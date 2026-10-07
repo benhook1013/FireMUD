@@ -9,10 +9,10 @@ import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
+import net.firedevops.firemud.common.world.GameSessionCanonicalInitialAdmissionOwnerProof;
+import net.firedevops.firemud.common.world.WorldCanonicalInitialAdmissionHold;
 import net.firedevops.firemud.common.world.WorldCanonicalInitialPlayerLocation;
 import net.firedevops.firemud.common.world.WorldCanonicalInstanceLifecycleEvidence;
-import net.firedevops.firemud.worldmanagement.entity.InitialAdmissionBindHold;
-import net.firedevops.firemud.worldmanagement.repository.InitialAdmissionBindHoldRepository;
 import org.jooq.DSLContext;
 import org.jooq.Record;
 import org.springframework.transaction.PlatformTransactionManager;
@@ -29,14 +29,14 @@ public final class WorldCanonicalInitialPlayerLocationRepository {
   private final TransactionTemplate writeTransaction;
   private final WorldCanonicalInstanceLifecycleReadRepository lifecycleRepository;
   private final WorldCanonicalInstanceAssociationRepository associationRepository;
-  private final InitialAdmissionBindHoldRepository holdRepository;
+  private final WorldCanonicalInitialAdmissionHoldFinalizationRepository holdRepository;
 
   public WorldCanonicalInitialPlayerLocationRepository(
       DSLContext dsl,
       PlatformTransactionManager transactionManager,
       WorldCanonicalInstanceLifecycleReadRepository lifecycleRepository,
       WorldCanonicalInstanceAssociationRepository associationRepository,
-      InitialAdmissionBindHoldRepository holdRepository) {
+      WorldCanonicalInitialAdmissionHoldFinalizationRepository holdRepository) {
     this.dsl = Objects.requireNonNull(dsl, "dsl");
     this.lifecycleRepository = Objects.requireNonNull(lifecycleRepository, "lifecycleRepository");
     this.associationRepository =
@@ -82,11 +82,11 @@ public final class WorldCanonicalInitialPlayerLocationRepository {
                   .readOwnerAssociationInActivationTransaction(request.canonicalGameInstanceId())
                   .orElseThrow(() -> denied("exact canonical World association is missing"));
           requireAssociation(request, current, association);
-          InitialAdmissionBindHold hold =
+          GameSessionCanonicalInitialAdmissionOwnerProof hold =
               holdRepository
-                  .findByHoldIdForUpdate(request.initialAdmissionHoldId().toString())
+                  .readCommittedInOwnerTransaction(request.initialAdmissionHoldId())
                   .orElseThrow(() -> denied("initial-admission hold is missing"));
-          requireCommittedNoPriorPointerHold(request, current, association, hold);
+          requireCommittedCanonicalHold(request, current, association, hold);
 
           Optional<StoredOperation> prior = findOperation(request);
           if (prior.isPresent()) {
@@ -166,34 +166,43 @@ public final class WorldCanonicalInitialPlayerLocationRepository {
     }
   }
 
-  static void requireCommittedNoPriorPointerHold(
+  static void requireCommittedCanonicalHold(
       WorldCanonicalInitialPlayerLocation.Request request,
       WorldCanonicalInstanceLifecycleEvidence current,
       WorldCanonicalInstanceAssociation association,
-      InitialAdmissionBindHold hold) {
-    var fields = association.worldPrepareFields();
-    if (!WorldCanonicalInitialPlayerLocation.InitialAdmissionOrigin.NO_PRIOR_POINTER.equals(
-            request.initialAdmissionOrigin())
-        || !"COMMITTED".equals(hold.status())
-        || !hold.expectedNoPriorPointer()
-        || !request.initialAdmissionHoldId().toString().equals(hold.holdId())
-        || !request.initialAdmissionHoldFence().toString().equals(hold.holdFence())
-        || hold.tenantId() != fields.privateTenantKey()
-        || hold.gameInstanceId() != fields.privateGameInstanceKey()
-        || hold.versionId() != fields.localVersionKey()
-        || !request.realmId().toString().equals(hold.realmUuid())
-        || !request.playableStateNamespaceId().toString().equals(hold.playableStateNamespaceUuid())
+      GameSessionCanonicalInitialAdmissionOwnerProof proof) {
+    var identity = proof.holdIdentity();
+    var hold = identity.request();
+    var lifecycle = current.request();
+    long expectedPointerVersion =
+        hold.initialAdmissionOrigin()
+                == WorldCanonicalInitialAdmissionHold.InitialAdmissionOrigin.NO_PRIOR_POINTER
+            ? 1L
+            : Math.addExact(hold.expectedPriorPointerVersion(), 1L);
+    if (proof.outcome() != GameSessionCanonicalInitialAdmissionOwnerProof.Outcome.COMMITTED
+        || !request.initialAdmissionOrigin().name().equals(hold.initialAdmissionOrigin().name())
+        || !request.initialAdmissionHoldId().equals(identity.holdId())
+        || !request.initialAdmissionHoldFence().equals(identity.holdFence())
+        || !lifecycle.targetNamespace().equals(hold.targetNamespace())
+        || !request.canonicalTenantId().equals(hold.canonicalTenantId())
+        || !request.worldSlug().equals(hold.worldSlug())
+        || !request.canonicalGameInstanceId().equals(hold.canonicalGameInstanceId())
+        || !lifecycle.canonicalVersionId().equals(hold.canonicalVersionId())
+        || !request.realmId().equals(hold.realmId())
+        || !request.playableStateNamespaceId().equals(hold.playableStateNamespaceId())
         || !request.playableStateScope().equals(hold.playableStateScope())
         || !request.initialAdmissionRequestId().equals(hold.initialAdmissionRequestId())
-        || !request.initialAdmissionRequestDigest().equals(hold.requestDigest())
+        || !request.initialAdmissionRequestDigest().equals(hold.initialAdmissionRequestDigest())
         || hold.expectedCatalogRevision() != request.catalogRevision()
-        || !request.initialAdmissionOwnerProofId().equals(hold.ownerProofId())
-        || !request.initialAdmissionOwnerProofDigest().equals(hold.ownerProofDigest())
-        || !request.pointerAuditId().equals(hold.ownerPointerAuditId())
-        || !Objects.equals(request.pointerVersion(), hold.ownerPointerVersion())
-        || hold.activeLifecycleEpoch() != current.lifecycleEpoch()) {
-      throw denied(
-          "initial placement requires the exact committed NO_PRIOR_POINTER hold and pointer outcome");
+        || !request.initialAdmissionOwnerProofId().equals(hold.initialAdmissionRequestId())
+        || !request.initialAdmissionOwnerProofDigest().equals(proof.proofDigest().substring(7))
+        || !request.pointerAuditId().equals(Long.toString(proof.auditEventId()))
+        || !Objects.equals(request.pointerVersion(), proof.committedPointerVersion())
+        || hold.activeLifecycleEpoch() != current.lifecycleEpoch()
+        || !association.identity().canonicalTenantId().equals(hold.canonicalTenantId())
+        || !association.identity().canonicalGameInstanceId().equals(hold.canonicalGameInstanceId())
+        || proof.committedPointerVersion() != expectedPointerVersion) {
+      throw denied("initial placement requires the exact typed committed hold and pointer outcome");
     }
   }
 

@@ -22,7 +22,10 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
+import java.time.Instant;
+import java.time.LocalDateTime;
 import java.time.OffsetDateTime;
+import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HexFormat;
@@ -72,8 +75,11 @@ import net.firedevops.firemud.common.tenant.AuthoredWorldSourceDigest;
 import net.firedevops.firemud.common.tenant.AuthoredWorldSourceEvidence;
 import net.firedevops.firemud.common.world.CanonicalWorldInstancePreparationClient;
 import net.firedevops.firemud.common.world.CanonicalWorldInstancePreparationGrpcCodec;
+import net.firedevops.firemud.common.world.GameSessionCanonicalInitialAdmissionOwnerProof;
+import net.firedevops.firemud.common.world.GameSessionCanonicalInitialAdmissionOwnerProofCodec;
 import net.firedevops.firemud.common.world.RoomTemplateRef;
 import net.firedevops.firemud.common.world.WorldCanonicalInitialAdmissionHold;
+import net.firedevops.firemud.common.world.WorldCanonicalInitialAdmissionHold.HoldIdentity;
 import net.firedevops.firemud.common.world.WorldCanonicalInitialAdmissionHold.InitialAdmissionOrigin;
 import net.firedevops.firemud.common.world.WorldCanonicalInitialAdmissionHold.Request;
 import net.firedevops.firemud.common.world.WorldCanonicalInitialPlayerLocation;
@@ -93,12 +99,8 @@ import net.firedevops.firemud.worldmanagement.client.EntityManagementClient;
 import net.firedevops.firemud.worldmanagement.client.GameDesignClient;
 import net.firedevops.firemud.worldmanagement.client.GameSessionClient;
 import net.firedevops.firemud.worldmanagement.client.GrpcGameSessionInitialAdmissionBindProofClient;
-import net.firedevops.firemud.worldmanagement.dto.InitialAdmissionBindHoldRequest;
-import net.firedevops.firemud.worldmanagement.dto.InitialAdmissionBindOwnerProof;
-import net.firedevops.firemud.worldmanagement.entity.InitialAdmissionBindHold;
 import net.firedevops.firemud.worldmanagement.repository.InitialAdmissionBindHoldRepository;
 import net.firedevops.firemud.worldmanagement.repository.WorldInstanceRepository;
-import net.firedevops.firemud.worldmanagement.service.InitialAdmissionBindHoldService;
 import net.firedevops.firemud.worldmanagement.service.WorldLifecycleCommandService;
 import net.firedevops.firemud.worldmanagement.tenant.WorldDesignPublicationFenceEvidence.OwnerBinding;
 import net.firedevops.firemud.worldmanagement.v1.ActivateCanonicalWorldInstanceRequest;
@@ -151,7 +153,7 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 import tools.jackson.databind.ObjectMapper;
 
 /**
- * Stipulated held Account ordering proves component atomicity, not authenticated Gameplay handoff.
+ * PostgreSQL World component fixtures; stipulated upstream owner proof is not live handoff proof.
  */
 @Testcontainers(disabledWithoutDocker = true)
 @SuppressWarnings("resource")
@@ -191,8 +193,6 @@ class WorldDraftGraphApplicationPostgresIntegrationTest {
   @Autowired private ObjectMapper mapper;
   @Autowired private WorldAuthoredGraphSnapshotRepository snapshots;
   @Autowired private WorldLifecycleCommandService lifecycleCommandService;
-  @Autowired private InitialAdmissionBindHoldService initialAdmissionBindHoldService;
-  @Autowired private InitialAdmissionBindHoldRepository initialAdmissionBindHoldRepository;
 
   @Autowired
   private net.firedevops.firemud.worldmanagement.service.WorldDraftDesignDigestService
@@ -2290,6 +2290,23 @@ class WorldDraftGraphApplicationPostgresIntegrationTest {
   }
 
   @Test
+  void expectedClosedPlacementUsesExactNextPointerVersionFromStipulatedOwnerProof() {
+    PlacementFixture fixture = initialPlayerLocationFixture(InitialAdmissionOrigin.EXPECT_CLOSED);
+
+    WorldCanonicalInitialPlayerLocation.Result placed = fixture.service().place(fixture.request());
+
+    assertThat(fixture.hold().request().initialAdmissionOrigin())
+        .isEqualTo(InitialAdmissionOrigin.EXPECT_CLOSED);
+    assertThat(fixture.hold().request().expectedPriorPointerVersion()).isEqualTo(7L);
+    assertThat(fixture.ownerProof().committedPointerVersion()).isEqualTo(8L);
+    assertThat(fixture.request().initialAdmissionOrigin())
+        .isEqualTo(WorldCanonicalInitialPlayerLocation.InitialAdmissionOrigin.EXPECT_CLOSED);
+    assertThat(fixture.request().pointerVersion()).isEqualTo(8L);
+    assertThat(placed.outcome()).isEqualTo(WorldCanonicalInitialPlayerLocation.Outcome.APPLIED);
+    assertOrigin();
+  }
+
+  @Test
   void currentInitialPlayerLocationReadReturnsExactActorRoomRegionAndLifecycleProof() {
     PlacementFixture fixture = initialPlayerLocationFixture();
     var placed = fixture.service().place(fixture.request());
@@ -4138,6 +4155,10 @@ class WorldDraftGraphApplicationPostgresIntegrationTest {
 
   /** Actual materialization and activation with only upstream owner authority stipulated. */
   private PlacementFixture initialPlayerLocationFixture() {
+    return initialPlayerLocationFixture(InitialAdmissionOrigin.NO_PRIOR_POINTER);
+  }
+
+  private PlacementFixture initialPlayerLocationFixture(InitialAdmissionOrigin origin) {
     PreparedLifecycleFixture lifecycleFixture = materializedLifecycleFixture();
     var activation =
         canonicalActivationService(lifecycleFixture, ignored -> stipulatedActivationAuthority())
@@ -4152,52 +4173,104 @@ class WorldDraftGraphApplicationPostgresIntegrationTest {
             .orElseThrow();
     assertThat(activeEvidence.lifecycleStatus()).isEqualTo("ACTIVE");
 
-    var worldFields = lifecycleFixture.materialized().association().worldPrepareFields();
     UUID realmId = UUID.randomUUID();
-    UUID playableNamespaceId = activeEvidence.request().playableStateNamespaceId();
     String initialAdmissionRequestId = "placement-admission-" + UUID.randomUUID();
     String initialAdmissionRequestDigest = "f".repeat(64);
-    long catalogRevision = 1L;
-    var acquired =
-        initialAdmissionBindHoldService.acquire(
-            new InitialAdmissionBindHoldRequest(
-                worldFields.privateTenantKey(),
-                worldFields.privateGameInstanceKey(),
-                worldFields.localVersionKey(),
-                activeEvidence.lifecycleEpoch(),
-                initialAdmissionRequestId,
-                initialAdmissionRequestDigest,
-                realmId.toString(),
-                playableNamespaceId.toString(),
-                activeEvidence.request().playableStateScope(),
-                true,
-                catalogRevision));
-    var ownerProof =
-        new InitialAdmissionBindOwnerProof(
-            InitialAdmissionBindOwnerProof.Outcome.COMMITTED,
-            acquired.holdId(),
-            acquired.holdFence(),
-            worldFields.privateTenantKey(),
-            realmId.toString(),
-            playableNamespaceId.toString(),
+    long catalogRevision = origin == InitialAdmissionOrigin.NO_PRIOR_POINTER ? 1L : 2L;
+    // EXPECT_CLOSED is an upstream stipulation here, not owner proof the realm was never OPEN.
+    Long expectedPriorPointerVersion = origin == InitialAdmissionOrigin.EXPECT_CLOSED ? 7L : null;
+    Request holdRequest =
+        new Request(
+            activeEvidence.request().targetNamespace(),
+            activeEvidence.request().canonicalTenantId(),
+            activeEvidence.request().worldSlug(),
+            realmId,
+            activeEvidence.request().playableStateNamespaceId(),
             activeEvidence.request().playableStateScope(),
-            worldFields.privateGameInstanceKey(),
-            worldFields.localVersionKey(),
+            activeEvidence.request().canonicalGameInstanceId(),
+            activeEvidence.request().canonicalVersionId(),
             activeEvidence.lifecycleEpoch(),
             initialAdmissionRequestId,
             initialAdmissionRequestDigest,
-            true,
+            origin,
             catalogRevision,
-            "stipulated-owner-proof-" + UUID.randomUUID(),
-            UUID.randomUUID().toString(),
-            1L,
-            initialAdmissionRequestDigest,
-            false);
-    var terminal =
-        initialAdmissionBindHoldService.reconcileOwnerProof(acquired.holdId(), ownerProof);
-    assertThat(terminal.status()).isEqualTo("COMMITTED");
-    InitialAdmissionBindHold hold =
-        initialAdmissionBindHoldRepository.findByHoldId(acquired.holdId()).orElseThrow();
+            expectedPriorPointerVersion);
+    var holdRepository =
+        new WorldCanonicalInitialAdmissionHoldRepository(
+            dsl, manager, associationRepository(), lifecycleFixture.lifecycleRepository());
+    HoldIdentity hold = holdRepository.acquire(holdRequest, activeEvidence.request());
+    assertThat(holdRepository.readIdentity(holdRequest)).contains(hold);
+
+    long pointerVersion =
+        origin == InitialAdmissionOrigin.NO_PRIOR_POINTER
+            ? 1L
+            : Math.addExact(Objects.requireNonNull(expectedPriorPointerVersion), 1L);
+    // This upstream Game Session outcome is supplied to World through a test-only verifier double.
+    GameSessionCanonicalInitialAdmissionOwnerProof stipulatedOwnerProof =
+        new GameSessionCanonicalInitialAdmissionOwnerProof(
+            hold,
+            GameSessionCanonicalInitialAdmissionOwnerProof.Outcome.COMMITTED,
+            pointerVersion,
+            41L,
+            "sha256:" + "c".repeat(64),
+            false,
+            Instant.parse("2026-10-07T01:02:03.123456Z"));
+    var holdFinalizationRepository =
+        new WorldCanonicalInitialAdmissionHoldFinalizationRepository(
+            dsl, manager, associationRepository(), lifecycleFixture.lifecycleRepository());
+    var finalizationService =
+        new WorldCanonicalInitialAdmissionHoldFinalizationService(
+            holdFinalizationRepository,
+            stipulatedCanonicalGameSessionOwnerProofVerifier(stipulatedOwnerProof));
+    GameSessionCanonicalInitialAdmissionOwnerProof terminal =
+        finalizationService.finalizeHold(
+            hold, GameSessionCanonicalInitialAdmissionOwnerProof.Outcome.COMMITTED);
+    assertThat(terminal).isEqualTo(stipulatedOwnerProof);
+    assertThat(terminal.holdIdentity().canonicalBytes()).containsExactly(hold.canonicalBytes());
+
+    byte[] canonicalOwnerProofBytes =
+        GameSessionCanonicalInitialAdmissionOwnerProofCodec.canonicalBytes(stipulatedOwnerProof);
+    Record storedHold =
+        Objects.requireNonNull(
+            dsl.fetchOne(
+                "SELECT hold_id, hold_fence, status, initial_admission_request_id, "
+                    + "request_digest, expected_catalog_revision, initial_admission_origin, "
+                    + "expected_prior_pointer_version, canonical_request_bytes, hold_binding_digest, "
+                    + "owner_proof_id, owner_proof_digest, owner_pointer_audit_id, "
+                    + "owner_pointer_version, terminal_at, canonical_owner_proof_bytes, "
+                    + "canonical_owner_proof_digest FROM initial_admission_bind_hold "
+                    + "WHERE hold_id = ?",
+                hold.holdId()));
+    assertThat(storedHold.get("hold_id", UUID.class)).isEqualTo(hold.holdId());
+    assertThat(storedHold.get("hold_fence", UUID.class)).isEqualTo(hold.holdFence());
+    assertThat(storedHold.get("status", String.class)).isEqualTo("COMMITTED");
+    assertThat(storedHold.get("initial_admission_request_id", String.class))
+        .isEqualTo(holdRequest.initialAdmissionRequestId());
+    assertThat(storedHold.get("request_digest", String.class))
+        .isEqualTo(holdRequest.initialAdmissionRequestDigest());
+    assertThat(storedHold.get("expected_catalog_revision", Long.class))
+        .isEqualTo(holdRequest.expectedCatalogRevision());
+    assertThat(storedHold.get("initial_admission_origin", String.class)).isEqualTo(origin.name());
+    assertThat(storedHold.get("expected_prior_pointer_version", Long.class))
+        .isEqualTo(expectedPriorPointerVersion);
+    assertThat(storedHold.get("canonical_request_bytes", byte[].class))
+        .containsExactly(holdRequest.canonicalRequestBytes());
+    assertThat(storedHold.get("hold_binding_digest", String.class))
+        .isEqualTo(hold.holdBindingDigest());
+    assertThat(storedHold.get("owner_proof_id", String.class))
+        .isEqualTo(holdRequest.initialAdmissionRequestId());
+    assertThat(storedHold.get("owner_proof_digest", String.class))
+        .isEqualTo(stipulatedOwnerProof.proofDigest().substring("sha256:".length()));
+    assertThat(storedHold.get("owner_pointer_audit_id", String.class))
+        .isEqualTo(Long.toString(Objects.requireNonNull(stipulatedOwnerProof.auditEventId())));
+    assertThat(storedHold.get("owner_pointer_version", Long.class))
+        .isEqualTo(stipulatedOwnerProof.committedPointerVersion());
+    assertThat(storedHold.get("terminal_at", LocalDateTime.class))
+        .isEqualTo(LocalDateTime.ofInstant(stipulatedOwnerProof.terminalAt(), ZoneOffset.UTC));
+    assertThat(storedHold.get("canonical_owner_proof_bytes", byte[].class))
+        .containsExactly(canonicalOwnerProofBytes);
+    assertThat(storedHold.get("canonical_owner_proof_digest", String.class))
+        .isEqualTo(sha256Digest(canonicalOwnerProofBytes));
 
     var repository =
         new WorldCanonicalInitialPlayerLocationRepository(
@@ -4205,12 +4278,19 @@ class WorldDraftGraphApplicationPostgresIntegrationTest {
             manager,
             lifecycleFixture.lifecycleRepository(),
             associationRepository(),
-            initialAdmissionBindHoldRepository);
+            holdFinalizationRepository);
     var service =
         new WorldCanonicalInitialPlayerLocationService(
             repository, ignored -> stipulatedPlacementAuthority());
     var fixture =
-        new PlacementFixture(lifecycleFixture, activeEvidence, hold, repository, service, null);
+        new PlacementFixture(
+            lifecycleFixture,
+            activeEvidence,
+            hold,
+            stipulatedOwnerProof,
+            repository,
+            service,
+            null);
     WorldCanonicalInitialPlayerLocation.Request request =
         initialLocationRequest(
             fixture,
@@ -4220,7 +4300,7 @@ class WorldDraftGraphApplicationPostgresIntegrationTest {
             "a".repeat(64),
             activeEvidence);
     return new PlacementFixture(
-        lifecycleFixture, activeEvidence, hold, repository, service, request);
+        lifecycleFixture, activeEvidence, hold, stipulatedOwnerProof, repository, service, request);
   }
 
   private WorldCanonicalCurrentPlayerLocationService currentLocationReadService(
@@ -4231,7 +4311,8 @@ class WorldDraftGraphApplicationPostgresIntegrationTest {
             manager,
             fixture.lifecycle().lifecycleRepository(),
             associationRepository(),
-            initialAdmissionBindHoldRepository,
+            new WorldCanonicalInitialAdmissionHoldFinalizationRepository(
+                dsl, manager, associationRepository(), fixture.lifecycle().lifecycleRepository()),
             fixture.repository());
     return new WorldCanonicalCurrentPlayerLocationService(
         repository, ignored -> stipulatedPlacementAuthority());
@@ -4245,10 +4326,12 @@ class WorldDraftGraphApplicationPostgresIntegrationTest {
       String assignmentDigest,
       WorldCanonicalInstanceLifecycleEvidence activeEvidence) {
     var hold = fixture.hold();
+    var holdRequest = hold.request();
+    var ownerProof = fixture.ownerProof();
     return new WorldCanonicalInitialPlayerLocation.Request(
         operationId,
         activeEvidence.request().canonicalTenantId(),
-        UUID.fromString(hold.realmUuid()),
+        holdRequest.realmId(),
         activeEvidence.request().worldSlug(),
         activeEvidence.request().canonicalGameInstanceId(),
         activeEvidence.request().playableStateNamespaceId(),
@@ -4257,16 +4340,17 @@ class WorldDraftGraphApplicationPostgresIntegrationTest {
         characterId,
         assignmentOperationId,
         assignmentDigest,
-        UUID.fromString(hold.holdId()),
-        UUID.fromString(hold.holdFence()),
-        hold.initialAdmissionRequestId(),
-        hold.requestDigest(),
-        hold.expectedCatalogRevision(),
-        hold.ownerProofId(),
-        hold.ownerProofDigest(),
-        hold.ownerPointerAuditId(),
-        Objects.requireNonNull(hold.ownerPointerVersion()),
-        WorldCanonicalInitialPlayerLocation.InitialAdmissionOrigin.NO_PRIOR_POINTER,
+        hold.holdId(),
+        hold.holdFence(),
+        holdRequest.initialAdmissionRequestId(),
+        holdRequest.initialAdmissionRequestDigest(),
+        holdRequest.expectedCatalogRevision(),
+        holdRequest.initialAdmissionRequestId(),
+        ownerProof.proofDigest().substring("sha256:".length()),
+        Long.toString(Objects.requireNonNull(ownerProof.auditEventId())),
+        Objects.requireNonNull(ownerProof.committedPointerVersion()),
+        WorldCanonicalInitialPlayerLocation.InitialAdmissionOrigin.valueOf(
+            holdRequest.initialAdmissionOrigin().name()),
         activeEvidence);
   }
 
@@ -4303,6 +4387,40 @@ class WorldDraftGraphApplicationPostgresIntegrationTest {
       public void close() {
         open = false;
       }
+    };
+  }
+
+  /**
+   * Test double that stipulates a held Game Session proof for World component coverage. This is not
+   * genuine Game Session authentication or pointer commit evidence, multi-owner proof, or mTLS
+   * proof.
+   */
+  private static WorldCanonicalInitialAdmissionHoldFinalizationService.OwnerProofVerifier
+      stipulatedCanonicalGameSessionOwnerProofVerifier(
+          GameSessionCanonicalInitialAdmissionOwnerProof ownerProof) {
+    return (identity, expectedOutcome) -> {
+      if (!identity.equals(ownerProof.holdIdentity()) || ownerProof.outcome() != expectedOutcome) {
+        throw new IllegalArgumentException(
+            "Stipulated Game Session owner proof differs from the requested hold or outcome");
+      }
+      return new WorldCanonicalInitialAdmissionHoldFinalizationService.HeldOwnerProof() {
+        private boolean open = true;
+
+        @Override
+        public GameSessionCanonicalInitialAdmissionOwnerProof proof() {
+          return ownerProof;
+        }
+
+        @Override
+        public void requireHeld() {
+          assertThat(open).isTrue();
+        }
+
+        @Override
+        public void close() {
+          open = false;
+        }
+      };
     };
   }
 
@@ -6504,7 +6622,8 @@ class WorldDraftGraphApplicationPostgresIntegrationTest {
   private record PlacementFixture(
       PreparedLifecycleFixture lifecycle,
       WorldCanonicalInstanceLifecycleEvidence activeEvidence,
-      InitialAdmissionBindHold hold,
+      HoldIdentity hold,
+      GameSessionCanonicalInitialAdmissionOwnerProof ownerProof,
       WorldCanonicalInitialPlayerLocationRepository repository,
       WorldCanonicalInitialPlayerLocationService service,
       WorldCanonicalInitialPlayerLocation.Request request) {}

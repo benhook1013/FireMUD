@@ -1,0 +1,32 @@
+syntax = "proto3";
+
+package world_management.v1;
+
+option java_package = "net.firedevops.firemud.worldmanagement.v1";
+option java_multiple_files = true;
+
+// Standalone World terminalization surface for one canonical initial-admission hold.
+service WorldCanonicalInitialAdmissionHoldTerminalService {
+  rpc FinalizeCanonicalInitialAdmissionHold(
+      FinalizeCanonicalInitialAdmissionHoldRequest)
+      returns (FinalizeCanonicalInitialAdmissionHoldResponse);
+}
+
+message FinalizeCanonicalInitialAdmissionHoldRequest {
+  // Complete immutable World-issued initial-admission hold identity bytes.
+  bytes hold_identity_bytes = 1;
+
+  // Requested terminal Game Session owner outcome. PENDING is deliberately not selectable.
+  ExpectedOutcome expected_outcome = 2;
+
+  enum ExpectedOutcome {
+    EXPECTED_OUTCOME_UNSPECIFIED = 0;
+    COMMITTED = 1;
+    ABORTED = 2;
+  }
+}
+
+message FinalizeCanonicalInitialAdmissionHoldResponse {
+  // Complete immutable authenticated Game Session owner proof returned after World finalization.
+  bytes owner_proof_bytes = 1;
+}

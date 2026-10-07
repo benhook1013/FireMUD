@@ -97,6 +97,12 @@ firemud:
         # Game Design mTLS peer before it reaches World-owned durable intake/readback.
         - world_management.v1.WorldAuthoredSourceIntakeService/IntakeAuthoredWorldSource
         - world_management.v1.WorldAuthoredSourceIntakeService/ReadAuthoredWorldSourceIntake
+        # JWT bypass is exact-method only; canonical first-admission handlers authenticate
+        # the same-namespace Game Session mTLS peer. Runtime composition is default-disabled.
+        - world_management.v1.WorldCanonicalInitialAdmissionHoldService/AcquireCanonicalInitialAdmissionHold
+        - world_management.v1.WorldCanonicalInitialAdmissionHoldService/ReadCanonicalInitialAdmissionHoldIdentity
+        - world_management.v1.WorldCanonicalInstanceLifecycleReadService/ReadWorldCanonicalInstanceLifecycle
+        - world_management.v1.WorldCanonicalInitialAdmissionHoldTerminalService/FinalizeCanonicalInitialAdmissionHold
   grpc:
     workload-namespace: ${FIREMUD_GRPC_WORKLOAD_NAMESPACE:}
     cert-chain: ${FIREMUD_GRPC_CERT_CHAIN_PATH:certs/client.crt}

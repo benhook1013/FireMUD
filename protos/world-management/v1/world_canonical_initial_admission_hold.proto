@@ -5,8 +5,8 @@ package world_management.v1;
 option java_package = "net.firedevops.firemud.worldmanagement.v1";
 option java_multiple_files = true;
 
-// Standalone canonical World initial-admission hold owner operations. This service is not
-// registered in the runtime server.
+// Canonical World initial-admission hold owner operations. Runtime composition is explicitly
+// opt-in and default-disabled; each operation authenticates the exact Game Session workload.
 service WorldCanonicalInitialAdmissionHoldService {
   rpc AcquireCanonicalInitialAdmissionHold(AcquireCanonicalInitialAdmissionHoldRequest)
       returns (AcquireCanonicalInitialAdmissionHoldResponse);

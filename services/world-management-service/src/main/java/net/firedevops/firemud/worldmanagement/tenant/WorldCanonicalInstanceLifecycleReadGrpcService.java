@@ -11,9 +11,18 @@ import net.firedevops.firemud.worldmanagement.v1.ReadWorldCanonicalInstanceLifec
 import net.firedevops.firemud.worldmanagement.v1.ReadWorldCanonicalInstanceLifecycleResponse;
 import net.firedevops.firemud.worldmanagement.v1.WorldCanonicalInstanceLifecycleReadServiceGrpc;
 import org.jooq.exception.DataAccessException;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.dao.TransientDataAccessException;
+import org.springframework.grpc.server.service.GrpcService;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
-/** Standalone exact authenticated read adapter; intentionally not registered as a runtime RPC. */
+/** Exact authenticated lifecycle read; explicitly gated, never default-enabled. */
+@GrpcService
+@ConditionalOnProperty(
+    prefix = "firemud.world.canonical-first-admission",
+    name = "transport-enabled",
+    havingValue = "true")
 public final class WorldCanonicalInstanceLifecycleReadGrpcService
     extends WorldCanonicalInstanceLifecycleReadServiceGrpc
         .WorldCanonicalInstanceLifecycleReadServiceImplBase {
@@ -21,7 +30,8 @@ public final class WorldCanonicalInstanceLifecycleReadGrpcService
   private final String trustedNamespace;
 
   public WorldCanonicalInstanceLifecycleReadGrpcService(
-      WorldCanonicalInstanceLifecycleReadRepository repository, String trustedNamespace) {
+      WorldCanonicalInstanceLifecycleReadRepository repository,
+      @Value("${firemud.grpc.workload-namespace:}") String trustedNamespace) {
     this.repository = Objects.requireNonNull(repository, "repository");
     if (!GrpcPeerIdentity.isValidNamespace(trustedNamespace)) {
       throw new IllegalArgumentException("World workload namespace is invalid");
@@ -34,6 +44,15 @@ public final class WorldCanonicalInstanceLifecycleReadGrpcService
       ReadWorldCanonicalInstanceLifecycleRequest request,
       StreamObserver<ReadWorldCanonicalInstanceLifecycleResponse> responseObserver) {
     if (!requireAuthenticatedGameSessionPeer(responseObserver)) return;
+    if (TransactionSynchronizationManager.isActualTransactionActive()
+        || TransactionSynchronizationManager.isSynchronizationActive()) {
+      responseObserver.onError(
+          Status.FAILED_PRECONDITION
+              .withDescription(
+                  "Canonical World lifecycle read requires an independent owner operation")
+              .asRuntimeException());
+      return;
+    }
 
     WorldCanonicalInstanceLifecycleEvidence.Request readRequest;
     try {

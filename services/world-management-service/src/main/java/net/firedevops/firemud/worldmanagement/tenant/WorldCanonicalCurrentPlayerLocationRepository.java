@@ -5,11 +5,10 @@ import java.util.Arrays;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
+import net.firedevops.firemud.common.world.GameSessionCanonicalInitialAdmissionOwnerProof;
 import net.firedevops.firemud.common.world.RoomTemplateRef;
 import net.firedevops.firemud.common.world.WorldCanonicalInitialPlayerLocation;
 import net.firedevops.firemud.common.world.WorldCanonicalInstanceLifecycleEvidence;
-import net.firedevops.firemud.worldmanagement.entity.InitialAdmissionBindHold;
-import net.firedevops.firemud.worldmanagement.repository.InitialAdmissionBindHoldRepository;
 import org.jooq.DSLContext;
 import org.jooq.Record;
 import org.springframework.transaction.PlatformTransactionManager;
@@ -26,7 +25,7 @@ public final class WorldCanonicalCurrentPlayerLocationRepository {
   private final TransactionTemplate readTransaction;
   private final WorldCanonicalInstanceLifecycleReadRepository lifecycleRepository;
   private final WorldCanonicalInstanceAssociationRepository associationRepository;
-  private final InitialAdmissionBindHoldRepository holdRepository;
+  private final WorldCanonicalInitialAdmissionHoldFinalizationRepository holdRepository;
   private final WorldCanonicalInitialPlayerLocationRepository placementRepository;
 
   public WorldCanonicalCurrentPlayerLocationRepository(
@@ -34,7 +33,7 @@ public final class WorldCanonicalCurrentPlayerLocationRepository {
       PlatformTransactionManager transactionManager,
       WorldCanonicalInstanceLifecycleReadRepository lifecycleRepository,
       WorldCanonicalInstanceAssociationRepository associationRepository,
-      InitialAdmissionBindHoldRepository holdRepository,
+      WorldCanonicalInitialAdmissionHoldFinalizationRepository holdRepository,
       WorldCanonicalInitialPlayerLocationRepository placementRepository) {
     this.dsl = Objects.requireNonNull(dsl, "dsl");
     this.lifecycleRepository = Objects.requireNonNull(lifecycleRepository, "lifecycleRepository");
@@ -84,11 +83,11 @@ public final class WorldCanonicalCurrentPlayerLocationRepository {
                   .orElseThrow(() -> denied("exact canonical World association is missing"));
           placementRepository.requireAssociation(request, current, association);
 
-          InitialAdmissionBindHold hold =
+          GameSessionCanonicalInitialAdmissionOwnerProof hold =
               holdRepository
-                  .findByHoldId(request.initialAdmissionHoldId().toString())
+                  .readCommittedInOwnerTransaction(request.initialAdmissionHoldId())
                   .orElseThrow(() -> denied("initial-admission hold is missing"));
-          WorldCanonicalInitialPlayerLocationRepository.requireCommittedNoPriorPointerHold(
+          WorldCanonicalInitialPlayerLocationRepository.requireCommittedCanonicalHold(
               request, current, association, hold);
 
           StoredOperation operation = readOperation(request, association);

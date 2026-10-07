@@ -639,7 +639,8 @@ public final class WorldCanonicalInstanceLifecycleReadRepository {
   }
 
   private static void requireNoActiveTransaction(String label) {
-    if (TransactionSynchronizationManager.isActualTransactionActive()) {
+    if (TransactionSynchronizationManager.isActualTransactionActive()
+        || TransactionSynchronizationManager.isSynchronizationActive()) {
       throw new IllegalStateException(label + " must not join an ambient transaction");
     }
   }

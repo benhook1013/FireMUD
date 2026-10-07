@@ -253,7 +253,11 @@ class WorldPublicationDigestMtlsTest {
                 WorldManagementServiceGrpc.getPingMethod().getFullMethodName(),
                 DIGEST_METHOD,
                 "world_management.v1.WorldAuthoredSourceIntakeService/IntakeAuthoredWorldSource",
-                "world_management.v1.WorldAuthoredSourceIntakeService/ReadAuthoredWorldSourceIntake"));
+                "world_management.v1.WorldAuthoredSourceIntakeService/ReadAuthoredWorldSourceIntake",
+                "world_management.v1.WorldCanonicalInitialAdmissionHoldService/AcquireCanonicalInitialAdmissionHold",
+                "world_management.v1.WorldCanonicalInitialAdmissionHoldService/ReadCanonicalInitialAdmissionHoldIdentity",
+                "world_management.v1.WorldCanonicalInstanceLifecycleReadService/ReadWorldCanonicalInstanceLifecycle",
+                "world_management.v1.WorldCanonicalInitialAdmissionHoldTerminalService/FinalizeCanonicalInitialAdmissionHold"));
   }
 
   @Test

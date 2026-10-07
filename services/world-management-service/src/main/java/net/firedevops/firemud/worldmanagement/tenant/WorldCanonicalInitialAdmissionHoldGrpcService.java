@@ -19,10 +19,18 @@ import net.firedevops.firemud.worldmanagement.v1.ReadCanonicalInitialAdmissionHo
 import net.firedevops.firemud.worldmanagement.v1.ReadCanonicalInitialAdmissionHoldIdentityResponse;
 import net.firedevops.firemud.worldmanagement.v1.WorldCanonicalInitialAdmissionHoldServiceGrpc;
 import org.jooq.exception.DataAccessException;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.dao.TransientDataAccessException;
+import org.springframework.grpc.server.service.GrpcService;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 
-/** Standalone authenticated hold adapter; intentionally not registered as a runtime RPC. */
+/** Explicitly gated authenticated hold adapter; no default runtime registration. */
+@GrpcService
+@ConditionalOnProperty(
+    prefix = "firemud.world.canonical-first-admission",
+    name = "transport-enabled",
+    havingValue = "true")
 public final class WorldCanonicalInitialAdmissionHoldGrpcService
     extends WorldCanonicalInitialAdmissionHoldServiceGrpc
         .WorldCanonicalInitialAdmissionHoldServiceImplBase {
@@ -30,7 +38,8 @@ public final class WorldCanonicalInitialAdmissionHoldGrpcService
   private final String trustedNamespace;
 
   public WorldCanonicalInitialAdmissionHoldGrpcService(
-      WorldCanonicalInitialAdmissionHoldRepository repository, String trustedNamespace) {
+      WorldCanonicalInitialAdmissionHoldRepository repository,
+      @Value("${firemud.grpc.workload-namespace:}") String trustedNamespace) {
     this.repository = Objects.requireNonNull(repository, "repository");
     if (!GrpcPeerIdentity.isValidNamespace(trustedNamespace)) {
       throw new IllegalArgumentException("World workload namespace is invalid");
