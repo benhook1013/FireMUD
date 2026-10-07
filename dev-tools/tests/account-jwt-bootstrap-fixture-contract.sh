@@ -54,7 +54,7 @@ if tool == "git":
         sys.exit(27)
 elif tool == "kind":
     if args == ["version"]:
-        print("kind v0.33.0 go1.25.0 linux/amd64")
+        print(f"kind v{state['kind_version']} go1.25.0 linux/amd64")
     elif args[:2] == ["config", "get-contexts"]:
         print("old-context" if state.get("existing_context") else "")
     elif args[:2] == ["get", "clusters"]:
@@ -98,9 +98,10 @@ elif tool == "kind":
         sys.exit(21)
 elif tool == "kubectl":
     if args[:2] == ["version", "--client"]:
-        emit({"clientVersion": {"gitVersion": "v1.35.9"}})
+        emit({"clientVersion": {"gitVersion": f"v{state['kubectl_version']}"}})
     elif "version" in args and "--client" not in args:
-        emit({"serverVersion": {"gitVersion": "v1.36.0" if state.get("server_version_mismatch") else "v1.35.8"}})
+        server_version = state["wrong_server_version"] if state.get("server_version_mismatch") else state["kind_node_image_version"]
+        emit({"serverVersion": {"gitVersion": server_version}})
     elif args[:3] == ["config", "get-contexts", "-o"]:
         if state.get("existing_context"):
             print("old-context")
@@ -221,7 +222,15 @@ def invoke_fixture(workspace, env, state_path, operation):
     return result, payload, json.loads(state_path.read_text())
 
 
-def run_case(flags=None, run_id="9911", attempt="1", operation="prepare", old_context=False, tampered_kind=False):
+def run_case(
+    flags=None,
+    run_id="9911",
+    attempt="1",
+    operation="prepare",
+    old_context=False,
+    tampered_kind=False,
+    authority_overrides=None,
+):
     temporary = tempfile.TemporaryDirectory(prefix="account-jwt-fixture-contract-")
     base = Path(temporary.name)
     binary_dir = base / "bin"
@@ -249,6 +258,13 @@ def run_case(flags=None, run_id="9911", attempt="1", operation="prepare", old_co
         authority_text,
     )
     assert replacements == 1
+    for key, value in (authority_overrides or {}).items():
+        authority_text, replacements = re.subn(
+            rf"(?m)^{re.escape(key)}=[^\n]+$",
+            f"{key}={value}",
+            authority_text,
+        )
+        assert replacements == 1, key
     (workspace / "config/workflow-tool-versions.env").write_text(authority_text)
     if tampered_kind:
         kind_path.write_text(kind_path.read_text() + "\n# altered bytes; same reported version\n")
@@ -256,7 +272,23 @@ def run_case(flags=None, run_id="9911", attempt="1", operation="prepare", old_co
     fake_path.write_text(fake_tool)
     fake_path.chmod(0o755)
     state_path = binary_dir / "state.json"
-    state_path.write_text(json.dumps({"created": False, "head": head, "existing_context": old_context, **(flags or {})}))
+    authority = dict(
+        line.split("=", 1)
+        for line in authority_text.splitlines()
+        if line and not line.startswith("#")
+    )
+    node_major, node_minor, _ = authority["KIND_NODE_IMAGE_VERSION"][1:].split(".")
+    state = {
+        "created": False,
+        "head": head,
+        "existing_context": old_context,
+        "kind_version": authority["KIND_VERSION"],
+        "kubectl_version": authority["KUBECTL_VERSION"],
+        "kind_node_image_version": authority["KIND_NODE_IMAGE_VERSION"],
+        "wrong_server_version": f"v{node_major}.{int(node_minor) + 1}.0",
+        **(flags or {}),
+    }
+    state_path.write_text(json.dumps(state))
     if old_context:
         kube_directory = home / ".kube"
         kube_directory.mkdir()
@@ -303,6 +335,27 @@ teardown, teardown_payload, state = invoke_fixture(
 assert teardown.returncode == 0 and teardown_payload["outcome"] == "fixture_torn_down", teardown_payload
 assert any(call[0] == "kind" and call[1:3] == ["delete", "cluster"] for call in state["calls"]), state["calls"]
 assert state["network_rm_ids"] == [state["network_id"]], state
+temporary.cleanup()
+
+updated_versions = {
+    "KIND_VERSION": "0.34.1",
+    "KIND_LINUX_AMD64_CHECKSUM_VERSION": "0.34.1",
+    "KUBECTL_VERSION": "1.35.10",
+    "KIND_NODE_IMAGE_VERSION": "v1.35.9",
+    "KIND_NODE_IMAGE_DIGEST": "sha256:" + "c" * 64,
+}
+temporary, runner_temp, env, result, payload, state = run_case(authority_overrides=updated_versions)
+assert result.returncode == 0 and payload["outcome"] == "fixture_ready", payload
+assert payload["fixture"]["kindVersion"] == updated_versions["KIND_VERSION"], payload
+assert payload["fixture"]["kubectlVersion"] == updated_versions["KUBECTL_VERSION"], payload
+assert payload["fixture"]["kubernetesServerVersion"] == updated_versions["KIND_NODE_IMAGE_VERSION"][1:], payload
+assert payload["fixture"]["nodeImage"].endswith(
+    f"{updated_versions['KIND_NODE_IMAGE_VERSION']}@{updated_versions['KIND_NODE_IMAGE_DIGEST']}"
+), payload
+teardown, teardown_payload, state = invoke_fixture(
+    Path(env["GITHUB_WORKSPACE"]), env, Path(env["PATH"].split(":", 1)[0]) / "state.json", "teardown"
+)
+assert teardown.returncode == 0 and teardown_payload["outcome"] == "fixture_torn_down", teardown_payload
 temporary.cleanup()
 
 temporary, _, _, result, payload, state = run_case(tampered_kind=True)
