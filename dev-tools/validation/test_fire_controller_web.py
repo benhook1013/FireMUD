@@ -13,8 +13,9 @@ ROOT = Path(__file__).resolve().parents[2]
 TOOLS = ROOT / "dev-tools"
 sys.path.insert(0, str(TOOLS))
 
-web = importlib.import_module("fire_controller.web")
 from fire_controller.jobs import JobStore
+
+web = importlib.import_module("fire_controller.web")
 
 
 PRIVATE_SENTINEL = "PRIVATE-BRIEF-SENTINEL-7f2d"
@@ -738,8 +739,8 @@ class PrivateWebHistoryTests(unittest.TestCase):
             "revision": 2, "status": "blocked", "worker": "General<script>", "primary": True,
             "title": "Historical title", "brief": "Old brief", "checklist": [
                 {"id": "old", "text": "Historical <script>check</script>", "done": True}]}}, history=True)
-        for text in ("<title>Current task title history</title>",
-                     "<h1>Current task title · Revision 2</h1>",
+        for text in ("<title>Job History for Current task title · Revision 2</title>",
+                     "<h1>Job History for Current task title · Revision 2</h1>",
                      '<p class="job-alias">Job alias · Current</p>',
                      "blocked", "General&lt;script&gt;", "Primary", "Historical title", "Checklist", "Done",
                      "Historical &lt;script&gt;check&lt;/script&gt;"):
@@ -750,8 +751,8 @@ class PrivateWebHistoryTests(unittest.TestCase):
         page = web.render_job({"job": {"id": "job-1", "name": "Current", "title": "Current task title"},
                                "history": [{"revision": 2, "status": "blocked", "title": "Historical title"}]},
                               history=True)
-        self.assertIn("<title>Current task title history</title>", page)
-        self.assertIn("<h1>Current task title history</h1>", page)
+        self.assertIn("<title>Job History for Current task title</title>", page)
+        self.assertIn("<h1>Job History for Current task title</h1>", page)
         self.assertIn('<p class="job-alias">Job alias · Current</p>', page)
         self.assertIn("Historical title", page)
 
@@ -759,17 +760,18 @@ class PrivateWebHistoryTests(unittest.TestCase):
         title = 'Task <one> & "done"'
         escaped_title = 'Task &lt;one&gt; &amp; &quot;done&quot;'
         job = {"id": "job-1", "name": "Current", "title": title}
+        history_title = f"Job History for {escaped_title}"
         revision = web.render_job({"job": job, "revision_entry": {
             "revision": 2, "title": 'Past <title> & "kept"'}}, history=True)
-        self.assertIn(f"<title>{escaped_title} history</title>", revision)
-        self.assertIn(f"<h1>{escaped_title} · Revision 2</h1>", revision)
+        self.assertIn(f"<title>{history_title} · Revision 2</title>", revision)
+        self.assertIn(f"<h1>{history_title} · Revision 2</h1>", revision)
         self.assertIn("<p>Past &lt;title&gt; &amp; &quot;kept&quot;</p>", revision)
         self.assertNotIn("&amp;amp;", revision)
 
         history = web.render_job({"job": job, "history": [
             {"revision": 2, "status": "blocked", "title": 'Past <title> & "kept"'}]}, history=True)
-        self.assertIn(f"<title>{escaped_title} history</title>", history)
-        self.assertIn(f"<h1>{escaped_title} history</h1>", history)
+        self.assertIn(f"<title>{history_title}</title>", history)
+        self.assertIn(f"<h1>{history_title}</h1>", history)
         self.assertIn("Past &lt;title&gt; &amp; &quot;kept&quot;", history)
         self.assertNotIn("&amp;amp;", history)
 

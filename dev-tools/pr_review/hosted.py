@@ -123,6 +123,7 @@ ARCHIVED = re.compile(r"^trigger-([1-9][0-9]*)\.json$")
 TIMEOUT_REASON = "bounded wait expired before a terminal CodeRabbit response"
 LATER_TRIGGER_AMBIGUITY_REASON = "a later or concurrent full-review trigger prevents attribution"
 UNKNOWN_RATE_LIMIT_BACKOFF = timedelta(seconds=3600)
+UNKNOWN_RATE_LIMIT_REASON = "CodeRabbit rate limited; response creation time is unavailable or invalid, so cooldown remains unresolved"
 
 
 @dataclass(frozen=True)
@@ -1393,21 +1394,12 @@ def _matches_head(body: str, head: str) -> bool:
 
 
 def _rate_limit(body: str, created: datetime) -> datetime | None:
-    match = RATE_LIMIT_PATTERN.search(_unquoted(body))
+    match = RATE_LIMIT_PATTERN.search(_without_fenced_code(_unquoted(body)))
     if not match:
         return None
     amount, unit = int(match.group(1)), match.group(2).lower()
     return created + timedelta(
         **({"seconds" if unit.startswith("second") else "minutes" if unit.startswith("minute") else "hours": amount})
-    )
-
-
-def _is_rate_limited_reply(body: str, cooldown: datetime | None) -> bool:
-    return (
-        REVIEW_LIMIT_MARKER in body
-        or cooldown is not None
-        or body.strip().lower().startswith("review rate limited")
-        or WRAPPED_RATE_LIMIT_REPLY_PATTERN.fullmatch(_without_fenced_code(_unquoted(body))) is not None
     )
 
 
@@ -1450,7 +1442,7 @@ def rate_limit_cooldown(
     provider_reset = _rate_limit(body, created)
     if provider_reset is not None:
         return provider_reset, "provider_reset"
-    if _is_rate_limited_reply(body, None):
+    if is_rate_limit_reply_body(body):
         return created + UNKNOWN_RATE_LIMIT_BACKOFF, "local_retry_backoff"
     return None, "none"
 
@@ -2743,7 +2735,7 @@ def trigger_state(
         elif cooldown_basis == "provider_reset" and cooldown is not None:
             reason = f"CodeRabbit rate limited; provider-stated next-review time is {cooldown.isoformat()}"
         elif cooldown_basis == "unknown":
-            reason = "CodeRabbit rate limited; response creation time is unavailable or invalid, so cooldown remains unresolved"
+            reason = UNKNOWN_RATE_LIMIT_REASON
     return TriggerState(
         state,
         True,

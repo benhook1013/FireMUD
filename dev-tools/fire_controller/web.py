@@ -564,12 +564,12 @@ def _render_history(data: dict) -> str:
     job_id = quote(str(job.get("id", "")), safe="")
     name = html.escape(str(job.get("name", "Job")), quote=True)
     raw_title = str(job.get("title") or job.get("name") or "Job")
-    title = html.escape(raw_title, quote=True)
+    history_title = f"Job History for {raw_title}"
     entry = data.get("revision_entry")
     if isinstance(entry, dict):
         revision = entry.get("revision", "?")
         body = [
-            f'<article class="job-history-entry"><h1>{title} · Revision {html.escape(str(revision), quote=True)}</h1>',
+            f'<article class="job-history-entry"><h1>{html.escape(history_title, quote=True)} · Revision {html.escape(str(revision), quote=True)}</h1>',
             f'<p class="job-alias">Job alias · {name}</p>',
             f'<p>{_time_metadata(entry.get("created_at", ""))}</p>',
         ]
@@ -586,12 +586,12 @@ def _render_history(data: dict) -> str:
                 body.append(section)
         body.append(f'<section><h2>Private working brief</h2>{_markdown(entry.get("brief", ""))}</section>')
         body.append(f'<p class="job-links"><a href="/jobs/{job_id}/history">All revisions</a> <a href="/jobs/{job_id}">Current job</a></p></article>')
-        return _private_document(f"{raw_title} history", "".join(body))
+        return _private_document(f"{history_title} · Revision {revision}", "".join(body))
 
     offset = data.get("offset", 0)
     rows = data.get("history", [])
     content = [(
-        f'<article class="job-private"><h1>{title} history</h1>'
+        f'<article class="job-private"><h1>{html.escape(history_title, quote=True)}</h1>'
         f'<p class="job-alias">Job alias · {name}</p><p>Recent revisions</p><ol class="private-list">'
     )]
     if isinstance(rows, list):
@@ -615,7 +615,7 @@ def _render_history(data: dict) -> str:
     if isinstance(rows, list) and len(rows) == HISTORY_PAGE_SIZE and type(offset) is int:
         content.append(f'<a href="/jobs/{job_id}/history?offset={offset + HISTORY_PAGE_SIZE}">Older revisions</a>')
     content.append(f'</nav><p class="job-links"><a href="/jobs/{job_id}">Current job</a></p></article>')
-    return _private_document(f"{raw_title} history", "".join(content))
+    return _private_document(history_title, "".join(content))
 
 
 

@@ -2631,6 +2631,10 @@ class HostedRunner:
                 finished_at = hosted.parse_timestamp(attempt.get("finished_at"))
                 if terminal_at is None or finished_at is None or terminal_at != finished_at:
                     continue
+                if metadata.get("reason") == hosted.UNKNOWN_RATE_LIMIT_REASON:
+                    raise ControllerError(
+                        f"closed PR #{pr} has a rate-limit response with unresolved creation-time cooldown evidence"
+                    )
                 trigger_at = hosted.strict_provider_timestamp(trigger.get("created_at"))
                 if trigger_at is None:
                     raise ControllerError(

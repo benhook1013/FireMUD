@@ -2066,11 +2066,28 @@ class HostedEvidenceTests(unittest.TestCase):
     def test_rate_limit_cooldown_rejects_missing_malformed_naive_and_future_response_times(self):
         now = datetime(2026, 9, 23, 1, 0, tzinfo=timezone.utc)
         future = "2026-09-23T01:00:01Z"
-        for response_created_at in (None, "not-a-time", datetime(2026, 9, 23, 0, 0), future):
+        for response_created_at in (
+            None,
+            "not-a-time",
+            datetime.fromisoformat("2026-09-23T00:00:00"),
+            future,
+        ):
             with self.subTest(response_created_at=response_created_at):
                 cooldown, basis = hosted.rate_limit_cooldown("Review rate limited", response_created_at, now=now)
                 self.assertIsNone(cooldown)
                 self.assertEqual(basis, "unknown")
+
+    def test_rate_limit_fallback_uses_the_same_quote_and_fence_recognition(self):
+        created_at = "2026-09-23T00:00:00Z"
+        for body in (
+            "> Original request: @coderabbitai full review\nReview rate limited",
+            "```text\nReview rate limited\n```\nReview rate limited",
+        ):
+            with self.subTest(body=body):
+                cooldown, basis = hosted.rate_limit_cooldown(body, created_at)
+                self.assertTrue(hosted.is_rate_limit_reply_body(body))
+                self.assertEqual(basis, "local_retry_backoff")
+                self.assertEqual(cooldown, datetime(2026, 9, 23, 1, 0, tzinfo=timezone.utc))
 
     def test_rate_limit_fallback_is_expired_at_inclusive_deadline(self):
         created_at = "2026-09-23T00:00:00Z"

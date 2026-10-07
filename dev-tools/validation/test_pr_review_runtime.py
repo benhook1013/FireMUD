@@ -970,10 +970,96 @@ class RuntimeTest(unittest.TestCase):
                 patch.object(runner, "_repository_current_trigger_paths", return_value={99: [path]}),
                 patch.object(github, "fetch_api_endpoint", return_value=[]),
                 patch.object(github, "fetch_pull_request", side_effect=RuntimeError("closed history unavailable")) as fetch,
+                self.assertRaisesRegex(ControllerError, "cooldown remains active on closed PR #99"),
             ):
-                with self.assertRaisesRegex(ControllerError, "cooldown remains active on closed PR #99"):
-                    runner._assert_no_other_active_reservations(42, common)
+                runner._assert_no_other_active_reservations(42, common)
             fetch.assert_not_called()
+
+    def test_closed_capture_preserves_unresolved_rate_limit_evidence(self) -> None:
+        runner = HostedRunner("owner/repo", LiveGitHub("owner/repo"))
+        now = datetime.now(timezone.utc).replace(microsecond=0)
+        trigger_at = now - timedelta(hours=2)
+        generic_created = now - timedelta(minutes=90)
+        with tempfile.TemporaryDirectory() as directory:
+            common = Path(directory)
+            records = self._new_review_records(common / "controller.sqlite3")
+            attempt_id = "closed-pr-unresolved-rate-limit"
+            trigger_record = self._trigger_record(created=trigger_at.isoformat().replace("+00:00", "Z"))
+            trigger_record.update({"pr_number": 99, "sqlite_attempt_id": attempt_id})
+            trigger_record["anchor"]["pr"] = 99
+            path = hosted.default_trigger_record_path("owner/repo", 99, common)
+            path.parent.mkdir(parents=True)
+            path.write_text(json.dumps(trigger_record), encoding="utf-8")
+            sqlite_hosted_capture.start_hosted_attempt(
+                records,
+                attempt_id=attempt_id,
+                source_pr=99,
+                candidate_sha=HEAD,
+                started_at=trigger_record["trigger"]["created_at"],
+            )
+            malformed_explicit_limit = {
+                "databaseId": 12,
+                "author": {"login": "coderabbitai[bot]"},
+                "body": "Review rate limited; next reviews available in: 20 hours.",
+            }
+            later_generic_limit = {
+                "databaseId": 11,
+                "author": {"login": "coderabbitai[bot]"},
+                "body": hosted.REVIEW_LIMIT_MARKER,
+                "createdAt": generic_created.isoformat().replace("+00:00", "Z"),
+            }
+            payload = self._payload(comments=[malformed_explicit_limit, later_generic_limit])
+            pull = payload["data"]["repository"]["pullRequest"]
+            pull["number"] = 99
+            pull["comments"]["nodes"].insert(
+                0,
+                {
+                    "databaseId": 10,
+                    "author": {"login": "maintainer"},
+                    "body": hosted.FULL_COMMAND,
+                    "createdAt": trigger_record["trigger"]["created_at"],
+                    "url": trigger_record["trigger"]["url"],
+                },
+            )
+            live_state = hosted.trigger_state(
+                "owner/repo",
+                99,
+                payload,
+                trigger_record,
+                now=now,
+            )
+            self.assertEqual(live_state.state, "rate_limited")
+            self.assertEqual(live_state.response_id, 11)
+            self.assertEqual(live_state.cooldown_basis, "unknown")
+            self.assertIsNone(live_state.cooldown_until)
+
+            captured = sqlite_hosted_capture.record_hosted_terminal_result(
+                records,
+                attempt_id=attempt_id,
+                repo="owner/repo",
+                source_pr=99,
+                trigger_record=trigger_record,
+                payload=payload,
+                current_record_path=path,
+            )
+            artifacts = records.attempt_artifacts(attempt_id)
+            metadata = json.loads(artifacts["metadata"])
+            archived_comments = json.loads(artifacts["hosted_comments"])["comments"]
+            self.assertEqual(captured["state"], "rate_limited")
+            self.assertEqual(metadata["reason"], hosted.UNKNOWN_RATE_LIMIT_REASON)
+            self.assertEqual(
+                [item["databaseId"] for item in archived_comments],
+                [10, 12, 11],
+            )
+            self.assertNotIn("createdAt", archived_comments[1])
+            self.assertLess(generic_created + timedelta(hours=1), now)
+
+            runner.records = records
+            with (
+                patch.object(hosted, "load_trigger_reservation", return_value=trigger_record),
+                self.assertRaisesRegex(ControllerError, "unresolved creation-time cooldown evidence"),
+            ):
+                runner._closed_repository_cooldown_until(99, [path])
 
     def test_open_pull_request_listing_failure_remains_fail_closed(self) -> None:
         runner = HostedRunner("owner/repo", LiveGitHub("owner/repo"))
