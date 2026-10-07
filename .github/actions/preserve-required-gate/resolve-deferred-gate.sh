@@ -362,7 +362,18 @@ deferred_job_id() {
   jobs_json="$(gh api --method GET "/repos/${GITHUB_REPOSITORY}/actions/runs/${target_run_id}/attempts/1/jobs" \
     -f per_page=100 --paginate --slurp)" || return 1
   jq -er --arg name "${gate_name}" --arg head "${head_sha}" --argjson run_id "${target_run_id}" '
-    if type != "array" or any(.[]; (.jobs | type) != "array") then error("malformed jobs") else . end
+    if type != "array" or length == 0 then error("malformed or incomplete target jobs")
+    elif any(.[]; type != "object" or (.jobs | type) != "array") then error("malformed or incomplete target jobs")
+    else
+      .[0].total_count as $total
+      | if all(.[]; (.total_count | type) == "number" and .total_count >= 0 and
+            .total_count == (.total_count | floor) and .total_count == $total)
+          and ([.[].jobs[]] | length) == $total
+          and all(.[].jobs[]; type == "object" and (.id | type) == "number" and
+            .id > 0 and .id == (.id | floor))
+          and ([.[].jobs[].id] | unique | length) == $total
+        then . else error("malformed or incomplete target jobs") end
+    end
     | [.[].jobs[] | select(.name == $name)]
     | if length != 1 then empty else .[0] end
     | select(.run_id == $run_id and .head_sha == $head and .status == "completed" and .conclusion == "failure")

@@ -404,6 +404,7 @@ jobs:
           bash ./dev-tools/tests/ci-validation-summary-contract.sh
           bash ./dev-tools/tests/security-summary-contract.sh
           bash ./dev-tools/tests/pr-runtime-image-publication-contract.sh
+          bash ./dev-tools/tests/runtime-base-image-apt-contract.sh
           bash ./dev-tools/tests/pr-required-gate-context-contract.sh
           bash ./dev-tools/tests/dev-demo-workflow-contract.sh
           bash ./dev-tools/tests/erd-workflow-contract.sh
