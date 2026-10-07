@@ -98,6 +98,14 @@ public final class WorldCanonicalInstanceLifecycleReadRepository {
     return Optional.ofNullable(readInCurrentOwnerTransaction(request, true));
   }
 
+  /** Reconstructs current lifecycle evidence inside an existing read-only owner snapshot. */
+  Optional<WorldCanonicalInstanceLifecycleEvidence> readForCurrentLocationInOwnerTransaction(
+      WorldCanonicalInstanceLifecycleEvidence.Request request) {
+    Objects.requireNonNull(request, "request");
+    requireReadOnlyRepeatableReadOwnerTransaction();
+    return Optional.ofNullable(readInCurrentOwnerTransaction(request, false));
+  }
+
   private WorldCanonicalInstanceLifecycleEvidence readInCurrentOwnerTransaction(
       WorldCanonicalInstanceLifecycleEvidence.Request request, boolean lockLifecycleRow) {
     try {

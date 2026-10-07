@@ -142,7 +142,7 @@ public final class WorldCanonicalInitialPlayerLocationRepository {
         });
   }
 
-  private void requireAssociation(
+  void requireAssociation(
       WorldCanonicalInitialPlayerLocation.Request request,
       WorldCanonicalInstanceLifecycleEvidence current,
       WorldCanonicalInstanceAssociation association) {
@@ -165,7 +165,7 @@ public final class WorldCanonicalInitialPlayerLocationRepository {
     }
   }
 
-  private static void requireCommittedNoPriorPointerHold(
+  static void requireCommittedNoPriorPointerHold(
       WorldCanonicalInitialPlayerLocation.Request request,
       WorldCanonicalInstanceLifecycleEvidence current,
       WorldCanonicalInstanceAssociation association,
@@ -232,7 +232,28 @@ public final class WorldCanonicalInitialPlayerLocationRepository {
         request.entityAssignmentOperationId());
   }
 
-  private static boolean sameInitialPlacement(
+  List<Record> findExistingLocationsForCurrentRead(
+      WorldCanonicalInitialPlayerLocation.Request request) {
+    return dsl.fetch(
+        "SELECT canonical_tenant_id, realm_id, world_slug, playable_state_namespace_id, "
+            + "playable_state_scope, canonical_game_instance_id, world_instance_id, canonical_account_id, character_id, "
+            + "entity_assignment_operation_id, entity_assignment_digest, canonical_version_id, "
+            + "active_lifecycle_epoch, initial_room_template_id, initial_runtime_room_instance_id, "
+            + "runtime_room_instance_id, initial_admission_hold_id, initial_admission_hold_fence, "
+            + "initial_admission_request_id, initial_admission_request_digest, catalog_revision, "
+            + "initial_admission_owner_proof_id, initial_admission_owner_proof_digest, pointer_audit_id, "
+            + "pointer_version, initial_location_operation_id, initial_location_request_digest, "
+            + "initial_lifecycle_evidence_bytes, initial_lifecycle_evidence_digest "
+            + "FROM character_location WHERE canonical_game_instance_id = ? "
+            + "AND playable_state_namespace_id = ? AND (character_id = ? "
+            + "OR entity_assignment_operation_id = ?)",
+        request.canonicalGameInstanceId(),
+        request.playableStateNamespaceId(),
+        request.characterId(),
+        request.entityAssignmentOperationId());
+  }
+
+  static boolean sameInitialPlacement(
       WorldCanonicalInitialPlayerLocation.Request request,
       WorldCanonicalInstanceLifecycleEvidence current,
       Record existing) {
@@ -399,7 +420,7 @@ public final class WorldCanonicalInitialPlayerLocationRepository {
     }
   }
 
-  private static String prefixedDigest(byte[] value) {
+  static String prefixedDigest(byte[] value) {
     try {
       return "sha256:"
           + HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(value));

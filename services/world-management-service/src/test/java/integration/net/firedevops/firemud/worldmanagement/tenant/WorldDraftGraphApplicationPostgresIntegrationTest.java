@@ -1832,6 +1832,214 @@ class WorldDraftGraphApplicationPostgresIntegrationTest {
   }
 
   @Test
+  void currentInitialPlayerLocationReadReturnsExactActorRoomRegionAndLifecycleProof() {
+    PlacementFixture fixture = initialPlayerLocationFixture();
+    var placed = fixture.service().place(fixture.request());
+
+    var current = currentLocationReadService(fixture).read(fixture.request()).orElseThrow();
+
+    assertThat(current.binding().canonicalTenantId())
+        .isEqualTo(fixture.request().canonicalTenantId());
+    assertThat(current.binding().realmId()).isEqualTo(fixture.request().realmId());
+    assertThat(current.binding().canonicalGameInstanceId())
+        .isEqualTo(fixture.request().canonicalGameInstanceId());
+    assertThat(current.binding().playableStateNamespaceId())
+        .isEqualTo(fixture.request().playableStateNamespaceId());
+    assertThat(current.binding().canonicalAccountId())
+        .isEqualTo(fixture.request().canonicalAccountId());
+    assertThat(current.binding().characterId()).isEqualTo(fixture.request().characterId());
+    assertThat(current.binding().entityAssignmentOperationId())
+        .isEqualTo(fixture.request().entityAssignmentOperationId());
+    assertThat(current.binding().entityAssignmentDigest())
+        .isEqualTo(fixture.request().entityAssignmentDigest());
+    assertThat(current.currentLifecycleEvidence().lifecycleStatus()).isEqualTo("ACTIVE");
+    assertThat(current.currentLifecycleEvidence().lifecycleEpoch())
+        .isEqualTo(fixture.activeEvidence().lifecycleEpoch());
+    assertThat(current.worldInstanceId())
+        .isEqualTo(fixture.lifecycle().materialized().association().worldInstanceId());
+    assertThat(current.startLocation()).isEqualTo(fixture.activeEvidence().startLocation());
+    assertThat(current.runtimeRoomInstanceId())
+        .isEqualTo(fixture.activeEvidence().runtimeRoomInstanceId());
+    assertThat(current.worldRegionInstanceId()).isPositive();
+    assertThat(current.operationalRegionId()).isNotEqualTo(new UUID(0L, 0L));
+    assertThat(current.placementResult().canonicalBytes()).containsExactly(placed.canonicalBytes());
+    assertThat(current.originalLifecycleEvidenceBytes())
+        .containsExactly(fixture.request().originalLifecycleEvidenceBytes());
+    Record region =
+        Objects.requireNonNull(
+            dsl.fetchOne(
+                "SELECT operational_region_id FROM region_instance WHERE id=?",
+                current.worldRegionInstanceId()));
+    assertThat(region.get("operational_region_id", UUID.class))
+        .isEqualTo(current.operationalRegionId());
+    assertOrigin();
+  }
+
+  @Test
+  void currentInitialPlayerLocationReadReturnsAbsentOnlyAfterExactOwnerChecks() {
+    PlacementFixture fixture = initialPlayerLocationFixture();
+
+    assertThat(currentLocationReadService(fixture).read(fixture.request())).isEmpty();
+    assertThat(countInitialLocationOperations(fixture.request().canonicalGameInstanceId()))
+        .isZero();
+    assertThat(countInitialLocations(fixture.request().canonicalGameInstanceId())).isZero();
+    assertOrigin();
+  }
+
+  @Test
+  void currentInitialPlayerLocationReadRejectsDanglingAppliedReceipt() {
+    PlacementFixture fixture = initialPlayerLocationFixture();
+    fixture.service().place(fixture.request());
+    dsl.execute(
+        "DELETE FROM character_location WHERE canonical_game_instance_id=? "
+            + "AND playable_state_namespace_id=? AND character_id=?",
+        fixture.request().canonicalGameInstanceId(),
+        fixture.request().playableStateNamespaceId(),
+        fixture.request().characterId());
+
+    assertThatThrownBy(() -> currentLocationReadService(fixture).read(fixture.request()))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("retained APPLIED operation has no exact current location row");
+    assertThat(countInitialLocationOperations(fixture.request().canonicalGameInstanceId()))
+        .isEqualTo(1L);
+    assertThat(countInitialLocations(fixture.request().canonicalGameInstanceId())).isZero();
+    assertOrigin();
+  }
+
+  @Test
+  void currentInitialPlayerLocationReadDeniesChangedActorScopeOrAssignment() {
+    PlacementFixture fixture = initialPlayerLocationFixture();
+    fixture.service().place(fixture.request());
+    var reader = currentLocationReadService(fixture);
+
+    var changedActor =
+        initialLocationRequest(
+            fixture,
+            fixture.request().operationId(),
+            UUID.randomUUID(),
+            fixture.request().entityAssignmentOperationId(),
+            fixture.request().entityAssignmentDigest(),
+            fixture.activeEvidence());
+    assertThatThrownBy(() -> reader.read(changedActor))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("exact actor or assignment binding");
+
+    var changedAssignment =
+        initialLocationRequest(
+            fixture,
+            fixture.request().operationId(),
+            fixture.request().characterId(),
+            UUID.randomUUID(),
+            "b".repeat(64),
+            fixture.activeEvidence());
+    assertThatThrownBy(() -> reader.read(changedAssignment))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("exact actor or assignment binding");
+
+    var original = fixture.activeEvidence().request();
+    var changedNamespaceRead =
+        new WorldCanonicalInstanceLifecycleEvidence.Request(
+            original.schemaVersion(),
+            UUID.randomUUID(),
+            original.targetNamespace(),
+            original.canonicalTenantId(),
+            original.worldSlug(),
+            original.canonicalGameInstanceId(),
+            UUID.randomUUID(),
+            original.playableStateScope(),
+            original.publicProduction(),
+            original.controlPlaneRequestId(),
+            original.canonicalVersionId(),
+            original.expectedDescriptorRequestDigest(),
+            original.expectedDescriptorResultDigest(),
+            original.expectedReleaseAttestationDigest());
+    var changedNamespaceEvidence =
+        new WorldCanonicalInstanceLifecycleEvidence(
+            changedNamespaceRead,
+            fixture.activeEvidence().launchBinding(),
+            fixture.activeEvidence().startLocation(),
+            fixture.activeEvidence().runtimeRoomInstanceId(),
+            fixture.activeEvidence().lifecycleStatus(),
+            fixture.activeEvidence().lifecycleEpoch(),
+            fixture.activeEvidence().rowVersion(),
+            fixture.activeEvidence().captureId(),
+            fixture.activeEvidence().graphSha256(),
+            fixture.activeEvidence().preparationInputDigest());
+    var changedScope =
+        initialLocationRequest(
+            fixture,
+            fixture.request().operationId(),
+            fixture.request().characterId(),
+            fixture.request().entityAssignmentOperationId(),
+            fixture.request().entityAssignmentDigest(),
+            changedNamespaceEvidence);
+    assertThatThrownBy(() -> reader.read(changedScope))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("exact canonical World lifecycle association is missing");
+
+    assertThat(countInitialLocations(fixture.request().canonicalGameInstanceId())).isEqualTo(1L);
+    assertOrigin();
+  }
+
+  @Test
+  void currentInitialPlayerLocationReadDeniesStaleLifecycleOrSubstitutedRoomMapping() {
+    PlacementFixture fixture = initialPlayerLocationFixture();
+    fixture.service().place(fixture.request());
+    var reader = currentLocationReadService(fixture);
+    var active = fixture.activeEvidence();
+
+    var staleEvidence =
+        new WorldCanonicalInstanceLifecycleEvidence(
+            lifecycleRequestWithFreshReadId(active.request()),
+            active.launchBinding(),
+            active.startLocation(),
+            active.runtimeRoomInstanceId(),
+            active.lifecycleStatus(),
+            active.lifecycleEpoch() + 1L,
+            active.rowVersion(),
+            active.captureId(),
+            active.graphSha256(),
+            active.preparationInputDigest());
+    var staleRequest =
+        initialLocationRequest(
+            fixture,
+            fixture.request().operationId(),
+            fixture.request().characterId(),
+            fixture.request().entityAssignmentOperationId(),
+            fixture.request().entityAssignmentDigest(),
+            staleEvidence);
+    assertThatThrownBy(() -> reader.read(staleRequest))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("current ACTIVE lifecycle or V42 ROOM evidence differs");
+
+    var changedRuntimeRoomEvidence =
+        new WorldCanonicalInstanceLifecycleEvidence(
+            lifecycleRequestWithFreshReadId(active.request()),
+            active.launchBinding(),
+            active.startLocation(),
+            active.runtimeRoomInstanceId() + 1L,
+            active.lifecycleStatus(),
+            active.lifecycleEpoch(),
+            active.rowVersion(),
+            active.captureId(),
+            active.graphSha256(),
+            active.preparationInputDigest());
+    var changedRoomRequest =
+        initialLocationRequest(
+            fixture,
+            fixture.request().operationId(),
+            fixture.request().characterId(),
+            fixture.request().entityAssignmentOperationId(),
+            fixture.request().entityAssignmentDigest(),
+            changedRuntimeRoomEvidence);
+    assertThatThrownBy(() -> reader.read(changedRoomRequest))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("current ACTIVE lifecycle or V42 ROOM evidence differs");
+    assertThat(countInitialLocations(fixture.request().canonicalGameInstanceId())).isEqualTo(1L);
+    assertOrigin();
+  }
+
+  @Test
   void changedActorOrAssignmentUnderAnExistingPlacementOperationConflictsWithoutMutation() {
     PlacementFixture fixture = initialPlayerLocationFixture();
     fixture.service().place(fixture.request());
@@ -3455,6 +3663,20 @@ class WorldDraftGraphApplicationPostgresIntegrationTest {
             activeEvidence);
     return new PlacementFixture(
         lifecycleFixture, activeEvidence, hold, repository, service, request);
+  }
+
+  private WorldCanonicalCurrentPlayerLocationService currentLocationReadService(
+      PlacementFixture fixture) {
+    var repository =
+        new WorldCanonicalCurrentPlayerLocationRepository(
+            dsl,
+            manager,
+            fixture.lifecycle().lifecycleRepository(),
+            associationRepository(),
+            initialAdmissionBindHoldRepository,
+            fixture.repository());
+    return new WorldCanonicalCurrentPlayerLocationService(
+        repository, ignored -> stipulatedPlacementAuthority());
   }
 
   private WorldCanonicalInitialPlayerLocation.Request initialLocationRequest(
