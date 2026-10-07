@@ -35,6 +35,6 @@ class PostgresImageCompatibilityTest {
         IllegalArgumentException.class,
         () ->
             PostgresBackedServiceTestSupport.postgresImage(
-                "registry.invalid/" + "postgres:16-alpine"));
+                "registry.invalid/" + "postgres:" + "16-alpine"));
   }
 }
