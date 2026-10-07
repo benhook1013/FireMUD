@@ -68,7 +68,9 @@ class PublishAttemptServiceTransactionIntegrationTest {
   private static final String WORKFLOW_ID = "full-version-transaction-integration-test";
 
   @Container
-  static PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>("postgres:16-alpine");
+  static PostgreSQLContainer<?> postgres =
+      new PostgreSQLContainer<>(
+          PostgresBackedServiceTestSupport.postgresImage("postgres:16-alpine"));
 
   @DynamicPropertySource
   static void configure(DynamicPropertyRegistry registry) {

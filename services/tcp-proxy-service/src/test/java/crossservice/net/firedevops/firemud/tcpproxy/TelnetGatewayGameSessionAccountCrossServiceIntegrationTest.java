@@ -29,6 +29,7 @@ import net.firedevops.firemud.tcpproxy.testsupport.GameplayTelnetDriver;
 import net.firedevops.firemud.tcpproxy.testsupport.GameplayTelnetScenarios;
 import net.firedevops.firemud.test.AccountRuntimeStubServer;
 import net.firedevops.firemud.test.HttpTestSupport;
+import net.firedevops.firemud.test.PostgresBackedServiceTestSupport;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -74,7 +75,8 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
 
   @Container
   static final PostgreSQLContainer<?> POSTGRES =
-      new PostgreSQLContainer<>("postgres:16-alpine")
+      new PostgreSQLContainer<>(
+              PostgresBackedServiceTestSupport.postgresImage("postgres:16-alpine"))
           .withDatabaseName("firemud")
           .withUsername("firemud")
           .withPassword("firemud");

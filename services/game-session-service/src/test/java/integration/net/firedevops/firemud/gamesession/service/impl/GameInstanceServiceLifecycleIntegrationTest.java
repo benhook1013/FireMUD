@@ -71,7 +71,9 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 })
 class GameInstanceServiceLifecycleIntegrationTest {
   @Container
-  static PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>("postgres:16-alpine");
+  static PostgreSQLContainer<?> postgres =
+      new PostgreSQLContainer<>(
+          PostgresBackedServiceTestSupport.postgresImage("postgres:16-alpine"));
 
   @DynamicPropertySource
   static void registerProperties(DynamicPropertyRegistry registry) {

@@ -22,6 +22,7 @@ import net.firedevops.firemud.automationscripting.service.ScriptPatchInstanceRol
 import net.firedevops.firemud.automationscripting.service.impl.ScriptDeadLetterReplayTransactionBoundary;
 import net.firedevops.firemud.automationscripting.service.impl.ScriptWorkItemExecutionServiceImpl;
 import net.firedevops.firemud.automationscripting.service.impl.ScriptWorkItemServiceImpl;
+import net.firedevops.firemud.test.PostgresBackedServiceTestSupport;
 import org.flywaydb.core.Flyway;
 import org.flywaydb.core.api.FlywayException;
 import org.jooq.DSLContext;
@@ -49,7 +50,9 @@ class PluginRuntimeLifecycleFenceIntegrationTest {
       "filesystem:" + Path.of("src/main/resources/db/migration").toAbsolutePath().normalize();
 
   @Container
-  static PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>("postgres:16-alpine");
+  static PostgreSQLContainer<?> postgres =
+      new PostgreSQLContainer<>(
+          PostgresBackedServiceTestSupport.postgresImage("postgres:16-alpine"));
 
   private DSLContext dsl;
   private String schema;

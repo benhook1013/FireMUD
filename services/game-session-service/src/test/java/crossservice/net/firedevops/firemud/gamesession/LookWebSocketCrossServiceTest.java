@@ -15,6 +15,7 @@ import net.firedevops.firemud.gamesession.testsupport.GameplayTranscriptMatchers
 import net.firedevops.firemud.gamesession.testsupport.GameplayWebSocketDriver;
 import net.firedevops.firemud.gamesession.testsupport.GameplayWebSocketScenarios;
 import net.firedevops.firemud.test.AccountRuntimeStubServer;
+import net.firedevops.firemud.test.PostgresBackedServiceTestSupport;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.Test;
 import org.testcontainers.containers.GenericContainer;
@@ -34,7 +35,8 @@ class LookWebSocketCrossServiceTest {
 
   @Container
   static final PostgreSQLContainer<?> POSTGRES =
-      new PostgreSQLContainer<>("postgres:16-alpine")
+      new PostgreSQLContainer<>(
+              PostgresBackedServiceTestSupport.postgresImage("postgres:16-alpine"))
           .withDatabaseName("firemud")
           .withUsername("firemud")
           .withPassword("firemud");
