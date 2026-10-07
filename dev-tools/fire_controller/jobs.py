@@ -1024,33 +1024,80 @@ class JobStore:
             workers,
         ):
             counts[row["worker"]][row["status"]] = row["total"]
-        ranked_rows = connection.execute(
-            "SELECT id, name, worker, workstream_id, title, status, is_primary, revision, summary, progress, "
-            "blocker, checklist_json, created_at, updated_at, lane_rank FROM ("
-            "SELECT id, name, worker, workstream_id, title, status, is_primary, revision, summary, progress, "
-            "blocker, checklist_json, created_at, updated_at, "
-            "ROW_NUMBER() OVER (PARTITION BY worker, status ORDER BY is_primary DESC, updated_at DESC, name COLLATE NOCASE) AS lane_rank "
-            f"FROM jobs WHERE worker IN ({placeholders}) AND status IN ('active', 'blocked', 'parked')"
-            ") WHERE lane_rank <= ? ORDER BY worker COLLATE NOCASE, status, lane_rank",
-            (*workers, _MAX_LANE_JOBS),
+        candidates = connection.execute(
+            "SELECT id, name, worker, status, is_primary FROM jobs "
+            f"WHERE worker IN ({placeholders}) AND status IN ('active', 'blocked', 'parked') "
+            "ORDER BY worker COLLATE NOCASE, status, name COLLATE NOCASE, id",
+            workers,
         ).fetchall()
-        activity = JobStore._last_activity(connection, [row["id"] for row in ranked_rows])
-        grouped: dict[str, dict[str, list[dict[str, Any]]]] = {
+        activity = JobStore._last_activity(connection, [row["id"] for row in candidates])
+        by_status: dict[str, dict[str, list[sqlite3.Row]]] = {
             worker: {status: [] for status in ("active", "blocked", "parked")} for worker in workers
         }
-        primary_by_worker: dict[str, dict[str, Any]] = {}
-        for row in ranked_rows:
-            selected = {
+        primary_candidates: dict[str, sqlite3.Row] = {}
+        for row in candidates:
+            by_status[row["worker"]][row["status"]].append(row)
+            if row["is_primary"]:
+                primary_candidates[row["worker"]] = row
+        selected_by_worker: dict[str, dict[str, list[sqlite3.Row]]] = {
+            worker: {} for worker in workers
+        }
+        selected_ids: list[str] = []
+        for worker in workers:
+            for status in ("active", "blocked", "parked"):
+                ordered = sorted(
+                    by_status[worker][status],
+                    key=lambda row: activity[row["id"]],
+                    reverse=True,
+                )
+                selected = ordered[:_MAX_LANE_JOBS]
+                primary = primary_candidates.get(worker)
+                if (
+                    primary is not None
+                    and primary["status"] == status
+                    and primary not in selected
+                    and len(ordered) > _MAX_LANE_JOBS
+                ):
+                    retained_ids = {
+                        row["id"] for row in (*ordered[:_MAX_LANE_JOBS - 1], primary)
+                    }
+                    selected = [row for row in ordered if row["id"] in retained_ids]
+                selected_by_worker[worker][status] = selected
+                selected_ids.extend(row["id"] for row in selected)
+        detail_ids = list(dict.fromkeys([
+            *selected_ids,
+            *(row["id"] for row in primary_candidates.values()),
+        ]))
+        detail_rows = connection.execute(
+            "SELECT id, name, worker, workstream_id, title, status, is_primary, revision, summary, progress, "
+            "blocker, checklist_json, created_at, updated_at FROM jobs "
+            "WHERE id IN (SELECT value FROM json_each(?))",
+            (_json(detail_ids),),
+        ).fetchall() if detail_ids else []
+        detail_by_id = {row["id"]: row for row in detail_rows}
+        card_by_id: dict[str, dict[str, Any]] = {}
+        for identifier in detail_ids:
+            row = detail_by_id[identifier]
+            card_by_id[identifier] = {
                 "id": row["id"], "name": row["name"], "worker": row["worker"],
                 "workstream_id": row["workstream_id"], "title": row["title"], "status": row["status"],
                 "primary": bool(row["is_primary"]), "revision": row["revision"], "summary": row["summary"],
                 "progress": row["progress"], "blocker": row["blocker"],
-                "checklist": _loads(row["checklist_json"], "job checklist"), "created_at": row["created_at"],
-                "updated_at": row["updated_at"], "last_activity_at": activity[row["id"]],
+                "checklist": _loads(row["checklist_json"], "job checklist"),
+                "created_at": row["created_at"], "updated_at": row["updated_at"],
+                "last_activity_at": activity[identifier],
             }
-            grouped[row["worker"]][row["status"]].append(selected)
-            if selected["primary"]:
-                primary_by_worker[row["worker"]] = selected
+        grouped: dict[str, dict[str, list[dict[str, Any]]]] = {
+            worker: {status: [] for status in ("active", "blocked", "parked")} for worker in workers
+        }
+        for worker in workers:
+            for status in ("active", "blocked", "parked"):
+                grouped[worker][status] = [
+                    card_by_id[row["id"]] for row in selected_by_worker[worker][status]
+                ]
+        primary_by_worker = {
+            worker: card_by_id[row["id"]] for worker, row in primary_candidates.items()
+        }
         result: list[dict[str, Any]] = []
         for worker in workers:
             state_row = state_rows.get(worker)
@@ -1227,12 +1274,17 @@ class JobStore:
         status: str | None = "pending",
         limit: int | None = 50,
         offset: int = 0,
+        include_assigned_jobs: bool = False,
     ) -> list[dict[str, Any]]:
-        """Read notes by exact indexed scope; status=None returns every state."""
+        """Read notes by exact scope; optionally include notes on a worker's assigned jobs."""
 
         selected_worker = None if worker is None else _worker(worker)
         selected_job = None if job is None else _text(job, "note job", maximum=100)
         selected_phase = None if phase is None else _text(phase, "note phase", maximum=200)
+        if not isinstance(include_assigned_jobs, bool):
+            raise JobError("include_assigned_jobs must be a boolean")
+        if include_assigned_jobs and selected_worker is None:
+            raise JobError("include_assigned_jobs requires an exact worker")
         if status is not None and (not isinstance(status, str) or status not in NOTE_STATUSES):
             raise JobError(f"status must be one of {', '.join(NOTE_STATUSES)}")
         selected_limit = _page_limit(limit)
@@ -1242,6 +1294,10 @@ class JobStore:
                 selected_job = self._find_job(connection, selected_job)["id"]
             clauses: list[str] = []
             parameters: list[Any] = []
+            if include_assigned_jobs:
+                clauses.append("(worker = ? OR job IN (SELECT id FROM jobs WHERE worker = ?))")
+                parameters.extend((selected_worker, selected_worker))
+                selected_worker = None
             for column, value in (("worker", selected_worker), ("job", selected_job), ("phase", selected_phase), ("status", status)):
                 if value is not None:
                     clauses.append(f"{column} = ?")
