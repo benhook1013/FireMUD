@@ -20,8 +20,9 @@ report_eligible() {
   fi
 }
 
-# This temporary admission boundary is empty in the trusted workflow. Proof
-# branches opt their existing action callers into assessment-mode: assess;
+# The script defaults to an empty admission boundary; the trusted workflow
+# supplies the exact isolated proof PR/branch allowlist. Proof branches opt
+# their existing action callers into assessment-mode: assess;
 # ordinary callers keep polling. No label, credential, or receipt is added.
 proof_allowlist="${REQUIRED_GATE_PROOF_ALLOWLIST:-[]}"
 jq -e 'type == "array" and all(.[];
