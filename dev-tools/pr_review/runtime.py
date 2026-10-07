@@ -3050,8 +3050,18 @@ class HostedRunner:
                 "use the CLI review path for a larger diff"
             )
         review_base_ref = before.base_ref_name if force else target.parent.ref_name
+        if force:
+            selected_base_ref_tip = target.selected_base_ref_tip
+            if not isinstance(selected_base_ref_tip, str) or not re.fullmatch(
+                r"[0-9a-fA-F]{40}", selected_base_ref_tip
+            ):
+                raise ControllerError("forced Hosted review has no valid selection-time base-ref tip")
+            expected_review_base = selected_base_ref_tip.casefold()
+            actual_review_base_sha = expected_review_base
+        else:
+            expected_review_base = target.parent.head_sha
+            actual_review_base_sha = before.base_sha
         parent_tip = self.live.branch_head(review_base_ref)
-        expected_review_base = before.base_sha if force else target.parent.head_sha
         if parent_tip != expected_review_base:
             if (
                 target.default_base_front
@@ -3141,7 +3151,7 @@ class HostedRunner:
                 "patch_id": target.patch_identity,
             }
             if force:
-                actual_merge_base = self.git.merge_base(before.base_sha, before.head_sha)
+                actual_merge_base = self.git.merge_base(actual_review_base_sha, before.head_sha)
                 actual_patch_id = self.git.patch_identity(actual_merge_base, before.head_sha)
                 anchor = {
                     "pr": pr,
@@ -3151,17 +3161,17 @@ class HostedRunner:
                         if target.parent.pr_number is not None and review_base_ref == target.parent.ref_name
                         else review_base_ref
                     ),
-                    "parent_head": before.base_sha,
+                    "parent_head": actual_review_base_sha,
                     "merge_base": actual_merge_base,
                     "patch_id": actual_patch_id,
                     "actual_base_ref": review_base_ref,
-                    "actual_base_sha": before.base_sha,
+                    "actual_base_sha": actual_review_base_sha,
                 }
             else:
                 anchor = {
                     **configured_queue_anchor,
                     "actual_base_ref": target.parent.ref_name,
-                    "actual_base_sha": before.base_sha,
+                    "actual_base_sha": actual_review_base_sha,
                 }
             budget.set_phase("posting_actor_identity", total=1)
             posting_actor = self._authenticated_login()
@@ -3176,7 +3186,7 @@ class HostedRunner:
                 "anchor": anchor,
                 **({"configured_queue_anchor": configured_queue_anchor} if force else {}),
                 "actual_base_ref": review_base_ref,
-                "actual_base_sha": before.base_sha,
+                "actual_base_sha": actual_review_base_sha,
                 "posting_started_at": posting_started_at,
                 "posting_actor_login": posting_actor,
                 "force_acknowledged": force,
@@ -3252,7 +3262,7 @@ class HostedRunner:
                             "anchor": anchor,
                             **({"configured_queue_anchor": configured_queue_anchor} if force else {}),
                             "actual_base_ref": review_base_ref,
-                            "actual_base_sha": before.base_sha,
+                            "actual_base_sha": actual_review_base_sha,
                             "posting_actor": posting_actor,
                             "force_acknowledged": force,
                             "force_reason": reason,
@@ -3413,7 +3423,7 @@ class HostedRunner:
                 "anchor": anchor,
                 **({"configured_queue_anchor": configured_queue_anchor} if force else {}),
                 "actual_base_ref": review_base_ref,
-                "actual_base_sha": before.base_sha,
+                "actual_base_sha": actual_review_base_sha,
                 "force_acknowledged": force,
                 "force_reason": reason,
                 "candidate_warnings": list(target.candidate_warnings),

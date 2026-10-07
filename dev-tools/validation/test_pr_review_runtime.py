@@ -2362,6 +2362,7 @@ class RuntimeTest(unittest.TestCase):
             repository="owner/repo",
             candidate_warnings=("stack reconciliation is PARENT_MOVED",),
             default_base_front=True,
+            selected_base_ref_tip=BASE,
         )
         live = LiveGitHub("owner/repo")
         comment = {
@@ -2488,6 +2489,119 @@ class RuntimeTest(unittest.TestCase):
             self.assertEqual(same_ref_record["anchor"]["parent_head"], BASE)
             self.assertEqual(same_ref_record["anchor"]["merge_base"], actual_merge_base)
             self.assertEqual(same_ref_record["anchor"]["patch_id"], actual_patch_id)
+
+    def test_forced_hosted_review_uses_selected_live_base_tip_not_retained_pr_base_oid(self) -> None:
+        snapshot = PullRequestSnapshot(42, "OPEN", "develop", BASE, HEAD, "feature", 1, mergeable="UNKNOWN")
+        selected_base_tip = "9" * 40
+        target = ReviewTarget(
+            snapshot,
+            EffectiveParent("develop", selected_base_tip),
+            reconciled=False,
+            ancestor_links_valid=False,
+            patch_identity=PATCH,
+            merge_base=BASE,
+            repository="owner/repo",
+            candidate_warnings=("stack reconciliation is PARENT_MOVED",),
+            selected_base_ref_tip=selected_base_tip,
+        )
+        live = LiveGitHub("owner/repo")
+        comment = {
+            "id": 457,
+            "created_at": "2026-09-23T00:04:00Z",
+            "html_url": "https://example.test/457",
+            "body": hosted.FULL_COMMAND,
+            "user": {"login": "maintainer"},
+        }
+        merge_base_calls = []
+
+        def gh_call(args, **_kwargs):
+            if args == ["gh", "api", "user"]:
+                return CompletedProcess(args, 0, json.dumps({"login": "maintainer"}), "")
+            return CompletedProcess(args, 0, json.dumps(comment), "")
+
+        payload = self._payload()
+        payload["data"]["repository"]["pullRequest"].update(
+            {"number": 42, "baseRefName": "develop", "baseRefOid": BASE, "changedFiles": 1}
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "trigger.json"
+            git = SimpleNamespace(
+                merge_base=lambda base, head: merge_base_calls.append((base, head)) or BASE,
+                patch_identity=lambda _merge_base, _head: "f" * 64,
+            )
+            with (
+                patch.object(live, "pull_request", return_value=snapshot),
+                patch.object(live, "branch_head", return_value=selected_base_tip),
+                patch.object(github, "fetch_pull_request", return_value=payload),
+                patch.object(hosted, "current_trigger_record_paths", return_value=[]),
+                patch.object(HostedRunner, "_assert_no_other_active_reservations"),
+                patch.object(hosted, "default_trigger_record_path", return_value=path),
+                patch.object(evidence, "git_common_dir", return_value=Path(directory)),
+                patch("pr_review.runtime.subprocess.run", side_effect=gh_call),
+            ):
+                result = HostedRunner("owner/repo", live, git=git)(
+                    target,
+                    expect_pr=42,
+                    force=True,
+                    reason="acknowledge the retained parent warning",
+                    admit=lambda reserve: reserve(),
+                )
+
+            record = json.loads(path.read_text(encoding="utf-8"))
+            self.assertEqual(snapshot.base_sha, BASE)
+            self.assertEqual(result["actual_base_sha"], selected_base_tip)
+            self.assertEqual(record["actual_base_sha"], selected_base_tip)
+            self.assertEqual(record["anchor"]["actual_base_sha"], selected_base_tip)
+            self.assertEqual(merge_base_calls, [(selected_base_tip, HEAD)])
+
+    def test_forced_hosted_review_rejects_live_parent_advance_before_posting(self) -> None:
+        snapshot = PullRequestSnapshot(42, "OPEN", "develop", BASE, HEAD, "feature", 1)
+        target = ReviewTarget(
+            snapshot,
+            EffectiveParent("develop", BASE),
+            reconciled=False,
+            patch_identity=PATCH,
+            merge_base=BASE,
+            repository="owner/repo",
+            selected_base_ref_tip=BASE,
+        )
+        live = LiveGitHub("owner/repo")
+        git = SimpleNamespace(merge_base=lambda _base, _head: BASE, patch_identity=lambda _base, _head: "f" * 64)
+        calls = []
+        payload = self._payload()
+        payload["data"]["repository"]["pullRequest"].update(
+            {"number": 42, "baseRefName": "develop", "baseRefOid": BASE, "changedFiles": 1}
+        )
+
+        def gh_call(args, **_kwargs):
+            calls.append(args)
+            if args == ["gh", "api", "user"]:
+                return CompletedProcess(args, 0, json.dumps({"login": "maintainer"}), "")
+            self.fail("a moved effective parent must block the Hosted POST")
+
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "trigger.json"
+            with (
+                patch.object(live, "pull_request", return_value=snapshot),
+                patch.object(live, "branch_head", side_effect=(BASE, "9" * 40)),
+                patch.object(github, "fetch_pull_request", return_value=payload),
+                patch.object(hosted, "current_trigger_record_paths", return_value=[]),
+                patch.object(HostedRunner, "_assert_no_other_active_reservations"),
+                patch.object(hosted, "default_trigger_record_path", return_value=path),
+                patch.object(evidence, "git_common_dir", return_value=Path(directory)),
+                patch("pr_review.runtime.subprocess.run", side_effect=gh_call),
+                self.assertRaisesRegex(ControllerError, "effective parent changed before the Hosted posting boundary"),
+            ):
+                HostedRunner("owner/repo", live, git=git)(
+                    target,
+                    expect_pr=42,
+                    force=True,
+                    reason="acknowledge known topology warning",
+                    admit=lambda reserve: reserve(),
+                )
+
+            self.assertFalse(path.exists())
+            self.assertEqual(calls, [["gh", "api", "user"]])
 
     def test_hosted_attempt_start_failure_does_not_block_the_single_post(self) -> None:
         snapshot = PullRequestSnapshot(42, "OPEN", "develop", BASE, HEAD, "feature", 1)
