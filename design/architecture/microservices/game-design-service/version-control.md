@@ -144,6 +144,7 @@ In addition to domain-service digests, publish safety requires a Game Design con
 - The control-plane digest surface should be exposed through a read-only API (for example `GetDesignControlPlaneDigest`) so publish tooling uses a uniform participant contract.
 - `GetDesignControlPlaneDigest` should return at minimum `{tenantId, versionId or scriptPatchVersion scope, appliedCommitId, contentDigest, digestSchemaVersion}` so publish gates compare like-for-like payloads across all participants.
 - After all digest gates and verified private-candidate asset export succeed, Game Design must persist a single immutable `published_release_bundle` attestation for `(tenantId, versionId)` that captures the final participant digests, the manifest digest, the complete required artifact set, and `generationConfigRevision`.
+- The [complete selected-release asset inventory](asset-storage.md#complete-selected-release-asset-inventory) owns the positive completeness and explicit-zero proof required before this export/attestation. Publication compares it with independent World evidence through the same exact selected source graph; neither an empty ordinary mapping snapshot nor a missing artifact producer can substitute.
 - Game Design must expose the attestation through `GetPublishedReleaseBundle(tenantId, versionId)` with deterministic response fields at minimum:
   - `tenantId`, `versionId`, `commitId`, `publishWorkflowId`, `publishedAt`
   - `participantDigests[] { serviceName, appliedCommitId, contentDigest, digestSchemaVersion }`

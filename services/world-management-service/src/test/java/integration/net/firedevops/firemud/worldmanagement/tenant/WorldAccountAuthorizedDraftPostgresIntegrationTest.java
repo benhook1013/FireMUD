@@ -26,6 +26,7 @@ import java.util.Objects;
 import java.util.UUID;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Supplier;
 import net.firedevops.firemud.accountservice.authordraft.AccountDraftCommitOrderReadGrpcService;
 import net.firedevops.firemud.accountservice.service.session.AccountControlUiOriginalOrderFixture;
@@ -87,6 +88,7 @@ import net.firedevops.firemud.worldmanagement.v1.WorldFreshGraphDeclaration;
 import net.firedevops.firemud.worldmanagement.v1.WorldFreshGraphFamilyCount;
 import net.firedevops.firemud.worldmanagement.v1.ZoneDesignMutation;
 import org.jooq.DSLContext;
+import org.jooq.exception.DataAccessException;
 import org.jooq.impl.DSL;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -234,7 +236,8 @@ class WorldAccountAuthorizedDraftPostgresIntegrationTest {
                                   missingApplicationEvidence,
                                   () ->
                                       checkpointRepository()
-                                          .capture(missingApplicationEvidence, plan))))
+                                          .captureWithSource(missingApplicationEvidence, plan)
+                                          .checkpoint())))
           .isInstanceOf(WorldDesignPublicationFenceRepository.ConflictException.class)
           .hasMessageContaining("actual APPLIED graph application");
       var stateAfterMissingApplicationDenial = ownerSnapshot(world, plan);
@@ -361,6 +364,7 @@ class WorldAccountAuthorizedDraftPostgresIntegrationTest {
                 .isEqualTo("OPEN");
             assertThat(stateBeforeFirstQualifiedCapture.publicationAttemptRows()).isEmpty();
             assertThat(stateBeforeFirstQualifiedCapture.publicationAuthorizationRows()).isEmpty();
+            assertThat(stateBeforeFirstQualifiedCapture.artifactInventoryRows()).isEmpty();
             var forcedRollback =
                 new IllegalStateException("forced first-freeze qualification rollback");
             assertThatThrownBy(
@@ -368,17 +372,32 @@ class WorldAccountAuthorizedDraftPostgresIntegrationTest {
                         ownerTransaction()
                             .execute(
                                 status -> {
+                                  var capturedCheckpoint =
+                                      new AtomicReference<
+                                          WorldSelectedDraftPublicationCheckpointRepository
+                                              .CapturedCheckpoint>();
                                   var candidate =
                                       fence.claimFreeze(
                                           freezeEvidence,
-                                          () ->
-                                              checkpointRepository().capture(freezeEvidence, plan));
+                                          () -> {
+                                            var captured =
+                                                checkpointRepository()
+                                                    .captureWithSource(freezeEvidence, plan);
+                                            capturedCheckpoint.set(captured);
+                                            return captured.checkpoint();
+                                          });
                                   assertThat(
                                           publicationAuthorizationRepository
                                               .retainOrRequireExact(
                                                   candidate, publicationOrder, true)
                                               .canonicalBytes())
                                       .containsExactly(publicationOrder.canonicalBytes());
+                                  artifactInventoryRepository()
+                                      .retainOrRequireExact(
+                                          candidate,
+                                          publicationOrder,
+                                          true,
+                                          capturedCheckpoint.get());
                                   throw forcedRollback;
                                 }))
                 .isSameAs(forcedRollback);
@@ -390,6 +409,7 @@ class WorldAccountAuthorizedDraftPostgresIntegrationTest {
             assertThat(stateAfterFirstQualifiedCaptureRollback.publicationAttemptRows()).isEmpty();
             assertThat(stateAfterFirstQualifiedCaptureRollback.publicationAuthorizationRows())
                 .isEmpty();
+            assertThat(stateAfterFirstQualifiedCaptureRollback.artifactInventoryRows()).isEmpty();
             var freezeRequest =
                 WorldSelectedDraftPublicationFreezeEvidence.Request.create(
                     NAMESPACE,
@@ -412,12 +432,43 @@ class WorldAccountAuthorizedDraftPostgresIntegrationTest {
                 .isEqualTo(frozenAttempt.checkpoint().contentDigest());
             assertThat(firstFreeze.acknowledgement().digestSchemaVersion())
                 .isEqualTo(frozenAttempt.checkpoint().digestSchemaVersion());
+            var inventoryRepository = artifactInventoryRepository();
+            var inventory = inventoryRepository.readCommitted(frozenAttempt, publicationOrder);
+            var publicInventory = inventory.publicEvidence();
+            assertThat(publicInventory.completeness()).isEqualTo("COMPLETE");
+            assertThat(publicInventory.sourceModel().familyCounts())
+                .extracting(WorldSelectedPublicationArtifactInventory.FamilyCount::family)
+                .containsExactly(
+                    "REGION",
+                    "ZONE",
+                    "ROOM",
+                    "ROOM_EXIT",
+                    "GENERATION_RULE",
+                    "WORLD_ENTITY_SPAWN_BINDING");
+            assertThat(publicInventory.sourceModel().familyCounts())
+                .extracting(WorldSelectedPublicationArtifactInventory.FamilyCount::rowCount)
+                .containsExactly(1, 1, 1, 0, 0, 0);
+            assertThat(publicInventory.artifactDecisions())
+                .extracting(
+                    WorldSelectedPublicationArtifactInventory.ArtifactDecision::artifactKind)
+                .containsExactly("NAVMESH", "PATH_GRAPH");
+            assertThat(publicInventory.accountOrder().bindingDigest())
+                .isEqualTo(
+                    DraftAuthorizationFenceBinding.digest(publicationOrder.canonicalBytes()));
+            String publicInventoryJson =
+                new String(
+                    inventory.publicCanonicalBytes(), java.nio.charset.StandardCharsets.UTF_8);
+            assertThat(publicInventoryJson)
+                .doesNotContain(
+                    "localTenantKey", "localVersionKey", "gameDesignVersionId", "sourceGameRowId");
+            assertThat(inventory.publicDigest()).matches("sha256:[0-9a-f]{64}");
             account.assertPublicationSourcesHeld(publicationOrder);
             var frozen = capture(plan, freezeEvidence, frozenAttempt);
             assertThat(frozenAttempt.checkpoint().appliedCommitId())
                 .isEqualTo(applied.application().operation().commitId().toString());
             var retryEvidence = freezeEvidence;
             var stateBeforeExactRetry = ownerSnapshot(world, plan);
+            assertThat(stateBeforeExactRetry.artifactInventoryRows()).hasSize(1);
             int selectedReadsBeforeRetry = selectedReadCalls.get();
             int stateReadsBeforeRetry = versionStateReadCalls.get();
             // A fresh authenticated transport recovers the committed acknowledgement without
@@ -439,7 +490,20 @@ class WorldAccountAuthorizedDraftPostgresIntegrationTest {
                         .orElseThrow()
                         .canonicalBytes())
                 .containsExactly(publicationOrder.canonicalBytes());
+            var retryInventory = inventoryRepository.readCommitted(exactRetry, publicationOrder);
+            assertThat(retryInventory.canonicalBytes()).containsExactly(inventory.canonicalBytes());
+            assertThat(retryInventory.publicCanonicalBytes())
+                .containsExactly(inventory.publicCanonicalBytes());
             account.assertPublicationSourcesHeld(publicationOrder);
+            assertThatThrownBy(
+                    () ->
+                        dsl.execute(
+                            "UPDATE world_selected_publication_artifact_inventory "
+                                + "SET inventory_bytes=? WHERE publication_fence=?",
+                            "{}".getBytes(java.nio.charset.StandardCharsets.UTF_8),
+                            exactRetry.publicationFence()))
+                .isInstanceOf(DataAccessException.class)
+                .hasStackTraceContaining("immutable");
             var changedOperation =
                 new AccountPublicationAuthorizationBinding(
                     UUID.randomUUID(),
@@ -607,7 +671,11 @@ class WorldAccountAuthorizedDraftPostgresIntegrationTest {
                       .execute(
                           status ->
                               fence.claimFreeze(
-                                  evidence, () -> checkpointRepository().capture(evidence, plan))));
+                                  evidence,
+                                  () ->
+                                      checkpointRepository()
+                                          .captureWithSource(evidence, plan)
+                                          .checkpoint())));
           var authorizationRepository = publicationAuthorizationRepository();
           assertThat(authorizationRepository.readCommitted(unqualified)).isEmpty();
           var before = ownerSnapshot(world, plan);
@@ -1224,6 +1292,7 @@ class WorldAccountAuthorizedDraftPostgresIntegrationTest {
         fence,
         checkpointRepository(),
         publicationAuthorizationRepository(),
+        artifactInventoryRepository(),
         appliedRepository(),
         manager);
   }
@@ -1282,6 +1351,10 @@ class WorldAccountAuthorizedDraftPostgresIntegrationTest {
   private WorldSelectedDraftPublicationAuthorizationRepository
       publicationAuthorizationRepository() {
     return new WorldSelectedDraftPublicationAuthorizationRepository(dsl);
+  }
+
+  private WorldSelectedPublicationArtifactInventoryRepository artifactInventoryRepository() {
+    return new WorldSelectedPublicationArtifactInventoryRepository(dsl);
   }
 
   private DraftOwnerSnapshot ownerSnapshot(Fixture fixture, WorldDraftTopologyCommitPlan plan) {
@@ -1379,6 +1452,16 @@ class WorldAccountAuthorizedDraftPostgresIntegrationTest {
             fixture.owner().targetNamespace(),
             fixture.owner().canonicalTenantId(),
             version);
+    var artifactInventoryRows =
+        rowJson(
+            "SELECT to_jsonb(i)::text AS row_json "
+                + "FROM world_selected_publication_artifact_inventory i "
+                + "JOIN world_design_publication_fence_attempt a USING (publication_fence) "
+                + "WHERE a.target_namespace=? AND a.canonical_tenant_id=? AND a.version_id=? "
+                + "ORDER BY i.publication_fence",
+            fixture.owner().targetNamespace(),
+            fixture.owner().canonicalTenantId(),
+            version);
     return new DraftOwnerSnapshot(
         List.copyOf(currentRows),
         mappingRows,
@@ -1391,7 +1474,8 @@ class WorldAccountAuthorizedDraftPostgresIntegrationTest {
         terminalIdentityRows,
         publicationOwnerRows,
         publicationAttemptRows,
-        publicationAuthorizationRows);
+        publicationAuthorizationRows,
+        artifactInventoryRows);
   }
 
   private List<String> rowJson(String sql, Object... bindings) {
@@ -1410,7 +1494,8 @@ class WorldAccountAuthorizedDraftPostgresIntegrationTest {
       List<String> terminalIdentityRows,
       List<String> publicationOwnerRows,
       List<String> publicationAttemptRows,
-      List<String> publicationAuthorizationRows) {}
+      List<String> publicationAuthorizationRows,
+      List<String> artifactInventoryRows) {}
 
   private AuthoredDraftPublishSelectionBinding publicationSelection(
       WorldDraftTopologyCommitPlan plan, String publicationRequest, long versionStateEpoch) {

@@ -5,6 +5,7 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
 import net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding;
 import net.firedevops.firemud.common.gamedesign.AuthoredWorldVersionStateClient;
 import net.firedevops.firemud.common.gamedesign.AuthoredWorldVersionStateEvidence;
@@ -21,7 +22,6 @@ import net.firedevops.firemud.common.publication.WorldSelectedDraftPublicationFr
 import net.firedevops.firemud.common.publication.WorldSelectedDraftPublicationFreezeEvidence.Request;
 import net.firedevops.firemud.common.security.SessionContext;
 import net.firedevops.firemud.gamedesign.v1.VersionLifecycleState;
-import net.firedevops.firemud.worldmanagement.tenant.WorldDesignPublicationFenceEvidence.Checkpoint;
 import net.firedevops.firemud.worldmanagement.tenant.WorldDesignPublicationFenceEvidence.FrozenAttempt;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.TransactionDefinition;
@@ -45,6 +45,7 @@ final class WorldSelectedDraftPublicationFreezeService {
   private final WorldDesignPublicationFenceRepository fence;
   private final WorldSelectedDraftPublicationCheckpointRepository checkpointRepository;
   private final WorldSelectedDraftPublicationAuthorizationRepository authorizationRepository;
+  private final WorldSelectedPublicationArtifactInventoryRepository artifactInventoryRepository;
   private final WorldDraftGraphApplicationRepository graphApplicationRepository;
   private final TransactionTemplate ownerTransaction;
 
@@ -57,6 +58,7 @@ final class WorldSelectedDraftPublicationFreezeService {
       WorldDesignPublicationFenceRepository fence,
       WorldSelectedDraftPublicationCheckpointRepository checkpointRepository,
       WorldSelectedDraftPublicationAuthorizationRepository authorizationRepository,
+      WorldSelectedPublicationArtifactInventoryRepository artifactInventoryRepository,
       PlatformTransactionManager transactionManager) {
     this(
         workloadNamespace,
@@ -67,6 +69,7 @@ final class WorldSelectedDraftPublicationFreezeService {
         fence,
         checkpointRepository,
         authorizationRepository,
+        artifactInventoryRepository,
         null,
         transactionManager);
   }
@@ -80,6 +83,7 @@ final class WorldSelectedDraftPublicationFreezeService {
       WorldDesignPublicationFenceRepository fence,
       WorldSelectedDraftPublicationCheckpointRepository checkpointRepository,
       WorldSelectedDraftPublicationAuthorizationRepository authorizationRepository,
+      WorldSelectedPublicationArtifactInventoryRepository artifactInventoryRepository,
       WorldDraftGraphApplicationRepository graphApplicationRepository,
       PlatformTransactionManager transactionManager) {
     if (!GrpcPeerIdentity.isValidNamespace(workloadNamespace)) {
@@ -95,6 +99,8 @@ final class WorldSelectedDraftPublicationFreezeService {
         Objects.requireNonNull(checkpointRepository, "checkpointRepository");
     this.authorizationRepository =
         Objects.requireNonNull(authorizationRepository, "authorizationRepository");
+    this.artifactInventoryRepository =
+        Objects.requireNonNull(artifactInventoryRepository, "artifactInventoryRepository");
     this.graphApplicationRepository = graphApplicationRepository;
     this.ownerTransaction = new TransactionTemplate(Objects.requireNonNull(transactionManager));
     this.ownerTransaction.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
@@ -219,6 +225,7 @@ final class WorldSelectedDraftPublicationFreezeService {
                       conflict(
                           "World freeze attempt has no original Account publication qualification"));
       requireSameAccountBinding(accountBinding, retained);
+      artifactInventoryRepository.readCommitted(stored, retained);
       return stored;
     }
 
@@ -228,6 +235,8 @@ final class WorldSelectedDraftPublicationFreezeService {
     requireAccountHeld(accountBinding);
 
     AtomicBoolean attemptCreatedInTransaction = new AtomicBoolean();
+    AtomicReference<WorldSelectedDraftPublicationCheckpointRepository.CapturedCheckpoint>
+        capturedCheckpoint = new AtomicReference<>();
     FrozenAttempt transactionResult =
         Objects.requireNonNull(
             ownerTransaction.execute(
@@ -241,15 +250,21 @@ final class WorldSelectedDraftPublicationFreezeService {
                       fence.claimFreeze(
                           evidence,
                           () -> {
-                            Checkpoint checkpoint =
-                                checkpointRepository.capture(evidence, selectedPlan);
+                            var captured =
+                                checkpointRepository.captureWithSource(evidence, selectedPlan);
+                            capturedCheckpoint.set(captured);
                             attemptCreatedInTransaction.set(true);
-                            return checkpoint;
+                            return captured.checkpoint();
                           });
                   AccountPublicationAuthorizationBinding retained =
                       authorizationRepository.retainOrRequireExact(
                           attempt, accountBinding, attemptCreatedInTransaction.get());
                   requireSameAccountBinding(accountBinding, retained);
+                  artifactInventoryRepository.retainOrRequireExact(
+                      attempt,
+                      retained,
+                      attemptCreatedInTransaction.get(),
+                      capturedCheckpoint.get());
                   requireCheckpointMatchesSelection(
                       attempt, selectedPlan, accountBinding.input().selection());
                   return attempt;
@@ -274,6 +289,7 @@ final class WorldSelectedDraftPublicationFreezeService {
                     conflict(
                         "Committed World freeze has no exact Account publication qualification"));
     requireSameAccountBinding(accountBinding, retained);
+    artifactInventoryRepository.readCommitted(committed, retained);
     requireCheckpointMatchesSelection(committed, selectedPlan, accountBinding.input().selection());
     return committed;
   }

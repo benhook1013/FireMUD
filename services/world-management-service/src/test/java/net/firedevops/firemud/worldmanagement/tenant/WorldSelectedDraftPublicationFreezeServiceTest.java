@@ -111,7 +111,7 @@ class WorldSelectedDraftPublicationFreezeServiceTest {
         collaborators.selectionClient,
         collaborators.versionStateClient,
         collaborators.accountClient);
-    verify(collaborators.checkpointRepository, never()).capture(any(), any());
+    verify(collaborators.checkpointRepository, never()).captureWithSource(any(), any());
     verify(collaborators.fence, never()).claimFreeze(any(), any());
     assertThat(collaborators.transactionManager.commits).isZero();
   }
@@ -270,8 +270,10 @@ class WorldSelectedDraftPublicationFreezeServiceTest {
               assertThat(TransactionSynchronizationManager.isSynchronizationActive()).isFalse();
               return accountRead(invocation.getArgument(0));
             });
-    when(collaborators.checkpointRepository.capture(fixture.evidence(), fixture.plan()))
-        .thenReturn(fixture.checkpoint());
+    when(collaborators.checkpointRepository.captureWithSource(fixture.evidence(), fixture.plan()))
+        .thenReturn(
+            new WorldSelectedDraftPublicationCheckpointRepository.CapturedCheckpoint(
+                fixture.checkpoint(), null, null, null, null));
     when(collaborators.fence.claimFreeze(eq(fixture.evidence()), any()))
         .thenAnswer(
             invocation -> {
@@ -284,6 +286,9 @@ class WorldSelectedDraftPublicationFreezeServiceTest {
         .thenReturn(fixture.accountBinding());
     when(collaborators.authorizationRepository.readCommitted(committed))
         .thenReturn(Optional.of(fixture.accountBinding()));
+    when(collaborators.artifactInventoryRepository.retainOrRequireExact(
+            eq(committed), eq(fixture.accountBinding()), eq(true), any()))
+        .thenReturn(null);
     var service = service(fixture, collaborators);
 
     FrozenAttempt result =
@@ -304,7 +309,8 @@ class WorldSelectedDraftPublicationFreezeServiceTest {
             collaborators.versionStateClient,
             collaborators.accountClient,
             collaborators.fence,
-            collaborators.authorizationRepository);
+            collaborators.authorizationRepository,
+            collaborators.artifactInventoryRepository);
     order.verify(collaborators.selectionClient).read(any());
     order.verify(collaborators.versionStateClient).read(any());
     order.verify(collaborators.accountClient).read(any());
@@ -312,7 +318,11 @@ class WorldSelectedDraftPublicationFreezeServiceTest {
     order
         .verify(collaborators.authorizationRepository)
         .retainOrRequireExact(committed, fixture.accountBinding(), true);
-    verify(collaborators.checkpointRepository).capture(fixture.evidence(), fixture.plan());
+    order
+        .verify(collaborators.artifactInventoryRepository)
+        .retainOrRequireExact(eq(committed), eq(fixture.accountBinding()), eq(true), any());
+    verify(collaborators.checkpointRepository)
+        .captureWithSource(fixture.evidence(), fixture.plan());
   }
 
   @Test
@@ -521,8 +531,10 @@ class WorldSelectedDraftPublicationFreezeServiceTest {
                     VERSION_EPOCH));
     when(collaborators.accountClient.read(any()))
         .thenAnswer(invocation -> accountRead(invocation.getArgument(0)));
-    when(collaborators.checkpointRepository.capture(fixture.evidence(), fixture.plan()))
-        .thenReturn(fixture.checkpoint());
+    when(collaborators.checkpointRepository.captureWithSource(fixture.evidence(), fixture.plan()))
+        .thenReturn(
+            new WorldSelectedDraftPublicationCheckpointRepository.CapturedCheckpoint(
+                fixture.checkpoint(), null, null, null, null));
     when(collaborators.fence.claimFreeze(eq(fixture.evidence()), any()))
         .thenAnswer(
             invocation -> {
@@ -586,7 +598,7 @@ class WorldSelectedDraftPublicationFreezeServiceTest {
                             fixture.evidence(), fixture.plan(), fixture.accountBinding())))
         .isInstanceOf(WorldDesignPublicationFenceRepository.ConflictException.class)
         .hasMessageContaining("cannot be attached");
-    verify(collaborators.checkpointRepository, never()).capture(any(), any());
+    verify(collaborators.checkpointRepository, never()).captureWithSource(any(), any());
     verify(collaborators.fence).readAttempt(fixture.evidence());
     assertThat(collaborators.transactionManager.commits).isZero();
     assertThat(collaborators.transactionManager.rollbacks).isEqualTo(1);
@@ -624,6 +636,7 @@ class WorldSelectedDraftPublicationFreezeServiceTest {
         collaborators.fence,
         collaborators.checkpointRepository,
         collaborators.authorizationRepository,
+        collaborators.artifactInventoryRepository,
         collaborators.transactionManager);
   }
 
@@ -924,6 +937,8 @@ class WorldSelectedDraftPublicationFreezeServiceTest {
         mock(WorldSelectedDraftPublicationCheckpointRepository.class);
     final WorldSelectedDraftPublicationAuthorizationRepository authorizationRepository =
         mock(WorldSelectedDraftPublicationAuthorizationRepository.class);
+    final WorldSelectedPublicationArtifactInventoryRepository artifactInventoryRepository =
+        mock(WorldSelectedPublicationArtifactInventoryRepository.class);
     final RecordingTransactionManager transactionManager = new RecordingTransactionManager();
 
     void verifyNoReadsOrWrites() {
@@ -934,7 +949,8 @@ class WorldSelectedDraftPublicationFreezeServiceTest {
           intakeRepository,
           fence,
           checkpointRepository,
-          authorizationRepository);
+          authorizationRepository,
+          artifactInventoryRepository);
     }
   }
 

@@ -92,18 +92,24 @@ class WorldSelectedDraftPublicationFreezeRequestTest {
         .isEqualTo(WorldSelectedDraftPublicationFreezeEvidence.OwnerFreezePhase.FROZEN);
     var order =
         inOrder(
-            collaborators.applications, collaborators.fence, collaborators.authorizationRepository);
+            collaborators.applications,
+            collaborators.fence,
+            collaborators.authorizationRepository,
+            collaborators.artifactInventoryRepository);
     order
         .verify(collaborators.applications)
         .readSelectedPublicationApplication(NAMESPACE, TENANT, VERSION, fixture.selection());
     order.verify(collaborators.fence).readAttempt(fixture.evidence());
     order.verify(collaborators.authorizationRepository).readCommitted(prior);
+    order
+        .verify(collaborators.artifactInventoryRepository)
+        .readCommitted(prior, fixture.accountBinding());
     verifyNoInteractions(
         collaborators.selectionClient,
         collaborators.versionStateClient,
         collaborators.accountClient);
     verify(collaborators.fence, never()).claimFreeze(any(), any());
-    verify(collaborators.checkpointRepository, never()).capture(any(), any());
+    verify(collaborators.checkpointRepository, never()).captureWithSource(any(), any());
     assertThat(collaborators.transactionManager.commits).isZero();
   }
 
@@ -180,6 +186,7 @@ class WorldSelectedDraftPublicationFreezeRequestTest {
         collaborators.fence,
         collaborators.checkpointRepository,
         collaborators.authorizationRepository,
+        collaborators.artifactInventoryRepository,
         collaborators.applications,
         collaborators.transactionManager);
   }
@@ -376,6 +383,8 @@ class WorldSelectedDraftPublicationFreezeRequestTest {
         mock(WorldSelectedDraftPublicationCheckpointRepository.class);
     final WorldSelectedDraftPublicationAuthorizationRepository authorizationRepository =
         mock(WorldSelectedDraftPublicationAuthorizationRepository.class);
+    final WorldSelectedPublicationArtifactInventoryRepository artifactInventoryRepository =
+        mock(WorldSelectedPublicationArtifactInventoryRepository.class);
     final WorldDraftGraphApplicationRepository applications =
         mock(WorldDraftGraphApplicationRepository.class);
     final RecordingTransactionManager transactionManager = new RecordingTransactionManager();
@@ -389,6 +398,7 @@ class WorldSelectedDraftPublicationFreezeRequestTest {
           fence,
           checkpointRepository,
           authorizationRepository,
+          artifactInventoryRepository,
           applications);
     }
   }

@@ -1,5 +1,6 @@
 package net.firedevops.firemud.worldmanagement.tenant;
 
+import java.util.Arrays;
 import java.util.Objects;
 import net.firedevops.firemud.worldmanagement.service.WorldDraftDesignDigestService;
 import net.firedevops.firemud.worldmanagement.tenant.WorldDesignPublicationFenceEvidence.Checkpoint;
@@ -20,6 +21,13 @@ final class WorldSelectedDraftPublicationCheckpointRepository {
   private final WorldDraftTopologyCommitRepository topology;
   private final WorldDraftDesignDigestService digestService;
 
+  record CapturedCheckpoint(
+      Checkpoint checkpoint,
+      WorldDraftGraphAppliedResult application,
+      WorldDraftTopologyCommitEvidence topology,
+      WorldCanonicalAuthoredGraph graph,
+      WorldDesignPublicationFenceRepository.OpenOwner owner) {}
+
   WorldSelectedDraftPublicationCheckpointRepository(
       WorldDesignPublicationFenceRepository fence,
       WorldDraftGraphApplicationRepository applications,
@@ -31,7 +39,7 @@ final class WorldSelectedDraftPublicationCheckpointRepository {
     this.digestService = Objects.requireNonNull(digestService, "digestService");
   }
 
-  Checkpoint capture(
+  CapturedCheckpoint captureWithSource(
       WorldDesignPublicationFenceEvidence freeze, WorldDraftTopologyCommitPlan selectedPlan) {
     Objects.requireNonNull(freeze, "freeze");
     Objects.requireNonNull(selectedPlan, "selectedPlan");
@@ -46,10 +54,13 @@ final class WorldSelectedDraftPublicationCheckpointRepository {
     var applied = applications.readAppliedForPublicationCheckpoint(freeze, selectedPlan);
     var stored = topology.readUnderFrozenLock(selectedPlan);
     if (!stored.binding().equals(applied.application().operation().binding())
-        || !stored.ownerBinding().equals(freeze.ownerBinding())) {
+        || !stored.ownerBinding().equals(freeze.ownerBinding())
+        || !Arrays.equals(stored.graphBytes(), applied.graphBytes())) {
       throw new ConflictException(
           "World stored topology differs from the exact APPLIED selected graph application");
     }
+    var graph =
+        topology.verifyImmutableBytes(selectedPlan, stored.graphBytes(), stored.resultBytes());
 
     var digest =
         digestService.getDraftDesignDigest(
@@ -61,9 +72,14 @@ final class WorldSelectedDraftPublicationCheckpointRepository {
           "World selected graph digest differs from the exact local schema-3 Draft scope");
     }
 
-    return new Checkpoint(
-        applied.application().operation().commitId().toString(),
-        digest.contentDigest(),
-        digest.digestSchemaVersion());
+    return new CapturedCheckpoint(
+        new Checkpoint(
+            applied.application().operation().commitId().toString(),
+            digest.contentDigest(),
+            digest.digestSchemaVersion()),
+        applied,
+        stored,
+        graph,
+        owner);
   }
 }

@@ -2,11 +2,17 @@ package integration.net.firedevops.firemud.gamedesign.repository;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
 
+import java.io.IOException;
 import java.nio.charset.StandardCharsets;
+import java.sql.SQLException;
 import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
+import net.firedevops.firemud.gamedesign.config.AssetStoreProperties;
 import net.firedevops.firemud.gamedesign.entity.Game;
 import net.firedevops.firemud.gamedesign.entity.GameAsset;
 import net.firedevops.firemud.gamedesign.entity.Version;
@@ -15,6 +21,7 @@ import net.firedevops.firemud.gamedesign.repository.GameAssetRepository;
 import net.firedevops.firemud.gamedesign.repository.GameRepository;
 import net.firedevops.firemud.gamedesign.repository.VersionAssetPublicationRepository;
 import net.firedevops.firemud.gamedesign.repository.VersionRepository;
+import net.firedevops.firemud.gamedesign.service.impl.AssetExportServiceImpl;
 import net.firedevops.firemud.test.TestContainerImages;
 import org.flywaydb.core.Flyway;
 import org.flywaydb.core.api.MigrationVersion;
@@ -23,6 +30,7 @@ import org.jooq.Record;
 import org.jooq.SQLDialect;
 import org.jooq.impl.DSL;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 import org.springframework.jdbc.datasource.DataSourceTransactionManager;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
 import org.springframework.jdbc.datasource.TransactionAwareDataSourceProxy;
@@ -31,6 +39,10 @@ import org.springframework.transaction.support.TransactionTemplate;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
+import software.amazon.awssdk.core.sync.RequestBody;
+import software.amazon.awssdk.services.s3.S3Client;
+import software.amazon.awssdk.services.s3.model.PutObjectRequest;
+import tools.jackson.databind.ObjectMapper;
 
 /**
  * Persistence proof for version-scoped asset selection. Fixtures create synthetic Game and Version
@@ -47,7 +59,8 @@ class VersionAssetPublicationPostgresIntegrationTest {
       new PostgreSQLContainer<>(TestContainerImages.postgres());
 
   @Test
-  void exactTenantVersionMappingsExcludeUnmappedAssetsAndSnapshotSurvivesRepositoryRestart() {
+  void exactTenantVersionMappingsExcludeUnmappedAssetsAndSnapshotSurvivesRepositoryRestart()
+      throws IOException {
     Fixture fixture = fixture(null);
     Game owner = saveGame(fixture, "a");
     Game otherOwner = saveGame(fixture, "b");
@@ -112,6 +125,43 @@ class VersionAssetPublicationPostgresIntegrationTest {
     assertThat(retried.items().get(0).assetId()).isEqualTo(selected.getId());
     assertThat(retried.items().get(0).contentDigest())
         .isEqualTo(frozen.items().get(0).contentDigest());
+
+    // Exercise the actual exporter and actual PostgreSQL snapshot read. Only S3 is simulated.
+    S3Client sink = mock(S3Client.class);
+    AssetStoreProperties properties = new AssetStoreProperties();
+    properties.setBucket("bucket");
+    properties.setEndpoint("http://asset-origin");
+    var exporter = new AssetExportServiceImpl(repository, sink, properties, new ObjectMapper());
+    var firstManifest = exporter.exportAssets(owner.getTenantId(), 1);
+    var restartedExporter =
+        new AssetExportServiceImpl(restartedRepository, sink, properties, new ObjectMapper());
+    var replayManifest = restartedExporter.exportAssets(owner.getTenantId(), 1);
+
+    assertThat(replayManifest).isEqualTo(firstManifest);
+    assertThat(firstManifest.requiredManifestAssetKeys())
+        .containsExactly("selected.png", "manifest.json");
+    var requests = ArgumentCaptor.forClass(PutObjectRequest.class);
+    var bodies = ArgumentCaptor.forClass(RequestBody.class);
+    verify(sink, times(4)).putObject(requests.capture(), bodies.capture());
+    String prefix = owner.getTenantId() + "/1/";
+    assertThat(requests.getAllValues())
+        .extracting(PutObjectRequest::key)
+        .containsExactly(
+            prefix + "selected.png", prefix + "manifest.json",
+            prefix + "selected.png", prefix + "manifest.json");
+    assertThat(requests.getAllValues().get(0).contentType()).isEqualTo("image/png");
+    try (var selectedStream = bodies.getAllValues().get(0).contentStreamProvider().newStream()) {
+      assertThat(selectedStream.readAllBytes()).containsExactly(selected.getData());
+    }
+    for (int index = 0; index < 2; index++) {
+      assertThat(requests.getAllValues().get(index + 2))
+          .isEqualTo(requests.getAllValues().get(index));
+      try (var firstStream = bodies.getAllValues().get(index).contentStreamProvider().newStream();
+          var replayStream =
+              bodies.getAllValues().get(index + 2).contentStreamProvider().newStream()) {
+        assertThat(replayStream.readAllBytes()).containsExactly(firstStream.readAllBytes());
+      }
+    }
   }
 
   @Test
@@ -130,31 +180,55 @@ class VersionAssetPublicationPostgresIntegrationTest {
   }
 
   @Test
-  void changedSourceBytesInvalidateCommittedSnapshotReadback() {
+  void immutableSourceRejectsChangedBytesBeforeCommittedSnapshotReadback() {
     Fixture fixture = fixture(null);
     Game owner = saveGame(fixture, "d");
     Version version = saveDraftVersion(fixture, owner, 1);
     GameAsset asset = saveAsset(fixture, owner, "mutable-source.png", "content-original");
     associate(fixture, owner.getTenantId(), version.getId(), asset.getId());
-    inTransaction(
-        fixture,
-        () -> fixture.publicationRepository().freezeOrReadSnapshot(owner.getTenantId(), 1));
-
-    fixture
-        .dsl()
-        .execute(
-            "UPDATE game_assets SET data = ? WHERE tenant_id = ? AND id = ?",
-            "content-replaced".getBytes(StandardCharsets.UTF_8),
-            owner.getTenantId(),
-            asset.getId());
+    VersionAssetPublicationRepository.ExportSnapshot frozen =
+        inTransaction(
+            fixture,
+            () -> fixture.publicationRepository().freezeOrReadSnapshot(owner.getTenantId(), 1));
 
     assertThatThrownBy(
             () ->
                 fixture
-                    .publicationRepository()
-                    .readFrozenSnapshot(owner.getTenantId(), version.getVersionNumber()))
-        .isInstanceOf(IllegalStateException.class)
-        .hasMessage("Frozen Version asset source bytes or mapping failed verification");
+                    .dsl()
+                    .execute(
+                        "UPDATE game_assets SET data = ? WHERE tenant_id = ? AND id = ?",
+                        "content-replaced".getBytes(StandardCharsets.UTF_8),
+                        owner.getTenantId(),
+                        asset.getId()))
+        .rootCause()
+        .isInstanceOf(SQLException.class)
+        .hasMessageContaining("game asset source rows are immutable")
+        .satisfies(
+            failure -> assertThat(((SQLException) failure).getSQLState()).isEqualTo("23514"));
+
+    Record persistedAsset =
+        Objects.requireNonNull(
+            fixture
+                .dsl()
+                .fetchSingle(
+                    "SELECT data FROM game_assets WHERE tenant_id = ? AND id = ?",
+                    owner.getTenantId(),
+                    asset.getId()));
+    assertThat(persistedAsset.get("data", byte[].class)).containsExactly(asset.getData());
+
+    VersionAssetPublicationRepository restartedRepository =
+        new VersionAssetPublicationRepository(fixture.dsl());
+    VersionAssetPublicationRepository.ExportSnapshot reloaded =
+        restartedRepository.readFrozenSnapshot(owner.getTenantId(), version.getVersionNumber());
+    assertSameSnapshot(frozen, reloaded);
+
+    VersionAssetPublicationRepository.ExportSnapshot retried =
+        inTransaction(
+            fixture,
+            () ->
+                restartedRepository.freezeOrReadSnapshot(
+                    owner.getTenantId(), version.getVersionNumber()));
+    assertSameSnapshot(frozen, retried);
   }
 
   @Test
@@ -292,6 +366,27 @@ class VersionAssetPublicationPostgresIntegrationTest {
                     tenantId,
                     versionId));
     return Objects.requireNonNull(countRecord.get("mapping_count", Long.class));
+  }
+
+  private void assertSameSnapshot(
+      VersionAssetPublicationRepository.ExportSnapshot expected,
+      VersionAssetPublicationRepository.ExportSnapshot actual) {
+    assertThat(actual.tenantId()).isEqualTo(expected.tenantId());
+    assertThat(actual.versionId()).isEqualTo(expected.versionId());
+    assertThat(actual.versionNumber()).isEqualTo(expected.versionNumber());
+    assertThat(actual.capturedVersionStateEpoch()).isEqualTo(expected.capturedVersionStateEpoch());
+    assertThat(actual.canonicalTenantId()).isEqualTo(expected.canonicalTenantId());
+    assertThat(actual.canonicalVersionId()).isEqualTo(expected.canonicalVersionId());
+    assertThat(actual.items()).hasSize(expected.items().size());
+    for (int i = 0; i < expected.items().size(); i++) {
+      VersionAssetPublicationRepository.AssetSelection expectedItem = expected.items().get(i);
+      VersionAssetPublicationRepository.AssetSelection actualItem = actual.items().get(i);
+      assertThat(actualItem.usageKey()).isEqualTo(expectedItem.usageKey());
+      assertThat(actualItem.assetId()).isEqualTo(expectedItem.assetId());
+      assertThat(actualItem.contentType()).isEqualTo(expectedItem.contentType());
+      assertThat(actualItem.contentDigest()).isEqualTo(expectedItem.contentDigest());
+      assertThat(actualItem.bytes()).containsExactly(expectedItem.bytes());
+    }
   }
 
   private long insertUnqualifiedRetainedVersion(DSLContext dsl, String tenantId) {

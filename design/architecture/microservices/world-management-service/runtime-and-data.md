@@ -191,6 +191,16 @@ Publish gating fails closed if World Management cannot attest a digest consisten
 
 In the initial slice, exported world artifacts such as navmesh/path-graph bundles are not folded into World Management’s `contentDigest`. Instead, the publish workflow must attest them separately through typed artifact digest entries and manifest usage keys bound to the same release identity as the world participant digest.
 
+### Complete selected-release artifact inventory
+
+World owns a typed, authenticated, immutable `COMPLETE` inventory for the exact selected, retained `APPLIED` graph. It binds the canonical tenant/version/commit, original source and application identities, complete affected scopes and applied epochs, exact Account publication-order identity and fence, topology result and graph digest, and the publication freeze/checkpoint. World captures and durably reads back that inventory under the same owner lock as its qualified first freeze; a caller-supplied inventory or later current-state sample cannot replace the selected graph. Exact retries preserve the original inventory rather than reclassifying mutable source state.
+
+The inventory identifies a versioned, closed source model and enumerates all six current topology families from the digest manifest, including explicit zero counts. Its requiredness evaluation covers the complete typed topology, region generator type/parameters, generation-rule name/scope/value, and typed spawn bindings. Unknown schemas, fields, families, omitted requiredness inputs, or unrepresentable generation semantics deny `COMPLETE`; missing producer rows or runtime consumers never establish that an artifact is unnecessary. The direct-authored room/exit model uses its persisted directed edges and does not require a separate generated navigation bundle; typed room-bound spawn references alone do not change that rule. Opaque generation inputs cannot inherit this classification without a defined, proved requiredness interpretation.
+
+The complete derived-family enumeration includes `NAVMESH` and `PATH_GRAPH`, each with an explicit decision bound to those source inputs. If the selected source requires either family, publication requires the actual finalized producer record and byte digest under the [Game Design asset handoff](../game-design-service/asset-storage.md#complete-selected-release-asset-inventory); an absent producer denies that release, rather than changing its requiredness or omitting the family. A supported release must not be relabeled empty or unsupported merely to avoid producing its required artifacts.
+
+World's inventory attests only World-owned source and derived-artifact requirements. It does not establish Game Design asset completeness, export success, release attestation, or runtime admission. Game Design compares its independent asset evidence with World evidence using their common exact selection/source-graph and publication bindings, not mutually issued receipts. Current implementation and physical proof remain separately recorded in the [authoring tracker](../../../project-management/implementation-tracking/game-authoring-publishing-and-activation.md#current-status).
+
 ## Instance-Scoped Population Schedule Contract
 
 Runtime population materialization is documented separately from published spawn bindings:
