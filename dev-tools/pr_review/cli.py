@@ -1708,10 +1708,16 @@ def _dispatch(args: argparse.Namespace) -> tuple[Any, int]:
             budget.set_phase("stack_review_evidence", total=1)
         if args.full_scan:
             stack_report = controller.status()
-        elif conversation_payload is not None:
-            stack_report = controller.status_for_pr(args.pr, conversation_payload=conversation_payload)
         else:
-            stack_report = controller.status_for_pr(args.pr)
+            status_options = {"summary_only": True} if args.summary else {}
+            if conversation_payload is not None:
+                stack_report = controller.status_for_pr(
+                    args.pr,
+                    conversation_payload=conversation_payload,
+                    **status_options,
+                )
+            else:
+                stack_report = controller.status_for_pr(args.pr, **status_options)
         if selected_pr_status:
             budget.set_completed(1)
             budget.set_phase("incoming_record_routes", total=1)

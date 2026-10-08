@@ -687,9 +687,17 @@ class StatusTest(unittest.TestCase):
                 self.store = SimpleNamespace(load=lambda: SimpleNamespace(summary_dispositions=()))
                 self.selected = selected
                 self.conversation_payloads: list[dict] = []
+                self.summary_modes: list[bool] = []
 
-            def status_for_pr(self, number: int, *, conversation_payload: dict | None = None) -> dict:
+            def status_for_pr(
+                self,
+                number: int,
+                *,
+                conversation_payload: dict | None = None,
+                summary_only: bool = False,
+            ) -> dict:
                 self.conversation_payloads.append(conversation_payload)
+                self.summary_modes.append(summary_only)
                 return {
                     "prs": [
                         {
@@ -718,7 +726,10 @@ class StatusTest(unittest.TestCase):
                             "headRefOid": head,
                             "baseRefName": base,
                             "baseRefOid": base_oid,
-                            "comments": {"nodes": [{"id": head}], "complete": True},
+                            "comments": {
+                                "nodes": [{"id": head}],
+                                "pageInfo": {"hasNextPage": False, "endCursor": None},
+                            },
                         }
                     }
                 }
@@ -754,14 +765,15 @@ class StatusTest(unittest.TestCase):
                 "mergeability": {"clean": True, "diagnosis": "READY"},
             }
 
-        args = cli._parser().parse_args(["status", "--pr", "2838", "--json"])
+        summary_args = cli._parser().parse_args(["status", "--pr", "2838", "--summary", "--json"])
+        detailed_args = cli._parser().parse_args(["status", "--pr", "2838", "--json"])
         with (
             patch.object(cli, "_controller", side_effect=[(controllers[0], None), (controllers[1], None)]),
             patch.object(status, "status", side_effect=report_for),
             patch.object(cli, "_read_record_incoming_routes", return_value=([], {"status": "available"})),
         ):
-            first, first_exit = cli._dispatch(args)
-            second, second_exit = cli._dispatch(args)
+            first, first_exit = cli._dispatch(summary_args)
+            second, second_exit = cli._dispatch(detailed_args)
 
         self.assertEqual((first_exit, second_exit), (0, 0))
         self.assertTrue(first["ready"])
@@ -769,6 +781,8 @@ class StatusTest(unittest.TestCase):
         self.assertIs(controllers[0].conversation_payloads[0], payloads[0])
         self.assertIs(controllers[1].conversation_payloads[0], payloads[1])
         self.assertIsNot(controllers[0].conversation_payloads[0], controllers[1].conversation_payloads[0])
+        self.assertEqual(controllers[0].summary_modes, [True])
+        self.assertEqual(controllers[1].summary_modes, [False])
 
     def test_live_comment_shape_is_converted_to_historical_checkpoint_evidence(self) -> None:
         payload = github_payload()

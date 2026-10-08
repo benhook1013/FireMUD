@@ -6343,6 +6343,7 @@ class ReviewController:
         pr: int,
         *,
         conversation_payload: dict[str, Any] | None = None,
+        summary_only: bool = False,
     ) -> dict[str, Any]:
         """Deeply verify one selected PR and its configured ancestors only."""
 
@@ -6368,16 +6369,34 @@ class ReviewController:
             if callable(prefetch_payload):
                 prefetch_payload(pr, conversation_payload)
         live_identities, _ = self._batch_live_pull_requests(self._require_github(), scoped.ordered_prs)
+        evidence_prs = None
+        selected_identity = self._require_github().pull_request(pr)
+        live_identity_cache = {pr: selected_identity}
+        if summary_only:
+            # The summary still needs the complete fresh identity prefix to
+            # select effective parents and validate every PR lifecycle. Only
+            # selected and unmerged PRs need full conversation evidence.
+            evidence_prs = {
+                number for number, item in live_identities.items() if number == pr or not item.merged
+            }
+            # Feed the validated batch back through reconciliation rather than
+            # issuing per-ancestor identity reads for this smaller evidence set.
+            live_identity_cache = dict(live_identities)
+            # Preserve the independent later selected-PR identity observation.
+            live_identity_cache[pr] = selected_identity
         report = self._status_from_state(
             scoped,
+            evidence_prs=evidence_prs,
             live_identities=live_identities,
-            # Keep the later selected-PR identity observation independent of
-            # both the batch and the standalone selected review report.
-            live_identity_cache={pr: self._require_github().pull_request(pr)},
+            live_identity_cache=live_identity_cache,
         )
         report["ordered_prs"] = list(state.ordered_prs)
         report["selected_pr"] = pr
-        report["scope"] = "selected PR and configured ancestors"
+        if summary_only:
+            report["prs"] = [item for item in report["prs"] if item["pr"] in evidence_prs]
+            report["scope"] = "selected PR and unmerged configured ancestors; merged ancestors identity-only"
+        else:
+            report["scope"] = "selected PR and configured ancestors"
         return report
 
     def status_overview(self) -> dict[str, Any]:
