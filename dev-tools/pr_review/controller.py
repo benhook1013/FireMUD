@@ -5907,6 +5907,86 @@ class ReviewController:
                     progress["label"] = "Waiting turn"
                     progress["waiting_for_pr"] = target["pr"]
 
+    def _initial_status_allocations(
+        self,
+        state: ReviewState,
+        live: Mapping[int, LivePullRequest],
+        reconciliation: stack.Reconciliation,
+        histories: Mapping[policy.Channel, Mapping[int, Sequence[Any]]],
+        *,
+        stop_audit_cache: dict[tuple[Any, ...], Mapping[str, Any]],
+        history_cache: dict[tuple[int, str], list[Any]],
+        bounded_evidence_cache: dict[tuple[int, str], Mapping[str, Any]],
+        concurrent_prs: bool = False,
+    ) -> dict[policy.Channel, dict[int, dict[str, Any]]]:
+        channels = (policy.Channel.HOSTED, policy.Channel.CLI)
+        allocated_prs = tuple(
+            pr for pr in state.ordered_prs
+            if not live[pr].merged and any(f"{pr}:{channel.value}" in state.allocations for channel in channels)
+        )
+        if not concurrent_prs or len(allocated_prs) < 2:
+            return {
+                channel: self._allocation_views(
+                    state, live, reconciliation, channel, histories[channel],
+                    stop_audit_cache=stop_audit_cache,
+                    history_cache=history_cache,
+                    bounded_evidence_cache=bounded_evidence_cache,
+                )
+                for channel in channels
+            }
+
+        def audit_pr(key):
+            if isinstance(key[0], int):
+                return key[0]
+            return key[1][0] if key[0] == "snapshot" else key[1]
+
+        # Each PR owns both channel caches. Only the caller publishes results,
+        # after every worker has joined; target reconciliation remains serial.
+        inputs = {
+            pr: (
+                copy.deepcopy({key: value for key, value in stop_audit_cache.items() if audit_pr(key) == pr}),
+                copy.deepcopy({key: value for key, value in history_cache.items() if key[0] == pr}),
+                copy.deepcopy({key: value for key, value in bounded_evidence_cache.items() if key[0] == pr}),
+            )
+            for pr in allocated_prs
+        }
+        budget = github.active_hosted_preflight_budget()
+
+        def project(pr):
+            audits, history, bounded = inputs[pr]
+            views = {
+                channel: self._allocation_views(
+                    state, live, reconciliation, channel, histories[channel], pr_numbers=(pr,),
+                    stop_audit_cache=audits, history_cache=history, bounded_evidence_cache=bounded,
+                )
+                for channel in channels
+            }
+            return views, audits, history, bounded
+
+        def project_bound(pr):
+            if budget is None:
+                return project(pr)
+            with github.bind_hosted_preflight_budget(budget):
+                budget.remaining_seconds()
+                return project(pr)
+
+        with ThreadPoolExecutor(max_workers=min(4, len(allocated_prs))) as pool:
+            results = list(pool.map(project_bound, allocated_prs))
+        allocations: dict[policy.Channel, dict[int, dict[str, Any]]] = {channel: {} for channel in channels}
+        for pr, (views, audits, history, bounded) in zip(allocated_prs, results):
+            for channel in channels:
+                allocations[channel].update(views[channel])
+            for cache, refreshed, owner in (
+                (stop_audit_cache, audits, audit_pr),
+                (history_cache, history, lambda key: key[0]),
+                (bounded_evidence_cache, bounded, lambda key: key[0]),
+            ):
+                for key in tuple(cache):
+                    if owner(key) == pr:
+                        del cache[key]
+                cache.update(refreshed)
+        return allocations
+
     def _status_from_state(
         self,
         state: ReviewState,
@@ -5920,6 +6000,7 @@ class ReviewController:
         review_target_selection_complete: bool = False,
         remote_head_snapshot: Mapping[str, str] | None = None,
         phase_timings: dict[str, float] | None = None,
+        concurrent_allocation_prs: bool = False,
     ) -> dict[str, Any]:
         if history_cache is None:
             history_cache = {}
@@ -5996,19 +6077,13 @@ class ReviewController:
         if stop_audit_cache is None:
             stop_audit_cache = {}
         bounded_evidence_cache: dict[tuple[int, str], Mapping[str, Any]] = {}
-        allocations = {
-            channel: self._allocation_views(
-                state,
-                live,
-                reconciliation,
-                channel,
-                histories[channel],
-                stop_audit_cache=stop_audit_cache,
-                history_cache=history_cache,
-                bounded_evidence_cache=bounded_evidence_cache,
-            )
-            for channel in (policy.Channel.HOSTED, policy.Channel.CLI)
-        }
+        allocations = self._initial_status_allocations(
+            state, live, reconciliation, histories,
+            stop_audit_cache=stop_audit_cache,
+            history_cache=history_cache,
+            bounded_evidence_cache=bounded_evidence_cache,
+            concurrent_prs=concurrent_allocation_prs,
+        )
         review_targets = None
         if review_target_prs is not None:
             review_targets = self._status_review_targets(
@@ -6287,9 +6362,11 @@ class ReviewController:
 
     @staticmethod
     def _batch_live_pull_requests(
-        provider: Any, numbers: Sequence[int]
+        provider: Any, numbers: Sequence[int], *, overview: bool = False
     ) -> tuple[dict[int, LivePullRequest], dict[int, Mapping[str, Any] | None]]:
-        fetch = getattr(provider, "batch_pull_requests", None)
+        fetch = getattr(provider, "batch_pull_requests_overview", None) if overview else None
+        if not callable(fetch):
+            fetch = getattr(provider, "batch_pull_requests", None)
         if not callable(fetch):
             raise ControllerError("GitHub provider does not support batched PR identities")
         values = fetch(tuple(numbers))
@@ -6416,7 +6493,7 @@ class ReviewController:
             }
 
         try:
-            batch_live, raw_identities = self._batch_live_pull_requests(self.github, state.ordered_prs)
+            batch_live, raw_identities = self._batch_live_pull_requests(self.github, state.ordered_prs, overview=True)
             remote_heads = self.git.remote_heads()
             default_tip = _sha(remote_heads.get(self.default_base_ref), "default base tip")
             batch_snapshots = {pr: item.snapshot() for pr, item in batch_live.items()}
@@ -6522,6 +6599,7 @@ class ReviewController:
                     review_target_selection_complete=target_scan_complete,
                     remote_head_snapshot=remote_heads,
                     phase_timings=phase_timings,
+                    concurrent_allocation_prs=True,
                 )
             except (ControllerError, OSError, subprocess.SubprocessError, RuntimeError, TypeError, ValueError) as error:
                 deep_error = str(error)

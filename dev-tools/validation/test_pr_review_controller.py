@@ -3,10 +3,12 @@
 
 from __future__ import annotations
 
+import copy
 import dataclasses
 import fcntl
 import hashlib
 import json
+import re
 import sqlite3
 import subprocess
 import sys
@@ -13301,6 +13303,387 @@ class ControllerTests(unittest.TestCase):
         unreconciled = self.make({1: pr(1, HEAD_1)}, unreconciled_evidence)
         unreconciled.set_stack([1])
         self.assertEqual(unreconciled.status()["prs"][0]["reconciliation"], "UNRECONCILED")
+
+
+class OverviewIdentityConcurrencyTests(unittest.TestCase):
+    @staticmethod
+    def numbers(query):
+        return tuple(int(number) for number in re.findall(r"pr_(\d+): pullRequest", query))
+
+    @staticmethod
+    def payload(numbers):
+        return {"data": {"repository": {
+            f"pr_{number}": _batch_identity(pr(number, HEAD_1)) for number in numbers
+        }}}
+
+    def test_overview_chunks_overlap_with_four_worker_limit_and_complete_coverage(self):
+        barrier = threading.Barrier(4)
+        lock = threading.Lock()
+        active = maximum = 0
+        calls = []
+
+        def query(text, _variables):
+            nonlocal active, maximum
+            numbers = self.numbers(text)
+            self.assertLessEqual(len(numbers), 25)
+            self.assertEqual(text.count("comments(last:5)"), len(numbers))
+            self.assertEqual(text.count("reviews(last:5)"), len(numbers))
+            with lock:
+                active += 1
+                maximum = max(maximum, active)
+                calls.append(numbers)
+            try:
+                if numbers[0] <= 100:
+                    barrier.wait(timeout=5)
+                return self.payload(numbers)
+            finally:
+                with lock:
+                    active -= 1
+
+        numbers = tuple(range(1, 126))
+        with patch.object(github, "run_gh_query", side_effect=query):
+            result = github.fetch_pr_identity_batch("owner/repo", numbers, concurrent_chunks=True)
+        self.assertEqual(maximum, 4)
+        self.assertEqual(len(calls), 5)
+        self.assertEqual(tuple(result), numbers)
+        self.assertTrue(all(result.values()))
+        self.assertEqual(sorted(number for chunk in calls for number in chunk), list(numbers))
+
+    def test_out_of_order_chunks_keep_configured_order_and_bound_budget(self):
+        later_finished = threading.Event()
+        completion_order = []
+        numbers = tuple(range(65, 0, -1))
+        with github.activate_hosted_preflight_budget(30) as budget:
+            budget.set_phase("target_identity_batch", total=3)
+
+            def query(text, _variables):
+                self.assertIs(github.active_hosted_preflight_budget(), budget)
+                self.assertLessEqual(github._request_timeout(120)[0], 30)
+                chunk = self.numbers(text)
+                if chunk[0] == 65:
+                    self.assertTrue(later_finished.wait(timeout=5))
+                completion_order.append(chunk[0])
+                if chunk[0] == 40:
+                    later_finished.set()
+                return self.payload(chunk)
+
+            with patch.object(github, "run_gh_query", side_effect=query):
+                result = github.fetch_pr_identity_batch("owner/repo", numbers, concurrent_chunks=True)
+            self.assertEqual(budget.completed, 3)
+        self.assertLess(completion_order.index(40), completion_order.index(65))
+        self.assertEqual(tuple(result), numbers)
+
+    def test_expired_shared_budget_fails_before_queries(self):
+        with github.activate_hosted_preflight_budget(30) as budget:
+            budget.deadline = time.monotonic() - 1
+            with (
+                patch.object(github, "run_gh_query") as query,
+                self.assertRaises(github.HostedPreflightDeadlineExceeded),
+            ):
+                github.fetch_pr_identity_batch("owner/repo", tuple(range(1, 66)), concurrent_chunks=True)
+            query.assert_not_called()
+
+    def test_shared_budget_expiry_inside_worker_propagates_after_join(self):
+        rendezvous = threading.Barrier(2)
+        other_finished = threading.Event()
+        with github.activate_hosted_preflight_budget(30) as budget:
+            def query(text, _variables):
+                self.assertIs(github.active_hosted_preflight_budget(), budget)
+                numbers = self.numbers(text)
+                rendezvous.wait(timeout=5)
+                if numbers[0] == 1:
+                    self.assertTrue(other_finished.wait(timeout=5))
+                    budget.deadline = time.monotonic() - 1
+                    github._request_timeout(30)
+                other_finished.set()
+                return self.payload(numbers)
+
+            with (
+                patch.object(github, "run_gh_query", side_effect=query),
+                self.assertRaises(github.HostedPreflightDeadlineExceeded),
+            ):
+                github.fetch_pr_identity_batch("owner/repo", tuple(range(1, 27)), concurrent_chunks=True)
+        self.assertTrue(other_finished.is_set())
+
+    def test_serial_default_and_concurrent_query_contents_are_identical(self):
+        numbers = tuple(range(1, 66))
+        calls = []
+
+        def query(text, variables):
+            calls.append((text, variables))
+            return self.payload(self.numbers(text))
+
+        with patch.object(github, "run_gh_query", side_effect=query):
+            with patch.object(github, "ThreadPoolExecutor") as pool:
+                serial = github.fetch_pr_identity_batch("owner/repo", numbers)
+                pool.assert_not_called()
+            serial_queries = list(calls)
+            calls.clear()
+            concurrent = github.fetch_pr_identity_batch("owner/repo", numbers, concurrent_chunks=True)
+            self.assertEqual(serial, concurrent)
+            self.assertEqual(sorted(calls), sorted(serial_queries))
+            with patch.object(github, "ThreadPoolExecutor") as pool:
+                github.fetch_pr_identity_batch("owner/repo", (1,), concurrent_chunks=True)
+                github.fetch_pr_identity_batch("owner/repo", (), concurrent_chunks=True)
+                pool.assert_not_called()
+
+    def test_missing_and_malformed_aliases_remain_unavailable(self):
+        for malformed in (None, {}, {"number": 26}, {"number": 25}):
+            with self.subTest(malformed=malformed):
+                def query(text, _variables, malformed=malformed):
+                    payload = self.payload(self.numbers(text))
+                    payload["data"]["repository"]["pr_26"] = malformed
+                    return payload
+
+                with patch.object(github, "run_gh_query", side_effect=query):
+                    result = github.fetch_pr_identity_batch("owner/repo", tuple(range(1, 27)), concurrent_chunks=True)
+                self.assertIsNone(result[26])
+                provider = SimpleNamespace(batch_pull_requests_overview=lambda _numbers, result=result: result)
+                with self.assertRaisesRegex(ControllerError, "missing PR #26"):
+                    ReviewController._batch_live_pull_requests(provider, tuple(range(1, 27)), overview=True)
+
+    def test_chunk_error_joins_other_reads_and_never_returns_partial_result(self):
+        rendezvous = threading.Barrier(2)
+        other_finished = threading.Event()
+
+        def query(text, _variables):
+            numbers = self.numbers(text)
+            rendezvous.wait(timeout=5)
+            if numbers[0] == 1:
+                raise RuntimeError("identity chunk unavailable")
+            other_finished.set()
+            return self.payload(numbers)
+
+        with (
+            patch.object(github, "run_gh_query", side_effect=query) as fetch,
+            self.assertRaisesRegex(RuntimeError, "identity chunk unavailable"),
+        ):
+            github.fetch_pr_identity_batch("owner/repo", tuple(range(1, 27)), concurrent_chunks=True)
+        self.assertTrue(other_finished.is_set())
+        self.assertEqual(fetch.call_count, 2)
+
+    def test_only_overview_uses_concurrent_adapter(self):
+        live = LiveGitHub("owner/repo")
+        with patch.object(github, "fetch_pr_identity_batch", return_value={}) as fetch:
+            live.batch_pull_requests((1, 2))
+            fetch.assert_called_once_with("owner/repo", (1, 2))
+            fetch.reset_mock()
+            live.batch_pull_requests_overview((1, 2))
+            fetch.assert_called_once_with("owner/repo", (1, 2), concurrent_chunks=True)
+        factory = ControllerTests()
+        values = {1: pr(1, HEAD_1)}
+        controller = factory.make(values, heads={"develop": BASE, "feature-1": HEAD_1})
+        controller.set_stack([1])
+        serial = Mock(return_value={1: _batch_identity(values[1])})
+        overview = Mock(return_value={1: _batch_identity(values[1])})
+        controller.github.batch_pull_requests = serial
+        controller.github.batch_pull_requests_overview = overview
+        controller.status_overview()
+        overview.assert_called_once_with((1,))
+        serial.assert_not_called()
+        controller.status_for_pr(1)
+        serial.assert_called_once_with((1,))
+
+
+class OverviewAllocationConcurrencyTests(unittest.TestCase):
+    def project(self, controller, numbers, *, concurrent=True, caches=None):
+        state = SimpleNamespace(
+            ordered_prs=tuple(numbers),
+            allocations={f"{pr}:hosted": object() for pr in numbers},
+        )
+        live = {pr: SimpleNamespace(merged=False) for pr in numbers}
+        audits, history, bounded = caches if caches is not None else ({}, {}, {})
+        return controller._initial_status_allocations(
+            state, live, None, {channel: {} for channel in Channel},
+            stop_audit_cache=audits, history_cache=history,
+            bounded_evidence_cache=bounded, concurrent_prs=concurrent,
+        )
+
+    def test_distinct_prs_overlap_bounded_and_each_pr_channels_are_serial(self):
+        controller = object.__new__(ReviewController)
+        barrier = threading.Barrier(4)
+        lock = threading.Lock()
+        active = maximum = 0
+        seen = {}
+        caller = threading.get_ident()
+        caches = ({}, {}, {})
+
+        def views(_state, _live, _reconciliation, channel, _histories, *, pr_numbers, **kwargs):
+            nonlocal active, maximum
+            pr_number, = pr_numbers
+            with lock:
+                seen.setdefault(pr_number, []).append(channel)
+                self.assertNotEqual(threading.get_ident(), caller)
+                self.assertEqual(seen[pr_number], [Channel.HOSTED] if channel == Channel.HOSTED
+                                 else [Channel.HOSTED, Channel.CLI])
+                active += 1
+                maximum = max(maximum, active)
+            try:
+                if channel == Channel.HOSTED and pr_number <= 4:
+                    barrier.wait(timeout=5)
+                self.assertEqual(caches, ({}, {}, {}))
+                kwargs["history_cache"][(pr_number, channel.value)] = [pr_number]
+                kwargs["stop_audit_cache"][("latest", pr_number)] = {"channel": channel.value}
+                kwargs["bounded_evidence_cache"][(pr_number, channel.value)] = {"pr": pr_number}
+                return {pr_number: {"channel": channel.value}}
+            finally:
+                with lock:
+                    active -= 1
+
+        controller._allocation_views = views
+        result = self.project(controller, range(1, 7), caches=caches)
+        self.assertEqual(maximum, 4)
+        self.assertEqual(tuple(result[Channel.HOSTED]), tuple(range(1, 7)))
+        self.assertEqual(tuple(result[Channel.CLI]), tuple(range(1, 7)))
+        self.assertEqual(len(caches[1]), 12)
+        self.assertTrue(all(item == {"channel": "cli"} for item in caches[0].values()))
+
+    def test_serial_default_empty_and_single_allocation_do_not_start_workers(self):
+        controller = object.__new__(ReviewController)
+        controller._allocation_views = Mock(return_value={})
+        with patch("pr_review.controller.ThreadPoolExecutor") as pool:
+            self.project(controller, (1, 2), concurrent=False)
+            self.project(controller, ())
+            self.project(controller, (1,))
+            pool.assert_not_called()
+        self.assertEqual(controller._allocation_views.call_count, 6)
+        self.assertTrue(all("pr_numbers" not in call.kwargs for call in controller._allocation_views.call_args_list))
+
+    def test_failure_joins_workers_and_does_not_publish_partial_caches(self):
+        controller = object.__new__(ReviewController)
+        barrier = threading.Barrier(2)
+        finished = threading.Event()
+        caches = ({("latest", 1): {"evidence": []}}, {(1, "hosted"): ["initial"]}, {})
+        before = copy.deepcopy(caches)
+
+        def views(_state, _live, _reconciliation, channel, _histories, *, pr_numbers, **kwargs):
+            pr_number, = pr_numbers
+            if channel == Channel.HOSTED:
+                kwargs["history_cache"][(pr_number, "hosted")] = ["refreshed"]
+                if pr_number == 1:
+                    kwargs["stop_audit_cache"][("latest", 1)]["evidence"].append("local")
+                barrier.wait(timeout=5)
+                if pr_number == 1:
+                    raise ControllerError("allocation audit unavailable")
+            else:
+                finished.set()
+            return {}
+
+        controller._allocation_views = views
+        with self.assertRaisesRegex(ControllerError, "allocation audit unavailable"):
+            self.project(controller, (1, 2), caches=caches)
+        self.assertTrue(finished.is_set())
+        self.assertEqual(caches, before)
+
+    def test_seeded_cache_invalidation_matches_serial_without_losing_other_prs(self):
+        controller = object.__new__(ReviewController)
+        seed = (
+            {("latest", pr): {"evidence": ["old"]} for pr in (1, 2, 99)},
+            {(pr, "hosted"): ["old"] for pr in (1, 2, 99)},
+            {(pr, "hosted"): {"old": True} for pr in (1, 2, 99)},
+        )
+        def views(state, _live, _reconciliation, channel, _histories, *, pr_numbers=None, **kwargs):
+            selected = state.ordered_prs if pr_numbers is None else pr_numbers
+            for pr_number in selected:
+                if channel == Channel.HOSTED:
+                    kwargs["stop_audit_cache"].pop(("latest", pr_number))
+                    kwargs["history_cache"].pop((pr_number, "hosted"))
+                    kwargs["bounded_evidence_cache"].pop((pr_number, "hosted"))
+                else:
+                    self.assertNotIn(("latest", pr_number), kwargs["stop_audit_cache"])
+                    self.assertNotIn((pr_number, "hosted"), kwargs["history_cache"])
+                    kwargs["history_cache"][(pr_number, "cli")] = ["fresh"]
+            return {}
+        controller._allocation_views = views
+        serial, concurrent = copy.deepcopy(seed), copy.deepcopy(seed)
+        self.project(controller, (1, 2), concurrent=False, caches=serial)
+        self.project(controller, (1, 2), caches=concurrent)
+        self.assertEqual(serial, concurrent)
+        for cache, original in zip(concurrent, seed):
+            for key, value in original.items():
+                if 99 in key:
+                    self.assertEqual(cache[key], value)
+
+    def test_workers_bind_existing_budget_and_expiry_is_not_replaced(self):
+        controller = object.__new__(ReviewController)
+        rendezvous = threading.Barrier(2)
+        finished = threading.Event()
+        with github.activate_hosted_preflight_budget(30) as budget:
+            def views(_state, _live, _reconciliation, channel, _histories, *, pr_numbers, **_kwargs):
+                self.assertIs(github.active_hosted_preflight_budget(), budget)
+                self.assertLessEqual(github._request_timeout(120)[0], 30)
+                if channel == Channel.HOSTED:
+                    rendezvous.wait(timeout=5)
+                    if pr_numbers == (1,):
+                        self.assertTrue(finished.wait(timeout=5))
+                        budget.deadline = time.monotonic() - 1
+                        budget.remaining_seconds()
+                else:
+                    finished.set()
+                return {}
+
+            controller._allocation_views = views
+            with self.assertRaises(github.HostedPreflightDeadlineExceeded):
+                self.project(controller, (1, 2))
+        self.assertTrue(finished.is_set())
+
+    def fixture(self):
+        factory = ControllerTests()
+        self.addCleanup(factory.doCleanups)
+        values, heads = _stacked_prs(2)
+        provider = CountingEvidence()
+        for number in values:
+            for channel in ("hosted", "cli"):
+                provider[(number, channel)] = [factory.allocation_evidence(
+                    number, values[number].head, f"{channel}-baseline-{number}", channel=channel)]
+        controller = factory.grant_bounded_allocation(
+            values=values, heads=heads, evidence=provider, checkpoint="hosted-baseline-1", cap=1)
+        for number in values:
+            for channel in ("hosted", "cli"):
+                if (number, channel) != (1, "hosted"):
+                    controller.decide_allocation(
+                        action="grant", pr=number, channel=channel, head=values[number].head,
+                        checkpoint=f"{channel}-baseline-{number}", min_additional_completed=1,
+                        max_additional_completed=1, reason="bounded test allocation")
+                provider[(number, channel)].append(factory.allocation_evidence(
+                    number, values[number].head, f"{channel}-completed-{number}", channel=channel))
+        factory._enable_batch_status(controller, values)
+        return controller
+
+    def test_stable_overview_matches_serial_projection_and_other_paths_remain_serial(self):
+        controller = self.fixture()
+        original = controller._initial_status_allocations
+        with patch.object(controller, "_initial_status_allocations", wraps=original) as allocation:
+            concurrent = controller.status_overview()
+            self.assertTrue(all(call.kwargs["concurrent_prs"] for call in allocation.call_args_list))
+        def serial(*args, **kwargs):
+            kwargs["concurrent_prs"] = False
+            return original(*args, **kwargs)
+        with patch.object(controller, "_initial_status_allocations", side_effect=serial):
+            expected = controller.status_overview()
+        for report in (concurrent, expected):
+            report.get("detail_window", {}).pop("timing_ms", None)
+        self.assertEqual(concurrent, expected)
+        with patch.object(controller, "_initial_status_allocations", wraps=original) as allocation:
+            controller.status()
+            controller.status_for_pr(1)
+            self.assertTrue(all(not call.kwargs["concurrent_prs"] for call in allocation.call_args_list))
+        with patch.object(controller, "_initial_status_allocations", wraps=original) as allocation:
+            with self.assertRaisesRegex(ControllerError, "all hosted targets are complete or explicitly stopped"):
+                controller.select_target("hosted")
+            allocation.assert_not_called()
+
+    def test_overview_projection_failure_never_publishes_partial_readiness(self):
+        controller = self.fixture()
+        original = controller._allocation_views
+        def fail(*args, **kwargs):
+            if kwargs.get("pr_numbers") == (1,):
+                raise ControllerError("allocation audit unavailable")
+            return original(*args, **kwargs)
+        with patch.object(controller, "_allocation_views", side_effect=fail):
+            result = controller.status_overview()
+        self.assertTrue(all(front["status"] != "READY" for front in result["review_fronts"].values()))
+        self.assertTrue(all(target["status"] != "READY" for target in result["review_targets"].values()))
 
 
 class ReviewProgressPresentationTests(unittest.TestCase):
