@@ -128,6 +128,64 @@ public final class HostedTermsEncoding {
     return canonical(fields);
   }
 
+  /** Exact hosted source bytes include the catalog head and the affirmative acceptance receipt. */
+  public static byte[] currentnessSource(
+      HostedTermsCatalogVersion catalog, IndividualHostedTermsAcceptance acceptance) {
+    return currentnessSource(catalog, acceptance, null);
+  }
+
+  /**
+   * Exact currentness source also retains any disclosed future catalog and its immutable deadline.
+   */
+  public static byte[] currentnessSource(
+      HostedTermsCatalogVersion catalog,
+      IndividualHostedTermsAcceptance acceptance,
+      HostedTermsCatalogVersion disclosedDeadline) {
+    Objects.requireNonNull(catalog);
+    Objects.requireNonNull(acceptance);
+    if (!catalog.hostedScopeId().equals(acceptance.hostedScopeId())
+        || catalog.materialGeneration() != acceptance.materialGeneration()
+        || !catalog.operatorLegalIdentity().equals(acceptance.operatorLegalIdentity())
+        || catalog.operatorIdentityVersion() != acceptance.operatorIdentityVersion()) {
+      throw new IllegalArgumentException(
+          "Currentness source requires one exact catalog and affirmative acceptance");
+    }
+    if (disclosedDeadline != null) {
+      long expectedGeneration =
+          Math.addExact(
+              catalog.materialGeneration(),
+              disclosedDeadline.materiality() == HostedTermsCatalogVersion.Materiality.MATERIAL
+                  ? 1
+                  : 0);
+      if (!catalog.hostedScopeId().equals(disclosedDeadline.hostedScopeId())
+          || !Objects.equals(disclosedDeadline.predecessorVersionId(), catalog.versionId())
+          || disclosedDeadline.sourceVersion() != Math.addExact(catalog.sourceVersion(), 1)
+          || disclosedDeadline.materialGeneration() != expectedGeneration
+          || (disclosedDeadline.materiality() != HostedTermsCatalogVersion.Materiality.MATERIAL
+              && !disclosedDeadline.hasOperatorIdentityOf(catalog))
+          || !disclosedDeadline.effectiveAt().isAfter(catalog.effectiveAt())) {
+        throw new IllegalArgumentException(
+            "Disclosed deadline must be the exact immutable next catalog version");
+      }
+    }
+    byte[] catalogBytes = catalog(catalog);
+    byte[] acceptanceBytes = acceptance(acceptance);
+    Map<String, Object> fields = new LinkedHashMap<>();
+    fields.put("schema", "account-hosted-terms-currentness-source/v2");
+    fields.put("hostedScopeId", catalog.hostedScopeId().toString());
+    fields.put("catalog", Base64.getEncoder().encodeToString(catalogBytes));
+    fields.put("catalogDigest", digest(catalogBytes));
+    fields.put("acceptance", Base64.getEncoder().encodeToString(acceptanceBytes));
+    fields.put("acceptanceDigest", digest(acceptanceBytes));
+    byte[] deadlineBytes = disclosedDeadline == null ? null : catalog(disclosedDeadline);
+    fields.put(
+        "disclosedDeadlineCatalog",
+        deadlineBytes == null ? null : Base64.getEncoder().encodeToString(deadlineBytes));
+    fields.put(
+        "disclosedDeadlineCatalogDigest", deadlineBytes == null ? null : digest(deadlineBytes));
+    return canonical(fields);
+  }
+
   public static String digest(byte[] bytes) {
     Objects.requireNonNull(bytes);
     try {
@@ -168,6 +226,13 @@ public final class HostedTermsEncoding {
   public static String requireDigest(String value) {
     if (value == null || !value.matches("sha256:[0-9a-f]{64}")) {
       throw new IllegalArgumentException("Canonical SHA-256 digest is required");
+    }
+    return value;
+  }
+
+  public static long requirePositive(long value, String description) {
+    if (value <= 0) {
+      throw new IllegalArgumentException("Positive " + description + " is required");
     }
     return value;
   }

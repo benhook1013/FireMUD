@@ -3465,6 +3465,7 @@ jobs:
         run: |
           ./gradlew :account-service:integrationTest \
             --tests integration.net.firedevops.firemud.accountservice.hostedterms.AccountHostedTermsPostgresIntegrationTest \
+            --tests integration.net.firedevops.firemud.accountservice.hostedterms.HostedTermsEnvironmentBindingPostgresIntegrationTest \
             -PfullCheck --no-build-cache --no-configuration-cache
 
       - name: Capture Account hosted-terms PostgreSQL raw XML
@@ -3472,7 +3473,9 @@ jobs:
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: account-hosted-terms-postgresql-proof-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
-          path: services/account-service/build/test-results/integrationTest/TEST-*AccountHostedTermsPostgresIntegrationTest.xml
+          path: |
+            services/account-service/build/test-results/integrationTest/TEST-*AccountHostedTermsPostgresIntegrationTest.xml
+            services/account-service/build/test-results/integrationTest/TEST-*HostedTermsEnvironmentBindingPostgresIntegrationTest.xml
           if-no-files-found: error
           retention-days: 7
 
@@ -3487,6 +3490,10 @@ jobs:
             --require-case 'integration.net.firedevops.firemud.accountservice.hostedterms.AccountHostedTermsPostgresIntegrationTest#acceptanceRejectsWrongSignerNegativeActionChangedShownTermsAndUnavailableIdentity()' \
             --require-case 'integration.net.firedevops.firemud.accountservice.hostedterms.AccountHostedTermsPostgresIntegrationTest#futureTermsCarryDeadlineWithoutFreezingPriorTermsEarly()' \
             --require-case 'integration.net.firedevops.firemud.accountservice.hostedterms.AccountHostedTermsPostgresIntegrationTest#ownerTransactionRollbackRemovesUncommittedCatalogAndPublicationIntent()' \
+            --require-suite integration.net.firedevops.firemud.accountservice.hostedterms.HostedTermsEnvironmentBindingPostgresIntegrationTest \
+            --require-case 'integration.net.firedevops.firemud.accountservice.hostedterms.HostedTermsEnvironmentBindingPostgresIntegrationTest#realAccountWorkflowBindsCurrentEnvironmentAndFencesIndependentSourceVersions()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.hostedterms.HostedTermsEnvironmentBindingPostgresIntegrationTest#bindingUpdateWaitsForExactTerminalSettlementOfAffectedDraftOperation()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.hostedterms.HostedTermsEnvironmentBindingPostgresIntegrationTest#boundCurrentnessCarriesExactScheduledCatalogAndUnextendedDeadline()' \
             account-service
 
       - name: Verify Game Session LOGIN fixture isolation proof

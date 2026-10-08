@@ -4,7 +4,10 @@ import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.util.Arrays;
+import java.util.Comparator;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
 import net.firedevops.firemud.accountservice.authordraft.DraftAuthorizationFenceRepository;
@@ -32,7 +35,29 @@ public final class AccountHostedTermsService {
   private final DraftAuthorizationFenceRepository draftFences;
   private final OperatorPublicationAuthority publicationAuthority;
   private final IndividualAcceptanceAuthority acceptanceAuthority;
+  private final HostedTermsEnvironmentBindingRepository environmentBindings;
+  private final EnvironmentBindingPublicationAuthority environmentBindingPublicationAuthority;
+  private final CurrentEnvironmentBoundaryAuthority currentEnvironmentBoundaryAuthority;
   private final TransactionTemplate ownerTransaction;
+
+  public AccountHostedTermsService(
+      PlatformTransactionManager transactionManager,
+      HostedTermsRepository repository,
+      IndividualCreatorPartyRepository individualParties,
+      DraftAuthorizationFenceRepository draftFences,
+      OperatorPublicationAuthority publicationAuthority,
+      IndividualAcceptanceAuthority acceptanceAuthority) {
+    this(
+        transactionManager,
+        repository,
+        individualParties,
+        draftFences,
+        publicationAuthority,
+        acceptanceAuthority,
+        null,
+        null,
+        null);
+  }
 
   @SuppressFBWarnings(
       value = "EI_EXPOSE_REP2",
@@ -43,12 +68,18 @@ public final class AccountHostedTermsService {
       IndividualCreatorPartyRepository individualParties,
       DraftAuthorizationFenceRepository draftFences,
       OperatorPublicationAuthority publicationAuthority,
-      IndividualAcceptanceAuthority acceptanceAuthority) {
+      IndividualAcceptanceAuthority acceptanceAuthority,
+      HostedTermsEnvironmentBindingRepository environmentBindings,
+      EnvironmentBindingPublicationAuthority environmentBindingPublicationAuthority,
+      CurrentEnvironmentBoundaryAuthority currentEnvironmentBoundaryAuthority) {
     this.repository = Objects.requireNonNull(repository);
     this.individualParties = Objects.requireNonNull(individualParties);
     this.draftFences = Objects.requireNonNull(draftFences);
     this.publicationAuthority = Objects.requireNonNull(publicationAuthority);
     this.acceptanceAuthority = Objects.requireNonNull(acceptanceAuthority);
+    this.environmentBindings = environmentBindings;
+    this.environmentBindingPublicationAuthority = environmentBindingPublicationAuthority;
+    this.currentEnvironmentBoundaryAuthority = currentEnvironmentBoundaryAuthority;
     ownerTransaction = new TransactionTemplate(Objects.requireNonNull(transactionManager));
     ownerTransaction.setIsolationLevel(TransactionDefinition.ISOLATION_READ_COMMITTED);
     ownerTransaction.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRED);
@@ -65,6 +96,61 @@ public final class AccountHostedTermsService {
         ownerTransaction.execute(
             ignored -> publishInTransaction(requestId, evidence, requestPayload)),
         "Account publication transaction result");
+  }
+
+  /**
+   * Resolves the authenticated environment-owner handoff before opening the Account transaction,
+   * then exact-validates its catalog and predecessor while holding owner-local locks.
+   */
+  public EnvironmentBindingPublicationResult publishEnvironmentBinding(UUID requestId) {
+    requireEnvironmentBindingPublicationAuthority();
+    HostedTermsEncoding.requireUuid(requestId, "environment binding publication request");
+    HostedTermsEnvironmentBinding.PublicationEvidence evidence =
+        Objects.requireNonNull(
+            environmentBindingPublicationAuthority.resolve(requestId),
+            "authenticated environment-owner publication evidence");
+    byte[] requestPayload = HostedTermsEnvironmentBindingEncoding.publication(requestId, evidence);
+    return Objects.requireNonNull(
+        ownerTransaction.execute(
+            ignored -> publishEnvironmentBindingInTransaction(requestId, evidence, requestPayload)),
+        "Account environment binding publication result");
+  }
+
+  /** Resumes only the exact durable environment-binding publication and source-change intent. */
+  public EnvironmentBindingPublicationResult resumeEnvironmentBinding(UUID requestId) {
+    requireEnvironmentBindingRepository();
+    HostedTermsEncoding.requireUuid(requestId, "environment binding publication request");
+    return Objects.requireNonNull(
+        ownerTransaction.execute(
+            ignored -> {
+              HostedTermsEnvironmentBindingRepository.PublicationOperation operation =
+                  environmentBindings
+                      .readPublication(requestId, true)
+                      .orElseThrow(
+                          () ->
+                              new IllegalArgumentException(
+                                  "Original environment binding publication is absent"));
+              return advanceEnvironmentBinding(operation);
+            }),
+        "Account environment binding recovery result");
+  }
+
+  /**
+   * Derives the official environment boundary from a trusted owner collaborator, then reads the
+   * exact binding, current catalog, verified individual party and acceptance in one Account
+   * READ_COMMITTED owner transaction. The result is currentness/source evidence, not permission.
+   */
+  public EnvironmentBoundCurrentness requireCurrentnessForCurrentEnvironment(UUID creatorPartyId) {
+    requireCurrentEnvironmentBoundaryAuthority();
+    HostedTermsEncoding.requireUuid(creatorPartyId, "creator party");
+    HostedTermsEnvironmentBinding.CurrentEnvironmentBoundary environment =
+        Objects.requireNonNull(
+            currentEnvironmentBoundaryAuthority.currentBoundary(),
+            "authenticated current environment boundary");
+    return Objects.requireNonNull(
+        ownerTransaction.execute(
+            ignored -> currentnessForEnvironmentInTransaction(environment, creatorPartyId)),
+        "Account environment-bound currentness result");
   }
 
   /** Recovery uses the already durable exact publication and never remints operator evidence. */
@@ -120,6 +206,290 @@ public final class AccountHostedTermsService {
         ownerTransaction.execute(
             ignored -> currentnessInTransaction(hostedScopeId, creatorPartyId)),
         "Account hosted terms currentness result");
+  }
+
+  private EnvironmentBindingPublicationResult publishEnvironmentBindingInTransaction(
+      UUID requestId,
+      HostedTermsEnvironmentBinding.PublicationEvidence evidence,
+      byte[] requestPayload) {
+    environmentBindings.ensureHead(evidence.environmentBoundary());
+    var operation =
+        environmentBindings.claimPublication(
+            requestId, evidence.environmentBoundary(), requestPayload);
+    if (operation.status() == HostedTermsEnvironmentBindingRepository.PublicationStatus.COMMITTED) {
+      return environmentBindingResult(operation, environmentBindings.readCandidate(operation));
+    }
+    if (operation.status()
+        == HostedTermsEnvironmentBindingRepository.PublicationStatus.PENDING_OWNER_SETTLEMENT) {
+      if (!Arrays.equals(operation.requestPayload(), requestPayload)) {
+        throw new IllegalArgumentException("Binding retry differs from exact owner publication");
+      }
+      return advanceEnvironmentBinding(operation);
+    }
+
+    HostedTermsEnvironmentBindingRepository.HeadSnapshot head =
+        environmentBindings.lockHead(evidence.environmentBoundary());
+    if (head.unsettledPublication() != null
+        && !head.unsettledPublication().requestId().equals(requestId)) {
+      throw new IllegalStateException("Another environment binding change is pending");
+    }
+    HostedTermsEnvironmentBinding predecessor = head.current();
+    if (!Objects.equals(
+            evidence.predecessorBindingId(), predecessor == null ? null : predecessor.bindingId())
+        || !Objects.equals(
+            evidence.predecessorSourceVersion(),
+            predecessor == null ? null : predecessor.sourceVersion())) {
+      throw new IllegalArgumentException(
+          "Authenticated environment publication does not extend exact current binding");
+    }
+    Map<UUID, HostedTermsRepository.ScopeSnapshot> catalogScopes =
+        lockBindingCatalogScopes(predecessor, evidence.hostedScopeId());
+    if (predecessor != null && catalogScopes.get(predecessor.hostedScopeId()).current() == null) {
+      throw new IllegalStateException("Prior environment binding catalog source is unavailable");
+    }
+    HostedTermsRepository.ScopeSnapshot targetScope = catalogScopes.get(evidence.hostedScopeId());
+    HostedTermsCatalogVersion targetCatalog = targetScope.current();
+    requireExactBindingCatalog(evidence, targetCatalog, targetScope.databaseNow());
+
+    HostedTermsEnvironmentBinding candidate =
+        environmentBindings.insertCandidate(UUID.randomUUID(), requestId, evidence, predecessor);
+    DraftAuthorizationFenceRepository.SourceChange change =
+        predecessor == null
+            ? null
+            : bindingSourceChange(requestId, predecessor, catalogScopes, candidate);
+    if (change != null) {
+      boolean settled = draftFences.requestSourceChange(change);
+      if (!settled || !draftFences.sourceMutationPermitted(change)) {
+        environmentBindings.markOwnerSettlementPending(
+            requestId, candidate, change.canonicalBytes());
+        return environmentBindingResult(
+            HostedTermsEnvironmentBindingRepository.PublicationStatus.PENDING_OWNER_SETTLEMENT,
+            candidate);
+      }
+      environmentBindings.completePublication(
+          requestId, candidate, change.canonicalBytes(), predecessor);
+      draftFences.markSourceCommitted(change);
+      return environmentBindingResult(
+          HostedTermsEnvironmentBindingRepository.PublicationStatus.COMMITTED, candidate);
+    }
+    environmentBindings.completePublication(requestId, candidate, null, null);
+    return environmentBindingResult(
+        HostedTermsEnvironmentBindingRepository.PublicationStatus.COMMITTED, candidate);
+  }
+
+  private EnvironmentBindingPublicationResult advanceEnvironmentBinding(
+      HostedTermsEnvironmentBindingRepository.PublicationOperation operation) {
+    if (operation.status() == HostedTermsEnvironmentBindingRepository.PublicationStatus.COMMITTED) {
+      return environmentBindingResult(operation, environmentBindings.readCandidate(operation));
+    }
+    if (operation.status() == HostedTermsEnvironmentBindingRepository.PublicationStatus.RECEIVED) {
+      throw new IllegalStateException(
+          "Binding publication intent is incomplete; retry the original trusted request");
+    }
+    if (operation.sourceChangeBinding() == null) {
+      throw new IllegalStateException("Pending binding lacks its durable source-change intent");
+    }
+    HostedTermsEnvironmentBindingRepository.HeadSnapshot head =
+        environmentBindings.lockHead(operation.environmentBoundary());
+    HostedTermsEnvironmentBinding candidate = environmentBindings.readCandidate(operation);
+    HostedTermsEnvironmentBinding predecessor = head.current();
+    if (head.unsettledPublication() == null
+        || !head.unsettledPublication().requestId().equals(operation.requestId())
+        || !Objects.equals(
+            candidate.predecessorBindingId(), predecessor == null ? null : predecessor.bindingId())
+        || !Objects.equals(
+            candidate.predecessorSourceVersion(),
+            predecessor == null ? null : predecessor.sourceVersion())) {
+      throw new IllegalStateException("Pending binding no longer matches exact environment head");
+    }
+    HostedTermsRepository.ScopeSnapshot targetScope =
+        repository.lockScope(candidate.hostedScopeId());
+    requireBindingCatalog(candidate, targetScope.current(), targetScope.databaseNow());
+    DraftAuthorizationFenceRepository.SourceChange change =
+        DraftAuthorizationFenceRepository.SourceChange.fromStored(operation.sourceChangeBinding());
+    boolean settled = draftFences.requestSourceChange(change);
+    if (!settled || !draftFences.sourceMutationPermitted(change)) {
+      return environmentBindingResult(
+          HostedTermsEnvironmentBindingRepository.PublicationStatus.PENDING_OWNER_SETTLEMENT,
+          candidate);
+    }
+    environmentBindings.completePublication(
+        operation.requestId(), candidate, change.canonicalBytes(), predecessor);
+    draftFences.markSourceCommitted(change);
+    return environmentBindingResult(
+        HostedTermsEnvironmentBindingRepository.PublicationStatus.COMMITTED, candidate);
+  }
+
+  private Map<UUID, HostedTermsRepository.ScopeSnapshot> lockBindingCatalogScopes(
+      HostedTermsEnvironmentBinding predecessor, UUID targetScopeId) {
+    Map<UUID, HostedTermsRepository.ScopeSnapshot> snapshots = new LinkedHashMap<>();
+    java.util.stream.Stream.of(
+            predecessor == null ? targetScopeId : predecessor.hostedScopeId(), targetScopeId)
+        .distinct()
+        .sorted(Comparator.comparing(UUID::toString))
+        .forEach(scopeId -> snapshots.put(scopeId, repository.lockScope(scopeId)));
+    return Map.copyOf(snapshots);
+  }
+
+  private DraftAuthorizationFenceRepository.SourceChange bindingSourceChange(
+      UUID changeId,
+      HostedTermsEnvironmentBinding predecessor,
+      Map<UUID, HostedTermsRepository.ScopeSnapshot> catalogScopes,
+      HostedTermsEnvironmentBinding candidate) {
+    Map<String, SourceEvidence> sources = new LinkedHashMap<>();
+    SourceEvidence bindingSource = predecessor.sourceEvidence();
+    sources.put(bindingSource.key(), bindingSource);
+    catalogScopes.values().stream()
+        .map(HostedTermsRepository.ScopeSnapshot::current)
+        .filter(Objects::nonNull)
+        .map(this::catalogSourceEvidence)
+        .forEach(source -> sources.put(source.key(), source));
+    return new DraftAuthorizationFenceRepository.SourceChange(
+        changeId,
+        List.copyOf(sources.values()),
+        HostedTermsEnvironmentBindingEncoding.receipt(candidate));
+  }
+
+  private SourceEvidence catalogSourceEvidence(HostedTermsCatalogVersion catalog) {
+    return new SourceEvidence(
+        SourceKind.HOSTED_TERMS,
+        catalog.hostedScopeId().toString(),
+        Long.toString(catalog.materialGeneration()),
+        Long.toString(catalog.sourceVersion()),
+        null,
+        null,
+        HostedTermsEncoding.catalog(catalog));
+  }
+
+  private void requireExactBindingCatalog(
+      HostedTermsEnvironmentBinding.PublicationEvidence evidence,
+      HostedTermsCatalogVersion current,
+      OffsetDateTime databaseNow) {
+    if (current == null || current.effectiveAt().isAfter(databaseNow.toInstant())) {
+      throw new IllegalStateException("Environment binding requires a current due terms catalog");
+    }
+    if (!current.versionId().equals(evidence.catalogVersionId())
+        || !current.hostedScopeId().equals(evidence.hostedScopeId())
+        || current.sourceVersion() != evidence.catalogSourceVersion()
+        || !current.operatorLegalIdentity().equals(evidence.operatorLegalIdentity())
+        || current.operatorIdentityVersion() != evidence.operatorIdentityVersion()) {
+      throw new IllegalArgumentException(
+          "Environment publication differs from exact current catalog and legal operator");
+    }
+  }
+
+  private void requireBindingCatalog(
+      HostedTermsEnvironmentBinding binding,
+      HostedTermsCatalogVersion current,
+      OffsetDateTime databaseNow) {
+    if (current == null || current.effectiveAt().isAfter(databaseNow.toInstant())) {
+      throw new IllegalStateException("Environment binding catalog is not currently operative");
+    }
+    if (!current.versionId().equals(binding.catalogVersionId())
+        || !current.hostedScopeId().equals(binding.hostedScopeId())
+        || current.sourceVersion() != binding.catalogSourceVersion()
+        || !current.operatorLegalIdentity().equals(binding.operatorLegalIdentity())
+        || current.operatorIdentityVersion() != binding.operatorIdentityVersion()) {
+      throw new IllegalStateException("Environment binding points at changed catalog authority");
+    }
+  }
+
+  private EnvironmentBoundCurrentness currentnessForEnvironmentInTransaction(
+      HostedTermsEnvironmentBinding.CurrentEnvironmentBoundary environment, UUID creatorPartyId) {
+    HostedTermsEnvironmentBindingRepository.HeadSnapshot head =
+        environmentBindings.lockHead(environment.environmentBoundary());
+    if (head.unsettledPublication() != null) {
+      throw new IllegalStateException("Environment binding source change is unresolved");
+    }
+    HostedTermsEnvironmentBinding binding = head.current();
+    if (binding == null) {
+      throw new IllegalStateException(
+          "No authenticated environment-to-hosted-scope binding exists");
+    }
+    CurrentnessEvidence terms = currentnessInTransaction(binding.hostedScopeId(), creatorPartyId);
+    HostedTermsRepository.ScopeSnapshot lockedScope = repository.lockScope(binding.hostedScopeId());
+    HostedTermsCatalogVersion catalog = lockedScope.current();
+    requireBindingCatalog(binding, catalog, lockedScope.databaseNow());
+    if (!catalog.versionId().equals(terms.currentVersionId())) {
+      throw new IllegalStateException("Currentness and locked catalog readback differ");
+    }
+    IndividualCreatorPartySource party =
+        individualParties.readIndividualSource(terms.creatorPartyId(), terms.accountId());
+    if (!party.locallyVerified()) {
+      throw new IllegalStateException(
+          "Current individual party source is unavailable or unverified");
+    }
+    IndividualHostedTermsAcceptance acceptance =
+        repository
+            .readCurrentAcceptance(terms.creatorPartyId(), binding.hostedScopeId(), catalog)
+            .orElseThrow(
+                () -> new IllegalStateException("Current affirmative acceptance is unavailable"));
+    if (!acceptance.evidenceId().equals(terms.acceptanceEvidenceId())) {
+      throw new IllegalStateException("Current acceptance readback changed during capture");
+    }
+    byte[] exactTermsSource =
+        HostedTermsEncoding.currentnessSource(catalog, acceptance, terms.disclosedDeadline());
+    if (!Arrays.equals(exactTermsSource, terms.exactCurrentnessSource())) {
+      throw new IllegalStateException(
+          "Currentness source differs from exact locked acceptance and deadline evidence");
+    }
+    SourceEvidence partySource =
+        new SourceEvidence(
+            SourceKind.CREATOR_PARTY,
+            party.creatorPartyId().toString(),
+            Long.toString(party.identityVersion()),
+            Long.toString(party.sourceVersion()),
+            null,
+            null,
+            CreatorPartyEncoding.party(party));
+    SourceEvidence termsSource =
+        new SourceEvidence(
+            SourceKind.HOSTED_TERMS,
+            catalog.hostedScopeId().toString(),
+            Long.toString(catalog.materialGeneration()),
+            Long.toString(catalog.sourceVersion()),
+            null,
+            null,
+            exactTermsSource);
+    List<SourceEvidence> sources =
+        java.util.stream.Stream.of(binding.sourceEvidence(), termsSource, partySource)
+            .sorted(Comparator.comparing(SourceEvidence::key))
+            .toList();
+    return new EnvironmentBoundCurrentness(environment, binding, terms, sources);
+  }
+
+  private EnvironmentBindingPublicationResult environmentBindingResult(
+      HostedTermsEnvironmentBindingRepository.PublicationOperation operation,
+      HostedTermsEnvironmentBinding candidate) {
+    return environmentBindingResult(operation.status(), candidate);
+  }
+
+  private EnvironmentBindingPublicationResult environmentBindingResult(
+      HostedTermsEnvironmentBindingRepository.PublicationStatus status,
+      HostedTermsEnvironmentBinding candidate) {
+    return new EnvironmentBindingPublicationResult(
+        status, candidate, HostedTermsEnvironmentBindingEncoding.receipt(candidate));
+  }
+
+  private void requireEnvironmentBindingRepository() {
+    if (environmentBindings == null) {
+      throw new IllegalStateException("Account environment-binding persistence is unavailable");
+    }
+  }
+
+  private void requireEnvironmentBindingPublicationAuthority() {
+    requireEnvironmentBindingRepository();
+    if (environmentBindingPublicationAuthority == null) {
+      throw new IllegalStateException(
+          "Authenticated environment publication authority is unavailable");
+    }
+  }
+
+  private void requireCurrentEnvironmentBoundaryAuthority() {
+    requireEnvironmentBindingRepository();
+    if (currentEnvironmentBoundaryAuthority == null) {
+      throw new IllegalStateException("Authenticated current environment boundary is unavailable");
+    }
   }
 
   private PublicationResult publishInTransaction(
@@ -341,10 +711,12 @@ public final class AccountHostedTermsService {
       throw new IllegalStateException("No operative hosted terms version is available");
     }
     Instant validUntil = null;
+    HostedTermsCatalogVersion disclosedDeadline = null;
     HostedTermsRepository.PublicationOperation pending = scope.unsettledPublication();
     if (pending != null) {
       HostedTermsCatalogVersion next = repository.readCandidate(pending);
       validUntil = next.effectiveAt();
+      disclosedDeadline = next;
       if (pending.status() == HostedTermsRepository.PublicationStatus.PENDING_OWNER_SETTLEMENT
           || !next.effectiveAt().isAfter(scope.databaseNow().toInstant())) {
         throw new IllegalStateException(
@@ -371,6 +743,8 @@ public final class AccountHostedTermsService {
       throw new IllegalStateException(
           "Acceptance or individual identity source is stale or changed");
     }
+    byte[] exactCurrentnessSource =
+        HostedTermsEncoding.currentnessSource(current, acceptance, disclosedDeadline);
     return new CurrentnessEvidence(
         scopeId,
         partyId,
@@ -384,7 +758,9 @@ public final class AccountHostedTermsService {
         acceptance.evidenceId(),
         acceptance.termsVersionId(),
         acceptance.documentDigest(),
-        validUntil);
+        validUntil,
+        disclosedDeadline,
+        exactCurrentnessSource);
   }
 
   private void requireOwnVerifiedIndividual(
@@ -428,6 +804,16 @@ public final class AccountHostedTermsService {
 
   public interface IndividualAcceptanceAuthority {
     AcceptanceAction resolve(UUID stableActionRequestId);
+  }
+
+  /** Authenticated owner handoff; the result is obtained before any Account DB lock is taken. */
+  public interface EnvironmentBindingPublicationAuthority {
+    HostedTermsEnvironmentBinding.PublicationEvidence resolve(UUID stableRequestId);
+  }
+
+  /** Current official boundary source; no boundary identifier is accepted from the caller. */
+  public interface CurrentEnvironmentBoundaryAuthority {
+    HostedTermsEnvironmentBinding.CurrentEnvironmentBoundary currentBoundary();
   }
 
   /** Typed result of an independently trusted operator publication/audit owner. */
@@ -551,6 +937,96 @@ public final class AccountHostedTermsService {
     }
   }
 
+  /** Immutable binding receipt result; PENDING_OWNER_SETTLEMENT is never current permission. */
+  public record EnvironmentBindingPublicationResult(
+      HostedTermsEnvironmentBindingRepository.PublicationStatus status,
+      HostedTermsEnvironmentBinding candidate,
+      byte[] exactReceipt) {
+    public EnvironmentBindingPublicationResult {
+      Objects.requireNonNull(status);
+      Objects.requireNonNull(candidate);
+      exactReceipt = HostedTermsEncoding.requireBytes(exactReceipt);
+      if (!Arrays.equals(exactReceipt, HostedTermsEnvironmentBindingEncoding.receipt(candidate))) {
+        throw new IllegalArgumentException("Binding result differs from exact immutable receipt");
+      }
+    }
+
+    @Override
+    public byte[] exactReceipt() {
+      return exactReceipt.clone();
+    }
+
+    @Override
+    public boolean equals(Object other) {
+      return other instanceof EnvironmentBindingPublicationResult that
+          && status == that.status
+          && candidate.equals(that.candidate)
+          && Arrays.equals(exactReceipt, that.exactReceipt);
+    }
+
+    @Override
+    public int hashCode() {
+      return Objects.hash(status, candidate, Arrays.hashCode(exactReceipt));
+    }
+  }
+
+  /** Combined currentness and exact independent source vector; not a Game Design commit token. */
+  public record EnvironmentBoundCurrentness(
+      HostedTermsEnvironmentBinding.CurrentEnvironmentBoundary environment,
+      HostedTermsEnvironmentBinding binding,
+      CurrentnessEvidence terms,
+      List<SourceEvidence> sourceEvidence) {
+    public EnvironmentBoundCurrentness {
+      Objects.requireNonNull(environment);
+      Objects.requireNonNull(binding);
+      Objects.requireNonNull(terms);
+      sourceEvidence =
+          List.copyOf(Objects.requireNonNull(sourceEvidence)).stream()
+              .sorted(Comparator.comparing(SourceEvidence::key))
+              .toList();
+      if (!environment.environmentBoundary().equals(binding.environmentBoundary())
+          || !terms.hostedScopeId().equals(binding.hostedScopeId())
+          || !terms.currentVersionId().equals(binding.catalogVersionId())
+          || terms.sourceVersion() != binding.catalogSourceVersion()
+          || !terms.operatorLegalIdentity().equals(binding.operatorLegalIdentity())
+          || terms.operatorIdentityVersion() != binding.operatorIdentityVersion()) {
+        throw new IllegalArgumentException(
+            "Environment binding, current catalog and party acceptance do not agree");
+      }
+      if (sourceEvidence.size() != 3
+          || sourceEvidence.stream().map(SourceEvidence::key).distinct().count() != 3
+          || sourceEvidence.stream()
+              .noneMatch(
+                  source ->
+                      source.key().equals(binding.sourceEvidence().key())
+                          && Arrays.equals(
+                              source.canonicalBytes(), binding.sourceEvidence().canonicalBytes()))
+          || sourceEvidence.stream()
+              .noneMatch(
+                  source ->
+                      source.kind() == SourceKind.HOSTED_TERMS
+                          && source.scopeId().equals(terms.hostedScopeId().toString())
+                          && Objects.equals(
+                              source.generation(), Long.toString(terms.materialGeneration()))
+                          && source.sourceVersion().equals(Long.toString(terms.sourceVersion()))
+                          && Arrays.equals(source.evidence(), terms.exactCurrentnessSource()))
+          || sourceEvidence.stream()
+              .noneMatch(
+                  source ->
+                      source.kind() == SourceKind.CREATOR_PARTY
+                          && source.scopeId().equals(terms.creatorPartyId().toString())
+                          && source.generation() != null
+                          && source.sourceVersion() != null)) {
+        throw new IllegalArgumentException(
+            "Bound currentness must retain exact binding, catalog/acceptance and party sources");
+      }
+    }
+
+    public List<SourceEvidence> sourceEvidence() {
+      return List.copyOf(sourceEvidence);
+    }
+  }
+
   /** Not an owner commit token; deadline must be rechecked at consumer commit linearization. */
   public record CurrentnessEvidence(
       UUID hostedScopeId,
@@ -565,7 +1041,9 @@ public final class AccountHostedTermsService {
       UUID acceptanceEvidenceId,
       UUID acceptedVersionId,
       String acceptedDocumentDigest,
-      Instant validUntil) {
+      Instant validUntil,
+      HostedTermsCatalogVersion disclosedDeadline,
+      byte[] exactCurrentnessSource) {
     public CurrentnessEvidence {
       HostedTermsEncoding.requireUuid(hostedScopeId, "hosted scope");
       HostedTermsEncoding.requireUuid(creatorPartyId, "creator party");
@@ -576,9 +1054,22 @@ public final class AccountHostedTermsService {
       HostedTermsEncoding.requireUuid(acceptanceEvidenceId, "acceptance evidence");
       HostedTermsEncoding.requireUuid(acceptedVersionId, "accepted terms version");
       acceptedDocumentDigest = HostedTermsEncoding.requireDigest(acceptedDocumentDigest);
+      exactCurrentnessSource = HostedTermsEncoding.requireBytes(exactCurrentnessSource);
       if (operatorIdentityVersion <= 0 || sourceVersion <= 0 || materialGeneration <= 0) {
         throw new IllegalArgumentException("Positive current hosted terms source required");
       }
+      if ((validUntil == null) != (disclosedDeadline == null)
+          || (disclosedDeadline != null
+              && (!validUntil.equals(disclosedDeadline.effectiveAt())
+                  || !disclosedDeadline.hostedScopeId().equals(hostedScopeId)))) {
+        throw new IllegalArgumentException(
+            "Disclosed deadline time and exact immutable catalog evidence must agree");
+      }
+    }
+
+    @Override
+    public byte[] exactCurrentnessSource() {
+      return exactCurrentnessSource.clone();
     }
   }
 }
