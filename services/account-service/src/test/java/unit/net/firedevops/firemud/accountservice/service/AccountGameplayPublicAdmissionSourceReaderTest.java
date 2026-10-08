@@ -108,13 +108,13 @@ class AccountGameplayPublicAdmissionSourceReaderTest {
     Fixture fixture = new Fixture();
     doThrow(
             new AccountLifecyclePendingDenialReader.PendingOperationException(
-                "Account lifecycle invalidation is unresolved for this Account and tenant"))
+                "Account-wide or target-tenant invalidation is unresolved"))
         .when(fixture.lifecyclePendingDenials)
         .requireNoPending(ACCOUNT, TENANT);
 
     assertThatThrownBy(fixture::read)
         .isInstanceOf(AccountLifecyclePendingDenialReader.PendingOperationException.class)
-        .hasMessage("Account lifecycle invalidation is unresolved for this Account and tenant");
+        .hasMessage("Account-wide or target-tenant invalidation is unresolved");
 
     var ordered = inOrder(fixture.memberships, fixture.lifecyclePendingDenials);
     ordered.verify(fixture.memberships).readCurrent(ACCOUNT, TENANT);

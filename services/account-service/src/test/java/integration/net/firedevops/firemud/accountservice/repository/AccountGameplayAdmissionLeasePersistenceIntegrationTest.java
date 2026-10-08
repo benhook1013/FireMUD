@@ -46,7 +46,7 @@ import org.springframework.transaction.support.TransactionTemplate;
  */
 class AccountGameplayAdmissionLeasePersistenceIntegrationTest {
   private static final AccountPostgresIntegrationFixture POSTGRES =
-      new AccountPostgresIntegrationFixture();
+      new AccountPostgresIntegrationFixture(true);
   private static final String TENANT = "22222222-2222-4222-8222-222222222222";
   private static final String OTHER = "33333333-3333-4333-8333-333333333333";
 
@@ -58,6 +58,14 @@ class AccountGameplayAdmissionLeasePersistenceIntegrationTest {
   @AfterAll
   static void stop() {
     POSTGRES.stop();
+  }
+
+  @Test
+  void fixtureUsesDurablePrimarySettingsRequiredByCommitConfirmation() {
+    var settings = POSTGRES.verifyDurablePrimary();
+    assertThat(settings.inRecovery()).isFalse();
+    assertThat(settings.fsync()).isEqualTo("on");
+    assertThat(settings.synchronousCommit()).isEqualTo("on");
   }
 
   @Test

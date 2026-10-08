@@ -71,3 +71,9 @@ Entry format:
   - Observation: an exact-head CI observer initially attributed a cancelled dev-tool job to a retry-validation error printed by a negative-test fixture. Parent inspection found both displayed unittest groups ended `OK`, and GitHub marked the job cancelled after a newer run superseded it. The completed Account job and uploaded PostgreSQL JUnit evidence remained valid, while aggregate validation was incomplete.
   - Expected pattern: inspect failing assertions, group summaries and exact job/step conclusions before treating an error-shaped log line as a defect. Preserve completed module proof separately from cancellation, skipped later steps and whole-workflow readiness.
   - Reconsideration trigger: apply this classification to the next failed or cancelled exact-head run; a later green run does not retroactively execute the cancelled steps.
+
+- `2026-10-08`: PostgreSQL test-container defaults are not durability proof
+  - Observation: Testcontainers PostgreSQL 2.0.5 starts with `fsync=off`; exact Account confirmation CI executed eighteen lease cases, but five correctly failed the production durable-primary guard. Successful storage tests against that default must not be reported as durable COMMIT proof.
+  - Expected pattern: opt durability-sensitive suites into durable PostgreSQL settings from startup, read back primary and WAL settings explicitly, and reject an unsuitable external database without changing it. Do not weaken a production guard or infer that re-enabling `fsync` repairs previously unsafe data.
+  - Current status: the scoped startup/readback repair is prepared; corrected physical confirmation execution remains required, including idle-database WAL coverage. Other test suites retain their existing fixture configuration.
+  - Reconsideration trigger: update proof after corrected exact-head PostgreSQL execution; distinguish local compilation/skips and ordinary row visibility from established durability.

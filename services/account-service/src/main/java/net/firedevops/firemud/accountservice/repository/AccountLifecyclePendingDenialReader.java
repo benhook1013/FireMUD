@@ -11,9 +11,9 @@ import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 /**
- * Reads the canonical Account lifecycle operation table as a fail-closed admission denial
- * predicate. It proves no producer identity, World result, source finalization, current serving
- * state, or admission permission.
+ * Reads exact target-tenant lifecycle operations and Account-wide pending source operations as a
+ * fail-closed admission denial predicate. It proves no producer identity, World result, source
+ * finalization, current serving state, or admission permission.
  */
 @Repository
 public class AccountLifecyclePendingDenialReader {
@@ -22,7 +22,12 @@ public class AccountLifecyclePendingDenialReader {
   private static final String PENDING_SQL =
       "SELECT EXISTS (SELECT 1 FROM account_lifecycle_serving_operations "
           + "WHERE account_uuid = ? AND tenant_uuid = ? "
-          + "AND status IN ('PENDING', 'WORLD_TERMINAL'))";
+          + "AND status IN ('PENDING', 'WORLD_TERMINAL')) "
+          + "OR EXISTS (SELECT 1 FROM account_security_state_operations "
+          + "WHERE account_uuid = ? AND status = 'WAITING') "
+          + "OR EXISTS (SELECT 1 FROM account_draft_authorization_source_changes c "
+          + "JOIN account_draft_authorization_changed_scopes s ON s.change_id = c.change_id "
+          + "WHERE c.status = 'WAITING' AND s.source_key IN (?, ?))";
   private static final UUID NIL_UUID = new UUID(0L, 0L);
 
   private final DSLContext dsl;
@@ -36,14 +41,18 @@ public class AccountLifecyclePendingDenialReader {
   }
 
   /**
-   * Requires no unresolved lifecycle operation for the exact Account/tenant pair.
+   * Requires no unresolved exact target-tenant lifecycle operation or Account-wide pending source
+   * operation.
    *
    * <p>The existing writable owner transaction must be READ_COMMITTED, REPEATABLE_READ, or
    * SERIALIZABLE. At READ_COMMITTED, the exact Account row lock makes this query observe a
-   * lifecycle insert committed before the lock is acquired; the journal's BEFORE INSERT row-version
-   * fence prevents an insert from crossing a later lock holder. When Spring uses the datasource's
-   * default isolation, the actual PostgreSQL transaction isolation is checked. Both a pending
-   * intent and a correlated World terminal receipt remain denial evidence.
+   * lifecycle insert committed before the lock is acquired; the lifecycle journal's and
+   * Account-wide pending-intent tables' row-version fences prevent an insert from crossing a later
+   * lock holder. When Spring uses the datasource's default isolation, the actual PostgreSQL
+   * transaction isolation is checked. A pending lifecycle intent, a correlated World terminal
+   * receipt, an Account security-state operation in WAITING, or an Account/GLOBAL_ROLES source
+   * change in WAITING remains denial evidence. Tenant membership and tenant source scopes are not
+   * promoted to Account-wide scope.
    */
   public void requireNoPending(UUID accountUuid, UUID tenantUuid) {
     requireWritableOwnerTransaction(dsl);
@@ -56,7 +65,14 @@ public class AccountLifecyclePendingDenialReader {
         throw new PendingStateUnavailableException(
             "Account lifecycle pending state could not be read");
       }
-      Record pendingRecord = dsl.fetchOne(PENDING_SQL, accountUuid, tenantUuid);
+      Record pendingRecord =
+          dsl.fetchOne(
+              PENDING_SQL,
+              accountUuid,
+              tenantUuid,
+              accountUuid,
+              "ACCOUNT:" + accountUuid,
+              "GLOBAL_ROLES:" + accountUuid);
       Boolean pending = pendingRecord == null ? null : pendingRecord.get(0, Boolean.class);
       if (pending == null) {
         throw new PendingStateUnavailableException(
@@ -64,7 +80,7 @@ public class AccountLifecyclePendingDenialReader {
       }
       if (pending) {
         throw new PendingOperationException(
-            "Account lifecycle invalidation is unresolved for this Account and tenant");
+            "Account-wide or target-tenant invalidation is unresolved");
       }
     } catch (PendingOperationException | PendingStateUnavailableException denied) {
       throw denied;

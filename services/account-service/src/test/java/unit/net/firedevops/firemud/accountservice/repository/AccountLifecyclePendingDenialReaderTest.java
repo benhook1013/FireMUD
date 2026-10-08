@@ -18,12 +18,22 @@ import org.jooq.Record;
 import org.jooq.exception.DataAccessException;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
+import org.mockito.InOrder;
 import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 class AccountLifecyclePendingDenialReaderTest {
   private static final UUID ACCOUNT = UUID.randomUUID();
   private static final UUID TENANT = UUID.randomUUID();
+  private static final String DENIAL_SQL =
+      "SELECT EXISTS (SELECT 1 FROM account_lifecycle_serving_operations "
+          + "WHERE account_uuid = ? AND tenant_uuid = ? "
+          + "AND status IN ('PENDING', 'WORLD_TERMINAL')) "
+          + "OR EXISTS (SELECT 1 FROM account_security_state_operations "
+          + "WHERE account_uuid = ? AND status = 'WAITING') "
+          + "OR EXISTS (SELECT 1 FROM account_draft_authorization_source_changes c "
+          + "JOIN account_draft_authorization_changed_scopes s ON s.change_id = c.change_id "
+          + "WHERE c.status = 'WAITING' AND s.source_key IN (?, ?))";
 
   @AfterEach
   void clearTransaction() {
@@ -31,7 +41,7 @@ class AccountLifecyclePendingDenialReaderTest {
   }
 
   @Test
-  void pendingOperationDeniesAfterLockingExactAccount() {
+  void pendingAccountOrTargetTenantOperationDeniesAfterLockingExactAccount() {
     DSLContext dsl = mock(DSLContext.class);
     Record account = accountRow();
     Record pending = mock(Record.class);
@@ -42,20 +52,13 @@ class AccountLifecyclePendingDenialReaderTest {
     assertThatThrownBy(
             () -> new AccountLifecyclePendingDenialReader(dsl).requireNoPending(ACCOUNT, TENANT))
         .isInstanceOf(PendingOperationException.class)
-        .hasMessage("Account lifecycle invalidation is unresolved for this Account and tenant");
+        .hasMessage("Account-wide or target-tenant invalidation is unresolved");
 
     var ordered = inOrder(dsl);
     ordered
         .verify(dsl)
         .fetchOne("SELECT account_uuid FROM accounts WHERE account_uuid = ? FOR UPDATE", ACCOUNT);
-    ordered
-        .verify(dsl)
-        .fetchOne(
-            "SELECT EXISTS (SELECT 1 FROM account_lifecycle_serving_operations "
-                + "WHERE account_uuid = ? AND tenant_uuid = ? "
-                + "AND status IN ('PENDING', 'WORLD_TERMINAL'))",
-            ACCOUNT,
-            TENANT);
+    verifyDenialQuery(ordered, dsl);
   }
 
   @Test
@@ -69,13 +72,7 @@ class AccountLifecyclePendingDenialReaderTest {
 
     new AccountLifecyclePendingDenialReader(dsl).requireNoPending(ACCOUNT, TENANT);
 
-    verify(dsl)
-        .fetchOne(
-            "SELECT EXISTS (SELECT 1 FROM account_lifecycle_serving_operations "
-                + "WHERE account_uuid = ? AND tenant_uuid = ? "
-                + "AND status IN ('PENDING', 'WORLD_TERMINAL'))",
-            ACCOUNT,
-            TENANT);
+    verifyDenialQuery(dsl);
   }
 
   @Test
@@ -89,13 +86,7 @@ class AccountLifecyclePendingDenialReaderTest {
 
     new AccountLifecyclePendingDenialReader(dsl).requireNoPending(ACCOUNT, TENANT);
 
-    verify(dsl)
-        .fetchOne(
-            "SELECT EXISTS (SELECT 1 FROM account_lifecycle_serving_operations "
-                + "WHERE account_uuid = ? AND tenant_uuid = ? "
-                + "AND status IN ('PENDING', 'WORLD_TERMINAL'))",
-            ACCOUNT,
-            TENANT);
+    verifyDenialQuery(dsl);
   }
 
   @Test
@@ -117,14 +108,7 @@ class AccountLifecyclePendingDenialReaderTest {
     ordered
         .verify(dsl)
         .fetchOne("SELECT account_uuid FROM accounts WHERE account_uuid = ? FOR UPDATE", ACCOUNT);
-    ordered
-        .verify(dsl)
-        .fetchOne(
-            "SELECT EXISTS (SELECT 1 FROM account_lifecycle_serving_operations "
-                + "WHERE account_uuid = ? AND tenant_uuid = ? "
-                + "AND status IN ('PENDING', 'WORLD_TERMINAL'))",
-            ACCOUNT,
-            TENANT);
+    verifyDenialQuery(ordered, dsl);
   }
 
   @Test
@@ -249,6 +233,19 @@ class AccountLifecyclePendingDenialReaderTest {
     Record account = mock(Record.class);
     when(account.get(0, UUID.class)).thenReturn(ACCOUNT);
     return account;
+  }
+
+  private static void verifyDenialQuery(DSLContext dsl) {
+    verify(dsl)
+        .fetchOne(
+            DENIAL_SQL, ACCOUNT, TENANT, ACCOUNT, "ACCOUNT:" + ACCOUNT, "GLOBAL_ROLES:" + ACCOUNT);
+  }
+
+  private static void verifyDenialQuery(InOrder ordered, DSLContext dsl) {
+    ordered
+        .verify(dsl)
+        .fetchOne(
+            DENIAL_SQL, ACCOUNT, TENANT, ACCOUNT, "ACCOUNT:" + ACCOUNT, "GLOBAL_ROLES:" + ACCOUNT);
   }
 
   private static void transaction(int isolation) {

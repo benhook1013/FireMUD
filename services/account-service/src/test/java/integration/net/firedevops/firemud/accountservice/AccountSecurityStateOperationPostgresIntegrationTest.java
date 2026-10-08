@@ -4,6 +4,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.nio.charset.StandardCharsets;
+import java.sql.Connection;
+import java.sql.SQLException;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -746,6 +748,281 @@ class AccountSecurityStateOperationPostgresIntegrationTest {
     assertThat(fixture.dsl().fetch("SELECT * FROM account_global_role_sources")).isEqualTo(roles);
     assertThat(fixture.dsl().fetchCount(DSL.table("account_security_state_operations"))).isZero();
     assertThat(seed.account().getAccountUuid()).isNotNull();
+  }
+
+  @Test
+  void latestWaitingClaimVersionsOnlyItsAccountAndFencesOlderSnapshots() throws Exception {
+    for (int isolation :
+        List.of(Connection.TRANSACTION_REPEATABLE_READ, Connection.TRANSACTION_SERIALIZABLE)) {
+      Fixture fixture = fixture("91");
+      Seed seed = latestSeed(fixture);
+      Seed other = latestSeed(fixture);
+      Pending pending = pending(fixture, seed, state(false), state(true), 0L, new byte[0]);
+      var accounts = fixture.dsl().fetch("SELECT * FROM accounts ORDER BY id");
+      var authority = fixture.dsl().fetch("SELECT * FROM account_authority_generations");
+      var fences = fixture.dsl().fetch("SELECT * FROM account_authority_issuance_fences");
+      var sources = fixture.dsl().fetch("SELECT * FROM account_authority_source_records");
+      var roles = fixture.dsl().fetch("SELECT * FROM account_global_role_sources");
+      var restrictions =
+          fixture.dsl().fetch("SELECT * FROM account_platform_restriction_projections");
+      var restrictionBirths =
+          fixture.dsl().fetch("SELECT * FROM account_platform_restriction_births");
+      var events = fixture.dsl().fetch("SELECT * FROM account_authority_outbox_events");
+      String accountVersion = accountVersion(fixture, seed.account().getAccountUuid());
+      String otherVersion = accountVersion(fixture, other.account().getAccountUuid());
+      try (Connection stale = fixture.dataSource().getConnection()) {
+        stale.setAutoCommit(false);
+        stale.setTransactionIsolation(isolation);
+        try (var statement = stale.createStatement()) {
+          statement.executeQuery("SELECT id FROM accounts").close();
+          var absent =
+              statement.executeQuery("SELECT count(*) FROM account_security_state_operations");
+          assertThat(absent.next()).isTrue();
+          assertThat(absent.getInt(1)).isZero();
+          absent.close();
+        }
+        var claim =
+            tx(fixture, () -> fixture.operations().claim(pending.request(), pending.capture()));
+        assertThat(claim.claimed()).isTrue();
+        assertThat(claim.operation().receipt()).isEmpty();
+        String claimedVersion = accountVersion(fixture, seed.account().getAccountUuid());
+        assertThat(claimedVersion).isNotEqualTo(accountVersion);
+        assertThat(accountVersion(fixture, other.account().getAccountUuid()))
+            .isEqualTo(otherVersion);
+        assertThat(fixture.dsl().fetch("SELECT * FROM accounts ORDER BY id")).isEqualTo(accounts);
+        assertThat(fixture.dsl().fetch("SELECT * FROM account_authority_generations"))
+            .isEqualTo(authority);
+        assertThat(fixture.dsl().fetch("SELECT * FROM account_authority_issuance_fences"))
+            .isEqualTo(fences);
+        assertThat(fixture.dsl().fetch("SELECT * FROM account_authority_source_records"))
+            .isEqualTo(sources);
+        assertThat(fixture.dsl().fetch("SELECT * FROM account_global_role_sources"))
+            .isEqualTo(roles);
+        assertThat(fixture.dsl().fetch("SELECT * FROM account_platform_restriction_projections"))
+            .isEqualTo(restrictions);
+        assertThat(fixture.dsl().fetch("SELECT * FROM account_platform_restriction_births"))
+            .isEqualTo(restrictionBirths);
+        assertThat(fixture.dsl().fetch("SELECT * FROM account_authority_outbox_events"))
+            .isEqualTo(events);
+        assertStaleAccountLock(stale, seed.account().getAccountUuid());
+        stale.rollback();
+        assertThat(
+                tx(fixture, () -> fixture.operations().claim(pending.request(), pending.capture()))
+                    .claimed())
+            .isFalse();
+        assertThat(accountVersion(fixture, seed.account().getAccountUuid()))
+            .isEqualTo(claimedVersion);
+      }
+    }
+  }
+
+  @Test
+  void forwardPendingFenceMigrationRetainsEvidenceAndProtectsPreInstallSnapshots()
+      throws Exception {
+    for (int isolation :
+        List.of(Connection.TRANSACTION_REPEATABLE_READ, Connection.TRANSACTION_SERIALIZABLE)) {
+      Fixture fixture = fixture("83");
+      Seed security = seed(fixture);
+      Seed roles = seed(fixture);
+      Seed other = seed(fixture);
+      migrate(fixture.dataSource(), fixture.schema(), "90");
+      String securityVersion = accountVersion(fixture, security.account().getAccountUuid());
+      String rolesVersion = accountVersion(fixture, roles.account().getAccountUuid());
+      String otherVersion = accountVersion(fixture, other.account().getAccountUuid());
+      try (Connection staleSecurity = fixture.dataSource().getConnection();
+          Connection staleRoles = fixture.dataSource().getConnection()) {
+        for (Connection stale : List.of(staleSecurity, staleRoles)) {
+          stale.setAutoCommit(false);
+          stale.setTransactionIsolation(isolation);
+          try (var statement = stale.createStatement()) {
+            statement.executeQuery("SELECT id FROM accounts").close();
+            var absent =
+                statement.executeQuery(
+                    "SELECT count(*) FROM account_draft_authorization_source_changes");
+            assertThat(absent.next()).isTrue();
+            assertThat(absent.getInt(1)).isZero();
+            absent.close();
+          }
+        }
+        Pending pending = pending(fixture, security, state(false), state(true), 0L, new byte[0]);
+        tx(fixture, () -> fixture.operations().claim(pending.request(), pending.capture()));
+        // Retained contradictory correlation is negative-only evidence, never source authority.
+        // Superuser fixture corruption isolates UUID-keyed security denial from Draft scopes.
+        String unrelated = "ISSUER:retained-security-correlation";
+        fixture
+            .dsl()
+            .execute(
+                "INSERT INTO account_draft_authorization_source_locks (source_key) VALUES (?)",
+                unrelated);
+        fixture
+            .dsl()
+            .execute("ALTER TABLE account_draft_authorization_changed_scopes DISABLE TRIGGER USER");
+        fixture
+            .dsl()
+            .execute(
+                "UPDATE account_draft_authorization_changed_scopes SET source_key = ? WHERE change_id = ?",
+                unrelated,
+                pending.capture().sourceChange().changeId());
+        fixture
+            .dsl()
+            .execute("ALTER TABLE account_draft_authorization_changed_scopes ENABLE TRIGGER USER");
+        fixture.dsl().execute("ALTER TABLE account_security_state_operations DISABLE TRIGGER ALL");
+        fixture
+            .dsl()
+            .execute(
+                "UPDATE account_security_state_operations SET account_provenance = 'ACCOUNT_DATABASE_INSERT' WHERE request_id = ?",
+                pending.request().requestId());
+        fixture.dsl().execute("ALTER TABLE account_security_state_operations ENABLE TRIGGER ALL");
+        SourceChange roleChange =
+            new SourceChange(
+                UUID.randomUUID(),
+                List.of(
+                    new SourceEvidence(
+                        SourceKind.GLOBAL_ROLES,
+                        roles.account().getAccountUuid().toString(),
+                        null,
+                        "1",
+                        null,
+                        null,
+                        new byte[] {7})),
+                new byte[] {12});
+        tx(fixture, () -> fixture.fences().requestSourceChange(roleChange));
+        // Historical malformed/unmapped participation remains evidence, never inferred identity.
+        retainedScope(fixture, "ACCOUNT:" + UUID.randomUUID());
+        retainedScope(fixture, "GLOBAL_ROLES:41");
+        assertThat(accountVersion(fixture, security.account().getAccountUuid()))
+            .isEqualTo(securityVersion);
+        assertThat(accountVersion(fixture, roles.account().getAccountUuid()))
+            .isEqualTo(rolesVersion);
+        var accounts = fixture.dsl().fetch("SELECT * FROM accounts ORDER BY id");
+        var changes =
+            fixture
+                .dsl()
+                .fetch(
+                    "SELECT * FROM account_draft_authorization_source_changes ORDER BY change_id");
+        var scopes =
+            fixture
+                .dsl()
+                .fetch(
+                    "SELECT * FROM account_draft_authorization_changed_scopes ORDER BY change_id, source_key");
+        var operations =
+            fixture
+                .dsl()
+                .fetch("SELECT * FROM account_security_state_operations ORDER BY request_id");
+        var authority = fixture.dsl().fetch("SELECT * FROM account_authority_generations");
+        var fences = fixture.dsl().fetch("SELECT * FROM account_authority_issuance_fences");
+        var sources = fixture.dsl().fetch("SELECT * FROM account_authority_source_records");
+        var roleSources = fixture.dsl().fetch("SELECT * FROM account_global_role_sources");
+        var events = fixture.dsl().fetch("SELECT * FROM account_authority_outbox_events");
+        migrate(fixture.dataSource(), fixture.schema(), "91");
+        assertThat(accountVersion(fixture, security.account().getAccountUuid()))
+            .isNotEqualTo(securityVersion);
+        assertThat(accountVersion(fixture, roles.account().getAccountUuid()))
+            .isNotEqualTo(rolesVersion);
+        assertThat(accountVersion(fixture, other.account().getAccountUuid()))
+            .isEqualTo(otherVersion);
+        assertThat(fixture.dsl().fetch("SELECT * FROM accounts ORDER BY id")).isEqualTo(accounts);
+        assertThat(
+                fixture
+                    .dsl()
+                    .fetch(
+                        "SELECT * FROM account_draft_authorization_source_changes ORDER BY change_id"))
+            .isEqualTo(changes);
+        assertThat(
+                fixture
+                    .dsl()
+                    .fetch(
+                        "SELECT * FROM account_draft_authorization_changed_scopes ORDER BY change_id, source_key"))
+            .isEqualTo(scopes);
+        assertThat(
+                fixture
+                    .dsl()
+                    .fetch("SELECT * FROM account_security_state_operations ORDER BY request_id"))
+            .isEqualTo(operations);
+        assertThat(fixture.dsl().fetch("SELECT * FROM account_authority_generations"))
+            .isEqualTo(authority);
+        assertThat(fixture.dsl().fetch("SELECT * FROM account_authority_issuance_fences"))
+            .isEqualTo(fences);
+        assertThat(fixture.dsl().fetch("SELECT * FROM account_authority_source_records"))
+            .isEqualTo(sources);
+        assertThat(fixture.dsl().fetch("SELECT * FROM account_global_role_sources"))
+            .isEqualTo(roleSources);
+        assertThat(fixture.dsl().fetch("SELECT * FROM account_authority_outbox_events"))
+            .isEqualTo(events);
+        assertThat(fixture.dsl().fetchCount(DSL.table("account_platform_restriction_births")))
+            .isZero();
+        assertStaleAccountLock(staleSecurity, security.account().getAccountUuid());
+        assertStaleAccountLock(staleRoles, roles.account().getAccountUuid());
+        staleSecurity.rollback();
+        staleRoles.rollback();
+      }
+    }
+  }
+
+  private void retainedScope(Fixture fixture, String key) {
+    tx(
+        fixture,
+        () -> {
+          UUID change = UUID.randomUUID();
+          fixture
+              .dsl()
+              .execute(
+                  "INSERT INTO account_draft_authorization_source_changes (change_id, binding, status) VALUES (?, ?, 'WAITING')",
+                  change,
+                  new byte[] {12});
+          fixture
+              .dsl()
+              .execute(
+                  "INSERT INTO account_draft_authorization_source_locks (source_key) VALUES (?)",
+                  key);
+          fixture
+              .dsl()
+              .execute(
+                  "INSERT INTO account_draft_authorization_changed_scopes (change_id, source_key) VALUES (?, ?)",
+                  change,
+                  key);
+          return null;
+        });
+  }
+
+  private Seed latestSeed(Fixture fixture) {
+    return tx(
+        fixture,
+        () -> {
+          String suffix = UUID.randomUUID().toString();
+          Account account = new Account();
+          account.setUsername("security-" + suffix);
+          account.setEmail(suffix + "@example.test");
+          account.setPasswordHash("synthetic-verifier");
+          account.setLoginAuthModes(AccountLoginAuthModes.DEFAULT_SERIALIZED);
+          new AccountAuthoritySourceEvidenceRepository(
+                  fixture.dsl(), fixture.generations(), fixture.outbox())
+              .initializeIssuerIfAbsent("firemud-account-service");
+          Account saved = new AccountRepository(fixture.dsl()).save(account);
+          return new Seed(
+              saved, fixture.generations().read(AuthorityScope.account(saved.getAccountUuid())));
+        });
+  }
+
+  private static String accountVersion(Fixture fixture, UUID account) {
+    return Objects.requireNonNull(
+            fixture
+                .dsl()
+                .fetchOne(
+                    "SELECT xmin::TEXT AS version FROM accounts WHERE account_uuid = ?", account),
+            "Expected persisted Account tuple version")
+        .get("version", String.class);
+  }
+
+  private static void assertStaleAccountLock(Connection stale, UUID account) throws SQLException {
+    try (var lock =
+        stale.prepareStatement("SELECT id FROM accounts WHERE account_uuid = ? FOR SHARE")) {
+      lock.setObject(1, account);
+      assertThatThrownBy(lock::executeQuery)
+          .isInstanceOf(SQLException.class)
+          .extracting("SQLState")
+          .isEqualTo("40001");
+    }
   }
 
   private Event producerFixture(Fixture fixture, Pending pending, boolean lateFailure) {

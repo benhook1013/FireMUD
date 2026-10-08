@@ -149,7 +149,7 @@ class AccountCanonicalFirstJoinTerminalCoordinatorTest {
     fixture.arrangePending();
     doThrow(
             new AccountLifecyclePendingDenialReader.PendingOperationException(
-                "Account lifecycle invalidation is unresolved for this Account and tenant"))
+                "Account-wide or target-tenant invalidation is unresolved"))
         .when(fixture.pendingReader)
         .requireNoPending(ACCOUNT_ID, TENANT_ID);
     fixture.startWritableTransaction();
@@ -159,7 +159,7 @@ class AccountCanonicalFirstJoinTerminalCoordinatorTest {
                 fixture.coordinator.commitCanonicalFirstJoin(
                     fixture.scope, REQUEST_ID, CALLER_BINDING))
         .isInstanceOf(AccountLifecyclePendingDenialReader.PendingOperationException.class)
-        .hasMessage("Account lifecycle invalidation is unresolved for this Account and tenant");
+        .hasMessage("Account-wide or target-tenant invalidation is unresolved");
 
     InOrder ordered = inOrder(fixture.operations, fixture.pendingReader);
     ordered.verify(fixture.operations).lockAccount(17L);

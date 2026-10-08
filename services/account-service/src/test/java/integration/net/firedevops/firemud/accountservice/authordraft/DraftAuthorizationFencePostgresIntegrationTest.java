@@ -4,12 +4,16 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.nio.charset.StandardCharsets;
+import java.sql.Connection;
+import java.sql.SQLException;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.UUID;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Supplier;
 import net.firedevops.firemud.accountservice.authordraft.DraftAuthorizationFenceBinding;
 import net.firedevops.firemud.accountservice.authordraft.DraftAuthorizationFenceBinding.Outcome;
@@ -22,6 +26,8 @@ import net.firedevops.firemud.accountservice.authordraft.DraftAuthorizationFence
 import net.firedevops.firemud.accountservice.authordraft.DraftAuthorizationFenceRepository.Settlement;
 import net.firedevops.firemud.accountservice.authordraft.DraftAuthorizationFenceRepository.SourceChange;
 import net.firedevops.firemud.accountservice.authordraft.DraftAuthorizationFenceRepository.SourceChangeAbortReason;
+import net.firedevops.firemud.accountservice.entity.Account;
+import net.firedevops.firemud.accountservice.repository.AccountRepository;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding.AffectedUnit;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding.RevisionPayload;
@@ -45,6 +51,9 @@ import org.testcontainers.junit.jupiter.Testcontainers;
  * Component fixtures stipulate authenticated current-source capture and authenticated definitive
  * owner readback. They do not implement or prove those absent producers, RPC or source-writer
  * gates.
+ *
+ * <p>Actual Account storage creation establishes fixture identity only. Supplied source counters
+ * and payloads remain stipulated capture, never current authorization evidence.
  */
 @Testcontainers(disabledWithoutDocker = true)
 class DraftAuthorizationFencePostgresIntegrationTest {
@@ -54,7 +63,7 @@ class DraftAuthorizationFencePostgresIntegrationTest {
   @Test
   void revokeBeforeCommitDeniesDelayedRequestsUntilBothDefinitiveAborts() {
     Context context = context();
-    DraftAuthorizationFenceBinding binding = binding();
+    DraftAuthorizationFenceBinding binding = binding(context);
     SourceChange change = change(binding);
     tx(context, () -> context.repository().reserve(binding));
     assertThat(tx(context, () -> context.repository().requestSourceChange(change))).isFalse();
@@ -79,7 +88,7 @@ class DraftAuthorizationFencePostgresIntegrationTest {
   @Test
   void abortedSourceChangeRetainsExactTerminalReasonAndCannotReopenOrBecomeMalformed() {
     Context context = context();
-    DraftAuthorizationFenceBinding binding = binding();
+    DraftAuthorizationFenceBinding binding = binding(context);
     SourceChange change = change(binding);
     tx(context, () -> context.repository().reserve(binding));
     assertThat(tx(context, () -> context.repository().requestSourceChange(change))).isFalse();
@@ -149,7 +158,7 @@ class DraftAuthorizationFencePostgresIntegrationTest {
   @Test
   void worldCommittedAndGameDesignUnknownSurviveRestartAndBlockSourceUntilExactBothReadbacks() {
     Context context = context();
-    DraftAuthorizationFenceBinding binding = binding();
+    DraftAuthorizationFenceBinding binding = binding(context);
     tx(context, () -> context.repository().reserve(binding));
     var ordered = tx(context, () -> context.repository().claimCommitOrder(binding));
     SourceChange change = change(binding);
@@ -158,6 +167,7 @@ class DraftAuthorizationFencePostgresIntegrationTest {
     Context restarted =
         new Context(
             context.dsl(),
+            context.dataSource(),
             new DraftAuthorizationFenceRepository(context.dsl()),
             context.transaction());
     assertThat(tx(restarted, () -> restarted.repository().sourceMutationPermitted(change)))
@@ -195,7 +205,7 @@ class DraftAuthorizationFencePostgresIntegrationTest {
   @Test
   void commitOrderWithBothDefinitiveAbortsReleasesOriginalWaitingIntentWithoutReopening() {
     Context context = context();
-    DraftAuthorizationFenceBinding binding = binding();
+    DraftAuthorizationFenceBinding binding = binding(context);
     tx(context, () -> context.repository().reserve(binding));
     var ordered = tx(context, () -> context.repository().claimCommitOrder(binding));
     SourceChange change = change(binding);
@@ -240,7 +250,7 @@ class DraftAuthorizationFencePostgresIntegrationTest {
   void bothMixedDirectionsFailNonpublicationAndReleaseOnlyAfterBothExactReadbacks() {
     for (Outcome worldOutcome : List.of(Outcome.COMMITTED, Outcome.DEFINITIVELY_ABORTED)) {
       Context context = context();
-      DraftAuthorizationFenceBinding binding = binding();
+      DraftAuthorizationFenceBinding binding = binding(context);
       tx(context, () -> context.repository().reserve(binding));
       var ordered = tx(context, () -> context.repository().claimCommitOrder(binding));
       SourceChange change = change(binding);
@@ -295,7 +305,7 @@ class DraftAuthorizationFencePostgresIntegrationTest {
   void revokeOrderWithEitherMixedDirectionCannotAuthorizeSourceMutation() {
     for (Outcome worldOutcome : List.of(Outcome.COMMITTED, Outcome.DEFINITIVELY_ABORTED)) {
       Context context = context();
-      DraftAuthorizationFenceBinding binding = binding();
+      DraftAuthorizationFenceBinding binding = binding(context);
       tx(context, () -> context.repository().reserve(binding));
       SourceChange change = change(binding);
       assertThat(tx(context, () -> context.repository().requestSourceChange(change))).isFalse();
@@ -328,7 +338,7 @@ class DraftAuthorizationFencePostgresIntegrationTest {
   @Test
   void changedCompleteBindingsConflictWithoutRewritingOriginal() {
     Context context = context();
-    DraftAuthorizationFenceBinding original = binding();
+    DraftAuthorizationFenceBinding original = binding(context);
     var stored = tx(context, () -> context.repository().reserve(original));
     assertThat(tx(context, () -> context.repository().readSettlement(original)))
         .isEqualTo(Settlement.PENDING);
@@ -345,7 +355,7 @@ class DraftAuthorizationFencePostgresIntegrationTest {
   @Test
   void inconsistentOrMalformedCompleteBindingsFailBeforeReservationStorage() {
     Context context = context();
-    DraftAuthorizationFenceBinding b = binding();
+    DraftAuthorizationFenceBinding b = binding(context);
     for (int field = 0; field < 9; field++) {
       int changedField = field;
       byte[] bytes = field == 6 ? new byte[] {11} : b.gameDesignBinding();
@@ -397,7 +407,7 @@ class DraftAuthorizationFencePostgresIntegrationTest {
   @Test
   void rollbackPreservesReservationAndIntentTogetherAndDisjointSourcesDoNotConflict() {
     Context context = context();
-    DraftAuthorizationFenceBinding original = binding();
+    DraftAuthorizationFenceBinding original = binding(context);
     assertThatThrownBy(
             () ->
                 tx(
@@ -412,7 +422,7 @@ class DraftAuthorizationFencePostgresIntegrationTest {
         .isInstanceOf(IllegalArgumentException.class);
     tx(context, () -> context.repository().reserve(original));
     tx(context, () -> context.repository().requestSourceChange(change(original)));
-    DraftAuthorizationFenceBinding independent = binding();
+    DraftAuthorizationFenceBinding independent = binding(context);
     tx(context, () -> context.repository().reserve(independent));
     assertThat(tx(context, () -> context.repository().claimCommitOrder(independent)).ordering())
         .isEqualTo(Ordering.COMMIT_ORDER);
@@ -421,7 +431,7 @@ class DraftAuthorizationFencePostgresIntegrationTest {
   @Test
   void distinctPendingChangesCannotRetainTwoOldCapturesForTheSameSource() {
     Context context = context();
-    DraftAuthorizationFenceBinding binding = binding();
+    DraftAuthorizationFenceBinding binding = binding(context);
     SourceChange first = change(binding);
     SourceChange second = change(binding);
     tx(context, () -> context.repository().reserve(binding));
@@ -457,7 +467,7 @@ class DraftAuthorizationFencePostgresIntegrationTest {
   void concurrentDistinctSourceClaimsAdmitOnlyOnePendingCaptureWithoutBlockingDisjointSources()
       throws Exception {
     Context context = context();
-    DraftAuthorizationFenceBinding binding = binding();
+    DraftAuthorizationFenceBinding binding = binding(context);
     SourceChange first = change(binding);
     SourceChange second = change(binding);
     tx(context, () -> context.repository().reserve(binding));
@@ -492,7 +502,7 @@ class DraftAuthorizationFencePostgresIntegrationTest {
     assertThat(context.dsl().fetchCount(DSL.table("account_draft_authorization_source_changes")))
         .isEqualTo(1);
     assertThat(tx(context, () -> context.repository().requestSourceChange(first))).isFalse();
-    SourceChange disjoint = change(binding());
+    SourceChange disjoint = change(binding(context));
     assertThat(tx(context, () -> context.repository().requestSourceChange(disjoint))).isTrue();
     assertThat(context.dsl().fetchCount(DSL.table("account_draft_authorization_source_changes")))
         .isEqualTo(2);
@@ -502,7 +512,7 @@ class DraftAuthorizationFencePostgresIntegrationTest {
   void concurrentCommitOrderAndRevocationChooseExactlyOneDurableOrdering() throws Exception {
     for (boolean commitWins : List.of(true, false)) {
       Context context = context();
-      DraftAuthorizationFenceBinding binding = binding();
+      DraftAuthorizationFenceBinding binding = binding(context);
       SourceChange change = change(binding);
       tx(context, () -> context.repository().reserve(binding));
       CountDownLatch firstOrdered = new CountDownLatch(1);
@@ -560,6 +570,315 @@ class DraftAuthorizationFencePostgresIntegrationTest {
         .isInstanceOf(DataAccessException.class);
   }
 
+  @Test
+  void accountAndGlobalRolePendingScopesVersionOnlyTheirExistingAccountTuple() throws Exception {
+    for (SourceKind kind : List.of(SourceKind.ACCOUNT, SourceKind.GLOBAL_ROLES)) {
+      for (int isolation :
+          List.of(Connection.TRANSACTION_REPEATABLE_READ, Connection.TRANSACTION_SERIALIZABLE)) {
+        Context context = context();
+        UUID account = binding(context).actorAccountId();
+        UUID other = binding(context).actorAccountId();
+        var before = context.dsl().fetch("SELECT * FROM accounts ORDER BY id");
+        var authority = context.dsl().fetch("SELECT * FROM account_authority_generations");
+        var fences = context.dsl().fetch("SELECT * FROM account_authority_issuance_fences");
+        var sources = context.dsl().fetch("SELECT * FROM account_authority_source_records");
+        var roles = context.dsl().fetch("SELECT * FROM account_global_role_sources");
+        var events = context.dsl().fetch("SELECT * FROM account_authority_outbox_events");
+        String originalVersion = accountVersion(context, account);
+        String otherVersion = accountVersion(context, other);
+        try (Connection stale = context.dataSource().getConnection()) {
+          stale.setAutoCommit(false);
+          stale.setTransactionIsolation(isolation);
+          try (var statement = stale.createStatement()) {
+            statement.executeQuery("SELECT id FROM accounts").close();
+            var absent =
+                statement.executeQuery(
+                    "SELECT count(*) FROM account_draft_authorization_source_changes");
+            assertThat(absent.next()).isTrue();
+            assertThat(absent.getInt(1)).isZero();
+            absent.close();
+          }
+          SourceChange change =
+              new SourceChange(UUID.randomUUID(), List.of(source(kind, account)), new byte[] {12});
+          assertThat(tx(context, () -> context.repository().requestSourceChange(change))).isTrue();
+          assertThat(accountVersion(context, account)).isNotEqualTo(originalVersion);
+          assertThat(accountVersion(context, other)).isEqualTo(otherVersion);
+          assertThat(context.dsl().fetch("SELECT * FROM accounts ORDER BY id")).isEqualTo(before);
+          assertThat(context.dsl().fetch("SELECT * FROM account_authority_generations"))
+              .isEqualTo(authority);
+          assertThat(context.dsl().fetch("SELECT * FROM account_authority_issuance_fences"))
+              .isEqualTo(fences);
+          assertThat(context.dsl().fetch("SELECT * FROM account_authority_source_records"))
+              .isEqualTo(sources);
+          assertThat(context.dsl().fetch("SELECT * FROM account_global_role_sources"))
+              .isEqualTo(roles);
+          assertThat(context.dsl().fetch("SELECT * FROM account_authority_outbox_events"))
+              .isEqualTo(events);
+          try (var lock =
+              stale.prepareStatement("SELECT id FROM accounts WHERE account_uuid = ? FOR SHARE")) {
+            lock.setObject(1, account);
+            assertThatThrownBy(lock::executeQuery)
+                .isInstanceOf(SQLException.class)
+                .extracting("SQLState")
+                .isEqualTo("40001");
+          }
+          stale.rollback();
+        }
+      }
+    }
+  }
+
+  @Test
+  void producerLocksDeduplicatedAccountsInUuidOrderBeforeAnySourceLocks() throws Exception {
+    Context context = context();
+    List<UUID> accounts =
+        List.of(binding(context).actorAccountId(), binding(context).actorAccountId()).stream()
+            .sorted(java.util.Comparator.comparing(UUID::toString))
+            .toList();
+    UUID first = accounts.getFirst();
+    UUID last = accounts.getLast();
+    SourceChange change =
+        new SourceChange(
+            UUID.randomUUID(),
+            List.of(
+                source(SourceKind.ACCOUNT, last),
+                source(SourceKind.GLOBAL_ROLES, first),
+                source(SourceKind.GLOBAL_ROLES, last)),
+            new byte[] {12});
+    tx(
+        context,
+        () -> {
+          for (SourceEvidence source : change.sources()) {
+            context
+                .dsl()
+                .execute(
+                    "INSERT INTO account_draft_authorization_source_locks (source_key) VALUES (?)",
+                    source.key());
+          }
+          return null;
+        });
+    CountDownLatch started = new CountDownLatch(1);
+    AtomicInteger waitingPid = new AtomicInteger();
+    try (var executor = Executors.newSingleThreadExecutor()) {
+      var claimed =
+          tx(
+              context,
+              () -> {
+                context
+                    .dsl()
+                    .fetchOne("SELECT id FROM accounts WHERE account_uuid = ? FOR UPDATE", first);
+                int blockerPid =
+                    Objects.requireNonNull(
+                            context.dsl().fetchOne("SELECT pg_backend_pid() AS pid"),
+                            "Expected blocking PostgreSQL backend")
+                        .get("pid", Integer.class);
+                var task =
+                    executor.submit(
+                        () ->
+                            tx(
+                                context,
+                                () -> {
+                                  context.dsl().execute("SET LOCAL lock_timeout = '10s'");
+                                  waitingPid.set(
+                                      Objects.requireNonNull(
+                                              context
+                                                  .dsl()
+                                                  .fetchOne("SELECT pg_backend_pid() AS pid"),
+                                              "Expected waiting PostgreSQL backend")
+                                          .get("pid", Integer.class));
+                                  started.countDown();
+                                  return context.repository().requestSourceChange(change);
+                                }));
+                await(started);
+                awaitBlocked(context, waitingPid.get(), blockerPid);
+                context
+                    .dsl()
+                    .fetchOne(
+                        "SELECT id FROM accounts WHERE account_uuid = ? FOR UPDATE NOWAIT", last);
+                for (SourceEvidence source : change.sources()) {
+                  context
+                      .dsl()
+                      .fetchOne(
+                          "SELECT source_key FROM account_draft_authorization_source_locks WHERE source_key = ? FOR UPDATE NOWAIT",
+                          source.key());
+                }
+                return task;
+              });
+      assertThat(claimed.get(15, TimeUnit.SECONDS)).isTrue();
+    }
+    assertThat(tx(context, () -> context.repository().requestSourceChange(change))).isTrue();
+  }
+
+  @Test
+  void scopeInsertVersionsAccountBeforeTheExistingParentLockingTrigger() throws Exception {
+    Context context = context();
+    UUID account = binding(context).actorAccountId();
+    UUID change = UUID.randomUUID();
+    String key = "ACCOUNT:" + account;
+    tx(
+        context,
+        () -> {
+          context
+              .dsl()
+              .execute(
+                  "INSERT INTO account_draft_authorization_source_changes (change_id, binding, status) VALUES (?, ?, 'WAITING')",
+                  change,
+                  new byte[] {12});
+          context
+              .dsl()
+              .execute(
+                  "INSERT INTO account_draft_authorization_source_locks (source_key) VALUES (?)",
+                  key);
+          return null;
+        });
+    CountDownLatch started = new CountDownLatch(1);
+    AtomicInteger waitingPid = new AtomicInteger();
+    try (var executor = Executors.newSingleThreadExecutor()) {
+      var inserted =
+          tx(
+              context,
+              () -> {
+                context
+                    .dsl()
+                    .fetchOne(
+                        "SELECT change_id FROM account_draft_authorization_source_changes WHERE change_id = ? FOR UPDATE",
+                        change);
+                int blockerPid =
+                    Objects.requireNonNull(
+                            context.dsl().fetchOne("SELECT pg_backend_pid() AS pid"),
+                            "Expected blocking PostgreSQL backend")
+                        .get("pid", Integer.class);
+                var task =
+                    executor.submit(
+                        () ->
+                            tx(
+                                context,
+                                () -> {
+                                  context.dsl().execute("SET LOCAL lock_timeout = '10s'");
+                                  waitingPid.set(
+                                      Objects.requireNonNull(
+                                              context
+                                                  .dsl()
+                                                  .fetchOne("SELECT pg_backend_pid() AS pid"),
+                                              "Expected waiting PostgreSQL backend")
+                                          .get("pid", Integer.class));
+                                  started.countDown();
+                                  return context
+                                      .dsl()
+                                      .execute(
+                                          "INSERT INTO account_draft_authorization_changed_scopes (change_id, source_key) VALUES (?, ?)",
+                                          change,
+                                          key);
+                                }));
+                await(started);
+                awaitBlocked(context, waitingPid.get(), blockerPid);
+                try (Connection observer = context.dataSource().getConnection();
+                    var lock =
+                        observer.prepareStatement(
+                            "SELECT id FROM accounts WHERE account_uuid = ? FOR UPDATE NOWAIT")) {
+                  lock.setObject(1, account);
+                  assertThatThrownBy(lock::executeQuery)
+                      .isInstanceOf(SQLException.class)
+                      .extracting("SQLState")
+                      .isEqualTo("55P03");
+                } catch (SQLException failure) {
+                  throw new IllegalStateException(failure);
+                }
+                return task;
+              });
+      assertThat(inserted.get(15, TimeUnit.SECONDS)).isEqualTo(1);
+    }
+  }
+
+  @Test
+  void applicableMissingOrMalformedAccountScopesDenyWithoutCreatingAccountOrIntent() {
+    Context context = context();
+    UUID absent = UUID.randomUUID();
+    SourceChange missing =
+        new SourceChange(
+            UUID.randomUUID(), List.of(source(SourceKind.ACCOUNT, absent)), new byte[] {12});
+    assertThatThrownBy(() -> tx(context, () -> context.repository().requestSourceChange(missing)))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("persisted Account");
+    assertThat(context.dsl().fetchCount(DSL.table("account_draft_authorization_source_locks")))
+        .isZero();
+    for (String key :
+        List.of(
+            "ACCOUNT:" + absent,
+            "GLOBAL_ROLES:" + absent,
+            "ACCOUNT:42",
+            "GLOBAL_ROLES:00000000-0000-0000-0000-000000000000",
+            "ACCOUNT")) {
+      assertThatThrownBy(() -> insertScope(context, key)).isInstanceOf(DataAccessException.class);
+    }
+    assertThat(context.dsl().fetchCount(DSL.table("accounts"))).isZero();
+    assertThat(context.dsl().fetchCount(DSL.table("account_draft_authorization_source_changes")))
+        .isZero();
+    insertScope(context, "TENANT:" + absent);
+    assertThat(context.dsl().fetchCount(DSL.table("account_draft_authorization_changed_scopes")))
+        .isEqualTo(1);
+  }
+
+  private void insertScope(Context context, String key) {
+    tx(
+        context,
+        () -> {
+          UUID change = UUID.randomUUID();
+          context
+              .dsl()
+              .execute(
+                  "INSERT INTO account_draft_authorization_source_changes (change_id, binding, status) VALUES (?, ?, 'WAITING')",
+                  change,
+                  new byte[] {12});
+          context
+              .dsl()
+              .execute(
+                  "INSERT INTO account_draft_authorization_source_locks (source_key) VALUES (?)",
+                  key);
+          context
+              .dsl()
+              .execute(
+                  "INSERT INTO account_draft_authorization_changed_scopes (change_id, source_key) VALUES (?, ?)",
+                  change,
+                  key);
+          return null;
+        });
+  }
+
+  private static SourceEvidence source(SourceKind kind, UUID account) {
+    // Stipulated capture is retained exactly; its counters/payload never establish authority.
+    return new SourceEvidence(
+        kind, account.toString(), "3", "5", "stream/" + account, "2", new byte[] {7});
+  }
+
+  private static String accountVersion(Context context, UUID account) {
+    return Objects.requireNonNull(
+            context
+                .dsl()
+                .fetchOne(
+                    "SELECT xmin::TEXT AS version FROM accounts WHERE account_uuid = ?", account),
+            "Expected persisted Account tuple version")
+        .get("version", String.class);
+  }
+
+  private static void awaitBlocked(Context context, int waitingPid, int blockerPid) {
+    long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+    while (System.nanoTime() < deadline) {
+      if (Boolean.TRUE.equals(
+          Objects.requireNonNull(
+                  context
+                      .dsl()
+                      .fetchOne(
+                          "SELECT ? = ANY(pg_blocking_pids(?)) AS blocked", blockerPid, waitingPid),
+                  "Expected PostgreSQL blocking-state readback")
+              .get("blocked", Boolean.class))) {
+        return;
+      }
+      Thread.onSpinWait();
+    }
+    throw new IllegalStateException("Source producer did not block on the first Account lock");
+  }
+
   private Context context() {
     String schema = "draft_fence_" + UUID.randomUUID().toString().replace("-", "");
     DriverManagerDataSource source = new DriverManagerDataSource();
@@ -579,11 +898,21 @@ class DraftAuthorizationFencePostgresIntegrationTest {
     TransactionTemplate transaction =
         new TransactionTemplate(new DataSourceTransactionManager(source));
     transaction.setIsolationLevel(TransactionDefinition.ISOLATION_READ_COMMITTED);
-    return new Context(dsl, new DraftAuthorizationFenceRepository(dsl), transaction);
+    return new Context(dsl, source, new DraftAuthorizationFenceRepository(dsl), transaction);
   }
 
-  private DraftAuthorizationFenceBinding binding() {
-    UUID account = UUID.randomUUID();
+  private DraftAuthorizationFenceBinding binding(Context context) {
+    UUID account =
+        tx(
+            context,
+            () -> {
+              Account row = new Account();
+              String suffix = UUID.randomUUID().toString();
+              row.setUsername("draft-" + suffix);
+              row.setEmail(suffix + "@example.test");
+              row.setPasswordHash("synthetic-verifier");
+              return new AccountRepository(context.dsl()).save(row).getAccountUuid();
+            });
     SourceEvidence source =
         new SourceEvidence(
             SourceKind.ACCOUNT,
@@ -727,6 +1056,7 @@ class DraftAuthorizationFencePostgresIntegrationTest {
 
   private record Context(
       DSLContext dsl,
+      DriverManagerDataSource dataSource,
       DraftAuthorizationFenceRepository repository,
       TransactionTemplate transaction) {}
 }
