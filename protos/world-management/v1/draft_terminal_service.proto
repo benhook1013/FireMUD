@@ -33,6 +33,8 @@ message ReadWorldDraftTerminalOutcomeResponse {
   string read_request_id = 3;
   bytes original_account_binding = 4;
   WorldDraftTerminalReadStatus status = 5;
-  // Canonical account-draft-owner-readback/v1 bytes. Empty only for UNKNOWN.
+  // Canonical account-draft-owner-readback/v1 or /v2 bytes; the version matches
+  // the original Account fence schema (fence v1 -> readback v1, v2 -> v2).
+  // Empty only for UNKNOWN.
   bytes owner_readback_bytes = 6;
 }
