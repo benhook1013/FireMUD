@@ -1696,6 +1696,67 @@ class WorldDraftGraphApplicationPostgresIntegrationTest {
   }
 
   @Test
+  void canonicalActivationRawSqlRejectsIncompleteOrSubstitutedOperationalRegionAssignments() {
+    PreparedLifecycleFixture fixture = materializedLifecycleFixture();
+    var assignments = fixture.preparing().operationalRegionAssignments();
+    assertThat(assignments).hasSizeGreaterThan(1);
+    var first = assignments.entrySet().iterator().next();
+
+    Map<UUID, UUID> missing = new LinkedHashMap<>(assignments);
+    missing.remove(first.getKey());
+    Map<UUID, UUID> extra = new LinkedHashMap<>(assignments);
+    UUID extraCanonicalId = UUID.randomUUID();
+    while (assignments.containsKey(extraCanonicalId)
+        || assignments.containsValue(extraCanonicalId)) {
+      extraCanonicalId = UUID.randomUUID();
+    }
+    UUID extraOperationalId = UUID.randomUUID();
+    while (assignments.containsKey(extraOperationalId)
+        || assignments.containsValue(extraOperationalId)
+        || extraCanonicalId.equals(extraOperationalId)) {
+      extraOperationalId = UUID.randomUUID();
+    }
+    extra.put(extraCanonicalId, extraOperationalId);
+    Map<UUID, UUID> substituted = new LinkedHashMap<>(assignments);
+    UUID substitutedOperationalId = UUID.randomUUID();
+    while (assignments.containsKey(substitutedOperationalId)
+        || assignments.containsValue(substitutedOperationalId)
+        || first.getKey().equals(substitutedOperationalId)) {
+      substitutedOperationalId = UUID.randomUUID();
+    }
+    substituted.put(first.getKey(), substitutedOperationalId);
+
+    ownerTransaction()
+        .execute(
+            status -> {
+              int index = 0;
+              for (Map<UUID, UUID> invalidAssignments : List.of(missing, extra, substituted)) {
+                var proof = rawCommittedActivationProofWithAssignments(fixture, invalidAssignments);
+                String savepoint = "invalid_activation_region_map_" + index++;
+                dsl.execute("SAVEPOINT " + savepoint);
+                assertThatThrownBy(
+                        () ->
+                            insertRawActivationOperation(
+                                proof, fixture.materialized().association().worldInstanceId()))
+                    .hasMessageContaining("exact complete operational REGION assignment map");
+                dsl.execute("ROLLBACK TO SAVEPOINT " + savepoint);
+                assertThat(
+                        activationOperationCountForRequest(proof.request().activationRequestId()))
+                    .isZero();
+                assertThat(activationManifestCountForRequest(proof.request().activationRequestId()))
+                    .isZero();
+              }
+              return null;
+            });
+
+    var retained = fixture.lifecycleRepository().read(fixture.readRequest()).orElseThrow();
+    assertThat(retained.lifecycleStatus()).isEqualTo("PREPARING");
+    assertThat(retained.operationalRegionAssignments()).containsExactlyEntriesOf(assignments);
+    assertThat(activationManifestCount(fixture.input().canonicalGameInstanceId())).isZero();
+    assertOrigin();
+  }
+
+  @Test
   void canonicalActivationTransportRequiresGameSessionAndReplaysImmutableOwnerResult()
       throws Exception {
     PreparedLifecycleFixture fixture = materializedLifecycleFixture();
@@ -4757,6 +4818,41 @@ class WorldDraftGraphApplicationPostgresIntegrationTest {
         request,
         new WorldCanonicalInstanceActivation.Result(
             request, WorldCanonicalInstanceActivation.Outcome.COMMITTED, null, predictedActive));
+  }
+
+  private ActivationProof rawCommittedActivationProofWithAssignments(
+      PreparedLifecycleFixture fixture, Map<UUID, UUID> assignments) {
+    var preparing =
+        new WorldCanonicalInstanceLifecycleEvidence(
+            fixture.preparing().request(),
+            fixture.preparing().launchBinding(),
+            fixture.preparing().startLocation(),
+            fixture.preparing().runtimeRoomInstanceId(),
+            "PREPARING",
+            fixture.preparing().lifecycleEpoch(),
+            fixture.preparing().rowVersion(),
+            fixture.preparing().captureId(),
+            fixture.preparing().graphSha256(),
+            fixture.preparing().preparationInputDigest(),
+            assignments);
+    var request = new WorldCanonicalInstanceActivation.Request(UUID.randomUUID(), preparing);
+    var active =
+        new WorldCanonicalInstanceLifecycleEvidence(
+            preparing.request(),
+            preparing.launchBinding(),
+            preparing.startLocation(),
+            preparing.runtimeRoomInstanceId(),
+            "ACTIVE",
+            preparing.lifecycleEpoch() + 1L,
+            preparing.rowVersion() + 1L,
+            preparing.captureId(),
+            preparing.graphSha256(),
+            preparing.preparationInputDigest(),
+            assignments);
+    return new ActivationProof(
+        request,
+        new WorldCanonicalInstanceActivation.Result(
+            request, WorldCanonicalInstanceActivation.Outcome.COMMITTED, null, active));
   }
 
   private void insertRawActivationOperation(ActivationProof proof, long worldInstanceId) {
