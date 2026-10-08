@@ -398,12 +398,15 @@ class AccountDraftTerminalReconciliationServiceTest {
               return worldEvidence(request, originalWorld);
             });
 
-    assertThat(f.service().reconcile(f.binding().operationId()))
-        .contains(Settlement.FAILED_NONPUBLICATION);
+    assertThat(f.service().reconcile(f.binding().operationId())).contains(Settlement.PENDING);
     assertThat(f.stored().get(Owner.WORLD).canonicalBytes())
         .containsExactly(originalWorld.canonicalBytes());
-    assertThat(f.service().reconcile(f.binding().operationId()))
-        .contains(Settlement.FAILED_NONPUBLICATION);
+    byte[] originalGameDesignBytes = f.stored().get(Owner.GAME_DESIGN).canonicalBytes();
+    assertThat(f.service().reconcile(f.binding().operationId())).contains(Settlement.PENDING);
+    assertThat(f.stored().get(Owner.WORLD).canonicalBytes())
+        .containsExactly(originalWorld.canonicalBytes());
+    assertThat(f.stored().get(Owner.GAME_DESIGN).canonicalBytes())
+        .containsExactly(originalGameDesignBytes);
     verify(f.gameDesignClient()).read(any());
     verify(f.worldClient()).read(any());
   }
@@ -503,13 +506,134 @@ class AccountDraftTerminalReconciliationServiceTest {
         });
   }
 
+  @Test
+  void v2WithoutWorldNeverReadsLooksUpOrRetainsWorldEvidence() {
+    Fixture f =
+        fixture(
+            Ordering.COMMIT_ORDER,
+            requiredBinding(List.of(DraftCommitBinding.Owner.GAME_DESIGN_CONTROL_PLANE)));
+    when(f.gameDesignClient().read(any()))
+        .thenAnswer(
+            invocation -> {
+              assertOutsideTransaction(f);
+              var request = (GameDesignDraftTerminalReadEvidence.Request) invocation.getArgument(0);
+              return new GameDesignDraftTerminalReadEvidence(
+                  request,
+                  Optional.of(
+                      readback(
+                          f.binding(), Owner.GAME_DESIGN, Outcome.COMMITTED, new byte[] {31})));
+            });
+
+    assertThat(f.service().reconcile(f.binding().operationId())).contains(Settlement.COMMITTED);
+    assertThat(f.service().reconcile(f.binding().operationId())).contains(Settlement.COMMITTED);
+    verifyNoInteractions(f.worldClient());
+    verify(f.repository(), never()).readOwnerResult(any(), eq(Owner.WORLD));
+    verify(f.repository()).recordOwnerReadback(eq(f.binding()), any());
+    assertThat(f.stored()).containsOnlyKeys(Owner.GAME_DESIGN);
+    verify(f.gameDesignClient()).read(any());
+  }
+
+  @Test
+  void v2WorldAndGameDesignResultsCannotSettleMissingIndependentEntity() {
+    Fixture f =
+        fixture(
+            Ordering.COMMIT_ORDER,
+            requiredBinding(
+                List.of(
+                    DraftCommitBinding.Owner.WORLD_MANAGEMENT,
+                    DraftCommitBinding.Owner.ENTITY_MANAGEMENT)));
+    when(f.gameDesignClient().read(any()))
+        .thenAnswer(
+            invocation -> {
+              assertOutsideTransaction(f);
+              var request = (GameDesignDraftTerminalReadEvidence.Request) invocation.getArgument(0);
+              return new GameDesignDraftTerminalReadEvidence(
+                  request,
+                  Optional.of(
+                      readback(
+                          f.binding(), Owner.GAME_DESIGN, Outcome.COMMITTED, new byte[] {32})));
+            });
+    when(f.worldClient().read(any()))
+        .thenAnswer(
+            invocation -> {
+              assertOutsideTransaction(f);
+              var request = (WorldDraftTerminalReadEvidence.Request) invocation.getArgument(0);
+              return worldEvidence(
+                  request, readback(f.binding(), Owner.WORLD, Outcome.COMMITTED, new byte[] {33}));
+            });
+
+    assertThat(f.service().reconcile(f.binding().operationId())).contains(Settlement.PENDING);
+    byte[] originalWorld = f.stored().get(Owner.WORLD).canonicalBytes();
+    byte[] originalGameDesign = f.stored().get(Owner.GAME_DESIGN).canonicalBytes();
+    assertThat(f.service().reconcile(f.binding().operationId())).contains(Settlement.PENDING);
+    assertThat(f.stored()).containsOnlyKeys(Owner.GAME_DESIGN, Owner.WORLD);
+    assertThat(f.stored().get(Owner.WORLD).canonicalBytes()).containsExactly(originalWorld);
+    assertThat(f.stored().get(Owner.GAME_DESIGN).canonicalBytes())
+        .containsExactly(originalGameDesign);
+    verify(f.gameDesignClient()).read(any());
+    verify(f.worldClient()).read(any());
+    verify(f.repository(), never()).readOwnerResult(any(), eq(Owner.ENTITY));
+  }
+
+  private static DraftAuthorizationFenceBinding requiredBinding(
+      List<DraftCommitBinding.Owner> owners) {
+    var original = binding();
+    var prior =
+        DraftCommitBinding.fromStored(
+            new String(original.gameDesignBinding(), java.nio.charset.StandardCharsets.UTF_8),
+            original.inputDigest());
+    var revisions =
+        java.util.stream.IntStream.range(0, owners.size())
+            .mapToObj(
+                index ->
+                    new DraftCommitBinding.RevisionPayload(
+                        Integer.toString(index),
+                        UUID.randomUUID(),
+                        owners.get(index),
+                        "payload-" + index))
+            .toList();
+    var affected =
+        owners.stream()
+            .map(
+                owner ->
+                    new DraftCommitBinding.AffectedUnit(
+                        owner, "aggregate", owner.name(), "aggregate", owner.name(), "0"))
+            .toList();
+    var complete =
+        DraftCommitBinding.create(
+            prior.target(),
+            prior.requestId(),
+            prior.commitId(),
+            prior.baseCommitId(),
+            revisions,
+            affected);
+    return new DraftAuthorizationFenceBinding(
+            original.operationId(),
+            original.requestId(),
+            original.commitId(),
+            original.fenceId(),
+            original.actorAccountId(),
+            original.tenantId(),
+            original.versionId(),
+            original.baseCommitId(),
+            original.expectedDraftEpoch(),
+            complete.canonicalBytes(),
+            complete.canonicalBytes(),
+            complete.digest(),
+            original.sources())
+        .withRequiredOwners();
+  }
+
   private static Fixture fixture(Ordering ordering) {
+    return fixture(ordering, binding());
+  }
+
+  private static Fixture fixture(Ordering ordering, DraftAuthorizationFenceBinding binding) {
     DraftAuthorizationFenceRepository repository = mock(DraftAuthorizationFenceRepository.class);
     GameDesignDraftTerminalReadClient gameDesignClient =
         mock(GameDesignDraftTerminalReadClient.class);
     WorldDraftTerminalReadClient worldClient = mock(WorldDraftTerminalReadClient.class);
     TestTransactionManager manager = new TestTransactionManager();
-    DraftAuthorizationFenceBinding binding = binding();
     Map<Owner, OwnerReadback> stored = new EnumMap<>(Owner.class);
     when(repository.readOriginalBinding(any())).thenReturn(Optional.of(binding));
     when(repository.read(any())).thenAnswer(invocation -> fenceSnapshot(binding, ordering));
@@ -527,21 +651,19 @@ class AccountDraftTerminalReconciliationServiceTest {
     when(repository.readSettlement(any()))
         .thenAnswer(
             invocation -> {
-              OwnerReadback gameDesign = stored.get(Owner.GAME_DESIGN);
-              OwnerReadback world = stored.get(Owner.WORLD);
-              if (ordering == Ordering.RESERVED || gameDesign == null || world == null) {
+              if (ordering == Ordering.RESERVED
+                  || !stored.keySet().equals(java.util.Set.copyOf(binding.requiredOwners()))) {
                 return Settlement.PENDING;
               }
-              if (ordering == Ordering.REVOKE_ORDER) {
-                return gameDesign.outcome() == Outcome.DEFINITIVELY_ABORTED
-                        && world.outcome() == Outcome.DEFINITIVELY_ABORTED
-                    ? Settlement.FAILED_NONPUBLICATION
-                    : Settlement.PENDING;
+              if (ordering == Ordering.COMMIT_ORDER
+                  && stored.values().stream()
+                      .allMatch(value -> value.outcome() == Outcome.COMMITTED)) {
+                return Settlement.COMMITTED;
               }
-              return gameDesign.outcome() == Outcome.COMMITTED
-                      && world.outcome() == Outcome.COMMITTED
-                  ? Settlement.COMMITTED
-                  : Settlement.FAILED_NONPUBLICATION;
+              return stored.values().stream()
+                      .allMatch(value -> value.outcome() == Outcome.DEFINITIVELY_ABORTED)
+                  ? Settlement.FAILED_NONPUBLICATION
+                  : Settlement.PENDING;
             });
     doAnswer(
             invocation -> {

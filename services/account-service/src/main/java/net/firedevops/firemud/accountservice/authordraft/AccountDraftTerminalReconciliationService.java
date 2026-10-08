@@ -21,8 +21,9 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
 import org.springframework.transaction.support.TransactionTemplate;
 
 /**
- * Unregistered two-owner recovery consumer. Exact authenticated owner readbacks recover only the
- * original V57 settlement; this component creates no authorization, source mutation or activation.
+ * Unregistered Game Design/World subset recovery consumer. It reads only required owners supported
+ * by these clients; other missing v2 owners remain pending under the repository's complete-set
+ * settlement predicate. This component creates no authorization, source mutation or activation.
  */
 public final class AccountDraftTerminalReconciliationService {
   private final DraftAuthorizationFenceRepository repository;
@@ -75,9 +76,14 @@ public final class AccountDraftTerminalReconciliationService {
     }
 
     Optional<OwnerReadback> gameDesignReadback =
-        before.gameDesignReadback().isEmpty() ? readGameDesign(before.binding()) : Optional.empty();
+        before.binding().requiredOwners().contains(Owner.GAME_DESIGN)
+                && before.gameDesignReadback().isEmpty()
+            ? readGameDesign(before.binding())
+            : Optional.empty();
     Optional<OwnerReadback> worldReadback =
-        before.worldReadback().isEmpty() ? readWorld(before.binding()) : Optional.empty();
+        before.binding().requiredOwners().contains(Owner.WORLD) && before.worldReadback().isEmpty()
+            ? readWorld(before.binding())
+            : Optional.empty();
 
     Settlement settled =
         ownerTransaction.execute(
@@ -134,6 +140,7 @@ public final class AccountDraftTerminalReconciliationService {
 
   private Optional<OwnerReadback> readStoredOwnerResult(
       DraftAuthorizationFenceBinding binding, Owner owner) {
+    if (!binding.requiredOwners().contains(owner)) return Optional.empty();
     return repository
         .readOwnerResult(binding, owner)
         .map(
@@ -170,7 +177,7 @@ public final class AccountDraftTerminalReconciliationService {
       Owner owner,
       Optional<OwnerReadback> candidate,
       Snapshot after) {
-    if (candidate.isEmpty()) return;
+    if (!binding.requiredOwners().contains(owner) || candidate.isEmpty()) return;
     OwnerReadback verified = verifyOwnerReadback(binding, owner, candidate.orElseThrow());
     Optional<OwnerReadback> existing =
         owner == Owner.GAME_DESIGN ? after.gameDesignReadback() : after.worldReadback();

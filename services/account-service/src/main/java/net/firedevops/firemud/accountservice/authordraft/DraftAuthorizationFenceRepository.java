@@ -340,8 +340,8 @@ public final class DraftAuthorizationFenceRepository {
 
   /**
    * Records a terminal no-mutation result. The same ordering-aware settlement predicate used for
-   * source commit applies: revoke order requires two definitive aborts; commit order requires two
-   * exact terminal owner readbacks, including a mixed vector.
+   * source commit applies: every original required owner must report the same terminal outcome;
+   * revoke order requires definitive aborts.
    */
   public void markSourceAborted(SourceChange change, SourceChangeAbortReason reason) {
     requireTransaction();
@@ -382,6 +382,10 @@ public final class DraftAuthorizationFenceRepository {
   public void recordOwnerReadback(DraftAuthorizationFenceBinding binding, OwnerReadback readback) {
     requireTransaction();
     readback.requireBinding(binding);
+    if (!binding.requiredOwners().contains(readback.owner())) {
+      throw new IllegalArgumentException("Owner is not required by the original Draft operation");
+    }
+    lockSources(binding.sources());
     Record row = requireExact(readOperation(binding.operationId()), binding);
     if ("RESERVED".equals(row.get("ordering", String.class))) {
       throw new IllegalStateException("Reservation alone cannot produce terminal owner evidence");
@@ -442,15 +446,7 @@ public final class DraftAuthorizationFenceRepository {
     if (limit < 1 || limit > 100) {
       throw new IllegalArgumentException("Recovery page limit must be between 1 and 100");
     }
-    String pending =
-        " (f.ordering = 'RESERVED' OR (f.ordering = 'COMMIT_ORDER' AND"
-            + " (SELECT count(*) FROM "
-            + READBACKS
-            + " r WHERE r.operation_id = f.operation_id) < 2) OR"
-            + " (f.ordering = 'REVOKE_ORDER' AND (SELECT count(*) FROM "
-            + READBACKS
-            + " r WHERE r.operation_id = f.operation_id AND"
-            + " r.outcome = 'DEFINITIVELY_ABORTED') < 2))";
+    String pending = " NOT account_draft_authorization_is_settled(f.operation_id)";
     String sql = "SELECT f.* FROM " + FENCES + " f WHERE" + pending;
     Object[] parameters;
     if (after == null) {
@@ -483,7 +479,7 @@ public final class DraftAuthorizationFenceRepository {
   public Settlement readSettlement(DraftAuthorizationFenceBinding binding) {
     requireTransaction();
     Record row = requireExact(readOperation(binding.operationId()), binding);
-    return settlement(binding.operationId(), Ordering.valueOf(row.get("ordering", String.class)));
+    return settlement(binding, Ordering.valueOf(row.get("ordering", String.class)));
   }
 
   /** Absence means UNKNOWN, never no-commit proof. */
@@ -501,7 +497,8 @@ public final class DraftAuthorizationFenceRepository {
     if (row != null) {
       OwnerReadback readback = OwnerReadback.fromStored(row.get("readback", byte[].class));
       readback.requireBinding(binding);
-      if (readback.owner() != owner
+      if (!binding.requiredOwners().contains(owner)
+          || readback.owner() != owner
           || !readback.outcome().name().equals(row.get("outcome", String.class))) {
         throw new IllegalStateException("Owner readback differs from persisted columns");
       }
@@ -613,13 +610,13 @@ public final class DraftAuthorizationFenceRepository {
   }
 
   /**
-   * Commit order settles only after both exact definitive outcomes, including mixed failure. Revoke
-   * order requires both definitive aborts. Missing evidence always remains pending.
+   * Every original required owner must report one uniform exact terminal outcome. Missing or mixed
+   * evidence always remains pending.
    */
   private boolean allAffectedSettled(List<SourceEvidence> sources) {
     for (UUID operation : affectedOperations(sources)) {
       Record row = readOperation(operation);
-      if (settlement(operation, Ordering.valueOf(row.get("ordering", String.class)))
+      if (settlement(originalBinding(row), Ordering.valueOf(row.get("ordering", String.class)))
           == Settlement.PENDING) {
         return false;
       }
@@ -628,28 +625,42 @@ public final class DraftAuthorizationFenceRepository {
         && new PublicationAuthorizationFenceRepository(dsl).allAffectedSettled(sources);
   }
 
-  private Settlement settlement(UUID operation, Ordering ordering) {
+  private Settlement settlement(DraftAuthorizationFenceBinding binding, Ordering ordering) {
     if (ordering == Ordering.RESERVED) {
       return Settlement.PENDING;
     }
-    List<Outcome> outcomes =
-        dsl
-            .fetch("SELECT outcome FROM " + READBACKS + " WHERE operation_id = ?", operation)
-            .getValues("outcome", String.class)
-            .stream()
-            .map(Outcome::valueOf)
-            .toList();
-    // The owner CHECK and (operation_id, owner) primary key admit exactly these two owners.
-    if (outcomes.size() != 2) {
+    var rows =
+        dsl.fetch(
+            "SELECT owner, outcome, readback FROM " + READBACKS + " WHERE operation_id = ?",
+            binding.operationId());
+    if (rows.size() != binding.requiredOwners().size()) {
       return Settlement.PENDING;
+    }
+    List<Outcome> outcomes = new java.util.ArrayList<>();
+    var owners = java.util.EnumSet.noneOf(Owner.class);
+    for (Record row : rows) {
+      try {
+        OwnerReadback readback = OwnerReadback.fromStored(row.get("readback", byte[].class));
+        readback.requireBinding(binding);
+        if (!binding.requiredOwners().contains(readback.owner())
+            || !owners.add(readback.owner())
+            || !readback.owner().name().equals(row.get("owner", String.class))
+            || !readback.outcome().name().equals(row.get("outcome", String.class))) {
+          return Settlement.PENDING;
+        }
+        outcomes.add(readback.outcome());
+      } catch (IllegalArgumentException invalidEvidence) {
+        return Settlement.PENDING;
+      }
     }
     boolean bothAborted = outcomes.stream().allMatch(o -> o == Outcome.DEFINITIVELY_ABORTED);
     if (ordering == Ordering.REVOKE_ORDER) {
       return bothAborted ? Settlement.FAILED_NONPUBLICATION : Settlement.PENDING;
     }
-    return outcomes.stream().allMatch(o -> o == Outcome.COMMITTED)
-        ? Settlement.COMMITTED
-        : Settlement.FAILED_NONPUBLICATION;
+    if (outcomes.stream().allMatch(o -> o == Outcome.COMMITTED)) {
+      return Settlement.COMMITTED;
+    }
+    return bothAborted ? Settlement.FAILED_NONPUBLICATION : Settlement.PENDING;
   }
 
   private Record readOperation(UUID operation) {

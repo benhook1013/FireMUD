@@ -2574,7 +2574,7 @@ jobs:
             --require-case 'integration.net.firedevops.firemud.accountservice.authordraft.DraftAuthorizationFencePostgresIntegrationTest#revokeBeforeCommitDeniesDelayedRequestsUntilBothDefinitiveAborts()' \
             --require-case 'integration.net.firedevops.firemud.accountservice.authordraft.DraftAuthorizationFencePostgresIntegrationTest#worldCommittedAndGameDesignUnknownSurviveRestartAndBlockSourceUntilExactBothReadbacks()' \
             --require-case 'integration.net.firedevops.firemud.accountservice.authordraft.DraftAuthorizationFencePostgresIntegrationTest#commitOrderWithBothDefinitiveAbortsReleasesOriginalWaitingIntentWithoutReopening()' \
-            --require-case 'integration.net.firedevops.firemud.accountservice.authordraft.DraftAuthorizationFencePostgresIntegrationTest#bothMixedDirectionsFailNonpublicationAndReleaseOnlyAfterBothExactReadbacks()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.authordraft.DraftAuthorizationFencePostgresIntegrationTest#bothMixedDirectionsRemainPendingAndPreserveOriginalReadbacks()' \
             --require-case 'integration.net.firedevops.firemud.accountservice.authordraft.DraftAuthorizationFencePostgresIntegrationTest#revokeOrderWithEitherMixedDirectionCannotAuthorizeSourceMutation()' \
             --require-case 'integration.net.firedevops.firemud.accountservice.authordraft.DraftAuthorizationFencePostgresIntegrationTest#changedCompleteBindingsConflictWithoutRewritingOriginal()' \
             --require-case 'integration.net.firedevops.firemud.accountservice.authordraft.DraftAuthorizationFencePostgresIntegrationTest#inconsistentOrMalformedCompleteBindingsFailBeforeReservationStorage()' \
@@ -2587,9 +2587,16 @@ jobs:
             --require-case 'integration.net.firedevops.firemud.accountservice.authordraft.DraftAuthorizationFencePostgresIntegrationTest#originalRecoveryRejectsMalformedBytesAndEveryConflictingIdentityColumn()' \
             --require-case 'integration.net.firedevops.firemud.accountservice.authordraft.DraftAuthorizationFencePostgresIntegrationTest#ownerRecoveryRejectsReadbackThatContradictsItsOutcomeColumn()' \
             --require-case 'integration.net.firedevops.firemud.accountservice.authordraft.DraftAuthorizationFencePostgresIntegrationTest#twoOwnerConsumerPersistsWorldOnceAndRecoversMissingGameDesignOnRetry()' \
-            --require-case 'integration.net.firedevops.firemud.accountservice.authordraft.DraftAuthorizationFencePostgresIntegrationTest#mixedCommitOrderPreservesOriginalWorldCommitAndTerminalConsumerRetry()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.authordraft.DraftAuthorizationFencePostgresIntegrationTest#mixedCommitOrderPreservesOriginalWorldCommitAndHoldsSourceFence()' \
             --require-case 'integration.net.firedevops.firemud.accountservice.authordraft.DraftAuthorizationFencePostgresIntegrationTest#concurrentExactConsumerRetriesReturnTheSameOriginalSettlement()' \
             --require-case 'integration.net.firedevops.firemud.accountservice.authordraft.DraftAuthorizationFencePostgresIntegrationTest#concurrentConflictingOwnerEvidenceRejectsRetryAndPreservesWinningBytes()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.authordraft.DraftAuthorizationFencePostgresIntegrationTest#v2WorldEntityAndCoordinatorRequireAllThreeExactOriginalResults()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.authordraft.DraftAuthorizationFencePostgresIntegrationTest#v2FreshDraftEpochZeroAcceptsExactRequiredOwnerReadback()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.authordraft.DraftAuthorizationFencePostgresIntegrationTest#rawSqlCannotRecordOwnerProofWithMissingChangedOrExtraSourceParticipation()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.authordraft.DraftAuthorizationFencePostgresIntegrationTest#v2RequiredOwnerDecoderRejectsMissingExtraDuplicateAndReorderedOwners()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.authordraft.DraftAuthorizationFencePostgresIntegrationTest#v2AllRequiredAbortsSettleBothCommitAndRevokeOrdering()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.authordraft.DraftAuthorizationFencePostgresIntegrationTest#v2MixedResultsHoldBothSourceTransitionsAndPreserveAppliedBytes()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.authordraft.DraftAuthorizationFencePostgresIntegrationTest#forwardMigrationRetainsV1BindingReadbackAndFlywayChecksumsExactly()' \
             account-service
 
       - name: Verify Game Design authored-draft publication PostgreSQL proof
@@ -2752,7 +2759,7 @@ jobs:
             --require-case 'integration.net.firedevops.firemud.accountservice.AccountLogoutAllAuthorityProducerPostgresIntegrationTest#invalidHistoricalSelectorsFailWithoutChangingAnyAccountSourceEvidence()' \
             --require-case 'integration.net.firedevops.firemud.accountservice.AccountLogoutAllAuthorityProducerPostgresIntegrationTest#historicalReaderHoldsAccountFenceThroughSelectedAndCurrentSourceReadback()' \
             --require-case 'integration.net.firedevops.firemud.accountservice.AccountLogoutAllAuthorityProducerPostgresIntegrationTest#revokeOrderWaitsForBothExactAbortsBeforeOneLogoutAdvanceAndNeverAdmitsDelayedCommit()' \
-            --require-case 'integration.net.firedevops.firemud.accountservice.AccountLogoutAllAuthorityProducerPostgresIntegrationTest#commitOrderWaitsForBothExactOutcomesIncludingMixedFailureBeforeLogoutAdvance()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.AccountLogoutAllAuthorityProducerPostgresIntegrationTest#mixedCommitOrderHoldsLogoutAuthorityAndPreservesOriginalOwnerResult()' \
             --require-case 'integration.net.firedevops.firemud.accountservice.AccountLogoutAllAuthorityProducerPostgresIntegrationTest#pendingRetryKeepsOriginalCaptureAndConflictsOnlyOnChangedCallerBindings()' \
             --require-case 'integration.net.firedevops.firemud.accountservice.AccountLogoutAllAuthorityProducerPostgresIntegrationTest#lateDatabaseFailureAfterReceiptEventAndBothJournalTransitionsRollsBackLogoutOnly()' \
             --require-case 'integration.net.firedevops.firemud.accountservice.AccountLogoutAllAuthorityProducerPostgresIntegrationTest#v59ToV60PreservesImmutableLogoutResetSourceOutboxAndFenceHistoryWithoutBackfill()' \

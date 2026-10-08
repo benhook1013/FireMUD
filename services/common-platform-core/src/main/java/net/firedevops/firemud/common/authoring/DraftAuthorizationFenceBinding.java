@@ -10,6 +10,7 @@ import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.Arrays;
 import java.util.Comparator;
+import java.util.EnumSet;
 import java.util.HexFormat;
 import java.util.List;
 import java.util.Objects;
@@ -29,11 +30,51 @@ public record DraftAuthorizationFenceBinding(
     byte[] gameDesignBinding,
     byte[] normalizedInput,
     String inputDigest,
-    List<SourceEvidence> sources) {
+    List<SourceEvidence> sources,
+    String schemaVersion,
+    List<Owner> requiredOwners) {
 
   public static final String SCHEMA = "account-draft-authorization-fence/v1";
+  public static final String SCHEMA_V1 = SCHEMA;
+  public static final String SCHEMA_V2 = "account-draft-authorization-fence/v2";
+  private static final List<Owner> V1_OWNERS = List.of(Owner.GAME_DESIGN, Owner.WORLD);
+
+  /** Retains the original producer's exact v1 frame and fixed owner vector. */
+  public DraftAuthorizationFenceBinding(
+      UUID operationId,
+      UUID requestId,
+      UUID commitId,
+      UUID fenceId,
+      UUID actorAccountId,
+      UUID tenantId,
+      UUID versionId,
+      String baseCommitId,
+      String expectedDraftEpoch,
+      byte[] gameDesignBinding,
+      byte[] normalizedInput,
+      String inputDigest,
+      List<SourceEvidence> sources) {
+    this(
+        operationId,
+        requestId,
+        commitId,
+        fenceId,
+        actorAccountId,
+        tenantId,
+        versionId,
+        baseCommitId,
+        expectedDraftEpoch,
+        gameDesignBinding,
+        normalizedInput,
+        inputDigest,
+        sources,
+        SCHEMA_V1,
+        V1_OWNERS);
+  }
 
   public DraftAuthorizationFenceBinding {
+    Objects.requireNonNull(schemaVersion, "schemaVersion");
+    requiredOwners = List.copyOf(Objects.requireNonNull(requiredOwners, "requiredOwners"));
     for (UUID id :
         List.of(operationId, requestId, commitId, fenceId, actorAccountId, tenantId, versionId)) {
       requireUuid(id);
@@ -75,13 +116,72 @@ public record DraftAuthorizationFenceBinding(
     if (sources.stream().map(SourceEvidence::key).distinct().count() != sources.size()) {
       throw new IllegalArgumentException("Duplicate Account source scope");
     }
+    if (SCHEMA_V1.equals(schemaVersion)) {
+      if (!V1_OWNERS.equals(requiredOwners)) {
+        throw new IllegalArgumentException("V1 Draft authorization owners are fixed");
+      }
+    } else if (SCHEMA_V2.equals(schemaVersion)) {
+      List<Owner> canonicalOwners = requiredOwners(completeBinding);
+      if (!canonicalOwners.equals(requiredOwners)) {
+        throw new IllegalArgumentException(
+            "V2 Draft authorization owners must exactly match the complete binding");
+      }
+    } else {
+      throw new IllegalArgumentException("Unsupported Draft authorization fence schema");
+    }
   }
 
-  /** Reconstructs only the exact existing immutable V57 framing; this grants no authorization. */
+  /** Converts this exact authorization input to v2 with its canonical complete owner set. */
+  public DraftAuthorizationFenceBinding withRequiredOwners() {
+    DraftCommitBinding completeBinding = completeGameDesignBinding();
+    return new DraftAuthorizationFenceBinding(
+        operationId,
+        requestId,
+        commitId,
+        fenceId,
+        actorAccountId,
+        tenantId,
+        versionId,
+        baseCommitId,
+        expectedDraftEpoch,
+        gameDesignBinding,
+        normalizedInput,
+        inputDigest,
+        sources,
+        SCHEMA_V2,
+        requiredOwners(completeBinding));
+  }
+
+  private DraftCommitBinding completeGameDesignBinding() {
+    return DraftCommitBinding.fromStored(
+        new String(gameDesignBinding, StandardCharsets.UTF_8), digest(gameDesignBinding));
+  }
+
+  private static List<Owner> requiredOwners(DraftCommitBinding binding) {
+    EnumSet<Owner> owners = EnumSet.of(Owner.GAME_DESIGN);
+    for (DraftCommitBinding.Owner owner : binding.requiredOwners()) {
+      owners.add(
+          switch (owner) {
+            case WORLD_MANAGEMENT -> Owner.WORLD;
+            case ENTITY_MANAGEMENT -> Owner.ENTITY;
+            case GAME_LOGIC -> Owner.GAME_LOGIC;
+            case AUTOMATION_SCRIPTING -> Owner.AUTOMATION;
+            case GAME_DESIGN_CONTROL_PLANE -> Owner.GAME_DESIGN;
+          });
+    }
+    return Arrays.stream(Owner.values()).filter(owners::contains).toList();
+  }
+
+  /**
+   * Reconstructs only exact supported immutable Draft-fence framing; this grants no authorization.
+   */
   public static DraftAuthorizationFenceBinding fromStored(byte[] original) {
     byte[] stored = bytes(original);
     FrameReader reader = new FrameReader(stored);
-    reader.expect(SCHEMA);
+    String schemaVersion = reader.text();
+    if (!SCHEMA_V1.equals(schemaVersion) && !SCHEMA_V2.equals(schemaVersion)) {
+      throw new IllegalArgumentException("Unsupported immutable source schema");
+    }
     UUID operationId = canonicalUuidValue(reader.text());
     UUID requestId = canonicalUuidValue(reader.text());
     UUID commitId = canonicalUuidValue(reader.text());
@@ -106,8 +206,26 @@ public record DraftAuthorizationFenceBinding(
     for (int index = 0; index < sourceCountValue; index++) {
       sources.add(SourceEvidence.fromStored(reader.bytes()));
     }
-    reader.expect("GAME_DESIGN");
-    reader.expect("WORLD");
+    List<Owner> requiredOwners;
+    if (SCHEMA_V1.equals(schemaVersion)) {
+      reader.expect("GAME_DESIGN");
+      reader.expect("WORLD");
+      requiredOwners = V1_OWNERS;
+    } else {
+      String ownerCountText = reader.text();
+      decimal(ownerCountText, false);
+      BigInteger ownerCount = new BigInteger(ownerCountText);
+      if (ownerCount.compareTo(BigInteger.valueOf(Owner.values().length)) > 0
+          || ownerCount.compareTo(BigInteger.valueOf(reader.remaining() / Integer.BYTES)) > 0) {
+        throw new IllegalArgumentException("Invalid stored required-owner vector");
+      }
+      int ownerCountValue = ownerCount.intValueExact();
+      java.util.ArrayList<Owner> storedOwners = new java.util.ArrayList<>();
+      for (int index = 0; index < ownerCountValue; index++) {
+        storedOwners.add(Owner.valueOf(reader.text()));
+      }
+      requiredOwners = List.copyOf(storedOwners);
+    }
     reader.requireEnd();
 
     DraftAuthorizationFenceBinding binding =
@@ -124,7 +242,9 @@ public record DraftAuthorizationFenceBinding(
             gameDesignBinding,
             normalizedInput,
             inputDigest,
-            sources);
+            sources,
+            schemaVersion,
+            requiredOwners);
     if (!Arrays.equals(stored, binding.canonicalBytes())) {
       throw new IllegalArgumentException("Noncanonical stored authorization fence binding");
     }
@@ -134,6 +254,11 @@ public record DraftAuthorizationFenceBinding(
   @Override
   public List<SourceEvidence> sources() {
     return List.copyOf(sources);
+  }
+
+  @Override
+  public List<Owner> requiredOwners() {
+    return List.copyOf(requiredOwners);
   }
 
   @Override
@@ -149,7 +274,7 @@ public record DraftAuthorizationFenceBinding(
   /** Closed, ordered UTF-8/binary length frames; counters are exact decimal strings. */
   public byte[] canonicalBytes() {
     ByteArrayOutputStream output = new ByteArrayOutputStream();
-    frame(output, SCHEMA);
+    frame(output, schemaVersion);
     for (UUID id :
         List.of(operationId, requestId, commitId, fenceId, actorAccountId, tenantId, versionId)) {
       frame(output, id.toString());
@@ -164,8 +289,15 @@ public record DraftAuthorizationFenceBinding(
     for (SourceEvidence source : sources) {
       frame(output, source.canonicalBytes());
     }
-    frame(output, "GAME_DESIGN");
-    frame(output, "WORLD");
+    if (SCHEMA_V1.equals(schemaVersion)) {
+      frame(output, "GAME_DESIGN");
+      frame(output, "WORLD");
+    } else {
+      frame(output, Integer.toString(requiredOwners.size()));
+      for (Owner owner : requiredOwners) {
+        frame(output, owner.name());
+      }
+    }
     return output.toByteArray();
   }
 
@@ -334,13 +466,19 @@ public record DraftAuthorizationFenceBinding(
 
   public enum Owner {
     GAME_DESIGN,
-    WORLD
+    WORLD,
+    ENTITY,
+    GAME_LOGIC,
+    AUTOMATION
   }
 
   public enum Outcome {
     COMMITTED,
     DEFINITIVELY_ABORTED
   }
+
+  private static final String OWNER_READBACK_SCHEMA_V1 = "account-draft-owner-readback/v1";
+  private static final String OWNER_READBACK_SCHEMA_V2 = "account-draft-owner-readback/v2";
 
   /** Only a future authenticated owner verifier may supply this exact durable readback. */
   public record OwnerReadback(
@@ -369,7 +507,10 @@ public record DraftAuthorizationFenceBinding(
     public static OwnerReadback fromStored(byte[] original) {
       byte[] stored = bytes(original);
       FrameReader reader = new FrameReader(stored);
-      reader.expect("account-draft-owner-readback/v1");
+      String schema = reader.text();
+      if (!OWNER_READBACK_SCHEMA_V1.equals(schema) && !OWNER_READBACK_SCHEMA_V2.equals(schema)) {
+        throw new IllegalArgumentException("Unsupported stored owner readback schema");
+      }
       OwnerReadback readback =
           new OwnerReadback(
               Owner.valueOf(reader.text()),
@@ -381,7 +522,12 @@ public record DraftAuthorizationFenceBinding(
               reader.bytes(),
               reader.bytes());
       reader.requireEnd();
-      readback.requireBinding(DraftAuthorizationFenceBinding.fromStored(readback.fullBinding()));
+      DraftAuthorizationFenceBinding binding =
+          DraftAuthorizationFenceBinding.fromStored(readback.fullBinding());
+      if (!schema.equals(readbackSchema(binding))) {
+        throw new IllegalArgumentException("Owner readback schema differs from its full binding");
+      }
+      readback.requireBinding(binding);
       if (!Arrays.equals(stored, readback.canonicalBytes())) {
         throw new IllegalArgumentException("Noncanonical stored owner readback");
       }
@@ -406,13 +552,22 @@ public record DraftAuthorizationFenceBinding(
           || !Arrays.equals(fullBinding, binding.canonicalBytes())) {
         throw new IllegalArgumentException("Owner readback differs from complete Draft binding");
       }
+      if (SCHEMA_V2.equals(binding.schemaVersion()) && !binding.requiredOwners().contains(owner)) {
+        throw new IllegalArgumentException("Owner readback owner is not required by Draft binding");
+      }
+      if (SCHEMA_V1.equals(binding.schemaVersion()) && !V1_OWNERS.contains(owner)) {
+        throw new IllegalArgumentException("V1 owner readback owner is outside its closed schema");
+      }
     }
 
     public byte[] canonicalBytes() {
+      DraftAuthorizationFenceBinding binding =
+          DraftAuthorizationFenceBinding.fromStored(fullBinding);
+      requireBinding(binding);
       ByteArrayOutputStream output = new ByteArrayOutputStream();
       for (String value :
           List.of(
-              "account-draft-owner-readback/v1",
+              readbackSchema(binding),
               owner.name(),
               outcome.name(),
               operationId.toString(),
@@ -424,6 +579,12 @@ public record DraftAuthorizationFenceBinding(
       frame(output, fullBinding);
       frame(output, result);
       return output.toByteArray();
+    }
+
+    private static String readbackSchema(DraftAuthorizationFenceBinding binding) {
+      return SCHEMA_V1.equals(binding.schemaVersion())
+          ? OWNER_READBACK_SCHEMA_V1
+          : OWNER_READBACK_SCHEMA_V2;
     }
   }
 

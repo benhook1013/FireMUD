@@ -11,6 +11,7 @@ import static org.mockito.Mockito.when;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
@@ -138,7 +139,7 @@ class DraftAuthorizationFencePostgresIntegrationTest {
   }
 
   @Test
-  void mixedCommitOrderPreservesOriginalWorldCommitAndTerminalConsumerRetry() {
+  void mixedCommitOrderPreservesOriginalWorldCommitAndHoldsSourceFence() {
     Context context = context();
     DraftAuthorizationFenceBinding binding = binding();
     tx(context, () -> context.repository().reserve(binding));
@@ -174,15 +175,16 @@ class DraftAuthorizationFencePostgresIntegrationTest {
             worldClient,
             "firemud-test");
 
-    assertThat(service.reconcile(binding.operationId())).contains(Settlement.FAILED_NONPUBLICATION);
+    assertThat(service.reconcile(binding.operationId())).contains(Settlement.PENDING);
     assertThat(tx(context, () -> context.repository().readOwnerResult(binding, Owner.WORLD)))
         .get()
         .satisfies(
             stored ->
                 assertThat(stored.readback())
                     .containsExactly(originalWorldCommit.canonicalBytes()));
-    assertThat(tx(context, () -> context.repository().sourceMutationPermitted(change))).isTrue();
-    assertThat(service.reconcile(binding.operationId())).contains(Settlement.FAILED_NONPUBLICATION);
+    assertThat(tx(context, () -> context.repository().sourceMutationPermitted(change))).isFalse();
+    assertSourceGuardBlocked(context, change);
+    assertThat(service.reconcile(binding.operationId())).contains(Settlement.PENDING);
     verify(gameDesignClient).read(any());
     verify(worldClient).read(any());
   }
@@ -440,7 +442,7 @@ class DraftAuthorizationFencePostgresIntegrationTest {
   }
 
   @Test
-  void bothMixedDirectionsFailNonpublicationAndReleaseOnlyAfterBothExactReadbacks() {
+  void bothMixedDirectionsRemainPendingAndPreserveOriginalReadbacks() {
     for (Outcome worldOutcome : List.of(Outcome.COMMITTED, Outcome.DEFINITIVELY_ABORTED)) {
       Context context = context();
       DraftAuthorizationFenceBinding binding = binding();
@@ -461,20 +463,15 @@ class DraftAuthorizationFencePostgresIntegrationTest {
           worldOutcome == Outcome.COMMITTED ? Outcome.DEFINITIVELY_ABORTED : Outcome.COMMITTED;
       owner(context, binding, Owner.GAME_DESIGN, gameDesignOutcome, new byte[] {2});
       assertThat(tx(context, () -> context.repository().readSettlement(binding)))
-          .isEqualTo(Settlement.FAILED_NONPUBLICATION);
-      assertThat(tx(context, () -> context.repository().requestSourceChange(change))).isTrue();
-      assertThat(tx(context, () -> context.repository().sourceMutationPermitted(change))).isTrue();
-      tx(
-          context,
-          () -> {
-            context.repository().markSourceCommitted(change);
-            return null;
-          });
-      var committed = tx(context, () -> context.repository().readSourceChange(change));
-      assertThat(committed.status()).isEqualTo("SOURCE_COMMITTED");
-      assertThat(committed.binding()).containsExactly(waiting.binding());
-      assertThat(committed.requestedAt()).isEqualTo(waiting.requestedAt());
+          .isEqualTo(Settlement.PENDING);
+      assertThat(tx(context, () -> context.repository().requestSourceChange(change))).isFalse();
       assertThat(tx(context, () -> context.repository().sourceMutationPermitted(change))).isFalse();
+      assertThat(tx(context, () -> context.repository().sourceAbortPermitted(change))).isFalse();
+      assertSourceGuardBlocked(context, change);
+      var held = tx(context, () -> context.repository().readSourceChange(change));
+      assertThat(held.status()).isEqualTo("WAITING");
+      assertThat(held.binding()).containsExactly(waiting.binding());
+      assertThat(held.requestedAt()).isEqualTo(waiting.requestedAt());
       assertThat(tx(context, () -> context.repository().read(binding)).ordering())
           .isEqualTo(Ordering.COMMIT_ORDER);
       assertThat(tx(context, () -> context.repository().read(binding)).orderedAt())
@@ -841,16 +838,16 @@ class DraftAuthorizationFencePostgresIntegrationTest {
           new byte[] {2});
     }
     var expected =
-        List.of(reserved, committedUnknown, revokedUnknown, revokedContradiction).stream()
+        List.of(reserved, committedUnknown, revokedUnknown, revokedContradiction, mixed).stream()
             .sorted(java.util.Comparator.comparing(b -> b.operationId().toString()))
             .toList();
     var first = tx(context, () -> context.repository().readUnresolvedOperations(null, 2));
     var second =
         tx(
             context,
-            () -> context.repository().readUnresolvedOperations(first.getLast().cursor(), 2));
+            () -> context.repository().readUnresolvedOperations(first.getLast().cursor(), 3));
     assertThat(first).hasSize(2);
-    assertThat(second).hasSize(2);
+    assertThat(second).hasSize(3);
     var combined = java.util.stream.Stream.concat(first.stream(), second.stream()).toList();
     assertThat(combined.stream().map(item -> item.binding().operationId()).toList())
         .containsExactlyElementsOf(
@@ -920,19 +917,315 @@ class DraftAuthorizationFencePostgresIntegrationTest {
             b.inputDigest(),
             b.canonicalBytes(),
             new byte[] {1});
+    assertThatThrownBy(
+            () ->
+                tx(
+                    context,
+                    () ->
+                        context
+                            .dsl()
+                            .execute(
+                                "INSERT INTO account_draft_authorization_owner_readbacks"
+                                    + " (operation_id, owner, outcome, readback) VALUES (?, 'WORLD', 'DEFINITIVELY_ABORTED', ?)",
+                                b.operationId(),
+                                readback.canonicalBytes())))
+        .isInstanceOf(DataAccessException.class);
+    assertThat(tx(context, () -> context.repository().readOwnerResult(b, Owner.WORLD))).isEmpty();
+  }
+
+  @Test
+  void v2WorldEntityAndCoordinatorRequireAllThreeExactOriginalResults() {
+    Context context = context();
+    var b = multiOwnerBinding();
+    tx(context, () -> context.repository().reserve(b));
+    tx(context, () -> context.repository().claimCommitOrder(b));
+    var change = change(b);
+    tx(context, () -> context.repository().requestSourceChange(change));
+    owner(context, b, Owner.GAME_DESIGN, Outcome.COMMITTED, new byte[] {1});
+    owner(context, b, Owner.WORLD, Outcome.COMMITTED, new byte[] {2});
+    assertThat(tx(context, () -> context.repository().readSettlement(b)))
+        .isEqualTo(Settlement.PENDING);
+    assertThat(tx(context, () -> context.repository().sourceMutationPermitted(change))).isFalse();
+    assertSourceGuardBlocked(context, change);
+    assertThat(tx(context, () -> context.repository().readUnresolvedOperations(null, 100)))
+        .extracting(item -> item.binding().operationId())
+        .contains(b.operationId());
+    var entity = ownerReadback(b, Owner.ENTITY, Outcome.COMMITTED, new byte[] {3});
+    // Structurally substituted owner, digest, full binding, result and trailing frames all fail.
+    for (byte[] invalid :
+        List.of(
+            java.util.Arrays.copyOf(entity.canonicalBytes(), entity.canonicalBytes().length - 1),
+            java.util.Arrays.copyOf(entity.canonicalBytes(), entity.canonicalBytes().length + 1),
+            ownerReadback(b, Owner.WORLD, Outcome.COMMITTED, new byte[] {3}).canonicalBytes(),
+            ownerReadback(binding(), Owner.WORLD, Outcome.COMMITTED, new byte[] {3})
+                .canonicalBytes())) {
+      assertThatThrownBy(() -> insertOwner(context, b, "ENTITY", "COMMITTED", invalid))
+          .isInstanceOf(DataAccessException.class);
+    }
+    assertThatThrownBy(
+            () -> insertOwner(context, b, "AUTOMATION", "COMMITTED", entity.canonicalBytes()))
+        .isInstanceOf(DataAccessException.class);
+    owner(context, b, Owner.ENTITY, Outcome.COMMITTED, new byte[] {3});
+    assertThatThrownBy(
+            () -> insertOwner(context, b, "ENTITY", "COMMITTED", entity.canonicalBytes()))
+        .isInstanceOf(DataAccessException.class);
+    assertThatThrownBy(() -> owner(context, b, Owner.ENTITY, Outcome.COMMITTED, new byte[] {4}))
+        .isInstanceOf(IllegalArgumentException.class);
+    assertThat(tx(context, () -> context.repository().readSettlement(b)))
+        .isEqualTo(Settlement.COMMITTED);
+    assertThat(tx(context, () -> context.repository().sourceMutationPermitted(change))).isTrue();
+  }
+
+  @Test
+  void v2FreshDraftEpochZeroAcceptsExactRequiredOwnerReadback() {
+    Context context = context();
+    var prior = multiOwnerBinding();
+    var b =
+        new DraftAuthorizationFenceBinding(
+                prior.operationId(),
+                prior.requestId(),
+                prior.commitId(),
+                prior.fenceId(),
+                prior.actorAccountId(),
+                prior.tenantId(),
+                prior.versionId(),
+                prior.baseCommitId(),
+                "0",
+                prior.gameDesignBinding(),
+                prior.normalizedInput(),
+                prior.inputDigest(),
+                prior.sources())
+            .withRequiredOwners();
+    tx(context, () -> context.repository().reserve(b));
+    tx(context, () -> context.repository().claimCommitOrder(b));
+    var readback = ownerReadback(b, Owner.WORLD, Outcome.COMMITTED, new byte[] {1});
+    insertOwner(context, b, "WORLD", "COMMITTED", readback.canonicalBytes());
+    assertThat(tx(context, () -> context.repository().readOwnerResult(b, Owner.WORLD)))
+        .get()
+        .satisfies(
+            result -> assertThat(result.readback()).containsExactly(readback.canonicalBytes()));
+    assertThat(tx(context, () -> context.repository().readSettlement(b)))
+        .isEqualTo(Settlement.PENDING);
+  }
+
+  @Test
+  void rawSqlCannotRecordOwnerProofWithMissingChangedOrExtraSourceParticipation() {
+    for (int sourceShape = 0; sourceShape < 4; sourceShape++) {
+      Context context = context();
+      var b = multiOwnerBinding();
+      var source = b.sources().getFirst();
+      context
+          .dsl()
+          .execute(
+              "INSERT INTO account_draft_authorization_fences"
+                  + " (operation_id, request_id, commit_id, fence_id, binding, ordering)"
+                  + " VALUES (?, ?, ?, ?, ?, 'RESERVED')",
+              b.operationId(),
+              b.requestId(),
+              b.commitId(),
+              b.fenceId(),
+              b.canonicalBytes());
+      if (sourceShape != 0) {
+        String key = sourceShape == 2 ? source.key() + "/changed" : source.key();
+        context
+            .dsl()
+            .execute(
+                "INSERT INTO account_draft_authorization_source_locks (source_key) VALUES (?)",
+                key);
+        context
+            .dsl()
+            .execute(
+                "INSERT INTO account_draft_authorization_sources (operation_id, source_key, source_evidence) VALUES (?, ?, ?)",
+                b.operationId(),
+                key,
+                sourceShape == 1 ? new byte[] {99} : source.canonicalBytes());
+        if (sourceShape == 3) {
+          String extraKey = source.key() + "/extra";
+          context
+              .dsl()
+              .execute(
+                  "INSERT INTO account_draft_authorization_source_locks (source_key) VALUES (?)",
+                  extraKey);
+          context
+              .dsl()
+              .execute(
+                  "INSERT INTO account_draft_authorization_sources (operation_id, source_key, source_evidence) VALUES (?, ?, ?)",
+                  b.operationId(),
+                  extraKey,
+                  source.canonicalBytes());
+        }
+      }
+      context
+          .dsl()
+          .execute(
+              "UPDATE account_draft_authorization_fences SET ordering = 'COMMIT_ORDER',"
+                  + " ordered_at = CURRENT_TIMESTAMP WHERE operation_id = ?",
+              b.operationId());
+      var readback = ownerReadback(b, Owner.WORLD, Outcome.COMMITTED, new byte[] {1});
+      assertThatThrownBy(
+              () -> insertOwner(context, b, "WORLD", "COMMITTED", readback.canonicalBytes()))
+          .isInstanceOf(DataAccessException.class);
+      assertThat(
+              Objects.requireNonNull(
+                      context
+                          .dsl()
+                          .fetchOne(
+                              "SELECT count(*) FROM account_draft_authorization_owner_readbacks WHERE operation_id = ?",
+                              b.operationId()))
+                  .get(0, Integer.class))
+          .isZero();
+    }
+  }
+
+  @Test
+  void v2RequiredOwnerDecoderRejectsMissingExtraDuplicateAndReorderedOwners() {
+    Context context = context();
+    var b = multiOwnerBinding();
+    for (var labels :
+        List.of(
+            List.of("GAME_DESIGN", "WORLD"),
+            List.of("GAME_DESIGN", "WORLD", "ENTITY", "AUTOMATION"),
+            List.of("GAME_DESIGN", "WORLD", "WORLD"),
+            List.of("GAME_DESIGN", "ENTITY", "WORLD"))) {
+      var reader = new DraftAuthorizationFenceBinding.FrameReader(b.canonicalBytes());
+      var output = new java.io.ByteArrayOutputStream();
+      for (int i = 0; i < 15 + b.sources().size(); i++) {
+        DraftAuthorizationFenceBinding.frame(output, reader.bytes());
+      }
+      DraftAuthorizationFenceBinding.frame(output, Integer.toString(labels.size()));
+      labels.forEach(label -> DraftAuthorizationFenceBinding.frame(output, label));
+      assertThatThrownBy(
+              () ->
+                  tx(
+                      context,
+                      () ->
+                          context
+                              .dsl()
+                              .fetch(
+                                  "SELECT account_draft_authorization_required_owners(?::bytea)",
+                                  output.toByteArray())))
+          .isInstanceOf(DataAccessException.class);
+    }
+  }
+
+  @Test
+  void v2AllRequiredAbortsSettleBothCommitAndRevokeOrdering() {
+    for (boolean commitOrder : List.of(true, false)) {
+      Context context = context();
+      var b = multiOwnerBinding();
+      tx(context, () -> context.repository().reserve(b));
+      if (commitOrder) tx(context, () -> context.repository().claimCommitOrder(b));
+      var change = change(b);
+      tx(context, () -> context.repository().requestSourceChange(change));
+      owner(context, b, Owner.GAME_DESIGN, Outcome.DEFINITIVELY_ABORTED, new byte[] {1});
+      owner(context, b, Owner.WORLD, Outcome.DEFINITIVELY_ABORTED, new byte[] {2});
+      assertSourceGuardBlocked(context, change);
+      owner(context, b, Owner.ENTITY, Outcome.DEFINITIVELY_ABORTED, new byte[] {3});
+      assertThat(tx(context, () -> context.repository().readSettlement(b)))
+          .isEqualTo(Settlement.FAILED_NONPUBLICATION);
+      tx(
+          context,
+          () -> {
+            context.repository().markSourceCommitted(change);
+            return null;
+          });
+      assertThat(tx(context, () -> context.repository().readSourceChange(change)).status())
+          .isEqualTo("SOURCE_COMMITTED");
+    }
+  }
+
+  @Test
+  void v2MixedResultsHoldBothSourceTransitionsAndPreserveAppliedBytes() {
+    Context context = context();
+    var b = multiOwnerBinding();
+    tx(context, () -> context.repository().reserve(b));
+    tx(context, () -> context.repository().claimCommitOrder(b));
+    var change = change(b);
+    tx(context, () -> context.repository().requestSourceChange(change));
+    owner(context, b, Owner.WORLD, Outcome.COMMITTED, new byte[] {1});
+    owner(context, b, Owner.ENTITY, Outcome.DEFINITIVELY_ABORTED, new byte[] {2});
+    owner(context, b, Owner.GAME_DESIGN, Outcome.DEFINITIVELY_ABORTED, new byte[] {3});
+    assertThat(tx(context, () -> context.repository().readSettlement(b)))
+        .isEqualTo(Settlement.PENDING);
+    assertSourceGuardBlocked(context, change);
+    assertThatThrownBy(
+            () ->
+                tx(
+                    context,
+                    () ->
+                        context
+                            .dsl()
+                            .execute(
+                                "UPDATE account_draft_authorization_source_changes SET status = 'SOURCE_ABORTED',"
+                                    + " aborted_at = CURRENT_TIMESTAMP, abort_reason = 'DEFINITIVE_ABORT' WHERE change_id = ?",
+                                change.changeId())))
+        .isInstanceOf(DataAccessException.class);
+    assertThat(tx(context, () -> context.repository().readOwnerResult(b, Owner.WORLD)))
+        .get()
+        .satisfies(
+            result ->
+                assertThat(result.readback())
+                    .containsExactly(
+                        ownerReadback(b, Owner.WORLD, Outcome.COMMITTED, new byte[] {1})
+                            .canonicalBytes()));
+  }
+
+  @Test
+  void forwardMigrationRetainsV1BindingReadbackAndFlywayChecksumsExactly() {
+    Context context = context("80");
+    var b = binding();
+    tx(context, () -> context.repository().reserve(b));
+    tx(context, () -> context.repository().claimCommitOrder(b));
+    var original = ownerReadback(b, Owner.WORLD, Outcome.COMMITTED, new byte[] {8});
+    owner(context, b, Owner.WORLD, Outcome.COMMITTED, new byte[] {8});
+    var checksums =
+        context
+            .dsl()
+            .fetch("SELECT version, checksum FROM flyway_schema_history ORDER BY installed_rank");
+    String schema =
+        Objects.requireNonNull(context.dsl().fetchOne("SELECT current_schema()"))
+            .get(0, String.class);
+    Flyway.configure()
+        .dataSource(postgres.getJdbcUrl(), postgres.getUsername(), postgres.getPassword())
+        .schemas(schema)
+        .defaultSchema(schema)
+        .placeholders(Map.of("serviceSchema", schema))
+        .locations("classpath:db/migration")
+        .load()
+        .migrate();
+    assertThat(
+            context
+                .dsl()
+                .fetch(
+                    "SELECT version, checksum FROM flyway_schema_history WHERE version <> '81' ORDER BY installed_rank"))
+        .isEqualTo(checksums);
+    assertThat(tx(context, () -> context.repository().read(b)).binding())
+        .containsExactly(b.canonicalBytes());
+    assertThat(tx(context, () -> context.repository().readOwnerResult(b, Owner.WORLD)))
+        .get()
+        .satisfies(
+            result -> assertThat(result.readback()).containsExactly(original.canonicalBytes()));
+    assertThat(tx(context, () -> context.repository().readSettlement(b)))
+        .isEqualTo(Settlement.PENDING);
+  }
+
+  private void insertOwner(
+      Context context,
+      DraftAuthorizationFenceBinding binding,
+      String owner,
+      String outcome,
+      byte[] bytes) {
     tx(
         context,
         () ->
             context
                 .dsl()
                 .execute(
-                    "INSERT INTO account_draft_authorization_owner_readbacks"
-                        + " (operation_id, owner, outcome, readback) VALUES (?, 'WORLD', 'DEFINITIVELY_ABORTED', ?)",
-                    b.operationId(),
-                    readback.canonicalBytes()));
-    assertThatThrownBy(
-            () -> tx(context, () -> context.repository().readOwnerResult(b, Owner.WORLD)))
-        .isInstanceOf(IllegalStateException.class);
+                    "INSERT INTO account_draft_authorization_owner_readbacks (operation_id, owner, outcome, readback) VALUES (?, ?, ?, ?)",
+                    binding.operationId(),
+                    owner,
+                    outcome,
+                    bytes));
   }
 
   private void assertSourceGuardBlocked(Context context, SourceChange change) {
@@ -952,6 +1245,10 @@ class DraftAuthorizationFencePostgresIntegrationTest {
   }
 
   private Context context() {
+    return context("latest");
+  }
+
+  private Context context(String target) {
     String schema = "draft_fence_" + UUID.randomUUID().toString().replace("-", "");
     DriverManagerDataSource source = new DriverManagerDataSource();
     source.setUrl(postgres.getJdbcUrl());
@@ -964,6 +1261,7 @@ class DraftAuthorizationFencePostgresIntegrationTest {
         .defaultSchema(schema)
         .placeholders(Map.of("serviceSchema", schema))
         .locations("classpath:db/migration")
+        .target(target)
         .load()
         .migrate();
     DSLContext dsl = DSL.using(new TransactionAwareDataSourceProxy(source), SQLDialect.POSTGRES);
@@ -1007,6 +1305,41 @@ class DraftAuthorizationFencePostgresIntegrationTest {
         complete.canonicalBytes(),
         complete.digest(),
         List.of(source));
+  }
+
+  private DraftAuthorizationFenceBinding multiOwnerBinding() {
+    var prior = binding();
+    var complete =
+        DraftCommitBinding.fromStored(
+            new String(prior.gameDesignBinding(), StandardCharsets.UTF_8), prior.inputDigest());
+    var entity = DraftCommitBinding.Owner.ENTITY_MANAGEMENT;
+    var multi =
+        DraftCommitBinding.create(
+            complete.target(),
+            complete.requestId(),
+            complete.commitId(),
+            complete.baseCommitId(),
+            List.of(
+                complete.revisions().getFirst(),
+                new RevisionPayload("1", UUID.randomUUID(), entity, "entity-payload")),
+            List.of(
+                complete.affectedUnits().getFirst(),
+                new AffectedUnit(entity, "entity", "entity-1", "aggregate", "entity-1", "0")));
+    return new DraftAuthorizationFenceBinding(
+            prior.operationId(),
+            prior.requestId(),
+            prior.commitId(),
+            prior.fenceId(),
+            prior.actorAccountId(),
+            prior.tenantId(),
+            prior.versionId(),
+            prior.baseCommitId(),
+            prior.expectedDraftEpoch(),
+            multi.canonicalBytes(),
+            multi.canonicalBytes(),
+            multi.digest(),
+            prior.sources())
+        .withRequiredOwners();
   }
 
   private DraftAuthorizationFenceBinding changed(DraftAuthorizationFenceBinding b, int field) {
