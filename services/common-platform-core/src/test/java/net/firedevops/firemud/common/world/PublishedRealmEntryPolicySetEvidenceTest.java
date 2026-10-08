@@ -2,6 +2,7 @@ package net.firedevops.firemud.common.world;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatIllegalArgumentException;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
@@ -11,6 +12,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.UUID;
 import net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding;
@@ -20,6 +22,8 @@ import net.firedevops.firemud.common.gamedesign.GameDesignPublicationTerminalEvi
 import net.firedevops.firemud.common.gamedesign.GameDesignPublicationTerminalEvidence.Participant;
 import net.firedevops.firemud.common.gamedesign.GameDesignPublicationTerminalEvidence.ReleaseContent;
 import net.firedevops.firemud.common.gamedesign.GameDesignPublicationTerminalReadEvidence.ReadRequest;
+import net.firedevops.firemud.common.gamedesign.GameDesignPublicationTerminalReadEvidence.ReadResult;
+import net.firedevops.firemud.common.gamedesign.GameDesignPublicationTerminalReadEvidence.Status;
 import net.firedevops.firemud.common.json.Rfc8785CanonicalJson;
 import net.firedevops.firemud.common.publication.AccountPublicationAuthorizationBinding;
 import net.firedevops.firemud.common.publication.AuthoredDraftPublishSelectionBinding;
@@ -62,6 +66,78 @@ class PublishedRealmEntryPolicySetEvidenceTest {
             uuid("20202020-2020-4020-8020-202020202020"),
             expected.operationBytes());
     assertThat(changedIdentity).isNotEqualTo(expected);
+  }
+
+  @Test
+  void terminalEvidenceAndPublishedOrNoPublicationReadResultsUseCanonicalByteValueEquality()
+      throws Exception {
+    var fixture = fixture(false);
+    var terminal = fixture.terminal();
+    var decodedTerminal =
+        GameDesignPublicationTerminalEvidence.fromStored(terminal.canonicalBytes());
+    assertThat(decodedTerminal).isEqualTo(terminal);
+    assertThat(decodedTerminal.hashCode()).isEqualTo(terminal.hashCode());
+
+    var request =
+        new ReadRequest(
+            ReadRequest.SCHEMA_VERSION,
+            fixture.operation().world().request().targetNamespace(),
+            uuid("10101010-1010-4010-8010-101010101010"),
+            fixture.operation().canonicalBytes());
+    var published = new ReadResult(request, Status.PUBLISHED, Optional.of(terminal));
+    var decodedPublished = ReadResult.fromStored(published.canonicalBytes());
+    assertThat(decodedPublished).isEqualTo(published);
+    assertThat(decodedPublished.hashCode()).isEqualTo(published.hashCode());
+
+    var noPublicationTerminal =
+        new GameDesignPublicationTerminalEvidence(
+            fixture.operation().canonicalBytes(), Outcome.NO_PUBLICATION, null, null);
+    var noPublication =
+        new ReadResult(request, Status.NO_PUBLICATION, Optional.of(noPublicationTerminal));
+    var decodedNoPublication = ReadResult.fromStored(noPublication.canonicalBytes());
+    assertThat(decodedNoPublication).isEqualTo(noPublication);
+    assertThat(decodedNoPublication.hashCode()).isEqualTo(noPublication.hashCode());
+
+    var changedTerminal =
+        terminal(
+            fixture.operation(),
+            fixture.release("changed-generation"),
+            terminal.publicationVersionStateEpoch());
+    assertThat(changedTerminal).isNotEqualTo(terminal);
+    assertThat(new ReadResult(request, Status.PUBLISHED, Optional.of(changedTerminal)))
+        .isNotEqualTo(published);
+  }
+
+  @Test
+  void storedDraftSelectionRetainsCanonicalValidationAndTheNestedWireFailureCause()
+      throws Exception {
+    var selection = fixture(false).operation().account().input().selection();
+
+    assertThatThrownBy(
+            () ->
+                AuthoredDraftPublishSelectionBinding.fromStored(
+                    selection.canonicalJson() + " ", selection.digest()))
+        .isInstanceOf(IllegalArgumentException.class)
+        .satisfies(
+            failure -> {
+              assertThat(failure.getCause())
+                  .isInstanceOf(IllegalArgumentException.class)
+                  .hasMessageContaining("not exact canonical JSON");
+            });
+
+    ObjectNode corrupted = (ObjectNode) JSON.readTree(selection.canonicalJson());
+    corrupted.put("selectedCommitBindingJson", "{}");
+    String corruptedJson = JSON.writeValueAsString(corrupted);
+    assertThatThrownBy(
+            () ->
+                AuthoredDraftPublishSelectionBinding.fromStored(corruptedJson, selection.digest()))
+        .isInstanceOf(IllegalArgumentException.class)
+        .satisfies(
+            failure -> {
+              assertThat(failure.getCause())
+                  .isInstanceOf(IllegalStateException.class)
+                  .hasMessageContaining("corrupt");
+            });
   }
 
   @Test

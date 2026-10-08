@@ -62,7 +62,7 @@ public class AccountTenantEntitlementOutboxRepository {
     long currentSequence = nonnegative(stream, "last_sequence");
     Record priorRequest =
         dsl.fetchOne(
-            "SELECT tenant_billing_sequence, event_id, event_digest, payload "
+            "SELECT tenant_billing_sequence, request_id, event_id, event_digest, payload "
                 + "FROM account_tenant_entitlement_outbox_events "
                 + "WHERE tenant_uuid = ? AND request_id = ?",
             tenantId,

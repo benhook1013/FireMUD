@@ -382,8 +382,13 @@ public class AccountTenantAuthorityEventRepository {
         eventDigest);
   }
 
-  /** Resolves current Account owner state itself; callers cannot supply a receipt or checkpoint. */
-  @Transactional(propagation = Propagation.MANDATORY, readOnly = true)
+  /**
+   * Resolves current Account owner state itself; callers cannot supply a receipt or checkpoint.
+   *
+   * <p>Requires the caller's writable Account owner transaction; MANDATORY does not convert an
+   * existing read-only transaction into a writable one.
+   */
+  @Transactional(propagation = Propagation.MANDATORY)
   public Event readCurrentByTenant(UUID tenantId) {
     requireTransaction();
     requireTenant(tenantId);

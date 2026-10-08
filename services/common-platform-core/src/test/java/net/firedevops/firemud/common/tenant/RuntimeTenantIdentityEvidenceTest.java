@@ -17,6 +17,25 @@ class RuntimeTenantIdentityEvidenceTest {
   }
 
   @Test
+  void acceptsTheSharedSourceTenantKeyCodePointAndUtf16Boundary() {
+    String maximumSourceKey = "😀".repeat(36);
+    var evidence =
+        new RuntimeTenantIdentityEvidence(
+            1, "test", REQUEST_ID, TENANT_ID, 42L, maximumSourceKey, "NEW_GAME_ROW");
+
+    assertThat(evidence.sourceGameTenantKey()).hasSize(72);
+    assertThat(evidence.sourceGameTenantKey().codePointCount(0, 72)).isEqualTo(36);
+    assertInvalid(
+        1,
+        evidence.targetNamespace(),
+        evidence.requestId(),
+        evidence.canonicalTenantId(),
+        evidence.sourceGameRowId(),
+        "😀".repeat(37),
+        evidence.provenanceKind());
+  }
+
+  @Test
   void rejectsUnsupportedOrIncompleteOwnerEvidence() {
     RuntimeTenantIdentityEvidence valid = evidence("NEW_GAME_ROW");
     assertInvalid(

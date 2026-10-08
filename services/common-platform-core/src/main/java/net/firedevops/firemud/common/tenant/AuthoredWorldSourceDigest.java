@@ -61,13 +61,7 @@ public final class AuthoredWorldSourceDigest {
     if (!GameTenantCreationDigest.isDigest(requestDigest)) {
       throw new IllegalArgumentException("requestDigest must be a lowercase SHA-256 digest");
     }
-    if (sourceGameRowId <= 0) {
-      throw new IllegalArgumentException("sourceGameRowId must be positive");
-    }
-    validateSourceGameTenantKey(sourceGameTenantKey);
-    if (!"NEW_GAME_ROW".equals(provenanceKind) && !"RETAINED_GAME_V29".equals(provenanceKind)) {
-      throw new IllegalArgumentException("Authored-world source provenance kind is not recognized");
-    }
+    validateSourceGameIdentity(sourceGameRowId, sourceGameTenantKey, provenanceKind);
     return GameTenantCreationDigest.digest(
         RECEIPT_DOMAIN,
         targetNamespace,
@@ -130,6 +124,15 @@ public final class AuthoredWorldSourceDigest {
     GameTenantCreationDigest.utf8ByteLength(value);
   }
 
+  static void validateSourceGameIdentity(
+      long sourceGameRowId, String sourceGameTenantKey, String provenanceKind) {
+    if (sourceGameRowId <= 0) {
+      throw new IllegalArgumentException("sourceGameRowId must be positive");
+    }
+    validateSourceGameTenantKey(sourceGameTenantKey);
+    validateProvenanceKind(provenanceKind);
+  }
+
   private static void validateSourceGameTenantKey(String value) {
     Objects.requireNonNull(value, "sourceGameTenantKey");
     if (value.isBlank() || value.length() > 72 || value.codePointCount(0, value.length()) > 36) {
@@ -138,7 +141,13 @@ public final class AuthoredWorldSourceDigest {
     GameTenantCreationDigest.utf8ByteLength(value);
   }
 
-  private static void requireNonNil(UUID value, String label) {
+  private static void validateProvenanceKind(String value) {
+    if (!"NEW_GAME_ROW".equals(value) && !"RETAINED_GAME_V29".equals(value)) {
+      throw new IllegalArgumentException("Authored-world source provenance kind is not recognized");
+    }
+  }
+
+  static void requireNonNil(UUID value, String label) {
     Objects.requireNonNull(value, label);
     if (NIL_UUID.equals(value)) {
       throw new IllegalArgumentException(label + " must not be nil");

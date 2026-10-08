@@ -9,15 +9,18 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import java.lang.reflect.Method;
 import java.util.UUID;
 import java.util.function.LongFunction;
 import net.firedevops.firemud.accountservice.dto.DemoTenantEntitlementEventV1Codec;
 import net.firedevops.firemud.accountservice.dto.DemoTenantEntitlementRequest;
+import net.firedevops.firemud.accountservice.dto.DemoTenantEntitlementSnapshot;
 import net.firedevops.firemud.accountservice.dto.TenantAuthorityEventV1Codec;
 import net.firedevops.firemud.accountservice.repository.AccountAuthorityGenerationRepository;
 import net.firedevops.firemud.accountservice.repository.AccountAuthorityGenerationRepository.AuthorityScope;
 import net.firedevops.firemud.accountservice.repository.AccountAuthorityGenerationRepository.ScopeState;
 import net.firedevops.firemud.accountservice.repository.AccountAuthorityOutboxRepository;
+import net.firedevops.firemud.accountservice.repository.AccountDemoTenantEntitlementRepository;
 import net.firedevops.firemud.accountservice.repository.AccountTenantAuthorityEventRepository;
 import net.firedevops.firemud.accountservice.repository.AccountTenantEntitlementOutboxRepository;
 import net.firedevops.firemud.accountservice.repository.FreshTenantIdentityAssociationRepository;
@@ -27,6 +30,8 @@ import org.jooq.DSLContext;
 import org.jooq.Record;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
+import org.springframework.transaction.annotation.Propagation;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 class AccountTenantAuthorityEventRepositoryTest {
@@ -38,6 +43,18 @@ class AccountTenantAuthorityEventRepositoryTest {
   private static final UUID SOURCE_OPERATION_ID =
       UUID.fromString("33333333-3333-4333-8333-333333333333");
   private static final String SOURCE_REQUEST_DIGEST = "sha256:" + "a".repeat(64);
+
+  @Test
+  void finalAdmissionOwnerReadsRequireWritableMandatoryTransactions() throws NoSuchMethodException {
+    assertWritableMandatory(
+        AccountDemoTenantEntitlementRepository.class, "readCurrent", UUID.class);
+    assertWritableMandatory(
+        AccountDemoTenantEntitlementRepository.class,
+        "revalidate",
+        DemoTenantEntitlementSnapshot.class);
+    assertWritableMandatory(
+        AccountTenantAuthorityEventRepository.class, "readCurrentByTenant", UUID.class);
+  }
 
   @Test
   void appendBindsBillingEventIdAsUuidAndAuthorityEventIdAsVarcharText() {
@@ -143,5 +160,16 @@ class AccountTenantAuthorityEventRepositoryTest {
         sourceTenantKey,
         "NEW_GAME_ROW",
         evidenceDigest);
+  }
+
+  private static void assertWritableMandatory(
+      Class<?> repositoryType, String methodName, Class<?>... parameterTypes)
+      throws NoSuchMethodException {
+    Method method = repositoryType.getMethod(methodName, parameterTypes);
+    Transactional transaction = method.getAnnotation(Transactional.class);
+
+    assertThat(transaction).isNotNull();
+    assertThat(transaction.propagation()).isEqualTo(Propagation.MANDATORY);
+    assertThat(transaction.readOnly()).isFalse();
   }
 }

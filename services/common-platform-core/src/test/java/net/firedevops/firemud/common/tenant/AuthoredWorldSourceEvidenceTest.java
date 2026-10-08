@@ -72,6 +72,27 @@ class AuthoredWorldSourceEvidenceTest {
   }
 
   @Test
+  void acceptsSourceTenantKeyAtThirtySixCodePointsAndSeventyTwoUtf16Units() {
+    String maximumSourceKey = "😀".repeat(36);
+    AuthoredWorldSourceEvidence evidence = evidence(maximumSourceKey, PROVENANCE);
+
+    assertThat(evidence.sourceGameTenantKey()).hasSize(72);
+    assertThat(evidence.sourceGameTenantKey().codePointCount(0, 72)).isEqualTo(36);
+    assertInvalid(
+        1,
+        NAMESPACE,
+        REGISTRATION_ID,
+        OPERATION_ID,
+        TENANT_ID,
+        TENANT_SLUG,
+        WORLD_SLUG,
+        DISPLAY_NAME,
+        SOURCE_GAME_ROW_ID,
+        "😀".repeat(37),
+        PROVENANCE);
+  }
+
+  @Test
   void rejectsUnsupportedVersionMalformedIdentitySelectorsAndDisplayName() {
     AuthoredWorldSourceEvidence valid = evidence(PROVENANCE);
     assertInvalid(
@@ -311,6 +332,11 @@ class AuthoredWorldSourceEvidenceTest {
   }
 
   private static AuthoredWorldSourceEvidence evidence(String provenanceKind) {
+    return evidence(SOURCE_GAME_TENANT_KEY, provenanceKind);
+  }
+
+  private static AuthoredWorldSourceEvidence evidence(
+      String sourceGameTenantKey, String provenanceKind) {
     String requestDigest =
         AuthoredWorldSourceDigest.requestDigest(
             NAMESPACE, REGISTRATION_ID, TENANT_ID, TENANT_SLUG, WORLD_SLUG, DISPLAY_NAME);
@@ -325,7 +351,7 @@ class AuthoredWorldSourceEvidenceTest {
             WORLD_SLUG,
             DISPLAY_NAME,
             SOURCE_GAME_ROW_ID,
-            SOURCE_GAME_TENANT_KEY,
+            sourceGameTenantKey,
             provenanceKind);
     return new AuthoredWorldSourceEvidence(
         1,
@@ -338,7 +364,7 @@ class AuthoredWorldSourceEvidenceTest {
         WORLD_SLUG,
         DISPLAY_NAME,
         SOURCE_GAME_ROW_ID,
-        SOURCE_GAME_TENANT_KEY,
+        sourceGameTenantKey,
         provenanceKind,
         evidenceDigest);
   }
