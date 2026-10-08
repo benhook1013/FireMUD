@@ -1383,8 +1383,11 @@ class AccountGameplayAdmissionLeasePersistenceIntegrationTest {
                 assertThat(((java.sql.SQLException) cause).getSQLState()).isEqualTo("40001");
               });
       assertThat(tx(context, () -> confirm(context, original, decision))).isEqualTo(retained);
-      assertThat(tx(context, () -> readConfirmation(context, original, decision)))
-          .isEqualTo(retained);
+      // This case proves serialization and exact retained storage, not the distinct V90 WAL
+      // durability observation. Dedicated independent-read/receipt-COMMIT cases cover that gate;
+      // a global insert-frontier denial remains an open durability limitation, never a bypass.
+      assertThat(tx(context, () -> confirmationRow(context, original)).intoMap())
+          .isEqualTo(retained.intoMap());
     }
     assertThat(
             context.dsl().fetchCount(DSL.table("account_gameplay_admission_commit_confirmations")))

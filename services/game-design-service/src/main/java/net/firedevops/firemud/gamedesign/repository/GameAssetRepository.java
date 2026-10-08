@@ -50,8 +50,11 @@ public class GameAssetRepository {
               .set(CONTENT_TYPE, asset.getContentType())
               .set(DATA, asset.getData())
               .set(CREATED_AT, createdAt)
-              .returning()
+              .returning(ID, TENANT_ID, FILE_NAME, CONTENT_TYPE, DATA, CREATED_AT)
               .fetchOne();
+      if (record == null) {
+        throw new IllegalStateException("Game asset insert did not return its persisted row");
+      }
       return toEntity(record);
     }
     dsl.update(TABLE_REF)
