@@ -18,11 +18,13 @@ import java.nio.file.Path;
 import net.firedevops.firemud.common.config.ServiceEndpointsProperties;
 import net.firedevops.firemud.common.grpc.CommonGrpcClientProperties;
 import net.firedevops.firemud.common.grpc.GrpcChannelFactory;
+import net.firedevops.firemud.gamesession.client.CanonicalGameplayRosterClient;
 import net.firedevops.firemud.gamesession.client.GameDesignPublishedRealmPolicyClient;
 import net.firedevops.firemud.gamesession.config.CanonicalPlayerRouteReadConfiguration;
 import net.firedevops.firemud.gamesession.repository.CanonicalGameInstanceLaunchAssociationRepository;
 import net.firedevops.firemud.gamesession.repository.CanonicalInitialAdmissionRepository;
 import net.firedevops.firemud.gamesession.repository.GameSessionCanonicalRealmCatalogRepository;
+import net.firedevops.firemud.gamesession.service.CanonicalGameplayRosterSelectionService;
 import net.firedevops.firemud.gamesession.service.CanonicalPlayerRouteReadService;
 import net.firedevops.firemud.gamesession.service.CanonicalPublishedPlayerRouteReadService;
 import org.junit.jupiter.api.Test;
@@ -41,6 +43,7 @@ class CanonicalPlayerRouteReadConfigurationTest {
               assertThat(context).doesNotHaveBean(GameDesignPublishedRealmPolicyClient.class);
               assertThat(context).doesNotHaveBean(CanonicalPlayerRouteReadService.class);
               assertThat(context).doesNotHaveBean(CanonicalPublishedPlayerRouteReadService.class);
+              assertThat(context).doesNotHaveBean(CanonicalGameplayRosterSelectionService.class);
             });
   }
 
@@ -55,6 +58,7 @@ class CanonicalPlayerRouteReadConfigurationTest {
               assertThat(context).doesNotHaveBean(GameDesignPublishedRealmPolicyClient.class);
               assertThat(context).doesNotHaveBean(CanonicalPlayerRouteReadService.class);
               assertThat(context).doesNotHaveBean(CanonicalPublishedPlayerRouteReadService.class);
+              assertThat(context).doesNotHaveBean(CanonicalGameplayRosterSelectionService.class);
             });
   }
 
@@ -84,6 +88,8 @@ class CanonicalPlayerRouteReadConfigurationTest {
         .withBean(CommonGrpcClientProperties.class, () -> tlsProperties)
         .withBean(GrpcChannelFactory.class, () -> channelFactory)
         .withBean(
+            CanonicalGameplayRosterClient.class, () -> mock(CanonicalGameplayRosterClient.class))
+        .withBean(
             GameSessionCanonicalRealmCatalogRepository.class,
             () -> mock(GameSessionCanonicalRealmCatalogRepository.class))
         .withBean(
@@ -101,6 +107,7 @@ class CanonicalPlayerRouteReadConfigurationTest {
               assertThat(context).hasSingleBean(GameDesignPublishedRealmPolicyClient.class);
               assertThat(context).hasSingleBean(CanonicalPlayerRouteReadService.class);
               assertThat(context).hasSingleBean(CanonicalPublishedPlayerRouteReadService.class);
+              assertThat(context).hasSingleBean(CanonicalGameplayRosterSelectionService.class);
               assertThat(
                       Mockito.mockingDetails(
                               context.getBean(GameDesignPublishedRealmPolicyClient.class))
@@ -141,6 +148,8 @@ class CanonicalPlayerRouteReadConfigurationTest {
         .withBean(ServiceEndpointsProperties.class, ServiceEndpointsProperties::new)
         .withBean(CommonGrpcClientProperties.class, () -> tlsProperties)
         .withBean(GrpcChannelFactory.class, () -> channelFactory)
+        .withBean(
+            CanonicalGameplayRosterClient.class, () -> mock(CanonicalGameplayRosterClient.class))
         .withBean(
             GameSessionCanonicalRealmCatalogRepository.class,
             () -> mock(GameSessionCanonicalRealmCatalogRepository.class))

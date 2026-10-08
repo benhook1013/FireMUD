@@ -4,10 +4,12 @@ import net.firedevops.firemud.common.config.ServiceEndpointsProperties;
 import net.firedevops.firemud.common.grpc.CommonGrpcClientProperties;
 import net.firedevops.firemud.common.grpc.GrpcChannelFactory;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
+import net.firedevops.firemud.gamesession.client.CanonicalGameplayRosterClient;
 import net.firedevops.firemud.gamesession.client.GameDesignPublishedRealmPolicyClient;
 import net.firedevops.firemud.gamesession.repository.CanonicalGameInstanceLaunchAssociationRepository;
 import net.firedevops.firemud.gamesession.repository.CanonicalInitialAdmissionRepository;
 import net.firedevops.firemud.gamesession.repository.GameSessionCanonicalRealmCatalogRepository;
+import net.firedevops.firemud.gamesession.service.CanonicalGameplayRosterSelectionService;
 import net.firedevops.firemud.gamesession.service.CanonicalPlayerRouteReadService;
 import net.firedevops.firemud.gamesession.service.CanonicalPublishedPlayerRouteReadService;
 import org.springframework.beans.factory.ObjectProvider;
@@ -73,5 +75,14 @@ public class CanonicalPlayerRouteReadConfiguration {
     }
     return new CanonicalPublishedPlayerRouteReadService(
         workloadNamespace, routeReader, catalogRepository, launchRepository, policyClient);
+  }
+
+  @Bean
+  CanonicalGameplayRosterSelectionService canonicalGameplayRosterSelectionService(
+      CanonicalPlayerRouteReadService routeReader,
+      CanonicalPublishedPlayerRouteReadService publishedRouteReader,
+      CanonicalGameplayRosterClient rosterClient) {
+    return new CanonicalGameplayRosterSelectionService(
+        routeReader, publishedRouteReader, rosterClient);
   }
 }
