@@ -26,6 +26,7 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.dao.DataAccessResourceFailureException;
 import org.springframework.grpc.server.service.GrpcService;
+import org.springframework.transaction.CannotCreateTransactionException;
 
 /** Same-namespace Entity-only mTLS transport for Account staging evidence, disabled by default. */
 @GrpcService
@@ -93,6 +94,12 @@ public class AccountActorStagingEligibilityGrpcService
               accountUuid,
               tenantUuid,
               purpose);
+    } catch (CannotCreateTransactionException unavailable) {
+      fail(
+          responseObserver,
+          Status.UNAVAILABLE,
+          "Account owner evidence is temporarily unavailable");
+      return;
     } catch (DataAccessResourceFailureException unavailable) {
       fail(
           responseObserver,
