@@ -71,7 +71,9 @@ class LiveGitHub:
         return github.fetch_pr_identity_batch(self.repo, numbers)
 
     def pull_request(self, number: int) -> PullRequestSnapshot:
-        value = self.metadata(number)
+        value = github.fetch_pr_identity(self.repo, number)
+        if type(value.get("number")) is not int or value["number"] != number:
+            raise ReviewRunnerError("GitHub returned the wrong pull request")
         head_repository_value = value.get("headRepository")
         if not isinstance(head_repository_value, dict):
             raise ReviewRunnerError("GitHub pull-request head repository identity is malformed")
@@ -87,6 +89,8 @@ class LiveGitHub:
                 raise ReviewRunnerError("GitHub pull-request head repository identity is malformed")
         else:
             owner_value = value.get("headRepositoryOwner")
+            if owner_value is None:
+                owner_value = head_repository_value.get("owner")
             owner = owner_value.get("login") if isinstance(owner_value, dict) else None
             name = head_repository_value.get("name")
             if (
@@ -99,15 +103,31 @@ class LiveGitHub:
             ):
                 raise ReviewRunnerError("GitHub pull-request head repository identity is malformed")
             head_repository = f"{owner}/{name}"
+        required_strings = (
+            "state",
+            "baseRefName",
+            "baseRefOid",
+            "headRefOid",
+            "headRefName",
+            "mergeable",
+        )
+        if any(not isinstance(value.get(field), str) or not value[field] for field in required_strings):
+            raise ReviewRunnerError("GitHub pull-request identity is malformed")
+        if any(re.fullmatch(r"[0-9a-fA-F]{40}", value[field]) is None for field in ("baseRefOid", "headRefOid")):
+            raise ReviewRunnerError("GitHub pull-request identity is malformed")
+        if type(value.get("changedFiles")) is not int or value["changedFiles"] < 0:
+            raise ReviewRunnerError("GitHub pull-request identity is malformed")
+        if value.get("mergedAt") is not None and not isinstance(value["mergedAt"], str):
+            raise ReviewRunnerError("GitHub pull-request identity is malformed")
         return PullRequestSnapshot(
-            number=int(value["number"]),
-            state=str(value["state"]),
-            base_ref_name=str(value["baseRefName"]),
-            base_sha=str(value["baseRefOid"]),
-            head_sha=str(value["headRefOid"]),
-            head_ref_name=str(value["headRefName"]),
-            changed_files=int(value["changedFiles"]),
-            mergeable=str(value["mergeable"]),
+            number=value["number"],
+            state=value["state"],
+            base_ref_name=value["baseRefName"],
+            base_sha=value["baseRefOid"],
+            head_sha=value["headRefOid"],
+            head_ref_name=value["headRefName"],
+            changed_files=value["changedFiles"],
+            mergeable=value["mergeable"],
             merged=value.get("mergedAt") is not None,
             base_exists=True,
             head_repository=head_repository,
@@ -148,10 +168,16 @@ class LiveEvidence:
             self._payloads[pr] = github.fetch_pull_request(self.repo, pr)
         return self._payloads[pr]
 
-    def prefetch_payload(self, pr: int) -> None:
-        """Warm one independent PR snapshot for a read-only queue overview."""
+    def prefetch_payload(self, pr: int, payload: dict[str, Any] | None = None) -> None:
+        """Warm a queue snapshot or seed one freshly fetched status payload."""
 
-        self._payload(pr)
+        if payload is None:
+            self._payload(pr)
+        else:
+            self._payloads[pr] = payload
+            self._histories.pop((pr, "hosted"), None)
+            self._histories.pop((pr, "cli"), None)
+            self._records_histories.pop(pr, None)
 
     def admission_history(self, pr: int, channel: str) -> Sequence[dict[str, Any]]:
         """Refresh one capped channel after execution exclusion, before state mutation."""
