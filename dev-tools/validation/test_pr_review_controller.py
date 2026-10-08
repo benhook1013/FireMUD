@@ -6990,6 +6990,41 @@ class ControllerTests(unittest.TestCase):
         mapped = controller.status()
         self.assertTrue(mapped["prs"][0]["is_draft"])
 
+    def test_selected_status_preserves_fresh_provider_draft_through_snapshot(self):
+        for is_draft in (True, False):
+            for summary_only in (False, True):
+                with self.subTest(is_draft=is_draft, summary_only=summary_only):
+                    values, heads = _stacked_prs(1)
+                    # The later selected observation must supersede the batch value,
+                    # even when only draft status changed at the same head/base.
+                    values[1] = dataclasses.replace(values[1], is_draft=not is_draft)
+                    controller = self.make(values, heads=heads)
+                    controller.set_stack([1])
+                    self._enable_batch_status(controller, values)
+                    identity = {**_batch_identity(values[1]), "isDraft": is_draft}
+                    payload = {"data": {"repository": {"pullRequest": identity}}}
+                    with (
+                        patch.object(github, "run_gh_query", return_value=payload) as query,
+                        patch.object(
+                            controller.github, "pull_request", side_effect=LiveGitHub("owner/repo").pull_request
+                        ),
+                    ):
+                        report = controller.status_for_pr(1, summary_only=summary_only)
+
+                    row = report["prs"][0]
+                    self.assertEqual(row["head"], identity["headRefOid"])
+                    self.assertEqual(row["pr_base_oid"], identity["baseRefOid"])
+                    self.assertEqual(row["is_draft"], is_draft)
+                    self.assertEqual(
+                        row["draft_notice"],
+                        "Draft PR — mark ready for review if preparation is complete." if is_draft else None,
+                    )
+                    self.assertIn("isDraft", query.call_args.args[0])
+                    round_trip = dataclasses.replace(values[1], is_draft=is_draft).runner_snapshot()
+                    self.assertEqual(round_trip.is_draft, is_draft)
+                    with patch.object(controller.github, "pull_request", return_value=round_trip):
+                        self.assertEqual(controller.status_for_pr(1)["prs"][0]["is_draft"], is_draft)
+
     def test_status_overview_rechecks_remote_heads_after_deep_reconciliation(self):
         values, heads = _stacked_prs(6)
         evidence = CountingEvidence()
