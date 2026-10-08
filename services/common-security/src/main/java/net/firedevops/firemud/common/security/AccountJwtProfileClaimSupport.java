@@ -274,8 +274,8 @@ final class AccountJwtProfileClaimSupport {
           new GameSessionAccountDelegationProfile.AccountSecurityCutoff(
               generation, streamKey, sequence);
       if (accountGeneration <= 1L
-          || !Long.toString(accountGeneration).equals(validatedCutoff.accountAuthorityGeneration())
-          || !Long.toString(accountGeneration - 1L).equals(validatedCutoff.outboxSequence())) {
+          || !Long.toString(accountGeneration)
+              .equals(validatedCutoff.accountAuthorityGeneration())) {
         throw invalid();
       }
     } catch (IllegalArgumentException failure) {

@@ -4,6 +4,7 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.UUID;
 import java.util.regex.Pattern;
 
 /**
@@ -85,10 +86,9 @@ public final class GameSessionAccountDelegationProfile {
     }
     accountSecurityCutoff.ifPresent(
         cutoff -> {
-          if (!Long.toString(accountAuthorityGeneration).equals(cutoff.accountAuthorityGeneration())
-              || !Long.toString(accountAuthorityGeneration - 1L).equals(cutoff.outboxSequence())) {
-            throw new IllegalArgumentException(
-                "Account security cutoff generation or sequence is stale");
+          if (!Long.toString(accountAuthorityGeneration)
+              .equals(cutoff.accountAuthorityGeneration())) {
+            throw new IllegalArgumentException("Account security cutoff generation is stale");
           }
         });
     Map<String, Object> tuple = new LinkedHashMap<>();
@@ -107,15 +107,28 @@ public final class GameSessionAccountDelegationProfile {
     public AccountSecurityCutoff {
       requirePositiveDecimal(accountAuthorityGeneration, "cutoff generation");
       requirePositiveDecimal(outboxSequence, "cutoff outbox sequence");
-      if (outboxStreamKey == null
-          || outboxStreamKey.length() > 2048
-          || !outboxStreamKey.startsWith("account:auth-authority:v1:account/")) {
-        throw new IllegalArgumentException("Account security cutoff stream is malformed");
-      }
+      requireAccountAuthorityStream(outboxStreamKey);
       for (int index = 0; index < outboxStreamKey.length(); index++) {
         if (Character.isISOControl(outboxStreamKey.charAt(index))) {
           throw new IllegalArgumentException("Account security cutoff stream is malformed");
         }
+      }
+    }
+
+    private static void requireAccountAuthorityStream(String value) {
+      String prefix = "account:auth-authority:v1:account/";
+      if (value == null || value.length() > 2048 || !value.startsWith(prefix)) {
+        throw new IllegalArgumentException("Account security cutoff stream is malformed");
+      }
+      String accountId = value.substring(prefix.length());
+      UUID parsed;
+      try {
+        parsed = UUID.fromString(accountId);
+      } catch (IllegalArgumentException failure) {
+        throw new IllegalArgumentException("Account security cutoff stream is malformed");
+      }
+      if (!parsed.toString().equals(accountId) || parsed.equals(new UUID(0L, 0L))) {
+        throw new IllegalArgumentException("Account security cutoff stream is malformed");
       }
     }
 

@@ -75,16 +75,28 @@ require(migration_base_match is not None, "migration-driver Dockerfile must decl
 require(migration_base_match.group(1) == service_base, "migration-driver Dockerfile base image must match the game-session service pin")
 require("FROM ${BASE_IMAGE}" in docker_lines, "Dockerfile must use the BASE_IMAGE argument")
 require(
-    "COPY --chown=999:999 services/game-session-service/build/distributions/game-session-migration-driver/ "
+    "COPY --chown=0:0 services/game-session-service/build/distributions/game-session-migration-driver/ "
     "/opt/firemud/game-session-migration-driver/" in docker_lines,
-    "Dockerfile must copy the packaged distribution from the repository-root build context with uid/gid 999 ownership",
+    "Dockerfile must copy the packaged distribution from the repository-root build context with root ownership",
+)
+permission_step_lines = [
+    "RUN chmod -R a+rX /opt/firemud/game-session-migration-driver \\",
+    "&& chmod -R a-w /opt/firemud/game-session-migration-driver \\",
+    "&& chmod a+x /opt/firemud/game-session-migration-driver/bin/game-session-migration-driver",
+]
+require(
+    [line for line in docker_lines if line.startswith(("RUN ", "&& "))] == permission_step_lines,
+    "Dockerfile must make the root-owned distribution readable/executable and non-writable before runtime",
 )
 require("USER 999:999" in docker_lines, "image default user must be uid/gid 999")
 require(
     f'ENTRYPOINT ["{launcher_path}"]' in docker_lines,
     "image entrypoint must be the fixed finite migration-driver launcher",
 )
-require(not any(line.startswith(("RUN ", "EXPOSE ", "CMD ")) for line in docker_lines), "image must not add startup commands, ports, or a second default command")
+require(
+    not any(line.startswith(("EXPOSE ", "CMD ")) for line in docker_lines),
+    "image must not add a startup command, port, or second default command",
+)
 require(not re.search(r"\b(?:PGDATA|serviceAccount|kubeconfig|password|secret)\b", docker_text, re.IGNORECASE), "Dockerfile must not configure storage, cluster credentials, or secrets")
 
 if not distribution.is_dir():

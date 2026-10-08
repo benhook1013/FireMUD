@@ -1,6 +1,7 @@
 package unit.net.firedevops.firemud.common.security;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.util.Map;
 import java.util.Optional;
@@ -44,7 +45,7 @@ class GameSessionAccountDelegationProfileTest {
   void includesOnlyAnExplicitlyApplicableAccountCutoff() {
     AccountSecurityCutoff cutoff =
         new AccountSecurityCutoff(
-            "12", "account:auth-authority:v1:account/11111111-1111-4111-8111-111111111111", "11");
+            "12", "account:auth-authority:v1:account/11111111-1111-4111-8111-111111111111", "44");
 
     Map<String, Object> tuple =
         GameSessionAccountDelegationProfile.authorityTuple(7L, 12L, Optional.of(cutoff));
@@ -63,5 +64,41 @@ class GameSessionAccountDelegationProfileTest {
         .containsEntry("accountAuthorityGeneration", "12");
     assertThat(GameSessionAccountDelegationProfile.authorityTuple(7L, 1L, Optional.empty()))
         .doesNotContainKey("accountSecurityCutoff");
+  }
+
+  @Test
+  void rejectsMalformedCutoffCountersAndNonAccountStreamScopes() {
+    assertThatThrownBy(
+            () ->
+                new AccountSecurityCutoff(
+                    "12",
+                    "account:auth-authority:v1:account/11111111-1111-4111-8111-111111111111",
+                    "044"))
+        .isInstanceOf(IllegalArgumentException.class);
+    assertThatThrownBy(
+            () ->
+                new AccountSecurityCutoff(
+                    "12",
+                    "account:auth-authority:v1:account/11111111-1111-4111-8111-111111111111",
+                    "0"))
+        .isInstanceOf(IllegalArgumentException.class);
+    assertThatThrownBy(
+            () ->
+                new AccountSecurityCutoff(
+                    "12",
+                    "account:auth-authority:v1:tenant/11111111-1111-4111-8111-111111111111",
+                    "44"))
+        .isInstanceOf(IllegalArgumentException.class);
+    assertThatThrownBy(
+            () ->
+                GameSessionAccountDelegationProfile.authorityTuple(
+                    7L,
+                    12L,
+                    Optional.of(
+                        new AccountSecurityCutoff(
+                            "11",
+                            "account:auth-authority:v1:account/11111111-1111-4111-8111-111111111111",
+                            "44"))))
+        .isInstanceOf(IllegalArgumentException.class);
   }
 }
