@@ -110,7 +110,9 @@ DECLARE
     locked_receipt account_gameplay_admission_commit_confirmations%ROWTYPE;
     own_xid TEXT;
     finalization_status TEXT;
+    fixed_snapshot pg_snapshot;
     insert_fence pg_lsn;
+    initial_flush_fence pg_lsn;
     flush_fence pg_lsn;
     observed_before_ms BIGINT;
     observation INTEGER;
@@ -139,9 +141,10 @@ BEGIN
     -- Establish the fixed transaction snapshot before the fence and before any heap read.
     -- A subsequently visible independent row committed before this snapshot, hence before
     -- this WAL upper bound. Even a SELECT can emit heap-pruning WAL; capture must precede it.
-    PERFORM pg_current_snapshot();
+    fixed_snapshot := pg_current_snapshot();
     own_xid := pg_current_xact_id_if_assigned()::text;
     insert_fence := pg_current_wal_insert_lsn();
+    initial_flush_fence := pg_current_wal_flush_lsn();
     IF insert_fence IS NULL OR insert_fence <= '0/0'::pg_lsn THEN
         RAISE EXCEPTION 'Account admission confirmation WAL coverage unavailable'
             USING ERRCODE = '23514', CONSTRAINT = 'account_admission_confirmation_wal_coverage';
@@ -217,7 +220,10 @@ BEGIN
         EXIT WHEN flush_fence IS NOT NULL AND flush_fence >= insert_fence;
         IF observation = 50 THEN
             RAISE EXCEPTION 'Account admission confirmation WAL coverage unavailable'
-                USING ERRCODE = '23514', CONSTRAINT = 'account_admission_confirmation_wal_coverage';
+                USING ERRCODE = '23514', CONSTRAINT = 'account_admission_confirmation_wal_coverage',
+                    DETAIL = format('phase=create snapshot=%s own_xid_if_assigned=%s finalization_xid=%s receipt_xid=%s insert_fence=%s initial_flush=%s final_flush=%s observed_db_ms=%s unchanged_expiry_ms=%s',
+                        fixed_snapshot, own_xid, operation.finalization_xid, receipt.confirmation_xid,
+                        insert_fence, initial_flush_fence, flush_fence, observed_before_ms, operation.expires_at_ms);
         END IF;
         PERFORM pg_sleep(0.01);
     END LOOP;
@@ -309,8 +315,11 @@ DECLARE
     locked_operation account_gameplay_admission_lease_operations%ROWTYPE;
     locked_receipt account_gameplay_admission_commit_confirmations%ROWTYPE;
     own_xid TEXT;
+    fixed_snapshot pg_snapshot;
     insert_fence pg_lsn;
+    initial_flush_fence pg_lsn;
     flush_fence pg_lsn;
+    observed_before_ms BIGINT;
     observation INTEGER;
 BEGIN
     IF current_setting('transaction_isolation') IS DISTINCT FROM 'serializable'
@@ -324,9 +333,10 @@ BEGIN
     END IF;
     -- Fix the snapshot and WAL upper bound before heap reads or assigning our own XID.
     -- Independent receipt visibility in that same snapshot covers its prior COMMIT.
-    PERFORM pg_current_snapshot();
+    fixed_snapshot := pg_current_snapshot();
     own_xid := pg_current_xact_id_if_assigned()::text;
     insert_fence := pg_current_wal_insert_lsn();
+    initial_flush_fence := pg_current_wal_flush_lsn();
     IF insert_fence IS NULL OR insert_fence <= '0/0'::pg_lsn THEN
         RAISE EXCEPTION 'Account admission confirmation WAL coverage unavailable'
             USING ERRCODE = '23514', CONSTRAINT = 'account_admission_confirmation_wal_coverage';
@@ -378,8 +388,12 @@ BEGIN
         flush_fence := pg_current_wal_flush_lsn();
         EXIT WHEN flush_fence IS NOT NULL AND flush_fence >= insert_fence;
         IF observation = 50 THEN
+            observed_before_ms := ceil(extract(epoch FROM clock_timestamp()) * 1000)::bigint;
             RAISE EXCEPTION 'Account admission confirmation WAL coverage unavailable'
-                USING ERRCODE = '23514', CONSTRAINT = 'account_admission_confirmation_wal_coverage';
+                USING ERRCODE = '23514', CONSTRAINT = 'account_admission_confirmation_wal_coverage',
+                    DETAIL = format('phase=receipt-read snapshot=%s own_xid_if_assigned=%s finalization_xid=%s receipt_xid=%s insert_fence=%s initial_flush=%s final_flush=%s observed_db_ms=%s unchanged_expiry_ms=%s',
+                        fixed_snapshot, own_xid, operation.finalization_xid, receipt.confirmation_xid,
+                        insert_fence, initial_flush_fence, flush_fence, observed_before_ms, operation.expires_at_ms);
         END IF;
         PERFORM pg_sleep(0.01);
     END LOOP;

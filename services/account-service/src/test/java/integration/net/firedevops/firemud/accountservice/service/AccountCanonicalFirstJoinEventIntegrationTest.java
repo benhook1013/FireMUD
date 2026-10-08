@@ -786,8 +786,8 @@ class AccountCanonicalFirstJoinEventIntegrationTest {
           rowSetJson(
               dsl,
               "account_tenant_membership",
-              "account_uuid = ? AND tenant_uuid = ?",
-              accountUuid,
+              "account_id = ? AND tenant_uuid = ?",
+              account.getId(),
               tenantUuid),
           rowSetJson(
               dsl,
@@ -799,15 +799,15 @@ class AccountCanonicalFirstJoinEventIntegrationTest {
               dsl,
               "account_tenant_membership_role_snapshots",
               "membership_id IN (SELECT id FROM account_tenant_membership "
-                  + "WHERE account_uuid = ? AND tenant_uuid = ?)",
-              accountUuid,
+                  + "WHERE account_id = ? AND tenant_uuid = ?)",
+              account.getId(),
               tenantUuid),
           rowSetJson(
               dsl,
               "account_tenant_membership_role_snapshot_roles",
               "membership_id IN (SELECT id FROM account_tenant_membership "
-                  + "WHERE account_uuid = ? AND tenant_uuid = ?)",
-              accountUuid,
+                  + "WHERE account_id = ? AND tenant_uuid = ?)",
+              account.getId(),
               tenantUuid),
           rowSetJson(
               dsl, "account_authority_outbox_events", "outbox_stream_key = ?", accountStream),
