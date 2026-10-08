@@ -1016,7 +1016,7 @@ class WorldCanonicalPlayerLocationGrpcServiceTest {
         "spiffe://firemud/ns/" + namespace + "/sa/" + service, namespace, service);
   }
 
-  private static Fixture fixture(String namespace, String readRequestId) throws Exception {
+  static Fixture fixture(String namespace, String readRequestId) throws Exception {
     var lifecycleEvidence = lifecycleEvidence(namespace, readRequestId);
     var request = placementRequest(lifecycleEvidence, OPERATION_ID);
     return new Fixture(
@@ -1554,7 +1554,7 @@ class WorldCanonicalPlayerLocationGrpcServiceTest {
     return UUID.fromString(value);
   }
 
-  private record Fixture(
+  record Fixture(
       WorldCanonicalInitialPlayerLocation.Request request,
       WorldCanonicalInstanceLifecycleEvidence lifecycleEvidence,
       byte[] originalLifecycleBytes,
