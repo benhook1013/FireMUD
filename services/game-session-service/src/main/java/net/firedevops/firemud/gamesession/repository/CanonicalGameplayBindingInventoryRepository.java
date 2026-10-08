@@ -1735,7 +1735,7 @@ public final class CanonicalGameplayBindingInventoryRepository {
             + " issuer_index_partition_count, issuer_index_partition_capacity, issuer_partition_id,"
             + " account_index_fence, issuer_reservation_id, transition_id, lifecycle,"
             + " account_index_state, issuer_index_state, inventory_revision)"
-            + " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,"
+            + " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,"
             + " 'CANDIDATE_PREPARED', 'REPAIR_REQUIRED', 'REPAIR_REQUIRED', ?)",
         prepared.bindingRef().bytes(),
         identity.accountId(),
