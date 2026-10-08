@@ -3,19 +3,19 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 ACTION="$ROOT_DIR/.github/actions/preserve-required-gate/action.yml"
-POLL_SCRIPT="$ROOT_DIR/.github/actions/preserve-required-gate/poll-required-gate.sh"
+ASSESS_SCRIPT="$ROOT_DIR/.github/actions/preserve-required-gate/assess-required-gate.sh"
 
 [[ -f "$ACTION" ]] || {
   echo "required-gate preservation composite action is missing: $ACTION" >&2
   exit 1
 }
-[[ -f "$POLL_SCRIPT" ]] || {
-  echo "required-gate preservation poll script is missing: $POLL_SCRIPT" >&2
+[[ -f "$ASSESS_SCRIPT" ]] || {
+  echo "required-gate preservation assessment script is missing: $ASSESS_SCRIPT" >&2
   exit 1
 }
 # shellcheck disable=SC2016 # Assert literal composite action runtime path.
-grep -Fxq '      run: bash "$GITHUB_ACTION_PATH/poll-required-gate.sh"' "$ACTION" || {
-  echo "required-gate action must invoke its checked-in poll script" >&2
+grep -Fxq '      run: bash "$GITHUB_ACTION_PATH/assess-required-gate.sh"' "$ACTION" || {
+  echo "required-gate action must invoke its checked-in assessment script" >&2
   exit 1
 }
 grep -Fq 'using: composite' "$ACTION" || {
@@ -26,7 +26,7 @@ grep -Fq '  gate-name:' "$ACTION" || {
   echo "required-gate preservation action must expose a gate-name input" >&2
   exit 1
 }
-if grep -Fq 'allow-pending' "$ACTION" || grep -Fq 'ALLOW_PENDING' "$POLL_SCRIPT"; then
+if grep -Fq 'allow-pending' "$ACTION" || grep -Fq 'ALLOW_PENDING' "$ASSESS_SCRIPT"; then
   echo "required-gate preservation must not expose a pending-predecessor success override" >&2
   exit 1
 fi
@@ -303,7 +303,7 @@ if data.get("name") != expected_workflow_name:
     )
 if data.get("jobs", {}).get("changes", {}).get("name") != change_job_names[workflow]:
     raise SystemExit(
-        f"{workflow} changes job name must match the poller's expected "
+        f"{workflow} changes job name must match the selector's expected "
         f"{change_job_names[workflow]!r} pattern"
     )
 if job_id not in expected_job_if or job_id not in result_step_names:
@@ -316,9 +316,8 @@ preserve_steps = [step for step in job["steps"] if step.get("name") == "Preserve
 deferred_steps = [step for step in job["steps"] if step.get("name") == "Report dependency-deferred required gate"]
 if len(preserve_steps) != 1 or preserve_steps[0].get("id") != "preserved_gate":
     raise SystemExit(f"{workflow} must bind the preservation output")
-proof_mode = "${{ github.event.pull_request.number == 3081 && github.event.pull_request.head.ref == 'codex/required-gate-native-rehearsal-v2' && 'assess' || 'poll' }}"
-if preserve_steps[0].get("with", {}).get("assessment-mode") != proof_mode:
-    raise SystemExit(f"{workflow} must assess only the fixed proof PR/ref and otherwise poll")
+if "assessment-mode" in preserve_steps[0].get("with", {}):
+    raise SystemExit(f"{workflow} must use canonical assessment without a mode opt-in")
 if len(deferred_steps) != 1 or deferred_steps[0].get("if") != "${{ steps.preserved_gate.outputs.assessment == 'dependency-deferred' }}":
     raise SystemExit(f"{workflow} must fail distinctly for dependency deferral")
 if "exit 1" not in deferred_steps[0].get("run", ""):
@@ -447,61 +446,6 @@ for workflow in ("ci.yml", "security.yml", "smoke.yml"):
 PY
 
 # shellcheck disable=SC2016 # Match the checked-in arithmetic assignment literally.
-poll_timeout_minutes="$(sed -n 's/^poll_timeout_seconds=\$((\([1-9][0-9]*\) \* 60))$/\1/p' "$POLL_SCRIPT")"
-# shellcheck disable=SC2016 # Match the checked-in arithmetic assignment literally.
-active_poll_timeout_minutes="$(sed -n 's/^active_poll_timeout_seconds=\$((\([1-9][0-9]*\) \* 60))$/\1/p' "$POLL_SCRIPT")"
-poll_interval_seconds="$(sed -n 's/^poll_interval_seconds=\([1-9][0-9]*\)$/\1/p' "$POLL_SCRIPT")"
-[[ "$poll_timeout_minutes" =~ ^[1-9][0-9]*$ ]] || {
-  echo "required-gate action must define one positive minute-based polling timeout" >&2
-  exit 1
-}
-poll_timeout_seconds=$((poll_timeout_minutes * 60))
-[[ "$active_poll_timeout_minutes" =~ ^[1-9][0-9]*$ ]] || {
-  echo "required-gate action must define one positive active-predecessor timeout" >&2
-  exit 1
-}
-active_poll_timeout_seconds=$((active_poll_timeout_minutes * 60))
-[[ "$poll_interval_seconds" =~ ^[1-9][0-9]*$ ]] || {
-  echo "required-gate action must define one positive polling interval" >&2
-  exit 1
-}
-(( poll_timeout_seconds > 19 * 60 )) || {
-  echo "required-gate action polling timeout must exceed the retired 19-minute budget" >&2
-  exit 1
-}
-(( poll_timeout_seconds < 25 * 60 )) || {
-  echo "required-gate action must retain a short missing-predecessor polling budget" >&2
-  exit 1
-}
-(( active_poll_timeout_seconds > poll_timeout_seconds )) || {
-  echo "required-gate action must allow a longer wait only for a verified active predecessor" >&2
-  exit 1
-}
-python3 - "$ROOT_DIR" "$active_poll_timeout_seconds" <<'PY'
-from pathlib import Path
-import sys
-
-import yaml
-
-root = Path(sys.argv[1])
-active_poll_timeout_seconds = int(sys.argv[2])
-callers = {
-    "ci.yml": "validation-gate",
-    "codeql.yml": "codeql-gate",
-    "license-scan.yml": "license-gate",
-    "security.yml": "security-gate",
-    "smoke.yml": "smoke-gate",
-}
-for workflow, job_id in callers.items():
-    path = root / ".github" / "workflows" / workflow
-    data = yaml.load(path.read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
-    timeout_minutes = int(data["jobs"][job_id]["timeout-minutes"])
-    if timeout_minutes * 60 < active_poll_timeout_seconds + 5 * 60:
-        raise SystemExit(
-            f"{workflow} {job_id} timeout must leave five minutes beyond the active-predecessor poll budget"
-        )
-PY
-
 CODEQL_WORKFLOW="$ROOT_DIR/.github/workflows/codeql.yml"
 OVERLAY_WORKFLOW="$ROOT_DIR/.github/workflows/validate-kustomize-overlays.yml"
 
@@ -1148,56 +1092,27 @@ esac
 EOF
 cat >"$tmp_dir/sleep" <<'EOF'
 #!/usr/bin/env bash
-exit 0
+echo "one-pass assessment must never sleep" >&2
+exit 97
 EOF
 chmod +x "$tmp_dir/gh" "$tmp_dir/sleep"
 
-action_script="$(<"$POLL_SCRIPT")"
-max_attempts="$(sed -n 's/^max_attempts=\([1-9][0-9]*\)$/\1/p' <<<"$action_script")"
-[[ "$max_attempts" =~ ^[1-9][0-9]*$ ]] || {
-  echo "required-gate action must define one positive max_attempts polling bound" >&2
-  exit 1
-}
-# shellcheck disable=SC2016 # Reject literal GitHub expression syntax in executable shell.
+action_script="$(<"$ASSESS_SCRIPT")"
+# shellcheck disable=SC2016 # Reject literal GitHub expressions in shell.
 if grep -Fq '${{' <<<"$action_script"; then
-  echo "required-gate action run script must receive workflow context through env" >&2
-  exit 1
+  echo "assessment must receive workflow context through env" >&2; exit 1
 fi
-grep -Fq 'retry_error_text=""' <<<"$action_script" || {
-  echo "required-gate action must reset retry error text for each attempt" >&2
-  exit 1
-}
-# shellcheck disable=SC2016 # Assert literal shell parameter expansion syntax.
-grep -Fq 'retry_error_text="${workflow_run_error}"' <<<"$action_script" || {
-  echo "required-gate action must capture workflow-run API error text at the failure site" >&2
-  exit 1
-}
-# shellcheck disable=SC2016 # Assert literal shell parameter expansion syntax.
-grep -Fq 'retry_error_text="${job_error}"' <<<"$action_script" || {
-  echo "required-gate action must capture retryable API error text at the failure site" >&2
-  exit 1
-}
-# Assert the exact discovery-loop declaration so stray mentions cannot mask a
-# removed active status from the actual API query.
-grep -Fxq '  for active_workflow_status in in_progress queued requested waiting pending; do' <<<"$action_script" || {
-  echo "required-gate action must query every supported active workflow status" >&2
-  exit 1
-}
-retry_branch="$(awk '/^  if \[\[ "\$\{job_lookup_retryable\}" == "true" \]\]; then$/{capture=1} capture{print} capture && /^  fi$/{exit}' <<<"$action_script")"
-# shellcheck disable=SC2016 # Assert literal shell parameter expansion syntax.
-grep -Fq '[[ -z "${retry_error_text}" ]] || printf' <<<"$retry_branch" || {
-  echo "required-gate action must print captured retry error text" >&2
-  exit 1
-}
-if grep -Fq 'api_error_file' <<<"$retry_branch"; then
-  echo "required-gate action retry branch must not reread the mutable API error file" >&2
-  exit 1
+if grep -Eq 'PRESERVATION_MODE|poll_deadline|sleep_until_poll_deadline|find_active_substantive_workflow' <<<"$action_script"; then
+  echo "assessment must not retain a polling mode or discovery loop" >&2; exit 1
 fi
 run_action() {
   local count_file="$1"
   local failure_mode="$2"
   local scenario="${3:-failure-retry}"
   local call_count_dir="${4:-}"
+  # Fixture outputs must never inherit the enclosing Actions step output file.
+  local assessment_output="${5:-$count_file-output}"
+  GITHUB_OUTPUT="$assessment_output" \
   GH_RETRY_COUNT_FILE="$count_file" \
   GH_FAILURE_MODE="$failure_mode" \
   GH_SCENARIO="$scenario" \
@@ -1214,764 +1129,96 @@ run_action() {
   EXPECTED_WORKFLOW_NAME='CI — Validation' \
   EXPECTED_WORKFLOW_FILE=ci.yml \
   EXPECTED_WORKFLOW_PATH=.github/workflows/ci.yml \
-  bash "$POLL_SCRIPT"
+  bash "$ASSESS_SCRIPT"
 }
 
 # Incomplete or inconsistent successful API responses cannot manufacture proof.
-for coverage_mode in poll assess; do
-  for coverage_case in truncated missing-total malformed-total overcount invalid-id empty-pages duplicate inconsistent-total; do
-    coverage_scenario="check-coverage-$coverage_case"
-    coverage_count="$tmp_dir/$coverage_mode-$coverage_scenario-count"
-    coverage_output="$tmp_dir/$coverage_mode-$coverage_scenario-output"
-    coverage_log="$tmp_dir/$coverage_mode-$coverage_scenario-log"
-    if PRESERVATION_MODE="$coverage_mode" GITHUB_OUTPUT="$coverage_output" \
-      run_action "$coverage_count" none "$coverage_scenario" >"$coverage_log" 2>&1; then
-      echo "required-gate $coverage_mode accepted invalid check coverage: $coverage_case" >&2
-      exit 1
-    fi
-    [[ "$(<"$coverage_count")" == 1 && ! -s "$coverage_output" ]] || {
-      echo "invalid check coverage was retried or emitted an assessment: $coverage_case" >&2
-      exit 1
-    }
-    grep -Fq 'malformed or incomplete check-run data' "$coverage_log" || {
-      echo "invalid check coverage did not fail at the coverage boundary: $coverage_case" >&2
-      exit 1
-    }
-  done
-  coverage_output="$tmp_dir/$coverage_mode-complete-multi-output"
-  PRESERVATION_MODE="$coverage_mode" GITHUB_OUTPUT="$coverage_output" \
-    run_action "$tmp_dir/$coverage_mode-complete-multi-count" none check-coverage-multi
-  [[ "$(<"$coverage_output")" == assessment=success ]] || {
-    echo "complete multi-page check coverage lost successful proof" >&2
-    exit 1
-  }
-done
-
-sleep_until_poll_deadline_script="$(awk '
-  /^sleep_until_poll_deadline\(\) \{$/ { capture=1 }
-  capture {
-    print
-    if ($0 == "}") exit
-  }
-' <<<"$action_script")"
-[[ -n "$sleep_until_poll_deadline_script" ]] || {
-  echo "required-gate action must define its bounded polling sleep helper" >&2
-  exit 1
-}
-deadline_clamp_output="$tmp_dir/deadline-clamp-output"
-deadline_clamp_script="poll_interval_seconds=$poll_interval_seconds
-poll_deadline=1
-${sleep_until_poll_deadline_script}
-sleep_until_poll_deadline"
-PATH="$tmp_dir:$PATH" bash -euo pipefail -c "$deadline_clamp_script" >"$deadline_clamp_output" 2>&1
-grep -Fxq 'Polling delay bounded to 1s by the deadline.' "$deadline_clamp_output" || {
-  echo "required-gate action did not report a polling delay clamped by its deadline" >&2
-  exit 1
-}
-deadline_unclamped_output="$tmp_dir/deadline-unclamped-output"
-deadline_unclamped_script="poll_interval_seconds=$poll_interval_seconds
-poll_deadline=30
-${sleep_until_poll_deadline_script}
-sleep_until_poll_deadline"
-PATH="$tmp_dir:$PATH" bash -euo pipefail -c "$deadline_unclamped_script" >"$deadline_unclamped_output" 2>&1
-if grep -Fq 'Polling delay bounded' "$deadline_unclamped_output"; then
-  echo "required-gate action logged a polling delay that was not clamped" >&2
-  exit 1
-fi
-
-refresh_active_workflow_state_script="$(awk '
-  /^refresh_active_workflow_state\(\) \{$/ { capture=1 }
-  capture {
-    print
-    if ($0 == "}") exit
-  }
-' <<<"$action_script")"
-[[ -n "$refresh_active_workflow_state_script" ]] || {
-  echo "required-gate action must define active-workflow state refresh" >&2
-  exit 1
-}
-late_deadline_discovery_script="poll_interval_seconds=$poll_interval_seconds
-attempt=3
-poll_attempt_limit=$max_attempts
-substantive_wait_extended=false
-last_uncertain_substantive_workflow=false
-active_substantive_workflow=false
-uncertain_substantive_workflow=false
-discovery_count=0
-find_active_substantive_workflow() { discovery_count=\$((discovery_count + 1)); }
-poll_deadline=\$((SECONDS + 2 * poll_interval_seconds))
-${refresh_active_workflow_state_script}
-refresh_active_workflow_state
-[[ \$discovery_count == 1 ]]"
-PATH="$tmp_dir:$PATH" bash -euo pipefail -c "$late_deadline_discovery_script" || {
-  echo "required-gate action did not rediscover when the wall-clock deadline approached before the final attempt" >&2
-  exit 1
-}
-
-run_guard_action() {
-  local output_file="$1"
-  local event_name="$2"
-  local head_sha="$3"
-  local count_file="$4"
-  GH_RETRY_COUNT_FILE="$count_file" \
-  PATH="$tmp_dir:$PATH" \
-  GITHUB_EVENT_NAME="$event_name" \
-  GITHUB_REPOSITORY=example/firemud \
-  GITHUB_RUN_ID=999 \
-  GH_TOKEN=test-token \
-  BASE_SHA=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb \
-  HEAD_SHA="$head_sha" \
-  PR_NUMBER=123 \
-  REQUIRED_GATE_NAME='Validation Gate' \
-  EXPECTED_WORKFLOW_NAME='CI — Validation' \
-  EXPECTED_WORKFLOW_FILE=ci.yml \
-  EXPECTED_WORKFLOW_PATH=.github/workflows/ci.yml \
-  bash "$POLL_SCRIPT" >"$output_file" 2>&1
-}
-
-for failure_mode in transient network rate-limit; do
-  count_file="$tmp_dir/count-${failure_mode}"
-  run_action "$count_file" "$failure_mode" failure-retry
-  [[ "$(<"$count_file")" == "2" ]] || {
-    echo "required-gate action did not retry simulated ${failure_mode} failure" >&2
-    exit 1
-  }
-done
-
-job_failure_count="$tmp_dir/count-job-failure-retry"
-job_failure_output="$tmp_dir/job-failure-retry-output"
-run_action "$job_failure_count" none job-failure-retry >"$job_failure_output" 2>&1
-[[ "$(<"$job_failure_count")" == "2" ]] || {
-  echo "required-gate action did not retry a retryable job metadata lookup failure" >&2
-  exit 1
-}
-grep -Fq 'Retryable GitHub API failure during job API lookup' "$job_failure_output" || {
-  echo "required-gate action did not identify a retryable job API lookup" >&2
-  exit 1
-}
-
-for failure_mode in permanent permission; do
-  permanent_output="$tmp_dir/${failure_mode}-output"
-  set +e
-  run_action "$tmp_dir/count-${failure_mode}" "$failure_mode" >"$permanent_output" 2>&1
-  permanent_status=$?
-  set -e
-  [[ "$permanent_status" -ne 0 ]] || {
-    echo "required-gate action retried or accepted a permanent ${failure_mode} gh api failure" >&2
-    exit 1
-  }
-  [[ "$(<"$tmp_dir/count-${failure_mode}")" == "1" ]] || {
-    echo "required-gate action polled again after a permanent ${failure_mode} gh api failure" >&2
-    exit 1
-  }
-  grep -Fq 'Permanent GitHub API/configuration failure' "$permanent_output" || {
-    echo "required-gate action did not report the permanent ${failure_mode} gh api failure" >&2
-    exit 1
-  }
-done
-
-workflow_identity_output="$tmp_dir/workflow-identity-output"
-set +e
-run_action "$tmp_dir/count-workflow-identity-mismatch" none workflow-identity-mismatch >"$workflow_identity_output" 2>&1
-workflow_identity_status=$?
-set -e
-[[ "$workflow_identity_status" -ne 0 ]] || {
-  echo "required-gate action accepted a mismatched initial workflow identity" >&2
-  exit 1
-}
-[[ ! -e "$tmp_dir/count-workflow-identity-mismatch" ]] || {
-  echo "required-gate action polled check runs after an initial workflow identity mismatch" >&2
-  exit 1
-}
-grep -Fxq 'GitHub API returned malformed expected workflow identity; refusing to preserve.' "$workflow_identity_output" || {
-  echo "required-gate action did not report the exact initial workflow identity mismatch message" >&2
-  exit 1
-}
-
-duplicate_run_identity_output="$tmp_dir/duplicate-run-identity-output"
-duplicate_run_call_counts="$tmp_dir/duplicate-run-call-counts"
-mkdir -p "$duplicate_run_call_counts"
-set +e
-run_action "$tmp_dir/count-duplicate-run-identity" none duplicate-invalid-run-identity "$duplicate_run_call_counts" >"$duplicate_run_identity_output" 2>&1
-duplicate_run_identity_status=$?
-set -e
-[[ "$duplicate_run_identity_status" -ne 0 ]] || {
-  echo "required-gate action accepted duplicate candidates with invalid workflow-run identity" >&2
-  exit 1
-}
-[[ "$(<"$duplicate_run_call_counts/runs-200")" == "1" ]] || {
-  echo "required-gate action refetched duplicate candidates' immutable workflow-run metadata" >&2
-  exit 1
-}
-grep -Fq 'Ambiguous prior' "$duplicate_run_identity_output" || {
-  echo "required-gate action did not fail closed for duplicate candidates with invalid workflow-run identity" >&2
-  exit 1
-}
-
-no_local_workflow_file_count="$tmp_dir/count-no-local-workflow-file"
-run_action "$no_local_workflow_file_count" none no-local-workflow-file
-[[ "$(<"$no_local_workflow_file_count")" == "1" ]] || {
-  echo "required-gate action rejected valid API identity without a local workflow file" >&2
-  exit 1
-}
-
-successful_predecessor_count="$tmp_dir/count-successful-predecessor-preferred"
-run_action "$successful_predecessor_count" none latest-pending-preferred
-[[ "$(<"$successful_predecessor_count")" == "1" ]] || {
-  echo "required-gate action did not preserve an existing success while a concurrent run was pending" >&2
-  exit 1
-}
-
-missing_created_at_count="$tmp_dir/count-missing-created-at"
-run_action "$missing_created_at_count" none missing-created-at
-[[ "$(<"$missing_created_at_count")" == "1" ]] || {
-  echo "required-gate action rejected a valid check-run without created_at while preserving an existing success" >&2
-  exit 1
-}
-
-pending_count="$tmp_dir/count-pending-predecessor"
-pending_output="$tmp_dir/pending-predecessor-output"
-run_action "$pending_count" none pending-predecessor >"$pending_output" 2>&1
-[[ "$(<"$pending_count")" == "2" ]] || {
-  echo "required-gate action did not poll the relevant prior run while it was finishing" >&2
-  exit 1
-}
-grep -Fq 'verified substantive Validation Gate is still pending' "$pending_output" || {
-  echo "required-gate action did not identify the pending substantive gate" >&2
-  exit 1
-}
-
-queued_null_started_at_count="$tmp_dir/count-queued-null-started-at"
-run_action "$queued_null_started_at_count" none queued-null-started-at
-[[ "$(<"$queued_null_started_at_count")" == "2" ]] || {
-  echo "required-gate action did not poll a queued run with a null started_at until completion" >&2
-  exit 1
-}
-
-delayed_count="$tmp_dir/count-delayed-predecessor"
-run_action "$delayed_count" none delayed-predecessor
-[[ "$(<"$delayed_count")" == "3" ]] || {
-  echo "required-gate action did not tolerate check-run publication delay" >&2
-  exit 1
-}
-
-delayed_after_19_minutes_count="$tmp_dir/count-delayed-predecessor-after-19-minutes"
-run_action "$delayed_after_19_minutes_count" none delayed-predecessor-after-19-minutes
-[[ "$(<"$delayed_after_19_minutes_count")" == "78" ]] || {
-  echo "required-gate action did not preserve a substantive predecessor published after 19 minutes" >&2
-  exit 1
-}
-
-slow_substantive_output="$tmp_dir/slow-substantive-output"
-slow_substantive_count="$tmp_dir/count-slow-substantive"
-slow_substantive_api_counts="$tmp_dir/slow-substantive-api-counts"
-mkdir -p "$slow_substantive_api_counts"
-run_action "$slow_substantive_count" none active-workflow-delayed-gate "$slow_substantive_api_counts" >"$slow_substantive_output" 2>&1
-(( 97 * poll_interval_seconds > poll_timeout_seconds )) || {
-  echo "slow-substantive fixture must exceed the former missing-gate polling budget" >&2
-  exit 1
-}
-[[ "$(<"$slow_substantive_count")" == "98" ]] || {
-  echo "required-gate action did not wait past its short budget for an active substantive workflow" >&2
-  exit 1
-}
-grep -Fq 'substantive workflow is active' "$slow_substantive_output" || {
-  echo "required-gate action did not distinguish active substantive work from a missing predecessor" >&2
-  exit 1
-}
-for active_status in in_progress queued requested waiting pending; do
-  [[ "$(<"$slow_substantive_api_counts/active-$active_status")" == "1" ]] || {
-    echo "required-gate action rediscovered $active_status after extending for a verified active run" >&2
-    exit 1
-  }
-done
-[[ "$(<"$slow_substantive_api_counts/run-jobs-100")" == "1" ]] || {
-  echo "required-gate action did not reuse completed change-detector evidence for the active run" >&2
-  exit 1
-}
-
-late_active_count="$tmp_dir/count-late-active-arrival"
-late_active_api_counts="$tmp_dir/late-active-api-counts"
-mkdir -p "$late_active_api_counts"
-run_action "$late_active_count" none active-workflow-late-arrival "$late_active_api_counts" >"$tmp_dir/late-active-output" 2>&1
-[[ "$(<"$late_active_count")" == "93" ]] || {
-  echo "required-gate action missed an active substantive workflow appearing on the final short-bound discovery" >&2
-  exit 1
-}
-for active_status in in_progress queued requested waiting pending; do
-  [[ "$(<"$late_active_api_counts/active-$active_status")" == "24" ]] || {
-    echo "required-gate action did not run active-workflow discovery every fourth poll plus the final short-bound poll" >&2
-    exit 1
-  }
-done
-[[ "$(<"$late_active_api_counts/run-jobs-100")" == "1" ]] || {
-  echo "required-gate action did not fetch completed change-detector evidence once for the late active run" >&2
-  exit 1
-}
-
-for absent_scenario in active-workflow-wrong-base active-workflow-metadata-only active-workflow-mismatched-tuple; do
-  absent_output="$tmp_dir/${absent_scenario}-output"
-  absent_count="$tmp_dir/count-${absent_scenario}"
-  set +e
-  run_action "$absent_count" none "$absent_scenario" >"$absent_output" 2>&1
-  absent_status=$?
-  set -e
-  [[ "$absent_status" -ne 0 && "$(<"$absent_count")" == "$max_attempts" ]] || {
-    echo "required-gate action extended or accepted a $absent_scenario predecessor (status=$absent_status attempts=$(<"$absent_count"))" >&2
-    cat "$absent_output" >&2
-    exit 1
-  }
-done
-
-malformed_active_output="$tmp_dir/malformed-active-output"
-set +e
-run_action "$tmp_dir/count-malformed-active" none active-workflow-malformed-list >"$malformed_active_output" 2>&1
-malformed_active_status=$?
-set -e
-[[ "$malformed_active_status" -ne 0 && "$(<"$tmp_dir/count-malformed-active")" == "1" ]] || {
-  echo "required-gate action did not fail closed on malformed active-workflow data" >&2
-  exit 1
-}
-
-alternate_pending_count="$tmp_dir/count-alternate-pending"
-run_action "$alternate_pending_count" none alternate-pending
-[[ "$(<"$alternate_pending_count")" == "4" ]] || {
-  echo "required-gate action did not treat all GitHub pending statuses as pending" >&2
-  exit 1
-}
-
-pending_step_count="$tmp_dir/count-pending-preservation-step"
-run_action "$pending_step_count" none pending-preservation-step-not-concluded
-[[ "$(<"$pending_step_count")" == "4" ]] || {
-  echo "required-gate action did not treat pending preservation jobs without a concluded step as pending" >&2
-  exit 1
-}
-
-pending_discovery_count="$tmp_dir/count-pending-gate-discovery-throttle"
-pending_discovery_api_counts="$tmp_dir/pending-gate-discovery-api-counts"
-mkdir -p "$pending_discovery_api_counts"
-run_action "$pending_discovery_count" none pending-gate-discovery-throttle "$pending_discovery_api_counts"
-[[ "$(<"$pending_discovery_count")" == "6" ]] || {
-  echo "required-gate action did not continue polling a pending gate through completion" >&2
-  exit 1
-}
-for active_status in in_progress queued requested waiting pending; do
-  [[ "$(<"$pending_discovery_api_counts/active-$active_status")" == "2" ]] || {
-    echo "required-gate action did not throttle active-workflow discovery for a pending gate" >&2
-    exit 1
-  }
-done
-
-completed_step_lag_count="$tmp_dir/count-completed-preservation-step-lag"
-completed_step_lag_output="$tmp_dir/completed-preservation-step-lag-output"
-run_action "$completed_step_lag_count" none completed-preservation-step-lag >"$completed_step_lag_output" 2>&1
-[[ "$(<"$completed_step_lag_count")" == "2" ]] || {
-  echo "required-gate action did not retry a completed check while its preservation step snapshot lagged" >&2
-  exit 1
-}
-grep -Fq 'Retrying preservation-step snapshot refresh' "$completed_step_lag_output" || {
-  echo "required-gate action did not identify a preservation-step snapshot refresh" >&2
-  exit 1
-}
-if grep -Fq 'GitHub API failure' "$completed_step_lag_output"; then
-  echo "required-gate action mislabeled a preservation-step snapshot refresh as an API failure" >&2
-  exit 1
-fi
-
-persistent_step_lag_count="$tmp_dir/count-completed-preservation-step-persistent-lag"
-persistent_step_lag_output="$tmp_dir/completed-preservation-step-persistent-lag-output"
-set +e
-run_action "$persistent_step_lag_count" none completed-preservation-step-persistent-lag >"$persistent_step_lag_output" 2>&1
-persistent_step_lag_status=$?
-set -e
-[[ "$persistent_step_lag_status" -ne 0 ]] || {
-  echo "required-gate action allowed an unresolved authoritative candidate to mask an older success" >&2
-  exit 1
-}
-[[ "$(<"$persistent_step_lag_count")" == "9" ]] || {
-  echo "required-gate action did not stop refreshing an unresolved authoritative candidate after its bounded attempts" >&2
-  exit 1
-}
-grep -Fxq 'Ambiguous prior Validation Gate run metadata; refusing to preserve.' "$persistent_step_lag_output" || {
-  echo "required-gate action did not fail closed for an unresolved authoritative candidate" >&2
-  exit 1
-}
-
-for non_authoritative_scenario in completed-cancelled-missing-step completed-skipped-missing-step completed-stale-missing-step; do
-  non_authoritative_count="$tmp_dir/count-${non_authoritative_scenario}"
-  non_authoritative_output="$tmp_dir/${non_authoritative_scenario}-output"
-  run_action "$non_authoritative_count" none "$non_authoritative_scenario" >"$non_authoritative_output" 2>&1
-  [[ "$(<"$non_authoritative_count")" == "1" ]] || {
-    echo "required-gate action did not immediately discard the unresolved ${non_authoritative_scenario} candidate" >&2
-    exit 1
-  }
-  if grep -Fq 'Retrying preservation-step snapshot refresh' "$non_authoritative_output"; then
-    echo "required-gate action refreshed a non-authoritative ${non_authoritative_scenario} candidate" >&2
+coverage_mode=assess
+for coverage_case in truncated missing-total malformed-total overcount invalid-id empty-pages duplicate inconsistent-total; do
+  coverage_scenario="check-coverage-$coverage_case"
+  coverage_count="$tmp_dir/$coverage_mode-$coverage_scenario-count"
+  coverage_output="$tmp_dir/$coverage_mode-$coverage_scenario-output"
+  coverage_log="$tmp_dir/$coverage_mode-$coverage_scenario-log"
+  if run_action "$coverage_count" none "$coverage_scenario" "" "$coverage_output" >"$coverage_log" 2>&1; then
+    echo "required-gate $coverage_mode accepted invalid check coverage: $coverage_case" >&2
     exit 1
   fi
-done
-
-cache_call_counts="$tmp_dir/cache-call-counts"
-mkdir -p "$cache_call_counts"
-run_action "$tmp_dir/count-cache-metadata" none pending-preservation-step-not-concluded "$cache_call_counts"
-[[ "$(<"$cache_call_counts/runs-100")" == "1" ]] || {
-  echo "required-gate action refetched immutable workflow-run metadata across polls" >&2
-  exit 1
-}
-[[ "$(<"$cache_call_counts/jobs-100")" == "4" ]] || {
-  echo "required-gate action did not refresh the pending job and final job metadata" >&2
-  exit 1
-}
-
-terminal_cache_counts="$tmp_dir/terminal-cache-call-counts"
-mkdir -p "$terminal_cache_counts"
-run_action "$tmp_dir/count-terminal-cache" none cache-metadata-across-polls "$terminal_cache_counts"
-[[ "$(<"$terminal_cache_counts/runs-100")" == "1" && "$(<"$terminal_cache_counts/jobs-100")" == "1" ]] || {
-  echo "required-gate action refetched a verified terminal metadata job across polls" >&2
-  exit 1
-}
-[[ "$(<"$terminal_cache_counts/runs-101")" == "1" && "$(<"$terminal_cache_counts/jobs-101")" == "2" ]] || {
-  echo "required-gate action did not refresh the pending job until it completed" >&2
-  exit 1
-}
-
-pending_step_failure_output="$tmp_dir/pending-step-failure-output"
-set +e
-run_action "$tmp_dir/count-pending-step-failure" none pending-missing-step-with-failed-substantive >"$pending_step_failure_output" 2>&1
-pending_step_failure_status=$?
-set -e
-[[ "$pending_step_failure_status" -ne 0 ]] || {
-  echo "required-gate action allowed a pending preservation job to mask a substantive failure" >&2
-  exit 1
-}
-[[ "$(<"$tmp_dir/count-pending-step-failure")" == "1" ]] || {
-  echo "required-gate action retried after selecting the substantive failure beside a pending preservation job" >&2
-  exit 1
-}
-grep -Fq 'concluded failure' "$pending_step_failure_output" || {
-  echo "required-gate action did not retain substantive failure authority beside a pending preservation job" >&2
-  exit 1
-}
-
-(( max_attempts * poll_interval_seconds >= poll_timeout_seconds )) || {
-  echo "required-gate action attempt bound must cover its polling timeout" >&2
-  exit 1
-}
-active_max_attempts=$((active_poll_timeout_seconds / poll_interval_seconds))
-timeout_output="$tmp_dir/timeout-output"
-set +e
-run_action "$tmp_dir/count-timeout" none timeout-pending >"$timeout_output" 2>&1
-timeout_status=$?
-set -e
-[[ "$timeout_status" -ne 0 ]] || {
-  echo "required-gate action accepted a predecessor that never completed" >&2
-  exit 1
-}
-[[ "$(<"$tmp_dir/count-timeout")" == "$active_max_attempts" ]] || {
-  echo "required-gate action did not retain its ${active_max_attempts}-attempt active-predecessor polling limit" >&2
-  exit 1
-}
-grep -Fq 'Timed out waiting for the relevant prior' "$timeout_output" || {
-  echo "required-gate action did not report its bounded polling timeout" >&2
-  exit 1
-}
-
-unverified_pending_output="$tmp_dir/unverified-pending-output"
-set +e
-run_action "$tmp_dir/count-unverified-pending" none unverified-pending-gate >"$unverified_pending_output" 2>&1
-unverified_pending_status=$?
-set -e
-[[ "$unverified_pending_status" -ne 0 && "$(<"$tmp_dir/count-unverified-pending")" == "$max_attempts" ]] || {
-  echo "required-gate action extended or accepted an unverified pending metadata gate" >&2
-  exit 1
-}
-grep -Fq 'substantive identity is not yet verified' "$unverified_pending_output" || {
-  echo "required-gate action did not distinguish an unverified pending gate" >&2
-  exit 1
-}
-
-self_run_count="$tmp_dir/count-self-run"
-run_action "$self_run_count" none self-run-excluded
-[[ "$(<"$self_run_count")" == "1" ]] || {
-  echo "required-gate action did not exclude its current workflow run" >&2
-  exit 1
-}
-
-failed_prior_output="$tmp_dir/failed-prior-output"
-set +e
-run_action "$tmp_dir/count-failed-prior" none failed-predecessor >"$failed_prior_output" 2>&1
-failed_prior_status=$?
-set -e
-[[ "$failed_prior_status" -ne 0 ]] || {
-  echo "required-gate action accepted a failed prior gate" >&2
-  exit 1
-}
-[[ "$(<"$tmp_dir/count-failed-prior")" == "1" ]] || {
-  echo "required-gate action retried a completed failed prior gate" >&2
-  exit 1
-}
-grep -Fq 'concluded failure' "$failed_prior_output" || {
-  echo "required-gate action did not report the failed prior conclusion" >&2
-  exit 1
-}
-
-newer_failure_output="$tmp_dir/newer-failure-output"
-set +e
-run_action "$tmp_dir/count-newer-failure" none newer-failure-over-success >"$newer_failure_output" 2>&1
-newer_failure_status=$?
-set -e
-[[ "$newer_failure_status" -ne 0 ]] || {
-  echo "required-gate action allowed an older success to mask a newer completed failure" >&2
-  exit 1
-}
-[[ "$(<"$tmp_dir/count-newer-failure")" == "1" ]] || {
-  echo "required-gate action retried after selecting the newest authoritative failure" >&2
-  exit 1
-}
-grep -Fq 'concluded failure' "$newer_failure_output" || {
-  echo "required-gate action did not report the newest authoritative failure" >&2
-  exit 1
-}
-
-same_timestamp_output="$tmp_dir/same-timestamp-output"
-set +e
-run_action "$tmp_dir/count-same-timestamp" none same-timestamp-newer-failure >"$same_timestamp_output" 2>&1
-same_timestamp_status=$?
-set -e
-[[ "$same_timestamp_status" -ne 0 ]] || {
-  echo "required-gate action allowed an older same-timestamp success to mask a newer failure" >&2
-  exit 1
-}
-[[ "$(<"$tmp_dir/count-same-timestamp")" == "1" ]] || {
-  echo "required-gate action retried after selecting the deterministic same-timestamp failure" >&2
-  exit 1
-}
-grep -Fq 'concluded failure' "$same_timestamp_output" || {
-  echo "required-gate action did not report the deterministic same-timestamp failure" >&2
-  exit 1
-}
-
-fork_head_count="$tmp_dir/count-fork-head"
-run_action "$fork_head_count" none fork-head-same-sha
-[[ "$(<"$fork_head_count")" == "1" ]] || {
-  echo "required-gate action rejected a valid fork pull request run owned by the base repository" >&2
-  exit 1
-}
-
-fork_empty_count="$tmp_dir/count-fork-empty-association"
-run_action "$fork_empty_count" none fork-empty-association
-[[ "$(<"$fork_empty_count")" == "1" ]] || {
-  echo "required-gate action rejected a fork pull request run with an empty association array and canonical title" >&2
-  exit 1
-}
-
-dynamic_run_count="$tmp_dir/count-dynamic-run-name"
-run_action "$dynamic_run_count" none dynamic-run-name
-[[ "$(<"$dynamic_run_count")" == "1" ]] || {
-  echo "required-gate action rejected a dynamic workflow run/job name with a populated PR association" >&2
-  exit 1
-}
-
-dynamic_fork_empty_count="$tmp_dir/count-dynamic-run-name-fork-empty"
-run_action "$dynamic_fork_empty_count" none dynamic-run-name-fork-empty
-[[ "$(<"$dynamic_fork_empty_count")" == "1" ]] || {
-  echo "required-gate action rejected a dynamic workflow run/job name with an empty fork association and canonical title" >&2
-  exit 1
-}
-
-run_path_ref_count="$tmp_dir/count-run-path-ref-suffix"
-run_action "$run_path_ref_count" none run-path-ref-suffix
-[[ "$(<"$run_path_ref_count")" == "1" ]] || {
-  echo "required-gate action rejected a valid workflow-run path ref suffix" >&2
-  exit 1
-}
-
-for run_path_ref_scenario in run-path-ref-suffix-plus run-path-ref-suffix-at; do
-  run_path_ref_count="$tmp_dir/count-${run_path_ref_scenario}"
-  run_action "$run_path_ref_count" none "$run_path_ref_scenario"
-  [[ "$(<"$run_path_ref_count")" == "1" ]] || {
-    echo "required-gate action rejected a valid ${run_path_ref_scenario} workflow-run path ref suffix" >&2
+  [[ "$(<"$coverage_count")" == 1 && ! -s "$coverage_output" ]] || {
+    echo "invalid check coverage was retried or emitted an assessment: $coverage_case" >&2
+    exit 1
+  }
+  grep -Fq 'malformed or incomplete check-run data' "$coverage_log" || {
+    echo "invalid check coverage did not fail at the coverage boundary: $coverage_case" >&2
     exit 1
   }
 done
-
-for details_url_scenario in details-url-query details-url-fragment; do
-  details_url_count="$tmp_dir/count-${details_url_scenario}"
-  run_action "$details_url_count" none "$details_url_scenario"
-  [[ "$(<"$details_url_count")" == "1" ]] || {
-    echo "required-gate action rejected a valid ${details_url_scenario} check-run URL" >&2
-    exit 1
-  }
-done
-
-valid_new_tuple_count="$tmp_dir/count-valid-new-tuple"
-run_action "$valid_new_tuple_count" none valid-new-tuple
-[[ "$(<"$valid_new_tuple_count")" == "1" ]] || {
-  echo "required-gate action rejected a valid populated current workflow tuple" >&2
+coverage_output="$tmp_dir/$coverage_mode-complete-multi-output"
+run_action "$tmp_dir/$coverage_mode-complete-multi-count" none check-coverage-multi "" "$coverage_output"
+[[ "$(<"$coverage_output")" == assessment=success ]] || {
+  echo "complete multi-page check coverage lost successful proof" >&2
   exit 1
 }
 
-stale_then_current_tuple_count="$tmp_dir/count-stale-then-current-tuple"
-run_action "$stale_then_current_tuple_count" none stale-then-current-tuple
-[[ "$(<"$stale_then_current_tuple_count")" == "1" ]] || {
-  echo "required-gate action did not skip a stale populated tuple before accepting the valid current tuple" >&2
-  exit 1
-}
-
-for stale_scenario in populated-wrong-base populated-wrong-head; do
-  stale_output="$tmp_dir/${stale_scenario}-output"
-  stale_count="$tmp_dir/count-${stale_scenario}"
-  set +e
-  run_action "$stale_count" none "$stale_scenario" >"$stale_output" 2>&1
-  stale_status=$?
-  set -e
-  [[ "$stale_status" -ne 0 && "$(<"$stale_count")" == "$max_attempts" ]] || {
-    echo "required-gate action did not skip stale populated ${stale_scenario} tuple (status=$stale_status attempts=$(<"$stale_count"))" >&2
-    cat "$stale_output" >&2
-    exit 1
-  }
-  if grep -Fq 'Ambiguous prior' "$stale_output"; then
-    echo "required-gate action treated stale populated ${stale_scenario} tuple as ambiguous" >&2
-    exit 1
+# API uncertainty is an error, never dependency deferral or a retry.
+for failure_mode in transient network rate-limit permanent permission; do
+  count_file="$tmp_dir/failure-$failure_mode"
+  output_file="$tmp_dir/failure-output-$failure_mode"
+  if run_action "$count_file" "$failure_mode" failure-retry >"$output_file" 2>&1; then
+    echo "assessment accepted an API failure: $failure_mode" >&2; exit 1
   fi
-done
-
-for malformed_scenario in cross-workflow-same-name malformed-run-path-ref-suffix malformed-details-url-suffix wrong-run-repository wrong-run-name wrong-job-workflow-name unknown-app unknown-check-name invalid-job-id missing-job-id unsupported-status missing-timestamp empty-wrong-pr empty-wrong-base empty-wrong-head empty-wrong-title empty-malformed-association other-pr-association; do
-  malformed_output="$tmp_dir/${malformed_scenario}-output"
-  set +e
-  run_action "$tmp_dir/count-${malformed_scenario}" none "$malformed_scenario" >"$malformed_output" 2>&1
-  malformed_status=$?
-  set -e
-  [[ "$malformed_status" -ne 0 ]] || {
-    echo "required-gate action accepted malformed ${malformed_scenario} metadata" >&2
-    exit 1
-  }
-  [[ "$(<"$tmp_dir/count-${malformed_scenario}")" == "1" ]] || {
-    echo "required-gate action retried after malformed ${malformed_scenario} metadata" >&2
-    exit 1
-  }
-  grep -Fq 'Ambiguous prior' "$malformed_output" || {
-    echo "required-gate action did not fail closed for malformed ${malformed_scenario} metadata" >&2
-    exit 1
+  [[ "$(<"$count_file")" == 1 && ! -s "$count_file-output" ]] || {
+    echo "API failure was retried or deferred: $failure_mode" >&2; exit 1;
   }
 done
 
-no_prior_output="$tmp_dir/no-prior-output"
-set +e
-run_action "$tmp_dir/count-no-prior" none no-prior >"$no_prior_output" 2>&1
-no_prior_status=$?
-set -e
-[[ "$no_prior_status" -ne 0 ]] || {
-  echo "required-gate action accepted the absence of a prior completed run" >&2
-  exit 1
-}
-[[ "$(<"$tmp_dir/count-no-prior")" == "$max_attempts" ]] || {
-  echo "required-gate action did not apply its bounded polling limit when no prior run appeared" >&2
-  exit 1
-}
-grep -Fq 'Timed out waiting for a prior' "$no_prior_output" || {
-  echo "required-gate action did not clearly report the missing prior-run timeout" >&2
-  exit 1
-}
-grep -Fq 'No attributable substantive workflow is visible yet' "$no_prior_output" || {
-  echo "required-gate action did not distinguish an absent workflow from a delayed gate" >&2
-  exit 1
-}
-
-multiple_metadata_output="$tmp_dir/multiple-metadata-output"
-set +e
-run_action "$tmp_dir/count-multiple-metadata" none multiple-metadata >"$multiple_metadata_output" 2>&1
-multiple_metadata_status=$?
-set -e
-[[ "$multiple_metadata_status" -ne 0 ]] || {
-  echo "required-gate action accepted metadata-preservation runs without a prior full gate" >&2
-  exit 1
-}
-[[ "$(<"$tmp_dir/count-multiple-metadata")" == "$max_attempts" ]] || {
-  echo "required-gate action did not keep polling when only metadata-preservation runs were visible" >&2
-  exit 1
-}
-grep -Fq 'Timed out waiting for a prior' "$multiple_metadata_output" || {
-  echo "required-gate action did not report the missing prior full gate with multiple metadata runs" >&2
-  exit 1
-}
-
-context_output="$tmp_dir/context-output"
-set +e
-run_guard_action "$context_output" push aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa "$tmp_dir/count-context"
-context_status=$?
-set -e
-[[ "$context_status" -ne 0 ]] || {
-  echo "required-gate action accepted a non-PR context" >&2
-  exit 1
-}
-[[ ! -e "$tmp_dir/count-context" ]] || {
-  echo "required-gate action polled before rejecting a non-PR context" >&2
-  exit 1
-}
-grep -Fxq 'Required-gate preservation requires pull_request context; refusing to poll.' "$context_output" || {
-  echo "required-gate action did not report the exact non-PR guard message" >&2
-  exit 1
-}
-
-head_output="$tmp_dir/head-output"
-set +e
-run_guard_action "$head_output" pull_request "   " "$tmp_dir/count-empty-head"
-head_status=$?
-set -e
-[[ "$head_status" -ne 0 ]] || {
-  echo "required-gate action accepted an empty pull request head SHA" >&2
-  exit 1
-}
-[[ ! -e "$tmp_dir/count-empty-head" ]] || {
-  echo "required-gate action polled before rejecting an empty head SHA" >&2
-  exit 1
-}
-grep -Fxq 'Required-gate preservation requires a valid pull request head SHA; refusing to poll.' "$head_output" || {
-  echo "required-gate action did not report the exact empty-head guard message" >&2
-  exit 1
-}
-
-# Exercise one assessment through the same predecessor fixtures as polling.
-for assessment_scenario in no-prior pending-predecessor queued-null-started-at multiple-metadata no-local-workflow-file fork-empty-association; do
-  assessment_file="$tmp_dir/assessment-$assessment_scenario"
-  assessment_count="$tmp_dir/assessment-count-$assessment_scenario"
-  PRESERVATION_MODE=assess GITHUB_OUTPUT="$assessment_file" \
-    run_action "$assessment_count" none "$assessment_scenario"
-  [[ "$(<"$assessment_count")" == 1 ]] || {
-    echo "one assessment polled again for $assessment_scenario" >&2
-    exit 1
-  }
-  case "$assessment_scenario" in
-    no-local-workflow-file|fork-empty-association) expected_assessment=success ;;
-    *) expected_assessment=dependency-deferred ;;
-  esac
-  [[ "$(<"$assessment_file")" == "assessment=$expected_assessment" ]] || {
-    echo "incorrect one-assessment result for $assessment_scenario" >&2
-    exit 1
+for scenario in no-local-workflow-file latest-pending-preferred missing-created-at self-run-excluded fork-head-same-sha fork-empty-association dynamic-run-name dynamic-run-name-fork-empty run-path-ref-suffix run-path-ref-suffix-plus run-path-ref-suffix-at details-url-query details-url-fragment valid-new-tuple stale-then-current-tuple completed-cancelled-missing-step completed-skipped-missing-step completed-stale-missing-step; do
+  count_file="$tmp_dir/success-$scenario"
+  run_action "$count_file" none "$scenario"
+  [[ "$(<"$count_file")" == 1 && "$(<"$count_file-output")" == assessment=success ]] || {
+    echo "one assessment lost valid original proof: $scenario" >&2; exit 1;
   }
 done
-for assessment_scenario in failed-predecessor newer-failure-over-success wrong-run-repository empty-wrong-base; do
-  assessment_file="$tmp_dir/rejected-assessment-$assessment_scenario"
-  if PRESERVATION_MODE=assess GITHUB_OUTPUT="$assessment_file" \
-    run_action "$tmp_dir/rejected-assessment-count-$assessment_scenario" none "$assessment_scenario"; then
-    echo "one assessment accepted invalid original proof: $assessment_scenario" >&2
-    exit 1
+
+for scenario in no-prior pending-predecessor queued-null-started-at multiple-metadata delayed-predecessor delayed-predecessor-after-19-minutes active-workflow-delayed-gate active-workflow-late-arrival active-workflow-wrong-base active-workflow-metadata-only active-workflow-mismatched-tuple alternate-pending pending-preservation-step-not-concluded pending-gate-discovery-throttle timeout-pending unverified-pending-gate populated-wrong-base populated-wrong-head cache-metadata-across-polls; do
+  count_file="$tmp_dir/deferred-$scenario"
+  run_action "$count_file" none "$scenario"
+  [[ "$(<"$count_file")" == 1 && "$(<"$count_file-output")" == assessment=dependency-deferred ]] || {
+    echo "one assessment did not defer unresolved original proof: $scenario" >&2; exit 1;
+  }
+done
+
+for scenario in job-failure-retry completed-preservation-step-lag completed-preservation-step-persistent-lag pending-missing-step-with-failed-substantive failed-predecessor newer-failure-over-success same-timestamp-newer-failure duplicate-invalid-run-identity cross-workflow-same-name malformed-run-path-ref-suffix malformed-details-url-suffix wrong-run-repository wrong-run-name wrong-job-workflow-name unknown-app unknown-check-name invalid-job-id missing-job-id unsupported-status missing-timestamp empty-wrong-pr empty-wrong-base empty-wrong-head empty-wrong-title empty-malformed-association other-pr-association; do
+  count_file="$tmp_dir/rejected-$scenario"
+  if run_action "$count_file" none "$scenario" >"$tmp_dir/rejected-log-$scenario" 2>&1; then
+    echo "assessment accepted invalid or unavailable evidence: $scenario" >&2; exit 1
   fi
-  [[ ! -s "$assessment_file" ]] || {
-    echo "invalid original proof was converted into dependency deferral" >&2
-    exit 1
+  [[ "$(<"$count_file")" == 1 && ! -s "$count_file-output" ]] || {
+    echo "invalid evidence was retried or deferred: $scenario" >&2; exit 1;
   }
 done
-if PRESERVATION_MODE=assess GITHUB_OUTPUT="$tmp_dir/api-assessment" \
-  run_action "$tmp_dir/api-assessment-count" transient failure-retry; then
-  echo "one assessment accepted an API failure" >&2
-  exit 1
+if run_action "$tmp_dir/initial-identity-count" none workflow-identity-mismatch >"$tmp_dir/initial-identity-log" 2>&1; then
+  echo "assessment accepted an initial workflow identity mismatch" >&2; exit 1
 fi
-[[ "$(<"$tmp_dir/api-assessment-count")" == 1 ]] || {
-  echo "one assessment retried an API failure" >&2
-  exit 1
+[[ ! -e "$tmp_dir/initial-identity-count" ]] || {
+  echo "assessment queried checks before verifying workflow identity" >&2; exit 1;
 }
+for guard in event head output; do
+  count_file="$tmp_dir/guard-count-$guard"
+  if (
+    export GITHUB_EVENT_NAME=pull_request GITHUB_REPOSITORY=example/firemud GITHUB_RUN_ID=999 GH_TOKEN=test-token
+    export BASE_SHA=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb HEAD_SHA=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa PR_NUMBER=123
+    export REQUIRED_GATE_NAME='Validation Gate' EXPECTED_WORKFLOW_NAME='CI — Validation' EXPECTED_WORKFLOW_FILE=ci.yml EXPECTED_WORKFLOW_PATH=.github/workflows/ci.yml
+    export GITHUB_OUTPUT="$tmp_dir/guard-output-$guard" GH_RETRY_COUNT_FILE="$count_file" GH_SCENARIO=no-local-workflow-file GH_FAILURE_MODE=none
+    case "$guard" in event) export GITHUB_EVENT_NAME=push ;; head) export HEAD_SHA=' ' ;; output) unset GITHUB_OUTPUT ;; esac
+    PATH="$tmp_dir:$PATH" bash "$ASSESS_SCRIPT"
+  ) >"$tmp_dir/guard-log-$guard" 2>&1; then
+    echo "assessment accepted invalid $guard context" >&2; exit 1
+  fi
+  [[ ! -s "$tmp_dir/guard-output-$guard" ]] || { echo "invalid context emitted an assessment" >&2; exit 1; }
+  if [[ "$guard" != output && -e "$count_file" ]]; then
+    echo "assessment queried checks before rejecting $guard context" >&2; exit 1
+  fi
+done
 
 RESOLVER="$ROOT_DIR/.github/actions/preserve-required-gate/resolve-deferred-gate.sh"
 python3 - "$ROOT_DIR" <<'PY'
@@ -1982,7 +1229,8 @@ import yaml
 root = Path(sys.argv[1])
 workflow = yaml.load((root / ".github/workflows/resolve-required-gates.yml").read_text(), Loader=yaml.BaseLoader)
 action = yaml.load((root / ".github/actions/preserve-required-gate/action.yml").read_text(), Loader=yaml.BaseLoader)
-assert action["inputs"]["assessment-mode"]["default"] == "poll"
+assert "assessment-mode" not in action["inputs"]
+assert "PRESERVATION_MODE" not in action["runs"]["steps"][-1]["env"]
 assert action["outputs"]["assessment"]["value"] == "${{ steps.preserve.outputs.assessment }}"
 assert workflow["on"]["workflow_run"]["types"] == ["completed"]
 assert set(workflow["on"]["workflow_run"]["workflows"]) == {
@@ -1996,30 +1244,8 @@ job = workflow["jobs"]["resolve"]
 import copy
 import json
 
-def assert_isolated_resolution(candidate):
-    assert candidate["if"] == "${{ github.event.workflow_run.head_branch == 'codex/required-gate-native-rehearsal-v2' && github.event.workflow_run.event == 'pull_request' }}"
-    assert json.loads(candidate["env"]["REQUIRED_GATE_PROOF_ALLOWLIST"]) == [
-        {"pr": 3081, "head_branch": "codex/required-gate-native-rehearsal-v2"},
-    ]
-
-assert_isolated_resolution(job)
-unsafe_scopes = [
-    {"if": "${{ github.event.workflow_run.event == 'pull_request' }}"},
-    {"if": "${{ true }}"},
-    {"env": {"REQUIRED_GATE_PROOF_ALLOWLIST": "[]"}},
-    {"env": {"REQUIRED_GATE_PROOF_ALLOWLIST": '[{"pr":3082,"head_branch":"codex/required-gate-native-rehearsal-v2"}]'}},
-    {"env": {"REQUIRED_GATE_PROOF_ALLOWLIST": '[{"pr":"3081","head_branch":"codex/required-gate-native-rehearsal-v2"}]'}},
-    {"env": {"REQUIRED_GATE_PROOF_ALLOWLIST": '[{"pr":3081,"head_branch":"ordinary-work"}]'}},
-]
-for override in unsafe_scopes:
-    unsafe = copy.deepcopy(job)
-    unsafe.update(override)
-    try:
-        assert_isolated_resolution(unsafe)
-    except AssertionError:
-        pass
-    else:
-        raise AssertionError(f"unsafe resolver proof scope accepted: {override}")
+assert job["if"] == "${{ github.event.workflow_run.event == 'pull_request' }}"
+assert "REQUIRED_GATE_PROOF_ALLOWLIST" not in (job.get("env") or {})
 assert job["permissions"] == {"contents": "read", "checks": "read", "pull-requests": "read", "actions": "write"}
 checkouts = [step for step in job["steps"] if step.get("uses", "").startswith("actions/checkout@")]
 assert len(checkouts) == 1 and checkouts[0]["with"] == {"ref": "${{ github.sha }}", "persist-credentials": "false"}
@@ -2389,7 +1615,6 @@ run_resolver() {
     "$source_id" >"$event_file"
   PATH="$tmp_dir/resolver-bin:$PATH" MOCK_ORIGINAL_GH="$tmp_dir/gh" \
     RESOLVER_STATE="$tmp_dir/resolver-state-$scenario" \
-    REQUIRED_GATE_PROOF_ALLOWLIST='[{"pr":123,"head_branch":"proof-branch"}]' \
     GITHUB_EVENT_NAME=workflow_run GITHUB_EVENT_PATH="$event_file" GITHUB_RUN_ID="$resolver_id" \
     GITHUB_OUTPUT="$tmp_dir/resolver-output-$scenario" \
     GITHUB_REPOSITORY=example/firemud GH_TOKEN=test-token \
@@ -2501,8 +1726,6 @@ run_resolver chronology-before-target 200 no-local-workflow-file admit 9001
   echo "target's later callback did not resolve a target refused by the earlier queued resolver" >&2; exit 1;
 }
 
-# A passive deployment must not even invoke the CLI.
-REQUIRED_GATE_PROOF_ALLOWLIST='[]' PATH="$tmp_dir/resolver-bin:$PATH" bash "$RESOLVER"
 run_resolver success
 run_resolver success
 [[ "$(resolver_posts success)" == 1 ]] || { echo "duplicate completion replayed a targeted rerun" >&2; exit 1; }

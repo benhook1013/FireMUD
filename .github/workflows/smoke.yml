@@ -494,7 +494,6 @@ jobs:
           workflow-name: PR Smoke Gate
           workflow-file: smoke.yml
           workflow-path: .github/workflows/smoke.yml
-          assessment-mode: ${{ github.event.pull_request.number == 3081 && github.event.pull_request.head.ref == 'codex/required-gate-native-rehearsal-v2' && 'assess' || 'poll' }}
 
       - name: Report dependency-deferred required gate
         if: ${{ steps.preserved_gate.outputs.assessment == 'dependency-deferred' }}
