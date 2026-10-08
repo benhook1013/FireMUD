@@ -20,20 +20,6 @@ report_eligible() {
   fi
 }
 
-# The script defaults to an empty admission boundary; the trusted workflow
-# supplies the exact isolated proof PR/branch allowlist. Proof branches opt
-# their existing action callers into assessment-mode: assess;
-# ordinary callers keep polling. No label, credential, or receipt is added.
-proof_allowlist="${REQUIRED_GATE_PROOF_ALLOWLIST:-[]}"
-jq -e 'type == "array" and all(.[];
-  (.pr | type) == "number" and .pr > 0 and .pr == (.pr | floor) and
-  (.head_branch | type) == "string" and (.head_branch | length) > 0)' \
-  <<<"${proof_allowlist}" >/dev/null || fail_closed "Malformed required-gate proof allowlist."
-if [[ "$(jq 'length' <<<"${proof_allowlist}")" == 0 ]]; then
-  echo "Required-gate resolution is passive: no isolated proof PR is admitted."
-  report_eligible false
-  exit 0
-fi
 [[ "${GITHUB_EVENT_NAME:-}" == workflow_run ]] || fail_closed "Resolver requires workflow_run context."
 for required_variable in GH_TOKEN GITHUB_REPOSITORY GITHUB_EVENT_PATH GITHUB_RUN_ID; do
   [[ -n "${!required_variable:-}" ]] || fail_closed "Resolver is missing ${required_variable}."
@@ -63,12 +49,6 @@ title_identity="$(jq -ern --arg title "${source_title}" --arg name "${workflow_n
   | select(.name == $name) | [.pr, .base, .head] | @tsv')"
 IFS=$'\t' read -r pr_number base_sha head_sha <<<"${title_identity}"
 head_branch="$(jq -er '.head_branch | select(type == "string" and length > 0)' <<<"${source_json}")"
-if ! jq -e --argjson pr "${pr_number}" --arg branch "${head_branch}" \
-  'any(.[]; .pr == $pr and .head_branch == $branch)' <<<"${proof_allowlist}" >/dev/null; then
-  echo "Source PR/head branch is outside the isolated proof allowlist."
-  report_eligible false
-  exit 0
-fi
 jq -e --argjson id "${source_run_id}" --argjson workflow_id "${workflow_id}" \
   --arg repository "${GITHUB_REPOSITORY}" --arg name "${workflow_name}" \
   --arg title "${source_title}" --arg path "${workflow_file}" --arg head "${head_sha}" '
@@ -428,8 +408,8 @@ for target_run_id in "${candidate_ids[@]}"; do
     BASE_SHA="${base_sha}" HEAD_SHA="${head_sha}" PR_NUMBER="${pr_number}" \
     REQUIRED_GATE_NAME="${gate_name}" EXPECTED_WORKFLOW_NAME="${workflow_name}" \
     EXPECTED_WORKFLOW_FILE="${workflow_filename}" EXPECTED_WORKFLOW_PATH="${workflow_file}" \
-    PRESERVATION_MODE=assess GITHUB_OUTPUT="${assessment_output}" \
-    bash "$(dirname "${BASH_SOURCE[0]}")/poll-required-gate.sh"; then
+    GITHUB_OUTPUT="${assessment_output}" \
+    bash "$(dirname "${BASH_SOURCE[0]}")/assess-required-gate.sh"; then
     fail_closed "Original proof is inconclusive or failed; no gate is rerun."
   fi
   [[ "$(<"${assessment_output}")" == 'assessment=success' ]] || continue

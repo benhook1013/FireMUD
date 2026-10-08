@@ -3307,6 +3307,8 @@ chmod +x "$capture_retry_step"
 capture_retry_stub_dir="$TEMP_DIR/capture-retry-stubs"
 capture_retry_namespace_json="$TEMP_DIR/capture-retry-namespace.json"
 capture_retry_output="$TEMP_DIR/capture-retry-output"
+capture_retry_partial_stdout="$TEMP_DIR/capture-retry-partial.stdout"
+capture_retry_partial_stderr="$TEMP_DIR/capture-retry-partial.stderr"
 mkdir -p "$capture_retry_stub_dir"
 cat >"$capture_retry_stub_dir/kubectl" <<'SH'
 #!/usr/bin/env bash
@@ -3355,11 +3357,17 @@ jq -nc \
     "firemud.dev/proof-retry-base-sha":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
   }}}' >"$capture_retry_namespace_json"
 : >"$capture_retry_output"
-if run_capture_retry; then
+if run_capture_retry >"$capture_retry_partial_stdout" 2>"$capture_retry_partial_stderr"; then
   echo "capture accepted a partial proof-retry annotation record" >&2
   exit 1
 fi
 [[ ! -s "$capture_retry_output" ]]
+grep -Fqx '::error title=Malformed proof-retry annotations::Retry annotations must be a complete string record before namespace recreation.' \
+  "$capture_retry_partial_stderr" || {
+    echo "capture rejected a partial proof-retry record without the expected error; observed stderr:" >&2
+    cat "$capture_retry_partial_stderr" >&2
+    exit 1
+  }
 
 invalid_preview_annotator_cases=(
   "pr-042|042|public|32000|2026-09-13T01:02:03Z"
@@ -3543,7 +3551,7 @@ controller_sleep_log="$TEMP_DIR/controller-sleep.log"
 controller_publish_output="$TEMP_DIR/controller-publish.output"
 controller_publish_stdout="$TEMP_DIR/controller-publish.stdout"
 successful_digest="sha256:$(printf '2%.0s' {1..64})"
-(
+if (
   cd "$ROOT_DIR"
   env \
     PATH="$controller_publish_stub_dir:$PATH" \
@@ -3554,12 +3562,47 @@ successful_digest="sha256:$(printf '2%.0s' {1..64})"
     CONTROLLER_SLEEP_LOG="$controller_sleep_log" \
     GITHUB_OUTPUT="$controller_publish_output" \
     bash "$controller_publish_step" >"$controller_publish_stdout"
-)
-test "$(<"$controller_push_count")" -eq 2
-grep -Fxq '5' "$controller_sleep_log"
-grep -Fxq "digest=$successful_digest" "$controller_publish_output"
+); then
+  controller_publish_step_status=0
+else
+  controller_publish_step_status=$?
+fi
+controller_publish_push_count_observed='<missing>'
+if [[ -f "$controller_push_count" ]]; then
+  controller_publish_push_count_observed="$(<"$controller_push_count")"
+fi
+controller_publish_sleep_log_observed='<missing>'
+if [[ -f "$controller_sleep_log" ]]; then
+  controller_publish_sleep_log_observed="$(<"$controller_sleep_log")"
+fi
+controller_publish_output_observed='<missing>'
+if [[ -f "$controller_publish_output" ]]; then
+  controller_publish_output_observed="$(<"$controller_publish_output")"
+fi
+if [[ "$controller_publish_step_status" -ne 0 ]]; then
+  printf 'controller publisher retry fixture extracted step failed: exit=%s pushes=%q sleeps=%q output=%q\n' \
+    "$controller_publish_step_status" "$controller_publish_push_count_observed" \
+    "$controller_publish_sleep_log_observed" "$controller_publish_output_observed" >&2
+  exit 1
+fi
+if ! test "$controller_publish_push_count_observed" -eq 2; then
+  printf 'controller publisher retry fixture push-count assertion failed: expected=2 observed=%q\n' \
+    "$controller_publish_push_count_observed" >&2
+  exit 1
+fi
+if ! grep -Fxq '5' "$controller_sleep_log"; then
+  printf 'controller publisher retry fixture sleep assertion failed: expected a 5-second backoff entry observed=%q\n' \
+    "$controller_publish_sleep_log_observed" >&2
+  exit 1
+fi
+if ! grep -Fxq "digest=$successful_digest" "$controller_publish_output"; then
+  printf 'controller publisher retry fixture digest assertion failed: expected=%q observed=%q\n' \
+    "digest=$successful_digest" "$controller_publish_output_observed" >&2
+  exit 1
+fi
 if grep -Fq "sha256:$(printf '1%.0s' {1..64})" "$controller_publish_output"; then
-  echo "failed controller push digest leaked into the attestation output" >&2
+  printf 'controller publisher retry fixture leaked the failed digest into output: observed=%q\n' \
+    "$controller_publish_output_observed" >&2
   exit 1
 fi
 

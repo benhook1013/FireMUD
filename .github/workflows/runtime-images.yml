@@ -83,7 +83,7 @@ jobs:
       pull-requests: read
     steps:
       - name: Harden runner
-        uses: step-security/harden-runner@351661ca32ac09a36dc5ee2d536e3128f2a3c8ed # v2.22.0
+        uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25 # v2.22.1
         with:
           egress-policy: audit
 
@@ -433,7 +433,7 @@ jobs:
       pull-requests: read
     steps:
       - name: Harden runner
-        uses: step-security/harden-runner@351661ca32ac09a36dc5ee2d536e3128f2a3c8ed # v2.22.0
+        uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25 # v2.22.1
         with:
           egress-policy: audit
 
@@ -900,7 +900,7 @@ jobs:
       packages: write
     steps:
       - name: Harden runner
-        uses: step-security/harden-runner@351661ca32ac09a36dc5ee2d536e3128f2a3c8ed # v2.22.0
+        uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25 # v2.22.1
         with:
           egress-policy: audit
 
@@ -1009,7 +1009,7 @@ jobs:
           - world-management-service
     steps:
       - name: Harden runner
-        uses: step-security/harden-runner@351661ca32ac09a36dc5ee2d536e3128f2a3c8ed # v2.22.0
+        uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25 # v2.22.1
         with:
           egress-policy: audit
 
@@ -1101,7 +1101,7 @@ jobs:
       BACKUP_VERIFIER_IMAGE: ghcr.io/benhook1013/backup-verifier:${{ needs.image-meta.outputs.image_tag }}
     steps:
       - name: Harden runner
-        uses: step-security/harden-runner@351661ca32ac09a36dc5ee2d536e3128f2a3c8ed # v2.22.0
+        uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25 # v2.22.1
         with:
           egress-policy: audit
 
@@ -1172,7 +1172,7 @@ jobs:
       BACKUP_VERIFIER_IMAGE: ghcr.io/benhook1013/backup-verifier:${{ needs.image-meta.outputs.image_tag }}
     steps:
       - name: Harden runner
-        uses: step-security/harden-runner@351661ca32ac09a36dc5ee2d536e3128f2a3c8ed # v2.22.0
+        uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25 # v2.22.1
         with:
           egress-policy: audit
 
@@ -1242,7 +1242,7 @@ jobs:
       CONTROLLER_IMAGE: ghcr.io/benhook1013/firemud-hosted-identity-controller:${{ needs.image-meta.outputs.image_tag }}
     steps:
       - name: Harden runner
-        uses: step-security/harden-runner@351661ca32ac09a36dc5ee2d536e3128f2a3c8ed # v2.22.0
+        uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25 # v2.22.1
         with:
           egress-policy: audit
 
@@ -1331,7 +1331,7 @@ jobs:
       CONTROLLER_IMAGE: ghcr.io/benhook1013/firemud-hosted-identity-controller:${{ needs.image-meta.outputs.image_tag }}
     steps:
       - name: Harden runner
-        uses: step-security/harden-runner@351661ca32ac09a36dc5ee2d536e3128f2a3c8ed # v2.22.0
+        uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25 # v2.22.1
         with:
           egress-policy: audit
 
@@ -1414,7 +1414,7 @@ jobs:
       BACKUP_VERIFIER_IMAGE: ghcr.io/benhook1013/backup-verifier:${{ needs.image-meta.outputs.image_tag }}
     steps:
       - name: Harden runner
-        uses: step-security/harden-runner@351661ca32ac09a36dc5ee2d536e3128f2a3c8ed # v2.22.0
+        uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25 # v2.22.1
         with:
           egress-policy: audit
 
@@ -1652,7 +1652,7 @@ jobs:
       CONTROLLER_IMAGE: firemud-hosted-identity-controller-local:${{ needs.image-meta.outputs.image_tag }}
     steps:
       - name: Harden runner
-        uses: step-security/harden-runner@351661ca32ac09a36dc5ee2d536e3128f2a3c8ed # v2.22.0
+        uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25 # v2.22.1
         with:
           egress-policy: audit
 
@@ -1716,7 +1716,7 @@ jobs:
       contents: write
     steps:
       - name: Harden runner
-        uses: step-security/harden-runner@351661ca32ac09a36dc5ee2d536e3128f2a3c8ed # v2.22.0
+        uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25 # v2.22.1
         with:
           egress-policy: audit
 
@@ -1761,7 +1761,7 @@ jobs:
       CANDIDATE_TAG: ${{ needs.image-meta.outputs.candidate_tag }}
     steps:
       - name: Harden runner
-        uses: step-security/harden-runner@351661ca32ac09a36dc5ee2d536e3128f2a3c8ed # v2.22.0
+        uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25 # v2.22.1
         with:
           egress-policy: audit
 

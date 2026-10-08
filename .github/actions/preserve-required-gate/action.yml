@@ -13,10 +13,6 @@ inputs:
   workflow-path:
     description: Exact workflow path returned by the Actions API.
     required: true
-  assessment-mode:
-    description: Temporary rollout mode; polling remains the default until hosted proof.
-    required: false
-    default: poll
 outputs:
   assessment:
     description: Successful proof or dependency-deferred assessment; invalid proof fails the action.
@@ -26,7 +22,7 @@ runs:
   steps:
     - name: Set up canonical GitHub CLI
       uses: ./.github/actions/setup-gh
-    - name: Poll prior required gate
+    - name: Assess prior required gate
       id: preserve
       shell: bash
       env:
@@ -38,5 +34,4 @@ runs:
         EXPECTED_WORKFLOW_NAME: ${{ inputs.workflow-name }}
         EXPECTED_WORKFLOW_FILE: ${{ inputs.workflow-file }}
         EXPECTED_WORKFLOW_PATH: ${{ inputs.workflow-path }}
-        PRESERVATION_MODE: ${{ inputs.assessment-mode }}
-      run: bash "$GITHUB_ACTION_PATH/poll-required-gate.sh"
+      run: bash "$GITHUB_ACTION_PATH/assess-required-gate.sh"
