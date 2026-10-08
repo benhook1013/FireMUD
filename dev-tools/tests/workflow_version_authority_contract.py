@@ -1957,16 +1957,20 @@ def main() -> int:
     busybox_source = busybox_path.read_text()
     busybox_pattern = compile_re2_pattern(busybox_manager["matchStrings"][0])
     busybox_matches = list(busybox_pattern.finditer(busybox_source))
+    busybox_context = busybox_matches[0].groupdict() if len(busybox_matches) == 1 else {}
+    busybox_indentation = busybox_context.get("indentation", "not captured")
     if (
         busybox_manager.get("managerFilePatterns") != ["/^charts\\/firemud\\/templates\\/redis-aof-reset-job\\.yaml$/"]
         or busybox_manager.get("datasourceTemplate") != "docker"
         or busybox_manager.get("versioningTemplate") != "docker"
         or len(busybox_matches) != 1
-        or busybox_matches[0].group("depName") != "busybox"
-        or not re.fullmatch(r"\d+\.\d+\.\d+", busybox_matches[0].group("currentValue"))
-        or not re.fullmatch(r"sha256:[0-9a-f]{64}", busybox_matches[0].group("currentDigest"))
+        or busybox_context.get("depName") != "busybox"
+        or not re.fullmatch(r"\d+\.\d+\.\d+", busybox_context.get("currentValue", ""))
+        or not re.fullmatch(r"sha256:[0-9a-f]{64}", busybox_context.get("currentDigest", ""))
+        or not isinstance(busybox_indentation, str)
+        or (busybox_indentation and not busybox_indentation.isspace())
     ):
-        fail("Renovate must extract exactly one versioned and digest-pinned BusyBox image from the chart hook")
+        fail("Renovate must extract the pinned BusyBox hook with supported version, digest, and indentation fields")
     busybox_rule = [
         rule
         for rule in renovate.get("packageRules", [])
@@ -1989,16 +1993,16 @@ def main() -> int:
             rendered,
         )
         return (
-            rendered.replace("{{{indent}}}", busybox_matches[0].group("indent"))
-            .replace("{{{depName}}}", busybox_matches[0].group("depName"))
-            .replace("{{{newValue}}}", new_value or busybox_matches[0].group("currentValue"))
-            .replace("{{{currentValue}}}", busybox_matches[0].group("currentValue"))
-            .replace("{{{newDigest}}}", new_digest or busybox_matches[0].group("currentDigest"))
-            .replace("{{{currentDigest}}}", busybox_matches[0].group("currentDigest"))
+            rendered.replace("{{{indentation}}}", busybox_context["indentation"])
+            .replace("{{{depName}}}", busybox_context["depName"])
+            .replace("{{{newValue}}}", new_value or busybox_context["currentValue"])
+            .replace("{{{currentValue}}}", busybox_context["currentValue"])
+            .replace("{{{newDigest}}}", new_digest or busybox_context["currentDigest"])
+            .replace("{{{currentDigest}}}", busybox_context["currentDigest"])
         )
 
-    current_value = busybox_matches[0].group("currentValue")
-    current_digest = busybox_matches[0].group("currentDigest")
+    current_value = busybox_context["currentValue"]
+    current_digest = busybox_context["currentDigest"]
     unchanged_busybox_source = busybox_source.replace(busybox_matches[0].group(0), "")
     for new_value, new_digest, expected_value, expected_digest in (
         ("1.38.1", synthetic_busybox_digest, "1.38.1", synthetic_busybox_digest),
@@ -2008,7 +2012,7 @@ def main() -> int:
     ):
         replacement = render_busybox_replacement(new_value, new_digest)
         replaced_source, replacement_count = busybox_pattern.subn(replacement, busybox_source)
-        expected_line = busybox_matches[0].group("indent") + f"image: busybox:{expected_value}@{expected_digest}"
+        expected_line = busybox_context["indentation"] + f"image: busybox:{expected_value}@{expected_digest}"
         if (
             replacement_count != 1
             or expected_line not in replaced_source

@@ -292,12 +292,12 @@
         "/^charts\\/firemud\\/templates\\/redis-aof-reset-job\\.yaml$/"
       ],
       "matchStrings": [
-        "(?m)^(?<indent>[ \\t]*)image:[ \\t]+(?<depName>busybox):(?<currentValue>[0-9][A-Za-z0-9_.-]*)@(?<currentDigest>sha256:[0-9a-f]{64})$"
+        "(?m)^(?<indentation>[ \\t]*)image:[ \\t]+(?<depName>busybox):(?<currentValue>[0-9][A-Za-z0-9_.-]*)@(?<currentDigest>sha256:[0-9a-f]{64})$"
       ],
       "depNameTemplate": "busybox",
       "datasourceTemplate": "docker",
       "versioningTemplate": "docker",
-      "autoReplaceStringTemplate": "{{{indent}}}image: {{{depName}}}:{{#if newValue}}{{{newValue}}}{{else}}{{{currentValue}}}{{/if}}@{{#if newDigest}}{{{newDigest}}}{{else}}{{{currentDigest}}}{{/if}}"
+      "autoReplaceStringTemplate": "{{{indentation}}}image: {{{depName}}}:{{#if newValue}}{{{newValue}}}{{else}}{{{currentValue}}}{{/if}}@{{#if newDigest}}{{{newDigest}}}{{else}}{{{currentDigest}}}{{/if}}"
     }
   ],
   "pip-compile": {
