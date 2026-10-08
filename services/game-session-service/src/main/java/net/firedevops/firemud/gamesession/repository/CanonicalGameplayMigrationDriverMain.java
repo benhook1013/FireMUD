@@ -441,6 +441,14 @@ public final class CanonicalGameplayMigrationDriverMain {
     return observed;
   }
 
+  static void requireStandaloneRedisTopology(Properties clusterInformation) {
+    if (clusterInformation == null
+        || !"0".equals(clusterInformation.getProperty("cluster_enabled"))) {
+      throw new IllegalStateException(
+          "Redis server topology is missing, ambiguous, or cluster-enabled");
+    }
+  }
+
   private static void requireFlywayCurrent(Flyway flyway) {
     var info = flyway.info();
     if (info.current() == null || info.pending().length != 0) {
@@ -944,6 +952,7 @@ public final class CanonicalGameplayMigrationDriverMain {
         Map<String, Object> values =
             redis.execute(
                 (RedisConnection connection) -> {
+                  requireStandaloneRedisTopology(connection.serverCommands().info("cluster"));
                   Properties info = connection.serverCommands().info("server");
                   String runId = info == null ? null : info.getProperty("run_id");
                   Properties plainConfiguration = connection.serverCommands().getConfig("port");

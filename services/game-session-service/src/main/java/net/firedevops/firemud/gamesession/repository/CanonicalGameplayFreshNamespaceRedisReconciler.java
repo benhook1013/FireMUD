@@ -70,6 +70,8 @@ final class CanonicalGameplayFreshNamespaceRedisReconciler
     FenceIdentity fence = FenceIdentity.capture(cohort);
     long startedAt = System.nanoTime();
     requireFenceAndTime(cohort, fence, startedAt);
+    requireStandaloneRedisTopology();
+    requireFenceAndTime(cohort, fence, startedAt);
     CanonicalGameplayLegacyMigrationSourceSnapshot currentLegacy =
         legacySource.captureEveryKnownFamily(cohort);
     requireFenceAndTime(cohort, fence, startedAt);
@@ -96,6 +98,8 @@ final class CanonicalGameplayFreshNamespaceRedisReconciler
 
     FenceIdentity fence = FenceIdentity.capture(cohort);
     long startedAt = System.nanoTime();
+    requireFenceAndTime(cohort, fence, startedAt);
+    requireStandaloneRedisTopology();
     requireFenceAndTime(cohort, fence, startedAt);
     CanonicalGameplayLegacyMigrationSourceSnapshot currentLegacy =
         legacySource.captureEveryKnownFamily(cohort);
@@ -146,6 +150,12 @@ final class CanonicalGameplayFreshNamespaceRedisReconciler
       throw conflict(
           "Target Redis cluster scan cannot prove complete cluster-wide namespace coverage");
     }
+    try {
+      CanonicalGameplayMigrationDriverMain.requireStandaloneRedisTopology(
+          connection.serverCommands().info("cluster"));
+    } catch (RuntimeException unprovenTopology) {
+      throw conflict("Target Redis standalone topology could not be proven");
+    }
 
     Set<String> keys = new TreeSet<>();
     ScanOptions options =
@@ -194,6 +204,26 @@ final class CanonicalGameplayFreshNamespaceRedisReconciler
       throw rejected;
     } catch (RuntimeException incompleteCursor) {
       throw conflict("Target Redis cursor failed before complete exhaustion");
+    }
+  }
+
+  private void requireStandaloneRedisTopology() {
+    try {
+      Boolean validated =
+          redis.execute(
+              (RedisCallback<Boolean>)
+                  connection -> {
+                    CanonicalGameplayMigrationDriverMain.requireStandaloneRedisTopology(
+                        connection.serverCommands().info("cluster"));
+                    return Boolean.TRUE;
+                  });
+      if (!Boolean.TRUE.equals(validated)) {
+        throw conflict("Target Redis standalone topology could not be proven");
+      }
+    } catch (CanonicalGameplayBindingInventoryConflictException rejected) {
+      throw rejected;
+    } catch (RuntimeException unavailableTopology) {
+      throw conflict("Target Redis standalone topology could not be proven");
     }
   }
 

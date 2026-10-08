@@ -16,6 +16,7 @@ import java.time.Duration;
 import java.util.ArrayList;
 import java.util.EnumSet;
 import java.util.List;
+import java.util.Properties;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicInteger;
 import net.firedevops.firemud.gamesession.binding.CanonicalGameplayAccountCoverageEvidence;
@@ -32,7 +33,9 @@ import net.firedevops.firemud.gamesession.binding.CanonicalGameplayLegacyMigrati
 import net.firedevops.firemud.gamesession.binding.CanonicalIssuerPartitionReservation;
 import org.junit.jupiter.api.Test;
 import org.springframework.data.redis.connection.RedisClusterConnection;
+import org.springframework.data.redis.connection.RedisClusterServerCommands;
 import org.springframework.data.redis.connection.RedisConnection;
+import org.springframework.data.redis.connection.RedisServerCommands;
 import org.springframework.data.redis.core.Cursor;
 import org.springframework.data.redis.core.RedisCallback;
 import org.springframework.data.redis.core.ScanOptions;
@@ -58,7 +61,7 @@ class CanonicalGameplayFreshNamespaceRedisReconcilerTest {
     assertThat(readback.remainingLegacySourceKeyDigests()).isEmpty();
     assertThat(readback.unexpectedNamespaceKeyDigests()).isEmpty();
     assertThat(cohort.fenceChecks.get()).isPositive();
-    verify(redis, times(8)).execute(any(RedisCallback.class));
+    verify(redis, times(10)).execute(any(RedisCallback.class));
     verifyNoRedisMutationOrValueRead(redis);
   }
 
@@ -88,7 +91,7 @@ class CanonicalGameplayFreshNamespaceRedisReconcilerTest {
         .isInstanceOf(CanonicalGameplayBindingInventoryConflictException.class)
         .hasMessageContaining("Complete empty legacy source inventory");
 
-    verify(redis, times(2)).execute(any(RedisCallback.class));
+    verify(redis, times(3)).execute(any(RedisCallback.class));
     verifyNoRedisMutationOrValueRead(redis);
   }
 
@@ -104,7 +107,7 @@ class CanonicalGameplayFreshNamespaceRedisReconcilerTest {
         .isInstanceOf(CanonicalGameplayBindingInventoryConflictException.class)
         .hasMessageContaining("session or index family is retained or unknown");
 
-    verify(redis, times(4)).execute(any(RedisCallback.class));
+    verify(redis, times(5)).execute(any(RedisCallback.class));
     verifyNoRedisMutationOrValueRead(redis);
   }
 
@@ -131,7 +134,7 @@ class CanonicalGameplayFreshNamespaceRedisReconcilerTest {
 
     assertThat(readback.sessionRecords()).isEmpty();
     assertThat(readback.characterIndexRecords()).isEmpty();
-    verify(redis, times(8)).execute(any(RedisCallback.class));
+    verify(redis, times(10)).execute(any(RedisCallback.class));
     verifyNoRedisMutationOrValueRead(redis);
   }
 
@@ -148,7 +151,7 @@ class CanonicalGameplayFreshNamespaceRedisReconcilerTest {
           .isInstanceOf(CanonicalGameplayBindingInventoryConflictException.class)
           .hasMessageContaining("malformed issuer projection key");
 
-      verify(redis, times(3)).execute(any(RedisCallback.class));
+      verify(redis, times(4)).execute(any(RedisCallback.class));
       verifyNoRedisMutationOrValueRead(redis);
     }
   }
@@ -174,7 +177,7 @@ class CanonicalGameplayFreshNamespaceRedisReconcilerTest {
         .isInstanceOf(CanonicalGameplayBindingInventoryConflictException.class)
         .hasMessageContaining("duplicate-safe visit bound");
 
-    verify(redis, times(3)).execute(any(RedisCallback.class));
+    verify(redis, times(4)).execute(any(RedisCallback.class));
     verifyNoRedisMutationOrValueRead(redis);
   }
 
@@ -207,6 +210,11 @@ class CanonicalGameplayFreshNamespaceRedisReconcilerTest {
   void clusterConnectionIsRefusedBecauseSingleScanCannotProveClusterCoverage() {
     StringRedisTemplate redis = mock(StringRedisTemplate.class);
     RedisClusterConnection connection = mock(RedisClusterConnection.class);
+    RedisClusterServerCommands serverCommands = mock(RedisClusterServerCommands.class);
+    Properties clusterInformation = new Properties();
+    clusterInformation.setProperty("cluster_enabled", "0");
+    when(serverCommands.info("cluster")).thenReturn(clusterInformation);
+    when(connection.serverCommands()).thenReturn(serverCommands);
     Cursor<byte[]> emptyCursor = cursor(ScanResult.empty());
     when(connection.scan(any(ScanOptions.class))).thenReturn(emptyCursor);
     invokeThroughRedisCallback(redis, connection);
@@ -225,6 +233,45 @@ class CanonicalGameplayFreshNamespaceRedisReconcilerTest {
   }
 
   @Test
+  void standaloneWrapperReportingClusterEnabledIsRefusedBeforeAnyNamespaceScan() {
+    StringRedisTemplate redis = mock(StringRedisTemplate.class);
+    RedisConnection connection = mock(RedisConnection.class);
+    RedisServerCommands serverCommands = serverCommandsWithTopology("1");
+    when(connection.serverCommands()).thenReturn(serverCommands);
+    invokeThroughRedisCallback(redis, connection);
+
+    assertThatThrownBy(
+            () ->
+                reconciler(redis)
+                    .rebuildExact(cohort(), emptyLegacySnapshot(), emptyCanonicalSnapshot(1)))
+        .isInstanceOf(CanonicalGameplayBindingInventoryConflictException.class)
+        .hasMessageContaining("standalone topology could not be proven");
+
+    verify(connection, never()).scan(any(ScanOptions.class));
+    verifyNoRedisMutationOrValueRead(redis);
+  }
+
+  @Test
+  void unavailableTopologyObservationIsRefusedBeforeAnyNamespaceScan() {
+    StringRedisTemplate redis = mock(StringRedisTemplate.class);
+    RedisConnection connection = mock(RedisConnection.class);
+    RedisServerCommands serverCommands = mock(RedisServerCommands.class);
+    when(serverCommands.info("cluster")).thenThrow(new IllegalStateException("INFO unavailable"));
+    when(connection.serverCommands()).thenReturn(serverCommands);
+    invokeThroughRedisCallback(redis, connection);
+
+    assertThatThrownBy(
+            () ->
+                reconciler(redis)
+                    .rebuildExact(cohort(), emptyLegacySnapshot(), emptyCanonicalSnapshot(1)))
+        .isInstanceOf(CanonicalGameplayBindingInventoryConflictException.class)
+        .hasMessageContaining("standalone topology could not be proven");
+
+    verify(connection, never()).scan(any(ScanOptions.class));
+    verifyNoRedisMutationOrValueRead(redis);
+  }
+
+  @Test
   void firstAndSecondTargetInventoriesMustBeIdentical() {
     StringRedisTemplate redis =
         redisWithScans(scans(List.of(), List.of(), List.of(), List.of(TARGET_KEY)));
@@ -236,7 +283,7 @@ class CanonicalGameplayFreshNamespaceRedisReconcilerTest {
         .isInstanceOf(CanonicalGameplayBindingInventoryConflictException.class)
         .hasMessageContaining("changed between complete fenced scans");
 
-    verify(redis, times(4)).execute(any(RedisCallback.class));
+    verify(redis, times(5)).execute(any(RedisCallback.class));
     verifyNoRedisMutationOrValueRead(redis);
   }
 
@@ -252,7 +299,7 @@ class CanonicalGameplayFreshNamespaceRedisReconcilerTest {
         .isInstanceOf(CanonicalGameplayBindingInventoryConflictException.class)
         .hasMessageContaining("changed during reconciliation");
 
-    verify(redis, times(3)).execute(any(RedisCallback.class));
+    verify(redis, times(4)).execute(any(RedisCallback.class));
     verifyNoRedisMutationOrValueRead(redis);
   }
 
@@ -278,7 +325,7 @@ class CanonicalGameplayFreshNamespaceRedisReconcilerTest {
         .isInstanceOf(CanonicalGameplayBindingInventoryConflictException.class)
         .hasMessageContaining("changed between complete fenced scans");
 
-    verify(redis, times(8)).execute(any(RedisCallback.class));
+    verify(redis, times(10)).execute(any(RedisCallback.class));
     verifyNoRedisMutationOrValueRead(redis);
   }
 
@@ -302,7 +349,7 @@ class CanonicalGameplayFreshNamespaceRedisReconcilerTest {
         .isInstanceOf(CanonicalGameplayBindingInventoryConflictException.class)
         .hasMessageContaining("Complete empty legacy source inventory");
 
-    verify(redis, times(6)).execute(any(RedisCallback.class));
+    verify(redis, times(8)).execute(any(RedisCallback.class));
     verifyNoRedisMutationOrValueRead(redis);
   }
 
@@ -394,8 +441,18 @@ class CanonicalGameplayFreshNamespaceRedisReconcilerTest {
               }
               return cursor(scans.get(index));
             });
+    RedisServerCommands serverCommands = serverCommandsWithTopology("0");
+    when(connection.serverCommands()).thenReturn(serverCommands);
     invokeThroughRedisCallback(redis, connection);
     return redis;
+  }
+
+  private static RedisServerCommands serverCommandsWithTopology(String clusterEnabled) {
+    RedisServerCommands serverCommands = mock(RedisServerCommands.class);
+    Properties clusterInformation = new Properties();
+    clusterInformation.setProperty("cluster_enabled", clusterEnabled);
+    when(serverCommands.info("cluster")).thenReturn(clusterInformation);
+    return serverCommands;
   }
 
   @SuppressWarnings({"rawtypes", "unchecked"})

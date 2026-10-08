@@ -18,3 +18,8 @@ paths:
   .github/workflows/preview-cleanup-proof.yml:
     ignore:
       - 'unexpected key "queue" for "concurrency" section'
+  .github/workflows/game-session-factory-qualification.yml:
+    # ubuntu-26.04 is an official GA GitHub-hosted label; remove this when the
+    # pinned actionlint release recognizes it.
+    ignore:
+      - 'label "ubuntu-26\.04" is unknown.*'

@@ -110,29 +110,46 @@ class SqliteBackupTest(unittest.TestCase):
             corrected_at="2026-09-29T01:03:00Z",
         )
         records.start_attempt(
-            attempt_id="run.backupfixture", source_pr=123, channel="cli",
-            candidate_sha="a" * 40, started_at="2026-09-29T01:00:00Z",
+            attempt_id="run.backupfixture",
+            source_pr=123,
+            channel="cli",
+            candidate_sha="a" * 40,
+            started_at="2026-09-29T01:00:00Z",
         )
         records.finish_attempt(
-            "run.backupfixture", state="completed", finished_at="2026-09-29T01:01:00Z",
+            "run.backupfixture",
+            state="completed",
+            finished_at="2026-09-29T01:01:00Z",
             artifacts={"cli_events": '{"type":"complete","status":"review_completed"}\n'},
         )
         records.import_completed_run(
-            run_id="backup-provider-run", source_pr=123, channel="cli",
-            findings=(), source_decisions=(), reviewer="CodeRabbit CLI",
-            started_at="2026-09-29T01:00:00Z", finished_at="2026-09-29T01:01:00Z",
+            run_id="backup-provider-run",
+            source_pr=123,
+            channel="cli",
+            findings=(),
+            source_decisions=(),
+            reviewer="CodeRabbit CLI",
+            started_at="2026-09-29T01:00:00Z",
+            finished_at="2026-09-29T01:01:00Z",
         )
         records.link_provider_origin(
-            repository="benhook1013/firemud", source_pr=123, channel="cli",
-            provider_id="run.backupfixture", checkpoint_id=123456,
-            checkpoint_fingerprint="a" * 64, run_id="backup-provider-run",
+            repository="benhook1013/firemud",
+            source_pr=123,
+            channel="cli",
+            provider_id="run.backupfixture",
+            checkpoint_id=123456,
+            checkpoint_fingerprint="a" * 64,
+            run_id="backup-provider-run",
         )
         records.archive_imported_artifacts(
             "backup-provider-run", {"cli_events": '{"type":"complete","status":"review_completed"}\n'}
         )
         records.record_historical_gap(
-            repository="benhook1013/firemud", source_pr=124, channel="hosted",
-            checkpoint_id=123457, checkpoint_fingerprint="b" * 64,
+            repository="benhook1013/firemud",
+            source_pr=124,
+            channel="hosted",
+            checkpoint_id=123457,
+            checkpoint_fingerprint="b" * 64,
             checkpoint={"comment_id": 123457, "body": "Historical checkpoint"},
             artifacts={"hosted_comments": json.dumps({"body": "Public review summary"})},
             missing_reason="Private decision capture never existed",
@@ -140,8 +157,9 @@ class SqliteBackupTest(unittest.TestCase):
 
     def _assert_fixture_records(self, path: Path) -> None:
         history = SqliteReviewRecords(path).history(123)
-        self.assertEqual(sorted(run["run_id"] for run in history["runs"]),
-                         ["backup-fixture-run", "backup-provider-run"])
+        self.assertEqual(
+            sorted(run["run_id"] for run in history["runs"]), ["backup-fixture-run", "backup-provider-run"]
+        )
         self.assertEqual([finding["title"] for finding in history["findings"]], ["Synthetic backup finding"])
         self.assertEqual(history["findings"][0]["display_severity"], "Trivial")
         self.assertEqual(history["source_resolutions"][0]["fix_sha"], "d" * 40)
@@ -155,9 +173,12 @@ class SqliteBackupTest(unittest.TestCase):
         self.assertEqual(gap_history["historical_gaps"][0]["checkpoint_id"], 123457)
         self.assertEqual(gap_history["historical_gap_artifacts"][0]["kind"], "hosted_comments")
         with sqlite3.connect(path) as connection:
-            self.assertEqual(connection.execute(
-                "SELECT COUNT(*) FROM review_artifacts WHERE attempt_id = 'run.backupfixture'"
-            ).fetchone()[0], 1)
+            self.assertEqual(
+                connection.execute(
+                    "SELECT COUNT(*) FROM review_artifacts WHERE attempt_id = 'run.backupfixture'"
+                ).fetchone()[0],
+                1,
+            )
 
     def _fake_sftp(self, remote: object, binary: str, batch: str, *, phase: str = "directory-validation") -> str:
         self.assertEqual(binary, "sftp")
@@ -218,9 +239,7 @@ class SqliteBackupTest(unittest.TestCase):
         return f"d{permissions}    ? {uid}        1001 4096 Sep 28 12:00 {path}"
 
     def _transport_patches(self):
-        return (
-            patch("pr_review.sqlite_backup._run_sftp", side_effect=self._fake_sftp),
-        )
+        return (patch("pr_review.sqlite_backup._run_sftp", side_effect=self._fake_sftp),)
 
     def _backup_arguments(self) -> dict[str, str | Path | int]:
         return {
@@ -267,7 +286,9 @@ class SqliteBackupTest(unittest.TestCase):
         self._assert_fixture_records(restored_path)
         self.assertTrue(self.sftp_batches)
         self.assertTrue(any(line.startswith("rename ") for batch in self.sftp_batches for line in batch.splitlines()))
-        self.assertTrue(any(line.startswith("chmod 600 ") for batch in self.sftp_batches for line in batch.splitlines()))
+        self.assertTrue(
+            any(line.startswith("chmod 600 ") for batch in self.sftp_batches for line in batch.splitlines())
+        )
         self.assertTrue(any(line.startswith("ls -ln ") for batch in self.sftp_batches for line in batch.splitlines()))
         commands = {line.split(maxsplit=1)[0].lstrip("-") for batch in self.sftp_batches for line in batch.splitlines()}
         self.assertLessEqual(commands, {"cd", "pwd", "put", "chmod", "ls", "get", "rename", "rm"})
@@ -368,11 +389,13 @@ class SqliteBackupTest(unittest.TestCase):
     def test_secret_named_json_artifact_fields_are_rejected_before_sftp(self) -> None:
         cases = (
             (
-                "review_artifacts", "attempt_id = ? AND kind = ?",
+                "review_artifacts",
+                "attempt_id = ? AND kind = ?",
                 ("run.backupfixture", "cli_events"),
             ),
             (
-                "imported_artifacts", "run_id = ? AND kind = ?",
+                "imported_artifacts",
+                "run_id = ? AND kind = ?",
                 ("backup-provider-run", "cli_events"),
             ),
             (
@@ -465,26 +488,41 @@ class SqliteBackupTest(unittest.TestCase):
     def _corrected_subagent_fixture(self) -> dict:
         records = SqliteReviewRecords(self.database)
         records.start_attempt(
-            attempt_id="corrected-backup-run", source_pr=125, channel="subagent",
+            attempt_id="corrected-backup-run",
+            source_pr=125,
+            channel="subagent",
             metadata={"model": "fixture-model", "reviewer": "fixture reviewer", "scope": "narrow"},
         )
         records.import_completed_run(
-            run_id="corrected-backup-run", source_pr=125, channel="subagent",
-            findings=(FindingObservation(
-                source_finding_key="implementation-handoff", title="Implementation handoff",
-                disposition="rejected", display_severity="Minor",
-            ),),
-            source_decisions=({
-                "source_finding_key": "implementation-handoff", "decision_id": "handoff-decision",
-                "decision": "rejected", "actor": "fixture reviewer", "reason": "Original recording",
-            },),
+            run_id="corrected-backup-run",
+            source_pr=125,
+            channel="subagent",
+            findings=(
+                FindingObservation(
+                    source_finding_key="implementation-handoff",
+                    title="Implementation handoff",
+                    disposition="rejected",
+                    display_severity="Minor",
+                ),
+            ),
+            source_decisions=(
+                {
+                    "source_finding_key": "implementation-handoff",
+                    "decision_id": "handoff-decision",
+                    "decision": "rejected",
+                    "actor": "fixture reviewer",
+                    "reason": "Original recording",
+                },
+            ),
         )
         records.finish_attempt("corrected-backup-run", state="completed")
         records.link_attempt_run("corrected-backup-run", "corrected-backup-run")
         original = records.history(125)
         records.correct_subagent_record(
-            "corrected-backup-run", "implementation-handoff",
-            actor="fixture owner", reason="Implementation metadata; no discovery finding",
+            "corrected-backup-run",
+            "implementation-handoff",
+            actor="fixture owner",
+            reason="Implementation metadata; no discovery finding",
         )
         return original
 
@@ -508,18 +546,78 @@ class SqliteBackupTest(unittest.TestCase):
         self.assertEqual(history["decisions"], original["decisions"])
         self.assertEqual(history["record_corrections"][0]["original_observation"], original["findings"][0])
         with sqlite3.connect(destination) as connection:
-            self.assertEqual(connection.execute(
-                "SELECT import_payload_json FROM review_runs WHERE run_id = 'corrected-backup-run'"
-            ).fetchone()[0], payload)
-            self.assertEqual(connection.execute(
-                "SELECT COUNT(*) FROM finding_observations WHERE run_id = 'corrected-backup-run'"
-            ).fetchone()[0], 1)
+            self.assertEqual(
+                connection.execute(
+                    "SELECT import_payload_json FROM review_runs WHERE run_id = 'corrected-backup-run'"
+                ).fetchone()[0],
+                payload,
+            )
+            self.assertEqual(
+                connection.execute(
+                    "SELECT COUNT(*) FROM finding_observations WHERE run_id = 'corrected-backup-run'"
+                ).fetchone()[0],
+                1,
+            )
+
+    def test_subagent_run_count_correction_survives_backup_and_restore(self) -> None:
+        records = SqliteReviewRecords(self.database)
+        started_at = "2026-10-07T01:00:00Z"
+        finished_at = "2026-10-07T01:01:00Z"
+        records.start_attempt(
+            attempt_id="helper-backup-zero-run",
+            source_pr=125,
+            channel="subagent",
+            started_at=started_at,
+            metadata={
+                "model": "fixture-model",
+                "reasoning_effort": "medium",
+                "reviewer": "fixture helper",
+                "scope": "narrow",
+                "coverage_limits": [],
+            },
+        )
+        records.import_completed_run(
+            run_id="helper-backup-zero-run",
+            source_pr=125,
+            channel="subagent",
+            findings=(),
+            source_decisions=(),
+            reviewer="fixture helper",
+            scope="narrow",
+            started_at=started_at,
+            finished_at=finished_at,
+        )
+        records.finish_attempt("helper-backup-zero-run", state="completed", finished_at=finished_at)
+        records.link_attempt_run("helper-backup-zero-run", "helper-backup-zero-run")
+        records.correct_subagent_run_count(
+            "helper-backup-zero-run",
+            correction_id="helper-backup-exclusion-1",
+            excluded_from_review_counts=True,
+            actor="fixture owner",
+            reason="Implementation support was not a commissioned review",
+        )
+        expected = records.history(125)
+
+        (sftp_patch,) = self._transport_patches()
+        with sftp_patch:
+            receipt = backup_database(self.database, **self._backup_arguments())
+            destination = self.root / "helper-restored.sqlite3"
+            restored = restore_remote_backup(receipt.filename, destination, **self._backup_arguments())
+
+        self.assertEqual(restored.sha256, receipt.sha256)
+        restored_history = SqliteReviewRecords(destination).history(125)
+        self.assertEqual(restored_history["runs"], expected["runs"])
+        self.assertEqual(restored_history["attempts"], expected["attempts"])
+        self.assertTrue(restored_history["runs"][0]["excluded_from_review_counts"])
+        self.assertEqual(restored_history["runs"][0]["counts"], {"found": 0, "accepted": 0, "routed": 0})
+        self.assertEqual(restored_history["runs"][0]["review_count_corrections"][0]["actor"], "fixture owner")
 
     def test_backup_rejects_missing_duplicate_or_wrong_retained_observation_projection(self) -> None:
         self._corrected_subagent_fixture()
         native_history = SqliteReviewRecords.history
         for defect in ("missing", "duplicate", "identity", "provenance"):
             with self.subTest(defect=defect):
+
                 def malformed_history(records, pr, defect=defect, **kwargs):
                     history = native_history(records, pr, **kwargs)
                     if pr == 125:
@@ -533,6 +631,7 @@ class SqliteBackupTest(unittest.TestCase):
                         else:
                             corrections[0]["source_finding_key"] = "wrong-key"
                     return history
+
                 with (
                     patch.object(SqliteReviewRecords, "history", malformed_history),
                     self.assertRaisesRegex(BackupError, "observations do not match|correction provenance"),
@@ -548,9 +647,11 @@ class SqliteBackupTest(unittest.TestCase):
                 with sqlite3.connect(self.database) as connection, sqlite3.connect(malformed) as copied:
                     connection.backup(copied)
                 with sqlite3.connect(malformed) as connection:
-                    metadata = json.loads(connection.execute(
-                        "SELECT metadata_json FROM review_attempts WHERE attempt_id = 'corrected-backup-run'"
-                    ).fetchone()[0])
+                    metadata = json.loads(
+                        connection.execute(
+                            "SELECT metadata_json FROM review_attempts WHERE attempt_id = 'corrected-backup-run'"
+                        ).fetchone()[0]
+                    )
                     corrections = metadata["record_corrections"]
                     if defect == "duplicate":
                         corrections.append(corrections[0])
@@ -588,9 +689,7 @@ class SqliteBackupTest(unittest.TestCase):
         with sqlite3.connect(self.database) as connection, sqlite3.connect(malformed) as copied:
             connection.backup(copied)
         with sqlite3.connect(malformed) as connection:
-            connection.execute(
-                "UPDATE source_finding_resolutions SET finding_id = ?", ("0" * 64,)
-            )
+            connection.execute("UPDATE source_finding_resolutions SET finding_id = ?", ("0" * 64,))
             self.assertEqual(connection.execute("PRAGMA integrity_check").fetchall(), [("ok",)])
         destination = self.root / "orphan-resolution-restore.sqlite3"
 
@@ -685,9 +784,19 @@ class SqliteBackupTest(unittest.TestCase):
         (sftp_patch,) = self._transport_patches()
         report = self.root / "backup-status.json"
         arguments = [
-            str(self.database), "--host", "backup@backup.example", "--identity-file", str(self.identity),
-            "--known-hosts-file", str(self.known_hosts), "--remote-directory", self.remote_directory,
-            "--remote-uid", "1001", "--report-file", str(report),
+            str(self.database),
+            "--host",
+            "backup@backup.example",
+            "--identity-file",
+            str(self.identity),
+            "--known-hosts-file",
+            str(self.known_hosts),
+            "--remote-directory",
+            self.remote_directory,
+            "--remote-uid",
+            "1001",
+            "--report-file",
+            str(report),
         ]
         with sftp_patch, patch("sys.stdout.write"):
             self.assertEqual(sqlite_backup.main(arguments), 0)
@@ -719,9 +828,19 @@ class SqliteBackupTest(unittest.TestCase):
             receipt = backup_database(self.database, **self._backup_arguments())
             destination = self.root / "restored-from-cli.sqlite3"
             arguments = [
-                str(destination), "--restore", receipt.filename, "--host", "backup@backup.example",
-                "--identity-file", str(self.identity), "--known-hosts-file", str(self.known_hosts),
-                "--remote-directory", self.remote_directory, "--remote-uid", "1001",
+                str(destination),
+                "--restore",
+                receipt.filename,
+                "--host",
+                "backup@backup.example",
+                "--identity-file",
+                str(self.identity),
+                "--known-hosts-file",
+                str(self.known_hosts),
+                "--remote-directory",
+                self.remote_directory,
+                "--remote-uid",
+                "1001",
             ]
             with patch("builtins.print"):
                 self.assertEqual(sqlite_backup.main(arguments), 0)
@@ -737,9 +856,19 @@ class SqliteBackupTest(unittest.TestCase):
             destination.write_bytes(b"preserve this file")
             batches_before = len(self.sftp_batches)
             arguments = [
-                str(destination), "--restore", receipt.filename, "--host", "backup@backup.example",
-                "--identity-file", str(self.identity), "--known-hosts-file", str(self.known_hosts),
-                "--remote-directory", self.remote_directory, "--remote-uid", "1001",
+                str(destination),
+                "--restore",
+                receipt.filename,
+                "--host",
+                "backup@backup.example",
+                "--identity-file",
+                str(self.identity),
+                "--known-hosts-file",
+                str(self.known_hosts),
+                "--remote-directory",
+                self.remote_directory,
+                "--remote-uid",
+                "1001",
             ]
             with patch("sys.stderr.write"):
                 self.assertEqual(sqlite_backup.main(arguments), 1)
@@ -794,9 +923,19 @@ class SqliteBackupTest(unittest.TestCase):
 
     def _cli_arguments(self, report: Path) -> list[str]:
         return [
-            str(self.database), "--host", "backup@backup.example", "--identity-file", str(self.identity),
-            "--known-hosts-file", str(self.known_hosts), "--remote-directory", self.remote_directory,
-            "--remote-uid", "1001", "--report-file", str(report),
+            str(self.database),
+            "--host",
+            "backup@backup.example",
+            "--identity-file",
+            str(self.identity),
+            "--known-hosts-file",
+            str(self.known_hosts),
+            "--remote-directory",
+            self.remote_directory,
+            "--remote-uid",
+            "1001",
+            "--report-file",
+            str(report),
         ]
 
     def test_cli_transport_failures_keep_trusted_phase_and_hide_external_text(self) -> None:
@@ -808,18 +947,22 @@ class SqliteBackupTest(unittest.TestCase):
                     report = self.root / f"{phase}-{failure}.json"
                     arguments = self._cli_arguments(report)
                     stdout, stderr = io.StringIO(), io.StringIO()
+
                     def transport(selected_remote, binary, batch, *, phase="directory-validation", target=phase):
                         if phase == target:
                             return real_run_sftp(selected_remote, binary, batch, phase=phase)
                         return self._fake_sftp(selected_remote, binary, batch, phase=phase)
+
                     response = SimpleNamespace(returncode=255, stdout=malicious, stderr=malicious)
                     side_effect = subprocess.TimeoutExpired([malicious], 120, output=malicious, stderr=malicious)
                     with (
                         patch("pr_review.sqlite_backup._run_sftp", side_effect=transport),
-                        patch("pr_review.sqlite_backup.subprocess.run", **(
-                            {"side_effect": side_effect} if failure == "timeout" else {"return_value": response}
-                        )) as run,
-                        contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr),
+                        patch(
+                            "pr_review.sqlite_backup.subprocess.run",
+                            **({"side_effect": side_effect} if failure == "timeout" else {"return_value": response}),
+                        ) as run,
+                        contextlib.redirect_stdout(stdout),
+                        contextlib.redirect_stderr(stderr),
                     ):
                         self.assertEqual(sqlite_backup.main(arguments), 1)
                     self.assertIn(f"phase={phase} failure={failure}", stderr.getvalue())
@@ -836,14 +979,19 @@ class SqliteBackupTest(unittest.TestCase):
     def test_cleanup_server_denial_keeps_original_transfer_failure_and_last_success(self) -> None:
         report = self.root / "cleanup-report.json"
         arguments = self._cli_arguments(report)
-        with patch("pr_review.sqlite_backup._run_sftp", side_effect=self._fake_sftp), contextlib.redirect_stdout(io.StringIO()):
+        with (
+            patch("pr_review.sqlite_backup._run_sftp", side_effect=self._fake_sftp),
+            contextlib.redirect_stdout(io.StringIO()),
+        ):
             self.assertEqual(sqlite_backup.main(arguments), 0)
         successful = json.loads(report.read_text())["lastSuccess"]
         real_run_sftp = sqlite_backup._run_sftp
+
         def transport(remote, binary, batch, *, phase="directory-validation"):
             if phase in {"upload", "cleanup"}:
                 return real_run_sftp(remote, binary, batch, phase=phase)
             return self._fake_sftp(remote, binary, batch, phase=phase)
+
         def server_denies_cleanup(arguments, *, input, **kwargs):
             if input.startswith("put "):
                 raise subprocess.TimeoutExpired(["secret argv"], 120, stderr="secret stderr")
@@ -852,13 +1000,16 @@ class SqliteBackupTest(unittest.TestCase):
             # A plain command must return nonzero for the same server denial.
             return SimpleNamespace(
                 returncode=0 if input.startswith("-") else 7,
-                stdout="private payload", stderr="secret cleanup permission denied",
+                stdout="private payload",
+                stderr="secret cleanup permission denied",
             )
+
         stderr, stdout = io.StringIO(), io.StringIO()
         with (
             patch("pr_review.sqlite_backup._run_sftp", side_effect=transport),
             patch("pr_review.sqlite_backup.subprocess.run", side_effect=server_denies_cleanup),
-            contextlib.redirect_stderr(stderr), contextlib.redirect_stdout(stdout),
+            contextlib.redirect_stderr(stderr),
+            contextlib.redirect_stdout(stdout),
         ):
             self.assertEqual(sqlite_backup.main(arguments), 1)
         self.assertIn("BackupError phase=upload failure=timeout", stderr.getvalue())
@@ -879,16 +1030,24 @@ class SqliteBackupTest(unittest.TestCase):
                 arguments = self._cli_arguments(self.root / "unused.json")
                 arguments[0] = str(destination)
                 arguments += ["--restore", receipt.filename]
+
                 def transport(remote, binary, batch, *, phase="directory-validation", target=selected_phase):
                     if phase == target:
                         return real_run_sftp(remote, binary, batch, phase=phase)
                     return self._fake_sftp(remote, binary, batch, phase=phase)
+
                 stderr = io.StringIO()
                 with (
                     patch("pr_review.sqlite_backup._run_sftp", side_effect=transport),
-                    patch("pr_review.sqlite_backup.subprocess.run", return_value=SimpleNamespace(
-                        returncode=3, stdout="remote payload", stderr="malicious secret stderr",
-                    )), contextlib.redirect_stderr(stderr),
+                    patch(
+                        "pr_review.sqlite_backup.subprocess.run",
+                        return_value=SimpleNamespace(
+                            returncode=3,
+                            stdout="remote payload",
+                            stderr="malicious secret stderr",
+                        ),
+                    ),
+                    contextlib.redirect_stderr(stderr),
                 ):
                     self.assertEqual(sqlite_backup.main(arguments), 1)
                 self.assertIn(f"phase={selected_phase} failure=nonzero-exit returncode=3", stderr.getvalue())

@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.util.Map;
+import java.util.Properties;
 import org.flywaydb.core.api.Location;
 import org.junit.jupiter.api.Test;
 import org.postgresql.ds.PGSimpleDataSource;
@@ -83,5 +84,37 @@ class CanonicalGameplayMigrationDriverMainTest {
                 CanonicalGameplayMigrationDriverMain.validatedRedisObservation(
                     runId, "0", "6380", null))
         .isInstanceOf(IllegalStateException.class);
+  }
+
+  @Test
+  void redisTopologyRequiresAnUnambiguousStandaloneServerObservation() {
+    Properties standalone = new Properties();
+    standalone.setProperty("cluster_enabled", "0");
+
+    CanonicalGameplayMigrationDriverMain.requireStandaloneRedisTopology(standalone);
+    assertThatThrownBy(
+            () -> CanonicalGameplayMigrationDriverMain.requireStandaloneRedisTopology(null))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("topology");
+    assertThatThrownBy(
+            () ->
+                CanonicalGameplayMigrationDriverMain.requireStandaloneRedisTopology(
+                    new Properties()))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("topology");
+
+    Properties malformed = new Properties();
+    malformed.setProperty("cluster_enabled", "unknown");
+    assertThatThrownBy(
+            () -> CanonicalGameplayMigrationDriverMain.requireStandaloneRedisTopology(malformed))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("topology");
+
+    Properties clustered = new Properties();
+    clustered.setProperty("cluster_enabled", "1");
+    assertThatThrownBy(
+            () -> CanonicalGameplayMigrationDriverMain.requireStandaloneRedisTopology(clustered))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("topology");
   }
 }
