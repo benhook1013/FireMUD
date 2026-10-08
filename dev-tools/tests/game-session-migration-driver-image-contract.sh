@@ -107,8 +107,16 @@ launcher = distribution / launcher_rel
 require(launcher.is_file(), f"packaged launcher is missing: {launcher_rel}")
 require(launcher.stat().st_mode & 0o111, "packaged launcher must be executable")
 launcher_text = launcher.read_text(encoding="utf-8")
-main_class = "net.firedevops.firemud.gamesession.repository.CanonicalGameplayMigrationDriverMain"
-require(main_class in launcher_text, "packaged launcher must invoke the finite driver main class")
+launcher_class = (
+    "net.firedevops.firemud.gamesession.repository.CanonicalGameplayMigrationDriverLauncher"
+)
+implementation_main_class = (
+    "net.firedevops.firemud.gamesession.repository.CanonicalGameplayMigrationDriverMain"
+)
+require(
+    launcher_class in launcher_text,
+    "packaged launcher must invoke the stdout-isolating driver launcher class",
+)
 for dependency in (
     "flyway-core-",
     "flyway-database-postgresql-",
@@ -139,7 +147,14 @@ game_session_source_entries = [
 ]
 with zipfile.ZipFile(app_jars[0]) as app_jar:
     app_entries = app_jar.namelist()
-    require(main_class.replace(".", "/") + ".class" in app_entries, "application jar is missing the migration-driver main class")
+    require(
+        launcher_class.replace(".", "/") + ".class" in app_entries,
+        "application jar is missing the stdout-isolating driver launcher class",
+    )
+    require(
+        implementation_main_class.replace(".", "/") + ".class" in app_entries,
+        "application jar is missing the finite migration-driver implementation class",
+    )
     game_session_packaged_entries = [
         (entry, app_jar.read(entry))
         for entry in app_entries

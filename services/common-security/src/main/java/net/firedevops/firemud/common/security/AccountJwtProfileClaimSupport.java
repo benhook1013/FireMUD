@@ -318,6 +318,20 @@ final class AccountJwtProfileClaimSupport {
     }
   }
 
+  static void requireExactAccountAuthorityStream(Object value, String accountId) {
+    String expected = "account:auth-authority:v1:account/" + requireUuid(accountId);
+    if (!expected.equals(value)) {
+      throw invalid();
+    }
+  }
+
+  static void requireExactTenantAuthorityStream(Object value, String tenantId) {
+    String expected = "account:auth-authority:v1:tenant/" + requireUuid(tenantId);
+    if (!expected.equals(value)) {
+      throw invalid();
+    }
+  }
+
   static AccountAsymmetricJwtVerifier.VerificationException invalid() {
     return new AccountAsymmetricJwtVerifier.VerificationException();
   }

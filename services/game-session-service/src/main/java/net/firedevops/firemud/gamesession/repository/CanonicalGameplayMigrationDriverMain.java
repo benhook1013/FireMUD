@@ -47,7 +47,7 @@ import org.springframework.data.redis.connection.lettuce.LettuceClientConfigurat
 import org.springframework.data.redis.connection.lettuce.LettuceConnectionFactory;
 import org.springframework.data.redis.core.StringRedisTemplate;
 
-/** Finite, non-listening entry point for the trusted Game Session empty-cohort migration. */
+/** Finite, non-listening implementation for the trusted Game Session empty-cohort migration. */
 @SuppressFBWarnings(
     value = "DMI_HARDCODED_ABSOLUTE_FILENAME",
     justification =
@@ -229,7 +229,7 @@ public final class CanonicalGameplayMigrationDriverMain {
 
   private CanonicalGameplayMigrationDriverMain() {}
 
-  public static void main(String[] args) {
+  static void launch(String[] args, java.io.PrintStream protocolOutput, java.io.PrintStream error) {
     ScheduledExecutorService deadline =
         Executors.newSingleThreadScheduledExecutor(
             task -> {
@@ -239,7 +239,7 @@ public final class CanonicalGameplayMigrationDriverMain {
             });
     deadline.schedule(
         () -> {
-          System.err.println(
+          error.println(
               "migration driver exceeded its finite run bound; retain the same cohort and writer fence");
           Runtime.getRuntime().halt(4);
         },
@@ -247,7 +247,7 @@ public final class CanonicalGameplayMigrationDriverMain {
         TimeUnit.SECONDS);
     int exitCode;
     try {
-      exitCode = run(args, System.in, System.out, System.err);
+      exitCode = run(args, System.in, protocolOutput, error);
     } finally {
       deadline.shutdownNow();
     }

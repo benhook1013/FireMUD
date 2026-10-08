@@ -62,6 +62,91 @@ class GameSessionAccountDelegationJwtProfileValidatorTest {
   }
 
   @Test
+  void tenantBillingCutoffMustUseTheExactTenantStreamAndAccountCutoffMustUseTheTokenAccount() {
+    String tenant = "22222222-2222-4222-8222-222222222222";
+    Map<String, Object> claims = validClaims();
+    Map<String, Object> tuple = object(claims.get("authorityTuple"));
+    tuple.put("accountAuthorityGeneration", "12");
+    tuple.put("tenantAuthorityGeneration", Map.of(tenant, "5"));
+    tuple.put("membershipAuthorityGeneration", Map.of(tenant, "7"));
+    tuple.put(
+        "accountSecurityCutoff",
+        Map.of(
+            "accountAuthorityGeneration",
+            "12",
+            "outboxStreamKey",
+            "account:auth-authority:v1:account/" + ACCOUNT,
+            "outboxSequence",
+            "44"));
+    tuple.put(
+        "tenantBillingCutoff",
+        Map.of(
+            tenant,
+            Map.of(
+                "tenantAuthorityGeneration",
+                "5",
+                "tenantBillingSequence",
+                "8",
+                "outboxStreamKey",
+                "account:auth-authority:v1:tenant/" + tenant,
+                "outboxSequence",
+                "45")));
+    claims.put("tenantId", tenant);
+    claims.put("authorityTuple", tuple);
+    claims.put("membershipVersion", Map.of(tenant, "3"));
+
+    assertThatCode(() -> GameSessionAccountDelegationJwtProfileValidator.validateClaims(claims))
+        .doesNotThrowAnyException();
+
+    Map<String, Object> crossAccount = object(tuple);
+    crossAccount.put(
+        "accountSecurityCutoff",
+        Map.of(
+            "accountAuthorityGeneration",
+            "12",
+            "outboxStreamKey",
+            "account:auth-authority:v1:account/33333333-3333-4333-8333-333333333333",
+            "outboxSequence",
+            "44"));
+    claims.put("authorityTuple", crossAccount);
+    assertInvalid(claims);
+
+    Map<String, Object> crossTenantStream = object(tuple);
+    crossTenantStream.put(
+        "tenantBillingCutoff",
+        Map.of(
+            tenant,
+            Map.of(
+                "tenantAuthorityGeneration",
+                "5",
+                "tenantBillingSequence",
+                "8",
+                "outboxStreamKey",
+                "account:auth-authority:v1:tenant/33333333-3333-4333-8333-333333333333",
+                "outboxSequence",
+                "45")));
+    claims.put("authorityTuple", crossTenantStream);
+    assertInvalid(claims);
+
+    Map<String, Object> crossTenantKey = object(tuple);
+    crossTenantKey.put(
+        "tenantBillingCutoff",
+        Map.of(
+            "33333333-3333-4333-8333-333333333333",
+            Map.of(
+                "tenantAuthorityGeneration",
+                "5",
+                "tenantBillingSequence",
+                "8",
+                "outboxStreamKey",
+                "account:auth-authority:v1:tenant/" + tenant,
+                "outboxSequence",
+                "45")));
+    claims.put("authorityTuple", crossTenantKey);
+    assertInvalid(claims);
+  }
+
+  @Test
   void tenantDiscriminatorNeverAdoptsInitialEmptyTuple() {
     var claims = validClaims();
     claims.put("tenantId", "22222222-2222-4222-8222-222222222222");
@@ -151,6 +236,19 @@ class GameSessionAccountDelegationJwtProfileValidatorTest {
             "outboxSequence",
             "44"));
     claims.put("authorityTuple", wrongScope);
+    assertInvalid(claims);
+
+    Map<String, Object> wrongAccountScope = object(tuple);
+    wrongAccountScope.put(
+        "accountSecurityCutoff",
+        Map.of(
+            "accountAuthorityGeneration",
+            "12",
+            "outboxStreamKey",
+            "account:auth-authority:v1:account/33333333-3333-4333-8333-333333333333",
+            "outboxSequence",
+            "44"));
+    claims.put("authorityTuple", wrongAccountScope);
     assertInvalid(claims);
   }
 
