@@ -241,7 +241,7 @@ def validate_api_discovery(core: dict[str, Any], groups: dict[str, Any]) -> dict
     if (
         not isinstance(core, dict)
         or core.get("kind") != "APIVersions"
-        or core.get("apiVersion") != "v1"
+        or ("apiVersion" in core and core.get("apiVersion") != "v1")
         or not isinstance(core_versions, list)
         or not core_versions
         or len(core_versions) > 32
