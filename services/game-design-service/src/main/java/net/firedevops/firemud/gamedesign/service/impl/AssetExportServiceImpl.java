@@ -18,6 +18,7 @@ import java.util.Objects;
 import java.util.Set;
 import java.util.UUID;
 import net.firedevops.firemud.gamedesign.config.AssetStoreProperties;
+import net.firedevops.firemud.gamedesign.dto.PublishedReleaseBundleDto;
 import net.firedevops.firemud.gamedesign.repository.VersionAssetPublicationRepository.AssetSelection;
 import net.firedevops.firemud.gamedesign.repository.VersionAssetPublicationRepository.ExportSnapshot;
 import net.firedevops.firemud.gamedesign.service.AssetExportOutcomePendingException;
@@ -90,11 +91,7 @@ public class AssetExportServiceImpl implements AssetExportService {
   @Override
   @Timed("gamedesign.asset.export")
   public ExportedAssetManifest exportAssets(String tenantId, int versionNumber) {
-    if (tenantId == null || tenantId.isBlank() || versionNumber <= 0) {
-      throw new IllegalArgumentException("VERSION_ASSET_SNAPSHOT_INVALID: invalid requested scope");
-    }
-    requireObjectStoreBucket();
-
+    requireExportScope(tenantId, versionNumber);
     ExportSnapshot frozen = publicationService.freezeOrReadSnapshot(tenantId, versionNumber);
     if (frozen == null) {
       throw new IllegalStateException(SNAPSHOT_UNAVAILABLE);
@@ -105,13 +102,50 @@ public class AssetExportServiceImpl implements AssetExportService {
       throw new IllegalStateException(SNAPSHOT_UNAVAILABLE);
     }
     requireSameSnapshot(frozen, independentlyRead);
-    List<AssetSelection> selections = validateAndOrderSnapshot(frozen, tenantId, versionNumber);
+    return exportVerifiedSnapshot(tenantId, versionNumber, independentlyRead, null);
+  }
+
+  @Override
+  @Timed("gamedesign.asset.repair")
+  public ExportedAssetManifest repairPublishedAssets(
+      String tenantId, int versionNumber, PublishedReleaseBundleDto publishedBundle) {
+    requireExportScope(tenantId, versionNumber);
+    if (publishedBundle == null) {
+      throw new IllegalStateException(PublishedReleaseBundleContract.REPAIR_ATTESTATION_MISMATCH);
+    }
+    ExportSnapshot frozen = publicationService.readFrozenSnapshot(tenantId, versionNumber);
+    if (frozen == null) {
+      throw new IllegalStateException(SNAPSHOT_UNAVAILABLE);
+    }
+    ExportSnapshot independentlyRead =
+        publicationService.readFrozenSnapshot(tenantId, versionNumber);
+    if (independentlyRead == null) {
+      throw new IllegalStateException(SNAPSHOT_UNAVAILABLE);
+    }
+    requireSameSnapshot(frozen, independentlyRead);
+    return exportVerifiedSnapshot(tenantId, versionNumber, independentlyRead, publishedBundle);
+  }
+
+  private void requireExportScope(String tenantId, int versionNumber) {
+    if (tenantId == null || tenantId.isBlank() || versionNumber <= 0) {
+      throw new IllegalArgumentException("VERSION_ASSET_SNAPSHOT_INVALID: invalid requested scope");
+    }
+    requireObjectStoreBucket();
+  }
+
+  private ExportedAssetManifest exportVerifiedSnapshot(
+      String tenantId,
+      int versionNumber,
+      ExportSnapshot snapshot,
+      PublishedReleaseBundleDto publishedBundle) {
+    List<AssetSelection> selections = validateAndOrderSnapshot(snapshot, tenantId, versionNumber);
 
     String publicBaseUrl = requireApprovedPublicBaseUrl();
     List<PreparedArtifact> artifacts =
         selections.stream()
             .map(
-                selection -> prepareArtifact(selection, publicBaseUrl, frozen.canonicalVersionId()))
+                selection ->
+                    prepareArtifact(selection, publicBaseUrl, snapshot.canonicalVersionId()))
             .toList();
     byte[] manifestBytes = serializeManifest(artifacts);
     String manifestHash = "sha256:" + sha256Hex(manifestBytes);
@@ -124,7 +158,12 @@ public class AssetExportServiceImpl implements AssetExportService {
     ExportedAssetManifest candidate =
         new ExportedAssetManifest(manifestHash, 1, requiredManifestAssetKeys, artifactDigests);
 
-    requireDurableCandidate(tenantId, versionNumber, candidate);
+    if (publishedBundle == null) {
+      requireDurableCandidate(tenantId, versionNumber, candidate);
+    } else {
+      requireExistingCandidate(tenantId, versionNumber, candidate);
+      PublishedReleaseBundleContract.requireExactRepairMatch(publishedBundle, candidate);
+    }
 
     // Candidate metadata and object proofs are durable before any private object write.
     // This producer does not transition lifecycle state or expose a release.
@@ -136,6 +175,17 @@ public class AssetExportServiceImpl implements AssetExportService {
     }
     writeAndVerifyImmutableObject(manifestObjectKey, manifestBytes, MANIFEST_CONTENT_TYPE);
     return candidate;
+  }
+
+  private void requireExistingCandidate(
+      String tenantId, int versionNumber, ExportedAssetManifest candidate) {
+    ExportedAssetManifest independentlyRead;
+    try {
+      independentlyRead = candidateService.readExportCandidate(tenantId, versionNumber);
+    } catch (RuntimeException exception) {
+      throw candidateFailure("read", exception);
+    }
+    requireCandidateMatch("read", candidate, independentlyRead);
   }
 
   private void requireDurableCandidate(
