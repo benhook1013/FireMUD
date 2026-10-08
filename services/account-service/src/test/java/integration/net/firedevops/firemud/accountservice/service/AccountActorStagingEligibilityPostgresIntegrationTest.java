@@ -267,7 +267,8 @@ class AccountActorStagingEligibilityPostgresIntegrationTest {
               roles,
               generations,
               outbox,
-              sourceEvidence);
+              sourceEvidence,
+              tenantEvents);
       seedMembershipOperation();
     }
 
@@ -419,7 +420,8 @@ class AccountActorStagingEligibilityPostgresIntegrationTest {
   private static FreshTenantCreationEvidence freshTenantEvidence(UUID tenantUuid) {
     UUID requestId = UUID.randomUUID();
     UUID operationId = UUID.randomUUID();
-    String sourceTenantKey = "actor-staging-" + UUID.randomUUID().toString().replace("-", "");
+    String sourceTenantKey =
+        "actor-stage-" + UUID.randomUUID().toString().replace("-", "").substring(0, 24);
     String requestDigest =
         GameTenantCreationDigest.requestDigest(
             TEST_NAMESPACE, requestId, sourceTenantKey, "Actor staging eligibility test", null);

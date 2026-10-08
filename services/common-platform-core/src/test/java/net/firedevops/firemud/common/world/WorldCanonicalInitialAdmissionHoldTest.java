@@ -1,4 +1,4 @@
-package unit.net.firedevops.firemud.common.world;
+package net.firedevops.firemud.common.world;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;

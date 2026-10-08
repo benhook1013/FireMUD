@@ -479,4 +479,4 @@ CREATE TRIGGER account_demo_entitlement_authority_event
 CREATE TRIGGER account_demo_entitlement_authority_receipt
     BEFORE INSERT OR UPDATE ON account_demo_tenant_entitlement_operations
     FOR EACH ROW EXECUTE FUNCTION account_demo_entitlement_authority_receipt_guard();
--- [jooq ignore end]
+-- [jooq ignore stop]

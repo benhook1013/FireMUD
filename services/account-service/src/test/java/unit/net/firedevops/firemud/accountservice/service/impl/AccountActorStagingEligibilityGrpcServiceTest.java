@@ -26,6 +26,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.core.io.FileSystemResource;
 import org.springframework.dao.DataAccessResourceFailureException;
+import org.springframework.transaction.CannotCreateTransactionException;
 import org.springframework.util.StreamUtils;
 
 class AccountActorStagingEligibilityGrpcServiceTest {
@@ -166,6 +167,25 @@ class AccountActorStagingEligibilityGrpcServiceTest {
     assertThat(missing.failure.getDescription())
         .isEqualTo("Current Account membership evidence is absent or contradictory");
     assertThat(status(unavailable)).isEqualTo(Status.Code.UNAVAILABLE);
+  }
+
+  @Test
+  void classifiesTransactionCreationFailureAsSanitizedUnavailable() {
+    when(ownerService.resolve(
+            1,
+            NAMESPACE,
+            REQUEST_UUID,
+            ACCOUNT_UUID,
+            TENANT_UUID,
+            Purpose.PUBLIC_PRODUCTION_STAGING_ONLY))
+        .thenThrow(new CannotCreateTransactionException("private database endpoint"));
+
+    TestObserver unavailable = call(request(), ENTITY_URI);
+
+    assertThat(status(unavailable)).isEqualTo(Status.Code.UNAVAILABLE);
+    assertThat(unavailable.failure.getDescription())
+        .isEqualTo("Account owner evidence is temporarily unavailable")
+        .doesNotContain("private database endpoint");
   }
 
   private TestObserver call(
