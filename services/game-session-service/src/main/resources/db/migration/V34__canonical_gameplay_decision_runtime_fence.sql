@@ -235,7 +235,12 @@ BEGIN
           FROM game_session_canonical_binding_transition transition
           JOIN game_session_canonical_gameplay_binding_inventory candidate
             ON candidate.binding_ref = transition.candidate_binding_ref
-         WHERE candidate.tenant_id = OLD.tenant_id
+          JOIN game_session_canonical_instance_launch launch
+            ON launch.canonical_tenant_id = candidate.tenant_id
+           AND launch.game_session_tenant_id = OLD.tenant_id
+           AND launch.game_instance_id = OLD.id
+           AND launch.game_instance_uuid = OLD.game_instance_uuid
+         WHERE candidate.tenant_id = launch.canonical_tenant_id
            AND candidate.runtime_game_instance_id = OLD.id
            AND candidate.game_instance_id = OLD.game_instance_uuid
          ORDER BY transition.transition_id

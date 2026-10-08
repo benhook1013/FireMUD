@@ -64,7 +64,7 @@ class CanonicalGameplayBindingInventoryRepositoryIntegrationTest {
           .locations(MIGRATION_LOCATION)
           .load()
           .migrate();
-      DSLContext dsl = DSL.using(dataSource, SQLDialect.POSTGRES);
+      DSLContext dsl = dslForSchema(dataSource, schema);
       CanonicalGameplayBindingInventoryRepository repository =
           new CanonicalGameplayBindingInventoryRepository(dsl);
       assertThatThrownBy(() -> repository.prepare(request(candidateSession(1))))
@@ -100,7 +100,7 @@ class CanonicalGameplayBindingInventoryRepositoryIntegrationTest {
           .locations(MIGRATION_LOCATION)
           .load()
           .migrate();
-      DSLContext dsl = DSL.using(dataSource, SQLDialect.POSTGRES);
+      DSLContext dsl = dslForSchema(dataSource, schema);
       seedSyntheticVerifiedLegacyDisposition(dsl);
       CanonicalGameplayBindingInventoryRepository repository =
           new CanonicalGameplayBindingInventoryRepository(dsl);
@@ -171,7 +171,7 @@ class CanonicalGameplayBindingInventoryRepositoryIntegrationTest {
           .locations(MIGRATION_LOCATION)
           .load()
           .migrate();
-      DSLContext dsl = DSL.using(dataSource, SQLDialect.POSTGRES);
+      DSLContext dsl = dslForSchema(dataSource, schema);
       CanonicalGameplayBindingInventoryRepository repository =
           new CanonicalGameplayBindingInventoryRepository(dsl);
       CanonicalGameplayBindingIdentity prior = identity(sourceSession());
@@ -207,7 +207,7 @@ class CanonicalGameplayBindingInventoryRepositoryIntegrationTest {
           .locations(MIGRATION_LOCATION)
           .load()
           .migrate();
-      DSLContext dsl = DSL.using(dataSource, SQLDialect.POSTGRES);
+      DSLContext dsl = dslForSchema(dataSource, schema);
       CanonicalGameplayBindingIdentity prior = identity(sourceSession());
       seedActiveSource(dsl, prior);
 
@@ -447,10 +447,27 @@ class CanonicalGameplayBindingInventoryRepositoryIntegrationTest {
   private static DriverManagerDataSource dataSource(String schema) {
     DriverManagerDataSource dataSource = new DriverManagerDataSource();
     dataSource.setDriverClassName("org.postgresql.Driver");
-    dataSource.setUrl(postgres.getJdbcUrl() + "?currentSchema=" + schema);
+    // Testcontainers already appends loggerLevel=OFF to the JDBC URL, so add currentSchema with
+    // '&' to keep both parameters and bind later repository connections to Flyway's schema.
+    String jdbcUrl = postgres.getJdbcUrl();
+    String separator = jdbcUrl.contains("?") ? "&" : "?";
+    dataSource.setUrl(jdbcUrl + separator + "currentSchema=" + schema);
     dataSource.setUsername(postgres.getUsername());
     dataSource.setPassword(postgres.getPassword());
     return dataSource;
+  }
+
+  private static DSLContext dslForSchema(DriverManagerDataSource dataSource, String schema) {
+    DSLContext dsl = DSL.using(dataSource, SQLDialect.POSTGRES);
+    var schemaReadback = dsl.fetchOne("SELECT current_schema() AS actual_schema");
+    assertThat(schemaReadback.get("actual_schema", String.class)).isEqualTo(schema);
+    var clockReadback =
+        dsl.fetchOne(
+            "SELECT to_regclass('game_session_canonical_binding_inventory_clock')::text"
+                + " AS relation_name");
+    assertThat(clockReadback.get("relation_name", String.class))
+        .isEqualTo("game_session_canonical_binding_inventory_clock");
+    return dsl;
   }
 
   private static void dropSchema(String schema) {
