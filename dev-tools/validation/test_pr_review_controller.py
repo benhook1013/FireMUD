@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import copy
 import dataclasses
 import fcntl
 import hashlib
@@ -13482,6 +13483,207 @@ class OverviewIdentityConcurrencyTests(unittest.TestCase):
         serial.assert_not_called()
         controller.status_for_pr(1)
         serial.assert_called_once_with((1,))
+
+
+class OverviewAllocationConcurrencyTests(unittest.TestCase):
+    def project(self, controller, numbers, *, concurrent=True, caches=None):
+        state = SimpleNamespace(
+            ordered_prs=tuple(numbers),
+            allocations={f"{pr}:hosted": object() for pr in numbers},
+        )
+        live = {pr: SimpleNamespace(merged=False) for pr in numbers}
+        audits, history, bounded = caches if caches is not None else ({}, {}, {})
+        return controller._initial_status_allocations(
+            state, live, None, {channel: {} for channel in Channel},
+            stop_audit_cache=audits, history_cache=history,
+            bounded_evidence_cache=bounded, concurrent_prs=concurrent,
+        )
+
+    def test_distinct_prs_overlap_bounded_and_each_pr_channels_are_serial(self):
+        controller = object.__new__(ReviewController)
+        barrier = threading.Barrier(4)
+        lock = threading.Lock()
+        active = maximum = 0
+        seen = {}
+        caller = threading.get_ident()
+        caches = ({}, {}, {})
+
+        def views(_state, _live, _reconciliation, channel, _histories, *, pr_numbers, **kwargs):
+            nonlocal active, maximum
+            pr_number, = pr_numbers
+            with lock:
+                seen.setdefault(pr_number, []).append(channel)
+                self.assertNotEqual(threading.get_ident(), caller)
+                self.assertEqual(seen[pr_number], [Channel.HOSTED] if channel == Channel.HOSTED
+                                 else [Channel.HOSTED, Channel.CLI])
+                active += 1
+                maximum = max(maximum, active)
+            try:
+                if channel == Channel.HOSTED and pr_number <= 4:
+                    barrier.wait(timeout=5)
+                self.assertEqual(caches, ({}, {}, {}))
+                kwargs["history_cache"][(pr_number, channel.value)] = [pr_number]
+                kwargs["stop_audit_cache"][("latest", pr_number)] = {"channel": channel.value}
+                kwargs["bounded_evidence_cache"][(pr_number, channel.value)] = {"pr": pr_number}
+                return {pr_number: {"channel": channel.value}}
+            finally:
+                with lock:
+                    active -= 1
+
+        controller._allocation_views = views
+        result = self.project(controller, range(1, 7), caches=caches)
+        self.assertEqual(maximum, 4)
+        self.assertEqual(tuple(result[Channel.HOSTED]), tuple(range(1, 7)))
+        self.assertEqual(tuple(result[Channel.CLI]), tuple(range(1, 7)))
+        self.assertEqual(len(caches[1]), 12)
+        self.assertTrue(all(item == {"channel": "cli"} for item in caches[0].values()))
+
+    def test_serial_default_empty_and_single_allocation_do_not_start_workers(self):
+        controller = object.__new__(ReviewController)
+        controller._allocation_views = Mock(return_value={})
+        with patch("pr_review.controller.ThreadPoolExecutor") as pool:
+            self.project(controller, (1, 2), concurrent=False)
+            self.project(controller, ())
+            self.project(controller, (1,))
+            pool.assert_not_called()
+        self.assertEqual(controller._allocation_views.call_count, 6)
+        self.assertTrue(all("pr_numbers" not in call.kwargs for call in controller._allocation_views.call_args_list))
+
+    def test_failure_joins_workers_and_does_not_publish_partial_caches(self):
+        controller = object.__new__(ReviewController)
+        barrier = threading.Barrier(2)
+        finished = threading.Event()
+        caches = ({("latest", 1): {"evidence": []}}, {(1, "hosted"): ["initial"]}, {})
+        before = copy.deepcopy(caches)
+
+        def views(_state, _live, _reconciliation, channel, _histories, *, pr_numbers, **kwargs):
+            pr_number, = pr_numbers
+            if channel == Channel.HOSTED:
+                kwargs["history_cache"][(pr_number, "hosted")] = ["refreshed"]
+                if pr_number == 1:
+                    kwargs["stop_audit_cache"][("latest", 1)]["evidence"].append("local")
+                barrier.wait(timeout=5)
+                if pr_number == 1:
+                    raise ControllerError("allocation audit unavailable")
+            else:
+                finished.set()
+            return {}
+
+        controller._allocation_views = views
+        with self.assertRaisesRegex(ControllerError, "allocation audit unavailable"):
+            self.project(controller, (1, 2), caches=caches)
+        self.assertTrue(finished.is_set())
+        self.assertEqual(caches, before)
+
+    def test_seeded_cache_invalidation_matches_serial_without_losing_other_prs(self):
+        controller = object.__new__(ReviewController)
+        seed = (
+            {("latest", pr): {"evidence": ["old"]} for pr in (1, 2, 99)},
+            {(pr, "hosted"): ["old"] for pr in (1, 2, 99)},
+            {(pr, "hosted"): {"old": True} for pr in (1, 2, 99)},
+        )
+        def views(state, _live, _reconciliation, channel, _histories, *, pr_numbers=None, **kwargs):
+            selected = state.ordered_prs if pr_numbers is None else pr_numbers
+            for pr_number in selected:
+                if channel == Channel.HOSTED:
+                    kwargs["stop_audit_cache"].pop(("latest", pr_number))
+                    kwargs["history_cache"].pop((pr_number, "hosted"))
+                    kwargs["bounded_evidence_cache"].pop((pr_number, "hosted"))
+                else:
+                    self.assertNotIn(("latest", pr_number), kwargs["stop_audit_cache"])
+                    self.assertNotIn((pr_number, "hosted"), kwargs["history_cache"])
+                    kwargs["history_cache"][(pr_number, "cli")] = ["fresh"]
+            return {}
+        controller._allocation_views = views
+        serial, concurrent = copy.deepcopy(seed), copy.deepcopy(seed)
+        self.project(controller, (1, 2), concurrent=False, caches=serial)
+        self.project(controller, (1, 2), caches=concurrent)
+        self.assertEqual(serial, concurrent)
+        for cache, original in zip(concurrent, seed):
+            for key, value in original.items():
+                if 99 in key:
+                    self.assertEqual(cache[key], value)
+
+    def test_workers_bind_existing_budget_and_expiry_is_not_replaced(self):
+        controller = object.__new__(ReviewController)
+        rendezvous = threading.Barrier(2)
+        finished = threading.Event()
+        with github.activate_hosted_preflight_budget(30) as budget:
+            def views(_state, _live, _reconciliation, channel, _histories, *, pr_numbers, **_kwargs):
+                self.assertIs(github.active_hosted_preflight_budget(), budget)
+                self.assertLessEqual(github._request_timeout(120)[0], 30)
+                if channel == Channel.HOSTED:
+                    rendezvous.wait(timeout=5)
+                    if pr_numbers == (1,):
+                        self.assertTrue(finished.wait(timeout=5))
+                        budget.deadline = time.monotonic() - 1
+                        budget.remaining_seconds()
+                else:
+                    finished.set()
+                return {}
+
+            controller._allocation_views = views
+            with self.assertRaises(github.HostedPreflightDeadlineExceeded):
+                self.project(controller, (1, 2))
+        self.assertTrue(finished.is_set())
+
+    def fixture(self):
+        factory = ControllerTests()
+        self.addCleanup(factory.doCleanups)
+        values, heads = _stacked_prs(2)
+        provider = CountingEvidence()
+        for number in values:
+            for channel in ("hosted", "cli"):
+                provider[(number, channel)] = [factory.allocation_evidence(
+                    number, values[number].head, f"{channel}-baseline-{number}", channel=channel)]
+        controller = factory.grant_bounded_allocation(
+            values=values, heads=heads, evidence=provider, checkpoint="hosted-baseline-1", cap=1)
+        for number in values:
+            for channel in ("hosted", "cli"):
+                if (number, channel) != (1, "hosted"):
+                    controller.decide_allocation(
+                        action="grant", pr=number, channel=channel, head=values[number].head,
+                        checkpoint=f"{channel}-baseline-{number}", min_additional_completed=1,
+                        max_additional_completed=1, reason="bounded test allocation")
+                provider[(number, channel)].append(factory.allocation_evidence(
+                    number, values[number].head, f"{channel}-completed-{number}", channel=channel))
+        factory._enable_batch_status(controller, values)
+        return controller
+
+    def test_stable_overview_matches_serial_projection_and_other_paths_remain_serial(self):
+        controller = self.fixture()
+        original = controller._initial_status_allocations
+        with patch.object(controller, "_initial_status_allocations", wraps=original) as allocation:
+            concurrent = controller.status_overview()
+            self.assertTrue(all(call.kwargs["concurrent_prs"] for call in allocation.call_args_list))
+        def serial(*args, **kwargs):
+            kwargs["concurrent_prs"] = False
+            return original(*args, **kwargs)
+        with patch.object(controller, "_initial_status_allocations", side_effect=serial):
+            expected = controller.status_overview()
+        for report in (concurrent, expected):
+            report.get("detail_window", {}).pop("timing_ms", None)
+        self.assertEqual(concurrent, expected)
+        with patch.object(controller, "_initial_status_allocations", wraps=original) as allocation:
+            controller.status()
+            controller.status_for_pr(1)
+            self.assertTrue(all(not call.kwargs["concurrent_prs"] for call in allocation.call_args_list))
+        with patch.object(controller, "_initial_status_allocations", wraps=original) as allocation:
+            with self.assertRaisesRegex(ControllerError, "all hosted targets are complete or explicitly stopped"):
+                controller.select_target("hosted")
+            allocation.assert_not_called()
+
+    def test_overview_projection_failure_never_publishes_partial_readiness(self):
+        controller = self.fixture()
+        original = controller._allocation_views
+        def fail(*args, **kwargs):
+            if kwargs.get("pr_numbers") == (1,):
+                raise ControllerError("allocation audit unavailable")
+            return original(*args, **kwargs)
+        with patch.object(controller, "_allocation_views", side_effect=fail):
+            result = controller.status_overview()
+        self.assertTrue(all(front["status"] != "READY" for front in result["review_fronts"].values()))
+        self.assertTrue(all(target["status"] != "READY" for target in result["review_targets"].values()))
 
 
 class ReviewProgressPresentationTests(unittest.TestCase):
