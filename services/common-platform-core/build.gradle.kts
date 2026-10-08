@@ -16,6 +16,7 @@ dependencies {
     implementation(libs.opentelemetry.sdk)
     implementation(libs.opentelemetry.exporter.otlp)
     implementation(libs.spring.boot.starter)
+    implementation("org.springframework:spring-tx")
     implementation(libs.spring.boot.starter.actuator)
     implementation(libs.spring.boot.starter.validation)
     compileOnly(libs.spring.boot.starter.web)
