@@ -1886,7 +1886,7 @@ public final class CanonicalGameplayBindingInventoryRepository {
             + " issuer_index_partition_capacity, lifecycle, reservation_fence,"
             + " issuer_coverage_operation_id, issuer_coverage_operation_fence, coverage_fence,"
             + " inventory_snapshot_revision, inventory_revision)"
-            + " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'RESERVED', ?, ?, ?, ?, ?, ?)",
+            + " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'RESERVED', ?, ?, ?, ?, ?, ?)",
         fenceEvidence.reservationId(),
         prepared.bindingRef().bytes(),
         owner.accountId(),
