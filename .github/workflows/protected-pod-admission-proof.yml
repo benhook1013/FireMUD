@@ -26,7 +26,7 @@ jobs:
       - name: Check out approved immutable proof source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
-          ref: 077829af77c89e4bff416f406ea4603290f64995
+          ref: 72d6c8a11d933c7d1fedba6876bb1577a3cad051
           persist-credentials: false
 
       - name: Set up repository-pinned Python and PyYAML
@@ -74,7 +74,7 @@ jobs:
 
       - name: Derive run-local proof paths
         env:
-          SOURCE_SHA: 077829af77c89e4bff416f406ea4603290f64995
+          SOURCE_SHA: 72d6c8a11d933c7d1fedba6876bb1577a3cad051
         run: |
           set -euo pipefail
           [[ "$SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]
@@ -88,7 +88,7 @@ jobs:
         id: proof
         env:
           KIND_NODE_IMAGE: ${{ steps.workflow-tool-versions.outputs.kind-node-image }}
-          SOURCE_SHA: 077829af77c89e4bff416f406ea4603290f64995
+          SOURCE_SHA: 72d6c8a11d933c7d1fedba6876bb1577a3cad051
         run: |
           set -euo pipefail
           if [[ -e "$PROOF_DIR" || -L "$PROOF_DIR" ]]; then
@@ -253,7 +253,7 @@ jobs:
           evidence="$PROOF_DIR/admission-only.txt"
           claim="$PROOF_DIR/cluster-ownership.claim"
           expected_claim="$(printf 'cluster=%s\nrun_id=%s\nrun_attempt=%s\nsource_sha=%s' \
-            "$KIND_CLUSTER_NAME" "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" "077829af77c89e4bff416f406ea4603290f64995")"
+            "$KIND_CLUSTER_NAME" "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" "72d6c8a11d933c7d1fedba6876bb1577a3cad051")"
           if [[ ! -f "$claim" || -L "$claim" ]]; then
             echo "cleanup=not_claimed_no_cluster_deletion"
             exit 0
