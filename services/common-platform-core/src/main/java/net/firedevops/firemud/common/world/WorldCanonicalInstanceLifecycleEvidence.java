@@ -6,6 +6,8 @@ import java.nio.charset.CodingErrorAction;
 import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
 import java.util.Base64;
+import java.util.Collections;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Objects;
@@ -41,7 +43,8 @@ public record WorldCanonicalInstanceLifecycleEvidence(
     long rowVersion,
     UUID captureId,
     String graphSha256,
-    String preparationInputDigest) {
+    String preparationInputDigest,
+    Map<UUID, UUID> operationalRegionAssignments) {
   public static final String SCHEMA = "world-canonical-instance-lifecycle-evidence/v1";
   public static final String REQUEST_SCHEMA = "world-canonical-instance-lifecycle-read-request/v1";
 
@@ -60,7 +63,8 @@ public record WorldCanonicalInstanceLifecycleEvidence(
           "rowVersion",
           "captureId",
           "graphSha256",
-          "preparationInputDigest");
+          "preparationInputDigest",
+          "operationalRegionAssignments");
   private static final Set<String> REQUEST_FIELDS =
       Set.of(
           "schemaVersion",
@@ -108,7 +112,15 @@ public record WorldCanonicalInstanceLifecycleEvidence(
     requireNonNil(captureId, "captureId");
     requireDigest(graphSha256, BARE_SHA256, "graphSha256");
     requireDigest(preparationInputDigest, PREFIXED_SHA256, "preparationInputDigest");
+    operationalRegionAssignments =
+        immutableOperationalRegionAssignments(operationalRegionAssignments);
     requireExactBinding(request, launchBinding, startLocation, graphSha256);
+  }
+
+  /** Returns an immutable ordered copy without exposing the retained map representation. */
+  @Override
+  public Map<UUID, UUID> operationalRegionAssignments() {
+    return Collections.unmodifiableMap(new LinkedHashMap<>(operationalRegionAssignments));
   }
 
   /** Closed canonical representation with the complete descriptor and separate attestation. */
@@ -127,6 +139,9 @@ public record WorldCanonicalInstanceLifecycleEvidence(
     value.put("captureId", captureId.toString());
     value.put("graphSha256", graphSha256);
     value.put("preparationInputDigest", preparationInputDigest);
+    value.put(
+        "operationalRegionAssignments",
+        operationalRegionAssignmentsJson(operationalRegionAssignments));
     try {
       return Rfc8785CanonicalJson.canonicalizeUtf8(JSON.writeValueAsString(value));
     } catch (IOException impossible) {
@@ -158,7 +173,8 @@ public record WorldCanonicalInstanceLifecycleEvidence(
               nonNegativeLong(text(root, "rowVersion"), "rowVersion"),
               parseUuid(text(root, "captureId"), "captureId"),
               text(root, "graphSha256"),
-              text(root, "preparationInputDigest"));
+              text(root, "preparationInputDigest"),
+              parseOperationalRegionAssignments(root.get("operationalRegionAssignments")));
       if (!Arrays.equals(stored, evidence.canonicalBytes())) {
         throw new IllegalArgumentException("World canonical lifecycle evidence is not canonical");
       }
@@ -288,6 +304,70 @@ public record WorldCanonicalInstanceLifecycleEvidence(
     value.put("versionId", reference.versionId().toString());
     value.put("roomTemplateId", reference.roomTemplateId().toString());
     return value;
+  }
+
+  private static Map<String, Object> operationalRegionAssignmentsJson(Map<UUID, UUID> assignments) {
+    Map<String, Object> value = new LinkedHashMap<>();
+    assignments.entrySet().stream()
+        .sorted((left, right) -> left.getKey().toString().compareTo(right.getKey().toString()))
+        .forEach(entry -> value.put(entry.getKey().toString(), entry.getValue().toString()));
+    return value;
+  }
+
+  private static Map<UUID, UUID> parseOperationalRegionAssignments(JsonNode node) {
+    if (node == null || !node.isObject() || node.size() == 0) {
+      throw new IllegalArgumentException("operationalRegionAssignments must be a nonempty object");
+    }
+    Map<UUID, UUID> assignments = new LinkedHashMap<>();
+    node.propertyNames()
+        .forEach(
+            canonicalRegionId -> {
+              JsonNode operationalRegion = node.get(canonicalRegionId);
+              if (operationalRegion == null || !operationalRegion.isTextual()) {
+                throw new IllegalArgumentException(
+                    "operationalRegionAssignments values must be canonical UUID strings");
+              }
+              UUID canonical = parseUuid(canonicalRegionId, "operationalRegionAssignments key");
+              UUID operational =
+                  parseUuid(operationalRegion.textValue(), "operationalRegionAssignments value");
+              if (assignments.putIfAbsent(canonical, operational) != null) {
+                throw new IllegalArgumentException(
+                    "operationalRegionAssignments contains duplicate canonical region identities");
+              }
+            });
+    return immutableOperationalRegionAssignments(assignments);
+  }
+
+  private static Map<UUID, UUID> immutableOperationalRegionAssignments(
+      Map<UUID, UUID> assignments) {
+    Objects.requireNonNull(assignments, "operationalRegionAssignments");
+    if (assignments.isEmpty()) {
+      throw new IllegalArgumentException("operationalRegionAssignments must be nonempty");
+    }
+    assignments.forEach(
+        (canonical, operational) -> {
+          requireNonNil(canonical, "operationalRegionAssignments canonical region ID");
+          requireNonNil(operational, "operationalRegionAssignments operational region ID");
+        });
+    Map<UUID, UUID> ordered = new LinkedHashMap<>();
+    Set<UUID> operationalIdentities = new HashSet<>();
+    assignments.entrySet().stream()
+        .sorted((left, right) -> left.getKey().toString().compareTo(right.getKey().toString()))
+        .forEach(
+            entry -> {
+              UUID canonical = entry.getKey();
+              UUID operational = entry.getValue();
+              if (canonical.equals(operational)) {
+                throw new IllegalArgumentException(
+                    "Canonical and operational region identities must be distinct");
+              }
+              if (!operationalIdentities.add(operational)) {
+                throw new IllegalArgumentException(
+                    "operationalRegionAssignments contains duplicate operational region identities");
+              }
+              ordered.put(canonical, operational);
+            });
+    return Collections.unmodifiableMap(ordered);
   }
 
   private static byte[] base64(JsonNode node, String field) {

@@ -127,7 +127,8 @@ class WorldCanonicalPlayerAdmissionHoldEvidenceTest {
               value,
               world.captureId(),
               world.graphSha256(),
-              world.preparationInputDigest());
+              world.preparationInputDigest(),
+              world.operationalRegionAssignments());
       var precise =
           new WorldCanonicalPlayerAdmissionHoldEvidence(
               original.holdId(),
@@ -323,7 +324,10 @@ class WorldCanonicalPlayerAdmissionHoldEvidenceTest {
         0L,
         uuid("33333333-3333-4333-8333-333333333333"),
         selectorReceipt.graphDigest().substring("sha256:".length()),
-        "sha256:" + "e".repeat(64));
+        "sha256:" + "e".repeat(64),
+        java.util.Map.of(
+            uuid("11111111-1111-4111-8111-111111111111"),
+            uuid("22222222-2222-4222-8222-222222222222")));
   }
 
   static WorldPublishedStartLocationEvidence publishedSelector() throws Exception {

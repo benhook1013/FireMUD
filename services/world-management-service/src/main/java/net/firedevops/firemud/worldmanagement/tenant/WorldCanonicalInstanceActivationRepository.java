@@ -214,7 +214,8 @@ public final class WorldCanonicalInstanceActivationRepository {
         Math.addExact(request.expectedRowVersion(), 1L),
         current.captureId(),
         current.graphSha256(),
-        current.preparationInputDigest());
+        current.preparationInputDigest(),
+        current.operationalRegionAssignments());
   }
 
   private void requireReadOnlyRepeatableReadTransaction() {

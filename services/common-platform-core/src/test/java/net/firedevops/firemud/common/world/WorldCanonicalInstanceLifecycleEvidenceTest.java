@@ -7,6 +7,7 @@ import com.google.protobuf.ByteString;
 import com.google.protobuf.UnknownFieldSet;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 import net.firedevops.firemud.common.gamedesign.AuthoredWorldLaunchDescriptorEvidence;
 import net.firedevops.firemud.common.gamedesign.AuthoredWorldReleaseAttestationEvidence;
@@ -37,6 +38,110 @@ class WorldCanonicalInstanceLifecycleEvidenceTest {
     assertThat(decoded.canonicalBytes()).containsExactly(expected.canonicalBytes());
     assertThat(reread).isEqualTo(expected);
     assertThat(reread.hashCode()).isEqualTo(expected.hashCode());
+    assertThat(reread.operationalRegionAssignments())
+        .containsExactlyEntriesOf(expected.operationalRegionAssignments());
+  }
+
+  @Test
+  void rejectsMalformedOperationalRegionAssignmentMapsAndFreezesCallerInput() throws Exception {
+    WorldCanonicalInstanceLifecycleEvidence evidence = evidence();
+    UUID canonicalRegionId = uuid("abcdefab-cdef-4abc-8def-abcdefabcdef");
+    UUID operationalRegionId = uuid("22222222-2222-4222-8222-222222222222");
+    Map<UUID, UUID> mutableAssignments = new java.util.LinkedHashMap<>();
+    mutableAssignments.put(canonicalRegionId, operationalRegionId);
+    var frozen =
+        new WorldCanonicalInstanceLifecycleEvidence(
+            evidence.request(),
+            evidence.launchBinding(),
+            evidence.startLocation(),
+            evidence.runtimeRoomInstanceId(),
+            evidence.lifecycleStatus(),
+            evidence.lifecycleEpoch(),
+            evidence.rowVersion(),
+            evidence.captureId(),
+            evidence.graphSha256(),
+            evidence.preparationInputDigest(),
+            mutableAssignments);
+    mutableAssignments.clear();
+    assertThat(frozen.operationalRegionAssignments())
+        .containsExactlyEntriesOf(Map.of(canonicalRegionId, operationalRegionId));
+    assertThatThrownBy(
+            () -> frozen.operationalRegionAssignments().put(canonicalRegionId, operationalRegionId))
+        .isInstanceOf(UnsupportedOperationException.class);
+
+    UUID secondCanonicalRegionId = uuid("44444444-4444-4444-8444-444444444444");
+    UUID secondOperationalRegionId = uuid("55555555-5555-4555-8555-555555555555");
+    Map<UUID, UUID> forward = new java.util.LinkedHashMap<>();
+    forward.put(canonicalRegionId, operationalRegionId);
+    forward.put(secondCanonicalRegionId, secondOperationalRegionId);
+    Map<UUID, UUID> reverse = new java.util.LinkedHashMap<>();
+    reverse.put(secondCanonicalRegionId, secondOperationalRegionId);
+    reverse.put(canonicalRegionId, operationalRegionId);
+    assertThat(withAssignments(evidence, forward).canonicalBytes())
+        .containsExactly(withAssignments(evidence, reverse).canonicalBytes());
+
+    String stored = new String(frozen.canonicalBytes(), StandardCharsets.UTF_8);
+    String assignmentField =
+        "\"operationalRegionAssignments\":{\""
+            + canonicalRegionId
+            + "\":\""
+            + operationalRegionId
+            + "\"}";
+    assertThat(stored).contains(assignmentField);
+    String legacyShape = stored.replace("," + assignmentField, "");
+    assertThatThrownBy(
+            () ->
+                WorldCanonicalInstanceLifecycleEvidence.fromStored(
+                    legacyShape.getBytes(StandardCharsets.UTF_8)))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("missing or unsupported fields");
+    assertInvalidStoredAssignments(stored, assignmentField, "{}", "nonempty");
+    assertInvalidStoredAssignments(
+        stored,
+        assignmentField,
+        "{\"00000000-0000-0000-0000-000000000000\":\"" + operationalRegionId + "\"}",
+        "non-nil UUID");
+    assertInvalidStoredAssignments(
+        stored,
+        assignmentField,
+        "{\"" + canonicalRegionId + "\":\"00000000-0000-0000-0000-000000000000\"}",
+        "non-nil UUID");
+    assertInvalidStoredAssignments(
+        stored,
+        assignmentField,
+        "{\"" + canonicalRegionId + "\":\"" + canonicalRegionId + "\"}",
+        "must be distinct");
+    assertInvalidStoredAssignments(
+        stored,
+        assignmentField,
+        "{\"" + canonicalRegionId.toString().toUpperCase() + "\":\"" + operationalRegionId + "\"}",
+        "canonical non-nil UUID");
+    assertInvalidStoredAssignments(
+        stored,
+        assignmentField,
+        "{\""
+            + canonicalRegionId
+            + "\":\""
+            + operationalRegionId
+            + "\",\""
+            + canonicalRegionId
+            + "\":\""
+            + uuid("33333333-3333-4333-8333-333333333333")
+            + "\"}",
+        "invalid");
+    assertInvalidStoredAssignments(
+        stored,
+        assignmentField,
+        "{\""
+            + canonicalRegionId
+            + "\":\""
+            + operationalRegionId
+            + "\",\""
+            + uuid("44444444-4444-4444-8444-444444444444")
+            + "\":\""
+            + operationalRegionId
+            + "\"}",
+        "duplicate operational region identities");
   }
 
   @Test
@@ -568,7 +673,8 @@ class WorldCanonicalInstanceLifecycleEvidenceTest {
         rowVersion,
         captureId,
         graphSha256,
-        preparationInputDigest);
+        preparationInputDigest,
+        source.operationalRegionAssignments());
   }
 
   private static Request copyRequest(
@@ -713,7 +819,38 @@ class WorldCanonicalInstanceLifecycleEvidenceTest {
         0L,
         uuid("33333333-3333-4333-8333-333333333333"),
         selectorReceipt.graphDigest().substring("sha256:".length()),
-        "sha256:" + "e".repeat(64));
+        "sha256:" + "e".repeat(64),
+        Map.of(
+            uuid("11111111-1111-4111-8111-111111111111"),
+            uuid("22222222-2222-4222-8222-222222222222")));
+  }
+
+  private static void assertInvalidStoredAssignments(
+      String stored, String assignmentField, String replacement, String message) {
+    String malformed =
+        stored.replace(assignmentField, "\"operationalRegionAssignments\":" + replacement);
+    assertThatThrownBy(
+            () ->
+                WorldCanonicalInstanceLifecycleEvidence.fromStored(
+                    malformed.getBytes(StandardCharsets.UTF_8)))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining(message);
+  }
+
+  private static WorldCanonicalInstanceLifecycleEvidence withAssignments(
+      WorldCanonicalInstanceLifecycleEvidence source, Map<UUID, UUID> assignments) {
+    return new WorldCanonicalInstanceLifecycleEvidence(
+        source.request(),
+        source.launchBinding(),
+        source.startLocation(),
+        source.runtimeRoomInstanceId(),
+        source.lifecycleStatus(),
+        source.lifecycleEpoch(),
+        source.rowVersion(),
+        source.captureId(),
+        source.graphSha256(),
+        source.preparationInputDigest(),
+        assignments);
   }
 
   private static UUID uuid(String value) {

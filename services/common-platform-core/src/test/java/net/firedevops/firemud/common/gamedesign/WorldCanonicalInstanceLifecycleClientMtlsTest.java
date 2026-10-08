@@ -306,7 +306,10 @@ class WorldCanonicalInstanceLifecycleClientMtlsTest {
         WorldDraftStartLocationEvidence.fromStored(selector.selectorReceiptBytes())
             .graphDigest()
             .substring("sha256:".length()),
-        "sha256:" + "e".repeat(64));
+        "sha256:" + "e".repeat(64),
+        java.util.Map.of(
+            uuid("11111111-1111-4111-8111-111111111111"),
+            uuid("22222222-2222-4222-8222-222222222222")));
   }
 
   private static WorldCanonicalInstanceLifecycleEvidence withRequest(
@@ -322,7 +325,8 @@ class WorldCanonicalInstanceLifecycleClientMtlsTest {
         evidence.rowVersion(),
         evidence.captureId(),
         evidence.graphSha256(),
-        evidence.preparationInputDigest());
+        evidence.preparationInputDigest(),
+        evidence.operationalRegionAssignments());
   }
 
   private static WorldCanonicalInstanceLifecycleEvidence.Request withReadRequestId(
