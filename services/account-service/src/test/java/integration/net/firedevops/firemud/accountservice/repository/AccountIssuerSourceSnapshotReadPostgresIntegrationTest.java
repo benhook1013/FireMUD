@@ -6,6 +6,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import io.grpc.Context;
 import io.grpc.Status;
 import io.grpc.StatusRuntimeException;
+import io.grpc.stub.StreamObserver;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
@@ -17,11 +18,13 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
+import net.firedevops.firemud.account.v1.AccountIssuerAuthoritySourceSnapshot;
 import net.firedevops.firemud.account.v1.ReadCurrentIssuerAuthoritySourceRequest;
 import net.firedevops.firemud.accountservice.repository.AccountAuthorityGenerationRepository;
 import net.firedevops.firemud.accountservice.repository.AccountAuthorityOutboxRepository;
 import net.firedevops.firemud.accountservice.repository.AccountAuthoritySourceEvidenceRepository;
 import net.firedevops.firemud.accountservice.repository.AccountIssuerSourceSnapshotReadOwner;
+import net.firedevops.firemud.accountservice.service.impl.AccountIssuerAuthoritySourceGrpcService;
 import net.firedevops.firemud.common.account.authority.AccountAuthoritySourceEventV1Codec;
 import net.firedevops.firemud.common.account.authority.AccountIssuerSourceSnapshotEvidence;
 import net.firedevops.firemud.common.account.authority.AccountIssuerSourceSnapshotGrpcCodec;
@@ -137,14 +140,24 @@ class AccountIssuerSourceSnapshotReadPostgresIntegrationTest {
     assertStatus(
         Status.Code.FAILED_PRECONDITION,
         () -> withPeer(() -> context.owner().read(request(UUID.randomUUID()))));
-    assertStatus(
-        Status.Code.INVALID_ARGUMENT,
-        () ->
-            withPeer(
-                () ->
-                    context
-                        .owner()
-                        .read(request(UUID.randomUUID(), "unsupported-issuer", Optional.empty()))));
+
+    // In-process adapter proof with a synthetic same-namespace peer; this does not exercise live
+    // mTLS.
+    var unsupportedObserver = new RecordingObserver();
+    var adapter = new AccountIssuerAuthoritySourceGrpcService(context.owner());
+    withPeer(
+        () -> {
+          adapter.readCurrentIssuerAuthoritySource(
+              request(UUID.randomUUID(), "unsupported-issuer", Optional.empty()),
+              unsupportedObserver);
+          return null;
+        });
+
+    assertThat(unsupportedObserver.error.getCode()).isEqualTo(Status.Code.INVALID_ARGUMENT);
+    assertThat(unsupportedObserver.error.getDescription())
+        .isEqualTo("Malformed Account issuer source request");
+    assertThat(unsupportedObserver.observedValue).isFalse();
+    assertThat(unsupportedObserver.completed).isFalse();
 
     assertThat(context.allIssuerRows()).isEqualTo(before);
     assertThat(context.allIssuerRows()).containsEntry("generation_rows", 0L);
@@ -354,6 +367,28 @@ class AccountIssuerSourceSnapshotReadPostgresIntegrationTest {
         .isInstanceOf(StatusRuntimeException.class)
         .satisfies(
             failure -> assertThat(Status.fromThrowable(failure).getCode()).isEqualTo(expected));
+  }
+
+  private static final class RecordingObserver
+      implements StreamObserver<AccountIssuerAuthoritySourceSnapshot> {
+    private Status error;
+    private boolean observedValue;
+    private boolean completed;
+
+    @Override
+    public void onNext(AccountIssuerAuthoritySourceSnapshot ignored) {
+      observedValue = true;
+    }
+
+    @Override
+    public void onError(Throwable failure) {
+      error = Status.fromThrowable(failure);
+    }
+
+    @Override
+    public void onCompleted() {
+      completed = true;
+    }
   }
 
   private record TestContext(
