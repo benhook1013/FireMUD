@@ -5,6 +5,7 @@ import java.util.Objects;
 import java.util.UUID;
 import java.util.regex.Pattern;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
+import net.firedevops.firemud.common.publication.GameDesignPublicationOperationBinding;
 import net.firedevops.firemud.common.publication.PublishedRealmEntryPolicyEvidence;
 import net.firedevops.firemud.common.publication.PublishedRealmEntryPolicySetEvidence;
 import net.firedevops.firemud.common.publication.RealmEntryPolicy;
@@ -80,9 +81,12 @@ public record CanonicalGameplayRosterOwnerReadEvidence(
 
   private static void requirePolicyMatches(
       Request request, PublishedRealmEntryPolicySetEvidence evidence) {
-    if (!evidence.target().canonicalTenantId().equals(request.canonicalTenantUuid())
+    var operation = GameDesignPublicationOperationBinding.fromStored(evidence.operationBytes());
+    if (!operation.world().request().targetNamespace().equals(request.targetNamespace())
+        || !evidence.target().canonicalTenantId().equals(request.canonicalTenantUuid())
         || !evidence.target().canonicalVersionId().equals(request.canonicalVersionUuid())) {
-      throw new IllegalArgumentException("Game Design policy set changed the exact tenant/version");
+      throw new IllegalArgumentException(
+          "Game Design policy set changed the exact owner target namespace or tenant/version");
     }
     List<PublishedRealmEntryPolicyEvidence> matches =
         evidence.policies().stream()

@@ -285,7 +285,9 @@ public class VersionAssetArtifactServiceImpl implements VersionAssetArtifactServ
           "version assets must be tombstoned before purge can begin");
     }
     var version =
-        versionRepository.findById(versionId).filter(found -> found.getTenantId().equals(tenantId));
+        versionRepository
+            .findById(versionId)
+            .filter(found -> Objects.equals(found.getTenantId(), tenantId));
     boolean hasPublishedReleaseBundle =
         publishedReleaseBundleRepository
             .findByTenantIdAndVersionId(tenantId, versionId)
@@ -333,15 +335,19 @@ public class VersionAssetArtifactServiceImpl implements VersionAssetArtifactServ
           "VERSION_STATE_NOT_RETIRED",
           "version assets cannot be purged until the version is retired");
     }
-    if (version.isEmpty() && hasPublishedReleaseBundle) {
+    if (version.isEmpty()) {
       return new VersionAssetDeletionEligibilityDto(
           artifact.getTenantId(),
           artifact.getVersionId(),
           false,
           artifact.getArtifactState().name(),
           artifact.getStateEpoch(),
-          "PUBLISHED_RELEASE_BUNDLE_STILL_PRESENT",
-          "version assets cannot be purged while an attested release bundle still exists without version state");
+          hasPublishedReleaseBundle
+              ? "PUBLISHED_RELEASE_BUNDLE_STILL_PRESENT"
+              : "VERSION_AUTHORITY_NOT_FOUND",
+          hasPublishedReleaseBundle
+              ? "version assets cannot be purged while an attested release bundle still exists without version state"
+              : "an exact caller-tenant Version authority is required before purge eligibility can be granted");
     }
     return new VersionAssetDeletionEligibilityDto(
         artifact.getTenantId(),
@@ -453,10 +459,14 @@ public class VersionAssetArtifactServiceImpl implements VersionAssetArtifactServ
             .findById(versionId)
             .filter(found -> found.getTenantId().equals(tenantId))
             .orElseThrow(() -> new IllegalArgumentException("version not found"));
-    var exported = assetExportService.exportAssets(tenantId, version.getVersionNumber());
+    ExportedAssetManifest exported;
     try {
-      PublishedReleaseBundleContract.requireExactRepairMatch(bundle, exported);
+      exported =
+          assetExportService.repairPublishedAssets(tenantId, version.getVersionNumber(), bundle);
     } catch (IllegalStateException ex) {
+      if (!isRepairAttestationFailure(ex)) {
+        throw ex;
+      }
       artifact.setLastWorkflowId(repairWorkflowId);
       artifact.setLastErrorCode(ex.getMessage().split(":", 2)[0]);
       artifact.setLastErrorMessage(ex.getMessage().split(":", 2)[1].trim());
@@ -472,6 +482,14 @@ public class VersionAssetArtifactServiceImpl implements VersionAssetArtifactServ
     artifact.setLastErrorMessage(null);
     artifact.setUpdatedAt(LocalDateTime.now());
     return toDto(repository.save(artifact));
+  }
+
+  private boolean isRepairAttestationFailure(IllegalStateException exception) {
+    String message = exception.getMessage();
+    return message != null
+        && (message.startsWith(PublishedReleaseBundleContract.REPAIR_ATTESTATION_MISMATCH)
+            || message.startsWith(PublishedReleaseBundleContract.REPAIR_ATTESTED_ASSET_KEY_MISMATCH)
+            || message.startsWith(PublishedReleaseBundleContract.SCHEMA_VERSION_UNSUPPORTED));
   }
 
   private VersionAssetPurgeWorkflow requireWorkflow(

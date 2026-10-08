@@ -30,6 +30,7 @@ import net.firedevops.firemud.gamedesign.service.AssetExportOutcomePendingExcept
 import net.firedevops.firemud.gamedesign.service.AssetExportService;
 import net.firedevops.firemud.gamedesign.service.ControlPlaneDigestService;
 import net.firedevops.firemud.gamedesign.service.ExportedAssetManifest;
+import net.firedevops.firemud.gamedesign.service.MutationOwnerProofUnavailableException;
 import net.firedevops.firemud.gamedesign.service.PublicationFailureClassifier;
 import net.firedevops.firemud.gamedesign.service.PublishAttemptService;
 import net.firedevops.firemud.gamedesign.service.PublishGateFailureException;
@@ -351,16 +352,18 @@ public class VersionPublishCommandServiceImpl {
   }
 
   private static FullVersionPublicationUnavailableException fullVersionPublicationUnavailable() {
-    return new FullVersionPublicationUnavailableException();
+    return CreatorMutationOwnerProofGuard.denyUntilAccountCommitBoundProof(
+        FullVersionPublicationUnavailableException::new);
   }
 
-  static final class FullVersionPublicationUnavailableException extends IllegalStateException {
+  static final class FullVersionPublicationUnavailableException
+      extends MutationOwnerProofUnavailableException {
     static final String ERROR_CODE = "FULL_VERSION_PUBLICATION_UNAVAILABLE";
     static final String SAFE_MESSAGE =
         "fresh and pending full-version publication require a production Draft association";
 
     FullVersionPublicationUnavailableException() {
-      super(ERROR_CODE + ": " + SAFE_MESSAGE);
+      super(ERROR_CODE, SAFE_MESSAGE);
     }
   }
 

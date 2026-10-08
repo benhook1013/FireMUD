@@ -38,9 +38,7 @@ import org.mockito.MockitoAnnotations;
 
 class VersionAssetArtifactServiceImplTest {
   private static final String MANIFEST_HASH = "sha256:" + "a".repeat(64);
-  private static final String DIFFERENT_MANIFEST_HASH = "sha256:" + "c".repeat(64);
   private static final String LOGO_DIGEST = "sha256:" + "b".repeat(64);
-  private static final String DIFFERENT_LOGO_DIGEST = "sha256:" + "d".repeat(64);
 
   @Mock private VersionAssetArtifactRepository repository;
   @Mock private VersionAssetPurgeWorkflowRepository purgeWorkflowRepository;
@@ -241,8 +239,13 @@ class VersionAssetArtifactServiceImplTest {
                 "opaque-owner-issued-release-reference",
                 1,
                 List.of()));
-    when(assetExportService.exportAssets("tenant-1", 8))
-        .thenReturn(new ExportedAssetManifest(DIFFERENT_MANIFEST_HASH, 1, List.of(), List.of()));
+    when(assetExportService.repairPublishedAssets(
+            org.mockito.ArgumentMatchers.eq("tenant-1"),
+            org.mockito.ArgumentMatchers.eq(8),
+            any(PublishedReleaseBundleDto.class)))
+        .thenThrow(
+            new IllegalStateException(
+                "REPAIR_ATTESTATION_MISMATCH: repair could not reproduce the attested manifest hash"));
 
     assertThrows(
         IllegalStateException.class,
@@ -289,10 +292,13 @@ class VersionAssetArtifactServiceImplTest {
                 "opaque-owner-issued-release-reference",
                 1,
                 List.of(logoProof(LOGO_DIGEST))));
-    when(assetExportService.exportAssets("tenant-1", 8))
-        .thenReturn(
-            new ExportedAssetManifest(
-                MANIFEST_HASH, 1, List.of("logo.png"), List.of(logoProof(DIFFERENT_LOGO_DIGEST))));
+    when(assetExportService.repairPublishedAssets(
+            org.mockito.ArgumentMatchers.eq("tenant-1"),
+            org.mockito.ArgumentMatchers.eq(8),
+            any(PublishedReleaseBundleDto.class)))
+        .thenThrow(
+            new IllegalStateException(
+                "REPAIR_ATTESTATION_MISMATCH: repair could not reproduce the attested artifact proof"));
 
     IllegalStateException thrown =
         assertThrows(
@@ -348,7 +354,7 @@ class VersionAssetArtifactServiceImplTest {
   }
 
   @Test
-  void finalizePurgeUsesFrozenExportVersionNumberWithoutVersionRow() {
+  void finalizePurgeUsesFrozenExportVersionNumberWithRetiredVersion() {
     VersionAssetArtifact artifact = new VersionAssetArtifact();
     artifact.setTenantId("tenant-1");
     artifact.setVersionId(7L);
@@ -361,7 +367,12 @@ class VersionAssetArtifactServiceImplTest {
         .thenAnswer(invocation -> invocation.getArgument(0));
     when(purgeWorkflowRepository.save(any(VersionAssetPurgeWorkflow.class)))
         .thenAnswer(invocation -> invocation.getArgument(0));
-    when(versionRepository.findById(7L)).thenReturn(Optional.empty());
+    Version retiredVersion = new Version();
+    retiredVersion.setId(7L);
+    retiredVersion.setTenantId("tenant-1");
+    retiredVersion.setVersionNumber(8);
+    retiredVersion.setVersionState(VersionLifecycleState.RETIRED);
+    when(versionRepository.findById(7L)).thenReturn(Optional.of(retiredVersion));
     when(publishedReleaseBundleRepository.findByTenantIdAndVersionId("tenant-1", 7L))
         .thenReturn(Optional.empty());
     when(launchDescriptorRepository.existsByTenantIdAndVersionId("tenant-1", 7L)).thenReturn(false);
@@ -393,6 +404,33 @@ class VersionAssetArtifactServiceImplTest {
   }
 
   @Test
+  void beginPurgeFailsClosedWhenVersionAuthorityIsAbsent() {
+    VersionAssetArtifact artifact = tombstonedExportedArtifact();
+    artifact.setExportedManifestAssetKeysJson("[\"logo.png\"]");
+    when(repository.findByTenantIdAndVersionId("tenant-1", 7L)).thenReturn(Optional.of(artifact));
+    when(versionRepository.findById(7L)).thenReturn(Optional.empty());
+    when(publishedReleaseBundleRepository.findByTenantIdAndVersionId("tenant-1", 7L))
+        .thenReturn(Optional.empty());
+    when(launchDescriptorRepository.existsByTenantIdAndVersionId("tenant-1", 7L)).thenReturn(false);
+    when(remapSetRepository.existsByTenantIdAndSourceVersionIdAndStatus(
+            "tenant-1", 7L, TemplateRemapSetStatus.APPROVED))
+        .thenReturn(false);
+    when(remapSetRepository.existsByTenantIdAndTargetVersionIdAndStatus(
+            "tenant-1", 7L, TemplateRemapSetStatus.APPROVED))
+        .thenReturn(false);
+
+    IllegalStateException thrown =
+        assertThrows(
+            IllegalStateException.class, () -> service.beginPurgeVersionAssets("tenant-1", 7L, 5L));
+
+    assertEquals("VERSION_AUTHORITY_NOT_FOUND", thrown.getMessage());
+    org.mockito.Mockito.verify(repository, org.mockito.Mockito.never())
+        .save(any(VersionAssetArtifact.class));
+    org.mockito.Mockito.verify(purgeWorkflowRepository, org.mockito.Mockito.never())
+        .save(any(VersionAssetPurgeWorkflow.class));
+  }
+
+  @Test
   void canDeleteFailsClosedWhenVersionIsNotRetired() {
     VersionAssetArtifact artifact = new VersionAssetArtifact();
     artifact.setTenantId("tenant-1");
@@ -419,6 +457,59 @@ class VersionAssetArtifactServiceImplTest {
 
     assertEquals(false, eligibility.deletable());
     assertEquals("VERSION_STATE_NOT_RETIRED", eligibility.failureCode());
+  }
+
+  @Test
+  void canDeleteFailsClosedWhenVersionAuthorityIsAbsent() {
+    VersionAssetArtifact artifact = tombstonedExportedArtifact();
+    when(repository.findByTenantIdAndVersionId("tenant-1", 7L)).thenReturn(Optional.of(artifact));
+    when(versionRepository.findById(7L)).thenReturn(Optional.empty());
+
+    var eligibility = service.canDeleteVersionAssets("tenant-1", 7L);
+
+    assertEquals(false, eligibility.deletable());
+    assertEquals("VERSION_AUTHORITY_NOT_FOUND", eligibility.failureCode());
+  }
+
+  @Test
+  void canDeleteFailsClosedWhenVersionAuthorityBelongsToAnotherTenant() {
+    VersionAssetArtifact artifact = tombstonedExportedArtifact();
+    when(repository.findByTenantIdAndVersionId("tenant-1", 7L)).thenReturn(Optional.of(artifact));
+    Version wrongTenantVersion = new Version();
+    wrongTenantVersion.setId(7L);
+    wrongTenantVersion.setTenantId("tenant-2");
+    wrongTenantVersion.setVersionState(VersionLifecycleState.RETIRED);
+    when(versionRepository.findById(7L)).thenReturn(Optional.of(wrongTenantVersion));
+
+    var eligibility = service.canDeleteVersionAssets("tenant-1", 7L);
+
+    assertEquals(false, eligibility.deletable());
+    assertEquals("VERSION_AUTHORITY_NOT_FOUND", eligibility.failureCode());
+  }
+
+  @Test
+  void canDeleteAllowsExactRetiredVersionWhenNoOtherReferencesRemain() {
+    VersionAssetArtifact artifact = tombstonedExportedArtifact();
+    when(repository.findByTenantIdAndVersionId("tenant-1", 7L)).thenReturn(Optional.of(artifact));
+    Version version = new Version();
+    version.setId(7L);
+    version.setTenantId("tenant-1");
+    version.setVersionState(VersionLifecycleState.RETIRED);
+    when(versionRepository.findById(7L)).thenReturn(Optional.of(version));
+    when(publishedReleaseBundleRepository.findByTenantIdAndVersionId("tenant-1", 7L))
+        .thenReturn(Optional.empty());
+    when(launchDescriptorRepository.existsByTenantIdAndVersionId("tenant-1", 7L)).thenReturn(false);
+    when(remapSetRepository.existsByTenantIdAndSourceVersionIdAndStatus(
+            "tenant-1", 7L, TemplateRemapSetStatus.APPROVED))
+        .thenReturn(false);
+    when(remapSetRepository.existsByTenantIdAndTargetVersionIdAndStatus(
+            "tenant-1", 7L, TemplateRemapSetStatus.APPROVED))
+        .thenReturn(false);
+
+    var eligibility = service.canDeleteVersionAssets("tenant-1", 7L);
+
+    assertEquals(true, eligibility.deletable());
+    assertEquals(null, eligibility.failureCode());
   }
 
   @Test
@@ -492,6 +583,16 @@ class VersionAssetArtifactServiceImplTest {
     artifact.setStateEpoch(1L);
     artifact.setLastWorkflowId("workflow-1");
     artifact.setExportedManifestAssetKeysJson("[]");
+    return artifact;
+  }
+
+  private static VersionAssetArtifact tombstonedExportedArtifact() {
+    VersionAssetArtifact artifact = new VersionAssetArtifact();
+    artifact.setTenantId("tenant-1");
+    artifact.setVersionId(7L);
+    artifact.setExportedVersionNumber(8);
+    artifact.setArtifactState(VersionAssetArtifactState.TOMBSTONED);
+    artifact.setStateEpoch(5L);
     return artifact;
   }
 

@@ -27,6 +27,7 @@ import net.firedevops.firemud.gamedesign.dto.TemplateRemapSetDto;
 import net.firedevops.firemud.gamedesign.dto.VersionDto;
 import net.firedevops.firemud.gamedesign.service.GameAuthoredHelpTopicService;
 import net.firedevops.firemud.gamedesign.service.LaunchDescriptorService;
+import net.firedevops.firemud.gamedesign.service.MutationOwnerProofUnavailableException;
 import net.firedevops.firemud.gamedesign.service.PingService;
 import net.firedevops.firemud.gamedesign.service.PublishAttemptPendingReconciliationException;
 import net.firedevops.firemud.gamedesign.service.PublishGateFailureException;
@@ -900,6 +901,10 @@ public class GameDesignGrpcService extends GameDesignServiceGrpc.GameDesignServi
               "CompareAndSetVersionState",
               "PERMISSION_DENIED",
               ex.getMessage()));
+    } catch (MutationOwnerProofUnavailableException ex) {
+      builder.setError(
+          GrpcAppErrors.error(
+              meterRegistry, logger, "CompareAndSetVersionState", ex.errorCode(), ex.getMessage()));
     } catch (IllegalArgumentException ex) {
       builder.setError(
           GrpcAppErrors.error(
