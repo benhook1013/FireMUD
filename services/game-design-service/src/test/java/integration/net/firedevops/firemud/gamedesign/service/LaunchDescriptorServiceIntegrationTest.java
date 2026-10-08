@@ -59,9 +59,7 @@ class LaunchDescriptorServiceIntegrationTest {
             "AUTHORED_WORLD_LAUNCH_BINDING_REQUIRED: canonical authored-world source binding is"
                 + " required to resolve a launch descriptor");
 
-    assertThat(
-            launchDescriptorRepository.findByTenantIdAndGameTemplateIdAndControlPlaneRequestId(
-                "1", 9L, "integration-cp-unbound"))
+    assertThat(launchDescriptorRepository.findByPrivateRequest("1", "integration-cp-unbound"))
         .isEmpty();
   }
 }
