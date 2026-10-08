@@ -316,7 +316,7 @@ class PublishedRealmEntryPolicySetEvidenceTest {
         policies);
   }
 
-  private static Fixture fixture(boolean includeSide) throws Exception {
+  static Fixture fixture(boolean includeSide) throws Exception {
     GameDesignPublicationOperationBinding operation = operation(5L);
     var target = operation.account().input().selection().target();
     var sourceBinding = operation.account().input().selection().selectedCommit();
@@ -620,7 +620,7 @@ class PublishedRealmEntryPolicySetEvidenceTest {
       String logicalRevisionId,
       RealmEntryPolicy policy) {}
 
-  private record Fixture(
+  record Fixture(
       DraftCommitBinding.TargetProof target,
       GameDesignPublicationOperationBinding operation,
       DraftCommitBinding sourceBinding,

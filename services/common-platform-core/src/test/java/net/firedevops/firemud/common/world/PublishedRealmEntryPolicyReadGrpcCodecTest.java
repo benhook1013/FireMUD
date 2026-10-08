@@ -5,31 +5,11 @@ import static org.assertj.core.api.Assertions.assertThatIllegalArgumentException
 
 import com.google.protobuf.ByteString;
 import com.google.protobuf.UnknownFieldSet;
-import java.io.ByteArrayOutputStream;
 import java.io.IOException;
-import java.nio.charset.StandardCharsets;
-import java.time.OffsetDateTime;
-import java.util.ArrayList;
-import java.util.LinkedHashMap;
-import java.util.List;
-import java.util.Map;
 import java.util.UUID;
-import net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding;
-import net.firedevops.firemud.common.authoring.DraftCommitBinding;
-import net.firedevops.firemud.common.gamedesign.AuthoredWorldReleaseAttestationEvidence;
-import net.firedevops.firemud.common.gamedesign.GameDesignPublicationTerminalEvidence;
-import net.firedevops.firemud.common.gamedesign.GameDesignPublicationTerminalEvidence.Outcome;
-import net.firedevops.firemud.common.gamedesign.GameDesignPublicationTerminalEvidence.Participant;
-import net.firedevops.firemud.common.gamedesign.GameDesignPublicationTerminalEvidence.ReleaseContent;
 import net.firedevops.firemud.common.json.Rfc8785CanonicalJson;
-import net.firedevops.firemud.common.publication.AccountPublicationAuthorizationBinding;
-import net.firedevops.firemud.common.publication.AuthoredDraftPublishSelectionBinding;
-import net.firedevops.firemud.common.publication.GameDesignPublicationOperationBinding;
-import net.firedevops.firemud.common.publication.PublicationDigestRequestBinding;
-import net.firedevops.firemud.common.publication.PublishedRealmEntryPolicyEvidence;
 import net.firedevops.firemud.common.publication.PublishedRealmEntryPolicyReadGrpcCodec;
 import net.firedevops.firemud.common.publication.PublishedRealmEntryPolicySetEvidence;
-import net.firedevops.firemud.common.publication.RealmEntryPolicy;
 import net.firedevops.firemud.gamedesign.v1.ListPublishedRealmEntryPoliciesResponse;
 import net.firedevops.firemud.gamedesign.v1.ResolvePublishedRealmEntryPolicyResponse;
 import org.junit.jupiter.api.Test;
@@ -39,12 +19,11 @@ import tools.jackson.databind.node.ObjectNode;
 
 /** Closed wire and complete-set proof over isolated publication fixture vectors. */
 class PublishedRealmEntryPolicyReadGrpcCodecTest {
-  private static final String DIGEST = "sha256:" + "a".repeat(64);
   private static final ObjectMapper JSON = new ObjectMapper();
 
   @Test
   void listAndResolveRoundTripTheCompleteOrderedSealedSet() throws Exception {
-    Fixture fixture = fixture(true);
+    PublishedRealmEntryPolicySetEvidenceTest.Fixture fixture = fixture(true);
     var listRequest = listRequest(fixture, "99999999-9999-4999-8999-999999999999");
     var resolveRequest = resolveRequest(fixture, "99999999-9999-4999-8999-999999999999", "main");
 
@@ -75,7 +54,7 @@ class PublishedRealmEntryPolicyReadGrpcCodecTest {
   @Test
   void requestsRejectUnknownFieldsUnsupportedSchemaAndNoncanonicalIdentityOrSelectors()
       throws Exception {
-    Fixture fixture = fixture(false);
+    PublishedRealmEntryPolicySetEvidenceTest.Fixture fixture = fixture(false);
     var validList =
         PublishedRealmEntryPolicyReadGrpcCodec.toRequest(
             listRequest(fixture, "99999999-9999-4999-8999-999999999999"));
@@ -130,7 +109,7 @@ class PublishedRealmEntryPolicyReadGrpcCodecTest {
 
   @Test
   void responsesRejectChangedEchoTargetAndMissingSelector() throws Exception {
-    Fixture fixture = fixture(false);
+    PublishedRealmEntryPolicySetEvidenceTest.Fixture fixture = fixture(false);
     var request = listRequest(fixture, "99999999-9999-4999-8999-999999999999");
     var response = PublishedRealmEntryPolicyReadGrpcCodec.toResponse(request, fixture.set());
 
@@ -230,7 +209,7 @@ class PublishedRealmEntryPolicyReadGrpcCodecTest {
 
   @Test
   void completeCarrierRejectsCountOrderAndDigestSubstitutionAtTheWireBoundary() throws Exception {
-    Fixture fixture = fixture(true);
+    PublishedRealmEntryPolicySetEvidenceTest.Fixture fixture = fixture(true);
     var request = listRequest(fixture, "99999999-9999-4999-8999-999999999999");
     byte[] canonical = fixture.set().canonicalBytes();
     ObjectNode root = (ObjectNode) JSON.readTree(canonical);
@@ -267,7 +246,7 @@ class PublishedRealmEntryPolicyReadGrpcCodecTest {
   }
 
   private static PublishedRealmEntryPolicyReadGrpcCodec.ListRequest listRequest(
-      Fixture fixture, String readId) {
+      PublishedRealmEntryPolicySetEvidenceTest.Fixture fixture, String readId) {
     return new PublishedRealmEntryPolicyReadGrpcCodec.ListRequest(
         "test",
         UUID.fromString(readId),
@@ -276,7 +255,7 @@ class PublishedRealmEntryPolicyReadGrpcCodecTest {
   }
 
   private static PublishedRealmEntryPolicyReadGrpcCodec.ResolveRequest resolveRequest(
-      Fixture fixture, String readId, String realmSlug) {
+      PublishedRealmEntryPolicySetEvidenceTest.Fixture fixture, String readId, String realmSlug) {
     return new PublishedRealmEntryPolicyReadGrpcCodec.ResolveRequest(
         "test",
         UUID.fromString(readId),
@@ -286,259 +265,8 @@ class PublishedRealmEntryPolicyReadGrpcCodecTest {
         realmSlug);
   }
 
-  private static Fixture fixture(boolean includeSide) throws Exception {
-    var operation = operation();
-    var target = operation.account().input().selection().target();
-    var sourceBinding = operation.account().input().selection().selectedCommit();
-    var terminal =
-        new GameDesignPublicationTerminalEvidence(
-            operation.canonicalBytes(), Outcome.PUBLISHED, release(operation), 6L);
-    List<Source> sources = new ArrayList<>();
-    sources.add(
-        source(
-            "main",
-            true,
-            "33333333-3333-4333-8333-333333333333",
-            "44444444-4444-4444-8444-444444444444",
-            "55555555-5555-4555-8555-555555555555"));
-    if (includeSide) {
-      sources.add(
-          source(
-              "side",
-              false,
-              "88888888-8888-4888-8888-888888888888",
-              "66666666-6666-4666-8666-666666666666",
-              "77777777-7777-4777-8777-777777777777"));
-    }
-    byte[] capture = capture(operation, sourceBinding, sources);
-    List<PublishedRealmEntryPolicyEvidence> policies =
-        sources.stream()
-            .map(
-                source -> {
-                  UUID policyId = UUID.fromString(source.policyId());
-                  return new PublishedRealmEntryPolicyEvidence(
-                      policyId,
-                      UUID.fromString(source.commitId()),
-                      UUID.fromString(source.revisionId()),
-                      "source-" + source.revisionId(),
-                      source.policy(),
-                      PublishedRealmEntryPolicySetEvidence.policyDigest(
-                          policyId,
-                          target,
-                          terminal.releaseContent().versionNumber(),
-                          terminal.publishedReleaseBundleRef(),
-                          terminal.publishedReleaseBundleDigest(),
-                          terminal.releaseContent().publishWorkflowId(),
-                          terminal.releaseContent().manifestHash(),
-                          UUID.fromString(source.commitId()),
-                          UUID.fromString(source.revisionId()),
-                          "source-" + source.revisionId(),
-                          source.policy()));
-                })
-            .toList();
-    var release = terminal.releaseContent();
-    String setDigest =
-        PublishedRealmEntryPolicySetEvidence.calculatePolicySetDigest(
-            target,
-            release.versionNumber(),
-            sourceBinding.commitId(),
-            "43",
-            release.publishedReleaseBundleRef(),
-            terminal.publishedReleaseBundleDigest(),
-            release.publishWorkflowId(),
-            release.manifestHash(),
-            terminal.publicationVersionStateEpoch(),
-            operation.canonicalBytes(),
-            capture,
-            terminal.canonicalBytes(),
-            policies);
-    return new Fixture(
-        target,
-        new PublishedRealmEntryPolicySetEvidence(
-            target,
-            release.versionNumber(),
-            sourceBinding.commitId(),
-            "43",
-            release.publishedReleaseBundleRef(),
-            terminal.publishedReleaseBundleDigest(),
-            release.publishWorkflowId(),
-            release.manifestHash(),
-            terminal.publicationVersionStateEpoch(),
-            operation.canonicalBytes(),
-            capture,
-            terminal.canonicalBytes(),
-            policies.size(),
-            setDigest,
-            policies));
+  private static PublishedRealmEntryPolicySetEvidenceTest.Fixture fixture(boolean includeSide)
+      throws Exception {
+    return PublishedRealmEntryPolicySetEvidenceTest.fixture(includeSide);
   }
-
-  private static Source source(
-      String realm, boolean production, String policyId, String commitId, String revisionId) {
-    RealmEntryPolicy policy =
-        RealmEntryPolicy.parse(
-            "{\"schemaVersion\":1,\"worldSlug\":\"earth\",\"worldDisplayName\":\"Earth\","
-                + "\"realmSlug\":\""
-                + realm
-                + "\",\"realmDisplayName\":\""
-                + realm
-                + "\",\"visible\":true,\"publicProduction\":"
-                + production
-                + ",\"stateScope\":\"SHARED\",\"entryPolicy\":\"PRESEEDED_ONLY\"}",
-            JSON);
-    return new Source(policyId, commitId, revisionId, policy);
-  }
-
-  private static byte[] capture(
-      net.firedevops.firemud.common.publication.GameDesignPublicationOperationBinding operation,
-      DraftCommitBinding binding,
-      List<Source> sources)
-      throws IOException {
-    List<Map<String, Object>> policies =
-        sources.stream()
-            .map(
-                source -> {
-                  Map<String, Object> value = new LinkedHashMap<>();
-                  value.put("commitId", source.commitId());
-                  value.put("revisionId", source.revisionId());
-                  value.put("logicalRevisionId", "source-" + source.revisionId());
-                  value.put("policy", JSON.readTree(source.policy().canonicalJson()));
-                  return value;
-                })
-            .toList();
-    Map<String, Object> snapshot = new LinkedHashMap<>();
-    snapshot.put("schema", PublishedRealmEntryPolicySetEvidence.SNAPSHOT_SCHEMA);
-    snapshot.put("bindingJson", binding.canonicalJson());
-    snapshot.put("bindingDigest", binding.digest());
-    snapshot.put("sourceEpoch", "43");
-    snapshot.put("policies", policies);
-    byte[] snapshotBytes = Rfc8785CanonicalJson.canonicalizeUtf8(JSON.writeValueAsString(snapshot));
-    ByteArrayOutputStream capture = new ByteArrayOutputStream();
-    DraftAuthorizationFenceBinding.frame(
-        capture, PublishedRealmEntryPolicySetEvidence.CAPTURE_SCHEMA);
-    DraftAuthorizationFenceBinding.frame(capture, operation.canonicalBytes());
-    DraftAuthorizationFenceBinding.frame(capture, snapshotBytes);
-    return capture.toByteArray();
-  }
-
-  private static net.firedevops.firemud.common.publication.GameDesignPublicationOperationBinding
-      operation() throws Exception {
-    var seed = WorldPublishedStartLocationGrpcCodecTest.evidence();
-    var original = DraftAuthorizationFenceBinding.fromStored(seed.originalAccountBindingBytes());
-    var draft =
-        DraftCommitBinding.fromStored(
-            new String(original.gameDesignBinding(), StandardCharsets.UTF_8),
-            original.inputDigest());
-    var target = draft.target();
-    String requestId = "publication-request";
-    var selected =
-        AuthoredDraftPublishSelectionBinding.capture(
-            new AuthoredDraftPublishSelectionBinding.PublishIntent(
-                target.canonicalTenantId(),
-                target.canonicalVersionId(),
-                requestId,
-                "5",
-                "fixed-notes",
-                draft.requestId(),
-                draft.commitId(),
-                draft.digest()),
-            target,
-            draft,
-            new AuthoredDraftPublishSelectionBinding.VisibilityFence(
-                target,
-                draft.requestId(),
-                draft.commitId(),
-                draft.digest(),
-                "[]",
-                OffsetDateTime.parse("2026-10-07T00:00:00Z")));
-    var account =
-        new AccountPublicationAuthorizationBinding(
-            UUID.fromString("cccccccc-cccc-4ccc-8ccc-cccccccccccc"),
-            UUID.fromString("dddddddd-dddd-4ddd-8ddd-dddddddddddd"),
-            new AccountPublicationAuthorizationBinding.PreallocationInput(
-                original.actorAccountId(), selected),
-            List.of(
-                new DraftAuthorizationFenceBinding.SourceEvidence(
-                    DraftAuthorizationFenceBinding.SourceKind.ACCOUNT,
-                    original.actorAccountId().toString(),
-                    "1",
-                    "1",
-                    null,
-                    null,
-                    new byte[] {1})));
-    var request = seed.request();
-    var world =
-        new WorldPublishedStartLocationEvidence(
-            new WorldPublishedStartLocationEvidence.Request(
-                request.targetNamespace(),
-                request.canonicalTenantId(),
-                request.canonicalVersionId(),
-                request.intakeRequestId(),
-                request.publicationFence(),
-                requestId,
-                selected.digest().substring(7),
-                5L,
-                PublicationDigestRequestBinding.full(
-                        target.canonicalTenantId().toString(),
-                        Long.toString(target.gameDesignVersionRowId()),
-                        requestId)
-                    .derivedWorkflowIdentity(),
-                request.appliedCommitId(),
-                request.contentDigest(),
-                request.digestSchemaVersion(),
-                request.worldAffectedTuples()),
-            seed.selectorReceiptBytes(),
-            seed.originalAccountBindingBytes(),
-            seed.appliedResultBytes());
-    return new GameDesignPublicationOperationBinding(account, world);
-  }
-
-  private static ReleaseContent release(
-      net.firedevops.firemud.common.publication.GameDesignPublicationOperationBinding operation) {
-    var request = operation.world().request();
-    var participants =
-        AuthoredWorldReleaseAttestationEvidence.requiredParticipantOrder().stream()
-            .map(
-                owner ->
-                    new Participant(
-                        owner,
-                        Long.toString(
-                            operation
-                                .account()
-                                .input()
-                                .selection()
-                                .target()
-                                .gameDesignVersionRowId()),
-                        null,
-                        request.appliedCommitId(),
-                        owner.equals("WORLD_MANAGEMENT") ? request.contentDigest() : "c".repeat(64),
-                        AuthoredWorldReleaseAttestationEvidence.supportedParticipantDigestSchema(
-                            owner),
-                        owner.equals("GAME_LOGIC") ? DIGEST : null,
-                        null,
-                        null))
-            .toList();
-    return new ReleaseContent(
-        request.canonicalTenantId(),
-        request.canonicalVersionId(),
-        "bundle:exact",
-        12,
-        "v2",
-        request.publishWorkflowId(),
-        DIGEST,
-        1,
-        List.of(
-            new AuthoredWorldReleaseAttestationEvidence.Artifact(
-                "asset-é", "FILE", "artifacts/sha256/" + "a".repeat(64), DIGEST, "text/plain", 1)),
-        List.of("asset-é"),
-        participants,
-        List.of("LOOK"),
-        "generation-1",
-        operation.world());
-  }
-
-  private record Source(
-      String policyId, String commitId, String revisionId, RealmEntryPolicy policy) {}
-
-  private record Fixture(
-      DraftCommitBinding.TargetProof target, PublishedRealmEntryPolicySetEvidence set) {}
 }
