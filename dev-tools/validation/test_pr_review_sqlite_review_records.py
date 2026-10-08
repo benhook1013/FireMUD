@@ -865,10 +865,22 @@ class SqliteReviewRecordsTest(unittest.TestCase):
     def test_archived_json_rejects_non_finite_numbers(self) -> None:
         for kind, content in (
             ("cli_events", '{"type":"finding","score":NaN}\n'),
+            ("cli_events", '{"type":"finding","score":1e999}\n'),
             ("hosted_review", '{"score":Infinity}'),
         ):
             with self.subTest(kind=kind), self.assertRaisesRegex(ReviewRecordsError, "JSON"):
                 _archive_artifact(kind, content)
+
+    def test_non_finite_cli_raw_diagnostic_keeps_source_digest_and_redacts_text(self) -> None:
+        content = '{"type":"finding","score":1e999,"token":"Bearer synthetic-overflow-secret"}\n'
+
+        archived, source_digest, redactions = _archive_artifact("cli_raw_output", content)
+
+        self.assertEqual(source_digest, hashlib.sha256(content.encode("utf-8")).hexdigest())
+        self.assertIn("1e999", archived)
+        self.assertNotIn("synthetic-overflow-secret", archived)
+        self.assertIn("[redacted credential]", archived)
+        self.assertEqual(redactions, 1)
 
     def test_archived_text_rejects_redaction_expansion_over_stored_byte_limit(self) -> None:
         content = "secret=x " * 12_000

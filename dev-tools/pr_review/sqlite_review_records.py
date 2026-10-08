@@ -120,6 +120,13 @@ def _reject_json_constant(value: str) -> None:
     raise ValueError(f"non-finite JSON number {value} is not allowed")
 
 
+def _parse_finite_json_float(value: str) -> float:
+    number = float(value)
+    if not math.isfinite(number):
+        raise ValueError("JSON number is outside the finite float range")
+    return number
+
+
 @dataclasses.dataclass(frozen=True)
 class FindingObservation:
     """One finding observed in a source run.
@@ -345,7 +352,10 @@ def _archive_artifact(kind: str, content: str) -> tuple[str, str, int]:
     }
     if kind not in limits or not isinstance(content, str):
         raise ReviewRecordsError("review artifact kind or content is invalid")
-    encoded = content.encode("utf-8")
+    try:
+        encoded = content.encode("utf-8")
+    except UnicodeEncodeError as exc:
+        raise ReviewRecordsError(f"{kind} must be valid UTF-8 text") from exc
     if len(encoded) > limits[kind]:
         raise ReviewRecordsError(f"{kind} exceeds its evidence size limit")
     source_digest = hashlib.sha256(encoded).hexdigest()
@@ -360,18 +370,26 @@ def _archive_artifact(kind: str, content: str) -> tuple[str, str, int]:
             for line in content.split("\n"):
                 line = line.removesuffix("\r")
                 if line.strip():
-                    event = json.loads(line, parse_constant=_reject_json_constant)
+                    event = json.loads(
+                        line,
+                        parse_constant=_reject_json_constant,
+                        parse_float=_parse_finite_json_float,
+                    )
                     if not isinstance(event, dict):
                         raise ValueError("non-object event")
                     events.append(event)
         except RecursionError as exc:
             raise ReviewRecordsError("CLI events must be JSON objects, one per line") from exc
-        except (ValueError, json.JSONDecodeError) as exc:
+        except (ValueError, OverflowError, json.JSONDecodeError) as exc:
             raise ReviewRecordsError("CLI events must be JSON objects, one per line") from exc
         value: Any = events
     else:
         try:
-            value = json.loads(content, parse_constant=_reject_json_constant)
+            value = json.loads(
+                content,
+                parse_constant=_reject_json_constant,
+                parse_float=_parse_finite_json_float,
+            )
         except RecursionError as exc:
             raise ReviewRecordsError(f"{kind} must be JSON") from exc
         except ValueError as exc:
@@ -412,6 +430,8 @@ def _archive_artifact(kind: str, content: str) -> tuple[str, str, int]:
             stored = _json(scrubbed)
     except RecursionError as exc:
         raise ReviewRecordsError(f"{kind} JSON is too deeply nested") from exc
+    except (TypeError, ValueError, OverflowError) as exc:
+        raise ReviewRecordsError(f"{kind} JSON cannot be archived safely") from exc
     if len(stored.encode("utf-8")) > limits[kind]:
         raise ReviewRecordsError(f"{kind} exceeds its evidence size limit")
     return stored, source_digest, redactions

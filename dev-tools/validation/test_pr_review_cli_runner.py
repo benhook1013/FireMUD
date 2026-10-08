@@ -1774,6 +1774,8 @@ class CliReviewRunnerTests(unittest.TestCase):
     def test_partial_cli_parser_rejects_truncated_malformed_and_ambiguous_jsonl(self):
         finding = json.dumps({"type": "finding", "codegenInstructions": "Trivial observation"}) + "\n"
         self.assertEqual(len(evidence.parse_partial_capture_events(finding)), 1)
+        finite_number = '{"type":"finding","codegenInstructions":"Useful finding","metric":1.25e2}\n'
+        self.assertEqual(evidence.parse_partial_capture_events(finite_number)[0]["metric"], 125.0)
         for invalid in (
             finding.rstrip("\n"),
             finding + '{"type":"finding"\n',
@@ -1786,6 +1788,9 @@ class CliReviewRunnerTests(unittest.TestCase):
             finding + '{"type":"review_context","reviewType":"full"}\n',
             '{"type":[]}\n',
             '{"type":{}}\n',
+            '{"type":"finding","codegenInstructions":"Useful finding","extra":{"metric":1e999}}\n',
+            r'{"type":"finding","codegenInstructions":"Useful finding","extra":{"text":"\ud800"}}' + "\n",
+            json.dumps({"type": "finding", "codegenInstructions": "Review comment at @src/Foo.java:1"}) + "\n",
         ):
             with self.subTest(invalid=invalid), self.assertRaises(evidence.EvidenceError):
                 evidence.parse_partial_capture_events(invalid)
@@ -1909,6 +1914,106 @@ class CliReviewRunnerTests(unittest.TestCase):
             self.assertEqual(records.attempt_artifacts(result.run_id)["cli_raw_output"], output)
             self.assertEqual(records.history(result.pull_request)["runs"], [])
 
+    def test_non_finite_and_invalid_utf8_cli_output_stays_raw_for_failure_and_timeout(self):
+        overflow = (
+            b'{"type":"finding","codegenInstructions":"Useful partial finding",'
+            b'"extra":{"score":1e999},"token":"Bearer synthetic-overflow-secret"}\n'
+        )
+        invalid_utf8 = b'{"type":"finding","codegenInstructions":"Useful \xff partial finding"}\n'
+        scenarios = (
+            ("overflow-failure", overflow, False),
+            ("overflow-timeout", overflow, True),
+            ("invalid-utf8-failure", invalid_utf8, False),
+            ("invalid-utf8-timeout", invalid_utf8, True),
+        )
+
+        for name, output, timed_out in scenarios:
+            with self.subTest(name=name), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                (root / ".git").mkdir()
+                database = root / ".git" / "firemud" / "records.sqlite3"
+                database.parent.mkdir()
+                SqliteStateStore(database).update(lambda state: state)
+                records = SqliteReviewRecords(database)
+                records.bootstrap()
+                runner = FakeCommands(
+                    root,
+                    timeout_review=timed_out,
+                    timeout_review_output=output,
+                    review_output=output,
+                    review_returncode=7,
+                )
+
+                if timed_out:
+                    with self.assertRaisesRegex(ReviewRunnerError, "CodeRabbit review timed out after 13 seconds"):
+                        run_cli_review(
+                            target(),
+                            github=FakeGitHub(),
+                            source_root=root,
+                            runner=runner,
+                            records=records,
+                            review_timeout_seconds=13,
+                        )
+                else:
+                    result = run_cli_review(
+                        target(),
+                        github=FakeGitHub(),
+                        source_root=root,
+                        runner=runner,
+                        records=records,
+                    )
+                    self.assertEqual(result.exit_status, 7)
+
+                attempt = records.attempt_history(42)[0]
+                capture = root / ".git" / "firemud" / "pr-review" / "runs" / attempt["attempt_id"]
+                self.assertEqual((capture / "stdout").read_bytes(), output)
+                self.assertEqual(attempt["state"], "timed_out" if timed_out else "failed")
+                self.assertIsNone(attempt["run_id"])
+                self.assertEqual(
+                    attempt["diagnostic"],
+                    "CodeRabbit CLI timed out before a complete result"
+                    if timed_out
+                    else "CodeRabbit CLI did not return a complete JSON review",
+                )
+                artifacts = records.attempt_artifacts(attempt["attempt_id"])
+                self.assertNotIn("cli_events", artifacts)
+                self.assertIn("cli_raw_output", artifacts)
+                self.assertEqual(records.history(42)["runs"], [])
+                if name.startswith("overflow"):
+                    self.assertIn("1e999", artifacts["cli_raw_output"])
+                    self.assertNotIn("synthetic-overflow-secret", artifacts["cli_raw_output"])
+                    self.assertIn("[redacted credential]", artifacts["cli_raw_output"])
+                if name.startswith("invalid-utf8"):
+                    self.assertIn("\ufffd", artifacts["cli_raw_output"])
+                    self.assertIn("diagnostic only", artifacts["cli_raw_output"])
+                    self.assertIn(hashlib.sha256(output).hexdigest(), artifacts["cli_raw_output"])
+
+    def test_locator_only_partial_finding_is_archived_without_source_projection(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / ".git").mkdir()
+            database = root / ".git" / "firemud" / "records.sqlite3"
+            database.parent.mkdir()
+            SqliteStateStore(database).update(lambda state: state)
+            records = SqliteReviewRecords(database)
+            records.bootstrap()
+            output = json.dumps({"type": "finding", "codegenInstructions": "Review comment at @src/Foo.java:1"}) + "\n"
+
+            result = run_cli_review(
+                target(),
+                github=FakeGitHub(),
+                source_root=root,
+                runner=FakeCommands(root, review_output=output, review_returncode=1),
+                records=records,
+            )
+
+            attempt = records.attempt(result.run_id)
+            self.assertEqual(result.exit_status, 1)
+            self.assertEqual(attempt["state"], "failed")
+            self.assertIsNone(attempt["run_id"])
+            self.assertEqual(records.attempt_artifacts(result.run_id)["cli_raw_output"], output)
+            self.assertEqual(records.history(42)["runs"], [])
+
     def test_partial_projection_storage_failure_falls_back_to_failed_raw_attempt(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -1942,6 +2047,7 @@ class CliReviewRunnerTests(unittest.TestCase):
             self.assertEqual(records.attempt_artifacts(result.run_id)["cli_raw_output"], output)
             self.assertEqual(records.history(result.pull_request)["runs"], [])
             self.assertIn("injected partial write failure", result.warning)
+            self.assertEqual(result.exit_status, 1)
 
     def test_timeout_projection_storage_failure_falls_back_and_preserves_timeout_error(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -2210,7 +2316,7 @@ class CliReviewRunnerTests(unittest.TestCase):
             run_dirs = list((root / ".git" / "firemud" / "pr-review" / "runs").glob("run.*"))
             self.assertEqual(len(run_dirs), 1)
             capture_dir = run_dirs[0]
-            self.assertEqual((capture_dir / "stdout").read_text(), "partial �\n")
+            self.assertEqual((capture_dir / "stdout").read_bytes(), b"partial \xff\n")
             self.assertEqual((capture_dir / "stderr").read_text(), "timed out\n")
             self.assertEqual((capture_dir / "exit-status").read_text(), "timeout\n")
             metadata = json.loads((capture_dir / "metadata.json").read_text())

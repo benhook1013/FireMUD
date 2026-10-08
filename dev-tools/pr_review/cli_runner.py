@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import dataclasses
 import fcntl
+import hashlib
 import json
 import os
 import shutil
@@ -1354,7 +1355,7 @@ def run_cli_review(
                         cwd=candidate_worktree,
                         capture_output=True,
                         check=False,
-                        text=True,
+                        text=False,
                         timeout=review_timeout_seconds,
                     )
                 except subprocess.TimeoutExpired as error:
@@ -1364,18 +1365,10 @@ def run_cli_review(
                     duration = max(0, (finished - started + 999_999_999) // 1_000_000_000)
                     timeout_stdout = error.stdout if error.stdout is not None else error.output
                     timeout_stderr = error.stderr
-                    stdout = (
-                        timeout_stdout.decode("utf-8", errors="replace")
-                        if isinstance(timeout_stdout, bytes)
-                        else timeout_stdout or ""
-                    )
-                    stderr = (
-                        timeout_stderr.decode("utf-8", errors="replace")
-                        if isinstance(timeout_stderr, bytes)
-                        else timeout_stderr or ""
-                    )
-                    (capture_dir / "stdout").write_text(stdout, encoding="utf-8")
-                    (capture_dir / "stderr").write_text(stderr, encoding="utf-8")
+                    stdout, stdout_bytes, stdout_valid_utf8 = _capture_output_stream(timeout_stdout)
+                    stderr, stderr_bytes, _stderr_valid_utf8 = _capture_output_stream(timeout_stderr)
+                    (capture_dir / "stdout").write_bytes(stdout_bytes)
+                    (capture_dir / "stderr").write_bytes(stderr_bytes)
                     (capture_dir / "exit-status").write_text("timeout\n", encoding="utf-8")
                     (capture_dir / "review-duration-seconds").write_text(f"{duration}\n", encoding="utf-8")
                     metadata.update({"duration_seconds": duration, "exit_status": None, "timed_out": True})
@@ -1387,7 +1380,7 @@ def run_cli_review(
                     if records is not None:
                         try:
                             finished_at = hosted.utc_now()
-                            has_timeout_findings = _has_failed_cli_findings(stdout)
+                            has_timeout_findings = stdout_valid_utf8 and _has_failed_cli_findings(stdout)
                             timeout_artifacts = {
                                 "cli_diagnostic": stderr,
                                 "metadata": json.dumps(metadata, sort_keys=True),
@@ -1442,8 +1435,10 @@ def run_cli_review(
                 if finished < started:
                     raise ReviewRunnerError("process clock moved backwards while measuring review duration")
                 duration = max(0, (finished - started + 999_999_999) // 1_000_000_000)
-                (capture_dir / "stdout").write_text(process.stdout or "", encoding="utf-8")
-                (capture_dir / "stderr").write_text(process.stderr or "", encoding="utf-8")
+                stdout, stdout_bytes, stdout_valid_utf8 = _capture_output_stream(process.stdout)
+                stderr, stderr_bytes, _stderr_valid_utf8 = _capture_output_stream(process.stderr)
+                (capture_dir / "stdout").write_bytes(stdout_bytes)
+                (capture_dir / "stderr").write_bytes(stderr_bytes)
                 (capture_dir / "exit-status").write_text(f"{process.returncode}\n", encoding="utf-8")
                 (capture_dir / "review-duration-seconds").write_text(f"{duration}\n", encoding="utf-8")
                 metadata.update({"duration_seconds": duration, "exit_status": process.returncode})
@@ -1452,22 +1447,21 @@ def run_cli_review(
                     legacy_file.write(f"review_duration_seconds={duration}\n")
                 _write_capture_complete_marker(capture_dir)
                 provider_result_saved = True
-                stdout = process.stdout or ""
-                stderr = process.stderr or ""
                 artifacts = {
                     "cli_diagnostic": stderr,
                     "metadata": json.dumps(metadata, sort_keys=True),
                 }
                 parsed_findings: list[dict[str, Any]] | None = None
                 capture_completed = False
-                try:
-                    parsed_findings, _ = evidence._parse_capture_stdout(capture_dir / "stdout")
-                    capture_completed = True
-                except evidence.EvidenceError:
+                if stdout_valid_utf8:
                     try:
-                        parsed_findings = evidence.parse_failed_capture_events(stdout)
+                        parsed_findings, _ = evidence._parse_capture_stdout(capture_dir / "stdout")
+                        capture_completed = True
                     except evidence.EvidenceError:
-                        parsed_findings = None
+                        try:
+                            parsed_findings = evidence.parse_failed_capture_events(stdout)
+                        except evidence.EvidenceError:
+                            parsed_findings = None
                 if parsed_findings is None:
                     result_state = "rate_limited" if "rate limit exceeded" in stderr.casefold() else "failed"
                     artifacts["cli_raw_output"] = stdout
@@ -1733,6 +1727,33 @@ def _bounded_recording_error(error: Exception) -> str:
     value = "".join(" " if unicodedata.category(character) in {"Cc", "Cs"} else character for character in str(error))
     value = " ".join(value.split())[:240]
     return value or type(error).__name__
+
+
+def _capture_output_stream(value: str | bytes | None) -> tuple[str, bytes, bool]:
+    """Return safe diagnostic text, original capture bytes, and strict UTF-8 validity."""
+
+    if value is None:
+        value = ""
+    if isinstance(value, bytes):
+        try:
+            return value.decode("utf-8"), value, True
+        except UnicodeDecodeError:
+            diagnostic = value.decode("utf-8", errors="replace")
+            digest = hashlib.sha256(value).hexdigest()
+            note = (
+                f"[diagnostic only: invalid UTF-8 was replaced; capture sha256={digest}; observations were not parsed]"
+            )
+            return f"{diagnostic}\n{note}\n", value, False
+    if isinstance(value, str):
+        try:
+            return value, value.encode("utf-8"), True
+        except UnicodeEncodeError:
+            encoded = value.encode("utf-8", errors="replace")
+            diagnostic = encoded.decode("utf-8")
+            digest = hashlib.sha256(encoded).hexdigest()
+            note = f"[diagnostic only: invalid Unicode was replaced; capture sha256={digest}; observations were not parsed]"
+            return f"{diagnostic}\n{note}\n", encoded, False
+    raise ReviewRunnerError("CodeRabbit CLI output was not text or bytes")
 
 
 def target_from_resolver(resolver: ReviewTargetResolver, expected_pr: int | None = None) -> ReviewTarget:

@@ -8,6 +8,7 @@ never turns an absent, malformed, or unlinked capture into review evidence.
 from __future__ import annotations
 
 import json
+import math
 import re
 import subprocess
 from dataclasses import dataclass, field
@@ -570,15 +571,26 @@ def parse_capture_events(value: str) -> tuple[list[dict[str, Any]], dict[str, An
             continue
         try:
             event = json.loads(line)
-        except json.JSONDecodeError as exc:
+        except (json.JSONDecodeError, ValueError, OverflowError, RecursionError) as exc:
             raise EvidenceError(f"linked capture stdout has invalid JSON at line {number}") from exc
         if not isinstance(event, dict):
             raise EvidenceError(f"linked capture stdout has a non-object event at line {number}")
+        _validate_event_archivability(event, number)
         if event.get("type") == "finding":
+            instructions = event.get("codegenInstructions")
+            if isinstance(instructions, str) and instructions.strip():
+                from .sqlite_provider_imports import _cli_detail
+
+                if not _cli_detail(instructions).strip():
+                    raise EvidenceError(f"linked capture stdout has a finding without issue content at line {number}")
             findings.append(event)
         elif event.get("type") == "complete":
             completes.append(event)
-    if len(completes) != 1 or completes[0].get("status") != "review_completed":
+    if (
+        len(completes) != 1
+        or completes[0].get("status") != "review_completed"
+        or type(completes[0].get("findings")) is not int
+    ):
         raise EvidenceError("linked capture has no unique successful completion")
     complete = completes[0]
     if complete.get("findings") != len(findings) or not isinstance(complete.get("reviewedFiles"), list):
@@ -646,6 +658,12 @@ def _parse_strict_capture_events(value: str) -> tuple[list[dict[str, Any]], list
     def reject_json_constant(constant: str) -> None:
         raise ValueError(f"non-standard JSON constant {constant}")
 
+    def parse_finite_float(value: str) -> float:
+        number = float(value)
+        if not math.isfinite(number):
+            raise ValueError("JSON number is outside the finite float range")
+        return number
+
     findings: list[dict[str, Any]] = []
     completes: list[dict[str, Any]] = []
     event_count = 0
@@ -661,11 +679,13 @@ def _parse_strict_capture_events(value: str) -> tuple[list[dict[str, Any]], list
                 line,
                 object_pairs_hook=reject_duplicate_keys,
                 parse_constant=reject_json_constant,
+                parse_float=parse_finite_float,
             )
-        except (json.JSONDecodeError, ValueError, RecursionError) as exc:
+        except (json.JSONDecodeError, ValueError, OverflowError, RecursionError) as exc:
             raise EvidenceError(f"capture stdout has invalid JSON at line {number}") from exc
         if not isinstance(event, dict):
             raise EvidenceError(f"capture stdout has a non-object event at line {number}")
+        _validate_event_archivability(event, number)
         if terminal_error_seen:
             raise EvidenceError("capture stdout has events after its terminal error")
         event_type = event.get("type")
@@ -679,6 +699,14 @@ def _parse_strict_capture_events(value: str) -> tuple[list[dict[str, Any]], list
                 instructions.encode("utf-8")
             except UnicodeEncodeError as exc:
                 raise EvidenceError(f"capture stdout has non-UTF-8 finding text at line {number}") from exc
+            # Reuse the canonical CLI projection to remove the provider's
+            # location preamble before deciding whether a finding has any
+            # issue content. A locator alone must not become a generic title
+            # paired with an empty detail.
+            from .sqlite_provider_imports import _cli_detail
+
+            if not _cli_detail(instructions).strip():
+                raise EvidenceError(f"capture stdout has a finding without issue content at line {number}")
             if completes:
                 raise EvidenceError("capture stdout has findings after its completion event")
             findings.append(event)
@@ -686,7 +714,7 @@ def _parse_strict_capture_events(value: str) -> tuple[list[dict[str, Any]], list
             if completes:
                 raise EvidenceError("capture stdout has multiple completion events")
             completes.append(event)
-        elif event_type in {"reviewing", "review_context", "heartbeat"}:
+        elif event_type in {"start", "reviewing", "review_context", "heartbeat"}:
             if completes:
                 raise EvidenceError("capture stdout has progress events after its completion event")
             if event_type == "review_context":
@@ -727,6 +755,15 @@ def _capture_lines(value: str) -> list[str]:
     """Split capture records on literal newlines while accepting trailing CR."""
 
     return [line.removesuffix("\r") for line in value.split("\n")]
+
+
+def _validate_event_archivability(event: dict[str, Any], number: int) -> None:
+    """Reject nested JSON values that the canonical archive cannot encode safely."""
+
+    try:
+        json.dumps(event, ensure_ascii=False, sort_keys=True, allow_nan=False).encode("utf-8")
+    except (TypeError, ValueError, OverflowError, UnicodeEncodeError, RecursionError) as exc:
+        raise EvidenceError(f"capture stdout has an unarchivable JSON value at line {number}") from exc
 
 
 def _validate_cli_checkpoint_decisions(checkpoint: Checkpoint, capture: CaptureData) -> None:
