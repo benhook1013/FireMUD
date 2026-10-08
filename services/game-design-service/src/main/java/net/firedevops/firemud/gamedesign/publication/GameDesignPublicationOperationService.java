@@ -21,6 +21,7 @@ public final class GameDesignPublicationOperationService {
     this.repository = Objects.requireNonNull(repository);
     write = new TransactionTemplate(transactions);
     write.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
+    write.setIsolationLevel(TransactionDefinition.ISOLATION_READ_COMMITTED);
     read = new TransactionTemplate(transactions);
     read.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
     read.setIsolationLevel(TransactionDefinition.ISOLATION_REPEATABLE_READ);
@@ -31,8 +32,19 @@ public final class GameDesignPublicationOperationService {
       GameDesignPublicationOperation operation) {
     requireIndependent();
     var retained = readExact(operation);
-    if (retained.isPresent()) return retained.orElseThrow();
-    write.executeWithoutResult(status -> repository.reserve(operation));
+    if (retained.isPresent()) {
+      var original = retained.orElseThrow();
+      if ("PENDING".equals(original.outcome())) {
+        read.executeWithoutResult(
+            status ->
+                repository
+                    .readSourceCapture(operation)
+                    .orElseThrow(
+                        () -> new IllegalStateException("PUBLICATION_SOURCE_CAPTURE_UNAVAILABLE")));
+      }
+      return original;
+    }
+    write.executeWithoutResult(status -> repository.reserveSourceBacked(operation));
     return readExact(operation)
         .orElseThrow(() -> new IllegalStateException("Publication operation readback absent"));
   }

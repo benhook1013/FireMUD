@@ -74,7 +74,7 @@ class AuthoredDraftPublishSelectionRepositoryIntegrationTest {
   @Test
   void v45PreservesRetainedAttemptDigestsAndStoresExactSelectionDigest() {
     Fixture retained = createFixture("44");
-    VersionFixture version = retained.newVersion(1L);
+    VersionFixture version = retained.historicalVersion(1L);
     DraftCommitBinding commit = binding(version.target(), UUID.randomUUID(), UUID.randomUUID());
     PublishIntent intent = intent(version, commit, "exact selection");
     SelectionSnapshot selected = insertHistoricalSelection(retained, version, commit, intent);
@@ -117,7 +117,24 @@ class AuthoredDraftPublishSelectionRepositoryIntegrationTest {
         .usingRecursiveComparison()
         .isEqualTo(coordinatorBeforeLatest);
     assertThat(
+            retained
+                .dsl()
+                .fetch(
+                    "SELECT id, tenant_id, publish_workflow_id, publish_type, status, version_id, "
+                        + "version_number, script_patch_version, failure_code, failure_message, "
+                        + "created_at, completed_at, base_version_id, request_digest "
+                        + "FROM publish_attempt ORDER BY id")
+                .intoMaps())
+        .isEqualTo(before);
+    assertThat(
+            retained
+                .dsl()
+                .fetchCount(DSL.table(DSL.name("publish_attempt")), DSL.field("revision").ne(1L)))
+        .isZero();
+    assertThat(
             retained.dsl().fetchCount(DSL.table(DSL.name("game_design_draft_terminal_operation"))))
+        .isZero();
+    assertThat(retained.dsl().fetchCount(DSL.table(DSL.name("game_design_publication_operation"))))
         .isZero();
     assertThat(reserve(retained, intent)).isEqualTo(selected);
     String workflowId = "selected-attempt-" + UUID.randomUUID();
@@ -141,19 +158,31 @@ class AuthoredDraftPublishSelectionRepositoryIntegrationTest {
     assertThat(
             retained
                 .dsl()
+                .fetchValue(
+                    "SELECT revision FROM publish_attempt WHERE publish_workflow_id = ?",
+                    workflowId))
+        .isEqualTo(1L);
+    assertThat(
+            retained
+                .dsl()
                 .fetch(
-                    "SELECT * FROM publish_attempt WHERE publish_workflow_id <> ? ORDER BY id",
+                    "SELECT id, tenant_id, publish_workflow_id, publish_type, status, version_id, "
+                        + "version_number, script_patch_version, failure_code, failure_message, "
+                        + "created_at, completed_at, base_version_id, request_digest "
+                        + "FROM publish_attempt WHERE publish_workflow_id <> ? ORDER BY id",
                     workflowId)
                 .intoMaps())
         .isEqualTo(before);
+    assertThat(retained.dsl().fetchCount(DSL.table(DSL.name("game_design_publication_operation"))))
+        .isZero();
   }
 
   @Test
   void v44PreservesExactSelectionsRetainedAtV43() {
     Fixture retained = createFixture("43");
-    VersionFixture first = retained.newVersion(Long.parseLong(LARGE_EPOCH));
-    VersionFixture second = retained.newFullVersionInTenant(first);
-    VersionFixture otherTenant = retained.newVersion(1L);
+    VersionFixture first = retained.historicalVersion(Long.parseLong(LARGE_EPOCH));
+    VersionFixture second = retained.historicalFullVersionInTenant(first);
+    VersionFixture otherTenant = retained.historicalVersion(1L);
     DraftCommitBinding firstCommit = binding(first.target(), UUID.randomUUID(), UUID.randomUUID());
     DraftCommitBinding secondCommit =
         binding(second.target(), UUID.randomUUID(), UUID.randomUUID());
@@ -204,8 +233,8 @@ class AuthoredDraftPublishSelectionRepositoryIntegrationTest {
   @Test
   void v44RejectsConflictingRetainedRequestAcrossVersionsWithoutDiscardingEitherHistory() {
     Fixture retained = createFixture("43");
-    VersionFixture first = retained.newVersion(1L);
-    VersionFixture second = retained.newFullVersionInTenant(first);
+    VersionFixture first = retained.historicalVersion(1L);
+    VersionFixture second = retained.historicalFullVersionInTenant(first);
     DraftCommitBinding firstCommit = binding(first.target(), UUID.randomUUID(), UUID.randomUUID());
     DraftCommitBinding secondCommit =
         binding(second.target(), UUID.randomUUID(), UUID.randomUUID());
@@ -543,7 +572,19 @@ class AuthoredDraftPublishSelectionRepositoryIntegrationTest {
 
   @Test
   void reusesExistingAuthoredVersionAndExactReplayIgnoresLaterServerState() {
-    VersionFixture version = fixture.newVersion(Long.parseLong(LARGE_EPOCH));
+    VersionFixture created = fixture.newVersion(1L);
+    Version savedVersion =
+        inTransaction(
+            () -> {
+              Version existing = fixture.versions().findById(created.rowId()).orElseThrow();
+              existing.setVersionStateEpoch(Long.parseLong(LARGE_EPOCH));
+              return fixture.versions().save(existing);
+            });
+    VersionFixture version =
+        new VersionFixture(
+            fixture.target(savedVersion),
+            savedVersion.getId(),
+            Long.toString(savedVersion.getVersionStateEpoch()));
     DraftCommitBinding binding = binding(version.target(), UUID.randomUUID(), UUID.randomUUID());
     fixture.synchronize(binding);
     long versionCountBeforeSelection = fixture.versionCount();
@@ -1147,6 +1188,50 @@ class AuthoredDraftPublishSelectionRepositoryIntegrationTest {
       Version savedVersion =
           Objects.requireNonNull(ownerTransaction.execute(status -> versions.save(version)));
       return new VersionFixture(target(savedVersion), savedVersion.getId(), "1");
+    }
+
+    VersionFixture historicalVersion(long stateEpoch) {
+      Game game = new Game();
+      game.setTenantId("d-" + UUID.randomUUID().toString().replace("-", ""));
+      game.setName("Authored Draft selection source");
+      game.setDescription("Canonical retained Version fixture");
+      Game savedGame = Objects.requireNonNull(ownerTransaction.execute(status -> games.save(game)));
+      return insertHistoricalVersion(savedGame, 1, stateEpoch);
+    }
+
+    VersionFixture historicalFullVersionInTenant(VersionFixture base) {
+      Game savedGame = games.findByTenantId(base.target().gameDesignVersionTenantKey());
+      return insertHistoricalVersion(Objects.requireNonNull(savedGame), 2, 1L);
+    }
+
+    private VersionFixture insertHistoricalVersion(
+        Game savedGame, int versionNumber, long stateEpoch) {
+      // Insert retained owner rows under V43/V44 without invoking post-V51 source enrollment.
+      Version savedVersion =
+          Objects.requireNonNull(
+              ownerTransaction.execute(
+                  status -> {
+                    var inserted =
+                        Objects.requireNonNull(
+                            dsl.fetchOne(
+                                "INSERT INTO version (tenant_id, canonical_version_id, canonical_tenant_id, "
+                                    + "identity_source_game_row_id, identity_source_game_tenant_key, "
+                                    + "identity_source_provenance_kind, version_number, version_state, version_state_epoch, "
+                                    + "script_patch_version, base_version_id, is_script_only, notes, created_at, updated_at) "
+                                    + "SELECT g.tenant_id, ?, g.canonical_tenant_id, g.id, g.tenant_id, "
+                                    + "g.tenant_identity_provenance_kind, ?, 'DRAFT', ?, NULL, NULL, FALSE, "
+                                    + "'ISOLATED retained selection fixture', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP "
+                                    + "FROM game g WHERE g.id = ? RETURNING id",
+                                UUID.randomUUID(),
+                                versionNumber,
+                                stateEpoch,
+                                savedGame.getId()));
+                    return versions.findById(inserted.get("id", Long.class)).orElseThrow();
+                  }));
+      return new VersionFixture(
+          target(savedVersion),
+          savedVersion.getId(),
+          Long.toString(savedVersion.getVersionStateEpoch()));
     }
 
     VersionFixture newFullVersionInTenant(VersionFixture base) {

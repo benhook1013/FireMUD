@@ -2,7 +2,9 @@ package net.firedevops.firemud.gamedesign.service.impl;
 
 import java.io.ByteArrayOutputStream;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
 import java.util.Base64;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -23,15 +25,53 @@ import net.firedevops.firemud.common.world.WorldPublishedStartLocationEvidence;
 /** Stipulated original Account/APPLIED component bytes; no live producer/currentness proof. */
 public final class PublishedWorldSelectorFixtures {
   private final TargetProof target;
+  private final String baseReference;
 
   private PublishedWorldSelectorFixtures(TargetProof target) {
+    this(target, "base-1");
+  }
+
+  private PublishedWorldSelectorFixtures(TargetProof target, String baseReference) {
     this.target = target;
+    this.baseReference = baseReference;
     this.TENANT_ID = target.canonicalTenantId();
     this.VERSION_ID = target.canonicalVersionId();
   }
 
   public static WorldPublishedStartLocationEvidence evidence(TargetProof target) throws Exception {
     return new PublishedWorldSelectorFixtures(target).build();
+  }
+
+  public static WorldPublishedStartLocationEvidence evidence(
+      TargetProof target, String baseReference) throws Exception {
+    net.firedevops.firemud.common.authoring.DraftBaseReference.parse(baseReference);
+    return new PublishedWorldSelectorFixtures(target, baseReference).build();
+  }
+
+  /** Adds an explicitly isolated World graph application to the exact supplied Draft binding. */
+  public static DraftCommitBinding withIsolatedFreshWorldGraph(DraftCommitBinding binding)
+      throws Exception {
+    var fixture = new PublishedWorldSelectorFixtures(binding.target(), binding.baseCommitId());
+    var revisions = new ArrayList<>(binding.revisions());
+    revisions.addAll(fixture.freshWorldRevisions(binding.commitId(), revisions.size()));
+    var affectedUnits = new ArrayList<>(binding.affectedUnits());
+    affectedUnits.addAll(fixture.freshWorldAffectedUnits());
+    return DraftCommitBinding.create(
+        binding.target(),
+        binding.requestId(),
+        binding.commitId(),
+        binding.baseCommitId(),
+        revisions,
+        affectedUnits);
+  }
+
+  /** Stipulates Account and World inputs for this exact binding; this is not producer proof. */
+  public static WorldPublishedStartLocationEvidence evidence(
+      TargetProof target, DraftCommitBinding draft) throws Exception {
+    if (!target.equals(draft.target())) {
+      throw new IllegalArgumentException("Isolated World evidence target differs from Draft");
+    }
+    return new PublishedWorldSelectorFixtures(target, draft.baseCommitId()).build(draft);
   }
 
   public static List<net.firedevops.firemud.gamedesign.dto.PublishParticipantDigestDto>
@@ -63,12 +103,22 @@ public final class PublishedWorldSelectorFixtures {
   }
 
   private WorldPublishedStartLocationEvidence build() throws Exception {
-    var draft = freshGraphBinding();
+    return build(freshGraphBinding());
+  }
+
+  private WorldPublishedStartLocationEvidence build(DraftCommitBinding draft) throws Exception {
     var terminal = WorldDraftTerminalReadEvidence.Request.create("test", accountBinding(draft));
     var result = committedReadback(terminal, true);
     var applied = JSON.readTree(result.result());
     var tuples =
         draft.affectedUnits(DraftCommitBinding.Owner.WORLD_MANAGEMENT).stream()
+            .sorted(
+                Comparator.comparing(AffectedUnit::owner)
+                    .thenComparing(AffectedUnit::aggregateType)
+                    .thenComparing(AffectedUnit::aggregateId)
+                    .thenComparing(AffectedUnit::scopeType)
+                    .thenComparing(AffectedUnit::scopeId)
+                    .thenComparing(AffectedUnit::expectedEpoch))
             .map(
                 u ->
                     new WorldPublishedStartLocationEvidence.OwnedAffectedTuple(
@@ -82,8 +132,8 @@ public final class PublishedWorldSelectorFixtures {
     var request =
         new WorldPublishedStartLocationEvidence.Request(
             "test",
-            TENANT_ID,
-            VERSION_ID,
+            draft.target().canonicalTenantId(),
+            draft.target().canonicalVersionId(),
             uuid("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"),
             uuid("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"),
             "publication-request",
@@ -210,6 +260,24 @@ public final class PublishedWorldSelectorFixtures {
   }
 
   private DraftCommitBinding freshGraphBinding() throws Exception {
+    return DraftCommitBinding.create(
+        new TargetProof(
+            TENANT_ID,
+            VERSION_ID,
+            target.gameDesignVersionRowId(),
+            target.gameDesignVersionTenantKey(),
+            target.sourceGameRowId(),
+            target.sourceGameTenantKey(),
+            target.sourceProvenanceKind()),
+        REQUEST_ID,
+        COMMIT_ID,
+        baseReference,
+        freshWorldRevisions(COMMIT_ID, 0),
+        freshWorldAffectedUnits());
+  }
+
+  private List<RevisionPayload> freshWorldRevisions(UUID commitId, int revisionOffset)
+      throws Exception {
     String declaration =
         JSON.writeValueAsString(
             Map.of(
@@ -232,54 +300,55 @@ public final class PublishedWorldSelectorFixtures {
                             "WORLD_DESIGN_AGGREGATE_TYPE_WORLD_ENTITY_SPAWN_BINDING",
                             "count",
                             0))));
-    return DraftCommitBinding.create(
-        new TargetProof(
-            TENANT_ID,
-            VERSION_ID,
-            target.gameDesignVersionRowId(),
-            target.gameDesignVersionTenantKey(),
-            target.sourceGameRowId(),
-            target.sourceGameTenantKey(),
-            target.sourceProvenanceKind()),
-        REQUEST_ID,
-        COMMIT_ID,
-        "base-1",
-        List.of(
-            new RevisionPayload(
-                "0",
+    return List.of(
+        new RevisionPayload(
+            Integer.toString(revisionOffset),
+            REGION_REVISION_ID,
+            DraftCommitBinding.Owner.WORLD_MANAGEMENT,
+            worldRevisionPayload(
+                commitId,
                 REGION_REVISION_ID,
-                DraftCommitBinding.Owner.WORLD_MANAGEMENT,
-                worldRevisionPayload(
-                    REGION_REVISION_ID,
-                    "WORLD_DESIGN_AGGREGATE_TYPE_REGION",
-                    REGION_TEMPLATE_ID,
-                    declaration)),
-            new RevisionPayload(
-                "1",
+                "WORLD_DESIGN_AGGREGATE_TYPE_REGION",
+                REGION_TEMPLATE_ID,
+                declaration)),
+        new RevisionPayload(
+            Integer.toString(revisionOffset + 1),
+            ZONE_REVISION_ID,
+            DraftCommitBinding.Owner.WORLD_MANAGEMENT,
+            worldRevisionPayload(
+                commitId,
                 ZONE_REVISION_ID,
-                DraftCommitBinding.Owner.WORLD_MANAGEMENT,
-                worldRevisionPayload(
-                    ZONE_REVISION_ID, "WORLD_DESIGN_AGGREGATE_TYPE_ZONE", ZONE_TEMPLATE_ID, null)),
-            new RevisionPayload(
-                "2",
+                "WORLD_DESIGN_AGGREGATE_TYPE_ZONE",
+                ZONE_TEMPLATE_ID,
+                null)),
+        new RevisionPayload(
+            Integer.toString(revisionOffset + 2),
+            ROOM_REVISION_ID,
+            DraftCommitBinding.Owner.WORLD_MANAGEMENT,
+            worldRevisionPayload(
+                commitId,
                 ROOM_REVISION_ID,
-                DraftCommitBinding.Owner.WORLD_MANAGEMENT,
-                worldRevisionPayload(
-                    ROOM_REVISION_ID, "WORLD_DESIGN_AGGREGATE_TYPE_ROOM", ROOM_TEMPLATE_ID, null))),
-        List.of(
-                affected("REGION", REGION_TEMPLATE_ID, "REGION_SUBTREE", REGION_TEMPLATE_ID),
-                affected("ZONE", ZONE_TEMPLATE_ID, "REGION_SUBTREE", REGION_TEMPLATE_ID),
-                affected("ROOM", ROOM_TEMPLATE_ID, "ZONE_SUBTREE", ZONE_TEMPLATE_ID))
-            .stream()
-            .flatMap(List::stream)
-            .toList());
+                "WORLD_DESIGN_AGGREGATE_TYPE_ROOM",
+                ROOM_TEMPLATE_ID,
+                null)));
+  }
+
+  private List<AffectedUnit> freshWorldAffectedUnits() {
+    return List.of(
+            affected("REGION", REGION_TEMPLATE_ID, "REGION_SUBTREE", REGION_TEMPLATE_ID),
+            affected("ZONE", ZONE_TEMPLATE_ID, "REGION_SUBTREE", REGION_TEMPLATE_ID),
+            affected("ROOM", ROOM_TEMPLATE_ID, "ZONE_SUBTREE", ZONE_TEMPLATE_ID))
+        .stream()
+        .flatMap(List::stream)
+        .toList();
   }
 
   private String worldRevisionPayload(
-      UUID revisionId, String family, UUID templateId, String declaration) throws Exception {
+      UUID commitId, UUID revisionId, String family, UUID templateId, String declaration)
+      throws Exception {
     var payload = new java.util.LinkedHashMap<String, Object>();
     payload.put("logicalRevisionId", revisionId.toString());
-    payload.put("commitId", COMMIT_ID.toString());
+    payload.put("commitId", commitId.toString());
     payload.put("aggregateType", family);
     payload.put("aggregateId", templateId.toString());
     if (declaration != null) payload.put("freshGraphDeclaration", JSON.readTree(declaration));
@@ -309,13 +378,13 @@ public final class PublishedWorldSelectorFixtures {
     byte[] draftBytes = draft.canonicalBytes();
     return new DraftAuthorizationFenceBinding(
             OPERATION_ID,
-            REQUEST_ID,
-            COMMIT_ID,
+            draft.requestId(),
+            draft.commitId(),
             FENCE_ID,
             ACTOR_ID,
-            TENANT_ID,
-            VERSION_ID,
-            "base-1",
+            draft.target().canonicalTenantId(),
+            draft.target().canonicalVersionId(),
+            draft.baseCommitId(),
             "0",
             draftBytes,
             draftBytes,

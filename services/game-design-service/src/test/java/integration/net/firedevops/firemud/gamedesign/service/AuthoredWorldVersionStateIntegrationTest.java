@@ -288,9 +288,11 @@ class AuthoredWorldVersionStateIntegrationTest {
     version.setVersionState(VersionLifecycleState.DRAFT);
     version.setVersionStateEpoch(1L);
     version.setNotes("synthetic source-qualified version-state proof fixture");
+    TransactionTemplate draftCreationTransaction = new TransactionTemplate(transactionManager);
+    draftCreationTransaction.setIsolationLevel(TransactionDefinition.ISOLATION_READ_COMMITTED);
+    draftCreationTransaction.setReadOnly(false);
     Version persistedVersion =
-        new TransactionTemplate(transactionManager)
-            .execute(status -> versionRepository.save(version));
+        draftCreationTransaction.execute(status -> versionRepository.save(version));
     assertThat(persistedVersion).isNotNull();
     return new Fixture(
         persistedGame.getCanonicalTenantId(), privateTenantKey, source, persistedVersion);

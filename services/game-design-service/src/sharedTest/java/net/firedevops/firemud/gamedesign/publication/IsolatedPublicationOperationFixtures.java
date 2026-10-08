@@ -29,6 +29,17 @@ public final class IsolatedPublicationOperationFixtures {
   public static GameDesignPublicationOperation fresh(DraftCommitBinding.TargetProof target)
       throws Exception {
     var seed = PublishedWorldSelectorFixtures.evidence(target);
+    return fresh(target, seed);
+  }
+
+  public static GameDesignPublicationOperation fresh(
+      DraftCommitBinding.TargetProof target, String baseReference) throws Exception {
+    return fresh(target, PublishedWorldSelectorFixtures.evidence(target, baseReference));
+  }
+
+  private static GameDesignPublicationOperation fresh(
+      DraftCommitBinding.TargetProof target, WorldPublishedStartLocationEvidence seed)
+      throws Exception {
     var originalDraftAccount =
         DraftAuthorizationFenceBinding.fromStored(seed.originalAccountBindingBytes());
     var draft =

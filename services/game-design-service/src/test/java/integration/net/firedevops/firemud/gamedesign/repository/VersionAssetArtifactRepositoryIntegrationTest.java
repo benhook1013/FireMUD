@@ -19,6 +19,7 @@ import org.springframework.context.annotation.Import;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.support.TransactionTemplate;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
@@ -58,6 +59,7 @@ class VersionAssetArtifactRepositoryIntegrationTest {
   @Test
   void stagedIntentCommitsThroughSpringProxyBeforeCallingTransactionRollsBack() {
     TransactionTemplate owner = new TransactionTemplate(transactionManager);
+    owner.setIsolationLevel(TransactionDefinition.ISOLATION_READ_COMMITTED);
     Game game = new Game();
     game.setTenantId(UUID.randomUUID().toString());
     game.setName("staged intent proof");

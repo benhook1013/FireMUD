@@ -3,205 +3,229 @@ package net.firedevops.firemud.common.publication;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatIllegalArgumentException;
 
-import java.util.List;
 import java.util.UUID;
+import net.firedevops.firemud.common.authoring.DraftCommitBinding.TargetProof;
 import org.junit.jupiter.api.Test;
 import tools.jackson.databind.ObjectMapper;
 
 class PublishedRealmEntryPolicyEvidenceTest {
-  private static final UUID TENANT_ID = UUID.fromString("e84e0676-77f2-4bac-8be5-e89d4f8b8f01");
-  private static final String WORKFLOW = "publish:tenant:publish-request:req";
-  private static final String MANIFEST = "manifest-sha256";
+  private static final TargetProof TARGET =
+      new TargetProof(
+          UUID.fromString("11111111-1111-4111-8111-111111111111"),
+          UUID.fromString("22222222-2222-4222-8222-222222222222"),
+          42,
+          "tenant-42",
+          7,
+          "tenant-42",
+          "NEW_GAME_ROW");
+  private static final UUID POLICY_ID = UUID.fromString("33333333-3333-4333-8333-333333333333");
+  private static final UUID SOURCE_COMMIT_ID =
+      UUID.fromString("44444444-4444-4444-8444-444444444444");
+  private static final UUID SOURCE_REVISION_ID =
+      UUID.fromString("55555555-5555-4555-8555-555555555555");
   private static final ObjectMapper MAPPER = new ObjectMapper();
 
   @Test
-  void parserAcceptsOnlyClosedV1AndCanonicalReadbackRequiresExactJson() {
-    String authored =
-        "{ \"schemaVersion\":1, \"worldSlug\":\"earth\", "
-            + "\"worldDisplayName\":\"Earth\", \"realmSlug\":\"main\", "
-            + "\"realmDisplayName\":\"Main\", \"visible\":true, "
-            + "\"publicProduction\":true, \"stateScope\":\"SHARED\", "
-            + "\"entryPolicy\":\"PRESEEDED_ONLY\" }";
+  void policyDigestMatchesTheOwnerKnownVectorForTheActualReleaseIdentity() {
+    RealmEntryPolicy policy = policy("world", "World", "main", "Main", true, true);
 
-    RealmEntryPolicy policy = RealmEntryPolicy.parse(authored, MAPPER);
+    String digest =
+        PublishedRealmEntryPolicyEvidence.calculateDigest(
+            POLICY_ID,
+            TARGET,
+            12,
+            "bundle:exact",
+            "sha256:" + "a".repeat(64),
+            "workflow-123",
+            "sha256:" + "b".repeat(64),
+            SOURCE_COMMIT_ID,
+            SOURCE_REVISION_ID,
+            "main-policy-v1",
+            policy);
 
-    assertThat(policy.stateScope()).isEqualTo(RealmEntryPolicy.StateScope.SHARED);
-    assertThat(policy.entryPolicy()).isEqualTo(RealmEntryPolicy.EntryPolicy.PRESEEDED_ONLY);
-    assertThat(policy.canonicalJson()).doesNotContain(": ");
-    assertThat(RealmEntryPolicy.isCanonicalSlug("demo--world")).isFalse();
-    assertThatIllegalArgumentException()
-        .isThrownBy(() -> RealmEntryPolicy.parseCanonical(authored, MAPPER));
-    assertThat(RealmEntryPolicy.parseCanonical(policy.canonicalJson(), MAPPER)).isEqualTo(policy);
-    assertThatIllegalArgumentException()
-        .isThrownBy(
-            () ->
-                RealmEntryPolicy.parse(
-                    policy.canonicalJson().replace("\"visible\":true", "\"visible\":1"), MAPPER));
-    assertThatIllegalArgumentException()
-        .isThrownBy(
-            () ->
-                RealmEntryPolicy.parse(
-                    policy
-                        .canonicalJson()
-                        .replace("\"worldSlug\":\"earth\"", "\"worldSlug\":\"demo--world\""),
-                    MAPPER));
-    assertThatIllegalArgumentException()
-        .isThrownBy(
-            () ->
-                RealmEntryPolicy.parse(
-                    policy.canonicalJson().replace("\"entryPolicy\":\"PRESEEDED_ONLY\"", ""),
-                    MAPPER));
-    assertThatIllegalArgumentException()
-        .isThrownBy(
-            () ->
-                RealmEntryPolicy.parse(
-                    policy.canonicalJson().substring(0, policy.canonicalJson().length() - 1)
-                        + ",\"descriptor\":{}}",
-                    MAPPER));
+    // Shared carrier vector copied from the independent Game Design owner implementation proof.
+    assertThat(digest)
+        .isEqualTo("sha256:1cb51d94ec2825d1d598fa30c197e6ce52d23b8a62106b04babcaafc92be2f47");
   }
 
   @Test
-  void policyEvidenceDigestBindsTenantSourceVersionBundleAndCanonicalPolicy() {
-    PublishedRealmEntryPolicyEvidence evidence = policyEvidence("main", true, true);
+  void policyDigestChangesWhenAnyAuthoredOrActualReleaseIdentityChanges() {
+    RealmEntryPolicy policy = policy("world", "World", "main", "Main", true, true);
+    String original =
+        digest(policy, TARGET, 12, "bundle:exact", "workflow-123", SOURCE_REVISION_ID);
 
-    assertThat(evidence.hasValidDigest(MAPPER)).isTrue();
-    assertThat(evidence.requireValidDigest(MAPPER)).isSameAs(evidence);
-    assertThat(evidence.policyDigest()).startsWith("sha256:").hasSize(71);
+    assertThat(digest(policy, TARGET, 13, "bundle:exact", "workflow-123", SOURCE_REVISION_ID))
+        .isNotEqualTo(original);
+    assertThat(digest(policy, TARGET, 12, "bundle:changed", "workflow-123", SOURCE_REVISION_ID))
+        .isNotEqualTo(original);
+    assertThat(digest(policy, TARGET, 12, "bundle:exact", "workflow-changed", SOURCE_REVISION_ID))
+        .isNotEqualTo(original);
+    var changedTarget =
+        new TargetProof(
+            TARGET.canonicalTenantId(),
+            TARGET.canonicalVersionId(),
+            TARGET.gameDesignVersionRowId(),
+            TARGET.gameDesignVersionTenantKey(),
+            TARGET.sourceGameRowId() + 1,
+            TARGET.sourceGameTenantKey(),
+            TARGET.sourceProvenanceKind());
     assertThat(
-            PublishedRealmEntryPolicyEvidence.releaseBundleIdentity(
-                TENANT_ID, 7L, WORKFLOW, MANIFEST, MAPPER))
-        .isEqualTo(evidence.releaseBundleIdentity());
+            digest(policy, changedTarget, 12, "bundle:exact", "workflow-123", SOURCE_REVISION_ID))
+        .isNotEqualTo(original);
+    assertThat(
+            PublishedRealmEntryPolicyEvidence.calculateDigest(
+                POLICY_ID,
+                TARGET,
+                12,
+                "bundle:exact",
+                "sha256:" + "c".repeat(64),
+                "workflow-123",
+                "sha256:" + "b".repeat(64),
+                SOURCE_COMMIT_ID,
+                SOURCE_REVISION_ID,
+                "main-policy-v1",
+                policy))
+        .isNotEqualTo(original);
+    assertThat(
+            PublishedRealmEntryPolicyEvidence.calculateDigest(
+                POLICY_ID,
+                TARGET,
+                12,
+                "bundle:exact",
+                "sha256:" + "a".repeat(64),
+                "workflow-123",
+                "sha256:" + "c".repeat(64),
+                SOURCE_COMMIT_ID,
+                SOURCE_REVISION_ID,
+                "main-policy-v1",
+                policy))
+        .isNotEqualTo(original);
+    assertThat(
+            PublishedRealmEntryPolicyEvidence.calculateDigest(
+                UUID.fromString("66666666-6666-4666-8666-666666666666"),
+                TARGET,
+                12,
+                "bundle:exact",
+                "sha256:" + "a".repeat(64),
+                "workflow-123",
+                "sha256:" + "b".repeat(64),
+                SOURCE_COMMIT_ID,
+                SOURCE_REVISION_ID,
+                "main-policy-v1",
+                policy))
+        .isNotEqualTo(original);
+    assertThat(
+            PublishedRealmEntryPolicyEvidence.calculateDigest(
+                POLICY_ID,
+                TARGET,
+                12,
+                "bundle:exact",
+                "sha256:" + "a".repeat(64),
+                "workflow-123",
+                "sha256:" + "b".repeat(64),
+                UUID.fromString("77777777-7777-4777-8777-777777777777"),
+                SOURCE_REVISION_ID,
+                "main-policy-v1",
+                policy))
+        .isNotEqualTo(original);
+    assertThat(
+            digest(
+                policy,
+                TARGET,
+                12,
+                "bundle:exact",
+                "workflow-123",
+                UUID.fromString("88888888-8888-4888-8888-888888888888")))
+        .isNotEqualTo(original);
+    assertThat(
+            PublishedRealmEntryPolicyEvidence.calculateDigest(
+                POLICY_ID,
+                TARGET,
+                12,
+                "bundle:exact",
+                "sha256:" + "a".repeat(64),
+                "workflow-123",
+                "sha256:" + "b".repeat(64),
+                SOURCE_COMMIT_ID,
+                SOURCE_REVISION_ID,
+                "main-policy-v2",
+                policy))
+        .isNotEqualTo(original);
+    assertThat(
+            digest(
+                policy("world", "World", "main", "Main Changed", true, true),
+                TARGET,
+                12,
+                "bundle:exact",
+                "workflow-123",
+                SOURCE_REVISION_ID))
+        .isNotEqualTo(original);
+  }
+
+  @Test
+  void childEvidenceRetainsTheCanonicalPolicyAndRejectsMalformedIdentity() {
+    RealmEntryPolicy policy = policy("world", "World", "main", "Main", true, true);
+    String digest = digest(policy, TARGET, 12, "bundle:exact", "workflow-123", SOURCE_REVISION_ID);
+    var evidence =
+        new PublishedRealmEntryPolicyEvidence(
+            POLICY_ID, SOURCE_COMMIT_ID, SOURCE_REVISION_ID, "main-policy-v1", policy, digest);
+
+    assertThat(evidence.policy().canonicalJson()).isEqualTo(policy.canonicalJson());
+    assertThat(evidence.policyId()).isEqualTo(POLICY_ID);
     assertThatIllegalArgumentException()
         .isThrownBy(
             () ->
                 new PublishedRealmEntryPolicyEvidence(
-                        evidence.policyId(),
-                        evidence.canonicalTenantId(),
-                        evidence.tenantIdentityProvenanceKind(),
-                        evidence.sourceGameRowId(),
-                        evidence.sourceGameTenantKey(),
-                        evidence.versionId() + 1,
-                        evidence.versionNumber(),
-                        evidence.sourceRevisionId(),
-                        evidence.releaseBundleIdentity(),
-                        evidence.publishWorkflowId(),
-                        evidence.manifestHash(),
-                        evidence.policy(),
-                        evidence.policyDigest())
-                    .requireValidDigest(MAPPER));
+                    POLICY_ID,
+                    SOURCE_COMMIT_ID,
+                    SOURCE_REVISION_ID,
+                    "main-policy-v1",
+                    policy,
+                    "not-a-digest"));
   }
 
-  @Test
-  void completeSetSortsRowsAndBindsCountAndEveryPolicyDigest() {
-    PublishedRealmEntryPolicyEvidence main = policyEvidence("main", true, true);
-    PublishedRealmEntryPolicyEvidence side = policyEvidence("side", false, false);
-
-    PublishedRealmEntryPolicySetEvidence set =
-        PublishedRealmEntryPolicySetEvidence.create(
-            TENANT_ID,
-            7L,
-            3,
-            main.releaseBundleIdentity(),
-            WORKFLOW,
-            MANIFEST,
-            List.of(side, main),
-            MAPPER);
-
-    assertThat(set.policies()).containsExactly(main, side);
-    assertThat(set.hasValidDigest(MAPPER)).isTrue();
-    assertThat(set.requireValidDigest(MAPPER)).isSameAs(set);
-    assertThat(set.policySetDigest()).startsWith("sha256:").hasSize(71);
-    assertThat(
-            PublishedRealmEntryPolicySetEvidence.create(
-                    TENANT_ID,
-                    7L,
-                    3,
-                    main.releaseBundleIdentity(),
-                    WORKFLOW,
-                    MANIFEST,
-                    List.of(main, side),
-                    MAPPER)
-                .policySetDigest())
-        .isEqualTo(set.policySetDigest());
+  private static String digest(
+      RealmEntryPolicy policy,
+      TargetProof target,
+      int versionNumber,
+      String bundleRef,
+      String workflow,
+      UUID sourceRevisionId) {
+    return PublishedRealmEntryPolicyEvidence.calculateDigest(
+        POLICY_ID,
+        target,
+        versionNumber,
+        bundleRef,
+        "sha256:" + "a".repeat(64),
+        workflow,
+        "sha256:" + "b".repeat(64),
+        SOURCE_COMMIT_ID,
+        sourceRevisionId,
+        "main-policy-v1",
+        policy);
   }
 
-  @Test
-  void completeSetRejectsMissingMultipleOrOversizedAddressableSets() {
-    PublishedRealmEntryPolicyEvidence main = policyEvidence("main", true, true);
-    PublishedRealmEntryPolicyEvidence side = policyEvidence("side", true, true);
-    String identity = main.releaseBundleIdentity();
-
-    assertThatIllegalArgumentException()
-        .isThrownBy(() -> createSet(identity, List.of(policyEvidence("hidden", false, false))));
-    assertThatIllegalArgumentException().isThrownBy(() -> createSet(identity, List.of(main, side)));
-    assertThatIllegalArgumentException()
-        .isThrownBy(
-            () ->
-                createSet(
-                    identity,
-                    java.util.Collections.nCopies(
-                        PublishedRealmEntryPolicySetEvidence.MAX_POLICIES + 1, main)));
-  }
-
-  @Test
-  void completeSetRejectsRealmSlugRepeatedAcrossDifferentWorlds() {
-    PublishedRealmEntryPolicyEvidence publicRealm = policyEvidence("main", "earth", true, true);
-    PublishedRealmEntryPolicyEvidence duplicateRealm = policyEvidence("main", "mars", false, false);
-
-    assertThatIllegalArgumentException()
-        .isThrownBy(
-            () ->
-                createSet(
-                    publicRealm.releaseBundleIdentity(), List.of(publicRealm, duplicateRealm)))
-        .withMessageContaining("realm slug more than once");
-  }
-
-  private static PublishedRealmEntryPolicySetEvidence createSet(
-      String releaseBundleIdentity, List<PublishedRealmEntryPolicyEvidence> policies) {
-    return PublishedRealmEntryPolicySetEvidence.create(
-        TENANT_ID, 7L, 3, releaseBundleIdentity, WORKFLOW, MANIFEST, policies, MAPPER);
-  }
-
-  private static PublishedRealmEntryPolicyEvidence policyEvidence(
-      String realmSlug, boolean visible, boolean publicProduction) {
-    return policyEvidence(realmSlug, "earth", visible, publicProduction);
-  }
-
-  private static PublishedRealmEntryPolicyEvidence policyEvidence(
-      String realmSlug, String worldSlug, boolean visible, boolean publicProduction) {
-    String sourceJson =
+  private static RealmEntryPolicy policy(
+      String world,
+      String worldName,
+      String realm,
+      String realmName,
+      boolean visible,
+      boolean publicProduction) {
+    return RealmEntryPolicy.parse(
         "{\"schemaVersion\":1,\"worldSlug\":\""
-            + worldSlug
+            + world
             + "\",\"worldDisplayName\":\""
-            + worldSlug
-            + "\","
-            + "\"realmSlug\":\""
-            + realmSlug
+            + worldName
+            + "\",\"realmSlug\":\""
+            + realm
             + "\",\"realmDisplayName\":\""
-            + realmSlug
+            + realmName
             + "\",\"visible\":"
             + visible
             + ",\"publicProduction\":"
             + publicProduction
-            + ",\"stateScope\":\"SHARED\",\"entryPolicy\":\"PRESEEDED_ONLY\"}";
-    RealmEntryPolicy policy = RealmEntryPolicy.parse(sourceJson, MAPPER);
-    String releaseIdentity =
-        PublishedRealmEntryPolicyEvidence.releaseBundleIdentity(
-            TENANT_ID, 7L, WORKFLOW, MANIFEST, MAPPER);
-    return PublishedRealmEntryPolicyEvidence.create(
-        UUID.nameUUIDFromBytes(
-            (worldSlug + ":" + realmSlug).getBytes(java.nio.charset.StandardCharsets.UTF_8)),
-        TENANT_ID,
-        "NEW_GAME_ROW",
-        12L,
-        "tenant-key",
-        7L,
-        3,
-        realmSlug.equals("main") ? 42L : 43L,
-        releaseIdentity,
-        WORKFLOW,
-        MANIFEST,
-        policy,
+            + ",\"stateScope\":\"SHARED\",\"entryPolicy\":\"PRESEEDED_ONLY\"}",
         MAPPER);
   }
 }

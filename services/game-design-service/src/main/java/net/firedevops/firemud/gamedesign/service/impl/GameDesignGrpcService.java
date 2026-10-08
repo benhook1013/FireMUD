@@ -729,7 +729,7 @@ public class GameDesignGrpcService extends GameDesignServiceGrpc.GameDesignServi
     GetPublishedReleaseBundleResponse.Builder builder =
         GetPublishedReleaseBundleResponse.newBuilder();
     try {
-      requireLaunchAttestationReadAccess();
+      requirePublishedReleaseBundleReadAccess();
       PublishedReleaseBundleDto bundle =
           versionService.getPublishedReleaseBundle(request.getTenantId(), request.getVersionId());
       PublishedReleaseBundleContract.requireSupportedSchemaForRead(bundle);
@@ -1053,7 +1053,7 @@ public class GameDesignGrpcService extends GameDesignServiceGrpc.GameDesignServi
     GetCompleteLaunchBindingResponse.Builder builder =
         GetCompleteLaunchBindingResponse.newBuilder();
     try {
-      requireLaunchDescriptorReadAccess();
+      requireCompleteLaunchBindingReadAccess();
       UUID readRequestId = parseCanonicalNonNilUuid(request.getRequestId());
       UUID canonicalTenantId = parseCanonicalNonNilUuid(request.getCanonicalTenantId());
       if (readRequestId == null
@@ -2367,6 +2367,32 @@ public class GameDesignGrpcService extends GameDesignServiceGrpc.GameDesignServi
             || peer.isService("world-management-service"))) {
       throw new AdminAuthorizationException(
           "Exact same-namespace Game Session or World Management workload identity is required");
+    }
+  }
+
+  private void requireCompleteLaunchBindingReadAccess() {
+    GrpcPeerIdentity peer = GrpcPeerIdentity.current();
+    if (!GrpcPeerIdentity.isValidNamespace(workloadNamespace)
+        || peer == null
+        || !workloadNamespace.equals(peer.namespace())
+        || !(peer.isService("game-session-service")
+            || peer.isService("world-management-service")
+            || peer.isService("entity-management-service"))) {
+      throw new AdminAuthorizationException(
+          "Exact same-namespace Game Session, World Management, or Entity Management workload identity is required");
+    }
+  }
+
+  private void requirePublishedReleaseBundleReadAccess() {
+    GrpcPeerIdentity peer = GrpcPeerIdentity.current();
+    if (!GrpcPeerIdentity.isValidNamespace(workloadNamespace)
+        || peer == null
+        || !workloadNamespace.equals(peer.namespace())
+        || !(peer.isService("game-session-service")
+            || peer.isService("world-management-service")
+            || peer.isService("automation-scripting-service"))) {
+      throw new AdminAuthorizationException(
+          "Exact same-namespace Game Session, World Management, or Automation workload identity is required");
     }
   }
 

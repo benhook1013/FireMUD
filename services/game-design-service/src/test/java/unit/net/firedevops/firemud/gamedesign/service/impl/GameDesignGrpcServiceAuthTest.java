@@ -166,15 +166,62 @@ class GameDesignGrpcServiceAuthTest {
         });
 
     assertNotNull(bundleRef.get());
-    assertEquals("", bundleRef.get().getError().getCode());
-    assertEquals(11L, bundleRef.get().getBundle().getId());
-    assertEquals("", bundleRef.get().getBundle().getPublishedReleaseBundleRef());
+    assertEquals("PERMISSION_DENIED", bundleRef.get().getError().getCode());
     assertNotNull(descriptorRef.get());
     assertEquals("PERMISSION_DENIED", descriptorRef.get().getError().getCode());
     GetCompleteLaunchBindingResponse completeBindingResponse = readCompleteBinding(service, null);
     assertEquals("PERMISSION_DENIED", completeBindingResponse.getError().getCode());
     Mockito.verifyNoInteractions(launchDescriptorService);
     Mockito.verifyNoInteractions(completeLaunchBindingService);
+    Mockito.verifyNoInteractions(versionService);
+  }
+
+  @Test
+  void publishedReleaseBundleAllowsExactSameNamespaceGameSessionPeer() {
+    VersionService versionService = Mockito.mock(VersionService.class);
+    Mockito.when(versionService.getPublishedReleaseBundle("1", 7L))
+        .thenReturn(
+            new PublishedReleaseBundleDto(
+                11L,
+                "1",
+                7L,
+                8,
+                "v1",
+                "workflow-1",
+                MANIFEST_HASH,
+                List.of(),
+                List.of(),
+                "genrev-1",
+                false,
+                null,
+                java.time.LocalDateTime.parse("2026-04-14T12:00:00"),
+                null,
+                null,
+                null,
+                1,
+                List.of()));
+    GameDesignGrpcService service =
+        new GameDesignGrpcService(
+            Mockito.mock(PingService.class),
+            Mockito.mock(RevisionService.class),
+            versionService,
+            Mockito.mock(LaunchDescriptorService.class),
+            Mockito.mock(CompleteLaunchBindingService.class),
+            Mockito.mock(TemplateRemapSetService.class),
+            Mockito.mock(VersionAssetArtifactService.class),
+            Mockito.mock(SettingsAuthorityService.class),
+            Mockito.mock(GameAuthoredHelpTopicService.class),
+            new TemporalVersionPublishWorkflowMetadataResolver(Optional.empty(), Optional.empty()),
+            new SimpleMeterRegistry());
+    ReflectionTestUtils.setField(service, "workloadNamespace", "test");
+
+    SessionContext.setContext(null, List.of(), Map.of(), true, "game-session-service", "gs-1");
+    GetPublishedReleaseBundleResponse response =
+        readPublishedReleaseBundle(service, "spiffe://firemud/ns/test/sa/game-session-service");
+
+    assertEquals("", response.getError().getCode());
+    assertEquals(11L, response.getBundle().getId());
+    Mockito.verify(versionService).getPublishedReleaseBundle("1", 7L);
   }
 
   @Test
@@ -304,6 +351,21 @@ class GameDesignGrpcServiceAuthTest {
                     .setControlPlaneRequestId("cp-auth")
                     .setExpectedRequestDigest("sha256:" + "a".repeat(64))
                     .setExpectedResultDigest("sha256:" + "b".repeat(64))
+                    .build(),
+                observerFor(response));
+    runAsPeer(peerUri, call);
+    return response.get();
+  }
+
+  private GetPublishedReleaseBundleResponse readPublishedReleaseBundle(
+      GameDesignGrpcService service, String peerUri) {
+    AtomicReference<GetPublishedReleaseBundleResponse> response = new AtomicReference<>();
+    Runnable call =
+        () ->
+            service.getPublishedReleaseBundle(
+                GetPublishedReleaseBundleRequest.newBuilder()
+                    .setTenantId("1")
+                    .setVersionId(7L)
                     .build(),
                 observerFor(response));
     runAsPeer(peerUri, call);

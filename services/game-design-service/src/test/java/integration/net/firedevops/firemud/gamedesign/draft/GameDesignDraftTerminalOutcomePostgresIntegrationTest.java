@@ -397,7 +397,7 @@ class GameDesignDraftTerminalOutcomePostgresIntegrationTest {
   @Test
   void migrationDoesNotInventAccountOutcomesForRetainedStatusOnlyRows() {
     Fixture legacy = createFixture(MigrationVersion.fromVersion("47"));
-    TargetProof target = legacy.newTarget();
+    TargetProof target = legacy.historicalTarget();
     DraftCommitBinding binding = binding(target);
     List<DraftCommitCoordinatorRepository.OwnerOutcome> outcomes = allAppliedOutcomes(binding);
 
@@ -751,6 +751,47 @@ class GameDesignDraftTerminalOutcomePostgresIntegrationTest {
           savedVersion.getIdentitySourceGameRowId(),
           savedVersion.getIdentitySourceGameTenantKey(),
           savedVersion.getIdentitySourceProvenanceKind());
+    }
+
+    TargetProof historicalTarget() {
+      Game game = new Game();
+      game.setTenantId("d-" + UUID.randomUUID().toString().replace("-", ""));
+      game.setName("Game Design terminal evidence source");
+      game.setDescription("Canonical retained Version fixture");
+      Game savedGame = Objects.requireNonNull(transaction.execute(status -> games.save(game)));
+      Version savedVersion = insertHistoricalVersion(savedGame, 1, 1L);
+      return new TargetProof(
+          savedVersion.getCanonicalTenantId(),
+          savedVersion.getCanonicalVersionId(),
+          savedVersion.getId(),
+          savedVersion.getTenantId(),
+          savedVersion.getIdentitySourceGameRowId(),
+          savedVersion.getIdentitySourceGameTenantKey(),
+          savedVersion.getIdentitySourceProvenanceKind());
+    }
+
+    private Version insertHistoricalVersion(Game savedGame, int versionNumber, long stateEpoch) {
+      // Insert retained owner history under V47 without invoking post-V51 source enrollment.
+      return Objects.requireNonNull(
+          transaction.execute(
+              status -> {
+                var inserted =
+                    Objects.requireNonNull(
+                        dsl.fetchOne(
+                            "INSERT INTO version (tenant_id, canonical_version_id, canonical_tenant_id, "
+                                + "identity_source_game_row_id, identity_source_game_tenant_key, "
+                                + "identity_source_provenance_kind, version_number, version_state, version_state_epoch, "
+                                + "script_patch_version, base_version_id, is_script_only, notes, created_at, updated_at) "
+                                + "SELECT g.tenant_id, ?, g.canonical_tenant_id, g.id, g.tenant_id, "
+                                + "g.tenant_identity_provenance_kind, ?, 'DRAFT', ?, NULL, NULL, FALSE, "
+                                + "'ISOLATED retained terminal fixture', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP "
+                                + "FROM game g WHERE g.id = ? RETURNING id",
+                            UUID.randomUUID(),
+                            versionNumber,
+                            stateEpoch,
+                            savedGame.getId()));
+                return versions.findById(inserted.get("id", Long.class)).orElseThrow();
+              }));
     }
 
     <T> T inTransaction(Supplier<T> action) {

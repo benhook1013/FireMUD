@@ -111,6 +111,16 @@ public class PublishedReleaseBundleServiceImpl implements PublishedReleaseBundle
           generationConfigRevision,
           participantDigests,
           worldEvidence);
+      List<String> originalCommandDefinitions =
+          repository.requireSelectedCommandDefinitions(
+              stored.tenantId(),
+              stored.versionId(),
+              stored.publishWorkflowId(),
+              stored.worldPublishedStartLocationEvidence());
+      if (!stored.commandDefinitions().equals(originalCommandDefinitions)) {
+        throw new IllegalStateException(
+            "IDEMPOTENCY_CONFLICT: stored command definitions differ from the original source capture");
+      }
       return stored;
     }
     var identitySource =
@@ -152,12 +162,15 @@ public class PublishedReleaseBundleServiceImpl implements PublishedReleaseBundle
         serializeKeys(exportedManifest.requiredManifestAssetKeys()));
     entity.setParticipantDigestsJson(serializeParticipantDigests(participantDigests));
     List<String> commandDefinitions =
-        revisionRepository
-            .findByTenantIdAndVersionIdAndRevisionKindOrderByIdAsc(
-                version.tenantId(), version.id(), "COMMAND_DEFINITION")
-            .stream()
-            .map(revision -> revision.getData())
-            .toList();
+        worldEvidence == null
+            ? revisionRepository
+                .findByTenantIdAndVersionIdAndRevisionKindOrderByIdAsc(
+                    version.tenantId(), version.id(), "COMMAND_DEFINITION")
+                .stream()
+                .map(revision -> revision.getData())
+                .toList()
+            : repository.requireSelectedCommandDefinitions(
+                version.tenantId(), version.id(), publishWorkflowId, worldEvidence);
     validateDistinctCommandDefinitions(commandDefinitions);
     entity.setCommandDefinitionsJson(serializeCommandDefinitions(commandDefinitions));
     entity.setScriptOnly(version.scriptOnly());

@@ -495,12 +495,16 @@ class GameDesignPublicationOperationPostgresIntegrationTest {
   void retainedV50TerminalReadFailsPreconditionWithoutBackfillingEvidenceOrEpoch()
       throws Exception {
     var fixture = fixture("50");
+    assertThat(fixture.candidate()).isNull();
     var op = fixture.operation();
     var old = new ByteArrayOutputStream();
     DraftAuthorizationFenceBinding.frame(old, "game-design-publication-owner-readback/v1");
     DraftAuthorizationFenceBinding.frame(old, op.canonicalBytes());
     DraftAuthorizationFenceBinding.frame(old, "NO_PUBLICATION");
-    DraftAuthorizationFenceBinding.frame(old, "");
+    // V50 framed nullable release_row_json as a present, zero-byte fourth frame for
+    // NO_PUBLICATION. Preserve that historical encoding exactly without routing an empty value
+    // through the nonempty canonical-text helper.
+    DraftAuthorizationFenceBinding.frame(old, new byte[0]);
     fixture
         .write()
         .executeWithoutResult(
@@ -877,6 +881,8 @@ class GameDesignPublicationOperationPostgresIntegrationTest {
     attempt.setStatus(PublishAttemptStatus.FAILED);
     attempt.setFailureCode("ISOLATED_BUSINESS_DENIAL");
     fixture.attempts().save(attempt);
+    // Emulate the historical V50/V51 seal storage directly. The current attempt wrapper also
+    // writes the V53 realm-policy association, which is absent from these schemas.
     fixture
         .operations()
         .seal(op.tenantKey(), op.workflowId(), op.versionId(), op.selectionDigest(), false);
@@ -916,10 +922,12 @@ class GameDesignPublicationOperationPostgresIntegrationTest {
         fixture.attempts().findByPublishWorkflowIdForUpdate(op.workflowId()).orElseThrow();
     attempt.setStatus(PublishAttemptStatus.SUCCEEDED);
     fixture.attempts().save(attempt);
-    if (seal)
+    if (seal) {
+      // Emulate the historical V50/V51 seal storage without querying the V53 policy association.
       fixture
           .operations()
           .seal(op.tenantKey(), op.workflowId(), op.versionId(), op.selectionDigest(), true);
+    }
   }
 
   /**
@@ -1016,6 +1024,27 @@ class GameDesignPublicationOperationPostgresIntegrationTest {
     return fixture("51");
   }
 
+  private Version insertRetainedVersion(
+      DSLContext dsl, VersionRepository versions, Game game, int versionNumber) {
+    var inserted =
+        dsl.fetchOne(
+            "INSERT INTO version (tenant_id, canonical_version_id, canonical_tenant_id, "
+                + "identity_source_game_row_id, identity_source_game_tenant_key, "
+                + "identity_source_provenance_kind, version_number, version_state, version_state_epoch, "
+                + "script_patch_version, base_version_id, is_script_only, notes, created_at, updated_at) "
+                + "SELECT g.tenant_id, ?, g.canonical_tenant_id, g.id, g.tenant_id, "
+                + "g.tenant_identity_provenance_kind, ?, 'DRAFT', 1, NULL, NULL, FALSE, "
+                + "'ISOLATED retained publication operation fixture', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP "
+                + "FROM game g WHERE g.id = ? RETURNING id",
+            UUID.randomUUID(),
+            versionNumber,
+            game.getId());
+    if (inserted == null) {
+      throw new IllegalStateException("ISOLATED retained Game Design owner row is absent");
+    }
+    return versions.findById(inserted.get("id", Long.class)).orElseThrow();
+  }
+
   private Fixture fixture(String migrationTarget) throws Exception {
     String schema = "gd_pub_op_" + UUID.randomUUID().toString().replace("-", "");
     var source =
@@ -1055,14 +1084,9 @@ class GameDesignPublicationOperationPostgresIntegrationTest {
               requested.setName("ISOLATED publication owner");
               return games.save(requested);
             });
-    Version version =
-        write.execute(
-            status -> {
-              var requested = new Version();
-              requested.setTenantId(game.getTenantId());
-              requested.setVersionNumber(1);
-              return versions.save(requested);
-            });
+    // These V50/V51 cases model retained history. Insert the canonical owner row before V52 so
+    // the current VersionRepository does not enroll it in post-V51 source storage.
+    Version version = write.execute(status -> insertRetainedVersion(dsl, versions, game, 1));
     var target =
         new TargetProof(
             version.getCanonicalTenantId(),
@@ -1083,60 +1107,64 @@ class GameDesignPublicationOperationPostgresIntegrationTest {
               }
             });
     var operations = new GameDesignPublicationOperationRepository(dsl);
-    var gameAssets = new GameAssetRepository(dsl);
-    var asset =
-        write.execute(
-            status -> {
-              var requested = new GameAsset();
-              requested.setTenantId(game.getTenantId());
-              requested.setFileName(ASSET_FILE_NAME);
-              requested.setContentType(ASSET_CONTENT_TYPE);
-              requested.setData(ASSET_BYTES);
-              return gameAssets.save(requested);
-            });
-    var publicationRepository = new VersionAssetPublicationRepository(dsl);
-    var publicationService =
-        new VersionAssetPublicationServiceImpl(transactions, publicationRepository);
-    publicationService.associateDraftAsset(
-        game.getTenantId(), version.getId(), asset.getId(), "logo");
-    var snapshot =
-        publicationService.freezeOrReadSnapshot(game.getTenantId(), version.getVersionNumber());
-    var artifactService =
-        new VersionAssetArtifactServiceImpl(
-            new VersionAssetArtifactRepository(dsl),
-            null,
-            versions,
-            null,
-            null,
-            null,
-            null,
-            null,
-            new ObjectMapper());
-    write.execute(
-        status ->
-            artifactService.stageExport(
-                game.getTenantId(),
-                version.getId(),
-                version.getVersionNumber(),
-                operation.workflowId()));
+    ExportedAssetManifest readCandidate = null;
+    if (!"50".equals(migrationTarget)) {
+      var gameAssets = new GameAssetRepository(dsl);
+      var asset =
+          write.execute(
+              status -> {
+                var requested = new GameAsset();
+                requested.setTenantId(game.getTenantId());
+                requested.setFileName(ASSET_FILE_NAME);
+                requested.setContentType(ASSET_CONTENT_TYPE);
+                requested.setData(ASSET_BYTES);
+                return gameAssets.save(requested);
+              });
+      var publicationRepository = new VersionAssetPublicationRepository(dsl);
+      var publicationService =
+          new VersionAssetPublicationServiceImpl(transactions, publicationRepository);
+      publicationService.associateDraftAsset(
+          game.getTenantId(), version.getId(), asset.getId(), "logo");
+      var snapshot =
+          publicationService.freezeOrReadSnapshot(game.getTenantId(), version.getVersionNumber());
+      var artifactService =
+          new VersionAssetArtifactServiceImpl(
+              new VersionAssetArtifactRepository(dsl),
+              null,
+              versions,
+              null,
+              null,
+              null,
+              null,
+              null,
+              new ObjectMapper());
+      write.execute(
+          status ->
+              artifactService.stageExport(
+                  game.getTenantId(),
+                  version.getId(),
+                  version.getVersionNumber(),
+                  operation.workflowId()));
+      var artifacts = new VersionAssetArtifactRepository(dsl);
+      var candidateService =
+          new VersionAssetExportCandidateServiceImpl(
+              versions,
+              games,
+              new PublishAttemptRepository(dsl),
+              artifacts,
+              publicationService,
+              transactions,
+              new ObjectMapper());
+      var requestedCandidate = candidate(snapshot);
+      var committedCandidate =
+          candidateService.recordExportCandidate(
+              game.getTenantId(), version.getVersionNumber(), requestedCandidate);
+      readCandidate =
+          candidateService.readExportCandidate(game.getTenantId(), version.getVersionNumber());
+      assertThat(committedCandidate).isEqualTo(requestedCandidate);
+      assertThat(readCandidate).isEqualTo(committedCandidate);
+    }
     var artifacts = new VersionAssetArtifactRepository(dsl);
-    var candidateService =
-        new VersionAssetExportCandidateServiceImpl(
-            versions,
-            games,
-            new PublishAttemptRepository(dsl),
-            artifacts,
-            publicationService,
-            transactions,
-            new ObjectMapper());
-    var requestedCandidate = candidate(snapshot);
-    var committedCandidate =
-        candidateService.recordExportCandidate(
-            game.getTenantId(), version.getVersionNumber(), requestedCandidate);
-    var readCandidate =
-        candidateService.readExportCandidate(game.getTenantId(), version.getVersionNumber());
-    assertThat(committedCandidate).isEqualTo(requestedCandidate);
-    assertThat(readCandidate).isEqualTo(committedCandidate);
     return new Fixture(
         dsl,
         write,

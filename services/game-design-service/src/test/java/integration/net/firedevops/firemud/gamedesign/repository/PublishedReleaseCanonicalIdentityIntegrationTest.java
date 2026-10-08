@@ -426,10 +426,10 @@ class PublishedReleaseCanonicalIdentityIntegrationTest {
               assertThat(row.get(ARTIFACT_DIGESTS_JSON)).isNull();
             });
 
-    Version mappedVersion = saveVersion(fixture, game);
     migrate(fixture.dataSource(), fixture.schema(), null);
     assertThat(retainedTuple(fixture.dsl(), retainedBundleId)).isEqualTo(retainedTupleBeforeV38);
     assertThat(bundleXmin(fixture.dsl(), retainedBundleId)).isEqualTo(retainedXminBeforeV38);
+    Version mappedVersion = saveVersion(fixture, game);
     PublishedReleaseBundle mapped =
         fixture.releaseBundleRepository().save(bundle(game.getTenantId(), mappedVersion.getId()));
     Map<String, Object> mappedTupleBefore = releaseBundleTuple(fixture.dsl(), mapped.getId());
@@ -574,9 +574,10 @@ class PublishedReleaseCanonicalIdentityIntegrationTest {
   @Test
   void selectorV2RetainsCompleteOriginalEvidenceAndExactlyReplaysWithoutReplacingRelease()
       throws Exception {
-    Fixture fixture = fixture(null);
-    Game owner = saveGame(fixture, "selector-release-source");
-    Version version = saveVersion(fixture, owner);
+    SelectorFixture selector = sourceLessSelectorFixture("selector-release-source");
+    Fixture fixture = selector.fixture();
+    Game owner = selector.owner();
+    Version version = selector.version();
     var operation = selectorOperation(fixture, version);
     WorldPublishedStartLocationEvidence evidence = operation.world();
     PublishedReleaseBundle requested = selectorBundle(version, evidence);
@@ -637,9 +638,9 @@ class PublishedReleaseCanonicalIdentityIntegrationTest {
 
   @Test
   void concurrentExactSelectorRetriesCommitOneImmutableBundle() throws Exception {
-    Fixture fixture = fixture(null);
-    Game owner = saveGame(fixture, "selector-concurrent-source");
-    Version version = saveVersion(fixture, owner);
+    SelectorFixture selector = sourceLessSelectorFixture("selector-concurrent-source");
+    Fixture fixture = selector.fixture();
+    Version version = selector.version();
     var operation = selectorOperation(fixture, version);
     var evidence = operation.world();
     var start = new java.util.concurrent.CountDownLatch(1);
@@ -673,9 +674,9 @@ class PublishedReleaseCanonicalIdentityIntegrationTest {
   @Test
   void sqlGuardRejectsMissingInjectedAndMismatchedSelectorBindingsWithoutAnyRelease()
       throws Exception {
-    Fixture fixture = fixture(null);
-    Game owner = saveGame(fixture, "selector-denial-source");
-    Version version = saveVersion(fixture, owner);
+    SelectorFixture selector = sourceLessSelectorFixture("selector-denial-source");
+    Fixture fixture = selector.fixture();
+    Version version = selector.version();
     var operation = selectorOperation(fixture, version);
     WorldPublishedStartLocationEvidence evidence = operation.world();
     var json = new ObjectMapper();
@@ -817,6 +818,68 @@ class PublishedReleaseCanonicalIdentityIntegrationTest {
                 throw new IllegalStateException(failure);
               }
             });
+  }
+
+  /**
+   * These selector tests exercise storage-only release evidence from a Version predating source
+   * genesis. Seed its era-valid canonical identity at V38, then run the current selector/seal
+   * checks. Current migrations must not infer an empty source baseline for this retained Draft.
+   */
+  private SelectorFixture sourceLessSelectorFixture(String tenantKey) {
+    Fixture fixture = fixture(V38);
+    Game owner = saveGame(fixture, tenantKey);
+    String provenanceKind =
+        Objects.requireNonNull(
+                fixture
+                    .dsl()
+                    .fetchOne(
+                        "SELECT tenant_identity_provenance_kind FROM game WHERE id = ?",
+                        owner.getId()))
+            .get(0, String.class);
+    UUID canonicalVersionId = UUID.randomUUID();
+    Long versionId =
+        fixture
+            .dsl()
+            .resultQuery(
+                "INSERT INTO version (tenant_id, canonical_version_id, canonical_tenant_id, "
+                    + "identity_source_game_row_id, identity_source_game_tenant_key, "
+                    + "identity_source_provenance_kind, version_number, version_state, "
+                    + "version_state_epoch, script_patch_version, base_version_id, is_script_only, notes) "
+                    + "VALUES (?, ?, ?, ?, ?, ?, 1, 'DRAFT', 1, NULL, NULL, FALSE, 'pre-source-genesis selector fixture') "
+                    + "RETURNING id",
+                owner.getTenantId(),
+                canonicalVersionId,
+                owner.getCanonicalTenantId(),
+                owner.getId(),
+                owner.getTenantId(),
+                provenanceKind)
+            .fetchOne(0, Long.class);
+    migrate(fixture.dataSource(), fixture.schema(), null);
+
+    Version version =
+        fixture
+            .versionRepository()
+            .findByTenantIdAndId(owner.getTenantId(), versionId)
+            .orElseThrow();
+    assertThat(
+            fixture
+                .dsl()
+                .fetchOne(
+                    "SELECT 1 FROM game_design_realm_policy_source "
+                        + "WHERE canonical_tenant_id = ? AND canonical_version_id = ?",
+                    version.getCanonicalTenantId(),
+                    version.getCanonicalVersionId()))
+        .isNull();
+    assertThat(
+            fixture
+                .dsl()
+                .fetchOne(
+                    "SELECT 1 FROM game_design_realm_policy_genesis "
+                        + "WHERE canonical_tenant_id = ? AND canonical_version_id = ?",
+                    version.getCanonicalTenantId(),
+                    version.getCanonicalVersionId()))
+        .isNull();
+    return new SelectorFixture(fixture, owner, version);
   }
 
   private PublishedReleaseBundle selectorBundle(
@@ -1075,4 +1138,6 @@ class PublishedReleaseCanonicalIdentityIntegrationTest {
       GameRepository gameRepository,
       VersionRepository versionRepository,
       PublishedReleaseBundleRepository releaseBundleRepository) {}
+
+  private record SelectorFixture(Fixture fixture, Game owner, Version version) {}
 }

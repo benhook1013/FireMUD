@@ -363,6 +363,8 @@ class VersionCanonicalIdentityIntegrationTest {
         DSL.using(new TransactionAwareDataSourceProxy(dataSource), SQLDialect.POSTGRES);
     DataSourceTransactionManager transactionManager = new DataSourceTransactionManager(dataSource);
     TransactionTemplate transactionTemplate = new TransactionTemplate(transactionManager);
+    transactionTemplate.setIsolationLevel(
+        org.springframework.transaction.TransactionDefinition.ISOLATION_READ_COMMITTED);
     GameRepository gameRepository = new GameRepository(dsl);
     PostgresProperties postgresProperties = new PostgresProperties();
     postgresProperties.setSchema(schema);
@@ -391,6 +393,8 @@ class VersionCanonicalIdentityIntegrationTest {
         DSL.using(new TransactionAwareDataSourceProxy(dataSource), SQLDialect.POSTGRES);
     DataSourceTransactionManager transactionManager = new DataSourceTransactionManager(dataSource);
     TransactionTemplate transactionTemplate = new TransactionTemplate(transactionManager);
+    transactionTemplate.setIsolationLevel(
+        org.springframework.transaction.TransactionDefinition.ISOLATION_READ_COMMITTED);
     GameRepository gameRepository = new GameRepository(dsl);
     PostgresProperties postgresProperties = new PostgresProperties();
     postgresProperties.setSchema(schema);

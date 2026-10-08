@@ -40,6 +40,18 @@ public final class GameDesignPublicationOperationRepository {
         operation.canonicalBytes());
   }
 
+  /** Caller has already proved authorization; reservation and source freeze are one transaction. */
+  public GameDesignSourceRepository.Capture reserveSourceBacked(
+      GameDesignPublicationOperation operation) {
+    reserve(operation);
+    return new GameDesignSourceRepository(dsl).freeze(operation);
+  }
+
+  public Optional<GameDesignSourceRepository.Capture> readSourceCapture(
+      GameDesignPublicationOperation operation) {
+    return new GameDesignSourceRepository(dsl).readCapture(operation);
+  }
+
   public GameDesignPublicationOperation requirePending(
       String tenant, String workflow, long version, String digest) {
     requireTransaction();
