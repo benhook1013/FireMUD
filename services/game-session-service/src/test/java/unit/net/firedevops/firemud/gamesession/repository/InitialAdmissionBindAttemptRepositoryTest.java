@@ -115,6 +115,15 @@ class InitialAdmissionBindAttemptRepositoryTest {
           created_at TIMESTAMP NOT NULL,
           updated_at TIMESTAMP NOT NULL,
           terminal_at TIMESTAMP,
+          catalog_source_kind VARCHAR(16) NOT NULL DEFAULT 'V9_FIXTURE',
+          fixture_catalog_realm_id UUID,
+          published_target_namespace VARCHAR(63),
+          canonical_tenant_id UUID,
+          game_template_id BIGINT,
+          launch_descriptor_id VARCHAR(128),
+          release_bundle_id BIGINT,
+          published_release_bundle_ref VARCHAR(200),
+          version_state_epoch BIGINT,
           UNIQUE (tenant_id, initial_admission_request_id)
         )
         """);
