@@ -168,7 +168,7 @@ public final class AccountControlUiIssuanceRepository {
                 + " (request_id, operation_id, token_jti, account_uuid, tenant_uuid, caller_workload,"
                 + " caller_context_id, request_mac_key_id, request_digest, claims_payload, source_payload,"
                 + " bundle_payload, signer_receipt, issued_at_epoch_second, expires_at_epoch_second,"
-                + " recovery_expires_at, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'PREPARED')"
+                + " recovery_expires_at, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?::timestamptz, 'PREPARED')"
                 + " ON CONFLICT (request_id) DO NOTHING",
             requestId,
             operationId,

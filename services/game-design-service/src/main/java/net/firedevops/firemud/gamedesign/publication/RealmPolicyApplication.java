@@ -2,6 +2,7 @@ package net.firedevops.firemud.gamedesign.publication;
 
 import java.io.ByteArrayOutputStream;
 import java.math.BigInteger;
+import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.UUID;
 import net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding;
@@ -43,7 +44,10 @@ public record RealmPolicyApplication(
         out, genesis == null ? new byte[0] : genesis.canonicalBytes());
     DraftAuthorizationFenceBinding.frame(out, inheritedCommitId == null ? "false" : "true");
     DraftAuthorizationFenceBinding.frame(
-        out, inheritedCommitId == null ? "" : inheritedCommitId.toString());
+        out,
+        inheritedCommitId == null
+            ? new byte[0]
+            : inheritedCommitId.toString().getBytes(StandardCharsets.UTF_8));
     DraftAuthorizationFenceBinding.frame(out, expectedEpoch);
     DraftAuthorizationFenceBinding.frame(out, snapshot.canonicalBytes());
     return out.toByteArray();

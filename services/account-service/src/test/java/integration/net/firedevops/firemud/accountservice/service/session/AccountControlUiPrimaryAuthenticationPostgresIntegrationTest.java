@@ -73,22 +73,17 @@ class AccountControlUiPrimaryAuthenticationPostgresIntegrationTest {
                             account.getEmail(), "wrong-secret")))
         .isInstanceOf(AuthenticationException.class);
     assertThat(c.accountBytes(account.getAccountUuid())).isEqualTo(before);
-    c.tx(
-        () -> {
-          Account locked = c.accounts.findByAccountUuid(account.getAccountUuid()).orElseThrow();
-          locked.setLifecycleState(AccountLifecycleState.SECURITY_LOCKED);
-          return c.accounts.save(locked);
-        });
-    String locked = c.accountBytes(account.getAccountUuid());
+    Account lockedAccount = c.account("PASSWORD", AccountLifecycleState.SECURITY_LOCKED);
+    String locked = c.accountBytes(lockedAccount.getAccountUuid());
     assertThatThrownBy(
             () ->
                 c.tx(
                     () ->
                         c.primary.authenticateControlUiPrimaryIdentity(
-                            account.getEmail(), PASSWORD)))
+                            lockedAccount.getEmail(), PASSWORD)))
         .isInstanceOf(AuthenticationException.class);
-    assertThat(c.accountBytes(account.getAccountUuid())).isEqualTo(locked);
-    assertThat(c.challenges.findByAccountId(account.getId())).isEmpty();
+    assertThat(c.accountBytes(lockedAccount.getAccountUuid())).isEqualTo(locked);
+    assertThat(c.challenges.findByAccountId(lockedAccount.getId())).isEmpty();
   }
 
   @Test
@@ -275,6 +270,10 @@ class AccountControlUiPrimaryAuthenticationPostgresIntegrationTest {
     }
 
     Account account(String modes) {
+      return account(modes, AccountLifecycleState.ACTIVE);
+    }
+
+    Account account(String modes, AccountLifecycleState lifecycleState) {
       return tx(
           () -> {
             Account account = new Account();
@@ -283,6 +282,7 @@ class AccountControlUiPrimaryAuthenticationPostgresIntegrationTest {
             account.setEmail(suffix + "@example.test");
             account.setPasswordHash(hash(PASSWORD));
             account.setLoginAuthModes(modes);
+            account.setLifecycleState(lifecycleState);
             return accounts.save(account);
           });
     }

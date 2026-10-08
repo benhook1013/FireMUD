@@ -144,18 +144,7 @@ class DraftAuthorizationFencePostgresIntegrationTest {
                 source(SourceKind.GLOBAL_ROLES, first),
                 source(SourceKind.GLOBAL_ROLES, last)),
             new byte[] {12});
-    tx(
-        context,
-        () -> {
-          for (SourceEvidence source : change.sources()) {
-            context
-                .dsl()
-                .execute(
-                    "INSERT INTO account_draft_authorization_source_locks (source_key) VALUES (?)",
-                    source.key());
-          }
-          return null;
-        });
+    // Fresh Account authority initialization already creates these canonical source locks.
     CountDownLatch started = new CountDownLatch(1);
     AtomicInteger waitingPid = new AtomicInteger();
     try (var executor = Executors.newSingleThreadExecutor()) {
@@ -223,11 +212,6 @@ class DraftAuthorizationFencePostgresIntegrationTest {
                   "INSERT INTO account_draft_authorization_source_changes (change_id, binding, status) VALUES (?, ?, 'WAITING')",
                   change,
                   new byte[] {12});
-          context
-              .dsl()
-              .execute(
-                  "INSERT INTO account_draft_authorization_source_locks (source_key) VALUES (?)",
-                  key);
           return null;
         });
     CountDownLatch started = new CountDownLatch(1);
@@ -1282,11 +1266,13 @@ class DraftAuthorizationFencePostgresIntegrationTest {
               b.canonicalBytes());
       if (sourceShape != 0) {
         String key = sourceShape == 2 ? source.key() + "/changed" : source.key();
-        context
-            .dsl()
-            .execute(
-                "INSERT INTO account_draft_authorization_source_locks (source_key) VALUES (?)",
-                key);
+        if (!key.equals(source.key())) {
+          context
+              .dsl()
+              .execute(
+                  "INSERT INTO account_draft_authorization_source_locks (source_key) VALUES (?)",
+                  key);
+        }
         context
             .dsl()
             .execute(
@@ -1558,12 +1544,15 @@ class DraftAuthorizationFencePostgresIntegrationTest {
     assertThat(tx(context, () -> context.repository().requestSourceChange(change))).isFalse();
 
     List<String> exactKeys = binding.sources().stream().map(SourceEvidence::key).toList();
+    List<String> lockKeys = new java.util.ArrayList<>(exactKeys);
+    lockKeys.add("GLOBAL_ROLES:" + base.actorAccountId());
+    lockKeys.add("ISSUER:firemud-account-service");
     assertThat(
             context
                 .dsl()
                 .fetch("SELECT source_key FROM account_draft_authorization_source_locks")
                 .getValues(0, String.class))
-        .containsExactlyInAnyOrderElementsOf(exactKeys);
+        .containsExactlyInAnyOrderElementsOf(lockKeys);
     assertThat(
             context
                 .dsl()

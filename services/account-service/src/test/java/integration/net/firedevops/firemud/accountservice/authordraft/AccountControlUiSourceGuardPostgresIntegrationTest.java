@@ -76,7 +76,7 @@ class AccountControlUiSourceGuardPostgresIntegrationTest {
         () ->
             c.dsl.execute(
                 "UPDATE accounts SET username = ? WHERE account_uuid = ?",
-                "test-noop-metadata-" + UUID.randomUUID(),
+                "test-noop-metadata",
                 binding.actorAccountId()));
     UUID unrelated = account(c);
     changePassword(c, unrelated, "test-only-unrelated-account-change");

@@ -461,7 +461,7 @@ class PublishAttemptServiceTransactionIntegrationTest {
 
   @Test
   void selectedDraftPublicationRemainsPendingWithoutItsOriginalOperation() throws Exception {
-    String tenantId = "9005";
+    String tenantId = "9007";
     Game game = new Game();
     game.setTenantId(tenantId);
     game.setName("missing-original-operation-proof-game");

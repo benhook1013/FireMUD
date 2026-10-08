@@ -61,6 +61,8 @@ class AccountControlUiIssuancePostgresIntegrationTest {
     Fixture f = new Fixture(c);
     var prepared = f.prepare();
     assertThat(prepared.status).isEqualTo("PREPARED");
+    assertThat(prepared.expiresAt).isEqualTo(prepared.issuedAt.plusSeconds(300));
+    assertThat(prepared.recoveryExpiry).isEqualTo(prepared.issuedAt.plusSeconds(60));
     var candidate = f.candidate(prepared);
     assertThat(candidate.status).isEqualTo("CANDIDATE");
     Transport transport = new Transport(candidate);
