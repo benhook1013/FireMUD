@@ -56,6 +56,8 @@ The sections below define the target-state runtime contract. Current implementat
 
 Game Session does not persist or allocate the primary actor. It resolves the realm target, asks Entity Management for the valid roster/policy result, and keeps `CHARS` as discovery before `PLAY`. A normal binding requires one persisted `characterId`; controller uniqueness is `{tenantId, playableStateNamespaceId, characterId}`, with `accountId` owner evidence and `playableStateScope`, `gameInstanceId`, and region/epoch as routing/fence evidence. See [Entity Runtime and Data](../entity-management-service/runtime-and-data.md) for allocation, policy, descriptor/template, and fork-copy rules.
 
+The current Game Session route and published-policy readers, plus the Entity-only roster and preseeded-assignment source reads, remain behind default-off composition. They return bounded source evidence; they do not persist actor assignments, attach a gameplay session, or activate `PLAY`/`LOOK`. See [API Contracts](./api-contracts.md#initial-admission-bind) for the local read boundary.
+
 The local runtime stores only active attachment, protocol state, presence, and controller-fence data. A playtest copy is selected by its new fork-local `characterId`; `sourceCharacterId` is not used as authority. Current per-instance lookup, unresolved-character fallback, and complete cross-service proof remain gaps.
 
 ## Owner-Local Gameplay Restrictions
