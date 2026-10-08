@@ -47,6 +47,10 @@ class VersionAssetArtifactRepositoryTest {
               + "\"last_error_code\" VARCHAR(255), "
               + "\"last_error_message\" VARCHAR(1000), "
               + "\"exported_manifest_asset_keys_json\" VARCHAR(4000), "
+              + "\"manifest_schema_version\" INTEGER, "
+              + "\"artifact_digests_json\" TEXT, "
+              + "\"published_object_proofs_json\" TEXT, "
+              + "\"candidate_snapshot_version_id\" BIGINT, "
               + "\"updated_at\" TIMESTAMP NOT NULL, "
               + "UNIQUE (\"tenant_id\", \"version_id\"))");
 
@@ -59,6 +63,10 @@ class VersionAssetArtifactRepositoryTest {
       artifact.setManifestHash("manifest-7");
       artifact.setLastWorkflowId("publish-7");
       artifact.setExportedManifestAssetKeysJson("[\"manifest.json\"]");
+      artifact.setManifestSchemaVersion(1);
+      artifact.setArtifactDigestsJson("[]");
+      artifact.setPublishedObjectProofsJson("[]");
+      artifact.setCandidateSnapshotVersionId(7L);
 
       VersionAssetArtifact inserted = new VersionAssetArtifactRepository(dsl).save(artifact);
 
@@ -70,6 +78,10 @@ class VersionAssetArtifactRepositoryTest {
       assertThat(inserted.getManifestHash()).isEqualTo("manifest-7");
       assertThat(inserted.getLastWorkflowId()).isEqualTo("publish-7");
       assertThat(inserted.getExportedManifestAssetKeysJson()).isEqualTo("[\"manifest.json\"]");
+      assertThat(inserted.getManifestSchemaVersion()).isEqualTo(1);
+      assertThat(inserted.getArtifactDigestsJson()).isEqualTo("[]");
+      assertThat(inserted.getPublishedObjectProofsJson()).isEqualTo("[]");
+      assertThat(inserted.getCandidateSnapshotVersionId()).isEqualTo(7L);
       assertThat(inserted.getUpdatedAt()).isNotNull();
       assertThat(executedSql)
           .filteredOn(sql -> sql.toLowerCase().contains(" where "))

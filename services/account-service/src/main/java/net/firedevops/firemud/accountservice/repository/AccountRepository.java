@@ -52,6 +52,16 @@ public class AccountRepository {
         dsl.selectFrom(ACCOUNTS).where(ACCOUNTS.ID.eq(id)).fetchOne(this::toEntity));
   }
 
+  /** Locks one exact persisted Account row before an owner-local authority mutation. */
+  @Transactional
+  public Optional<Account> findByIdForUpdate(Long id) {
+    if (id == null || id <= 0L) {
+      throw new IllegalArgumentException("A positive persisted Account ID is required");
+    }
+    return Optional.ofNullable(
+        dsl.selectFrom(ACCOUNTS).where(ACCOUNTS.ID.eq(id)).forUpdate().fetchOne(this::toEntity));
+  }
+
   public Optional<Account> findByAccountUuid(UUID accountUuid) {
     Objects.requireNonNull(accountUuid, "accountUuid must not be null");
     return Optional.ofNullable(

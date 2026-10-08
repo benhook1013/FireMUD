@@ -874,7 +874,7 @@ public class GameDesignGrpcService extends GameDesignServiceGrpc.GameDesignServi
       builder.setLaunchDescriptor(
           net.firedevops.firemud.gamedesign.v1.LaunchDescriptor.newBuilder()
               .setLaunchDescriptorId(descriptor.launchDescriptorId())
-              .setTenantId(descriptor.tenantId())
+              .setCanonicalTenantId(descriptor.canonicalTenantId())
               .setGameTemplateId(descriptor.gameTemplateId())
               .setControlPlaneRequestId(descriptor.controlPlaneRequestId())
               .setVersionId(descriptor.versionId())

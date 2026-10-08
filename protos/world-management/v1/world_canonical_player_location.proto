@@ -1,0 +1,69 @@
+syntax = "proto3";
+
+package world_management.v1;
+
+option java_package = "net.firedevops.firemud.worldmanagement.v1";
+option java_multiple_files = true;
+
+// Standalone canonical World initial placement and current-location transport. This is distinct
+// from the legacy numeric WorldManagementService surface and is intentionally unregistered.
+service WorldCanonicalPlayerLocationService {
+  rpc PlaceCanonicalInitialPlayerLocation(PlaceCanonicalInitialPlayerLocationRequest)
+      returns (PlaceCanonicalInitialPlayerLocationResponse);
+  rpc ReadCanonicalCurrentPlayerLocation(ReadCanonicalCurrentPlayerLocationRequest)
+      returns (ReadCanonicalCurrentPlayerLocationResponse);
+}
+
+message PlaceCanonicalInitialPlayerLocationRequest {
+  // Complete closed canonical World initial-placement request bytes.
+  bytes canonical_request_bytes = 1;
+
+  // Complete original ACTIVE lifecycle evidence bytes, including its read correlation UUID.
+  bytes original_lifecycle_evidence_bytes = 2;
+}
+
+message PlaceCanonicalInitialPlayerLocationResponse {
+  // Stable operation UUID from the immutable placement request.
+  string operation_id = 1;
+
+  // Exact immutable canonical World placement result bytes, including its original request proof.
+  bytes canonical_result_bytes = 2;
+}
+
+message ReadCanonicalCurrentPlayerLocationRequest {
+  // Fresh canonical non-nil UUID for this read correlation; it grants no gameplay authority.
+  string read_request_id = 1;
+
+  // Complete closed canonical placement request bytes, without the lifecycle read correlation.
+  bytes canonical_placement_request_bytes = 2;
+
+  // Complete current ACTIVE lifecycle evidence for this read correlation. In this RPC these are
+  // fresh current bytes, distinct from the original lifecycle evidence retained with placement.
+  bytes original_lifecycle_evidence_bytes = 3;
+}
+
+message ReadCanonicalCurrentPlayerLocationResponse {
+  // Echo of the fresh read correlation UUID.
+  string read_request_id = 1;
+
+  // Stable operation UUID of the immutable initial placement.
+  string placement_operation_id = 2;
+
+  // Exact canonical digest of the immutable placement request.
+  string placement_request_digest = 3;
+
+  // Complete current ACTIVE lifecycle evidence, including this read's correlation UUID.
+  bytes current_lifecycle_evidence_bytes = 4;
+
+  // Exact immutable APPLIED placement result bytes retained by World.
+  bytes immutable_placement_result_bytes = 5;
+
+  // Complete original lifecycle evidence retained with the immutable placement operation.
+  bytes original_placement_lifecycle_evidence_bytes = 6;
+
+  // Persisted V35 canonicalRegionInstanceId UUID for the current scoped room.
+  string region_instance_id = 7;
+
+  // Distinct persisted V45 operationalRegionId UUID for the current scoped room.
+  string operational_region_id = 8;
+}

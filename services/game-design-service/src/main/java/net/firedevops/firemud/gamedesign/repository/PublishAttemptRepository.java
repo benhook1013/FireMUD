@@ -8,6 +8,8 @@ import net.firedevops.firemud.common.persistence.jooq.JooqPersistenceSupport;
 import net.firedevops.firemud.gamedesign.entity.PublishAttempt;
 import net.firedevops.firemud.gamedesign.model.PublishAttemptStatus;
 import net.firedevops.firemud.gamedesign.model.PublishType;
+import net.firedevops.firemud.gamedesign.publication.GameDesignPublicationOperationRepository;
+import net.firedevops.firemud.gamedesign.publication.RealmPolicyPublicationRepository;
 import org.jooq.Condition;
 import org.jooq.DSLContext;
 import org.jooq.Field;
@@ -59,6 +61,60 @@ public class PublishAttemptRepository {
             .where(PUBLISH_WORKFLOW_ID.eq(publishWorkflowId))
             .limit(1)
             .fetchOne(this::toEntity));
+  }
+
+  /** The owning Game lock always precedes the exact attempt lock. */
+  public Optional<PublishAttempt> findByPublishWorkflowIdForUpdate(String workflow) {
+    Optional<PublishAttempt> initial = findByPublishWorkflowId(workflow);
+    if (initial.isEmpty()) return initial;
+    dsl.fetchOne("SELECT id FROM game WHERE tenant_id = ? FOR UPDATE", initial.get().getTenantId());
+    return Optional.ofNullable(
+        dsl.selectFrom(PUBLISH_ATTEMPT_TABLE)
+            .where(PUBLISH_WORKFLOW_ID.eq(workflow))
+            .forUpdate()
+            .fetchOne(this::toEntity));
+  }
+
+  public net.firedevops.firemud.common.world.WorldPublishedStartLocationEvidence
+      requirePublicationPending(PublishAttempt attempt) {
+    return new GameDesignPublicationOperationRepository(dsl)
+        .requirePending(
+            attempt.getTenantId(),
+            attempt.getPublishWorkflowId(),
+            attempt.getVersionId(),
+            attempt.getRequestDigest())
+        .world();
+  }
+
+  public void sealPublication(PublishAttempt attempt, boolean published) {
+    new GameDesignPublicationOperationRepository(dsl)
+        .seal(
+            attempt.getTenantId(),
+            attempt.getPublishWorkflowId(),
+            attempt.getVersionId(),
+            attempt.getRequestDigest(),
+            published);
+    if (published) {
+      new RealmPolicyPublicationRepository(dsl)
+          .retainSealedPublished(attempt.getPublishWorkflowId());
+    }
+  }
+
+  public void requirePublishedOperation(PublishAttempt attempt) {
+    requireTerminalOperation(attempt, "PUBLISHED");
+  }
+
+  private void requireTerminalOperation(PublishAttempt attempt, String outcome) {
+    var result =
+        new GameDesignPublicationOperationRepository(dsl)
+            .read(attempt.getPublishWorkflowId())
+            .orElseThrow(() -> new IllegalStateException("PUBLICATION_OPERATION_UNAVAILABLE"));
+    if (!outcome.equals(result.outcome())
+        || !result.operation().selectionDigest().equals(attempt.getRequestDigest())
+        || result.operation().versionId() != attempt.getVersionId()
+        || !result.operation().tenantKey().equals(attempt.getTenantId())) {
+      throw new IllegalStateException("PUBLICATION_OPERATION_SEALED_OR_CHANGED");
+    }
   }
 
   /**

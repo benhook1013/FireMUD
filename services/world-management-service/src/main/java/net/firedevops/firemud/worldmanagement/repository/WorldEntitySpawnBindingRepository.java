@@ -85,6 +85,15 @@ public class WorldEntitySpawnBindingRepository {
             .set(WORLD_ENTITY_SPAWN_BINDING.ROOM_ID, entity.getRoom().getId())
             .set(WORLD_ENTITY_SPAWN_BINDING.ENTITY_TEMPLATE_TYPE, entity.getEntityTemplateType())
             .set(WORLD_ENTITY_SPAWN_BINDING.ENTITY_TEMPLATE_ID, entity.getEntityTemplateId())
+            .set(
+                WORLD_ENTITY_SPAWN_BINDING.ENTITY_CANONICAL_TENANT_ID,
+                entity.getEntityCanonicalTenantId())
+            .set(
+                WORLD_ENTITY_SPAWN_BINDING.ENTITY_CANONICAL_VERSION_ID,
+                entity.getEntityCanonicalVersionId())
+            .set(
+                WORLD_ENTITY_SPAWN_BINDING.ENTITY_CANONICAL_TEMPLATE_ID,
+                entity.getEntityCanonicalTemplateId())
             .set(WORLD_ENTITY_SPAWN_BINDING.SPAWN_COUNT, entity.getSpawnCount())
             .set(WORLD_ENTITY_SPAWN_BINDING.RESPAWN_DELAY_SECONDS, entity.getRespawnDelaySeconds())
             .set(WORLD_ENTITY_SPAWN_BINDING.VERSION, entity.getVersion() + 1)
@@ -124,6 +133,9 @@ public class WorldEntitySpawnBindingRepository {
     record.setRoomId(entity.getRoom().getId());
     record.setEntityTemplateType(entity.getEntityTemplateType());
     record.setEntityTemplateId(entity.getEntityTemplateId());
+    record.setEntityCanonicalTenantId(entity.getEntityCanonicalTenantId());
+    record.setEntityCanonicalVersionId(entity.getEntityCanonicalVersionId());
+    record.setEntityCanonicalTemplateId(entity.getEntityCanonicalTemplateId());
     record.setSpawnCount(entity.getSpawnCount());
     record.setRespawnDelaySeconds(entity.getRespawnDelaySeconds());
     record.setVersion(entity.getVersion());
@@ -139,6 +151,12 @@ public class WorldEntitySpawnBindingRepository {
             record.get(WORLD_ENTITY_SPAWN_BINDING.ROOM_ID)));
     entity.setEntityTemplateType(record.get(WORLD_ENTITY_SPAWN_BINDING.ENTITY_TEMPLATE_TYPE));
     entity.setEntityTemplateId(record.get(WORLD_ENTITY_SPAWN_BINDING.ENTITY_TEMPLATE_ID));
+    entity.setEntityCanonicalTenantId(
+        record.get(WORLD_ENTITY_SPAWN_BINDING.ENTITY_CANONICAL_TENANT_ID));
+    entity.setEntityCanonicalVersionId(
+        record.get(WORLD_ENTITY_SPAWN_BINDING.ENTITY_CANONICAL_VERSION_ID));
+    entity.setEntityCanonicalTemplateId(
+        record.get(WORLD_ENTITY_SPAWN_BINDING.ENTITY_CANONICAL_TEMPLATE_ID));
     Integer spawnCount = record.get(WORLD_ENTITY_SPAWN_BINDING.SPAWN_COUNT);
     entity.setSpawnCount(spawnCount == null ? 1 : spawnCount);
     Integer respawnDelaySeconds = record.get(WORLD_ENTITY_SPAWN_BINDING.RESPAWN_DELAY_SECONDS);

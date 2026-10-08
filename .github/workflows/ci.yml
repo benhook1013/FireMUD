@@ -948,8 +948,8 @@ jobs:
     permissions:
       contents: read
       id-token: write
-    # The World PostgreSQL proof can run close to 20 minutes before Gradle post-job cleanup.
-    timeout-minutes: ${{ matrix.module == 'world-management-service' && 30 || 20 }}
+    # Account and World PostgreSQL proofs can run close to 20 minutes before Gradle post-job cleanup.
+    timeout-minutes: ${{ (matrix.module == 'account-service' || matrix.module == 'world-management-service') && 30 || 20 }}
     strategy:
       fail-fast: false
       matrix:
@@ -994,6 +994,54 @@ jobs:
           echo "::group::Run Module Validation"
           ./gradlew :${{ matrix.module }}:check -PfullCheck
           echo "::endgroup::"
+
+      - name: 📤 Capture Account Draft authorization fence PostgreSQL XML
+        if: ${{ always() && matrix.module == 'account-service' }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: account-draft-authorization-fence-postgresql-proof-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: services/account-service/build/test-results/integrationTest/TEST-*DraftAuthorizationFencePostgresIntegrationTest.xml
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: 🔎 Verify Account Draft authorization fence PostgreSQL proof
+        if: ${{ !cancelled() && matrix.module == 'account-service' }}
+        run: |
+          bash dev-tools/validation/inspect-test-results.sh \
+            --strict \
+            --require-suite integration.net.firedevops.firemud.accountservice.authordraft.DraftAuthorizationFencePostgresIntegrationTest \
+            --require-case 'integration.net.firedevops.firemud.accountservice.authordraft.DraftAuthorizationFencePostgresIntegrationTest#accountAndGlobalRolePendingScopesVersionOnlyTheirExistingAccountTuple()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.authordraft.DraftAuthorizationFencePostgresIntegrationTest#producerLocksDeduplicatedAccountsInUuidOrderBeforeAnySourceLocks()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.authordraft.DraftAuthorizationFencePostgresIntegrationTest#scopeInsertVersionsAccountBeforeTheExistingParentLockingTrigger()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.authordraft.DraftAuthorizationFencePostgresIntegrationTest#applicableMissingOrMalformedAccountScopesDenyWithoutCreatingAccountOrIntent()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.authordraft.DraftAuthorizationFencePostgresIntegrationTest#twoOwnerConsumerPersistsWorldOnceAndRecoversMissingGameDesignOnRetry()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.authordraft.DraftAuthorizationFencePostgresIntegrationTest#mixedCommitOrderPreservesOriginalWorldCommitAndHoldsSourceFence()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.authordraft.DraftAuthorizationFencePostgresIntegrationTest#concurrentExactConsumerRetriesReturnTheSameOriginalSettlement()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.authordraft.DraftAuthorizationFencePostgresIntegrationTest#concurrentConflictingOwnerEvidenceRejectsRetryAndPreservesWinningBytes()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.authordraft.DraftAuthorizationFencePostgresIntegrationTest#revokeBeforeCommitDeniesDelayedRequestsUntilBothDefinitiveAborts()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.authordraft.DraftAuthorizationFencePostgresIntegrationTest#worldCommittedAndGameDesignUnknownSurviveRestartAndBlockSourceUntilExactBothReadbacks()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.authordraft.DraftAuthorizationFencePostgresIntegrationTest#commitOrderWithBothDefinitiveAbortsReleasesOriginalWaitingIntentWithoutReopening()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.authordraft.DraftAuthorizationFencePostgresIntegrationTest#bothMixedDirectionsRemainPendingAndPreserveOriginalReadbacks()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.authordraft.DraftAuthorizationFencePostgresIntegrationTest#revokeOrderWithEitherMixedDirectionCannotAuthorizeSourceMutation()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.authordraft.DraftAuthorizationFencePostgresIntegrationTest#changedCompleteBindingsConflictWithoutRewritingOriginal()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.authordraft.DraftAuthorizationFencePostgresIntegrationTest#inconsistentOrMalformedCompleteBindingsFailBeforeReservationStorage()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.authordraft.DraftAuthorizationFencePostgresIntegrationTest#rollbackPreservesReservationAndIntentTogetherAndDisjointSourcesDoNotConflict()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.authordraft.DraftAuthorizationFencePostgresIntegrationTest#distinctPendingChangesCannotRetainTwoOldCapturesForTheSameSource()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.authordraft.DraftAuthorizationFencePostgresIntegrationTest#concurrentDistinctSourceClaimsAdmitOnlyOnePendingCaptureWithoutBlockingDisjointSources()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.authordraft.DraftAuthorizationFencePostgresIntegrationTest#concurrentCommitOrderAndRevocationChooseExactlyOneDurableOrdering()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.authordraft.DraftAuthorizationFencePostgresIntegrationTest#originalBindingSurvivesRestartAndAbsenceRemainsUnknownUnderOwnerTransaction()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.authordraft.DraftAuthorizationFencePostgresIntegrationTest#discoveryPagesOriginalPendingOperationsAndExcludesEverySettledVector()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.authordraft.DraftAuthorizationFencePostgresIntegrationTest#originalRecoveryRejectsMalformedBytesAndEveryConflictingIdentityColumn()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.authordraft.DraftAuthorizationFencePostgresIntegrationTest#ownerRecoveryRejectsReadbackThatContradictsItsOutcomeColumn()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.authordraft.DraftAuthorizationFencePostgresIntegrationTest#v2WorldEntityAndCoordinatorRequireAllThreeExactOriginalResults()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.authordraft.DraftAuthorizationFencePostgresIntegrationTest#v2FreshDraftEpochZeroAcceptsExactRequiredOwnerReadback()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.authordraft.DraftAuthorizationFencePostgresIntegrationTest#rawSqlCannotRecordOwnerProofWithMissingChangedOrExtraSourceParticipation()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.authordraft.DraftAuthorizationFencePostgresIntegrationTest#v2RequiredOwnerDecoderRejectsMissingExtraDuplicateAndReorderedOwners()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.authordraft.DraftAuthorizationFencePostgresIntegrationTest#v2AllRequiredAbortsSettleBothCommitAndRevokeOrdering()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.authordraft.DraftAuthorizationFencePostgresIntegrationTest#v2MixedResultsHoldBothSourceTransitionsAndPreserveAppliedBytes()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.authordraft.DraftAuthorizationFencePostgresIntegrationTest#forwardMigrationRetainsV1BindingReadbackAndFlywayChecksumsExactly()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.authordraft.DraftAuthorizationFencePostgresIntegrationTest#issuerSourceKeysPreserveLegacyAndUnicodeIdentityThroughExactByteBound()' \
+            account-service
 
       - name: 📦 Build Runtime JAR
         if: ${{ contains(fromJSON(needs.changes.outputs.bootable_modules), matrix.module) }}

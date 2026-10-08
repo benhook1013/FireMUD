@@ -38,6 +38,14 @@ public class VersionAssetArtifactRepository {
       DSL.field(DSL.name("last_error_message"), String.class);
   private static final Field<String> EXPORTED_MANIFEST_ASSET_KEYS_JSON =
       DSL.field(DSL.name("exported_manifest_asset_keys_json"), String.class);
+  private static final Field<Integer> MANIFEST_SCHEMA_VERSION =
+      DSL.field(DSL.name("manifest_schema_version"), Integer.class);
+  private static final Field<String> ARTIFACT_DIGESTS_JSON =
+      DSL.field(DSL.name("artifact_digests_json"), String.class);
+  private static final Field<String> PUBLISHED_OBJECT_PROOFS_JSON =
+      DSL.field(DSL.name("published_object_proofs_json"), String.class);
+  private static final Field<Long> CANDIDATE_SNAPSHOT_VERSION_ID =
+      DSL.field(DSL.name("candidate_snapshot_version_id"), Long.class);
   private static final Field<Timestamp> UPDATED_AT =
       DSL.field(DSL.name("updated_at"), Timestamp.class);
 
@@ -72,6 +80,10 @@ public class VersionAssetArtifactRepository {
               .set(LAST_ERROR_CODE, artifact.getLastErrorCode())
               .set(LAST_ERROR_MESSAGE, artifact.getLastErrorMessage())
               .set(EXPORTED_MANIFEST_ASSET_KEYS_JSON, artifact.getExportedManifestAssetKeysJson())
+              .set(MANIFEST_SCHEMA_VERSION, artifact.getManifestSchemaVersion())
+              .set(ARTIFACT_DIGESTS_JSON, artifact.getArtifactDigestsJson())
+              .set(PUBLISHED_OBJECT_PROOFS_JSON, artifact.getPublishedObjectProofsJson())
+              .set(CANDIDATE_SNAPSHOT_VERSION_ID, artifact.getCandidateSnapshotVersionId())
               .set(UPDATED_AT, JooqPersistenceSupport.toTimestamp(updatedAt))
               .returning(ID)
               .fetchOne();
@@ -95,6 +107,10 @@ public class VersionAssetArtifactRepository {
         .set(LAST_ERROR_CODE, artifact.getLastErrorCode())
         .set(LAST_ERROR_MESSAGE, artifact.getLastErrorMessage())
         .set(EXPORTED_MANIFEST_ASSET_KEYS_JSON, artifact.getExportedManifestAssetKeysJson())
+        .set(MANIFEST_SCHEMA_VERSION, artifact.getManifestSchemaVersion())
+        .set(ARTIFACT_DIGESTS_JSON, artifact.getArtifactDigestsJson())
+        .set(PUBLISHED_OBJECT_PROOFS_JSON, artifact.getPublishedObjectProofsJson())
+        .set(CANDIDATE_SNAPSHOT_VERSION_ID, artifact.getCandidateSnapshotVersionId())
         .set(UPDATED_AT, JooqPersistenceSupport.toTimestamp(updatedAt))
         .where(ID.eq(artifact.getId()))
         .execute();
@@ -120,6 +136,10 @@ public class VersionAssetArtifactRepository {
     artifact.setLastErrorCode(record.get(LAST_ERROR_CODE));
     artifact.setLastErrorMessage(record.get(LAST_ERROR_MESSAGE));
     artifact.setExportedManifestAssetKeysJson(record.get(EXPORTED_MANIFEST_ASSET_KEYS_JSON));
+    artifact.setManifestSchemaVersion(record.get(MANIFEST_SCHEMA_VERSION));
+    artifact.setArtifactDigestsJson(record.get(ARTIFACT_DIGESTS_JSON));
+    artifact.setPublishedObjectProofsJson(record.get(PUBLISHED_OBJECT_PROOFS_JSON));
+    artifact.setCandidateSnapshotVersionId(record.get(CANDIDATE_SNAPSHOT_VERSION_ID));
     artifact.setUpdatedAt(JooqPersistenceSupport.toLocalDateTime(record.get(UPDATED_AT)));
     return artifact;
   }

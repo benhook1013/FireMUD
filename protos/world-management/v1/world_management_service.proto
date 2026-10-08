@@ -5,6 +5,7 @@ package world_management.v1;
 import "entity-management/v1/entity_management_service.proto";
 import "shared/v1/errors.proto";
 import "shared/v1/instance_refs.proto";
+import "world-management/v1/world_canonical_instance_lifecycle_read.proto";
 
 option java_package = "net.firedevops.firemud.worldmanagement.v1";
 option java_multiple_files = true;
@@ -32,6 +33,94 @@ service WorldManagementService {
       returns (ValidateWorldUpgradeMappingsResponse);
   rpc ListRoomOccupants(ListRoomOccupantsRequest) returns (ListRoomOccupantsResponse);
   rpc ApplyRoomAmbientStatePatch(ApplyRoomAmbientStatePatchRequest) returns (ApplyRoomAmbientStatePatchResponse);
+}
+
+// Explicitly unwired authenticated authored-source intake boundary. This service remains separate
+// from the runtime WorldManagementService until its caller and deployment path are authorized.
+service WorldAuthoredSourceIntakeService {
+  rpc IntakeAuthoredWorldSource(IntakeAuthoredWorldSourceRequest)
+      returns (IntakeAuthoredWorldSourceResponse);
+  rpc ReadAuthoredWorldSourceIntake(ReadAuthoredWorldSourceIntakeRequest)
+      returns (ReadAuthoredWorldSourceIntakeResponse);
+}
+
+// Explicitly unwired Game Session-to-World canonical launch preparation transport.
+service WorldCanonicalInstancePreparationService {
+  rpc PrepareCanonicalWorldInstance(PrepareCanonicalWorldInstanceRequest)
+      returns (PrepareCanonicalWorldInstanceResponse);
+}
+
+// The exact ten-field committed Game Session launch-association selector.
+message PrepareCanonicalWorldInstanceRequest {
+  string read_request_id = 1;
+  string target_namespace = 2;
+  string canonical_tenant_id = 3;
+  string world_slug = 4;
+  string game_instance_uuid = 5;
+  string control_plane_request_id = 6;
+  string launch_descriptor_id = 7;
+  string expected_descriptor_request_digest = 8;
+  string expected_descriptor_result_digest = 9;
+  string expected_release_attestation_evidence_digest = 10;
+}
+
+message PrepareCanonicalWorldInstanceResponse {
+  PrepareCanonicalWorldInstanceRequest request = 1;
+  ReadWorldCanonicalInstanceLifecycleResponse lifecycle = 2;
+  shared.v1.ErrorDetail error = 3;
+}
+
+message IntakeAuthoredWorldSourceRequest {
+  int32 schema_version = 1;
+  string target_namespace = 2;
+  string intake_request_id = 3;
+  string canonical_tenant_id = 4;
+  string world_slug = 5;
+  string source_operation_id = 6;
+  string expected_source_evidence_digest = 7;
+}
+
+message IntakeAuthoredWorldSourceResponse {
+  int32 schema_version = 1;
+  string target_namespace = 2;
+  string intake_request_id = 3;
+  string canonical_tenant_id = 4;
+  string world_slug = 5;
+  string source_operation_id = 6;
+  string expected_source_evidence_digest = 7;
+  string operation_id = 8;
+  // Recomputable from the echoed intake binding using the World request digest contract.
+  string request_digest = 9;
+  // Opaque authenticated World attestation; it binds private World state and is not client-recomputable.
+  string receipt_digest = 10;
+}
+
+message ReadAuthoredWorldSourceIntakeRequest {
+  int32 schema_version = 1;
+  string target_namespace = 2;
+  // A distinct nonnil identity for this read; intake_request_id remains the stored receipt key.
+  string request_id = 3;
+  string intake_request_id = 4;
+  string canonical_tenant_id = 5;
+  string world_slug = 6;
+  string source_operation_id = 7;
+  string expected_source_evidence_digest = 8;
+}
+
+message ReadAuthoredWorldSourceIntakeResponse {
+  int32 schema_version = 1;
+  string target_namespace = 2;
+  string request_id = 3;
+  string intake_request_id = 4;
+  string canonical_tenant_id = 5;
+  string world_slug = 6;
+  string source_operation_id = 7;
+  string expected_source_evidence_digest = 8;
+  string operation_id = 9;
+  // Recomputable from the echoed intake binding using the World request digest contract.
+  string request_digest = 10;
+  // Opaque authenticated World attestation; it binds private World state and is not client-recomputable.
+  string receipt_digest = 11;
 }
 
 enum WorldInstanceLifecycleStatus {
@@ -347,6 +436,28 @@ enum WorldDesignAggregateType {
   WORLD_DESIGN_AGGREGATE_TYPE_GENERATION_RULE = 5;
   WORLD_DESIGN_AGGREGATE_TYPE_WORLD_ENTITY_SPAWN_BINDING = 6;
   WORLD_DESIGN_AGGREGATE_TYPE_WORLD_GENERATION_SUBTREE = 7;
+}
+
+// Canonical authored room identity for a selected World start location. This is not a runtime
+// room instance or a private database key.
+message RoomTemplateRef {
+  string tenant_id = 1;
+  string version_id = 2;
+  string room_template_id = 3;
+}
+
+message WorldFreshGraphFamilyCount {
+  WorldDesignAggregateType family = 1;
+  // Presence is carried by this repeated entry; zero is an explicit empty-family declaration.
+  optional int32 count = 2;
+}
+
+// Complete fresh graph declaration bound into the original Game Design revision payload.
+message WorldFreshGraphDeclaration {
+  string tenant_id = 1;
+  string version_id = 2;
+  RoomTemplateRef start_location = 3;
+  repeated WorldFreshGraphFamilyCount family_counts = 4;
 }
 
 enum WorldDesignMutationResult {

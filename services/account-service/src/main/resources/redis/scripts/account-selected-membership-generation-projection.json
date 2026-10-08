@@ -1,0 +1,65 @@
+{
+  "scriptId": "account.selected-membership-generation-projection.v1",
+  "resourcePath": "redis/account_generation_projection_cas.lua",
+  "sha256": "b8cf7abd202786a0b45b59444d1396a6c821e65284092e21a46a995e19e72507",
+  "owner": "account-service",
+  "principal": "account_coord_app",
+  "role": "COORDINATION",
+  "keys": [
+    {
+      "name": "membershipGenerationProjection",
+      "ownedPrefix": "session:auth:generation:membership:",
+      "hashTagDeclaration": "NOT_REQUIRED"
+    }
+  ],
+  "arguments": [
+    {
+      "name": "expectedMode"
+    },
+    {
+      "name": "expectedBytes"
+    },
+    {
+      "name": "candidateBytes"
+    }
+  ],
+  "category": "SESSION_CAS",
+  "outcomes": [
+    {
+      "code": "APPLIED",
+      "category": "SUCCESS",
+      "effect": "MUTATING"
+    },
+    {
+      "code": "REPLAY",
+      "category": "REPLAY",
+      "effect": "NON_MUTATING"
+    },
+    {
+      "code": "STALE",
+      "category": "STALE",
+      "effect": "NON_MUTATING"
+    },
+    {
+      "code": "INVALID",
+      "category": "VALIDATION_FAILURE",
+      "effect": "NON_MUTATING"
+    },
+    {
+      "code": "TTL_PRESENT",
+      "category": "VALIDATION_FAILURE",
+      "effect": "NON_MUTATING"
+    }
+  ],
+  "resetSensitivity": "CLUSTER",
+  "lossClass": "SESSION_LEASE_CACHE_OR_WAKE_UP",
+  "tailLossBehavior": "On loss deny selected gameplay use; reapply exact Account membership events without sequence gaps.",
+  "compatibilityLevel": "REQUIRES_CLUSTER_RESET",
+  "supportedCoexistence": [
+    {
+      "callerVersion": "v1",
+      "payloadVersion": "v1"
+    }
+  ],
+  "legacyPayloadShape": null
+}

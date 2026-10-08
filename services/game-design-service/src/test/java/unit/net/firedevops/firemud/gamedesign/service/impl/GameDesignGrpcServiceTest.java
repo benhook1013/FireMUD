@@ -1060,7 +1060,7 @@ class GameDesignGrpcServiceTest {
         .thenReturn(
             new ResolvedLaunchDescriptorDto(
                 "ld-1",
-                "tenant-1",
+                "12345678-1234-4234-8234-123456789abc",
                 9L,
                 "cp-1",
                 7L,
@@ -1070,7 +1070,8 @@ class GameDesignGrpcServiceTest {
                 11L,
                 11L,
                 "prb:tenant-1:7:11",
-                ""));
+                "",
+                null));
 
     AtomicReference<ResolveLaunchDescriptorResponse> ref = new AtomicReference<>();
     try (MockedStatic<AdminRoleGuard> ignored = Mockito.mockStatic(AdminRoleGuard.class)) {
