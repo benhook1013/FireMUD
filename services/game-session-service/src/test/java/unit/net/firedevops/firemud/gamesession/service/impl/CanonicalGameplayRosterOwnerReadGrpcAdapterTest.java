@@ -32,7 +32,7 @@ import org.springframework.beans.factory.ObjectProvider;
 import support.net.firedevops.firemud.gamesession.PublishedRealmPolicyEvidenceFixture;
 
 class CanonicalGameplayRosterOwnerReadGrpcAdapterTest {
-  private static final String NAMESPACE = "gameplay";
+  private static final String NAMESPACE = "test";
   private static final String ENTITY_SERVICE = "entity-management-service";
   private static final UUID ACCOUNT = uuid("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa");
   private static final UUID TENANT = uuid("11111111-1111-4111-8111-111111111111");
