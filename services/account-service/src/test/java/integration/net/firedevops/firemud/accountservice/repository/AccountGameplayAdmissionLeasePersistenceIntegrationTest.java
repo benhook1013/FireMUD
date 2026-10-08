@@ -18,6 +18,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.function.Supplier;
 import net.firedevops.firemud.account.v1.AbortGameplayAdmissionLeaseRequest;
+import net.firedevops.firemud.account.v1.FinalizeGameplayAdmissionLeaseRequest;
 import net.firedevops.firemud.account.v1.ReadGameplayAdmissionLeaseRequest;
 import net.firedevops.firemud.accountservice.dto.AccountGameplayAdmissionLeaseOperation;
 import net.firedevops.firemud.accountservice.dto.AccountGameplayAdmissionLeaseOperation.State;
@@ -27,6 +28,7 @@ import net.firedevops.firemud.common.account.admission.AccountGameplayAdmissionL
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
 import org.flywaydb.core.Flyway;
 import org.jooq.DSLContext;
+import org.jooq.Record;
 import org.jooq.SQLDialect;
 import org.jooq.impl.DSL;
 import org.junit.jupiter.api.AfterAll;
@@ -667,6 +669,489 @@ class AccountGameplayAdmissionLeasePersistenceIntegrationTest {
                   b.get(30, TimeUnit.SECONDS).leaseFence()))
           .containsExactlyInAnyOrder(2L, 3L);
     }
+  }
+
+  @Test
+  void durableConfirmationStoresOriginalCommitProofAndRecoversLostResponseAfterExpiry()
+      throws Exception {
+    var context = context(null);
+    UUID account = account(context);
+    var original = pending(context, account);
+    var repository = new AccountGameplayAdmissionLeaseRepository(context.dsl());
+    UUID decision = UUID.randomUUID();
+    tx(context, () -> repository.recordCommitted(original, decision));
+    var unchanged = storageSnapshot(context);
+    var transactionManager = new DataSourceTransactionManager(context.dataSource());
+    var confirmationOwner =
+        new AccountGameplayAdmissionCommitConfirmationOwner(
+            new AccountGameplayAdmissionCommitConfirmationRepository(context.dsl(), repository),
+            transactionManager,
+            "test");
+    var request =
+        FinalizeGameplayAdmissionLeaseRequest.newBuilder()
+            .setLease(AccountGameplayAdmissionLeaseWireCodec.encodeReference(original))
+            .setBindingDecisionId(decision.toString())
+            .build();
+
+    // The exact Game Session peer, carrier and decision are synthetic upstream fixtures. The real
+    // Java owner creates and independently reads Account SQL proof; this does not prove mTLS.
+    syntheticReadPeer().call(() -> confirmationOwner.confirm(request)); // Discard the response.
+    // Inspect stored fields separately; this visible row alone is not durable readback proof.
+    var receipt =
+        Objects.requireNonNull(
+            context
+                .dsl()
+                .fetchOne(
+                    "SELECT * FROM account_gameplay_admission_commit_confirmations WHERE request_id = ?",
+                    requestId(original)));
+    assertThat(receipt.get("confirmation_version", Short.class)).isEqualTo((short) 1);
+    assertThat(receipt.get("request_id", UUID.class)).isEqualTo(requestId(original));
+    assertThat(receipt.get("account_uuid", UUID.class)).isEqualTo(account);
+    assertThat(receipt.get("lease_id", UUID.class))
+        .isEqualTo(UUID.fromString((String) original.carrier().get("leaseId")));
+    assertThat(receipt.get("lease_fence", Long.class))
+        .isEqualTo(original.leaseFence().longValueExact());
+    assertThat(receipt.get("evidence_sha256", String.class)).isEqualTo(original.sha256());
+    assertThat(receipt.get("binding_decision_id", UUID.class)).isEqualTo(decision);
+    assertThat(receipt.get("expires_at_ms", Long.class)).isEqualTo(expiresAt(original));
+    assertThat(receipt.get("committed_before_ms", Long.class))
+        .isPositive()
+        .isLessThan(expiresAt(original));
+    assertThat(receipt.get("finalization_xid", String.class))
+        .isEqualTo(operation(context, original).get("finalization_xid", String.class));
+    assertThat(receipt.get("confirmation_xid", String.class))
+        .isNotEqualTo(receipt.get("finalization_xid", String.class));
+    assertThat(
+            Objects.requireNonNull(
+                    context
+                        .dsl()
+                        .fetchOne(
+                            "SELECT ?::pg_lsn >= ?::pg_lsn AS covered",
+                            receipt.get("wal_flush_lsn", String.class),
+                            receipt.get("wal_insert_lsn", String.class)))
+                .get("covered", Boolean.class))
+        .isTrue();
+    // Recovery opens the real owner's fresh transaction and covers the independently committed
+    // receipt's WAL before returning the immutable DTO, without reconstructing any proof fields.
+    var recovered = syntheticReadPeer().call(() -> confirmationOwner.read(request));
+    assertThat(recovered.operation().state()).isEqualTo(State.COMMITTED);
+    assertThat(recovered.operation().evidence().canonicalJson())
+        .isEqualTo(original.canonicalJson());
+    assertThat(recovered.operation().evidence().sha256()).isEqualTo(original.sha256());
+    assertThat(recovered.operation().bindingDecisionId()).isEqualTo(decision);
+    assertThat(recovered.requestId()).isEqualTo(receipt.get("request_id", UUID.class));
+    assertThat(recovered.accountId()).isEqualTo(receipt.get("account_uuid", UUID.class));
+    assertThat(recovered.leaseId()).isEqualTo(receipt.get("lease_id", UUID.class));
+    assertThat(recovered.leaseFence()).isEqualTo(receipt.get("lease_fence", Long.class));
+    assertThat(recovered.confirmationVersion())
+        .isEqualTo(receipt.get("confirmation_version", Short.class));
+    assertThat(recovered.evidenceSha256()).isEqualTo(receipt.get("evidence_sha256", String.class));
+    assertThat(recovered.bindingDecisionId())
+        .isEqualTo(receipt.get("binding_decision_id", UUID.class));
+    assertThat(recovered.expiresAtMs()).isEqualTo(receipt.get("expires_at_ms", Long.class));
+    assertThat(recovered.committedBeforeMs())
+        .isEqualTo(receipt.get("committed_before_ms", Long.class));
+    assertThat(recovered.finalizationXid())
+        .isEqualTo(receipt.get("finalization_xid", String.class));
+    assertThat(recovered.confirmationXid())
+        .isEqualTo(receipt.get("confirmation_xid", String.class));
+    assertThat(recovered.walInsertLsn()).isEqualTo(receipt.get("wal_insert_lsn", String.class));
+    assertThat(recovered.walFlushLsn()).isEqualTo(receipt.get("wal_flush_lsn", String.class));
+    waitPastDeadline(context, original);
+    assertThat(tx(context, () -> confirm(context, original, decision))).isEqualTo(receipt);
+    assertThat(syntheticReadPeer().call(() -> confirmationOwner.read(request)))
+        .isEqualTo(recovered);
+    assertThat(storageSnapshot(context)).isEqualTo(unchanged);
+    var readOwner = new AccountGameplayAdmissionReadOwner(repository, transactionManager, "test");
+    assertFailedExactRead(readOwner, original);
+  }
+
+  @Test
+  void updateBeforeExpiryButPhysicalCommitAfterExpiryCannotCreateConfirmation() {
+    var context = context(null);
+    var original = pending(context, account(context), 1000);
+    var repository = new AccountGameplayAdmissionLeaseRepository(context.dsl());
+    UUID decision = UUID.randomUUID();
+    tx(
+        context,
+        () -> {
+          repository.recordCommitted(original, decision);
+          assertThat(databaseNow(context)).isLessThan(expiresAt(original));
+          waitPastDeadline(context, original);
+          return null;
+        });
+    assertThat(operation(context, original).get("status", String.class)).isEqualTo("COMMITTED");
+    assertThat(operation(context, original).get("finalization_xid", String.class)).isNotNull();
+    var unchanged = storageSnapshot(context);
+    assertThatThrownBy(() -> tx(context, () -> confirm(context, original, decision)))
+        .hasMessageContaining("original deadline expired");
+    assertThatThrownBy(() -> tx(context, () -> readConfirmation(context, original, decision)))
+        .hasMessageContaining("exact durable receipt required");
+    assertThat(
+            context.dsl().fetchCount(DSL.table("account_gameplay_admission_commit_confirmations")))
+        .isZero();
+    assertThat(storageSnapshot(context)).isEqualTo(unchanged);
+  }
+
+  @Test
+  void sameTransactionAndReleasedSubtransactionCannotConfirmOriginalFinalization() {
+    var context = context(null);
+    UUID account = account(context);
+    var repository = new AccountGameplayAdmissionLeaseRepository(context.dsl());
+    for (boolean subtransaction : List.of(false, true)) {
+      var original = pending(context, account);
+      UUID decision = UUID.randomUUID();
+      tx(
+          context,
+          () -> {
+            if (subtransaction) context.dsl().execute("SAVEPOINT original_finalization");
+            repository.recordCommitted(original, decision);
+            if (subtransaction) context.dsl().execute("RELEASE SAVEPOINT original_finalization");
+            var stamp = operation(context, original).get("finalization_xid", String.class);
+            assertThat(stamp)
+                .isEqualTo(
+                    Objects.requireNonNull(
+                            context.dsl().fetchOne("SELECT pg_current_xact_id()::text AS xid"))
+                        .get("xid", String.class));
+            assertDeniedInSavepoint(
+                context,
+                () -> confirm(context, original, decision),
+                "requires independent finalization commit");
+            return null;
+          });
+    }
+    assertThat(
+            context.dsl().fetchCount(DSL.table("account_gameplay_admission_commit_confirmations")))
+        .isZero();
+  }
+
+  @Test
+  void missingPendingRolledBackAbortedAndRetainedUnstampedCommitsStayUnproved() {
+    var context = context("89");
+    UUID account = account(context);
+    var repository = new AccountGameplayAdmissionLeaseRepository(context.dsl());
+    var retained = pending(context, account);
+    UUID decision = UUID.randomUUID();
+    tx(context, () -> repository.recordCommitted(retained, decision));
+    var retainedPending = pending(context, account);
+    var aborted = pending(context, account);
+    tx(context, () -> repository.recordAborted(aborted, null, UUID.randomUUID()));
+    migrate(context, null);
+    assertThat(operation(context, retained).get("finalization_xid", String.class)).isNull();
+    assertThat(operation(context, retainedPending).get("finalization_xid", String.class)).isNull();
+    assertThat(operation(context, aborted).get("finalization_xid", String.class)).isNull();
+    var rolledBack = pending(context, account);
+    assertThatThrownBy(
+            () ->
+                tx(
+                    context,
+                    () -> {
+                      repository.recordCommitted(rolledBack, decision);
+                      throw new IllegalStateException("roll back physical finalization");
+                    }))
+        .hasMessageContaining("roll back physical finalization");
+    assertThat(operation(context, rolledBack).get("status", String.class)).isEqualTo("PENDING");
+    assertThat(operation(context, rolledBack).get("finalization_xid", String.class)).isNull();
+    var unchanged = storageSnapshot(context);
+    for (var unproved : List.of(retained, retainedPending, aborted, rolledBack)) {
+      assertThatThrownBy(() -> tx(context, () -> confirm(context, unproved, decision)))
+          .hasMessageContaining("exact committed binding required");
+      assertThatThrownBy(() -> tx(context, () -> readConfirmation(context, unproved, decision)))
+          .hasMessageContaining("exact durable receipt required");
+    }
+    assertThatThrownBy(
+            () ->
+                tx(
+                    context,
+                    () ->
+                        context
+                            .dsl()
+                            .fetchOne(
+                                "SELECT * FROM account_gameplay_admission_confirm_committed(?, ?, ?)",
+                                UUID.randomUUID(),
+                                retained.sha256(),
+                                decision)))
+        .hasMessageContaining("operation missing");
+    assertThat(
+            context.dsl().fetchCount(DSL.table("account_gameplay_admission_commit_confirmations")))
+        .isZero();
+    assertThat(storageSnapshot(context)).isEqualTo(unchanged);
+  }
+
+  @Test
+  void confirmationRejectsChangedBindingsAndCallerProofAndRemainsImmutable() {
+    var context = context(null);
+    UUID account = account(context);
+    var original = pending(context, account);
+    var repository = new AccountGameplayAdmissionLeaseRepository(context.dsl());
+    UUID decision = UUID.randomUUID();
+    UUID request = requestId(original);
+    assertThatThrownBy(
+            () ->
+                tx(
+                    context,
+                    () ->
+                        context
+                            .dsl()
+                            .execute(
+                                "UPDATE account_gameplay_admission_lease_operations SET status = 'COMMITTED', binding_decision_id = ?, finalization_xid = '1' WHERE request_id = ?",
+                                decision,
+                                request)))
+        .hasMessageContaining("finalization transaction is database stamped");
+    tx(context, () -> repository.recordCommitted(original, decision));
+    var unchanged = storageSnapshot(context);
+    assertThatThrownBy(
+            () ->
+                tx(
+                    context,
+                    () ->
+                        context
+                            .dsl()
+                            .fetchOne(
+                                "SELECT * FROM account_gameplay_admission_confirm_committed(?, ?, ?)",
+                                request,
+                                "b".repeat(64),
+                                decision)))
+        .hasMessageContaining("exact committed binding required");
+    assertThatThrownBy(() -> tx(context, () -> confirm(context, original, UUID.randomUUID())))
+        .hasMessageContaining("exact committed binding required");
+    // Every proof/identity field is database-derived even if supplied values look plausible.
+    for (String assignment :
+        List.of(
+            "account_uuid = '" + account + "'::uuid",
+            "lease_id = '" + original.carrier().get("leaseId") + "'::uuid",
+            "lease_fence = 1",
+            "expires_at_ms = " + expiresAt(original),
+            "finalization_xid = '1'",
+            "wal_insert_lsn = '0/1'",
+            "wal_flush_lsn = '0/1'",
+            "committed_before_ms = 1",
+            "confirmation_xid = '1'")) {
+      String[] fieldAndValue = assignment.split(" = ", 2);
+      assertThatThrownBy(
+              () ->
+                  tx(
+                      context,
+                      () ->
+                          context
+                              .dsl()
+                              .execute(
+                                  "INSERT INTO account_gameplay_admission_commit_confirmations(request_id, evidence_sha256, binding_decision_id, "
+                                      + fieldAndValue[0]
+                                      + ") VALUES (?, ?, ?, "
+                                      + fieldAndValue[1]
+                                      + ")",
+                                  request,
+                                  original.sha256(),
+                                  decision)))
+          .hasMessageContaining("proof is database derived");
+    }
+    var receipt = tx(context, () -> confirm(context, original, decision));
+    for (String mutation :
+        List.of(
+            "UPDATE account_gameplay_admission_commit_confirmations SET committed_before_ms = 1",
+            "UPDATE account_gameplay_admission_commit_confirmations SET expires_at_ms = expires_at_ms + 1",
+            "UPDATE account_gameplay_admission_commit_confirmations SET evidence_sha256 = '"
+                + "b".repeat(64)
+                + "'",
+            "DELETE FROM account_gameplay_admission_commit_confirmations",
+            "TRUNCATE account_gameplay_admission_commit_confirmations")) {
+      assertThatThrownBy(() -> tx(context, () -> context.dsl().execute(mutation)))
+          .hasMessageContaining("confirmation is immutable");
+    }
+    assertThatThrownBy(
+            () -> tx(context, () -> readConfirmation(context, original, UUID.randomUUID())))
+        .hasMessageContaining("exact durable receipt required");
+    assertThatThrownBy(
+            () ->
+                tx(
+                    context,
+                    () ->
+                        context
+                            .dsl()
+                            .execute(
+                                "UPDATE account_gameplay_admission_lease_operations SET finalization_xid = '1' WHERE request_id = ?",
+                                request)))
+        .hasMessageContaining("finalization transaction is database stamped");
+    assertThat(tx(context, () -> readConfirmation(context, original, decision))).isEqualTo(receipt);
+    assertThat(storageSnapshot(context)).isEqualTo(unchanged);
+  }
+
+  @Test
+  void sameTransactionReceiptReadAndRolledBackConfirmationCannotProveDurability() {
+    var context = context(null);
+    var original = pending(context, account(context));
+    var repository = new AccountGameplayAdmissionLeaseRepository(context.dsl());
+    UUID decision = UUID.randomUUID();
+    tx(context, () -> repository.recordCommitted(original, decision));
+    assertThatThrownBy(
+            () ->
+                tx(
+                    context,
+                    () -> {
+                      confirm(context, original, decision);
+                      assertDeniedInSavepoint(
+                          context,
+                          () -> readConfirmation(context, original, decision),
+                          "requires independent receipt commit");
+                      throw new IllegalStateException("roll back confirmation commit");
+                    }))
+        .hasMessageContaining("roll back confirmation commit");
+    assertThat(
+            context.dsl().fetchCount(DSL.table("account_gameplay_admission_commit_confirmations")))
+        .isZero();
+    assertThatThrownBy(() -> tx(context, () -> readConfirmation(context, original, decision)))
+        .hasMessageContaining("exact durable receipt required");
+    var receipt = tx(context, () -> confirm(context, original, decision));
+    assertThat(tx(context, () -> readConfirmation(context, original, decision))).isEqualTo(receipt);
+  }
+
+  @Test
+  void concurrentConfirmationsRetainOneOriginalReceiptWithoutAdvancingSources() throws Exception {
+    var context = context(null);
+    var original = pending(context, account(context));
+    var repository = new AccountGameplayAdmissionLeaseRepository(context.dsl());
+    UUID decision = UUID.randomUUID();
+    tx(context, () -> repository.recordCommitted(original, decision));
+    var unchanged = storageSnapshot(context);
+    var start = new CountDownLatch(1);
+    Callable<Record> duplicate =
+        () -> {
+          if (!start.await(10, TimeUnit.SECONDS)) throw new IllegalStateException("start timeout");
+          return retrySerialization(() -> tx(context, () -> confirm(context, original, decision)));
+        };
+    try (var executor = Executors.newFixedThreadPool(2)) {
+      var left = executor.submit(duplicate);
+      var right = executor.submit(duplicate);
+      start.countDown();
+      assertThat(left.get(30, TimeUnit.SECONDS)).isEqualTo(right.get(30, TimeUnit.SECONDS));
+    }
+    assertThat(
+            context.dsl().fetchCount(DSL.table("account_gameplay_admission_commit_confirmations")))
+        .isEqualTo(1);
+    var retained = tx(context, () -> confirm(context, original, decision));
+    assertThat(tx(context, () -> readConfirmation(context, original, decision)))
+        .isEqualTo(retained);
+    assertThat(storageSnapshot(context)).isEqualTo(unchanged);
+  }
+
+  private static Record confirm(
+      Context context, AccountGameplayAdmissionLeaseEvidence original, UUID decision) {
+    return Objects.requireNonNull(
+        context
+            .dsl()
+            .fetchOne(
+                "SELECT * FROM account_gameplay_admission_confirm_committed(?, ?, ?)",
+                requestId(original),
+                original.sha256(),
+                decision));
+  }
+
+  private static Record readConfirmation(
+      Context context, AccountGameplayAdmissionLeaseEvidence original, UUID decision) {
+    return Objects.requireNonNull(
+        context
+            .dsl()
+            .fetchOne(
+                "SELECT * FROM account_gameplay_admission_read_commit_confirmation(?, ?, ?)",
+                requestId(original),
+                original.sha256(),
+                decision));
+  }
+
+  private static void assertDeniedInSavepoint(
+      Context context, Supplier<?> action, String expectedMessage) {
+    context.dsl().execute("SAVEPOINT denied_confirmation");
+    try {
+      assertThatThrownBy(action::get)
+          .hasMessageContaining(expectedMessage)
+          .satisfies(
+              failure -> {
+                Throwable cause = failure;
+                while (cause != null && !(cause instanceof java.sql.SQLException))
+                  cause = cause.getCause();
+                assertThat(cause).isInstanceOf(java.sql.SQLException.class);
+                assertThat(((java.sql.SQLException) cause).getSQLState()).isEqualTo("23514");
+              });
+    } finally {
+      context.dsl().execute("ROLLBACK TO SAVEPOINT denied_confirmation");
+      context.dsl().execute("RELEASE SAVEPOINT denied_confirmation");
+    }
+  }
+
+  private static Record operation(Context context, AccountGameplayAdmissionLeaseEvidence original) {
+    return Objects.requireNonNull(
+        context
+            .dsl()
+            .fetchOne(
+                "SELECT * FROM account_gameplay_admission_lease_operations WHERE request_id = ?",
+                requestId(original)));
+  }
+
+  private static Map<String, List<Map<String, Object>>> storageSnapshot(Context context) {
+    Map<String, List<Map<String, Object>>> snapshot = new LinkedHashMap<>();
+    for (String table :
+        List.of(
+            "accounts",
+            "account_gameplay_admission_lease_fences",
+            "account_gameplay_admission_lease_allocations",
+            "account_gameplay_admission_lease_operations",
+            "account_authority_generations",
+            "account_authority_issuance_fences",
+            "account_authority_source_records",
+            "account_authority_outbox_streams",
+            "account_authority_outbox_events")) {
+      snapshot.put(
+          table,
+          context.dsl().fetch("SELECT * FROM " + table + " ORDER BY 1").stream()
+              .map(Record::intoMap)
+              .toList());
+    }
+    return snapshot;
+  }
+
+  private static UUID requestId(AccountGameplayAdmissionLeaseEvidence original) {
+    return UUID.fromString((String) original.carrier().get("requestId"));
+  }
+
+  private static long expiresAt(AccountGameplayAdmissionLeaseEvidence original) {
+    return Long.parseLong((String) original.carrier().get("expiresAt"));
+  }
+
+  private static long databaseNow(Context context) {
+    return Objects.requireNonNull(
+            context
+                .dsl()
+                .fetchOne(
+                    "SELECT ceil(extract(epoch FROM clock_timestamp()) * 1000)::bigint AS now_ms"))
+        .get("now_ms", Long.class);
+  }
+
+  private static void waitPastDeadline(
+      Context context, AccountGameplayAdmissionLeaseEvidence original) {
+    context
+        .dsl()
+        .fetchOne(
+            "SELECT pg_sleep(GREATEST(0, (? - ceil(extract(epoch FROM clock_timestamp()) * 1000) + 50) / 1000.0))",
+            expiresAt(original));
+    assertThat(databaseNow(context)).isGreaterThanOrEqualTo(expiresAt(original));
+  }
+
+  private static AccountGameplayAdmissionLeaseEvidence pending(
+      Context context, UUID account, long lifetimeMs) {
+    var repository = new AccountGameplayAdmissionLeaseRepository(context.dsl());
+    return tx(
+        context,
+        () -> {
+          var allocation = repository.allocate(account, UUID.randomUUID(), UUID.randomUUID());
+          var carrier = new LinkedHashMap<>(evidence(allocation).carrier());
+          carrier.put(
+              "expiresAt",
+              Long.toString(Long.parseLong((String) carrier.get("evaluatedAt")) + lifetimeMs));
+          var evidence = AccountGameplayAdmissionLeaseEvidence.fromCarrier(carrier);
+          repository.beginPending(evidence);
+          return evidence;
+        });
   }
 
   private static <T> T retrySerialization(Supplier<T> action) {
