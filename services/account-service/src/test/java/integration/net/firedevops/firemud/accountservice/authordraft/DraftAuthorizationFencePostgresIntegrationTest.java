@@ -1196,8 +1196,13 @@ class DraftAuthorizationFencePostgresIntegrationTest {
     assertThat(
             context
                 .dsl()
+                .fetch("SELECT version, checksum FROM flyway_schema_history WHERE version = '81'"))
+        .hasSize(1);
+    assertThat(
+            context
+                .dsl()
                 .fetch(
-                    "SELECT version, checksum FROM flyway_schema_history WHERE version <> '81' ORDER BY installed_rank"))
+                    "SELECT version, checksum FROM flyway_schema_history WHERE version IS DISTINCT FROM '81' ORDER BY installed_rank"))
         .isEqualTo(checksums);
     assertThat(tx(context, () -> context.repository().read(b)).binding())
         .containsExactly(b.canonicalBytes());
