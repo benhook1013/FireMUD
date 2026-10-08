@@ -57,11 +57,7 @@ public class PublishedReleaseBundleServiceImpl implements PublishedReleaseBundle
       String generationConfigRevision,
       List<PublishParticipantDigestDto> participantDigests) {
     return createBundle(
-        version,
-        publishWorkflowId,
-        exportedManifest,
-        generationConfigRevision,
-        participantDigests);
+        version, publishWorkflowId, exportedManifest, generationConfigRevision, participantDigests);
   }
 
   private PublishedReleaseBundleDto createBundle(
@@ -185,8 +181,7 @@ public class PublishedReleaseBundleServiceImpl implements PublishedReleaseBundle
         json, objectMapper.getTypeFactory().constructCollectionType(List.class, String.class));
   }
 
-  private String serializeParticipantDigests(
-      List<PublishParticipantDigestDto> participantDigests) {
+  private String serializeParticipantDigests(List<PublishParticipantDigestDto> participantDigests) {
     return objectMapper.writeValueAsString(
         participantDigests == null ? List.of() : List.copyOf(participantDigests));
   }
