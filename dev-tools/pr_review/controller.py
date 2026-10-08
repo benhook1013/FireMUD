@@ -6338,7 +6338,12 @@ class ReviewController:
                 return True
         return False
 
-    def status_for_pr(self, pr: int) -> dict[str, Any]:
+    def status_for_pr(
+        self,
+        pr: int,
+        *,
+        conversation_payload: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
         """Deeply verify one selected PR and its configured ancestors only."""
 
         state = self._state()
@@ -6358,6 +6363,10 @@ class ReviewController:
                 "routes_out": [item.to_dict() for item in state.routes if item.source_pr == pr],
             }
         scoped = dataclasses.replace(state, ordered_prs=state.ordered_prs[: index + 1])
+        if conversation_payload is not None:
+            prefetch_payload = getattr(self._evidence_provider, "prefetch_payload", None)
+            if callable(prefetch_payload):
+                prefetch_payload(pr, conversation_payload)
         live_identities, _ = self._batch_live_pull_requests(self._require_github(), scoped.ordered_prs)
         report = self._status_from_state(
             scoped,

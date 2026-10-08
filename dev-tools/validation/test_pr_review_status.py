@@ -442,6 +442,116 @@ class StatusTest(unittest.TestCase):
                         with self.assertRaisesRegex(TypeError, expected):
                             github.load_pull_request(path, "owner/repo", 2838)
 
+    def test_live_status_captures_complete_unenriched_paginated_payload(self) -> None:
+        payload = github_payload()
+        pull_request = payload["data"]["repository"]["pullRequest"]
+        metadata = {
+            "number": pull_request["number"],
+            "title": pull_request["title"],
+            "state": "OPEN",
+            "headRefName": pull_request["headRefName"],
+            "headRefOid": HEAD,
+            "headRepository": {"nameWithOwner": "owner/repo"},
+            "headRepositoryOwner": {"login": "owner"},
+            "baseRefName": "develop",
+            "baseRefOid": BASE,
+            "changedFiles": 4,
+            "body": pull_request["body"],
+            "statusCheckRollup": pull_request["statusCheckRollup"],
+            "mergeable": "MERGEABLE",
+            "mergeStateStatus": "CLEAN",
+            "reviewDecision": "",
+            "isDraft": False,
+            "url": "https://github.test/pull/2838",
+            "mergedAt": None,
+        }
+        required_checks = pull_request["required_status_checks"]
+        check_inventory = pull_request["statusCheckRollup"]
+        for field in (
+            "title",
+            "headRefName",
+            "body",
+            "statusCheckRollup",
+            "mergeable",
+            "mergeStateStatus",
+            "reviewDecision",
+            "isDraft",
+            "url",
+            "required_status_checks",
+        ):
+            pull_request.pop(field, None)
+        pull_request["comments"] = {
+            "nodes": [
+                {
+                    "id": "comment-1",
+                    "databaseId": 1,
+                    "author": {"login": "ben"},
+                    "body": "first page",
+                    "createdAt": "2026-09-23T00:00:00Z",
+                    "updatedAt": "2026-09-23T00:00:00Z",
+                    "url": "https://github.test/comments/1",
+                }
+            ],
+            "pageInfo": {"hasNextPage": True, "endCursor": "comments-page-1"},
+        }
+        for connection in ("reviewThreads", "reviews"):
+            pull_request[connection]["pageInfo"] = {"hasNextPage": False, "endCursor": None}
+        for thread in pull_request["reviewThreads"]["nodes"]:
+            thread["comments"]["pageInfo"] = {"hasNextPage": False, "endCursor": None}
+        continuation = {
+            "data": {
+                "repository": {
+                    "pullRequest": {
+                        "comments": {
+                            "nodes": [
+                                {
+                                    "id": "comment-2",
+                                    "databaseId": 2,
+                                    "author": {"login": "ben"},
+                                    "body": "second page",
+                                    "createdAt": "2026-09-23T00:01:00Z",
+                                    "updatedAt": "2026-09-23T00:01:00Z",
+                                    "url": "https://github.test/comments/2",
+                                }
+                            ],
+                            "pageInfo": {"hasNextPage": False, "endCursor": None},
+                        }
+                    }
+                }
+            }
+        }
+        observed: list[dict] = []
+
+        def graphql(query: str, variables: dict) -> dict:
+            if "after" in variables:
+                self.assertEqual(variables["after"], "comments-page-1")
+                self.assertIn("comments(first:100, after:$after)", query)
+                return continuation
+            return payload
+
+        with (
+            patch.object(github, "run_gh_query", side_effect=graphql) as query,
+            patch.object(github, "fetch_pr_metadata", return_value=metadata),
+            patch.object(status, "_loc_status", return_value={"status": "fresh", "merge_base_checked": True}),
+        ):
+            report = status.build_report(
+                "owner/repo",
+                2838,
+                checkpoint_payload=checkpoint_payload(),
+                required_status_checks_payload=required_checks,
+                check_inventory_payload=check_inventory,
+                raw_payload_observer=observed.append,
+            )
+
+        self.assertEqual(query.call_count, 2)
+        self.assertEqual(len(observed), 1)
+        self.assertIs(observed[0], payload)
+        captured_pull = observed[0]["data"]["repository"]["pullRequest"]
+        self.assertEqual([item["id"] for item in captured_pull["comments"]["nodes"]], ["comment-1", "comment-2"])
+        self.assertNotIn("title", captured_pull)
+        self.assertNotIn("mergeStateStatus", captured_pull)
+        self.assertEqual(report["pull_request"]["title"], metadata["title"])
+
     def test_identity_batch_names_every_configured_pr_without_repository_list_limit(self) -> None:
         numbers = (12, 931)
 
@@ -568,6 +678,97 @@ class StatusTest(unittest.TestCase):
         self.assertEqual(controller.selected, [6])
         self.assertEqual(controller.full_status_calls, 0)
         self.assertEqual([item["pr"] for item in result["review_stack"]["prs"]], list(range(1, 7)))
+
+    def test_selected_status_seeds_each_command_with_its_fresh_raw_conversation(self) -> None:
+        class FakeController:
+            repository = "owner/repo"
+
+            def __init__(self, selected: dict) -> None:
+                self.store = SimpleNamespace(load=lambda: SimpleNamespace(summary_dispositions=()))
+                self.selected = selected
+                self.conversation_payloads: list[dict] = []
+
+            def status_for_pr(self, number: int, *, conversation_payload: dict | None = None) -> dict:
+                self.conversation_payloads.append(conversation_payload)
+                return {
+                    "prs": [
+                        {
+                            "pr": number,
+                            "head": self.selected["head"],
+                            "base": self.selected["base"],
+                            "pr_base_oid": self.selected["base_oid"],
+                            "reconciliation": "COHERENT",
+                            "channels": {"hosted": "COMPLETE", "cli": "COMPLETE"},
+                            "allocations": {
+                                "hosted": {"status": "HANDED_OFF", "reason": ""},
+                                "cli": {"status": "HANDED_OFF", "reason": ""},
+                            },
+                            "incoming_routes": [],
+                            "routes_out": [],
+                        }
+                    ]
+                }
+
+        def conversation(head: str, base: str, base_oid: str) -> dict:
+            return {
+                "data": {
+                    "repository": {
+                        "pullRequest": {
+                            "number": 2838,
+                            "headRefOid": head,
+                            "baseRefName": base,
+                            "baseRefOid": base_oid,
+                            "comments": {"nodes": [{"id": head}], "complete": True},
+                        }
+                    }
+                }
+            }
+
+        selected = [
+            {"head": HEAD, "base": "develop", "base_oid": BASE},
+            {"head": "e" * 40, "base": "release", "base_oid": "f" * 40},
+        ]
+        payloads = [conversation(item["head"], item["base"], item["base_oid"]) for item in selected]
+        controllers = [FakeController(item) for item in selected]
+        next_payload = iter(payloads)
+
+        def report_for(
+            pr: int,
+            *,
+            raw_payload_observer,
+            **_kwargs,
+        ) -> dict:
+            payload = next(next_payload)
+            raw_payload_observer(payload)
+            pull = payload["data"]["repository"]["pullRequest"]
+            return {
+                "pr_number": pr,
+                "pull_request": {
+                    "headRefOid": pull["headRefOid"],
+                    "baseRefName": pull["baseRefName"],
+                    "baseRefOid": pull["baseRefOid"],
+                },
+                "reasons": [],
+                "ready": True,
+                "verdict": "READY",
+                "mergeability": {"clean": True, "diagnosis": "READY"},
+            }
+
+        args = cli._parser().parse_args(["status", "--pr", "2838", "--json"])
+        with (
+            patch.object(cli, "_controller", side_effect=[(controllers[0], None), (controllers[1], None)]),
+            patch.object(status, "status", side_effect=report_for),
+            patch.object(cli, "_read_record_incoming_routes", return_value=([], {"status": "available"})),
+        ):
+            first, first_exit = cli._dispatch(args)
+            second, second_exit = cli._dispatch(args)
+
+        self.assertEqual((first_exit, second_exit), (0, 0))
+        self.assertTrue(first["ready"])
+        self.assertTrue(second["ready"])
+        self.assertIs(controllers[0].conversation_payloads[0], payloads[0])
+        self.assertIs(controllers[1].conversation_payloads[0], payloads[1])
+        self.assertIsNot(controllers[0].conversation_payloads[0], controllers[1].conversation_payloads[0])
 
     def test_live_comment_shape_is_converted_to_historical_checkpoint_evidence(self) -> None:
         payload = github_payload()
@@ -1260,15 +1461,19 @@ class StatusTest(unittest.TestCase):
             "verdict": "READY",
             "mergeability": {"clean": True, "diagnosis": "READY"},
         }
-        for stack_head, stack_pr_base_oid in (("e" * 40, BASE), (HEAD, "f" * 40)):
-            with self.subTest(head=stack_head, pr_base_oid=stack_pr_base_oid):
+        for stack_head, stack_base, stack_pr_base_oid in (
+            ("e" * 40, "develop", BASE),
+            (HEAD, "release", BASE),
+            (HEAD, "develop", "f" * 40),
+        ):
+            with self.subTest(head=stack_head, base=stack_base, pr_base_oid=stack_pr_base_oid):
                 controller = Mock()
                 controller.status.return_value = {
                     "prs": [
                         {
                             "pr": 2838,
                             "head": stack_head,
-                            "base": "develop",
+                            "base": stack_base,
                             "parent_head": BASE,
                             "pr_base_oid": stack_pr_base_oid,
                             "reconciliation": "COHERENT",

@@ -8737,6 +8737,8 @@ class ControllerTests(unittest.TestCase):
         evidence.history_reads.clear()
         batch_calls = self._enable_batch_status(controller, values)
         pull_calls = []
+        seeded_payloads = []
+        controller._evidence_provider.prefetch_payload = lambda pr, payload: seeded_payloads.append((pr, payload))
         original = controller.github.pull_request
 
         def pull(number):
@@ -8745,9 +8747,11 @@ class ControllerTests(unittest.TestCase):
 
         controller.github.pull_request = pull
 
-        report = controller.status_for_pr(6)
+        conversation_payload = {"data": {"repository": {"pullRequest": {"number": 6}}}}
+        report = controller.status_for_pr(6, conversation_payload=conversation_payload)
 
         self.assertEqual([item["pr"] for item in report["prs"]], [1, 2, 3, 4, 5, 6])
+        self.assertEqual(seeded_payloads, [(6, conversation_payload)])
         self.assertEqual(pull_calls, [6])
         self.assertEqual(batch_calls, [(1, 2, 3, 4, 5, 6)])
         self.assertEqual(report["prs"], expected["prs"])

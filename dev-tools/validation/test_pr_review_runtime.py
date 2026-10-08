@@ -471,7 +471,7 @@ class RuntimeTest(unittest.TestCase):
             with self.subTest(channel=channel), tempfile.TemporaryDirectory() as directory:
                 other = "cli" if channel == "hosted" else "hosted"
                 observer = LiveEvidence("owner/repo", LiveGitHub("owner/repo"))
-                observer._payloads[42] = {"stale": True}
+                observer.prefetch_payload(42, {"stale": True})
                 observer._histories[(42, channel)] = [{"checkpoint": "stale-selection"}]
                 observer._histories[(42, other)] = [{"checkpoint": "other-channel"}]
                 observer._records_histories[42] = {"stale": True}
@@ -490,6 +490,26 @@ class RuntimeTest(unittest.TestCase):
                 self.assertEqual(observer._histories[(42, other)], [{"checkpoint": "other-channel"}])
                 self.assertEqual(observer._payloads[99], {"unrelated": True})
                 self.assertNotIn(42, observer._records_histories)
+
+    def test_selected_status_payload_seed_replaces_only_its_derived_operation_cache(self) -> None:
+        observer = LiveEvidence("owner/repo", LiveGitHub("owner/repo"))
+        payload = {"data": {"repository": {"pullRequest": {"number": 42}}}}
+        observer._payloads[99] = {"unrelated": True}
+        observer._histories[(42, "hosted")] = [{"stale": True}]
+        observer._histories[(42, "cli")] = [{"stale": True}]
+        observer._histories[(99, "hosted")] = [{"unrelated": True}]
+        observer._records_histories[42] = {"stale": True}
+        observer._records_histories[99] = {"unrelated": True}
+
+        observer.prefetch_payload(42, payload)
+
+        self.assertIs(observer._payloads[42], payload)
+        self.assertNotIn((42, "hosted"), observer._histories)
+        self.assertNotIn((42, "cli"), observer._histories)
+        self.assertNotIn(42, observer._records_histories)
+        self.assertEqual(observer._payloads[99], {"unrelated": True})
+        self.assertEqual(observer._histories[(99, "hosted")], [{"unrelated": True}])
+        self.assertEqual(observer._records_histories[99], {"unrelated": True})
 
     def test_hosted_source_resolution_retries_transient_history_failure_and_casefolds_repository(self) -> None:
         origin = {
@@ -896,7 +916,7 @@ class RuntimeTest(unittest.TestCase):
                 (42, (), {"child_head": HEAD, "live_base_ref": "develop", "live_base_tip": BASE}),
             ),
         ):
-            observer._payloads[42] = {"stale": True}
+            observer.prefetch_payload(42, {"stale": True})
             observer._histories[(42, "hosted")] = [{"stale": True}]
             observer._histories[(42, "cli")] = [{"stale": True}]
             observer._records_histories[42] = {"stale": True}
@@ -916,7 +936,7 @@ class RuntimeTest(unittest.TestCase):
         for stop_audit in (False, True):
             with self.subTest(stop_audit=stop_audit):
                 observer = LiveEvidence("owner/repo", LiveGitHub("owner/repo"))
-                observer._payloads[42] = {"stale": True}
+                observer.prefetch_payload(42, {"stale": True})
                 fresh_payload = self._payload()
                 malformed_payload = self._payload(threads=[{"isResolved": "unknown"}])
                 if stop_audit:
@@ -2210,7 +2230,7 @@ class RuntimeTest(unittest.TestCase):
             controller = default_controller("owner/repo")
         self.assertEqual(controller.default_base_ref, "main")
 
-    def test_live_github_projects_exact_metadata_and_paginated_files(self) -> None:
+    def test_live_github_projects_exact_fresh_identity_and_paginated_files(self) -> None:
         metadata = {
             "number": 42,
             "state": "OPEN",
@@ -2224,7 +2244,7 @@ class RuntimeTest(unittest.TestCase):
             "mergedAt": None,
         }
         with (
-            patch.object(github, "fetch_pr_metadata", return_value=metadata),
+            patch.object(github, "fetch_pr_identity", return_value=metadata),
             patch.object(
                 github,
                 "fetch_api_endpoint",
@@ -2246,13 +2266,12 @@ class RuntimeTest(unittest.TestCase):
             "baseRefOid": BASE,
             "headRefName": "feature",
             "headRefOid": HEAD,
-            "headRepository": {"name": "repo"},
-            "headRepositoryOwner": {"login": "owner"},
+            "headRepository": {"name": "repo", "owner": {"login": "owner"}},
             "changedFiles": 0,
             "mergeable": "MERGEABLE",
             "mergedAt": None,
         }
-        with patch.object(github, "fetch_pr_metadata", return_value=metadata):
+        with patch.object(github, "fetch_pr_identity", return_value=metadata):
             self.assertEqual(LiveGitHub("owner/repo").pull_request(42).head_repository, "owner/repo")
 
     def test_live_github_rejects_malformed_present_head_repository_identity(self) -> None:
@@ -2270,7 +2289,7 @@ class RuntimeTest(unittest.TestCase):
             "mergedAt": None,
         }
         with (
-            patch.object(github, "fetch_pr_metadata", return_value=metadata),
+            patch.object(github, "fetch_pr_identity", return_value=metadata),
             self.assertRaisesRegex(ReviewRunnerError, "head repository identity is malformed"),
         ):
             LiveGitHub("owner/repo").pull_request(42)
@@ -2289,7 +2308,7 @@ class RuntimeTest(unittest.TestCase):
             "mergedAt": None,
         }
         with (
-            patch.object(github, "fetch_pr_metadata", return_value=metadata),
+            patch.object(github, "fetch_pr_identity", return_value=metadata),
             self.assertRaisesRegex(ReviewRunnerError, "head repository identity is malformed"),
         ):
             LiveGitHub("owner/repo").pull_request(42)
@@ -2304,6 +2323,81 @@ class RuntimeTest(unittest.TestCase):
 
         self.assertEqual(value["headRepository"]["nameWithOwner"], "owner/repo")
         self.assertIn("headRepository", run.call_args.args[0][-1])
+        metadata_fields = run.call_args.args[0][-1]
+        self.assertIn("body", metadata_fields)
+        self.assertIn("statusCheckRollup", metadata_fields)
+        self.assertIn("mergeStateStatus", metadata_fields)
+
+    def test_fetch_pr_identity_requests_only_live_snapshot_fields_and_rejects_bad_identity(self) -> None:
+        pull_request = {
+            "number": 42,
+            "state": "OPEN",
+            "baseRefName": "develop",
+            "baseRefOid": BASE,
+            "headRefName": "feature",
+            "headRefOid": HEAD,
+            "headRepository": {
+                "nameWithOwner": "owner/repo",
+                "name": "repo",
+                "owner": {"login": "owner"},
+            },
+            "changedFiles": 2,
+            "mergeable": "MERGEABLE",
+            "mergedAt": None,
+        }
+        payload = {"data": {"repository": {"pullRequest": pull_request}}}
+        with patch.object(github, "run_gh_query", return_value=payload) as query:
+            identity = github.fetch_pr_identity("owner/repo", 42)
+
+        self.assertEqual(identity, pull_request)
+        self.assertEqual(query.call_args.args[1], {"owner": "owner", "repo": "repo", "number": 42})
+        query_text = query.call_args.args[0]
+        for field in (
+            "number",
+            "state",
+            "baseRefName",
+            "baseRefOid",
+            "headRefName",
+            "headRefOid",
+            "headRepository",
+            "changedFiles",
+            "mergeable",
+            "mergedAt",
+        ):
+            self.assertIn(field, query_text)
+        for field in (
+            "title",
+            "body",
+            "statusCheckRollup",
+            "mergeStateStatus",
+            "reviewDecision",
+            "comments(",
+            "reviews(",
+        ):
+            self.assertNotIn(field, query_text)
+
+        for invalid_payload, expected_exception, expected_error in (
+            ({"data": {"repository": {"pullRequest": None}}}, TypeError, "no pull request"),
+            (
+                {"data": {"repository": {"pullRequest": {**pull_request, "number": 43}}}},
+                RuntimeError,
+                "no matching pull-request identity",
+            ),
+        ):
+            with (
+                self.subTest(expected_error=expected_error),
+                patch.object(github, "run_gh_query", return_value=invalid_payload),
+                self.assertRaisesRegex(expected_exception, expected_error),
+            ):
+                github.fetch_pr_identity("owner/repo", 42)
+
+        malformed = dict(pull_request)
+        del malformed["headRefOid"]
+        with (
+            patch.object(github, "fetch_pr_identity", return_value=malformed),
+            self.assertRaisesRegex(ReviewRunnerError, "pull-request identity is malformed"),
+        ):
+            LiveGitHub("owner/repo").pull_request(42)
 
     def test_historical_cli_capture_remains_attributable(self) -> None:
         body = f"CLI: 1 found / 0 accepted · `{HEAD[:12]}` · 1 files\n<!-- firemud-cli-run: run.Legacy -->"
