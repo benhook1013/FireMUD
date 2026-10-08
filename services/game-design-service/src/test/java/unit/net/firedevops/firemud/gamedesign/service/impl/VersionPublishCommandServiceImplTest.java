@@ -144,15 +144,12 @@ class VersionPublishCommandServiceImplTest {
   }
 
   @Test
-  void publishFullVersionRequiresOriginalSelectedDraft() {
+  void freshLegacyFullVersionRequestIsDeniedByCanonicalPublicationGuard() {
     String workflowId = "publish:tenant-1:publish-request:workflow-1";
 
-    IllegalStateException thrown =
-        assertThrows(
-            IllegalStateException.class,
-            () -> service.publishFullVersion("tenant-1", "notes", "workflow-1", workflowId));
-
-    assertTrue(thrown.getMessage().startsWith("PUBLISH_SELECTION_REQUIRED"));
+    assertThrows(
+        VersionPublishCommandServiceImpl.FullVersionPublicationUnavailableException.class,
+        () -> service.publishFullVersion("tenant-1", "notes", "workflow-1", workflowId));
     verify(authoredSelections, never()).reserve(any(PublishIntent.class));
     verify(publishAttemptService, never())
         .createFullVersionAttempt(any(VersionDto.class), any(String.class), any(String.class));
@@ -194,21 +191,18 @@ class VersionPublishCommandServiceImplTest {
   }
 
   @Test
-  void legacyPendingAttemptCannotBePromotedWithoutOriginalSelection() {
+  void legacyPendingAttemptIsDeniedBeforeReadbackOrMutation() {
     String workflowId = "publish:tenant-1:publish-request:workflow-1";
     PublishAttempt attempt = fullAttempt(PublishAttemptStatus.PENDING, 10L, 1, workflowId);
     attempt.setRequestDigest(null);
     when(publishAttemptRepository.findByPublishWorkflowId(workflowId))
         .thenReturn(Optional.of(attempt));
 
-    IllegalStateException thrown =
-        assertThrows(
-            IllegalStateException.class,
-            () ->
-                service.reconcileFullVersionPublish(
-                    new PublishWorkflowRequest("tenant-1", "notes", "workflow-1", workflowId)));
-
-    assertTrue(thrown.getMessage().startsWith("PUBLISH_SELECTION_REQUIRED"));
+    assertThrows(
+        VersionPublishCommandServiceImpl.FullVersionPublicationUnavailableException.class,
+        () ->
+            service.reconcileFullVersionPublish(
+                new PublishWorkflowRequest("tenant-1", "notes", "workflow-1", workflowId)));
     assertEquals(PublishAttemptStatus.PENDING, attempt.getStatus());
     verify(publishAttemptRepository, never()).save(any(PublishAttempt.class));
     verify(authoredSelections, never()).reserve(any(PublishIntent.class));
@@ -238,11 +232,9 @@ class VersionPublishCommandServiceImplTest {
     when(publishAttemptRepository.findByPublishWorkflowId(request.publishWorkflowId()))
         .thenReturn(Optional.empty());
 
-    IllegalStateException thrown =
-        assertThrows(
-            IllegalStateException.class, () -> service.reconcileFullVersionPublish(request));
-
-    assertTrue(thrown.getMessage().startsWith("PUBLISH_OWNER_CARRIER_UNAVAILABLE:"));
+    assertThrows(
+        VersionPublishCommandServiceImpl.FullVersionPublicationUnavailableException.class,
+        () -> service.reconcileFullVersionPublish(request));
     verify(authoredSelections, never()).reserve(any(PublishIntent.class));
     verify(publishAttemptService, never()).executeFullVersionTransaction(any());
     verify(publishAttemptService, never())
@@ -266,11 +258,9 @@ class VersionPublishCommandServiceImplTest {
     when(publishAttemptRepository.findByPublishWorkflowId(request.publishWorkflowId()))
         .thenReturn(Optional.of(attempt));
 
-    IllegalStateException thrown =
-        assertThrows(
-            IllegalStateException.class, () -> service.reconcileFullVersionPublish(request));
-
-    assertTrue(thrown.getMessage().startsWith("PUBLISH_OWNER_CARRIER_UNAVAILABLE:"));
+    assertThrows(
+        VersionPublishCommandServiceImpl.FullVersionPublicationUnavailableException.class,
+        () -> service.reconcileFullVersionPublish(request));
     assertEquals(PublishAttemptStatus.PENDING, attempt.getStatus());
     verify(publishAttemptService, never()).executeFullVersionTransaction(any());
     verify(publishAttemptService, never()).markFullVersionSucceeded(any(String.class));
@@ -292,7 +282,7 @@ class VersionPublishCommandServiceImplTest {
     String workflowId = "publish:tenant-1:publish-request:workflow-1";
 
     assertThrows(
-        IllegalStateException.class,
+        VersionPublishCommandServiceImpl.FullVersionPublicationUnavailableException.class,
         () -> service.publishFullVersion("tenant-1", "notes", "workflow-1", workflowId));
 
     verify(assetExportService, never()).exportAssets(any(String.class), any(Integer.class));
@@ -555,6 +545,28 @@ class VersionPublishCommandServiceImplTest {
     verify(versionRepository, never()).findByTenantIdAndId(any(String.class), any(Long.class));
     verify(gameRepository, never()).findByTenantIdForUpdate(any(String.class));
     verify(publishAttemptService, never()).executeFullVersionTransaction(any());
+  }
+
+  @Test
+  void selectedFailedReplayRequiresTheExactNoPublicationSeal() {
+    SelectionSnapshot reservation = selectedReservation();
+    PublishWorkflowRequest request = selectedRequest(reservation);
+    PublishAttempt attempt = selectedAttempt(reservation, request, 1);
+    attempt.setStatus(PublishAttemptStatus.FAILED);
+    when(authoredSelections.readByPublishRequest(
+            request.intent().canonicalTenantId(), request.publishRequestId()))
+        .thenReturn(Optional.of(reservation));
+    when(publishAttemptRepository.findByPublishWorkflowId(request.publishWorkflowId()))
+        .thenReturn(Optional.of(attempt));
+
+    assertEquals("FAILED", service.reconcileFullVersionPublish(request).status());
+    verify(publishAttemptRepository).requireNoPublicationOperation(attempt);
+    org.mockito.Mockito.doThrow(new IllegalStateException("PUBLICATION_OPERATION_SEALED_OR_CHANGED"))
+        .when(publishAttemptRepository)
+        .requireNoPublicationOperation(attempt);
+    assertThrows(
+        IllegalStateException.class, () -> service.reconcileFullVersionPublish(request));
+    verify(publishAttemptRepository, never()).save(any(PublishAttempt.class));
   }
 
   @Test

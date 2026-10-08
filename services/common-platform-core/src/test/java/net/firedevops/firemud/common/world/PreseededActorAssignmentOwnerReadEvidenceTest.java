@@ -115,6 +115,48 @@ class PreseededActorAssignmentOwnerReadEvidenceTest {
         .isInstanceOf(IllegalArgumentException.class);
   }
 
+  @Test
+  void sourceRequestRequiresCommittedOwnerProofBeforeReadingCommittedPointer() throws Exception {
+    var evidence = fixture();
+    var source = evidence.sourceEvidence();
+    var committed = source.gameSessionOwnerProof();
+    assertThat(
+            PreseededActorAssignmentOwnerReadEvidence.sourceRequest(evidence.request(), committed))
+        .isEqualTo(source.request());
+
+    var pending =
+        new GameSessionCanonicalInitialAdmissionOwnerProof(
+            committed.holdIdentity(),
+            GameSessionCanonicalInitialAdmissionOwnerProof.Outcome.PENDING,
+            null,
+            null,
+            null,
+            false,
+            null);
+    assertThatThrownBy(
+            () ->
+                PreseededActorAssignmentOwnerReadEvidence.sourceRequest(
+                    evidence.request(), pending))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("Committed Game Session owner proof");
+
+    var aborted =
+        new GameSessionCanonicalInitialAdmissionOwnerProof(
+            committed.holdIdentity(),
+            GameSessionCanonicalInitialAdmissionOwnerProof.Outcome.ABORTED,
+            null,
+            null,
+            "sha256:" + "c".repeat(64),
+            true,
+            TERMINAL_AT);
+    assertThatThrownBy(
+            () ->
+                PreseededActorAssignmentOwnerReadEvidence.sourceRequest(
+                    evidence.request(), aborted))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("Committed Game Session owner proof");
+  }
+
   private static PreseededActorAssignmentOwnerReadEvidence fixture() throws Exception {
     var policySet = PublishedRealmEntryPolicySetEvidenceTest.preseededSetFixture();
     var selectedPolicy = policySet.policies().getFirst();

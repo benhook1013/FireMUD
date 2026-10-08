@@ -142,7 +142,7 @@ public final class AuthoredDraftPublishSelectionBinding {
       }
       return selection;
     } catch (RuntimeException exception) {
-      throw new IllegalStateException("Stored authored Draft selection is corrupt", exception);
+      throw new IllegalArgumentException("Stored authored Draft selection is corrupt", exception);
     }
   }
 

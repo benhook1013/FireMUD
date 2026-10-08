@@ -16,6 +16,7 @@ import net.firedevops.firemud.worldmanagement.v1.ReadWorldPublishedStartLocation
 import org.junit.jupiter.api.Test;
 
 class WorldPublishedStartLocationGrpcCodecTest {
+  private static final String LARGE_EPOCH = "900719925474099312345678901234567890";
   private static final tools.jackson.databind.ObjectMapper JSON =
       new tools.jackson.databind.ObjectMapper();
 
@@ -122,6 +123,46 @@ class WorldPublishedStartLocationGrpcCodecTest {
         .hasMessageContaining("intake request");
   }
 
+  @Test
+  void requestCarrierAcceptsUnboundedDraftEpochAndRejectsMalformedCounters() throws Exception {
+    WorldPublishedStartLocationEvidence.Request base = evidence().request();
+    var tuple = base.worldAffectedTuples().getFirst();
+    var largeEpochTuple =
+        new WorldPublishedStartLocationEvidence.OwnedAffectedTuple(
+            tuple.owner(),
+            tuple.aggregateType(),
+            tuple.aggregateId(),
+            tuple.scopeType(),
+            tuple.scopeId(),
+            LARGE_EPOCH);
+    var carrierRequest =
+        new WorldPublishedStartLocationEvidence.Request(
+            base.targetNamespace(),
+            base.canonicalTenantId(),
+            base.canonicalVersionId(),
+            base.intakeRequestId(),
+            base.publicationFence(),
+            base.publicationRequestId(),
+            base.requestDigest(),
+            base.versionStateEpoch(),
+            base.publishWorkflowId(),
+            base.appliedCommitId(),
+            base.contentDigest(),
+            base.digestSchemaVersion(),
+            List.of(largeEpochTuple));
+    var roundTrip =
+        WorldPublishedStartLocationGrpcCodec.fromRequest(
+            WorldPublishedStartLocationGrpcCodec.toRequest(carrierRequest));
+
+    assertThat(roundTrip).isEqualTo(carrierRequest);
+    assertThat(roundTrip.worldAffectedTuples().getFirst().expectedEpoch()).isEqualTo(LARGE_EPOCH);
+
+    assertInvalidExpectedEpoch(tuple, null);
+    assertInvalidExpectedEpoch(tuple, "-1");
+    assertInvalidExpectedEpoch(tuple, "01");
+    assertInvalidExpectedEpoch(tuple, "not-a-decimal");
+  }
+
   static WorldPublishedStartLocationEvidence evidence() throws Exception {
     WorldDraftTerminalReadEvidence.Request terminalRequest = freshGraphRequest();
     OwnerReadback committed = freshGraphReadback(terminalRequest);
@@ -175,5 +216,20 @@ class WorldPublishedStartLocationGrpcCodecTest {
 
   private static UUID uuid(String value) {
     return UUID.fromString(value);
+  }
+
+  private static void assertInvalidExpectedEpoch(
+      WorldPublishedStartLocationEvidence.OwnedAffectedTuple template, String expectedEpoch) {
+    assertThatThrownBy(
+            () ->
+                new WorldPublishedStartLocationEvidence.OwnedAffectedTuple(
+                    template.owner(),
+                    template.aggregateType(),
+                    template.aggregateId(),
+                    template.scopeType(),
+                    template.scopeId(),
+                    expectedEpoch))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("canonical non-negative decimal");
   }
 }

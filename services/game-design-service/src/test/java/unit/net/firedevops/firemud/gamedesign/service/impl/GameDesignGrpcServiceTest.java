@@ -381,6 +381,27 @@ class GameDesignGrpcServiceTest {
   }
 
   @Test
+  void publishVersionMapsFreshLegacyPublicationGuardToExplicitDenial() throws Exception {
+    Mockito.when(versionService.replayLegacyFullVersion("tenant-1", "notes", "fresh-1"))
+        .thenThrow(
+            new VersionPublishCommandServiceImpl.FullVersionPublicationUnavailableException());
+    AtomicReference<PublishVersionResponse> ref = new AtomicReference<>();
+
+    try (MockedStatic<AdminRoleGuard> ignored = Mockito.mockStatic(AdminRoleGuard.class)) {
+      service.publishVersion(
+          PublishVersionRequest.newBuilder()
+              .setTenantId("tenant-1")
+              .setNotes("notes")
+              .setPublishRequestId("fresh-1")
+              .build(),
+          observerFor(ref));
+    }
+
+    assertEquals("FULL_VERSION_PUBLICATION_UNAVAILABLE", ref.get().getError().getCode());
+    Mockito.verify(versionService).replayLegacyFullVersion("tenant-1", "notes", "fresh-1");
+  }
+
+  @Test
   void publishVersionMapsKnownPublishAttemptStateFailures() throws Exception {
     Mockito.when(versionService.publishVersion(selectedIntent("publish-request-1")))
         .thenThrow(

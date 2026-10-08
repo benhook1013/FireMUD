@@ -165,8 +165,13 @@ public class AccountDemoTenantEntitlementRepository {
     return snapshot(committedEvent, authorityEvent);
   }
 
-  /** Reads one exact current snapshot and denies stale or incomplete Account/source state. */
-  @Transactional(propagation = Propagation.MANDATORY, readOnly = true)
+  /**
+   * Reads one exact current snapshot and denies stale or incomplete Account/source state.
+   *
+   * <p>Requires the caller's writable Account owner transaction; MANDATORY does not convert an
+   * existing read-only transaction into a writable one.
+   */
+  @Transactional(propagation = Propagation.MANDATORY)
   public DemoTenantEntitlementSnapshot readCurrent(UUID canonicalTenantId) {
     requireTenantUuid(canonicalTenantId);
     Optional<FreshTenantCreationEvidence> evidence =
@@ -188,8 +193,13 @@ public class AccountDemoTenantEntitlementRepository {
     return snapshot(current.billingEvent(), current.authorityEvent());
   }
 
-  /** Re-reads all source, generation, version, and outbox evidence at the final admission fence. */
-  @Transactional(propagation = Propagation.MANDATORY, readOnly = true)
+  /**
+   * Re-reads all source, generation, version, and outbox evidence at the final admission fence.
+   *
+   * <p>Requires the caller's writable Account owner transaction; MANDATORY does not convert an
+   * existing read-only transaction into a writable one.
+   */
+  @Transactional(propagation = Propagation.MANDATORY)
   public DemoTenantEntitlementSnapshot revalidate(DemoTenantEntitlementSnapshot evaluated) {
     Objects.requireNonNull(evaluated, "Complete evaluated entitlement evidence is required");
     DemoTenantEntitlementSnapshot current = readCurrent(evaluated.canonicalTenantId());
