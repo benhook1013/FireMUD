@@ -46,6 +46,9 @@ public record PreseededActorAssignmentOwnerReadEvidence(
       Request request, GameSessionCanonicalInitialAdmissionOwnerProof proof) {
     Objects.requireNonNull(request, "request");
     Objects.requireNonNull(proof, "proof");
+    if (proof.outcome() != GameSessionCanonicalInitialAdmissionOwnerProof.Outcome.COMMITTED) {
+      throw new IllegalArgumentException("Committed Game Session owner proof required");
+    }
     var hold = proof.holdIdentity().request();
     return new CanonicalGameplayRosterOwnerReadEvidence.Request(
         request.assignmentUuid(),

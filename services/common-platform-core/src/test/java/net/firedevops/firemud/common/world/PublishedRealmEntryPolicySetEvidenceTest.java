@@ -19,6 +19,7 @@ import net.firedevops.firemud.common.gamedesign.GameDesignPublicationTerminalEvi
 import net.firedevops.firemud.common.gamedesign.GameDesignPublicationTerminalEvidence.Outcome;
 import net.firedevops.firemud.common.gamedesign.GameDesignPublicationTerminalEvidence.Participant;
 import net.firedevops.firemud.common.gamedesign.GameDesignPublicationTerminalEvidence.ReleaseContent;
+import net.firedevops.firemud.common.gamedesign.GameDesignPublicationTerminalReadEvidence.ReadRequest;
 import net.firedevops.firemud.common.json.Rfc8785CanonicalJson;
 import net.firedevops.firemud.common.publication.AccountPublicationAuthorizationBinding;
 import net.firedevops.firemud.common.publication.AuthoredDraftPublishSelectionBinding;
@@ -38,6 +39,29 @@ class PublishedRealmEntryPolicySetEvidenceTest {
 
   static PublishedRealmEntryPolicySetEvidence preseededSetFixture() throws Exception {
     return fixture(false).set();
+  }
+
+  @Test
+  void terminalReadRequestUsesCanonicalByteValueEquality() throws Exception {
+    var fixture = fixture(false);
+    var expected =
+        new ReadRequest(
+            ReadRequest.SCHEMA_VERSION,
+            fixture.operation().world().request().targetNamespace(),
+            uuid("10101010-1010-4010-8010-101010101010"),
+            fixture.operation().canonicalBytes());
+    var decoded = ReadRequest.fromStored(expected.canonicalBytes());
+
+    assertThat(decoded).isEqualTo(expected);
+    assertThat(decoded.hashCode()).isEqualTo(expected.hashCode());
+    assertThat(new java.util.HashSet<>(List.of(expected, decoded))).hasSize(1);
+    var changedIdentity =
+        new ReadRequest(
+            expected.schemaVersion(),
+            expected.targetNamespace(),
+            uuid("20202020-2020-4020-8020-202020202020"),
+            expected.operationBytes());
+    assertThat(changedIdentity).isNotEqualTo(expected);
   }
 
   @Test

@@ -499,10 +499,7 @@ public record PublishedRealmEntryPolicySetEvidence(
     byte[] operationBytes = capture.bytes();
     byte[] snapshotBytes = capture.bytes();
     capture.requireEnd();
-    if (!Arrays.equals(operationBytes, expectedOperationBytes)
-        || !Arrays.equals(
-            operationBytes,
-            GameDesignPublicationOperationBinding.fromStored(operationBytes).canonicalBytes())) {
+    if (!Arrays.equals(operationBytes, expectedOperationBytes)) {
       throw new IllegalArgumentException("Captured source operation bytes changed");
     }
     String snapshotJson = strictUtf8(snapshotBytes);
