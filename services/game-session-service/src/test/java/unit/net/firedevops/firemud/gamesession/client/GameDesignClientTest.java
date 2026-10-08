@@ -76,8 +76,7 @@ class GameDesignClientTest {
   }
 
   private static GameDesignClient newClient(
-      GameDesignServiceGrpc.GameDesignServiceBlockingStub stub,
-      GrpcChannelFactory channelFactory)
+      GameDesignServiceGrpc.GameDesignServiceBlockingStub stub, GrpcChannelFactory channelFactory)
       throws Exception {
     GameDesignClient client =
         new GameDesignClient(

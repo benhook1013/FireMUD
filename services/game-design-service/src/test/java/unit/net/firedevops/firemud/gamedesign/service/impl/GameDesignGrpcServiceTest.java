@@ -225,8 +225,7 @@ class GameDesignGrpcServiceTest {
         ref.get().getBundle().getPublishedReleaseBundleRef());
     assertEquals(CANONICAL_TENANT_ID.toString(), ref.get().getBundle().getCanonicalTenantId());
     assertEquals(
-        "82345678-1234-4234-8234-123456789abc",
-        ref.get().getBundle().getCanonicalVersionId());
+        "82345678-1234-4234-8234-123456789abc", ref.get().getBundle().getCanonicalVersionId());
     assertEquals(1, ref.get().getBundle().getManifestSchemaVersion());
     assertEquals(1, ref.get().getBundle().getArtifactDigestsCount());
     assertEquals("logo.png", ref.get().getBundle().getArtifactDigests(0).getUsageKey());
@@ -1064,13 +1063,25 @@ class GameDesignGrpcServiceTest {
                 8,
                 "v999",
                 "workflow-1",
-                "abc123",
+                "sha256:" + "a".repeat(64),
                 List.of("manifest.json"),
                 List.of(),
                 "genrev-1",
                 false,
                 null,
-                LocalDateTime.parse("2026-04-14T12:00:00")));
+                LocalDateTime.parse("2026-04-14T12:00:00"),
+                CANONICAL_TENANT_ID,
+                UUID.fromString("82345678-1234-4234-8234-123456789abc"),
+                "opaque-release-reference-from-owner",
+                1,
+                List.of(
+                    new PublishedArtifactDigest(
+                        "manifest.json",
+                        "manifest",
+                        "artifacts/sha256/" + "b".repeat(64),
+                        "sha256:" + "b".repeat(64),
+                        "application/json",
+                        1))));
 
     AtomicReference<GetPublishedReleaseBundleResponse> ref = new AtomicReference<>();
     try (MockedStatic<AdminRoleGuard> ignored = Mockito.mockStatic(AdminRoleGuard.class)) {

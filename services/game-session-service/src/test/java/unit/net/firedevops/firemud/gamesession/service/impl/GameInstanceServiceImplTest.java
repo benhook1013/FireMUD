@@ -133,9 +133,8 @@ class GameInstanceServiceImplTest {
   @Test
   void legacyNumericLaunchFailsClosedBeforeMutation() {
     StartSessionRequest request = new StartSessionRequest(1L, 3L, "cp-numeric-launch", 42L);
-    when(
-            gameDesignClient.resolveLaunchDescriptor(
-                request.tenantId(), request.gameTemplateId(), request.controlPlaneRequestId()))
+    when(gameDesignClient.resolveLaunchDescriptor(
+            request.tenantId(), request.gameTemplateId(), request.controlPlaneRequestId()))
         .thenReturn(
             ResolveLaunchDescriptorResponse.newBuilder()
                 .setError(

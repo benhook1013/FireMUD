@@ -87,9 +87,6 @@ class RealmPolicyPublicationReadConfigurationTest {
                             .bind("firemud.auth.grpc.public-methods", Bindable.listOf(String.class))
                             .orElse(List.of()))
                     .containsExactly(
-                        "gamedesign.v1.TenantIdentityService/ResolveRuntimeTenantIdentity",
-                        "gamedesign.v1.TenantIdentityService/ResolveLegacyGameSessionTenantAssociation",
-                        "gamedesign.v1.TenantIdentityService/ResolveAuthoredWorldSource",
                         "gamedesign.v1.TenantIdentityService/ResolveFreshTenantCreation",
                         "game_design.v1.PublishedRealmEntryPolicyService/ResolvePublishedRealmEntryPolicy",
                         "game_design.v1.PublishedRealmEntryPolicyService/ListPublishedRealmEntryPolicies"));

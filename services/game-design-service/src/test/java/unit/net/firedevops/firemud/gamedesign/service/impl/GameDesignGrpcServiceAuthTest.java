@@ -9,6 +9,7 @@ import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.UUID;
 import java.util.concurrent.atomic.AtomicReference;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
 import net.firedevops.firemud.common.security.SessionContext;
@@ -16,6 +17,7 @@ import net.firedevops.firemud.gamedesign.dto.PublishedReleaseBundleDto;
 import net.firedevops.firemud.gamedesign.service.GameAuthoredHelpTopicService;
 import net.firedevops.firemud.gamedesign.service.LaunchDescriptorService;
 import net.firedevops.firemud.gamedesign.service.PingService;
+import net.firedevops.firemud.gamedesign.service.PublishedArtifactDigest;
 import net.firedevops.firemud.gamedesign.service.RevisionService;
 import net.firedevops.firemud.gamedesign.service.SettingsAuthorityService;
 import net.firedevops.firemud.gamedesign.service.TemplateRemapSetService;
@@ -31,6 +33,12 @@ import org.mockito.Mockito;
 import org.springframework.test.util.ReflectionTestUtils;
 
 class GameDesignGrpcServiceAuthTest {
+  private static final String MANIFEST_HASH = "sha256:" + "a".repeat(64);
+  private static final UUID CANONICAL_TENANT_ID =
+      UUID.fromString("12345678-1234-4234-8234-123456789abc");
+  private static final UUID CANONICAL_VERSION_ID =
+      UUID.fromString("82345678-1234-4234-8234-123456789abc");
+
   @AfterEach
   void tearDown() {
     SessionContext.clear();
@@ -86,13 +94,25 @@ class GameDesignGrpcServiceAuthTest {
                 8,
                 "v1",
                 "workflow-1",
-                "hash-1",
+                MANIFEST_HASH,
                 List.of("manifest.json"),
                 List.of(),
                 "genrev-1",
                 false,
                 null,
-                java.time.LocalDateTime.parse("2026-04-14T12:00:00")));
+                java.time.LocalDateTime.parse("2026-04-14T12:00:00"),
+                CANONICAL_TENANT_ID,
+                CANONICAL_VERSION_ID,
+                "opaque-release-reference-from-owner",
+                1,
+                List.of(
+                    new PublishedArtifactDigest(
+                        "manifest.json",
+                        "manifest",
+                        "artifacts/sha256/" + "b".repeat(64),
+                        "sha256:" + "b".repeat(64),
+                        "application/json",
+                        1))));
     GameDesignGrpcService service =
         new GameDesignGrpcService(
             Mockito.mock(PingService.class),
@@ -138,8 +158,7 @@ class GameDesignGrpcServiceAuthTest {
 
   private void underGameSessionPeer(Runnable operation) {
     GrpcPeerIdentity peer =
-        GrpcPeerIdentity.parseUri("spiffe://firemud/ns/test/sa/game-session-service")
-            .orElseThrow();
+        GrpcPeerIdentity.parseUri("spiffe://firemud/ns/test/sa/game-session-service").orElseThrow();
     Context.current().withValue(GrpcPeerIdentity.CONTEXT_KEY, peer).run(operation);
   }
 }
