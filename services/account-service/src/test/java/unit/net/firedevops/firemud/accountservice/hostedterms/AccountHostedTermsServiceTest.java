@@ -14,25 +14,235 @@ import java.time.ZoneOffset;
 import java.util.Optional;
 import java.util.UUID;
 import net.firedevops.firemud.accountservice.authordraft.DraftAuthorizationFenceRepository;
+import net.firedevops.firemud.accountservice.creatorparty.CreatorPartyEncoding;
 import net.firedevops.firemud.accountservice.creatorparty.IndividualCreatorPartyRepository;
 import net.firedevops.firemud.accountservice.creatorparty.IndividualCreatorPartySource;
 import net.firedevops.firemud.accountservice.creatorparty.IndividualCreatorPartySource.VerificationStatus;
 import net.firedevops.firemud.accountservice.hostedterms.AccountHostedTermsService;
 import net.firedevops.firemud.accountservice.hostedterms.HostedTermsCatalogVersion;
 import net.firedevops.firemud.accountservice.hostedterms.HostedTermsEncoding;
+import net.firedevops.firemud.accountservice.hostedterms.HostedTermsEnvironmentBinding;
+import net.firedevops.firemud.accountservice.hostedterms.HostedTermsEnvironmentBindingRepository;
 import net.firedevops.firemud.accountservice.hostedterms.HostedTermsRepository;
 import net.firedevops.firemud.accountservice.hostedterms.IndividualHostedTermsAcceptance;
+import net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding.SourceKind;
 import org.junit.jupiter.api.Test;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.TransactionStatus;
 import org.springframework.transaction.support.SimpleTransactionStatus;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 /**
  * Unit proof uses explicit typed upstream authority fixtures, not caller-supplied authority DTOs.
  */
 class AccountHostedTermsServiceTest {
   private static final Instant NOW = Instant.parse("2026-10-08T00:00:00Z");
+
+  @Test
+  void environmentCaptureIsServiceIssuedOutsideTheOwnerTransaction() {
+    Fixture fixture = new Fixture();
+    var boundaries = mock(AccountHostedTermsService.CurrentEnvironmentBoundaryAuthority.class);
+    var bindings = mock(HostedTermsEnvironmentBindingRepository.class);
+    AccountHostedTermsService service = fixture.environmentService(bindings, boundaries);
+    var current = currentBoundary("production");
+    when(boundaries.currentBoundary())
+        .thenAnswer(
+            ignored -> {
+              assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+              return current;
+            });
+
+    var captured = service.captureCurrentEnvironmentBoundary();
+    assertThat(captured).isNotNull();
+    verify(boundaries).currentBoundary();
+
+    boolean transactionWasActive = TransactionSynchronizationManager.isActualTransactionActive();
+    TransactionSynchronizationManager.setActualTransactionActive(true);
+    try {
+      assertThatThrownBy(service::captureCurrentEnvironmentBoundary)
+          .isInstanceOf(IllegalStateException.class)
+          .hasMessageContaining("outside an Account transaction");
+      assertThatThrownBy(() -> service.requireCurrentnessForCurrentEnvironment(fixture.partyId))
+          .isInstanceOf(IllegalStateException.class)
+          .hasMessageContaining("outside an Account transaction");
+    } finally {
+      TransactionSynchronizationManager.setActualTransactionActive(transactionWasActive);
+    }
+    // Both rejected calls precede an additional external boundary lookup.
+    verify(boundaries).currentBoundary();
+  }
+
+  @Test
+  void synchronizationOnlyContextCannotCaptureTheExternalEnvironment() {
+    Fixture fixture = new Fixture();
+    var boundaries = mock(AccountHostedTermsService.CurrentEnvironmentBoundaryAuthority.class);
+    AccountHostedTermsService service =
+        fixture.environmentService(mock(HostedTermsEnvironmentBindingRepository.class), boundaries);
+    boolean synchronizationWasActive = TransactionSynchronizationManager.isSynchronizationActive();
+    if (!synchronizationWasActive) {
+      TransactionSynchronizationManager.initSynchronization();
+    }
+    try {
+      assertThatThrownBy(service::captureCurrentEnvironmentBoundary)
+          .isInstanceOf(IllegalStateException.class)
+          .hasMessageContaining("outside an Account transaction");
+    } finally {
+      if (!synchronizationWasActive) {
+        TransactionSynchronizationManager.clearSynchronization();
+      }
+    }
+    verify(boundaries, never()).currentBoundary();
+  }
+
+  @Test
+  void capturedEnvironmentReadsTheSameLockedSourcesWithoutCallingTheProviderInsideTransaction() {
+    Fixture fixture = new Fixture();
+    var boundaries = mock(AccountHostedTermsService.CurrentEnvironmentBoundaryAuthority.class);
+    var bindings = mock(HostedTermsEnvironmentBindingRepository.class);
+    AccountHostedTermsService service = fixture.environmentService(bindings, boundaries);
+    var environment = currentBoundary("production");
+    when(boundaries.currentBoundary())
+        .thenAnswer(
+            ignored -> {
+              assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+              return environment;
+            });
+    var captured = service.captureCurrentEnvironmentBoundary();
+
+    IndividualCreatorPartySource party = party(fixture.partyId, fixture.accountId);
+    HostedTermsCatalogVersion catalog =
+        terms(fixture.scopeId, null, 1, 1, "terms-v1", NOW.minusSeconds(60));
+    IndividualHostedTermsAcceptance acceptance =
+        acceptance(action(fixture, catalog, true), party, catalog);
+    byte[] publicationEvidence = "test-publication-evidence".getBytes();
+    HostedTermsEnvironmentBinding binding =
+        new HostedTermsEnvironmentBinding(
+            UUID.randomUUID(),
+            UUID.randomUUID(),
+            "production",
+            fixture.scopeId,
+            catalog.operatorLegalIdentity(),
+            catalog.operatorIdentityVersion(),
+            catalog.versionId(),
+            catalog.sourceVersion(),
+            "test-environment-owner",
+            "test-publication-event",
+            HostedTermsEncoding.digest(publicationEvidence),
+            null,
+            null,
+            1);
+    when(bindings.lockHead("production"))
+        .thenReturn(
+            new HostedTermsEnvironmentBindingRepository.HeadSnapshot("production", binding, null));
+    when(fixture.repository.lockPartyAccount(fixture.partyId)).thenReturn(fixture.accountId);
+    when(fixture.parties.readIndividualSource(fixture.partyId, fixture.accountId))
+        .thenReturn(party);
+    when(fixture.repository.lockScope(fixture.scopeId))
+        .thenReturn(scope(fixture.scopeId, catalog, NOW, null));
+    when(fixture.repository.readCurrentAcceptance(fixture.partyId, fixture.scopeId, catalog))
+        .thenReturn(Optional.of(acceptance));
+
+    boolean transactionWasActive = TransactionSynchronizationManager.isActualTransactionActive();
+    boolean transactionWasReadOnly =
+        TransactionSynchronizationManager.isCurrentTransactionReadOnly();
+    TransactionSynchronizationManager.setActualTransactionActive(true);
+    TransactionSynchronizationManager.setCurrentTransactionReadOnly(false);
+    try {
+      var current = service.requireCurrentnessInOwnerTransaction(captured, fixture.partyId);
+      assertThat(current.environment()).isSameAs(environment);
+      assertThat(current.binding()).isSameAs(binding);
+      assertThat(current.terms().acceptanceEvidenceId()).isEqualTo(acceptance.evidenceId());
+      assertThat(current.terms().exactCurrentnessSource())
+          .containsExactly(HostedTermsEncoding.currentnessSource(catalog, acceptance, null));
+      assertThat(current.sourceEvidence()).hasSize(3);
+      assertThat(current.sourceEvidence())
+          .anySatisfy(
+              source -> {
+                assertThat(source.key()).isEqualTo(binding.sourceEvidence().key());
+                assertThat(source.canonicalBytes())
+                    .containsExactly(binding.sourceEvidence().canonicalBytes());
+              })
+          .anySatisfy(
+              source -> {
+                assertThat(source.kind()).isEqualTo(SourceKind.HOSTED_TERMS);
+                assertThat(source.scopeId()).isEqualTo(fixture.scopeId.toString());
+                assertThat(source.evidence())
+                    .containsExactly(
+                        HostedTermsEncoding.currentnessSource(catalog, acceptance, null));
+              })
+          .anySatisfy(
+              source -> {
+                assertThat(source.kind()).isEqualTo(SourceKind.CREATOR_PARTY);
+                assertThat(source.scopeId()).isEqualTo(fixture.partyId.toString());
+                assertThat(source.evidence()).containsExactly(CreatorPartyEncoding.party(party));
+              });
+    } finally {
+      TransactionSynchronizationManager.setCurrentTransactionReadOnly(transactionWasReadOnly);
+      TransactionSynchronizationManager.setActualTransactionActive(transactionWasActive);
+    }
+    verify(boundaries).currentBoundary();
+    verify(bindings).lockHead("production");
+  }
+
+  @Test
+  void ownerCurrentnessRejectsMissingForeignAndNonwritableTransactionBeforeSourceRead() {
+    Fixture fixture = new Fixture();
+    var boundaries = mock(AccountHostedTermsService.CurrentEnvironmentBoundaryAuthority.class);
+    var bindings = mock(HostedTermsEnvironmentBindingRepository.class);
+    AccountHostedTermsService service = fixture.environmentService(bindings, boundaries);
+    AccountHostedTermsService other = fixture.environmentService(bindings, boundaries);
+    when(boundaries.currentBoundary()).thenReturn(currentBoundary("production"));
+    var captured = service.captureCurrentEnvironmentBoundary();
+
+    assertThatThrownBy(() -> service.requireCurrentnessInOwnerTransaction(null, fixture.partyId))
+        .isInstanceOf(IllegalArgumentException.class);
+    assertThatThrownBy(() -> other.requireCurrentnessInOwnerTransaction(captured, fixture.partyId))
+        .isInstanceOf(IllegalArgumentException.class);
+    assertThatThrownBy(
+            () -> service.requireCurrentnessInOwnerTransaction(captured, fixture.partyId))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("Writable Account owner transaction");
+
+    boolean transactionWasActive = TransactionSynchronizationManager.isActualTransactionActive();
+    boolean transactionWasReadOnly =
+        TransactionSynchronizationManager.isCurrentTransactionReadOnly();
+    TransactionSynchronizationManager.setActualTransactionActive(true);
+    TransactionSynchronizationManager.setCurrentTransactionReadOnly(true);
+    try {
+      assertThatThrownBy(
+              () -> service.requireCurrentnessInOwnerTransaction(captured, fixture.partyId))
+          .isInstanceOf(IllegalStateException.class)
+          .hasMessageContaining("Writable Account owner transaction");
+    } finally {
+      TransactionSynchronizationManager.setCurrentTransactionReadOnly(transactionWasReadOnly);
+      TransactionSynchronizationManager.setActualTransactionActive(transactionWasActive);
+    }
+    verify(bindings, never()).lockHead(any());
+  }
+
+  @Test
+  void unavailableEnvironmentObservationCannotProduceACapture() {
+    Fixture fixture = new Fixture();
+    var boundaries = mock(AccountHostedTermsService.CurrentEnvironmentBoundaryAuthority.class);
+    AccountHostedTermsService service =
+        fixture.environmentService(mock(HostedTermsEnvironmentBindingRepository.class), boundaries);
+    assertThatThrownBy(service::captureCurrentEnvironmentBoundary)
+        .isInstanceOf(NullPointerException.class)
+        .hasMessageContaining("authenticated current environment boundary");
+  }
+
+  private static HostedTermsEnvironmentBinding.CurrentEnvironmentBoundary currentBoundary(
+      String boundary) {
+    byte[] evidence =
+        ("test-boundary:" + boundary).getBytes(java.nio.charset.StandardCharsets.UTF_8);
+    return new HostedTermsEnvironmentBinding.CurrentEnvironmentBoundary(
+        boundary,
+        "test-environment-owner",
+        "test-observation",
+        evidence,
+        HostedTermsEncoding.digest(evidence));
+  }
 
   @Test
   void affirmativeAcceptancePersistsExactShownCatalogAndReturnsOriginalReceipt() {
@@ -549,6 +759,21 @@ class AccountHostedTermsServiceTest {
 
     private void publicationAuthority(AccountHostedTermsService.PublicationEvidence evidence) {
       when(publicationAuthority.resolve(requestId)).thenReturn(evidence);
+    }
+
+    private AccountHostedTermsService environmentService(
+        HostedTermsEnvironmentBindingRepository bindings,
+        AccountHostedTermsService.CurrentEnvironmentBoundaryAuthority boundaries) {
+      return new AccountHostedTermsService(
+          new NoopTransactionManager(),
+          repository,
+          parties,
+          fences,
+          publicationAuthority,
+          acceptanceAuthority,
+          bindings,
+          mock(AccountHostedTermsService.EnvironmentBindingPublicationAuthority.class),
+          boundaries);
     }
   }
 

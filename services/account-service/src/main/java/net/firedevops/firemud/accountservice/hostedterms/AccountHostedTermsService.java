@@ -19,6 +19,7 @@ import net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding.So
 import net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding.SourceKind;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.TransactionDefinition;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.transaction.support.TransactionTemplate;
 
 /**
@@ -141,16 +142,62 @@ public final class AccountHostedTermsService {
    * READ_COMMITTED owner transaction. The result is currentness/source evidence, not permission.
    */
   public EnvironmentBoundCurrentness requireCurrentnessForCurrentEnvironment(UUID creatorPartyId) {
-    requireCurrentEnvironmentBoundaryAuthority();
     HostedTermsEncoding.requireUuid(creatorPartyId, "creator party");
+    CapturedEnvironmentBoundary captured = captureCurrentEnvironmentBoundary();
+    return Objects.requireNonNull(
+        ownerTransaction.execute(
+            ignored -> requireCurrentnessInOwnerTransaction(captured, creatorPartyId)),
+        "Account environment-bound currentness result");
+  }
+
+  /**
+   * Obtains the trusted environment observation before any Account transaction begins. This
+   * service-issued handle is source material only and cannot authorize a Draft mutation.
+   */
+  public CapturedEnvironmentBoundary captureCurrentEnvironmentBoundary() {
+    if (TransactionSynchronizationManager.isActualTransactionActive()
+        || TransactionSynchronizationManager.isSynchronizationActive()) {
+      throw new IllegalStateException(
+          "Current environment boundary must be captured outside an Account transaction");
+    }
+    requireCurrentEnvironmentBoundaryAuthority();
     HostedTermsEnvironmentBinding.CurrentEnvironmentBoundary environment =
         Objects.requireNonNull(
             currentEnvironmentBoundaryAuthority.currentBoundary(),
             "authenticated current environment boundary");
-    return Objects.requireNonNull(
-        ownerTransaction.execute(
-            ignored -> currentnessForEnvironmentInTransaction(environment, creatorPartyId)),
-        "Account environment-bound currentness result");
+    return new CapturedEnvironmentBoundary(this, environment);
+  }
+
+  /**
+   * Locks and rereads the persisted mapping, catalog, party, acceptance and deadline in the
+   * caller's writable READ_COMMITTED Account transaction. No external owner is called here; the
+   * returned evidence is not a commit token or proof of later external environment continuity.
+   */
+  public EnvironmentBoundCurrentness requireCurrentnessInOwnerTransaction(
+      CapturedEnvironmentBoundary captured, UUID creatorPartyId) {
+    if (captured == null || captured.owner != this) {
+      throw new IllegalArgumentException("Current environment capture belongs to another owner");
+    }
+    HostedTermsEncoding.requireUuid(creatorPartyId, "creator party");
+    if (!TransactionSynchronizationManager.isActualTransactionActive()
+        || TransactionSynchronizationManager.isCurrentTransactionReadOnly()) {
+      throw new IllegalStateException("Writable Account owner transaction required");
+    }
+    // lockHead performs the physical connection's writable READ_COMMITTED check before reading.
+    return currentnessForEnvironmentInTransaction(captured.environment, creatorPartyId);
+  }
+
+  /** Opaque, immutable observation scoped to the issuing service instance. */
+  public static final class CapturedEnvironmentBoundary {
+    private final AccountHostedTermsService owner;
+    private final HostedTermsEnvironmentBinding.CurrentEnvironmentBoundary environment;
+
+    private CapturedEnvironmentBoundary(
+        AccountHostedTermsService owner,
+        HostedTermsEnvironmentBinding.CurrentEnvironmentBoundary environment) {
+      this.owner = owner;
+      this.environment = environment;
+    }
   }
 
   /** Recovery uses the already durable exact publication and never remints operator evidence. */

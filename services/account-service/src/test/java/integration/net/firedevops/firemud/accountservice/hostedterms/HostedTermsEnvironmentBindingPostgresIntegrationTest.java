@@ -49,6 +49,7 @@ import org.springframework.jdbc.datasource.DataSourceTransactionManager;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
 import org.springframework.jdbc.datasource.TransactionAwareDataSourceProxy;
 import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.transaction.support.TransactionTemplate;
 import org.testcontainers.containers.PostgreSQLContainer;
@@ -127,6 +128,35 @@ class HostedTermsEnvironmentBindingPostgresIntegrationTest {
     bindingPublications.put(firstBindingRequest, firstBindingEvidence);
 
     var current = service.requireCurrentnessForCurrentEnvironment(partyId);
+    var capturedBoundary = service.captureCurrentEnvironmentBoundary();
+    var sameSnapshot =
+        db.transactions()
+            .execute(
+                ignored -> service.requireCurrentnessInOwnerTransaction(capturedBoundary, partyId));
+    assertThat(sameSnapshot.environment()).isEqualTo(current.environment());
+    assertThat(sameSnapshot.binding()).isEqualTo(current.binding());
+    assertThat(sameSnapshot.terms().acceptanceEvidenceId())
+        .isEqualTo(current.terms().acceptanceEvidenceId());
+    assertThat(sameSnapshot.terms().exactCurrentnessSource())
+        .containsExactly(current.terms().exactCurrentnessSource());
+    TransactionTemplate wrongIsolation = new TransactionTemplate(db.transactionManager());
+    wrongIsolation.setIsolationLevel(TransactionDefinition.ISOLATION_REPEATABLE_READ);
+    assertThatThrownBy(
+            () ->
+                wrongIsolation.execute(
+                    ignored ->
+                        service.requireCurrentnessInOwnerTransaction(capturedBoundary, partyId)))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("READ_COMMITTED");
+    TransactionTemplate readOnly = new TransactionTemplate(db.transactionManager());
+    readOnly.setReadOnly(true);
+    assertThatThrownBy(
+            () ->
+                readOnly.execute(
+                    ignored ->
+                        service.requireCurrentnessInOwnerTransaction(capturedBoundary, partyId)))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("Writable Account owner transaction");
     assertThat(current.environment().environmentBoundary()).isEqualTo("production");
     assertThat(current.binding()).isEqualTo(firstBinding.candidate());
     assertThat(current.terms().acceptanceEvidenceId()).isEqualTo(acceptance.evidenceId());
@@ -175,6 +205,15 @@ class HostedTermsEnvironmentBindingPostgresIntegrationTest {
     assertThatThrownBy(() -> service.requireCurrentnessForCurrentEnvironment(partyId))
         .isInstanceOf(IllegalStateException.class)
         .hasMessageContaining("changed catalog authority");
+    assertThatThrownBy(
+            () ->
+                db.transactions()
+                    .execute(
+                        ignored ->
+                            service.requireCurrentnessInOwnerTransaction(
+                                capturedBoundary, partyId)))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("changed catalog authority");
 
     UUID secondBindingRequest = UUID.randomUUID();
     HostedTermsEnvironmentBinding.PublicationEvidence secondBindingEvidence =
@@ -204,6 +243,13 @@ class HostedTermsEnvironmentBindingPostgresIntegrationTest {
                         "production", firstBinding.candidate().bindingId()));
     assertThat(retainedBinding).isEqualTo(firstBinding.candidate());
     assertThat(service.requireCurrentnessForCurrentEnvironment(partyId).binding())
+        .isEqualTo(secondBinding.candidate());
+    assertThat(
+            db.transactions()
+                .execute(
+                    ignored ->
+                        service.requireCurrentnessInOwnerTransaction(capturedBoundary, partyId))
+                .binding())
         .isEqualTo(secondBinding.candidate());
 
     boundary.set(currentBoundary("unbound-test-environment"));
@@ -337,6 +383,7 @@ class HostedTermsEnvironmentBindingPostgresIntegrationTest {
             "deadline-test-environment", currentCatalog, null, null, "test-only-publisher"));
     service.publishEnvironmentBinding(bindingRequest);
 
+    var capturedBoundary = service.captureCurrentEnvironmentBoundary();
     Instant deadline = databaseNow(db).plus(1, ChronoUnit.DAYS).truncatedTo(ChronoUnit.MICROS);
     UUID scheduledRequest = UUID.randomUUID();
     catalogPublications.put(
@@ -349,6 +396,13 @@ class HostedTermsEnvironmentBindingPostgresIntegrationTest {
     HostedTermsCatalogVersion scheduled = service.publish(scheduledRequest).candidate();
 
     var currentness = service.requireCurrentnessForCurrentEnvironment(partyId);
+    var sameTransactionCurrentness =
+        db.transactions()
+            .execute(
+                ignored -> service.requireCurrentnessInOwnerTransaction(capturedBoundary, partyId));
+    assertThat(sameTransactionCurrentness.binding()).isEqualTo(currentness.binding());
+    assertThat(sameTransactionCurrentness.terms().exactCurrentnessSource())
+        .containsExactly(currentness.terms().exactCurrentnessSource());
     assertThat(currentness.terms().acceptanceEvidenceId()).isEqualTo(acceptance.evidenceId());
     assertThat(currentness.terms().validUntil()).isEqualTo(scheduled.effectiveAt());
     assertThat(currentness.terms().disclosedDeadline()).isEqualTo(scheduled);
