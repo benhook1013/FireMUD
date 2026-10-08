@@ -154,6 +154,25 @@ class ControllerCliTest(unittest.TestCase):
         self.last_output_bytes = len(result.stdout.encode("utf-8"))
         return json.loads(result.stdout) if success and result.stdout.strip() else result
 
+    def test_rejected_brief_reports_only_safe_location_on_stderr(self):
+        job = self.run_cli("alpha", "create", "diagnostics", "--worker", "General", "--title", "Safe")
+        before = self.run_cli("alpha", "read", job["id"])
+        body_file = self.root / "synthetic.md"
+        body_file.write_bytes(b"surrounding-sentinel\r\n\r\nBearer synthetic-value\r\ntrailing-sentinel")
+        result = self.run_cli(
+            "alpha", "revise", job["id"], "--expect-revision", str(job["revision"]),
+            "--body-file", str(body_file), success=False,
+        )
+        self.assertEqual(result.stdout, "")
+        self.assertEqual(
+            result.stderr,
+            "fire-controller: brief resembles credential or raw secret material "
+            "(category=bearer_authorization; line=3)\n",
+        )
+        for omitted in ("synthetic-value", "surrounding-sentinel", "trailing-sentinel", str(body_file)):
+            self.assertNotIn(omitted, result.stdout + result.stderr)
+        self.assertEqual(self.run_cli("alpha", "read", job["id"]), before)
+
     def test_file_and_real_piped_stdin_preserve_utf8_and_exact_line_endings(self):
         original = "# Instructions\r\n\r\nKeep ü text.\nMixed return\rLast line\r\n"
         body_file = self.root / "windows.md"

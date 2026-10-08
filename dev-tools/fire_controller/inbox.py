@@ -18,7 +18,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from pr_review.sqlite_review_records import _SECRET_PATTERNS
+from pr_review.sqlite_review_records import _SECRET_PATTERNS, _credential_location
 from pr_review.sqlite_store import SqliteStateStore
 
 from .context import worker_alias
@@ -97,8 +97,9 @@ def _text(value: Any, label: str, *, maximum: int = 200, allow_empty: bool = Fal
         raise InboxError(f"{label} must not be empty")
     if any(ord(char) < 0x20 and char not in "\n\r\t" for char in value):
         raise InboxError(f"{label} must not contain control characters")
-    if any(pattern.search(value) for pattern in _SECRET_PATTERNS):
-        raise InboxError(f"{label} resembles credential or raw secret material")
+    if location := _credential_location(value, _SECRET_PATTERNS):
+        category, line = location
+        raise InboxError(f"{label} resembles credential or raw secret material (category={category}; line={line})")
     return value
 
 

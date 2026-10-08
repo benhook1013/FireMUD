@@ -185,19 +185,23 @@ class AccountDemoTenantEntitlementPersistenceIntegrationTest {
       assertThat(replay.payload()).containsExactly(exactEvent.payload());
     }
     assertThat(
-            context
-                .dsl()
-                .fetchOne(
-                    "SELECT last_sequence FROM account_tenant_entitlement_outbox_streams WHERE tenant_uuid = ?",
-                    tenantId)
+            Objects.requireNonNull(
+                    context
+                        .dsl()
+                        .fetchOne(
+                            "SELECT last_sequence FROM account_tenant_entitlement_outbox_streams WHERE tenant_uuid = ?",
+                            tenantId),
+                    "expected entitlement outbox stream row")
                 .get("last_sequence", Long.class))
         .isEqualTo(1L);
     assertThat(
-            context
-                .dsl()
-                .fetchOne(
-                    "SELECT COUNT(*) AS event_count FROM account_tenant_entitlement_outbox_events WHERE tenant_uuid = ?",
-                    tenantId)
+            Objects.requireNonNull(
+                    context
+                        .dsl()
+                        .fetchOne(
+                            "SELECT COUNT(*) AS event_count FROM account_tenant_entitlement_outbox_events WHERE tenant_uuid = ?",
+                            tenantId),
+                    "expected entitlement outbox event count row")
                 .get("event_count", Long.class))
         .isEqualTo(1L);
     assertThat(first.canonicalTenantId()).isEqualTo(tenantId);
