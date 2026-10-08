@@ -9,7 +9,6 @@ import java.io.IOException;
 import java.util.UUID;
 import net.firedevops.firemud.common.json.Rfc8785CanonicalJson;
 import net.firedevops.firemud.common.publication.PublishedRealmEntryPolicyReadGrpcCodec;
-import net.firedevops.firemud.common.publication.PublishedRealmEntryPolicySetEvidence;
 import net.firedevops.firemud.gamedesign.v1.ListPublishedRealmEntryPoliciesResponse;
 import net.firedevops.firemud.gamedesign.v1.ResolvePublishedRealmEntryPolicyResponse;
 import org.junit.jupiter.api.Test;
