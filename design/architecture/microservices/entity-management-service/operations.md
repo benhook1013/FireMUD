@@ -10,65 +10,6 @@ The current replacement-validation path is also narrower than the target contrac
 
 At the live enqueue boundary, the current Automation implementation expands each enabled command node over its target entity ids, assigns `commandOrdinal`, and enforces configured bounded per-run and per-entity fan-out with atomic rejection before admission when a bound is exceeded. The current path still does not prove complete durable child/target identity or end-to-end fan-out/replay semantics; the target Command-Handoff Identity and its atomic rejection distinction remain required. `automationDispatchId` alone is not a dedupe key; use the complete Command-Handoff Identity for the target contract.
 
-## V3 Concurrent Index Migration Recovery
-
-Entity V3 creates `ux_characters_character_uuid_idx` concurrently, then `idx_characters_owner_resolved_roster` concurrently, and finally attaches the first index as the `ux_characters_character_uuid` unique constraint. Follow the [database migration contract](../../system-architecture-database-migrations.md) for migration activation and roll-forward. These local recovery steps preserve all character rows and require writer admission to remain closed and quiesced throughout inspection and recovery.
-
-Use the deployed Entity `SERVICE_SCHEMA` value, confirm the selected schema, and inspect the exact index definitions, PostgreSQL validity/readiness flags, and any attached constraint before taking action. In `psql`, set `service_schema` to that deployed schema and run:
-
-```sql
-SET search_path TO :"service_schema";
-
-SELECT current_schema() AS selected_schema, current_schemas(false) AS search_path_schemas;
-
-SELECT ns.nspname AS schema_name,
-       idx.relname AS index_name,
-       pg_get_indexdef(idx.oid) AS index_definition,
-       pi.indisvalid,
-       pi.indisready,
-       pi.indisunique,
-       con.conname AS attached_constraint
-FROM pg_class AS idx
-JOIN pg_namespace AS ns ON ns.oid = idx.relnamespace
-JOIN pg_index AS pi ON pi.indexrelid = idx.oid
-LEFT JOIN pg_constraint AS con ON con.conindid = idx.oid
-WHERE ns.nspname = :'service_schema'
-  AND idx.relname IN (
-      'ux_characters_character_uuid_idx',
-      'idx_characters_owner_resolved_roster',
-      'ux_characters_character_uuid'
-  )
-ORDER BY idx.relname;
-```
-
-Before a concurrent index build or drop, inspect long-running transactions and blockers in the target database; concurrent index operations can wait on old snapshots and other transactions. This read-only query identifies long-running active transactions and sessions blocking or blocked by another backend:
-
-```sql
-SELECT activity.pid,
-       activity.usename,
-       activity.state,
-       now() - activity.xact_start AS transaction_age,
-       now() - activity.query_start AS query_age,
-       activity.wait_event_type,
-       activity.wait_event,
-       pg_blocking_pids(activity.pid) AS blocking_pids,
-       activity.query
-FROM pg_stat_activity AS activity
-WHERE activity.datname = current_database()
-  AND activity.pid <> pg_backend_pid()
-  AND (activity.state <> 'idle' OR cardinality(pg_blocking_pids(activity.pid)) > 0)
-ORDER BY activity.xact_start NULLS LAST, activity.query_start NULLS LAST;
-```
-
-An invalid index may be removed only after confirming it is one of these exact V3 indexes, is unattached to a constraint, and its definition matches the expected V3 object. Use the deployed schema explicitly; run each statement outside a transaction:
-
-```sql
-DROP INDEX CONCURRENTLY IF EXISTS :"service_schema".ux_characters_character_uuid_idx;
-DROP INDEX CONCURRENTLY IF EXISTS :"service_schema".idx_characters_owner_resolved_roster;
-```
-
-Drop only the specific invalid, unattached index confirmed by inspection, then verify it is absent. Do not drop a valid index or the attached `ux_characters_character_uuid` constraint as generic cleanup. A blind Flyway repair-and-migrate is unsafe when an earlier V3 statement succeeded: retrying the whole file may collide with a surviving valid index, and attaching the unique index renames it to the constraint's final name. If either expected index is valid, the final constraint exists, or the observed state is otherwise mixed, stop automatic retry and use an operator-reviewed, phase-specific roll-forward plan that accounts for Flyway history and the exact surviving definitions. Do not delete or rewrite character data to make the migration proceed.
-
 ## Target Replacement Operations
 
 Replacement operations use the stable `playableStateNamespaceId` and owner-resolved `playableStateScope` for durable S1/S2 state and the active `gameInstanceId` as a runtime fence; Entity validates the scope and never derives it from the opaque namespace. Explicitly disposable S3 families may remain instance-keyed. Entity must report owner-local classification, mapping validation/application, and cleanup acknowledgement to World Management. Unknown or unregistered families block cutover/termination, and an echoed `remapSetId` is not proof of mapping application. [ADR 0122](../../decisions/adr-0122-stable-playable-state-namespaces-for-runtime-replacement.md) and [ADR 0123](../../decisions/adr-0123-database-authoritative-temporal-coordinated-world-lifecycle.md) own the cross-service decisions; this file records the Entity operational consequence.

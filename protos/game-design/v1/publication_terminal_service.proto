@@ -1,0 +1,22 @@
+syntax = "proto3";
+
+package game_design.v1;
+
+option java_package = "net.firedevops.firemud.gamedesign.v1";
+option java_multiple_files = true;
+
+// Explicit composition only; no runtime publication or lifecycle authority is enabled.
+service GameDesignPublicationTerminalReadService {
+  rpc ReadGameDesignPublicationTerminal(ReadGameDesignPublicationTerminalRequest)
+      returns (ReadGameDesignPublicationTerminalResponse);
+}
+
+message ReadGameDesignPublicationTerminalRequest {
+  // Closed schema-1 namespace/read UUID/complete original operation carrier.
+  bytes canonical_request_bytes = 1;
+}
+
+message ReadGameDesignPublicationTerminalResponse {
+  // Exact request echo plus UNKNOWN or the unchanged immutable terminal evidence.
+  bytes canonical_response_bytes = 1;
+}

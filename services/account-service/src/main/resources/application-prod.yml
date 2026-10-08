@@ -77,6 +77,7 @@ firemud:
         - account.v1.AccountService/IssueDirectTextConnectScope
         - account.v1.AccountService/JoinPublicProductionMembership
         - account.v1.RuntimeAccountIdentityService/ResolveRuntimeAccountIdentity
+        - account.v1.AccountActorStagingEligibilityService/ResolvePreseededActorStagingEligibility
   grpc:
     cert-chain: ${FIREMUD_GRPC_CERT_CHAIN_PATH:certs/client.crt}
     private-key: ${FIREMUD_GRPC_PRIVATE_KEY_PATH:certs/client.key}

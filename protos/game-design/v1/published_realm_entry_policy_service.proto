@@ -1,0 +1,44 @@
+syntax = "proto3";
+
+package game_design.v1;
+
+option java_package = "net.firedevops.firemud.gamedesign.v1";
+option java_multiple_files = true;
+
+// Exact same-namespace Game Session workload only; explicit composition, not runtime registration.
+service PublishedRealmEntryPolicyService {
+  rpc ResolvePublishedRealmEntryPolicy(ResolvePublishedRealmEntryPolicyRequest)
+      returns (ResolvePublishedRealmEntryPolicyResponse);
+  rpc ListPublishedRealmEntryPolicies(ListPublishedRealmEntryPoliciesRequest)
+      returns (ListPublishedRealmEntryPoliciesResponse);
+}
+
+message ResolvePublishedRealmEntryPolicyRequest {
+  uint32 schema_version = 1;
+  string target_namespace = 2;
+  string read_request_id = 3;
+  string canonical_tenant_id = 4;
+  string canonical_version_id = 5;
+  string world_slug = 6;
+  string realm_slug = 7;
+}
+
+message ResolvePublishedRealmEntryPolicyResponse {
+  ResolvePublishedRealmEntryPolicyRequest request = 1;
+  // Complete immutable set proves the selected row without weakening its publication binding.
+  bytes policy_set_evidence = 2;
+}
+
+message ListPublishedRealmEntryPoliciesRequest {
+  uint32 schema_version = 1;
+  string target_namespace = 2;
+  string read_request_id = 3;
+  string canonical_tenant_id = 4;
+  string canonical_version_id = 5;
+}
+
+message ListPublishedRealmEntryPoliciesResponse {
+  ListPublishedRealmEntryPoliciesRequest request = 1;
+  // Complete ordered set, count/digests and exact actual source/capture/terminal/release evidence.
+  bytes policy_set_evidence = 2;
+}

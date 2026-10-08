@@ -1,6 +1,10 @@
 package net.firedevops.firemud.entitymanagement.service.impl;
 
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import io.micrometer.core.annotation.Timed;
+import io.micrometer.core.instrument.Counter;
+import io.micrometer.core.instrument.MeterRegistry;
+import jakarta.annotation.PostConstruct;
 import lombok.RequiredArgsConstructor;
 import net.firedevops.firemud.entitymanagement.dto.CharacterDto;
 import net.firedevops.firemud.entitymanagement.entity.Character;
@@ -10,6 +14,8 @@ import net.firedevops.firemud.entitymanagement.service.CharacterService;
 import net.firedevops.firemud.entitymanagement.service.PlayableStateKeyResolver;
 import net.firedevops.firemud.entitymanagement.service.ScopedCharacterResolver;
 import net.firedevops.firemud.entitymanagement.v1.PlayableStateScope;
+import org.springframework.cache.Cache;
+import org.springframework.cache.CacheManager;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
@@ -17,14 +23,28 @@ import org.springframework.transaction.annotation.Transactional;
 
 @Service
 @RequiredArgsConstructor
+@SuppressFBWarnings(
+    value = "EI_EXPOSE_REP2",
+    justification = "Injected dependencies are not exposed")
 public class CharacterServiceImpl implements CharacterService {
 
   private final CharacterRepository characterRepository;
   private final CharacterMapper characterMapper;
+  private final CacheManager cacheManager;
+  private final MeterRegistry meterRegistry;
   private final PlayableStateKeyResolver playableStateKeyResolver;
   private final ScopedCharacterResolver scopedCharacterResolver;
 
+  private Counter cacheHitCounter;
+  private Counter cacheMissCounter;
+
   private static final int EXP_PER_LEVEL = 1000;
+
+  @PostConstruct
+  void initMetrics() {
+    cacheHitCounter = meterRegistry.counter("character_cache_hits_total");
+    cacheMissCounter = meterRegistry.counter("character_cache_misses_total");
+  }
 
   @Override
   @Transactional
@@ -57,9 +77,21 @@ public class CharacterServiceImpl implements CharacterService {
   @Transactional(readOnly = true)
   @Timed(value = "character.get")
   public CharacterDto getWithInventory(Long characterId) {
-    // Rely exclusively on the repository's fresh persisted OWNER_RESOLVED predicate.
+    Cache cache = cacheManager.getCache("characterGraph");
+    if (cache != null) {
+      CharacterDto cached = cache.get(characterId, CharacterDto.class);
+      if (cached != null) {
+        cacheHitCounter.increment();
+        return cached;
+      }
+    }
+    cacheMissCounter.increment();
     Character character = characterRepository.findWithInventoryById(characterId).orElseThrow();
-    return toDto(character);
+    CharacterDto dto = toDto(character);
+    if (cache != null) {
+      cache.put(characterId, dto);
+    }
+    return dto;
   }
 
   @Override
@@ -108,7 +140,13 @@ public class CharacterServiceImpl implements CharacterService {
       String gameInstanceId,
       PlayableStateScope playableStateScope,
       Pageable pageable) {
-    return Page.empty(pageable == null ? Pageable.unpaged() : pageable);
+    return characterRepository
+        .findByTenantIdAndAccountIdAndPlayableStateKey(
+            tenantId,
+            accountId,
+            playableStateKeyResolver.resolve(gameInstanceId, playableStateScope),
+            pageable)
+        .map(this::toDto);
   }
 
   @Override
@@ -119,7 +157,12 @@ public class CharacterServiceImpl implements CharacterService {
     if (name == null || name.isBlank()) {
       return java.util.Optional.empty();
     }
-    return java.util.Optional.empty();
+    return characterRepository
+        .findByTenantIdAndPlayableStateKeyAndNameIgnoreCase(
+            tenantId,
+            playableStateKeyResolver.resolve(gameInstanceId, playableStateScope),
+            name.trim())
+        .map(this::toDto);
   }
 
   private CharacterDto toDto(Character character) {
@@ -129,12 +172,7 @@ public class CharacterServiceImpl implements CharacterService {
         dto.tenantId(),
         dto.accountId(),
         dto.name(),
-        character.getActorIdentity() == null
-                || character.getActorIdentity().status()
-                    != net.firedevops.firemud.entitymanagement.entity.ActorIdentityStatus
-                        .OWNER_RESOLVED
-            ? PlayableStateScope.PLAYABLE_STATE_SCOPE_UNSPECIFIED
-            : character.getActorIdentity().playableStateScope(),
+        playableStateKeyResolver.resolveScope(character.getPlayableStateKey()),
         dto.level(),
         dto.experience(),
         dto.strength(),
