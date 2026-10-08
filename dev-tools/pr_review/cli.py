@@ -294,6 +294,13 @@ def _parser() -> argparse.ArgumentParser:
     provider_import.add_argument("--coverage-limit", action="append", default=[])
     records_database(provider_import)
 
+    cli_observations = record_commands.add_parser(
+        "cli-observations",
+        help="recover validated findings from one exact terminal failed native CLI capture",
+    )
+    cli_observations.add_argument("--run-id", required=True)
+    records_database(cli_observations)
+
     provider_repair = record_commands.add_parser(
         "repair-provider",
         help="preview or replay exact public provider checkpoints into SQLite",
@@ -1316,6 +1323,9 @@ def _dispatch_records(args: argparse.Namespace) -> tuple[Any, int]:
             reason=args.reason,
             target_pr=args.target_pr,
         )
+        return {"api_version": 1, "result": result}, 0
+    if args.records_command == "cli-observations":
+        result = cli_attempts.recover_failed_cli_observations(store, _records_database_path(args), args.run_id)
         return {"api_version": 1, "result": result}, 0
     if args.records_command == "cli-correct":
         result = store.correct_source_decision(

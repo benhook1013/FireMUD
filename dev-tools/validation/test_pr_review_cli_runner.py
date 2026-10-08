@@ -1678,6 +1678,136 @@ class CliReviewRunnerTests(unittest.TestCase):
             )
             self.assertEqual(records.history(result.pull_request)["runs"], [])
 
+    def test_terminal_failed_cli_capture_retains_unattributable_findings_for_adjudication(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / ".git").mkdir()
+            database = root / ".git" / "firemud" / "records.sqlite3"
+            database.parent.mkdir()
+            SqliteStateStore(database).update(lambda state: state)
+            records = SqliteReviewRecords(database)
+            records.bootstrap()
+            output = "".join(
+                json.dumps(event) + "\n"
+                for event in (
+                    {
+                        "type": "review_context",
+                        "baseBranch": "main",
+                        "currentBranch": "feature",
+                        "expectedDuration": "short",
+                        "reviewType": "full",
+                        "workingDirectory": "/workspace",
+                    },
+                    {"type": "heartbeat", "status": "working"},
+                    {"type": "heartbeat", "status": "working"},
+                    {"type": "reviewing", "message": "Review started"},
+                    {"type": "reviewing", "message": "Reviewing changed files"},
+                    {
+                        "type": "finding",
+                        "severity": "Trivial",
+                        "codegenInstructions": (
+                            "Review comment at @src/Representative.java:1\nTrivial: retain the useful observation."
+                        ),
+                    },
+                    {
+                        "type": "error",
+                        "errorType": "connection",
+                        "message": "Provider connection closed",
+                        "recoverable": True,
+                        "details": {},
+                    },
+                )
+            )
+
+            result = run_cli_review(
+                target(),
+                github=FakeGitHub(),
+                source_root=root,
+                runner=FakeCommands(root, review_output=output, review_returncode=1),
+                records=records,
+            )
+
+            attempt = records.attempt(result.run_id)
+            history = records.history(result.pull_request)
+            run = next(item for item in history["runs"] if item["run_id"] == result.run_id)
+            self.assertEqual(result.exit_status, 1)
+            self.assertEqual(attempt["state"], "failed")
+            self.assertEqual(attempt["run_id"], result.run_id)
+            self.assertEqual(run["outcome"], "failed")
+            self.assertFalse(run["attributable"])
+            self.assertFalse(run["finalized"])
+            self.assertEqual(run["counts"], {"found": 1, "accepted": 0, "routed": 0})
+            self.assertEqual(history["findings"][0]["source_finding_key"], f"cli-run:{result.run_id}:finding:1")
+            self.assertEqual(records.completed_cli_capture_snapshots(result.pull_request), [])
+            with self.assertRaisesRegex(ReviewRecordsError, "ended without a completed source run"):
+                records.cli_capture_snapshot(result.run_id, source_pr=result.pull_request)
+
+            key = f"cli-run:{result.run_id}:finding:1"
+            records.record_source_decision(
+                result.run_id,
+                key,
+                decision_id=f"{result.run_id}.decision.1",
+                decision="accepted",
+                actor="reviewer",
+                reason="Useful but non-counting partial observation",
+            )
+            records.finalize_run(result.run_id, finalized_at="2026-10-01T00:00:03Z")
+            self.assertEqual(records.completed_cli_capture_snapshots(result.pull_request), [])
+            with self.assertRaisesRegex(ReviewRecordsError, "completed attributable finalized run"):
+                records.record_source_resolution(
+                    result.run_id,
+                    key,
+                    source_pr=result.pull_request,
+                    resolution_id=f"{result.run_id}.resolution.1",
+                    fix_sha="b" * 40,
+                    actor="reviewer",
+                    proof_note="must remain unavailable for a failed review",
+                )
+
+    def test_partial_cli_parser_rejects_truncated_malformed_and_ambiguous_jsonl(self):
+        finding = json.dumps({"type": "finding", "codegenInstructions": "Trivial observation"}) + "\n"
+        self.assertEqual(len(evidence.parse_partial_capture_events(finding)), 1)
+        for invalid in (
+            finding.rstrip("\n"),
+            finding + '{"type":"finding"\n',
+            finding + '{"type":"finding","type":"complete"}\n',
+            finding + '["not","an object"]\n',
+            finding + '{"type":"complete","status":"review_completed","findings":1,"reviewedFiles":[]}\n',
+            finding + '{"type":"unknown"}\n',
+            finding + '{"type":"error","errorType":"connection","recoverable":"yes"}\n',
+            finding + '{"type":"heartbeat","status":[]}\n',
+            finding + '{"type":"review_context","reviewType":"full"}\n',
+        ):
+            with self.subTest(invalid=invalid), self.assertRaises(evidence.EvidenceError):
+                evidence.parse_partial_capture_events(invalid)
+
+        stream = "".join(
+            json.dumps(event) + "\n"
+            for event in (
+                {
+                    "type": "review_context",
+                    "baseBranch": "main",
+                    "currentBranch": "feature",
+                    "expectedDuration": "short",
+                    "reviewType": "full",
+                    "workingDirectory": "/workspace",
+                },
+                {"type": "heartbeat", "status": "working"},
+                {"type": "heartbeat", "status": "working"},
+                {"type": "reviewing", "message": "Review started"},
+                {"type": "reviewing", "message": "Reviewing changed files"},
+                {"type": "finding", "codegenInstructions": "Trivial observation"},
+                {
+                    "type": "error",
+                    "errorType": "connection",
+                    "message": "Provider connection closed",
+                    "recoverable": True,
+                    "details": {},
+                },
+            )
+        )
+        self.assertEqual(len(evidence.parse_partial_capture_events(stream)), 1)
+
     def test_redacted_cli_headline_is_bounded_before_sql_completion(self):
         long_headline = " ".join(["Bearer x"] * 40)
         output = (

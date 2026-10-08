@@ -92,13 +92,158 @@ def failed_attempts(database: Path, pr: int) -> dict[str, Any]:
                 continue
         except (OSError, ValueError, UnicodeError):
             continue
-        attempts.append({
-            "run_id": directory.name,
-            "finished_at": datetime.fromtimestamp(when, timezone.utc).isoformat().replace("+00:00", "Z"),
-            "outcome": outcome,
-        })
+        attempts.append(
+            {
+                "run_id": directory.name,
+                "finished_at": datetime.fromtimestamp(when, timezone.utc).isoformat().replace("+00:00", "Z"),
+                "outcome": outcome,
+            }
+        )
     attempts.sort(key=lambda item: (item["finished_at"], item["run_id"]), reverse=True)
     return {"available": True, "attempts": attempts[:MAX_ATTEMPTS]}
+
+
+def recover_failed_cli_observations(records: Any, database: Path, run_id: str) -> dict[str, Any]:
+    """Recover findings from the exact durable capture of one failed native CLI attempt."""
+
+    if not isinstance(run_id, str) or not RUN_NAME.fullmatch(run_id):
+        raise ReviewRecordsError("run ID must identify one native CLI capture")
+    try:
+        attempt = records.attempt(run_id)
+    except AttemptNotFound as exc:
+        raise ReviewRecordsError("exact native CLI attempt is unavailable") from exc
+    if (
+        attempt["channel"] != "cli"
+        or attempt["state"] not in {"failed", "rate_limited", "timed_out"}
+        or attempt["run_id"] not in (None, run_id)
+        or attempt["metadata"].get("origin") == "legacy_private_capture"
+    ):
+        raise ReviewRecordsError("run ID does not identify a terminal failed native CLI attempt")
+
+    common_records_dir = database.resolve(strict=True).parent
+    private_dir = common_records_dir / "pr-review"
+    root = private_dir / "runs"
+    if private_dir.is_symlink() or not private_dir.is_dir() or root.is_symlink() or not root.is_dir():
+        raise ReviewRecordsError("native CLI capture directory is unavailable")
+    directory = root / run_id
+    if directory.is_symlink() or not directory.is_dir():
+        raise ReviewRecordsError("exact native CLI capture is unavailable")
+
+    metadata = _read_capture_json(directory / "metadata.json", MAX_METADATA_BYTES, "metadata")
+    if (
+        metadata.get("run_id") != run_id
+        or metadata.get("kind") != "cli"
+        or metadata.get("capture_completion_marker") != "capture-complete"
+    ):
+        raise ReviewRecordsError("native CLI capture metadata identity is invalid")
+    original_metadata = {
+        key: value for key, value in metadata.items() if key not in {"duration_seconds", "exit_status", "timed_out"}
+    }
+    if original_metadata != attempt["metadata"]:
+        raise ReviewRecordsError("native CLI capture metadata conflicts with its exact SQL attempt")
+    pr = _capture_pr(metadata.get("pull_request"))
+    candidate_sha = metadata.get("candidate_sha")
+    if pr != attempt["source_pr"] or not isinstance(candidate_sha, str) or candidate_sha != attempt["candidate_sha"]:
+        raise ReviewRecordsError("native CLI capture PR or candidate head conflicts with its exact SQL attempt")
+    attempts = {item["attempt_id"]: item for item in records.attempt_history(pr)}
+    exact_attempt = attempts.get(run_id)
+    if exact_attempt is None or exact_attempt["finished_at"] != attempt["finished_at"]:
+        raise ReviewRecordsError("native CLI attempt history does not match the exact capture")
+
+    marker = _read_capture_text(directory / "capture-complete", 128, "completion marker")
+    if marker != f"{run_id}\n":
+        raise ReviewRecordsError("native CLI capture has no exact durable capture marker")
+    exit_text = _read_capture_text(directory / "exit-status", MAX_EXIT_STATUS_BYTES, "exit status").strip()
+    stderr = _read_capture_text(directory / "stderr", MAX_RECOVERY_STDERR_BYTES, "stderr")
+    stdout = _read_capture_text(directory / "stdout", MAX_RECOVERY_STDOUT_BYTES, "stdout")
+    duration_text = _read_capture_text(
+        directory / "review-duration-seconds", MAX_EXIT_STATUS_BYTES, "review duration"
+    ).strip()
+    if not re.fullmatch(r"[0-9]{1,9}", duration_text):
+        raise ReviewRecordsError("native CLI capture duration is invalid")
+    duration = int(duration_text)
+    if type(metadata.get("duration_seconds")) is not int or metadata["duration_seconds"] != duration:
+        raise ReviewRecordsError("native CLI capture duration conflicts with its metadata")
+    if type(exact_attempt.get("duration_seconds")) is not int or exact_attempt["duration_seconds"] != duration:
+        raise ReviewRecordsError("native CLI capture duration conflicts with its exact SQL attempt")
+
+    if exit_text == "timeout":
+        state = "timed_out"
+        exit_status = None
+        if metadata.get("exit_status") is not None or metadata.get("timed_out") is not True:
+            raise ReviewRecordsError("native CLI timeout capture metadata is inconsistent")
+    elif re.fullmatch(r"-?[0-9]{1,9}", exit_text):
+        exit_status = int(exit_text)
+        if metadata.get("exit_status") != exit_status or metadata.get("timed_out") not in (None, False):
+            raise ReviewRecordsError("native CLI failed capture exit status is inconsistent")
+        if exit_status == 0:
+            if attempt["state"] != "failed":
+                raise ReviewRecordsError("native CLI zero exit is not a failed terminal attempt")
+            state = "failed"
+        else:
+            state = "rate_limited" if "rate limit exceeded" in stderr.casefold() else "failed"
+    else:
+        raise ReviewRecordsError("native CLI failed capture exit status is invalid")
+    if state != attempt["state"] or exit_status != exact_attempt.get("exit_status"):
+        raise ReviewRecordsError("native CLI capture terminal state conflicts with its exact SQL attempt")
+    try:
+        findings = (
+            evidence.parse_partial_capture_events(stdout)
+            if exit_status == 0
+            else evidence.parse_failed_capture_events(stdout)
+        )
+    except evidence.EvidenceError as exc:
+        raise ReviewRecordsError("native CLI capture does not contain valid bounded finding events") from exc
+    if not findings:
+        raise ReviewRecordsError("native CLI capture contains no findings to recover")
+
+    finished_at = exact_attempt["finished_at"]
+    if not isinstance(finished_at, str) or not finished_at:
+        raise ReviewRecordsError("native CLI failed attempt has no terminal timestamp")
+
+    artifacts = records.attempt_artifacts(run_id)
+    if "cli_diagnostic" not in artifacts or "metadata" not in artifacts:
+        raise ReviewRecordsError("native CLI attempt does not retain its exact diagnostic metadata")
+    try:
+        archived_metadata = json.loads(artifacts["metadata"])
+    except (TypeError, json.JSONDecodeError) as exc:
+        raise ReviewRecordsError("native CLI attempt metadata archive is malformed") from exc
+    if archived_metadata != metadata:
+        raise ReviewRecordsError("native CLI capture metadata conflicts with its archived digest record")
+    archived_diagnostic, _ = _redact_archive_text(stderr)
+    if archived_diagnostic != artifacts["cli_diagnostic"]:
+        raise ReviewRecordsError("native CLI capture diagnostic conflicts with its archived evidence")
+
+    finish = {
+        "state": state,
+        "finished_at": finished_at,
+        "duration_seconds": duration,
+        "exit_status": exit_status,
+        "diagnostic": exact_attempt["diagnostic"],
+        "artifacts": {"cli_events": stdout},
+    }
+    recorded = records.record_failed_cli_observations(
+        run_id,
+        finish=finish,
+        run={
+            "run_id": run_id,
+            "source_pr": pr,
+            "channel": "cli",
+            "outcome": "failed",
+            "attributable": False,
+            "source_head": candidate_sha,
+            "reviewer": "CodeRabbit CLI",
+            "scope": "broad",
+            "started_at": attempt["started_at"],
+            "finished_at": finished_at,
+        },
+    )
+    return {
+        "run_id": run_id,
+        "source_pr": pr,
+        "finding_count": len(findings),
+        "idempotent_replay": recorded["idempotent_replay"],
+    }
 
 
 def reconcile_legacy_failed_attempts(records: Any, database: Path) -> dict[str, Any]:
@@ -121,8 +266,12 @@ def reconcile_legacy_failed_attempts(records: Any, database: Path) -> dict[str, 
         return {
             "available": False,
             "reason": "legacy CLI capture directory could not be inspected",
-            "imported": [], "already_imported": [], "recovered": [],
-            "terminally_classified": [], "conflicts": [], "skipped": 0,
+            "imported": [],
+            "already_imported": [],
+            "recovered": [],
+            "terminally_classified": [],
+            "conflicts": [],
+            "skipped": 0,
         }
 
     lock_path = database.parent / "pr-review" / "cli.lock"
@@ -133,8 +282,12 @@ def reconcile_legacy_failed_attempts(records: Any, database: Path) -> dict[str, 
         return {
             "available": False,
             "reason": "CLI review lock could not be opened or acquired",
-            "imported": [], "already_imported": [], "recovered": [],
-            "terminally_classified": [], "conflicts": [], "skipped": 0,
+            "imported": [],
+            "already_imported": [],
+            "recovered": [],
+            "terminally_classified": [],
+            "conflicts": [],
+            "skipped": 0,
         }
     acquired = False
     try:
@@ -144,15 +297,23 @@ def reconcile_legacy_failed_attempts(records: Any, database: Path) -> dict[str, 
             return {
                 "available": False,
                 "reason": "a CLI review is active; legacy captures were not reconciled",
-                "imported": [], "already_imported": [], "recovered": [],
-                "terminally_classified": [], "conflicts": [], "skipped": 0,
+                "imported": [],
+                "already_imported": [],
+                "recovered": [],
+                "terminally_classified": [],
+                "conflicts": [],
+                "skipped": 0,
             }
         except OSError:
             return {
                 "available": False,
                 "reason": "CLI review lock could not be opened or acquired",
-                "imported": [], "already_imported": [], "recovered": [],
-                "terminally_classified": [], "conflicts": [], "skipped": 0,
+                "imported": [],
+                "already_imported": [],
+                "recovered": [],
+                "terminally_classified": [],
+                "conflicts": [],
+                "skipped": 0,
             }
         acquired = True
         return _reconcile_legacy_failed_attempts_locked(records, database)
@@ -188,15 +349,23 @@ def _reconcile_legacy_failed_attempts_locked(records: Any, database: Path) -> di
         return {
             "available": False,
             "reason": "legacy CLI capture directory could not be inspected",
-            "imported": [], "already_imported": [], "recovered": [],
-            "terminally_classified": [], "conflicts": [], "skipped": 0,
+            "imported": [],
+            "already_imported": [],
+            "recovered": [],
+            "terminally_classified": [],
+            "conflicts": [],
+            "skipped": 0,
         }
     if root.is_symlink() or not root.is_dir():
         return {
             "available": False,
             "reason": "legacy CLI capture directory is not a regular directory",
-            "imported": [], "already_imported": [], "recovered": [],
-            "terminally_classified": [], "conflicts": [], "skipped": 0,
+            "imported": [],
+            "already_imported": [],
+            "recovered": [],
+            "terminally_classified": [],
+            "conflicts": [],
+            "skipped": 0,
         }
     try:
         directories = []
@@ -205,8 +374,12 @@ def _reconcile_legacy_failed_attempts_locked(records: Any, database: Path) -> di
                 return {
                     "available": False,
                     "reason": "legacy CLI capture directory exceeds the migration scan limit",
-                    "imported": [], "already_imported": [], "recovered": [],
-                    "terminally_classified": [], "conflicts": [], "skipped": 0,
+                    "imported": [],
+                    "already_imported": [],
+                    "recovered": [],
+                    "terminally_classified": [],
+                    "conflicts": [],
+                    "skipped": 0,
                 }
             if RUN_NAME.fullmatch(directory.name) and not directory.is_symlink() and directory.is_dir():
                 directories.append(directory)
@@ -214,8 +387,12 @@ def _reconcile_legacy_failed_attempts_locked(records: Any, database: Path) -> di
         return {
             "available": False,
             "reason": "legacy CLI captures could not be enumerated",
-            "imported": [], "already_imported": [], "recovered": [],
-            "terminally_classified": [], "conflicts": [], "skipped": 0,
+            "imported": [],
+            "already_imported": [],
+            "recovered": [],
+            "terminally_classified": [],
+            "conflicts": [],
+            "skipped": 0,
         }
     directories.sort(key=lambda path: path.name)
 
@@ -299,7 +476,10 @@ def _reconcile_legacy_failed_attempts_locked(records: Any, database: Path) -> di
             if any(existing.get(key) != expected[key] for key in ("source_pr", "channel", "candidate_sha", "metadata")):
                 conflicts.append({"run_id": run_id, "reason": "attempt identity or source fingerprint conflicts"})
                 continue
-            if existing["state"] not in {"started", expected["state"]} or existing["started_at"] != expected["started_at"]:
+            if (
+                existing["state"] not in {"started", expected["state"]}
+                or existing["started_at"] != expected["started_at"]
+            ):
                 conflicts.append({"run_id": run_id, "reason": "attempt outcome conflicts with captured evidence"})
                 continue
             try:
@@ -480,17 +660,13 @@ def _reconcile_failed_capture(records: Any, directory: Path) -> dict[str, Any] |
         if metadata.get("capture_completion_marker") != "capture-complete":
             return None
         original_metadata = {
-            key: value for key, value in metadata.items()
-            if key not in {"duration_seconds", "exit_status", "timed_out"}
+            key: value for key, value in metadata.items() if key not in {"duration_seconds", "exit_status", "timed_out"}
         }
         if original_metadata != attempt["metadata"]:
             return None
         pr = _capture_pr(metadata.get("pull_request"))
         candidate_sha = metadata.get("candidate_sha")
-        if (
-            pr != attempt["source_pr"]
-            or candidate_sha != attempt["candidate_sha"]
-        ):
+        if pr != attempt["source_pr"] or candidate_sha != attempt["candidate_sha"]:
             return None
         marker = _read_capture_text(directory / "capture-complete", 128, "completion marker")
         if marker != f"{directory.name}\n":
@@ -576,8 +752,7 @@ def _reconcile_incomplete_native_capture(records: Any, directory: Path) -> dict[
         if metadata.get("run_id") != directory.name or metadata.get("kind") != "cli":
             return None
         original_metadata = {
-            key: value for key, value in metadata.items()
-            if key not in {"duration_seconds", "exit_status", "timed_out"}
+            key: value for key, value in metadata.items() if key not in {"duration_seconds", "exit_status", "timed_out"}
         }
         if original_metadata != attempt["metadata"]:
             return None
@@ -662,20 +837,12 @@ def _successful_capture(directory: Path, attempt: dict[str, Any]) -> dict[str, A
         raise _UnrecordableCapture("capture identity is invalid")
     pr = _capture_pr(metadata.get("pull_request"))
     candidate_sha = metadata.get("candidate_sha")
-    if not isinstance(candidate_sha, str) or not re.fullmatch(
-        r"[0-9a-fA-F]{40}|[0-9a-fA-F]{64}", candidate_sha
-    ):
+    if not isinstance(candidate_sha, str) or not re.fullmatch(r"[0-9a-fA-F]{40}|[0-9a-fA-F]{64}", candidate_sha):
         raise _UnrecordableCapture("capture candidate identity is invalid")
-    if (
-        attempt["channel"] != "cli"
-        or attempt["source_pr"] != pr
-        or attempt["candidate_sha"] != candidate_sha
-    ):
+    if attempt["channel"] != "cli" or attempt["source_pr"] != pr or attempt["candidate_sha"] != candidate_sha:
         raise _UnrecordableCapture("capture identity conflicts with the SQL attempt")
     initial_metadata = {
-        key: value
-        for key, value in metadata.items()
-        if key not in {"duration_seconds", "exit_status", "timed_out"}
+        key: value for key, value in metadata.items() if key not in {"duration_seconds", "exit_status", "timed_out"}
     }
     if attempt["metadata"] != initial_metadata:
         raise _UnrecordableCapture("capture metadata conflicts with the SQL attempt")
@@ -695,15 +862,15 @@ def _successful_capture(directory: Path, attempt: dict[str, Any]) -> dict[str, A
     findings = _parse_successful_stdout(stdout)
     observations = []
     for index, finding in enumerate(findings, 1):
-        title = _cli_finding_title(
-            finding.get("codegenInstructions"), f"CodeRabbit CLI finding {index}"
-        )
+        title = _cli_finding_title(finding.get("codegenInstructions"), f"CodeRabbit CLI finding {index}")
         try:
-            observations.append(FindingObservation(
-                source_finding_key=f"cli-run:{run_id}:finding:{index}",
-                title=title,
-                detail=_safe_finding_detail(_cli_detail(finding.get("codegenInstructions"))),
-            ))
+            observations.append(
+                FindingObservation(
+                    source_finding_key=f"cli-run:{run_id}:finding:{index}",
+                    title=title,
+                    detail=_safe_finding_detail(_cli_detail(finding.get("codegenInstructions"))),
+                )
+            )
         except ReviewRecordsError as error:
             raise _UnrecordableCapture("capture finding metadata is invalid") from error
     finished_at = _capture_finished_at(directory / "exit-status")
@@ -772,10 +939,7 @@ def _archive_diagnostic(summary: str, detail: str = "") -> str:
     """Normalize provider controls before redaction and bounded persistence."""
 
     diagnostic = f"{summary}: {detail}" if detail else summary
-    diagnostic = "".join(
-        " " if unicodedata.category(character) == "Cc" else character
-        for character in diagnostic
-    )
+    diagnostic = "".join(" " if unicodedata.category(character) == "Cc" else character for character in diagnostic)
     diagnostic, _ = _redact_archive_text(diagnostic)
     return diagnostic[:1000].rstrip()
 
@@ -942,7 +1106,9 @@ def _legacy_failure(directory: Path) -> dict[str, Any] | None:
         candidate_sha = None
     started_epoch = metadata_stat.st_mtime
     finished_epoch = finished_stat.st_mtime
-    started_at = datetime.fromtimestamp(min(started_epoch, finished_epoch), timezone.utc).isoformat().replace("+00:00", "Z")
+    started_at = (
+        datetime.fromtimestamp(min(started_epoch, finished_epoch), timezone.utc).isoformat().replace("+00:00", "Z")
+    )
     finished_at = datetime.fromtimestamp(finished_epoch, timezone.utc).isoformat().replace("+00:00", "Z")
     fingerprint_source = {
         "run_id": directory.name,

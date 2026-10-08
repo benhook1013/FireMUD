@@ -2389,6 +2389,155 @@ class SqliteReviewRecordsTest(unittest.TestCase):
             [run_id],
         )
 
+    def failed_cli_observation_input(self, run_id: str = "run.failed-cli-observations"):
+        pr = 2838
+        head = "d" * 40
+        started_at = "2026-10-01T00:00:00Z"
+        finished_at = "2026-10-01T00:00:03Z"
+        metadata = {
+            "run_id": run_id,
+            "kind": "cli",
+            "capture_completion_marker": "capture-complete",
+            "pull_request": pr,
+            "candidate_sha": head,
+        }
+        self.records.start_attempt(
+            attempt_id=run_id,
+            source_pr=pr,
+            channel="cli",
+            candidate_sha=head,
+            started_at=started_at,
+            metadata=metadata,
+        )
+        stdout = (
+            json.dumps(
+                {
+                    "type": "finding",
+                    "codegenInstructions": "Review comment at @src/Example.java:1\nTrivial: keep this observation.",
+                }
+            )
+            + "\n"
+        )
+        finish = {
+            "state": "failed",
+            "finished_at": finished_at,
+            "duration_seconds": 3,
+            "exit_status": 1,
+            "diagnostic": "CodeRabbit CLI exited nonzero",
+            "artifacts": {"cli_events": stdout},
+        }
+        run = {
+            "run_id": run_id,
+            "source_pr": pr,
+            "channel": "cli",
+            "outcome": "failed",
+            "attributable": False,
+            "source_head": head,
+            "reviewer": "CodeRabbit CLI",
+            "scope": "broad",
+            "started_at": started_at,
+            "finished_at": finished_at,
+        }
+        return stdout, finish, run
+
+    def test_failed_cli_observation_link_is_atomic_idempotent_and_digest_bound(self) -> None:
+        self.bootstrap()
+        stdout, finish, run = self.failed_cli_observation_input()
+
+        recorded = self.records.record_failed_cli_observations(run["run_id"], finish=finish, run=run)
+        self.assertFalse(recorded["idempotent_replay"])
+        attempt = self.records.attempt(run["run_id"])
+        history = self.records.history(run["source_pr"])
+        source_run = next(item for item in history["runs"] if item["run_id"] == run["run_id"])
+        self.assertEqual(attempt["state"], "failed")
+        self.assertEqual(attempt["run_id"], run["run_id"])
+        self.assertEqual(source_run["outcome"], "failed")
+        self.assertFalse(source_run["attributable"])
+        self.assertFalse(source_run["finalized"])
+        self.assertEqual(source_run["counts"], {"found": 1, "accepted": 0, "routed": 0})
+        self.assertEqual(self.records.completed_cli_capture_snapshots(run["source_pr"]), [])
+
+        replay = self.records.record_failed_cli_observations(run["run_id"], finish=finish, run=run)
+        self.assertTrue(replay["idempotent_replay"])
+        changed = {**finish, "artifacts": {"cli_events": stdout + "\n"}}
+        with self.assertRaisesRegex(ReviewRecordsError, "archived digest"):
+            self.records.record_failed_cli_observations(run["run_id"], finish=changed, run=run)
+        self.assertEqual(self.records.attempt(run["run_id"])["run_id"], run["run_id"])
+        self.assertEqual(len(self.records.history(run["source_pr"])["runs"]), 1)
+
+    def test_failed_cli_observation_identity_mismatch_and_transaction_rollback(self) -> None:
+        self.bootstrap()
+        _, finish, run = self.failed_cli_observation_input("run.failed-cli-atomic")
+        mismatched = {**run, "source_head": "e" * 40}
+        with self.assertRaisesRegex(ReviewRecordsError, "identity"):
+            self.records.record_failed_cli_observations(run["run_id"], finish=finish, run=mismatched)
+        self.assertEqual(self.records.attempt(run["run_id"])["state"], "started")
+        self.assertEqual(self.records.attempt_artifacts(run["run_id"]), {})
+        self.assertEqual(self.records.history(run["source_pr"])["runs"], [])
+
+        with (
+            patch.object(self.records, "record_run", side_effect=ReviewRecordsError("injected run write failure")),
+            self.assertRaisesRegex(ReviewRecordsError, "injected run write failure"),
+        ):
+            self.records.record_failed_cli_observations(run["run_id"], finish=finish, run=run)
+        self.assertEqual(self.records.attempt(run["run_id"])["state"], "started")
+        self.assertEqual(self.records.attempt_artifacts(run["run_id"]), {})
+        self.assertEqual(self.records.history(run["source_pr"])["runs"], [])
+
+    def test_failed_cli_observation_path_refuses_completed_attempts(self) -> None:
+        self.bootstrap()
+        _, finish, run = self.failed_cli_observation_input("run.completed-cli-refusal")
+        self.records.finish_attempt(
+            run["run_id"],
+            state="completed",
+            finished_at=finish["finished_at"],
+            duration_seconds=3,
+            exit_status=0,
+            artifacts={"cli_events": finish["artifacts"]["cli_events"]},
+        )
+        with self.assertRaisesRegex(ReviewRecordsError, "recoverable failed terminal state"):
+            self.records.record_failed_cli_observations(run["run_id"], finish=finish, run=run)
+        self.assertEqual(self.records.attempt(run["run_id"])["state"], "completed")
+        self.assertEqual(self.records.history(run["source_pr"])["runs"], [])
+
+    def test_routed_failed_cli_observation_remains_noncounting_and_unresolvable(self) -> None:
+        self.bootstrap()
+        _, finish, run = self.failed_cli_observation_input("run.failed-cli-routed")
+        self.records.record_failed_cli_observations(run["run_id"], finish=finish, run=run)
+        finding_key = f"cli-run:{run['run_id']}:finding:1"
+
+        decision = self.records.record_source_decision(
+            run["run_id"],
+            finding_key,
+            decision_id="run.failed-cli-routed.decision.1",
+            decision="routed",
+            actor="reviewer",
+            reason="Route the retained observation for follow-up",
+            target_pr=2840,
+        )
+        self.records.finalize_run(run["run_id"], finalized_at="2026-10-01T00:00:03Z")
+
+        source_run = self.records.history(run["source_pr"])["runs"][0]
+        self.assertEqual(source_run["outcome"], "failed")
+        self.assertFalse(source_run["attributable"])
+        self.assertTrue(source_run["finalized"])
+        self.assertEqual(source_run["counts"], {"found": 1, "accepted": 0, "routed": 1})
+        self.assertEqual(self.records.completed_cli_capture_snapshots(run["source_pr"]), [])
+        routes = self.records.list_routes(source_pr=run["source_pr"])
+        self.assertEqual(len(routes), 1)
+        self.assertEqual(routes[0]["route_id"], decision["route_id"])
+        self.assertEqual(routes[0]["target_pr"], 2840)
+        with self.assertRaisesRegex(ReviewRecordsError, "completed attributable finalized run"):
+            self.records.record_source_resolution(
+                run["run_id"],
+                finding_key,
+                source_pr=run["source_pr"],
+                resolution_id="run.failed-cli-routed.resolution.1",
+                fix_sha="b" * 40,
+                actor="reviewer",
+                proof_note="routed failed observation cannot satisfy source resolution",
+            )
+
     def test_cli_severity_native_unknown_missing_and_conflicting_archive(self) -> None:
         self.test_native_cli_capture_snapshot_binds_attempt_run_artifacts_and_decisions()
         run_id = "run.native-snapshot"

@@ -177,7 +177,8 @@ _SECRET_CATEGORIES = (
 
 
 def _credential_location(
-    value: str, patterns: Sequence[re.Pattern[str]] = _SECRET_PATTERNS,
+    value: str,
+    patterns: Sequence[re.Pattern[str]] = _SECRET_PATTERNS,
 ) -> tuple[str, int] | None:
     """Locate the earliest existing rule match without returning submitted text.
 
@@ -816,6 +817,195 @@ class SqliteReviewRecords:
             if attempt[3] not in (None, run_id):
                 raise ReviewRecordsError("attempt is already linked to a different run")
             connection.execute("UPDATE review_attempts SET run_id = ? WHERE attempt_id = ?", (run_id, attempt_id))
+
+    @_translate_database_errors
+    def record_failed_cli_observations(
+        self,
+        attempt_id: str,
+        *,
+        finish: Mapping[str, Any],
+        run: Mapping[str, Any],
+    ) -> dict[str, Any]:
+        """Atomically retain valid findings from one exact terminal failed CLI attempt.
+
+        The source run remains failed and non-attributable. This path is
+        intentionally separate from ``link_attempt_run`` and
+        ``complete_attempt_run`` so partial provider output cannot become a
+        completed or countable review.
+        """
+
+        attempt_id = _safe_identifier(attempt_id, "attempt ID", maximum=100)
+        if not isinstance(finish, Mapping) or not isinstance(run, Mapping):
+            raise ReviewRecordsError("failed CLI observations require finish and source-run objects")
+        finish_values = dict(finish)
+        run_values = dict(run)
+        if set(finish_values) - {"state", "finished_at", "duration_seconds", "exit_status", "diagnostic", "artifacts"}:
+            raise ReviewRecordsError("failed CLI attempt finish contains unsupported fields")
+        if set(run_values) - {
+            "run_id",
+            "source_pr",
+            "channel",
+            "outcome",
+            "attributable",
+            "source_head",
+            "reviewer",
+            "scope",
+            "coverage_limits",
+            "started_at",
+            "finished_at",
+        }:
+            raise ReviewRecordsError("failed CLI source run contains unsupported fields")
+        if finish_values.get("state") not in {"failed", "rate_limited", "timed_out"}:
+            raise ReviewRecordsError("partial CLI observations require a terminal failed attempt")
+        artifacts = finish_values.get("artifacts")
+        if not isinstance(artifacts, Mapping) or set(artifacts) - {"cli_events", "cli_diagnostic", "metadata"}:
+            raise ReviewRecordsError("failed CLI observation artifacts are invalid")
+        if (
+            run_values.get("run_id") != attempt_id
+            or run_values.get("channel") != "cli"
+            or run_values.get("outcome") != "failed"
+            or run_values.get("attributable") is not False
+        ):
+            raise ReviewRecordsError("partial CLI source run must remain failed and non-attributable")
+        events_text = artifacts.get("cli_events")
+        if not isinstance(events_text, str):
+            raise ReviewRecordsError("failed CLI observations require validated CLI event evidence")
+        from . import evidence
+
+        try:
+            parsed_findings = evidence.parse_failed_capture_events(events_text)
+        except evidence.EvidenceError as exc:
+            raise ReviewRecordsError("failed CLI event evidence is malformed or incomplete") from exc
+        if not parsed_findings:
+            raise ReviewRecordsError("failed CLI event evidence contains no findings")
+        from .sqlite_finding_text import _safe_finding_detail
+        from .sqlite_provider_imports import _cli_detail, _cli_finding_title
+
+        observations = []
+        for index, finding in enumerate(parsed_findings, 1):
+            instructions = finding.get("codegenInstructions")
+            observations.append(
+                FindingObservation(
+                    source_finding_key=f"cli-run:{attempt_id}:finding:{index}",
+                    title=_cli_finding_title(instructions, f"CodeRabbit CLI finding {index}"),
+                    detail=_safe_finding_detail(_cli_detail(instructions)),
+                )
+            )
+        run_values["findings"] = tuple(observations)
+        finished_at = finish_values.get("finished_at")
+        if not isinstance(finished_at, str) or run_values.get("finished_at") != finished_at:
+            raise ReviewRecordsError("failed CLI source run must use the attempt's exact terminal time")
+
+        try:
+            with self._write_connection() as connection:
+                attempt = connection.execute(
+                    "SELECT source_pr, channel, candidate_sha, state, started_at, finished_at, duration_seconds, "
+                    "exit_status, run_id, diagnostic FROM review_attempts WHERE attempt_id = ?",
+                    (attempt_id,),
+                ).fetchone()
+                if attempt is None:
+                    raise ReviewRecordsError("failed CLI attempt does not exist")
+                (
+                    source_pr,
+                    channel,
+                    candidate_sha,
+                    state,
+                    started_at,
+                    prior_finished,
+                    duration,
+                    exit_status,
+                    linked,
+                    diagnostic,
+                ) = attempt
+                if (
+                    channel != "cli"
+                    or source_pr != run_values.get("source_pr")
+                    or candidate_sha != run_values.get("source_head")
+                    or run_values.get("started_at") != started_at
+                ):
+                    raise ReviewRecordsError("failed CLI source identity does not match its exact attempt")
+                if state not in {"started", "failed", "rate_limited", "timed_out"}:
+                    raise ReviewRecordsError("CLI attempt is not in a recoverable failed terminal state")
+                if linked not in (None, attempt_id):
+                    raise ReviewRecordsError("CLI attempt is already linked to a different source run")
+                other_link = connection.execute(
+                    "SELECT 1 FROM review_attempts WHERE run_id = ? AND attempt_id != ? LIMIT 1",
+                    (attempt_id, attempt_id),
+                ).fetchone()
+                if other_link is not None:
+                    raise ReviewRecordsError("failed CLI source run is already linked to another attempt")
+
+                event_artifact = _archive_artifact("cli_events", events_text)
+                if state == "started":
+                    self.finish_attempt(attempt_id, _connection=connection, **finish_values)
+                else:
+                    expected_terminal = (
+                        finish_values.get("state"),
+                        finished_at,
+                        finish_values.get("duration_seconds"),
+                        finish_values.get("exit_status"),
+                        finish_values.get("diagnostic", ""),
+                    )
+                    if (state, prior_finished, duration, exit_status, diagnostic) != expected_terminal:
+                        raise ReviewRecordsError("failed CLI capture conflicts with its terminal attempt")
+                    existing_artifacts = {
+                        row[0]: row[1]
+                        for row in connection.execute(
+                            "SELECT kind, source_sha256 FROM review_artifacts WHERE attempt_id = ?",
+                            (attempt_id,),
+                        )
+                    }
+                    event_digest = event_artifact[1]
+                    if existing_artifacts.get("cli_events") not in (None, event_digest):
+                        raise ReviewRecordsError("failed CLI event capture conflicts with its archived digest")
+                    if existing_artifacts.get("cli_raw_output") not in (None, event_digest):
+                        raise ReviewRecordsError("failed CLI raw output conflicts with its event capture digest")
+                    if not {"cli_events", "cli_raw_output"} & existing_artifacts.keys():
+                        raise ReviewRecordsError("failed CLI attempt has no matching archived stdout digest")
+                    if "cli_events" not in existing_artifacts:
+                        content, source_sha256, redactions = event_artifact
+                        connection.execute(
+                            "INSERT INTO review_artifacts (attempt_id, kind, content, source_sha256, redactions) "
+                            "VALUES (?, 'cli_events', ?, ?, ?)",
+                            (attempt_id, content, source_sha256, redactions),
+                        )
+
+                recorded = self.record_run(_connection=connection, **run_values)
+                self._link_failed_cli_run(connection, attempt_id)
+        except ReviewRecordsError:
+            raise
+        except sqlite3.IntegrityError as exc:
+            raise ReviewRecordsError("failed CLI observations conflict with existing immutable records") from exc
+        except sqlite3.DatabaseError as exc:
+            raise ReviewRecordsError("cannot record failed CLI observations") from exc
+        return {
+            "attempt_id": attempt_id,
+            "state": finish_values["state"],
+            "run": recorded,
+            "idempotent_replay": bool(recorded.get("idempotent_replay")),
+        }
+
+    @staticmethod
+    def _link_failed_cli_run(connection: sqlite3.Connection, attempt_id: str) -> None:
+        attempt = connection.execute(
+            "SELECT source_pr, channel, candidate_sha, state, run_id FROM review_attempts WHERE attempt_id = ?",
+            (attempt_id,),
+        ).fetchone()
+        run = connection.execute(
+            "SELECT source_pr, channel, source_head, outcome, attributable FROM review_runs WHERE run_id = ?",
+            (attempt_id,),
+        ).fetchone()
+        if (
+            attempt is None
+            or run is None
+            or attempt[1] != "cli"
+            or attempt[3] not in {"failed", "rate_limited", "timed_out"}
+            or run != (attempt[0], "cli", attempt[2], "failed", 0)
+        ):
+            raise ReviewRecordsError("failed CLI attempt and non-attributable source run do not match")
+        if attempt[4] not in (None, attempt_id):
+            raise ReviewRecordsError("CLI attempt is already linked to a different source run")
+        connection.execute("UPDATE review_attempts SET run_id = ? WHERE attempt_id = ?", (attempt_id, attempt_id))
 
     @_translate_database_errors
     def complete_attempt_run(
