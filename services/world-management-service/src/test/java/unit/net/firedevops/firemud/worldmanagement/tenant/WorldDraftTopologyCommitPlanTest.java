@@ -580,7 +580,7 @@ class WorldDraftTopologyCommitPlanTest {
                 "source-key",
                 801,
                 "source-key",
-                "RETAINED_GAME_V30"))) {
+                "RETAINED_GAME_V29"))) {
       rejected(
           DraftCommitBinding.create(
               changed,

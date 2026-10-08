@@ -98,6 +98,9 @@ class WorldCanonicalInitialAdmissionMtlsTest {
       WorldCanonicalInitialAdmissionHoldTerminalServiceGrpc
           .getFinalizeCanonicalInitialAdmissionHoldMethod()
           .getFullMethodName();
+  // Fixture-only opt-in lets the physical receiver reach the mock-backed workload-identity gates.
+  private static final Set<String> PHYSICAL_RECEIVER_PUBLIC_METHODS =
+      Set.of(ACQUIRE_METHOD, IDENTITY_READ_METHOD, LIFECYCLE_READ_METHOD, TERMINAL_METHOD);
   private static TestPki pki;
 
   private final WorldCanonicalInitialAdmissionHoldRepository holdRepository =
@@ -180,7 +183,7 @@ class WorldCanonicalInitialAdmissionMtlsTest {
 
     var authInterceptor =
         new AuthTokenInterceptor(
-            new JwtUtil(JWT_SECRET, 60_000L), publicMethods("application.yml"));
+            new JwtUtil(JWT_SECRET, 60_000L), PHYSICAL_RECEIVER_PUBLIC_METHODS);
     var peerInterceptor = new GrpcPeerIdentityInterceptor();
     server =
         NettyServerBuilder.forAddress(new InetSocketAddress("127.0.0.1", 0))
@@ -274,15 +277,7 @@ class WorldCanonicalInitialAdmissionMtlsTest {
   @Test
   void unrelatedWorldMutationMethodStillRequiresBearerAuthentication() throws Exception {
     assertThat(publicMethods("application.yml"))
-        .containsExactlyInAnyOrder(
-            "world_management.v1.WorldManagementService/Ping",
-            "world_management.v1.WorldManagementService/GetDraftDesignDigest",
-            "world_management.v1.WorldAuthoredSourceIntakeService/IntakeAuthoredWorldSource",
-            "world_management.v1.WorldAuthoredSourceIntakeService/ReadAuthoredWorldSourceIntake",
-            ACQUIRE_METHOD,
-            IDENTITY_READ_METHOD,
-            LIFECYCLE_READ_METHOD,
-            TERMINAL_METHOD);
+        .containsExactly("world_management.v1.WorldManagementService/Ping");
     assertThat(publicMethods("application.yml"))
         .doesNotContain(
             WorldManagementServiceGrpc.getApplyWorldDesignMutationMethod().getFullMethodName());
