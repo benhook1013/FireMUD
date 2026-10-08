@@ -101,9 +101,9 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 @Testcontainers(disabledWithoutDocker = true)
 class AccountControlUiOwnerWorkflowPostgresIntegrationTest {
   private static final String NAMESPACE = "control-ui-owner-proof";
-  private static final String CALLER =
+  static final String CALLER =
       "spiffe://firemud/ns/control-ui-owner-proof/sa/logging-admin-service";
-  private static final String OTP = "test-only-original-creator-otp";
+  static final String OTP = "test-only-original-creator-otp";
 
   @Container
   static PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>("postgres:16-alpine");
@@ -236,7 +236,7 @@ class AccountControlUiOwnerWorkflowPostgresIntegrationTest {
     f.assertNoIssuance();
   }
 
-  private static final class Fixture {
+  static final class Fixture {
     final DSLContext dsl;
     final TransactionTemplate transactions;
     final Account account;
@@ -250,8 +250,18 @@ class AccountControlUiOwnerWorkflowPostgresIntegrationTest {
     final AccountHostedTermsService terms;
     final AccountControlUiAuthority authority;
     final AccountControlUiIssuanceService service;
+    final DataSourceTransactionManager manager;
+    final DraftAuthorizationFenceRepository fences;
+    final AccountServiceImpl primary;
 
     Fixture(Path root) {
+      this(root, true);
+    }
+
+    /**
+     * Reuses actual Account/source/auth owners while a composed test supplies signer/Redis owners.
+     */
+    Fixture(Path root, boolean installNegativeIssuer) {
       String schema = "control_ui_owner_" + UUID.randomUUID().toString().replace("-", "");
       var dataSource =
           new DriverManagerDataSource(
@@ -265,7 +275,7 @@ class AccountControlUiOwnerWorkflowPostgresIntegrationTest {
           .locations("classpath:db/migration")
           .load()
           .migrate();
-      var manager = new DataSourceTransactionManager(dataSource);
+      manager = new DataSourceTransactionManager(dataSource);
       transactions = new TransactionTemplate(manager);
       transactions.setIsolationLevel(TransactionDefinition.ISOLATION_READ_COMMITTED);
       dsl = DSL.using(new TransactionAwareDataSourceProxy(dataSource), SQLDialect.POSTGRES);
@@ -346,7 +356,7 @@ class AccountControlUiOwnerWorkflowPostgresIntegrationTest {
       insertTestParty(dsl, party);
       var parties = new IndividualCreatorPartyRepository(dsl, fresh, bootstrapOperations);
       tx(() -> parties.associateFresh(UUID.randomUUID(), creator, party));
-      var fences = new DraftAuthorizationFenceRepository(dsl);
+      fences = new DraftAuthorizationFenceRepository(dsl);
       Map<UUID, AccountHostedTermsService.PublicationEvidence> publications = new HashMap<>();
       Map<UUID, AccountHostedTermsService.AcceptanceAction> actions = new HashMap<>();
       Map<UUID, HostedTermsEnvironmentBinding.PublicationEvidence> bindings = new HashMap<>();
@@ -430,7 +440,7 @@ class AccountControlUiOwnerWorkflowPostgresIntegrationTest {
             challenge.setUpdatedAt(now);
             return challenges.save(challenge);
           });
-      var primary =
+      var primaryTarget =
           new AccountServiceImpl(
               accounts,
               null,
@@ -458,11 +468,15 @@ class AccountControlUiOwnerWorkflowPostgresIntegrationTest {
               null,
               manager);
       // Exercise the real MANDATORY interceptor: noRollbackFor must not poison the owner callback.
-      var primaryProxy = new ProxyFactory(primary);
+      var primaryProxy = new ProxyFactory(primaryTarget);
       primaryProxy.setProxyTargetClass(true);
       primaryProxy.addAdvice(
           new TransactionInterceptor(manager, new AnnotationTransactionAttributeSource()));
       primary = (AccountServiceImpl) primaryProxy.getProxy();
+      if (!installNegativeIssuer) {
+        service = null;
+        return;
+      }
       var signerRepository = new AccountJwtSignerDesiredStateRepository(dsl);
       var trust = new AccountJwtSignerMaterializerTrustBinding(false, "");
       var api = new AccountJwtJwksApiBinding();
@@ -604,14 +618,14 @@ class AccountControlUiOwnerWorkflowPostgresIntegrationTest {
     }
   }
 
-  private static PeerScope withPeer(String uri) {
+  static PeerScope withPeer(String uri) {
     var attached =
         Context.current()
             .withValue(GrpcPeerIdentity.CONTEXT_KEY, GrpcPeerIdentity.parseUri(uri).orElseThrow());
     return new PeerScope(attached.attach(), attached);
   }
 
-  private record PeerScope(Context previous, Context attached) implements AutoCloseable {
+  record PeerScope(Context previous, Context attached) implements AutoCloseable {
     @Override
     public void close() {
       attached.detach(previous);
