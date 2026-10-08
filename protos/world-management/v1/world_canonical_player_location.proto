@@ -10,6 +10,8 @@ option java_multiple_files = true;
 service WorldCanonicalPlayerLocationService {
   rpc PlaceCanonicalInitialPlayerLocation(PlaceCanonicalInitialPlayerLocationRequest)
       returns (PlaceCanonicalInitialPlayerLocationResponse);
+  rpc ReadCanonicalInitialPlayerLocationOutcome(ReadCanonicalInitialPlayerLocationOutcomeRequest)
+      returns (ReadCanonicalInitialPlayerLocationOutcomeResponse);
   rpc ReadCanonicalCurrentPlayerLocation(ReadCanonicalCurrentPlayerLocationRequest)
       returns (ReadCanonicalCurrentPlayerLocationResponse);
 }
@@ -28,6 +30,34 @@ message PlaceCanonicalInitialPlayerLocationResponse {
 
   // Exact immutable canonical World placement result bytes, including its original request proof.
   bytes canonical_result_bytes = 2;
+}
+
+message ReadCanonicalInitialPlayerLocationOutcomeRequest {
+  // Fresh canonical non-nil UUID for this read correlation; it grants no gameplay authority.
+  string read_request_id = 1;
+
+  // Complete closed canonical placement request bytes identifying the immutable operation.
+  bytes canonical_placement_request_bytes = 2;
+
+  // Complete original ACTIVE lifecycle evidence retained with the placement operation.
+  bytes original_lifecycle_evidence_bytes = 3;
+}
+
+message ReadCanonicalInitialPlayerLocationOutcomeResponse {
+  // Echo of the fresh read correlation UUID.
+  string read_request_id = 1;
+
+  // Stable operation UUID of the immutable initial placement.
+  string placement_operation_id = 2;
+
+  // Exact canonical digest of the immutable placement request.
+  string placement_request_digest = 3;
+
+  // Exact immutable APPLIED or CONFLICT placement result bytes retained by World.
+  bytes immutable_placement_result_bytes = 4;
+
+  // Exact complete original lifecycle evidence bytes retained with the operation.
+  bytes original_placement_lifecycle_evidence_bytes = 5;
 }
 
 message ReadCanonicalCurrentPlayerLocationRequest {

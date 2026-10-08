@@ -50,6 +50,8 @@ import net.firedevops.firemud.worldmanagement.v1.PlaceCanonicalInitialPlayerLoca
 import net.firedevops.firemud.worldmanagement.v1.PlaceCanonicalInitialPlayerLocationResponse;
 import net.firedevops.firemud.worldmanagement.v1.ReadCanonicalCurrentPlayerLocationRequest;
 import net.firedevops.firemud.worldmanagement.v1.ReadCanonicalCurrentPlayerLocationResponse;
+import net.firedevops.firemud.worldmanagement.v1.ReadCanonicalInitialPlayerLocationOutcomeRequest;
+import net.firedevops.firemud.worldmanagement.v1.ReadCanonicalInitialPlayerLocationOutcomeResponse;
 import org.jooq.exception.DataAccessException;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
@@ -60,6 +62,7 @@ class WorldCanonicalPlayerLocationGrpcServiceTest {
   private static final String NAMESPACE = "test";
   private static final UUID NIL_UUID = new UUID(0L, 0L);
   private static final UUID OPERATION_ID = uuid("a0000000-0000-4000-8000-000000000001");
+  private static final UUID TERMINAL_READ_ID = uuid("d0000000-0000-4000-8000-000000000001");
   private static final UUID OTHER_OPERATION_ID = uuid("10000000-0000-4000-8000-000000000002");
   private static final UUID REGION_INSTANCE_ID = uuid("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa");
   private static final UUID OPERATIONAL_REGION_ID = uuid("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb");
@@ -85,6 +88,103 @@ class WorldCanonicalPlayerLocationGrpcServiceTest {
     assertThat(wrongService.error).isEqualTo(Status.Code.PERMISSION_DENIED);
     assertThat(wrongNamespace.error).isEqualTo(Status.Code.PERMISSION_DENIED);
     assertThat(readWrongService.error).isEqualTo(Status.Code.PERMISSION_DENIED);
+    verifyNoInteractions(placementService, currentService);
+  }
+
+  @Test
+  void terminalOutcomeReadRequiresExactSameNamespaceEntityPeerBeforeOwnerAccess() throws Exception {
+    var placementService = mock(WorldCanonicalInitialPlayerLocationService.class);
+    var currentService = mock(WorldCanonicalCurrentPlayerLocationService.class);
+    var grpc = service(placementService, currentService);
+    var malformed = terminalOutcomeRequest("not-a-uuid", new byte[] {1}, new byte[] {1});
+
+    Collector<ReadCanonicalInitialPlayerLocationOutcomeResponse> missing =
+        callTerminalOutcome(grpc, malformed, null);
+    Collector<ReadCanonicalInitialPlayerLocationOutcomeResponse> wrongService =
+        callTerminalOutcome(grpc, malformed, peer("game-session-service", NAMESPACE));
+    Collector<ReadCanonicalInitialPlayerLocationOutcomeResponse> wrongNamespace =
+        callTerminalOutcome(grpc, malformed, peer("entity-management-service", "other"));
+
+    assertThat(missing.error).isEqualTo(Status.Code.PERMISSION_DENIED);
+    assertThat(wrongService.error).isEqualTo(Status.Code.PERMISSION_DENIED);
+    assertThat(wrongNamespace.error).isEqualTo(Status.Code.PERMISSION_DENIED);
+    verifyNoInteractions(placementService, currentService);
+  }
+
+  @Test
+  void terminalOutcomeReadRejectsEndUserContextAndAmbientTransactionsBeforeOwnerAccess()
+      throws Exception {
+    var placementService = mock(WorldCanonicalInitialPlayerLocationService.class);
+    var currentService = mock(WorldCanonicalCurrentPlayerLocationService.class);
+    var grpc = service(placementService, currentService);
+    var malformed = terminalOutcomeRequest("not-a-uuid", new byte[] {1}, new byte[] {1});
+
+    SessionContext.setContext("11111111-1111-4111-8111-111111111111", List.of(), Map.of());
+    Collector<ReadCanonicalInitialPlayerLocationOutcomeResponse> callerContext;
+    try {
+      callerContext =
+          callTerminalOutcome(grpc, malformed, peer("entity-management-service", NAMESPACE));
+    } finally {
+      SessionContext.clear();
+    }
+
+    TransactionSynchronizationManager.setActualTransactionActive(true);
+    Collector<ReadCanonicalInitialPlayerLocationOutcomeResponse> transaction;
+    try {
+      transaction =
+          callTerminalOutcome(grpc, malformed, peer("entity-management-service", NAMESPACE));
+    } finally {
+      TransactionSynchronizationManager.setActualTransactionActive(false);
+    }
+
+    assertThat(callerContext.error).isEqualTo(Status.Code.PERMISSION_DENIED);
+    assertThat(transaction.error).isEqualTo(Status.Code.FAILED_PRECONDITION);
+    verifyNoInteractions(placementService, currentService);
+  }
+
+  @Test
+  void terminalOutcomeReadRejectsMalformedOrReusedCorrelationBeforeOwnerAccess() throws Exception {
+    var placementService = mock(WorldCanonicalInitialPlayerLocationService.class);
+    var currentService = mock(WorldCanonicalCurrentPlayerLocationService.class);
+    var grpc = service(placementService, currentService);
+    var fixture = fixture(NAMESPACE, "b0000000-0000-4000-8000-000000000001");
+
+    var malformed =
+        callTerminalOutcome(
+            grpc,
+            terminalOutcomeRequest(
+                TERMINAL_READ_ID.toString(), new byte[] {1}, fixture.originalLifecycleBytes()),
+            peer("entity-management-service", NAMESPACE));
+    var operationCorrelation =
+        callTerminalOutcome(
+            grpc,
+            terminalOutcomeRequest(
+                OPERATION_ID.toString(),
+                fixture.request().canonicalRequestBytes(),
+                fixture.originalLifecycleBytes()),
+            peer("entity-management-service", NAMESPACE));
+    var lifecycleCorrelation =
+        callTerminalOutcome(
+            grpc,
+            terminalOutcomeRequest(
+                fixture.readRequestId().toString(),
+                fixture.request().canonicalRequestBytes(),
+                fixture.originalLifecycleBytes()),
+            peer("entity-management-service", NAMESPACE));
+    var otherNamespace = fixture("other", "c0000000-0000-4000-8000-000000000001");
+    var namespaceMismatch =
+        callTerminalOutcome(
+            grpc,
+            terminalOutcomeRequest(
+                TERMINAL_READ_ID.toString(),
+                otherNamespace.request().canonicalRequestBytes(),
+                otherNamespace.originalLifecycleBytes()),
+            peer("entity-management-service", NAMESPACE));
+
+    assertThat(malformed.error).isEqualTo(Status.Code.INVALID_ARGUMENT);
+    assertThat(operationCorrelation.error).isEqualTo(Status.Code.INVALID_ARGUMENT);
+    assertThat(lifecycleCorrelation.error).isEqualTo(Status.Code.INVALID_ARGUMENT);
+    assertThat(namespaceMismatch.error).isEqualTo(Status.Code.PERMISSION_DENIED);
     verifyNoInteractions(placementService, currentService);
   }
 
@@ -448,6 +548,163 @@ class WorldCanonicalPlayerLocationGrpcServiceTest {
   }
 
   @Test
+  void terminalOutcomeReadReturnsExactAppliedBytesAndDoesNotConsultCurrentLocation()
+      throws Exception {
+    Fixture fixture = fixture(NAMESPACE, "b0000000-0000-4000-8000-000000000001");
+    var applied =
+        WorldCanonicalInitialPlayerLocation.Result.applied(
+            fixture.request(),
+            fixture.lifecycleEvidence().startLocation(),
+            fixture.lifecycleEvidence().runtimeRoomInstanceId());
+    var placementService = mock(WorldCanonicalInitialPlayerLocationService.class);
+    var currentService = mock(WorldCanonicalCurrentPlayerLocationService.class);
+    when(placementService.readTerminalOutcome(any()))
+        .thenReturn(
+            Optional.of(
+                new WorldCanonicalInitialPlayerLocationRepository.TerminalReadback(
+                    applied, fixture.originalLifecycleBytes())));
+    var grpc = service(placementService, currentService);
+
+    Collector<ReadCanonicalInitialPlayerLocationOutcomeResponse> response =
+        callTerminalOutcome(
+            grpc,
+            terminalOutcomeRequest(
+                TERMINAL_READ_ID.toString(),
+                fixture.request().canonicalRequestBytes(),
+                fixture.originalLifecycleBytes()),
+            peer("entity-management-service", NAMESPACE));
+
+    assertThat(response.error).isNull();
+    assertThat(response.completed).isTrue();
+    assertThat(response.value.getReadRequestId()).isEqualTo(TERMINAL_READ_ID.toString());
+    assertThat(response.value.getPlacementOperationId()).isEqualTo(OPERATION_ID.toString());
+    assertThat(response.value.getPlacementRequestDigest())
+        .isEqualTo(fixture.request().requestDigest());
+    assertThat(response.value.getImmutablePlacementResultBytes().toByteArray())
+        .containsExactly(applied.canonicalBytes());
+    assertThat(response.value.getOriginalPlacementLifecycleEvidenceBytes().toByteArray())
+        .containsExactly(fixture.originalLifecycleBytes());
+    verify(placementService).readTerminalOutcome(any());
+    verify(placementService, never()).place(any());
+    verifyNoInteractions(currentService);
+  }
+
+  @Test
+  void terminalOutcomeReadReturnsDurableConflictAsEvidenceInsteadOfGrpcConflict() throws Exception {
+    Fixture fixture = fixture(NAMESPACE, "b0000000-0000-4000-8000-000000000001");
+    var conflict =
+        WorldCanonicalInitialPlayerLocation.Result.conflict(
+            fixture.request(), "INITIAL_LOCATION_ALREADY_ASSIGNED");
+    var placementService = mock(WorldCanonicalInitialPlayerLocationService.class);
+    var currentService = mock(WorldCanonicalCurrentPlayerLocationService.class);
+    when(placementService.readTerminalOutcome(any()))
+        .thenReturn(
+            Optional.of(
+                new WorldCanonicalInitialPlayerLocationRepository.TerminalReadback(
+                    conflict, fixture.originalLifecycleBytes())));
+    var grpc = service(placementService, currentService);
+
+    Collector<ReadCanonicalInitialPlayerLocationOutcomeResponse> response =
+        callTerminalOutcome(
+            grpc,
+            terminalOutcomeRequest(
+                TERMINAL_READ_ID.toString(),
+                fixture.request().canonicalRequestBytes(),
+                fixture.originalLifecycleBytes()),
+            peer("entity-management-service", NAMESPACE));
+
+    assertThat(response.error).isNull();
+    assertThat(response.completed).isTrue();
+    assertThat(
+            WorldCanonicalInitialPlayerLocation.Result.fromStored(
+                    fixture.request(),
+                    response.value.getImmutablePlacementResultBytes().toByteArray())
+                .outcome())
+        .isEqualTo(WorldCanonicalInitialPlayerLocation.Outcome.CONFLICT);
+    assertThat(response.value.getImmutablePlacementResultBytes().toByteArray())
+        .containsExactly(conflict.canonicalBytes());
+    assertThat(response.value.getOriginalPlacementLifecycleEvidenceBytes().toByteArray())
+        .containsExactly(fixture.originalLifecycleBytes());
+    verify(placementService).readTerminalOutcome(any());
+    verify(placementService, never()).place(any());
+    verifyNoInteractions(currentService);
+  }
+
+  @Test
+  void missingTerminalOutcomeRemainsNotFoundAndDoesNotInvokeMutationOrCurrentRead()
+      throws Exception {
+    Fixture fixture = fixture(NAMESPACE, "b0000000-0000-4000-8000-000000000001");
+    var placementService = mock(WorldCanonicalInitialPlayerLocationService.class);
+    var currentService = mock(WorldCanonicalCurrentPlayerLocationService.class);
+    when(placementService.readTerminalOutcome(any())).thenReturn(Optional.empty());
+    var grpc = service(placementService, currentService);
+
+    Collector<ReadCanonicalInitialPlayerLocationOutcomeResponse> response =
+        callTerminalOutcome(
+            grpc,
+            terminalOutcomeRequest(
+                TERMINAL_READ_ID.toString(),
+                fixture.request().canonicalRequestBytes(),
+                fixture.originalLifecycleBytes()),
+            peer("entity-management-service", NAMESPACE));
+
+    assertThat(response.error).isEqualTo(Status.Code.NOT_FOUND);
+    assertThat(response.description).contains("remains unresolved");
+    verify(placementService).readTerminalOutcome(any());
+    verify(placementService, never()).place(any());
+    verifyNoInteractions(currentService);
+  }
+
+  @Test
+  void mismatchedOrCorruptTerminalResultFailsClosedWithoutReturningBytes() throws Exception {
+    Fixture fixture = fixture(NAMESPACE, "b0000000-0000-4000-8000-000000000001");
+    var substitutedRequest = placementRequestWithOperation(fixture, OTHER_OPERATION_ID);
+    var substitutedResult =
+        WorldCanonicalInitialPlayerLocation.Result.applied(
+            substitutedRequest,
+            substitutedRequest.activeLifecycleEvidence().startLocation(),
+            substitutedRequest.activeLifecycleEvidence().runtimeRoomInstanceId());
+    var mismatchedService = mock(WorldCanonicalInitialPlayerLocationService.class);
+    when(mismatchedService.readTerminalOutcome(any()))
+        .thenReturn(
+            Optional.of(
+                new WorldCanonicalInitialPlayerLocationRepository.TerminalReadback(
+                    substitutedResult, fixture.originalLifecycleBytes())));
+    var mismatched =
+        callTerminalOutcome(
+            service(mismatchedService, mock(WorldCanonicalCurrentPlayerLocationService.class)),
+            terminalOutcomeRequest(
+                TERMINAL_READ_ID.toString(),
+                fixture.request().canonicalRequestBytes(),
+                fixture.originalLifecycleBytes()),
+            peer("entity-management-service", NAMESPACE));
+
+    var corruptResult = mock(WorldCanonicalInitialPlayerLocation.Result.class);
+    when(corruptResult.request()).thenReturn(fixture.request());
+    when(corruptResult.requestDigest()).thenReturn(fixture.request().requestDigest());
+    when(corruptResult.canonicalBytes()).thenReturn(new byte[] {1, 2, 3});
+    var corruptService = mock(WorldCanonicalInitialPlayerLocationService.class);
+    when(corruptService.readTerminalOutcome(any()))
+        .thenReturn(
+            Optional.of(
+                new WorldCanonicalInitialPlayerLocationRepository.TerminalReadback(
+                    corruptResult, fixture.originalLifecycleBytes())));
+    var corrupt =
+        callTerminalOutcome(
+            service(corruptService, mock(WorldCanonicalCurrentPlayerLocationService.class)),
+            terminalOutcomeRequest(
+                TERMINAL_READ_ID.toString(),
+                fixture.request().canonicalRequestBytes(),
+                fixture.originalLifecycleBytes()),
+            peer("entity-management-service", NAMESPACE));
+
+    assertThat(mismatched.error).isEqualTo(Status.Code.FAILED_PRECONDITION);
+    assertThat(mismatched.value).isNull();
+    assertThat(corrupt.error).isEqualTo(Status.Code.FAILED_PRECONDITION);
+    assertThat(corrupt.value).isNull();
+  }
+
+  @Test
   void foundLocationReturnsExactLifecycleResultProofAndDistinctRegionUuids() throws Exception {
     var fixture = fixture(NAMESPACE, "b0000000-0000-4000-8000-000000000001");
     Fixture originalPlacement = fixture(NAMESPACE, "c0000000-0000-4000-8000-000000000001");
@@ -685,6 +942,15 @@ class WorldCanonicalPlayerLocationGrpcServiceTest {
         .build();
   }
 
+  private static ReadCanonicalInitialPlayerLocationOutcomeRequest terminalOutcomeRequest(
+      String readRequestId, byte[] canonicalRequestBytes, byte[] lifecycleEvidenceBytes) {
+    return ReadCanonicalInitialPlayerLocationOutcomeRequest.newBuilder()
+        .setReadRequestId(readRequestId)
+        .setCanonicalPlacementRequestBytes(ByteString.copyFrom(canonicalRequestBytes))
+        .setOriginalLifecycleEvidenceBytes(ByteString.copyFrom(lifecycleEvidenceBytes))
+        .build();
+  }
+
   private static UnknownFieldSet unknownField() {
     return UnknownFieldSet.newBuilder()
         .addField(99, UnknownFieldSet.Field.newBuilder().addVarint(1L).build())
@@ -721,6 +987,24 @@ class WorldCanonicalPlayerLocationGrpcServiceTest {
     Context previous = context.attach();
     try {
       service.readCanonicalCurrentPlayerLocation(request, response);
+    } finally {
+      context.detach(previous);
+    }
+    return response;
+  }
+
+  private static Collector<ReadCanonicalInitialPlayerLocationOutcomeResponse> callTerminalOutcome(
+      WorldCanonicalPlayerLocationGrpcService service,
+      ReadCanonicalInitialPlayerLocationOutcomeRequest request,
+      GrpcPeerIdentity peer) {
+    Collector<ReadCanonicalInitialPlayerLocationOutcomeResponse> response = new Collector<>();
+    Context context =
+        peer == null
+            ? Context.current()
+            : Context.current().withValue(GrpcPeerIdentity.CONTEXT_KEY, peer);
+    Context previous = context.attach();
+    try {
+      service.readCanonicalInitialPlayerLocationOutcome(request, response);
     } finally {
       context.detach(previous);
     }
@@ -1279,6 +1563,7 @@ class WorldCanonicalPlayerLocationGrpcServiceTest {
   private static final class Collector<T> implements StreamObserver<T> {
     private T value;
     private Status.Code error;
+    private String description;
     private boolean completed;
 
     @Override
@@ -1290,7 +1575,9 @@ class WorldCanonicalPlayerLocationGrpcServiceTest {
     public void onError(Throwable failure) {
       assertThat(value).isNull();
       assertThat(completed).isFalse();
-      error = Status.fromThrowable(failure).getCode();
+      Status status = Status.fromThrowable(failure);
+      error = status.getCode();
+      description = status.getDescription();
     }
 
     @Override

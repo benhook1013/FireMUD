@@ -7,6 +7,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import java.nio.charset.StandardCharsets;
+import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicInteger;
 import net.firedevops.firemud.common.world.WorldCanonicalInitialPlayerLocation;
@@ -66,6 +67,29 @@ class WorldCanonicalInitialPlayerLocationServiceTest {
         .place(org.mockito.ArgumentMatchers.eq(request), org.mockito.ArgumentMatchers.any());
     org.assertj.core.api.Assertions.assertThat(checks).hasValue(4);
     org.assertj.core.api.Assertions.assertThat(closes).hasValue(2);
+  }
+
+  @Test
+  void historicalOutcomeReadDoesNotInvokeCurrentPlacementAuthority() {
+    var repository = mock(WorldCanonicalInitialPlayerLocationRepository.class);
+    var request = request();
+    when(repository.readTerminalOutcome(request)).thenReturn(Optional.empty());
+    AtomicInteger verifierCalls = new AtomicInteger();
+    var service =
+        new WorldCanonicalInitialPlayerLocationService(
+            repository,
+            ignored -> {
+              verifierCalls.incrementAndGet();
+              throw new AssertionError(
+                  "historical outcome read must not acquire placement authority");
+            });
+
+    org.assertj.core.api.Assertions.assertThat(service.readTerminalOutcome(request)).isEmpty();
+
+    verify(repository).readTerminalOutcome(request);
+    verify(repository, never())
+        .place(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any());
+    org.assertj.core.api.Assertions.assertThat(verifierCalls).hasValue(0);
   }
 
   private static WorldCanonicalInitialPlayerLocation.Request request() {

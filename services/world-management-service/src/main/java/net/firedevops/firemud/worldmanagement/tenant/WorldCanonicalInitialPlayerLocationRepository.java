@@ -143,6 +143,82 @@ public final class WorldCanonicalInitialPlayerLocationRepository {
         });
   }
 
+  /**
+   * Reads only the immutable placement operation row. This historical settlement read deliberately
+   * does not consult current lifecycle, association, hold, location, or placement authority state.
+   */
+  public Optional<TerminalReadback> readTerminalOutcome(
+      WorldCanonicalInitialPlayerLocation.Request request) {
+    Objects.requireNonNull(request, "request");
+    requireNoActiveTransaction();
+
+    // A single statement observes one atomic row version; the operation table's owner guard keeps
+    // the request, lifecycle proof, and result immutable after commit.
+    Record row =
+        dsl.fetchOne(
+            "SELECT canonical_tenant_id, playable_state_namespace_id, canonical_game_instance_id, "
+                + "operation_id, request_digest, request_bytes, original_lifecycle_evidence_bytes, "
+                + "outcome, conflict_code, result_bytes, result_digest "
+                + "FROM world_canonical_initial_player_location_operation WHERE operation_id = ?",
+            request.operationId());
+    if (row == null) return Optional.empty();
+
+    try {
+      UUID operationId = row.get("operation_id", UUID.class);
+      UUID canonicalTenantId = row.get("canonical_tenant_id", UUID.class);
+      UUID playableStateNamespaceId = row.get("playable_state_namespace_id", UUID.class);
+      UUID canonicalGameInstanceId = row.get("canonical_game_instance_id", UUID.class);
+      String requestDigest = row.get("request_digest", String.class);
+      byte[] requestBytes = row.get("request_bytes", byte[].class);
+      byte[] originalLifecycleEvidenceBytes =
+          row.get("original_lifecycle_evidence_bytes", byte[].class);
+      String outcome = row.get("outcome", String.class);
+      String conflictCode = row.get("conflict_code", String.class);
+      byte[] resultBytes = row.get("result_bytes", byte[].class);
+      String resultDigest = row.get("result_digest", String.class);
+      if (requestBytes == null || originalLifecycleEvidenceBytes == null || resultBytes == null) {
+        throw terminalReadbackDenied("retained initial-location operation is incomplete");
+      }
+
+      WorldCanonicalInitialPlayerLocation.Request storedRequest =
+          WorldCanonicalInitialPlayerLocation.Request.fromStored(
+              requestBytes, originalLifecycleEvidenceBytes);
+      if (!request.operationId().equals(operationId)
+          || !request.operationId().equals(storedRequest.operationId())
+          || !request.canonicalTenantId().equals(canonicalTenantId)
+          || !request.playableStateNamespaceId().equals(playableStateNamespaceId)
+          || !request.canonicalGameInstanceId().equals(canonicalGameInstanceId)
+          || !request.requestDigest().equals(requestDigest)
+          || !prefixedDigest(requestBytes).equals(requestDigest)
+          || !Arrays.equals(request.canonicalRequestBytes(), requestBytes)
+          || !Arrays.equals(
+              request.normalizedLifecycleEvidenceBytes(),
+              WorldCanonicalInitialPlayerLocation.normalizedLifecycleEvidenceBytes(
+                  originalLifecycleEvidenceBytes))) {
+        throw terminalReadbackDenied(
+            "requested initial-location operation differs from its immutable World binding");
+      }
+
+      if (!prefixedDigest(resultBytes).equals(resultDigest)) {
+        throw terminalReadbackDenied("retained initial-location result digest is inconsistent");
+      }
+      WorldCanonicalInitialPlayerLocation.Result result =
+          WorldCanonicalInitialPlayerLocation.Result.fromStored(storedRequest, resultBytes);
+      if (!result.outcome().name().equals(outcome)
+          || !Objects.equals(result.conflictCode(), conflictCode)) {
+        throw terminalReadbackDenied(
+            "retained initial-location result differs from its immutable outcome columns");
+      }
+      return Optional.of(new TerminalReadback(result, originalLifecycleEvidenceBytes));
+    } catch (RuntimeException inconsistent) {
+      if (inconsistent.getMessage() != null
+          && inconsistent.getMessage().startsWith("INITIAL_PLAYER_LOCATION_READBACK_DENIED:")) {
+        throw inconsistent;
+      }
+      throw terminalReadbackDenied("retained initial-location operation is invalid", inconsistent);
+    }
+  }
+
   void requireAssociation(
       WorldCanonicalInitialPlayerLocation.Request request,
       WorldCanonicalInstanceLifecycleEvidence current,
@@ -443,6 +519,15 @@ public final class WorldCanonicalInitialPlayerLocationRepository {
     return new IllegalStateException("INITIAL_PLAYER_LOCATION_DENIED: " + message);
   }
 
+  private static IllegalStateException terminalReadbackDenied(String message) {
+    return new IllegalStateException("INITIAL_PLAYER_LOCATION_READBACK_DENIED: " + message);
+  }
+
+  private static IllegalStateException terminalReadbackDenied(
+      String message, RuntimeException cause) {
+    return new IllegalStateException("INITIAL_PLAYER_LOCATION_READBACK_DENIED: " + message, cause);
+  }
+
   private static IllegalArgumentException conflict(String message) {
     return new IllegalArgumentException("IDEMPOTENCY_CONFLICT: " + message);
   }
@@ -457,6 +542,24 @@ public final class WorldCanonicalInitialPlayerLocationRepository {
       originalLifecycleEvidenceBytes =
           Arrays.copyOf(originalLifecycleEvidenceBytes, originalLifecycleEvidenceBytes.length);
       resultBytes = Arrays.copyOf(resultBytes, resultBytes.length);
+    }
+  }
+
+  /** Exact immutable result plus the exact original lifecycle bytes retained beside it. */
+  public record TerminalReadback(
+      WorldCanonicalInitialPlayerLocation.Result result, byte[] originalLifecycleEvidenceBytes) {
+    public TerminalReadback {
+      Objects.requireNonNull(result, "result");
+      originalLifecycleEvidenceBytes =
+          Arrays.copyOf(
+              Objects.requireNonNull(
+                  originalLifecycleEvidenceBytes, "originalLifecycleEvidenceBytes"),
+              originalLifecycleEvidenceBytes.length);
+    }
+
+    @Override
+    public byte[] originalLifecycleEvidenceBytes() {
+      return Arrays.copyOf(originalLifecycleEvidenceBytes, originalLifecycleEvidenceBytes.length);
     }
   }
 }

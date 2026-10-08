@@ -14,6 +14,8 @@ import net.firedevops.firemud.worldmanagement.v1.PlaceCanonicalInitialPlayerLoca
 import net.firedevops.firemud.worldmanagement.v1.PlaceCanonicalInitialPlayerLocationResponse;
 import net.firedevops.firemud.worldmanagement.v1.ReadCanonicalCurrentPlayerLocationRequest;
 import net.firedevops.firemud.worldmanagement.v1.ReadCanonicalCurrentPlayerLocationResponse;
+import net.firedevops.firemud.worldmanagement.v1.ReadCanonicalInitialPlayerLocationOutcomeRequest;
+import net.firedevops.firemud.worldmanagement.v1.ReadCanonicalInitialPlayerLocationOutcomeResponse;
 import net.firedevops.firemud.worldmanagement.v1.WorldCanonicalPlayerLocationServiceGrpc;
 import org.jooq.exception.DataAccessException;
 import org.springframework.dao.TransientDataAccessException;
@@ -146,6 +148,104 @@ public final class WorldCanonicalPlayerLocationGrpcService
           responseObserver,
           Status.FAILED_PRECONDITION,
           "Canonical World placement result does not match the requested operation");
+    }
+  }
+
+  @Override
+  public void readCanonicalInitialPlayerLocationOutcome(
+      ReadCanonicalInitialPlayerLocationOutcomeRequest request,
+      StreamObserver<ReadCanonicalInitialPlayerLocationOutcomeResponse> responseObserver) {
+    if (!requireAuthenticatedEntityManagementPeer(responseObserver)) return;
+    if (hasAmbientTransaction()) {
+      fail(
+          responseObserver,
+          Status.FAILED_PRECONDITION,
+          "Canonical World placement outcome read requires an independent owner operation");
+      return;
+    }
+
+    ParsedTerminalOutcomeRequest parsed;
+    try {
+      parsed = parseTerminalOutcomeRequest(request);
+    } catch (IllegalArgumentException malformed) {
+      fail(
+          responseObserver,
+          Status.INVALID_ARGUMENT,
+          "A complete canonical World placement outcome read request is required");
+      return;
+    }
+    if (!trustedNamespace.equals(
+        parsed.placementRequest().activeLifecycleEvidence().request().targetNamespace())) {
+      fail(
+          responseObserver,
+          Status.PERMISSION_DENIED,
+          "Canonical World placement namespace must match the authenticated Entity Management peer");
+      return;
+    }
+
+    java.util.Optional<WorldCanonicalInitialPlayerLocationRepository.TerminalReadback> readback;
+    try {
+      readback = placementService.readTerminalOutcome(parsed.placementRequest());
+    } catch (TransientDataAccessException unavailable) {
+      fail(
+          responseObserver,
+          Status.UNAVAILABLE,
+          "Canonical World placement outcome storage is temporarily unavailable");
+      return;
+    } catch (DataAccessException permanentStorageFailure) {
+      fail(responseObserver, Status.INTERNAL, "Canonical World placement outcome storage failed");
+      return;
+    } catch (org.springframework.dao.DataAccessException permanentSpringStorageFailure) {
+      fail(responseObserver, Status.INTERNAL, "Canonical World placement outcome storage failed");
+      return;
+    } catch (IllegalStateException inconsistent) {
+      if (hasPrefix(inconsistent, "INITIAL_PLAYER_LOCATION_READBACK_DENIED:")) {
+        fail(
+            responseObserver,
+            Status.FAILED_PRECONDITION,
+            "Canonical World placement outcome does not match its immutable request");
+      } else {
+        fail(responseObserver, Status.INTERNAL, "Canonical World placement outcome read failed");
+      }
+      return;
+    } catch (RuntimeException failure) {
+      fail(responseObserver, Status.INTERNAL, "Canonical World placement outcome read failed");
+      return;
+    }
+
+    if (readback == null) {
+      fail(
+          responseObserver,
+          Status.INTERNAL,
+          "Canonical World placement outcome owner returned no read result");
+      return;
+    }
+    if (readback.isEmpty()) {
+      fail(
+          responseObserver,
+          Status.NOT_FOUND,
+          "No immutable terminal placement outcome is recorded; this operation remains unresolved");
+      return;
+    }
+
+    try {
+      ValidatedTerminalOutcome validated =
+          validateTerminalOutcome(parsed, readback.orElseThrow(), trustedNamespace);
+      responseObserver.onNext(
+          ReadCanonicalInitialPlayerLocationOutcomeResponse.newBuilder()
+              .setReadRequestId(parsed.readRequestId().toString())
+              .setPlacementOperationId(parsed.placementRequest().operationId().toString())
+              .setPlacementRequestDigest(parsed.placementRequest().requestDigest())
+              .setImmutablePlacementResultBytes(ByteString.copyFrom(validated.resultBytes()))
+              .setOriginalPlacementLifecycleEvidenceBytes(
+                  ByteString.copyFrom(validated.originalLifecycleEvidenceBytes()))
+              .build());
+      responseObserver.onCompleted();
+    } catch (RuntimeException inconsistent) {
+      fail(
+          responseObserver,
+          Status.FAILED_PRECONDITION,
+          "Canonical World placement outcome does not match the requested operation");
     }
   }
 
@@ -296,6 +396,33 @@ public final class WorldCanonicalPlayerLocationGrpcService
     return new ParsedCurrentLocationRequest(readRequestId, placementRequest);
   }
 
+  private static ParsedTerminalOutcomeRequest parseTerminalOutcomeRequest(
+      ReadCanonicalInitialPlayerLocationOutcomeRequest request) {
+    Objects.requireNonNull(request, "request");
+    if (!request.getUnknownFields().asMap().isEmpty()) {
+      throw new IllegalArgumentException("Unknown canonical World outcome read request fields");
+    }
+    UUID readRequestId = parseCanonicalUuid(request.getReadRequestId());
+    byte[] canonicalRequestBytes = request.getCanonicalPlacementRequestBytes().toByteArray();
+    byte[] originalLifecycleEvidenceBytes =
+        request.getOriginalLifecycleEvidenceBytes().toByteArray();
+    if (canonicalRequestBytes.length == 0 || originalLifecycleEvidenceBytes.length == 0) {
+      throw new IllegalArgumentException(
+          "Complete canonical World placement outcome evidence is required");
+    }
+    WorldCanonicalInitialPlayerLocation.Request placementRequest =
+        WorldCanonicalInitialPlayerLocation.Request.fromStored(
+            canonicalRequestBytes, originalLifecycleEvidenceBytes);
+    UUID originalLifecycleReadId =
+        placementRequest.activeLifecycleEvidence().request().readRequestId();
+    if (readRequestId.equals(placementRequest.operationId())
+        || readRequestId.equals(originalLifecycleReadId)) {
+      throw new IllegalArgumentException(
+          "Outcome read correlation must be fresh relative to the placement and retained lifecycle proof");
+    }
+    return new ParsedTerminalOutcomeRequest(readRequestId, placementRequest);
+  }
+
   private static UUID parseCanonicalUuid(String value) {
     UUID parsed;
     try {
@@ -390,6 +517,65 @@ public final class WorldCanonicalPlayerLocationGrpcService
         currentEvidenceBytes, immutablePlacementResultBytes, originalLifecycleEvidenceBytes);
   }
 
+  private static ValidatedTerminalOutcome validateTerminalOutcome(
+      ParsedTerminalOutcomeRequest parsed,
+      WorldCanonicalInitialPlayerLocationRepository.TerminalReadback readback,
+      String trustedNamespace) {
+    WorldCanonicalInitialPlayerLocation.Request requested = parsed.placementRequest();
+    WorldCanonicalInitialPlayerLocation.Result result =
+        Objects.requireNonNull(readback.result(), "terminalReadback.result");
+    WorldCanonicalInitialPlayerLocation.Request resultRequest =
+        Objects.requireNonNull(result.request(), "terminalReadback.result.request");
+    if (!requested.operationId().equals(resultRequest.operationId())
+        || !requested.requestDigest().equals(result.requestDigest())
+        || !Arrays.equals(
+            requested.canonicalRequestBytes(), resultRequest.canonicalRequestBytes())) {
+      throw new InvalidOwnerEvidenceException();
+    }
+
+    byte[] resultBytes = result.canonicalBytes();
+    if (resultBytes.length == 0) throw new InvalidOwnerEvidenceException();
+    WorldCanonicalInitialPlayerLocation.Result exactResult =
+        WorldCanonicalInitialPlayerLocation.Result.fromStored(requested, resultBytes);
+    if (exactResult.outcome() != WorldCanonicalInitialPlayerLocation.Outcome.APPLIED
+        && exactResult.outcome() != WorldCanonicalInitialPlayerLocation.Outcome.CONFLICT) {
+      throw new InvalidOwnerEvidenceException();
+    }
+
+    byte[] originalLifecycleEvidenceBytes = readback.originalLifecycleEvidenceBytes();
+    if (originalLifecycleEvidenceBytes.length == 0) throw new InvalidOwnerEvidenceException();
+    WorldCanonicalInitialPlayerLocation.Request storedRequest =
+        WorldCanonicalInitialPlayerLocation.Request.fromStored(
+            requested.canonicalRequestBytes(), originalLifecycleEvidenceBytes);
+    if (!trustedNamespace.equals(
+            storedRequest.activeLifecycleEvidence().request().targetNamespace())
+        || parsed
+            .readRequestId()
+            .equals(storedRequest.activeLifecycleEvidence().request().readRequestId())
+        || !Arrays.equals(
+            requested.normalizedLifecycleEvidenceBytes(),
+            storedRequest.normalizedLifecycleEvidenceBytes())) {
+      throw new InvalidOwnerEvidenceException();
+    }
+
+    return new ValidatedTerminalOutcome(resultBytes, originalLifecycleEvidenceBytes);
+  }
+
+  private boolean requireAuthenticatedEntityManagementPeer(StreamObserver<?> responseObserver) {
+    GrpcPeerIdentity peer = GrpcPeerIdentity.current();
+    if (peer != null
+        && peer.isService("entity-management-service")
+        && peer.isInNamespace(trustedNamespace)
+        && !SessionContext.hasAuthenticatedCallerContext()) {
+      return true;
+    }
+    fail(
+        responseObserver,
+        Status.PERMISSION_DENIED,
+        "Only the verified same-namespace Entity Management workload without end-user context is allowed");
+    return false;
+  }
+
   private boolean requireAuthenticatedGameSessionPeer(StreamObserver<?> responseObserver) {
     GrpcPeerIdentity peer = GrpcPeerIdentity.current();
     if (peer != null
@@ -421,10 +607,16 @@ public final class WorldCanonicalPlayerLocationGrpcService
   private record ParsedCurrentLocationRequest(
       UUID readRequestId, WorldCanonicalInitialPlayerLocation.Request placementRequest) {}
 
+  private record ParsedTerminalOutcomeRequest(
+      UUID readRequestId, WorldCanonicalInitialPlayerLocation.Request placementRequest) {}
+
   private record ValidatedCurrentLocation(
       byte[] currentLifecycleEvidenceBytes,
       byte[] placementResultBytes,
       byte[] originalPlacementLifecycleEvidenceBytes) {}
+
+  private record ValidatedTerminalOutcome(
+      byte[] resultBytes, byte[] originalLifecycleEvidenceBytes) {}
 
   private static final class InvalidOwnerEvidenceException extends IllegalStateException {}
 }

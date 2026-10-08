@@ -1,6 +1,7 @@
 package net.firedevops.firemud.worldmanagement.tenant;
 
 import java.util.Objects;
+import java.util.Optional;
 import net.firedevops.firemud.common.world.WorldCanonicalInitialPlayerLocation;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 
@@ -47,6 +48,21 @@ public final class WorldCanonicalInitialPlayerLocationService {
       held.requireHeld();
       return result;
     }
+  }
+
+  /**
+   * Returns operation-specific historical settlement evidence without rechecking current placement
+   * authority or lifecycle state. Absence remains unresolved and never authorizes hold release.
+   */
+  public Optional<WorldCanonicalInitialPlayerLocationRepository.TerminalReadback>
+      readTerminalOutcome(WorldCanonicalInitialPlayerLocation.Request request) {
+    Objects.requireNonNull(request, "request");
+    if (TransactionSynchronizationManager.isActualTransactionActive()
+        || TransactionSynchronizationManager.isSynchronizationActive()) {
+      throw new IllegalStateException(
+          "World initial-placement outcome read requires an independent owner operation");
+    }
+    return repository.readTerminalOutcome(request);
   }
 
   private static HeldPlacementAuthority denyByDefault(

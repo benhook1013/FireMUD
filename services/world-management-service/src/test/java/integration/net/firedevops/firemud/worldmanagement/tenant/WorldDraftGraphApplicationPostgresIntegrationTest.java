@@ -2077,6 +2077,117 @@ class WorldDraftGraphApplicationPostgresIntegrationTest {
   }
 
   @Test
+  void terminalInitialPlayerLocationReadbackReturnsStoredAppliedAndConflictAfterTermination() {
+    PlacementFixture fixture = initialPlayerLocationFixture();
+    var applied = fixture.service().place(fixture.request());
+    var secondRequest =
+        initialLocationRequest(
+            fixture,
+            UUID.randomUUID(),
+            UUID.randomUUID(),
+            UUID.randomUUID(),
+            "d".repeat(64),
+            fixture.activeEvidence());
+    fixture.service().place(secondRequest);
+    var conflictRequest =
+        initialLocationRequest(
+            fixture,
+            UUID.randomUUID(),
+            fixture.request().characterId(),
+            secondRequest.entityAssignmentOperationId(),
+            secondRequest.entityAssignmentDigest(),
+            fixture.activeEvidence());
+    var conflict = fixture.service().place(conflictRequest);
+    assertThat(conflict.outcome()).isEqualTo(WorldCanonicalInitialPlayerLocation.Outcome.CONFLICT);
+
+    var missingRequest =
+        initialLocationRequest(
+            fixture,
+            UUID.randomUUID(),
+            UUID.randomUUID(),
+            UUID.randomUUID(),
+            "e".repeat(64),
+            fixture.activeEvidence());
+    long operationsBeforeReads =
+        countInitialLocationOperations(fixture.request().canonicalGameInstanceId());
+    String locationsBeforeReads =
+        initialLocationSnapshot(fixture.request().canonicalGameInstanceId());
+    assertThat(fixture.repository().readTerminalOutcome(missingRequest)).isEmpty();
+
+    var privateKeys = fixture.lifecycle().materialized().association().worldPrepareFields();
+    lifecycleCommandService.terminateWorldInstance(
+        privateKeys.privateTenantKey(),
+        privateKeys.privateGameInstanceKey(),
+        fixture.activeEvidence().lifecycleEpoch(),
+        "initial-placement-terminal-readback",
+        "terminal readback proof");
+    assertThat(
+            Objects.requireNonNull(
+                    dsl.fetchOne(
+                        "SELECT status FROM world_instance WHERE id=?",
+                        fixture.lifecycle().materialized().association().worldInstanceId()))
+                .get("status", String.class))
+        .isEqualTo("TERMINATED");
+
+    var appliedRead = fixture.repository().readTerminalOutcome(fixture.request()).orElseThrow();
+    var conflictRead = fixture.repository().readTerminalOutcome(conflictRequest).orElseThrow();
+    assertThat(appliedRead.result().outcome())
+        .isEqualTo(WorldCanonicalInitialPlayerLocation.Outcome.APPLIED);
+    assertThat(appliedRead.result().canonicalBytes()).containsExactly(applied.canonicalBytes());
+    assertThat(appliedRead.originalLifecycleEvidenceBytes())
+        .containsExactly(fixture.request().originalLifecycleEvidenceBytes());
+    assertThat(conflictRead.result().outcome())
+        .isEqualTo(WorldCanonicalInitialPlayerLocation.Outcome.CONFLICT);
+    assertThat(conflictRead.result().canonicalBytes()).containsExactly(conflict.canonicalBytes());
+    assertThat(conflictRead.originalLifecycleEvidenceBytes())
+        .containsExactly(conflictRequest.originalLifecycleEvidenceBytes());
+
+    var changedAssignment =
+        initialLocationRequest(
+            fixture,
+            fixture.request().operationId(),
+            fixture.request().characterId(),
+            fixture.request().entityAssignmentOperationId(),
+            "f".repeat(64),
+            fixture.activeEvidence());
+    assertThatThrownBy(() -> fixture.repository().readTerminalOutcome(changedAssignment))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("immutable World binding");
+    var changedRealm =
+        new WorldCanonicalInitialPlayerLocation.Request(
+            fixture.request().operationId(),
+            fixture.request().canonicalTenantId(),
+            UUID.randomUUID(),
+            fixture.request().worldSlug(),
+            fixture.request().canonicalGameInstanceId(),
+            fixture.request().playableStateNamespaceId(),
+            fixture.request().playableStateScope(),
+            fixture.request().canonicalAccountId(),
+            fixture.request().characterId(),
+            fixture.request().entityAssignmentOperationId(),
+            fixture.request().entityAssignmentDigest(),
+            fixture.request().initialAdmissionHoldId(),
+            fixture.request().initialAdmissionHoldFence(),
+            fixture.request().initialAdmissionRequestId(),
+            fixture.request().initialAdmissionRequestDigest(),
+            fixture.request().catalogRevision(),
+            fixture.request().initialAdmissionOwnerProofId(),
+            fixture.request().initialAdmissionOwnerProofDigest(),
+            fixture.request().pointerAuditId(),
+            fixture.request().pointerVersion(),
+            fixture.request().initialAdmissionOrigin(),
+            fixture.request().activeLifecycleEvidence());
+    assertThatThrownBy(() -> fixture.repository().readTerminalOutcome(changedRealm))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("immutable World binding");
+    assertThat(countInitialLocationOperations(fixture.request().canonicalGameInstanceId()))
+        .isEqualTo(operationsBeforeReads);
+    assertThat(initialLocationSnapshot(fixture.request().canonicalGameInstanceId()))
+        .isEqualTo(locationsBeforeReads);
+    assertOrigin();
+  }
+
+  @Test
   void expectedClosedPlacementUsesExactNextPointerVersionFromStipulatedOwnerProof() {
     PlacementFixture fixture = initialPlayerLocationFixture(InitialAdmissionOrigin.EXPECT_CLOSED);
 
