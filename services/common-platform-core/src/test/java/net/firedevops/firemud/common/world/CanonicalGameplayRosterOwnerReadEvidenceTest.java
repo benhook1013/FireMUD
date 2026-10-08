@@ -7,6 +7,7 @@ import com.google.protobuf.ByteString;
 import com.google.protobuf.UnknownFieldSet;
 import java.time.Instant;
 import java.util.UUID;
+import net.firedevops.firemud.common.publication.GameDesignPublicationOperationBinding;
 import net.firedevops.firemud.gamesession.v1.GetCanonicalGameplayRosterOwnerReadResponse;
 import org.junit.jupiter.api.Test;
 
@@ -32,6 +33,74 @@ class CanonicalGameplayRosterOwnerReadEvidenceTest {
   }
 
   @Test
+  void rejectsExactPolicySetSealedForAnotherWorkloadNamespace() throws Exception {
+    var evidence = fixture();
+    var policyOperation =
+        GameDesignPublicationOperationBinding.fromStored(
+            evidence.publishedPolicySetEvidence().operationBytes());
+    var hold = evidence.gameSessionOwnerProof().holdIdentity();
+    var priorHoldRequest = hold.request();
+    var wrongNamespaceHoldRequest =
+        new WorldCanonicalInitialAdmissionHold.Request(
+            TARGET_NAMESPACE,
+            priorHoldRequest.canonicalTenantId(),
+            priorHoldRequest.worldSlug(),
+            priorHoldRequest.realmId(),
+            priorHoldRequest.playableStateNamespaceId(),
+            priorHoldRequest.playableStateScope(),
+            priorHoldRequest.canonicalGameInstanceId(),
+            priorHoldRequest.canonicalVersionId(),
+            priorHoldRequest.activeLifecycleEpoch(),
+            priorHoldRequest.initialAdmissionRequestId(),
+            priorHoldRequest.initialAdmissionRequestDigest(),
+            priorHoldRequest.initialAdmissionOrigin(),
+            priorHoldRequest.expectedCatalogRevision(),
+            priorHoldRequest.expectedPriorPointerVersion());
+    var wrongNamespaceHold =
+        new WorldCanonicalInitialAdmissionHold.HoldIdentity(
+            wrongNamespaceHoldRequest, hold.holdId(), hold.holdFence());
+    var originalProof = evidence.gameSessionOwnerProof();
+    var wrongNamespaceProof =
+        new GameSessionCanonicalInitialAdmissionOwnerProof(
+            wrongNamespaceHold,
+            originalProof.outcome(),
+            originalProof.committedPointerVersion(),
+            originalProof.auditEventId(),
+            originalProof.proofDigest(),
+            originalProof.positiveDurableAbort(),
+            originalProof.terminalAt());
+    var originalRequest = evidence.request();
+    var wrongNamespaceRequest =
+        new CanonicalGameplayRosterOwnerReadEvidence.Request(
+            originalRequest.requestUuid(),
+            originalRequest.canonicalAccountUuid(),
+            TARGET_NAMESPACE,
+            originalRequest.canonicalTenantUuid(),
+            originalRequest.worldSlug(),
+            originalRequest.realmUuid(),
+            originalRequest.realmSlug(),
+            originalRequest.playableStateNamespaceUuid(),
+            originalRequest.playableStateScope(),
+            originalRequest.canonicalGameInstanceUuid(),
+            originalRequest.canonicalVersionUuid(),
+            originalRequest.expectedCatalogRevision(),
+            originalRequest.expectedPointerVersion(),
+            originalRequest.expectedActiveWorldEpoch());
+    assertThat(policyOperation.world().request().targetNamespace())
+        .isNotEqualTo(wrongNamespaceRequest.targetNamespace());
+
+    assertThatThrownBy(
+            () ->
+                new CanonicalGameplayRosterOwnerReadEvidence(
+                    wrongNamespaceRequest,
+                    evidence.admissionPointerSnapshotDigest(),
+                    wrongNamespaceProof,
+                    evidence.publishedPolicySetEvidence()))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("target namespace");
+  }
+
+  @Test
   void rejectsNoncommittedStaleOrChangedRouteAndPolicyEvidence() throws Exception {
     var good = fixture();
     var pending = pendingProof(good.gameSessionOwnerProof().holdIdentity());
@@ -45,7 +114,7 @@ class CanonicalGameplayRosterOwnerReadEvidenceTest {
         new CanonicalGameplayRosterOwnerReadEvidence.Request(
             good.request().requestUuid(),
             ACCOUNT,
-            TARGET_NAMESPACE,
+            good.request().targetNamespace(),
             good.request().canonicalTenantUuid(),
             "earth",
             REALM,
@@ -70,7 +139,7 @@ class CanonicalGameplayRosterOwnerReadEvidenceTest {
         new CanonicalGameplayRosterOwnerReadEvidence.Request(
             good.request().requestUuid(),
             ACCOUNT,
-            TARGET_NAMESPACE,
+            good.request().targetNamespace(),
             good.request().canonicalTenantUuid(),
             "earth",
             REALM,
@@ -216,11 +285,13 @@ class CanonicalGameplayRosterOwnerReadEvidenceTest {
 
   private static CanonicalGameplayRosterOwnerReadEvidence fixture() throws Exception {
     var set = PublishedRealmEntryPolicySetEvidenceTest.preseededSetFixture();
+    var operation = GameDesignPublicationOperationBinding.fromStored(set.operationBytes());
+    String targetNamespace = operation.world().request().targetNamespace();
     UUID tenant = set.target().canonicalTenantId();
     UUID version = set.target().canonicalVersionId();
     var holdRequest =
         new WorldCanonicalInitialAdmissionHold.Request(
-            TARGET_NAMESPACE,
+            targetNamespace,
             tenant,
             "earth",
             REALM,
@@ -252,7 +323,7 @@ class CanonicalGameplayRosterOwnerReadEvidenceTest {
         new CanonicalGameplayRosterOwnerReadEvidence.Request(
             uuid("11111111-1111-4111-8111-111111111111"),
             ACCOUNT,
-            TARGET_NAMESPACE,
+            targetNamespace,
             tenant,
             "earth",
             REALM,
