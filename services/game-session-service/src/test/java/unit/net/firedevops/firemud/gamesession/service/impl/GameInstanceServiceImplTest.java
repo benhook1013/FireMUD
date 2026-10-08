@@ -131,6 +131,13 @@ class GameInstanceServiceImplTest {
   }
 
   @Test
+  void legacyNumericLaunchFailsClosedBeforeMutation() {
+    StartSessionRequest request = new StartSessionRequest(1L, 3L, "cp-numeric-launch", 42L);
+
+    assertNumericLaunchDeniedWithoutMutation(request);
+  }
+
+  @Test
   void runOwnedInitialLaunchExactRetryReturnsSameActiveTargetWithoutReplayingActivation() {
     StartSessionRequest request = new StartSessionRequest(1L, 3L, "run-owned-1", 42L);
     configureRunOwnedWorld(request);
@@ -1466,6 +1473,21 @@ class GameInstanceServiceImplTest {
                         .setUpdatedAt("2026-04-15T10:00:00")
                         .build())
                 .build());
+  }
+
+  private void assertNumericLaunchDeniedWithoutMutation(StartSessionRequest request) {
+    Map<Long, GameInstance> before = new HashMap<>();
+    store.forEach((id, instance) -> before.put(id, copyOf(instance)));
+
+    IllegalArgumentException error =
+        assertThrows(IllegalArgumentException.class, () -> service.startSession(request));
+
+    assertEquals(
+        "AUTHORED_WORLD_LAUNCH_BINDING_REQUIRED: canonical authored-world launch binding is"
+            + " required",
+        error.getMessage());
+    org.assertj.core.api.Assertions.assertThat(store).usingRecursiveComparison().isEqualTo(before);
+    verifyNoInteractions(repository, gameDesignClient, worldManagementClient, stateService);
   }
 
   @Test

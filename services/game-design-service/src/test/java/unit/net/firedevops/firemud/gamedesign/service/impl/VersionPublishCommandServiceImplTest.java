@@ -32,6 +32,7 @@ import net.firedevops.firemud.gamedesign.repository.GameRepository;
 import net.firedevops.firemud.gamedesign.repository.PublishAttemptRepository;
 import net.firedevops.firemud.gamedesign.repository.VersionRepository;
 import net.firedevops.firemud.gamedesign.service.AssetExportService;
+import net.firedevops.firemud.gamedesign.service.AssetExportOutcomePendingException;
 import net.firedevops.firemud.gamedesign.service.ControlPlaneDigestService;
 import net.firedevops.firemud.gamedesign.service.ExportedAssetManifest;
 import net.firedevops.firemud.gamedesign.service.PublishAttemptService;
@@ -694,6 +695,36 @@ class VersionPublishCommandServiceImplTest {
     verify(versionRepository, never()).findByTenantIdAndId(any(String.class), any(Long.class));
     verify(gameRepository, never()).findByTenantIdForUpdate(any(String.class));
     verify(publishAttemptService, never()).executeFullVersionTransaction(any());
+  }
+
+  @Test
+  void uncertainAssetExportRemainsPendingForExactRetry() {
+    String workflowId = "publish:tenant-1:publish-request:workflow-1";
+    PublishAttempt attempt = fullAttempt(PublishAttemptStatus.PENDING, 10L, 1, workflowId);
+    Version version = fullVersion(10L, 1, VersionLifecycleState.DRAFT);
+    when(publishAttemptRepository.findByPublishWorkflowId(workflowId))
+        .thenReturn(Optional.of(attempt));
+    when(versionRepository.findByTenantIdAndId("tenant-1", 10L)).thenReturn(Optional.of(version));
+    when(publishGateService.collectFullVersionParticipantDigests(
+            any(VersionDto.class), any(String.class), any(String.class)))
+        .thenReturn(participantDigests());
+    when(assetExportService.exportAssets("tenant-1", 1))
+        .thenThrow(new AssetExportOutcomePendingException("exact object readback is unavailable"));
+
+    VersionPublishCommandServiceImpl.PendingReconciliationException thrown =
+        assertThrows(
+            VersionPublishCommandServiceImpl.PendingReconciliationException.class,
+            () ->
+                service.reconcileFullVersionPublish(
+                    new PublishWorkflowRequest("tenant-1", "notes", "workflow-1", workflowId)));
+
+    assertTrue(thrown.getMessage().contains("asset export outcome is pending"));
+    assertEquals(PublishAttemptStatus.PENDING, attempt.getStatus());
+    verify(publishAttemptService, never())
+        .markFullVersionFailed(any(String.class), any(String.class), any(String.class));
+    verify(versionRepository, never()).delete(any(Version.class));
+    verify(assetExportService, never())
+        .deleteExportedAssets(any(String.class), any(Integer.class), any(List.class));
   }
 
   @Test

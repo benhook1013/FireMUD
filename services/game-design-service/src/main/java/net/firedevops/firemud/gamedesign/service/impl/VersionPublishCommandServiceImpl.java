@@ -22,6 +22,7 @@ import net.firedevops.firemud.gamedesign.repository.GameRepository;
 import net.firedevops.firemud.gamedesign.repository.PublishAttemptRepository;
 import net.firedevops.firemud.gamedesign.repository.VersionRepository;
 import net.firedevops.firemud.gamedesign.service.AssetExportService;
+import net.firedevops.firemud.gamedesign.service.AssetExportOutcomePendingException;
 import net.firedevops.firemud.gamedesign.service.ControlPlaneDigestService;
 import net.firedevops.firemud.gamedesign.service.ExportedAssetManifest;
 import net.firedevops.firemud.gamedesign.service.PublicationFailureClassifier;
@@ -169,6 +170,9 @@ public class VersionPublishCommandServiceImpl {
     ExportedAssetManifest exportedManifest;
     try {
       exportedManifest = assetExportService.exportAssets(request.tenantId(), dto.versionNumber());
+    } catch (AssetExportOutcomePendingException ex) {
+      throw pendingReconciliation(
+          "asset export outcome is pending; retry exact publish request", ex);
     } catch (RuntimeException ex) {
       return failDefinitively(request, attempt, version, null, ex);
     }
