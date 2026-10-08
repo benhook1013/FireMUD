@@ -4,6 +4,7 @@ import java.io.IOException;
 import java.math.BigInteger;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Objects;
 import java.util.UUID;
@@ -12,6 +13,17 @@ import net.firedevops.firemud.common.authoring.DraftCommitBinding.Owner;
 import net.firedevops.firemud.common.gamedesign.DraftSynchronizedVisibilityEvidence.AppliedEpoch;
 import net.firedevops.firemud.common.json.Rfc8785CanonicalJson;
 import net.firedevops.firemud.common.publication.AccountPublicationAuthorizationBinding;
+import net.firedevops.firemud.common.publication.WorldSelectedPublicationArtifactInventoryEvidence.ArtifactDecision;
+import net.firedevops.firemud.common.publication.WorldSelectedPublicationArtifactInventoryEvidence.Checkpoint;
+import net.firedevops.firemud.common.publication.WorldSelectedPublicationArtifactInventoryEvidence.FamilyCount;
+import net.firedevops.firemud.common.publication.WorldSelectedPublicationArtifactInventoryEvidence.Freeze;
+import net.firedevops.firemud.common.publication.WorldSelectedPublicationArtifactInventoryEvidence.PublicAccountOrder;
+import net.firedevops.firemud.common.publication.WorldSelectedPublicationArtifactInventoryEvidence.PublicEvidence;
+import net.firedevops.firemud.common.publication.WorldSelectedPublicationArtifactInventoryEvidence.PublicOwnerScope;
+import net.firedevops.firemud.common.publication.WorldSelectedPublicationArtifactInventoryEvidence.RegionGeneratorInput;
+import net.firedevops.firemud.common.publication.WorldSelectedPublicationArtifactInventoryEvidence.SelectedApplication;
+import net.firedevops.firemud.common.publication.WorldSelectedPublicationArtifactInventoryEvidence.SourceModel;
+import net.firedevops.firemud.common.publication.WorldSelectedPublicationArtifactInventoryEvidence.SpawnBindingInput;
 import net.firedevops.firemud.worldmanagement.tenant.WorldDesignPublicationFenceEvidence.FrozenAttempt;
 import net.firedevops.firemud.worldmanagement.tenant.WorldDesignPublicationFenceRepository.ConflictException;
 import tools.jackson.core.StreamReadFeature;
@@ -130,64 +142,6 @@ public final class WorldSelectedPublicationArtifactInventory {
       String sourceGameTenantKey,
       String sourceProvenanceKind) {}
 
-  public record FamilyCount(String family, int rowCount) {}
-
-  public record RegionGeneratorInput(
-      UUID regionTemplateId, String generatorType, String generatorParams) {}
-
-  public record SpawnBindingInput(
-      UUID bindingTemplateId,
-      UUID roomTemplateId,
-      String entityTemplateType,
-      String entityReferenceKind,
-      UUID entityTenantId,
-      UUID entityVersionId,
-      UUID entityTemplateId,
-      int spawnCount,
-      int respawnDelaySeconds) {}
-
-  public record SourceModel(
-      String modelId,
-      int graphSchemaVersion,
-      String graphDigest,
-      String topologyResultDigest,
-      List<FamilyCount> familyCounts,
-      List<RegionGeneratorInput> regionGeneratorInputs,
-      List<String> generationRuleFields,
-      List<String> regionFields,
-      List<String> zoneFields,
-      List<String> roomFields,
-      List<String> roomExitFields,
-      List<String> spawnBindingFields,
-      List<SpawnBindingInput> spawnBindingInputs,
-      int generationRuleInputCount,
-      int spawnBindingCount,
-      List<AppliedEpoch> appliedEpochs) {
-    public SourceModel {
-      familyCounts = List.copyOf(Objects.requireNonNull(familyCounts, "familyCounts"));
-      regionGeneratorInputs =
-          List.copyOf(Objects.requireNonNull(regionGeneratorInputs, "regionGeneratorInputs"));
-      generationRuleFields =
-          List.copyOf(Objects.requireNonNull(generationRuleFields, "generationRuleFields"));
-      regionFields = List.copyOf(Objects.requireNonNull(regionFields, "regionFields"));
-      zoneFields = List.copyOf(Objects.requireNonNull(zoneFields, "zoneFields"));
-      roomFields = List.copyOf(Objects.requireNonNull(roomFields, "roomFields"));
-      roomExitFields = List.copyOf(Objects.requireNonNull(roomExitFields, "roomExitFields"));
-      spawnBindingFields =
-          List.copyOf(Objects.requireNonNull(spawnBindingFields, "spawnBindingFields"));
-      spawnBindingInputs =
-          List.copyOf(Objects.requireNonNull(spawnBindingInputs, "spawnBindingInputs"));
-      appliedEpochs = List.copyOf(Objects.requireNonNull(appliedEpochs, "appliedEpochs"));
-    }
-  }
-
-  public record SelectedApplication(
-      UUID applicationOperationId,
-      UUID applicationRequestId,
-      String appliedCommitId,
-      String bindingDigest,
-      String appliedResultDigest) {}
-
   public record AccountOrder(
       UUID operationId,
       UUID fenceId,
@@ -205,59 +159,6 @@ public final class WorldSelectedPublicationArtifactInventory {
     @Override
     public byte[] canonicalBindingBytes() {
       return canonicalBindingBytes.clone();
-    }
-  }
-
-  public record Freeze(
-      UUID publicationFence,
-      String publicationRequestId,
-      String requestDigest,
-      String versionStateEpoch,
-      String publishWorkflowId) {}
-
-  public record Checkpoint(String appliedCommitId, String contentDigest, int digestSchemaVersion) {}
-
-  public record ArtifactDecision(String artifactKind, String state, String rule) {}
-
-  /** Public Account order fields; the internal exact canonical bytes remain owner-private. */
-  public record PublicAccountOrder(
-      UUID operationId,
-      UUID fenceId,
-      UUID actorAccountId,
-      String publicationRequestId,
-      String selectionDigest,
-      String selectedCommitId,
-      String bindingDigest) {}
-
-  /** Public canonical projection; it intentionally omits every private numeric owner key. */
-  public record PublicOwnerScope(
-      String targetNamespace,
-      UUID canonicalTenantId,
-      UUID canonicalVersionId,
-      UUID versionIdentityOperationId,
-      UUID intakeRequestId,
-      UUID intakeOperationId,
-      String intakeRequestDigest,
-      UUID sourceOperationId,
-      String sourceEvidenceDigest,
-      String intakeReceiptDigest) {}
-
-  /**
-   * Safe egress view after the authenticated World owner read has verified the durable envelope.
-   */
-  public record PublicEvidence(
-      String schema,
-      int schemaVersion,
-      String completeness,
-      PublicOwnerScope ownerScope,
-      SelectedApplication selectedApplication,
-      PublicAccountOrder accountOrder,
-      Freeze freeze,
-      Checkpoint checkpoint,
-      SourceModel sourceModel,
-      List<ArtifactDecision> artifactDecisions) {
-    public PublicEvidence {
-      artifactDecisions = List.copyOf(Objects.requireNonNull(artifactDecisions));
     }
   }
 
@@ -534,25 +435,51 @@ public final class WorldSelectedPublicationArtifactInventory {
         publicAccountOrder(envelope.accountOrder()),
         envelope.freeze(),
         envelope.checkpoint(),
-        envelope.sourceModel(),
+        publicSourceModel(envelope.sourceModel()),
         envelope.artifactDecisions());
+  }
+
+  /**
+   * Stable public projection order; retained private-envelope bytes preserve original graph order.
+   */
+  private static SourceModel publicSourceModel(SourceModel model) {
+    List<RegionGeneratorInput> regions =
+        model.regionGeneratorInputs().stream()
+            .sorted(Comparator.comparing(input -> input.regionTemplateId().toString()))
+            .toList();
+    List<SpawnBindingInput> spawnBindings =
+        model.spawnBindingInputs().stream()
+            .sorted(Comparator.comparing(input -> input.bindingTemplateId().toString()))
+            .toList();
+    return new SourceModel(
+        model.modelId(),
+        model.graphSchemaVersion(),
+        model.graphDigest(),
+        model.topologyResultDigest(),
+        model.familyCounts(),
+        regions,
+        model.generationRuleFields(),
+        model.regionFields(),
+        model.zoneFields(),
+        model.roomFields(),
+        model.roomExitFields(),
+        model.spawnBindingFields(),
+        spawnBindings,
+        model.generationRuleInputCount(),
+        model.spawnBindingCount(),
+        model.appliedEpochs());
   }
 
   /** Canonical bytes for the safe public projection; private owner keys are never serialized. */
   public byte[] publicCanonicalBytes() {
-    try {
-      return Rfc8785CanonicalJson.canonicalizeUtf8(JSON.writeValueAsString(publicEvidence()));
-    } catch (IOException failure) {
-      throw new IllegalStateException(
-          "World public artifact inventory could not be encoded", failure);
-    }
+    return publicEvidence().canonicalBytes();
   }
 
   /**
    * Digest of {@link #publicCanonicalBytes()}, distinct from the private durable-envelope digest.
    */
   public String publicDigest() {
-    return WorldDraftGraphAppliedResult.digest(publicCanonicalBytes());
+    return publicEvidence().digest();
   }
 
   private static PublicAccountOrder publicAccountOrder(AccountOrder account) {

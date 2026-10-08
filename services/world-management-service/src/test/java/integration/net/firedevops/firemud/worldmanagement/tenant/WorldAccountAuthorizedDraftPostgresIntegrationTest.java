@@ -54,6 +54,9 @@ import net.firedevops.firemud.common.publication.AuthoredDraftPublishSelectionRe
 import net.firedevops.firemud.common.publication.AuthoredDraftPublishSelectionReadGrpcCodec;
 import net.firedevops.firemud.common.publication.WorldSelectedDraftPublicationFreezeClient;
 import net.firedevops.firemud.common.publication.WorldSelectedDraftPublicationFreezeEvidence;
+import net.firedevops.firemud.common.publication.WorldSelectedDraftPublicationFreezeGrpcCodec;
+import net.firedevops.firemud.common.publication.WorldSelectedPublicationArtifactInventoryClient;
+import net.firedevops.firemud.common.publication.WorldSelectedPublicationArtifactInventoryEvidence;
 import net.firedevops.firemud.common.tenant.AuthoredWorldSourceDigest;
 import net.firedevops.firemud.common.tenant.AuthoredWorldSourceEvidence;
 import net.firedevops.firemud.common.world.WorldPublishedStartLocationClient;
@@ -437,7 +440,7 @@ class WorldAccountAuthorizedDraftPostgresIntegrationTest {
             var publicInventory = inventory.publicEvidence();
             assertThat(publicInventory.completeness()).isEqualTo("COMPLETE");
             assertThat(publicInventory.sourceModel().familyCounts())
-                .extracting(WorldSelectedPublicationArtifactInventory.FamilyCount::family)
+                .extracting(WorldSelectedPublicationArtifactInventoryEvidence.FamilyCount::family)
                 .containsExactly(
                     "REGION",
                     "ZONE",
@@ -446,11 +449,12 @@ class WorldAccountAuthorizedDraftPostgresIntegrationTest {
                     "GENERATION_RULE",
                     "WORLD_ENTITY_SPAWN_BINDING");
             assertThat(publicInventory.sourceModel().familyCounts())
-                .extracting(WorldSelectedPublicationArtifactInventory.FamilyCount::rowCount)
+                .extracting(WorldSelectedPublicationArtifactInventoryEvidence.FamilyCount::rowCount)
                 .containsExactly(1, 1, 1, 0, 0, 0);
             assertThat(publicInventory.artifactDecisions())
                 .extracting(
-                    WorldSelectedPublicationArtifactInventory.ArtifactDecision::artifactKind)
+                    WorldSelectedPublicationArtifactInventoryEvidence.ArtifactDecision
+                        ::artifactKind)
                 .containsExactly("NAVMESH", "PATH_GRAPH");
             assertThat(publicInventory.accountOrder().bindingDigest())
                 .isEqualTo(
@@ -462,6 +466,26 @@ class WorldAccountAuthorizedDraftPostgresIntegrationTest {
                 .doesNotContain(
                     "localTenantKey", "localVersionKey", "gameDesignVersionId", "sourceGameRowId");
             assertThat(inventory.publicDigest()).matches("sha256:[0-9a-f]{64}");
+            var firstInventoryRead =
+                readArtifactInventoryOverMtls(selectedFreezeService, firstFreeze, pki);
+            assertThat(firstInventoryRead.canonicalBytes())
+                .containsExactly(inventory.publicCanonicalBytes());
+            assertThat(firstInventoryRead.digest()).isEqualTo(inventory.publicDigest());
+            assertThat(
+                    new String(
+                        firstInventoryRead.canonicalBytes(),
+                        java.nio.charset.StandardCharsets.UTF_8))
+                .doesNotContain(
+                    "localTenantKey", "localVersionKey", "gameDesignVersionId", "sourceGameRowId");
+            assertThatThrownBy(
+                    () ->
+                        readArtifactInventoryOverMtls(
+                            selectedFreezeService, firstFreeze, pki, pki.worldClient))
+                .isInstanceOf(StatusRuntimeException.class)
+                .satisfies(
+                    failure ->
+                        assertThat(Status.fromThrowable(failure).getCode())
+                            .isEqualTo(Status.Code.PERMISSION_DENIED));
             account.assertPublicationSourcesHeld(publicationOrder);
             var frozen = capture(plan, freezeEvidence, frozenAttempt);
             assertThat(frozenAttempt.checkpoint().appliedCommitId())
@@ -476,6 +500,11 @@ class WorldAccountAuthorizedDraftPostgresIntegrationTest {
             var retryFreeze = beginOverMtls(selectedFreezeService, freezeRequest, pki);
             assertThat(retryFreeze.request()).isEqualTo(firstFreeze.request());
             assertThat(retryFreeze.acknowledgement()).isEqualTo(firstFreeze.acknowledgement());
+            var retryInventoryRead =
+                readArtifactInventoryOverMtls(selectedFreezeService, retryFreeze, pki);
+            assertThat(retryInventoryRead.canonicalBytes())
+                .containsExactly(firstInventoryRead.canonicalBytes());
+            assertThat(retryInventoryRead.digest()).isEqualTo(firstInventoryRead.digest());
             var exactRetry = fence.readAttempt(retryEvidence).orElseThrow();
             assertThat(exactRetry.request()).isEqualTo(retryEvidence);
             assertThat(exactRetry.publicationFence()).isEqualTo(frozenAttempt.publicationFence());
@@ -519,6 +548,79 @@ class WorldAccountAuthorizedDraftPostgresIntegrationTest {
                     freezeRequest.expectedVersionStateEpoch(),
                     freezeRequest.requestDigest(),
                     changedOperation);
+            var substitutedAccountAcknowledgement =
+                new WorldSelectedDraftPublicationFreezeEvidence.Acknowledgement(
+                    changedFreezeRequest,
+                    firstFreeze.acknowledgement().intakeRequestId(),
+                    firstFreeze.acknowledgement().versionStateEpoch(),
+                    firstFreeze.acknowledgement().publicationFence(),
+                    WorldSelectedDraftPublicationFreezeEvidence.OwnerFreezePhase.FROZEN,
+                    firstFreeze.acknowledgement().appliedCommitId(),
+                    firstFreeze.acknowledgement().contentDigest(),
+                    firstFreeze.acknowledgement().digestSchemaVersion());
+            var substitutedAccountFreeze =
+                WorldSelectedDraftPublicationFreezeGrpcCodec.fromResponse(
+                    changedFreezeRequest,
+                    WorldSelectedDraftPublicationFreezeGrpcCodec.toResponse(
+                        substitutedAccountAcknowledgement));
+            assertThatThrownBy(
+                    () ->
+                        readArtifactInventoryOverMtls(
+                            selectedFreezeService, substitutedAccountFreeze, pki))
+                .isInstanceOf(StatusRuntimeException.class)
+                .satisfies(
+                    failure ->
+                        assertThat(Status.fromThrowable(failure).getCode())
+                            .isEqualTo(Status.Code.FAILED_PRECONDITION));
+            var substitutedCheckpointAcknowledgement =
+                new WorldSelectedDraftPublicationFreezeEvidence.Acknowledgement(
+                    freezeRequest,
+                    firstFreeze.acknowledgement().intakeRequestId(),
+                    firstFreeze.acknowledgement().versionStateEpoch(),
+                    firstFreeze.acknowledgement().publicationFence(),
+                    WorldSelectedDraftPublicationFreezeEvidence.OwnerFreezePhase.FROZEN,
+                    firstFreeze.acknowledgement().appliedCommitId(),
+                    "b".repeat(64),
+                    firstFreeze.acknowledgement().digestSchemaVersion());
+            var substitutedCheckpointFreeze =
+                WorldSelectedDraftPublicationFreezeGrpcCodec.fromResponse(
+                    freezeRequest,
+                    WorldSelectedDraftPublicationFreezeGrpcCodec.toResponse(
+                        substitutedCheckpointAcknowledgement));
+            assertThatThrownBy(
+                    () ->
+                        readArtifactInventoryOverMtls(
+                            selectedFreezeService, substitutedCheckpointFreeze, pki))
+                .isInstanceOf(StatusRuntimeException.class)
+                .satisfies(
+                    failure ->
+                        assertThat(Status.fromThrowable(failure).getCode())
+                            .isEqualTo(Status.Code.FAILED_PRECONDITION));
+            var substitutedFenceAcknowledgement =
+                new WorldSelectedDraftPublicationFreezeEvidence.Acknowledgement(
+                    freezeRequest,
+                    firstFreeze.acknowledgement().intakeRequestId(),
+                    firstFreeze.acknowledgement().versionStateEpoch(),
+                    UUID.randomUUID(),
+                    WorldSelectedDraftPublicationFreezeEvidence.OwnerFreezePhase.FROZEN,
+                    firstFreeze.acknowledgement().appliedCommitId(),
+                    firstFreeze.acknowledgement().contentDigest(),
+                    firstFreeze.acknowledgement().digestSchemaVersion());
+            var substitutedFenceFreeze =
+                WorldSelectedDraftPublicationFreezeGrpcCodec.fromResponse(
+                    freezeRequest,
+                    WorldSelectedDraftPublicationFreezeGrpcCodec.toResponse(
+                        substitutedFenceAcknowledgement));
+            assertThatThrownBy(
+                    () ->
+                        readArtifactInventoryOverMtls(
+                            selectedFreezeService, substitutedFenceFreeze, pki))
+                .isInstanceOf(StatusRuntimeException.class)
+                .satisfies(
+                    failure ->
+                        assertThat(Status.fromThrowable(failure).getCode())
+                            .isEqualTo(Status.Code.FAILED_PRECONDITION));
+            assertThat(ownerSnapshot(world, plan)).isEqualTo(stateBeforeExactRetry);
             assertThatThrownBy(
                     () -> beginOverMtls(selectedFreezeService, changedFreezeRequest, pki))
                 .isInstanceOf(StatusRuntimeException.class)
@@ -1306,7 +1408,8 @@ class WorldAccountAuthorizedDraftPostgresIntegrationTest {
         serveAll(
             pki.worldServer,
             pki,
-            new WorldSelectedDraftPublicationFreezeGrpcService(service, NAMESPACE));
+            new WorldSelectedDraftPublicationFreezeGrpcService(
+                service, selectedPublicationArtifactInventoryReadService(), NAMESPACE));
     try {
       var endpoints = new ServiceEndpointsProperties();
       endpoints.setWorldManagementService("localhost:" + server.getPort());
@@ -1318,6 +1421,40 @@ class WorldAccountAuthorizedDraftPostgresIntegrationTest {
               NAMESPACE)) {
         client.init();
         return client.begin(request);
+      }
+    } finally {
+      stop(server);
+    }
+  }
+
+  private WorldSelectedPublicationArtifactInventoryEvidence readArtifactInventoryOverMtls(
+      WorldSelectedDraftPublicationFreezeService service,
+      WorldSelectedDraftPublicationFreezeEvidence freezeEvidence,
+      TestPki pki)
+      throws Exception {
+    return readArtifactInventoryOverMtls(service, freezeEvidence, pki, pki.gameDesignClient);
+  }
+
+  private WorldSelectedPublicationArtifactInventoryEvidence readArtifactInventoryOverMtls(
+      WorldSelectedDraftPublicationFreezeService service,
+      WorldSelectedDraftPublicationFreezeEvidence freezeEvidence,
+      TestPki pki,
+      TestIdentity clientIdentity)
+      throws Exception {
+    var server =
+        serveAll(
+            pki.worldServer,
+            pki,
+            new WorldSelectedDraftPublicationFreezeGrpcService(
+                service, selectedPublicationArtifactInventoryReadService(), NAMESPACE));
+    try {
+      var endpoints = new ServiceEndpointsProperties();
+      endpoints.setWorldManagementService("localhost:" + server.getPort());
+      try (var client =
+          new WorldSelectedPublicationArtifactInventoryClient(
+              endpoints, clientIdentity.properties(pki.ca), new GrpcChannelFactory(), NAMESPACE)) {
+        client.init();
+        return client.read(freezeEvidence);
       }
     } finally {
       stop(server);
@@ -1355,6 +1492,12 @@ class WorldAccountAuthorizedDraftPostgresIntegrationTest {
 
   private WorldSelectedPublicationArtifactInventoryRepository artifactInventoryRepository() {
     return new WorldSelectedPublicationArtifactInventoryRepository(dsl);
+  }
+
+  private WorldSelectedPublicationArtifactInventoryReadService
+      selectedPublicationArtifactInventoryReadService() {
+    return new WorldSelectedPublicationArtifactInventoryReadService(
+        NAMESPACE, fence, publicationAuthorizationRepository(), artifactInventoryRepository());
   }
 
   private DraftOwnerSnapshot ownerSnapshot(Fixture fixture, WorldDraftTopologyCommitPlan plan) {

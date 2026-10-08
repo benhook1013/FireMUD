@@ -13,6 +13,7 @@ import net.firedevops.firemud.gamedesign.model.PublishAttemptStatus;
 import net.firedevops.firemud.gamedesign.model.PublishType;
 import net.firedevops.firemud.gamedesign.model.VersionAssetArtifactState;
 import net.firedevops.firemud.gamedesign.model.VersionLifecycleState;
+import net.firedevops.firemud.gamedesign.publication.AssetSource;
 import net.firedevops.firemud.gamedesign.publication.GameDesignPublicationOperation;
 import net.firedevops.firemud.gamedesign.publication.GameDesignPublicationOperationRepository;
 import net.firedevops.firemud.gamedesign.publication.GameDesignSourceRepository;
@@ -29,6 +30,65 @@ import org.jooq.DSLContext;
  */
 public final class IsolatedPublicationOwnerSetup {
   private IsolatedPublicationOwnerSetup() {}
+
+  /** Actual ordinary source/coordinator transaction; does not stipulate complete inventory. */
+  public static DraftCommitBinding applyOrdinaryReferences(
+      DSLContext dsl, DraftCommitBinding.TargetProof target, List<String> payloads) {
+    var head =
+        dsl.fetchOne(
+            "SELECT source_epoch FROM game_design_asset_source_head WHERE canonical_tenant_id = ? AND canonical_version_id = ?",
+            target.canonicalTenantId(),
+            target.canonicalVersionId());
+    if (head == null) throw new IllegalStateException("ASSET_SOURCE_GENESIS_UNAVAILABLE");
+    var coordinator = new DraftCommitCoordinatorRepository(dsl);
+    var prior = coordinator.readVisibilityFence(target);
+    var revisions = new java.util.ArrayList<DraftCommitBinding.RevisionPayload>();
+    for (int index = 0; index < payloads.size(); index++) {
+      revisions.add(
+          new DraftCommitBinding.RevisionPayload(
+              Integer.toString(index),
+              java.util.UUID.randomUUID(),
+              DraftCommitBinding.Owner.GAME_DESIGN_CONTROL_PLANE,
+              payloads.get(index)));
+    }
+    var binding =
+        DraftCommitBinding.create(
+            target,
+            java.util.UUID.randomUUID(),
+            java.util.UUID.randomUUID(),
+            prior.map(value -> value.commitId().toString()).orElse("base-commit-0"),
+            revisions,
+            List.of(
+                new DraftCommitBinding.AffectedUnit(
+                    DraftCommitBinding.Owner.GAME_DESIGN_CONTROL_PLANE,
+                    AssetSource.SCOPE,
+                    target.canonicalVersionId().toString(),
+                    AssetSource.SCOPE,
+                    AssetSource.SCOPE_ID,
+                    head.get("source_epoch", String.class))));
+    coordinator.claim(binding);
+    coordinator.claimApplicationSlot(binding);
+    coordinator.markOwnerInProgress(binding, DraftCommitBinding.Owner.GAME_DESIGN_CONTROL_PLANE);
+    var applied = new GameDesignSourceRepository(dsl).apply(binding);
+    coordinator.advanceSourceVisibilityFence(
+        binding,
+        new DraftCommitCoordinatorRepository.CoordinatorProof(
+            binding, List.of(applied.ownerOutcome())));
+    coordinator.releaseApplicationSlot(binding);
+    return binding;
+  }
+
+  /**
+   * Fixture-only source visibility advance; the coordinator still validates every exact outcome.
+   */
+  public static void advanceSourceVisibility(
+      DSLContext dsl,
+      DraftCommitBinding binding,
+      List<DraftCommitCoordinatorRepository.OwnerOutcome> outcomes) {
+    new DraftCommitCoordinatorRepository(dsl)
+        .advanceSourceVisibilityFence(
+            binding, new DraftCommitCoordinatorRepository.CoordinatorProof(binding, outcomes));
+  }
 
   /** Fixture-only visibility advance; supplied owner authority remains explicitly isolated. */
   public static void advanceIsolatedVisibility(

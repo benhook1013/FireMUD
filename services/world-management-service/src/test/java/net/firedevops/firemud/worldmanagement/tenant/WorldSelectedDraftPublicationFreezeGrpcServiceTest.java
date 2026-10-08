@@ -16,8 +16,11 @@ import net.firedevops.firemud.common.publication.WorldSelectedDraftPublicationFr
 import net.firedevops.firemud.common.security.SessionContext;
 import net.firedevops.firemud.worldmanagement.v1.BeginVersionPublicationFreezeRequest;
 import net.firedevops.firemud.worldmanagement.v1.BeginVersionPublicationFreezeResponse;
+import net.firedevops.firemud.worldmanagement.v1.ReadSelectedPublicationArtifactInventoryRequest;
+import net.firedevops.firemud.worldmanagement.v1.ReadSelectedPublicationArtifactInventoryResponse;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 class WorldSelectedDraftPublicationFreezeGrpcServiceTest {
   private static final String NAMESPACE = "firemud";
@@ -30,7 +33,9 @@ class WorldSelectedDraftPublicationFreezeGrpcServiceTest {
   @Test
   void authenticatesExactSameNamespaceGameDesignPeerBeforeParsingOrDelegating() {
     var delegate = mock(WorldSelectedDraftPublicationFreezeService.class);
-    var receiver = new WorldSelectedDraftPublicationFreezeGrpcService(delegate, NAMESPACE);
+    var receiver =
+        new WorldSelectedDraftPublicationFreezeGrpcService(
+            delegate, mock(WorldSelectedPublicationArtifactInventoryReadService.class), NAMESPACE);
     var malformed = BeginVersionPublicationFreezeRequest.getDefaultInstance();
 
     var anonymous = new RecordingObserver();
@@ -75,7 +80,9 @@ class WorldSelectedDraftPublicationFreezeGrpcServiceTest {
   void exactGameDesignPeerReceivesOnlyTheCompleteCommittedFreezeAcknowledgement() {
     var fixture = WorldSelectedDraftPublicationFreezeRequestTest.fixture();
     var delegate = mock(WorldSelectedDraftPublicationFreezeService.class);
-    var receiver = new WorldSelectedDraftPublicationFreezeGrpcService(delegate, NAMESPACE);
+    var receiver =
+        new WorldSelectedDraftPublicationFreezeGrpcService(
+            delegate, mock(WorldSelectedPublicationArtifactInventoryReadService.class), NAMESPACE);
     var acknowledgement =
         new WorldSelectedDraftPublicationFreezeEvidence.Acknowledgement(
             fixture.request(),
@@ -101,6 +108,65 @@ class WorldSelectedDraftPublicationFreezeGrpcServiceTest {
     assertThat(observer.error).isNull();
     assertThat(observer.completed).isTrue();
     verify(delegate).begin(fixture.request());
+  }
+
+  @Test
+  void authenticatesInventoryReadBeforeParsingAndRequiresAnIndependentRead() {
+    var freezeService = mock(WorldSelectedDraftPublicationFreezeService.class);
+    var readService = mock(WorldSelectedPublicationArtifactInventoryReadService.class);
+    var receiver =
+        new WorldSelectedDraftPublicationFreezeGrpcService(freezeService, readService, NAMESPACE);
+    var malformed = ReadSelectedPublicationArtifactInventoryRequest.getDefaultInstance();
+
+    var anonymous = new InventoryRecordingObserver();
+    withoutPeer(() -> receiver.readSelectedPublicationArtifactInventory(malformed, anonymous));
+    assertInventoryDenied(anonymous, Status.Code.UNAUTHENTICATED);
+
+    var wrongWorkload = new InventoryRecordingObserver();
+    withPeer(
+        peer(NAMESPACE, "account-service"),
+        () -> receiver.readSelectedPublicationArtifactInventory(malformed, wrongWorkload));
+    assertInventoryDenied(wrongWorkload, Status.Code.PERMISSION_DENIED);
+
+    var wrongNamespace = new InventoryRecordingObserver();
+    withPeer(
+        peer("other", "game-design-service"),
+        () -> receiver.readSelectedPublicationArtifactInventory(malformed, wrongNamespace));
+    assertInventoryDenied(wrongNamespace, Status.Code.PERMISSION_DENIED);
+
+    SessionContext.setContext(
+        "11111111-1111-4111-8111-111111111111", java.util.List.of(), java.util.Map.of());
+    var endUserContext = new InventoryRecordingObserver();
+    withPeer(
+        peer(NAMESPACE, "game-design-service"),
+        () -> receiver.readSelectedPublicationArtifactInventory(malformed, endUserContext));
+    assertInventoryDenied(endUserContext, Status.Code.PERMISSION_DENIED);
+    SessionContext.clear();
+
+    TransactionSynchronizationManager.setActualTransactionActive(true);
+    try {
+      var ambientTransaction = new InventoryRecordingObserver();
+      withPeer(
+          peer(NAMESPACE, "game-design-service"),
+          () -> receiver.readSelectedPublicationArtifactInventory(malformed, ambientTransaction));
+      assertInventoryDenied(ambientTransaction, Status.Code.FAILED_PRECONDITION);
+    } finally {
+      TransactionSynchronizationManager.setActualTransactionActive(false);
+    }
+
+    var authenticatedMalformed = new InventoryRecordingObserver();
+    withPeer(
+        peer(NAMESPACE, "game-design-service"),
+        () -> receiver.readSelectedPublicationArtifactInventory(malformed, authenticatedMalformed));
+    assertInventoryDenied(authenticatedMalformed, Status.Code.INVALID_ARGUMENT);
+    verifyNoInteractions(readService, freezeService);
+  }
+
+  private static void assertInventoryDenied(
+      InventoryRecordingObserver observer, Status.Code expectedCode) {
+    assertThat(Status.fromThrowable(observer.error).getCode()).isEqualTo(expectedCode);
+    assertThat(observer.response).isNull();
+    assertThat(observer.completed).isFalse();
   }
 
   private static GrpcPeerIdentity peer(String namespace, String service) {
@@ -135,6 +201,31 @@ class WorldSelectedDraftPublicationFreezeGrpcServiceTest {
 
     @Override
     public void onNext(BeginVersionPublicationFreezeResponse value) {
+      response = value;
+    }
+
+    @Override
+    @SuppressFBWarnings(
+        value = "EI_EXPOSE_REP2",
+        justification = "The test collector retains the original throwable for assertion.")
+    public void onError(Throwable failure) {
+      error = failure;
+    }
+
+    @Override
+    public void onCompleted() {
+      completed = true;
+    }
+  }
+
+  private static final class InventoryRecordingObserver
+      implements StreamObserver<ReadSelectedPublicationArtifactInventoryResponse> {
+    ReadSelectedPublicationArtifactInventoryResponse response;
+    Throwable error;
+    boolean completed;
+
+    @Override
+    public void onNext(ReadSelectedPublicationArtifactInventoryResponse value) {
       response = value;
     }
 

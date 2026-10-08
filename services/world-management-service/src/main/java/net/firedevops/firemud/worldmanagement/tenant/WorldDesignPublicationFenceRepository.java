@@ -241,6 +241,20 @@ public class WorldDesignPublicationFenceRepository {
     return Optional.of(stored);
   }
 
+  /** Reads one retained attempt by its opaque fence without resolving mutable source state. */
+  @Transactional(propagation = Propagation.NOT_SUPPORTED, readOnly = true)
+  public Optional<FrozenAttempt> readAttemptByFence(UUID publicationFence) {
+    if (publicationFence == null || NIL_UUID.equals(publicationFence)) {
+      throw new IllegalArgumentException("A non-nil World publication fence is required");
+    }
+    if (TransactionSynchronizationManager.isActualTransactionActive()
+        || TransactionSynchronizationManager.isSynchronizationActive()) {
+      throw new IllegalStateException("World publication attempt read requires a committed read");
+    }
+    FrozenAttempt stored = findAttemptByFence(publicationFence);
+    return Optional.ofNullable(stored);
+  }
+
   private ResolvedVersion resolveVersion(OwnerBinding binding) {
     Objects.requireNonNull(binding, "binding");
     WorldAuthoredSourceIntakeReceipt receipt =

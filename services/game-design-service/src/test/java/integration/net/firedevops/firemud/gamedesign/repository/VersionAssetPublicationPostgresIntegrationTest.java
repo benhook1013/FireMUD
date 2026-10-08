@@ -9,14 +9,26 @@ import static org.mockito.Mockito.verify;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.sql.SQLException;
+import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
+import net.firedevops.firemud.common.authoring.DraftCommitBinding;
 import net.firedevops.firemud.gamedesign.config.AssetStoreProperties;
+import net.firedevops.firemud.gamedesign.draft.AuthoredDraftPublishSelection;
+import net.firedevops.firemud.gamedesign.draft.AuthoredDraftPublishSelectionRepository;
+import net.firedevops.firemud.gamedesign.draft.DraftCommitCoordinatorRepository;
+import net.firedevops.firemud.gamedesign.draft.IsolatedPublicationOwnerSetup;
 import net.firedevops.firemud.gamedesign.entity.Game;
 import net.firedevops.firemud.gamedesign.entity.GameAsset;
 import net.firedevops.firemud.gamedesign.entity.Version;
 import net.firedevops.firemud.gamedesign.model.VersionLifecycleState;
+import net.firedevops.firemud.gamedesign.publication.AssetSource;
+import net.firedevops.firemud.gamedesign.publication.AssetSourceRepository;
+import net.firedevops.firemud.gamedesign.publication.CommandSource;
+import net.firedevops.firemud.gamedesign.publication.GameDesignSourceRepository;
+import net.firedevops.firemud.gamedesign.publication.IsolatedPublicationOperationFixtures;
+import net.firedevops.firemud.gamedesign.publication.RealmPolicySource;
 import net.firedevops.firemud.gamedesign.repository.GameAssetRepository;
 import net.firedevops.firemud.gamedesign.repository.GameRepository;
 import net.firedevops.firemud.gamedesign.repository.VersionAssetPublicationRepository;
@@ -30,6 +42,8 @@ import org.jooq.Record;
 import org.jooq.SQLDialect;
 import org.jooq.impl.DSL;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.ArgumentCaptor;
 import org.springframework.jdbc.datasource.DataSourceTransactionManager;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
@@ -165,6 +179,365 @@ class VersionAssetPublicationPostgresIntegrationTest {
   }
 
   @Test
+  void ordinarySourceIsImmutableBeforeExportAndCannotBeBypassedByRepositoryOrSql() {
+    Fixture fixture = fixture(null);
+    Game owner = saveGame(fixture, "ordinary-source");
+    Version version = saveDraftVersion(fixture, owner, 1);
+    GameAsset asset = saveAsset(fixture, owner, "resource.png", "source-bytes");
+    assertThatThrownBy(
+            () ->
+                inTransaction(
+                    fixture,
+                    () ->
+                        fixture
+                            .publicationRepository()
+                            .freezeOrReadSnapshot(owner.getTenantId(), 1)))
+        .isInstanceOf(IllegalStateException.class);
+    assertThatThrownBy(
+            () ->
+                fixture
+                    .transaction()
+                    .execute(
+                        status -> {
+                          fixture
+                              .publicationRepository()
+                              .associateDraftAsset(
+                                  owner.getTenantId(), version.getId(), asset.getId(), null);
+                          return null;
+                        }))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("synchronized ASSET_REFERENCE");
+    assertThatThrownBy(
+            () ->
+                fixture
+                    .dsl()
+                    .execute(
+                        "INSERT INTO version_asset (tenant_id, version_id, asset_id, usage_key) VALUES (?, ?, ?, ?)",
+                        owner.getTenantId(),
+                        version.getId(),
+                        asset.getId(),
+                        asset.getFileName()))
+        .rootCause()
+        .isInstanceOf(SQLException.class);
+    associate(fixture, owner.getTenantId(), version.getId(), asset.getId());
+    assertThatThrownBy(
+            () ->
+                fixture
+                    .dsl()
+                    .execute(
+                        "UPDATE game_assets SET data = ? WHERE id = ?",
+                        new byte[] {9},
+                        asset.getId()))
+        .rootCause()
+        .isInstanceOf(SQLException.class)
+        .hasMessageContaining("immutable from source history");
+    assertThat(
+            fixture
+                .dsl()
+                .fetchSingle("SELECT count(*) FROM version_asset_export_snapshot")
+                .get(0, Long.class))
+        .isZero();
+  }
+
+  @Test
+  void mixedCommandAssetOutcomeRetriesExactlyAndDisjointCommandInheritsWithoutAssetEpochAdvance() {
+    Fixture fixture = fixture(null);
+    Game owner = saveGame(fixture, "mixed-source");
+    Version version = saveDraftVersion(fixture, owner, 1);
+    GameAsset asset = saveAsset(fixture, owner, "resource.png", "source-bytes");
+    var binding =
+        sourceBinding(
+            fixture,
+            version,
+            CommandSource.deletePayload("not-present"),
+            AssetSource.upsertPayload(
+                asset.getId().toString(), asset.getFileName(), AssetSource.Requiredness.REQUIRED));
+    var applied = inTransaction(fixture, () -> applySources(fixture, binding));
+    assertThat(applied.ownerOutcome().appliedEpochs()).hasSize(2);
+    assertThat(applied.command()).isPresent();
+    assertThat(applied.asset()).isPresent();
+    var replay =
+        inTransaction(fixture, () -> new GameDesignSourceRepository(fixture.dsl()).apply(binding));
+    assertThat(replay.ownerOutcome()).isEqualTo(applied.ownerOutcome());
+    var changed =
+        DraftCommitBinding.create(
+            binding.target(),
+            binding.requestId(),
+            binding.commitId(),
+            binding.baseCommitId(),
+            List.of(
+                new DraftCommitBinding.RevisionPayload(
+                    "0",
+                    UUID.randomUUID(),
+                    DraftCommitBinding.Owner.GAME_DESIGN_CONTROL_PLANE,
+                    AssetSource.deletePayload(asset.getFileName()))),
+            binding.affectedUnits());
+    assertThatThrownBy(
+            () ->
+                inTransaction(
+                    fixture, () -> new GameDesignSourceRepository(fixture.dsl()).apply(changed)))
+        .isInstanceOf(IllegalArgumentException.class);
+    var disjoint =
+        sourceBinding(fixture, version, CommandSource.deletePayload("still-not-present"));
+    inTransaction(fixture, () -> applySources(fixture, disjoint));
+    var inherited =
+        new AssetSourceRepository(fixture.dsl())
+            .readSnapshot(disjoint.target(), disjoint.commitId())
+            .orElseThrow();
+    assertThat(inherited.sourceEpoch()).isEqualTo("1");
+    assertThat(inherited.items()).isEqualTo(applied.asset().orElseThrow().snapshot().items());
+    assertThat(inherited.items().getFirst().reference().sourceBinding()).isEqualTo(binding);
+    var deletion = sourceBinding(fixture, version, AssetSource.deletePayload(asset.getFileName()));
+    inTransaction(fixture, () -> applySources(fixture, deletion));
+    assertThat(mappingCount(fixture, owner.getTenantId(), version.getId())).isZero();
+    assertThat(
+            new AssetSourceRepository(fixture.dsl())
+                .readSnapshot(deletion.target(), deletion.commitId())
+                .orElseThrow()
+                .sourceEpoch())
+        .isEqualTo("2");
+    assertThatThrownBy(
+            () -> fixture.dsl().execute("DELETE FROM game_assets WHERE id = ?", asset.getId()))
+        .rootCause()
+        .isInstanceOf(SQLException.class);
+  }
+
+  @Test
+  void policyCommandAndAssetShareOneExactOwnerOutcomeAndSynchronizedSnapshot() throws Exception {
+    Fixture fixture = fixture(null);
+    Game owner = saveGame(fixture, "all-local-sources");
+    Version version = saveDraftVersion(fixture, owner, 1);
+    GameAsset asset = saveAsset(fixture, owner, "resource.png", "source-bytes");
+    String reference =
+        AssetSource.upsertPayload(
+            asset.getId().toString(), asset.getFileName(), AssetSource.Requiredness.REQUIRED);
+    var target = sourceBinding(fixture, version, reference).target();
+    // Only the policy input is borrowed; no Account or World authority is claimed by this test.
+    String policy =
+        IsolatedPublicationOperationFixtures.fresh(target)
+            .account()
+            .input()
+            .selection()
+            .selectedCommit()
+            .revisions()
+            .stream()
+            .filter(
+                revision -> revision.owner() == DraftCommitBinding.Owner.GAME_DESIGN_CONTROL_PLANE)
+            .map(DraftCommitBinding.RevisionPayload::payload)
+            .filter(payload -> payload.contains("REALM_ENTRY_POLICY"))
+            .findFirst()
+            .orElseThrow();
+    var binding =
+        sourceBinding(
+            fixture, version, CommandSource.deletePayload("not-present"), reference, policy);
+    var result = inTransaction(fixture, () -> applySources(fixture, binding));
+    assertThat(result.ownerOutcome().resultIdentity())
+        .isEqualTo("control-plane-source:" + binding.commitId());
+    assertThat(result.ownerOutcome().appliedEpochs())
+        .extracting(DraftCommitCoordinatorRepository.AppliedEpoch::aggregateType)
+        .containsExactly(AssetSource.SCOPE, CommandSource.SCOPE, RealmPolicySource.SCOPE);
+    var readback =
+        new GameDesignSourceRepository(fixture.dsl())
+            .readSynchronized(target, binding.commitId())
+            .orElseThrow();
+    assertThat(readback.asset()).isEqualTo(result.asset().orElseThrow().snapshot());
+    assertThat(readback.command()).isEqualTo(result.command().orElseThrow().snapshot());
+    assertThat(readback.policy()).isEqualTo(result.policy().orElseThrow().snapshot());
+  }
+
+  @ParameterizedTest
+  @ValueSource(booleans = {false, true})
+  void stagedOrdinaryApplicationCannotCommitWithoutItsCompleteAppliedOwnerOutcome(boolean unknown) {
+    Fixture fixture = fixture(null);
+    Game owner = saveGame(fixture, "partial-source");
+    Version version = saveDraftVersion(fixture, owner, 1);
+    GameAsset asset = saveAsset(fixture, owner, "resource.png", "source-bytes");
+    var binding =
+        sourceBinding(
+            fixture,
+            version,
+            AssetSource.upsertPayload(
+                asset.getId().toString(), asset.getFileName(), AssetSource.Requiredness.REQUIRED));
+    assertThatThrownBy(
+            () ->
+                fixture
+                    .transaction()
+                    .execute(
+                        status -> {
+                          var coordinator = new DraftCommitCoordinatorRepository(fixture.dsl());
+                          coordinator.claim(binding);
+                          coordinator.claimApplicationSlot(binding);
+                          coordinator.markOwnerInProgress(
+                              binding, DraftCommitBinding.Owner.GAME_DESIGN_CONTROL_PLANE);
+                          new AssetSourceRepository(fixture.dsl()).apply(binding).orElseThrow();
+                          if (unknown) {
+                            coordinator.recordOwnerOutcome(
+                                binding,
+                                new DraftCommitCoordinatorRepository.OwnerOutcome(
+                                    DraftCommitBinding.Owner.GAME_DESIGN_CONTROL_PLANE,
+                                    DraftCommitCoordinatorRepository.OwnerStatus.UNKNOWN,
+                                    binding.commitId(),
+                                    binding.digest(),
+                                    null,
+                                    null,
+                                    List.of()));
+                          }
+                          assertThat(
+                                  new AssetSourceRepository(fixture.dsl())
+                                      .readSnapshot(binding.target(), binding.commitId()))
+                              .isEmpty();
+                          assertThatThrownBy(
+                                  () ->
+                                      new AssetSourceRepository(fixture.dsl())
+                                          .requireExportSelection(
+                                              owner.getTenantId(), version.getId()))
+                              .isInstanceOf(IllegalStateException.class);
+                          return null;
+                        }))
+        .rootCause()
+        .isInstanceOf(SQLException.class);
+    assertThat(mappingCount(fixture, owner.getTenantId(), version.getId())).isZero();
+    assertThat(
+            new DraftCommitCoordinatorRepository(fixture.dsl())
+                .readVisibilityFence(binding.target()))
+        .isEmpty();
+  }
+
+  @Test
+  void sourceVisibilityAndProjectionRollbackTogether() {
+    Fixture fixture = fixture(null);
+    Game owner = saveGame(fixture, "source-rollback");
+    Version version = saveDraftVersion(fixture, owner, 1);
+    GameAsset asset = saveAsset(fixture, owner, "resource.png", "source-bytes");
+    var binding =
+        sourceBinding(
+            fixture,
+            version,
+            AssetSource.upsertPayload(
+                asset.getId().toString(), asset.getFileName(), AssetSource.Requiredness.REQUIRED));
+    assertThatThrownBy(
+            () ->
+                fixture
+                    .transaction()
+                    .execute(
+                        status -> {
+                          applySources(fixture, binding);
+                          throw new IllegalStateException("fixture rollback");
+                        }))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessage("fixture rollback");
+    assertThat(mappingCount(fixture, owner.getTenantId(), version.getId())).isZero();
+    assertThat(
+            new GameDesignSourceRepository(fixture.dsl())
+                .readSynchronized(binding.target(), binding.commitId()))
+        .isEmpty();
+    assertThat(
+            new DraftCommitCoordinatorRepository(fixture.dsl())
+                .readVisibilityFence(binding.target()))
+        .isEmpty();
+    assertThat(
+            fixture
+                .dsl()
+                .fetchSingle(
+                    "SELECT source_epoch FROM game_design_asset_source_head WHERE canonical_version_id = ?",
+                    version.getCanonicalVersionId())
+                .get(0, String.class))
+        .isEqualTo("0");
+  }
+
+  @Test
+  void selectedCommitFreezesOrdinarySourceAndRetainsExactExportAfterReconstruction() {
+    Fixture fixture = fixture(null);
+    Game owner = saveGame(fixture, "selected-ordinary");
+    Version version = saveDraftVersion(fixture, owner, 1);
+    GameAsset asset = saveAsset(fixture, owner, "resource.png", "source-bytes");
+    var binding =
+        sourceBinding(
+            fixture,
+            version,
+            AssetSource.upsertPayload(
+                asset.getId().toString(), asset.getFileName(), AssetSource.Requiredness.REQUIRED));
+    inTransaction(fixture, () -> applySources(fixture, binding));
+    var intent =
+        new AuthoredDraftPublishSelection.PublishIntent(
+            owner.getCanonicalTenantId(),
+            version.getCanonicalVersionId(),
+            UUID.randomUUID().toString(),
+            "1",
+            "local selected ordinary source proof",
+            binding.requestId(),
+            binding.commitId(),
+            binding.digest());
+    var selected =
+        inTransaction(
+            fixture,
+            () ->
+                new AuthoredDraftPublishSelectionRepository(
+                        fixture.dsl(), new DraftCommitCoordinatorRepository(fixture.dsl()))
+                    .reserve(intent));
+    assertThat(selected.selection().selectedCommit()).isEqualTo(binding);
+    var frozen =
+        inTransaction(
+            fixture,
+            () -> fixture.publicationRepository().freezeOrReadSnapshot(owner.getTenantId(), 1));
+    var restarted =
+        new VersionAssetPublicationRepository(fixture.dsl())
+            .readFrozenSnapshot(owner.getTenantId(), 1);
+    assertSameSnapshot(frozen, restarted);
+    assertThat(
+            new AssetSourceRepository(fixture.dsl())
+                .requireExportSelection(owner.getTenantId(), version.getId())
+                .binding())
+        .isEqualTo(binding);
+    var changed = sourceBinding(fixture, version, AssetSource.deletePayload(asset.getFileName()));
+    assertThatThrownBy(() -> inTransaction(fixture, () -> applySources(fixture, changed)))
+        .isInstanceOf(RuntimeException.class);
+    assertThat(mappingCount(fixture, owner.getTenantId(), version.getId())).isEqualTo(1);
+  }
+
+  @Test
+  void qualifiedRetainedDraftCannotReceiveInventedFreshOrdinaryGenesis() {
+    Fixture fixture = fixture(MigrationVersion.fromVersion("54"));
+    Game owner = saveGame(fixture, "retained-qualified");
+    UUID versionId = UUID.randomUUID();
+    Long rowId =
+        fixture
+            .dsl()
+            .fetchSingle(
+                "INSERT INTO version (tenant_id, version_number, version_state, version_state_epoch, is_script_only, "
+                    + "canonical_tenant_id, canonical_version_id, identity_source_game_row_id, identity_source_game_tenant_key, identity_source_provenance_kind) "
+                    + "SELECT tenant_id, 1, 'DRAFT', 1, FALSE, canonical_tenant_id, ?, id, tenant_id, tenant_identity_provenance_kind FROM game WHERE id = ? RETURNING id",
+                versionId,
+                owner.getId())
+            .get(0, Long.class);
+    migrate(fixture.dataSource(), fixture.schema(), null);
+    Version retained =
+        fixture.versions().findByTenantIdAndId(owner.getTenantId(), rowId).orElseThrow();
+    var target =
+        new DraftCommitBinding.TargetProof(
+            retained.getCanonicalTenantId(),
+            retained.getCanonicalVersionId(),
+            rowId,
+            retained.getTenantId(),
+            retained.getIdentitySourceGameRowId(),
+            retained.getIdentitySourceGameTenantKey(),
+            retained.getIdentitySourceProvenanceKind());
+    assertThatThrownBy(
+            () ->
+                inTransaction(
+                    fixture,
+                    () -> new AssetSourceRepository(fixture.dsl()).enrollFreshDraft(target)))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessage("ASSET_SOURCE_FRESH_INSERT_UNAVAILABLE");
+    assertThat(new AssetSourceRepository(fixture.dsl()).readGenesis(target)).isEmpty();
+    assertThatThrownBy(
+            () ->
+                new AssetSourceRepository(fixture.dsl())
+                    .requireExportSelection(owner.getTenantId(), rowId))
+        .isInstanceOf(IllegalStateException.class);
+  }
+
+  @Test
   void retainedVersionWithoutCanonicalSourceCannotReceiveAssetMapping() {
     Fixture fixture = fixture(V35);
     Game owner = saveGame(fixture, "c");
@@ -202,7 +575,7 @@ class VersionAssetPublicationPostgresIntegrationTest {
                         asset.getId()))
         .rootCause()
         .isInstanceOf(SQLException.class)
-        .hasMessageContaining("game asset source rows are immutable")
+        .hasMessageContaining("immutable")
         .satisfies(
             failure -> assertThat(((SQLException) failure).getSQLState()).isEqualTo("23514"));
 
@@ -246,7 +619,7 @@ class VersionAssetPublicationPostgresIntegrationTest {
     assertThatThrownBy(
             () -> associate(fixture, owner.getTenantId(), version.getId(), second.getId()))
         .isInstanceOf(IllegalStateException.class)
-        .hasMessage("Version asset mappings are frozen by the durable export snapshot");
+        .hasMessage("ASSET_SOURCE_FROZEN_OR_NOT_DRAFT");
     assertThat(mappingCount(fixture, owner.getTenantId(), version.getId())).isEqualTo(1);
   }
 
@@ -344,11 +717,117 @@ class VersionAssetPublicationPostgresIntegrationTest {
         .transaction()
         .execute(
             status -> {
-              fixture
-                  .publicationRepository()
-                  .associateDraftAsset(tenantId, versionId, assetId, null);
+              var version =
+                  fixture
+                      .versions()
+                      .findByTenantIdAndId(tenantId, versionId)
+                      .orElseThrow(
+                          () ->
+                              new IllegalStateException("Exact tenant Version row was not found"));
+              if (version.getCanonicalTenantId() == null
+                  || version.getCanonicalVersionId() == null) {
+                throw new IllegalStateException(
+                    "Version lacks a complete canonical owner identity");
+              }
+              var asset =
+                  fixture
+                      .dsl()
+                      .fetchOne(
+                          "SELECT file_name FROM game_assets WHERE tenant_id = ? AND id = ?",
+                          tenantId,
+                          assetId);
+              if (asset == null)
+                throw new IllegalStateException("Exact tenant game asset row was not found");
+              var target =
+                  new DraftCommitBinding.TargetProof(
+                      version.getCanonicalTenantId(),
+                      version.getCanonicalVersionId(),
+                      versionId,
+                      tenantId,
+                      version.getIdentitySourceGameRowId(),
+                      version.getIdentitySourceGameTenantKey(),
+                      version.getIdentitySourceProvenanceKind());
+              IsolatedPublicationOwnerSetup.applyOrdinaryReferences(
+                  fixture.dsl(),
+                  target,
+                  List.of(
+                      AssetSource.upsertPayload(
+                          Long.toString(assetId),
+                          asset.get("file_name", String.class),
+                          AssetSource.Requiredness.REQUIRED)));
               return null;
             });
+  }
+
+  private DraftCommitBinding sourceBinding(Fixture fixture, Version version, String... payloads) {
+    var target =
+        new DraftCommitBinding.TargetProof(
+            version.getCanonicalTenantId(),
+            version.getCanonicalVersionId(),
+            version.getId(),
+            version.getTenantId(),
+            version.getIdentitySourceGameRowId(),
+            version.getIdentitySourceGameTenantKey(),
+            version.getIdentitySourceProvenanceKind());
+    var revisions = new java.util.ArrayList<DraftCommitBinding.RevisionPayload>();
+    var units = new java.util.ArrayList<DraftCommitBinding.AffectedUnit>();
+    for (int index = 0; index < payloads.length; index++) {
+      revisions.add(
+          new DraftCommitBinding.RevisionPayload(
+              Integer.toString(index),
+              UUID.randomUUID(),
+              DraftCommitBinding.Owner.GAME_DESIGN_CONTROL_PLANE,
+              payloads[index]));
+    }
+    for (String scope : List.of(CommandSource.SCOPE, AssetSource.SCOPE, RealmPolicySource.SCOPE)) {
+      String kind =
+          scope.equals(AssetSource.SCOPE)
+              ? "ASSET_REFERENCE"
+              : scope.equals(RealmPolicySource.SCOPE) ? "REALM_ENTRY_POLICY" : "COMMAND_DEFINITION";
+      if (List.of(payloads).stream().noneMatch(payload -> payload.contains(kind))) continue;
+      String table =
+          scope.equals(AssetSource.SCOPE)
+              ? "game_design_asset_source_head"
+              : scope.equals(RealmPolicySource.SCOPE)
+                  ? "game_design_realm_policy_source"
+                  : "game_design_command_source_head";
+      String epoch =
+          fixture
+              .dsl()
+              .fetchSingle(
+                  "SELECT source_epoch FROM " + table + " WHERE canonical_version_id = ?",
+                  version.getCanonicalVersionId())
+              .get(0, String.class);
+      units.add(
+          new DraftCommitBinding.AffectedUnit(
+              DraftCommitBinding.Owner.GAME_DESIGN_CONTROL_PLANE,
+              scope,
+              target.canonicalVersionId().toString(),
+              scope,
+              "effective",
+              epoch));
+    }
+    var prior = new DraftCommitCoordinatorRepository(fixture.dsl()).readVisibilityFence(target);
+    return DraftCommitBinding.create(
+        target,
+        UUID.randomUUID(),
+        UUID.randomUUID(),
+        prior.map(fence -> fence.commitId().toString()).orElse("base-commit-0"),
+        revisions,
+        units);
+  }
+
+  private GameDesignSourceRepository.Application applySources(
+      Fixture fixture, DraftCommitBinding binding) {
+    var coordinator = new DraftCommitCoordinatorRepository(fixture.dsl());
+    coordinator.claim(binding);
+    coordinator.claimApplicationSlot(binding);
+    coordinator.markOwnerInProgress(binding, DraftCommitBinding.Owner.GAME_DESIGN_CONTROL_PLANE);
+    var applied = new GameDesignSourceRepository(fixture.dsl()).apply(binding);
+    IsolatedPublicationOwnerSetup.advanceSourceVisibility(
+        fixture.dsl(), binding, List.of(applied.ownerOutcome()));
+    coordinator.releaseApplicationSlot(binding);
+    return applied;
   }
 
   private <T> T inTransaction(Fixture fixture, java.util.function.Supplier<T> action) {

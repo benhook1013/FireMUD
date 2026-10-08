@@ -13,6 +13,7 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
+import net.firedevops.firemud.gamedesign.publication.AssetSourceRepository;
 import org.jooq.DSLContext;
 import org.jooq.Record;
 import org.springframework.stereotype.Repository;
@@ -37,64 +38,13 @@ public class VersionAssetPublicationRepository {
   }
 
   /**
-   * Associates an ordinary source asset with an exact tenant-owned Draft Version. Numeric ids in
-   * this method are private Game Design owner keys and are not public identity aliases. The caller
-   * must hold a writable READ_COMMITTED transaction.
+   * Rejects the former direct-mapping path. Ordinary references must be authored in an exact Draft
+   * commit; only synchronized source projection can populate version_asset.
    */
   public void associateDraftAsset(String tenantId, long versionId, long assetId, String usageType) {
     requireWritableReadCommittedTransaction();
-    requireTenantId(tenantId);
-    if (versionId <= 0 || assetId <= 0) {
-      throw new IllegalArgumentException("Version and asset owner keys must be positive");
-    }
-
-    VersionRow version =
-        lockVersionByTenantAndId(tenantId, versionId)
-            .orElseThrow(() -> new IllegalStateException("Exact tenant Version row was not found"));
-    qualifyVersion(version);
-    requireDraft(version);
-    requireNoSnapshot(tenantId, versionId);
-
-    AssetRow asset =
-        findAssetForUpdate(tenantId, assetId)
-            .orElseThrow(
-                () -> new IllegalStateException("Exact tenant game asset row was not found"));
-    validateUsageKey(asset.fileName());
-
-    Record existing =
-        dsl.fetchOne(
-            "SELECT usage_key, usage_type FROM version_asset "
-                + "WHERE tenant_id = ? AND version_id = ? AND asset_id = ?",
-            tenantId,
-            versionId,
-            assetId);
-    if (existing != null) {
-      if (Objects.equals(existing.get("usage_key", String.class), asset.fileName())
-          && Objects.equals(existing.get("usage_type", String.class), usageType)) {
-        return;
-      }
-      throw new IllegalStateException("Conflicting Version asset association already exists");
-    }
-
-    Record usageCollision =
-        dsl.fetchOne(
-            "SELECT asset_id FROM version_asset "
-                + "WHERE tenant_id = ? AND version_id = ? AND usage_key = ?",
-            tenantId,
-            versionId,
-            asset.fileName());
-    if (usageCollision != null) {
-      throw new IllegalStateException("Version asset usage key is already mapped to another asset");
-    }
-
-    dsl.execute(
-        "INSERT INTO version_asset "
-            + "(tenant_id, version_id, asset_id, usage_key, usage_type) VALUES (?, ?, ?, ?, ?)",
-        tenantId,
-        versionId,
-        assetId,
-        asset.fileName(),
-        usageType);
+    throw new IllegalStateException(
+        "Version asset associations require synchronized ASSET_REFERENCE source projection");
   }
 
   /**
@@ -112,6 +62,7 @@ public class VersionAssetPublicationRepository {
         lockVersionByTenantAndVersionNumber(tenantId, versionNumber)
             .orElseThrow(() -> new IllegalStateException("Exact tenant Version was not found"));
     qualifyVersion(version);
+    new AssetSourceRepository(dsl).requireExportSelection(tenantId, version.id());
 
     if (hasSnapshot(tenantId, version.id())) {
       return readSnapshot(version);
@@ -294,6 +245,24 @@ public class VersionAssetPublicationRepository {
           new AssetSelection(usageKey, snapshotAssetId, sourceData, sourceType, snapshotDigest));
     }
     items.sort(Comparator.comparing(AssetSelection::usageKey, UTF8_BYTE_ORDER));
+    var ordinary =
+        new AssetSourceRepository(dsl).requireExportSelection(version.tenantId(), version.id());
+    if (ordinary.items().size() != items.size()) {
+      throw new IllegalStateException(
+          "Frozen export differs from synchronized ordinary asset source");
+    }
+    for (int index = 0; index < items.size(); index++) {
+      var retained = ordinary.items().get(index);
+      var exported = items.get(index);
+      if (!retained.reference().usageKey().equals(exported.usageKey())
+          || Long.parseLong(retained.reference().assetRowId()) != exported.assetId()
+          || !retained.contentType().equals(exported.contentType())
+          || !retained.contentDigest().equals(exported.contentDigest())
+          || retained.byteSize() != exported.bytes().length) {
+        throw new IllegalStateException(
+            "Frozen export differs from synchronized ordinary asset source");
+      }
+    }
 
     return new ExportSnapshot(
         version.tenantId(),
@@ -323,28 +292,6 @@ public class VersionAssetPublicationRepository {
                     row.get("file_name", String.class),
                     row.get("content_type", String.class),
                     row.get("data", byte[].class)));
-  }
-
-  private Optional<AssetRow> findAssetForUpdate(String tenantId, long assetId) {
-    Record row =
-        dsl.fetchOne(
-            "SELECT file_name FROM game_assets WHERE tenant_id = ? AND id = ? FOR UPDATE",
-            tenantId,
-            assetId);
-    if (row == null) {
-      return Optional.empty();
-    }
-    return Optional.of(new AssetRow(row.get("file_name", String.class)));
-  }
-
-  private Optional<VersionRow> lockVersionByTenantAndId(String tenantId, long versionId) {
-    return readVersion(
-        "SELECT id, tenant_id, version_number, version_state, version_state_epoch, "
-            + "canonical_tenant_id, canonical_version_id, identity_source_game_row_id, "
-            + "identity_source_game_tenant_key, identity_source_provenance_kind "
-            + "FROM version WHERE tenant_id = ? AND id = ? FOR UPDATE",
-        tenantId,
-        versionId);
   }
 
   private Optional<VersionRow> lockVersionByTenantAndVersionNumber(
@@ -444,13 +391,6 @@ public class VersionAssetPublicationRepository {
     }
   }
 
-  private void requireNoSnapshot(String tenantId, long versionId) {
-    if (hasSnapshot(tenantId, versionId)) {
-      throw new IllegalStateException(
-          "Version asset mappings are frozen by the durable export snapshot");
-    }
-  }
-
   private boolean hasSnapshot(String tenantId, long versionId) {
     return dsl.fetchOne(
             "SELECT 1 FROM version_asset_export_snapshot WHERE tenant_id = ? AND version_id = ?",
@@ -534,8 +474,6 @@ public class VersionAssetPublicationRepository {
       Long identitySourceGameRowId,
       String identitySourceGameTenantKey,
       String identitySourceProvenanceKind) {}
-
-  private record AssetRow(String fileName) {}
 
   private record SourceAsset(
       String usageKey, Long assetId, String fileName, String contentType, byte[] bytes) {}

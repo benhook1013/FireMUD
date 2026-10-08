@@ -7,9 +7,12 @@ import java.util.Objects;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
 import net.firedevops.firemud.common.publication.WorldSelectedDraftPublicationFreezeEvidence.Request;
 import net.firedevops.firemud.common.publication.WorldSelectedDraftPublicationFreezeGrpcCodec;
+import net.firedevops.firemud.common.publication.WorldSelectedPublicationArtifactInventoryGrpcCodec;
 import net.firedevops.firemud.common.security.SessionContext;
 import net.firedevops.firemud.worldmanagement.v1.BeginVersionPublicationFreezeRequest;
 import net.firedevops.firemud.worldmanagement.v1.BeginVersionPublicationFreezeResponse;
+import net.firedevops.firemud.worldmanagement.v1.ReadSelectedPublicationArtifactInventoryRequest;
+import net.firedevops.firemud.worldmanagement.v1.ReadSelectedPublicationArtifactInventoryResponse;
 import net.firedevops.firemud.worldmanagement.v1.WorldSelectedDraftPublicationFreezeServiceGrpc;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 
@@ -24,11 +27,16 @@ public final class WorldSelectedDraftPublicationFreezeGrpcService
     extends WorldSelectedDraftPublicationFreezeServiceGrpc
         .WorldSelectedDraftPublicationFreezeServiceImplBase {
   private final WorldSelectedDraftPublicationFreezeService freezeService;
+  private final WorldSelectedPublicationArtifactInventoryReadService inventoryReadService;
   private final String trustedNamespace;
 
   public WorldSelectedDraftPublicationFreezeGrpcService(
-      WorldSelectedDraftPublicationFreezeService freezeService, String trustedNamespace) {
+      WorldSelectedDraftPublicationFreezeService freezeService,
+      WorldSelectedPublicationArtifactInventoryReadService inventoryReadService,
+      String trustedNamespace) {
     this.freezeService = Objects.requireNonNull(freezeService, "freezeService");
+    this.inventoryReadService =
+        Objects.requireNonNull(inventoryReadService, "inventoryReadService");
     if (!GrpcPeerIdentity.isValidNamespace(trustedNamespace)) {
       throw new IllegalArgumentException("World workload namespace is invalid");
     }
@@ -102,6 +110,75 @@ public final class WorldSelectedDraftPublicationFreezeGrpcService
       return;
     }
 
+    responseObserver.onNext(response);
+    responseObserver.onCompleted();
+  }
+
+  @Override
+  public void readSelectedPublicationArtifactInventory(
+      ReadSelectedPublicationArtifactInventoryRequest request,
+      StreamObserver<ReadSelectedPublicationArtifactInventoryResponse> responseObserver) {
+    if (!requireAuthenticatedGameDesignPeer(responseObserver)) return;
+    if (TransactionSynchronizationManager.isActualTransactionActive()
+        || TransactionSynchronizationManager.isSynchronizationActive()) {
+      responseObserver.onError(
+          Status.FAILED_PRECONDITION
+              .withDescription("World selected inventory read requires an independent owner read")
+              .asRuntimeException());
+      return;
+    }
+
+    final net.firedevops.firemud.common.publication.WorldSelectedDraftPublicationFreezeEvidence
+        freezeEvidence;
+    try {
+      freezeEvidence = WorldSelectedPublicationArtifactInventoryGrpcCodec.fromRequest(request);
+    } catch (IllegalArgumentException invalid) {
+      responseObserver.onError(
+          Status.INVALID_ARGUMENT
+              .withDescription("Complete canonical World freeze lookup identity is required")
+              .asRuntimeException());
+      return;
+    }
+    if (!trustedNamespace.equals(freezeEvidence.request().targetNamespace())) {
+      responseObserver.onError(
+          Status.PERMISSION_DENIED
+              .withDescription("World inventory namespace must match the authenticated peer")
+              .asRuntimeException());
+      return;
+    }
+
+    final ReadSelectedPublicationArtifactInventoryResponse response;
+    try {
+      response =
+          WorldSelectedPublicationArtifactInventoryGrpcCodec.toResponse(
+              inventoryReadService.read(freezeEvidence));
+    } catch (SecurityException denied) {
+      responseObserver.onError(
+          Status.PERMISSION_DENIED
+              .withDescription("Authenticated same-namespace Game Design workload is required")
+              .asRuntimeException());
+      return;
+    } catch (WorldDesignPublicationFenceRepository.ConflictException
+        | IllegalArgumentException inconsistent) {
+      responseObserver.onError(
+          Status.FAILED_PRECONDITION
+              .withDescription("Exact retained World artifact inventory is unavailable")
+              .asRuntimeException());
+      return;
+    } catch (org.springframework.dao.DataAccessException
+        | org.jooq.exception.DataAccessException unavailable) {
+      responseObserver.onError(
+          Status.UNAVAILABLE
+              .withDescription("World selected inventory owner storage is unavailable")
+              .asRuntimeException());
+      return;
+    } catch (RuntimeException failure) {
+      responseObserver.onError(
+          Status.INTERNAL
+              .withDescription("World selected-publication inventory read failed")
+              .asRuntimeException());
+      return;
+    }
     responseObserver.onNext(response);
     responseObserver.onCompleted();
   }

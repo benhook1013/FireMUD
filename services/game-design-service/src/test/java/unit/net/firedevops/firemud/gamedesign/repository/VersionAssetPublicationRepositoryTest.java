@@ -7,6 +7,7 @@ import static org.mockito.Mockito.verifyNoInteractions;
 import java.util.stream.Stream;
 import org.jooq.DSLContext;
 import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
@@ -40,6 +41,22 @@ class VersionAssetPublicationRepositoryTest {
         .isInstanceOf(IllegalStateException.class)
         .hasMessage(TRANSACTION_REQUIRED);
 
+    verifyNoInteractions(dsl);
+  }
+
+  @Test
+  void directAssociationCannotBypassSourceEvenInAnOtherwiseValidOwnerTransaction() {
+    TransactionSynchronizationManager.setActualTransactionActive(true);
+    TransactionSynchronizationManager.setCurrentTransactionReadOnly(false);
+    TransactionSynchronizationManager.setCurrentTransactionIsolationLevel(
+        TransactionDefinition.ISOLATION_READ_COMMITTED);
+    DSLContext dsl = mock(DSLContext.class);
+    assertThatThrownBy(
+            () ->
+                new VersionAssetPublicationRepository(dsl)
+                    .associateDraftAsset("tenant", 1, 1, null))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("synchronized ASSET_REFERENCE");
     verifyNoInteractions(dsl);
   }
 

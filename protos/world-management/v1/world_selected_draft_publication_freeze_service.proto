@@ -11,6 +11,9 @@ option java_multiple_files = true;
 service WorldSelectedDraftPublicationFreezeService {
   rpc BeginVersionPublicationFreeze(BeginVersionPublicationFreezeRequest)
       returns (BeginVersionPublicationFreezeResponse);
+  rpc ReadSelectedPublicationArtifactInventory(
+      ReadSelectedPublicationArtifactInventoryRequest)
+      returns (ReadSelectedPublicationArtifactInventoryResponse);
 }
 
 enum WorldSelectedDraftPublicationFreezePhase {
@@ -51,4 +54,19 @@ message BeginVersionPublicationFreezeResponse {
   // Exact World intake correlation from the retained APPLIED owner binding; not caller input or
   // publication authority. The later selector read validates it against that same APPLIED result.
   string world_intake_request_id = 15;
+}
+
+message ReadSelectedPublicationArtifactInventoryRequest {
+  int32 schema_version = 1;
+  // The exact original freeze input and committed acknowledgement are lookup identity only.
+  BeginVersionPublicationFreezeRequest freeze_request = 2;
+  BeginVersionPublicationFreezeResponse freeze_acknowledgement = 3;
+}
+
+message ReadSelectedPublicationArtifactInventoryResponse {
+  int32 schema_version = 1;
+  // Canonical WorldSelectedPublicationArtifactInventoryEvidence.PublicEvidence bytes. This is
+  // the public projection only; the private owner envelope and numeric owner keys never egress.
+  bytes canonical_public_inventory = 2;
+  string public_inventory_digest = 3;
 }
