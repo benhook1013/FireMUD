@@ -213,6 +213,17 @@ public final class AccountJwtSignerBootstrapCoordinator {
                       trustFence(sources.materializerBinding()),
                       preparation,
                       verifiedProof);
+              PreparedGenerationEvidence readback =
+                  desiredStateRepository.readPreparedGenerationForRecovery(
+                      sources.materializerBinding().accountBinding(),
+                      trustFence(sources.materializerBinding()));
+              if (!readback.promotion().operationId().equals(persisted.operationId())
+                  || !readback.promotion().requestDigest().equals(persisted.requestDigest())
+                  || !readback.promotion().generationOperationId().equals(request.operationId())
+                  || !readback.generationResult().equals(verifiedProof.generationResult())
+                  || !"PREPARED".equals(persisted.status())) {
+                throw new BootstrapOperationException(FailureCode.ACCOUNT_STATE_AMBIGUOUS);
+              }
               requireUnchangedProtectedBindings(sources);
               return persisted;
             });
@@ -220,10 +231,6 @@ public final class AccountJwtSignerBootstrapCoordinator {
       return Optional.empty();
     }
     requireUnchangedProtectedBindings(sources);
-    if (!prepared.operationId().equals(request.operationId())
-        || !"PREPARED".equals(prepared.status())) {
-      throw new BootstrapOperationException(FailureCode.ACCOUNT_STATE_AMBIGUOUS);
-    }
     return Optional.of(prepared);
   }
 

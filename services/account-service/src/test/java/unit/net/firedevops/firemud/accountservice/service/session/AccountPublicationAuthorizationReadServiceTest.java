@@ -64,11 +64,27 @@ class AccountPublicationAuthorizationReadServiceTest {
   }
 
   @Test
+  void commitsAnIndependentWorldOwnerReadBeforeReturningHeld() {
+    var request = request("test");
+    when(transactions.getTransaction(any())).thenReturn(status);
+    asPeer("test", "world-management-service", () -> service.requireHeld(request));
+    verify(repository).readHeld(any());
+    var definition = ArgumentCaptor.forClass(TransactionDefinition.class);
+    verify(transactions).getTransaction(definition.capture());
+    assertThat(definition.getValue().getPropagationBehavior())
+        .isEqualTo(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
+    assertThat(definition.getValue().getIsolationLevel())
+        .isEqualTo(TransactionDefinition.ISOLATION_READ_COMMITTED);
+    assertThat(definition.getValue().isReadOnly()).isFalse();
+    verify(transactions).commit(status);
+  }
+
+  @Test
   void rejectsUnverifiedWrongWorkloadCrossNamespaceAndAmbientTransactionBeforeLookup() {
     var request = request("test");
     assertCode(Status.Code.UNAUTHENTICATED, () -> service.requireHeld(request));
     for (String workload :
-        List.of("account-service", "world-management-service", "spring-cloud-gateway")) {
+        List.of("account-service", "game-session-service", "spring-cloud-gateway")) {
       assertCode(
           Status.Code.PERMISSION_DENIED,
           () -> asPeer("test", workload, () -> service.requireHeld(request)));
@@ -76,6 +92,9 @@ class AccountPublicationAuthorizationReadServiceTest {
     assertCode(
         Status.Code.PERMISSION_DENIED,
         () -> asPeer("other", "game-design-service", () -> service.requireHeld(request)));
+    assertCode(
+        Status.Code.PERMISSION_DENIED,
+        () -> asPeer("other", "world-management-service", () -> service.requireHeld(request)));
     assertCode(
         Status.Code.PERMISSION_DENIED,
         () -> asPeer("test", "game-design-service", () -> service.requireHeld(request("other"))));
@@ -126,7 +145,7 @@ class AccountPublicationAuthorizationReadServiceTest {
     assertThat(Status.fromThrowable(error.get()).getCode()).isEqualTo(Status.Code.UNAUTHENTICATED);
     asPeer(
         "test",
-        "world-management-service",
+        "account-service",
         () ->
             endpoint.readHeldPublicationAuthorization(
                 ReadHeldPublicationAuthorizationRequest.getDefaultInstance(), observer));
@@ -134,7 +153,7 @@ class AccountPublicationAuthorizationReadServiceTest {
         .isEqualTo(Status.Code.PERMISSION_DENIED);
     asPeer(
         "other",
-        "game-design-service",
+        "world-management-service",
         () ->
             endpoint.readHeldPublicationAuthorization(
                 ReadHeldPublicationAuthorizationRequest.getDefaultInstance(), observer));
@@ -142,7 +161,7 @@ class AccountPublicationAuthorizationReadServiceTest {
         .isEqualTo(Status.Code.PERMISSION_DENIED);
     asPeer(
         "test",
-        "game-design-service",
+        "world-management-service",
         () ->
             endpoint.readHeldPublicationAuthorization(
                 ReadHeldPublicationAuthorizationRequest.getDefaultInstance(), observer));

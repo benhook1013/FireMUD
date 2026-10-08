@@ -13,7 +13,7 @@ class AccountPublicationAuthorizationServiceTest {
   void persistenceCannotBeCalledWithoutTheWritableAccountOwnerTransaction() {
     var dsl = mock(DSLContext.class);
     var repository = new AccountPublicationAuthorizationRepository(dsl);
-    assertThatThrownBy(() -> repository.authorize(null, null, null, () -> {}))
+    assertThatThrownBy(() -> repository.authorize(null, null, () -> {}))
         .isInstanceOf(IllegalStateException.class)
         .hasMessageContaining("Writable READ_COMMITTED");
     verifyNoInteractions(dsl);
@@ -28,12 +28,12 @@ class AccountPublicationAuthorizationServiceTest {
       TransactionSynchronizationManager.setCurrentTransactionReadOnly(true);
       TransactionSynchronizationManager.setCurrentTransactionIsolationLevel(
           java.sql.Connection.TRANSACTION_READ_COMMITTED);
-      assertThatThrownBy(() -> repository.authorize(null, null, null, () -> {}))
+      assertThatThrownBy(() -> repository.authorize(null, null, () -> {}))
           .isInstanceOf(IllegalStateException.class);
       TransactionSynchronizationManager.setCurrentTransactionReadOnly(false);
       TransactionSynchronizationManager.setCurrentTransactionIsolationLevel(
           java.sql.Connection.TRANSACTION_REPEATABLE_READ);
-      assertThatThrownBy(() -> repository.authorize(null, null, null, () -> {}))
+      assertThatThrownBy(() -> repository.authorize(null, null, () -> {}))
           .isInstanceOf(IllegalStateException.class);
       verifyNoInteractions(dsl);
     } finally {

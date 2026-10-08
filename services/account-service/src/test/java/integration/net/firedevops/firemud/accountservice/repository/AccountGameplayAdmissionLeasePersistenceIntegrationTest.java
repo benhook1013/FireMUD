@@ -45,6 +45,8 @@ import org.jooq.impl.DSL;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.RegisterExtension;
+import org.junit.jupiter.api.extension.TestExecutionExceptionHandler;
 import org.postgresql.util.PSQLException;
 import org.springframework.jdbc.datasource.DataSourceTransactionManager;
 import org.springframework.jdbc.datasource.DelegatingDataSource;
@@ -60,6 +62,43 @@ import org.springframework.transaction.support.TransactionTemplate;
 class AccountGameplayAdmissionLeasePersistenceIntegrationTest {
   private static final AccountPostgresIntegrationFixture POSTGRES =
       new AccountPostgresIntegrationFixture(true);
+
+  @RegisterExtension
+  static final TestExecutionExceptionHandler WAL_FAILURE_DIAGNOSTICS =
+      (context, failure) -> {
+        // Only unexpected test failures reach this hook; expected assertThrows cases do not.
+        try {
+          Throwable cause = failure;
+          var visited =
+              java.util.Collections.newSetFromMap(
+                  new java.util.IdentityHashMap<Throwable, Boolean>());
+          while (cause != null && visited.add(cause)) {
+            if (cause instanceof PSQLException postgresFailure) {
+              var error = postgresFailure.getServerErrorMessage();
+              if ("23514".equals(postgresFailure.getSQLState())
+                  && error != null
+                  && ("account_admission_confirmation_wal_coverage".equals(error.getConstraint())
+                      || "account_admission_original_ack_receipt_wal_coverage"
+                          .equals(error.getConstraint()))) {
+                System.err.println(
+                    "WAL diagnostic for "
+                        + context.getDisplayName()
+                        + ":\n"
+                        + POSTGRES.describeWalCoverageFailure(error.getDetail()));
+                break;
+              }
+            }
+            cause = cause.getCause();
+          }
+        } catch (Throwable diagnosticFailure) {
+          // Do not replace, suppress or retry the original test failure, even if capture fails.
+          if (diagnosticFailure instanceof InterruptedException) Thread.currentThread().interrupt();
+          System.err.println(
+              "WAL diagnostic unavailable: " + diagnosticFailure.getClass().getSimpleName());
+        }
+        throw failure;
+      };
+
   private static final String TENANT = "22222222-2222-4222-8222-222222222222";
   private static final String OTHER = "33333333-3333-4333-8333-333333333333";
 

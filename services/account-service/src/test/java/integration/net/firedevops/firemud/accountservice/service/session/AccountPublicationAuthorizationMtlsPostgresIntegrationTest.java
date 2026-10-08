@@ -90,7 +90,7 @@ class AccountPublicationAuthorizationMtlsPostgresIntegrationTest {
   @TempDir Path temporary;
 
   @Test
-  void genuineProducerToMtlsReaderReplaysExactlyAndRejectsTrustedPeerAndBindingSubstitution()
+  void genuineProducerToGameDesignAndWorldMtlsReadersReplaysExactlyAndRejectsSubstitution()
       throws Exception {
     var pki = new TestPki(Files.createDirectories(temporary.resolve("pki")));
     try (var fixture =
@@ -110,8 +110,7 @@ class AccountPublicationAuthorizationMtlsPostgresIntegrationTest {
       var producer =
           new AccountPublicationAuthorizationService(issued.actors(), sources.fences, repository);
       var original =
-          producer.authorize(
-              issued.compact(), descriptor.selection(), descriptor.world(), issued.environment());
+          producer.authorize(issued.compact(), descriptor.selection(), issued.environment());
       var request = AccountPublicationAuthorizationReadEvidence.Request.create(NAMESPACE, original);
       var endpoint =
           new AccountPublicationAuthorizationReadGrpcService(
@@ -157,7 +156,16 @@ class AccountPublicationAuthorizationMtlsPostgresIntegrationTest {
           // A negative read cannot change the exact held owner row or prevent its next read.
           assertThat(client.read(request).request()).isEqualTo(request);
         }
-        for (var wrongPeer : List.of(pki.wrongWorkload, pki.otherNamespace)) {
+        try (var client = client(server.getPort(), pki.worldManagement, pki.ca)) {
+          var first = client.read(request);
+          var retry = client.read(request);
+          assertThat(first.request()).isEqualTo(request);
+          assertThat(retry.request()).isEqualTo(first.request());
+          assertThat(first.request().originalPublicationAuthorizationBinding())
+              .isEqualTo(original.canonicalBytes());
+        }
+        for (var wrongPeer :
+            List.of(pki.wrongWorkload, pki.otherNamespace, pki.otherWorldNamespace)) {
           try (var client = client(server.getPort(), wrongPeer, pki.ca)) {
             assertCode(Status.Code.PERMISSION_DENIED, () -> client.read(request));
           }
@@ -223,7 +231,12 @@ class AccountPublicationAuthorizationMtlsPostgresIntegrationTest {
   private static final class TestPki {
     private static final String PASSWORD = "test-only-publication-mtls-password";
     final Path ca;
-    final TestIdentity server, gameDesign, wrongWorkload, otherNamespace;
+    final TestIdentity server,
+        gameDesign,
+        worldManagement,
+        wrongWorkload,
+        otherNamespace,
+        otherWorldNamespace;
 
     TestPki(Path root) throws Exception {
       Path caStore = root.resolve("ca.p12");
@@ -268,8 +281,10 @@ class AccountPublicationAuthorizationMtlsPostgresIntegrationTest {
       server = issue(root, caStore, "account-server", NAMESPACE, "account-service", true);
       gameDesign =
           issue(root, caStore, "game-design-client", NAMESPACE, "game-design-service", false);
-      wrongWorkload =
+      worldManagement =
           issue(root, caStore, "world-client", NAMESPACE, "world-management-service", false);
+      wrongWorkload =
+          issue(root, caStore, "game-session-client", NAMESPACE, "game-session-service", false);
       otherNamespace =
           issue(
               root,
@@ -278,6 +293,9 @@ class AccountPublicationAuthorizationMtlsPostgresIntegrationTest {
               "other-test",
               "game-design-service",
               false);
+      otherWorldNamespace =
+          issue(
+              root, caStore, "other-world-client", "other-test", "world-management-service", false);
     }
 
     private static TestIdentity issue(

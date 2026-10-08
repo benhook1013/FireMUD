@@ -81,7 +81,7 @@ class AccountPublicationAuthorizationPostgresIntegrationTest {
   @TempDir Path temporary;
 
   @Test
-  void authenticatesDistinctOrderReplaysExactlyAndBlocksSourceWritersAndDisclosure()
+  void authenticatesPreFreezeDistinctOrderReplaysExactlyAndBlocksSourceWritersAndDisclosure()
       throws Exception {
     try (var fixture = fixture()) {
       var issued = fixture.issueCreator();
@@ -90,12 +90,8 @@ class AccountPublicationAuthorizationPostgresIntegrationTest {
       var service =
           new AccountPublicationAuthorizationService(
               issued.actors(), f.fences, new AccountPublicationAuthorizationRepository(f.dsl));
-      var original =
-          service.authorize(
-              issued.compact(), proof.selection(), proof.world(), issued.environment());
-      var replay =
-          service.authorize(
-              issued.compact(), proof.selection(), proof.world(), issued.environment());
+      var original = service.authorize(issued.compact(), proof.selection(), issued.environment());
+      var replay = service.authorize(issued.compact(), proof.selection(), issued.environment());
       assertThat(replay.canonicalBytes()).isEqualTo(original.canonicalBytes());
       assertThat(original.operationId()).isNotEqualTo(proof.original().operationId());
       assertThat(original.fenceId()).isNotEqualTo(proof.original().fenceId());
@@ -105,6 +101,18 @@ class AccountPublicationAuthorizationPostgresIntegrationTest {
               f.dsl.fetchCount(
                   org.jooq.impl.DSL.table("account_selected_publication_authorizations")))
           .isEqualTo(1);
+      assertThat(
+              java.util.Objects.requireNonNull(
+                      f.dsl.fetchOne(
+                          "SELECT world_evidence FROM account_selected_publication_authorizations"
+                              + " WHERE operation_id = ?",
+                          original.operationId()),
+                      "Expected exact pre-freeze Account order")
+                  .get("world_evidence", byte[].class))
+          .isNull();
+      // The immutable Account order is available before the separate World capture is correlated.
+      new net.firedevops.firemud.common.publication.GameDesignPublicationOperationBinding(
+          original, proof.world());
       assertThat(original.sources()).hasSize(8);
       var readOwner =
           new AccountPublicationAuthorizationReadService(
@@ -150,8 +158,7 @@ class AccountPublicationAuthorizationPostgresIntegrationTest {
       // An exact retained replay remains possible while a later source change waits.
       assertThat(
               service
-                  .authorize(
-                      issued.compact(), proof.selection(), proof.world(), issued.environment())
+                  .authorize(issued.compact(), proof.selection(), issued.environment())
                   .canonicalBytes())
           .isEqualTo(original.canonicalBytes());
       asGameDesign(() -> readOwner.requireHeld(readRequest));
@@ -176,43 +183,12 @@ class AccountPublicationAuthorizationPostgresIntegrationTest {
               () -> f.tx(() -> f.dsl.execute("DELETE FROM account_selected_publication_sources")))
           .isInstanceOf(org.jooq.exception.DataAccessException.class);
       var changed = selection(proof.selection().selectedCommit(), "changed notes");
-      assertThatThrownBy(
-              () ->
-                  service.authorize(issued.compact(), changed, proof.world(), issued.environment()))
+      assertThatThrownBy(() -> service.authorize(issued.compact(), changed, issued.environment()))
           .isInstanceOf(IllegalArgumentException.class);
-      var request = proof.world().request();
-      var changedWorld =
-          new WorldPublishedStartLocationEvidence(
-              new WorldPublishedStartLocationEvidence.Request(
-                  request.targetNamespace(),
-                  request.canonicalTenantId(),
-                  request.canonicalVersionId(),
-                  request.intakeRequestId(),
-                  UUID.randomUUID(),
-                  request.publicationRequestId(),
-                  request.requestDigest(),
-                  request.versionStateEpoch(),
-                  request.publishWorkflowId(),
-                  request.appliedCommitId(),
-                  request.contentDigest(),
-                  request.digestSchemaVersion(),
-                  request.worldAffectedTuples()),
-              proof.world().selectorReceiptBytes(),
-              proof.world().originalAccountBindingBytes(),
-              proof.world().appliedResultBytes());
       assertThatThrownBy(
               () ->
                   service.authorize(
-                      issued.compact(), proof.selection(), changedWorld, issued.environment()))
-          .isInstanceOf(IllegalArgumentException.class)
-          .hasMessageContaining("Changed immutable");
-      assertThatThrownBy(
-              () ->
-                  service.authorize(
-                      issued.compact() + "changed",
-                      proof.selection(),
-                      proof.world(),
-                      issued.environment()))
+                      issued.compact() + "changed", proof.selection(), issued.environment()))
           .isInstanceOf(RuntimeException.class);
       // Original source/issuance identity is immutable even if a privileged SQL caller tries it.
       assertThatThrownBy(
@@ -251,18 +227,13 @@ class AccountPublicationAuthorizationPostgresIntegrationTest {
           new AccountPublicationAuthorizationService(
               issued.actors(), f.fences, new AccountPublicationAuthorizationRepository(f.dsl));
       assertThatThrownBy(
-              () ->
-                  service.authorize(
-                      issued.compact(), proof.selection(), proof.world(), issued.environment()))
+              () -> service.authorize(issued.compact(), proof.selection(), issued.environment()))
           .isInstanceOf(IllegalStateException.class)
           .hasMessageContaining("source change is waiting");
       assertThatThrownBy(
               () ->
                   service.authorize(
-                      "unsigned-caller-claim",
-                      proof.selection(),
-                      proof.world(),
-                      issued.environment()))
+                      "unsigned-caller-claim", proof.selection(), issued.environment()))
           .isInstanceOf(RuntimeException.class);
       assertThat(
               f.dsl.fetchCount(
@@ -302,10 +273,7 @@ class AccountPublicationAuthorizationPostgresIntegrationTest {
                   executor.submit(
                       () ->
                           service.authorize(
-                              issued.compact(),
-                              proof.selection(),
-                              proof.world(),
-                              issued.environment())));
+                              issued.compact(), proof.selection(), issued.environment())));
               long deadline = System.nanoTime() + java.util.concurrent.TimeUnit.SECONDS.toNanos(10);
               Integer blockedPid = null;
               while (System.nanoTime() < deadline && blockedPid == null) {

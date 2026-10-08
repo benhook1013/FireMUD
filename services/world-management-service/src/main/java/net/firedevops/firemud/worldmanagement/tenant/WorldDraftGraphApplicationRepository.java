@@ -195,6 +195,52 @@ public class WorldDraftGraphApplicationRepository {
         new WorldCanonicalAuthoredGraphReader().read(application.plan(), result.graphBytes()));
   }
 
+  /**
+   * Reads the actual APPLIED carrier for the one exact fresh graph selected for an internal World
+   * publication checkpoint. The caller holds the shared OPEN owner lock in the same transaction;
+   * this is not a substitute for Game Design selection or authenticated transport evidence.
+   */
+  WorldDraftGraphAppliedResult readAppliedForPublicationCheckpoint(
+      WorldDesignPublicationFenceEvidence freeze, WorldDraftTopologyCommitPlan selectedPlan) {
+    Objects.requireNonNull(freeze, "freeze");
+    Objects.requireNonNull(selectedPlan, "selectedPlan");
+    requireTransaction();
+    if (!freeze.ownerBinding().equals(selectedPlan.ownerBinding())
+        || selectedPlan.graph().freshGraphDeclaration().isEmpty()) {
+      throw new ConflictException(
+          "World publication checkpoint requires the exact selected fresh graph owner");
+    }
+    var binding = selectedPlan.binding();
+    var rows =
+        dsl.fetch(
+            selectSql() + " WHERE a.request_id=? OR a.commit_id=?",
+            binding.requestId(),
+            binding.commitId());
+    if (rows.isEmpty()) {
+      throw new ConflictException(
+          "World publication checkpoint requires an actual APPLIED graph application");
+    }
+    if (rows.size() != 1) {
+      throw new ConflictException(
+          "Selected World graph request and commit identify conflicting applications");
+    }
+    Record row = rows.getFirst();
+    WorldDraftGraphApplication application = reconstruct(row);
+    if (!selectedPlan.binding().equals(application.plan().binding())
+        || !selectedPlan.ownerBinding().equals(application.plan().ownerBinding())
+        || !freeze.ownerBinding().equals(application.operation().ownerBinding())
+        || !binding.requestId().equals(application.operation().requestId())
+        || !binding.commitId().equals(application.operation().commitId())) {
+      throw new ConflictException(
+          "World APPLIED graph application differs from the exact selected commit or freeze owner");
+    }
+    WorldDraftGraphAppliedResult result = readExact(application, row);
+    if (!"APPLIED".equals(result.status())) {
+      throw new ConflictException("World selected graph application is not APPLIED");
+    }
+    return result;
+  }
+
   private WorldDraftGraphApplication reconstruct(Record row) {
     try {
       var account =

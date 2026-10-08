@@ -5,13 +5,12 @@ import net.firedevops.firemud.accountservice.authordraft.DraftAuthorizationFence
 import net.firedevops.firemud.accountservice.hostedterms.AccountHostedTermsService.CapturedEnvironmentBoundary;
 import net.firedevops.firemud.common.publication.AccountPublicationAuthorizationBinding;
 import net.firedevops.firemud.common.publication.AuthoredDraftPublishSelectionBinding;
-import net.firedevops.firemud.common.world.WorldPublishedStartLocationEvidence;
 
 /**
  * Unregistered Account producer for a distinct selected-publication order. Authenticates the
- * current initial creator through the real issuance owner. Supplied World evidence is structurally
- * checked and retained, not authenticated by this component; protected owner transport remains a
- * separate integration boundary. No remote calls, terminalization, or activation occur here.
+ * current initial creator through the real issuance owner and retains the immutable Draft selection
+ * before World freezes it. World capture and correlation are a separate later boundary. No remote
+ * calls, terminalization, or activation occur here.
  */
 public final class AccountPublicationAuthorizationService {
   private final AccountControlUiActorService actors;
@@ -33,10 +32,8 @@ public final class AccountPublicationAuthorizationService {
   public AccountPublicationAuthorizationBinding authorize(
       String compactJwt,
       AuthoredDraftPublishSelectionBinding selection,
-      WorldPublishedStartLocationEvidence world,
       CapturedEnvironmentBoundary environment) {
     Objects.requireNonNull(selection);
-    Objects.requireNonNull(world);
     return actors.withCurrent(
         compactJwt,
         selection.intent().canonicalTenantId(),
@@ -46,7 +43,6 @@ public final class AccountPublicationAuthorizationService {
           return publications.authorize(
               new AccountPublicationAuthorizationBinding.PreallocationInput(
                   current.stored().accountId, selection),
-              world,
               current,
               () -> fences.requirePublicationAdmission(current.source().sources()));
         });

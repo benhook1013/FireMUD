@@ -121,11 +121,19 @@ if args[0] == 'replace':
 spec = pod['spec']
 container = spec['containers'][0]
 security = container['securityContext']
-# Kubernetes rejects privileged=true with allowPrivilegeEscalation=false at
-# schema validation, before the protected-Pod admission policy can deny it.
+# Kubernetes rejects invalid security-context combinations and path traversal
+# at schema validation, before the protected-Pod admission policy can deny them.
 if security.get('privileged') and security.get('allowPrivilegeEscalation') is False:
     print('Error from server (BadRequest): privileged containers require allowPrivilegeEscalation=true', file=sys.stderr)
     sys.exit(1)
+if security.get('procMount') == 'Unmasked' and spec.get('hostUsers', True):
+    print('Error from server (BadRequest): `hostUsers` must be false to use `Unmasked`', file=sys.stderr)
+    sys.exit(1)
+for candidate_container in spec.get('containers', []) + spec.get('initContainers', []) + spec.get('ephemeralContainers', []):
+    for mount in candidate_container.get('volumeMounts', []):
+        if any(segment == '..' for segment in mount.get('mountPath', '').split('/')):
+            print('Error from server (BadRequest): mountPath must not contain `..`', file=sys.stderr)
+            sys.exit(1)
 policy = None
 message = None
 if any(spec.get(k) for k in ('hostNetwork', 'hostPID', 'hostIPC')) or any('hostPath' in v for v in spec['volumes']) or spec['securityContext'].get('sysctls'):

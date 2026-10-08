@@ -6,8 +6,8 @@ option java_package = "net.firedevops.firemud.account.v1";
 option java_multiple_files = true;
 
 // Standalone read of a distinct immutable selected-publication authorization. Account must
-// authenticate only the exact same-namespace Game Design workload peer for this method. It does
-// not read or reuse the original Draft COMMIT_ORDER.
+// authenticate only the exact same-namespace Game Design or World Management workload peer for
+// this method. It does not read or reuse the original Draft COMMIT_ORDER.
 service AccountPublicationAuthorizationReadService {
   rpc ReadHeldPublicationAuthorization(ReadHeldPublicationAuthorizationRequest)
       returns (ReadHeldPublicationAuthorizationResponse);

@@ -24,7 +24,6 @@ public final class AccountPublicationAuthorizationRepository {
 
   AccountPublicationAuthorizationBinding authorize(
       AccountPublicationAuthorizationBinding.PreallocationInput input,
-      WorldPublishedStartLocationEvidence world,
       AccountControlUiActorService.Current current,
       Runnable admission) {
     requireTransaction();
@@ -37,20 +36,18 @@ public final class AccountPublicationAuthorizationRepository {
     if (prior != null) {
       var original =
           AccountPublicationAuthorizationBinding.fromStored(prior.get("binding", byte[].class));
-      requireExact(prior, original, input, world, current);
+      requireExact(prior, original, input, current);
       return original;
     }
     admission.run();
     var binding =
         new AccountPublicationAuthorizationBinding(
             UUID.randomUUID(), UUID.randomUUID(), input, current.source().sources());
-    // The shared closed operation checks the entire selection and World relation, not authority.
-    new GameDesignPublicationOperationBinding(binding, world);
     dsl.execute(
         "INSERT INTO account_selected_publication_authorizations"
             + " (operation_id, fence_id, actor_account_uuid, tenant_uuid, publish_request_id,"
-            + " input_digest, binding, world_evidence, issuance_operation_id, issuance_fence,"
-            + " source_payload, issuance_bundle, outbox_checkpoints) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            + " input_digest, binding, issuance_operation_id, issuance_fence,"
+            + " source_payload, issuance_bundle, outbox_checkpoints) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         binding.operationId(),
         binding.fenceId(),
         input.actorAccountId(),
@@ -58,7 +55,6 @@ public final class AccountPublicationAuthorizationRepository {
         binding.publishRequestId(),
         input.digest(),
         binding.canonicalBytes(),
-        world.canonicalBytes(),
         current.stored().operationId,
         current.source().issuanceFence(),
         current.stored().sources,
@@ -77,7 +73,7 @@ public final class AccountPublicationAuthorizationRepository {
         dsl.fetchOne(
             "SELECT * FROM account_selected_publication_authorizations WHERE operation_id = ? FOR UPDATE",
             binding.operationId());
-    requireExact(retained, binding, input, world, current);
+    requireExact(retained, binding, input, current);
     return binding;
   }
 
@@ -106,9 +102,7 @@ public final class AccountPublicationAuthorizationRepository {
     }
     var retained =
         AccountPublicationAuthorizationBinding.fromStored(row.get("binding", byte[].class));
-    var world =
-        WorldPublishedStartLocationEvidence.fromStored(row.get("world_evidence", byte[].class));
-    new GameDesignPublicationOperationBinding(retained, world);
+    validateRetainedWorldIfPresent(row, retained);
     // Issuance producers acquire this row before source capture. Do not wait backwards while
     // holding sources; a concurrent issuer/source writer must cause a retry, never a lock cycle.
     Record issuance =
@@ -175,9 +169,8 @@ public final class AccountPublicationAuthorizationRepository {
       Record row,
       AccountPublicationAuthorizationBinding binding,
       AccountPublicationAuthorizationBinding.PreallocationInput input,
-      WorldPublishedStartLocationEvidence world,
       AccountControlUiActorService.Current current) {
-    new GameDesignPublicationOperationBinding(binding, world);
+    validateRetainedWorldIfPresent(row, binding);
     if (row == null
         || !binding.operationId().equals(row.get("operation_id", UUID.class))
         || !binding.fenceId().equals(row.get("fence_id", UUID.class))
@@ -187,7 +180,6 @@ public final class AccountPublicationAuthorizationRepository {
         || !input.digest().equals(row.get("input_digest", String.class))
         || !Arrays.equals(input.canonicalBytes(), binding.input().canonicalBytes())
         || !Arrays.equals(binding.canonicalBytes(), row.get("binding", byte[].class))
-        || !Arrays.equals(world.canonicalBytes(), row.get("world_evidence", byte[].class))
         || !current.stored().operationId.equals(row.get("issuance_operation_id", UUID.class))
         || current.source().issuanceFence() != row.get("issuance_fence", Long.class)
         || !Arrays.equals(current.stored().sources, row.get("source_payload", byte[].class))
@@ -220,6 +212,16 @@ public final class AccountPublicationAuthorizationRepository {
               source.canonicalBytes(), current.source().sources().get(i).canonicalBytes())) {
         throw new IllegalArgumentException("Changed original publication source vector");
       }
+    }
+  }
+
+  /** Historical V103 World evidence remains immutable and is checked when a row contains it. */
+  private static void validateRetainedWorldIfPresent(
+      Record row, AccountPublicationAuthorizationBinding binding) {
+    byte[] worldEvidence = row == null ? null : row.get("world_evidence", byte[].class);
+    if (worldEvidence != null) {
+      new GameDesignPublicationOperationBinding(
+          binding, WorldPublishedStartLocationEvidence.fromStored(worldEvidence));
     }
   }
 

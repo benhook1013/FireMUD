@@ -71,9 +71,11 @@ public final class AccountPublicationAuthorizationReadService {
           .withDescription("Verified workload identity required")
           .asRuntimeException();
     }
-    if (!("spiffe://firemud/ns/" + namespace + "/sa/game-design-service").equals(peer.uri())) {
+    String peerUri = peer.uri();
+    if (!("spiffe://firemud/ns/" + namespace + "/sa/game-design-service").equals(peerUri)
+        && !("spiffe://firemud/ns/" + namespace + "/sa/world-management-service").equals(peerUri)) {
       throw Status.PERMISSION_DENIED
-          .withDescription("Exact same-namespace Game Design workload required")
+          .withDescription("Exact same-namespace Game Design or World Management workload required")
           .asRuntimeException();
     }
   }

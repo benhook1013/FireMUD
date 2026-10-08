@@ -191,8 +191,13 @@ for app in ("account-service", "game-session-service"):
     for label, change in (("privileged", {"privileged": True, "allowPrivilegeEscalation": True}),
                           ("escalation", {"allowPrivilegeEscalation": True}),
                           ("NET_ADMIN", {"capabilities": {"drop": ["ALL"], "add": ["NET_ADMIN"]}}),
-                          ("missing-drop", {"capabilities": {"drop": []}}), ("procMount", {"procMount": "Unmasked"})):
+                          ("missing-drop", {"capabilities": {"drop": []}})):
         deny(label, lambda p, change=change: p["spec"]["containers"][0]["securityContext"].update(change), boundary, container_message)
+    def unmasked_proc(p):
+        # Kubernetes v1.35 requires Unmasked procMount to use a Pod user namespace.
+        p["spec"]["hostUsers"] = False
+        p["spec"]["containers"][0]["securityContext"]["procMount"] = "Unmasked"
+    deny("procMount", unmasked_proc, boundary, container_message)
     deny("hostPort", lambda p: p["spec"]["containers"][0].update({"ports": [{"containerPort": 8080, "hostPort": 8080}]}), boundary, container_message)
     deny("sidecar", lambda p: p["spec"]["containers"].append({"name": "proxy", "image": "registry.k8s.io/pause:3.10", "securityContext": security}), identity, injection_message)
     deny("init", lambda p: p["spec"].update({"initContainers": [{"name": "proxy", "image": "registry.k8s.io/pause:3.10", "securityContext": security}]}), identity, injection_message)
@@ -203,7 +208,7 @@ for app in ("account-service", "game-session-service"):
     deny("UID-mode", lambda p: p["spec"]["volumes"][0]["downwardAPI"].update({"defaultMode": 420}), identity, volume_message)
     for label, change in (("writable", {"readOnly": False}), ("subPath", {"subPath": "uid"}),
                           ("subPathExpr", {"subPathExpr": "uid"}), ("propagation", {"mountPropagation": "HostToContainer"}),
-                          ("noncanonical-path", {"mountPath": mount_path + "/../pod-identity"})):
+                          ("noncanonical-path", {"mountPath": mount_path + "-alternate"})):
         deny(label, lambda p, change=change: p["spec"]["containers"][0]["volumeMounts"][0].update(change), identity, mount_message)
     for shadow_path in ("/var/run/secrets/firemud", mount_path + "/uid"):
         def shadow(p, shadow_path=shadow_path):

@@ -545,7 +545,25 @@ class AccountJwtSignerBootstrapCoordinatorTest {
                 Optional.of(operationId),
                 Optional.empty(),
                 Optional.of(enrollment)));
-    PreparedPromotion prepared = new PreparedPromotion(operationId, "6".repeat(64), "PREPARED");
+    UUID promotionId = UUID.randomUUID();
+    PreparedPromotion prepared = new PreparedPromotion(promotionId, "6".repeat(64), "PREPARED");
+    PromotionOperationEvidence promotion = mock(PromotionOperationEvidence.class);
+    when(promotion.operationId()).thenReturn(promotionId);
+    when(promotion.requestDigest()).thenReturn(prepared.requestDigest());
+    when(promotion.generationOperationId()).thenReturn(operationId);
+    PreparedGenerationEvidence readback = mock(PreparedGenerationEvidence.class);
+    when(readback.promotion()).thenReturn(promotion);
+    when(readback.generationResult()).thenReturn(generation);
+    when(fixture
+            .repository()
+            .readPreparedGenerationForRecovery(
+                eq(fixture.binding().accountBinding()), eq(trustFence(fixture.binding()))))
+        .thenAnswer(
+            invocation -> {
+              assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isTrue();
+              assertThat(insideTransaction.get()).isTrue();
+              return readback;
+            });
     when(fixture
             .repository()
             .prepareCurrentGeneration(
@@ -561,6 +579,7 @@ class AccountJwtSignerBootstrapCoordinatorTest {
             });
 
     assertThat(fixture.coordinator().prepareCurrentPromotionOnce()).contains(prepared);
+    assertThat(prepared.operationId()).isNotEqualTo(operationId);
 
     ArgumentCaptor<PromotionPreparation> preparation =
         ArgumentCaptor.forClass(PromotionPreparation.class);
@@ -576,6 +595,12 @@ class AccountJwtSignerBootstrapCoordinatorTest {
     assertThat(preparation.getValue().readinessPlanDigest()).isEqualTo("4".repeat(64));
     assertThat(preparation.getValue().readinessEvidenceDigest()).isEqualTo("5".repeat(64));
     assertThat(insideTransaction.get()).isFalse();
+
+    when(promotion.generationOperationId()).thenReturn(UUID.randomUUID());
+    assertThatThrownBy(fixture.coordinator()::prepareCurrentPromotionOnce)
+        .isInstanceOf(BootstrapOperationException.class)
+        .extracting(error -> ((BootstrapOperationException) error).failureCode())
+        .isEqualTo(FailureCode.ACCOUNT_STATE_AMBIGUOUS);
   }
 
   @Test

@@ -1332,10 +1332,17 @@ class AccountJwtReadinessProbePersistenceIntegrationTest {
     when(inventorySource.observe(initialObservationContext)).thenReturn(proofInventory);
     Optional<PreparedPromotion> prepared = coordinator.prepareCurrentPromotionOnce();
     assertThat(prepared).isPresent();
-    assertThat(prepared.orElseThrow().operationId()).isEqualTo(result.operationId());
+    assertThat(prepared.orElseThrow().operationId()).isNotEqualTo(result.operationId());
     assertThat(prepared.orElseThrow().status()).isEqualTo("PREPARED");
-    assertThat(inTransaction(context, () -> desired.read(BINDING).preparedOperationId()))
-        .contains(result.operationId());
+    var preparedEvidence =
+        inTransaction(context, () -> desired.readPreparedGenerationForRecovery(BINDING, trust));
+    assertThat(preparedEvidence.desiredState().preparedOperationId())
+        .contains(prepared.orElseThrow().operationId());
+    assertThat(preparedEvidence.promotion().operationId())
+        .isEqualTo(prepared.orElseThrow().operationId());
+    assertThat(preparedEvidence.promotion().generationOperationId())
+        .isEqualTo(result.operationId());
+    assertThat(preparedEvidence.generationResult()).isEqualTo(result);
     assertThat(count(context, "account_jwt_signer_promotion_operations")).isEqualTo(1L);
     assertThat(
             inTransaction(
@@ -1346,8 +1353,6 @@ class AccountJwtReadinessProbePersistenceIntegrationTest {
         .isPresent();
     assertThat(count(context, "account_jwt_readiness_pod_receipts")).isEqualTo(12L);
 
-    var preparedEvidence =
-        inTransaction(context, () -> desired.readPreparedGenerationForRecovery(BINDING, trust));
     var promotion = preparedEvidence.promotion();
     inTransaction(context, () -> desired.readAndMarkPreparedPromotionDispatched(BINDING, trust));
     PrivatePromotionObservation privateObservation =

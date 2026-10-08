@@ -2,8 +2,10 @@ package integration.net.firedevops.firemud.accountservice.repository;
 
 import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
+import java.math.BigInteger;
 import java.net.URI;
 import java.util.Properties;
+import java.util.regex.Pattern;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
 import org.testcontainers.DockerClientFactory;
@@ -17,6 +19,142 @@ public final class AccountPostgresIntegrationFixture {
   private final String externalJdbcUrl;
   private final boolean requireDurablePrimary;
   private boolean started;
+
+  private static final BigInteger MAX_UINT64 =
+      BigInteger.ONE.shiftLeft(64).subtract(BigInteger.ONE);
+  private static final Pattern WAL_FAILURE_DETAIL =
+      Pattern.compile(
+          "(?:phase=(?:create|receipt-read) )?snapshot=[0-9:,]+ own_xid_if_assigned=([0-9]*)"
+              + " finalization_xid=([1-9][0-9]{0,19}) receipt_xid=([0-9]*)"
+              + " insert_fence=([0-9A-F]{1,8}/[0-9A-F]{1,8})"
+              + " initial_flush=([0-9A-F]{1,8}/[0-9A-F]{1,8})"
+              + " final_flush=([0-9A-F]{1,8}/[0-9A-F]{1,8})"
+              + "(?: observed_db_ms=([1-9][0-9]{0,18}))?"
+              + " unchanged_expiry_ms=([1-9][0-9]{0,18})");
+
+  /** Failure-only observation; never opens a database connection or changes database settings. */
+  public String describeWalCoverageFailure(String detail) throws Exception {
+    if (detail == null || detail.length() > 1024) {
+      return "WAL diagnostic unavailable: missing or oversized server DETAIL";
+    }
+    var fields = WAL_FAILURE_DETAIL.matcher(detail);
+    if (!fields.matches()) return "WAL diagnostic unavailable: unsupported server DETAIL shape";
+    String[] snapshot =
+        detail
+            .substring(detail.indexOf("snapshot=") + 9, detail.indexOf(" own_xid_if_assigned="))
+            .split(":", -1);
+    if (snapshot.length != 3
+        || !validXid(snapshot[0])
+        || !validXid(snapshot[1])
+        || new BigInteger(snapshot[0]).compareTo(new BigInteger(snapshot[1])) > 0) {
+      return "WAL diagnostic unavailable: invalid snapshot";
+    }
+    if (!snapshot[2].isEmpty()) {
+      for (String xid : snapshot[2].split(",", -1)) {
+        if (!validXid(xid)
+            || new BigInteger(xid).compareTo(new BigInteger(snapshot[0])) < 0
+            || new BigInteger(xid).compareTo(new BigInteger(snapshot[1])) >= 0) {
+          return "WAL diagnostic unavailable: invalid snapshot XID";
+        }
+      }
+    }
+    for (int group : new int[] {1, 2, 3}) {
+      String xid = fields.group(group);
+      if (!xid.isEmpty() && !validXid(xid)) {
+        return "WAL diagnostic unavailable: invalid XID";
+      }
+    }
+    for (int group : new int[] {7, 8}) {
+      if (fields.group(group) != null) Long.parseLong(fields.group(group));
+    }
+    BigInteger insert = parseLsn(fields.group(4));
+    BigInteger initialFlush = parseLsn(fields.group(5));
+    BigInteger finalFlush = parseLsn(fields.group(6));
+    if (insert.signum() <= 0
+        || initialFlush.compareTo(finalFlush) > 0
+        || finalFlush.compareTo(insert) >= 0) {
+      return "WAL diagnostic unavailable: inconsistent WAL fences";
+    }
+    if (container == null) {
+      return "WAL diagnostic unavailable: external loopback fixture has no owned container WAL access";
+    }
+    if (!started) return "WAL diagnostic unavailable: owned container is not running";
+
+    // Search only the preceding 1 MiB. Missing/recycled records or a COMMIT outside this window
+    // remain explicitly inconclusive. This observes WAL files after failure, not flush durability.
+    String start =
+        formatLsn(finalFlush.subtract(BigInteger.valueOf(1_048_576)).max(BigInteger.ZERO));
+    StringBuilder result = new StringBuilder("WAL failure DETAIL: ").append(detail);
+    result.append("\nUnflushed interval (up to 256 records):\n");
+    result.append(dumpWal(fields.group(6), fields.group(4), null));
+    for (int group : new int[] {2, 3}) {
+      String xid = fields.group(group);
+      if (xid.isEmpty()) continue;
+      // pg_waldump filters 32-bit WAL XIDs, whereas the server DETAIL retains full xid8 identity.
+      String walXid =
+          new BigInteger(xid).and(BigInteger.ONE.shiftLeft(32).subtract(BigInteger.ONE)).toString();
+      result
+          .append("\nXID8 ")
+          .append(xid)
+          .append(" (WAL xid ")
+          .append(walXid)
+          .append(") records in bounded lookback ")
+          .append(start)
+          .append("..")
+          .append(fields.group(4))
+          .append(":\n");
+      result.append(dumpWal(start, fields.group(4), walXid));
+    }
+    return result
+        .append(
+            "\nLimits: each dump <=6s, <=16KiB, <=256 matching records; output may be truncated. "
+                + "Missing COMMIT is inconclusive. WAL file presence is not a flush observation; "
+                + "compare records with the original logged flush fence. pg_waldump reports record start "
+                + "and length, not an independently measured COMMIT end/flush bound.")
+        .toString();
+  }
+
+  private String dumpWal(String start, String end, String xid) throws Exception {
+    // The shell program is constant; validated values travel only as positional arguments.
+    var arguments =
+        new java.util.ArrayList<String>(
+            java.util.List.of(
+                "sh",
+                "-c",
+                "set -o pipefail; timeout -k 1 5 pg_waldump \"$@\" 2>&1 | head -c 16384",
+                "wal-diagnostic",
+                "-p",
+                "/var/lib/postgresql/data/pg_wal",
+                "-s",
+                start,
+                "-e",
+                end,
+                "-n",
+                "256"));
+    if (xid != null) {
+      arguments.add("-x");
+      arguments.add(xid);
+    }
+    var output = container.execInContainer(arguments.toArray(String[]::new));
+    return "pipeline_exit=" + output.getExitCode() + "\n" + output.getStdout() + output.getStderr();
+  }
+
+  private static BigInteger parseLsn(String lsn) {
+    String[] halves = lsn.split("/");
+    return new BigInteger(halves[0], 16).shiftLeft(32).add(new BigInteger(halves[1], 16));
+  }
+
+  private static boolean validXid(String xid) {
+    return xid.matches("[1-9][0-9]{0,19}") && new BigInteger(xid).compareTo(MAX_UINT64) <= 0;
+  }
+
+  private static String formatLsn(BigInteger lsn) {
+    return lsn.shiftRight(32).toString(16).toUpperCase(java.util.Locale.ROOT)
+        + "/"
+        + lsn.and(BigInteger.ONE.shiftLeft(32).subtract(BigInteger.ONE))
+            .toString(16)
+            .toUpperCase(java.util.Locale.ROOT);
+  }
 
   public AccountPostgresIntegrationFixture() {
     this(false);

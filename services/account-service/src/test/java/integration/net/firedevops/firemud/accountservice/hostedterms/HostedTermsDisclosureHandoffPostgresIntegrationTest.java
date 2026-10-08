@@ -646,7 +646,7 @@ class HostedTermsDisclosureHandoffPostgresIntegrationTest {
         .defaultSchema(database.schema())
         .placeholders(Map.of("serviceSchema", database.schema()))
         .locations("classpath:db/migration")
-        .target("101")
+        .target("latest")
         .load()
         .migrate();
     return database;
