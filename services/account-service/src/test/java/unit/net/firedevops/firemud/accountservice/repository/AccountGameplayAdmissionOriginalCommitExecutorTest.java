@@ -9,6 +9,7 @@ import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.mockConstruction;
+import static org.mockito.Mockito.mockingDetails;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
@@ -16,6 +17,7 @@ import static org.mockito.Mockito.when;
 
 import java.io.Serializable;
 import java.lang.reflect.Modifier;
+import java.math.BigDecimal;
 import java.sql.Connection;
 import java.sql.DatabaseMetaData;
 import java.sql.PreparedStatement;
@@ -45,7 +47,8 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
 
 /**
  * Concrete Spring/JDBC lifecycle with mocked JDBC responses and repository storage. These unit
- * doubles prove neither PostgreSQL durability nor a deadline, receipt, authentication or admission.
+ * doubles prove neither physical PostgreSQL durability nor a persisted receipt, authentication or
+ * admission.
  */
 class AccountGameplayAdmissionOriginalCommitExecutorTest {
   @AfterEach
@@ -75,6 +78,7 @@ class AccountGameplayAdmissionOriginalCommitExecutorTest {
       assertThat(acknowledgement.evidence()).isSameAs(fixture.evidence);
       assertThat(acknowledgement.decisionId()).isEqualTo(fixture.decision);
       assertThat(acknowledgement.finalizationXid()).isEqualTo("42");
+      assertThat(acknowledgement.committedBeforeMs()).isEqualTo(9000L);
       assertThat(Serializable.class.isAssignableFrom(acknowledgement.getClass())).isFalse();
       assertThat(Arrays.stream(acknowledgement.getClass().getDeclaredConstructors()))
           .allMatch(constructor -> Modifier.isPrivate(constructor.getModifiers()));
@@ -83,7 +87,8 @@ class AccountGameplayAdmissionOriginalCommitExecutorTest {
               repositories.constructed().getFirst(),
               fixture.stamp,
               fixture.settingsStatement,
-              fixture.connection);
+              fixture.connection,
+              fixture.clockStatement);
       order
           .verify(repositories.constructed().getFirst())
           .recordCommitted(fixture.evidence, fixture.decision);
@@ -92,7 +97,57 @@ class AccountGameplayAdmissionOriginalCommitExecutorTest {
       order.verify(fixture.settingsStatement).execute("SET LOCAL synchronous_commit = on");
       order.verify(fixture.settingsStatement).close();
       order.verify(fixture.connection).commit();
+      order.verify(fixture.clockStatement).close();
+      var commits =
+          mockingDetails(fixture.connection).getInvocations().stream()
+              .filter(invocation -> invocation.getMethod().getName().equals("commit"))
+              .mapToInt(invocation -> invocation.getSequenceNumber())
+              .toArray();
+      var clockQueries =
+          mockingDetails(fixture.clockStatement).getInvocations().stream()
+              .filter(invocation -> invocation.getMethod().getName().equals("executeQuery"))
+              .mapToInt(invocation -> invocation.getSequenceNumber())
+              .toArray();
+      assertThat(commits).hasSize(1);
+      assertThat(clockQueries).hasSize(1);
+      assertThat(clockQueries[0]).isGreaterThan(commits[0]);
       assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+    }
+  }
+
+  @ParameterizedTest
+  @ValueSource(strings = {"10000", "11000", "0", "-1", "9223372036854775808", "9000.5"})
+  void invalidOrLatePostCommitClockCannotReturnCapability(String value) throws Exception {
+    var fixture = new Fixture();
+    when(fixture.clockRow.getBigDecimal(1)).thenReturn(new BigDecimal(value));
+    try (var repositories = fixture.repositories(State.PENDING)) {
+      assertThatThrownBy(() -> fixture.executor.execute(fixture.evidence, fixture.decision))
+          .hasMessageContaining("post-COMMIT clock bound unavailable");
+      verify(fixture.connection).commit();
+      verify(fixture.connection).rollback();
+      verify(repositories.constructed().getFirst())
+          .recordCommitted(fixture.evidence, fixture.decision);
+    }
+  }
+
+  @ParameterizedTest
+  @ValueSource(strings = {"missing", "null", "query-error"})
+  void unavailableClockAfterAcknowledgedCommitCannotReturnCapability(String fault)
+      throws Exception {
+    var fixture = new Fixture();
+    switch (fault) {
+      case "missing" -> when(fixture.clockRow.next()).thenReturn(false);
+      case "null" -> when(fixture.clockRow.getBigDecimal(1)).thenReturn(null);
+      case "query-error" -> fixture.clockFailure = new SQLException("clock response lost", "08006");
+      default -> throw new IllegalArgumentException(fault);
+    }
+    try (var repositories = fixture.repositories(State.PENDING)) {
+      assertThatThrownBy(() -> fixture.executor.execute(fixture.evidence, fixture.decision))
+          .hasMessageContaining("post-COMMIT clock");
+      verify(fixture.connection).commit();
+      verify(fixture.connection).rollback();
+      verify(repositories.constructed().getFirst())
+          .recordCommitted(fixture.evidence, fixture.decision);
     }
   }
 
@@ -222,6 +277,21 @@ class AccountGameplayAdmissionOriginalCommitExecutorTest {
 
   private static final class Fixture {
     private final DataSource source = mock(DataSource.class);
+    private final ResultSet clockRow = mock(ResultSet.class);
+    private SQLException clockFailure;
+    private final Statement clockStatement =
+        mock(
+            Statement.class,
+            invocation -> {
+              if (invocation.getMethod().getName().equals("executeQuery")) {
+                assertThat(invocation.getArgument(0, String.class))
+                    .isEqualTo("SELECT ceil(extract(epoch FROM clock_timestamp()) * 1000)::bigint");
+                if (clockFailure != null) throw clockFailure;
+                return clockRow;
+              }
+              return Answers.RETURNS_DEFAULTS.answer(invocation);
+            });
+    private final AtomicInteger statementCalls = new AtomicInteger();
     private final ResultSet settings = mock(ResultSet.class);
     private final Statement settingsStatement =
         mock(
@@ -243,7 +313,8 @@ class AccountGameplayAdmissionOriginalCommitExecutorTest {
             Connection.class,
             invocation ->
                 switch (invocation.getMethod().getName()) {
-                  case "createStatement" -> settingsStatement;
+                  case "createStatement" ->
+                      statementCalls.getAndIncrement() == 0 ? settingsStatement : clockStatement;
                   case "prepareStatement" -> stamp;
                   default -> Answers.RETURNS_DEFAULTS.answer(invocation);
                 });
@@ -285,11 +356,14 @@ class AccountGameplayAdmissionOriginalCommitExecutorTest {
       when(settings.getString(4)).thenReturn("on");
       when(settings.getString(5)).thenReturn("serializable");
       when(settings.getString(6)).thenReturn("off");
+      when(clockRow.next()).thenReturn(true, false);
+      when(clockRow.getBigDecimal(1)).thenReturn(BigDecimal.valueOf(9000L));
       when(evidence.carrier())
           .thenReturn(
               Map.of(
                   "requestId", UUID.randomUUID().toString(),
-                  "leaseId", UUID.randomUUID().toString()));
+                  "leaseId", UUID.randomUUID().toString(),
+                  "expiresAt", "10000"));
       when(evidence.sha256()).thenReturn("a".repeat(64));
       when(evidence.canonicalJson()).thenReturn("synthetic-unit-carrier");
     }

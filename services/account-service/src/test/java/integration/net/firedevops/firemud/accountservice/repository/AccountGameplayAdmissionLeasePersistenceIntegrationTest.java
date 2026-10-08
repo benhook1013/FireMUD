@@ -9,7 +9,9 @@ import io.grpc.StatusRuntimeException;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Proxy;
 import java.sql.Connection;
+import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.sql.Statement;
 import java.time.Instant;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -20,6 +22,7 @@ import java.util.concurrent.Callable;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Supplier;
 import javax.sql.DataSource;
@@ -91,6 +94,7 @@ class AccountGameplayAdmissionLeasePersistenceIntegrationTest {
     assertThat(acknowledgement.decisionId()).isEqualTo(decision);
     assertThat(acknowledgement.finalizationXid())
         .isEqualTo(committed.get("finalization_xid", String.class));
+    assertThat(acknowledgement.committedBeforeMs()).isPositive().isLessThan(expiresAt(original));
     assertThat(committed.get("status", String.class)).isEqualTo("COMMITTED");
     assertThat(committed.get("binding_decision_id", UUID.class)).isEqualTo(decision);
     for (String field :
@@ -109,7 +113,166 @@ class AccountGameplayAdmissionLeasePersistenceIntegrationTest {
     assertThat(
             context.dsl().fetchCount(DSL.table("account_gameplay_admission_commit_confirmations")))
         .isZero();
-    // ACK alone supplies no post-COMMIT DB-clock bound and is not a temporal confirmation.
+    // The in-process ACK and bound are not a persisted temporal confirmation or durable receipt.
+  }
+
+  @Test
+  void originalExecutorReadsClockOnOriginalConnectionOnlyAfterActualCommitAcknowledgement() {
+    var context = context(null);
+    var original = pending(context, account(context));
+    UUID decision = UUID.randomUUID();
+    var clockQueries = new AtomicInteger();
+    // Component-only upstream evidence. The wrapper delegates the actual commit and clock query.
+    var acknowledgement =
+        new AccountGameplayAdmissionOriginalCommitExecutor(
+                postCommitClockDataSource(context.dataSource(), 0L, false, clockQueries))
+            .execute(original, decision);
+    assertThat(clockQueries.get()).isEqualTo(1);
+    assertThat(acknowledgement.committedBeforeMs()).isPositive().isLessThan(expiresAt(original));
+    assertThat(databaseNow(context)).isGreaterThanOrEqualTo(acknowledgement.committedBeforeMs());
+    var committed = operation(context, original);
+    assertThat(committed.get("finalization_xid", String.class))
+        .isEqualTo(acknowledgement.finalizationXid());
+    assertThat(committed.get("binding_decision_id", UUID.class)).isEqualTo(decision);
+    assertThat(committed.get("evidence_json", String.class)).isEqualTo(original.canonicalJson());
+    assertThat(committed.get("evidence_sha256", String.class)).isEqualTo(original.sha256());
+    assertThat(committed.get("expires_at_ms", Long.class)).isEqualTo(expiresAt(original));
+    assertThat(
+            context.dsl().fetchCount(DSL.table("account_gameplay_admission_commit_confirmations")))
+        .isZero();
+  }
+
+  @Test
+  void delayedPostAcknowledgementClockDeniesWithoutUndoingOriginalCommitOrRenewingExpiry() {
+    var context = context(null);
+    var original = pending(context, account(context), 1000L);
+    UUID decision = UUID.randomUUID();
+    var clockQueries = new AtomicInteger();
+    var executor =
+        new AccountGameplayAdmissionOriginalCommitExecutor(
+            postCommitClockDataSource(
+                context.dataSource(), expiresAt(original), false, clockQueries));
+    assertThatThrownBy(() -> executor.execute(original, decision))
+        .hasMessageContaining("post-COMMIT clock bound unavailable");
+    assertThat(clockQueries.get()).isEqualTo(1);
+    assertThat(databaseNow(context)).isGreaterThanOrEqualTo(expiresAt(original));
+    var committed = operation(context, original);
+    assertThat(committed.get("status", String.class)).isEqualTo("COMMITTED");
+    assertThat(committed.get("binding_decision_id", UUID.class)).isEqualTo(decision);
+    assertThat(committed.get("finalization_xid", String.class)).isNotBlank();
+    assertThat(committed.get("evidence_json", String.class)).isEqualTo(original.canonicalJson());
+    assertThat(committed.get("expires_at_ms", Long.class)).isEqualTo(expiresAt(original));
+    assertThatThrownBy(
+            () ->
+                new AccountGameplayAdmissionOriginalCommitExecutor(context.dataSource())
+                    .execute(original, decision))
+        .hasMessageContaining("Fresh owned Account original COMMIT required");
+    assertThat(operation(context, original)).isEqualTo(committed);
+    assertThat(
+            context.dsl().fetchCount(DSL.table("account_gameplay_admission_commit_confirmations")))
+        .isZero();
+  }
+
+  @Test
+  void lostPostAcknowledgementClockResponseCannotBeRemintedFromCommittedRetry() {
+    var context = context(null);
+    var original = pending(context, account(context));
+    UUID decision = UUID.randomUUID();
+    var clockQueries = new AtomicInteger();
+    var executor =
+        new AccountGameplayAdmissionOriginalCommitExecutor(
+            postCommitClockDataSource(context.dataSource(), 0L, true, clockQueries));
+    assertThatThrownBy(() -> executor.execute(original, decision))
+        .hasMessageContaining("post-COMMIT clock unavailable");
+    assertThat(clockQueries.get()).isEqualTo(1);
+    var committed = operation(context, original);
+    assertThat(committed.get("status", String.class)).isEqualTo("COMMITTED");
+    assertThat(committed.get("binding_decision_id", UUID.class)).isEqualTo(decision);
+    assertThat(committed.get("finalization_xid", String.class)).isNotBlank();
+    assertThat(committed.get("evidence_json", String.class)).isEqualTo(original.canonicalJson());
+    assertThat(committed.get("expires_at_ms", Long.class)).isEqualTo(expiresAt(original));
+    assertThatThrownBy(
+            () ->
+                new AccountGameplayAdmissionOriginalCommitExecutor(context.dataSource())
+                    .execute(original, decision))
+        .hasMessageContaining("Fresh owned Account original COMMIT required");
+    assertThat(operation(context, original)).isEqualTo(committed);
+    assertThat(
+            context.dsl().fetchCount(DSL.table("account_gameplay_admission_commit_confirmations")))
+        .isZero();
+  }
+
+  /** Real database clock faults on the original connection, strictly after successful COMMIT. */
+  private static DataSource postCommitClockDataSource(
+      DataSource source, long waitUntilMs, boolean loseClockResponse, AtomicInteger clockQueries) {
+    return new DelegatingDataSource(source) {
+      @Override
+      public Connection getConnection() throws SQLException {
+        return clockConnection(super.getConnection());
+      }
+
+      @Override
+      public Connection getConnection(String username, String password) throws SQLException {
+        return clockConnection(super.getConnection(username, password));
+      }
+
+      private Connection clockConnection(Connection physical) {
+        var committed = new AtomicBoolean();
+        return (Connection)
+            Proxy.newProxyInstance(
+                Connection.class.getClassLoader(),
+                new Class<?>[] {Connection.class},
+                (proxy, method, arguments) -> {
+                  if (method.getName().equals("commit") && method.getParameterCount() == 0) {
+                    physical.commit();
+                    committed.set(true);
+                    return null;
+                  }
+                  if (method.getName().equals("createStatement") && method.getParameterCount() == 0)
+                    return clockStatement(physical.createStatement(), committed);
+                  try {
+                    return method.invoke(physical, arguments);
+                  } catch (InvocationTargetException failure) {
+                    throw failure.getCause();
+                  }
+                });
+      }
+
+      private Statement clockStatement(Statement physical, AtomicBoolean committed) {
+        return (Statement)
+            Proxy.newProxyInstance(
+                Statement.class.getClassLoader(),
+                new Class<?>[] {Statement.class},
+                (proxy, method, arguments) -> {
+                  if (method.getName().equals("executeQuery")
+                      && arguments != null
+                      && arguments.length == 1
+                      && "SELECT ceil(extract(epoch FROM clock_timestamp()) * 1000)::bigint"
+                          .equals(arguments[0])) {
+                    assertThat(committed.get()).isTrue();
+                    clockQueries.incrementAndGet();
+                    if (waitUntilMs > 0) {
+                      // Delay only this test's post-ACK clock query using database time.
+                      physical.execute(
+                          "SELECT pg_sleep(GREATEST(0, ("
+                              + waitUntilMs
+                              + " - ceil(extract(epoch FROM clock_timestamp()) * 1000) + 50) / 1000.0))");
+                    }
+                    if (loseClockResponse) {
+                      try (ResultSet discarded = physical.executeQuery((String) arguments[0])) {
+                        assertThat(discarded.next()).isTrue();
+                      }
+                      throw new SQLException("Test lost post-COMMIT clock response", "08006");
+                    }
+                  }
+                  try {
+                    return method.invoke(physical, arguments);
+                  } catch (InvocationTargetException failure) {
+                    throw failure.getCause();
+                  }
+                });
+      }
+    };
   }
 
   @Test

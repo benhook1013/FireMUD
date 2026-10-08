@@ -1,5 +1,6 @@
 package net.firedevops.firemud.accountservice.repository;
 
+import java.math.BigDecimal;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
@@ -23,11 +24,12 @@ import org.springframework.transaction.support.TransactionTemplate;
 /**
  * Unregistered original storage-COMMIT executor; supplies no authentication or admission authority.
  *
- * <p>The opaque acknowledgement proves only successful synchronous COMMIT of this fresh transition.
- * It contains no clock bound and is neither a temporal confirmation nor a durable receipt. The
- * protected owner must separately observe database time before unchanged expiry, persist its exact
- * confirmation and prove the receipt's own durability. Lost acknowledgement cannot be reconstructed
- * by retrying this executor: a retained COMMITTED operation is rejected.
+ * <p>The opaque acknowledgement binds successful synchronous COMMIT of this fresh transition to a
+ * subsequent database-clock upper bound strictly before unchanged expiry, on the same connection.
+ * It is not a persisted temporal confirmation or durable receipt. The protected owner must
+ * separately persist its exact confirmation and prove the receipt's own durability. Lost
+ * acknowledgement or unavailable/late clock evidence cannot be reconstructed by retrying this
+ * executor: a retained COMMITTED operation is rejected.
  */
 final class AccountGameplayAdmissionOriginalCommitExecutor {
   private final DataSource dataSource;
@@ -82,11 +84,13 @@ final class AccountGameplayAdmissionOriginalCommitExecutor {
     private final AccountGameplayAdmissionLeaseEvidence evidence;
     private final UUID decisionId;
     private final String finalizationXid;
+    private final long committedBeforeMs;
 
-    private OriginalCommitAcknowledgement(OriginalBinding binding) {
+    private OriginalCommitAcknowledgement(OriginalBinding binding, long committedBeforeMs) {
       evidence = binding.evidence();
       decisionId = binding.decisionId();
       finalizationXid = binding.finalizationXid();
+      this.committedBeforeMs = committedBeforeMs;
     }
 
     AccountGameplayAdmissionLeaseEvidence evidence() {
@@ -99,6 +103,10 @@ final class AccountGameplayAdmissionOriginalCommitExecutor {
 
     String finalizationXid() {
       return finalizationXid;
+    }
+
+    long committedBeforeMs() {
+      return committedBeforeMs;
     }
 
     @Override
@@ -195,12 +203,40 @@ final class AccountGameplayAdmissionOriginalCommitExecutor {
         }
         // No callback or caller flag can mint this capability. An ambiguous JDBC outcome throws.
         connection.commit();
-        acknowledgement = new OriginalCommitAcknowledgement(binding);
+        long committedBeforeMs = observeCommitBound(connection, binding.evidence());
+        acknowledgement = new OriginalCommitAcknowledgement(binding, committedBeforeMs);
       } catch (SQLException failure) {
         throw new TransactionSystemException(
             "Original Account physical COMMIT unavailable", failure);
       }
     }
+
+    private static long observeCommitBound(
+        Connection connection, AccountGameplayAdmissionLeaseEvidence evidence) {
+      // This statement follows the actual successful COMMIT, before cleanup or any reconnect.
+      // A failure here cannot undo that original COMMIT, and must never mint a capability.
+      try (Statement statement = connection.createStatement();
+          ResultSet row =
+              statement.executeQuery(
+                  "SELECT ceil(extract(epoch FROM clock_timestamp()) * 1000)::bigint")) {
+        if (!row.next()) throw unavailableClock();
+        BigDecimal value = row.getBigDecimal(1);
+        if (value == null) throw unavailableClock();
+        long observed = value.longValueExact();
+        long expiry = Long.parseLong((String) evidence.carrier().get("expiresAt"));
+        if (observed <= 0 || observed >= expiry || row.next()) throw unavailableClock();
+        return observed;
+      } catch (SQLException failure) {
+        throw new TransactionSystemException(
+            "Original Account post-COMMIT clock unavailable", failure);
+      } catch (ArithmeticException failure) {
+        throw unavailableClock();
+      }
+    }
+  }
+
+  private static IllegalStateException unavailableClock() {
+    return new IllegalStateException("Original Account post-COMMIT clock bound unavailable");
   }
 
   private static IllegalStateException denied() {
