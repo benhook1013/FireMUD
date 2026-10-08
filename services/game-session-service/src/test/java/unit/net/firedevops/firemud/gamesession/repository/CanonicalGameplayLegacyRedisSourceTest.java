@@ -8,6 +8,7 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoMoreInteractions;
 import static org.mockito.Mockito.when;
 
 import java.nio.charset.StandardCharsets;
@@ -35,7 +36,8 @@ class CanonicalGameplayLegacyRedisSourceTest {
 
   @Test
   void fullyEnumeratedEmptyPrefixIsOnlyAnEmptySourceObservation() {
-    StringRedisTemplate redis = redisWithScans(List.of(List.of(), List.of()));
+    RedisFixture fixture = redisFixtureWithScans(List.of(List.of(), List.of()));
+    StringRedisTemplate redis = fixture.redis();
     var source = new CanonicalGameplayLegacyRedisSource(redis, limits());
 
     var snapshot = source.captureEveryKnownFamily(cohort());
@@ -43,7 +45,7 @@ class CanonicalGameplayLegacyRedisSourceTest {
     assertThat(snapshot.entries()).isEmpty();
     assertThat(snapshot.enumeratedEveryKnownFamily()).isTrue();
     assertThat(snapshot.everyEntryIsReconciled()).isTrue();
-    verify(redis, times(2)).execute(any(RedisCallback.class));
+    verifySuccessfulReadOnlyCapture(fixture, 2);
   }
 
   @Test
@@ -242,6 +244,10 @@ class CanonicalGameplayLegacyRedisSourceTest {
   }
 
   private static StringRedisTemplate redisWithScans(List<List<String>> scans) {
+    return redisFixtureWithScans(scans).redis();
+  }
+
+  private static RedisFixture redisFixtureWithScans(List<List<String>> scans) {
     StringRedisTemplate redis = mock(StringRedisTemplate.class);
     RedisConnection connection = mock(RedisConnection.class);
     AtomicInteger scanIndex = new AtomicInteger();
@@ -260,8 +266,24 @@ class CanonicalGameplayLegacyRedisSourceTest {
     when(serverCommands.info("cluster")).thenReturn(clusterInformation);
     when(connection.serverCommands()).thenReturn(serverCommands);
     invokeThroughRedisCallback(redis, connection);
-    return redis;
+    return new RedisFixture(redis, connection, serverCommands);
   }
+
+  private static void verifySuccessfulReadOnlyCapture(RedisFixture fixture, int scanCount) {
+    verify(fixture.redis(), times(scanCount)).execute(any(RedisCallback.class));
+    verify(fixture.redis(), never()).delete(any(String.class));
+    verify(fixture.redis(), never()).opsForValue();
+    verify(fixture.redis(), never()).opsForHash();
+    verify(fixture.redis(), never()).opsForSet();
+    verifyNoMoreInteractions(fixture.redis());
+    verify(fixture.connection(), times(scanCount)).scan(any(ScanOptions.class));
+    verify(fixture.connection(), times(scanCount)).serverCommands();
+    verify(fixture.serverCommands(), times(scanCount)).info("cluster");
+    verifyNoMoreInteractions(fixture.connection(), fixture.serverCommands());
+  }
+
+  private record RedisFixture(
+      StringRedisTemplate redis, RedisConnection connection, RedisServerCommands serverCommands) {}
 
   @SuppressWarnings({"rawtypes", "unchecked"})
   private static void invokeThroughRedisCallback(

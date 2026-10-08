@@ -152,6 +152,30 @@ class AccountPublicJwksCacheTest {
   }
 
   @Test
+  void neverLoadedUnknownKidRetriesSourceAfterUnavailableResponseBackoff() {
+    AtomicInteger loads = new AtomicInteger();
+    MutableClock clock = new MutableClock(INITIAL);
+    AccountPublicJwksCache cache =
+        cache(
+            clock,
+            () -> {
+              loads.incrementAndGet();
+              throw new AccountPublicJwksCache.SourceUnavailableException();
+            });
+
+    assertThatThrownBy(() -> cache.keyFor("future"))
+        .isInstanceOf(AccountPublicJwksCache.SourceUnavailableException.class);
+    assertThatThrownBy(() -> cache.keyFor("future"))
+        .isInstanceOf(AccountPublicJwksCache.SourceUnavailableException.class);
+    assertThat(loads).hasValue(1);
+
+    clock.advance(Duration.ofSeconds(1));
+    assertThatThrownBy(() -> cache.keyFor("future"))
+        .isInstanceOf(AccountPublicJwksCache.SourceUnavailableException.class);
+    assertThat(loads).hasValue(2);
+  }
+
+  @Test
   void staleUnavailableDistinctUnknownKidsDoNotGrowRefreshHistoryPastItsBound() throws Exception {
     KeyPair known = rsa3072();
     AtomicInteger loads = new AtomicInteger();

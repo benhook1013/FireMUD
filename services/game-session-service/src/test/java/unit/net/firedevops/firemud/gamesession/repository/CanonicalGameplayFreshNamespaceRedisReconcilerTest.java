@@ -8,6 +8,7 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoMoreInteractions;
 import static org.mockito.Mockito.when;
 
 import java.math.BigInteger;
@@ -48,7 +49,8 @@ class CanonicalGameplayFreshNamespaceRedisReconcilerTest {
 
   @Test
   void fullyScannedEmptyPhysicalDoubleSucceedsOnlyWithStableFencedEmptyInventory() {
-    StringRedisTemplate redis = redisWithScans(emptyScans(8));
+    RedisFixture fixture = redisFixtureWithScans(emptyScans(8));
+    StringRedisTemplate redis = fixture.redis();
     TestCohort cohort = new TestCohort(0);
     CanonicalGameplayFreshNamespaceRedisReconciler reconciler = reconciler(redis);
 
@@ -61,8 +63,7 @@ class CanonicalGameplayFreshNamespaceRedisReconcilerTest {
     assertThat(readback.remainingLegacySourceKeyDigests()).isEmpty();
     assertThat(readback.unexpectedNamespaceKeyDigests()).isEmpty();
     assertThat(cohort.fenceChecks.get()).isPositive();
-    verify(redis, times(10)).execute(any(RedisCallback.class));
-    verifyNoRedisMutationOrValueRead(redis);
+    verifySuccessfulReadOnlyCapture(fixture, 8, 10);
   }
 
   @Test
@@ -114,8 +115,8 @@ class CanonicalGameplayFreshNamespaceRedisReconcilerTest {
   @Test
   void onlyCanonicalNonNilIssuerProjectionIsExcludedAndPreservedWithoutReadingValue() {
     String issuerProjection = "session:game:auth:issuer-generation:v1:" + UUID.randomUUID();
-    StringRedisTemplate redis =
-        redisWithScans(
+    RedisFixture fixture =
+        redisFixtureWithScans(
             scans(
                 List.of(),
                 List.of(),
@@ -125,6 +126,7 @@ class CanonicalGameplayFreshNamespaceRedisReconcilerTest {
                 List.of(),
                 List.of(issuerProjection, issuerProjection),
                 List.of(issuerProjection, issuerProjection)));
+    StringRedisTemplate redis = fixture.redis();
     CanonicalGameplayFreshNamespaceRedisReconciler reconciler = reconciler(redis);
     TestCohort cohort = cohort();
     CanonicalGameplayBindingInventorySnapshot canonical = emptyCanonicalSnapshot(3);
@@ -134,8 +136,7 @@ class CanonicalGameplayFreshNamespaceRedisReconcilerTest {
 
     assertThat(readback.sessionRecords()).isEmpty();
     assertThat(readback.characterIndexRecords()).isEmpty();
-    verify(redis, times(10)).execute(any(RedisCallback.class));
-    verifyNoRedisMutationOrValueRead(redis);
+    verifySuccessfulReadOnlyCapture(fixture, 8, 10);
   }
 
   @Test
@@ -426,6 +427,14 @@ class CanonicalGameplayFreshNamespaceRedisReconcilerTest {
   }
 
   private static StringRedisTemplate redisWithResults(List<ScanResult> scans) {
+    return redisFixtureWithResults(scans).redis();
+  }
+
+  private static RedisFixture redisFixtureWithScans(List<List<String>> scans) {
+    return redisFixtureWithResults(scans.stream().map(ScanResult::withKeys).toList());
+  }
+
+  private static RedisFixture redisFixtureWithResults(List<ScanResult> scans) {
     StringRedisTemplate redis = mock(StringRedisTemplate.class);
     RedisConnection connection = mock(RedisConnection.class);
     AtomicInteger scanIndex = new AtomicInteger();
@@ -441,8 +450,22 @@ class CanonicalGameplayFreshNamespaceRedisReconcilerTest {
     RedisServerCommands serverCommands = serverCommandsWithTopology("0");
     when(connection.serverCommands()).thenReturn(serverCommands);
     invokeThroughRedisCallback(redis, connection);
-    return redis;
+    return new RedisFixture(redis, connection, serverCommands);
   }
+
+  private static void verifySuccessfulReadOnlyCapture(
+      RedisFixture fixture, int scans, int callbacks) {
+    verify(fixture.redis(), times(callbacks)).execute(any(RedisCallback.class));
+    verifyNoRedisMutationOrValueRead(fixture.redis());
+    verifyNoMoreInteractions(fixture.redis());
+    verify(fixture.connection(), times(scans)).scan(any(ScanOptions.class));
+    verify(fixture.connection(), times(callbacks)).serverCommands();
+    verify(fixture.serverCommands(), times(callbacks)).info("cluster");
+    verifyNoMoreInteractions(fixture.connection(), fixture.serverCommands());
+  }
+
+  private record RedisFixture(
+      StringRedisTemplate redis, RedisConnection connection, RedisServerCommands serverCommands) {}
 
   private static RedisServerCommands serverCommandsWithTopology(String clusterEnabled) {
     RedisServerCommands serverCommands = mock(RedisServerCommands.class);
