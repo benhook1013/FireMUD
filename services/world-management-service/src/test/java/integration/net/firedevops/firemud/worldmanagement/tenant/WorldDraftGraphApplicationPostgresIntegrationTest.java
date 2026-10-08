@@ -2077,7 +2077,7 @@ class WorldDraftGraphApplicationPostgresIntegrationTest {
   }
 
   @Test
-  void terminalInitialPlayerLocationReadbackReturnsStoredAppliedAndConflictAfterTermination() {
+  void terminalInitialPlayerLocationReadbackReturnsStoredResultsWithoutCurrentPlacementAuthority() {
     PlacementFixture fixture = initialPlayerLocationFixture();
     var applied = fixture.service().place(fixture.request());
     var secondRequest =
@@ -2114,23 +2114,14 @@ class WorldDraftGraphApplicationPostgresIntegrationTest {
         initialLocationSnapshot(fixture.request().canonicalGameInstanceId());
     assertThat(fixture.repository().readTerminalOutcome(missingRequest)).isEmpty();
 
-    var privateKeys = fixture.lifecycle().materialized().association().worldPrepareFields();
-    lifecycleCommandService.terminateWorldInstance(
-        privateKeys.privateTenantKey(),
-        privateKeys.privateGameInstanceKey(),
-        fixture.activeEvidence().lifecycleEpoch(),
-        "initial-placement-terminal-readback",
-        "terminal readback proof");
-    assertThat(
-            Objects.requireNonNull(
-                    dsl.fetchOne(
-                        "SELECT status FROM world_instance WHERE id=?",
-                        fixture.lifecycle().materialized().association().worldInstanceId()))
-                .get("status", String.class))
-        .isEqualTo("TERMINATED");
-
-    var appliedRead = fixture.repository().readTerminalOutcome(fixture.request()).orElseThrow();
-    var conflictRead = fixture.repository().readTerminalOutcome(conflictRequest).orElseThrow();
+    // The legacy termination writer is correctly denied for this canonical tenant. Do not bypass
+    // its execution-manifest guard to manufacture a terminal lifecycle. Physical post-termination
+    // proof remains open until the canonical termination/cleanup owner path exists.
+    var historicalReader = new WorldCanonicalInitialPlayerLocationService(fixture.repository());
+    assertThatThrownBy(() -> historicalReader.place(fixture.request()))
+        .isInstanceOf(WorldCanonicalInitialPlayerLocationService.PlacementDeniedException.class);
+    var appliedRead = historicalReader.readTerminalOutcome(fixture.request()).orElseThrow();
+    var conflictRead = historicalReader.readTerminalOutcome(conflictRequest).orElseThrow();
     assertThat(appliedRead.result().outcome())
         .isEqualTo(WorldCanonicalInitialPlayerLocation.Outcome.APPLIED);
     assertThat(appliedRead.result().canonicalBytes()).containsExactly(applied.canonicalBytes());
