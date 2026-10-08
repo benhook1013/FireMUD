@@ -274,6 +274,37 @@ class AccountPublicJwksCacheTest {
   }
 
   @Test
+  void repeatedStaleKnownKeyLookupsBackOffInvalidJwksAndRetryAfterOneSecond() throws Exception {
+    KeyPair key = rsa3072();
+    AtomicInteger loads = new AtomicInteger();
+    AtomicReference<String> currentJwks =
+        new AtomicReference<>(jwks(jwk("known", (RSAPublicKey) key.getPublic())));
+    MutableClock clock = new MutableClock(INITIAL);
+    AccountPublicJwksCache cache =
+        cache(
+            clock,
+            () -> {
+              loads.incrementAndGet();
+              return snapshot(currentJwks.get());
+            });
+
+    assertThat(cache.keyFor("known")).isEqualTo(key.getPublic());
+    clock.advance(Duration.ofSeconds(11));
+    currentJwks.set("not-json");
+
+    assertThatThrownBy(() -> cache.keyFor("known"))
+        .isInstanceOf(AccountPublicJwksCache.InvalidJwksException.class);
+    assertThatThrownBy(() -> cache.keyFor("known"))
+        .isInstanceOf(AccountPublicJwksCache.InvalidJwksException.class);
+    assertThat(loads).hasValue(2);
+
+    currentJwks.set(jwks(jwk("known", (RSAPublicKey) key.getPublic())));
+    clock.advance(Duration.ofSeconds(1));
+    assertThat(cache.keyFor("known")).isEqualTo(key.getPublic());
+    assertThat(loads).hasValue(3);
+  }
+
+  @Test
   void changedSourceIdentityAndReusedKidMaterialAreRejected() throws Exception {
     KeyPair first = rsa3072();
     KeyPair replacement = rsa3072();

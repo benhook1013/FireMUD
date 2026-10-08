@@ -628,7 +628,8 @@ public final class CanonicalGameplayBindingInventoryRepository {
             + " admission_target_hold_binding_digest = ?, admission_target_audit_event_id = ?,"
             + " admission_target_owner_proof_digest = ?,"
             + " admission_target_owner_proof_outcome = ?,"
-            + " admission_target_positive_durable_abort = ?, admission_target_terminal_at = ?,"
+            + " admission_target_positive_durable_abort = ?,"
+            + " admission_target_terminal_at = ?::timestamptz,"
             + " admission_target_character_creation_policy = ?";
     return transaction.execute(
         "UPDATE "

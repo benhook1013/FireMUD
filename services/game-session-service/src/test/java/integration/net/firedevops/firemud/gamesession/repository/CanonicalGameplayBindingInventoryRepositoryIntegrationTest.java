@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.math.BigInteger;
 import java.nio.file.Path;
+import java.time.OffsetDateTime;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -215,6 +216,33 @@ class CanonicalGameplayBindingInventoryRepositoryIntegrationTest {
       assertThat(decision.leaseEvidence().hasSameIdentity(fixture.leaseEvidence())).isTrue();
       assertThat(decision.candidate()).isEqualTo(fixture.evidence().candidate().identity());
       assertThat(decision.expectedOldBindingGeneration()).isNull();
+    } finally {
+      dropSchema(testSchema.schema());
+    }
+  }
+
+  @Test
+  void persistsLeaseBoundAdmissionTerminalTimestampAsPostgresTimestamptz() {
+    TestSchema testSchema = newTestSchema("gs_binding_terminal_timestamp_");
+    try {
+      LeaseBoundFirstBinding fixture = prepareLeaseBoundFirstBinding(testSchema.dsl());
+
+      var decision =
+          fixture.repository().readAdmissionDecision(TRANSITION_ID, fixture.leaseEvidence());
+      var storedTarget =
+          testSchema
+              .dsl()
+              .fetchOne(
+                  "SELECT admission_target_terminal_at,"
+                      + " pg_typeof(admission_target_terminal_at) AS terminal_at_type"
+                      + " FROM game_session_canonical_binding_transition WHERE transition_id = ?",
+                  TRANSITION_ID);
+
+      assertThat(storedTarget).isNotNull();
+      assertThat(storedTarget.get("terminal_at_type", String.class))
+          .isEqualTo("timestamp with time zone");
+      assertThat(storedTarget.get("admission_target_terminal_at", OffsetDateTime.class).toInstant())
+          .isEqualTo(decision.targetEvidence().ownerProofTerminalAt());
     } finally {
       dropSchema(testSchema.schema());
     }
