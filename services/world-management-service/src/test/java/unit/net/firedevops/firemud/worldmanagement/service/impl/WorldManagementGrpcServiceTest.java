@@ -1,9 +1,11 @@
 package net.firedevops.firemud.worldmanagement.service.impl;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.grpc.Context;
 import io.grpc.stub.StreamObserver;
@@ -23,7 +25,6 @@ import net.firedevops.firemud.shared.v1.RoomInstanceRef;
 import net.firedevops.firemud.worldmanagement.dto.InitialAdmissionBindHoldDto;
 import net.firedevops.firemud.worldmanagement.dto.RoomSnapshotDto;
 import net.firedevops.firemud.worldmanagement.dto.RuntimeRoomDto;
-import net.firedevops.firemud.worldmanagement.dto.WorldDesignMutationResultDto;
 import net.firedevops.firemud.worldmanagement.dto.WorldInstanceLifecycleSnapshotDto;
 import net.firedevops.firemud.worldmanagement.service.InitialAdmissionBindHoldService;
 import net.firedevops.firemud.worldmanagement.service.PingService;
@@ -38,6 +39,8 @@ import net.firedevops.firemud.worldmanagement.v1.ActivatePreparedWorldInstanceRe
 import net.firedevops.firemud.worldmanagement.v1.ActivatePreparedWorldInstanceResponse;
 import net.firedevops.firemud.worldmanagement.v1.ApplyWorldDesignMutationRequest;
 import net.firedevops.firemud.worldmanagement.v1.ApplyWorldDesignMutationResponse;
+import net.firedevops.firemud.worldmanagement.v1.FailPreparedWorldInstanceRequest;
+import net.firedevops.firemud.worldmanagement.v1.FailPreparedWorldInstanceResponse;
 import net.firedevops.firemud.worldmanagement.v1.GetDraftDesignDigestRequest;
 import net.firedevops.firemud.worldmanagement.v1.GetDraftDesignDigestResponse;
 import net.firedevops.firemud.worldmanagement.v1.GetRoomSnapshotRequest;
@@ -47,12 +50,15 @@ import net.firedevops.firemud.worldmanagement.v1.PingResponse;
 import net.firedevops.firemud.worldmanagement.v1.PrepareWorldInstanceRequest;
 import net.firedevops.firemud.worldmanagement.v1.PrepareWorldInstanceResponse;
 import net.firedevops.firemud.worldmanagement.v1.RegionDesignMutation;
+import net.firedevops.firemud.worldmanagement.v1.TerminateWorldInstanceRequest;
+import net.firedevops.firemud.worldmanagement.v1.TerminateWorldInstanceResponse;
 import net.firedevops.firemud.worldmanagement.v1.ValidateWorldUpgradeMappingsRequest;
 import net.firedevops.firemud.worldmanagement.v1.ValidateWorldUpgradeMappingsResponse;
 import net.firedevops.firemud.worldmanagement.v1.WorldDesignAggregateType;
 import net.firedevops.firemud.worldmanagement.v1.WorldDesignMutationOperation;
 import net.firedevops.firemud.worldmanagement.v1.WorldDesignMutationResult;
 import net.firedevops.firemud.worldmanagement.v1.WorldDesignScopeType;
+import net.firedevops.firemud.worldmanagement.v1.WorldInstanceLifecycleStatus;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
@@ -79,12 +85,61 @@ class WorldManagementGrpcServiceTest {
   }
 
   private static GrpcPeerIdentity peer(String service) {
+    return peer(TEST_NAMESPACE, service);
+  }
+
+  private static GrpcPeerIdentity peer(String namespace, String service) {
     return new GrpcPeerIdentity(
-        "spiffe://firemud/ns/" + TEST_NAMESPACE + "/sa/" + service, TEST_NAMESPACE, service);
+        "spiffe://firemud/ns/" + namespace + "/sa/" + service, namespace, service);
   }
 
   private static void runWithPeer(GrpcPeerIdentity peer, Runnable action) {
     Context.current().withValue(GrpcPeerIdentity.CONTEXT_KEY, peer).run(action);
+  }
+
+  private static PrepareWorldInstanceResponse invokePrepareWorldInstance(
+      WorldManagementGrpcService service, PrepareWorldInstanceRequest request) {
+    AtomicReference<PrepareWorldInstanceResponse> ref = new AtomicReference<>();
+    service.prepareWorldInstance(request, responseObserver(ref));
+    return ref.get();
+  }
+
+  private static ActivatePreparedWorldInstanceResponse invokeActivatePreparedWorldInstance(
+      WorldManagementGrpcService service, ActivatePreparedWorldInstanceRequest request) {
+    AtomicReference<ActivatePreparedWorldInstanceResponse> ref = new AtomicReference<>();
+    service.activatePreparedWorldInstance(request, responseObserver(ref));
+    return ref.get();
+  }
+
+  private static FailPreparedWorldInstanceResponse invokeFailPreparedWorldInstance(
+      WorldManagementGrpcService service, FailPreparedWorldInstanceRequest request) {
+    AtomicReference<FailPreparedWorldInstanceResponse> ref = new AtomicReference<>();
+    service.failPreparedWorldInstance(request, responseObserver(ref));
+    return ref.get();
+  }
+
+  private static TerminateWorldInstanceResponse invokeTerminateWorldInstance(
+      WorldManagementGrpcService service, TerminateWorldInstanceRequest request) {
+    AtomicReference<TerminateWorldInstanceResponse> ref = new AtomicReference<>();
+    service.terminateWorldInstance(request, responseObserver(ref));
+    return ref.get();
+  }
+
+  private static <T> StreamObserver<T> responseObserver(AtomicReference<T> ref) {
+    return new StreamObserver<>() {
+      @Override
+      public void onNext(T value) {
+        ref.set(value);
+      }
+
+      @Override
+      public void onError(Throwable t) {
+        throw new AssertionError("Lifecycle RPC failed", t);
+      }
+
+      @Override
+      public void onCompleted() {}
+    };
   }
 
   private static GetDraftDesignDigestResponse invokeDigest(
@@ -587,112 +642,127 @@ class WorldManagementGrpcServiceTest {
   }
 
   @Test
-  void applyWorldDesignMutationReturnsTypedResult() {
-    PingService pingService = Mockito.mock(PingService.class);
-    RoomService roomService = Mockito.mock(RoomService.class);
-    WorldDraftDesignDigestService digestService = Mockito.mock(WorldDraftDesignDigestService.class);
+  void applyWorldDesignMutationFailsClosedForEveryCallerContext() {
     WorldDesignMutationService mutationService = Mockito.mock(WorldDesignMutationService.class);
-    MeterRegistry meterRegistry = new SimpleMeterRegistry();
-    Mockito.when(mutationService.applyMutation(Mockito.any()))
-        .thenReturn(new WorldDesignMutationResultDto("APPLIED", 1L, 7L, 44L, 1L, null));
+    WorldManagementGrpcService service = worldManagementService(mutationService);
+    ApplyWorldDesignMutationRequest request = worldDesignMutationRequest("1", "7", "44");
+
+    SessionContext.clear();
+    assertMutationUnavailable(invokeWorldDesignMutation(service, request));
+
     SessionContext.setContext(
         "test-account", List.of(), Map.of(), true, "game-session-service", "test-instance");
-    WorldManagementGrpcService service =
-        new WorldManagementGrpcService(
-            pingService,
-            roomService,
-            Mockito.mock(WorldInstanceActivationService.class),
-            digestService,
-            mutationService,
-            Mockito.mock(WorldUpgradeValidationService.class),
-            Mockito.mock(GameplaySessionAttestationService.class),
-            meterRegistry,
-            new ObjectMapper(),
-            (PublicationReadGuard) null);
+    assertMutationUnavailable(invokeWorldDesignMutation(service, request));
 
-    AtomicReference<ApplyWorldDesignMutationResponse> ref = new AtomicReference<>();
-    service.applyWorldDesignMutation(
-        ApplyWorldDesignMutationRequest.newBuilder()
-            .setTenantId("1")
-            .setVersionId("7")
-            .setCommitId("commit-1")
-            .setRevisionId("revision-1")
-            .setOperation(WorldDesignMutationOperation.WORLD_DESIGN_MUTATION_OPERATION_UPSERT)
-            .setAggregateType(WorldDesignAggregateType.WORLD_DESIGN_AGGREGATE_TYPE_REGION)
-            .setScopeType(WorldDesignScopeType.WORLD_DESIGN_SCOPE_TYPE_REGION_SUBTREE)
-            .setScopeId("44")
-            .setRegion(RegionDesignMutation.newBuilder().setName("North").build())
-            .build(),
-        new StreamObserver<>() {
-          @Override
-          public void onNext(ApplyWorldDesignMutationResponse value) {
-            ref.set(value);
-          }
+    for (String caller :
+        List.of(
+            "account-service",
+            "game-session-service",
+            "game-design-service",
+            "tcp-proxy-service")) {
+      SessionContext.setContext("test-account", List.of(), Map.of(), true, caller, "test-instance");
+      runWithPeer(
+          peer(caller),
+          () -> assertMutationUnavailable(invokeWorldDesignMutation(service, request)));
+    }
 
-          @Override
-          public void onError(Throwable t) {}
-
-          @Override
-          public void onCompleted() {}
-        });
-
-    assertEquals(
-        WorldDesignMutationResult.WORLD_DESIGN_MUTATION_RESULT_APPLIED, ref.get().getResult());
-    assertEquals("44", ref.get().getAggregateId());
-    assertEquals(1L, ref.get().getDraftRevisionEpoch());
+    SessionContext.clear();
+    Mockito.verifyNoInteractions(mutationService);
   }
 
   @Test
-  void applyWorldDesignMutationRejectsZeroVersionIdBeforeMutation() {
-    PingService pingService = Mockito.mock(PingService.class);
-    RoomService roomService = Mockito.mock(RoomService.class);
-    WorldDraftDesignDigestService digestService = Mockito.mock(WorldDraftDesignDigestService.class);
+  void applyWorldDesignMutationFailsClosedBeforeParsingTargetIds() {
     WorldDesignMutationService mutationService = Mockito.mock(WorldDesignMutationService.class);
-    MeterRegistry meterRegistry = new SimpleMeterRegistry();
-    SessionContext.setContext(
-        "test-account", List.of(), Map.of(), true, "game-session-service", "test-instance");
-    WorldManagementGrpcService service =
-        new WorldManagementGrpcService(
-            pingService,
-            roomService,
-            Mockito.mock(WorldInstanceActivationService.class),
-            digestService,
-            mutationService,
-            Mockito.mock(WorldUpgradeValidationService.class),
-            Mockito.mock(GameplaySessionAttestationService.class),
-            meterRegistry,
-            new ObjectMapper(),
-            (PublicationReadGuard) null);
+    WorldManagementGrpcService service = worldManagementService(mutationService);
+    SessionContext.clear();
 
-    AtomicReference<ApplyWorldDesignMutationResponse> ref = new AtomicReference<>();
+    String[][] targets = {
+      {"1", "7", "44"},
+      {
+        "123e4567-e89b-12d3-a456-426614174000",
+        "123e4567-e89b-12d3-a456-426614174001",
+        "123e4567-e89b-12d3-a456-426614174002"
+      },
+      {"tenant-x", "version-y", "scope-z"},
+      {"", "0", "not-a-number"}
+    };
+    for (String[] target : targets) {
+      assertMutationUnavailable(
+          invokeWorldDesignMutation(
+              service, worldDesignMutationRequest(target[0], target[1], target[2])));
+    }
+
+    SessionContext.clear();
+    Mockito.verifyNoInteractions(mutationService);
+  }
+
+  private static WorldManagementGrpcService worldManagementService(
+      WorldDesignMutationService mutationService) {
+    return new WorldManagementGrpcService(
+        Mockito.mock(PingService.class),
+        Mockito.mock(RoomService.class),
+        Mockito.mock(WorldInstanceActivationService.class),
+        Mockito.mock(WorldDraftDesignDigestService.class),
+        mutationService,
+        Mockito.mock(WorldUpgradeValidationService.class),
+        Mockito.mock(GameplaySessionAttestationService.class),
+        new SimpleMeterRegistry(),
+        new ObjectMapper(),
+        (PublicationReadGuard) null);
+  }
+
+  private static ApplyWorldDesignMutationRequest worldDesignMutationRequest(
+      String tenantId, String versionId, String scopeId) {
+    return ApplyWorldDesignMutationRequest.newBuilder()
+        .setTenantId(tenantId)
+        .setVersionId(versionId)
+        .setCommitId("commit-1")
+        .setRevisionId("revision-1")
+        .setOperation(WorldDesignMutationOperation.WORLD_DESIGN_MUTATION_OPERATION_UPSERT)
+        .setAggregateType(WorldDesignAggregateType.WORLD_DESIGN_AGGREGATE_TYPE_REGION)
+        .setScopeType(WorldDesignScopeType.WORLD_DESIGN_SCOPE_TYPE_REGION_SUBTREE)
+        .setScopeId(scopeId)
+        .setRegion(RegionDesignMutation.newBuilder().setName("North").build())
+        .build();
+  }
+
+  private static ApplyWorldDesignMutationResponse invokeWorldDesignMutation(
+      WorldManagementGrpcService service, ApplyWorldDesignMutationRequest request) {
+    AtomicReference<ApplyWorldDesignMutationResponse> response = new AtomicReference<>();
     service.applyWorldDesignMutation(
-        ApplyWorldDesignMutationRequest.newBuilder()
-            .setTenantId("1")
-            .setVersionId("0")
-            .setCommitId("commit-1")
-            .setRevisionId("revision-1")
-            .setOperation(WorldDesignMutationOperation.WORLD_DESIGN_MUTATION_OPERATION_UPSERT)
-            .setAggregateType(WorldDesignAggregateType.WORLD_DESIGN_AGGREGATE_TYPE_REGION)
-            .setScopeType(WorldDesignScopeType.WORLD_DESIGN_SCOPE_TYPE_REGION_SUBTREE)
-            .setScopeId("44")
-            .setRegion(RegionDesignMutation.newBuilder().setName("North").build())
-            .build(),
+        request,
         new StreamObserver<>() {
           @Override
           public void onNext(ApplyWorldDesignMutationResponse value) {
-            ref.set(value);
+            response.set(value);
           }
 
           @Override
-          public void onError(Throwable t) {}
+          public void onError(Throwable throwable) {
+            throw new AssertionError("World mutation RPC failed", throwable);
+          }
 
           @Override
           public void onCompleted() {}
         });
+    return response.get();
+  }
 
-    assertEquals("INVALID_ARGUMENT", ref.get().getError().getCode());
-    assertEquals("versionId must be positive", ref.get().getError().getMessage());
-    Mockito.verifyNoInteractions(mutationService);
+  private static void assertMutationUnavailable(ApplyWorldDesignMutationResponse response) {
+    assertNotNull(response);
+    assertTrue(response.hasError());
+    assertEquals("FAILED_PRECONDITION", response.getError().getCode());
+    assertEquals(
+        "Canonical World Draft writes are unavailable until current Account "
+            + "commit authorization is verified.",
+        response.getError().getMessage());
+    assertEquals(
+        WorldDesignMutationResult.WORLD_DESIGN_MUTATION_RESULT_UNSPECIFIED, response.getResult());
+    assertEquals("", response.getTenantId());
+    assertEquals("", response.getVersionId());
+    assertEquals("", response.getAggregateId());
+    assertEquals(0L, response.getDraftRevisionEpoch());
+    assertEquals(0L, response.getDraftScopeRevisionEpoch());
   }
 
   @Test
@@ -703,8 +773,7 @@ class WorldManagementGrpcServiceTest {
     WorldInstanceActivationService activationService =
         Mockito.mock(WorldInstanceActivationService.class);
     MeterRegistry meterRegistry = new SimpleMeterRegistry();
-    SessionContext.setContext(
-        "test-account", List.of(), Map.of(), true, "game-session-service", "test-instance");
+    SessionContext.clear();
     Mockito.when(
             activationService.prepareWorldInstance(
                 Mockito.argThat(
@@ -734,35 +803,27 @@ class WorldManagementGrpcServiceTest {
             Mockito.mock(GameplaySessionAttestationService.class),
             meterRegistry,
             new ObjectMapper(),
-            (PublicationReadGuard) null);
+            publicationReadGuard());
 
     AtomicReference<PrepareWorldInstanceResponse> ref = new AtomicReference<>();
-    service.prepareWorldInstance(
-        PrepareWorldInstanceRequest.newBuilder()
-            .setTenantId("1")
-            .setGameInstanceId("55")
-            .setGameTemplateId("7")
-            .setControlPlaneRequestId("cp-1")
-            .setLaunchDescriptorId("ld-1")
-            .setVersionId("11")
-            .setRuntimeFlagsJson("{}")
-            .setGenerationConfigRevision("genrev-11")
-            .setReleaseBundleId("77")
-            .setPublishedReleaseBundleRef("prb:1:11:77")
-            .setVersionStateEpoch(4L)
-            .build(),
-        new StreamObserver<>() {
-          @Override
-          public void onNext(PrepareWorldInstanceResponse value) {
-            ref.set(value);
-          }
-
-          @Override
-          public void onError(Throwable t) {}
-
-          @Override
-          public void onCompleted() {}
-        });
+    runWithPeer(
+        peer("game-session-service"),
+        () ->
+            service.prepareWorldInstance(
+                PrepareWorldInstanceRequest.newBuilder()
+                    .setTenantId("1")
+                    .setGameInstanceId("55")
+                    .setGameTemplateId("7")
+                    .setControlPlaneRequestId("cp-1")
+                    .setLaunchDescriptorId("ld-1")
+                    .setVersionId("11")
+                    .setRuntimeFlagsJson("{}")
+                    .setGenerationConfigRevision("genrev-11")
+                    .setReleaseBundleId("77")
+                    .setPublishedReleaseBundleRef("prb:1:11:77")
+                    .setVersionStateEpoch(4L)
+                    .build(),
+                responseObserver(ref)));
 
     assertEquals("55", ref.get().getWorldInstance().getGameInstanceId());
     assertEquals(1L, ref.get().getWorldInstance().getLifecycleEpoch());
@@ -775,8 +836,7 @@ class WorldManagementGrpcServiceTest {
     WorldInstanceActivationService activationService =
         Mockito.mock(WorldInstanceActivationService.class);
     MeterRegistry meterRegistry = new SimpleMeterRegistry();
-    SessionContext.setContext(
-        "test-account", List.of(), Map.of(), true, "game-session-service", "test-instance");
+    SessionContext.clear();
     WorldManagementGrpcService service =
         new WorldManagementGrpcService(
             pingService,
@@ -788,35 +848,27 @@ class WorldManagementGrpcServiceTest {
             Mockito.mock(GameplaySessionAttestationService.class),
             meterRegistry,
             new ObjectMapper(),
-            (PublicationReadGuard) null);
+            publicationReadGuard());
 
     AtomicReference<PrepareWorldInstanceResponse> ref = new AtomicReference<>();
-    service.prepareWorldInstance(
-        PrepareWorldInstanceRequest.newBuilder()
-            .setTenantId("0")
-            .setGameInstanceId("55")
-            .setGameTemplateId("7")
-            .setControlPlaneRequestId("cp-1")
-            .setLaunchDescriptorId("ld-1")
-            .setVersionId("11")
-            .setRuntimeFlagsJson("{}")
-            .setGenerationConfigRevision("genrev-11")
-            .setReleaseBundleId("77")
-            .setPublishedReleaseBundleRef("prb:1:11:77")
-            .setVersionStateEpoch(4L)
-            .build(),
-        new StreamObserver<>() {
-          @Override
-          public void onNext(PrepareWorldInstanceResponse value) {
-            ref.set(value);
-          }
-
-          @Override
-          public void onError(Throwable t) {}
-
-          @Override
-          public void onCompleted() {}
-        });
+    runWithPeer(
+        peer("game-session-service"),
+        () ->
+            service.prepareWorldInstance(
+                PrepareWorldInstanceRequest.newBuilder()
+                    .setTenantId("0")
+                    .setGameInstanceId("55")
+                    .setGameTemplateId("7")
+                    .setControlPlaneRequestId("cp-1")
+                    .setLaunchDescriptorId("ld-1")
+                    .setVersionId("11")
+                    .setRuntimeFlagsJson("{}")
+                    .setGenerationConfigRevision("genrev-11")
+                    .setReleaseBundleId("77")
+                    .setPublishedReleaseBundleRef("prb:1:11:77")
+                    .setVersionStateEpoch(4L)
+                    .build(),
+                responseObserver(ref)));
 
     assertEquals("INVALID_ARGUMENT", ref.get().getError().getCode());
     assertEquals("tenantId must be positive", ref.get().getError().getMessage());
@@ -830,8 +882,7 @@ class WorldManagementGrpcServiceTest {
     WorldInstanceActivationService activationService =
         Mockito.mock(WorldInstanceActivationService.class);
     MeterRegistry meterRegistry = new SimpleMeterRegistry();
-    SessionContext.setContext(
-        "test-account", List.of(), Map.of(), true, "game-session-service", "test-instance");
+    SessionContext.clear();
     WorldManagementGrpcService service =
         new WorldManagementGrpcService(
             pingService,
@@ -843,31 +894,159 @@ class WorldManagementGrpcServiceTest {
             Mockito.mock(GameplaySessionAttestationService.class),
             meterRegistry,
             new ObjectMapper(),
-            (PublicationReadGuard) null);
+            publicationReadGuard());
 
     AtomicReference<ActivatePreparedWorldInstanceResponse> ref = new AtomicReference<>();
-    service.activatePreparedWorldInstance(
-        ActivatePreparedWorldInstanceRequest.newBuilder()
-            .setTenantId("1")
-            .setGameInstanceId("abc")
-            .setExpectedLifecycleEpoch(3L)
-            .build(),
-        new StreamObserver<>() {
-          @Override
-          public void onNext(ActivatePreparedWorldInstanceResponse value) {
-            ref.set(value);
-          }
-
-          @Override
-          public void onError(Throwable t) {}
-
-          @Override
-          public void onCompleted() {}
-        });
+    runWithPeer(
+        peer("game-session-service"),
+        () ->
+            service.activatePreparedWorldInstance(
+                ActivatePreparedWorldInstanceRequest.newBuilder()
+                    .setTenantId("1")
+                    .setGameInstanceId("abc")
+                    .setExpectedLifecycleEpoch(3L)
+                    .build(),
+                responseObserver(ref)));
 
     assertEquals("INVALID_ARGUMENT", ref.get().getError().getCode());
     assertEquals("gameInstanceId must be numeric", ref.get().getError().getMessage());
     Mockito.verifyNoInteractions(activationService);
+  }
+
+  @Test
+  void lifecycleMutationsRequireSameNamespaceGameSessionPeerBeforeParsingOrOwnerCalls() {
+    SessionContext.clear();
+    WorldInstanceActivationService activationService =
+        Mockito.mock(WorldInstanceActivationService.class);
+    WorldManagementGrpcService configuredService =
+        lifecycleService(activationService, publicationReadGuard());
+
+    assertLifecycleEndpointsDenied(configuredService, null);
+    assertLifecycleEndpointsDenied(configuredService, peer("account-service"));
+    assertLifecycleEndpointsDenied(configuredService, peer("other-test", "game-session-service"));
+
+    SessionContext.setContext(
+        "test-account", List.of(), Map.of(), true, "game-session-service", "test-instance");
+    assertLifecycleEndpointsDenied(configuredService, peer("game-session-service"));
+    SessionContext.clear();
+
+    WorldManagementGrpcService missingNamespaceService = lifecycleService(activationService, null);
+    assertLifecycleEndpointsDenied(missingNamespaceService, peer("game-session-service"));
+
+    Mockito.verifyNoInteractions(activationService);
+    SessionContext.clear();
+  }
+
+  @Test
+  void authorizedGameSessionPeerReachesAllLifecycleOwners() {
+    SessionContext.clear();
+    WorldInstanceActivationService activationService =
+        Mockito.mock(WorldInstanceActivationService.class);
+    WorldInstanceLifecycleSnapshotDto snapshot =
+        new WorldInstanceLifecycleSnapshotDto(
+            1L, 55L, 7L, "cp-1", "ld-1", 11L, 77L, "genrev-11", "prb:1:11:77", 4L, 2L, "ACTIVE");
+    Mockito.when(activationService.activatePreparedWorldInstance(1L, 55L, 2L)).thenReturn(snapshot);
+    Mockito.when(activationService.failPreparedWorldInstance(1L, 55L, 2L, "reason"))
+        .thenReturn(snapshot);
+    Mockito.when(activationService.terminateWorldInstance(1L, 55L, 2L, "termination-1", "reason"))
+        .thenReturn(snapshot);
+    WorldManagementGrpcService service =
+        lifecycleService(activationService, publicationReadGuard());
+
+    AtomicReference<ActivatePreparedWorldInstanceResponse> activateResponse =
+        new AtomicReference<>();
+    AtomicReference<FailPreparedWorldInstanceResponse> failResponse = new AtomicReference<>();
+    AtomicReference<TerminateWorldInstanceResponse> terminateResponse = new AtomicReference<>();
+    runWithPeer(
+        peer("game-session-service"),
+        () -> {
+          service.activatePreparedWorldInstance(
+              ActivatePreparedWorldInstanceRequest.newBuilder()
+                  .setTenantId("1")
+                  .setGameInstanceId("55")
+                  .setExpectedLifecycleEpoch(2L)
+                  .build(),
+              responseObserver(activateResponse));
+          service.failPreparedWorldInstance(
+              FailPreparedWorldInstanceRequest.newBuilder()
+                  .setTenantId("1")
+                  .setGameInstanceId("55")
+                  .setExpectedLifecycleEpoch(2L)
+                  .setReason("reason")
+                  .build(),
+              responseObserver(failResponse));
+          service.terminateWorldInstance(
+              TerminateWorldInstanceRequest.newBuilder()
+                  .setTenantId("1")
+                  .setGameInstanceId("55")
+                  .setExpectedLifecycleEpoch(2L)
+                  .setTerminationRequestId("termination-1")
+                  .setReason("reason")
+                  .build(),
+              responseObserver(terminateResponse));
+        });
+
+    assertEquals(
+        WorldInstanceLifecycleStatus.WORLD_INSTANCE_LIFECYCLE_STATUS_ACTIVE,
+        activateResponse.get().getWorldInstance().getStatus());
+    assertEquals(
+        WorldInstanceLifecycleStatus.WORLD_INSTANCE_LIFECYCLE_STATUS_ACTIVE,
+        failResponse.get().getWorldInstance().getStatus());
+    assertEquals(
+        WorldInstanceLifecycleStatus.WORLD_INSTANCE_LIFECYCLE_STATUS_ACTIVE,
+        terminateResponse.get().getWorldInstance().getStatus());
+    Mockito.verify(activationService).activatePreparedWorldInstance(1L, 55L, 2L);
+    Mockito.verify(activationService).failPreparedWorldInstance(1L, 55L, 2L, "reason");
+    Mockito.verify(activationService)
+        .terminateWorldInstance(1L, 55L, 2L, "termination-1", "reason");
+    SessionContext.clear();
+  }
+
+  private static WorldManagementGrpcService lifecycleService(
+      WorldInstanceActivationService activationService, PublicationReadGuard readGuard) {
+    return new WorldManagementGrpcService(
+        Mockito.mock(PingService.class),
+        Mockito.mock(RoomService.class),
+        activationService,
+        Mockito.mock(WorldDraftDesignDigestService.class),
+        Mockito.mock(WorldDesignMutationService.class),
+        Mockito.mock(WorldUpgradeValidationService.class),
+        Mockito.mock(GameplaySessionAttestationService.class),
+        new SimpleMeterRegistry(),
+        new ObjectMapper(),
+        readGuard);
+  }
+
+  private static void assertLifecycleEndpointsDenied(
+      WorldManagementGrpcService service, GrpcPeerIdentity caller) {
+    Runnable assertDenied =
+        () -> {
+          var prepare =
+              invokePrepareWorldInstance(service, PrepareWorldInstanceRequest.getDefaultInstance());
+          var activate =
+              invokeActivatePreparedWorldInstance(
+                  service, ActivatePreparedWorldInstanceRequest.getDefaultInstance());
+          var fail =
+              invokeFailPreparedWorldInstance(
+                  service, FailPreparedWorldInstanceRequest.getDefaultInstance());
+          var terminate =
+              invokeTerminateWorldInstance(
+                  service, TerminateWorldInstanceRequest.getDefaultInstance());
+
+          assertEquals("PERMISSION_DENIED", prepare.getError().getCode());
+          assertFalse(prepare.hasWorldInstance());
+          assertEquals("PERMISSION_DENIED", activate.getError().getCode());
+          assertFalse(activate.hasWorldInstance());
+          assertEquals("PERMISSION_DENIED", fail.getError().getCode());
+          assertFalse(fail.hasWorldInstance());
+          assertEquals("PERMISSION_DENIED", terminate.getError().getCode());
+          assertFalse(terminate.hasWorldInstance());
+        };
+    if (caller == null) {
+      assertDenied.run();
+    } else {
+      runWithPeer(caller, assertDenied);
+    }
   }
 
   @Test

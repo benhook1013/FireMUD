@@ -48,9 +48,13 @@ import net.firedevops.firemud.worldmanagement.tenant.WorldCanonicalInitialAdmiss
 import net.firedevops.firemud.worldmanagement.tenant.WorldCanonicalInstanceLifecycleReadGrpcService;
 import net.firedevops.firemud.worldmanagement.tenant.WorldCanonicalInstanceLifecycleReadRepository;
 import net.firedevops.firemud.worldmanagement.v1.AcquireCanonicalInitialAdmissionHoldRequest;
+import net.firedevops.firemud.worldmanagement.v1.ActivatePreparedWorldInstanceRequest;
+import net.firedevops.firemud.worldmanagement.v1.FailPreparedWorldInstanceRequest;
 import net.firedevops.firemud.worldmanagement.v1.FinalizeCanonicalInitialAdmissionHoldRequest;
+import net.firedevops.firemud.worldmanagement.v1.PrepareWorldInstanceRequest;
 import net.firedevops.firemud.worldmanagement.v1.ReadCanonicalInitialAdmissionHoldIdentityRequest;
 import net.firedevops.firemud.worldmanagement.v1.ReadWorldCanonicalInstanceLifecycleRequest;
+import net.firedevops.firemud.worldmanagement.v1.TerminateWorldInstanceRequest;
 import net.firedevops.firemud.worldmanagement.v1.WorldCanonicalInitialAdmissionHoldServiceGrpc;
 import net.firedevops.firemud.worldmanagement.v1.WorldCanonicalInitialAdmissionHoldTerminalServiceGrpc;
 import net.firedevops.firemud.worldmanagement.v1.WorldCanonicalInstanceLifecycleReadServiceGrpc;
@@ -79,7 +83,7 @@ import org.springframework.core.env.StandardEnvironment;
 import org.springframework.core.io.FileSystemResource;
 import tools.jackson.databind.ObjectMapper;
 
-/** Physical socket proof for the exact-method-protected canonical first-admission handlers. */
+/** Physical socket proof for exact-method-protected lifecycle and first-admission handlers. */
 class WorldCanonicalInitialAdmissionMtlsTest {
   private static final String NAMESPACE = "test";
   private static final String JWT_SECRET = "test-secret-key-test-secret-key-32-bytes";
@@ -100,7 +104,15 @@ class WorldCanonicalInitialAdmissionMtlsTest {
           .getFullMethodName();
   // Fixture-only opt-in lets the physical receiver reach the mock-backed workload-identity gates.
   private static final Set<String> PHYSICAL_RECEIVER_PUBLIC_METHODS =
-      Set.of(ACQUIRE_METHOD, IDENTITY_READ_METHOD, LIFECYCLE_READ_METHOD, TERMINAL_METHOD);
+      Set.of(
+          ACQUIRE_METHOD,
+          IDENTITY_READ_METHOD,
+          LIFECYCLE_READ_METHOD,
+          TERMINAL_METHOD,
+          WorldManagementServiceGrpc.getPrepareWorldInstanceMethod().getFullMethodName(),
+          WorldManagementServiceGrpc.getActivatePreparedWorldInstanceMethod().getFullMethodName(),
+          WorldManagementServiceGrpc.getFailPreparedWorldInstanceMethod().getFullMethodName(),
+          WorldManagementServiceGrpc.getTerminateWorldInstanceMethod().getFullMethodName());
   private static TestPki pki;
 
   private final WorldCanonicalInitialAdmissionHoldRepository holdRepository =
@@ -216,7 +228,7 @@ class WorldCanonicalInitialAdmissionMtlsTest {
   }
 
   @Test
-  void exactSameNamespaceGameSessionCertificateReachesAllFourHandlersWithoutBearer()
+  void exactSameNamespaceGameSessionCertificateReachesProtectedHandlersWithoutBearer()
       throws Exception {
     ManagedChannel channel = channel(pki.gameSessionClient());
     try {
@@ -240,6 +252,31 @@ class WorldCanonicalInitialAdmissionMtlsTest {
               terminalStub(channel)
                   .finalizeCanonicalInitialAdmissionHold(
                       FinalizeCanonicalInitialAdmissionHoldRequest.getDefaultInstance()));
+      assertWorldLifecycleError(
+          worldManagementStub(channel)
+              .prepareWorldInstance(PrepareWorldInstanceRequest.getDefaultInstance())
+              .getError()
+              .getCode(),
+          "INVALID_ARGUMENT");
+      assertWorldLifecycleError(
+          worldManagementStub(channel)
+              .activatePreparedWorldInstance(
+                  ActivatePreparedWorldInstanceRequest.getDefaultInstance())
+              .getError()
+              .getCode(),
+          "INVALID_ARGUMENT");
+      assertWorldLifecycleError(
+          worldManagementStub(channel)
+              .failPreparedWorldInstance(FailPreparedWorldInstanceRequest.getDefaultInstance())
+              .getError()
+              .getCode(),
+          "INVALID_ARGUMENT");
+      assertWorldLifecycleError(
+          worldManagementStub(channel)
+              .terminateWorldInstance(TerminateWorldInstanceRequest.getDefaultInstance())
+              .getError()
+              .getCode(),
+          "INVALID_ARGUMENT");
     } finally {
       stopChannel(channel);
     }
@@ -324,6 +361,7 @@ class WorldCanonicalInitialAdmissionMtlsTest {
               terminalStub(channel)
                   .finalizeCanonicalInitialAdmissionHold(
                       FinalizeCanonicalInitialAdmissionHoldRequest.getDefaultInstance()));
+      assertWorldLifecyclePeerDenied(channel);
     } finally {
       stopChannel(channel);
     }
@@ -348,6 +386,44 @@ class WorldCanonicalInitialAdmissionMtlsTest {
       terminalStub(ManagedChannel channel) {
     return WorldCanonicalInitialAdmissionHoldTerminalServiceGrpc.newBlockingStub(channel)
         .withDeadlineAfter(3, TimeUnit.SECONDS);
+  }
+
+  private WorldManagementServiceGrpc.WorldManagementServiceBlockingStub worldManagementStub(
+      ManagedChannel channel) {
+    return WorldManagementServiceGrpc.newBlockingStub(channel)
+        .withDeadlineAfter(3, TimeUnit.SECONDS);
+  }
+
+  private void assertWorldLifecyclePeerDenied(ManagedChannel channel) {
+    assertWorldLifecycleError(
+        worldManagementStub(channel)
+            .prepareWorldInstance(PrepareWorldInstanceRequest.getDefaultInstance())
+            .getError()
+            .getCode(),
+        "PERMISSION_DENIED");
+    assertWorldLifecycleError(
+        worldManagementStub(channel)
+            .activatePreparedWorldInstance(
+                ActivatePreparedWorldInstanceRequest.getDefaultInstance())
+            .getError()
+            .getCode(),
+        "PERMISSION_DENIED");
+    assertWorldLifecycleError(
+        worldManagementStub(channel)
+            .failPreparedWorldInstance(FailPreparedWorldInstanceRequest.getDefaultInstance())
+            .getError()
+            .getCode(),
+        "PERMISSION_DENIED");
+    assertWorldLifecycleError(
+        worldManagementStub(channel)
+            .terminateWorldInstance(TerminateWorldInstanceRequest.getDefaultInstance())
+            .getError()
+            .getCode(),
+        "PERMISSION_DENIED");
+  }
+
+  private static void assertWorldLifecycleError(String actual, String expected) {
+    assertThat(actual).isEqualTo(expected);
   }
 
   private ManagedChannel channel(TestCertificate clientCertificate) throws Exception {

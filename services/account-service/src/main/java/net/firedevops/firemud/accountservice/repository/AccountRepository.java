@@ -16,7 +16,9 @@ import net.firedevops.firemud.common.EmailCanonicalization;
 import net.firedevops.firemud.common.account.authority.AccountAuthoritySourceEventV1Codec.AccountState;
 import org.jooq.DSLContext;
 import org.springframework.stereotype.Repository;
+import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 @Repository
 public class AccountRepository {
@@ -67,6 +69,20 @@ public class AccountRepository {
     return Optional.ofNullable(
         dsl.selectFrom(ACCOUNTS)
             .where(ACCOUNTS.ACCOUNT_UUID.eq(accountUuid))
+            .fetchOne(this::toEntity));
+  }
+
+  /** Locks one exact Account UUID before an owner-local authority mutation. */
+  @Transactional(propagation = Propagation.MANDATORY)
+  public Optional<Account> findByAccountUuidForUpdate(UUID accountUuid) {
+    if (accountUuid == null || accountUuid.equals(new UUID(0L, 0L))) {
+      throw new IllegalArgumentException("A non-nil Account UUID is required");
+    }
+    requireWritableOwnerTransaction();
+    return Optional.ofNullable(
+        dsl.selectFrom(ACCOUNTS)
+            .where(ACCOUNTS.ACCOUNT_UUID.eq(accountUuid))
+            .forUpdate()
             .fetchOne(this::toEntity));
   }
 
@@ -227,6 +243,14 @@ public class AccountRepository {
 
   private String normalizedLoginAuthModes(Account entity) {
     return AccountLoginAuthModes.normalize(entity.getLoginAuthModes());
+  }
+
+  private static void requireWritableOwnerTransaction() {
+    if (!TransactionSynchronizationManager.isActualTransactionActive()
+        || TransactionSynchronizationManager.isCurrentTransactionReadOnly()) {
+      throw new IllegalStateException(
+          "Account UUID lock requires an active writable owner transaction");
+    }
   }
 
   private static AccountAuthorityState authorityState(AccountsRecord record) {

@@ -59,7 +59,7 @@ class AccountGameplayAdmissionCommitConfirmationOwnerTest {
   }
 
   @Test
-  void dependencyUnavailableDescriptionAndTrailersAreReplacedWithBoundedOwnerFailure() {
+  void dependencyFailureRetainsLocalCauseWithBoundedOwnerStatusAndNoTrailers() {
     var evidence = AccountGameplayAdmissionAbortOwnerTest.fixture();
     UUID decision = UUID.randomUUID();
     Metadata trailers = new Metadata();
@@ -73,12 +73,13 @@ class AccountGameplayAdmissionCommitConfirmationOwnerTest {
     when(executor.confirm(evidence, decision)).thenThrow(dependencyFailure);
 
     assertUnavailableIsRedacted(
-        () -> peer().call(() -> owner.confirm(request(evidence, decision))));
+        () -> peer().call(() -> owner.confirm(request(evidence, decision))), dependencyFailure);
 
     TransactionSynchronizationManager.clear();
     org.mockito.Mockito.reset(executor);
     when(executor.read(evidence, decision)).thenThrow(dependencyFailure);
-    assertUnavailableIsRedacted(() -> peer().call(() -> owner.read(request(evidence, decision))));
+    assertUnavailableIsRedacted(
+        () -> peer().call(() -> owner.read(request(evidence, decision))), dependencyFailure);
   }
 
   @Test
@@ -222,7 +223,7 @@ class AccountGameplayAdmissionCommitConfirmationOwnerTest {
   }
 
   private static void assertUnavailableIsRedacted(
-      org.assertj.core.api.ThrowableAssert.ThrowingCallable action) {
+      org.assertj.core.api.ThrowableAssert.ThrowingCallable action, Throwable expectedCause) {
     assertThatThrownBy(action)
         .isInstanceOf(StatusRuntimeException.class)
         .satisfies(
@@ -233,7 +234,7 @@ class AccountGameplayAdmissionCommitConfirmationOwnerTest {
               assertThat(Status.fromThrowable(failure).getDescription())
                   .isEqualTo("Durable Account admission commit confirmation unavailable");
               assertThat(statusFailure.getTrailers()).isNull();
-              assertThat(statusFailure.getCause()).isNull();
+              assertThat(statusFailure.getCause()).isSameAs(expectedCause);
             });
   }
 }

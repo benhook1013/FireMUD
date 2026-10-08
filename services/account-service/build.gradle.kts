@@ -14,6 +14,7 @@ firemudJooq {
 
 dependencies {
     testCompileOnly(libs.spotbugs.annotations)
+    add("integrationTestCompileOnly", libs.spotbugs.annotations)
     implementation(project(":common-redis-contracts"))
     implementation("com.fasterxml.jackson.core:jackson-databind")
     implementation(libs.spring.boot.starter.mail)

@@ -43,7 +43,7 @@ public final class AccountGameplayAdmissionCommitConfirmationOwner {
     try {
       return Objects.requireNonNull(executor.confirm(identity.evidence(), identity.decisionId()));
     } catch (RuntimeException failure) {
-      throw unavailable();
+      throw unavailable(failure);
     }
   }
 
@@ -55,7 +55,7 @@ public final class AccountGameplayAdmissionCommitConfirmationOwner {
     try {
       return Objects.requireNonNull(executor.read(identity.evidence(), identity.decisionId()));
     } catch (RuntimeException failure) {
-      throw unavailable();
+      throw unavailable(failure);
     }
   }
 
@@ -114,9 +114,10 @@ public final class AccountGameplayAdmissionCommitConfirmationOwner {
         .asRuntimeException();
   }
 
-  private static io.grpc.StatusRuntimeException unavailable() {
+  private static io.grpc.StatusRuntimeException unavailable(RuntimeException failure) {
     return Status.UNAVAILABLE
         .withDescription("Durable Account admission commit confirmation unavailable")
+        .withCause(failure)
         .asRuntimeException();
   }
 
