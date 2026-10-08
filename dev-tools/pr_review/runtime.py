@@ -591,8 +591,10 @@ class LiveEvidence:
         child_head = expected_anchor["child_head"]
         parent_identity = expected_anchor["parent_identity"]
         if (
-            type(pull_number) is not int or pull_number != pr
-            or type(current.number) is not int or current.number != pr
+            type(pull_number) is not int
+            or pull_number != pr
+            or type(current.number) is not int
+            or current.number != pr
             or any(
                 not isinstance(value, str) or re.fullmatch(r"[0-9a-fA-F]{40}", value) is None
                 for value in (payload_head, payload_base_head, current.head_sha, current.base_sha)
@@ -615,17 +617,17 @@ class LiveEvidence:
             current.head_sha.casefold() != child_head.casefold()
             or current.base_sha.casefold() != selected_pr_base_oid.casefold()
             or current.base_ref_name != selected_base_ref
-            or (enforce_parent_identity_ref and not parent_identity.isdecimal()
-                and current.base_ref_name != parent_identity)
+            or (
+                enforce_parent_identity_ref
+                and not parent_identity.isdecimal()
+                and current.base_ref_name != parent_identity
+            )
         )
         try:
             actual_parent_head = self.live.branch_head(current.base_ref_name)
         except (OSError, RuntimeError, ValueError) as error:
             raise ControllerError("current pull-request base ref tip is unavailable for review stop") from error
-        if (
-            not isinstance(actual_parent_head, str)
-            or re.fullmatch(r"[0-9a-fA-F]{40}", actual_parent_head) is None
-        ):
+        if not isinstance(actual_parent_head, str) or re.fullmatch(r"[0-9a-fA-F]{40}", actual_parent_head) is None:
             raise ControllerError("current pull-request base ref tip is invalid for review stop")
         request_preparation_only = request_preparation_only or (
             actual_parent_head.casefold() != effective_parent_head.casefold()
@@ -649,9 +651,7 @@ class LiveEvidence:
             now=audit_now,
         )
         payload = self._payload(pr)
-        channel_history = {
-            channel: list(self.history(pr, channel, now=audit_now)) for channel in ("hosted", "cli")
-        }
+        channel_history = {channel: list(self.history(pr, channel, now=audit_now)) for channel in ("hosted", "cli")}
 
         ambiguous_terminal_responses: list[dict[str, Any]] = []
         terminal_rate_limits: list[dict[str, Any]] = []
@@ -767,11 +767,17 @@ class LiveEvidence:
         for channel, history in channel_history.items():
             for item in history:
                 source_status = item.get("source_resolution_status")
-                if (source_status is None or source_status == "resolved"
-                    or item.get("completed") is not True or item.get("attributable") is not True
-                    or item.get("provisional") is True or item.get("correction") is True
+                if (
+                    source_status is None
+                    or source_status == "resolved"
+                    or item.get("completed") is not True
+                    or item.get("attributable") is not True
+                    or item.get("provisional") is True
+                    or item.get("correction") is True
                     or item.get("non_counting") is True
-                    or type(item.get("accepted")) is not int or item["accepted"] <= 0):
+                    or type(item.get("accepted")) is not int
+                    or item["accepted"] <= 0
+                ):
                     continue
                 label = f"{channel} accepted-finding source proof: {item.get('checkpoint')}"
                 unresolved_findings.append(label)
@@ -797,7 +803,9 @@ class LiveEvidence:
             # A moved identity is audited against its actual public head/base;
             # it cannot attest the old selected stack anchor.
             "request_preparation_only": request_preparation_only,
-            "anchor": None if request_preparation_only else {
+            "anchor": None
+            if request_preparation_only
+            else {
                 name: expected_anchor[name]
                 for name in ("pr", "child_head", "parent_identity", "parent_head", "merge_base", "patch_id")
                 if name in expected_anchor
@@ -1202,9 +1210,7 @@ class LiveEvidence:
             and item.get("parent_moved") is not True
             and item.get("over_ceiling") is not True
         ]
-        unknown_review_evidence = [
-            value for value in unresolved_history if value not in finding_only_findings
-        ]
+        unknown_review_evidence = [value for value in unresolved_history if value not in finding_only_findings]
         return {
             "complete": True,
             "active_reservations": active_reservations,
@@ -2217,9 +2223,7 @@ class LiveEvidence:
                     }
                 )
         if channel == "hosted":
-            values.extend(
-                self._current_hosted_history(pr, head, payload, emitted_hosted_response_ids, now=now)
-            )
+            values.extend(self._current_hosted_history(pr, head, payload, emitted_hosted_response_ids, now=now))
         parsed_scope_changes = {
             (item.comment_id, item.created_at, item.description, item.updated_at) for item in scope_changes
         }
@@ -2357,8 +2361,10 @@ class HostedRunner:
                 current_record_path=record_path,
             )
         except Exception as exc:
-            if (isinstance(exc, github.HostedPreflightDeadlineExceeded)
-                    and github.active_hosted_preflight_budget() is not None):
+            if (
+                isinstance(exc, github.HostedPreflightDeadlineExceeded)
+                and github.active_hosted_preflight_budget() is not None
+            ):
                 raise
             # This history write is secondary to the terminal observation
             # already used for admission and must not block the next request.
@@ -2783,7 +2789,8 @@ class HostedRunner:
                     )
                 archived_comments = archived["comments"]
                 captured_triggers = [
-                    item for item in archived_comments
+                    item
+                    for item in archived_comments
                     if isinstance(item, dict) and github.immutable_database_id(item) == trigger_id
                 ]
                 if len(captured_triggers) != 1:
@@ -2806,7 +2813,10 @@ class HostedRunner:
                         continue
                     author = item.get("author")
                     login = author.get("login") if isinstance(author, Mapping) else None
-                    if github.is_coderabbit_login(login) or hosted.normalize_command(item.get("body") or "") != hosted.FULL_COMMAND:
+                    if (
+                        github.is_coderabbit_login(login)
+                        or hosted.normalize_command(item.get("body") or "") != hosted.FULL_COMMAND
+                    ):
                         continue
                     later_trigger_at = hosted.strict_provider_timestamp(item.get("createdAt"))
                     if later_trigger_at is None:
@@ -2816,7 +2826,8 @@ class HostedRunner:
                 next_trigger_at = min(later_trigger_times, default=None)
 
                 responses = [
-                    item for item in archived_comments
+                    item
+                    for item in archived_comments
                     if isinstance(item, dict) and github.immutable_database_id(item) == metadata["response_id"]
                 ]
                 if len(responses) != 1:
@@ -2854,9 +2865,7 @@ class HostedRunner:
                     ):
                         continue
                     rate_limit_responses.append(item)
-                if metadata["response_id"] not in {
-                    github.immutable_database_id(item) for item in rate_limit_responses
-                }:
+                if metadata["response_id"] not in {github.immutable_database_id(item) for item in rate_limit_responses}:
                     raise ControllerError(f"closed PR #{pr} rate-limit response is outside its captured trigger window")
                 reset, cooldown_basis = hosted.rate_limit_window_cooldown(rate_limit_responses, now=now)
                 if cooldown_basis in {"unknown", "none"}:
@@ -2968,22 +2977,80 @@ class HostedRunner:
             if reset is not None:
                 raise ControllerError(f"Hosted repository cooldown remains active on closed PR #{closed_pr}")
 
-        def fetch_comments(other_pr: int) -> dict[str, Any]:
+        def fetch_comment_batch(other_prs: Sequence[int]) -> dict[int, dict[str, Any]]:
             try:
-                comments = github.fetch_api_endpoint(f"repos/{self.repo}/issues/{other_pr}/comments?per_page=100")
-                return self._normalize_rest_issue_comments(other_pr, comments)
-            except (OSError, RuntimeError, ValueError, TypeError) as exc:
-                if isinstance(exc, github.HostedPreflightDeadlineExceeded):
-                    raise
-                raise ControllerError(f"issue-comment history for PR #{other_pr} cannot be verified") from exc
+                histories = github.fetch_issue_comments_batch(self.repo, other_prs)
+                if not isinstance(histories, Mapping) or set(histories) != set(other_prs):
+                    raise RuntimeError("GitHub issue-comment batch did not cover every requested PR")
+                normalized: dict[int, dict[str, Any]] = {}
+                for other_pr in other_prs:
+                    comments = histories[other_pr]
+                    if not isinstance(comments, list) or any(not isinstance(item, Mapping) for item in comments):
+                        raise TypeError(f"GitHub issue-comment history is malformed for PR #{other_pr}")
+                    normalized[other_pr] = {
+                        "data": {"repository": {"pullRequest": {"comments": {"nodes": list(comments)}}}}
+                    }
+                return normalized
+            except github.HostedPreflightDeadlineExceeded:
+                raise
+            except (OSError, RuntimeError, ValueError, TypeError, KeyError):
+                # If the GraphQL alias query is unavailable or malformed, retain
+                # complete REST pagination for every PR in this batch. Never
+                # accept the partial GraphQL result as proof of an empty history.
+                fallback: dict[int, dict[str, Any]] = {}
+                for other_pr in other_prs:
+                    budget.remaining_seconds()
+                    try:
+                        comments = github.fetch_api_endpoint(
+                            f"repos/{self.repo}/issues/{other_pr}/comments?per_page=100"
+                        )
+                        fallback[other_pr] = self._normalize_rest_issue_comments(other_pr, comments)
+                    except github.HostedPreflightDeadlineExceeded:
+                        raise
+                    except (OSError, RuntimeError, ValueError, TypeError) as exc:
+                        raise ControllerError(f"issue-comment history for PR #{other_pr} cannot be verified") from exc
+                return fallback
 
-        comments_by_pr = self._bounded_preflight_fetches(
-            budget,
-            "repository_issue_comments",
-            sorted(open_prs),
-            fetch_comments,
-            "issue-comment history",
+        comment_numbers = tuple(sorted(open_prs))
+        comment_batches = tuple(
+            comment_numbers[offset : offset + github.ISSUE_COMMENT_BATCH_SIZE]
+            for offset in range(0, len(comment_numbers), github.ISSUE_COMMENT_BATCH_SIZE)
         )
+        # The phase reports fully covered PR histories, independent of how many
+        # alias queries or continuation pages were required to cover them.
+        budget.set_phase("repository_issue_comments", total=len(comment_numbers))
+        comments_by_pr: dict[int, dict[str, Any]] = {}
+        if comment_batches:
+
+            def fetch_bound_comment_batch(other_prs: Sequence[int]) -> dict[int, dict[str, Any]]:
+                with github.bind_hosted_preflight_budget(budget):
+                    return fetch_comment_batch(other_prs)
+
+            with ThreadPoolExecutor(max_workers=min(4, len(comment_batches))) as pool:
+                futures = {pool.submit(fetch_bound_comment_batch, batch): batch for batch in comment_batches}
+                for future in as_completed(futures):
+                    batch = futures[future]
+                    try:
+                        batch_comments = future.result()
+                    except github.HostedPreflightDeadlineExceeded as error:
+                        budget.set_completed(len(comments_by_pr))
+                        raise ControllerError(
+                            f"{error}; completed={len(comments_by_pr)}/{len(comment_numbers)}"
+                        ) from error
+                    except Exception as error:
+                        budget.set_completed(len(comments_by_pr))
+                        detail = (
+                            str(error)
+                            if isinstance(error, ControllerError)
+                            else f"issue-comment history for PR #{batch[0]} cannot be verified"
+                        )
+                        raise ControllerError(
+                            f"{detail} (phase=repository_issue_comments, "
+                            f"elapsed={budget.elapsed_seconds():.1f}s, "
+                            f"completed={len(comments_by_pr)}/{len(comment_numbers)})"
+                        ) from error
+                    comments_by_pr.update(batch_comments)
+                    budget.set_completed(len(comments_by_pr))
 
         reservation_paths = sorted(
             (other_pr, paths[0])

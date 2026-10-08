@@ -203,6 +203,286 @@ class ReviewReadJsonFlagTests(unittest.TestCase):
         self.assertEqual(output.getvalue(), "ordered_prs=[3092, 3093]\nschema_version=1\n")
 
 
+class StackMutationCliTests(unittest.TestCase):
+    def test_add_and_move_options_parse_with_narrow_placement_controls(self):
+        add = _parser().parse_args(["stack", "add", "3092", "--before", "3088", "--json"])
+        append = _parser().parse_args(["stack", "add", "3092"])
+        move = _parser().parse_args(["stack", "move", "3092", "--after", "3088"])
+        first = _parser().parse_args(["stack", "move", "3092", "--first"])
+
+        self.assertEqual((add.pr, add.before, add.after, add.as_json), (3092, 3088, None, True))
+        self.assertEqual((append.pr, append.before, append.after), (3092, None, None))
+        self.assertEqual((move.pr, move.before, move.after, move.first, move.last), (3092, None, 3088, False, False))
+        self.assertTrue(first.first)
+
+    def test_add_and_move_dispatch_use_short_text_and_explicit_full_json(self):
+        added = {
+            "action": "add",
+            "pr": 3092,
+            "position": "before #3088",
+            "changed": True,
+            "ordered_prs": [3092, 3088],
+            "schema_version": 1,
+        }
+        moved = {**added, "action": "move", "position": "first", "changed": False}
+        controller = SimpleNamespace(
+            add_stack_pr=Mock(return_value=added),
+            move_stack_pr=Mock(return_value=moved),
+        )
+
+        output = io.StringIO()
+        with (
+            patch.object(cli_module, "_controller", return_value=(controller, None)),
+            contextlib.redirect_stdout(output),
+        ):
+            self.assertEqual(cli_module.main(["stack", "add", "3092", "--before", "3088"]), 0)
+        self.assertEqual(output.getvalue(), "Added PR #3092 before #3088 (stack now has 2 PRs).\n")
+        controller.add_stack_pr.assert_called_once_with(3092, before=3088, after=None)
+
+        output = io.StringIO()
+        with (
+            patch.object(cli_module, "_controller", return_value=(controller, None)),
+            contextlib.redirect_stdout(output),
+        ):
+            self.assertEqual(cli_module.main(["stack", "move", "3092", "--first", "--json"]), 0)
+        self.assertEqual(json.loads(output.getvalue()), moved)
+        controller.move_stack_pr.assert_called_once_with(3092, before=None, after=None, first=True, last=False)
+
+    def test_local_move_and_single_pr_add_avoid_full_default_controller(self):
+        move_args = _parser().parse_args(["stack", "move", "3092", "--first"])
+        with (
+            patch.object(cli_module, "ControllerStateStore", return_value=object()),
+            patch.object(cli_module, "default_controller", side_effect=AssertionError("full controller constructed")),
+            patch.object(cli_module.github, "infer_repo", side_effect=AssertionError("repository queried")),
+        ):
+            move_controller, fixture = cli_module._controller(move_args)
+        self.assertIsNone(fixture)
+        self.assertIsNone(move_controller.github)
+
+        add_args = _parser().parse_args(["stack", "add", "3092"])
+        live = object()
+        with (
+            patch.object(cli_module, "ControllerStateStore", return_value=object()),
+            patch.object(cli_module.github, "infer_repo", return_value="owner/repo") as infer_repo,
+            patch.object(cli_module, "LiveGitHub", return_value=live) as live_provider,
+            patch.object(cli_module, "default_controller", side_effect=AssertionError("full controller constructed")),
+        ):
+            add_controller, fixture = cli_module._controller(add_args)
+        self.assertIsNone(fixture)
+        self.assertIs(add_controller.github, live)
+        self.assertEqual(add_controller.repository, "owner/repo")
+        infer_repo.assert_called_once_with()
+        live_provider.assert_called_once_with("owner/repo")
+
+
+class SelectedPrStatusSummaryTests(unittest.TestCase):
+    def test_summary_keeps_selected_readiness_and_global_safety_without_large_inventories(self):
+        selected = {
+            "pr": 3092,
+            "head": "a" * 40,
+            "base": "develop",
+            "pr_base_oid": "b" * 40,
+            "parent": 3091,
+            "parent_head": "c" * 40,
+            "state": "OPEN",
+            "merged": False,
+            "is_draft": False,
+            "reconciliation": "COHERENT",
+            "reason": None,
+            "channels": {"hosted": "COMPLETE", "cli": "HELD"},
+            "review_progress": {"hosted": {"completed": 2}, "cli": {"completed": 1}},
+            "review_obligations": {"cli": ["one finding needs a decision"]},
+            "channel_reasons": {"cli": ["pending finding"]},
+            "allocations": {"cli": {"status": "ACTIVE", "reason": "one more result"}},
+            "check_inventory": [{"name": "large inventory detail"}],
+        }
+        report = {
+            "pull_request": {"number": 3092, "headRefOid": "a" * 40},
+            "review_decision": {"verdict": "CHANGES REQUESTED"},
+            "checkpoint_counts": {"hosted": 2, "cli": 1},
+            "threads": {"current": 1, "outdated": 2, "total": 3, "nodes": [{"body": "large thread detail"}]},
+            "ci": {
+                "aggregate": "FAILURE",
+                "required": {"available": True, "status": "failure", "reason": "required check failed"},
+                "pending": [{"name": "Native tests", "details": "large pending detail"}],
+                "failed": [{"name": "Lint", "details": "large failure detail"}],
+                "observed": True,
+                "optional": {"available": True, "pending": [{"name": "Optional A"}], "failed": []},
+                "inventory_available": True,
+                "inventory_status": "complete",
+                "inventory_reason": None,
+                "aggregate_inventory_conflict": False,
+                "checks": [{"name": "large raw check inventory"}],
+            },
+            "mergeability": {"clean": False, "diagnosis": "NOT READY"},
+            "ready": False,
+            "verdict": "NOT READY",
+            "reasons": ["required check failed", "global safety hold remains active"],
+            "incoming_routes": [{"route_id": "route-1"}],
+            "incoming_record_routes": [{"route_id": "record-route-1"}],
+            "record_route_store": {"status": "available", "reason": None},
+            "review_stack": {
+                "status": "complete",
+                "ordered_prs": [3090, 3091, 3092, 3093],
+                "review_fronts": {"hosted": {"pr": 3094}, "cli": {"pr": 3092}},
+                "prs": [
+                    {"pr": 3091, "check_inventory": [{"name": "ancestor inventory"}]},
+                    selected,
+                    {"pr": 3093, "check_inventory": [{"name": "descendant inventory"}]},
+                ],
+            },
+        }
+
+        summary = cli_module._selected_pr_status_summary(report, 3092)
+
+        self.assertEqual(summary["pull_request"], report["pull_request"])
+        self.assertEqual(summary["mergeability"], report["mergeability"])
+        self.assertFalse(summary["ready"])
+        self.assertEqual(summary["reasons"], report["reasons"])
+        self.assertEqual(summary["threads"], {"current": 1, "outdated": 2, "total": 3})
+        self.assertEqual(summary["ci"]["pending"], ["Native tests"])
+        self.assertEqual(summary["ci"]["failed"], ["Lint"])
+        self.assertEqual(summary["ci"]["optional_checks"]["pending_count"], 1)
+        self.assertEqual(summary["review_stack"]["review_fronts"], report["review_stack"]["review_fronts"])
+        self.assertEqual(
+            summary["review_stack"]["prs"],
+            [
+                {
+                    key: selected[key]
+                    for key in (
+                        "pr",
+                        "head",
+                        "base",
+                        "pr_base_oid",
+                        "parent",
+                        "parent_head",
+                        "state",
+                        "merged",
+                        "is_draft",
+                        "reconciliation",
+                        "reason",
+                        "channels",
+                        "review_progress",
+                        "review_obligations",
+                        "channel_reasons",
+                        "allocations",
+                    )
+                }
+            ],
+        )
+        encoded = json.dumps(summary)
+        for omitted in ("ordered_prs", "large inventory detail", "large raw check inventory", "large thread detail"):
+            self.assertNotIn(omitted, encoded)
+        self.assertIn("global safety hold remains active", encoded)
+
+    def test_summary_json_is_opt_in_and_normal_selected_status_json_keeps_full_contract(self):
+        pull_request = {
+            "number": 3092,
+            "headRefOid": "a" * 40,
+            "baseRefName": "develop",
+            "baseRefOid": "b" * 40,
+        }
+        status_report = {
+            "pull_request": pull_request,
+            "review_decision": {"verdict": "APPROVED"},
+            "checkpoint_counts": {"hosted": 1, "cli": 1},
+            "threads": {"current": 0, "outdated": 0, "total": 0},
+            "ci": {"aggregate": {"state": "SUCCESS"}, "pending": [], "failed": [], "optional": {}, "required": {}},
+            "mergeability": {"clean": True, "diagnosis": "CLEAN"},
+            "ready": True,
+            "verdict": "READY",
+            "reasons": [],
+        }
+        selected = {
+            "pr": 3092,
+            "head": "a" * 40,
+            "base": "develop",
+            "pr_base_oid": "b" * 40,
+            "reconciliation": "COHERENT",
+            "channels": {"hosted": "COMPLETE", "cli": "COMPLETE"},
+            "review_obligations": {},
+            "allocations": {
+                "hosted": {"status": "HANDED_OFF", "reason": "review complete"},
+                "cli": {"status": "HANDED_OFF", "reason": "review complete"},
+            },
+            "review_progress": {
+                "hosted": {"status": "COMPLETE", "rule": {"kind": "normal_taper"}},
+                "cli": {"status": "COMPLETE", "rule": {"kind": "normal_taper"}},
+            },
+            "incoming_routes": [],
+            "routes_out": [],
+        }
+        stack_report = {
+            "ordered_prs": [3090, 3091, 3092, 3093],
+            "status": "COHERENT",
+            "review_fronts": {"hosted": {"pr": 3092}, "cli": {"pr": 3092}},
+            "prs": [selected],
+            "ancestor_inventory": [{"pr": 3090, "details": "large"}],
+        }
+        controller = SimpleNamespace(
+            repository="owner/repo",
+            store=SimpleNamespace(load=lambda: SimpleNamespace(summary_dispositions=())),
+            status_for_pr=lambda pr: stack_report,
+        )
+        output = io.StringIO()
+        with (
+            patch.object(cli_module, "_controller", return_value=(controller, None)),
+            patch.object(cli_module.status_module, "status", return_value=status_report),
+            patch.object(cli_module, "_read_record_incoming_routes", return_value=([], {"status": "available"})),
+            contextlib.redirect_stdout(output),
+        ):
+            self.assertEqual(cli_module.main(["status", "--pr", "3092", "--summary", "--json"]), 0)
+        summary = json.loads(output.getvalue())
+        self.assertEqual(
+            summary["review_stack"]["prs"],
+            [
+                {
+                    key: selected[key]
+                    for key in (
+                        "pr",
+                        "head",
+                        "base",
+                        "pr_base_oid",
+                        "reconciliation",
+                        "channels",
+                        "review_progress",
+                        "review_obligations",
+                        "channel_reasons",
+                        "allocations",
+                    )
+                    if key in selected
+                }
+            ],
+        )
+        self.assertNotIn("ordered_prs", summary["review_stack"])
+        self.assertNotIn("ancestor_inventory", json.dumps(summary))
+
+        output = io.StringIO()
+        with (
+            patch.object(cli_module, "_controller", return_value=(controller, None)),
+            patch.object(cli_module.status_module, "status", return_value=status_report),
+            patch.object(cli_module, "_read_record_incoming_routes", return_value=([], {"status": "available"})),
+            contextlib.redirect_stdout(output),
+        ):
+            self.assertEqual(cli_module.main(["status", "--pr", "3092", "--json"]), 0)
+        normal = json.loads(output.getvalue())
+        self.assertEqual(normal["review_stack"]["ordered_prs"], [3090, 3091, 3092, 3093])
+
+    def test_summary_requires_one_selected_pr_and_rejects_full_scan_before_controller(self):
+        for arguments, expected in (
+            (["status", "--summary", "--json"], "status --summary requires --pr"),
+            (["status", "--pr", "3092", "--summary", "--full-scan"], "cannot be combined with --full-scan"),
+        ):
+            with self.subTest(arguments=arguments):
+                errors = io.StringIO()
+                with (
+                    patch.object(cli_module, "_controller", side_effect=AssertionError("controller constructed")),
+                    contextlib.redirect_stderr(errors),
+                ):
+                    self.assertEqual(cli_module.main(arguments), 2)
+                self.assertIn(expected, errors.getvalue())
+
+
 class HostedCliPreflightBudgetTests(unittest.TestCase):
     def test_main_starts_one_budget_before_dispatch_and_leaves_other_commands_unchanged(self):
         observed = []

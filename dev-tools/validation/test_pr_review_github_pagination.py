@@ -18,6 +18,145 @@ from pr_review import github
 
 
 class GithubPaginationTests(unittest.TestCase):
+    @staticmethod
+    def _issue_comment(comment_id: int) -> dict[str, object]:
+        return {
+            "id": f"comment-node-{comment_id}",
+            "databaseId": comment_id,
+            "author": {"login": "maintainer"},
+            "body": f"comment {comment_id}",
+            "createdAt": "2026-10-08T00:00:00Z",
+            "updatedAt": None,
+            "url": f"https://example.test/comments/{comment_id}",
+        }
+
+    @staticmethod
+    def _issue_comment_page(number, comments, *, has_next=False, cursor=None):
+        return {
+            "number": number,
+            "comments": {
+                "nodes": comments,
+                "pageInfo": {"hasNextPage": has_next, "endCursor": cursor},
+            },
+        }
+
+    def test_issue_comment_batch_paginates_each_pr_with_its_own_cursor(self):
+        first_page = {
+            "data": {
+                "repository": {
+                    "pr_42": self._issue_comment_page(
+                        42, [self._issue_comment(421)], has_next=True, cursor="cursor-42"
+                    ),
+                    "pr_43": self._issue_comment_page(
+                        43, [self._issue_comment(431)], has_next=True, cursor="cursor-43"
+                    ),
+                }
+            }
+        }
+        second_page = {
+            "data": {
+                "repository": {
+                    "pr_42": self._issue_comment_page(42, [self._issue_comment(422)]),
+                    "pr_43": self._issue_comment_page(43, [self._issue_comment(432)]),
+                }
+            }
+        }
+
+        with patch.object(github, "run_gh_query", side_effect=[first_page, second_page]) as query:
+            result = github.fetch_issue_comments_batch("owner/repo", (42, 43))
+
+        self.assertEqual([item["databaseId"] for item in result[42]], [421, 422])
+        self.assertEqual([item["databaseId"] for item in result[43]], [431, 432])
+        self.assertEqual(query.call_count, 2)
+        self.assertEqual(
+            query.call_args_list[1].args[1],
+            {
+                "owner": "owner",
+                "repo": "repo",
+                "after_42": "cursor-42",
+                "after_43": "cursor-43",
+            },
+        )
+        self.assertIn("comments(first:100, after:$after_42)", query.call_args_list[1].args[0])
+        self.assertIn("comments(first:100, after:$after_43)", query.call_args_list[1].args[0])
+
+    def test_issue_comment_batch_rejects_missing_identity_and_repeated_cursor(self):
+        malformed_identity = {
+            "data": {
+                "repository": {
+                    "pr_42": self._issue_comment_page(43, []),
+                }
+            }
+        }
+        repeated_cursor = {
+            "data": {
+                "repository": {
+                    "pr_42": self._issue_comment_page(
+                        42, [self._issue_comment(422)], has_next=True, cursor="cursor-42"
+                    ),
+                }
+            }
+        }
+        initial = {
+            "data": {
+                "repository": {
+                    "pr_42": self._issue_comment_page(
+                        42, [self._issue_comment(421)], has_next=True, cursor="cursor-42"
+                    ),
+                }
+            }
+        }
+
+        with (
+            patch.object(github, "run_gh_query", return_value=malformed_identity),
+            self.assertRaisesRegex(RuntimeError, "identity is missing or mismatched"),
+        ):
+            github.fetch_issue_comments_batch("owner/repo", (42,))
+
+        with (
+            patch.object(github, "run_gh_query", side_effect=[initial, repeated_cursor]),
+            self.assertRaisesRegex(RuntimeError, "pagination repeated cursor for PR #42"),
+        ):
+            github.fetch_issue_comments_batch("owner/repo", (42,))
+
+    def test_issue_comment_batch_rejects_malformed_connections_ids_and_cursors(self):
+        malformed_connections = (
+            (
+                {"nodes": [], "pageInfo": {}},
+                "page info is malformed",
+            ),
+            (
+                {
+                    "nodes": [{"id": "opaque-id", "body": "comment"}],
+                    "pageInfo": {"hasNextPage": False},
+                },
+                "identity is missing",
+            ),
+            (
+                {"nodes": [], "pageInfo": {"hasNextPage": True}},
+                "pagination has no cursor",
+            ),
+        )
+
+        for connection, expected in malformed_connections:
+            payload = {
+                "data": {
+                    "repository": {
+                        "pr_42": {"number": 42, "comments": connection},
+                    }
+                }
+            }
+            with (
+                self.subTest(expected=expected),
+                patch.object(github, "run_gh_query", return_value=payload),
+                self.assertRaisesRegex((RuntimeError, TypeError), expected),
+            ):
+                github.fetch_issue_comments_batch("owner/repo", (42,))
+
+    def test_issue_comment_batch_limits_each_query_to_25_pull_requests(self):
+        with self.assertRaisesRegex(ValueError, "limited to 25 PRs"):
+            github.fetch_issue_comments_batch("owner/repo", tuple(range(1, 27)))
+
     def test_expired_phase_transition_preserves_previous_nonzero_progress(self):
         with patch.object(github.time, "monotonic", return_value=0) as monotonic:
             budget = github.HostedPreflightBudget(timeout_seconds=10)
@@ -160,13 +299,7 @@ class GithubPaginationTests(unittest.TestCase):
             }
         }
         next_page = {
-            "data": {
-                "repository": {
-                    "pullRequest": {
-                        "comments": {"nodes": [], "pageInfo": {"hasNextPage": False}}
-                    }
-                }
-            }
+            "data": {"repository": {"pullRequest": {"comments": {"nodes": [], "pageInfo": {"hasNextPage": False}}}}}
         }
 
         class Clock:

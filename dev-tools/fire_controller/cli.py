@@ -33,6 +33,21 @@ def _body_options(parser, *, label="Markdown"):
     group.add_argument("--body-file", help=f"{label} file, or - for stdin")
 
 
+def _checklist_argument(value):
+    try:
+        parsed = json.loads(value)
+    except json.JSONDecodeError as exc:
+        raise argparse.ArgumentTypeError(
+            f'invalid JSON at column {exc.colno}: {exc.msg}; use \'[{{"text":"Focused proof"}}]\' '
+            "or repeat --checklist-item TEXT"
+        ) from exc
+    if not isinstance(parsed, list):
+        raise argparse.ArgumentTypeError(
+            'expected a JSON array such as \'[{"text":"Focused proof"}]\' or repeat --checklist-item TEXT'
+        )
+    return parsed
+
+
 def _object_file(path, label):
     value = json.loads(path.read_text(encoding="utf-8"))
     if not isinstance(value, dict):
@@ -103,7 +118,23 @@ def _parser():
     create.add_argument("--chat-id")
     create.add_argument("--workstream-id", help="curated project-map track association")
     create.add_argument("--secondary", action="store_true", help="create without the primary designation")
-    create.add_argument("--checklist", type=json.loads, default=[])
+    checklist_options = create.add_mutually_exclusive_group()
+    checklist_options.add_argument(
+        "--checklist",
+        type=_checklist_argument,
+        default=[],
+        metavar="JSON",
+        help=(
+            'JSON array of objects such as \'[{"text":"Focused proof"}]\'; item IDs are generated '
+            "and done defaults false"
+        ),
+    )
+    checklist_options.add_argument(
+        "--checklist-item",
+        action="append",
+        metavar="TEXT",
+        help="plain checklist item; repeat for several items instead of --checklist JSON",
+    )
     _body_options(create, label="Private working brief (Markdown)")
     for name in ("list", "assigned", "search", "public-export"):
         description = {
@@ -117,6 +148,12 @@ def _parser():
         command.add_argument("--status", choices=["active", "parked", "blocked", "completed"])
         command.add_argument("--workstream-id", help="select associated project-map track")
         command.add_argument("--primary", action="store_true", help="select designated primary jobs")
+        if name == "list":
+            command.add_argument(
+                "--compact",
+                action="store_true",
+                help="show one concise human-readable line per job; incompatible with --json",
+            )
         if name == "assigned":
             command.add_argument(
                 "--all-jobs", action="store_true", help="include secondary and parked jobs with full briefs"
@@ -142,10 +179,16 @@ def _parser():
         default=10,
         help="maximum newest updates to include (default: 10); does not limit the brief or latest checkpoint",
     )
-    read.add_argument(
+    read_scope = read.add_mutually_exclusive_group()
+    read_scope.add_argument(
         "--full-history",
         action="store_true",
         help="include all updates, checkpoints, notes and revision snapshots, including historical briefs",
+    )
+    read_scope.add_argument(
+        "--checkpoint-only",
+        action="store_true",
+        help="return only job ID, name, status, revision and latest checkpoint; omit the brief and other context",
     )
     for name in ("revise", "assign", "park", "resume", "complete", "block"):
         command = commands.add_parser(
@@ -182,10 +225,21 @@ def _parser():
             command.epilog = (
                 "Read the job first, then use its revision in --expect-revision. Example if revision is 1: "
                 "firemud-controller jobs revise current-general --expect-revision 1 --body-file /tmp/revised-brief.md\n"
-                "Use --title for the durable mission, --progress for the current focus, and selected checklist items for broad milestones."
+                "Use --title for the durable mission, --progress for the current focus, and selected checklist items for broad milestones. "
+                "Keep standing instructions, exceptions and resume context in the current brief; when ongoing execution changes, "
+                "revise it with the latest revision while preserving other instructions. Updates and checkpoints record milestones "
+                "and outcomes; notes and reminders hold future triggers."
             )
             command.formatter_class = argparse.RawDescriptionHelpFormatter
-    update = commands.add_parser("update", help="append a meaningful update without replacing the brief")
+    update = commands.add_parser(
+        "update",
+        help="append a milestone, outcome or transient status; use guarded revise for ongoing instructions",
+        description=(
+            "Append a milestone, outcome or transient status without replacing the current brief. "
+            "When ongoing execution instructions change, promote them into the brief with jobs revise and its current revision guard. "
+            "Use notes or reminders for future triggers."
+        ),
+    )
     update.add_argument("job")
     update.add_argument("--kind", default="progress")
     _body_options(update)
@@ -243,11 +297,15 @@ def _parser():
     notes.add_argument("--job")
     notes.add_argument("--phase")
     notes.add_argument("--status", choices=["pending", "consumed", "dismissed"], default="pending")
-    state = commands.add_parser("note-status")
+    state = commands.add_parser("note-status", help="consume, dismiss or reopen a note with a revision guard")
     state.add_argument("note_id")
     state.add_argument("status", choices=["pending", "consumed", "dismissed"])
     state.add_argument("--expect-revision", required=True, type=int)
-    state.add_argument("--reason", default="")
+    state.add_argument(
+        "--reason",
+        default="",
+        help="required when status is dismissed; only valid for dismissed notes",
+    )
     note_revise = commands.add_parser("note-revise", help="correct or reopen a note with its current revision")
     note_revise.add_argument("note_id")
     note_revise.add_argument("--expect-revision", required=True, type=int)
@@ -588,6 +646,9 @@ def _dispatch(args):
             options["reason"] = args.reason
         return getattr(store, "pause" if command == "lane-pause" else "resume")(args.worker, **options)
     if command == "create":
+        checklist = args.checklist
+        if args.checklist_item is not None:
+            checklist = [{"text": text} for text in args.checklist_item]
         created = store.create(
             args.name,
             args.worker,
@@ -597,14 +658,16 @@ def _dispatch(args):
             status=args.status,
             primary=False if args.secondary else None,
             chat_id=args.chat_id,
-            checklist=args.checklist,
+            checklist=checklist,
             progress=args.progress,
             blocker=args.blocker,
             workstream_id=args.workstream_id,
         )
         return _job_receipt(created)
     if command == "read":
-        job = store.get(args.job, latest=args.latest, full_history=args.full_history)
+        job = store.get(args.job, latest=0 if args.checkpoint_only else args.latest, full_history=args.full_history)
+        if args.checkpoint_only:
+            return {key: job[key] for key in ("id", "name", "status", "revision", "latest_checkpoint")}
         if not args.full_history:
             job["history"] = []
         return job
@@ -804,6 +867,8 @@ def _precheck(args):
         for index, item in enumerate(checklist):
             if isinstance(item, dict) and isinstance(item.get("text"), str):
                 values[f"checklist[{index}]"] = item["text"]
+    for index, text in enumerate(getattr(args, "checklist_item", None) or []):
+        values[f"checklist_item[{index}]"] = text
     if args.area == "jobs" and args.command == "import":
         manifest = _object_file(args.manifest, "brief import manifest")
         for index, job in enumerate(manifest.get("jobs", [])):
@@ -881,6 +946,29 @@ def _compact_inbox_messages(messages):
     return "\n".join(lines)
 
 
+def _compact_job_cell(value, maximum):
+    text = " ".join(str(value or "").split())
+    if len(text) > maximum:
+        text = text[: maximum - 1] + "…"
+    return text
+
+
+def _compact_job_rows(rows):
+    if not rows:
+        return "No jobs match the selected filters."
+    lines = ["ID  STATUS  WORKER  NAME / TITLE  CURRENT WORK  LAST ACTIVITY"]
+    for job in rows:
+        focus = job.get("blocker") if job.get("status") == "blocked" else ""
+        focus = focus or job.get("summary") or job.get("progress") or ""
+        lines.append(
+            f"{_compact_job_cell(job.get('id'), 36)}  {_compact_job_cell(job.get('status'), 10)}  "
+            f"{_compact_job_cell(job.get('worker'), 24)}  "
+            f"{_compact_job_cell(job.get('name'), 36)} / {_compact_job_cell(job.get('title'), 60)}  "
+            f"{_compact_job_cell(focus, 96)}  {_compact_job_cell(job.get('last_activity_at'), 30)}"
+        )
+    return "\n".join(lines)
+
+
 def main(argv=None):
     argv = list(sys.argv[1:] if argv is None else argv)
     # Generic options precede the command area; review options remain untouched.
@@ -939,6 +1027,9 @@ def main(argv=None):
         compact_inbox_list = args.area == "inbox" and args.command == "list" and getattr(args, "compact", False)
         if compact_inbox_list and args.json:
             raise ValueError("inbox list --compact is human-readable; omit --json for one-line summaries")
+        compact_jobs_list = args.area == "jobs" and args.command == "list" and getattr(args, "compact", False)
+        if compact_jobs_list and args.json:
+            raise ValueError("jobs list --compact is human-readable; omit --json to keep the full structured list")
         if args.area == "text":
             from .markdown import diagnostics as lint_diagnostics
             from .web import render_markdown
@@ -958,6 +1049,8 @@ def main(argv=None):
         result = dispatch[args.area](args)
         if compact_inbox_list:
             result = _compact_inbox_messages(result)
+        if compact_jobs_list:
+            result = _compact_job_rows(result)
         metadata = _unread_metadata(_database(args), args.worker_identity)
         public_export = args.area == "jobs" and args.command == "public-export"
         if diagnostics:
