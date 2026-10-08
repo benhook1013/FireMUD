@@ -1,7 +1,11 @@
 package net.firedevops.firemud.gamedesign.service.impl;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertSame;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoMoreInteractions;
 import static org.mockito.Mockito.when;
 
 import org.junit.jupiter.api.Test;
@@ -27,5 +31,25 @@ class TemporalVersionPublishActivitiesImplTest {
     assertEquals(
         "committed publication readback could not be reconciled", snapshot.failureMessage());
     assertEquals(false, snapshot.isTerminal());
+  }
+
+  @Test
+  void unavailableFreshOrPendingPublicationPropagatesWithoutTerminalMutation() {
+    VersionPublishCommandServiceImpl commandService = mock(VersionPublishCommandServiceImpl.class);
+    PublishWorkflowRequest request =
+        new PublishWorkflowRequest(
+            "tenant-1", "notes", "request-1", "publish:tenant-1:publish-request:request-1");
+    VersionPublishCommandServiceImpl.FullVersionPublicationUnavailableException denial =
+        new VersionPublishCommandServiceImpl.FullVersionPublicationUnavailableException();
+    when(commandService.reconcileFullVersionPublish(request)).thenThrow(denial);
+
+    VersionPublishCommandServiceImpl.FullVersionPublicationUnavailableException propagated =
+        assertThrows(
+            VersionPublishCommandServiceImpl.FullVersionPublicationUnavailableException.class,
+            () -> new TemporalVersionPublishActivitiesImpl(commandService).reconcile(request));
+
+    assertSame(denial, propagated);
+    verify(commandService).reconcileFullVersionPublish(request);
+    verifyNoMoreInteractions(commandService);
   }
 }

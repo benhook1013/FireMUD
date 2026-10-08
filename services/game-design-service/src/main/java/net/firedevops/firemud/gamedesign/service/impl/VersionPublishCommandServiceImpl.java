@@ -100,24 +100,33 @@ public class VersionPublishCommandServiceImpl {
         request.publishWorkflowId());
     PublishAttempt attempt =
         publishAttemptRepository.findByPublishWorkflowId(request.publishWorkflowId()).orElse(null);
+    if (attempt == null || attempt.getStatus() == PublishAttemptStatus.PENDING) {
+      throw fullVersionPublicationUnavailable();
+    }
+    return replayTerminalAttempt(request, attempt);
+  }
+
+  /**
+   * Private non-ingress seam retained for mechanics proof until a production Draft source exists.
+   */
+  private PublishWorkflowSnapshot reconcileFullVersionPublishMechanics(
+      PublishWorkflowRequest request) {
+    request = request.recoverMissingPublishRequestId();
+    validateRequestIdentity(request);
+    logger.info(
+        "Reconciling full-version publication mechanics tenant={} workflowId={}",
+        request.tenantId(),
+        request.publishWorkflowId());
+    PublishAttempt attempt =
+        publishAttemptRepository.findByPublishWorkflowId(request.publishWorkflowId()).orElse(null);
     if (attempt == null) {
       attempt = reserveDraftAttempt(request);
     }
     if (attempt.getStatus() == PublishAttemptStatus.SUCCEEDED) {
-      validateTerminalFullVersionAttempt(attempt, request);
-      return replaySucceededAttempt(request, attempt);
+      return replayTerminalAttempt(request, attempt);
     }
     if (attempt.getStatus() == PublishAttemptStatus.FAILED) {
-      // Failed legacy attempts may retain only terminal evidence after their draft was deleted.
-      // Validate their stable scope before entering the draft-dependent compatibility backfill.
-      validateTerminalFullVersionAttempt(attempt, request);
-      return new PublishWorkflowSnapshot(
-          attempt.getVersionId() == null ? 0L : attempt.getVersionId(),
-          attempt.getVersionNumber(),
-          request.publishWorkflowId(),
-          "FAILED",
-          emptyIfNull(attempt.getFailureCode()),
-          emptyIfNull(attempt.getFailureMessage()));
+      return replayTerminalAttempt(request, attempt);
     }
     attempt = backfillLegacyFullVersionRequestDigest(request, attempt);
     validateFullVersionAttempt(attempt, request);
@@ -242,6 +251,41 @@ public class VersionPublishCommandServiceImpl {
       throw pendingReconciliation(
           "full-version finalization commit outcome is unknown; readback/reconciliation is required",
           ambiguousCommit);
+    }
+  }
+
+  private PublishWorkflowSnapshot replayTerminalAttempt(
+      PublishWorkflowRequest request, PublishAttempt attempt) {
+    if (attempt.getStatus() == PublishAttemptStatus.SUCCEEDED) {
+      validateTerminalFullVersionAttempt(attempt, request);
+      return replaySucceededAttempt(request, attempt);
+    }
+    if (attempt.getStatus() == PublishAttemptStatus.FAILED) {
+      // Failed legacy attempts may retain only terminal evidence after their draft was deleted.
+      // Validate their stable scope before returning the immutable terminal result.
+      validateTerminalFullVersionAttempt(attempt, request);
+      return new PublishWorkflowSnapshot(
+          attempt.getVersionId() == null ? 0L : attempt.getVersionId(),
+          attempt.getVersionNumber(),
+          request.publishWorkflowId(),
+          "FAILED",
+          emptyIfNull(attempt.getFailureCode()),
+          emptyIfNull(attempt.getFailureMessage()));
+    }
+    throw fullVersionPublicationUnavailable();
+  }
+
+  private static FullVersionPublicationUnavailableException fullVersionPublicationUnavailable() {
+    return new FullVersionPublicationUnavailableException();
+  }
+
+  static final class FullVersionPublicationUnavailableException extends IllegalStateException {
+    static final String ERROR_CODE = "FULL_VERSION_PUBLICATION_UNAVAILABLE";
+    static final String SAFE_MESSAGE =
+        "fresh and pending full-version publication require a production Draft association";
+
+    FullVersionPublicationUnavailableException() {
+      super(ERROR_CODE + ": " + SAFE_MESSAGE);
     }
   }
 
