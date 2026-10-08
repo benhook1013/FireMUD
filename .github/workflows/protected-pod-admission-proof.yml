@@ -209,8 +209,8 @@ jobs:
             # If its exact tag and immutable registry digest are unavailable, fail closed;
             # never resolve or pull an unpinned image here.
             pause_image="$(docker exec "${KIND_CLUSTER_NAME}-control-plane" crictl images --output=json \
-              | jq -er '[.images[] | select(any(.repoTags[]?; . == "registry.k8s.io/pause:3.10")) \
-                | .repoDigests[]? | select(test("^registry\\.k8s\\.io/pause@sha256:[0-9a-f]{64}$"))] \
+              | jq -er '[.images[] | select(any(.repoTags[]?; . == "registry.k8s.io/pause:3.10"))
+                | .repoDigests[]? | select(test("^registry\\.k8s\\.io/pause@sha256:[0-9a-f]{64}$"))]
                 | unique | if length == 1 then .[0] else error("pinned node has no unique immutable pause:3.10 digest") end')"
             printf 'pause_image_from_pinned_node=%s\n' "$pause_image"
             kubectl --kubeconfig "$KUBECONFIG" --context "$expected_context" \
