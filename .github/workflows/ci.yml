@@ -909,7 +909,8 @@ jobs:
     # Game Session and Account run composed owner proofs before full checks and runtime JARs.
     # CI37121026340 exhausted 20m at Game Session packaging; CI37425364000
     # reached Account PostgreSQL cases but exhausted 20m before raw XML finalized.
-    timeout-minutes: ${{ (matrix.module == 'game-session-service' || matrix.module == 'account-service') && 30 || 20 }}
+    # World PostgreSQL proof can also reach 20 minutes before Gradle post-job cleanup (#3099).
+    timeout-minutes: ${{ (matrix.module == 'game-session-service' || matrix.module == 'account-service' || matrix.module == 'world-management-service') && 30 || 20 }}
     strategy:
       fail-fast: false
       matrix:
