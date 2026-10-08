@@ -14,6 +14,7 @@ import net.firedevops.firemud.loggingadmin.client.GameSessionClient;
 import net.firedevops.firemud.loggingadmin.client.GameSessionControlPlaneClient;
 import net.firedevops.firemud.test.GatewayTestProperties;
 import net.firedevops.firemud.test.PostgresBackedServiceTestSupport;
+import net.firedevops.firemud.test.TestContainerImages;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -50,11 +51,12 @@ class LoggingAdminApplicationIntegrationTest {
       new JwtUtil("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", 3600000L);
 
   @Container
-  static PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>("postgres:16-alpine");
+  static PostgreSQLContainer<?> postgres =
+      new PostgreSQLContainer<>(TestContainerImages.postgres());
 
   @Container
   static GenericContainer<?> redis =
-      new GenericContainer<>("redis:7.2-alpine").withExposedPorts(6379);
+      new GenericContainer<>(TestContainerImages.redis()).withExposedPorts(6379);
 
   @DynamicPropertySource
   static void configure(DynamicPropertyRegistry registry) {

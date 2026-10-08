@@ -6,6 +6,7 @@ import java.util.Map;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.testcontainers.containers.GenericContainer;
 import org.testcontainers.containers.PostgreSQLContainer;
+import org.testcontainers.utility.DockerImageName;
 
 public final class PostgresBackedServiceTestSupport {
   private static final Map<String, String> SERVICE_MODULE_DIRECTORY =
@@ -23,6 +24,16 @@ public final class PostgresBackedServiceTestSupport {
           Map.entry("world_management_service", "world-management-service"));
 
   private PostgresBackedServiceTestSupport() {}
+
+  public static DockerImageName postgresImage(String imageReference) {
+    DockerImageName image = DockerImageName.parse(imageReference);
+    if (!imageReference.matches(
+        "postgres(?::[A-Za-z0-9_][A-Za-z0-9_.-]*)?(?:@sha256:[0-9a-f]{64})?")) {
+      throw new IllegalArgumentException(
+          "Expected a Docker image from the canonical postgres repository");
+    }
+    return image.asCompatibleSubstituteFor(DockerImageName.parse("postgres"));
+  }
 
   public static void registerPostgresService(
       DynamicPropertyRegistry registry, PostgreSQLContainer<?> postgres, String serviceSchema) {

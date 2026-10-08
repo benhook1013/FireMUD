@@ -13,6 +13,7 @@ import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import net.firedevops.firemud.automationscripting.service.impl.ScriptPatchReadinessProjectionServiceImpl;
+import net.firedevops.firemud.test.TestContainerImages;
 import org.flywaydb.core.Flyway;
 import org.flywaydb.core.api.FlywayException;
 import org.jooq.DSLContext;
@@ -36,7 +37,8 @@ class ScriptPatchReadinessSingletonIntegrationTest {
       "filesystem:" + Path.of("src/main/resources/db/migration").toAbsolutePath().normalize();
 
   @Container
-  static PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>("postgres:16-alpine");
+  static PostgreSQLContainer<?> postgres =
+      new PostgreSQLContainer<>(TestContainerImages.postgres());
 
   private String schema;
 

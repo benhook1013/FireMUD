@@ -105,8 +105,9 @@ def _parser():
         if name == "search":
             command.add_argument("query")
     read = commands.add_parser(
-        "read", help="current brief, notes, checkpoint and newest updates",
-        description="Read the full current brief, latest checkpoint, relevant notes and current revision without writing.",
+        "read", help="current brief, pending notes, checkpoint and newest updates",
+        description=("Read the full current brief, latest checkpoint, relevant pending notes and current revision "
+                     "without writing. Revision history is omitted by default; use jobs history or --full-history."),
         epilog="Example: firemud-controller jobs read current-general --json",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
@@ -114,7 +115,7 @@ def _parser():
     read.add_argument("--latest", type=int, default=10,
                       help="maximum newest updates to include (default: 10); does not limit the brief or latest checkpoint")
     read.add_argument("--full-history", action="store_true",
-                      help="include all updates, checkpoints and notes without the usual history bounds")
+                      help="include all updates, checkpoints, notes and revision snapshots, including historical briefs")
     for name in ("revise", "assign", "park", "resume", "complete", "block"):
         command = commands.add_parser(
             name, help="change current state with a revision guard",
@@ -469,11 +470,16 @@ def _dispatch(args):
             options["reason"] = args.reason
         return getattr(store, "pause" if command == "lane-pause" else "resume")(args.worker, **options)
     if command == "create":
-        return store.create(args.name, args.worker, args.title, brief=_body(args), summary=args.summary,
-                            status=args.status, primary=False if args.secondary else None, chat_id=args.chat_id, checklist=args.checklist,
-                            progress=args.progress, blocker=args.blocker, workstream_id=args.workstream_id)
+        created = store.create(args.name, args.worker, args.title, brief=_body(args), summary=args.summary,
+                               status=args.status, primary=False if args.secondary else None, chat_id=args.chat_id,
+                               checklist=args.checklist, progress=args.progress, blocker=args.blocker,
+                               workstream_id=args.workstream_id)
+        return _job_receipt(created)
     if command == "read":
-        return store.get(args.job, latest=args.latest, full_history=args.full_history)
+        job = store.get(args.job, latest=args.latest, full_history=args.full_history)
+        if not args.full_history:
+            job["history"] = []
+        return job
     if command in {"list", "search", "public-export", "assigned"}:
         rows = store.list(worker=args.worker, status=args.status,
                           search=args.query if command == "search" else None,
@@ -495,11 +501,16 @@ def _dispatch(args):
         statuses = {"park": "parked", "resume": "active", "complete": "completed", "block": "blocked"}
         if command in statuses:
             changes["status"] = statuses[command]
-        return store.revise(args.job, args.expect_revision, **changes)
+        revised = store.revise(args.job, args.expect_revision, **changes)
+        return _job_receipt(revised)
     if command == "update":
         return store.append_update(args.job, _body(args), kind=args.kind)
     if command == "checklist":
-        return store.checklist(args.job, args.expect_revision, args.action, item_id=args.item_id, text=args.text)
+        updated = store.checklist(args.job, args.expect_revision, args.action, item_id=args.item_id, text=args.text)
+        item_id = args.item_id
+        if args.action == "add" and item_id is None:
+            item_id = updated["checklist"][-1]["id"]
+        return _job_receipt(updated, item_id=item_id)
     if command == "checkpoint":
         return store.checkpoint(args.job, args.done, args.next_steps, blocker=args.blocker, pointers=args.pointers)
     if command == "history":
@@ -536,6 +547,26 @@ def _dispatch(args):
                 job["source_files"] = [str((args.manifest.parent / p).resolve()) for p in job["source_files"]]
         return store.import_briefs(manifest, apply=args.apply)
     raise ValueError("unsupported job command")
+
+
+_JOB_RECEIPT_FIELDS = (
+    "id", "name", "worker", "title", "status", "revision", "brief_revision",
+    "created_at", "updated_at", "last_activity_at",
+)
+
+
+def _job_receipt(job, *, item_id=None):
+    """Return stable identity and revision fields after a job state mutation."""
+
+    receipt = {field: job[field] for field in _JOB_RECEIPT_FIELDS if field in job}
+    if "brief_revision" not in receipt:
+        # The existing JobStore projection exposes this value in revision rows.
+        history = job.get("history", [])
+        if history:
+            receipt["brief_revision"] = history[0]["brief_revision"]
+    if item_id is not None:
+        receipt["item_id"] = item_id
+    return receipt
 
 
 def _require_workstream(database, identifier):

@@ -776,6 +776,54 @@ class StatusTest(unittest.TestCase):
         self.assertEqual(result["historical"]["classification"], "historical")
         self.assertNotEqual(result["historical"]["state"], result["state"])
 
+    def test_current_rate_limit_status_identifies_local_retry_backoff(self) -> None:
+        payload = github_payload()
+        payload["data"]["repository"]["pullRequest"]["comments"] = {
+            "nodes": [
+                {
+                    "databaseId": 10,
+                    "author": {"login": "maintainer"},
+                    "body": status.hosted.FULL_COMMAND,
+                    "createdAt": "2026-09-21T00:00:00Z",
+                    "url": "https://github.test/comments/10",
+                },
+                {
+                    "databaseId": 11,
+                    "author": {"login": "coderabbitai[bot]"},
+                    "body": "Review rate limited.",
+                    "createdAt": "2026-09-22T01:00:00Z",
+                    "updatedAt": "2026-09-25T01:00:00Z",
+                    "url": "https://github.test/comments/11",
+                },
+            ]
+        }
+        record = {
+            "schema_version": 1,
+            "status": "posted",
+            "repository": "owner/repo",
+            "pr_number": 2838,
+            "head_sha": HEAD,
+            "trigger": {
+                "id": 10,
+                "created_at": "2026-09-21T00:00:00Z",
+                "url": "https://github.test/comments/10",
+                "type": "full",
+                "command": "@coderabbitai full review",
+            },
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            current = Path(directory) / "trigger.json"
+            current.write_text(json.dumps(record), encoding="utf-8")
+            with (
+                patch.object(status.evidence, "git_common_dir", return_value=Path(directory)),
+                patch.object(status.hosted, "trigger_record_paths", return_value=[current]),
+            ):
+                result = status._trigger("owner/repo", 2838, payload, HEAD)
+        self.assertEqual(result["state"], "rate_limited", result)
+        self.assertEqual(result["cooldown_basis"], "local_retry_backoff")
+        self.assertEqual(result["cooldown_until"], "2026-09-22T02:00:00+00:00")
+        self.assertIn("local one-hour retry backoff", result["reason"])
+
     def test_current_posting_reservation_is_ambiguous_not_malformed(self) -> None:
         payload = github_payload()
         record = {
@@ -1361,6 +1409,66 @@ class StatusTest(unittest.TestCase):
                         value, _ = cli._dispatch(cli._parser().parse_args(["status", "--pr", "2838", "--json"]))
                     self.assertFalse(value["ready"])
                     self.assertIn(f"{channel}: {obligation}", value["reasons"])
+
+    def test_completed_discovery_keeps_fresh_controller_obligations_as_readiness_gates(self) -> None:
+        for obligation in (
+            "accepted findings remain pending; source resolution proof is uncertain",
+            "accepted findings remain pending; their fixes are mandatory",
+            "unresolved review thread discovered after public status read",
+        ):
+            for channel in ("hosted", "cli"):
+                with self.subTest(obligation=obligation, channel=channel):
+                    report = {
+                        "pull_request": {"headRefOid": HEAD, "baseRefName": "develop", "baseRefOid": BASE},
+                        "reasons": [],
+                        "ready": True,
+                        "verdict": "READY",
+                        "mergeability": {"clean": True, "diagnosis": "READY"},
+                    }
+                    stack_report = {
+                        "prs": [
+                            {
+                                "pr": 2838,
+                                "head": HEAD,
+                                "base": "develop",
+                                "pr_base_oid": BASE,
+                                "reconciliation": "COHERENT",
+                                "channels": {"hosted": "COMPLETE", "cli": "COMPLETE"},
+                                "review_obligations": {channel: [obligation]},
+                            }
+                        ],
+                        "review_fronts": {"hosted": 2839, "cli": 2839},
+                    }
+                    controller = Mock()
+
+                    def fresh_stack_status(number: int, report: dict = report, stack_report: dict = stack_report) -> dict:
+                        public_status.assert_called_once()
+                        self.assertEqual(number, 2838)
+                        self.assertTrue(report["ready"])
+                        self.assertEqual(report["reasons"], [])
+                        return stack_report
+
+                    controller.status_for_pr.side_effect = fresh_stack_status
+                    with (
+                        patch.object(cli, "default_controller", return_value=controller),
+                        patch.object(status, "status", return_value=report) as public_status,
+                        patch.object(
+                            cli, "_read_record_incoming_routes", return_value=([], {"status": "not_bootstrapped"})
+                        ),
+                    ):
+                        value, exit_status = cli._dispatch(
+                            cli._parser().parse_args(["status", "--pr", "2838", "--json"])
+                        )
+                    self.assertEqual(exit_status, 0)
+                    self.assertFalse(value["ready"])
+                    self.assertEqual(value["verdict"], "NOT READY")
+                    self.assertEqual(value["reasons"], [f"{channel}: {obligation}"])
+                    self.assertFalse(value["mergeability"]["clean"])
+                    self.assertEqual(value["mergeability"]["diagnosis"], "NOT READY")
+                    self.assertEqual(value["review_stack"], stack_report)
+                    self.assertEqual(stack_report["review_fronts"], {"hosted": 2839, "cli": 2839})
+                    controller.status_for_pr.assert_called_once_with(2838)
+                    controller.status.assert_not_called()
 
     def test_cli_status_supplies_persisted_summary_dispositions_to_report(self) -> None:
         disposition = SummaryFindingDisposition(

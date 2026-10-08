@@ -328,6 +328,8 @@ Use `dev-tools/backups/backup-db.sh` to create a snapshot and
 
 The local helper creates a custom-format `.dump` file and accepts an optional output-directory argument. This ad hoc `backup-db.sh`/`restore-db.sh` lane is separate from the scheduled Compose backup lane.
 
+Local Compose now uses PostgreSQL 18. It preserves the existing source volume and refuses to start against a PostgreSQL 16 root cluster; follow the [PostgreSQL 18 retained-data procedure](docker/README.md#postgresql-18-and-retained-data) to restore a logical dump into a separate target volume before switching the local stack.
+
 ### Automatic Kubernetes Backups
 
 Production clusters run a `firemud-pg-dump` CronJob that writes compressed dumps

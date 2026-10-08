@@ -19,6 +19,7 @@ import net.firedevops.firemud.gamesession.repository.GameInstanceRepository;
 import net.firedevops.firemud.gamesession.repository.GameplayCommandRepository;
 import net.firedevops.firemud.gamesession.repository.RuntimeRegionStatusRepository;
 import net.firedevops.firemud.gamesession.service.SessionAuthenticationService;
+import net.firedevops.firemud.test.TestContainerImages;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -52,7 +53,7 @@ class TickQueueControlServiceRedisIntegrationTest {
 
   @Container
   static GenericContainer<?> redis =
-      new GenericContainer<>("redis:7.2-alpine").withExposedPorts(6379);
+      new GenericContainer<>(TestContainerImages.redis()).withExposedPorts(6379);
 
   private LettuceConnectionFactory connectionFactory;
   private RedisTemplate<String, Object> redisTemplate;

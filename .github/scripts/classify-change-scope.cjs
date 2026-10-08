@@ -70,6 +70,31 @@ const SHARED_FILES = new Set([
   "dev-tools/validation/gradle-run-supervisor.py",
 ]);
 
+const POSTGRES_RUNTIME_PROOF_FILES = new Set([
+  ".github/scripts/classify-change-scope.cjs",
+  ".github/scripts/classify-change-scope.test.cjs",
+  ".github/workflows/ci.yml",
+  "dev-tools/hosted/preview/validate-preview-artifact.py",
+  "dev-tools/tests/ci-lightweight-scope-contract.sh",
+  "dev-tools/tests/hosted-gateway-bridge-contract.sh",
+  "dev-tools/tests/postgres-runtime-upgrade-contract.sh",
+  "dev-tools/validation/test_validate_preview_artifact.py",
+  "docker/README.md",
+  "docker/docker-compose.yml",
+  "docker/pg-dump-cron.Dockerfile",
+  "docker/pg-dump-cron.crontab",
+  "docker/postgres-data-layout-entrypoint.sh",
+  "k8s/helm/firemud/templates/stateful-core.yaml",
+  "k8s/helm/firemud/values-hosted-shared.example.yaml",
+  "k8s/postgres/pg-dump-cronjob.yaml",
+]);
+
+const POSTGRES_RUNTIME_PROOF_PREFIXES = [
+  "dev-tools/backups/",
+  "dev-tools/restores/",
+  "k8s/postgres/",
+];
+
 function isDocumentation(file) {
   return (
     file === "AGENTS.md" ||
@@ -91,6 +116,13 @@ function isValidationTooling(file) {
 
 function isRuntimeAuthority(file) {
   return file === ".node-version" || file === ".python-version";
+}
+
+function isPostgresRuntimeProofRelevant(file) {
+  return (
+    POSTGRES_RUNTIME_PROOF_FILES.has(file) ||
+    POSTGRES_RUNTIME_PROOF_PREFIXES.some((prefix) => file.startsWith(prefix))
+  );
 }
 
 function isPythonDependency(file) {
@@ -172,6 +204,7 @@ function classifyChangeScope(inputFiles, options = {}) {
     pythonChanged: forceAll || pythonFiles.length > 0,
     designDocsChanged,
     validationPythonChanged,
+    postgresRuntimeProofChanged: files.some(isPostgresRuntimeProofRelevant),
     lightweightOnly:
       !forceAll &&
       files.length > 0 &&
@@ -180,8 +213,85 @@ function classifyChangeScope(inputFiles, options = {}) {
 }
 
 async function classifyGithubChangeScope(github, context) {
+  if (context.eventName === "push") {
+    const scope = classifyChangeScope([], { forceAll: true });
+    const payload = context.payload || {};
+    if (payload.deleted === true) {
+      return { ...scope, postgresRuntimeProofChanged: false };
+    }
+
+    const before = payload.before;
+    const after = payload.after;
+    const validSha = (sha) => typeof sha === "string" && /^[0-9a-f]{40}$/i.test(sha);
+    const pushRangeUsable =
+      payload.forced === false &&
+      validSha(before) &&
+      validSha(after) &&
+      !/^0{40}$/i.test(before) &&
+      !/^0{40}$/i.test(after);
+    let files = [];
+    let fileListComplete = false;
+
+    if (pushRangeUsable) {
+      try {
+        const response = await github.rest.repos.compareCommitsWithBasehead({
+          ...context.repo,
+          basehead: `${before}...${after}`,
+          per_page: 100,
+        });
+        const comparison = response?.data;
+        const entries = comparison?.files;
+        const statusUsable =
+          comparison?.status === "ahead" || comparison?.status === "identical";
+        const exactRange =
+          comparison?.base_commit?.sha?.toLowerCase() === before.toLowerCase() &&
+          comparison?.merge_base_commit?.sha?.toLowerCase() === before.toLowerCase();
+        const entriesValid =
+          Array.isArray(entries) &&
+          entries.length < 300 &&
+          entries.every((entry) => {
+            if (
+              !entry ||
+              typeof entry !== "object" ||
+              typeof entry.filename !== "string" ||
+              entry.filename.length === 0 ||
+              !["added", "removed", "modified", "renamed"].includes(entry.status)
+            ) {
+              return false;
+            }
+            if (entry.status === "renamed") {
+              return typeof entry.previous_filename === "string" && entry.previous_filename.length > 0;
+            }
+            return (
+              entry.previous_filename === undefined ||
+              (typeof entry.previous_filename === "string" && entry.previous_filename.length > 0)
+            );
+          });
+
+        fileListComplete = statusUsable && exactRange && entriesValid;
+        if (fileListComplete) {
+          files = entries.flatMap((entry) =>
+            entry.previous_filename === undefined
+              ? [entry.filename]
+              : [entry.filename, entry.previous_filename],
+          );
+        }
+      } catch {
+        // Missing, unavailable, or malformed comparison evidence requires the physical proof.
+      }
+    }
+
+    return {
+      ...scope,
+      postgresRuntimeProofChanged: !fileListComplete || files.some(isPostgresRuntimeProofRelevant),
+    };
+  }
+
   if (context.eventName !== "pull_request") {
-    return classifyChangeScope([], { forceAll: true });
+    return {
+      ...classifyChangeScope([], { forceAll: true }),
+      postgresRuntimeProofChanged: false,
+    };
   }
 
   const fileEntries = await github.paginate(
@@ -220,7 +330,12 @@ async function classifyGithubChangeScope(github, context) {
     Number.isInteger(expectedFileCount) &&
     expectedFileCount === fileEntries.length;
 
-  return classifyChangeScope(files, { forceAll: !fileListComplete });
+  const scope = classifyChangeScope(files, { forceAll: !fileListComplete });
+  return {
+    ...scope,
+    postgresRuntimeProofChanged:
+      !fileListComplete || scope.postgresRuntimeProofChanged,
+  };
 }
 
 module.exports = {
@@ -231,6 +346,7 @@ module.exports = {
   classifyGithubChangeScope,
   isDocumentation,
   isLightweightEligible,
+  isPostgresRuntimeProofRelevant,
   isValidationPython,
   isValidationTooling,
   moduleForFile,

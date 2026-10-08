@@ -38,6 +38,7 @@ The `pr-review`, `report-worktree-pr-topology.sh`, and `maintenance/cloc-report.
 - `certs/` – tracked certificate helper scripts plus ignored generated local TLS material.
 - `deploy/` – deployment preflight and overlay validation; see `deploy/README.md` for the script map.
 - `hosted/` – hosted Kubernetes environment tooling; see `hosted/README.md` for the lane split.
+- `hosted/account-bootstrap/` – disposable fixture ownership and review-only factory inventory tooling; see the [manual qualification workflow](../.github/workflows/game-session-factory-qualification.yml) and [focused contract](tests/game-session-factory-qualification-contract.sh).
 - `docs/` – documentation generation and validation helpers; see `docs/README.md` for the script map.
 - `kreya/` – Kreya gRPC client assets.
 - `load-testing/` – Gatling load-testing module.

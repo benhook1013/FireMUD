@@ -15,6 +15,7 @@ import net.firedevops.firemud.common.security.JwtUtil;
 import net.firedevops.firemud.test.GatewayTestProperties;
 import net.firedevops.firemud.test.HttpTestSupport;
 import net.firedevops.firemud.test.PostgresBackedServiceTestSupport;
+import net.firedevops.firemud.test.TestContainerImages;
 import org.jooq.DSLContext;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -47,11 +48,12 @@ class AccountApplicationIntegrationTest {
   private static final HttpClient HTTP_CLIENT = HttpClient.newHttpClient();
 
   @Container
-  static PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>("postgres:16-alpine");
+  static PostgreSQLContainer<?> postgres =
+      new PostgreSQLContainer<>(TestContainerImages.postgres());
 
   @Container
   static GenericContainer<?> redis =
-      new GenericContainer<>("redis:7.2-alpine").withExposedPorts(6379);
+      new GenericContainer<>(TestContainerImages.redis()).withExposedPorts(6379);
 
   @DynamicPropertySource
   static void configure(DynamicPropertyRegistry registry) {

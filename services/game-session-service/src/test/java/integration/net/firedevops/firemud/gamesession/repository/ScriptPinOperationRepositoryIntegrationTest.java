@@ -11,6 +11,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
+import net.firedevops.firemud.test.TestContainerImages;
 import org.flywaydb.core.Flyway;
 import org.jooq.DSLContext;
 import org.jooq.SQLDialect;
@@ -39,7 +40,8 @@ class ScriptPinOperationRepositoryIntegrationTest {
           + "VALUES (1, 7, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
 
   @Container
-  static PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>("postgres:16-alpine");
+  static PostgreSQLContainer<?> postgres =
+      new PostgreSQLContainer<>(TestContainerImages.postgres());
 
   private DSLContext dsl;
   private GameInstanceRepository repository;
@@ -63,7 +65,10 @@ class ScriptPinOperationRepositoryIntegrationTest {
 
   @BeforeEach
   void cleanTables() {
-    dsl.execute("TRUNCATE TABLE script_pin_operation, game_instances CASCADE");
+    // These are this fixture's only test-owned rows. Use bounded row deletes instead of
+    // TRUNCATE: V26 protects immutable launch evidence and runtime history from truncation.
+    dsl.execute("DELETE FROM script_pin_operation WHERE tenant_id = 1 AND game_instance_id = 7");
+    dsl.execute("DELETE FROM game_instances WHERE tenant_id = 1 AND id = 7");
     dsl.insertInto(GAME_INSTANCES)
         .set(GAME_INSTANCES.ID, 7L)
         .set(GAME_INSTANCES.TENANT_ID, 1L)

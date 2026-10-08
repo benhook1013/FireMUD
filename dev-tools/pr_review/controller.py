@@ -14,6 +14,7 @@ checkpoint observations remain provider data and are never copied into state.
 
 from __future__ import annotations
 
+import copy
 import dataclasses
 import re
 import subprocess
@@ -55,6 +56,14 @@ from .state import (
 
 class ControllerError(RuntimeError):
     """A fail-closed controller preflight or decision error."""
+
+
+class _FindingOnlyStopEvidence(ControllerError):
+    """A complete audit found only typed finding obligations, with no safety blocker."""
+
+
+class _RequestPreparationError(ControllerError):
+    """A complete safety audit proved only known request-preparation movement."""
 
 
 class WrongStackTarget(ControllerError):
@@ -317,12 +326,42 @@ class AnchorFacts:
     parent_head: str
     merge_base: str | None
     patch_id: str | None
+    stop_audit_pr_base_oid: str | None = dataclasses.field(default=None, compare=False, repr=False)
+    stop_audit_base_ref: str | None = dataclasses.field(default=None, compare=False, repr=False)
+    stop_audit_effective_parent_head: str | None = dataclasses.field(default=None, compare=False, repr=False)
+    stop_audit_enforce_parent_identity_ref: bool = dataclasses.field(default=True, compare=False, repr=False)
 
     def as_dict(self) -> dict[str, Any]:
-        return dataclasses.asdict(self)
+        # Persisted review anchors describe the stack identity. The retained PR
+        # base and selected branch ref are transient stop-audit inputs, not part
+        # of reconciliation, taper, or review-credit identity.
+        return {
+            "pr": self.pr,
+            "child_head": self.child_head,
+            "parent_identity": self.parent_identity,
+            "parent_head": self.parent_head,
+            "merge_base": self.merge_base,
+            "patch_id": self.patch_id,
+        }
+
+    def as_stop_audit_dict(self) -> dict[str, Any]:
+        return {
+            **self.as_dict(),
+            "pr_base_oid": self.stop_audit_pr_base_oid,
+            "base_ref": self.stop_audit_base_ref,
+            "effective_parent_head": self.stop_audit_effective_parent_head,
+            "enforce_parent_identity_ref": self.stop_audit_enforce_parent_identity_ref,
+        }
 
     def as_anchor(self) -> stack.ReviewAnchor:
-        return stack.ReviewAnchor(**self.as_dict())
+        return stack.ReviewAnchor(
+            self.pr,
+            self.child_head,
+            self.parent_identity,
+            self.parent_head,
+            self.merge_base,
+            self.patch_id,
+        )
 
 
 @dataclasses.dataclass(frozen=True)
@@ -732,8 +771,13 @@ class ReviewController:
         key = (pr, channel.value)
         if key not in history_cache:
             started = time.perf_counter() if phase_timings is not None else 0.0
+            budget = github.active_hosted_preflight_budget()
+            if budget is not None:
+                budget.set_phase(f"target_history_pr_{pr}_{channel.value}", total=1)
             try:
                 history_cache[key] = _history(self._evidence_provider, pr, channel)
+                if budget is not None:
+                    budget.set_completed(1)
             finally:
                 if phase_timings is not None:
                     phase_timings["deep_evidence_history_ms"] = (
@@ -1214,14 +1258,74 @@ class ReviewController:
             or not patch_id
         ):
             return None
-        return AnchorFacts(pr, live.head, link.identity, link.parent_head, merge_base, patch_id)
+        return AnchorFacts(
+            pr,
+            live.head,
+            link.identity,
+            link.parent_head,
+            merge_base,
+            patch_id,
+            stop_audit_pr_base_oid=live.base_tip,
+            stop_audit_base_ref=live.base_ref,
+            stop_audit_effective_parent_head=link.parent_head,
+        )
 
-    def set_stack(self, pr_numbers: Iterable[int]) -> dict[str, Any]:
+    def prepare_stack_update(
+        self,
+        pr_numbers: Iterable[int],
+        *,
+        allow_removal: bool = False,
+        reason: str | None = None,
+        expected_stack: tuple[int, ...] | None = None,
+    ) -> tuple[tuple[int, ...], tuple[int, ...]]:
         numbers = tuple(pr_numbers)
         if not numbers or any(isinstance(pr, bool) or not isinstance(pr, int) or pr <= 0 for pr in numbers):
             raise ControllerError("stack must contain positive pull-request numbers")
         if len(set(numbers)) != len(numbers):
             raise ControllerError("stack pull requests must be unique")
+        if not isinstance(allow_removal, bool):
+            raise ControllerError("allow_removal must be a boolean")
+
+        if allow_removal and (not isinstance(reason, str) or not reason.strip()):
+            raise ControllerError("--allow-removal requires a nonblank --reason")
+        if not allow_removal and reason is not None:
+            raise ControllerError("--reason requires --allow-removal")
+
+        current_stack = self._state().ordered_prs
+        if expected_stack is not None and current_stack != expected_stack:
+            raise ControllerError(
+                "configured stack changed during validation; read the current stack and retry"
+            )
+        expected_stack = current_stack
+        requested = set(numbers)
+        removed = tuple(pr for pr in expected_stack if pr not in requested)
+        if removed and not allow_removal:
+            formatted = ", ".join(f"#{pr}" for pr in removed)
+            raise ControllerError(
+                f"stack set cannot remove configured PRs by default; omitted {formatted}; "
+                "explicit user authorization is required with --allow-removal and --reason"
+            )
+        if allow_removal and not removed:
+            raise ControllerError("--allow-removal requires omitting at least one configured PR")
+
+        return numbers, expected_stack
+
+    def set_stack(
+        self,
+        pr_numbers: Iterable[int],
+        *,
+        allow_removal: bool = False,
+        reason: str | None = None,
+        expected_stack: tuple[int, ...] | None = None,
+    ) -> dict[str, Any]:
+        numbers, expected_stack = self.prepare_stack_update(
+            pr_numbers,
+            allow_removal=allow_removal,
+            reason=reason,
+            expected_stack=expected_stack,
+        )
+        requested = set(numbers)
+
         if self.github is not None:
             if not self.repository:
                 raise ControllerError("repository identity is required to validate stack head repositories")
@@ -1230,7 +1334,22 @@ class ReviewController:
                 problem = self._head_repository_problem(item)
                 if problem:
                     raise ControllerError(f"PR #{pr} {problem}")
-        state = self.store.update(lambda current: dataclasses.replace(current, ordered_prs=numbers))
+
+        def update(current: ReviewState) -> ReviewState:
+            if current.ordered_prs != expected_stack:
+                raise ControllerError(
+                    "configured stack changed during validation; read the current stack and retry"
+                )
+            current_removed = tuple(pr for pr in current.ordered_prs if pr not in requested)
+            if current_removed and not allow_removal:
+                formatted = ", ".join(f"#{pr}" for pr in current_removed)
+                raise ControllerError(
+                    f"stack set cannot remove configured PRs by default; omitted {formatted}; "
+                    "explicit user authorization is required with --allow-removal and --reason"
+                )
+            return dataclasses.replace(current, ordered_prs=numbers)
+
+        state = self.store.update(update)
         return {"ordered_prs": list(state.ordered_prs), "schema_version": state.schema_version}
 
     def _head_repository_problem(self, item: LivePullRequest) -> str | None:
@@ -1290,15 +1409,26 @@ class ReviewController:
         )
         selected_evidence_prs = set(state.ordered_prs if evidence_prs is None else evidence_prs)
         ancestry_errors: set[tuple[str, str]] = set()
+        ancestry_cache: dict[tuple[str, str], bool] = {}
 
         def is_ancestor(parent: str, child: str) -> bool:
+            key = (parent.casefold(), child.casefold())
+            if key in ancestry_cache:
+                return ancestry_cache[key]
+            budget = github.active_hosted_preflight_budget()
+            if budget is not None:
+                budget.set_phase(f"target_ancestry_{parent[:8]}_{child[:8]}", total=1)
             try:
-                return self.git.is_ancestor(parent, child)
+                result = self.git.is_ancestor(parent, child)
             except github.HostedPreflightDeadlineExceeded:
                 raise
             except (ControllerError, OSError, subprocess.SubprocessError, ValueError):
-                ancestry_errors.add((parent.casefold(), child.casefold()))
-                return False
+                ancestry_errors.add(key)
+                result = False
+            ancestry_cache[key] = result
+            if budget is not None:
+                budget.set_completed(1)
+            return result
 
         baseline = stack.reconcile_stack(
             state.ordered_prs,
@@ -1326,7 +1456,12 @@ class ReviewController:
             ):
                 continue
             try:
+                budget = github.active_hosted_preflight_budget()
+                if budget is not None:
+                    budget.set_phase(f"target_test_merge_pr_{pr}", total=1)
                 merge_tree = self._test_merge_tree(item.base_tip, item.head)
+                if budget is not None:
+                    budget.set_completed(1)
             except github.HostedPreflightDeadlineExceeded:
                 raise
             except (ControllerError, OSError, subprocess.SubprocessError, ValueError) as error:
@@ -1393,8 +1528,13 @@ class ReviewController:
                 continue
             try:
                 anchor_started = time.perf_counter() if phase_timings is not None else 0.0
+                budget = github.active_hosted_preflight_budget()
+                if budget is not None:
+                    budget.set_phase(f"target_anchor_pr_{pr}", total=1)
                 try:
                     current = self._anchor(pr, live[pr], link)
+                    if budget is not None:
+                        budget.set_completed(1)
                 finally:
                     if phase_timings is not None:
                         phase_timings["local_anchors_ms"] = (
@@ -1569,8 +1709,13 @@ class ReviewController:
             if current is None:
                 try:
                     anchor_started = time.perf_counter() if phase_timings is not None else 0.0
+                    budget = github.active_hosted_preflight_budget()
+                    if budget is not None:
+                        budget.set_phase(f"target_anchor_pr_{pr}", total=1)
                     try:
                         current = self._anchor(pr, live[pr], link)
+                        if budget is not None:
+                            budget.set_completed(1)
                     finally:
                         if phase_timings is not None:
                             phase_timings["local_anchors_ms"] = (
@@ -1753,9 +1898,23 @@ class ReviewController:
         return True
 
     def _checkpoint_for_reconciliation(
-        self, pr: int, channel: policy.Channel, checkpoint: str, prior_head: str, current: AnchorFacts
+        self,
+        pr: int,
+        channel: policy.Channel,
+        checkpoint: str,
+        prior_head: str,
+        current: AnchorFacts,
     ) -> Any:
-        for item in _history(self._evidence_provider, pr, channel):
+        # This proof requires complete historical evidence. Admission may have
+        # preloaded request-only history for a stopped allocation, which cannot
+        # establish that an older moved-parent checkpoint exists.
+        budget = github.active_hosted_preflight_budget()
+        if budget is not None:
+            budget.set_phase(f"target_checkpoint_history_pr_{pr}_{channel.value}", total=1)
+        history = _history(self._evidence_provider, pr, channel)
+        if budget is not None:
+            budget.set_completed(1)
+        for item in history:
             if (
                 _field(item, "checkpoint", "checkpoint_id") != checkpoint
                 or _field(item, "head", "reviewed_head") != prior_head
@@ -1782,7 +1941,10 @@ class ReviewController:
         raise ControllerError("checkpoint must be attributable evidence anchored to a moved parent")
 
     def _active_stack_reconciliation(
-        self, state: ReviewState, pr: int, current: AnchorFacts
+        self,
+        state: ReviewState,
+        pr: int,
+        current: AnchorFacts,
     ) -> StackReconciliationDecision | None:
         for decision in reversed(state.reconciliations):
             if not decision.matches(pr, current.as_dict()):
@@ -1805,7 +1967,17 @@ class ReviewController:
         patch_id = self.git.patch_identity(merge_base, item.head)
         if not isinstance(patch_id, str) or not patch_id:
             raise ControllerError("Git provider returned an empty patch identity")
-        return AnchorFacts(pr, item.head, link.identity, link.parent_head, merge_base, patch_id)
+        return AnchorFacts(
+            pr,
+            item.head,
+            link.identity,
+            link.parent_head,
+            merge_base,
+            patch_id,
+            stop_audit_pr_base_oid=item.base_tip,
+            stop_audit_base_ref=item.base_ref,
+            stop_audit_effective_parent_head=link.parent_head,
+        )
 
     def _test_merge_tree(self, base: str, head: str) -> str:
         verifier = getattr(self.git, "test_merge_tree", None)
@@ -2394,14 +2566,18 @@ class ReviewController:
         allow_cli_hosted_overlap: bool = False,
         allow_hosted_cli_overlap: bool = False,
         acknowledged_over_ceiling_checkpoints: Sequence[str] = (),
+        audit_snapshot: dict[str, Any] | None = None,
+        audit_override: Mapping[str, Any] | None = None,
     ) -> Mapping[str, Any]:
         provider = self._evidence_provider
         review_audit = getattr(provider, "review_stop_audit", None)
-        if callable(review_audit):
+        if audit_override is not None:
+            audit = audit_override
+        elif callable(review_audit):
             try:
                 audit = review_audit(
                     pr,
-                    current.as_dict(),
+                    current.as_stop_audit_dict(),
                     retained_ambiguous_fingerprints=retained_ambiguous_fingerprints,
                 )
             except (OSError, ValueError, TypeError, KeyError) as exc:
@@ -2424,11 +2600,23 @@ class ReviewController:
                 raise ControllerError(f"complete review-stop evidence is unavailable: {exc}") from exc
         else:
             raise ControllerError("review stop requires complete paginated evidence for both review channels")
+        if audit_snapshot is not None and isinstance(audit, Mapping):
+            audit_snapshot.update(copy.deepcopy(dict(audit)))
         if not isinstance(audit, Mapping) or audit.get("complete") is not True:
             raise ControllerError("review stop requires complete paginated evidence for both review channels")
-        if audit.get("head") is not None and str(audit.get("head")).casefold() != current.child_head.casefold():
+        if "request_preparation_only" in audit and type(audit["request_preparation_only"]) is not bool:
+            raise ControllerError("review-stop audit has malformed preparation movement evidence")
+        if (
+            not audit.get("request_preparation_only", False)
+            and audit.get("head") is not None
+            and str(audit.get("head")).casefold() != current.child_head.casefold()
+        ):
             raise ControllerError("review-stop evidence audit observed a stale pull-request head")
-        if audit.get("anchor") is not None and audit.get("anchor") != current.as_dict():
+        audit_anchor = audit.get("anchor")
+        if audit_anchor is not None and (
+            not isinstance(audit_anchor, Mapping)
+            or {name: audit_anchor.get(name) for name in current.as_dict()} != current.as_dict()
+        ):
             raise ControllerError("review-stop evidence audit observed a stale stack identity")
 
         terminal_ambiguities = audit.get("ambiguous_terminal_responses", [])
@@ -2573,15 +2761,15 @@ class ReviewController:
             ("active_reservations", "active review or reservation"),
             ("unmatched_responses", "unmatched review response"),
             ("ambiguous_responses", "unresolved evidence ambiguity"),
-            ("unresolved_findings", "unresolved actionable finding or thread"),
+            ("unknown_review_evidence", "unknown or unresolved review evidence"),
         ):
             values = normalized_audit.get(field, [])
             if not isinstance(values, Sequence) or isinstance(values, (str, bytes)):
                 raise ControllerError(f"review-stop audit has malformed {field}")
-            if field == "unresolved_findings" and acknowledged_over_ceiling_checkpoints:
+            if field == "unknown_review_evidence" and acknowledged_over_ceiling_checkpoints:
                 allowed = set(acknowledged_over_ceiling_checkpoints)
                 if any(not isinstance(value, str) for value in values):
-                    raise ControllerError("review-stop audit has malformed unresolved findings")
+                    raise ControllerError("review-stop audit has malformed unknown review evidence")
                 values = [value for value in values if value not in allowed]
             if field == "active_reservations" and allowed_active_hosted_reservations:
                 if values.count("active") < len(allowed_active_hosted_reservations):
@@ -2612,6 +2800,30 @@ class ReviewController:
             raise ControllerError(
                 "review stop is blocked by historical unmatched evidence outside a direct Hosted stop"
             )
+        unresolved_findings = audit.get("unresolved_findings", [])
+        finding_only_findings = audit.get("finding_only_findings", [])
+        unknown_review_evidence = audit.get("unknown_review_evidence", [])
+        if any(
+            not isinstance(values, Sequence) or isinstance(values, (str, bytes))
+            for values in (unresolved_findings, finding_only_findings, unknown_review_evidence)
+        ) or any(
+            not isinstance(value, str)
+            for values in (unresolved_findings, finding_only_findings, unknown_review_evidence)
+            for value in values
+        ):
+            raise ControllerError("review-stop audit has malformed finding classification")
+        # Older providers expose one untyped unresolved list. Treat it as
+        # unknown; only the canonical runtime adapter's exact split may prove
+        # that every blocker is a validated finding obligation.
+        if "finding_only_findings" not in audit or "unknown_review_evidence" not in audit:
+            if unresolved_findings:
+                raise ControllerError("review stop is blocked by an unresolved actionable finding or thread (untyped)")
+        else:
+            ignored_over_ceiling = set(acknowledged_over_ceiling_checkpoints)
+            classified_unresolved = [value for value in unresolved_findings if value not in ignored_over_ceiling]
+            classified_unknown = [value for value in unknown_review_evidence if value not in ignored_over_ceiling]
+            if sorted(classified_unresolved) != sorted([*finding_only_findings, *classified_unknown]):
+                raise ControllerError("review-stop audit has inconsistent finding classification")
         return normalized_audit
 
     def _stop_ambiguity_pins(
@@ -2677,6 +2889,7 @@ class ReviewController:
         allow_hosted_cli_overlap: bool = False,
         stop_audit_cache: dict[tuple[Any, ...], Mapping[str, Any]] | None = None,
         history_cache: dict[tuple[int, str], list[Any]] | None = None,
+        audit_override: Mapping[str, Any] | None = None,
     ) -> tuple[Any, tuple[tuple[str, ...], str] | None, dict[policy.Channel, list[Any]]]:
         allow_exact_hosted_overlap = allow_cli_hosted_overlap and channel == policy.Channel.CLI
         allow_exact_cli_overlap = allow_hosted_cli_overlap and channel == policy.Channel.HOSTED
@@ -2736,21 +2949,67 @@ class ReviewController:
             allow_exact_hosted_overlap,
             allow_exact_cli_overlap,
         )
-        if stop_audit_cache is not None and cache_key in stop_audit_cache:
+        if audit_override is None and stop_audit_cache is not None and cache_key in stop_audit_cache:
             audit = stop_audit_cache[cache_key]
+            snapshot = stop_audit_cache.get(("snapshot", cache_key), {"evidence": audit, "error": None})
+            latest_snapshot = stop_audit_cache.get(("latest", pr), snapshot)
+            if snapshot["evidence"] != latest_snapshot["evidence"]:
+                raise ControllerError("review safety evidence changed during audit; refresh status before clearance")
         else:
-            audit = self._stop_audit(
-                pr,
-                current,
-                retained_ambiguous_fingerprints,
-                allow_historical_unmatched=allow_historical_unmatched,
-                allow_historical_terminal_ambiguity=allow_historical_terminal_ambiguity,
-                allow_cli_hosted_overlap=allow_exact_hosted_overlap,
-                allow_hosted_cli_overlap=allow_exact_cli_overlap,
-                acknowledged_over_ceiling_checkpoints=acknowledged_over_ceiling_checkpoints,
-            )
+            raw_snapshot: dict[str, Any] = {}
+            audit_error = None
+            try:
+                audit = self._stop_audit(
+                    pr,
+                    current,
+                    retained_ambiguous_fingerprints,
+                    allow_historical_unmatched=allow_historical_unmatched,
+                    allow_historical_terminal_ambiguity=allow_historical_terminal_ambiguity,
+                    allow_cli_hosted_overlap=allow_exact_hosted_overlap,
+                    allow_hosted_cli_overlap=allow_exact_cli_overlap,
+                    acknowledged_over_ceiling_checkpoints=acknowledged_over_ceiling_checkpoints,
+                    audit_snapshot=raw_snapshot,
+                    audit_override=audit_override,
+                )
+            except (ControllerError, OSError, subprocess.SubprocessError, ValueError) as error:
+                audit = raw_snapshot
+                audit_error = str(error)
+            snapshot = {
+                "evidence": raw_snapshot, "error": audit_error,
+                "overlap": {"allow_cli_hosted_overlap": allow_exact_hosted_overlap,
+                            "allow_hosted_cli_overlap": allow_exact_cli_overlap},
+            }
             if stop_audit_cache is not None:
                 stop_audit_cache[cache_key] = audit
+                stop_audit_cache[("snapshot", cache_key)] = snapshot
+                stop_audit_cache[("latest", pr)] = snapshot
+        if stop_audit_cache is not None:
+            stop_audit_cache[("clearance", pr, channel.value)] = snapshot
+        # Authorization consumes the history snapshot refreshed by the audit,
+        # rather than lists captured before the provider invalidated its caches.
+        refreshed = audit.get("channel_histories")
+        if refreshed is not None and (
+            not isinstance(refreshed, Mapping)
+            or any(not isinstance(refreshed.get(selected.value), Sequence)
+                   or isinstance(refreshed.get(selected.value), (str, bytes))
+                   for selected in (policy.Channel.HOSTED, policy.Channel.CLI))
+        ):
+            snapshot["error"] = "review-stop audit has incomplete refreshed channel histories"
+            raise ControllerError(snapshot["error"])
+        refreshed_cache = history_cache if history_cache is not None else {}
+        for selected in (policy.Channel.HOSTED, policy.Channel.CLI):
+            if refreshed is None and snapshot["error"] is not None:
+                continue
+            refreshed_cache[(pr, selected.value)] = list(
+                refreshed[selected.value] if refreshed is not None
+                else _history(self._evidence_provider, pr, selected)
+            )
+        if snapshot["error"] is not None:
+            raise ControllerError(snapshot["error"])
+        histories = {
+            selected: self._policy_history(state, pr, selected, reconciliation, history_cache=refreshed_cache)
+            for selected in (policy.Channel.HOSTED, policy.Channel.CLI)
+        }
         retained_fingerprints, retained_reason = self._stop_ambiguity_pins(
             histories, retained_ambiguous_fingerprints, ambiguity_reason, audit
         )
@@ -2767,6 +3026,11 @@ class ReviewController:
         }
         consumed_active_hosted_reservations: set[tuple[int, int]] = set()
         consumed_active_cli_overlap = False
+        finding_reasons = list(audit.get("finding_only_findings", ()))
+        audited_head = (
+            _sha(audit.get("head"), "audited public head")
+            if audit.get("request_preparation_only") is True else current.child_head
+        )
         for selected, history in histories.items():
             parsed_history = [policy.Evidence.from_value(value) for value in history]
             valid_review_indexes = [
@@ -2798,7 +3062,7 @@ class ReviewController:
                 )
                 if evidence_value.provisional and index > last_valid_review_index:
                     provisional_head = evidence_value.head.casefold()
-                    relevant_heads = {current.child_head.casefold()}
+                    relevant_heads = {current.child_head.casefold(), audited_head.casefold()}
                     if last_valid_review_head:
                         relevant_heads.add(last_valid_review_head.casefold())
                     if not provisional_head or provisional_head in relevant_heads:
@@ -2815,8 +3079,14 @@ class ReviewController:
                     if evidence_value.accepted > 0:
                         has_source_resolution = _field(value, "source_resolution_status") is not None
                         if has_source_resolution:
+                            source_status = _field(value, "source_resolution_status")
+                            if source_status != "resolved" and source_status != "finding_pending":
+                                raise ControllerError(
+                                    f"{self._accepted_findings_pending_reason(value)}; "
+                                    "accepted-finding source linkage or resolution proof is uncertain"
+                                )
                             if self._accepted_findings_pending(value, current.child_head):
-                                raise ControllerError(self._accepted_findings_pending_reason(value))
+                                finding_reasons.append(self._accepted_findings_pending_reason(value))
                         else:
                             reviewed_head = _field(value, "head", "reviewed_head")
                             try:
@@ -2827,7 +3097,7 @@ class ReviewController:
                                     "could not verify corrected-head ancestry for accepted findings"
                                 ) from exc
                             if not has_corrected_descendant or reviewed_head == current.child_head.casefold():
-                                raise ControllerError(
+                                finding_reasons.append(
                                     "accepted findings need a published corrected head before review can stop"
                                 )
                 active_hosted_identity = (_field(value, "trigger_id"), _field(value, "response_id"))
@@ -2858,6 +3128,8 @@ class ReviewController:
                     "unreconciled",
                     "parent_moved",
                     "over_ceiling",
+                    "active_review",
+                    "active_reservation",
                 )
                 # Only the observer's unknown-reset cooldown hold is waived.
                 # Other held/unstable evidence retains its ordinary fence.
@@ -2941,7 +3213,26 @@ class ReviewController:
                     )
                     if allow_historical_unmatched and historical_unanchored_checkpoint and not other_blocker_flags:
                         continue
-                    raise ControllerError(f"{selected.value} channel has unresolved review evidence")
+                    if (
+                        _field(value, "finding_only_hold") is True
+                        and _field(value, "held") is True
+                        and not any(
+                            _field(value, flag) is True
+                            for flag in (
+                                "unstable",
+                                "unreconciled",
+                                "parent_moved",
+                                "over_ceiling",
+                                "rate_limited",
+                                "active_review",
+                                "active_reservation",
+                                "actionable",
+                            )
+                        )
+                    ):
+                        finding_reasons.append(f"{selected.value} channel has validated finding-only evidence")
+                    else:
+                        raise ControllerError(f"{selected.value} channel has unresolved review evidence")
                 checkpoint_id = _field(value, "checkpoint", "checkpoint_id")
                 if isinstance(checkpoint_id, str) and checkpoint_id.startswith(("trigger:", "pending-capture:")):
                     if audited_terminal_rate_limit:
@@ -2984,7 +3275,13 @@ class ReviewController:
             and reviewed_head.casefold() == current.child_head.casefold()
             and (not has_source_resolution or self._accepted_findings_pending(latest, current.child_head))
         ):
-            raise ControllerError(self._accepted_findings_pending_reason(latest))
+            finding_reasons.append(self._accepted_findings_pending_reason(latest))
+        # Positive classifications are valid only after every canonical safety,
+        # history and latest-checkpoint check above has completed.
+        if audit.get("request_preparation_only") is True:
+            raise _RequestPreparationError("known pull-request preparation identity moved after complete safety audit")
+        if finding_reasons:
+            raise _FindingOnlyStopEvidence(finding_reasons[0])
         retained = (retained_fingerprints, retained_reason) if retained_fingerprints else None
         return latest, retained, histories
 
@@ -3539,12 +3836,22 @@ class ReviewController:
             ),
         )
 
-        def result(status: str, reason: str, *, control: str, details: str | None = None) -> dict[str, Any]:
+        def result(
+            status: str,
+            reason: str,
+            *,
+            control: str,
+            details: str | None = None,
+            finding_only_pending: bool = False,
+            request_preparation_only: bool = False,
+        ) -> dict[str, Any]:
             cap_stopped = status in {"CAP_AUDITED_STOP", "CAP_EXHAUSTED_PENDING"}
             return {
                 "status": status,
                 "reason": reason,
                 "details": details,
+                "finding_only_pending": finding_only_pending,
+                "request_preparation_only": request_preparation_only,
                 "promised_head": allocation.head,
                 "checkpoint": latest["checkpoint"] if latest else None,
                 "accepted": latest["accepted"] if latest else None,
@@ -3632,10 +3939,41 @@ class ReviewController:
             None,
         )
         if pending_baseline is not None:
+            finding_only_pending = False
+            request_preparation_only = False
+            stopping_checkpoint = latest["checkpoint"] if latest else _field(
+                baseline, "checkpoint", "checkpoint_id"
+            )
+            if (
+                used >= minimum
+                and normal_taper_complete
+                and current is not None
+                and reconciliation_result is not None
+                and stopping_checkpoint
+            ):
+                try:
+                    self._check_stop_evidence(
+                        state,
+                        allocation.pr,
+                        policy.Channel(allocation.channel),
+                        current,
+                        reconciliation_result,
+                        checkpoint_pin=stopping_checkpoint,
+                        require_checkpoint_ancestry=False,
+                        allow_cli_hosted_overlap=allocation.channel == policy.Channel.CLI.value,
+                        allow_hosted_cli_overlap=allocation.channel == policy.Channel.HOSTED.value,
+                        stop_audit_cache=stop_audit_cache,
+                        history_cache=history_cache,
+                    )
+                except (ControllerError, ValueError) as error:
+                    finding_only_pending = isinstance(error, _FindingOnlyStopEvidence)
+                    request_preparation_only = isinstance(error, _RequestPreparationError)
             return result(
                 "CAP_EXHAUSTED_PENDING" if cap is not None and used >= cap else "CAP_FINDINGS_PENDING",
                 self._accepted_findings_pending_reason(pending_baseline),
                 control="unresolved_work",
+                finding_only_pending=finding_only_pending,
+                request_preparation_only=request_preparation_only,
             )
 
         if any(completed["accepted"] > 0 for completed in snapshot["results"]):
@@ -3673,6 +4011,8 @@ class ReviewController:
                     else "accepted findings remain pending; their fixes are mandatory",
                     control="unresolved_work",
                     details=str(error),
+                    finding_only_pending=not cap_reached and isinstance(error, _FindingOnlyStopEvidence),
+                    request_preparation_only=not cap_reached and isinstance(error, _RequestPreparationError),
                 )
 
         stopping_checkpoint = latest["checkpoint"] if latest else _field(baseline, "checkpoint", "checkpoint_id")
@@ -3709,6 +4049,8 @@ class ReviewController:
                     "normal taper is complete but review obligations remain pending",
                     control="unresolved_work",
                     details=str(error),
+                    finding_only_pending=isinstance(error, _FindingOnlyStopEvidence),
+                    request_preparation_only=isinstance(error, _RequestPreparationError),
                 )
             return result(
                 "CAP_TAPERED",
@@ -3917,6 +4259,27 @@ class ReviewController:
             accepted,
         )
 
+    @staticmethod
+    def _review_credit_projection(history: Sequence[Any]) -> tuple[Any, ...]:
+        """Retain material count/taper inputs, ignoring non-counting audit additions."""
+
+        fields = (
+            ("pr", "number"), ("head", "reviewed_head"), ("checkpoint", "checkpoint_id"),
+            ("patch_id", "patch_identity"), ("accepted",), ("anchored",),
+            ("child_head",), ("parent_identity",), ("parent_head", "parent_sha", "base_tip_sha"),
+            ("merge_base",), ("rate_limited",), ("connection_failed",), ("duplicate",),
+            ("partial",), ("ambiguous",), ("over_ceiling",),
+        )
+        return tuple(
+            tuple(_field(value, *aliases) for aliases in fields)
+            for value in history
+            if not (item := policy.Evidence.from_value(value)).correction
+            and not item.non_counting
+            and item.completed is True
+            and item.attributable is True
+            and item.provisional is False
+        )
+
     def _allocation_views(
         self,
         state: ReviewState,
@@ -3942,10 +4305,14 @@ class ReviewController:
                 bounded_snapshot = self._bounded_allocation_evidence(allocation, histories[pr])
                 if bounded_evidence_cache is not None:
                     bounded_evidence_cache[cache_key] = bounded_snapshot
-            try:
-                current = self._anchor(pr, live[pr], reconciliation.links[pr])
-            except (ControllerError, OSError, subprocess.SubprocessError, ValueError):
-                current = None
+            current = self._reconciled_anchor(pr, live[pr], reconciliation)
+            if current is None:
+                try:
+                    current = self._anchor(pr, live[pr], reconciliation.links[pr])
+                except (ControllerError, OSError, subprocess.SubprocessError, ValueError):
+                    current = None
+            credit_projection = self._review_credit_projection(histories[pr])
+            refreshed_history_cache = history_cache if history_cache is not None else {}
             view = self._allocation_progress(
                 allocation,
                 histories[pr],
@@ -3954,9 +4321,33 @@ class ReviewController:
                 state=state,
                 reconciliation_result=reconciliation,
                 stop_audit_cache=stop_audit_cache,
-                history_cache=history_cache,
+                history_cache=refreshed_history_cache,
                 bounded_evidence=bounded_snapshot,
             )
+            refreshed_history = self._policy_history(
+                state, pr, channel, reconciliation, history_cache=refreshed_history_cache,
+            )
+            # Scope markers carry no review credit, but still invalidate a
+            # bounded allowance. Assess them again after the clearance audit.
+            if refreshed_history != histories[pr]:
+                bounded_snapshot = self._bounded_allocation_evidence(allocation, refreshed_history)
+                if bounded_evidence_cache is not None:
+                    bounded_evidence_cache[cache_key] = bounded_snapshot
+            projection_current = credit_projection == self._review_credit_projection(refreshed_history)
+            view["history_projection_current"] = projection_current
+            if not projection_current:
+                reason = "review count or taper evidence changed during audit; refresh status before release"
+                view.update(status="INVALID", reason=reason, details=reason,
+                            finding_only_pending=False, request_preparation_only=False,
+                            selection_control="unresolved_work")
+            elif (allocation.stop_basis is None
+                  and (allocation.min_additional_completed is not None
+                       or allocation.max_additional_completed is not None)
+                  and bounded_snapshot["error"] is not None):
+                reason = bounded_snapshot["error"]
+                view.update(status="INVALID", reason=reason, details=reason,
+                            finding_only_pending=False, request_preparation_only=False,
+                            selection_control="unresolved_work")
             default_one_result = (
                 allocation.min_additional_completed is None
                 and allocation.max_additional_completed is None
@@ -3995,11 +4386,14 @@ class ReviewController:
                 taper_values,
                 policy.required_taper(state, channel, taper_values),
             )
+            if not projection_current:
+                for key in ("completed_count", "used", "remaining", "taper_complete", "historical_taper_complete"):
+                    view[key] = None
             views[pr] = view
         return views
 
-    @staticmethod
     def _select_review_decision(
+        self,
         state: ReviewState,
         channel: policy.Channel,
         live: Mapping[int, LivePullRequest],
@@ -4010,6 +4404,8 @@ class ReviewController:
         *,
         allocation_reopen_prs: Iterable[int] = (),
         bounded_evidence_cache: Mapping[tuple[int, str], Mapping[str, Any]] | None = None,
+        stop_audit_cache: dict[tuple[Any, ...], Mapping[str, Any]] | None = None,
+        history_cache: dict[tuple[int, str], list[Any]] | None = None,
     ) -> policy.ChannelDecision:
         """Apply the same authoritative selector to already fetched status evidence."""
 
@@ -4023,6 +4419,64 @@ class ReviewController:
                 for value in histories[channel].get(pr, ())
             )
         }
+        discovery_closed_pending_prs = {
+            pr
+            for pr, view in channel_allocations.items()
+            if view.get("status") in {"CAP_TAPERED_PENDING", "CAP_FINDINGS_PENDING"}
+            and (
+                view.get("finding_only_pending") is True
+                or view.get("request_preparation_only") is True
+            )
+            and view.get("taper_complete") is True
+            and type(view.get("completed_count")) is int
+            and type(view.get("min_additional_completed")) is int
+            and view["completed_count"] >= view["min_additional_completed"]
+        }
+        allocation_holds = {
+            pr: view.get("details") or view["reason"]
+            for pr, view in channel_allocations.items()
+            if (
+                view["status"] in {"CAP_TAPERED_PENDING", "CAP_FINDINGS_PENDING"}
+                and pr not in discovery_closed_pending_prs
+            )
+            or (view["status"] == "CAP_ACTIVE" and view.get("selection_control") == "unresolved_work")
+            or view.get("history_projection_current") is False
+        }
+        finding_clearance_prs = set(discovery_closed_pending_prs)
+        # Unallocated discovery-complete candidates with typed finding holds
+        # or pending accepted-source proof need the same canonical audit.
+        # Source uncertainty may exist even after every public thread resolves.
+        for pr in candidate_prs:
+            values = histories[channel].get(pr, ())
+            if (live[pr].merged or f"{pr}:{channel.value}" in state.allocations
+                or not any(
+                    policy._is_finding_only_hold(policy.Evidence.from_value(value))
+                    or self._accepted_findings_pending(value, live[pr].head)
+                    for value in values
+                )
+                or not policy.taper_satisfied(channel, policy.fresh_taper_history(state, channel, values),
+                    policy.required_taper(state, channel, values))):
+                continue
+            credit_projection = self._review_credit_projection(values)
+            refreshed_history_cache = history_cache if history_cache is not None else {}
+            try:
+                current = self._anchor(pr, live[pr], reconciliation.links[pr])
+                self._check_stop_evidence(
+                    state, pr, channel, current, reconciliation, checkpoint_pin=None,
+                    require_checkpoint_ancestry=False,
+                    stop_audit_cache=stop_audit_cache, history_cache=refreshed_history_cache)
+            except (_FindingOnlyStopEvidence, _RequestPreparationError):
+                pass
+            except (ControllerError, OSError, subprocess.SubprocessError, ValueError) as error:
+                allocation_holds[pr] = str(error)
+                continue
+            refreshed_history = self._policy_history(
+                state, pr, channel, reconciliation, history_cache=refreshed_history_cache,
+            )
+            if credit_projection != self._review_credit_projection(refreshed_history):
+                allocation_holds[pr] = "review count or taper evidence changed during audit; refresh status before release"
+            else:
+                finding_clearance_prs.add(pr)
         for pr, view in channel_allocations.items():
             allocation = state.allocations.get(f"{pr}:{channel.value}")
             if allocation is None:
@@ -4057,26 +4511,19 @@ class ReviewController:
             handed_off_prs=(
                 pr
                 for pr, view in channel_allocations.items()
-                if view["status"] in {"HANDED_OFF", "CAP_TAPERED"}
+                if view["status"] in {"HANDED_OFF", "CAP_TAPERED"} and pr not in active_review_prs
             ),
             human_stopped_prs=(
                 pr for pr, view in channel_allocations.items()
-                if view["status"] in {"STOPPED", "CAP_AUDITED_STOP", "CAP_EXHAUSTED_PENDING"}
+                if view["status"]
+                in {"STOPPED", "CAP_AUDITED_STOP", "CAP_EXHAUSTED_PENDING"}
             ),
             exhausted_prs=(pr for pr, view in channel_allocations.items() if view["status"] == "EXHAUSTED_PENDING"),
             allocation_blocks={
-                pr: view["reason"] for pr, view in channel_allocations.items() if view["status"] == "INVALID"
+                pr: view["reason"] for pr, view in channel_allocations.items()
+                if view["status"] == "INVALID" and view.get("history_projection_current") is not False
             },
-            allocation_holds={
-                pr: view.get("details") or view["reason"]
-                for pr, view in channel_allocations.items()
-                if view["status"]
-                in {
-                    "CAP_FINDINGS_PENDING",
-                    "CAP_TAPERED_PENDING",
-                }
-                or (view["status"] == "CAP_ACTIVE" and view.get("selection_control") == "unresolved_work")
-            },
+            allocation_holds=allocation_holds,
             allocation_reopen_prs=set(allocation_reopen_prs)
             | {
                 pr
@@ -4085,6 +4532,7 @@ class ReviewController:
             },
             taper_history_by_pr=taper_history_by_pr,
             active_review_prs=active_review_prs,
+            finding_clearance_prs=finding_clearance_prs,
         )
         if (
             channel == policy.Channel.CLI
@@ -4267,13 +4715,85 @@ class ReviewController:
             for channel in (policy.Channel.HOSTED, policy.Channel.CLI)
         )
 
+    def _refreshed_status_histories(
+        self, state, live, reconciliation, candidate_prs, history_cache,
+    ):
+        # Clearance audits refresh both cache entries. Reproject that local
+        # snapshot for selection and row rendering without another read.
+        current_histories = {
+            selected: {
+                pr: self._policy_history(
+                    state, pr, selected, reconciliation, history_cache=history_cache,
+                )
+                for pr in candidate_prs
+            }
+            for selected in (policy.Channel.HOSTED, policy.Channel.CLI)
+        }
+        current_histories[policy.Channel.CLI] = {
+            pr: self._project_cli_streak_lineage(
+                self._project_cli_hosted_reservations(
+                    current_histories[policy.Channel.CLI][pr],
+                    current_histories[policy.Channel.HOSTED][pr],
+                    pr, live[pr].head, self._reconciled_anchor(pr, live[pr], reconciliation),
+                ),
+                pr, state, self._reconciled_anchor(pr, live[pr], reconciliation),
+            )
+            for pr in candidate_prs
+        }
+        return current_histories
+
+    def _refreshed_status_allocations(
+        self, state, live, reconciliation, histories, allocations, candidate_prs,
+        bounded_evidence_cache, channel, current_histories,
+    ):
+        current_allocations = dict(allocations[channel])
+        for pr in candidate_prs:
+            fresh_history = current_histories[channel][pr]
+            allocation = state.allocations.get(f"{pr}:{channel.value}")
+            reason = None
+            if (allocation is not None and allocation.stop_basis is None
+                and (allocation.min_additional_completed is not None
+                     or allocation.max_additional_completed is not None)):
+                snapshot = bounded_evidence_cache.get((pr, channel.value))
+                if snapshot is None or fresh_history != histories[channel].get(pr, ()):
+                    snapshot = self._bounded_allocation_evidence(allocation, fresh_history)
+                if fresh_history != histories[channel].get(pr, ()):
+                    reason = snapshot["error"]
+                    if reason is None and snapshot["in_flight"]:
+                        # The canonical in-flight branch returns before a
+                        # clearance audit; refresh activity counters locally.
+                        current_allocations[pr] = dict(
+                            current_allocations.get(pr, {}),
+                            **self._allocation_progress(
+                                allocation, fresh_history,
+                                self._reconciled_anchor(pr, live[pr], reconciliation),
+                                reconciliation.status_for(pr, channel.value),
+                                state=state, reconciliation_result=reconciliation,
+                                bounded_evidence=snapshot,
+                            ),
+                        )
+            if self._review_credit_projection(histories[channel].get(pr, ())) != self._review_credit_projection(
+                fresh_history
+            ):
+                reason = "review count or taper evidence changed during audit; refresh status before release"
+            if reason is not None:
+                current_allocations[pr] = dict(
+                    current_allocations.get(pr, {}), status="INVALID", reason=reason, details=reason,
+                    history_projection_current=False, finding_only_pending=False,
+                    request_preparation_only=False, selection_control="unresolved_work",
+                )
+                for key in ("completed_count", "used", "remaining", "in_flight",
+                            "taper_complete", "historical_taper_complete"):
+                    current_allocations[pr][key] = None
+        return current_allocations
+
     def _status_review_targets(
         self,
         state: ReviewState,
         live: Mapping[int, LivePullRequest],
         reconciliation: stack.Reconciliation,
-        histories: Mapping[policy.Channel, Mapping[int, Sequence[Any]]],
-        allocations: Mapping[policy.Channel, Mapping[int, Mapping[str, Any]]],
+        histories: dict[policy.Channel, dict[int, list[Any]]],
+        allocations: dict[policy.Channel, dict[int, dict[str, Any]]],
         candidate_prs: Sequence[int],
         *,
         selection_complete: bool,
@@ -4282,16 +4802,32 @@ class ReviewController:
         history_cache: dict[tuple[int, str], list[Any]],
     ) -> dict[str, dict[str, Any]]:
         result: dict[str, dict[str, Any]] = {}
+
+        def refreshed_histories():
+            return self._refreshed_status_histories(
+                state, live, reconciliation, candidate_prs, history_cache,
+            )
+
+        def refreshed_allocations(channel, current_histories):
+            return self._refreshed_status_allocations(
+                state, live, reconciliation, histories, allocations, candidate_prs,
+                bounded_evidence_cache, channel, current_histories,
+            )
+
         for channel in (policy.Channel.HOSTED, policy.Channel.CLI):
+            current_histories = refreshed_histories()
+            current_allocations = refreshed_allocations(channel, current_histories)
             decision = self._select_review_decision(
                 state,
                 channel,
                 live,
                 reconciliation,
-                histories,
-                allocations[channel],
+                current_histories,
+                current_allocations,
                 candidate_prs,
                 bounded_evidence_cache=bounded_evidence_cache,
+                stop_audit_cache=stop_audit_cache,
+                history_cache=history_cache,
             )
             decision = self._reopen_hosted_cross_channel_judgment(
                 state,
@@ -4299,8 +4835,8 @@ class ReviewController:
                 decision,
                 live,
                 reconciliation,
-                histories,
-                allocations[channel],
+                current_histories,
+                current_allocations,
                 stop_audit_cache=stop_audit_cache,
                 history_cache=history_cache,
             )
@@ -4320,6 +4856,76 @@ class ReviewController:
                 value["draft_notice"] = DRAFT_PR_NOTICE if is_draft else None
             value["pr"] = value.pop("target")
             result[channel.value] = value
+        # Both selectors may refresh either channel. Publish one final local
+        # snapshot to the row renderer, retaining invalidated projections.
+        final_histories = refreshed_histories()
+        for channel in (policy.Channel.HOSTED, policy.Channel.CLI):
+            final_allocations = refreshed_allocations(channel, final_histories)
+            allocations[channel].update({
+                pr: view for pr, view in final_allocations.items() if pr in allocations[channel]
+            })
+            for pr in candidate_prs:
+                if live[pr].merged:
+                    continue
+                view = final_allocations.get(pr, {})
+                consumed = stop_audit_cache.get(("clearance", pr, channel.value))
+                latest = stop_audit_cache.get(("latest", pr))
+                clearance_changed = (
+                    consumed is not None and latest is not None
+                    and consumed["evidence"] != latest["evidence"]
+                    and view.get("status") not in {
+                        "STOPPED", "CAP_AUDITED_STOP", "CAP_EXHAUSTED_PENDING", "HANDED_OFF"
+                    }
+                )
+                clearance_error = None
+                if clearance_changed:
+                    try:
+                        current = self._reconciled_anchor(pr, live[pr], reconciliation)
+                        if current is None:
+                            current = self._anchor(pr, live[pr], reconciliation.links[pr])
+                        final_audit = dict(latest["evidence"])
+                        final_audit.setdefault("channel_histories", {
+                            selected.value: history_cache.get((pr, selected.value), [])
+                            for selected in (policy.Channel.HOSTED, policy.Channel.CLI)
+                        })
+                        self._check_stop_evidence(
+                            state, pr, channel, current, reconciliation,
+                            checkpoint_pin=None, require_checkpoint_ancestry=False,
+                            history_cache=history_cache, audit_override=final_audit,
+                            **consumed.get("overlap", {}),
+                        )
+                    except (_FindingOnlyStopEvidence, _RequestPreparationError):
+                        pass
+                    except (ControllerError, OSError, subprocess.SubprocessError, ValueError) as error:
+                        clearance_error = str(error)
+                clearance_changed = clearance_error is not None
+                active = any(
+                    _field(value, "active_review") is True or _field(value, "active_reservation") is True
+                    for value in final_histories[channel][pr]
+                )
+                if not clearance_changed and not active and view.get("history_projection_current") is not False:
+                    continue
+                target = result[channel.value].get("pr")
+                if target is not None and candidate_prs.index(target) < candidate_prs.index(pr):
+                    break
+                reason = (
+                    clearance_error
+                    if clearance_changed else
+                    f"{pr} has an active review or reservation in a review channel" if active else view["reason"]
+                )
+                if clearance_changed and pr in allocations[channel]:
+                    allocations[channel][pr] = dict(
+                        allocations[channel][pr], status="INVALID", reason=reason, details=reason,
+                        finding_only_pending=False, request_preparation_only=False,
+                        selection_control="unresolved_work",
+                    )
+                held = policy.ChannelDecision(channel, pr, policy.ReviewStatus.HELD, reason).to_dict()
+                held["pr"] = held.pop("target")
+                held["is_draft"] = live[pr].is_draft
+                held["draft_notice"] = DRAFT_PR_NOTICE if live[pr].is_draft else None
+                result[channel.value] = held
+                break
+            histories[channel].update(final_histories[channel])
         return result
 
     def _target(
@@ -4327,12 +4933,34 @@ class ReviewController:
         channel: policy.Channel | str,
         expected_pr: int | None = None,
         *,
+        allow_cli_prefix_optimization: bool = True,
         allow_completed_allocation: bool = False,
     ) -> Target:
         selected = policy.Channel(channel)
         state = self._state()
         if not state.ordered_prs:
             raise ControllerError("review stack is empty")
+        budget = github.active_hosted_preflight_budget()
+        use_current_batch = (
+            budget is not None
+            and callable(getattr(self._require_github(), "batch_pull_requests", None))
+        )
+        scoped_expected_cli = (
+            allow_cli_prefix_optimization
+            and use_current_batch
+            and selected == policy.Channel.CLI
+            and expected_pr in state.ordered_prs
+            and callable(getattr(self._evidence_provider, "active_review_targets", None))
+            and callable(getattr(self._evidence_provider, "repository_cli_lock_status", None))
+            and callable(getattr(self._evidence_provider, "request_history", None))
+        )
+        selection_prs = state.ordered_prs
+        selection_state = state
+        expected_index: int | None = None
+        if scoped_expected_cli:
+            expected_index = state.ordered_prs.index(expected_pr)
+            selection_prs = state.ordered_prs[: expected_index + 1]
+            selection_state = dataclasses.replace(state, ordered_prs=selection_prs)
         history_cache: dict[tuple[int, str], list[Any]] = {}
         stop_audit_cache: dict[tuple[Any, ...], Mapping[str, Any]] = {}
         bounded_evidence_cache: dict[tuple[int, str], Mapping[str, Any]] = {}
@@ -4340,6 +4968,8 @@ class ReviewController:
         def cache_request_history(pr: int, channel: str) -> None:
             if (pr, channel) in history_cache:
                 return
+            if budget is not None:
+                budget.set_phase(f"target_request_history_pr_{pr}_{channel}", total=1)
             request_history = getattr(self._evidence_provider, "request_history", None)
             if callable(request_history):
                 values = list(request_history(pr, channel))
@@ -4356,17 +4986,14 @@ class ReviewController:
                     )
                 ]
             history_cache[(pr, channel)] = values
+            if budget is not None:
+                budget.set_completed(1)
 
         for allocation in state.allocations.values():
-            if allocation.pr in state.ordered_prs and allocation.stop_basis is not None:
+            if allocation.pr in selection_prs and allocation.stop_basis is not None:
                 cache_request_history(allocation.pr, allocation.channel)
         live_identities = None
-        use_current_batch = (
-            github.active_hosted_preflight_budget() is not None
-            and callable(getattr(self._require_github(), "batch_pull_requests", None))
-        )
         if use_current_batch:
-            budget = github.active_hosted_preflight_budget()
             identity_batch_count = (len(state.ordered_prs) + 24) // 25
             if budget is not None:
                 budget.set_phase("target_identity_batch", total=identity_batch_count)
@@ -4388,15 +5015,140 @@ class ReviewController:
                 raise ControllerError(
                     f"fresh live identity is incomplete for the configured {selected.value.upper()} review stack"
                 )
-            if budget is not None:
-                budget.set_phase("target_reconciliation", total=1)
+            if scoped_expected_cli:
+                validated_identities: dict[int, LivePullRequest] = {}
+                for pr in state.ordered_prs:
+                    identity = live_identities[pr]
+                    if (
+                        type(identity.get("isDraft")) is not bool
+                        or any(
+                            not isinstance(identity.get(field), str) or not identity[field]
+                            for field in (
+                                "state",
+                                "baseRefName",
+                                "baseRefOid",
+                                "headRefName",
+                                "headRefOid",
+                                "mergeable",
+                            )
+                        )
+                    ):
+                        raise ControllerError(f"fresh live identity is malformed for PR #{pr}")
+                    item = _live(identity, pr)
+                    if item.state not in {"OPEN", "CLOSED", "MERGED"} or item.mergeable not in {
+                        "MERGEABLE",
+                        "CONFLICTING",
+                        "UNKNOWN",
+                    }:
+                        raise ControllerError(f"fresh live identity has an unknown lifecycle for PR #{pr}")
+                    validated_identities[pr] = item
+                for pr, item in validated_identities.items():
+                    problem = self._head_repository_problem(item)
+                    if problem:
+                        raise ControllerError(f"PR #{pr} {problem}")
+                active_candidates = tuple(
+                    pr
+                    for pr, item in validated_identities.items()
+                    if not item.merged and item.state == "OPEN"
+                )
+                if budget is not None:
+                    budget.set_phase("target_repository_cli_lock", total=1)
+                try:
+                    lock_status = self._evidence_provider.repository_cli_lock_status()
+                except github.HostedPreflightDeadlineExceeded:
+                    raise
+                except Exception as error:
+                    raise ControllerError("repository-wide CLI review activity cannot be verified") from error
+                if lock_status != "clear":
+                    detail = "active" if lock_status == "held" else "unknown or ambiguous"
+                    raise ControllerError(f"repository-wide CLI review activity is {detail}")
+                if budget is not None:
+                    budget.set_completed(1)
+                discover_active = getattr(self._evidence_provider, "active_review_targets", None)
+                if budget is not None:
+                    budget.set_phase("target_active_candidate_scan", total=1)
+                if scoped_expected_cli:
+                    try:
+                        found_candidates = discover_active(active_candidates, live_identities)
+                    except github.HostedPreflightDeadlineExceeded:
+                        raise
+                    except (ControllerError, OSError, RuntimeError, TypeError, ValueError, KeyError):
+                        # Candidate discovery can fail because of Hosted or
+                        # historical evidence. Keep the former full-stack path
+                        # instead of treating that uncertainty as CLI activity.
+                        scoped_expected_cli = False
+                    else:
+                        if not isinstance(found_candidates, (set, frozenset)) or any(
+                            isinstance(pr, bool) or not isinstance(pr, int) or pr not in active_candidates
+                            for pr in found_candidates
+                        ):
+                            scoped_expected_cli = False
+                        else:
+                            for pr in sorted(found_candidates):
+                                key = (pr, policy.Channel.CLI.value)
+                                if key in history_cache:
+                                    current_cli = history_cache[key]
+                                else:
+                                    if budget is not None:
+                                        budget.set_phase(f"target_cli_activity_pr_{pr}", total=1)
+                                    try:
+                                        current_cli = list(self._evidence_provider.request_history(pr, "cli"))
+                                    except github.HostedPreflightDeadlineExceeded:
+                                        raise
+                                    except Exception as error:
+                                        raise ControllerError(
+                                            f"current CLI activity for PR #{pr} cannot be verified"
+                                        ) from error
+                                    if budget is not None:
+                                        budget.set_completed(1)
+                                if not isinstance(current_cli, Sequence) or isinstance(current_cli, (str, bytes)):
+                                    raise ControllerError(
+                                        f"current CLI activity for PR #{pr} is ambiguous"
+                                    )
+                                for item in current_cli:
+                                    if not isinstance(item, Mapping):
+                                        raise ControllerError(
+                                            f"current CLI activity for PR #{pr} is ambiguous"
+                                        )
+                                    for field in ("active_review", "active_reservation"):
+                                        flag = _field(item, field)
+                                        if flag is not None and type(flag) is not bool:
+                                            raise ControllerError(
+                                                f"current CLI activity for PR #{pr} is ambiguous"
+                                            )
+                                    if _field(item, "active_review") is True or _field(
+                                        item, "active_reservation"
+                                    ) is True:
+                                        raise ControllerError(
+                                            f"repository-wide CLI review activity is active or ambiguous on PR #{pr}"
+                                        )
+                    if budget is not None:
+                        budget.set_phase("target_active_candidate_scan_complete", total=1)
+                        budget.set_completed(1)
+                if not scoped_expected_cli:
+                    selection_prs = state.ordered_prs
+                    selection_state = state
+                    expected_index = None
+                    for allocation in state.allocations.values():
+                        if allocation.pr in selection_prs and allocation.stop_basis is not None:
+                            cache_request_history(allocation.pr, allocation.channel)
+        if budget is not None:
+            budget.set_phase("target_remote_heads", total=1)
+        selection_remote_heads = self.git.remote_heads()
+        if budget is not None:
+            budget.set_completed(1)
+            budget.set_phase("target_stack_reconciliation", total=1)
         live, reconciliation = self._reconciliation(
-            state,
+            selection_state,
             live_identities=live_identities,
             refresh_prs=set() if live_identities is not None else None,
             history_cache=history_cache,
+            remote_head_snapshot=selection_remote_heads,
         )
-        for pr in state.ordered_prs:
+        if budget is not None:
+            budget.set_phase("target_stack_reconciliation_complete", total=1)
+            budget.set_completed(1)
+        for pr in selection_prs:
             problem = self._head_repository_problem(live[pr])
             if problem:
                 raise ControllerError(f"PR #{pr} {problem}")
@@ -4405,15 +5157,25 @@ class ReviewController:
                 # and repository cooldowns still belong to request admission.
                 for channel_name in ("hosted", "cli"):
                     cache_request_history(pr, channel_name)
-        history = {
-            pr: self._policy_history(state, pr, selected, reconciliation, history_cache=history_cache)
-            for pr in state.ordered_prs
-        }
         other = policy.Channel.CLI if selected == policy.Channel.HOSTED else policy.Channel.HOSTED
-        other_history = {
-            pr: self._policy_history(state, pr, other, reconciliation, history_cache=history_cache)
-            for pr in state.ordered_prs
-        }
+        policy_histories: dict[policy.Channel, dict[int, list[Any]]] = {selected: {}, other: {}}
+        if budget is not None:
+            budget.set_phase("target_policy_history_projection", total=2 * len(selection_prs))
+        completed_history_items = 0
+        for pr in selection_prs:
+            for channel_name in (selected, other):
+                policy_histories[channel_name][pr] = self._policy_history(
+                    selection_state,
+                    pr,
+                    channel_name,
+                    reconciliation,
+                    history_cache=history_cache,
+                )
+                completed_history_items += 1
+                if budget is not None:
+                    budget.set_completed(completed_history_items)
+        history = policy_histories[selected]
+        other_history = policy_histories[other]
         cli_history = history if selected == policy.Channel.CLI else other_history
         hosted_history = other_history if selected == policy.Channel.CLI else history
         projected_cli_history = {
@@ -4426,17 +5188,17 @@ class ReviewController:
                     self._reconciled_anchor(pr, live[pr], reconciliation),
                 ),
                 pr,
-                state,
+                selection_state,
                 self._reconciled_anchor(pr, live[pr], reconciliation),
             )
-            for pr in state.ordered_prs
+            for pr in selection_prs
         }
         if selected == policy.Channel.CLI:
             history = projected_cli_history
         else:
             other_history = projected_cli_history
         allocations = self._allocation_views(
-            state,
+            selection_state,
             live,
             reconciliation,
             selected,
@@ -4446,19 +5208,25 @@ class ReviewController:
             bounded_evidence_cache=bounded_evidence_cache,
         )
         candidate_histories = {selected: history, other: other_history}
+        if budget is not None:
+            budget.set_phase("target_policy_selection", total=1)
         decision = self._select_review_decision(
-            state,
+            selection_state,
             selected,
             live,
             reconciliation,
             candidate_histories,
             allocations,
-            state.ordered_prs,
+            selection_prs,
             allocation_reopen_prs=((expected_pr,) if allow_completed_allocation and expected_pr is not None else ()),
             bounded_evidence_cache=bounded_evidence_cache,
+            stop_audit_cache=stop_audit_cache,
+            history_cache=history_cache,
         )
+        if budget is not None:
+            budget.set_completed(1)
         decision = self._reopen_hosted_cross_channel_judgment(
-            state,
+            selection_state,
             selected,
             decision,
             live,
@@ -4511,6 +5279,11 @@ class ReviewController:
             test_merge[0].casefold() != item.base_tip.casefold() or test_merge[1].casefold() != item.head.casefold()
         ):
             test_merge = None
+        selected_base_ref_tip = selection_remote_heads.get(item.base_ref)
+        if not isinstance(selected_base_ref_tip, str) or re.fullmatch(r"[0-9a-fA-F]{40}", selected_base_ref_tip) is None:
+            selected_base_ref_tip = None
+        else:
+            selected_base_ref_tip = selected_base_ref_tip.casefold()
         selected_target = ReviewTarget(
             item.runner_snapshot(),
             EffectiveParent(link.parent_ref, link.parent_head, link.parent_pr),
@@ -4541,6 +5314,7 @@ class ReviewController:
             default_test_merge_head_sha=test_merge[1] if test_merge is not None else "",
             default_test_merge_tree_sha=test_merge[2] if test_merge is not None else "",
             candidate_warnings=candidate_warnings,
+            selected_base_ref_tip=selected_base_ref_tip,
         )
         return Target(
             selected,
@@ -4995,6 +5769,37 @@ class ReviewController:
             )
             for channel in (policy.Channel.HOSTED, policy.Channel.CLI)
         }
+        review_targets = None
+        if review_target_prs is not None:
+            review_targets = self._status_review_targets(
+                state,
+                live,
+                reconciliation,
+                histories,
+                allocations,
+                review_target_prs,
+                selection_complete=review_target_selection_complete,
+                bounded_evidence_cache=bounded_evidence_cache,
+                stop_audit_cache=stop_audit_cache,
+                history_cache=history_cache,
+            )
+        else:
+            # Allocation audits refresh both operation-local histories even
+            # when this read does not select a queue target. Render those final
+            # snapshots through the same projection used by target status.
+            checked_prs = tuple(pr for pr in state.ordered_prs if evidence_prs is None or pr in evidence_prs)
+            final_histories = self._refreshed_status_histories(
+                state, live, reconciliation, checked_prs, history_cache,
+            )
+            for channel in (policy.Channel.HOSTED, policy.Channel.CLI):
+                final_allocations = self._refreshed_status_allocations(
+                    state, live, reconciliation, histories, allocations, checked_prs,
+                    bounded_evidence_cache, channel, final_histories,
+                )
+                allocations[channel].update({
+                    pr: view for pr, view in final_allocations.items() if pr in allocations[channel]
+                })
+                histories[channel].update(final_histories[channel])
         for pr in state.ordered_prs:
             item = live[pr]
             reconciliation_status = reconciliation.status_for(pr)
@@ -5114,7 +5919,8 @@ class ReviewController:
                                 or str(_field(value, "checkpoint") or "").startswith("pending-capture:")
                                 or index in pending_by_channel[channel]
                             )
-                        ]
+                        ] + ([stop_audit_cache[("latest", pr)]["error"]]
+                             if stop_audit_cache.get(("latest", pr), {}).get("error") else [])
                         for channel in (policy.Channel.HOSTED, policy.Channel.CLI)
                     },
                     "review_activity": {
@@ -5144,18 +5950,7 @@ class ReviewController:
             "legacy_transitions": [item.to_dict() for item in state.legacy_transitions],
         }
         if review_target_prs is not None:
-            report["review_targets"] = self._status_review_targets(
-                state,
-                live,
-                reconciliation,
-                histories,
-                allocations,
-                review_target_prs,
-                selection_complete=review_target_selection_complete,
-                bounded_evidence_cache=bounded_evidence_cache,
-                stop_audit_cache=stop_audit_cache,
-                history_cache=history_cache,
-            )
+            report["review_targets"] = review_targets
             # PR-level queue selection survives request-only identity warnings.
             # Keep a separate snapshot; neither presentation nor later request
             # invalidation may select a replacement or change policy admission.
@@ -5984,7 +6779,12 @@ class ReviewController:
                         if not selected.target.default_base_front or attempt == MAX_BASE_RESELECTIONS:
                             raise ControllerError(str(error)) from error
                         selected = preflight_phase(
-                            "target_reselection", lambda selected=selected: self._target(policy.Channel.CLI, selected.pr)
+                            "target_reselection",
+                            lambda selected=selected: self._target(
+                                policy.Channel.CLI,
+                                selected.pr,
+                                allow_cli_prefix_optimization=expected_pr is not None,
+                            ),
                         )
             except github.HostedPreflightDeadlineExceeded as error:
                 raise ControllerError(str(error)) from error
@@ -6400,6 +7200,8 @@ class ReviewController:
             item.base_tip,
             merge_base,
             patch_id,
+            stop_audit_pr_base_oid=item.base_tip,
+            stop_audit_base_ref=item.base_ref,
         )
         basis = previous.stop_basis if previous is not None and previous.stop_basis is not None else "direct_human"
         if acknowledge_over_ceiling and basis != "direct_human":
@@ -6419,6 +7221,17 @@ class ReviewController:
             latest = None
         retained_fingerprints, retained_reason = (), None
         if retained_fingerprint_values:
+            try:
+                selected_base_ref_tip = _sha(
+                    self.git.branch_head(item.base_ref), "selected pull-request base ref tip"
+                )
+            except (ControllerError, OSError, RuntimeError, ValueError, subprocess.SubprocessError) as error:
+                raise ControllerError("selected pull-request base ref tip is unavailable for ambiguity audit") from error
+            current = dataclasses.replace(
+                current,
+                stop_audit_effective_parent_head=selected_base_ref_tip,
+                stop_audit_enforce_parent_identity_ref=False,
+            )
             audit = self._stop_audit(
                 pr,
                 current,

@@ -83,7 +83,7 @@ jobs:
       pull-requests: read
     steps:
       - name: Harden runner
-        uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5 # v2.19.3
+        uses: step-security/harden-runner@351661ca32ac09a36dc5ee2d536e3128f2a3c8ed # v2.22.0
         with:
           egress-policy: audit
 
@@ -428,11 +428,12 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
+      actions: read
       contents: write
       pull-requests: read
     steps:
       - name: Harden runner
-        uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5 # v2.19.3
+        uses: step-security/harden-runner@351661ca32ac09a36dc5ee2d536e3128f2a3c8ed # v2.22.0
         with:
           egress-policy: audit
 
@@ -484,6 +485,9 @@ jobs:
               "gradlew.bat",
               "settings.gradle.kts",
             ]);
+            const runtimeRunEvents = ["pull_request", "repository_dispatch"];
+            const runtimeRunPageSize = 100;
+            const runtimeRunLookbackMilliseconds = 7 * 24 * 60 * 60 * 1000;
 
             const waitForMergeRefresh = async () => {
               await new Promise((resolve) => setTimeout(resolve, 2000));
@@ -620,6 +624,162 @@ jobs:
               return null;
             };
 
+            const loadExistingRuntimeRuns = async () => {
+              const readInventory = async (createdSince) => {
+                const inventory = [];
+                let complete = true;
+                let incompleteReason = null;
+                for (const event of runtimeRunEvents) {
+                  const response = await github.rest.actions.listWorkflowRuns({
+                    ...context.repo,
+                    workflow_id: "runtime-images.yml",
+                    event,
+                    created: `${createdSince}..*`,
+                    per_page: runtimeRunPageSize,
+                    page: 1,
+                  });
+                  const payload = response?.data;
+                  if (!payload || !Number.isInteger(payload.total_count) ||
+                    payload.total_count < 0 || !Array.isArray(payload.workflow_runs)) {
+                    throw new Error(`runtime-images ${event} recent run inventory is malformed`);
+                  }
+                  if (payload.total_count > runtimeRunPageSize) {
+                    complete = false;
+                    incompleteReason ??= `runtime-images ${event} has more than ${runtimeRunPageSize} runs since ${createdSince}`;
+                  }
+                  const expectedPageLength = Math.min(payload.total_count, runtimeRunPageSize);
+                  if (payload.workflow_runs.length !== expectedPageLength) {
+                    throw new Error(`runtime-images ${event} recent run inventory is incomplete`);
+                  }
+                  inventory.push(...payload.workflow_runs);
+                }
+                return {complete, runs: inventory, reason: incompleteReason};
+              };
+
+              const createdSince = new Date(Date.now() - runtimeRunLookbackMilliseconds).toISOString();
+              const initial = await readInventory(createdSince);
+              if (initial.complete) {
+                return initial;
+              }
+
+              const inFlightStatuses = ["queued", "waiting", "requested", "pending", "in_progress"];
+              const inFlightRuns = initial.runs.filter((run) => inFlightStatuses.includes(run?.status));
+              if (inFlightRuns.length === 0) {
+                return initial;
+              }
+
+              const validTimestamp = (value) => typeof value === "string" &&
+                /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z$/.test(value) &&
+                Number.isFinite(Date.parse(value));
+              if (inFlightRuns.some((run) => !runtimeRunEvents.includes(run.event) ||
+                !Number.isSafeInteger(run.id) || run.id <= 0 || !validTimestamp(run.created_at))) {
+                return {
+                  ...initial,
+                  reason: "truncated recent inventory contains an in-flight run without a valid event, id, or creation timestamp",
+                };
+              }
+
+              const refinementSince = inFlightRuns
+                .map((run) => run.created_at)
+                .sort()[0];
+              // The inclusive created lower bound makes the refined pages a complete candidate set without relying on API ordering.
+              const refined = await readInventory(refinementSince);
+              if (!refined.complete) {
+                return {
+                  ...refined,
+                  reason: refined.reason || "refined runtime run inventory is incomplete",
+                };
+              }
+              const refinedIds = new Set(refined.runs.map((run) => `${run?.event}:${run?.id}`));
+              if (inFlightRuns.some((run) => !refinedIds.has(`${run.event}:${run.id}`))) {
+                return {
+                  ...refined,
+                  complete: false,
+                  reason: "refined inventory did not retain every initially observed in-flight run",
+                };
+              }
+              return refined;
+            };
+
+            const findExactExistingProducer = (tuple, inventory) => {
+              const expectedWorkflowPath = ".github/workflows/runtime-images.yml";
+              const workflowPathMatches = (path) => {
+                if (path === expectedWorkflowPath) {
+                  return true;
+                }
+                const prefix = `${expectedWorkflowPath}@`;
+                if (typeof path !== "string" || !path.startsWith(prefix)) {
+                  return false;
+                }
+                const ref = path.slice(prefix.length);
+                if (ref.length === 0 || ref === "@" || ref.endsWith(".") ||
+                  /[\u0000-\u0020\u007f]/.test(ref) ||
+                  ["~", "^", ":", "?", "*", "[", "\\"].some((character) => ref.includes(character)) ||
+                  ref.includes("..") || ref.includes("@{")) {
+                  return false;
+                }
+                return ref.split("/").every((part) =>
+                  part.length > 0 && part !== "." && part !== ".." &&
+                  !part.startsWith(".") &&
+                  !part.endsWith(".lock")
+                );
+              };
+              const expectedTitle =
+                `Build Runtime Images secure-pr-artifact pr-${tuple.prNumber} ` +
+                `base-${tuple.baseSha} head-${tuple.headSha} merge-${tuple.mergeSha} mode-required`;
+              const matching = inventory.runs.filter((run) =>
+                run?.display_title === expectedTitle
+              );
+              const ordered = [];
+              const matchingIds = new Set();
+              for (const run of matching) {
+                if (!runtimeRunEvents.includes(run.event) ||
+                  !Number.isSafeInteger(run.id) || run.id <= 0 || matchingIds.has(run.id) ||
+                  typeof run.created_at !== "string" ||
+                  !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z$/.test(run.created_at) ||
+                  !Number.isFinite(Date.parse(run.created_at)) ||
+                  !workflowPathMatches(run.path) ||
+                  !["Build Runtime Images", expectedTitle].includes(run.name) ||
+                  run.repository?.full_name !== context.payload.repository.full_name ||
+                  run.head_repository?.full_name !== context.payload.repository.full_name) {
+                  throw new Error(`run ${run.id} has the exact tuple title but invalid workflow or repository identity`);
+                }
+                matchingIds.add(run.id);
+                ordered.push(run);
+                if (run.event === "pull_request") {
+                  if (run.head_sha !== tuple.headSha) {
+                    throw new Error(`run ${run.id} has the exact tuple title but a different PR head SHA`);
+                  }
+                  const pullRequests = run.pull_requests;
+                  if (!Array.isArray(pullRequests) || (pullRequests.length > 0 && !pullRequests.some((pullRequest) =>
+                    String(pullRequest?.number) === tuple.prNumber &&
+                    pullRequest?.head?.sha === tuple.headSha
+                  ))) {
+                    throw new Error(`run ${run.id} has incomplete or conflicting PR association evidence`);
+                  }
+                }
+              }
+              ordered.sort((left, right) => right.created_at.localeCompare(left.created_at));
+              if (ordered.length > 1 && ordered[0].created_at === ordered[1].created_at) {
+                throw new Error("newest exact runtime producer has an ambiguous created_at timestamp");
+              }
+              const newest = ordered[0];
+              if (!newest) {
+                return [];
+              }
+              if (["queued", "waiting", "requested", "pending", "in_progress"].includes(newest.status)) {
+                if (newest.conclusion !== null && newest.conclusion !== undefined) {
+                  throw new Error(`run ${newest.id} has a conclusion while still ${newest.status}`);
+                }
+                return [newest];
+              }
+              if (newest.status === "completed") {
+                // Completed source success does not prove publication remains usable; preserve recovery dispatch.
+                return [];
+              }
+              throw new Error(`run ${newest.id} has an unknown status and cannot be classified`);
+            };
+
             if (!shaPattern.test(baseSha) || !["main", "develop"].includes(baseBranch)) {
               core.setFailed("Successful CI push did not identify a supported lowercase base branch SHA.");
               return;
@@ -643,6 +803,8 @@ jobs:
               },
               (response) => response.data
             );
+            let runtimeInventoryPromise;
+            let runtimeInventoryError = null;
             for (const listedPullRequest of pullRequests) {
               if (listedPullRequest.state !== "open" ||
                 listedPullRequest.base?.ref !== baseBranch ||
@@ -656,18 +818,56 @@ jobs:
               }
               const {tuple, pullRequest} = resolved;
               if (await hasRuntimeChange(pullRequest)) {
-                core.info(`Dispatching PR runtime base refresh for #${tuple.prNumber} (${tuple.baseSha} / ${tuple.headSha} / ${tuple.mergeSha}).`);
-                await github.rest.repos.createDispatchEvent({
-                  ...context.repo,
-                  event_type: "pr-runtime-base-refresh",
-                  client_payload: {
-                    pr_number: tuple.prNumber,
-                    base_ref: tuple.baseRef,
-                    base_sha: tuple.baseSha,
-                    head_sha: tuple.headSha,
-                    merge_sha: tuple.mergeSha,
-                  },
-                });
+                let existingProducers = [];
+                let fallbackReason = null;
+                let inventory;
+                if (runtimeInventoryError) {
+                  fallbackReason = runtimeInventoryError;
+                } else {
+                  try {
+                    runtimeInventoryPromise ??= loadExistingRuntimeRuns();
+                    inventory = await runtimeInventoryPromise;
+                  } catch (error) {
+                    fallbackReason = error.message || String(error);
+                    runtimeInventoryError = fallbackReason;
+                  }
+                }
+                if (!fallbackReason) {
+                  try {
+                    existingProducers = findExactExistingProducer(tuple, inventory);
+                    if (!inventory.complete) {
+                      // The REST contract does not specify a sort order, so a truncated page cannot prove omitted runs are older.
+                      existingProducers = [];
+                      fallbackReason = inventory.reason || "recent run inventory is incomplete";
+                    }
+                  } catch (error) {
+                    fallbackReason = error.message || String(error);
+                  }
+                }
+                if (fallbackReason) {
+                  core.warning(
+                    `Cannot verify recent runtime producer evidence for #${tuple.prNumber} (${tuple.baseSha} / ${tuple.headSha} / ${tuple.mergeSha}); falling back to the required refresh dispatch: ${fallbackReason}`
+                  );
+                }
+                if (existingProducers.length > 0) {
+                  const producer = existingProducers[0];
+                  core.info(
+                    `Skipping duplicate PR runtime refresh for #${tuple.prNumber}: exact tuple producer ${producer.id} remains ${producer.status}.`
+                  );
+                } else {
+                  core.info(`No reusable in-flight exact producer was verified in the bounded recent inventory; dispatching required PR runtime refresh for #${tuple.prNumber} (${tuple.baseSha} / ${tuple.headSha} / ${tuple.mergeSha}).`);
+                  await github.rest.repos.createDispatchEvent({
+                    ...context.repo,
+                    event_type: "pr-runtime-base-refresh",
+                    client_payload: {
+                      pr_number: tuple.prNumber,
+                      base_ref: tuple.baseRef,
+                      base_sha: tuple.baseSha,
+                      head_sha: tuple.headSha,
+                      merge_sha: tuple.mergeSha,
+                    },
+                  });
+                }
               } else {
                 core.info(`Skipping PR runtime image refresh for #${tuple.prNumber}: no runtime-changing files.`);
               }
@@ -700,7 +900,7 @@ jobs:
       packages: write
     steps:
       - name: Harden runner
-        uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5 # v2.19.3
+        uses: step-security/harden-runner@351661ca32ac09a36dc5ee2d536e3128f2a3c8ed # v2.22.0
         with:
           egress-policy: audit
 
@@ -711,7 +911,7 @@ jobs:
           persist-credentials: false
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@d7f5e7f509e45cec5c76c4d5afdd7de93d0b3df5 # v4.1.0
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
 
       - name: Login to GHCR
         uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
@@ -723,7 +923,7 @@ jobs:
       - name: Build and push runtime base image
         id: build_base_image_first
         continue-on-error: true
-        uses: docker/build-push-action@f9f3042f7e2789586610d6e8b85c8f03e5195baf # v7.2.0
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: .
           file: ./docker/base.Dockerfile
@@ -740,7 +940,7 @@ jobs:
       - name: Retry build and push runtime base image
         id: build_base_image_retry
         if: ${{ steps.build_base_image_first.outcome == 'failure' }}
-        uses: docker/build-push-action@f9f3042f7e2789586610d6e8b85c8f03e5195baf # v7.2.0
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: .
           file: ./docker/base.Dockerfile
@@ -809,7 +1009,7 @@ jobs:
           - world-management-service
     steps:
       - name: Harden runner
-        uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5 # v2.19.3
+        uses: step-security/harden-runner@351661ca32ac09a36dc5ee2d536e3128f2a3c8ed # v2.22.0
         with:
           egress-policy: audit
 
@@ -826,7 +1026,7 @@ jobs:
           java-version: '25'
 
       - name: ⚙️ Set Up Gradle
-        uses: gradle/actions/setup-gradle@50e97c2cd7a37755bbfafc9c5b7cafaece252f6e # v6.1.0
+        uses: gradle/actions/setup-gradle@3f5f9adaf7d9fecd50b5935e54106014257a94e6 # v6.4.0
         with:
           build-scan-publish: true
           build-scan-terms-of-use-url: 'https://gradle.com/help/legal-terms-of-use'
@@ -837,7 +1037,7 @@ jobs:
         run: ./gradlew :${{ matrix.service }}:bootJar
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@d7f5e7f509e45cec5c76c4d5afdd7de93d0b3df5 # v4.1.0
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
 
       - name: Login to GHCR
         uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
@@ -849,7 +1049,7 @@ jobs:
       - name: Build and push runtime service image
         id: build_runtime_image_first
         continue-on-error: true
-        uses: docker/build-push-action@f9f3042f7e2789586610d6e8b85c8f03e5195baf # v7.2.0
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: ./services/${{ matrix.service }}/build/libs
           file: ./services/${{ matrix.service }}/Dockerfile
@@ -869,7 +1069,7 @@ jobs:
 
       - name: Retry build and push runtime service image
         if: ${{ steps.build_runtime_image_first.outcome == 'failure' }}
-        uses: docker/build-push-action@f9f3042f7e2789586610d6e8b85c8f03e5195baf # v7.2.0
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: ./services/${{ matrix.service }}/build/libs
           file: ./services/${{ matrix.service }}/Dockerfile
@@ -901,7 +1101,7 @@ jobs:
       BACKUP_VERIFIER_IMAGE: ghcr.io/benhook1013/backup-verifier:${{ needs.image-meta.outputs.image_tag }}
     steps:
       - name: Harden runner
-        uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5 # v2.19.3
+        uses: step-security/harden-runner@351661ca32ac09a36dc5ee2d536e3128f2a3c8ed # v2.22.0
         with:
           egress-policy: audit
 
@@ -949,7 +1149,7 @@ jobs:
           docker save "$BACKUP_VERIFIER_IMAGE" | gzip -1 > "$RUNNER_TEMP/backup-verifier.tar.gz"
 
       - name: Upload exact verified backup verifier image artifact
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: backup-verifier-${{ needs.image-meta.outputs.image_tag }}
           path: ${{ runner.temp }}/backup-verifier.tar.gz
@@ -972,7 +1172,7 @@ jobs:
       BACKUP_VERIFIER_IMAGE: ghcr.io/benhook1013/backup-verifier:${{ needs.image-meta.outputs.image_tag }}
     steps:
       - name: Harden runner
-        uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5 # v2.19.3
+        uses: step-security/harden-runner@351661ca32ac09a36dc5ee2d536e3128f2a3c8ed # v2.22.0
         with:
           egress-policy: audit
 
@@ -983,7 +1183,7 @@ jobs:
           persist-credentials: false
 
       - name: Download exact verified backup verifier image artifact
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           name: backup-verifier-${{ needs.image-meta.outputs.image_tag }}
           path: ${{ runner.temp }}/backup-verifier-artifact
@@ -1042,7 +1242,7 @@ jobs:
       CONTROLLER_IMAGE: ghcr.io/benhook1013/firemud-hosted-identity-controller:${{ needs.image-meta.outputs.image_tag }}
     steps:
       - name: Harden runner
-        uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5 # v2.19.3
+        uses: step-security/harden-runner@351661ca32ac09a36dc5ee2d536e3128f2a3c8ed # v2.22.0
         with:
           egress-policy: audit
 
@@ -1059,7 +1259,7 @@ jobs:
           java-version: '25'
 
       - name: Set up Gradle
-        uses: gradle/actions/setup-gradle@50e97c2cd7a37755bbfafc9c5b7cafaece252f6e # v6.1.0
+        uses: gradle/actions/setup-gradle@3f5f9adaf7d9fecd50b5935e54106014257a94e6 # v6.4.0
         with:
           build-scan-publish: true
           build-scan-terms-of-use-url: 'https://gradle.com/help/legal-terms-of-use'
@@ -1108,7 +1308,7 @@ jobs:
           docker save "$CONTROLLER_IMAGE" | gzip -1 > "$RUNNER_TEMP/hosted-identity-controller.tar.gz"
 
       - name: Upload exact verified controller image artifact
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: hosted-identity-controller-${{ needs.image-meta.outputs.image_tag }}
           path: ${{ runner.temp }}/hosted-identity-controller.tar.gz
@@ -1131,7 +1331,7 @@ jobs:
       CONTROLLER_IMAGE: ghcr.io/benhook1013/firemud-hosted-identity-controller:${{ needs.image-meta.outputs.image_tag }}
     steps:
       - name: Harden runner
-        uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5 # v2.19.3
+        uses: step-security/harden-runner@351661ca32ac09a36dc5ee2d536e3128f2a3c8ed # v2.22.0
         with:
           egress-policy: audit
 
@@ -1142,7 +1342,7 @@ jobs:
           persist-credentials: false
 
       - name: Download exact verified controller image artifact
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           name: hosted-identity-controller-${{ needs.image-meta.outputs.image_tag }}
           path: ${{ runner.temp }}/hosted-identity-controller-artifact
@@ -1214,7 +1414,7 @@ jobs:
       BACKUP_VERIFIER_IMAGE: ghcr.io/benhook1013/backup-verifier:${{ needs.image-meta.outputs.image_tag }}
     steps:
       - name: Harden runner
-        uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5 # v2.19.3
+        uses: step-security/harden-runner@351661ca32ac09a36dc5ee2d536e3128f2a3c8ed # v2.22.0
         with:
           egress-policy: audit
 
@@ -1241,7 +1441,7 @@ jobs:
           java-version: '25'
 
       - name: Set up Gradle
-        uses: gradle/actions/setup-gradle@50e97c2cd7a37755bbfafc9c5b7cafaece252f6e # v6.1.0
+        uses: gradle/actions/setup-gradle@3f5f9adaf7d9fecd50b5935e54106014257a94e6 # v6.4.0
         with:
           build-scan-publish: true
           build-scan-terms-of-use-url: 'https://gradle.com/help/legal-terms-of-use'
@@ -1366,7 +1566,7 @@ jobs:
           docker save "${images[@]}" | gzip -1 > /tmp/pr-runtime-images.tar.gz
 
       - name: Upload preview image artifact
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: pr-runtime-images-${{ needs.image-meta.outputs.image_tag }}
           path: |
@@ -1452,7 +1652,7 @@ jobs:
       CONTROLLER_IMAGE: firemud-hosted-identity-controller-local:${{ needs.image-meta.outputs.image_tag }}
     steps:
       - name: Harden runner
-        uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5 # v2.19.3
+        uses: step-security/harden-runner@351661ca32ac09a36dc5ee2d536e3128f2a3c8ed # v2.22.0
         with:
           egress-policy: audit
 
@@ -1469,7 +1669,7 @@ jobs:
           java-version: '25'
 
       - name: Set up Gradle
-        uses: gradle/actions/setup-gradle@50e97c2cd7a37755bbfafc9c5b7cafaece252f6e # v6.1.0
+        uses: gradle/actions/setup-gradle@3f5f9adaf7d9fecd50b5935e54106014257a94e6 # v6.4.0
         with:
           build-scan-publish: true
           build-scan-terms-of-use-url: 'https://gradle.com/help/legal-terms-of-use'
@@ -1477,10 +1677,10 @@ jobs:
           cache-read-only: true
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@d7f5e7f509e45cec5c76c4d5afdd7de93d0b3df5 # v4.1.0
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
 
       - name: Build exact local runtime base image
-        uses: docker/build-push-action@f9f3042f7e2789586610d6e8b85c8f03e5195baf # v7.2.0
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: .
           file: docker/base.Dockerfile
@@ -1504,6 +1704,31 @@ jobs:
         run: |
           set -euo pipefail
           bash ./dev-tools/hosted/controller/smoke-paused-controller-image.sh "$CONTROLLER_IMAGE" >/dev/null
+
+  dispatch-pr-runtime-publication:
+    name: Dispatch Trusted PR Runtime Publication
+    needs: [image-meta, pr-local-smoke, pr-controller-smoke]
+    if: ${{ always() && !cancelled() && github.event_name == 'repository_dispatch' && github.event.action == 'pr-runtime-base-refresh' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch) && needs.image-meta.result == 'success' && needs.pr-local-smoke.result == 'success' && (needs.pr-controller-smoke.result == 'success' || (needs.image-meta.outputs.controller_smoke_required == 'false' && needs.pr-controller-smoke.result == 'skipped')) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      # This trusted no-checkout job only sends an exact source-run handoff.
+      contents: write
+    steps:
+      - name: Harden runner
+        uses: step-security/harden-runner@351661ca32ac09a36dc5ee2d536e3128f2a3c8ed # v2.22.0
+        with:
+          egress-policy: audit
+
+      - name: Dispatch exact runtime publication source
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9
+        with:
+          script: |
+            await github.rest.repos.createDispatchEvent({
+              ...context.repo,
+              event_type: "pr-runtime-image-publication",
+              client_payload: { source_run_id: String(context.runId) },
+            });
 
   smoke-full:
     name: Published Runtime Full-Stack Smoke
@@ -1536,7 +1761,7 @@ jobs:
       CANDIDATE_TAG: ${{ needs.image-meta.outputs.candidate_tag }}
     steps:
       - name: Harden runner
-        uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5 # v2.19.3
+        uses: step-security/harden-runner@351661ca32ac09a36dc5ee2d536e3128f2a3c8ed # v2.22.0
         with:
           egress-policy: audit
 
@@ -1550,7 +1775,7 @@ jobs:
         uses: ./.github/actions/setup-gh
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@d7f5e7f509e45cec5c76c4d5afdd7de93d0b3df5 # v4.1.0
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
 
       - name: Login to GHCR
         uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0

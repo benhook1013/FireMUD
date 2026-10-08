@@ -26,7 +26,7 @@ jobs:
       run_smoke_full: ${{ steps.compute.outputs.run_smoke_full }}
     steps:
       - name: Harden runner
-        uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5 # v2.19.3
+        uses: step-security/harden-runner@351661ca32ac09a36dc5ee2d536e3128f2a3c8ed # v2.22.0
         with:
           egress-policy: audit
 
@@ -151,7 +151,7 @@ jobs:
     if: ${{ !cancelled() && github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]' && (github.event.action != 'edited' || github.event.changes.base.ref != null) }}
     steps:
       - name: Harden runner
-        uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5 # v2.19.3
+        uses: step-security/harden-runner@351661ca32ac09a36dc5ee2d536e3128f2a3c8ed # v2.22.0
         with:
           egress-policy: audit
 
@@ -303,7 +303,7 @@ jobs:
     if: ${{ !cancelled() && github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]' && (github.event.action != 'edited' || github.event.changes.base.ref != null) }}
     steps:
       - name: Harden runner
-        uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5 # v2.19.3
+        uses: step-security/harden-runner@351661ca32ac09a36dc5ee2d536e3128f2a3c8ed # v2.22.0
         with:
           egress-policy: audit
 
@@ -461,7 +461,7 @@ jobs:
     timeout-minutes: 95
     steps:
       - name: Harden runner
-        uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5 # v2.19.3
+        uses: step-security/harden-runner@351661ca32ac09a36dc5ee2d536e3128f2a3c8ed # v2.22.0
         with:
           egress-policy: audit
 
@@ -486,6 +486,7 @@ jobs:
           persist-credentials: false
 
       - name: Preserve successful required gate on metadata-only edit
+        id: preserved_gate
         if: ${{ steps.smoke_gate_context.outputs.required != 'true' }}
         uses: ./.github/actions/preserve-required-gate
         with:
@@ -493,6 +494,13 @@ jobs:
           workflow-name: PR Smoke Gate
           workflow-file: smoke.yml
           workflow-path: .github/workflows/smoke.yml
+          assessment-mode: ${{ github.event.pull_request.number == 3081 && github.event.pull_request.head.ref == 'codex/required-gate-native-rehearsal-v2' && 'assess' || 'poll' }}
+
+      - name: Report dependency-deferred required gate
+        if: ${{ steps.preserved_gate.outputs.assessment == 'dependency-deferred' }}
+        run: |
+          echo "Original required-gate proof is pending; dependency-deferred failure." >&2
+          exit 1
 
       - name: Fail when smoke dependencies did not succeed
         if: ${{ steps.smoke_gate_context.outputs.required == 'true' && steps.smoke_gate_context.outputs.execute != 'true' }}

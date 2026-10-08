@@ -116,7 +116,9 @@ class ReviewTarget:
 
     ``snapshot`` and ``parent`` are obtained from the integration layer.  The runner
     refreshes the corresponding live GitHub values through ``github`` before invoking
-    CodeRabbit, so stale state cannot silently spend quota.
+    CodeRabbit, so stale state cannot silently spend quota. ``selected_base_ref_tip``
+    separately freezes the live PR base-ref tip for a forced review; the PR's retained
+    ``base_sha`` remains an independent API-identity check.
     """
 
     snapshot: PullRequestSnapshot
@@ -131,6 +133,7 @@ class ReviewTarget:
     default_test_merge_head_sha: str = ""
     default_test_merge_tree_sha: str = ""
     candidate_warnings: tuple[str, ...] = ()
+    selected_base_ref_tip: str | None = None
 
     def has_current_default_test_merge_proof(self) -> bool:
         """Whether the controller supplied a tree proof for this exact PR tuple."""
@@ -501,6 +504,9 @@ def _verify_target_still_current(target: ReviewTarget, github: GitHubReader, *, 
     selected_base = _sha(target.snapshot.base_sha, "selected base")
     if force:
         actual_base_tip = _sha(github.branch_head(target.snapshot.base_ref_name), "pull request base branch tip")
+        selected_base_ref_tip = _sha(
+            target.selected_base_ref_tip, "selected pull request base branch tip"
+        )
         if (
             current.number == target.snapshot.number
             and current.state.upper() == "OPEN"
@@ -508,7 +514,7 @@ def _verify_target_still_current(target: ReviewTarget, github: GitHubReader, *, 
             and _sha(current.head_sha, "pull request head") == selected_head
             and current.base_ref_name == target.snapshot.base_ref_name
             and _sha(current.base_sha, "pull request base") == selected_base
-            and actual_base_tip == selected_base
+            and actual_base_tip == selected_base_ref_tip
         ):
             return
         raise ReviewRunnerError("pull request identity changed during forced CLI preflight")
@@ -805,6 +811,9 @@ def _validate_target(
     expected_base = _sha(expected.base_sha, "selected base")
     live_parent_tip = _sha(parent_tip, "effective parent tip")
     selected_parent_tip = _sha(target.parent.head_sha, "selected parent")
+    selected_base_ref_tip = (
+        _sha(target.selected_base_ref_tip, "selected pull request base branch tip") if force else selected_parent_tip
+    )
     if not force and target.default_base_front and live_base != expected_base and live_base == live_parent_tip:
         raise StaleReviewTargetError("default base advanced after CLI target selection")
     if live_base != expected_base:
@@ -813,7 +822,9 @@ def _validate_target(
         if target.default_base_front:
             raise StaleReviewTargetError("default base advanced after CLI target selection")
         raise ReviewRunnerError("effective parent moved since target selection")
-    if live_base != live_parent_tip:
+    if force and live_parent_tip != selected_base_ref_tip:
+        raise ReviewRunnerError("pull request base branch tip moved since CLI target selection")
+    if not force and live_base != live_parent_tip:
         raise ReviewRunnerError("pull request's actual base branch tip does not match its selected base SHA")
     if not force and (not target.reconciled or not target.ancestor_links_valid):
         raise UnreconciledReviewError("stack identity warnings require --force for a CLI review")
@@ -831,7 +842,7 @@ def _validate_target(
         "committed HEAD is neither the pull request head nor a descendant containing its fixes",
         timeout=git_timeout_seconds,
     )
-    diff_base = live_base if force else target.parent.head_sha
+    diff_base = selected_base_ref_tip if force else target.parent.head_sha
     diff_head = candidate_sha if force or not target.default_base_front else child_head
     merge_base = _unique_merge_base(
         runner,
@@ -916,7 +927,7 @@ def _validate_target(
         published = _nul_paths(
             runner,
             source_root,
-            *_name_only_diff_args(live.base_sha, child_head),
+            *_name_only_diff_args(diff_base, child_head),
             timeout=git_timeout_seconds,
         )
         if published != sorted(live_files):
@@ -1076,7 +1087,7 @@ def run_cli_review(
                 _unique_merge_base(
                     runner,
                     source_root,
-                    live.base_sha if force else target.parent.head_sha,
+                    review_base_tip if force else target.parent.head_sha,
                     candidate_sha,
                     timeout=git_timeout_seconds,
                 )
@@ -1093,7 +1104,7 @@ def run_cli_review(
                 else _unique_merge_base(
                     runner,
                     source_root,
-                    live.base_sha if force else target.parent.head_sha,
+                    review_base_tip if force else target.parent.head_sha,
                     child_head,
                     timeout=git_timeout_seconds,
                 )
@@ -1226,12 +1237,12 @@ def run_cli_review(
                         else target.parent.pr_number
                     ),
                     "parent_ref": review_base_ref if force else target.parent.ref_name,
-                    "parent_sha": live.base_sha if force else target.parent.head_sha,
+                    "parent_sha": review_base_tip if force else target.parent.head_sha,
                     "configured_parent_pr": target.parent.pr_number,
                     "configured_parent_ref": target.parent.ref_name,
                     "configured_parent_sha": target.parent.head_sha,
                     "actual_base_ref": review_base_ref,
-                    "actual_base_sha": live.base_sha,
+                    "actual_base_sha": review_base_tip,
                     "merge_base": merge_base,
                     "published_merge_base": published_merge_base,
                     "published_files": published_files,
@@ -1260,12 +1271,12 @@ def run_cli_review(
                         else str(target.parent.pr_number) if target.parent.pr_number is not None else ""
                     ),
                     "parent_ref": review_base_ref if force else target.parent.ref_name,
-                    "parent_sha": live.base_sha if force else target.parent.head_sha,
+                    "parent_sha": review_base_tip if force else target.parent.head_sha,
                     "configured_parent_pr": str(target.parent.pr_number) if target.parent.pr_number is not None else "",
                     "configured_parent_ref": target.parent.ref_name,
                     "configured_parent_sha": target.parent.head_sha,
                     "actual_base_ref": review_base_ref,
-                    "actual_base_sha": live.base_sha,
+                    "actual_base_sha": review_base_tip,
                     "merge_base": merge_base,
                     "published_merge_base": published_merge_base,
                     "patch_identity": candidate_patch_identity,
@@ -1499,7 +1510,7 @@ def run_cli_review(
                     run_id=run_id,
                     pull_request=target.snapshot.number,
                     candidate_sha=candidate_sha,
-                    parent_sha=live.base_sha if force else target.parent.head_sha,
+                    parent_sha=review_base_tip if force else target.parent.head_sha,
                     merge_base=merge_base,
                     published_files=published_files,
                     candidate_files=candidate_files,

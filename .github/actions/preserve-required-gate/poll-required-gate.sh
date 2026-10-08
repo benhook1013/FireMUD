@@ -33,6 +33,24 @@ if [[ ! "${EXPECTED_WORKFLOW_FILE}" =~ ^[A-Za-z0-9._-]+\.(yml|yaml)$ ||
   exit 1
 fi
 expected_display_title="${EXPECTED_WORKFLOW_NAME} pr-${PR_NUMBER} base-${BASE_SHA} head-${HEAD_SHA}"
+preservation_mode="${PRESERVATION_MODE:-poll}"
+case "${preservation_mode}" in
+  poll|assess) ;;
+  *) echo "Invalid required-gate assessment mode; refusing to preserve." >&2; exit 1 ;;
+esac
+report_assessment() {
+  if [[ -n "${GITHUB_OUTPUT:-}" ]]; then
+    printf 'assessment=%s\n' "$1" >>"${GITHUB_OUTPUT}"
+  elif [[ "${preservation_mode}" == "assess" ]]; then
+    echo "One-assessment preservation requires GITHUB_OUTPUT; refusing to preserve." >&2
+    exit 1
+  fi
+}
+defer_dependency() {
+  echo "Required-gate proof is not yet conclusive; deferring without polling." >&2
+  report_assessment dependency-deferred
+  exit 0
+}
 is_retryable_gh_failure() {
   local exit_status="$1"
   local error_text="${2,,}"
@@ -79,6 +97,10 @@ declare -A verified_substantive_run_cache=()
 last_uncertain_substantive_workflow=false
 substantive_wait_extended=false
 sleep_until_poll_deadline() {
+  if [[ "${preservation_mode:-poll}" == "assess" ]]; then
+    echo "Required-gate assessment could not resolve API evidence; refusing to poll." >&2
+    exit 1
+  fi
   local remaining=$((poll_deadline - SECONDS))
   if (( remaining <= 0 )); then
     return 1
@@ -372,13 +394,22 @@ for attempt in $(seq 1 "${active_max_attempts}"); do
 
   set +e
   jq -e '
-    type == "array"
-    and all(.[]; type == "object" and (.check_runs | type) == "array")
+    if type != "array" or length == 0 then false
+    elif any(.[]; type != "object" or (.check_runs | type) != "array") then false
+    else
+      .[0].total_count as $total
+      | all(.[]; (.total_count | type) == "number" and .total_count >= 0 and
+          .total_count == (.total_count | floor) and .total_count == $total)
+        and ([.[].check_runs[]] | length) == $total
+        and all(.[].check_runs[]; type == "object" and (.id | type) == "number" and
+          .id > 0 and .id == (.id | floor))
+        and ([.[].check_runs[].id] | unique | length) == $total
+    end
   ' <<<"${check_runs_json}" >/dev/null 2>>"${api_error_file}"
   check_runs_shape_status=$?
   set -e
   if [[ "${check_runs_shape_status}" -ne 0 ]]; then
-    echo "GitHub API returned malformed check-run data for the prior ${REQUIRED_GATE_NAME}; refusing to preserve." >&2
+    echo "GitHub API returned malformed or incomplete check-run data for the prior ${REQUIRED_GATE_NAME}; refusing to preserve." >&2
     exit 1
   fi
 
@@ -673,6 +704,10 @@ for attempt in $(seq 1 "${active_max_attempts}"); do
   done <<<"${candidate_rows}"
 
   if [[ "${job_lookup_retryable}" == "true" ]]; then
+    if [[ "${preservation_mode}" == "assess" ]]; then
+      echo "Required-gate assessment could not resolve ${retry_reason}; refusing to poll." >&2
+      exit 1
+    fi
     if [[ "${retry_reason}" == *"API lookup" ]]; then
       echo "Retryable GitHub API failure during ${retry_reason} for the prior ${REQUIRED_GATE_NAME}; retrying attempt ${attempt}/${poll_attempt_limit}." >&2
     else
@@ -708,12 +743,14 @@ for attempt in $(seq 1 "${active_max_attempts}"); do
   IFS=$'\t' read -r _prior_sort _prior_run _prior_check _prior_job prior_status prior_conclusion prior_preserve_step <<< "${prior_row}"
   if [ "${prior_status}" = "completed" ]; then
     if [ "${prior_conclusion}" = "success" ]; then
+      report_assessment success
       exit 0
     fi
     echo "Prior ${REQUIRED_GATE_NAME} for unchanged head ${HEAD_SHA} concluded ${prior_conclusion:-unknown}." >&2
     exit 1
   fi
   if [ "${prior_status}" = "none" ]; then
+    [[ "${preservation_mode}" != "assess" ]] || defer_dependency
     refresh_active_workflow_state
     if [[ "${active_substantive_workflow}" == "true" || "${substantive_wait_extended}" == "true" ]]; then
       extend_for_active_substantive_run
@@ -737,6 +774,7 @@ for attempt in $(seq 1 "${active_max_attempts}"); do
     echo "Unexpected prior ${REQUIRED_GATE_NAME} selection state ${prior_status:-unknown}; refusing to preserve." >&2
     exit 1
   fi
+  [[ "${preservation_mode}" != "assess" ]] || defer_dependency
   if [[ "${prior_preserve_step}" == "skipped" ]]; then
     extend_for_active_substantive_run
   else

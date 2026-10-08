@@ -489,7 +489,12 @@ class AcceptanceCliTest(unittest.TestCase):
             payload.pop("test_merge_trees")
             fixture.write_text(json.dumps(payload), encoding="utf-8")
 
-            self.assertEqual(self.run_cli(fixture, isolated, "stack", "set", "1").returncode, 0)
+            self.assertEqual(
+                self.run_cli(
+                    fixture, isolated, "stack", "set", "--allow-removal", "--reason", "single-PR acceptance setup", "1"
+                ).returncode,
+                0,
+            )
             status = self.run_cli(fixture, isolated, "status", "--json")
             self.assertEqual(status.returncode, 0, status.stderr)
             pr = json.loads(status.stdout)["prs"][0]
@@ -517,7 +522,12 @@ class AcceptanceCliTest(unittest.TestCase):
             }
             fixture.write_text(json.dumps(payload), encoding="utf-8")
 
-            self.assertEqual(self.run_cli(fixture, isolated, "stack", "set", "1").returncode, 0)
+            self.assertEqual(
+                self.run_cli(
+                    fixture, isolated, "stack", "set", "--allow-removal", "--reason", "single-PR acceptance setup", "1"
+                ).returncode,
+                0,
+            )
             command = ("run", "cli", "--expect-pr", "1", "--force", "--reason", "known stale reconciliation")
             first = self.run_cli(fixture, isolated, *command)
             self.assertEqual(first.returncode, 0, first.stderr)
@@ -577,7 +587,12 @@ class AcceptanceCliTest(unittest.TestCase):
             }
             fixture.write_text(json.dumps(payload), encoding="utf-8")
 
-            self.assertEqual(self.run_cli(fixture, isolated, "stack", "set", "1").returncode, 0)
+            self.assertEqual(
+                self.run_cli(
+                    fixture, isolated, "stack", "set", "--allow-removal", "--reason", "single-PR acceptance setup", "1"
+                ).returncode,
+                0,
+            )
             before_transition = self.run_cli(fixture, isolated, "status", "--json")
             self.assertEqual(before_transition.returncode, 0, before_transition.stderr)
             self.assertEqual(
@@ -649,7 +664,12 @@ class AcceptanceCliTest(unittest.TestCase):
             }
             fixture.write_text(json.dumps(payload), encoding="utf-8")
 
-            self.assertEqual(self.run_cli(fixture, isolated, "stack", "set", "1").returncode, 0)
+            self.assertEqual(
+                self.run_cli(
+                    fixture, isolated, "stack", "set", "--allow-removal", "--reason", "single-PR acceptance setup", "1"
+                ).returncode,
+                0,
+            )
             initial = self.run_cli(
                 fixture,
                 isolated,
@@ -802,7 +822,12 @@ class AcceptanceCliTest(unittest.TestCase):
             payload["evidence"]["1"] = {"hosted": [legacy_hosted], "cli": [legacy_cli]}
             fixture.write_text(json.dumps(payload), encoding="utf-8")
 
-            self.assertEqual(self.run_cli(fixture, isolated, "stack", "set", "1").returncode, 0)
+            self.assertEqual(
+                self.run_cli(
+                    fixture, isolated, "stack", "set", "--allow-removal", "--reason", "single-PR acceptance setup", "1"
+                ).returncode,
+                0,
+            )
             initial = self.run_cli(
                 fixture,
                 isolated,
@@ -939,7 +964,9 @@ class AcceptanceCliTest(unittest.TestCase):
             payload["pull_requests"][0]["head_repository"] = "outside/fork"
             fixture.write_text(json.dumps(payload), encoding="utf-8")
 
-            result = self.run_cli(fixture, isolated, "stack", "set", "1")
+            result = self.run_cli(
+                fixture, isolated, "stack", "set", "--allow-removal", "--reason", "single-PR acceptance setup", "1"
+            )
 
             self.assertEqual(result.returncode, 1)
             self.assertIn("unsupported cross-repository head", result.stderr)
@@ -992,7 +1019,12 @@ class AcceptanceCliTest(unittest.TestCase):
             fixture = root / "fixture.json"
             isolated = root / "state.json"
             fixture.write_text(json.dumps(fixture_payload()), encoding="utf-8")
-            self.assertEqual(self.run_cli(fixture, isolated, "stack", "set", "1").returncode, 0)
+            self.assertEqual(
+                self.run_cli(
+                    fixture, isolated, "stack", "set", "--allow-removal", "--reason", "single-PR acceptance setup", "1"
+                ).returncode,
+                0,
+            )
             result = self.run_cli(
                 fixture,
                 isolated,

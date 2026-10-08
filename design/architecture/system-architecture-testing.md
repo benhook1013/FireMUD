@@ -225,6 +225,10 @@ Unit and integration tests run automatically in GitHub Actions through a matrix 
 
 For workflows that span multiple services, such as account creation and world provisioning, the suite starts several containers at once using **Testcontainers**. Each container joins a shared network so gRPC calls function just like in production.
 
+### Shared Container Image References
+
+PostgreSQL and Redis Testcontainers fixtures use `TestContainerImages.postgres()` and `TestContainerImages.redis()` from `common-test-support`. The fixture artifact exports [`container-images.properties`](../../services/common-test-support/src/testFixtures/resources/net/firedevops/firemud/test/container-images.properties) as a classpath resource; this file owns the selected test image references. PostgreSQL uses the approved digest-pinned PostgreSQL 18 test baseline, and Redis retains its existing 7.2 Alpine baseline. Renovate updates this resource, including digest pinning, rather than editing Java source literals. PostgreSQL tagged digests retain the canonical Testcontainers compatible-substitute handling. These disposable fixture selections do not change deployed database version or migration/restore requirements.
+
 ### Example Workflow
 
 1. Launch PostgreSQL and Redis containers.
@@ -233,7 +237,7 @@ For workflows that span multiple services, such as account creation and world pr
 
 ```kotlin
 val network = Network.newNetwork()
-val postgres = PostgreSQLContainer<Nothing>("postgres:16").withNetwork(network)
+val postgres = PostgreSQLContainer<Nothing>(TestContainerImages.postgres()).withNetwork(network)
 val accountService = GenericContainer("account-service:latest").withNetwork(network)
 ```
 

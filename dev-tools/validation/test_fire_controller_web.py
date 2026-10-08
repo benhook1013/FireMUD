@@ -3,6 +3,7 @@ from __future__ import annotations
 import importlib
 import json
 import sys
+import tempfile
 import types
 import unittest
 from pathlib import Path
@@ -11,6 +12,8 @@ from unittest.mock import patch
 ROOT = Path(__file__).resolve().parents[2]
 TOOLS = ROOT / "dev-tools"
 sys.path.insert(0, str(TOOLS))
+
+from fire_controller.jobs import JobStore
 
 web = importlib.import_module("fire_controller.web")
 
@@ -30,6 +33,9 @@ def public_row():
         "summary": "Finish the safe handoff. [private](/jobs/private-job)",
         "progress": "Public progress.",
         "blocker": "Waiting on the reviewed interface.",
+        "created_at": "2026-10-02T10:00:00Z",
+        "updated_at": "2026-10-03T10:00:00Z",
+        "last_activity_at": "2026-10-04T10:00:00Z",
         "checklist": [
             {"id": "c1", "text": "Confirm the contract", "done": True, "private": PRIVATE_SENTINEL},
             {"id": "c2", "text": "Resume after review [private](/jobs/private-job)", "done": False},
@@ -100,8 +106,11 @@ class FireControllerWebTest(unittest.TestCase):
         result = web.public_jobs([public_row()])
         self.assertEqual(set(result[0]), {
             "id", "name", "worker", "workstream_id", "title", "status", "primary", "summary", "progress",
-            "blocker", "checklist",
+            "blocker", "created_at", "updated_at", "last_activity_at", "checklist",
         })
+        self.assertEqual(result[0]["created_at"], "2026-10-02T10:00:00Z")
+        self.assertEqual(result[0]["updated_at"], "2026-10-03T10:00:00Z")
+        self.assertEqual(result[0]["last_activity_at"], "2026-10-04T10:00:00Z")
         self.assertEqual(set(result[0]["checklist"][0]), {"id", "text", "done"})
         self.assertTrue(result[0]["primary"])
         self.assertEqual(result[0]["status"], "blocked")
@@ -126,6 +135,28 @@ class FireControllerWebTest(unittest.TestCase):
         self.assertEqual(calls, [{"primary": True}])
         self.assertEqual(result[0]["id"], "job-1")
         self.assertNotIn(PRIVATE_SENTINEL, json.dumps(result))
+
+    def test_load_public_lanes_projects_durable_job_dates_from_real_store(self):
+        created_at = "2026-10-01T10:00:00Z"
+        last_activity_at = "2026-10-03T11:30:00Z"
+        with tempfile.TemporaryDirectory() as directory:
+            database = Path(directory) / "controller.sqlite3"
+            store = JobStore(database)
+            store.bootstrap()
+            with patch("fire_controller.jobs._now", side_effect=[created_at, last_activity_at]):
+                job = store.create("lane-dates", "Gameplay", "Lane dates", status="blocked")
+                store.append_update(job["id"], "A later public milestone")
+
+            lanes = web.load_public_lanes(database)
+
+        lane = next(item for item in lanes if item["worker"] == "Gameplay")
+        projected = lane["jobs"][0]
+        self.assertEqual(projected["created_at"], created_at)
+        self.assertEqual(projected["updated_at"], created_at)
+        self.assertEqual(projected["last_activity_at"], last_activity_at)
+        self.assertEqual(lane["primary"]["last_activity_at"], last_activity_at)
+        self.assertNotIn("brief", projected)
+        self.assertNotIn("chat_id", projected)
 
     def test_lane_projection_batches_and_keeps_blocked_primary_visible(self):
         job = {**public_row(), "worker": "Build & Tools"}
@@ -183,7 +214,8 @@ class FireControllerWebTest(unittest.TestCase):
         page = web.render_job(FakeStore().detail)
         self.assertIn("<title>Keep the lane moving · FireController job</title>", page)
         self.assertIn("<h1>Keep the lane moving</h1>", page)
-        self.assertIn('<span class="job-alias">Job alias · Build the bridge</span>', page)
+        self.assertIn("← Local Delivery Status page", page)
+        self.assertIn('<span class="job-alias">Alias: Build the bridge</span>', page)
         self.assertIn(PRIVATE_SENTINEL, page)
         self.assertIn('<a href="https://example.com">web</a>', page)
         self.assertIn('<a href="/jobs/job-1/history">local</a>', page)
@@ -196,6 +228,11 @@ class FireControllerWebTest(unittest.TestCase):
         self.assertNotIn("<script>private()", page)
         self.assertIn("Latest checkpoint", page)
         self.assertIn("Latest update", page)
+        self.assertIn('<section class="job-brief"><h2>Private working brief</h2>', page)
+        self.assertIn('<div class="job-brief-body"><h1>Private instructions</h1>', page)
+        self.assertIn(".private-pages section.job-brief>h2{font-size:1.4rem}", page)
+        self.assertIn(".private-pages .job-brief-body{font-size:.95rem}", page)
+        self.assertIn(".private-pages .job-brief-body h1{font-size:1.15rem", page)
         self.assertIn("after-review", page)
         self.assertIn("/jobs/job-1/history", page)
 
@@ -413,8 +450,12 @@ class FireControllerWebTest(unittest.TestCase):
         self.assertIn(b'<time datetime="2026-10-03T00:00:00Z">3 Oct 2026 13:00 NZDT</time>', body)
         self.assertEqual(inbox.list_calls, [])
         self.assertIn(b"Open conversation", body)
-        self.assertIn(b"2 message(s)", body)
-        self.assertIn(b"1 unread incoming", body)
+        self.assertIn(b"2 messages", body)
+        self.assertIn(b"1 unread incoming message", body)
+        self.assertIn(b'conversation-card', body)
+        self.assertIn(b'class="conversation-meta"', body)
+        self.assertIn(b'class="conversation-open"', body)
+        self.assertIn(b"@media(max-width:760px)", body)
         status, _headers, body = web.private_route("/inbox/Build%20%26%20Tools?view=messages", None, inbox=inbox)
         self.assertEqual(status, 200)
         self.assertEqual(inbox.list_calls, [("Build & Tools", 50, 0)])
@@ -441,6 +482,32 @@ class FireControllerWebTest(unittest.TestCase):
         self.assertIn(b"PR: #2898", body)
         self.assertIn(b"Reply to", body)
         self.assertIn(b"Earlier messages", body)
+
+    def test_conversation_message_counts_use_singular_and_plural_labels(self):
+        conversation = {
+            "root_id": "message-1",
+            "message_count": 1,
+            "unread_count": 2,
+            "latest_message": {
+                "id": "message-2",
+                "author": "Overseer",
+                "recipient": "Gameplay",
+                "created_at": "2026-10-03T00:00:00Z",
+            },
+        }
+
+        page = web.render_inbox_conversations("Gameplay", [conversation], unread_count=2)
+
+        self.assertIn("2 unread incoming messages.", page)
+        self.assertIn("1 message</span>", page)
+        self.assertIn("2 unread incoming messages</span>", page)
+
+        conversation["message_count"] = 2
+        conversation["unread_count"] = 1
+        singular_page = web.render_inbox_conversations("Gameplay", [conversation], unread_count=1)
+        self.assertIn("1 unread incoming message.", singular_page)
+        self.assertIn("2 messages</span>", singular_page)
+        self.assertIn("1 unread incoming message</span>", singular_page)
 
     def test_private_conversation_pagination_labels_follow_chronological_order(self):
         first_page = [
@@ -475,7 +542,10 @@ class FireControllerWebTest(unittest.TestCase):
         self.assertIn("(1h 30m ago)", document)
         self.assertNotIn('datetime="2026-10-01T00:00:00Z"', document)
         self.assertIn('datetime="2026-07-01T00:00:00Z"', document)
-        missing = web.render_worker_history("Gameplay", [public_row()])
+        missing_job = public_row()
+        for field in ("created_at", "updated_at", "last_activity_at"):
+            missing_job.pop(field)
+        missing = web.render_worker_history("Gameplay", [missing_job])
         self.assertEqual(missing.count("Not recorded"), 2)
         self.assertNotIn("1970", missing)
         invalid = web._time_metadata('<invalid>', relative=True)
@@ -572,7 +642,197 @@ class FireControllerWebTest(unittest.TestCase):
             for query in ("view=", "view=sent", "view=messages&view=conversations", "view=messages&offset=-1",
                           "view=messages&offset=1000001", "view=messages&focus=message-1"):
                 self.assertEqual(web.private_route(f"/inbox/General?{query}", None, inbox=inbox)[0], 400)
+            for query in ("notes_offset=-1", "notes_offset=1000001", "notes_offset=00"):
+                self.assertEqual(web.private_route(f"/inbox/General?{query}", None, inbox=inbox)[0], 400)
             self.assertEqual(web.private_route(f"/inbox/General/thread/{incoming['id']}?view=messages", None, inbox=inbox)[0], 400)
+
+    def test_inbox_landings_show_exact_worker_pending_notes_without_read_side_effects(self):
+        import tempfile
+
+        from fire_controller.inbox import InboxStore
+
+        with tempfile.TemporaryDirectory() as directory:
+            database = Path(directory) / "controller.sqlite3"
+            jobs = JobStore(database)
+            jobs.bootstrap()
+            gameplay_job = jobs.create("current-gameplay", "Gameplay", "Keep the gameplay work moving")
+            general_job = jobs.create("current-general", "General", "Keep the general work moving")
+            worker_note = jobs.note(
+                "**Worker-wide reminder** [unsafe](javascript:alert) <script>private()</script>",
+                worker="Gameplay", kind="reminder",
+            )
+            job_note = jobs.note(
+                "Follow up on production deployment", job=gameplay_job["id"],
+                phase="production", kind="instruction",
+            )
+            foreign_worker_note = jobs.note("Other worker reminder", worker="General")
+            foreign_job_note = jobs.note("Other job reminder", job=general_job["id"])
+            dismissed_note = jobs.note("Dismissed reminder", worker="Gameplay")
+            jobs.note_status(
+                dismissed_note["id"], "dismissed", "No longer needed", expected_revision=dismissed_note["revision"],
+            )
+            consumed_note = jobs.note("Consumed source", worker="Gameplay", kind="source")
+            jobs.note_status(consumed_note["id"], "consumed", expected_revision=consumed_note["revision"])
+
+            inbox = InboxStore(database)
+            inbox.bootstrap()
+            message = inbox.send("Gameplay", "Unread incoming message", author="Overseer")
+            inbox.send("Overseer", "Outgoing response", author="Gameplay", reply_to=message["id"])
+
+            for route in ("/inbox/Gameplay", "/inbox/Gameplay?view=messages"):
+                status, headers, body = web.private_route(route, jobs, inbox=inbox)
+                rendered = body.decode()
+                with self.subTest(route=route):
+                    self.assertEqual(status, 200)
+                    self.assertEqual(headers["Cache-Control"], "no-store")
+                    self.assertIn("Pending notes and reminders", rendered)
+                    self.assertIn("pending", rendered)
+                    self.assertIn("reminder", rendered)
+                    self.assertIn("Phase: production", rendered)
+                    self.assertIn("<strong>Worker-wide reminder</strong>", rendered)
+                    self.assertIn("Follow up on production deployment", rendered)
+                    self.assertIn(f'href="/jobs/{gameplay_job["id"]}"', rendered)
+                    self.assertNotIn("javascript:", rendered)
+                    self.assertNotIn("<script>private()</script>", rendered)
+                    self.assertIn("&lt;script&gt;private()&lt;/script&gt;", rendered)
+                    self.assertNotIn("Other worker reminder", rendered)
+                    self.assertNotIn("Other job reminder", rendered)
+                    self.assertNotIn("Dismissed reminder", rendered)
+                    self.assertNotIn("Consumed source", rendered)
+
+            stored_messages = inbox.messages_page("Gameplay", limit=50, offset=0)["messages"]
+            self.assertTrue(all(row["seen_at"] is None and row["acknowledged_at"] is None
+                                for row in stored_messages))
+            self.assertEqual(inbox.unread_count("Gameplay"), 1)
+            self.assertNotIn(worker_note["id"], json.dumps(web.public_jobs(jobs.list(worker="Gameplay"))))
+            self.assertNotIn(job_note["body"], json.dumps(web.public_jobs(jobs.list(worker="Gameplay"))))
+            worker_history = web.private_route("/workers/@Gameplay/jobs", jobs)[2].decode()
+            self.assertNotIn(worker_note["body"], worker_history)
+            self.assertNotIn(job_note["body"], worker_history)
+            self.assertNotIn(foreign_worker_note["body"], worker_history)
+            self.assertNotIn(foreign_job_note["body"], worker_history)
+
+    def test_inbox_uses_one_bounded_assigned_note_query_for_each_landing_page(self):
+        class Jobs:
+            def __init__(self):
+                self.calls = []
+
+            def notes(self, **kwargs):
+                self.calls.append(kwargs)
+                return [{"id": f"note-{index}", "body": f"Reminder {index}", "worker": "Gameplay",
+                         "job": None, "phase": None, "kind": "reminder", "status": "pending",
+                         "created_at": f"2026-10-03T00:00:{index:02d}Z"} for index in range(51)]
+
+        class Inbox:
+            def unread_count(self, worker):
+                return 1
+
+            def messages_page(self, worker, *, limit, offset):
+                return {"offset": offset, "has_more": False, "messages": []}
+
+        jobs, inbox = Jobs(), Inbox()
+        status, _, body = web.private_route(
+            "/inbox/Gameplay?view=messages&offset=100&notes_offset=50", jobs, inbox=inbox,
+        )
+        rendered = body.decode()
+        self.assertEqual(status, 200)
+        self.assertEqual(jobs.calls, [{
+            "worker": "Gameplay", "status": "pending", "limit": 51, "offset": 50,
+            "include_assigned_jobs": True,
+        }])
+        self.assertEqual(rendered.count('<article class="job-note">'), 50)
+        self.assertIn(
+            'href="/inbox/Gameplay?view=messages&amp;offset=100">Newer notes</a>', rendered,
+        )
+        self.assertIn(
+            'href="/inbox/Gameplay?view=messages&amp;offset=100&amp;notes_offset=100">Older notes</a>',
+            rendered,
+        )
+
+    def test_inbox_pending_notes_empty_unavailable_and_truncation_states(self):
+        import tempfile
+
+        from fire_controller.inbox import InboxStore
+
+        with tempfile.TemporaryDirectory() as directory:
+            database = Path(directory) / "controller.sqlite3"
+            jobs = JobStore(database)
+            jobs.bootstrap()
+            inbox = InboxStore(database)
+            inbox.bootstrap()
+            inbox.send("Gameplay", "Private message", author="Overseer")
+
+            empty = web.private_route("/inbox/Gameplay", jobs, inbox=inbox)[2].decode()
+            self.assertIn("No pending notes or reminders.", empty)
+            unavailable = web.private_route("/inbox/Gameplay", None, inbox=inbox)[2].decode()
+            self.assertIn("Pending notes are unavailable.", unavailable)
+            self.assertIn("1 unread incoming message", unavailable)
+
+            for index in range(51):
+                jobs.note(f"Overflow reminder {index}", worker="Gameplay")
+            jobs.create("overflow-job", "Gameplay", "An attached job")
+            truncated = web.private_route(
+                "/inbox/Gameplay?view=messages&offset=50", jobs, inbox=inbox,
+            )[2].decode()
+            self.assertIn("Showing up to 50 pending notes; older notes are available below.", truncated)
+            self.assertIn(
+                'href="/inbox/Gameplay?view=messages&amp;offset=50&amp;notes_offset=50">Older notes</a>',
+                truncated,
+            )
+            self.assertEqual(truncated.count('<article class="job-note">'), 50)
+            older_notes = web.private_route(
+                "/inbox/Gameplay?view=messages&offset=50&notes_offset=50", jobs, inbox=inbox,
+            )[2].decode()
+            self.assertEqual(older_notes.count('<article class="job-note">'), 1)
+            self.assertIn(
+                'href="/inbox/Gameplay?view=messages&amp;offset=50">Newer notes</a>',
+                older_notes,
+            )
+
+    def test_inbox_and_note_pagers_preserve_each_others_offsets_and_view(self):
+        note = {"id": "note-1", "body": "Still pending", "worker": "Gameplay", "job": None,
+                "phase": None, "kind": "reminder", "status": "pending", "created_at": "2026-10-03T00:00:00Z"}
+        messages = web.render_inbox(
+            "Gameplay", [], offset=50, has_more=True, pending_notes=[note], notes_available=True,
+            notes_has_more=True, notes_offset=50,
+        )
+        self.assertIn(
+            'href="/inbox/Gameplay?view=messages&amp;offset=100&amp;notes_offset=50">Older messages</a>',
+            messages,
+        )
+        self.assertIn(
+            'href="/inbox/Gameplay?view=messages&amp;offset=50">Newer notes</a>',
+            messages,
+        )
+        self.assertIn(
+            'href="/inbox/Gameplay?view=messages&amp;offset=50&amp;notes_offset=100">Older notes</a>',
+            messages,
+        )
+        self.assertIn(
+            'href="/inbox/Gameplay?notes_offset=50">Conversations</a>',
+            messages,
+        )
+
+        conversations = web.render_inbox_conversations(
+            "Gameplay", [], offset=50, has_more=True, pending_notes=[note], notes_available=True,
+            notes_has_more=True, notes_offset=100,
+        )
+        self.assertIn(
+            'href="/inbox/Gameplay?offset=100&amp;notes_offset=100">Older conversations</a>',
+            conversations,
+        )
+        self.assertIn(
+            'href="/inbox/Gameplay?offset=0&amp;notes_offset=100">Newer conversations</a>',
+            conversations,
+        )
+        self.assertIn(
+            'href="/inbox/Gameplay?offset=50&amp;notes_offset=50">Newer notes</a>',
+            conversations,
+        )
+        self.assertIn(
+            'href="/inbox/Gameplay?offset=50&amp;notes_offset=150">Older notes</a>',
+            conversations,
+        )
 
     def test_inbox_full_final_pages_hide_forward_links_and_message_pages_preserve_view(self):
         import tempfile
@@ -669,9 +929,9 @@ class PrivateWebHistoryTests(unittest.TestCase):
             "revision": 2, "status": "blocked", "worker": "General<script>", "primary": True,
             "title": "Historical title", "brief": "Old brief", "checklist": [
                 {"id": "old", "text": "Historical <script>check</script>", "done": True}]}}, history=True)
-        for text in ("<title>Current task title history</title>",
-                     "<h1>Current task title · Revision 2</h1>",
-                     '<p class="job-alias">Job alias · Current</p>',
+        for text in ("<title>Job History for Current task title · Revision 2</title>",
+                     "<h1>Job History for Current task title · Revision 2</h1>",
+                     '<span class="job-alias">Alias: Current</span>',
                      "blocked", "General&lt;script&gt;", "Primary", "Historical title", "Checklist", "Done",
                      "Historical &lt;script&gt;check&lt;/script&gt;"):
             self.assertIn(text, page)
@@ -681,26 +941,27 @@ class PrivateWebHistoryTests(unittest.TestCase):
         page = web.render_job({"job": {"id": "job-1", "name": "Current", "title": "Current task title"},
                                "history": [{"revision": 2, "status": "blocked", "title": "Historical title"}]},
                               history=True)
-        self.assertIn("<title>Current task title history</title>", page)
-        self.assertIn("<h1>Current task title history</h1>", page)
-        self.assertIn('<p class="job-alias">Job alias · Current</p>', page)
+        self.assertIn("<title>Job History for Current task title</title>", page)
+        self.assertIn("<h1>Job History for Current task title</h1>", page)
+        self.assertIn('<span class="job-alias">Alias: Current</span>', page)
         self.assertIn("Historical title", page)
 
     def test_history_page_titles_escape_current_and_historical_titles_once(self):
         title = 'Task <one> & "done"'
         escaped_title = 'Task &lt;one&gt; &amp; &quot;done&quot;'
         job = {"id": "job-1", "name": "Current", "title": title}
+        history_title = f"Job History for {escaped_title}"
         revision = web.render_job({"job": job, "revision_entry": {
             "revision": 2, "title": 'Past <title> & "kept"'}}, history=True)
-        self.assertIn(f"<title>{escaped_title} history</title>", revision)
-        self.assertIn(f"<h1>{escaped_title} · Revision 2</h1>", revision)
+        self.assertIn(f"<title>{history_title} · Revision 2</title>", revision)
+        self.assertIn(f"<h1>{history_title} · Revision 2</h1>", revision)
         self.assertIn("<p>Past &lt;title&gt; &amp; &quot;kept&quot;</p>", revision)
         self.assertNotIn("&amp;amp;", revision)
 
         history = web.render_job({"job": job, "history": [
             {"revision": 2, "status": "blocked", "title": 'Past <title> & "kept"'}]}, history=True)
-        self.assertIn(f"<title>{escaped_title} history</title>", history)
-        self.assertIn(f"<h1>{escaped_title} history</h1>", history)
+        self.assertIn(f"<title>{history_title}</title>", history)
+        self.assertIn(f"<h1>{history_title}</h1>", history)
         self.assertIn("Past &lt;title&gt; &amp; &quot;kept&quot;", history)
         self.assertNotIn("&amp;amp;", history)
 

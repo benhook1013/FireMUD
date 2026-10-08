@@ -260,6 +260,8 @@ def _commit_tree_case(root, *, conflict=False):
 class FakeGitHub:
     mergeable = "MERGEABLE"
     base_exists = True
+    base_sha = BASE
+    base_ref_tip = PARENT
 
     def __init__(self, files=None):
         self.files = files or ["src/Representative.java"]
@@ -269,7 +271,7 @@ class FakeGitHub:
             number,
             "OPEN",
             "develop",
-            BASE,
+            self.base_sha,
             HEAD,
             changed_files=len(self.files),
             mergeable=self.mergeable,
@@ -280,7 +282,7 @@ class FakeGitHub:
         return self.files
 
     def branch_head(self, ref_name):
-        return PARENT
+        return self.base_ref_tip
 
 
 class FakeCommands:
@@ -421,8 +423,10 @@ def target(
     parent_head=PARENT,
     parent_pr=None,
     candidate_warnings=(),
+    snapshot_base_sha=BASE,
+    selected_base_ref_tip=PARENT,
 ):
-    snapshot = PullRequestSnapshot(42, "OPEN", "develop", BASE, HEAD, changed_files=changed_files)
+    snapshot = PullRequestSnapshot(42, "OPEN", "develop", snapshot_base_sha, HEAD, changed_files=changed_files)
     return ReviewTarget(
         snapshot,
         EffectiveParent(parent_ref, parent_head, parent_pr),
@@ -436,6 +440,7 @@ def target(
         default_test_merge_head_sha=HEAD if default_base_front else "",
         default_test_merge_tree_sha=CONTEXT if default_base_front else "",
         candidate_warnings=tuple(candidate_warnings),
+        selected_base_ref_tip=selected_base_ref_tip,
     )
 
 
@@ -1765,6 +1770,64 @@ class CliReviewRunnerTests(unittest.TestCase):
             metadata = json.loads((result.capture_dir / "metadata.json").read_text())
             self.assertFalse(metadata["provisional"])
             self.assertTrue(metadata["force_acknowledged"])
+
+    def test_force_uses_selected_live_base_tip_when_pr_retains_older_base_oid(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / ".git").mkdir()
+            live = FakeGitHub()
+            live.base_sha = OLDER_BASE
+            live.base_ref_tip = PARENT
+            selected = target(
+                reconciled=False,
+                snapshot_base_sha=OLDER_BASE,
+                selected_base_ref_tip=PARENT,
+                candidate_warnings=("stack reconciliation is PARENT_MOVED",),
+            )
+
+            result = run_cli_review(
+                selected,
+                github=live,
+                source_root=root,
+                runner=FakeCommands(root),
+                force=True,
+                reason="acknowledge retained base movement",
+            )
+
+            metadata = json.loads((result.capture_dir / "metadata.json").read_text())
+            self.assertTrue(result.force_acknowledged)
+            self.assertEqual(selected.snapshot.base_sha, OLDER_BASE)
+            self.assertEqual(metadata["actual_base_ref"], "develop")
+            self.assertEqual(metadata["actual_base_sha"], PARENT)
+            self.assertEqual(metadata["configured_parent_sha"], PARENT)
+
+    def test_force_rejects_live_base_tip_advance_before_cli_review_starts(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / ".git").mkdir()
+            live = FakeGitHub()
+            selected = target(
+                reconciled=False,
+                snapshot_base_sha=OLDER_BASE,
+                selected_base_ref_tip=PARENT,
+            )
+            commands = FakeCommands(root)
+
+            with (
+                patch.object(live, "base_sha", OLDER_BASE),
+                patch.object(live, "branch_head", side_effect=(PARENT, ADVANCED)),
+                self.assertRaisesRegex(ReviewRunnerError, "identity changed during forced CLI preflight"),
+            ):
+                run_cli_review(
+                    selected,
+                    github=live,
+                    source_root=root,
+                    runner=commands,
+                    force=True,
+                    reason="acknowledge known stack movement",
+                )
+
+            self.assertFalse(any(args[0] == "coderabbit" for args, _cwd in commands.calls))
 
     def test_repeated_forced_cli_results_import_as_counting_runtime_history(self):
         with tempfile.TemporaryDirectory() as directory:
