@@ -69,6 +69,10 @@ class CanonicalLaunchGrpcAuthWiringTest {
           GET_COMPLETE_LAUNCH_BINDING_METHOD);
   private static final String GAME_SESSION_URI =
       "spiffe://firemud/ns/test/sa/game-session-service";
+  private static final String WORLD_MANAGEMENT_URI =
+      "spiffe://firemud/ns/test/sa/world-management-service";
+  private static final String ENTITY_MANAGEMENT_URI =
+      "spiffe://firemud/ns/test/sa/entity-management-service";
   private static final String OTHER_NAMESPACE_GAME_SESSION_URI =
       "spiffe://firemud/ns/other/sa/game-session-service";
   private static final String ACCOUNT_URI = "spiffe://firemud/ns/test/sa/account-service";
@@ -174,6 +178,115 @@ class CanonicalLaunchGrpcAuthWiringTest {
   }
 
   @Test
+  void worldAndEntityPeersAreLimitedToTheirDeclaredLaunchReadHandlers() {
+    AuthTokenInterceptor interceptor = interceptor();
+    Harness harness = harness();
+    when(harness.launchDescriptorService()
+            .getLaunchDescriptor(
+                any(UUID.class),
+                any(UUID.class),
+                anyString(),
+                anyString(),
+                anyString(),
+                anyString()))
+        .thenThrow(new IllegalArgumentException("intentional exact read probe"));
+    when(harness.completeLaunchBindingService()
+            .getCompleteLaunchBinding(
+                any(UUID.class),
+                any(UUID.class),
+                anyString(),
+                anyString(),
+                anyString(),
+                anyString()))
+        .thenThrow(new IllegalArgumentException("intentional complete read probe"));
+
+    DispatchResult<GetLaunchDescriptorResponse> worldDescriptorRead =
+        dispatchHandler(
+            interceptor,
+            harness,
+            WORLD_MANAGEMENT_URI,
+            new Metadata(),
+            GET_LAUNCH_DESCRIPTOR_METHOD,
+            GetLaunchDescriptorRequest.getDefaultInstance(),
+            GetLaunchDescriptorResponse.getDefaultInstance(),
+            readRequest(),
+            GameDesignGrpcService::getLaunchDescriptor);
+    DispatchResult<GetCompleteLaunchBindingResponse> worldCompleteRead =
+        dispatchHandler(
+            interceptor,
+            harness,
+            WORLD_MANAGEMENT_URI,
+            new Metadata(),
+            GET_COMPLETE_LAUNCH_BINDING_METHOD,
+            GetLaunchDescriptorRequest.getDefaultInstance(),
+            GetCompleteLaunchBindingResponse.getDefaultInstance(),
+            readRequest(),
+            GameDesignGrpcService::getCompleteLaunchBinding);
+    DispatchResult<GetCompleteLaunchBindingResponse> entityCompleteRead =
+        dispatchHandler(
+            interceptor,
+            harness,
+            ENTITY_MANAGEMENT_URI,
+            new Metadata(),
+            GET_COMPLETE_LAUNCH_BINDING_METHOD,
+            GetLaunchDescriptorRequest.getDefaultInstance(),
+            GetCompleteLaunchBindingResponse.getDefaultInstance(),
+            readRequest(),
+            GameDesignGrpcService::getCompleteLaunchBinding);
+
+    assertAllowedHandlerReached(worldDescriptorRead);
+    assertAllowedHandlerReached(worldCompleteRead);
+    assertAllowedHandlerReached(entityCompleteRead);
+    verify(harness.launchDescriptorService())
+        .getLaunchDescriptor(
+            any(UUID.class),
+            any(UUID.class),
+            anyString(),
+            anyString(),
+            anyString(),
+            anyString());
+    verify(harness.completeLaunchBindingService(), org.mockito.Mockito.times(2))
+        .getCompleteLaunchBinding(
+            any(UUID.class),
+            any(UUID.class),
+            anyString(),
+            anyString(),
+            anyString(),
+            anyString());
+
+    assertDenied(
+        interceptor,
+        identity(WORLD_MANAGEMENT_URI),
+        new Metadata(),
+        RESOLVE_LAUNCH_DESCRIPTOR_METHOD,
+        ResolveLaunchDescriptorRequest.getDefaultInstance(),
+        ResolveLaunchDescriptorResponse.getDefaultInstance(),
+        resolveRequest(),
+        GameDesignGrpcService::resolveLaunchDescriptor,
+        response -> response.getError().getCode());
+    assertDenied(
+        interceptor,
+        identity(ENTITY_MANAGEMENT_URI),
+        new Metadata(),
+        RESOLVE_LAUNCH_DESCRIPTOR_METHOD,
+        ResolveLaunchDescriptorRequest.getDefaultInstance(),
+        ResolveLaunchDescriptorResponse.getDefaultInstance(),
+        resolveRequest(),
+        GameDesignGrpcService::resolveLaunchDescriptor,
+        response -> response.getError().getCode());
+    assertDenied(
+        interceptor,
+        identity(ENTITY_MANAGEMENT_URI),
+        new Metadata(),
+        GET_LAUNCH_DESCRIPTOR_METHOD,
+        GetLaunchDescriptorRequest.getDefaultInstance(),
+        GetLaunchDescriptorResponse.getDefaultInstance(),
+        readRequest(),
+        GameDesignGrpcService::getLaunchDescriptor,
+        response -> response.getError().getCode());
+  }
+
+  @Test
   void playerJwtCannotSubstituteForMissingGameSessionPeerIdentity() {
     JwtUtil jwtUtil = new JwtUtil("valid-test-player-jwt-secret-123456", 60_000L);
     Metadata playerJwt = new Metadata();
@@ -266,6 +379,12 @@ class CanonicalLaunchGrpcAuthWiringTest {
     assertThat(errorCode.apply(result.response())).isEqualTo("PERMISSION_DENIED");
     verifyNoInteractions(
         harness.launchDescriptorService(), harness.completeLaunchBindingService());
+  }
+
+  private static void assertAllowedHandlerReached(DispatchResult<?> result) {
+    assertThat(result.dispatched()).isTrue();
+    assertThat(result.closedStatus()).isNull();
+    assertThat(result.response()).isNotNull();
   }
 
   private static <RequestT extends Message, ResponseT extends Message>
