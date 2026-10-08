@@ -42,8 +42,8 @@ import net.firedevops.firemud.entitymanagement.v1.CanonicalGameplayRosterRequest
 import net.firedevops.firemud.entitymanagement.v1.CanonicalGameplayRosterResponse;
 import net.firedevops.firemud.entitymanagement.v1.CanonicalGameplayRosterSelectedAssignmentRequest;
 import net.firedevops.firemud.entitymanagement.v1.CanonicalGameplayRosterSelectedAssignmentResponse;
-import net.firedevops.firemud.entitymanagement.v1.CanonicalGameplayRosterSnapshotReference;
 import net.firedevops.firemud.entitymanagement.v1.CanonicalGameplayRosterServiceGrpc;
+import net.firedevops.firemud.entitymanagement.v1.CanonicalGameplayRosterSnapshotReference;
 import net.firedevops.firemud.entitymanagement.v1.CanonicalGameplayRosterTarget;
 import net.firedevops.firemud.entitymanagement.v1.PlayableStateScope;
 import net.firedevops.firemud.gamesession.client.CanonicalGameplayRosterClient;
@@ -123,7 +123,7 @@ class CanonicalGameplayRosterClientTest {
   }
 
   @Test
-  void rejectsMissingMalformedAndSubstitutedInitialExecutionContextBeforeRpc() {
+  void rejectsMissingMalformedAndSubstitutedInitialExecutionContextBeforeRpc() throws Exception {
     var stub = mockStub();
     var client = newClient(stub);
     var unknown =
@@ -156,8 +156,7 @@ class CanonicalGameplayRosterClientTest {
             () ->
                 client.listPreseededRoster(
                     publishedRoute(),
-                    listContext()
-                        .toBuilder()
+                    listContext().toBuilder()
                         .setPlayableStateNamespaceId(SNAPSHOT_UUID.toString())
                         .build()))
         .isInstanceOf(IllegalArgumentException.class)
@@ -186,8 +185,7 @@ class CanonicalGameplayRosterClientTest {
     assertThatThrownBy(
             () ->
                 client.listPreseededRoster(
-                    publishedRoute(),
-                    listContext().toBuilder().setPlayableStateScope("2").build()))
+                    publishedRoute(), listContext().toBuilder().setPlayableStateScope("2").build()))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("exact SHARED or ISOLATED");
     assertThatThrownBy(
@@ -398,8 +396,7 @@ class CanonicalGameplayRosterClientTest {
     var transportFailure =
         Status.UNAVAILABLE.withDescription("owner unavailable").asRuntimeException();
     doThrow(transportFailure).when(stub).listPreseededRoster(any());
-    assertThatThrownBy(
-            () -> newClient(stub).listPreseededRoster(publishedRoute(), listContext()))
+    assertThatThrownBy(() -> newClient(stub).listPreseededRoster(publishedRoute(), listContext()))
         .isSameAs(transportFailure);
   }
 
@@ -454,7 +451,8 @@ class CanonicalGameplayRosterClientTest {
     assertThatThrownBy(
             () ->
                 client.readSelectedPreseededAssignment(
-                    roster, selectedContext().toBuilder().setAccountId(TENANT_UUID.toString()).build()))
+                    roster,
+                    selectedContext().toBuilder().setAccountId(TENANT_UUID.toString()).build()))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("account does not match");
     assertThatThrownBy(
@@ -470,9 +468,7 @@ class CanonicalGameplayRosterClientTest {
             () ->
                 client.readSelectedPreseededAssignment(
                     roster,
-                    selectedContext().toBuilder()
-                        .setCharacterId(SNAPSHOT_UUID.toString())
-                        .build()))
+                    selectedContext().toBuilder().setCharacterId(SNAPSHOT_UUID.toString()).build()))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("exactly once");
     assertThatThrownBy(
@@ -699,10 +695,12 @@ class CanonicalGameplayRosterClientTest {
                 new CanonicalGameplayRosterClient.RosterActor(ACTOR_UUID, "Pilot One"),
                 new CanonicalGameplayRosterClient.RosterActor(ACTOR_UUID, "Pilot One")));
 
-    assertThatThrownBy(() -> client.readSelectedPreseededAssignment(absentRoster, selectedContext()))
+    assertThatThrownBy(
+            () -> client.readSelectedPreseededAssignment(absentRoster, selectedContext()))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("exactly once");
-    assertThatThrownBy(() -> client.readSelectedPreseededAssignment(duplicateRoster, selectedContext()))
+    assertThatThrownBy(
+            () -> client.readSelectedPreseededAssignment(duplicateRoster, selectedContext()))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("duplicate actor");
     verify(stub, never()).readSelectedPreseededAssignment(any());
@@ -742,9 +740,7 @@ class CanonicalGameplayRosterClientTest {
             () ->
                 uninitialized.listPreseededRoster(
                     publishedRoute(),
-                    listContext().toBuilder()
-                        .setAccountId(new UUID(0L, 0L).toString())
-                        .build()))
+                    listContext().toBuilder().setAccountId(new UUID(0L, 0L).toString()).build()))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("canonical non-nil");
     verifyNoInteractions(factory);

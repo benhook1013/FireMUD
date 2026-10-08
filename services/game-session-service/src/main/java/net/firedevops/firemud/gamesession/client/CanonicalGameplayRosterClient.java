@@ -33,8 +33,8 @@ import net.firedevops.firemud.entitymanagement.v1.CanonicalGameplayRosterRequest
 import net.firedevops.firemud.entitymanagement.v1.CanonicalGameplayRosterResponse;
 import net.firedevops.firemud.entitymanagement.v1.CanonicalGameplayRosterSelectedAssignmentRequest;
 import net.firedevops.firemud.entitymanagement.v1.CanonicalGameplayRosterSelectedAssignmentResponse;
-import net.firedevops.firemud.entitymanagement.v1.CanonicalGameplayRosterSnapshotReference;
 import net.firedevops.firemud.entitymanagement.v1.CanonicalGameplayRosterServiceGrpc;
+import net.firedevops.firemud.entitymanagement.v1.CanonicalGameplayRosterSnapshotReference;
 import net.firedevops.firemud.entitymanagement.v1.CanonicalGameplayRosterTarget;
 import net.firedevops.firemud.entitymanagement.v1.PlayableStateScope;
 import net.firedevops.firemud.gamesession.dto.CanonicalPlayableTarget;
@@ -107,10 +107,9 @@ public final class CanonicalGameplayRosterClient
   /**
    * Reads one complete Entity snapshot for an exact current published route. The result is
    * discovery evidence only: it does not establish Account membership, admission, or PLAY.
-  */
+   */
   public PreseededRosterSnapshot listPreseededRoster(
-      CanonicalPublishedPlayerRoute publishedRoute,
-      PlayerExecutionContext playerExecutionContext) {
+      CanonicalPublishedPlayerRoute publishedRoute, PlayerExecutionContext playerExecutionContext) {
     Objects.requireNonNull(publishedRoute, "publishedRoute");
     CanonicalGameplayRosterTarget expectedTarget = toExpectedTarget(publishedRoute);
     UUID canonicalAccountUuid =
@@ -251,8 +250,7 @@ public final class CanonicalGameplayRosterClient
       parsed = UUID.fromString(value);
     } catch (IllegalArgumentException malformed) {
       throw new IllegalArgumentException(
-          "Player execution context " + fieldName + " must be a canonical non-nil UUID",
-          malformed);
+          "Player execution context " + fieldName + " must be a canonical non-nil UUID", malformed);
     }
     if (parsed.equals(NIL_UUID) || !parsed.toString().equals(value)) {
       throw new IllegalArgumentException(
@@ -334,8 +332,7 @@ public final class CanonicalGameplayRosterClient
         || !roster.target().equals(response.getTarget())) {
       throw invalidSelectedAssignmentResponse("response changed the complete expected target");
     }
-    if (!response.hasSnapshot()
-        || !response.getSnapshot().getUnknownFields().asMap().isEmpty()) {
+    if (!response.hasSnapshot() || !response.getSnapshot().getUnknownFields().asMap().isEmpty()) {
       throw invalidSelectedAssignmentResponse("response snapshot is absent or malformed");
     }
     UUID echoedSnapshotUuid =
