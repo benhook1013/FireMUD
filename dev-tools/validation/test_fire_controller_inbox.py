@@ -52,6 +52,21 @@ class InboxStoreTest(unittest.TestCase):
         create_snapshot(self.database, snapshot)
         self.assertTrue(snapshot.is_file())
 
+    def test_credential_diagnostics_locate_message_without_echo_or_write(self) -> None:
+        self.store.bootstrap()
+        for newline in ("\n", "\r\n"):
+            with self.subTest(newline=newline):
+                with self.assertRaises(InboxError) as caught:
+                    self.store.send("General", newline.join(("surrounding-sentinel", "Bearer synthetic-value")))
+                self.assertEqual(
+                    str(caught.exception),
+                    "message body resembles credential or raw secret material "
+                    "(category=bearer_authorization; line=2)",
+                )
+                self.assertNotIn("synthetic-value", str(caught.exception))
+                self.assertNotIn("surrounding-sentinel", str(caught.exception))
+        self.assertEqual(self.store.list("General"), [])
+
     def test_unread_count_is_read_only_when_inbox_schema_is_missing(self) -> None:
         self.assertEqual(self.store.unread_count("General"), 0)
         self.assertFalse(self.database.exists())

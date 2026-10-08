@@ -17,6 +17,7 @@ import net.firedevops.firemud.common.security.AdminAuthorizationException;
 import net.firedevops.firemud.common.security.AdminRoleGuard;
 import net.firedevops.firemud.common.security.SessionContext;
 import net.firedevops.firemud.common.settings.GameDesignSettingsProtoMapper;
+import net.firedevops.firemud.gamedesign.draft.AuthoredDraftPublishSelection.PublishIntent;
 import net.firedevops.firemud.gamedesign.dto.CompleteLaunchBindingDto;
 import net.firedevops.firemud.gamedesign.dto.DesignControlPlaneDigestDto;
 import net.firedevops.firemud.gamedesign.dto.HelpTopicDto;
@@ -224,9 +225,40 @@ public class GameDesignGrpcService extends GameDesignServiceGrpc.GameDesignServi
       if (request.getPublishRequestId().isBlank()) {
         throw new IllegalArgumentException("publish_request_id is required");
       }
-      VersionDto version =
-          versionService.publishVersion(
-              request.getTenantId(), request.getNotes(), request.getPublishRequestId());
+      boolean noSelection =
+          request.getVersionId().isBlank()
+              && request.getExpectedVersionStateEpoch().isBlank()
+              && request.getSelectedCommitRequestId().isBlank()
+              && request.getSelectedCommitId().isBlank()
+              && request.getSelectedCommitDigest().isBlank();
+      boolean completeSelection =
+          !request.getVersionId().isBlank()
+              && !request.getExpectedVersionStateEpoch().isBlank()
+              && !request.getSelectedCommitRequestId().isBlank()
+              && !request.getSelectedCommitId().isBlank()
+              && !request.getSelectedCommitDigest().isBlank();
+      VersionDto version;
+      if (noSelection) {
+        version =
+            versionService.replayLegacyFullVersion(
+                request.getTenantId(), request.getNotes(), request.getPublishRequestId());
+      } else if (completeSelection) {
+        version =
+            versionService.publishVersion(
+                new PublishIntent(
+                    canonicalPublicationUuid(request.getTenantId(), "tenant_id"),
+                    canonicalPublicationUuid(request.getVersionId(), "version_id"),
+                    request.getPublishRequestId(),
+                    request.getExpectedVersionStateEpoch(),
+                    request.getNotes(),
+                    canonicalPublicationUuid(
+                        request.getSelectedCommitRequestId(), "selected_commit_request_id"),
+                    canonicalPublicationUuid(request.getSelectedCommitId(), "selected_commit_id"),
+                    request.getSelectedCommitDigest()));
+      } else {
+        throw new IllegalArgumentException(
+            "all selected version, epoch, commit, and digest fields are required together");
+      }
       builder.setVersionId(version.id());
     } catch (AdminAuthorizationException ex) {
       builder.setError(
@@ -2355,6 +2387,11 @@ public class GameDesignGrpcService extends GameDesignServiceGrpc.GameDesignServi
           "PUBLISH_ATTEMPT_INCONSISTENT",
           "PUBLISH_ATTEMPT_PENDING_RECONCILIATION_REQUIRED",
           "PUBLISH_ATTEMPT_SCOPE_MISMATCH",
+          "FULL_VERSION_PUBLICATION_UNAVAILABLE",
+          "PUBLICATION_AUTHORIZATION_UNAVAILABLE",
+          "PUBLISH_OWNER_CARRIER_UNAVAILABLE",
+          "PUBLISH_SELECTION_REQUIRED",
+          "SELECTED_SOURCE_CAPTURE_UNAVAILABLE",
           "PUBLISH_SCRIPT_PATCH_IDENTITY_CONFLICT" ->
           candidate;
       default -> null;
@@ -2366,6 +2403,14 @@ public class GameDesignGrpcService extends GameDesignServiceGrpc.GameDesignServi
       return;
     }
     AdminRoleGuard.requireAdminRole();
+  }
+
+  private static UUID canonicalPublicationUuid(String value, String field) {
+    UUID parsed = UUID.fromString(value);
+    if (!parsed.toString().equals(value) || parsed.equals(new UUID(0L, 0L))) {
+      throw new IllegalArgumentException(field + " must be a canonical non-nil UUID");
+    }
+    return parsed;
   }
 
   private void requirePublishedReleaseBundleReadAccess() {

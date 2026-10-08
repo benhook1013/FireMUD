@@ -166,6 +166,34 @@ _SECRET_PATTERNS = (
     re.compile(r"\b(?:password|passwd|secret|api[_-]?key|access[_-]?token)\s*[:=]\s*\S+", re.IGNORECASE),
     re.compile(r"\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b"),
 )
+_SECRET_CATEGORIES = (
+    "private_key",
+    "github_token",
+    "aws_access_key",
+    "bearer_authorization",
+    "credential_assignment",
+    "jwt",
+)
+
+
+def _credential_location(
+    value: str, patterns: Sequence[re.Pattern[str]] = _SECRET_PATTERNS,
+) -> tuple[str, int] | None:
+    """Locate the earliest existing rule match without returning submitted text.
+
+    Ties use rule order. LF and CRLF each advance one line.
+    """
+    matches = (
+        (match.start(), category)
+        for category, pattern in zip(_SECRET_CATEGORIES, patterns, strict=True)
+        if (match := pattern.search(value)) is not None
+    )
+    first = min(matches, key=lambda item: item[0], default=None)
+    if first is None:
+        return None
+    return first[1], value.count("\n", 0, first[0]) + 1
+
+
 _SECRET_FIELD_SUFFIXES = (
     "password",
     "passwd",
@@ -204,8 +232,11 @@ def _text(value: Any, label: str, *, maximum: int, allow_empty: bool = False) ->
 
 def _bounded_text(value: Any, label: str, *, maximum: int, allow_empty: bool = False) -> str:
     value = _text(value, label, maximum=maximum, allow_empty=allow_empty)
-    if any(pattern.search(value) for pattern in _SECRET_PATTERNS):
-        raise ReviewRecordsError(f"{label} resembles credential or raw secret material")
+    if location := _credential_location(value):
+        category, line = location
+        raise ReviewRecordsError(
+            f"{label} resembles credential or raw secret material (category={category}; line={line})"
+        )
     return value
 
 

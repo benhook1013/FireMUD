@@ -2071,6 +2071,41 @@ class SqliteReviewRecordsTest(unittest.TestCase):
         with self.assertRaisesRegex(ReviewRecordsError, "credential or raw secret"):
             FindingObservation("safe-key", "title", detail="token=ghp_" + "A" * 30)
 
+    def test_safe_credential_location_uses_earliest_match_and_existing_rules(self) -> None:
+        fixtures = (
+            ("private_key", "-----BEGIN PRIVATE KEY-----"),
+            ("github_token", "ghp_" + "A" * 30),
+            ("aws_access_key", "AKIA" + "A" * 16),
+            ("bearer_authorization", "Bearer synthetic-value"),
+            ("credential_assignment", "password=synthetic-value"),
+            ("jwt", "eyJabcdefgh.abcdefghij.abcdefghij"),
+        )
+        for category, shaped in fixtures:
+            with self.subTest(category=category):
+                self.assertEqual(sqlite_review_records._credential_location(shaped), (category, 1))
+                with self.assertRaises(ReviewRecordsError) as caught:
+                    FindingObservation("safe-key", shaped)
+                self.assertEqual(
+                    str(caught.exception),
+                    f"title resembles credential or raw secret material (category={category}; line=1)",
+                )
+                self.assertNotIn(shaped, str(caught.exception))
+        for newline in ("\n", "\r\n"):
+            value = newline.join(("surrounding-sentinel", fixtures[-1][1], fixtures[0][1]))
+            self.assertEqual(sqlite_review_records._credential_location(value), ("jwt", 2))
+        self.assertEqual(
+            sqlite_review_records._credential_location("Bearer password=synthetic-value"),
+            ("bearer_authorization", 1),
+        )
+        ordinary = "The password field is omitted. Authentication uses environment configuration."
+        self.assertIsNone(sqlite_review_records._credential_location(ordinary))
+        self.assertEqual(FindingObservation("safe-key", ordinary).title, ordinary)
+        # Ambiguous code prose is still rejected; diagnostics grant no exception.
+        self.assertEqual(
+            sqlite_review_records._credential_location("global bearer AuthTokenInterceptor"),
+            ("bearer_authorization", 1),
+        )
+
     def test_review_text_preserves_code_identifiers_and_redacts_recognizable_credentials(self) -> None:
         sha1 = "a" * 40
         sha256 = "b" * 64

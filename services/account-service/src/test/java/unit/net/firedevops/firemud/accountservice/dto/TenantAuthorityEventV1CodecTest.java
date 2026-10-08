@@ -53,10 +53,15 @@ class TenantAuthorityEventV1CodecTest {
         .contains("\"tenantAuthorityGeneration\":\"2\"")
         .contains("\"tenantBillingSequence\":\"1\"");
 
-    byte[] altered = authorityEvent.payload();
-    altered[altered.length - 2] = altered[altered.length - 2] == 'a' ? (byte) 'b' : (byte) 'a';
-    assertThatThrownBy(() -> TenantAuthorityEventV1Codec.verify(altered))
-        .isInstanceOf(IllegalArgumentException.class);
+    String alteredJson =
+        new String(authorityEvent.payload(), StandardCharsets.UTF_8)
+            .replace("\"tenantAuthorityGeneration\":\"2\"", "\"tenantAuthorityGeneration\":\"3\"");
+    assertThat(alteredJson)
+        .isNotEqualTo(new String(authorityEvent.payload(), StandardCharsets.UTF_8));
+    assertThatThrownBy(
+            () -> TenantAuthorityEventV1Codec.verify(alteredJson.getBytes(StandardCharsets.UTF_8)))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("digest or canonical bytes differ");
   }
 
   private static FreshTenantCreationEvidence source(UUID tenantId) {

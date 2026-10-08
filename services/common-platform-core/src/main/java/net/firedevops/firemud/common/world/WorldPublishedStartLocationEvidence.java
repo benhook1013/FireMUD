@@ -539,11 +539,7 @@ public record WorldPublishedStartLocationEvidence(
       if (scopeType.isEmpty() != scopeId.isEmpty()) {
         throw new IllegalArgumentException("scopeType and scopeId must both be present or absent");
       }
-      if (expectedEpoch == null
-          || !expectedEpoch.matches("0|[1-9][0-9]*")
-          || new java.math.BigInteger(expectedEpoch)
-                  .compareTo(java.math.BigInteger.valueOf(Long.MAX_VALUE))
-              > 0) {
+      if (expectedEpoch == null || !expectedEpoch.matches("0|[1-9][0-9]*")) {
         throw new IllegalArgumentException("expectedEpoch must be canonical non-negative decimal");
       }
     }

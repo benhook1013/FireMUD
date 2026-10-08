@@ -43,6 +43,22 @@ class WorldCanonicalInitialAdmissionHoldTest {
   }
 
   @Test
+  void rejectsUnpairedSurrogatesAtRequestConstruction() {
+    assertThatThrownBy(() -> noPriorRequest("gs-initial-admission-" + (char) 0xd800))
+        .isInstanceOf(IllegalArgumentException.class);
+    assertThatThrownBy(() -> noPriorRequest("gs-initial-admission-" + (char) 0xdc00))
+        .isInstanceOf(IllegalArgumentException.class);
+  }
+
+  @Test
+  void acceptsSupplementaryCodePointAndRoundTripsCanonicalRequest() {
+    String requestId = "gs-initial-admission-" + new String(Character.toChars(0x1f680));
+    Request request = noPriorRequest(requestId);
+
+    assertThat(Request.fromStored(request.canonicalRequestBytes())).isEqualTo(request);
+  }
+
+  @Test
   void requestAndAcquiredIdentityRoundTripAndExactRetryKeepTheirCanonicalIdentity() {
     Request noPrior = noPriorRequest();
     Request request = expectClosedRequest(13L);
@@ -457,6 +473,10 @@ class WorldCanonicalInitialAdmissionHoldTest {
   }
 
   private static Request noPriorRequest() {
+    return noPriorRequest("gs-initial-admission-17");
+  }
+
+  private static Request noPriorRequest(String requestId) {
     return request(
         "prod",
         TENANT,
@@ -466,7 +486,7 @@ class WorldCanonicalInitialAdmissionHoldTest {
         GAME_INSTANCE,
         VERSION,
         7L,
-        "gs-initial-admission-17",
+        requestId,
         REQUEST_DIGEST,
         InitialAdmissionOrigin.NO_PRIOR_POINTER,
         12L,

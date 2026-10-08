@@ -114,7 +114,12 @@ class AccountCanonicalFirstJoinEventIntegrationTest {
     assertThat(decoded.membershipAuthorityGeneration()).isEqualTo("1");
     assertThat(decoded.authorityTuple().privateRealmGrantVersions()).isEmpty();
     assertThat(decoded.authorityTuple().accountSecurityCutoff()).isEmpty();
-    assertThat(decoded.authorityTuple().tenantBillingCutoff()).isEmpty();
+    assertThat(decoded.authorityTuple().tenantBillingCutoff())
+        .contains(
+            Map.of(
+                fixture.tenantUuid.toString(),
+                new MembershipAuthorityEventV1Codec.TenantBillingCutoff(
+                    "2", "1", "account:auth-authority:v1:tenant/" + fixture.tenantUuid, "1")));
     assertThat(decoded.roles()).containsExactly("player");
     assertThat(pair.membershipExists()).isTrue();
     assertThat(pair.membershipVersion()).isEqualTo(2L);
@@ -142,41 +147,39 @@ class AccountCanonicalFirstJoinEventIntegrationTest {
   }
 
   @Test
-  void laterTenantAuthorityUsesTheCurrentAccountSourceEventAndItsExactBillingCutoff() {
+  void changedEntitlementPreventsAStalePendingJoinFromCommittingMembership() {
     Fixture fixture = newFixture();
     DemoTenantEntitlementSnapshot entitlement = fixture.provisionCurrentTenantEntitlement();
 
-    var proof = fixture.commitFirstJoin();
+    assertThatThrownBy(fixture::commitFirstJoin)
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("exact current public-join entitlement evidence");
     String stream = fixture.membershipStream();
-    AccountAuthorityOutboxRepository.Event membershipEvent =
-        fixture.inTransaction(
-            () -> fixture.outbox.findEvent(stream, proof.eventSequence()).orElseThrow());
-    var decoded =
-        MembershipAuthorityEventV1Codec.verify(
-            new String(membershipEvent.payload(), StandardCharsets.UTF_8));
     var currentTenantEvent =
         fixture.inTransaction(
             () -> fixture.tenantAuthorityEvents.readCurrentByTenant(fixture.tenantUuid));
+    var pendingOperation =
+        fixture.inTransaction(
+            () -> {
+              fixture.operations.lockAccount(fixture.account.getId());
+              return fixture.operations.findCanonicalEvidenceForUpdateByRequestId(
+                  fixture.requestId);
+            });
 
+    assertThat(entitlement.entitlementVersion()).isEqualTo(2L);
+    assertThat(pendingOperation).isPresent();
+    assertThat(pendingOperation.orElseThrow().status()).isEqualTo("PENDING");
+    assertThat(pendingOperation.orElseThrow().entitlementVersion()).isEqualTo(1L);
     assertThat(entitlement.tenantAuthorityGeneration()).isEqualTo(3L);
     assertThat(entitlement.tenantAuthoritySourceVersion()).isEqualTo(3L);
     assertThat(entitlement.tenantBillingSequence()).isEqualTo(2L);
     assertThat(entitlement.tenantAuthorityOutboxSequence()).isEqualTo(2L);
-    assertThat(decoded.authorityTuple().tenantAuthorityGeneration())
-        .isEqualTo(Map.of(fixture.tenantUuid.toString(), "3"));
-    assertThat(decoded.authorityTuple().tenantBillingCutoff())
-        .contains(
-            Map.of(
-                fixture.tenantUuid.toString(),
-                new MembershipAuthorityEventV1Codec.TenantBillingCutoff(
-                    "3", "2", currentTenantEvent.outboxStreamKey(), "2")));
     assertThat(currentTenantEvent.tenantBillingEventId()).isEqualTo(entitlement.eventId());
     assertThat(currentTenantEvent.tenantBillingEventDigest()).isEqualTo(entitlement.eventDigest());
-    assertThat(decoded.eventId()).isEqualTo(proof.eventId());
     assertThat(fixture.count("account_tenant_membership", "tenant_uuid", fixture.tenantUuid))
-        .isEqualTo(1L);
+        .isZero();
     assertThat(fixture.count("account_authority_outbox_events", "outbox_stream_key", stream))
-        .isEqualTo(1L);
+        .isZero();
   }
 
   @Test
@@ -382,7 +385,8 @@ class AccountCanonicalFirstJoinEventIntegrationTest {
               generations,
               outbox,
               sourceEvidence,
-              tenantAuthorityEvents);
+              tenantAuthorityEvents,
+              demoEntitlements);
       this.terminalCoordinator =
           new AccountCanonicalFirstJoinTerminalCoordinator(
               accounts, operations, memberships, roles, outbox, pairs, auditOutbox, producer);
@@ -419,21 +423,32 @@ class AccountCanonicalFirstJoinEventIntegrationTest {
                     account.getAccountUuid(), tenantUuid));
             connectScopes.insertCanonical(account.getId(), scope, provenance);
             operations.insertCanonicalIntent(requestId, scope, callerBinding);
-            operations.bindCanonicalPolicyEvidence(requestId, scope, callerBinding, true, 5L);
+            return null;
+          });
+      DemoTenantEntitlementSnapshot currentEntitlement =
+          inTransaction(
+              () ->
+                  demoEntitlements.provision(
+                      entitlementRequest(UUID.randomUUID(), null), tenantEvidence));
+      inTransaction(
+          () -> {
+            operations.bindCanonicalPolicyEvidence(
+                requestId,
+                scope,
+                callerBinding,
+                currentEntitlement.allowPublicJoin(),
+                currentEntitlement.entitlementVersion());
             return null;
           });
     }
 
     private DemoTenantEntitlementSnapshot provisionCurrentTenantEntitlement() {
-      DemoTenantEntitlementSnapshot created =
-          inTransaction(
-              () ->
-                  demoEntitlements.provision(
-                      entitlementRequest(UUID.randomUUID(), null), tenantEvidence));
+      DemoTenantEntitlementSnapshot current =
+          inTransaction(() -> demoEntitlements.readCurrent(tenantUuid));
       return inTransaction(
           () ->
               demoEntitlements.provision(
-                  entitlementRequest(UUID.randomUUID(), created), tenantEvidence));
+                  entitlementRequest(UUID.randomUUID(), current), tenantEvidence));
     }
 
     private DemoTenantEntitlementRequest entitlementRequest(

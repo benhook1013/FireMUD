@@ -8,6 +8,7 @@ import java.io.ByteArrayOutputStream;
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.util.Base64;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -57,6 +58,71 @@ public class WorldDraftTerminalReadGrpcCodecTest {
             WorldDraftTerminalReadEvidence.Request.create("test", request.originalAccountBinding())
                 .readRequestId())
         .isNotEqualTo(request.accountBinding().operationId());
+  }
+
+  @Test
+  void independentlyDecodedByteEvidenceUsesCanonicalValueEquality() {
+    var request = request();
+    var binding = request.accountBinding();
+    var decodedBinding = DraftAuthorizationFenceBinding.fromStored(binding.canonicalBytes());
+    assertThat(decodedBinding).isEqualTo(binding);
+    assertThat(decodedBinding.hashCode()).isEqualTo(binding.hashCode());
+    assertThat(new HashSet<>(List.of(binding, decodedBinding))).hasSize(1);
+
+    var source = binding.sources().getFirst();
+    var decodedSource = SourceEvidence.fromStored(source.canonicalBytes());
+    assertThat(decodedSource).isEqualTo(source);
+    assertThat(decodedSource.hashCode()).isEqualTo(source.hashCode());
+    assertThat(new HashSet<>(List.of(source, decodedSource))).hasSize(1);
+
+    var changedSource =
+        new SourceEvidence(
+            source.kind(),
+            source.scopeId(),
+            source.generation(),
+            source.sourceVersion(),
+            source.checkpointStream(),
+            source.checkpointSequence(),
+            new byte[] {9});
+    assertThat(changedSource).isNotEqualTo(source);
+    var changedSourceBinding =
+        new DraftAuthorizationFenceBinding(
+            binding.operationId(),
+            binding.requestId(),
+            binding.commitId(),
+            binding.fenceId(),
+            binding.actorAccountId(),
+            binding.tenantId(),
+            binding.versionId(),
+            binding.baseCommitId(),
+            binding.expectedDraftEpoch(),
+            binding.gameDesignBinding(),
+            binding.normalizedInput(),
+            binding.inputDigest(),
+            List.of(changedSource),
+            binding.schemaVersion(),
+            binding.requiredOwners());
+    assertThat(changedSourceBinding).isNotEqualTo(binding);
+
+    var readback = committedReadback(request);
+    var decodedReadback =
+        DraftAuthorizationFenceBinding.OwnerReadback.fromStored(readback.canonicalBytes());
+    assertThat(decodedReadback).isEqualTo(readback);
+    assertThat(decodedReadback.hashCode()).isEqualTo(readback.hashCode());
+    assertThat(new HashSet<>(List.of(readback, decodedReadback))).hasSize(1);
+    assertThat(
+            DraftAuthorizationFenceBinding.OwnerReadback.fromStored(
+                new DraftAuthorizationFenceBinding.OwnerReadback(
+                        Owner.WORLD,
+                        Outcome.COMMITTED,
+                        readback.operationId(),
+                        readback.commitId(),
+                        readback.fenceId(),
+                        readback.inputDigest(),
+                        readback.fullBinding(),
+                        new byte[] {9})
+                    .canonicalBytes()))
+        .isNotEqualTo(readback);
   }
 
   @Test
