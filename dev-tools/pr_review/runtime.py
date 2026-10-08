@@ -122,6 +122,8 @@ class LiveGitHub:
             raise ReviewRunnerError("GitHub pull-request identity is malformed")
         if type(value.get("changedFiles")) is not int or value["changedFiles"] < 0:
             raise ReviewRunnerError("GitHub pull-request identity is malformed")
+        if type(value.get("isDraft")) is not bool:
+            raise ReviewRunnerError("GitHub pull-request draft status is malformed")
         if value.get("mergedAt") is not None and not isinstance(value["mergedAt"], str):
             raise ReviewRunnerError("GitHub pull-request identity is malformed")
         return PullRequestSnapshot(
@@ -136,6 +138,7 @@ class LiveGitHub:
             merged=value.get("mergedAt") is not None,
             base_exists=True,
             head_repository=head_repository,
+            is_draft=value["isDraft"],
         )
 
     # cli_runner.GitHubReader

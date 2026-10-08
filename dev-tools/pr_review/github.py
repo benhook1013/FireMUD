@@ -845,6 +845,7 @@ query($owner:String!, $repo:String!, $number:Int!) {
   repository(owner:$owner, name:$repo) { pullRequest(number:$number) {
     number
     state
+    isDraft
     baseRefName
     baseRefOid
     headRefName

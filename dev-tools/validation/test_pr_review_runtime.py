@@ -2234,6 +2234,7 @@ class RuntimeTest(unittest.TestCase):
         metadata = {
             "number": 42,
             "state": "OPEN",
+            "isDraft": True,
             "baseRefName": "develop",
             "baseRefOid": BASE,
             "headRefName": "feature",
@@ -2256,12 +2257,14 @@ class RuntimeTest(unittest.TestCase):
             self.assertEqual(snapshot.head_sha, HEAD)
             self.assertEqual(snapshot.base_sha, BASE)
             self.assertEqual(snapshot.head_repository, "owner/repo")
+            self.assertTrue(snapshot.is_draft)
             self.assertEqual(live.pull_request_files(42), ["a.txt", "b.txt"])
 
     def test_live_github_derives_head_repository_identity_when_name_with_owner_is_absent(self) -> None:
         metadata = {
             "number": 42,
             "state": "OPEN",
+            "isDraft": False,
             "baseRefName": "develop",
             "baseRefOid": BASE,
             "headRefName": "feature",
@@ -2272,12 +2275,15 @@ class RuntimeTest(unittest.TestCase):
             "mergedAt": None,
         }
         with patch.object(github, "fetch_pr_identity", return_value=metadata):
-            self.assertEqual(LiveGitHub("owner/repo").pull_request(42).head_repository, "owner/repo")
+            snapshot = LiveGitHub("owner/repo").pull_request(42)
+            self.assertEqual(snapshot.head_repository, "owner/repo")
+            self.assertFalse(snapshot.is_draft)
 
     def test_live_github_rejects_malformed_present_head_repository_identity(self) -> None:
         metadata = {
             "number": 42,
             "state": "OPEN",
+            "isDraft": False,
             "baseRefName": "develop",
             "baseRefOid": BASE,
             "headRefName": "feature",
@@ -2298,6 +2304,7 @@ class RuntimeTest(unittest.TestCase):
         metadata = {
             "number": 42,
             "state": "OPEN",
+            "isDraft": False,
             "baseRefName": "develop",
             "baseRefOid": BASE,
             "headRefName": "feature",
@@ -2332,6 +2339,7 @@ class RuntimeTest(unittest.TestCase):
         pull_request = {
             "number": 42,
             "state": "OPEN",
+            "isDraft": False,
             "baseRefName": "develop",
             "baseRefOid": BASE,
             "headRefName": "feature",
@@ -2355,6 +2363,7 @@ class RuntimeTest(unittest.TestCase):
         for field in (
             "number",
             "state",
+            "isDraft",
             "baseRefName",
             "baseRefOid",
             "headRefName",
@@ -2398,6 +2407,27 @@ class RuntimeTest(unittest.TestCase):
             self.assertRaisesRegex(ReviewRunnerError, "pull-request identity is malformed"),
         ):
             LiveGitHub("owner/repo").pull_request(42)
+
+    def test_live_github_rejects_missing_or_malformed_draft_status(self) -> None:
+        metadata = {
+            "number": 42,
+            "state": "OPEN",
+            "baseRefName": "develop",
+            "baseRefOid": BASE,
+            "headRefName": "feature",
+            "headRefOid": HEAD,
+            "headRepository": {"nameWithOwner": "owner/repo"},
+            "changedFiles": 0,
+            "mergeable": "MERGEABLE",
+            "mergedAt": None,
+        }
+        for draft_field in ({}, {"isDraft": None}, {"isDraft": 0}, {"isDraft": "false"}):
+            with (
+                self.subTest(draft_field=draft_field),
+                patch.object(github, "fetch_pr_identity", return_value={**metadata, **draft_field}),
+                self.assertRaisesRegex(ReviewRunnerError, "draft status is malformed"),
+            ):
+                LiveGitHub("owner/repo").pull_request(42)
 
     def test_historical_cli_capture_remains_attributable(self) -> None:
         body = f"CLI: 1 found / 0 accepted · `{HEAD[:12]}` · 1 files\n<!-- firemud-cli-run: run.Legacy -->"

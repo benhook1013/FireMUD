@@ -108,6 +108,7 @@ class PullRequestSnapshot:
     merged: bool = False
     base_exists: bool = True
     head_repository: str | None = None
+    is_draft: bool = False
 
 
 @dataclasses.dataclass(frozen=True)

@@ -313,6 +313,7 @@ class LivePullRequest:
             self.merged,
             self.base_exists,
             self.head_repository,
+            self.is_draft,
         )
 
 
@@ -437,6 +438,7 @@ def _live(value: Any, number: int) -> LivePullRequest:
             value.base_exists,
             value.changed_files,
             value.head_repository,
+            value.is_draft,
         )
     if not isinstance(value, Mapping):
         raise ControllerError("pull-request provider returned an unsupported value")
