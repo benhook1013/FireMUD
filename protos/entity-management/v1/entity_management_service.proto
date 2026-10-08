@@ -142,13 +142,17 @@ message CanonicalGameplayRosterSelectedAssignmentResponse {
   string canonical_account_uuid = 2;
   string selected_character_uuid = 3;
   CanonicalGameplayRosterTarget target = 4;
-  reserved 5, 6;
+  // Original non-nil operation identity and immutable intent digest from the unique committed
+  // ASSIGNED PRESEEDED PLAYER receipt matching this exact account, actor, target, and owner proof.
+  // This read returns persisted owner evidence; it never mints an assignment identity or digest.
+  string assignment_uuid = 5;
+  string intent_digest = 6;
   reserved 7;
-  reserved "assignment_uuid", "intent_digest", "error";
+  reserved "error";
   // Exact snapshot reference supplied by the caller and validated by this operation. The
-  // response echoes discovery bindings only; it does not mint an assignment receipt or prove
-  // admission. Any later assignment/admission write and its authoritative readback belong to
-  // the owning downstream operation.
+  // response echoes that binding alongside the original persisted assignment reference. The
+  // reference does not prove admission or current Account eligibility; placement must revalidate
+  // it with its owning Entity write/readback contract.
   CanonicalGameplayRosterSnapshotReference snapshot = 8;
 }
 
