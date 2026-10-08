@@ -31,6 +31,36 @@ class JobStoreTest(unittest.TestCase):
     def bootstrap(self) -> None:
         self.store.bootstrap()
 
+    def test_credential_diagnostics_locate_brief_without_writing_or_echoing(self) -> None:
+        self.bootstrap()
+        ordinary = "The password field is omitted. Authentication uses environment configuration."
+        job = self.store.create("safe-diagnostics", "General", "Safe", brief=ordinary)
+        with sqlite3.connect(self.database) as connection:
+            before = list(connection.iterdump())
+        fixtures = (
+            ("private_key", "-----BEGIN PRIVATE KEY-----"),
+            ("github_token", "ghp_" + "A" * 30),
+            ("aws_access_key", "AKIA" + "A" * 16),
+            ("bearer_authorization", "bEaReR synthetic-value"),
+            ("credential_assignment", "API_KEY=synthetic-value"),
+            ("jwt", "eyJabcdefgh.abcdefghij.abcdefghij"),
+        )
+        for newline in ("\n", "\r\n"):
+            for category, shaped in fixtures:
+                with self.subTest(newline=newline, category=category):
+                    value = newline.join(("surrounding-sentinel", "", shaped, "trailing-sentinel"))
+                    with self.assertRaises(JobError) as caught:
+                        self.store.revise(job["id"], job["revision"], brief=value)
+                    self.assertEqual(
+                        str(caught.exception),
+                        f"brief resembles credential or raw secret material (category={category}; line=3)",
+                    )
+                    for omitted in (shaped, "synthetic-value", "surrounding-sentinel", "trailing-sentinel"):
+                        self.assertNotIn(omitted, str(caught.exception))
+        with sqlite3.connect(self.database) as connection:
+            self.assertEqual(list(connection.iterdump()), before)
+        self.assertEqual(self.store.get(job["id"])["brief"], ordinary)
+
     def test_worker_controls_are_rejected_at_each_ingress_without_writes(self) -> None:
         self.bootstrap()
         job = self.store.create("valid-worker", "Build Team", "Valid")
