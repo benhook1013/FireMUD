@@ -1218,14 +1218,7 @@ public final class CanonicalGameplayBindingInventoryRepository {
       throw conflict("An unresolved candidate or repair obligation already fences this controller");
     }
 
-    transaction.execute(
-        "INSERT INTO "
-            + GENERATION
-            + " (tenant_id, playable_state_namespace_id, character_id, last_issued_generation) "
-            + "VALUES (?, ?, ?, 0) ON CONFLICT DO NOTHING",
-        candidate.tenantId(),
-        candidate.playableStateNamespaceId(),
-        candidate.characterId());
+    ensureGenerationRow(transaction, candidate);
     Record generationRow =
         Objects.requireNonNull(
             transaction.fetchOne(
@@ -1297,6 +1290,18 @@ public final class CanonicalGameplayBindingInventoryRepository {
     if (request.candidateAccountIndexFence().equals(NIL_UUID)) {
       throw new IllegalArgumentException("candidateAccountIndexFence must not be nil");
     }
+  }
+
+  private static void ensureGenerationRow(
+      DSLContext transaction, CanonicalGameplayBindingIdentity candidate) {
+    transaction.execute(
+        "INSERT INTO "
+            + GENERATION
+            + " (tenant_id, playable_state_namespace_id, character_id, last_issued_generation) "
+            + "VALUES (?, ?, ?, 0) ON CONFLICT DO NOTHING",
+        candidate.tenantId(),
+        candidate.playableStateNamespaceId(),
+        candidate.characterId());
   }
 
   private static BigInteger lockInventoryRevision(DSLContext transaction) {
@@ -1938,7 +1943,7 @@ public final class CanonicalGameplayBindingInventoryRepository {
             + " (transition_id, binding_ref, binding_generation, account_id, tenant_id,"
             + " game_instance_id, runtime_game_instance_id, session_id, region_id, region_epoch,"
             + " status, inventory_revision)"
-            + " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'REQUIRED', ?)",
+            + " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'REQUIRED', ?)",
         prepared.transitionId(),
         prepared.bindingRef().bytes(),
         decimal(prepared.bindingGeneration()),
