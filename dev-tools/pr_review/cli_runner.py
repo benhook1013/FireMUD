@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import dataclasses
 import fcntl
+import hashlib
 import json
 import os
 import shutil
@@ -342,7 +343,9 @@ def format_exception_notes(error: BaseException) -> str:
         current = (
             current.__cause__
             if current.__cause__ is not None
-            else current.__context__ if not current.__suppress_context__ else None
+            else current.__context__
+            if not current.__suppress_context__
+            else None
         )
     if not notes:
         return rendered
@@ -505,9 +508,7 @@ def _verify_target_still_current(target: ReviewTarget, github: GitHubReader, *, 
     selected_base = _sha(target.snapshot.base_sha, "selected base")
     if force:
         actual_base_tip = _sha(github.branch_head(target.snapshot.base_ref_name), "pull request base branch tip")
-        selected_base_ref_tip = _sha(
-            target.selected_base_ref_tip, "selected pull request base branch tip"
-        )
+        selected_base_ref_tip = _sha(target.selected_base_ref_tip, "selected pull request base branch tip")
         if (
             current.number == target.snapshot.number
             and current.state.upper() == "OPEN"
@@ -1185,9 +1186,7 @@ def run_cli_review(
             try:
                 if budget is not None:
                     budget.set_phase("candidate_context_setup")
-                review_base_sha = (
-                    target.parent.head_sha if target.default_base_front and not force else merge_base
-                )
+                review_base_sha = target.parent.head_sha if target.default_base_front and not force else merge_base
                 _git(runner, source_root, "update-ref", pinned_ref, review_base_sha, timeout=git_timeout_seconds)
                 temp_root = Path(tempfile.mkdtemp(prefix="firemud-pr-review-"))
             except Exception as primary_error:
@@ -1233,9 +1232,7 @@ def run_cli_review(
                     "review_context_sha": review_context_sha,
                     "review_base_sha": review_base_sha,
                     "parent_pr": (
-                        None
-                        if force and review_base_ref != target.parent.ref_name
-                        else target.parent.pr_number
+                        None if force and review_base_ref != target.parent.ref_name else target.parent.pr_number
                     ),
                     "parent_ref": review_base_ref if force else target.parent.ref_name,
                     "parent_sha": review_base_tip if force else target.parent.head_sha,
@@ -1269,7 +1266,9 @@ def run_cli_review(
                     "parent_pr": (
                         ""
                         if force and review_base_ref != target.parent.ref_name
-                        else str(target.parent.pr_number) if target.parent.pr_number is not None else ""
+                        else str(target.parent.pr_number)
+                        if target.parent.pr_number is not None
+                        else ""
                     ),
                     "parent_ref": review_base_ref if force else target.parent.ref_name,
                     "parent_sha": review_base_tip if force else target.parent.head_sha,
@@ -1356,7 +1355,7 @@ def run_cli_review(
                         cwd=candidate_worktree,
                         capture_output=True,
                         check=False,
-                        text=True,
+                        text=False,
                         timeout=review_timeout_seconds,
                     )
                 except subprocess.TimeoutExpired as error:
@@ -1366,18 +1365,10 @@ def run_cli_review(
                     duration = max(0, (finished - started + 999_999_999) // 1_000_000_000)
                     timeout_stdout = error.stdout if error.stdout is not None else error.output
                     timeout_stderr = error.stderr
-                    stdout = (
-                        timeout_stdout.decode("utf-8", errors="replace")
-                        if isinstance(timeout_stdout, bytes)
-                        else timeout_stdout or ""
-                    )
-                    stderr = (
-                        timeout_stderr.decode("utf-8", errors="replace")
-                        if isinstance(timeout_stderr, bytes)
-                        else timeout_stderr or ""
-                    )
-                    (capture_dir / "stdout").write_text(stdout, encoding="utf-8")
-                    (capture_dir / "stderr").write_text(stderr, encoding="utf-8")
+                    stdout, stdout_bytes, stdout_valid_utf8 = _capture_output_stream(timeout_stdout)
+                    stderr, stderr_bytes, _stderr_valid_utf8 = _capture_output_stream(timeout_stderr)
+                    (capture_dir / "stdout").write_bytes(stdout_bytes)
+                    (capture_dir / "stderr").write_bytes(stderr_bytes)
                     (capture_dir / "exit-status").write_text("timeout\n", encoding="utf-8")
                     (capture_dir / "review-duration-seconds").write_text(f"{duration}\n", encoding="utf-8")
                     metadata.update({"duration_seconds": duration, "exit_status": None, "timed_out": True})
@@ -1388,30 +1379,66 @@ def run_cli_review(
                     provider_result_saved = True
                     if records is not None:
                         try:
-                            records.finish_attempt(
-                                run_id,
-                                state="timed_out",
-                                duration_seconds=duration,
-                                diagnostic="CodeRabbit CLI timed out before a complete result",
-                                artifacts={
-                                    "cli_raw_output": stdout,
-                                    "cli_diagnostic": stderr,
-                                    "metadata": json.dumps(metadata, sort_keys=True),
-                                },
-                            )
+                            finished_at = hosted.utc_now()
+                            has_timeout_findings = stdout_valid_utf8 and _has_failed_cli_findings(stdout)
+                            timeout_artifacts = {
+                                "cli_diagnostic": stderr,
+                                "metadata": json.dumps(metadata, sort_keys=True),
+                            }
+                            if has_timeout_findings:
+                                timeout_artifacts["cli_events"] = stdout
+                                attempt_finished, records_warning = _retain_failed_cli_observations(
+                                    records,
+                                    run_id,
+                                    stdout=stdout,
+                                    finish={
+                                        "state": "timed_out",
+                                        "finished_at": finished_at,
+                                        "duration_seconds": duration,
+                                        "exit_status": None,
+                                        "diagnostic": "CodeRabbit CLI timed out before a complete result",
+                                        "artifacts": timeout_artifacts,
+                                    },
+                                    run={
+                                        "run_id": run_id,
+                                        "source_pr": target.snapshot.number,
+                                        "channel": "cli",
+                                        "outcome": "failed",
+                                        "attributable": False,
+                                        "source_head": candidate_sha,
+                                        "reviewer": "CodeRabbit CLI",
+                                        "scope": "broad",
+                                        "started_at": attempt_started_at,
+                                        "finished_at": finished_at,
+                                    },
+                                )
+                            else:
+                                timeout_artifacts["cli_raw_output"] = stdout
+                                records.finish_attempt(
+                                    run_id,
+                                    state="timed_out",
+                                    finished_at=finished_at,
+                                    duration_seconds=duration,
+                                    diagnostic="CodeRabbit CLI timed out before a complete result",
+                                    artifacts=timeout_artifacts,
+                                )
+                                attempt_finished = True
                         except (ReviewRecordsError, OSError, sqlite3.DatabaseError):
                             pass
-                        else:
-                            attempt_finished = True
-                    raise ReviewRunnerError(
+                    timeout_failure = ReviewRunnerError(
                         f"CodeRabbit review timed out after {review_timeout_seconds} seconds"
-                    ) from error
+                    )
+                    if records_warning:
+                        _add_exception_note(timeout_failure, records_warning)
+                    raise timeout_failure from error
                 finished = monotonic_ns()
                 if finished < started:
                     raise ReviewRunnerError("process clock moved backwards while measuring review duration")
                 duration = max(0, (finished - started + 999_999_999) // 1_000_000_000)
-                (capture_dir / "stdout").write_text(process.stdout or "", encoding="utf-8")
-                (capture_dir / "stderr").write_text(process.stderr or "", encoding="utf-8")
+                stdout, stdout_bytes, stdout_valid_utf8 = _capture_output_stream(process.stdout)
+                stderr, stderr_bytes, _stderr_valid_utf8 = _capture_output_stream(process.stderr)
+                (capture_dir / "stdout").write_bytes(stdout_bytes)
+                (capture_dir / "stderr").write_bytes(stderr_bytes)
                 (capture_dir / "exit-status").write_text(f"{process.returncode}\n", encoding="utf-8")
                 (capture_dir / "review-duration-seconds").write_text(f"{duration}\n", encoding="utf-8")
                 metadata.update({"duration_seconds": duration, "exit_status": process.returncode})
@@ -1420,38 +1447,42 @@ def run_cli_review(
                     legacy_file.write(f"review_duration_seconds={duration}\n")
                 _write_capture_complete_marker(capture_dir)
                 provider_result_saved = True
-                stdout = process.stdout or ""
-                stderr = process.stderr or ""
                 artifacts = {
                     "cli_diagnostic": stderr,
                     "metadata": json.dumps(metadata, sort_keys=True),
                 }
-                try:
-                    parsed_findings, _ = evidence._parse_capture_stdout(capture_dir / "stdout")
-                except evidence.EvidenceError:
+                parsed_findings: list[dict[str, Any]] | None = None
+                capture_completed = False
+                if stdout_valid_utf8:
+                    try:
+                        parsed_findings, _ = evidence._parse_capture_stdout(capture_dir / "stdout")
+                        capture_completed = True
+                    except evidence.EvidenceError:
+                        try:
+                            parsed_findings = evidence.parse_failed_capture_events(stdout)
+                        except evidence.EvidenceError:
+                            parsed_findings = None
+                if parsed_findings is None:
                     result_state = "rate_limited" if "rate limit exceeded" in stderr.casefold() else "failed"
                     artifacts["cli_raw_output"] = stdout
-                    diagnostic = (
-                        "CodeRabbit CLI was rate limited before a complete result"
-                        if result_state == "rate_limited"
-                        else "CodeRabbit CLI did not return a complete JSON review"
-                    )
                 else:
+                    artifacts["cli_events"] = stdout
                     result_state = (
                         "completed"
-                        if process.returncode == 0
+                        if process.returncode == 0 and capture_completed
                         else "rate_limited"
                         if "rate limit exceeded" in stderr.casefold()
                         else "failed"
                     )
-                    artifacts["cli_events"] = stdout
-                    diagnostic = (
-                        ""
-                        if result_state == "completed"
-                        else "CodeRabbit CLI was rate limited"
-                        if result_state == "rate_limited"
-                        else "CodeRabbit CLI exited nonzero"
-                    )
+                diagnostic = (
+                    ""
+                    if result_state == "completed"
+                    else "CodeRabbit CLI was rate limited"
+                    if result_state == "rate_limited"
+                    else "CodeRabbit CLI did not return a complete JSON review"
+                    if parsed_findings is None or not capture_completed
+                    else "CodeRabbit CLI exited nonzero"
+                )
                 command_exit_status = process.returncode
                 if result_state != "completed" and command_exit_status == 0:
                     command_exit_status = 1
@@ -1493,6 +1524,45 @@ def run_cli_review(
                                 },
                                 finalize_empty=not observations,
                             )
+                            attempt_finished = True
+                        elif parsed_findings:
+                            completed_at = hosted.utc_now()
+                            if _has_failed_cli_findings(stdout):
+                                attempt_finished, records_warning = _retain_failed_cli_observations(
+                                    records,
+                                    run_id,
+                                    stdout=stdout,
+                                    finish={
+                                        "state": result_state,
+                                        "finished_at": completed_at,
+                                        "duration_seconds": duration,
+                                        "exit_status": process.returncode,
+                                        "diagnostic": diagnostic,
+                                        "artifacts": artifacts,
+                                    },
+                                    run={
+                                        "run_id": run_id,
+                                        "source_pr": target.snapshot.number,
+                                        "channel": "cli",
+                                        "outcome": "failed",
+                                        "attributable": False,
+                                        "source_head": candidate_sha,
+                                        "reviewer": "CodeRabbit CLI",
+                                        "scope": "broad",
+                                        "started_at": attempt_started_at,
+                                        "finished_at": completed_at,
+                                    },
+                                )
+                            else:
+                                records.finish_attempt(
+                                    run_id,
+                                    state=result_state,
+                                    duration_seconds=duration,
+                                    exit_status=process.returncode,
+                                    diagnostic=diagnostic,
+                                    artifacts=artifacts,
+                                )
+                                attempt_finished = True
                         else:
                             records.finish_attempt(
                                 run_id,
@@ -1502,7 +1572,7 @@ def run_cli_review(
                                 diagnostic=diagnostic,
                                 artifacts=artifacts,
                             )
-                        attempt_finished = True
+                            attempt_finished = True
                     except (ReviewRecordsError, OSError, sqlite3.DatabaseError):
                         records_warning = (
                             "SQLite review record was not saved; the durable CLI capture remains available for recovery"
@@ -1608,6 +1678,82 @@ def run_cli_review(
                     pass
                 finally:
                     fcntl.flock(lock_handle.fileno(), fcntl.LOCK_UN)
+
+
+def _has_failed_cli_findings(stdout: str) -> bool:
+    """Return whether a failed native CLI stream contains valid finding events."""
+    try:
+        findings = evidence.parse_failed_capture_events(stdout)
+    except evidence.EvidenceError:
+        return False
+    return bool(findings)
+
+
+def _retain_failed_cli_observations(
+    records: SqliteReviewRecords,
+    run_id: str,
+    *,
+    stdout: str,
+    finish: Mapping[str, Any],
+    run: Mapping[str, Any],
+) -> tuple[bool, str | None]:
+    """Keep a failed attempt terminal if observation projection cannot be stored."""
+
+    try:
+        records.record_failed_cli_observations(run_id, finish=finish, run=run)
+    except (ReviewRecordsError, OSError, sqlite3.DatabaseError) as observation_error:
+        fallback = dict(finish)
+        fallback_artifacts = dict(fallback.get("artifacts", {}))
+        fallback_artifacts.pop("cli_events", None)
+        fallback_artifacts["cli_raw_output"] = stdout
+        fallback["artifacts"] = fallback_artifacts
+        try:
+            records.finish_attempt(run_id, **fallback)
+        except (ReviewRecordsError, OSError, sqlite3.DatabaseError) as fallback_error:
+            return False, (
+                "SQLite could not retain partial CLI observations "
+                f"({_bounded_recording_error(observation_error)}); terminal raw-output fallback also failed "
+                f"({_bounded_recording_error(fallback_error)}). The durable capture remains available."
+            )
+        return True, (
+            "SQLite could not retain partial CLI observations "
+            f"({_bounded_recording_error(observation_error)}); the failed attempt was archived as raw output "
+            "for exact recovery."
+        )
+    return True, None
+
+
+def _bounded_recording_error(error: Exception) -> str:
+    value = "".join(" " if unicodedata.category(character) in {"Cc", "Cs"} else character for character in str(error))
+    value = " ".join(value.split())[:240]
+    return value or type(error).__name__
+
+
+def _capture_output_stream(value: str | bytes | None) -> tuple[str, bytes, bool]:
+    """Return safe diagnostic text, original capture bytes, and strict UTF-8 validity."""
+
+    if value is None:
+        value = ""
+    if isinstance(value, bytes):
+        try:
+            return value.decode("utf-8"), value, True
+        except UnicodeDecodeError:
+            diagnostic = value.decode("utf-8", errors="replace")
+            digest = hashlib.sha256(value).hexdigest()
+            note = (
+                f"[diagnostic only: invalid UTF-8 was replaced; capture sha256={digest}; observations were not parsed]"
+            )
+            return f"{diagnostic}\n{note}\n", value, False
+    if isinstance(value, str):
+        try:
+            return value, value.encode("utf-8"), True
+        except UnicodeEncodeError:
+            encoded = value.encode("utf-8", errors="replace")
+            diagnostic = encoded.decode("utf-8")
+            digest = hashlib.sha256(encoded).hexdigest()
+            note = f"[diagnostic only: invalid Unicode was replaced; capture sha256={digest}; observations were not parsed]"
+            return f"{diagnostic}\n{note}\n", encoded, False
+    raise ReviewRunnerError("CodeRabbit CLI output was not text or bytes")
 
 
 def target_from_resolver(resolver: ReviewTargetResolver, expected_pr: int | None = None) -> ReviewTarget:
