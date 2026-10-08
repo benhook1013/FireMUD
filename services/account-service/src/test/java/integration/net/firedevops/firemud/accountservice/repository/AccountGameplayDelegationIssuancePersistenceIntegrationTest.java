@@ -30,6 +30,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.security.MessageDigest;
 import java.sql.SQLException;
+import java.sql.Timestamp;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.LocalDateTime;
@@ -58,10 +59,15 @@ import net.firedevops.firemud.accountservice.dto.AccountGameplayTokenIdentityFen
 import net.firedevops.firemud.accountservice.dto.AccountGameplayTokenIdentityFence.TokenIdentity;
 import net.firedevops.firemud.accountservice.dto.AccountSecurityStateMutationRequest;
 import net.firedevops.firemud.accountservice.dto.CanonicalGameplayLoginRequest;
+import net.firedevops.firemud.accountservice.dto.CanonicalJoinScopeV2;
+import net.firedevops.firemud.accountservice.dto.DemoTenantEntitlementRequest;
+import net.firedevops.firemud.accountservice.dto.DemoTenantEntitlementSnapshot;
 import net.firedevops.firemud.accountservice.dto.GameplayCredentialSourceContext;
 import net.firedevops.firemud.accountservice.entity.Account;
 import net.firedevops.firemud.accountservice.entity.AccountEmailLoginChallenge;
+import net.firedevops.firemud.accountservice.entity.AccountLifecycleState;
 import net.firedevops.firemud.accountservice.entity.AccountLoginAuthModes;
+import net.firedevops.firemud.accountservice.repository.AccountAuditOutboxRepository;
 import net.firedevops.firemud.accountservice.repository.AccountAuthEvidenceBundleRepository;
 import net.firedevops.firemud.accountservice.repository.AccountAuthorityGenerationRepository;
 import net.firedevops.firemud.accountservice.repository.AccountAuthorityOutboxRepository;
@@ -69,6 +75,8 @@ import net.firedevops.firemud.accountservice.repository.AccountAuthorityOutboxRe
 import net.firedevops.firemud.accountservice.repository.AccountAuthorityOutboxRepository.EventEvidence;
 import net.firedevops.firemud.accountservice.repository.AccountAuthoritySourceEvidenceRepository;
 import net.firedevops.firemud.accountservice.repository.AccountAuthoritySourceEvidenceRepository.IssuerAccountSourceSnapshot;
+import net.firedevops.firemud.accountservice.repository.AccountConnectScopeRepository;
+import net.firedevops.firemud.accountservice.repository.AccountDemoTenantEntitlementRepository;
 import net.firedevops.firemud.accountservice.repository.AccountEmailLoginChallengeRepository;
 import net.firedevops.firemud.accountservice.repository.AccountGameplayCredentialRequestBinding;
 import net.firedevops.firemud.accountservice.repository.AccountGameplayCredentialRequestBindingFixture;
@@ -82,9 +90,26 @@ import net.firedevops.firemud.accountservice.repository.AccountGameplayDelegatio
 import net.firedevops.firemud.accountservice.repository.AccountGameplayDelegationResponseEnvelopeRepository.SealedCandidateObservation;
 import net.firedevops.firemud.accountservice.repository.AccountGameplayTokenIdentityFenceRepository;
 import net.firedevops.firemud.accountservice.repository.AccountGameplayTokenIdentityFenceRepository.TokenRevokedException;
+import net.firedevops.firemud.accountservice.repository.AccountJoinOperationRepository;
+import net.firedevops.firemud.accountservice.repository.AccountLifecyclePendingDenialReader;
+import net.firedevops.firemud.accountservice.repository.AccountMembershipPairAuthorityRepository;
+import net.firedevops.firemud.accountservice.repository.AccountMembershipPairAuthorityRepository.TenantProvenanceKind;
+import net.firedevops.firemud.accountservice.repository.AccountMembershipPairAuthorityRepository.VerifiedTenantProvenance;
 import net.firedevops.firemud.accountservice.repository.AccountRepository;
 import net.firedevops.firemud.accountservice.repository.AccountSecurityStateOperationRepository;
 import net.firedevops.firemud.accountservice.repository.AccountSecurityStateOperationRepository.Capture;
+import net.firedevops.firemud.accountservice.repository.AccountTenantAuthorityEventRepository;
+import net.firedevops.firemud.accountservice.repository.AccountTenantEntitlementOutboxRepository;
+import net.firedevops.firemud.accountservice.repository.AccountTenantIdentityResolver;
+import net.firedevops.firemud.accountservice.repository.AccountTenantMembershipRepository;
+import net.firedevops.firemud.accountservice.repository.AccountTenantMembershipRoleSnapshotRepository;
+import net.firedevops.firemud.accountservice.repository.ApprovedLegacyTenantAssociationRepository;
+import net.firedevops.firemud.accountservice.repository.FreshTenantIdentityAssociationRepository;
+import net.firedevops.firemud.accountservice.repository.PreRestrictionBirthAccountFixture;
+import net.firedevops.firemud.accountservice.service.AccountCanonicalFirstJoinTerminalCoordinator;
+import net.firedevops.firemud.accountservice.service.AccountGameplayPublicAdmissionSourceReader;
+import net.firedevops.firemud.accountservice.service.AccountMembershipAuthorityEventProducer;
+import net.firedevops.firemud.accountservice.service.AccountMembershipRoleSourceReader;
 import net.firedevops.firemud.accountservice.service.session.AccountGameplayCanonicalLoginOwner;
 import net.firedevops.firemud.accountservice.service.session.AccountGameplayCredentialRequestDigestKeySource;
 import net.firedevops.firemud.accountservice.service.session.AccountGameplayCredentialRequestDigestKeySource.CredentialDigestKey;
@@ -112,6 +137,8 @@ import net.firedevops.firemud.common.redis.contracts.RedisScriptCatalog;
 import net.firedevops.firemud.common.security.GameSessionAccountDelegationProfile;
 import net.firedevops.firemud.common.security.GameSessionAccountDelegationProfile.AccountSecurityCutoff;
 import net.firedevops.firemud.common.security.GameSessionAccountDelegationRegistryRecord.AccountAuthoritySnapshot;
+import net.firedevops.firemud.common.tenant.FreshTenantCreationEvidence;
+import net.firedevops.firemud.common.tenant.GameTenantCreationDigest;
 import org.flywaydb.core.Flyway;
 import org.flywaydb.core.api.MigrationVersion;
 import org.jooq.DSLContext;
@@ -130,6 +157,7 @@ import org.springframework.jdbc.datasource.DataSourceTransactionManager;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
 import org.springframework.jdbc.datasource.TransactionAwareDataSourceProxy;
 import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.support.TransactionTemplate;
 import org.testcontainers.DockerClientFactory;
 import org.testcontainers.containers.PostgreSQLContainer;
@@ -141,6 +169,7 @@ class AccountGameplayDelegationIssuancePersistenceIntegrationTest {
       "FIREMUD_ACCOUNT_SIGNER_TEST_POSTGRES_URL";
   private static final String CALLER_WORKLOAD = "spiffe://firemud/ns/test/sa/game-session-service";
   private static final String ACCOUNT_ISSUER = "firemud-account-service";
+  private static final String GAME_DESIGN_NAMESPACE = "account-gameplay-admission-proof";
   private static final JsonMapper JSON = JsonMapper.builder().build();
 
   private static final PostgreSQLContainer<?> postgres =
@@ -372,7 +401,7 @@ class AccountGameplayDelegationIssuancePersistenceIntegrationTest {
       throws Exception {
     // V78 is the existing pre-binding schema in this checkout; V79/V80 are reserved elsewhere.
     TestContext context = newTestContextAtVersion("78");
-    Account account = createAccount(context);
+    Account account = createHistoricalAccount(context, "PASSWORD");
     AccountAuthorityGenerationRepository authorities =
         new AccountAuthorityGenerationRepository(context.dsl());
     AccountAuthoritySourceEvidenceRepository sources = sourceEvidence(context.dsl(), authorities);
@@ -1025,6 +1054,705 @@ class AccountGameplayDelegationIssuancePersistenceIntegrationTest {
         .isEqualTo("PENDING");
   }
 
+  // Source-capture proof only; this does not claim authenticated admission or lease issuance.
+  @Test
+  void capturesFreshPlayerDemoSourcesBesideTheExactCommittedSqlTokenIdentity() throws Exception {
+    AdmissionSourceFixture fixture = newAdmissionSourceFixture();
+
+    var membership =
+        inRepeatableReadTransaction(
+            fixture.harness().context(),
+            () ->
+                fixture
+                    .membershipReader()
+                    .readCurrent(fixture.harness().accountId(), fixture.tenantId()));
+    assertThat(membership.membership().lifecycleState()).isEqualTo("ACTIVE");
+    assertThat(membership.membership().gameplayAdmissionAllowed()).isTrue();
+    assertThat(membership.roles().roles()).containsExactly("player");
+    assertThat(membership.membershipEvent().roles()).containsExactly("player");
+    assertThat(membership.tenantSource().sourceEvidence()).isEqualTo(fixture.tenantEvidence());
+    assertThat(membership.tenantSource().sourceEvidence().provenanceKind())
+        .isEqualTo("NEW_GAME_ROW");
+
+    var captured =
+        inRepeatableReadTransaction(
+            fixture.harness().context(),
+            () ->
+                fixture
+                    .admissionReader()
+                    .readCurrent(
+                        fixture.harness().accountId(), fixture.tenantId(), fixture.identity()));
+    assertThat(captured.membershipSource().membership()).isEqualTo(membership.membership());
+    assertThat(captured.accountLifecycleState()).isEqualTo(AccountLifecycleState.ACTIVE);
+    assertThat(captured.entitlementSource().entitlementKind()).isEqualTo("NON_PAID_DEMO");
+    assertThat(captured.entitlementSource().sourceEvidence()).isEqualTo(fixture.tenantEvidence());
+    assertThat(captured.entitlementSource().gameplayAvailable()).isTrue();
+    assertThat(captured.entitlementSource().allowNewGameplayBindings()).isTrue();
+    assertThat(captured.tokenIdentityFence().state()).isEqualTo(State.ACTIVE);
+    assertThat(captured.tokenIdentityFence().identity()).isEqualTo(fixture.identity());
+
+    Record sqlFence =
+        Objects.requireNonNull(
+            fixture
+                .harness()
+                .dsl()
+                .fetchOne(
+                    "SELECT account_uuid, operation_id, issuance_request_id, token_hash, "
+                        + "token_jti, not_before_epoch_second, token_generation, issuance_fence, "
+                        + "token_identity_fence, state "
+                        + "FROM account_gameplay_token_identity_fences WHERE operation_id = ?",
+                    fixture.identity().operationId()),
+            "the committed issuance must have an exact SQL token-fence row");
+    assertThat(sqlFence.get("account_uuid", UUID.class)).isEqualTo(fixture.identity().accountId());
+    assertThat(sqlFence.get("operation_id", UUID.class))
+        .isEqualTo(fixture.identity().operationId());
+    assertThat(sqlFence.get("issuance_request_id", UUID.class))
+        .isEqualTo(fixture.identity().issuanceRequestId());
+    assertThat(sqlFence.get("token_hash", String.class))
+        .isEqualTo(fixture.identity().tokenSha256());
+    assertThat(sqlFence.get("token_jti", UUID.class)).isEqualTo(fixture.identity().tokenJti());
+    assertThat(sqlFence.get("not_before_epoch_second", Long.class))
+        .isEqualTo(fixture.identity().notBeforeEpochSecond());
+    assertThat(sqlFence.get("token_generation", Long.class))
+        .isEqualTo(fixture.identity().tokenGeneration());
+    assertThat(sqlFence.get("issuance_fence", Long.class))
+        .isEqualTo(fixture.identity().issuanceFence());
+    assertThat(sqlFence.get("token_identity_fence", Long.class)).isEqualTo(1L);
+    assertThat(sqlFence.get("state", String.class)).isEqualTo("ACTIVE");
+  }
+
+  @Test
+  void publicAdmissionSourceCaptureRejectsDurablePendingTokenRevocation() throws Exception {
+    AdmissionSourceFixture fixture = newAdmissionSourceFixture();
+    UUID requestId = UUID.randomUUID();
+    String digest =
+        AccountGameplayTokenIdentityFenceRepository.revocationDigest(fixture.identity(), requestId);
+    var pending =
+        inTransaction(
+            fixture.harness().context(),
+            () ->
+                fixture.tokenFences().beginRevocationIntent(fixture.identity(), requestId, digest));
+    assertThat(pending.state()).isEqualTo(State.PENDING);
+    assertThat(pending.tokenIdentityFence()).isEqualTo(2L);
+
+    assertThatThrownBy(
+            () ->
+                inRepeatableReadTransaction(
+                    fixture.harness().context(),
+                    () ->
+                        fixture
+                            .admissionReader()
+                            .readCurrent(
+                                fixture.harness().accountId(),
+                                fixture.tenantId(),
+                                fixture.identity())))
+        .isInstanceOf(TokenRevokedException.class);
+  }
+
+  @Test
+  void pendingAndWorldTerminalLifecycleRowsDenyWithoutChangingOwnerState() throws Exception {
+    for (String status : List.of("PENDING", "WORLD_TERMINAL")) {
+      AdmissionSourceFixture fixture = newAdmissionSourceFixture();
+      String accountBefore =
+          accountSemanticSnapshot(fixture.harness().dsl(), fixture.harness().accountId());
+      String sourceBefore =
+          accountAuthoritySourceSnapshot(fixture.harness().dsl(), fixture.harness().accountId());
+      long authorityEventsBefore =
+          accountAuthorityEventCount(fixture.harness().dsl(), fixture.harness().accountId());
+      UUID requestId = insertLifecycleDenialFixture(fixture, fixture.tenantId(), status);
+
+      assertThatThrownBy(
+              () ->
+                  inRepeatableReadTransaction(
+                      fixture.harness().context(),
+                      () ->
+                          fixture
+                              .admissionReader()
+                              .readCurrent(
+                                  fixture.harness().accountId(),
+                                  fixture.tenantId(),
+                                  fixture.identity())))
+          .isInstanceOf(AccountLifecyclePendingDenialReader.PendingOperationException.class)
+          .hasMessage("Account-wide or target-tenant invalidation is unresolved");
+
+      assertThat(accountSemanticSnapshot(fixture.harness().dsl(), fixture.harness().accountId()))
+          .isEqualTo(accountBefore);
+      assertThat(
+              accountAuthoritySourceSnapshot(
+                  fixture.harness().dsl(), fixture.harness().accountId()))
+          .isEqualTo(sourceBefore);
+      assertThat(
+              Objects.requireNonNull(
+                      fixture
+                          .harness()
+                          .dsl()
+                          .fetchOne(
+                              "SELECT status FROM account_lifecycle_serving_operations "
+                                  + "WHERE request_id = ?",
+                              requestId))
+                  .get(0, String.class))
+          .isEqualTo(status);
+      assertThat(accountAuthorityEventCount(fixture.harness().dsl(), fixture.harness().accountId()))
+          .isEqualTo(authorityEventsBefore);
+      assertThat(
+              Objects.requireNonNull(
+                      fixture
+                          .harness()
+                          .dsl()
+                          .fetchOne(
+                              "SELECT state FROM account_gameplay_token_identity_fences "
+                                  + "WHERE operation_id = ?",
+                              fixture.identity().operationId()))
+                  .get(0, String.class))
+          .isEqualTo("ACTIVE");
+    }
+  }
+
+  @Test
+  void lifecycleJournalInsertInvalidatesOlderRepeatableReadAndSerializableSnapshots()
+      throws Exception {
+    for (int isolation :
+        List.of(
+            TransactionDefinition.ISOLATION_REPEATABLE_READ,
+            TransactionDefinition.ISOLATION_SERIALIZABLE)) {
+      AdmissionSourceFixture fixture = newAdmissionSourceFixture();
+      DSLContext dsl = fixture.harness().dsl();
+      UUID accountId = fixture.harness().accountId();
+      String accountBefore = accountSemanticSnapshot(dsl, accountId);
+      String sourceBefore = accountAuthoritySourceSnapshot(dsl, accountId);
+      long authorityEventsBefore = accountAuthorityEventCount(dsl, accountId);
+      CountDownLatch writerLockedAccount = new CountDownLatch(1);
+      CountDownLatch readerSnapshotEstablished = new CountDownLatch(1);
+      CountDownLatch readerIsChecking = new CountDownLatch(1);
+      var executor = Executors.newFixedThreadPool(2);
+      try {
+        TransactionTemplate writerTransaction =
+            new TransactionTemplate(fixture.harness().context().manager());
+        writerTransaction.setIsolationLevel(TransactionDefinition.ISOLATION_READ_COMMITTED);
+        var writer =
+            executor.submit(
+                () ->
+                    writerTransaction.execute(
+                        transaction -> {
+                          Record lockedAccount =
+                              dsl.fetchOne(
+                                  "SELECT account_uuid FROM accounts "
+                                      + "WHERE account_uuid = ? FOR UPDATE",
+                                  accountId);
+                          if (lockedAccount == null) {
+                            throw new IllegalStateException(
+                                "Lifecycle writer could not lock the exact Account");
+                          }
+                          writerLockedAccount.countDown();
+                          awaitLatch(
+                              readerSnapshotEstablished, "reader to establish its stale snapshot");
+                          awaitLatch(readerIsChecking, "reader to attempt its Account lock");
+                          insertLifecycleDenialFixture(fixture, fixture.tenantId(), "PENDING");
+                          return null;
+                        }));
+
+        var reader =
+            executor.submit(
+                () -> {
+                  awaitLatch(writerLockedAccount, "lifecycle writer to lock the Account");
+                  TransactionTemplate readerTransaction =
+                      new TransactionTemplate(fixture.harness().context().manager());
+                  readerTransaction.setIsolationLevel(isolation);
+                  try {
+                    readerTransaction.execute(
+                        transaction -> {
+                          Objects.requireNonNull(
+                              dsl.fetchOne(
+                                  "SELECT COUNT(*) FROM account_lifecycle_serving_operations "
+                                      + "WHERE account_uuid = ? AND tenant_uuid = ?",
+                                  accountId,
+                                  fixture.tenantId()));
+                          readerSnapshotEstablished.countDown();
+                          readerIsChecking.countDown();
+                          new AccountLifecyclePendingDenialReader(dsl)
+                              .requireNoPending(accountId, fixture.tenantId());
+                          return null;
+                        });
+                    return null;
+                  } catch (RuntimeException failure) {
+                    return failure;
+                  }
+                });
+
+        RuntimeException readerFailure = reader.get(15, TimeUnit.SECONDS);
+        writer.get(15, TimeUnit.SECONDS);
+        assertThat(readerFailure)
+            .as("an old %s snapshot cannot observe a clear lifecycle predicate", isolation)
+            .isInstanceOf(
+                AccountLifecyclePendingDenialReader.PendingStateUnavailableException.class);
+        assertThat(sqlState(readerFailure)).isEqualTo("40001");
+        assertThat(accountSemanticSnapshot(dsl, accountId)).isEqualTo(accountBefore);
+        assertThat(accountAuthoritySourceSnapshot(dsl, accountId)).isEqualTo(sourceBefore);
+        assertThat(accountAuthorityEventCount(dsl, accountId)).isEqualTo(authorityEventsBefore);
+      } finally {
+        readerSnapshotEstablished.countDown();
+        readerIsChecking.countDown();
+        executor.shutdownNow();
+      }
+    }
+  }
+
+  @Test
+  void lifecycleOperationForAnotherTenantDoesNotDenyExactAdmissionScope() throws Exception {
+    AdmissionSourceFixture fixture = newAdmissionSourceFixture();
+    UUID otherTenant = UUID.randomUUID();
+    insertLifecycleDenialFixture(fixture, otherTenant, "PENDING");
+
+    var captured =
+        inRepeatableReadTransaction(
+            fixture.harness().context(),
+            () ->
+                fixture
+                    .admissionReader()
+                    .readCurrent(
+                        fixture.harness().accountId(), fixture.tenantId(), fixture.identity()));
+
+    assertThat(captured.membershipSource().membership().tenantId()).isEqualTo(fixture.tenantId());
+  }
+
+  @Test
+  void accountWidePendingSourcesDenyEveryTenantButRemainAccountScoped() throws Exception {
+    for (GlobalPendingKind pendingKind : GlobalPendingKind.values()) {
+      AdmissionSourceFixture fixture = newAdmissionSourceFixture();
+      UUID accountId = fixture.harness().accountId();
+      UUID otherTenant = UUID.randomUUID();
+      Account otherAccount = createAccount(fixture.harness().context());
+      String accountBefore = accountSemanticSnapshot(fixture.harness().dsl(), accountId);
+      String sourceBefore = accountAuthoritySourceSnapshot(fixture.harness().dsl(), accountId);
+      long eventsBefore = accountAuthorityEventCount(fixture.harness().dsl(), accountId);
+      String roleSourceBefore = accountGlobalRoleSourceSnapshot(fixture.harness().dsl(), accountId);
+      String generationBefore =
+          accountAuthorityGenerationSnapshot(fixture.harness().dsl(), accountId);
+      String issuanceFenceBefore = accountIssuanceFenceSnapshot(fixture.harness().dsl(), accountId);
+
+      seedGlobalPending(fixture, pendingKind);
+
+      assertThatThrownBy(
+              () ->
+                  inRepeatableReadTransaction(
+                      fixture.harness().context(),
+                      () ->
+                          fixture
+                              .admissionReader()
+                              .readCurrent(accountId, fixture.tenantId(), fixture.identity())))
+          .isInstanceOf(AccountLifecyclePendingDenialReader.PendingOperationException.class)
+          .hasMessage("Account-wide or target-tenant invalidation is unresolved");
+      assertThatThrownBy(
+              () ->
+                  inRepeatableReadTransaction(
+                      fixture.harness().context(),
+                      () -> {
+                        new AccountLifecyclePendingDenialReader(fixture.harness().dsl())
+                            .requireNoPending(accountId, otherTenant);
+                        return null;
+                      }))
+          .isInstanceOf(AccountLifecyclePendingDenialReader.PendingOperationException.class);
+      inRepeatableReadTransaction(
+          fixture.harness().context(),
+          () -> {
+            new AccountLifecyclePendingDenialReader(fixture.harness().dsl())
+                .requireNoPending(otherAccount.getAccountUuid(), fixture.tenantId());
+            return null;
+          });
+
+      assertThat(accountSemanticSnapshot(fixture.harness().dsl(), accountId))
+          .isEqualTo(accountBefore);
+      assertThat(accountAuthoritySourceSnapshot(fixture.harness().dsl(), accountId))
+          .isEqualTo(sourceBefore);
+      assertThat(accountAuthorityEventCount(fixture.harness().dsl(), accountId))
+          .isEqualTo(eventsBefore);
+      assertThat(accountGlobalRoleSourceSnapshot(fixture.harness().dsl(), accountId))
+          .isEqualTo(roleSourceBefore);
+      assertThat(accountAuthorityGenerationSnapshot(fixture.harness().dsl(), accountId))
+          .isEqualTo(generationBefore);
+      assertThat(accountIssuanceFenceSnapshot(fixture.harness().dsl(), accountId))
+          .isEqualTo(issuanceFenceBefore);
+      assertThat(
+              Objects.requireNonNull(
+                      fixture
+                          .harness()
+                          .dsl()
+                          .fetchOne(
+                              "SELECT state FROM account_gameplay_token_identity_fences "
+                                  + "WHERE operation_id = ?",
+                              fixture.identity().operationId()))
+                  .get(0, String.class))
+          .isEqualTo("ACTIVE");
+    }
+  }
+
+  @Test
+  void terminalDraftSourceChangesDoNotClearWaitingSecurityStateOperation() throws Exception {
+    for (String terminalStatus : List.of("SOURCE_COMMITTED", "SOURCE_ABORTED")) {
+      AdmissionSourceFixture fixture = newAdmissionSourceFixture();
+      SecurityStatePendingFixture waiting = insertSecurityStateWaitingFixture(fixture);
+      inTransaction(
+          fixture.harness().context(),
+          () -> {
+            DraftAuthorizationFenceRepository fences =
+                new DraftAuthorizationFenceRepository(fixture.harness().dsl());
+            if ("SOURCE_ABORTED".equals(terminalStatus)) {
+              fences.markSourceAborted(
+                  waiting.sourceChange(),
+                  DraftAuthorizationFenceRepository.SourceChangeAbortReason.DEFINITIVE_ABORT);
+            } else {
+              fences.markSourceCommitted(waiting.sourceChange());
+            }
+            return null;
+          });
+
+      assertThat(
+              Objects.requireNonNull(
+                      fixture
+                          .harness()
+                          .dsl()
+                          .fetchOne(
+                              "SELECT status FROM account_security_state_operations "
+                                  + "WHERE request_id = ?",
+                              waiting.requestId()))
+                  .get(0, String.class))
+          .isEqualTo("WAITING");
+      assertThatThrownBy(
+              () ->
+                  inRepeatableReadTransaction(
+                      fixture.harness().context(),
+                      () ->
+                          fixture
+                              .admissionReader()
+                              .readCurrent(
+                                  fixture.harness().accountId(),
+                                  fixture.tenantId(),
+                                  fixture.identity())))
+          .isInstanceOf(AccountLifecyclePendingDenialReader.PendingOperationException.class);
+    }
+  }
+
+  @Test
+  void membershipAndTenantSourceChangesAreNotPromotedToAccountWideDenials() throws Exception {
+    AdmissionSourceFixture fixture = newAdmissionSourceFixture();
+    insertScopedSourceChangeFixture(fixture, SourceKind.MEMBERSHIP, fixture.tenantId());
+    insertScopedSourceChangeFixture(fixture, SourceKind.TENANT, fixture.tenantId());
+
+    var captured =
+        inRepeatableReadTransaction(
+            fixture.harness().context(),
+            () ->
+                fixture
+                    .admissionReader()
+                    .readCurrent(
+                        fixture.harness().accountId(), fixture.tenantId(), fixture.identity()));
+
+    assertThat(captured.membershipSource().membership().tenantId()).isEqualTo(fixture.tenantId());
+  }
+
+  @Test
+  void accountWidePendingInsertInvalidatesStaleRepeatableReadAndSerializableSnapshots()
+      throws Exception {
+    for (GlobalPendingKind pendingKind : GlobalPendingKind.values()) {
+      for (int isolation :
+          List.of(
+              TransactionDefinition.ISOLATION_REPEATABLE_READ,
+              TransactionDefinition.ISOLATION_SERIALIZABLE)) {
+        AdmissionSourceFixture fixture = newAdmissionSourceFixture();
+        DSLContext dsl = fixture.harness().dsl();
+        UUID accountId = fixture.harness().accountId();
+        String accountBefore = accountSemanticSnapshot(dsl, accountId);
+        String sourceBefore = accountAuthoritySourceSnapshot(dsl, accountId);
+        long eventsBefore = accountAuthorityEventCount(dsl, accountId);
+        CountDownLatch writerLockedAccount = new CountDownLatch(1);
+        CountDownLatch readerSnapshotEstablished = new CountDownLatch(1);
+        CountDownLatch readerIsChecking = new CountDownLatch(1);
+        var executor = Executors.newFixedThreadPool(2);
+        try {
+          TransactionTemplate writerTransaction =
+              new TransactionTemplate(fixture.harness().context().manager());
+          writerTransaction.setIsolationLevel(TransactionDefinition.ISOLATION_READ_COMMITTED);
+          var writer =
+              executor.submit(
+                  () ->
+                      writerTransaction.execute(
+                          transaction -> {
+                            Record lockedAccount =
+                                dsl.fetchOne(
+                                    "SELECT account_uuid FROM accounts "
+                                        + "WHERE account_uuid = ? FOR UPDATE",
+                                    accountId);
+                            if (lockedAccount == null) {
+                              throw new IllegalStateException(
+                                  "Account-wide pending writer could not lock the exact Account");
+                            }
+                            writerLockedAccount.countDown();
+                            awaitLatch(
+                                readerSnapshotEstablished,
+                                "reader to establish its stale Account-wide snapshot");
+                            awaitLatch(
+                                readerIsChecking, "reader to attempt its Account-wide predicate");
+                            seedGlobalPending(fixture, pendingKind);
+                            return null;
+                          }));
+
+          var reader =
+              executor.submit(
+                  () -> {
+                    awaitLatch(writerLockedAccount, "writer to lock the Account");
+                    TransactionTemplate readerTransaction =
+                        new TransactionTemplate(fixture.harness().context().manager());
+                    readerTransaction.setIsolationLevel(isolation);
+                    try {
+                      readerTransaction.execute(
+                          transaction -> {
+                            establishPendingSnapshot(dsl, accountId, pendingKind);
+                            readerSnapshotEstablished.countDown();
+                            readerIsChecking.countDown();
+                            new AccountLifecyclePendingDenialReader(dsl)
+                                .requireNoPending(accountId, fixture.tenantId());
+                            return null;
+                          });
+                      return null;
+                    } catch (RuntimeException failure) {
+                      return failure;
+                    }
+                  });
+
+          RuntimeException readerFailure = reader.get(15, TimeUnit.SECONDS);
+          writer.get(15, TimeUnit.SECONDS);
+          assertThat(readerFailure)
+              .as("an old %s snapshot cannot miss %s", isolation, pendingKind)
+              .isInstanceOf(
+                  AccountLifecyclePendingDenialReader.PendingStateUnavailableException.class);
+          assertThat(sqlState(readerFailure)).isEqualTo("40001");
+          assertThat(accountSemanticSnapshot(dsl, accountId)).isEqualTo(accountBefore);
+          assertThat(accountAuthoritySourceSnapshot(dsl, accountId)).isEqualTo(sourceBefore);
+          assertThat(accountAuthorityEventCount(dsl, accountId)).isEqualTo(eventsBefore);
+        } finally {
+          readerSnapshotEstablished.countDown();
+          readerIsChecking.countDown();
+          executor.shutdownNow();
+        }
+      }
+    }
+  }
+
+  @Test
+  void readCommittedReaderAndAccountWidePendingPublicationSerializeInBothOrders() throws Exception {
+    for (GlobalPendingKind pendingKind : GlobalPendingKind.values()) {
+      assertReadCommittedReaderWaitsThenDenies(fixtureForGlobalPendingRace(), pendingKind);
+      assertAccountWidePublicationWaitsForReadCommittedReader(
+          fixtureForGlobalPendingRace(), pendingKind);
+    }
+  }
+
+  private AdmissionSourceFixture fixtureForGlobalPendingRace() throws Exception {
+    return newAdmissionSourceFixture();
+  }
+
+  private void assertReadCommittedReaderWaitsThenDenies(
+      AdmissionSourceFixture fixture, GlobalPendingKind pendingKind) throws Exception {
+    DSLContext dsl = fixture.harness().dsl();
+    UUID accountId = fixture.harness().accountId();
+    CountDownLatch writerInserted = new CountDownLatch(1);
+    CountDownLatch readerAttempting = new CountDownLatch(1);
+    CountDownLatch releaseWriter = new CountDownLatch(1);
+    AtomicReference<Integer> readerBackendPid = new AtomicReference<>();
+    var executor = Executors.newFixedThreadPool(2);
+    try {
+      TransactionTemplate writerTransaction =
+          new TransactionTemplate(fixture.harness().context().manager());
+      writerTransaction.setIsolationLevel(TransactionDefinition.ISOLATION_READ_COMMITTED);
+      var writer =
+          executor.submit(
+              () ->
+                  writerTransaction.execute(
+                      transaction -> {
+                        lockAccountForPendingFixture(dsl, accountId);
+                        seedGlobalPending(fixture, pendingKind);
+                        writerInserted.countDown();
+                        awaitLatch(releaseWriter, "release Account-wide pending writer");
+                        return null;
+                      }));
+      var reader =
+          executor.submit(
+              () -> {
+                awaitLatch(writerInserted, "writer to insert Account-wide pending evidence");
+                TransactionTemplate readerTransaction =
+                    new TransactionTemplate(fixture.harness().context().manager());
+                readerTransaction.setIsolationLevel(TransactionDefinition.ISOLATION_READ_COMMITTED);
+                try {
+                  readerTransaction.execute(
+                      transaction -> {
+                        readerBackendPid.set(currentBackendPid(dsl));
+                        readerAttempting.countDown();
+                        new AccountLifecyclePendingDenialReader(dsl)
+                            .requireNoPending(accountId, fixture.tenantId());
+                        return null;
+                      });
+                  return null;
+                } catch (RuntimeException failure) {
+                  return failure;
+                }
+              });
+
+      awaitLatch(readerAttempting, "READ_COMMITTED reader to attempt Account lock");
+      awaitBackendLockWait(dsl, Objects.requireNonNull(readerBackendPid.get()));
+      assertThat(reader.isDone()).isFalse();
+      releaseWriter.countDown();
+      writer.get(15, TimeUnit.SECONDS);
+      RuntimeException readerFailure = reader.get(15, TimeUnit.SECONDS);
+      assertThat(readerFailure)
+          .as("READ_COMMITTED reader observes committed %s after waiting for Account", pendingKind)
+          .isInstanceOf(AccountLifecyclePendingDenialReader.PendingOperationException.class);
+    } finally {
+      releaseWriter.countDown();
+      executor.shutdownNow();
+    }
+  }
+
+  private void assertAccountWidePublicationWaitsForReadCommittedReader(
+      AdmissionSourceFixture fixture, GlobalPendingKind pendingKind) throws Exception {
+    DSLContext dsl = fixture.harness().dsl();
+    UUID accountId = fixture.harness().accountId();
+    CountDownLatch readerOwnsAccount = new CountDownLatch(1);
+    CountDownLatch releaseReader = new CountDownLatch(1);
+    CountDownLatch writerAttempting = new CountDownLatch(1);
+    AtomicReference<Integer> writerBackendPid = new AtomicReference<>();
+    var executor = Executors.newFixedThreadPool(2);
+    try {
+      TransactionTemplate readerTransaction =
+          new TransactionTemplate(fixture.harness().context().manager());
+      readerTransaction.setIsolationLevel(TransactionDefinition.ISOLATION_READ_COMMITTED);
+      var reader =
+          executor.submit(
+              () ->
+                  readerTransaction.execute(
+                      transaction -> {
+                        new AccountLifecyclePendingDenialReader(dsl)
+                            .requireNoPending(accountId, fixture.tenantId());
+                        readerOwnsAccount.countDown();
+                        awaitLatch(releaseReader, "release READ_COMMITTED denial reader");
+                        return null;
+                      }));
+      awaitLatch(readerOwnsAccount, "READ_COMMITTED reader to hold the Account lock");
+
+      TransactionTemplate writerTransaction =
+          new TransactionTemplate(fixture.harness().context().manager());
+      writerTransaction.setIsolationLevel(TransactionDefinition.ISOLATION_READ_COMMITTED);
+      var writer =
+          executor.submit(
+              () ->
+                  writerTransaction.execute(
+                      transaction -> {
+                        writerBackendPid.set(currentBackendPid(dsl));
+                        writerAttempting.countDown();
+                        seedGlobalPending(fixture, pendingKind);
+                        return null;
+                      }));
+
+      awaitLatch(writerAttempting, "Account-wide pending publisher to attempt its Account lock");
+      awaitBackendLockWait(dsl, Objects.requireNonNull(writerBackendPid.get()));
+      assertThat(writer.isDone()).isFalse();
+      releaseReader.countDown();
+      reader.get(15, TimeUnit.SECONDS);
+      writer.get(15, TimeUnit.SECONDS);
+      assertThatThrownBy(
+              () ->
+                  inRepeatableReadTransaction(
+                      fixture.harness().context(),
+                      () -> {
+                        new AccountLifecyclePendingDenialReader(dsl)
+                            .requireNoPending(accountId, fixture.tenantId());
+                        return null;
+                      }))
+          .isInstanceOf(AccountLifecyclePendingDenialReader.PendingOperationException.class);
+    } finally {
+      releaseReader.countDown();
+      executor.shutdownNow();
+    }
+  }
+
+  @Test
+  void membershipRoleSnapshotMustStillMatchItsCommittedCurrentEvent() throws Exception {
+    AdmissionSourceFixture fixture = newAdmissionSourceFixture();
+    inRepeatableReadTransaction(
+        fixture.harness().context(),
+        () -> {
+          var membership =
+              fixture
+                  .memberships()
+                  .findFreshMembershipForUpdate(fixture.harness().accountId(), fixture.tenantId())
+                  .orElseThrow();
+          fixture
+              .roles()
+              .replaceCanonical(
+                  membership,
+                  fixture.harness().accountId(),
+                  fixture.tenantId(),
+                  fixture.provenance(),
+                  membership.getMembershipVersion(),
+                  List.of("builder", "player"));
+          return null;
+        });
+
+    assertThatThrownBy(
+            () ->
+                inRepeatableReadTransaction(
+                    fixture.harness().context(),
+                    () ->
+                        fixture
+                            .admissionReader()
+                            .readCurrent(
+                                fixture.harness().accountId(),
+                                fixture.tenantId(),
+                                fixture.identity())))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessage("Current Account membership/role SQL source is unavailable or inconsistent");
+  }
+
+  @Test
+  void publicAdmissionSourceCaptureRejectsARealEntitlementAuthorityAdvance() throws Exception {
+    AdmissionSourceFixture fixture = newAdmissionSourceFixture();
+    var changedEntitlement =
+        new DemoTenantEntitlementRequest(
+            UUID.randomUUID(),
+            fixture.tenantId(),
+            fixture.tenantEvidence().creationRequestId(),
+            fixture.tenantEvidence().requestDigest(),
+            fixture.entitlement().entitlementVersion(),
+            fixture.entitlement().tenantAuthorityGeneration(),
+            fixture.entitlement().tenantAuthoritySourceVersion(),
+            true,
+            true,
+            false,
+            true,
+            fixture.entitlement().quotas());
+    var committedChange =
+        inTransaction(
+            fixture.harness().context(),
+            () -> fixture.entitlements().provision(changedEntitlement, fixture.tenantEvidence()));
+    assertThat(committedChange.tenantAuthorityGeneration())
+        .isGreaterThan(fixture.entitlement().tenantAuthorityGeneration());
+    assertThat(committedChange.allowNewGameplayBindings()).isFalse();
+
+    assertThatThrownBy(
+            () ->
+                inRepeatableReadTransaction(
+                    fixture.harness().context(),
+                    () ->
+                        fixture
+                            .admissionReader()
+                            .readCurrent(
+                                fixture.harness().accountId(),
+                                fixture.tenantId(),
+                                fixture.identity())))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessage(
+            "Current public demo entitlement or fresh Game Design source is unavailable or denied");
+  }
+
   @Test
   void racingAdmissionWaitsForAccountRevocationTransactionThenObservesPendingFence()
       throws Exception {
@@ -1144,6 +1872,610 @@ class AccountGameplayDelegationIssuancePersistenceIntegrationTest {
       releaseIssuance.countDown();
       executor.shutdownNow();
     }
+  }
+
+  private AdmissionSourceFixture newAdmissionSourceFixture() throws Exception {
+    CommitHarness harness = newCommitHarness(CommitHook.NONE, false);
+    assertThat(harness.service().commitPendingCandidate(harness.pending().requestId()).outcome())
+        .isEqualTo(AccountGameplayDelegationIssuanceCommitService.Outcome.COMMITTED);
+    TokenIdentity identity = tokenFenceIdentity(harness);
+
+    DSLContext dsl = harness.dsl();
+    UUID tenantId = UUID.randomUUID();
+    FreshTenantCreationEvidence tenantEvidence = freshAdmissionTenantEvidence(tenantId);
+    VerifiedTenantProvenance provenance =
+        new VerifiedTenantProvenance(
+            null,
+            TenantProvenanceKind.FRESH_GAME_DESIGN,
+            tenantEvidence.operationId(),
+            tenantEvidence.evidenceDigest());
+    AccountAuthorityGenerationRepository generations =
+        new AccountAuthorityGenerationRepository(dsl);
+    AccountAuthorityOutboxRepository outbox = new AccountAuthorityOutboxRepository(dsl);
+    AccountAuthoritySourceEvidenceRepository sources = harness.sources();
+    FreshTenantIdentityAssociationRepository freshTenants =
+        new FreshTenantIdentityAssociationRepository(dsl, GAME_DESIGN_NAMESPACE);
+    AccountTenantEntitlementOutboxRepository billingOutbox =
+        new AccountTenantEntitlementOutboxRepository(dsl);
+    AccountTenantAuthorityEventRepository tenantAuthorityEvents =
+        new AccountTenantAuthorityEventRepository(
+            dsl, outbox, billingOutbox, freshTenants, generations);
+    AccountDemoTenantEntitlementRepository entitlements =
+        new AccountDemoTenantEntitlementRepository(
+            dsl, freshTenants, generations, billingOutbox, tenantAuthorityEvents);
+    AccountGameplayTokenIdentityFenceRepository tokenFences =
+        new AccountGameplayTokenIdentityFenceRepository(dsl);
+    AccountRepository accounts = new AccountRepository(dsl, sources);
+    AccountMembershipPairAuthorityRepository pairs =
+        new AccountMembershipPairAuthorityRepository(dsl);
+    AccountTenantMembershipRepository memberships =
+        new AccountTenantMembershipRepository(dsl, accounts, freshTenants, pairs);
+    AccountTenantMembershipRoleSnapshotRepository roles =
+        new AccountTenantMembershipRoleSnapshotRepository(dsl);
+
+    inTransaction(
+        harness.context(),
+        () -> {
+          freshTenants.importVerified(tenantEvidence);
+          sources.initializeIssuerIfAbsent(ACCOUNT_ISSUER);
+          generations.initializeTenantIfAbsent(tenantId);
+          generations.initialize(
+              AccountAuthorityGenerationRepository.AuthorityScope.membership(
+                  harness.accountId(), tenantId));
+          return null;
+        });
+    DemoTenantEntitlementRequest initialEntitlementRequest =
+        new DemoTenantEntitlementRequest(
+            UUID.randomUUID(),
+            tenantId,
+            tenantEvidence.creationRequestId(),
+            tenantEvidence.requestDigest(),
+            null,
+            null,
+            null,
+            true,
+            true,
+            true,
+            true,
+            new DemoTenantEntitlementRequest.Quotas(3L, 2L, 4096L));
+    DemoTenantEntitlementSnapshot entitlement =
+        inTransaction(
+            harness.context(),
+            () -> entitlements.provision(initialEntitlementRequest, tenantEvidence));
+
+    CanonicalJoinScopeV2 scope = canonicalAdmissionJoinScope(harness.accountId(), tenantId);
+    String requestId = UUID.randomUUID().toString();
+    String callerBinding = "admission-source-owner-" + UUID.randomUUID();
+    ApprovedLegacyTenantAssociationRepository legacyAssociations =
+        mock(ApprovedLegacyTenantAssociationRepository.class);
+    AccountTenantIdentityResolver tenantIdentityResolver =
+        new AccountTenantIdentityResolver(legacyAssociations, GAME_DESIGN_NAMESPACE);
+    AccountConnectScopeRepository connectScopes =
+        new AccountConnectScopeRepository(dsl, tenantIdentityResolver, freshTenants);
+    AccountJoinOperationRepository joinOperations =
+        new AccountJoinOperationRepository(dsl, connectScopes);
+    AccountMembershipAuthorityEventProducer membershipEvents =
+        new AccountMembershipAuthorityEventProducer(
+            joinOperations,
+            accounts,
+            pairs,
+            memberships,
+            roles,
+            generations,
+            outbox,
+            sources,
+            tenantAuthorityEvents);
+    AccountCanonicalFirstJoinTerminalCoordinator firstJoin =
+        new AccountCanonicalFirstJoinTerminalCoordinator(
+            accounts,
+            joinOperations,
+            memberships,
+            roles,
+            outbox,
+            pairs,
+            new AccountAuditOutboxRepository(dsl),
+            membershipEvents,
+            new AccountLifecyclePendingDenialReader(dsl));
+    inTransaction(
+        harness.context(),
+        () -> {
+          long accountRowId =
+              Objects.requireNonNull(
+                  accounts.findByAccountUuid(harness.accountId()).orElseThrow().getId());
+          connectScopes.insertCanonical(accountRowId, scope, provenance);
+          joinOperations.insertCanonicalIntent(requestId, scope, callerBinding);
+          joinOperations.bindCanonicalPolicyEvidence(
+              requestId, scope, callerBinding, true, entitlement.entitlementVersion());
+          firstJoin.commitCanonicalFirstJoin(scope, requestId, callerBinding);
+          return null;
+        });
+
+    AccountMembershipRoleSourceReader membershipReader =
+        new AccountMembershipRoleSourceReader(
+            sources, generations, memberships, pairs, roles, outbox, tenantAuthorityEvents);
+    AccountGameplayPublicAdmissionSourceReader admissionReader =
+        new AccountGameplayPublicAdmissionSourceReader(
+            membershipReader,
+            accounts,
+            entitlements,
+            tokenFences,
+            new AccountLifecyclePendingDenialReader(dsl));
+    return new AdmissionSourceFixture(
+        harness,
+        tenantId,
+        tenantEvidence,
+        provenance,
+        membershipReader,
+        admissionReader,
+        entitlements,
+        entitlement,
+        tokenFences,
+        memberships,
+        roles,
+        identity);
+  }
+
+  private void seedGlobalPending(AdmissionSourceFixture fixture, GlobalPendingKind pendingKind) {
+    switch (pendingKind) {
+      case SECURITY_STATE -> insertSecurityStateWaitingFixture(fixture);
+      case ACCOUNT_SOURCE ->
+          insertScopedSourceChangeFixture(
+              fixture, SourceKind.ACCOUNT, fixture.harness().accountId());
+      case GLOBAL_ROLES_SOURCE ->
+          insertScopedSourceChangeFixture(
+              fixture, SourceKind.GLOBAL_ROLES, fixture.harness().accountId());
+    }
+  }
+
+  /**
+   * Stores valid Account-owned WAITING operation evidence for denial testing only. The fixture
+   * supplies no authenticated owner decision and performs no Account source mutation.
+   */
+  private SecurityStatePendingFixture insertSecurityStateWaitingFixture(
+      AdmissionSourceFixture fixture) {
+    return inTransaction(
+        fixture.harness().context(),
+        () -> {
+          DSLContext dsl = fixture.harness().dsl();
+          UUID accountUuid = fixture.harness().accountId();
+          Account account =
+              new AccountRepository(dsl, fixture.harness().sources())
+                  .findByAccountUuid(accountUuid)
+                  .orElseThrow();
+          var source =
+              fixture
+                  .harness()
+                  .sources()
+                  .readCurrentIssuerAccountSources(ACCOUNT_ISSUER, accountUuid)
+                  .account();
+          Record roleRow =
+              Objects.requireNonNull(
+                  dsl.fetchOne(
+                      "SELECT global_roles, global_role_source_version "
+                          + "FROM account_global_role_sources WHERE account_uuid = ? FOR SHARE",
+                      accountUuid));
+          long roleVersion = roleRow.get("global_role_source_version", Long.class);
+          AccountState before =
+              new AccountState(
+                  account.isEmailVerified(),
+                  AccountLoginAuthModes.read(account.getLoginAuthModes()).stream()
+                      .map(Enum::name)
+                      .sorted()
+                      .toList(),
+                  java.util.Arrays.stream(roleRow.get("global_roles", String[].class))
+                      .sorted()
+                      .toList(),
+                  account.getLifecycleState().name());
+          AccountState after =
+              new AccountState(
+                  true, before.loginAuthModes(), before.globalRoles(), before.lifecycleState());
+          UUID requestId = UUID.randomUUID();
+          AccountSecurityStateMutationRequest request =
+              new AccountSecurityStateMutationRequest(
+                  requestId,
+                  accountUuid,
+                  securityStateCorrelation(accountUuid, requestId),
+                  source.generation(),
+                  source.sourceVersion(),
+                  AccountSecurityStateOperationRepository.detectedKinds(before, after),
+                  after);
+          long checkpointSequence = source.checkpoint().sequence();
+          byte[] checkpointPayload =
+              checkpointSequence == 0L
+                  ? new byte[0]
+                  : new AccountAuthorityOutboxRepository(dsl)
+                      .findEvent(accountStream(accountUuid), checkpointSequence)
+                      .orElseThrow()
+                      .payload();
+          Capture draft =
+              new Capture(
+                  account.getId(),
+                  account.getAccountUuidProvenance(),
+                  before,
+                  new AccountAuthorityGenerationRepository.ScopeState(
+                      source.scope(),
+                      source.generation(),
+                      source.sourceVersion(),
+                      source.issuanceFence()),
+                  checkpointSequence,
+                  checkpointPayload,
+                  roleVersion,
+                  null);
+          byte[] captureBytes =
+              AccountSecurityStateOperationRepository.captureBytes(request, draft);
+          SourceEvidence accountSource =
+              new SourceEvidence(
+                  SourceKind.ACCOUNT,
+                  accountUuid.toString(),
+                  Long.toString(source.generation()),
+                  Long.toString(source.sourceVersion()),
+                  accountStream(accountUuid),
+                  Long.toString(checkpointSequence),
+                  captureBytes);
+          SourceChange sourceChange =
+              new SourceChange(UUID.randomUUID(), List.of(accountSource), captureBytes);
+          Capture capture =
+              new Capture(
+                  draft.accountId(),
+                  draft.provenance(),
+                  before,
+                  draft.sourceState(),
+                  checkpointSequence,
+                  checkpointPayload,
+                  roleVersion,
+                  sourceChange);
+          DraftAuthorizationFenceRepository fences = new DraftAuthorizationFenceRepository(dsl);
+          if (!fences.requestSourceChange(sourceChange)) {
+            throw new IllegalStateException("Security-state fixture source change is unresolved");
+          }
+          new AccountSecurityStateOperationRepository(dsl).claim(request, capture);
+          return new SecurityStatePendingFixture(requestId, sourceChange);
+        });
+  }
+
+  /** Creates an exact-scope source-change row for negative-predicate tests only. */
+  private SourceChange insertScopedSourceChangeFixture(
+      AdmissionSourceFixture fixture, SourceKind kind, UUID scopeUuid) {
+    return inTransaction(
+        fixture.harness().context(),
+        () -> {
+          UUID accountUuid = fixture.harness().accountId();
+          String scopeId;
+          String generation = null;
+          String sourceVersion = "1";
+          String checkpointStream = null;
+          String checkpointSequence = null;
+          byte[] evidence = opaquePendingSourceEvidence(kind, accountUuid, scopeUuid);
+          if (kind == SourceKind.ACCOUNT) {
+            var source =
+                fixture
+                    .harness()
+                    .sources()
+                    .readCurrentIssuerAccountSources(ACCOUNT_ISSUER, accountUuid)
+                    .account();
+            scopeId = accountUuid.toString();
+            generation = Long.toString(source.generation());
+            sourceVersion = Long.toString(source.sourceVersion());
+            checkpointStream = accountStream(accountUuid);
+            checkpointSequence = Long.toString(source.checkpoint().sequence());
+          } else if (kind == SourceKind.GLOBAL_ROLES) {
+            Record role =
+                Objects.requireNonNull(
+                    fixture
+                        .harness()
+                        .dsl()
+                        .fetchOne(
+                            "SELECT global_role_source_version "
+                                + "FROM account_global_role_sources WHERE account_uuid = ?",
+                            accountUuid));
+            scopeId = accountUuid.toString();
+            sourceVersion = Long.toString(role.get("global_role_source_version", Long.class));
+          } else if (kind == SourceKind.MEMBERSHIP) {
+            scopeId = accountUuid + "/" + scopeUuid;
+          } else if (kind == SourceKind.TENANT) {
+            scopeId = scopeUuid.toString();
+          } else {
+            throw new IllegalArgumentException("Unsupported source-change fixture scope");
+          }
+          SourceEvidence source =
+              new SourceEvidence(
+                  kind,
+                  scopeId,
+                  generation,
+                  sourceVersion,
+                  checkpointStream,
+                  checkpointSequence,
+                  evidence);
+          byte[] mutation = opaquePendingSourceEvidence(kind, accountUuid, scopeUuid);
+          SourceChange change = new SourceChange(UUID.randomUUID(), List.of(source), mutation);
+          boolean settled =
+              new DraftAuthorizationFenceRepository(fixture.harness().dsl())
+                  .requestSourceChange(change);
+          if (!settled) {
+            throw new IllegalStateException("Pending-source fixture has unresolved owners");
+          }
+          return change;
+        });
+  }
+
+  private static byte[] opaquePendingSourceEvidence(
+      SourceKind kind, UUID accountUuid, UUID scopeUuid) {
+    return ("synthetic-denial-only-source:" + kind + ":" + accountUuid + ":" + scopeUuid)
+        .getBytes(StandardCharsets.US_ASCII);
+  }
+
+  private static void establishPendingSnapshot(
+      DSLContext dsl, UUID accountUuid, GlobalPendingKind pendingKind) {
+    if (pendingKind == GlobalPendingKind.SECURITY_STATE) {
+      Objects.requireNonNull(
+          dsl.fetchOne(
+              "SELECT COUNT(*) FROM account_security_state_operations WHERE account_uuid = ?",
+              accountUuid));
+      return;
+    }
+    String sourceKey =
+        (pendingKind == GlobalPendingKind.ACCOUNT_SOURCE ? "ACCOUNT:" : "GLOBAL_ROLES:")
+            + accountUuid;
+    Objects.requireNonNull(
+        dsl.fetchOne(
+            "SELECT COUNT(*) FROM account_draft_authorization_source_changes c "
+                + "JOIN account_draft_authorization_changed_scopes s ON s.change_id = c.change_id "
+                + "WHERE c.status = 'WAITING' AND s.source_key = ?",
+            sourceKey));
+  }
+
+  private static void lockAccountForPendingFixture(DSLContext dsl, UUID accountUuid) {
+    if (dsl.fetchOne(
+            "SELECT account_uuid FROM accounts WHERE account_uuid = ? FOR UPDATE", accountUuid)
+        == null) {
+      throw new IllegalStateException("Account-wide pending writer could not lock the Account");
+    }
+  }
+
+  private static int currentBackendPid(DSLContext dsl) {
+    return Objects.requireNonNull(dsl.fetchOne("SELECT pg_backend_pid()")).get(0, Integer.class);
+  }
+
+  private static void awaitBackendLockWait(DSLContext dsl, int backendPid) {
+    long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10L);
+    while (System.nanoTime() < deadline) {
+      Record activity =
+          dsl.fetchOne("SELECT wait_event_type FROM pg_stat_activity WHERE pid = ?", backendPid);
+      if (activity != null && "Lock".equals(activity.get(0, String.class))) return;
+      try {
+        Thread.sleep(10L);
+      } catch (InterruptedException interrupted) {
+        Thread.currentThread().interrupt();
+        throw new IllegalStateException(
+            "Interrupted while waiting for PostgreSQL lock evidence", interrupted);
+      }
+    }
+    throw new IllegalStateException("PostgreSQL did not expose the expected Account row lock wait");
+  }
+
+  /**
+   * Creates opaque shape-valid storage evidence only. This fixture does not represent an
+   * authenticated caller, valid World request, or actual invalidation publisher.
+   */
+  private UUID insertLifecycleDenialFixture(
+      AdmissionSourceFixture fixture, UUID tenantId, String status) {
+    UUID requestId = UUID.randomUUID();
+    inTransaction(
+        fixture.harness().context(),
+        () -> {
+          DSLContext dsl = fixture.harness().dsl();
+          Account account =
+              new AccountRepository(dsl)
+                  .findByAccountUuid(fixture.harness().accountId())
+                  .orElseThrow();
+          String streamKey = "account:auth-authority:v1:account/" + fixture.harness().accountId();
+          Record source =
+              Objects.requireNonNull(
+                  dsl.fetchOne(
+                      "SELECT current_generation, current_source_version, "
+                          + "current_issuance_fence, current_issuance_fence_source_version, "
+                          + "last_outbox_sequence "
+                          + "FROM account_authority_source_records WHERE outbox_stream_key = ?",
+                      streamKey));
+          Long checkpointSequenceValue = source.get("last_outbox_sequence", Long.class);
+          if (checkpointSequenceValue == null || checkpointSequenceValue < 0L) {
+            throw new IllegalStateException(
+                "Current Account authority source checkpoint is unavailable");
+          }
+          long checkpointSequence = checkpointSequenceValue;
+          Record checkpoint =
+              checkpointSequence == 0L
+                  ? null
+                  : Objects.requireNonNull(
+                      dsl.fetchOne(
+                          "SELECT request_id, event_id, event_digest, payload "
+                              + "FROM account_authority_outbox_events "
+                              + "WHERE outbox_stream_key = ? AND outbox_sequence = ?",
+                          streamKey,
+                          checkpointSequence));
+          String terminalOutcome = "WORLD_TERMINAL".equals(status) ? "ABORTED" : null;
+          byte[] terminalPayload =
+              "WORLD_TERMINAL".equals(status)
+                  ? "opaque-storage-shape".getBytes(StandardCharsets.US_ASCII)
+                  : null;
+          String digest = "sha256:" + "a".repeat(64);
+          dsl.execute(
+              "INSERT INTO account_lifecycle_serving_operations ("
+                  + "request_id, actor_account_uuid, account_uuid, account_id, account_provenance, "
+                  + "tenant_uuid, purpose, caller_proof_binding, world_activation_request_id, "
+                  + "world_activation_request_digest, world_activation_request_bytes, "
+                  + "world_activation_preparing_evidence, request_payload, request_digest, "
+                  + "account_stream_key, account_generation, account_source_version, "
+                  + "account_issuance_fence, account_fence_source_version, checkpoint_sequence, "
+                  + "checkpoint_event_sequence, checkpoint_event_request_id, checkpoint_event_id, "
+                  + "checkpoint_event_digest, checkpoint_payload, capture_payload, capture_digest, "
+                  + "status, world_result_outcome, world_result_payload, world_result_digest, "
+                  + "world_terminal_at) VALUES (?, ?, ?, ?, ?, ?, 'WORLD_ACTIVATION_INVALIDATION', "
+                  + "?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+              requestId,
+              fixture.harness().accountId(),
+              fixture.harness().accountId(),
+              account.getId(),
+              account.getAccountUuidProvenance().name(),
+              tenantId,
+              new byte[] {1},
+              UUID.randomUUID(),
+              digest,
+              new byte[] {1},
+              new byte[] {1},
+              new byte[] {1},
+              digest,
+              streamKey,
+              source.get("current_generation", Long.class),
+              source.get("current_source_version", Long.class),
+              source.get("current_issuance_fence", Long.class),
+              source.get("current_issuance_fence_source_version", Long.class),
+              checkpointSequence,
+              checkpoint == null ? null : checkpointSequence,
+              checkpoint == null ? null : checkpoint.get("request_id", String.class),
+              checkpoint == null ? null : checkpoint.get("event_id", String.class),
+              checkpoint == null ? null : checkpoint.get("event_digest", String.class),
+              checkpoint == null ? new byte[0] : checkpoint.get("payload", byte[].class),
+              new byte[] {1},
+              digest,
+              status,
+              terminalOutcome,
+              terminalPayload,
+              "WORLD_TERMINAL".equals(status) ? digest : null,
+              "WORLD_TERMINAL".equals(status) ? Timestamp.from(Instant.now()) : null);
+          return null;
+        });
+    return requestId;
+  }
+
+  private static long accountAuthorityEventCount(DSLContext dsl, UUID accountId) {
+    return Objects.requireNonNull(
+            dsl.fetchOne(
+                "SELECT COUNT(*) FROM account_authority_outbox_events "
+                    + "WHERE outbox_stream_key = ?",
+                "account:auth-authority:v1:account/" + accountId))
+        .get(0, Long.class);
+  }
+
+  private static String accountSemanticSnapshot(DSLContext dsl, UUID accountId) {
+    return Objects.requireNonNull(
+            dsl.fetchOne(
+                "SELECT to_jsonb(account_row)::text FROM accounts account_row "
+                    + "WHERE account_uuid = ?",
+                accountId))
+        .get(0, String.class);
+  }
+
+  private static String accountAuthoritySourceSnapshot(DSLContext dsl, UUID accountId) {
+    return Objects.requireNonNull(
+            dsl.fetchOne(
+                "SELECT to_jsonb(source_row)::text FROM account_authority_source_records source_row "
+                    + "WHERE outbox_stream_key = ?",
+                "account:auth-authority:v1:account/" + accountId))
+        .get(0, String.class);
+  }
+
+  private static String accountGlobalRoleSourceSnapshot(DSLContext dsl, UUID accountId) {
+    return Objects.requireNonNull(
+            dsl.fetchOne(
+                "SELECT to_jsonb(role_row)::text FROM account_global_role_sources role_row "
+                    + "WHERE account_uuid = ?",
+                accountId))
+        .get(0, String.class);
+  }
+
+  private static String accountAuthorityGenerationSnapshot(DSLContext dsl, UUID accountId) {
+    return Objects.requireNonNull(
+            dsl.fetchOne(
+                "SELECT COALESCE(jsonb_agg(to_jsonb(generation_row) "
+                    + "ORDER BY generation_row.scope_kind, generation_row.tenant_uuid)::text, '[]') "
+                    + "FROM account_authority_generations generation_row "
+                    + "WHERE account_uuid = ?",
+                accountId))
+        .get(0, String.class);
+  }
+
+  private static String accountIssuanceFenceSnapshot(DSLContext dsl, UUID accountId) {
+    return Objects.requireNonNull(
+            dsl.fetchOne(
+                "SELECT to_jsonb(fence_row)::text FROM account_authority_issuance_fences fence_row "
+                    + "WHERE account_uuid = ?",
+                accountId))
+        .get(0, String.class);
+  }
+
+  private static String sqlState(Throwable failure) {
+    for (Throwable cause = failure; cause != null; cause = cause.getCause()) {
+      if (cause instanceof SQLException sqlException && sqlException.getSQLState() != null) {
+        return sqlException.getSQLState();
+      }
+    }
+    return null;
+  }
+
+  private static FreshTenantCreationEvidence freshAdmissionTenantEvidence(UUID tenantId) {
+    UUID requestId = UUID.randomUUID();
+    UUID operationId = UUID.randomUUID();
+    String sourceTenantKey =
+        "admission-" + UUID.randomUUID().toString().replace("-", "").substring(0, 26);
+    String requestDigest =
+        GameTenantCreationDigest.requestDigest(
+            GAME_DESIGN_NAMESPACE,
+            requestId,
+            sourceTenantKey,
+            "Account admission source proof",
+            null);
+    long sourceGameRowId = UUID.randomUUID().getMostSignificantBits() & Long.MAX_VALUE;
+    if (sourceGameRowId == 0L) sourceGameRowId = 1L;
+    String provenanceKind = "NEW_GAME_ROW";
+    return new FreshTenantCreationEvidence(
+        1,
+        GAME_DESIGN_NAMESPACE,
+        requestId,
+        operationId,
+        requestDigest,
+        tenantId,
+        sourceGameRowId,
+        sourceTenantKey,
+        provenanceKind,
+        GameTenantCreationDigest.evidenceDigest(
+            GAME_DESIGN_NAMESPACE,
+            requestId,
+            operationId,
+            requestDigest,
+            tenantId,
+            sourceGameRowId,
+            sourceTenantKey,
+            provenanceKind));
+  }
+
+  private static CanonicalJoinScopeV2 canonicalAdmissionJoinScope(UUID accountId, UUID tenantId) {
+    long evaluatedAtEpochSecond = Instant.now().getEpochSecond();
+    String evaluatedAt = Instant.ofEpochSecond(evaluatedAtEpochSecond).toString();
+    String expiresAt = Instant.ofEpochSecond(evaluatedAtEpochSecond + 120L).toString();
+    return new CanonicalJoinScopeV2(
+        "admission-scope-" + UUID.randomUUID(),
+        accountId,
+        tenantId,
+        UUID.randomUUID(),
+        "tenant",
+        "world",
+        "production",
+        UUID.randomUUID(),
+        "SHARED",
+        UUID.randomUUID(),
+        7L,
+        3L,
+        evaluatedAt,
+        expiresAt);
+  }
+
+  private static <T> T inRepeatableReadTransaction(
+      TestContext context, java.util.function.Supplier<T> operation) {
+    TransactionTemplate transaction = new TransactionTemplate(context.manager());
+    transaction.setIsolationLevel(TransactionDefinition.ISOLATION_REPEATABLE_READ);
+    transaction.setReadOnly(false);
+    return transaction.execute(status -> operation.get());
   }
 
   private static TokenIdentity tokenFenceIdentity(CommitHarness harness) {
@@ -1911,6 +3243,19 @@ class AccountGameplayDelegationIssuancePersistenceIntegrationTest {
         });
   }
 
+  private static Account createHistoricalAccount(TestContext context, String loginAuthModes) {
+    String suffix = UUID.randomUUID().toString().replace("-", "");
+    return inTransaction(
+        context,
+        () ->
+            PreRestrictionBirthAccountFixture.create(
+                context.dsl(),
+                "delegation-" + suffix,
+                "delegation-" + UUID.randomUUID() + "@example.test",
+                "integration-test-hash",
+                loginAuthModes));
+  }
+
   private static Account createEmailOtpAccount(
       TestContext context, AccountAuthoritySourceEvidenceRepository sourceEvidence) {
     return createAccount(context, "EMAIL_OTP");
@@ -2489,6 +3834,14 @@ class AccountGameplayDelegationIssuancePersistenceIntegrationTest {
     CAPTURE_COMMIT_PROOF
   }
 
+  private enum GlobalPendingKind {
+    SECURITY_STATE,
+    ACCOUNT_SOURCE,
+    GLOBAL_ROLES_SOURCE
+  }
+
+  private record SecurityStatePendingFixture(UUID requestId, SourceChange sourceChange) {}
+
   private record CommitHarness(
       TestContext context,
       DSLContext dsl,
@@ -2502,6 +3855,20 @@ class AccountGameplayDelegationIssuancePersistenceIntegrationTest {
       AccountGameplayDelegationSigner signer,
       AccountGameplayCanonicalLoginOwner loginOwner,
       CanonicalGameplayLoginRequest loginRequest) {}
+
+  private record AdmissionSourceFixture(
+      CommitHarness harness,
+      UUID tenantId,
+      FreshTenantCreationEvidence tenantEvidence,
+      VerifiedTenantProvenance provenance,
+      AccountMembershipRoleSourceReader membershipReader,
+      AccountGameplayPublicAdmissionSourceReader admissionReader,
+      AccountDemoTenantEntitlementRepository entitlements,
+      DemoTenantEntitlementSnapshot entitlement,
+      AccountGameplayTokenIdentityFenceRepository tokenFences,
+      AccountTenantMembershipRepository memberships,
+      AccountTenantMembershipRoleSnapshotRepository roles,
+      TokenIdentity identity) {}
 
   private static final class TransactionHookManager implements PlatformTransactionManager {
     private final PlatformTransactionManager delegate;

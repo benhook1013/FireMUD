@@ -14,6 +14,7 @@ import net.firedevops.firemud.accountservice.authordraft.DraftAuthorizationFence
 import net.firedevops.firemud.accountservice.authordraft.DraftAuthorizationFenceBinding.Owner;
 import net.firedevops.firemud.accountservice.authordraft.DraftAuthorizationFenceBinding.OwnerReadback;
 import net.firedevops.firemud.accountservice.authordraft.DraftAuthorizationFenceBinding.SourceEvidence;
+import net.firedevops.firemud.accountservice.authordraft.DraftAuthorizationFenceBinding.SourceKind;
 import org.jooq.DSLContext;
 import org.jooq.Record;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
@@ -237,6 +238,7 @@ public final class DraftAuthorizationFenceRepository {
    */
   public boolean requestSourceChange(SourceChange change) {
     requireTransaction();
+    lockChangedAccounts(change.sources());
     lockSources(change.sources());
     Record prior = readChange(change.changeId());
     if (prior != null) {
@@ -498,6 +500,28 @@ public final class DraftAuthorizationFenceRepository {
       dsl.fetchOne(
           "SELECT source_key FROM account_draft_authorization_source_locks WHERE source_key = ? FOR UPDATE",
           source.key());
+    }
+  }
+
+  /** Account-wide negative intent uses Account-before-source/operation lock order. */
+  private void lockChangedAccounts(List<SourceEvidence> sources) {
+    for (UUID account :
+        sources.stream()
+            .filter(s -> s.kind() == SourceKind.ACCOUNT || s.kind() == SourceKind.GLOBAL_ROLES)
+            .map(s -> UUID.fromString(s.scopeId()))
+            .distinct()
+            .sorted(Comparator.comparing(UUID::toString))
+            .toList()) {
+      Record row =
+          dsl.fetchOne(
+              "SELECT account_uuid FROM accounts WHERE account_uuid = ?"
+                  + " AND id > 0 AND account_uuid_source_numeric_id = id"
+                  + " AND account_uuid_provenance IN ('ACCOUNT_V29_MIGRATION',"
+                  + " 'ACCOUNT_REPOSITORY_INSERT', 'ACCOUNT_DATABASE_INSERT') FOR UPDATE",
+              account);
+      if (row == null) {
+        throw new IllegalStateException("Source change requires the exact persisted Account row");
+      }
     }
   }
 

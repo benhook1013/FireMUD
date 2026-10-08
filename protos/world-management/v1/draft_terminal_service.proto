@@ -1,0 +1,38 @@
+syntax = "proto3";
+
+package world_management.v1;
+
+option java_package = "net.firedevops.firemud.worldmanagement.v1";
+option java_multiple_files = true;
+
+// Opt-in authenticated readback of immutable World Draft terminal evidence.
+service WorldDraftTerminalReadService {
+  rpc ReadWorldDraftTerminalOutcome(ReadWorldDraftTerminalOutcomeRequest)
+      returns (ReadWorldDraftTerminalOutcomeResponse);
+}
+
+enum WorldDraftTerminalReadStatus {
+  WORLD_DRAFT_TERMINAL_READ_STATUS_UNSPECIFIED = 0;
+  WORLD_DRAFT_TERMINAL_READ_STATUS_UNKNOWN = 1;
+  WORLD_DRAFT_TERMINAL_READ_STATUS_DEFINITIVELY_ABORTED = 2;
+  WORLD_DRAFT_TERMINAL_READ_STATUS_COMMITTED = 3;
+}
+
+message ReadWorldDraftTerminalOutcomeRequest {
+  int32 schema_version = 1;
+  string target_namespace = 2;
+  string read_request_id = 3;
+  // Complete canonical Account fence bytes; this is read identity, not permission.
+  bytes original_account_binding = 4;
+}
+
+message ReadWorldDraftTerminalOutcomeResponse {
+  // The complete request tuple is echoed byte-for-byte, including the original Account binding.
+  int32 schema_version = 1;
+  string target_namespace = 2;
+  string read_request_id = 3;
+  bytes original_account_binding = 4;
+  WorldDraftTerminalReadStatus status = 5;
+  // Canonical account-draft-owner-readback/v1 bytes. Empty only for UNKNOWN.
+  bytes owner_readback_bytes = 6;
+}

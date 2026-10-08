@@ -25,6 +25,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import net.firedevops.firemud.accountservice.dto.AccountAuthEvidenceBundle;
 import net.firedevops.firemud.accountservice.entity.Account;
+import net.firedevops.firemud.accountservice.entity.AccountLoginAuthModes;
 import net.firedevops.firemud.accountservice.repository.AccountAuthEvidenceBundleRepository;
 import net.firedevops.firemud.accountservice.repository.AccountAuthorityGenerationRepository;
 import net.firedevops.firemud.accountservice.repository.AccountAuthorityOutboxRepository;
@@ -34,6 +35,7 @@ import net.firedevops.firemud.accountservice.repository.AccountGameplayCredentia
 import net.firedevops.firemud.accountservice.repository.AccountGameplayDelegationIssuanceRepository;
 import net.firedevops.firemud.accountservice.repository.AccountGameplayDelegationIssuanceRepository.PendingIntent;
 import net.firedevops.firemud.accountservice.repository.AccountRepository;
+import net.firedevops.firemud.accountservice.repository.PreRestrictionBirthAccountFixture;
 import net.firedevops.firemud.common.json.Rfc8785CanonicalJson;
 import net.firedevops.firemud.common.security.GameSessionAccountDelegationProfile;
 import net.firedevops.firemud.common.security.GameSessionAccountDelegationRegistryRecord.AccountAuthoritySnapshot;
@@ -100,7 +102,17 @@ class AccountAuthEvidenceBundlePersistenceIntegrationTest {
   void forwardCheckpointRepairRetainsV84OwnersAndCapturesZeroAndPositiveEvidence() {
     TestContext context = newTestContext(MigrationVersion.fromVersion("84"));
     DSLContext dsl = context.dsl();
-    Account account = createAccount(context);
+    String accountSuffix = UUID.randomUUID().toString().replace("-", "");
+    Account account =
+        inTransaction(
+            context,
+            () ->
+                PreRestrictionBirthAccountFixture.create(
+                    dsl,
+                    "auth-bundle-" + accountSuffix,
+                    "auth-bundle-" + UUID.randomUUID() + "@example.test",
+                    "integration-test-hash",
+                    AccountLoginAuthModes.DEFAULT_SERIALIZED));
     AccountAuthorityGenerationRepository authorities =
         new AccountAuthorityGenerationRepository(dsl);
     AccountAuthorityOutboxRepository outbox = new AccountAuthorityOutboxRepository(dsl);

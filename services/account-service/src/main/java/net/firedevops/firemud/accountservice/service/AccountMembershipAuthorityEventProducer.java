@@ -32,6 +32,7 @@ import net.firedevops.firemud.accountservice.repository.AccountMembershipPairAut
 import net.firedevops.firemud.accountservice.repository.AccountMembershipPairAuthorityRepository.TenantProvenanceKind;
 import net.firedevops.firemud.accountservice.repository.AccountMembershipPairAuthorityRepository.VerifiedTenantProvenance;
 import net.firedevops.firemud.accountservice.repository.AccountRepository;
+import net.firedevops.firemud.accountservice.repository.AccountTenantAuthorityEventRepository;
 import net.firedevops.firemud.accountservice.repository.AccountTenantMembershipRepository;
 import net.firedevops.firemud.accountservice.repository.AccountTenantMembershipRoleSnapshotRepository;
 import net.firedevops.firemud.accountservice.repository.AccountTenantMembershipRoleSnapshotRepository.RoleSnapshot;
@@ -59,6 +60,7 @@ public class AccountMembershipAuthorityEventProducer {
   private final AccountAuthorityGenerationRepository authorityGenerationRepository;
   private final AccountAuthorityOutboxRepository authorityOutboxRepository;
   private final AccountAuthoritySourceEvidenceRepository sourceEvidenceRepository;
+  private final AccountTenantAuthorityEventRepository tenantAuthorityEventRepository;
 
   @SuppressFBWarnings(
       value = {"CT_CONSTRUCTOR_THROW", "EI_EXPOSE_REP2"},
@@ -73,7 +75,8 @@ public class AccountMembershipAuthorityEventProducer {
       AccountTenantMembershipRoleSnapshotRepository roleSnapshotRepository,
       AccountAuthorityGenerationRepository authorityGenerationRepository,
       AccountAuthorityOutboxRepository authorityOutboxRepository,
-      AccountAuthoritySourceEvidenceRepository sourceEvidenceRepository) {
+      AccountAuthoritySourceEvidenceRepository sourceEvidenceRepository,
+      AccountTenantAuthorityEventRepository tenantAuthorityEventRepository) {
     this.joinOperationRepository = Objects.requireNonNull(joinOperationRepository);
     this.accountRepository = Objects.requireNonNull(accountRepository);
     this.pairAuthorityRepository = Objects.requireNonNull(pairAuthorityRepository);
@@ -82,6 +85,7 @@ public class AccountMembershipAuthorityEventProducer {
     this.authorityGenerationRepository = Objects.requireNonNull(authorityGenerationRepository);
     this.authorityOutboxRepository = Objects.requireNonNull(authorityOutboxRepository);
     this.sourceEvidenceRepository = Objects.requireNonNull(sourceEvidenceRepository);
+    this.tenantAuthorityEventRepository = Objects.requireNonNull(tenantAuthorityEventRepository);
   }
 
   /**
@@ -171,7 +175,13 @@ public class AccountMembershipAuthorityEventProducer {
       IssuerAccountSourceSnapshot sourceSnapshot =
           sourceEvidenceRepository.readCurrentIssuerAccountSources(ACCOUNT_JWT_ISSUER, accountUuid);
       requireCurrentAuthority(
-          authority, sourceSnapshot, account.getId(), accountUuid, tenantUuid, membership);
+          authority,
+          sourceSnapshot,
+          account.getId(),
+          accountUuid,
+          tenantUuid,
+          membership,
+          provenance);
       if (authorityOutboxRepository.readCheckpoint(streamKey).isPresent()) {
         throw new IllegalStateException(
             "Canonical first JOIN cannot publish over retained membership-event history");
@@ -521,17 +531,14 @@ public class AccountMembershipAuthorityEventProducer {
       long accountRowId,
       UUID accountUuid,
       UUID tenantUuid,
-      AccountTenantMembership membership) {
+      AccountTenantMembership membership,
+      VerifiedTenantProvenance provenance) {
     ScopeState member = only(snapshot.memberships(), "membership");
     ScopeState tenant = only(snapshot.tenants(), "tenant");
+    requireCurrentTenantAuthority(tenant, tenantUuid, provenance);
     if (!AuthorityScope.issuer(ACCOUNT_JWT_ISSUER).equals(snapshot.issuer().scope())
         || !AuthorityScope.account(accountUuid).equals(snapshot.account().scope())
         || !AuthorityScope.tenant(tenantUuid).equals(tenant.scope())
-        // Account currently has no tenant source-event readback for later tenant mutations. The
-        // exact fresh tenant association proves the original identity only, so do not accept a
-        // changed tenant authority generation until its owner source can prove that transition.
-        || tenant.generation() != 1L
-        || tenant.sourceVersion() != 1L
         || !AuthorityScope.membership(accountUuid, tenantUuid).equals(member.scope())
         || member.generation() != membership.getMembershipAuthorityGeneration()
         || !accountUuid.equals(snapshot.issuanceFence().accountId())
@@ -558,6 +565,25 @@ public class AccountMembershipAuthorityEventProducer {
         || sourceSnapshot.account().accountRepositoryInsertTransactionId() <= 0L
         || sourceSnapshot.account().initializationTransactionId()
             != sourceSnapshot.account().accountRepositoryInsertTransactionId()) {
+      throw new IllegalStateException(
+          "Canonical first JOIN requires exact current Account, source, and tenant authority evidence");
+    }
+  }
+
+  private void requireCurrentTenantAuthority(
+      ScopeState tenant, UUID tenantUuid, VerifiedTenantProvenance provenance) {
+    // The fresh association retains the original sequence-zero baseline. An advanced authority
+    // must instead be proved by Account's exact current entitlement and authenticated owner event.
+    if (tenant.generation() == 1L && tenant.sourceVersion() == 1L) {
+      return;
+    }
+    var current = tenantAuthorityEventRepository.readCurrentByTenant(tenantUuid);
+    if (current == null
+        || !tenantUuid.equals(current.tenantId())
+        || current.tenantAuthorityGeneration() != tenant.generation()
+        || current.tenantAuthoritySourceVersion() != tenant.sourceVersion()
+        || !provenance.sourceOperationId().equals(current.sourceEvidence().operationId())
+        || !provenance.digest().equals(current.sourceEvidence().evidenceDigest())) {
       throw new IllegalStateException(
           "Canonical first JOIN requires exact current Account, source, and tenant authority evidence");
     }

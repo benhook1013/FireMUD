@@ -87,14 +87,20 @@ public class AccountAuthoritySourceEvidenceRepository {
   @Transactional(propagation = Propagation.MANDATORY)
   public void initializeFreshAccount(AccountRepository.FreshAccountInsert proof) {
     Objects.requireNonNull(proof, "fresh Account repository insert proof is required");
-    initializeIssuerIfAbsent(ACCOUNT_ISSUER);
+    if (!TransactionSynchronizationManager.isActualTransactionActive()
+        || TransactionSynchronizationManager.isCurrentTransactionReadOnly()) {
+      throw new SourceEvidenceUnavailableException();
+    }
     long accountInsertTransactionId = requireFreshAccountReadback(proof);
+    initializeIssuerIfAbsent(ACCOUNT_ISSUER);
     ScopeState accountState = generations.initializeAccountForFreshRepositoryInsert(proof);
     insertFreshBaseline(
         AuthorityScope.account(proof.accountUuid()),
         accountState,
         new AccountIdentitySource(proof.accountId(), accountInsertTransactionId));
     readCurrentSource(AuthorityScope.account(proof.accountUuid()), accountState);
+    new AccountPlatformRestrictionBirthRepository(dsl)
+        .initializeFreshAccount(proof, accountInsertTransactionId, accountState);
   }
 
   /**

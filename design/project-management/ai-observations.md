@@ -61,3 +61,31 @@ Entry format:
   - Expected pattern: retain remote output and payload suppression while reporting trusted static phase, timeout versus nonzero exit, and secondary cleanup failure labels.
   - Current status: safe backup diagnostics are being added; fresh backup and isolated restore proof remain unavailable. Publishing and backup root causes are unresolved.
   - Reconsideration trigger: update the outcome after an authorized exact-phase failure capture and successful fresh backup/isolated restore verification; do not treat host health or a single successful SFTP listing as recovery proof.
+
+- `2026-10-08`: Keep migration simulation and Java fixture repairs narrow
+  - Observation: jOOQ's H2-backed DDL interpreter maps PostgreSQL `TEXT` to CLOB, which cannot be indexed there. Closed category/kind/state vocabulary and fixed-format stream keys can use appropriately bounded `VARCHAR` while retaining the actual PostgreSQL checks, foreign keys and triggers; simulator success is not physical migration proof.
+  - Expected pattern: build Mockito-returned fixtures before starting an outer `when(...).thenReturn(...)` call, because nested stubbing leaves that outer call unfinished. Give generic transaction readbacks an explicit typed local before overloaded AssertJ assertions, and check nullable fetched rows or fields explicitly rather than suppressing null-boundary warnings.
+  - Reconsideration trigger: apply these bounded patterns to the next migration or transaction-fixture change without broad constraint exclusions, weaker assertions or a new validator family.
+
+- `2026-10-08`: Distinguish negative-test diagnostics from superseded CI failures
+  - Observation: an exact-head CI observer initially attributed a cancelled dev-tool job to a retry-validation error printed by a negative-test fixture. Parent inspection found both displayed unittest groups ended `OK`, and GitHub marked the job cancelled after a newer run superseded it. The completed Account job and uploaded PostgreSQL JUnit evidence remained valid, while aggregate validation was incomplete.
+  - Expected pattern: inspect failing assertions, group summaries and exact job/step conclusions before treating an error-shaped log line as a defect. Preserve completed module proof separately from cancellation, skipped later steps and whole-workflow readiness.
+  - Reconsideration trigger: apply this classification to the next failed or cancelled exact-head run; a later green run does not retroactively execute the cancelled steps.
+
+- `2026-10-08`: PostgreSQL test-container defaults are not durability proof
+  - Observation: Testcontainers PostgreSQL 2.0.5 starts with `fsync=off`; exact Account confirmation CI executed eighteen lease cases, but five correctly failed the production durable-primary guard. Successful storage tests against that default must not be reported as durable COMMIT proof.
+  - Expected pattern: opt durability-sensitive suites into durable PostgreSQL settings from startup, read back primary and WAL settings explicitly, and reject an unsuitable external database without changing it. Do not weaken a production guard or infer that re-enabling `fsync` repairs previously unsafe data.
+  - Current status: the scoped startup/readback repair is prepared; corrected physical confirmation execution remains required, including idle-database WAL coverage. Other test suites retain their existing fixture configuration.
+  - Reconsideration trigger: update proof after corrected exact-head PostgreSQL execution; distinguish local compilation/skips and ordinary row visibility from established durability.
+
+- `2026-10-08`: A durability observer can accidentally wait for its own uncommitted lock WAL
+  - Observation: PostgreSQL tuple locks emit WAL. Capturing the insertion fence after those locks can include an uncommitted partial WAL page that an idle primary need not flush, causing conservative confirmation failure despite an already durable original COMMIT. This is an availability defect, not evidence of unsafe positive confirmation.
+  - Expected pattern: independently observe the committed operation or receipt, capture its fixed coverage fence before own tuple locks, then lock in canonical Account-first order and revalidate exact immutable evidence before checking flush coverage and the original database-time bound. Never force a marker or extend the deadline to make proof pass.
+  - Current status: the SQL and Java ordering correction and idle-primary/stale-snapshot definitions are prepared; physical execution remains required. Assertions must not depend on asynchronous background WAL flushing remaining idle.
+  - Reconsideration trigger: consume corrected exact-head PostgreSQL proof; unrelated concurrent WAL can still conservatively prevent coverage, and unavailable proof remains denied.
+
+- `2026-10-08`: Heap observation is not a WAL-free durability precondition
+  - Observation: exact Account CI at `2b19e46fa` still failed five confirmation cases after moving capture before tuple locks. The idle assertion observed a 72-byte advance, but the raw JUnit artifact cannot identify that WAL record. PostgreSQL heap/index reads can perform pruning and emit WAL; successful read-only statements are not evidence that the insertion position stayed unchanged. The earlier EXCEPTION/subtransaction explanation was not established and must not be reported as the cause.
+  - Expected pattern: establish a fixed SERIALIZABLE snapshot and a database-owned upper fence before heap observation, then prove independent committed visibility within that same snapshot and revalidate immutable evidence under canonical owner locks. Keep original expiry and fail closed on uncovered WAL; do not create markers, force a flush or weaken durability to satisfy a test.
+  - Current status: the scoped SQL/fixture correction is prepared for consolidated validation. Physical proof remains required; the exact cause of the observed record is unresolved without statement-level WAL evidence.
+  - Reconsideration trigger: consume corrected exact-head PostgreSQL execution. Global pre-call LSN equality is not a stable assertion under background activity; exact temporal and binding guarantees still need executed owner proof.
