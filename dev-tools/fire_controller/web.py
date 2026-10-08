@@ -886,10 +886,11 @@ def render_inbox_conversations(
         inbox_offset=offset,
     )
     content = (
-        f'<article class="job-private"><h1>{title}</h1>{_inbox_views(worker, notes_offset=notes_offset)}{count}'
+        f'<article class="job-private"><h1>{title}</h1>'
+        f"{notes_section}<section class=\"inbox-conversations\"><h2>Conversations</h2>"
+        f'{_inbox_views(worker, notes_offset=notes_offset)}{count}'
         "<p>Conversations are ordered by your latest incoming or outgoing message. "
         "Opening this list or a conversation does not mark messages seen or acknowledge them.</p>"
-        f"{notes_section}"
         f'<ol class="private-list conversation-list">{rendered_entries}</ol>'
         '<nav class="job-history-paging" aria-label="Conversation pages">'
     )
@@ -897,7 +898,7 @@ def render_inbox_conversations(
         content += f'<a href="{_inbox_page_url(worker, messages=False, inbox_offset=max(0, offset - HISTORY_PAGE_SIZE), notes_offset=notes_offset, preserve_zero_offset=True)}">Newer conversations</a> '
     if has_more:
         content += f'<a href="{_inbox_page_url(worker, messages=False, inbox_offset=offset + HISTORY_PAGE_SIZE, notes_offset=notes_offset)}">Older conversations</a>'
-    return _private_document(f"{raw_title} · FireController", content + "</nav></article>", delivery_link=False)
+    return _private_document(f"{raw_title} · FireController", content + "</nav></section></article>", delivery_link=False)
 
 
 def render_inbox(
@@ -973,10 +974,11 @@ def render_inbox(
         inbox_offset=offset,
     )
     content = (
-        f'<article class="job-private"><h1>{title}</h1>{_inbox_views(worker, messages=True, notes_offset=notes_offset)}{count}'
+        f'<article class="job-private"><h1>{title}</h1>'
+        f"{notes_section}<section class=\"inbox-messages\"><h2>Messages</h2>"
+        f'{_inbox_views(worker, messages=True, notes_offset=notes_offset)}{count}'
         "<p>Incoming and outgoing messages are shown newest first. Seen and acknowledged state belongs to the recipient. "
         "Messages remain private. Opening this list does not mark them seen or acknowledge them.</p>"
-        f"{notes_section}"
         f'<ol class="private-list">{rendered_entries}</ol><nav class="job-history-paging" aria-label="Message pages">'
     )
     if offset > 0:
@@ -989,7 +991,7 @@ def render_inbox(
             f'<a href="{_inbox_page_url(worker, messages=True, inbox_offset=offset + HISTORY_PAGE_SIZE, notes_offset=notes_offset)}">'
             "Older messages</a>"
         )
-    content += "</nav></article>"
+    content += "</nav></section></article>"
     return _private_document(f"{raw_title} · FireController", content, delivery_link=False)
 
 
