@@ -3,6 +3,7 @@ FROM ${BASE_IMAGE}
 
 WORKDIR /opt/firemud
 COPY --chown=0:0 services/game-session-service/build/distributions/game-session-migration-driver/ /opt/firemud/game-session-migration-driver/
+USER 0:0
 RUN chmod -R a+rX /opt/firemud/game-session-migration-driver \
     && chmod -R a-w /opt/firemud/game-session-migration-driver \
     && chmod a+x /opt/firemud/game-session-migration-driver/bin/game-session-migration-driver
