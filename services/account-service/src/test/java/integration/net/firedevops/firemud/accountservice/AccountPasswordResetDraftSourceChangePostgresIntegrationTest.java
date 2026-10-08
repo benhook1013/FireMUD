@@ -281,8 +281,36 @@ class AccountPasswordResetDraftSourceChangePostgresIntegrationTest {
     recordOwner(
         commitFixture, commitPending.binding(), Owner.GAME_DESIGN, Outcome.DEFINITIVELY_ABORTED);
     assertThat(readSettlement(commitFixture, commitPending.binding()))
-        .isEqualTo(Settlement.FAILED_NONPUBLICATION);
-    assertThat(abort(commitFixture, commitSnapshot, AbortReason.DEFINITIVE_ABORT)).isTrue();
+        .isEqualTo(Settlement.PENDING);
+    StoredState mixedEvidence = storedState(commitFixture, commitSeed, commitPending);
+    assertThat(abort(commitFixture, commitSnapshot, AbortReason.DEFINITIVE_ABORT)).isFalse();
+    assertThat(readSettlement(commitFixture, commitPending.binding()))
+        .isEqualTo(Settlement.PENDING);
+    assertThat(readSourceStatus(commitFixture, commitPending.intent().sourceChange()))
+        .isEqualTo("WAITING");
+    assertThat(durableSnapshot(commitFixture, commitSeed, commitPending.intent()).status())
+        .isEqualTo("WAITING");
+    assertThat(storedState(commitFixture, commitSeed, commitPending)).isEqualTo(mixedEvidence);
+    assertThat(
+            transaction(
+                commitFixture.transaction(),
+                () ->
+                    commitFixture
+                        .fences()
+                        .readOwnerResult(commitPending.binding(), Owner.WORLD)
+                        .orElseThrow()
+                        .outcome()))
+        .isEqualTo(Outcome.COMMITTED);
+    assertThat(
+            transaction(
+                commitFixture.transaction(),
+                () ->
+                    commitFixture
+                        .fences()
+                        .readOwnerResult(commitPending.binding(), Owner.GAME_DESIGN)
+                        .orElseThrow()
+                        .outcome()))
+        .isEqualTo(Outcome.DEFINITIVELY_ABORTED);
   }
 
   @Test

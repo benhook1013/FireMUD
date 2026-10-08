@@ -31,6 +31,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import net.firedevops.firemud.accountservice.authordraft.DraftAuthorizationFenceRepository;
 import net.firedevops.firemud.accountservice.authordraft.DraftAuthorizationFenceRepository.Ordering;
+import net.firedevops.firemud.accountservice.authordraft.DraftAuthorizationFenceRepository.Settlement;
 import net.firedevops.firemud.accountservice.authordraft.DraftAuthorizationFenceRepository.SourceChange;
 import net.firedevops.firemud.accountservice.client.EntityManagementClient;
 import net.firedevops.firemud.accountservice.client.GameSessionClient;
@@ -2117,7 +2118,7 @@ class AccountJoinPostgresIntegrationTest {
             "ACCOUNT:" + fixture.admin().accountUuid());
     for (DraftAuthorizationFenceBinding binding : List.of(actor, target)) {
       syntheticVerifiedOwnerReadback(binding, Owner.WORLD, Outcome.COMMITTED);
-      syntheticVerifiedOwnerReadback(binding, Owner.GAME_DESIGN, Outcome.DEFINITIVELY_ABORTED);
+      syntheticVerifiedOwnerReadback(binding, Owner.GAME_DESIGN, Outcome.COMMITTED);
       assertPendingRoleIntent(tenantRoleMutationService.mutate(request));
     }
     syntheticVerifiedOwnerReadback(issuance, Owner.WORLD, Outcome.COMMITTED);
@@ -2125,12 +2126,91 @@ class AccountJoinPostgresIntegrationTest {
     assertThat(committedRoles(fixture.admin())).contains("tenantAdmin");
     assertThat(committedRoles(fixture.target())).doesNotContain("tenantAdmin");
     syntheticVerifiedOwnerReadback(issuance, Owner.GAME_DESIGN, Outcome.COMMITTED);
+    for (DraftAuthorizationFenceBinding binding : List.of(actor, target, issuance)) {
+      assertThat(
+              new TransactionTemplate(transactionManager)
+                  .<Settlement>execute(
+                      status -> new DraftAuthorizationFenceRepository(dsl).readSettlement(binding)))
+          .isEqualTo(Settlement.COMMITTED);
+    }
     OperationEvidence transfer = tenantRoleMutationService.mutate(request);
     assertThat(transfer.status()).isEqualTo("COMMITTED");
     assertThat(transfer.members()).hasSize(2);
     assertCurrentRoleMutationState(fixture.admin(), 3L, 2L, 2L, 2L, List.of("player"), true);
     assertCurrentRoleMutationState(
         fixture.target(), 3L, 1L, 2L, 1L, List.of("player", "tenantAdmin"), false);
+
+    TenantRoleFixture mixedFixture = syntheticRetainedAdminFixture();
+    Request mixedRequest = roleRequest(mixedFixture, Action.TRANSFER_TENANT_ADMIN, 2L);
+    DraftAuthorizationFenceBinding mixedActor =
+        syntheticVerifiedRoleFence(mixedFixture.admin(), SourceKind.MEMBERSHIP);
+    DraftAuthorizationFenceBinding mixedTarget =
+        syntheticVerifiedRoleFence(mixedFixture.target(), SourceKind.MEMBERSHIP);
+    DraftAuthorizationFenceBinding mixedIssuance =
+        syntheticVerifiedRoleFence(mixedFixture.admin(), SourceKind.ACCOUNT);
+    for (DraftAuthorizationFenceBinding binding : List.of(mixedActor, mixedTarget, mixedIssuance)) {
+      reserveRoleFence(binding, true);
+    }
+    assertPendingRoleIntent(tenantRoleMutationService.mutate(mixedRequest));
+    SourceChange mixedOriginal = originalRoleSourceChange(mixedRequest);
+    Map<String, Object> mixedAdminBefore =
+        membershipAuthorityReadEvidenceSnapshot(mixedFixture.admin());
+    Map<String, Object> mixedTargetBefore =
+        membershipAuthorityReadEvidenceSnapshot(mixedFixture.target());
+    long mixedAuditRowsBefore = countAuditOutboxRows(mixedFixture.admin());
+
+    for (DraftAuthorizationFenceBinding binding : List.of(mixedActor, mixedTarget)) {
+      syntheticVerifiedOwnerReadback(binding, Owner.WORLD, Outcome.COMMITTED);
+      syntheticVerifiedOwnerReadback(binding, Owner.GAME_DESIGN, Outcome.DEFINITIVELY_ABORTED);
+    }
+    syntheticVerifiedOwnerReadback(mixedIssuance, Owner.WORLD, Outcome.COMMITTED);
+    syntheticVerifiedOwnerReadback(mixedIssuance, Owner.GAME_DESIGN, Outcome.COMMITTED);
+
+    DraftAuthorizationFenceRepository mixedFences = new DraftAuthorizationFenceRepository(dsl);
+    for (DraftAuthorizationFenceBinding binding : List.of(mixedActor, mixedTarget)) {
+      assertThat(
+              new TransactionTemplate(transactionManager)
+                  .<Settlement>execute(status -> mixedFences.readSettlement(binding)))
+          .isEqualTo(Settlement.PENDING);
+    }
+    assertThat(
+            new TransactionTemplate(transactionManager)
+                .<Settlement>execute(status -> mixedFences.readSettlement(mixedIssuance)))
+        .isEqualTo(Settlement.COMMITTED);
+    assertPendingRoleIntent(tenantRoleMutationService.mutate(mixedRequest));
+    assertThat(membershipAuthorityReadEvidenceSnapshot(mixedFixture.admin()))
+        .isEqualTo(mixedAdminBefore);
+    assertThat(membershipAuthorityReadEvidenceSnapshot(mixedFixture.target()))
+        .isEqualTo(mixedTargetBefore);
+    assertThat(countAuditOutboxRows(mixedFixture.admin())).isEqualTo(mixedAuditRowsBefore);
+    assertThat(committedRoles(mixedFixture.admin())).containsExactly("player", "tenantAdmin");
+    assertThat(committedRoles(mixedFixture.target())).containsExactly("player");
+    assertThat(originalRoleSourceChange(mixedRequest).canonicalBytes())
+        .containsExactly(mixedOriginal.canonicalBytes());
+    assertThat(
+            new TransactionTemplate(transactionManager)
+                .<String>execute(status -> mixedFences.readSourceChange(mixedOriginal).status()))
+        .isEqualTo("WAITING");
+    for (DraftAuthorizationFenceBinding binding : List.of(mixedActor, mixedTarget)) {
+      assertThat(
+              new TransactionTemplate(transactionManager)
+                  .<Outcome>execute(
+                      status ->
+                          mixedFences
+                              .readOwnerResult(binding, Owner.WORLD)
+                              .orElseThrow()
+                              .outcome()))
+          .isEqualTo(Outcome.COMMITTED);
+      assertThat(
+              new TransactionTemplate(transactionManager)
+                  .<Outcome>execute(
+                      status ->
+                          mixedFences
+                              .readOwnerResult(binding, Owner.GAME_DESIGN)
+                              .orElseThrow()
+                              .outcome()))
+          .isEqualTo(Outcome.DEFINITIVELY_ABORTED);
+    }
   }
 
   @Test

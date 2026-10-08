@@ -8,6 +8,7 @@ import net.firedevops.firemud.accountservice.creatorparty.IndividualCreatorParty
 import net.firedevops.firemud.accountservice.repository.AccountTenantCreationBootstrapOperationRepository;
 import net.firedevops.firemud.accountservice.repository.AccountTenantCreationBootstrapOperationRepository.StoredOperation;
 import net.firedevops.firemud.accountservice.repository.FreshTenantIdentityAssociationRepository;
+import net.firedevops.firemud.common.tenant.FreshTenantCreationEvidence;
 import net.firedevops.firemud.common.tenant.FreshTenantCreatorEvidence;
 import org.jooq.DSLContext;
 import org.jooq.Record;
@@ -165,6 +166,90 @@ public final class IndividualCreatorPartyRepository {
     return receipt;
   }
 
+  /**
+   * Resolves the one persisted fresh initial association from its canonical tenant scope.
+   *
+   * <p>The initiating Account, original creator qualification, association operation, and party are
+   * all derived from owner rows. The canonical tenant claim serializes an absent-row read with the
+   * initial-association writer; no caller-selected party or operation can redirect the readback.
+   * This is immutable source evidence only and grants no caller, content, or gameplay permission. A
+   * composing source read acquires this tenant fence before the bootstrap and Account-source locks
+   * to preserve the initial-association writer's lock order.
+   */
+  public InitialAssociationReadback readExistingInitialAssociation(UUID tenantUuid) {
+    requireTransaction();
+    CreatorPartyEncoding.requireUuid(tenantUuid);
+    lockTenant(tenantUuid);
+
+    FreshTenantCreationEvidence creation =
+        freshTenants
+            .read(tenantUuid)
+            .orElseThrow(
+                () -> new IllegalStateException("Exact fresh tenant creation source is absent"));
+    UUID bootstrapRequestId =
+        bootstraps
+            .findRequestIdByTenantForUpdate(tenantUuid)
+            .orElseThrow(
+                () -> new IllegalStateException("Committed creator-bootstrap receipt is absent"));
+    StoredOperation bootstrap =
+        bootstraps
+            .findForUpdate(bootstrapRequestId)
+            .orElseThrow(
+                () -> new IllegalStateException("Committed creator-bootstrap receipt is absent"));
+    if (!"COMMITTED".equals(bootstrap.status())
+        || !bootstrapRequestId.equals(bootstrap.requestId())
+        || !bootstrapRequestId.equals(bootstrap.accountAuthorizationOperationId())
+        || !tenantUuid.equals(bootstrap.tenantUuid())
+        || !creation.creationRequestId().equals(bootstrap.creationRequestId())
+        || !creation.operationId().equals(bootstrap.creationOperationId())) {
+      throw new IllegalStateException(
+          "Committed creator-bootstrap receipt differs from exact fresh tenant provenance");
+    }
+
+    FreshTenantCreatorEvidence creator =
+        new FreshTenantCreatorEvidence(
+            1,
+            creation,
+            bootstrap.initiatingAccountUuid(),
+            bootstrap.accountAuthorizationOperationId(),
+            bootstrap.accountAuthorizationDigest(),
+            bootstrap.creatorEvidenceDigest());
+    // Re-read the persisted bootstrap through the existing exact creator-evidence verifier. This
+    // also binds the original creator payload and authorization digest to the fresh association.
+    requireFreshCreation(creator);
+
+    Record association =
+        dsl.fetchOne(
+            "SELECT * FROM account_fresh_creator_party_association_operations "
+                + "WHERE tenant_uuid = ? FOR UPDATE",
+            tenantUuid);
+    if (association == null) {
+      throw new IllegalStateException(
+          "Immutable fresh initial creator-party association is absent");
+    }
+    UUID associationRequestId = association.get("request_id", UUID.class);
+    UUID partyId = association.get("creator_party_id", UUID.class);
+    if (associationRequestId == null || partyId == null) {
+      throw new IllegalStateException(
+          "Immutable fresh initial creator-party association identity is incomplete");
+    }
+
+    IndividualCreatorPartySource party =
+        readIndividualSource(partyId, creator.initiatingAccountId());
+    if (!party.locallyVerified()) {
+      throw new IllegalStateException(
+          "Fresh initial association does not identify its own verified individual party");
+    }
+    AssociationReceipt receipt = readInitialAssociation(associationRequestId, creator, party);
+    if (!tenantUuid.equals(receipt.tenantId())
+        || !partyId.equals(receipt.creatorPartyId())
+        || !associationRequestId.equals(receipt.requestId())) {
+      throw new IllegalStateException(
+          "Exact initial association readback differs from its persisted tenant row");
+    }
+    return new InitialAssociationReadback(creator, receipt, party);
+  }
+
   /** This slice never provides commit-bound party/terms authorization. */
   public void requireHostedAuthoringCurrentness() {
     throw new IllegalStateException(
@@ -299,6 +384,25 @@ public final class IndividualCreatorPartyRepository {
   /** Historical immutable result only; grants no caller, content or gameplay permission. */
   public record AssociationReceipt(
       UUID requestId, UUID tenantId, UUID creatorPartyId, UUID historyId, String resultDigest) {}
+
+  /** Owner-derived fresh creator qualification, association receipt, and current party source. */
+  public record InitialAssociationReadback(
+      FreshTenantCreatorEvidence creatorEvidence,
+      AssociationReceipt receipt,
+      IndividualCreatorPartySource partySource) {
+    public InitialAssociationReadback {
+      Objects.requireNonNull(creatorEvidence);
+      Objects.requireNonNull(receipt);
+      Objects.requireNonNull(partySource);
+      if (!creatorEvidence.creationEvidence().canonicalTenantId().equals(receipt.tenantId())
+          || !creatorEvidence.initiatingAccountId().equals(partySource.accountId())
+          || !receipt.creatorPartyId().equals(partySource.creatorPartyId())
+          || !partySource.locallyVerified()) {
+        throw new IllegalArgumentException(
+            "Initial association readback must retain exact fresh creator and own-party identity");
+      }
+    }
+  }
 
   public static final class AssociationConflictException extends IllegalStateException {
     public AssociationConflictException(String message) {

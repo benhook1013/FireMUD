@@ -64,6 +64,171 @@ class DraftAuthorizationFenceBindingCodecTest {
     DraftAuthorizationFenceBinding restored = DraftAuthorizationFenceBinding.fromStored(golden);
     assertBindingValues(original, restored);
     assertThat(restored.canonicalBytes()).containsExactly(golden);
+    assertThat(restored.schemaVersion()).isEqualTo(DraftAuthorizationFenceBinding.SCHEMA_V1);
+    assertThat(restored.requiredOwners())
+        .containsExactly(
+            DraftAuthorizationFenceBinding.Owner.GAME_DESIGN,
+            DraftAuthorizationFenceBinding.Owner.WORLD);
+  }
+
+  @Test
+  void v2BindsWorldAndEntityAndRoundTripsTheCanonicalRequiredOwnerSet() {
+    DraftAuthorizationFenceBinding original =
+        bindingForOwners(List.of(Owner.WORLD_MANAGEMENT, Owner.ENTITY_MANAGEMENT))
+            .withRequiredOwners();
+    List<DraftAuthorizationFenceBinding.Owner> expectedOwners =
+        List.of(
+            DraftAuthorizationFenceBinding.Owner.GAME_DESIGN,
+            DraftAuthorizationFenceBinding.Owner.WORLD,
+            DraftAuthorizationFenceBinding.Owner.ENTITY);
+
+    assertThat(original.schemaVersion()).isEqualTo(DraftAuthorizationFenceBinding.SCHEMA_V2);
+    assertThat(original.requiredOwners()).containsExactlyElementsOf(expectedOwners);
+    assertThat(original.canonicalBytes()).containsExactly(goldenV2Bytes(original, expectedOwners));
+
+    DraftAuthorizationFenceBinding restored =
+        DraftAuthorizationFenceBinding.fromStored(original.canonicalBytes());
+    assertBindingValues(original, restored);
+    assertThat(restored.canonicalBytes()).containsExactly(original.canonicalBytes());
+    assertThat(restored.requiredOwners()).containsExactlyElementsOf(expectedOwners);
+  }
+
+  @Test
+  void v2MapsEveryCommitOwnerAndAlwaysIncludesTheGameDesignCoordinator() {
+    DraftAuthorizationFenceBinding multiOwner =
+        bindingForOwners(Arrays.asList(Owner.values())).withRequiredOwners();
+    assertThat(multiOwner.requiredOwners())
+        .containsExactly(
+            DraftAuthorizationFenceBinding.Owner.GAME_DESIGN,
+            DraftAuthorizationFenceBinding.Owner.WORLD,
+            DraftAuthorizationFenceBinding.Owner.ENTITY,
+            DraftAuthorizationFenceBinding.Owner.GAME_LOGIC,
+            DraftAuthorizationFenceBinding.Owner.AUTOMATION);
+    assertBindingValues(
+        multiOwner, DraftAuthorizationFenceBinding.fromStored(multiOwner.canonicalBytes()));
+
+    DraftAuthorizationFenceBinding controlPlaneOnly =
+        bindingForOwners(List.of(Owner.GAME_DESIGN_CONTROL_PLANE)).withRequiredOwners();
+    assertThat(controlPlaneOnly.requiredOwners())
+        .containsExactly(DraftAuthorizationFenceBinding.Owner.GAME_DESIGN);
+    assertBindingValues(
+        controlPlaneOnly,
+        DraftAuthorizationFenceBinding.fromStored(controlPlaneOnly.canonicalBytes()));
+  }
+
+  @Test
+  void v2RejectsMissingExtraUnknownReorderedAndSubstitutedOwners() {
+    DraftAuthorizationFenceBinding binding =
+        bindingForOwners(List.of(Owner.WORLD_MANAGEMENT, Owner.ENTITY_MANAGEMENT))
+            .withRequiredOwners();
+    List<byte[]> canonicalFrames = readFrames(binding.canonicalBytes());
+
+    List<byte[]> missing = new ArrayList<>(canonicalFrames);
+    missing.set(16, utf8("2"));
+    missing.remove(missing.size() - 1);
+    assertInvalid(writeFrames(missing));
+
+    List<byte[]> extra = new ArrayList<>(canonicalFrames);
+    extra.set(16, utf8("4"));
+    extra.add(utf8("AUTOMATION"));
+    assertInvalid(writeFrames(extra));
+
+    List<byte[]> unknown = new ArrayList<>(canonicalFrames);
+    unknown.set(18, utf8("UNKNOWN_OWNER"));
+    assertInvalid(writeFrames(unknown));
+
+    List<byte[]> reordered = new ArrayList<>(canonicalFrames);
+    byte[] gameDesign = reordered.get(17);
+    reordered.set(17, reordered.get(18));
+    reordered.set(18, gameDesign);
+    assertInvalid(writeFrames(reordered));
+
+    List<byte[]> substituted = new ArrayList<>(canonicalFrames);
+    substituted.set(18, utf8("GAME_LOGIC"));
+    assertInvalid(writeFrames(substituted));
+  }
+
+  @Test
+  void v2RejectsChangedCompleteBindingAndNoncanonicalOwnerCount() {
+    DraftAuthorizationFenceBinding binding =
+        bindingForOwners(List.of(Owner.WORLD_MANAGEMENT, Owner.ENTITY_MANAGEMENT))
+            .withRequiredOwners();
+    List<byte[]> changedInput = readFrames(binding.canonicalBytes());
+    changedInput.set(11, utf8("{}"));
+    assertInvalid(writeFrames(changedInput));
+
+    List<byte[]> noncanonicalCount = readFrames(binding.canonicalBytes());
+    noncanonicalCount.set(16, utf8("03"));
+    assertInvalid(writeFrames(noncanonicalCount));
+
+    List<byte[]> excessiveCount = readFrames(binding.canonicalBytes());
+    excessiveCount.set(16, utf8("999999999999999999999999999999999999"));
+    assertInvalid(writeFrames(excessiveCount));
+  }
+
+  @Test
+  void v2OwnerReadbackUsesMatchingVersionAndOnlyAllowsRequiredOwners() {
+    DraftAuthorizationFenceBinding binding =
+        bindingForOwners(List.of(Owner.WORLD_MANAGEMENT, Owner.ENTITY_MANAGEMENT))
+            .withRequiredOwners();
+    var worldReadback =
+        ownerReadback(binding, DraftAuthorizationFenceBinding.Owner.WORLD, new byte[] {1});
+    List<byte[]> frames = readFrames(worldReadback.canonicalBytes());
+    assertThat(new String(frames.get(0), StandardCharsets.UTF_8))
+        .isEqualTo("account-draft-owner-readback/v2");
+    DraftAuthorizationFenceBinding.OwnerReadback.fromStored(worldReadback.canonicalBytes())
+        .requireBinding(binding);
+
+    var wrongOwner = new ArrayList<>(frames);
+    wrongOwner.set(1, utf8("AUTOMATION"));
+    assertThatThrownBy(
+            () -> DraftAuthorizationFenceBinding.OwnerReadback.fromStored(writeFrames(wrongOwner)))
+        .isInstanceOf(IllegalArgumentException.class);
+
+    for (int field : List.of(3, 4, 5, 6, 7)) {
+      var changedBinding = new ArrayList<>(frames);
+      changedBinding.set(
+          field,
+          switch (field) {
+            case 3, 4, 5 -> utf8("99999999-9999-4999-8999-999999999999");
+            case 6 -> utf8("sha256:" + "f".repeat(64));
+            default -> binding(List.of(source())).canonicalBytes();
+          });
+      assertThatThrownBy(
+              () ->
+                  DraftAuthorizationFenceBinding.OwnerReadback.fromStored(
+                      writeFrames(changedBinding)))
+          .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    var mismatchedVersion = new ArrayList<>(frames);
+    mismatchedVersion.set(0, utf8("account-draft-owner-readback/v1"));
+    assertThatThrownBy(
+            () ->
+                DraftAuthorizationFenceBinding.OwnerReadback.fromStored(
+                    writeFrames(mismatchedVersion)))
+        .isInstanceOf(IllegalArgumentException.class);
+
+    var changedResult = new ArrayList<>(frames);
+    changedResult.set(changedResult.size() - 1, new byte[] {2});
+    var changedReadback =
+        DraftAuthorizationFenceBinding.OwnerReadback.fromStored(writeFrames(changedResult));
+    assertThat(changedReadback.result()).containsExactly((byte) 2);
+    assertThat(changedReadback.canonicalBytes()).containsExactly(writeFrames(changedResult));
+    assertThat(changedReadback.canonicalBytes()).isNotEqualTo(worldReadback.canonicalBytes());
+  }
+
+  @Test
+  void v1OwnerReadbackSchemaCannotBeSubstitutedForV2Binding() {
+    DraftAuthorizationFenceBinding binding =
+        bindingForOwners(List.of(Owner.WORLD_MANAGEMENT)).withRequiredOwners();
+    var readback =
+        ownerReadback(binding, DraftAuthorizationFenceBinding.Owner.WORLD, new byte[] {1});
+    List<byte[]> frames = readFrames(readback.canonicalBytes());
+    frames.set(0, utf8("account-draft-owner-readback/v1"));
+    assertThatThrownBy(
+            () -> DraftAuthorizationFenceBinding.OwnerReadback.fromStored(writeFrames(frames)))
+        .isInstanceOf(IllegalArgumentException.class);
   }
 
   @Test
@@ -155,7 +320,10 @@ class DraftAuthorizationFenceBindingCodecTest {
   @Test
   void ownerReadbackRoundTripsExactBytesAndOriginalBindingForEveryOutcome() {
     var binding = binding(List.of(source()));
-    for (var owner : DraftAuthorizationFenceBinding.Owner.values()) {
+    for (var owner :
+        List.of(
+            DraftAuthorizationFenceBinding.Owner.GAME_DESIGN,
+            DraftAuthorizationFenceBinding.Owner.WORLD)) {
       for (var outcome : DraftAuthorizationFenceBinding.Outcome.values()) {
         var original =
             new DraftAuthorizationFenceBinding.OwnerReadback(
@@ -174,6 +342,8 @@ class DraftAuthorizationFenceBindingCodecTest {
         assertThat(decoded.outcome()).isEqualTo(outcome);
         assertThat(decoded.result()).containsExactly(new byte[] {1, 2, 3});
         assertThat(decoded.canonicalBytes()).containsExactly(original.canonicalBytes());
+        assertThat(original.canonicalBytes())
+            .containsExactly(goldenOwnerReadbackV1(binding, owner, outcome, new byte[] {1, 2, 3}));
       }
     }
   }
@@ -229,6 +399,14 @@ class DraftAuthorizationFenceBindingCodecTest {
     assertThatThrownBy(
             () -> DraftAuthorizationFenceBinding.OwnerReadback.fromStored(writeFrames(invalidUtf8)))
         .isInstanceOf(IllegalArgumentException.class);
+
+    var expandedV1Owner = readFrames(bytes);
+    expandedV1Owner.set(1, utf8("ENTITY"));
+    assertThatThrownBy(
+            () ->
+                DraftAuthorizationFenceBinding.OwnerReadback.fromStored(
+                    writeFrames(expandedV1Owner)))
+        .isInstanceOf(IllegalArgumentException.class);
   }
 
   private static void assertBindingValues(
@@ -245,6 +423,8 @@ class DraftAuthorizationFenceBindingCodecTest {
     assertThat(actual.gameDesignBinding()).containsExactly(expected.gameDesignBinding());
     assertThat(actual.normalizedInput()).containsExactly(expected.normalizedInput());
     assertThat(actual.inputDigest()).isEqualTo(expected.inputDigest());
+    assertThat(actual.schemaVersion()).isEqualTo(expected.schemaVersion());
+    assertThat(actual.requiredOwners()).containsExactlyElementsOf(expected.requiredOwners());
     assertThat(actual.sources()).hasSize(expected.sources().size());
     for (int index = 0; index < expected.sources().size(); index++) {
       SourceEvidence expectedSource = expected.sources().get(index);
@@ -289,6 +469,121 @@ class DraftAuthorizationFenceBindingCodecTest {
         List.of(
             new AffectedUnit(
                 Owner.WORLD_MANAGEMENT, "WORLD_TEMPLATE", "world-1", "ROOM_SCOPE", "room-1", "0")));
+  }
+
+  private static DraftAuthorizationFenceBinding bindingForOwners(List<Owner> owners) {
+    DraftCommitBinding gameDesign = gameDesignBinding(owners);
+    byte[] gameDesignBytes = gameDesign.canonicalBytes();
+    return new DraftAuthorizationFenceBinding(
+        OPERATION_ID,
+        REQUEST_ID,
+        COMMIT_ID,
+        FENCE_ID,
+        ACTOR_ID,
+        TENANT_ID,
+        VERSION_ID,
+        "base-source-1",
+        EXPECTED_DRAFT_EPOCH,
+        gameDesignBytes,
+        gameDesignBytes,
+        gameDesign.digest(),
+        List.of(source()));
+  }
+
+  private static DraftCommitBinding gameDesignBinding(List<Owner> owners) {
+    List<RevisionPayload> revisions = new ArrayList<>();
+    List<AffectedUnit> affectedUnits = new ArrayList<>();
+    for (int index = 0; index < owners.size(); index++) {
+      Owner owner = owners.get(index);
+      revisions.add(
+          new RevisionPayload(
+              Integer.toString(index),
+              UUID.nameUUIDFromBytes(("revision-" + owner.name()).getBytes(StandardCharsets.UTF_8)),
+              owner,
+              "{}"));
+      affectedUnits.add(
+          new AffectedUnit(
+              owner,
+              "TEST_AGGREGATE",
+              owner.name().toLowerCase(java.util.Locale.ROOT),
+              "TEST_SCOPE",
+              "scope-" + owner.name().toLowerCase(java.util.Locale.ROOT),
+              "0"));
+    }
+    return DraftCommitBinding.create(
+        new TargetProof(
+            TENANT_ID, VERSION_ID, 19L, "tenant-key", 42L, "tenant-key", "NEW_GAME_ROW"),
+        REQUEST_ID,
+        COMMIT_ID,
+        "base-source-1",
+        revisions,
+        affectedUnits);
+  }
+
+  private static DraftAuthorizationFenceBinding.OwnerReadback ownerReadback(
+      DraftAuthorizationFenceBinding binding,
+      DraftAuthorizationFenceBinding.Owner owner,
+      byte[] result) {
+    return new DraftAuthorizationFenceBinding.OwnerReadback(
+        owner,
+        DraftAuthorizationFenceBinding.Outcome.COMMITTED,
+        binding.operationId(),
+        binding.commitId(),
+        binding.fenceId(),
+        binding.inputDigest(),
+        binding.canonicalBytes(),
+        result);
+  }
+
+  private static byte[] goldenV2Bytes(
+      DraftAuthorizationFenceBinding binding,
+      List<DraftAuthorizationFenceBinding.Owner> requiredOwners) {
+    ByteArrayOutputStream output = new ByteArrayOutputStream();
+    appendFrame(output, DraftAuthorizationFenceBinding.SCHEMA_V2);
+    for (String value :
+        List.of(
+            binding.operationId().toString(),
+            binding.requestId().toString(),
+            binding.commitId().toString(),
+            binding.fenceId().toString(),
+            binding.actorAccountId().toString(),
+            binding.tenantId().toString(),
+            binding.versionId().toString(),
+            binding.baseCommitId(),
+            "DRAFT",
+            binding.expectedDraftEpoch())) {
+      appendFrame(output, value);
+    }
+    appendFrame(output, binding.gameDesignBinding());
+    appendFrame(output, binding.normalizedInput());
+    appendFrame(output, binding.inputDigest());
+    appendFrame(output, Integer.toString(binding.sources().size()));
+    binding.sources().forEach(source -> appendFrame(output, source.canonicalBytes()));
+    appendFrame(output, Integer.toString(requiredOwners.size()));
+    requiredOwners.forEach(owner -> appendFrame(output, owner.name()));
+    return output.toByteArray();
+  }
+
+  private static byte[] goldenOwnerReadbackV1(
+      DraftAuthorizationFenceBinding binding,
+      DraftAuthorizationFenceBinding.Owner owner,
+      DraftAuthorizationFenceBinding.Outcome outcome,
+      byte[] result) {
+    ByteArrayOutputStream output = new ByteArrayOutputStream();
+    for (String value :
+        List.of(
+            "account-draft-owner-readback/v1",
+            owner.name(),
+            outcome.name(),
+            binding.operationId().toString(),
+            binding.commitId().toString(),
+            binding.fenceId().toString(),
+            binding.inputDigest())) {
+      appendFrame(output, value);
+    }
+    appendFrame(output, binding.canonicalBytes());
+    appendFrame(output, result);
+    return output.toByteArray();
   }
 
   private static SourceEvidence source() {

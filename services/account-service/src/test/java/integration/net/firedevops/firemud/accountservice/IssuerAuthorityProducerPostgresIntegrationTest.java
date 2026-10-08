@@ -17,6 +17,7 @@ import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Supplier;
 import net.firedevops.firemud.accountservice.authordraft.DraftAuthorizationFenceRepository;
+import net.firedevops.firemud.accountservice.authordraft.DraftAuthorizationFenceRepository.Settlement;
 import net.firedevops.firemud.accountservice.authordraft.DraftAuthorizationFenceRepository.SourceChange;
 import net.firedevops.firemud.accountservice.repository.AccountAuthorityGenerationRepository;
 import net.firedevops.firemud.accountservice.repository.AccountAuthorityGenerationRepository.AuthorityScope;
@@ -67,7 +68,6 @@ class IssuerAuthorityProducerPostgresIntegrationTest {
     for (List<Outcome> outcomes :
         List.of(
             List.of(Outcome.COMMITTED, Outcome.COMMITTED),
-            List.of(Outcome.COMMITTED, Outcome.DEFINITIVELY_ABORTED),
             List.of(Outcome.DEFINITIVELY_ABORTED, Outcome.DEFINITIVELY_ABORTED))) {
       Fixture fixture = newFixture();
       seedIssuer(fixture);
@@ -99,6 +99,11 @@ class IssuerAuthorityProducerPostgresIntegrationTest {
       assertThat(readAuthority(fixture).generation()).isEqualTo(1);
       assertThat(countEvents(fixture, STREAM_KEY)).isZero();
       recordOwner(fixture, binding, Owner.GAME_DESIGN, outcomes.get(1));
+      assertThat(transaction(fixture.transaction(), () -> fences.readSettlement(binding)))
+          .isEqualTo(
+              outcomes.getFirst() == Outcome.COMMITTED
+                  ? Settlement.COMMITTED
+                  : Settlement.FAILED_NONPUBLICATION);
       IssuerGenerationAuthorityEvent event = fixture.producer().advance(ISSUER_ID, request, 1, 1);
       assertThat(event.issuerAuthGeneration()).isEqualTo("2");
       assertThat(
@@ -119,7 +124,76 @@ class IssuerAuthorityProducerPostgresIntegrationTest {
                   fixture.transaction(),
                   () -> fences.readOwnerResult(binding, Owner.WORLD).orElseThrow().outcome()))
           .isEqualTo(outcomes.get(0));
+      assertThat(
+              transaction(
+                  fixture.transaction(),
+                  () -> fences.readOwnerResult(binding, Owner.GAME_DESIGN).orElseThrow().outcome()))
+          .isEqualTo(outcomes.get(1));
     }
+
+    Fixture mixedFixture = newFixture();
+    seedIssuer(mixedFixture);
+    DraftAuthorizationFenceBinding mixedBinding =
+        issuerBinding(ISSUER_ID, "1", "1", "0", new byte[] {1});
+    DraftAuthorizationFenceRepository mixedFences =
+        new DraftAuthorizationFenceRepository(mixedFixture.transactionDsl());
+    transaction(
+        mixedFixture.transaction(),
+        () -> {
+          mixedFences.reserve(mixedBinding);
+          mixedFences.claimCommitOrder(mixedBinding);
+          return null;
+        });
+    StoredState beforeMixed = snapshot(mixedFixture);
+    UUID mixedRequest = UUID.randomUUID();
+    assertThatThrownBy(() -> mixedFixture.producer().advance(ISSUER_ID, mixedRequest, 1, 1))
+        .isInstanceOf(PendingSourceChangeException.class);
+    SourceChange mixedOriginal = pendingIssuerChange(mixedFixture, ISSUER_ID, mixedRequest);
+    recordOwner(mixedFixture, mixedBinding, Owner.WORLD, Outcome.COMMITTED);
+    recordOwner(mixedFixture, mixedBinding, Owner.GAME_DESIGN, Outcome.DEFINITIVELY_ABORTED);
+
+    assertThat(
+            transaction(mixedFixture.transaction(), () -> mixedFences.readSettlement(mixedBinding)))
+        .isEqualTo(Settlement.PENDING);
+    assertThatThrownBy(() -> mixedFixture.producer().advance(ISSUER_ID, mixedRequest, 1, 1))
+        .isInstanceOf(PendingSourceChangeException.class)
+        .satisfies(
+            error ->
+                assertThat(((PendingSourceChangeException) error).sourceChangeId())
+                    .isEqualTo(mixedOriginal.changeId()));
+    assertThat(snapshot(mixedFixture)).isEqualTo(beforeMixed);
+    assertThat(pendingIssuerChange(mixedFixture, ISSUER_ID, mixedRequest).canonicalBytes())
+        .containsExactly(mixedOriginal.canonicalBytes());
+    assertThat(
+            transaction(
+                mixedFixture.transaction(),
+                () -> mixedFences.readSourceChange(mixedOriginal).status()))
+        .isEqualTo("WAITING");
+    assertThat(
+            Objects.requireNonNull(
+                    mixedFixture
+                        .setupDsl()
+                        .fetchOne(
+                            "SELECT status FROM account_issuer_tenant_draft_source_changes WHERE request_id = ?",
+                            mixedRequest),
+                    "Mixed issuer source intent disappeared")
+                .get("status", String.class))
+        .isEqualTo("WAITING");
+    assertThat(
+            transaction(
+                mixedFixture.transaction(),
+                () ->
+                    mixedFences.readOwnerResult(mixedBinding, Owner.WORLD).orElseThrow().outcome()))
+        .isEqualTo(Outcome.COMMITTED);
+    assertThat(
+            transaction(
+                mixedFixture.transaction(),
+                () ->
+                    mixedFences
+                        .readOwnerResult(mixedBinding, Owner.GAME_DESIGN)
+                        .orElseThrow()
+                        .outcome()))
+        .isEqualTo(Outcome.DEFINITIVELY_ABORTED);
   }
 
   @Test

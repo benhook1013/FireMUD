@@ -310,7 +310,7 @@ class AccountLogoutAllAuthorityProducerPostgresIntegrationTest {
   }
 
   @Test
-  void commitOrderWaitsForBothExactOutcomesIncludingMixedFailureBeforeLogoutAdvance() {
+  void mixedCommitOrderHoldsLogoutAuthorityAndPreservesOriginalOwnerResult() {
     Fixture fixture = newFixture();
     Seed seed = seedAccount(fixture);
     DraftAuthorizationFenceBinding binding =
@@ -347,7 +347,7 @@ class AccountLogoutAllAuthorityProducerPostgresIntegrationTest {
         fixture, binding, Owner.GAME_DESIGN, Outcome.DEFINITIVELY_ABORTED, new byte[] {42});
     assertThat(
             transaction(fixture.transaction(), () -> draftFences(fixture).readSettlement(binding)))
-        .isEqualTo(Settlement.FAILED_NONPUBLICATION);
+        .isEqualTo(Settlement.PENDING);
     var originalWorldResult =
         transaction(
                 fixture.transaction(),
@@ -356,18 +356,14 @@ class AccountLogoutAllAuthorityProducerPostgresIntegrationTest {
     assertThat(originalWorldResult.outcome()).isEqualTo(Outcome.COMMITTED);
     assertThat(originalWorldResult.readback()).containsExactly(expectedWorldReadbackBytes);
 
-    assertThat(commit(fixture, seed, requestId, requestDigest, tokenHash, seed.initialState()))
-        .isEqualTo(LogoutAllResult.LOGOUT_ALL_COMMITTED);
-    assertThat(authority(fixture, seed).generation()).isEqualTo(2L);
-    assertThat(logoutReceipt(fixture, requestId).outboxSequence()).isEqualTo(1L);
-    assertThat(event(fixture, seed, 1L).requestId()).isEqualTo(requestId.toString());
-    assertThat(pendingIntent(fixture, requestId).orElseThrow().status())
-        .isEqualTo("SOURCE_COMMITTED");
+    assertPending(fixture, seed, requestId, requestDigest, tokenHash, seed.initialState());
+    assertThat(snapshot(fixture, seed)).isEqualTo(before);
+    assertThat(pendingIntent(fixture, requestId).orElseThrow().status()).isEqualTo("WAITING");
     assertThat(
             transaction(
                 fixture.transaction(),
                 () -> draftFences(fixture).readSourceChange(sourceChange).status()))
-        .isEqualTo("SOURCE_COMMITTED");
+        .isEqualTo("WAITING");
     var replayedWorldResult =
         transaction(
                 fixture.transaction(),
@@ -376,8 +372,8 @@ class AccountLogoutAllAuthorityProducerPostgresIntegrationTest {
     assertThat(replayedWorldResult.outcome()).isEqualTo(originalWorldResult.outcome());
     assertThat(replayedWorldResult.readback()).containsExactly(expectedWorldReadbackBytes);
     assertThat(replayedWorldResult.recordedAt()).isEqualTo(originalWorldResult.recordedAt());
-    assertThat(count(fixture, "account_authority_outbox_events")).isEqualTo(1L);
-    assertThat(count(fixture, "account_logout_all_operation_receipts")).isEqualTo(1L);
+    assertThat(count(fixture, "account_authority_outbox_events")).isZero();
+    assertThat(count(fixture, "account_logout_all_operation_receipts")).isZero();
   }
 
   @Test
