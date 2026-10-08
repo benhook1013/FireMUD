@@ -6,6 +6,10 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import integration.net.firedevops.firemud.accountservice.repository.AccountPostgresIntegrationFixture;
 import io.grpc.Status;
 import io.grpc.StatusRuntimeException;
+import java.lang.reflect.InvocationTargetException;
+import java.lang.reflect.Proxy;
+import java.sql.Connection;
+import java.sql.SQLException;
 import java.time.Instant;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -16,7 +20,9 @@ import java.util.concurrent.Callable;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Supplier;
+import javax.sql.DataSource;
 import net.firedevops.firemud.account.v1.AbortGameplayAdmissionLeaseRequest;
 import net.firedevops.firemud.account.v1.FinalizeGameplayAdmissionLeaseRequest;
 import net.firedevops.firemud.account.v1.ReadGameplayAdmissionLeaseRequest;
@@ -35,6 +41,7 @@ import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.springframework.jdbc.datasource.DataSourceTransactionManager;
+import org.springframework.jdbc.datasource.DelegatingDataSource;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
 import org.springframework.jdbc.datasource.TransactionAwareDataSourceProxy;
 import org.springframework.transaction.TransactionDefinition;
@@ -66,6 +73,149 @@ class AccountGameplayAdmissionLeasePersistenceIntegrationTest {
     assertThat(settings.inRecovery()).isFalse();
     assertThat(settings.fsync()).isEqualTo("on");
     assertThat(settings.synchronousCommit()).isEqualTo("on");
+  }
+
+  @Test
+  void originalExecutorAcknowledgesActualCommitWithoutCreatingTemporalReceipt() {
+    var context = context(null);
+    var original = pending(context, account(context));
+    UUID decision = UUID.randomUUID();
+    var before = operation(context, original);
+    // Upstream carrier and authority fields are component-only fixtures, never admission proof.
+    var acknowledgement =
+        new AccountGameplayAdmissionOriginalCommitExecutor(context.dataSource())
+            .execute(original, decision);
+    var committed = operation(context, original);
+    assertThat(acknowledgement.evidence().canonicalJson()).isEqualTo(original.canonicalJson());
+    assertThat(acknowledgement.evidence().sha256()).isEqualTo(original.sha256());
+    assertThat(acknowledgement.decisionId()).isEqualTo(decision);
+    assertThat(acknowledgement.finalizationXid())
+        .isEqualTo(committed.get("finalization_xid", String.class));
+    assertThat(committed.get("status", String.class)).isEqualTo("COMMITTED");
+    assertThat(committed.get("binding_decision_id", UUID.class)).isEqualTo(decision);
+    for (String field :
+        List.of(
+            "request_id",
+            "account_uuid",
+            "lease_id",
+            "lease_fence",
+            "evidence_json",
+            "evidence_sha256",
+            "evaluated_at_ms",
+            "expires_at_ms")) {
+      assertThat(committed.get(field)).as(field).isEqualTo(before.get(field));
+    }
+    assertThat(committed.get("expires_at_ms", Long.class)).isEqualTo(expiresAt(original));
+    assertThat(
+            context.dsl().fetchCount(DSL.table("account_gameplay_admission_commit_confirmations")))
+        .isZero();
+    // ACK alone supplies no post-COMMIT DB-clock bound and is not a temporal confirmation.
+  }
+
+  @Test
+  void originalExecutorRejectsCommittedRetryWithoutRefreshingEvidence() {
+    var context = context(null);
+    var original = pending(context, account(context));
+    UUID decision = UUID.randomUUID();
+    var executor = new AccountGameplayAdmissionOriginalCommitExecutor(context.dataSource());
+    var acknowledgement = executor.execute(original, decision);
+    var committed = operation(context, original);
+    assertThatThrownBy(() -> executor.execute(original, decision))
+        .hasMessageContaining("Fresh owned Account original COMMIT required");
+    assertThat(operation(context, original)).isEqualTo(committed);
+    assertThat(operation(context, original).get("finalization_xid", String.class))
+        .isEqualTo(acknowledgement.finalizationXid());
+    assertThat(
+            context.dsl().fetchCount(DSL.table("account_gameplay_admission_commit_confirmations")))
+        .isZero();
+  }
+
+  @Test
+  void lostOriginalCommitAcknowledgementDeniesDespiteActualCommittedReadback() {
+    var context = context(null);
+    var original = pending(context, account(context));
+    UUID decision = UUID.randomUUID();
+    var physicalCommits = new AtomicInteger();
+    var executor =
+        new AccountGameplayAdmissionOriginalCommitExecutor(
+            originalCommitFailureDataSource(context.dataSource(), true, physicalCommits));
+    assertThatThrownBy(() -> executor.execute(original, decision))
+        .hasMessageContaining("Original Account physical COMMIT unavailable");
+    assertThat(physicalCommits.get()).isEqualTo(1);
+    var committed = operation(context, original);
+    assertThat(committed.get("status", String.class)).isEqualTo("COMMITTED");
+    assertThat(committed.get("binding_decision_id", UUID.class)).isEqualTo(decision);
+    assertThat(committed.get("finalization_xid", String.class)).isNotBlank();
+    assertThat(committed.get("evidence_json", String.class)).isEqualTo(original.canonicalJson());
+    assertThat(committed.get("evidence_sha256", String.class)).isEqualTo(original.sha256());
+    assertThat(committed.get("expires_at_ms", Long.class)).isEqualTo(expiresAt(original));
+    // Retry on a normal physical connection cannot turn raw visibility into the missing ACK.
+    assertThatThrownBy(
+            () ->
+                new AccountGameplayAdmissionOriginalCommitExecutor(context.dataSource())
+                    .execute(original, decision))
+        .hasMessageContaining("Fresh owned Account original COMMIT required");
+    assertThat(operation(context, original)).isEqualTo(committed);
+    assertThat(
+            context.dsl().fetchCount(DSL.table("account_gameplay_admission_commit_confirmations")))
+        .isZero();
+  }
+
+  @Test
+  void rejectionBeforeOriginalPhysicalCommitRollsBackPendingWithoutAcknowledgement() {
+    var context = context(null);
+    var original = pending(context, account(context));
+    var unchanged = storageSnapshot(context);
+    var physicalCommits = new AtomicInteger();
+    var executor =
+        new AccountGameplayAdmissionOriginalCommitExecutor(
+            originalCommitFailureDataSource(context.dataSource(), false, physicalCommits));
+    assertThatThrownBy(() -> executor.execute(original, UUID.randomUUID()))
+        .hasMessageContaining("Original Account physical COMMIT unavailable");
+    assertThat(physicalCommits.get()).isZero();
+    assertThat(operation(context, original).get("status", String.class)).isEqualTo("PENDING");
+    assertThat(operation(context, original).get("finalization_xid", String.class)).isNull();
+    assertThat(storageSnapshot(context)).isEqualTo(unchanged);
+    assertThat(
+            context.dsl().fetchCount(DSL.table("account_gameplay_admission_commit_confirmations")))
+        .isZero();
+  }
+
+  /** Test-only transport fault around real JDBC COMMIT, with no production success injection. */
+  private static DataSource originalCommitFailureDataSource(
+      DataSource source, boolean afterPhysicalCommit, AtomicInteger physicalCommits) {
+    return new DelegatingDataSource(source) {
+      @Override
+      public Connection getConnection() throws SQLException {
+        return faultConnection(super.getConnection());
+      }
+
+      @Override
+      public Connection getConnection(String username, String password) throws SQLException {
+        return faultConnection(super.getConnection(username, password));
+      }
+
+      private Connection faultConnection(Connection physical) {
+        return (Connection)
+            Proxy.newProxyInstance(
+                Connection.class.getClassLoader(),
+                new Class<?>[] {Connection.class},
+                (proxy, method, arguments) -> {
+                  if (method.getName().equals("commit") && method.getParameterCount() == 0) {
+                    if (!afterPhysicalCommit)
+                      throw new SQLException("Test rejection before physical COMMIT", "08006");
+                    physical.commit();
+                    physicalCommits.incrementAndGet();
+                    throw new SQLException("Test lost original COMMIT acknowledgement", "08006");
+                  }
+                  try {
+                    return method.invoke(physical, arguments);
+                  } catch (InvocationTargetException failure) {
+                    throw failure.getCause();
+                  }
+                });
+      }
+    };
   }
 
   @Test

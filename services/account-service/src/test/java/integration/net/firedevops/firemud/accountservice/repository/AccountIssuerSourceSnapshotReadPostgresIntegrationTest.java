@@ -47,7 +47,7 @@ class AccountIssuerSourceSnapshotReadPostgresIntegrationTest {
   private static final String ISSUER = AccountIssuerSourceSnapshotEvidence.ISSUER_ID;
   private static final String NAMESPACE = "test";
   private static final String CALLER = "spiffe://firemud/ns/test/sa/game-session-service";
-  private static final String SCHEMA_PREFIX = "account_issuer_source_read_proof";
+  private static final String SCHEMA_PREFIX = "account_issuer_read";
   private static final AccountPostgresIntegrationFixture POSTGRES =
       new AccountPostgresIntegrationFixture();
 
