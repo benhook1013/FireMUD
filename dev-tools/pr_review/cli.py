@@ -132,7 +132,13 @@ def _parser() -> argparse.ArgumentParser:
         metavar="REASON",
         help="nonblank reason required with --allow-removal; not persisted in controller state",
     )
-    stack_commands.add_parser("show")
+    stack_show = stack_commands.add_parser(
+        "show",
+        help="show the configured review stack",
+        description="Show the configured PR order as text by default or as JSON on request.",
+        epilog="Example: dev-tools/pr-review stack show --json",
+    )
+    stack_show.add_argument("--json", action="store_true", dest="as_json", help="return the stack object as JSON")
 
     status = commands.add_parser("status", help="show live stack or one-PR status")
     status.add_argument("--pr", type=_positive_int)
@@ -144,7 +150,8 @@ def _parser() -> argparse.ArgumentParser:
     )
 
     routes = commands.add_parser(
-        "routes", help="list open incoming or unassigned finding routes",
+        "routes",
+        help="list open incoming or unassigned finding routes",
         description=(
             "List open incoming or unassigned finding routes from structured SQLite records and migrated legacy "
             "controller state. Before review-records schema bootstrap, lists legacy controller routes only."
@@ -179,18 +186,39 @@ def _parser() -> argparse.ArgumentParser:
     )
     records_database(migrate_records)
 
-    history = record_commands.add_parser("history", help="show source and incoming route history for one PR")
+    history = record_commands.add_parser(
+        "history",
+        help="show source and incoming route history for one PR",
+        description=(
+            "Read the existing versioned JSON history envelope. --json is accepted as an explicit "
+            "structured-output marker; omitting it keeps the same response."
+        ),
+        epilog="Example: dev-tools/pr-review records history --pr 123 --json",
+    )
     history.add_argument("--pr", required=True, type=_positive_int)
+    history.add_argument(
+        "--json", action="store_true", dest="as_json", help="explicitly request the existing versioned JSON response"
+    )
     records_database(history)
 
     history_batch = record_commands.add_parser(
-        "history-batch", help="show structured review history for several PRs in one command"
+        "history-batch",
+        help="show structured review history for several PRs in one command",
+        description=(
+            "Read the existing versioned JSON history envelope. --json is accepted as an explicit "
+            "structured-output marker; omitting it keeps the same response."
+        ),
+        epilog="Example: dev-tools/pr-review records history-batch --pr 123 --pr 124 --json",
     )
     history_batch.add_argument("--pr", action="append", required=True, type=_positive_int)
+    history_batch.add_argument(
+        "--json", action="store_true", dest="as_json", help="explicitly request the existing versioned JSON response"
+    )
     records_database(history_batch)
 
     incoming = record_commands.add_parser(
-        "routes", help="list structured and migrated controller routes",
+        "routes",
+        help="list structured and migrated controller routes",
         description="List recorded routes; use records route resolve to record a native receiving-owner outcome.",
     )
     incoming_query = incoming.add_mutually_exclusive_group()
@@ -382,13 +410,16 @@ def _parser() -> argparse.ArgumentParser:
     route_decide.add_argument("--decided-at")
     records_database(route_decide)
     route_resolve = route_subcommands.add_parser(
-        "resolve", help="record a native receiving-owner fix or rejection",
+        "resolve",
+        help="record a native receiving-owner fix or rejection",
         description="Record a native SQLite route outcome with proof or a rejection reason; does not complete a review run.",
-        epilog=("Find the route ID with routes --target-pr PR or records routes.\n"
-                "Example: firemud-controller reviews records route resolve --route-id ROUTE_ID\n"
-                "  --resolution-id UNIQUE_ID --target-pr 123 --outcome accepted_fixed\n"
-                "  --actor General --proof-or-reason 'Verified fix and focused proof'\n"
-                "The example is one command; join its continuation lines."),
+        epilog=(
+            "Find the route ID with routes --target-pr PR or records routes.\n"
+            "Example: firemud-controller reviews records route resolve --route-id ROUTE_ID\n"
+            "  --resolution-id UNIQUE_ID --target-pr 123 --outcome accepted_fixed\n"
+            "  --actor General --proof-or-reason 'Verified fix and focused proof'\n"
+            "The example is one command; join its continuation lines."
+        ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     route_resolve.add_argument("--route-id", required=True, help="stable route ID returned by route listing")
@@ -396,7 +427,9 @@ def _parser() -> argparse.ArgumentParser:
     route_resolve.add_argument("--target-pr", required=True, type=_positive_int, help="receiving PR for this route")
     route_resolve.add_argument("--outcome", required=True, choices=("accepted_fixed", "rejected"))
     route_resolve.add_argument("--actor", required=True)
-    route_resolve.add_argument("--proof-or-reason", required=True, help="verified fix evidence or bounded rejection reason")
+    route_resolve.add_argument(
+        "--proof-or-reason", required=True, help="verified fix evidence or bounded rejection reason"
+    )
     route_resolve.add_argument("--resolved-at")
     records_database(route_resolve)
     route_retarget = route_subcommands.add_parser("retarget")
@@ -449,19 +482,27 @@ def _parser() -> argparse.ArgumentParser:
     policy.add_argument("--reason", required=True)
     policy.add_argument("--json", action="store_true", dest="as_json")
     allocation = decide_commands.add_parser(
-        "allocation", help="grant, renew, or cancel one exact-bound channel review allocation",
-        description=("Grant a new allocation, or renew to replace an existing allocation or human stop explicitly. "
-                     "Recording an allocation does not request a review. Exact rounds always preserve taper "
-                     "and cannot be combined with --fresh-taper."),
-        epilog=("Example: firemud-controller reviews decide allocation grant --pr 123 --channel cli\n"
-                "  --head aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa --exact-additional-completed 2\n"
-                "  --reason 'Human requested two further completed results'\n"
-                "Join continuation lines and replace the example head with the exact live SHA.\n"
-                "Use renew instead of grant when replacing an existing allocation or stop."),
+        "allocation",
+        help="grant, renew, or cancel one exact-bound channel review allocation",
+        description=(
+            "Grant a new allocation, or renew to replace an existing allocation or human stop explicitly. "
+            "Recording an allocation does not request a review. Exact rounds always preserve taper "
+            "and cannot be combined with --fresh-taper."
+        ),
+        epilog=(
+            "Example: firemud-controller reviews decide allocation grant --pr 123 --channel cli\n"
+            "  --head aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa --exact-additional-completed 2\n"
+            "  --reason 'Human requested two further completed results'\n"
+            "Join continuation lines and replace the example head with the exact live SHA.\n"
+            "Use renew instead of grant when replacing an existing allocation or stop."
+        ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    allocation.add_argument("action", choices=("grant", "renew", "cancel"),
-                            help="grant new allowance; renew replaces allowance/stop; cancel removes allowance")
+    allocation.add_argument(
+        "action",
+        choices=("grant", "renew", "cancel"),
+        help="grant new allowance; renew replaces allowance/stop; cancel removes allowance",
+    )
     allocation.add_argument("--pr", required=True, type=_positive_int)
     allocation.add_argument("--channel", required=True, choices=("hosted", "cli"))
     allocation.add_argument("--head", required=True, type=_exact_sha)
@@ -511,9 +552,12 @@ def _parser() -> argparse.ArgumentParser:
     )
     stop.add_argument("--json", action="store_true", dest="as_json")
     route = decide_commands.add_parser(
-        "route", help="record or disposition one stable routed finding",
-        description=("Record controller route decisions. Native SQLite receiving-owner resolution uses "
-                     "records route resolve; the actions here are open, accepted-fixed, rejected and retargeted."),
+        "route",
+        help="record or disposition one stable routed finding",
+        description=(
+            "Record controller route decisions. Native SQLite receiving-owner resolution uses "
+            "records route resolve; the actions here are open, accepted-fixed, rejected and retargeted."
+        ),
     )
     route.add_argument("action", choices=("open", "accepted-fixed", "rejected", "retargeted"))
     route.add_argument("--route-id")
@@ -1252,8 +1296,9 @@ def _dispatch_records(args: argparse.Namespace) -> tuple[Any, int]:
                 if attempt["state"] == "started":
                     store.finish_attempt(args.run_id, state="completed", finished_at=finished_at)
                 store.link_attempt_run(args.run_id, args.run_id)
-                effective = next(run for run in store.history(attempt["source_pr"])["runs"]
-                                 if run["run_id"] == args.run_id)
+                effective = next(
+                    run for run in store.history(attempt["source_pr"])["runs"] if run["run_id"] == args.run_id
+                )
                 if "original_counts" in effective:
                     recorded["counts"] = effective["counts"]
                     recorded["original_counts"] = effective["original_counts"]

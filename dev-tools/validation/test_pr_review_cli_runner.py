@@ -143,9 +143,9 @@ class BoundedAllocationCliParserTests(unittest.TestCase):
             "exact additional review count",
         ]
         self.assertEqual(
-            _parser().parse_args(
-                [*common, "--min-additional-completed", "1", "--max-additional-completed", "4"]
-            ).min_additional_completed,
+            _parser()
+            .parse_args([*common, "--min-additional-completed", "1", "--max-additional-completed", "4"])
+            .min_additional_completed,
             1,
         )
         for bound in ("--min-additional-completed", "--max-additional-completed"):
@@ -173,6 +173,34 @@ class BoundedAllocationCliParserTests(unittest.TestCase):
 
         self.assertIsNone(args.checkpoint)
         self.assertIsNone(args.max_additional_completed)
+
+
+class ReviewReadJsonFlagTests(unittest.TestCase):
+    def test_history_and_stack_json_flags_keep_existing_payload_shapes(self):
+        history = _parser().parse_args(["records", "history", "--pr", "3092", "--json"])
+        history_batch = _parser().parse_args(["records", "history-batch", "--pr", "3092", "--pr", "3093", "--json"])
+        stack = _parser().parse_args(["stack", "show", "--json"])
+        self.assertTrue(history.as_json)
+        self.assertTrue(history_batch.as_json)
+        self.assertTrue(stack.as_json)
+
+        value = {"ordered_prs": [3092, 3093], "schema_version": 1}
+        controller = SimpleNamespace(show_stack=lambda: value)
+        output = io.StringIO()
+        with (
+            patch.object(cli_module, "_controller", return_value=(controller, None)),
+            contextlib.redirect_stdout(output),
+        ):
+            self.assertEqual(cli_module.main(["stack", "show", "--json"]), 0)
+        self.assertEqual(json.loads(output.getvalue()), value)
+
+        output = io.StringIO()
+        with (
+            patch.object(cli_module, "_controller", return_value=(controller, None)),
+            contextlib.redirect_stdout(output),
+        ):
+            self.assertEqual(cli_module.main(["stack", "show"]), 0)
+        self.assertEqual(output.getvalue(), "ordered_prs=[3092, 3093]\nschema_version=1\n")
 
 
 class HostedCliPreflightBudgetTests(unittest.TestCase):
@@ -656,8 +684,12 @@ class CliReviewRunnerTests(unittest.TestCase):
 
             self.assertEqual(cleanup_operations, ["worktree", "pinned-ref"])
             notes = getattr(raised.exception, "__notes__", [])
-            self.assertTrue(any("CLI worktree cleanup failed with exit status 1: worktree is busy" in note for note in notes))
-            self.assertTrue(any("CLI pinned-ref cleanup failed with exit status 1: pinned ref is busy" in note for note in notes))
+            self.assertTrue(
+                any("CLI worktree cleanup failed with exit status 1: worktree is busy" in note for note in notes)
+            )
+            self.assertTrue(
+                any("CLI pinned-ref cleanup failed with exit status 1: pinned ref is busy" in note for note in notes)
+            )
             self.assertFalse(any(call[0][0] == "coderabbit" for call in commands.calls))
 
     def test_deadline_cleanup_notes_reach_capture_sqlite_and_wrapped_cli_boundary(self):
@@ -682,9 +714,7 @@ class CliReviewRunnerTests(unittest.TestCase):
                 return original_run(args, **kwargs)
 
             commands.run = fail_cleanup
-            deadline = github.HostedPreflightDeadlineExceeded(
-                "final_identity_check", 121.5, 120, 0, 1, "CLI"
-            )
+            deadline = github.HostedPreflightDeadlineExceeded("final_identity_check", 121.5, 120, 0, 1, "CLI")
             with (
                 github.cli_preflight_budget(),
                 patch.object(cli_runner, "_verify_target_still_current", side_effect=deadline),
@@ -760,9 +790,7 @@ class CliReviewRunnerTests(unittest.TestCase):
                 return original_finish(*args, **kwargs)
 
             records.finish_attempt = fail_failed_archive
-            deadline = github.HostedPreflightDeadlineExceeded(
-                "final_identity_check", 121.5, 120, 0, 1, "CLI"
-            )
+            deadline = github.HostedPreflightDeadlineExceeded("final_identity_check", 121.5, 120, 0, 1, "CLI")
             if callable(getattr(deadline, "add_note", None)):
                 deadline.add_note = None
             original_write_text = Path.write_text
@@ -827,9 +855,7 @@ class CliReviewRunnerTests(unittest.TestCase):
             common_dir.mkdir()
             write_hosted_trigger(common_dir)
             commands = FakeCommands(root)
-            deadline = github.HostedPreflightDeadlineExceeded(
-                "hosted_overlap_preflight", 121.5, 120, 0, 1, "CLI"
-            )
+            deadline = github.HostedPreflightDeadlineExceeded("hosted_overlap_preflight", 121.5, 120, 0, 1, "CLI")
 
             with (
                 github.cli_preflight_budget(),
@@ -985,10 +1011,7 @@ class CliReviewRunnerTests(unittest.TestCase):
             self.assertFalse((run_dirs[0] / "capture-complete").exists())
             self.assertFalse(commands.test_worktrees)
             self.assertTrue(
-                any(
-                    args[:2] == ("git", "-C") and args[2:] and args[-2:-1] == ("-d",)
-                    for args, _cwd in commands.calls
-                )
+                any(args[:2] == ("git", "-C") and args[2:] and args[-2:-1] == ("-d",) for args, _cwd in commands.calls)
             )
             self.assertFalse(any(call[0][0] == "coderabbit" for call in commands.calls))
 
