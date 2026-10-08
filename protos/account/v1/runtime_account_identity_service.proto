@@ -1,0 +1,29 @@
+syntax = "proto3";
+
+package account.v1;
+
+option java_package = "net.firedevops.firemud.account.v1";
+option java_multiple_files = true;
+
+// Authenticated owner-local read of Account's persisted UUID identity provenance.
+service RuntimeAccountIdentityService {
+  rpc ResolveRuntimeAccountIdentity(ResolveRuntimeAccountIdentityRequest)
+      returns (ResolveRuntimeAccountIdentityResponse);
+}
+
+message ResolveRuntimeAccountIdentityRequest {
+  string canonical_account_id = 1;
+  string request_id = 2;
+}
+
+message ResolveRuntimeAccountIdentityResponse {
+  int32 schema_version = 1;
+  string target_namespace = 2;
+  string request_id = 3;
+  string canonical_account_id = 4;
+  // Private Account provenance evidence; never use this row key as gameplay identity.
+  int64 source_account_row_id = 5;
+  string account_uuid_provenance = 6;
+  reserved 7;
+  reserved "source_numeric_row_id";
+}

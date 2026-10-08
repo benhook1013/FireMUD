@@ -21,6 +21,7 @@ import net.firedevops.firemud.gamedesign.model.VersionLifecycleState;
 import net.firedevops.firemud.gamedesign.repository.GameRepository;
 import net.firedevops.firemud.gamedesign.repository.PublishAttemptRepository;
 import net.firedevops.firemud.gamedesign.repository.VersionRepository;
+import net.firedevops.firemud.gamedesign.service.AssetExportOutcomePendingException;
 import net.firedevops.firemud.gamedesign.service.AssetExportService;
 import net.firedevops.firemud.gamedesign.service.ControlPlaneDigestService;
 import net.firedevops.firemud.gamedesign.service.ExportedAssetManifest;
@@ -166,9 +167,36 @@ public class VersionPublishCommandServiceImpl {
     } catch (RuntimeException ex) {
       return failDefinitively(request, attempt, version, null, ex);
     }
+    VersionAssetArtifactStateDto stagedArtifact;
+    try {
+      stagedArtifact =
+          versionAssetArtifactService.stageExport(
+              request.tenantId(),
+              version.getId(),
+              dto.versionNumber(),
+              request.publishWorkflowId());
+    } catch (RuntimeException ex) {
+      throw pendingReconciliation(
+          "asset export staging outcome is pending; retry exact publish request", ex);
+    }
+    if (stagedArtifact == null
+        || !Objects.equals(stagedArtifact.tenantId(), request.tenantId())
+        || !Objects.equals(stagedArtifact.versionId(), version.getId())
+        || stagedArtifact.exportedVersionNumber() != dto.versionNumber()
+        || !Objects.equals(stagedArtifact.lastWorkflowId(), request.publishWorkflowId())
+        || stagedArtifact.stateEpoch() <= 0
+        || !("STAGED".equals(stagedArtifact.artifactState())
+            || "EXPORTED_UNATTESTED".equals(stagedArtifact.artifactState()))) {
+      throw pendingReconciliation(
+          "asset export staging did not confirm the exact pending publish scope; "
+              + "retry the exact publish request");
+    }
     ExportedAssetManifest exportedManifest;
     try {
       exportedManifest = assetExportService.exportAssets(request.tenantId(), dto.versionNumber());
+    } catch (AssetExportOutcomePendingException ex) {
+      throw pendingReconciliation(
+          "asset export outcome is pending; retry exact publish request", ex);
     } catch (RuntimeException ex) {
       return failDefinitively(request, attempt, version, null, ex);
     }

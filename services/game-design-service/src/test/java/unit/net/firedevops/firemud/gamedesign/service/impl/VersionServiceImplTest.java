@@ -16,6 +16,7 @@ import io.grpc.StatusRuntimeException;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
+import java.util.UUID;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Supplier;
 import net.firedevops.firemud.common.publication.PublicationDigestRequestBinding;
@@ -49,6 +50,7 @@ import net.firedevops.firemud.gamedesign.service.PublishAttemptPendingReconcilia
 import net.firedevops.firemud.gamedesign.service.PublishAttemptService;
 import net.firedevops.firemud.gamedesign.service.PublishGateFailureException;
 import net.firedevops.firemud.gamedesign.service.PublishGateService;
+import net.firedevops.firemud.gamedesign.service.PublishedArtifactDigest;
 import net.firedevops.firemud.gamedesign.service.PublishedReleaseBundleService;
 import net.firedevops.firemud.gamedesign.service.RecordedParticipantDigestService;
 import net.firedevops.firemud.gamedesign.service.ScriptPatchPublishFailureException;
@@ -65,6 +67,11 @@ import org.springframework.data.domain.Pageable;
 
 class VersionServiceImplTest {
   private static final String PUBLISH_REQUEST_ID = "publish-request-1";
+  private static final String MANIFEST_HASH = "sha256:" + "a".repeat(64);
+  private static final UUID CANONICAL_TENANT_ID =
+      UUID.fromString("12345678-1234-4234-8234-123456789abc");
+  private static final UUID CANONICAL_VERSION_ID =
+      UUID.fromString("82345678-1234-4234-8234-123456789abc");
 
   @Mock private VersionRepository versionRepository;
   @Mock private GameRepository gameRepository;
@@ -1523,7 +1530,7 @@ class VersionServiceImplTest {
         7,
         "v1",
         "workflow-1",
-        "manifest-1",
+        MANIFEST_HASH,
         List.of("manifest.json"),
         List.of(
             new PublishParticipantDigestDto(
@@ -1537,7 +1544,19 @@ class VersionServiceImplTest {
         "genrev-1",
         false,
         null,
-        LocalDateTime.parse("2026-04-26T10:00:00"));
+        LocalDateTime.parse("2026-04-26T10:00:00"),
+        CANONICAL_TENANT_ID,
+        CANONICAL_VERSION_ID,
+        "opaque-release-reference-from-owner",
+        1,
+        List.of(
+            new PublishedArtifactDigest(
+                "manifest.json",
+                "manifest",
+                "artifacts/sha256/" + "b".repeat(64),
+                "sha256:" + "b".repeat(64),
+                "application/json",
+                1)));
   }
 
   private PublishedPluginVersion uploadedPluginVersion(

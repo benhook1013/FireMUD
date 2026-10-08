@@ -40,6 +40,7 @@ firemud:
     cert-chain: ${FIREMUD_GRPC_CERT_CHAIN_PATH:certs/client.crt}
     private-key: ${FIREMUD_GRPC_PRIVATE_KEY_PATH:certs/client.key}
     ca-cert: ${FIREMUD_GRPC_CA_CERT_PATH:certs/ca.crt}
+    workload-namespace: ${FIREMUD_GRPC_WORKLOAD_NAMESPACE:}
   account:
     credentials:
       cleanup:
@@ -54,6 +55,8 @@ firemud:
       player-bootstrap-expiration-ms: 300000
       connect-scope-expiration-ms: 120000
       connect-token-expiration-ms: 30000
+    actor-staging-eligibility:
+      enabled: ${FIREMUD_ACCOUNT_ACTOR_STAGING_ELIGIBILITY_ENABLED:false}
   mail:
     from: no-reply@firemud.local
     verification-url: http://localhost:8080/auth/verify-email?token=%s
@@ -102,6 +105,8 @@ firemud:
         - account.v1.AccountService/GetTenantEntitlementsForRuntime
         - account.v1.AccountService/IssueDirectTextConnectScope
         - account.v1.AccountService/JoinPublicProductionMembership
+        - account.v1.RuntimeAccountIdentityService/ResolveRuntimeAccountIdentity
+        - account.v1.AccountActorStagingEligibilityService/ResolvePreseededActorStagingEligibility
 
 management:
   endpoints:
