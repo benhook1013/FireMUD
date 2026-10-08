@@ -1,0 +1,32 @@
+syntax = "proto3";
+
+package game_design.v1;
+
+option java_package = "net.firedevops.firemud.gamedesign.v1";
+option java_multiple_files = true;
+
+// Standalone historical owner read. Only verified same-namespace Account and World Management
+// workloads may call. No runtime registration, source release, World completion, or admission.
+service GameDesignPublicationTerminalReadService {
+  rpc ReadPublicationTerminal(ReadPublicationTerminalRequest)
+      returns (ReadPublicationTerminalResponse);
+}
+
+message ReadPublicationTerminalRequest {
+  int32 schema_version = 1;
+  string target_namespace = 2;
+  string read_request_id = 3;
+  // Complete canonical GameDesignPublicationOperationBinding bytes; lookup data, not authority.
+  bytes original_operation = 4;
+}
+
+message ReadPublicationTerminalResponse {
+  // Complete request echoed unchanged; unavailable/nonterminal/legacy evidence is a non-OK RPC.
+  int32 schema_version = 1;
+  string target_namespace = 2;
+  string read_request_id = 3;
+  bytes original_operation = 4;
+  // Exact original GameDesignPublicationTerminalEvidence, including exhaustive PUBLISHED content
+  // or explicit NO_PUBLICATION. Transport never mints or upgrades retained terminal bytes.
+  bytes terminal_evidence = 5;
+}

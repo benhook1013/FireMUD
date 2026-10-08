@@ -4,18 +4,42 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.assertj.core.api.Assertions.catchThrowable;
 
+import io.grpc.Server;
+import io.grpc.ServerInterceptors;
+import io.grpc.Status;
+import io.grpc.StatusRuntimeException;
+import io.grpc.netty.shaded.io.grpc.netty.GrpcSslContexts;
+import io.grpc.netty.shaded.io.grpc.netty.NettyServerBuilder;
+import io.grpc.netty.shaded.io.netty.handler.ssl.ClientAuth;
+import java.net.InetSocketAddress;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.security.KeyStore;
 import java.time.LocalDateTime;
+import java.util.ArrayList;
+import java.util.Base64;
 import java.util.List;
 import java.util.UUID;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding.TargetProof;
+import net.firedevops.firemud.common.config.ServiceEndpointsProperties;
+import net.firedevops.firemud.common.grpc.CommonGrpcClientProperties;
+import net.firedevops.firemud.common.grpc.GrpcChannelFactory;
+import net.firedevops.firemud.common.grpc.GrpcPeerIdentityInterceptor;
 import net.firedevops.firemud.common.publication.AccountPublicationAuthorizationBinding;
+import net.firedevops.firemud.common.publication.AuthoredDraftPublishSelectionBinding;
+import net.firedevops.firemud.common.publication.AuthoredDraftPublishSelectionReadClient;
+import net.firedevops.firemud.common.publication.AuthoredDraftPublishSelectionReadEvidence;
 import net.firedevops.firemud.common.publication.PublicationDigestRequestBinding;
 import net.firedevops.firemud.common.temporal.FiremudWorkflowIds;
 import net.firedevops.firemud.gamedesign.GameDesignServiceApplication;
 import net.firedevops.firemud.gamedesign.draft.AuthoredDraftPublishSelection;
 import net.firedevops.firemud.gamedesign.draft.AuthoredDraftPublishSelectionRepository;
+import net.firedevops.firemud.gamedesign.draft.DraftCommitCoordinatorRepository;
+import net.firedevops.firemud.gamedesign.draft.GameDesignSelectedDraftPublicationReadGrpcService;
 import net.firedevops.firemud.gamedesign.draft.IsolatedPublicationOwnerSetup;
 import net.firedevops.firemud.gamedesign.dto.VersionDto;
 import net.firedevops.firemud.gamedesign.entity.Game;
@@ -46,6 +70,7 @@ import net.firedevops.firemud.test.PostgresBackedServiceTestSupport;
 import net.firedevops.firemud.test.TestContainerImages;
 import org.jooq.DSLContext;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 import org.mockito.Mockito;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -783,6 +808,389 @@ class PublishAttemptServiceTransactionIntegrationTest {
     assertThat(terminalOperation.outcome()).isEqualTo("NO_PUBLICATION");
     assertThat(terminalOperation.terminalEvidenceBytes()).isNotNull();
     publishAttemptRepository.requireNoPublicationOperation(attempt);
+  }
+
+  /**
+   * Real PostgreSQL selection and production loopback mTLS owner read. Original Account/World
+   * outcomes are stipulated by the isolated setup; this does not prove full cross-owner APPLIED
+   * provenance, deployed custody, current DRAFT authority, publication, or runtime activation.
+   */
+  @Test
+  void retainedSelectedDraftOwnerReadOverMtlsReplaysExactlyAndDeniesSubstitution(
+      @TempDir Path temporary) throws Exception {
+    String tenantId = "9009";
+    Game game = new Game();
+    game.setTenantId(tenantId);
+    game.setName("selected-draft-mtls-proof-game");
+    gameRepository.save(game);
+    Version candidate = new Version();
+    candidate.setTenantId(tenantId);
+    candidate.setVersionNumber(1);
+    candidate.setVersionState(VersionLifecycleState.DRAFT);
+    candidate.setVersionStateEpoch(1L);
+    candidate.setNotes("selected Draft mTLS proof");
+    candidate = versionRepository.save(candidate);
+    TargetProof target = targetProof(candidate);
+    long epoch = candidate.getVersionStateEpoch();
+    var selected =
+        inOwnerTransaction(
+            () -> {
+              try {
+                // Actual GD source/fence/selection writes; remote owner outcomes remain fixture
+                // inputs.
+                return IsolatedPublicationOwnerSetup.selectSourceBackedDraft(
+                        dsl, target, epoch, "selected Draft mTLS proof")
+                    .selection();
+              } catch (Exception failure) {
+                throw new IllegalStateException(failure);
+              }
+            });
+    var original =
+        AuthoredDraftPublishSelectionBinding.fromStored(
+            selected.canonicalJson(), selected.digest());
+    var request = AuthoredDraftPublishSelectionReadEvidence.Request.create("test", original);
+    var repository =
+        new AuthoredDraftPublishSelectionRepository(dsl, new DraftCommitCoordinatorRepository(dsl));
+    int selectionRowsBefore =
+        dsl.fetchCount(org.jooq.impl.DSL.table("game_design_authored_draft_publish_selection"));
+    var retainedBefore =
+        java.util.Objects.requireNonNull(
+                dsl.fetchOne(
+                    "SELECT * FROM game_design_authored_draft_publish_selection"
+                        + " WHERE canonical_tenant_id = ? AND canonical_version_id = ?",
+                    target.canonicalTenantId(),
+                    target.canonicalVersionId()))
+            .intoMap();
+    var pki = new SelectionReadTestPki(Files.createDirectories(temporary.resolve("pki")));
+    var endpoint = new GameDesignSelectedDraftPublicationReadGrpcService(repository, "test");
+    Server server =
+        NettyServerBuilder.forAddress(new InetSocketAddress("127.0.0.1", 0))
+            .sslContext(
+                GrpcSslContexts.forServer(
+                        pki.server.certificate().toFile(), pki.server.key().toFile())
+                    .trustManager(pki.ca.toFile())
+                    .clientAuth(ClientAuth.REQUIRE)
+                    .build())
+            .addService(ServerInterceptors.intercept(endpoint, new GrpcPeerIdentityInterceptor()))
+            .build()
+            .start();
+    try {
+      for (var identity : List.of(pki.account, pki.worldManagement)) {
+        try (var client = selectionReadClient(server.getPort(), identity, pki.ca)) {
+          var first = client.read(request);
+          var retry = client.read(request);
+          assertThat(first.request()).isEqualTo(request);
+          assertThat(retry.request()).isEqualTo(first.request());
+          assertThat(first.request().originalSelection())
+              .containsExactly(selected.canonicalBytes());
+          assertThat(first.request().selectionDigest()).isEqualTo(selected.digest());
+          var freshRead =
+              AuthoredDraftPublishSelectionReadEvidence.Request.create("test", original);
+          assertThat(client.read(freshRead).request()).isEqualTo(freshRead);
+          var intent = original.intent();
+          var changed = selectionReadVariant(original, intent.publishRequestId(), "changed notes");
+          var missing =
+              selectionReadVariant(original, UUID.randomUUID().toString(), intent.notes());
+          assertSelectionReadCode(
+              Status.Code.FAILED_PRECONDITION,
+              () ->
+                  client.read(
+                      AuthoredDraftPublishSelectionReadEvidence.Request.create("test", changed)));
+          assertSelectionReadCode(
+              Status.Code.NOT_FOUND,
+              () ->
+                  client.read(
+                      AuthoredDraftPublishSelectionReadEvidence.Request.create("test", missing)));
+          assertThat(client.read(request).request()).isEqualTo(request);
+        }
+      }
+      for (var identity : List.of(pki.wrongWorkload, pki.otherNamespace, pki.otherWorldNamespace)) {
+        try (var client = selectionReadClient(server.getPort(), identity, pki.ca)) {
+          assertSelectionReadCode(Status.Code.PERMISSION_DENIED, () -> client.read(request));
+        }
+      }
+      var retainedAfter =
+          java.util.Objects.requireNonNull(
+                  dsl.fetchOne(
+                      "SELECT * FROM game_design_authored_draft_publish_selection"
+                          + " WHERE canonical_tenant_id = ? AND canonical_version_id = ?",
+                      target.canonicalTenantId(),
+                      target.canonicalVersionId()))
+              .intoMap();
+      assertThat(retainedAfter).isEqualTo(retainedBefore);
+      assertThat(
+              dsl.fetchCount(
+                  org.jooq.impl.DSL.table("game_design_authored_draft_publish_selection")))
+          .isEqualTo(selectionRowsBefore);
+      assertThat(
+              repository
+                  .read(
+                      target.canonicalTenantId(),
+                      target.canonicalVersionId(),
+                      original.intent().publishRequestId())
+                  .orElseThrow()
+                  .selection()
+                  .canonicalBytes())
+          .containsExactly(selected.canonicalBytes());
+      assertThat(
+              versionRepository
+                  .findByTenantIdAndId(tenantId, target.gameDesignVersionRowId())
+                  .orElseThrow()
+                  .getVersionState())
+          .isEqualTo(VersionLifecycleState.DRAFT);
+      assertThat(
+              publishedReleaseBundleRepository.findByTenantIdAndVersionId(
+                  tenantId, target.gameDesignVersionRowId()))
+          .isEmpty();
+    } finally {
+      server.shutdownNow();
+      assertThat(server.awaitTermination(5, TimeUnit.SECONDS)).isTrue();
+    }
+  }
+
+  private static AuthoredDraftPublishSelectionBinding selectionReadVariant(
+      AuthoredDraftPublishSelectionBinding original, String publishRequestId, String notes) {
+    var intent = original.intent();
+    return AuthoredDraftPublishSelectionBinding.capture(
+        new AuthoredDraftPublishSelectionBinding.PublishIntent(
+            intent.canonicalTenantId(),
+            intent.canonicalVersionId(),
+            publishRequestId,
+            intent.expectedVersionStateEpoch(),
+            notes,
+            intent.selectedCommitRequestId(),
+            intent.selectedCommitId(),
+            intent.selectedCommitDigest()),
+        original.target(),
+        original.selectedCommit(),
+        new AuthoredDraftPublishSelectionBinding.VisibilityFence(
+            original.target(),
+            original.fenceRequestId(),
+            original.fenceCommitId(),
+            original.fenceInputDigest(),
+            original.fenceResultVectorJson(),
+            java.time.OffsetDateTime.parse(original.fenceCreatedAt())));
+  }
+
+  private static AuthoredDraftPublishSelectionReadClient selectionReadClient(
+      int port, SelectionReadTestIdentity identity, Path ca) throws Exception {
+    var endpoints = new ServiceEndpointsProperties();
+    endpoints.setGameDesignService("127.0.0.1:" + port);
+    var client =
+        new AuthoredDraftPublishSelectionReadClient(
+            endpoints, identity.properties(ca), new GrpcChannelFactory(), "test");
+    try {
+      client.init();
+      return client;
+    } catch (Exception failure) {
+      client.close();
+      throw failure;
+    }
+  }
+
+  private static void assertSelectionReadCode(Status.Code expected, Runnable action) {
+    assertThatThrownBy(action::run)
+        .isInstanceOf(StatusRuntimeException.class)
+        .satisfies(
+            failure -> assertThat(Status.fromThrowable(failure).getCode()).isEqualTo(expected));
+  }
+
+  private record SelectionReadTestIdentity(Path certificate, Path key) {
+    CommonGrpcClientProperties properties(Path ca) {
+      var properties = new CommonGrpcClientProperties();
+      properties.setPlaintext(false);
+      properties.setCertChain(certificate.toString());
+      properties.setPrivateKey(key.toString());
+      properties.setCaCert(ca.toString());
+      return properties;
+    }
+  }
+
+  /** Ephemeral keytool PKI, following Account's existing loopback test; no runtime credentials. */
+  private static final class SelectionReadTestPki {
+    private static final String PASSWORD = "test-only-publication-mtls-password";
+    final Path ca;
+    final SelectionReadTestIdentity server,
+        account,
+        worldManagement,
+        wrongWorkload,
+        otherNamespace,
+        otherWorldNamespace;
+
+    SelectionReadTestPki(Path root) throws Exception {
+      Path caStore = root.resolve("ca.p12");
+      runKeytool(
+          "-genkeypair",
+          "-alias",
+          "test-ca",
+          "-keyalg",
+          "RSA",
+          "-keysize",
+          "2048",
+          "-dname",
+          "CN=Game Design selected Draft read test CA",
+          "-validity",
+          "30",
+          "-ext",
+          "BC=ca:true",
+          "-ext",
+          "KU=keyCertSign,cRLSign",
+          "-storetype",
+          "PKCS12",
+          "-keystore",
+          caStore.toString(),
+          "-storepass",
+          PASSWORD,
+          "-keypass",
+          PASSWORD);
+      ca = root.resolve("ca.crt");
+      runKeytool(
+          "-exportcert",
+          "-alias",
+          "test-ca",
+          "-keystore",
+          caStore.toString(),
+          "-storetype",
+          "PKCS12",
+          "-storepass",
+          PASSWORD,
+          "-file",
+          ca.toString(),
+          "-rfc");
+      server = issue(root, caStore, "game-design-server", "test", "game-design-service", true);
+      account = issue(root, caStore, "account-client", "test", "account-service", false);
+      worldManagement =
+          issue(root, caStore, "world-client", "test", "world-management-service", false);
+      wrongWorkload =
+          issue(root, caStore, "game-session-client", "test", "game-session-service", false);
+      otherNamespace =
+          issue(root, caStore, "other-account-client", "other-test", "account-service", false);
+      otherWorldNamespace =
+          issue(
+              root, caStore, "other-world-client", "other-test", "world-management-service", false);
+    }
+
+    private static SelectionReadTestIdentity issue(
+        Path root, Path caStore, String alias, String namespace, String workload, boolean server)
+        throws Exception {
+      Path store = root.resolve(alias + ".p12"),
+          request = root.resolve(alias + ".csr"),
+          certificate = root.resolve(alias + ".crt");
+      String san =
+          "URI:spiffe://firemud/ns/"
+              + namespace
+              + "/sa/"
+              + workload
+              + ",DNS:localhost,IP:127.0.0.1";
+      String eku = server ? "serverAuth" : "clientAuth";
+      runKeytool(
+          "-genkeypair",
+          "-alias",
+          alias,
+          "-keyalg",
+          "RSA",
+          "-keysize",
+          "2048",
+          "-dname",
+          "CN=" + alias,
+          "-validity",
+          "30",
+          "-ext",
+          "KU=digitalSignature,keyEncipherment",
+          "-ext",
+          "EKU=" + eku,
+          "-ext",
+          "SAN=" + san,
+          "-storetype",
+          "PKCS12",
+          "-keystore",
+          store.toString(),
+          "-storepass",
+          PASSWORD,
+          "-keypass",
+          PASSWORD);
+      runKeytool(
+          "-certreq",
+          "-alias",
+          alias,
+          "-keystore",
+          store.toString(),
+          "-storetype",
+          "PKCS12",
+          "-storepass",
+          PASSWORD,
+          "-file",
+          request.toString(),
+          "-ext",
+          "SAN=" + san);
+      runKeytool(
+          "-gencert",
+          "-alias",
+          "test-ca",
+          "-keystore",
+          caStore.toString(),
+          "-storetype",
+          "PKCS12",
+          "-storepass",
+          PASSWORD,
+          "-infile",
+          request.toString(),
+          "-outfile",
+          certificate.toString(),
+          "-validity",
+          "30",
+          "-rfc",
+          "-ext",
+          "BC=ca:false",
+          "-ext",
+          "KU=digitalSignature,keyEncipherment",
+          "-ext",
+          "EKU=" + eku,
+          "-ext",
+          "SAN=" + san);
+      var keyStore = KeyStore.getInstance("PKCS12");
+      try (var input = Files.newInputStream(store)) {
+        keyStore.load(input, PASSWORD.toCharArray());
+      }
+      byte[] privateKey =
+          java.util.Objects.requireNonNull(
+              java.util.Objects.requireNonNull(
+                      keyStore.getKey(alias, PASSWORD.toCharArray()),
+                      "Expected ephemeral test private key")
+                  .getEncoded(),
+              "Expected encoded ephemeral test private key");
+      Path key = root.resolve(alias + ".key");
+      String body = Base64.getMimeEncoder(64, new byte[] {'\n'}).encodeToString(privateKey);
+      Files.writeString(
+          key,
+          "-----BEGIN PRIVATE KEY-----\n" + body + "\n-----END PRIVATE KEY-----\n",
+          StandardCharsets.US_ASCII);
+      java.util.Arrays.fill(privateKey, (byte) 0);
+      return new SelectionReadTestIdentity(certificate, key);
+    }
+
+    private static void runKeytool(String... arguments) throws Exception {
+      Path keytool =
+          Path.of(
+              System.getProperty("java.home"),
+              "bin",
+              System.getProperty("os.name").toLowerCase(java.util.Locale.ROOT).contains("windows")
+                  ? "keytool.exe"
+                  : "keytool");
+      var command = new ArrayList<String>();
+      command.add(keytool.toString());
+      command.addAll(List.of(arguments));
+      Process process = new ProcessBuilder(command).redirectErrorStream(true).start();
+      if (!process.waitFor(30, TimeUnit.SECONDS)) {
+        process.destroyForcibly();
+        throw new IllegalStateException("Ephemeral test certificate generation timed out");
+      }
+      try (var output = process.getInputStream()) {
+        String details = new String(output.readAllBytes(), StandardCharsets.UTF_8);
+        if (process.exitValue() != 0)
+          throw new IllegalStateException("Test keytool failed: " + details);
+      }
+    }
   }
 
   private static String firstStackFrame(Throwable failure) {

@@ -277,6 +277,24 @@ class AccountPublicationAuthorizationPostgresIntegrationTest {
               long deadline = System.nanoTime() + java.util.concurrent.TimeUnit.SECONDS.toNanos(10);
               Integer blockedPid = null;
               while (System.nanoTime() < deadline && blockedPid == null) {
+                if (attempt.get().isDone()) {
+                  try {
+                    attempt.get().get();
+                  } catch (java.util.concurrent.ExecutionException failure) {
+                    throw new AssertionError(
+                        "Creator authorization failed before the Account-row wait was observed",
+                        failure.getCause());
+                  } catch (InterruptedException interrupted) {
+                    Thread.currentThread().interrupt();
+                    throw new AssertionError(
+                        "Interrupted while diagnosing completed creator authorization",
+                        interrupted);
+                  }
+                  throw new AssertionError(
+                      "Creator authorization succeeded before the source writer committed");
+                }
+                // Activity snapshots are otherwise frozen for this blocker transaction.
+                f.dsl.fetch("SELECT pg_stat_clear_snapshot()");
                 var blocked =
                     f.dsl.fetchOne(
                         "SELECT pid FROM pg_stat_activity WHERE datname = current_database()"

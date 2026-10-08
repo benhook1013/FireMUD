@@ -2,6 +2,7 @@ package net.firedevops.firemud.worldmanagement.tenant;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.Mockito.when;
 
 import com.google.protobuf.InvalidProtocolBufferException;
 import com.google.protobuf.util.JsonFormat;
@@ -21,6 +22,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import net.firedevops.firemud.accountservice.authordraft.AccountDraftCommitOrderReadGrpcService;
 import net.firedevops.firemud.accountservice.service.session.AccountControlUiOriginalOrderFixture;
+import net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding.AffectedUnit;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding.Owner;
@@ -31,11 +33,17 @@ import net.firedevops.firemud.common.gamedesign.AuthoredWorldVersionStateEvidenc
 import net.firedevops.firemud.common.grpc.CommonGrpcClientProperties;
 import net.firedevops.firemud.common.grpc.GrpcChannelFactory;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentityInterceptor;
+import net.firedevops.firemud.common.publication.AccountPublicationAuthorizationBinding;
+import net.firedevops.firemud.common.publication.AuthoredDraftPublishSelectionBinding;
+import net.firedevops.firemud.common.publication.AuthoredDraftPublishSelectionBinding.PublishIntent;
+import net.firedevops.firemud.common.publication.AuthoredDraftPublishSelectionBinding.VisibilityFence;
 import net.firedevops.firemud.common.tenant.AuthoredWorldSourceDigest;
 import net.firedevops.firemud.common.tenant.AuthoredWorldSourceEvidence;
 import net.firedevops.firemud.common.world.WorldPublishedStartLocationClient;
 import net.firedevops.firemud.common.world.WorldPublishedStartLocationEvidence;
+import net.firedevops.firemud.gamedesign.v1.GetVersionStateResponse;
 import net.firedevops.firemud.gamedesign.v1.VersionLifecycleState;
+import net.firedevops.firemud.gamedesign.v1.VersionStateSnapshot;
 import net.firedevops.firemud.gamedesign.v1.WorldDesignMutationRevision;
 import net.firedevops.firemud.test.PostgresBackedServiceTestSupport;
 import net.firedevops.firemud.test.TestContainerImages;
@@ -44,6 +52,8 @@ import net.firedevops.firemud.worldmanagement.client.EntityManagementClient;
 import net.firedevops.firemud.worldmanagement.client.GameDesignClient;
 import net.firedevops.firemud.worldmanagement.client.GameSessionClient;
 import net.firedevops.firemud.worldmanagement.client.GrpcGameSessionInitialAdmissionBindProofClient;
+import net.firedevops.firemud.worldmanagement.dto.WorldDesignMutationRequestDto;
+import net.firedevops.firemud.worldmanagement.service.WorldDesignMutationService;
 import net.firedevops.firemud.worldmanagement.tenant.WorldDesignPublicationFenceEvidence.OwnerBinding;
 import net.firedevops.firemud.worldmanagement.v1.RegionDesignMutation;
 import net.firedevops.firemud.worldmanagement.v1.RoomDesignMutation;
@@ -146,6 +156,7 @@ class WorldAccountAuthorizedDraftPostgresIntegrationTest {
   @Autowired private WorldDesignPublicationFenceRepository fence;
   @Autowired private ObjectMapper mapper;
   @Autowired private WorldAuthoredGraphSnapshotRepository snapshots;
+  @Autowired private WorldDesignMutationService mutationService;
 
   @Autowired
   private net.firedevops.firemud.worldmanagement.service.WorldDraftDesignDigestService
@@ -239,26 +250,77 @@ class WorldAccountAuthorizedDraftPostgresIntegrationTest {
               .isEqualTo(applied.canonicalBytes());
           assertThat(writer.apply(application).canonicalBytes())
               .isEqualTo(applied.canonicalBytes());
-          // Freeze a test-only publication selection of these actual authored owner rows.
-          var frozen = capture(plan);
+          assertLegacyNumericWritesCannotChangeCanonicalFreshGraph(world, plan);
+          // Both the immutable selection and distinct Account publication order are fixture-only
+          // stipulations. They are not proof that Account created or currently holds that order.
+          String publicationRequest = "selector-" + UUID.randomUUID();
+          var publicationSelection = publicationSelection(plan, publicationRequest, 1L);
+          var stipulatedPublicationOrder = stipulatedPublicationOrder(publicationSelection);
+          var freezeEvidence = publicationFreezeEvidence(plan, publicationSelection);
+          var publicationAuthorizationRepository = publicationAuthorizationRepository();
+          var stateBeforeFirstQualifiedCapture = ownerSnapshot(world, plan);
+          assertThat(stateBeforeFirstQualifiedCapture.publicationOwnerRows()).hasSize(1);
+          String openPublicationOwnerRow =
+              stateBeforeFirstQualifiedCapture.publicationOwnerRows().get(0);
+          assertThat(mapper.readTree(openPublicationOwnerRow).path("owner_freeze_phase").asText())
+              .isEqualTo("OPEN");
+          assertThat(stateBeforeFirstQualifiedCapture.publicationAttemptRows()).isEmpty();
+          assertThat(stateBeforeFirstQualifiedCapture.publicationAuthorizationRows()).isEmpty();
+          var forcedRollback =
+              new IllegalStateException("forced first-freeze qualification rollback");
+          assertThatThrownBy(
+                  () ->
+                      ownerTransaction()
+                          .execute(
+                              status -> {
+                                var candidate =
+                                    fence.claimFreeze(
+                                        freezeEvidence,
+                                        () -> checkpointRepository().capture(freezeEvidence, plan));
+                                assertThat(
+                                        publicationAuthorizationRepository
+                                            .retainOrRequireExact(
+                                                candidate, stipulatedPublicationOrder, true)
+                                            .canonicalBytes())
+                                    .containsExactly(stipulatedPublicationOrder.canonicalBytes());
+                                throw forcedRollback;
+                              }))
+              .isSameAs(forcedRollback);
+          var stateAfterFirstQualifiedCaptureRollback = ownerSnapshot(world, plan);
+          assertThat(stateAfterFirstQualifiedCaptureRollback)
+              .isEqualTo(stateBeforeFirstQualifiedCapture);
+          assertThat(stateAfterFirstQualifiedCaptureRollback.publicationOwnerRows())
+              .containsExactly(openPublicationOwnerRow);
+          assertThat(stateAfterFirstQualifiedCaptureRollback.publicationAttemptRows()).isEmpty();
+          assertThat(stateAfterFirstQualifiedCaptureRollback.publicationAuthorizationRows())
+              .isEmpty();
+          var frozen = capture(plan, freezeEvidence, stipulatedPublicationOrder);
           assertThat(frozen.request().freeze().appliedCommitId())
               .isEqualTo(applied.application().operation().commitId().toString());
-          var retryEvidence =
-              publicationFreezeEvidence(plan, frozen.request().freeze().publicationRequestId());
+          var retryEvidence = freezeEvidence;
           var stateBeforeExactRetry = ownerSnapshot(world, plan);
           var checkpointCallbackInvocations = new AtomicInteger();
           var exactRetry =
               Objects.requireNonNull(
                   ownerTransaction()
                       .execute(
-                          status ->
-                              fence.claimFreeze(
-                                  retryEvidence,
-                                  () -> {
-                                    checkpointCallbackInvocations.incrementAndGet();
-                                    return new WorldDesignPublicationFenceEvidence.Checkpoint(
-                                        "recapture-must-not-run", "b".repeat(64), 3);
-                                  })));
+                          status -> {
+                            WorldDesignPublicationFenceEvidence.FrozenAttempt retry =
+                                fence.claimFreeze(
+                                    retryEvidence,
+                                    () -> {
+                                      checkpointCallbackInvocations.incrementAndGet();
+                                      return new WorldDesignPublicationFenceEvidence.Checkpoint(
+                                          "recapture-must-not-run", "b".repeat(64), 3);
+                                    });
+                            assertThat(
+                                    publicationAuthorizationRepository
+                                        .retainOrRequireExact(
+                                            retry, stipulatedPublicationOrder, false)
+                                        .canonicalBytes())
+                                .containsExactly(stipulatedPublicationOrder.canonicalBytes());
+                            return retry;
+                          }));
           assertThat(exactRetry.request()).isEqualTo(retryEvidence);
           assertThat(exactRetry.publicationFence())
               .isEqualTo(frozen.request().freeze().publicationFence());
@@ -269,6 +331,43 @@ class WorldAccountAuthorizedDraftPostgresIntegrationTest {
                       frozen.request().freeze().contentDigest(),
                       frozen.request().freeze().digestSchemaVersion()));
           assertThat(checkpointCallbackInvocations.get()).isZero();
+          assertThat(ownerSnapshot(world, plan)).isEqualTo(stateBeforeExactRetry);
+          assertThat(
+                  publicationAuthorizationRepository
+                      .readCommitted(exactRetry)
+                      .orElseThrow()
+                      .canonicalBytes())
+              .containsExactly(stipulatedPublicationOrder.canonicalBytes());
+          var changedOperation =
+              new AccountPublicationAuthorizationBinding(
+                  UUID.randomUUID(),
+                  stipulatedPublicationOrder.fenceId(),
+                  stipulatedPublicationOrder.input(),
+                  stipulatedPublicationOrder.sources());
+          assertThatThrownBy(
+                  () ->
+                      ownerTransaction()
+                          .execute(
+                              status ->
+                                  publicationAuthorizationRepository.retainOrRequireExact(
+                                      exactRetry, changedOperation, false)))
+              .isInstanceOf(WorldDesignPublicationFenceRepository.ConflictException.class)
+              .hasMessageContaining("changed");
+          var changedFence =
+              new AccountPublicationAuthorizationBinding(
+                  stipulatedPublicationOrder.operationId(),
+                  UUID.randomUUID(),
+                  stipulatedPublicationOrder.input(),
+                  stipulatedPublicationOrder.sources());
+          assertThatThrownBy(
+                  () ->
+                      ownerTransaction()
+                          .execute(
+                              status ->
+                                  publicationAuthorizationRepository.retainOrRequireExact(
+                                      exactRetry, changedFence, false)))
+              .isInstanceOf(WorldDesignPublicationFenceRepository.ConflictException.class)
+              .hasMessageContaining("changed");
           assertThat(ownerSnapshot(world, plan)).isEqualTo(stateBeforeExactRetry);
           var selectors =
               new WorldPublishedStartLocationRepository(
@@ -328,8 +427,212 @@ class WorldAccountAuthorizedDraftPostgresIntegrationTest {
     }
   }
 
+  @Test
+  void committedUnqualifiedAttemptCannotBeLateQualified() throws Exception {
+    try (var account =
+        new AccountControlUiOriginalOrderFixture(
+            accountPostgres.getJdbcUrl(),
+            accountPostgres.getUsername(),
+            accountPostgres.getPassword(),
+            redis.getHost(),
+            redis.getMappedPort(6379),
+            temporary.resolve("unqualified-account"))) {
+      var world = fixture(intakeRepository, manager, dsl, account.tenantId());
+      var plan = plan(world);
+      var original = account.claimOriginal(plan.binding());
+      var operation =
+          new WorldDraftTerminalOperation(
+              original.operationId(),
+              original.requestId(),
+              original.commitId(),
+              original.fenceId(),
+              original.tenantId(),
+              original.versionId(),
+              plan.binding(),
+              plan.ownerBinding(),
+              original.canonicalBytes());
+      var application = new WorldDraftGraphApplication(operation, plan);
+      var pki = new TestPki(temporary.resolve("unqualified-pki"));
+      var accountServer =
+          serve(
+              new AccountDraftCommitOrderReadGrpcService(
+                  account.heldOrderOwner(NAMESPACE), NAMESPACE),
+              pki.accountServer,
+              pki);
+      try {
+        var endpoints = new ServiceEndpointsProperties();
+        endpoints.setAccountService("localhost:" + accountServer.getPort());
+        try (var read =
+            new DraftCommitOrderReadClient(
+                endpoints,
+                pki.worldClient.properties(pki.ca),
+                new GrpcChannelFactory(),
+                NAMESPACE)) {
+          read.init();
+          var writer =
+              new WorldDraftGraphApplicationService(
+                  appliedRepository(), manager, new WorldDraftCommitOrderVerifier(read, NAMESPACE));
+          assertThat(writer.apply(application).status()).isEqualTo("APPLIED");
+
+          // A real World APPLIED graph and checkpoint are retained first. The distinct
+          // publication selection/order below is explicitly stipulated; this isolates storage
+          // qualification and does not claim an authenticated Account HELD read.
+          String publicationRequest = "unqualified-" + UUID.randomUUID();
+          var selection = publicationSelection(plan, publicationRequest, 1L);
+          var stipulatedOrder = stipulatedPublicationOrder(selection);
+          var evidence = publicationFreezeEvidence(plan, selection);
+          var unqualified =
+              Objects.requireNonNull(
+                  ownerTransaction()
+                      .execute(
+                          status ->
+                              fence.claimFreeze(
+                                  evidence, () -> checkpointRepository().capture(evidence, plan))));
+          var authorizationRepository = publicationAuthorizationRepository();
+          assertThat(authorizationRepository.readCommitted(unqualified)).isEmpty();
+          var before = ownerSnapshot(world, plan);
+
+          assertThatThrownBy(
+                  () ->
+                      ownerTransaction()
+                          .execute(
+                              status ->
+                                  authorizationRepository.retainOrRequireExact(
+                                      unqualified, stipulatedOrder, true)))
+              .satisfies(failure -> assertSqlState(failure, "P0002"));
+          assertThat(authorizationRepository.readCommitted(unqualified)).isEmpty();
+          assertThat(ownerSnapshot(world, plan)).isEqualTo(before);
+          assertThat(before.publicationAuthorizationRows()).isEmpty();
+        }
+      } finally {
+        stop(accountServer);
+      }
+    }
+  }
+
+  private static void assertSqlState(Throwable failure, String expectedState) {
+    String sqlState = null;
+    for (Throwable cause = failure; cause != null; cause = cause.getCause()) {
+      if (cause instanceof java.sql.SQLException sqlException) {
+        sqlState = sqlException.getSQLState();
+      }
+    }
+    assertThat(sqlState).isEqualTo(expectedState);
+  }
+
   private WorldDraftGraphApplicationRepository appliedRepository() {
     return new WorldDraftGraphApplicationRepository(dsl, fence, mapper);
+  }
+
+  private void assertLegacyNumericWritesCannotChangeCanonicalFreshGraph(
+      Fixture fixture, WorldDraftTopologyCommitPlan plan) {
+    // Use only retained owner receipts/mappings for the private selectors; do not derive them from
+    // canonical UUIDs or assume Game Design's numeric selectors are World database keys.
+    long tenantKey = fixture.intake().localTenantKey();
+    long versionKey = fixture.version().localVersionKey();
+    assertThat(fixture.version().sourceIntakeReceipt().localTenantKey()).isEqualTo(tenantKey);
+
+    when(gameDesignClient.getVersionState(tenantKey, versionKey))
+        .thenReturn(
+            GetVersionStateResponse.newBuilder()
+                .setVersionState(
+                    VersionStateSnapshot.newBuilder()
+                        .setTenantId(Long.toString(tenantKey))
+                        .setVersionId(versionKey)
+                        .setVersionState(VersionLifecycleState.VERSION_LIFECYCLE_STATE_DRAFT)
+                        .setVersionStateEpoch(1L)
+                        .build())
+                .build());
+
+    var owner = plan.ownerBinding();
+    List<Long> mappedRegionIds =
+        dsl.resultQuery(
+                "SELECT private_row_key FROM world_authored_topology_identity "
+                    + "WHERE target_namespace=? AND canonical_tenant_id=? "
+                    + "AND canonical_version_id=? AND family='REGION'",
+                owner.targetNamespace(),
+                owner.canonicalTenantId(),
+                owner.canonicalVersionId())
+            .fetch(0, Long.class);
+    assertThat(mappedRegionIds).hasSize(1);
+    long mappedRegionId = mappedRegionIds.getFirst();
+    Long aggregateEpoch =
+        dsl.resultQuery(
+                "SELECT draft_revision_epoch FROM world_design_aggregate_epoch "
+                    + "WHERE tenant_id=? AND version_id=? AND aggregate_type='REGION' AND aggregate_id=?",
+                tenantKey,
+                versionKey,
+                mappedRegionId)
+            .fetchOne(0, Long.class);
+    assertThat(aggregateEpoch).isNotNull();
+
+    var before = ownerSnapshot(fixture, plan);
+    assertThat(before.currentRows()).hasSize(3);
+    assertThat(before.mappingRows()).hasSize(3);
+    assertThat(before.startLocationRows()).hasSize(1);
+    assertThat(before.publicationOwnerRows()).hasSize(1);
+    assertThat(before.publicationAttemptRows()).isEmpty();
+
+    var updateRequest =
+        legacyRegionMutation(tenantKey, versionKey, Long.toString(mappedRegionId), aggregateEpoch);
+    assertThatThrownBy(() -> mutationService.applyMutation(updateRequest))
+        .satisfies(
+            failure ->
+                assertDatabaseGuardFailure(
+                    failure,
+                    "Mapped UUID World content cannot be changed by numeric writers",
+                    "World tenant key is reserved for a canonical authored source"));
+    assertThat(ownerSnapshot(fixture, plan)).isEqualTo(before);
+
+    var createRequest = legacyRegionMutation(tenantKey, versionKey, "", 0L);
+    assertThatThrownBy(() -> mutationService.applyMutation(createRequest))
+        .satisfies(
+            failure ->
+                assertDatabaseGuardFailure(
+                    failure, "World tenant key is reserved for a canonical authored source"));
+    assertThat(ownerSnapshot(fixture, plan)).isEqualTo(before);
+  }
+
+  private static WorldDesignMutationRequestDto legacyRegionMutation(
+      long tenantKey, long versionKey, String aggregateId, long expectedEpoch) {
+    return new WorldDesignMutationRequestDto(
+        tenantKey,
+        versionKey,
+        "legacy-commit-" + UUID.randomUUID(),
+        "legacy-revision-" + UUID.randomUUID(),
+        "UPSERT",
+        "REGION",
+        aggregateId,
+        expectedEpoch,
+        "",
+        "",
+        0L,
+        "",
+        new WorldDesignMutationRequestDto.RegionMutationDto(
+            "legacy-write", "clear", 8, 17L, "ROOM_GRAPH", "{}", 1.0d),
+        null,
+        null,
+        null,
+        null,
+        null,
+        null);
+  }
+
+  private static void assertDatabaseGuardFailure(Throwable failure, String... messageFragments) {
+    String sqlState = null;
+    StringBuilder messages = new StringBuilder();
+    for (Throwable cause = failure; cause != null; cause = cause.getCause()) {
+      if (cause instanceof java.sql.SQLException sqlException) {
+        sqlState = sqlException.getSQLState();
+      }
+      if (cause.getMessage() != null) {
+        messages.append(cause.getMessage()).append('\n');
+      }
+    }
+    assertThat(sqlState).isEqualTo("23514");
+    String combinedMessages = messages.toString();
+    assertThat(java.util.Arrays.stream(messageFragments).anyMatch(combinedMessages::contains))
+        .isTrue();
   }
 
   private WorldCanonicalFrozenTopologyRepository frozenRepository() {
@@ -628,18 +931,34 @@ class WorldAccountAuthorizedDraftPostgresIntegrationTest {
         .setScopeId(scope.toString());
   }
 
-  private WorldCanonicalFrozenTopology capture(WorldDraftTopologyCommitPlan plan) {
+  private WorldCanonicalFrozenTopology capture(
+      WorldDraftTopologyCommitPlan plan,
+      WorldDesignPublicationFenceEvidence evidence,
+      AccountPublicationAuthorizationBinding stipulatedAccountOrder) {
     var owner = plan.ownerBinding();
-    String publicationRequest = "selector-" + UUID.randomUUID();
-    // Stipulated test-only Game Design selection; no release/settlement is claimed.
-    var evidence = publicationFreezeEvidence(plan, publicationRequest);
+    String publicationRequest = evidence.publicationRequestId();
+    var authorizationRepository = publicationAuthorizationRepository();
+    var checkpointCaptured = new AtomicInteger();
     var attempt =
         Objects.requireNonNull(
             ownerTransaction()
                 .execute(
-                    status ->
-                        fence.claimFreeze(
-                            evidence, () -> checkpointRepository().capture(evidence, plan))));
+                    status -> {
+                      var frozen =
+                          fence.claimFreeze(
+                              evidence,
+                              () -> {
+                                var checkpoint = checkpointRepository().capture(evidence, plan);
+                                checkpointCaptured.incrementAndGet();
+                                return checkpoint;
+                              });
+                      var stored =
+                          authorizationRepository.retainOrRequireExact(
+                              frozen, stipulatedAccountOrder, checkpointCaptured.get() == 1);
+                      assertThat(stored.canonicalBytes())
+                          .containsExactly(stipulatedAccountOrder.canonicalBytes());
+                      return frozen;
+                    }));
     var tuples =
         plan.binding().affectedUnits(Owner.WORLD_MANAGEMENT).stream()
             .map(
@@ -679,6 +998,11 @@ class WorldAccountAuthorizedDraftPostgresIntegrationTest {
         digestService);
   }
 
+  private WorldSelectedDraftPublicationAuthorizationRepository
+      publicationAuthorizationRepository() {
+    return new WorldSelectedDraftPublicationAuthorizationRepository(dsl);
+  }
+
   private DraftOwnerSnapshot ownerSnapshot(Fixture fixture, WorldDraftTopologyCommitPlan plan) {
     long tenant = fixture.intake().localTenantKey();
     long version = fixture.version().localVersionKey();
@@ -705,6 +1029,14 @@ class WorldAccountAuthorizedDraftPostgresIntegrationTest {
                 + "WHERE tenant_id=? AND version_id=? ORDER BY aggregate_type,aggregate_id",
             tenant,
             version);
+    var mappingRows =
+        rowJson(
+            "SELECT to_jsonb(t)::text AS row_json FROM world_authored_topology_identity t "
+                + "WHERE target_namespace=? AND canonical_tenant_id=? AND canonical_version_id=? "
+                + "ORDER BY family,private_row_key",
+            fixture.owner().targetNamespace(),
+            fixture.owner().canonicalTenantId(),
+            fixture.owner().canonicalVersionId());
     var scopeEpochRows =
         rowJson(
             "SELECT to_jsonb(t)::text AS row_json FROM world_design_scope_epoch t "
@@ -720,6 +1052,12 @@ class WorldAccountAuthorizedDraftPostgresIntegrationTest {
     var topologyRows =
         rowJson(
             "SELECT to_jsonb(t)::text AS row_json FROM world_topology_draft_commit t "
+                + "WHERE request_id=? OR commit_id=? ORDER BY request_id",
+            plan.binding().requestId(),
+            plan.binding().commitId());
+    var startLocationRows =
+        rowJson(
+            "SELECT to_jsonb(t)::text AS row_json FROM world_draft_start_location_receipt t "
                 + "WHERE request_id=? OR commit_id=? ORDER BY request_id",
             plan.binding().requestId(),
             plan.binding().commitId());
@@ -751,16 +1089,28 @@ class WorldAccountAuthorizedDraftPostgresIntegrationTest {
             fixture.owner().targetNamespace(),
             fixture.owner().canonicalTenantId(),
             version);
+    var publicationAuthorizationRows =
+        rowJson(
+            "SELECT to_jsonb(b)::text AS row_json FROM world_design_publication_account_binding b "
+                + "JOIN world_design_publication_fence_attempt a USING (publication_fence) "
+                + "WHERE a.target_namespace=? AND a.canonical_tenant_id=? AND a.version_id=? "
+                + "ORDER BY b.publication_fence",
+            fixture.owner().targetNamespace(),
+            fixture.owner().canonicalTenantId(),
+            version);
     return new DraftOwnerSnapshot(
         List.copyOf(currentRows),
+        mappingRows,
         aggregateEpochRows,
         scopeEpochRows,
         revisionRows,
         topologyRows,
+        startLocationRows,
         applicationRows,
         terminalIdentityRows,
         publicationOwnerRows,
-        publicationAttemptRows);
+        publicationAttemptRows,
+        publicationAuthorizationRows);
   }
 
   private List<String> rowJson(String sql, Object... bindings) {
@@ -769,14 +1119,89 @@ class WorldAccountAuthorizedDraftPostgresIntegrationTest {
 
   private record DraftOwnerSnapshot(
       List<String> currentRows,
+      List<String> mappingRows,
       List<String> aggregateEpochRows,
       List<String> scopeEpochRows,
       List<String> revisionRows,
       List<String> topologyRows,
+      List<String> startLocationRows,
       List<String> applicationRows,
       List<String> terminalIdentityRows,
       List<String> publicationOwnerRows,
-      List<String> publicationAttemptRows) {}
+      List<String> publicationAttemptRows,
+      List<String> publicationAuthorizationRows) {}
+
+  private AuthoredDraftPublishSelectionBinding publicationSelection(
+      WorldDraftTopologyCommitPlan plan, String publicationRequest, long versionStateEpoch) {
+    var binding = plan.binding();
+    var target = binding.target();
+    return AuthoredDraftPublishSelectionBinding.capture(
+        new PublishIntent(
+            target.canonicalTenantId(),
+            target.canonicalVersionId(),
+            publicationRequest,
+            Long.toString(versionStateEpoch),
+            "test-only stipulated immutable publication selection",
+            binding.requestId(),
+            binding.commitId(),
+            binding.digest()),
+        target,
+        binding,
+        new VisibilityFence(
+            target,
+            binding.requestId(),
+            binding.commitId(),
+            binding.digest(),
+            "[]",
+            java.time.OffsetDateTime.parse("2026-10-01T00:00:00Z")));
+  }
+
+  private AccountPublicationAuthorizationBinding stipulatedPublicationOrder(
+      AuthoredDraftPublishSelectionBinding selection) {
+    return stipulatedPublicationOrder(selection, UUID.randomUUID(), UUID.randomUUID());
+  }
+
+  private AccountPublicationAuthorizationBinding stipulatedPublicationOrder(
+      AuthoredDraftPublishSelectionBinding selection, UUID operationId, UUID fenceId) {
+    UUID actor = UUID.randomUUID();
+    return new AccountPublicationAuthorizationBinding(
+        operationId,
+        fenceId,
+        new AccountPublicationAuthorizationBinding.PreallocationInput(actor, selection),
+        List.of(
+            new DraftAuthorizationFenceBinding.SourceEvidence(
+                DraftAuthorizationFenceBinding.SourceKind.ACCOUNT,
+                actor.toString(),
+                "1",
+                "1",
+                null,
+                null,
+                new byte[] {1})));
+  }
+
+  private WorldDesignPublicationFenceEvidence publicationFreezeEvidence(
+      WorldDraftTopologyCommitPlan plan, AuthoredDraftPublishSelectionBinding selection) {
+    var owner = plan.ownerBinding();
+    return new WorldDesignPublicationFenceEvidence(
+        owner.targetNamespace(),
+        owner.canonicalTenantId(),
+        owner.canonicalVersionId(),
+        owner.versionIdentityOperationId(),
+        owner.gameDesignVersionId(),
+        owner.intakeRequestId(),
+        owner.intakeOperationId(),
+        owner.intakeRequestDigest(),
+        owner.sourceOperationId(),
+        owner.sourceEvidenceDigest(),
+        owner.intakeReceiptDigest(),
+        selection.intent().publishRequestId(),
+        selection.digest().substring("sha256:".length()),
+        Long.parseLong(selection.intent().expectedVersionStateEpoch()),
+        "publish:"
+            + owner.canonicalTenantId()
+            + ":publish-request:"
+            + selection.intent().publishRequestId());
+  }
 
   private WorldDesignPublicationFenceEvidence publicationFreezeEvidence(
       WorldDraftTopologyCommitPlan plan, String publicationRequest) {
