@@ -264,7 +264,7 @@ class PublishedReleaseBundleRepositoryTest {
     bundle.setTenantId(tenantId);
     bundle.setVersionId(versionId);
     bundle.setVersionNumber(1);
-    bundle.setAttestationSchemaVersion("1");
+    bundle.setAttestationSchemaVersion("v1");
     bundle.setPublishWorkflowId("workflow-" + versionId);
     bundle.setManifestHash(MANIFEST_HASH);
     bundle.setManifestSchemaVersion(1);

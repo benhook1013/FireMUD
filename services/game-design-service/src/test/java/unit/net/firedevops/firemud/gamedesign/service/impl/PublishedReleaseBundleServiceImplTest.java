@@ -258,8 +258,7 @@ class PublishedReleaseBundleServiceImplTest {
   void setUp() {
     MockitoAnnotations.openMocks(this);
     service =
-        new PublishedReleaseBundleServiceImpl(
-            repository, revisionRepository, versionRepository, new ObjectMapper());
+        new PublishedReleaseBundleServiceImpl(repository, versionRepository, new ObjectMapper());
     Version source = new Version();
     source.setId(7L);
     source.setTenantId("tenant-1");
@@ -269,82 +268,15 @@ class PublishedReleaseBundleServiceImplTest {
   }
 
   @Test
-  void createFullVersionBundlePersistsImmutableAttestation() {
-    VersionDto version =
-        new VersionDto(
-            7L,
-            "tenant-1",
-            8,
-            VersionLifecycleState.PUBLISHED,
-            2L,
-            null,
-            null,
-            false,
-            "notes",
-            LocalDateTime.now(),
-            LocalDateTime.now());
-    when(repository.findByTenantIdAndVersionId("tenant-1", 7L)).thenReturn(Optional.empty());
-    Revision commandDefinition = new Revision();
-    commandDefinition.setData(validCommandDefinition());
-    when(revisionRepository.findByTenantIdAndVersionIdAndRevisionKindOrderByIdAsc(
-            "tenant-1", 7L, "COMMAND_DEFINITION"))
-        .thenReturn(List.of(commandDefinition));
-    when(repository.save(any(PublishedReleaseBundle.class)))
-        .thenAnswer(
-            invocation -> {
-              PublishedReleaseBundle entity = invocation.getArgument(0);
-              entity.setId(11L);
-              entity.setPublishedReleaseBundleRef("owner-issued-reference-11");
-              return entity;
-            });
+  void legacyFullVersionCannotCreateV1BundleFromMutableRevisions() {
+    assertThatThrownBy(
+            () ->
+                service.createFullVersionBundle(
+                    version(), "workflow-1", logoManifest(), "genrev-1", List.of()))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageStartingWith("PUBLISH_SELECTION_REQUIRED");
 
-    var dto =
-        service.createFullVersionBundle(
-            version,
-            "workflow-1",
-            logoManifest(),
-            "genrev-1",
-            List.of(
-                new PublishParticipantDigestDto(
-                    "GAME_LOGIC",
-                    "7",
-                    null,
-                    "version:7",
-                    "digest-logic",
-                    1,
-                    "ability-schema-v1",
-                    null,
-                    null),
-                new PublishParticipantDigestDto(
-                    "GAME_DESIGN_CONTROL_PLANE", "7", "version:7", "digest-1", 1, null, null)));
-
-    assertEquals(11L, dto.id());
-    assertEquals("tenant-1", dto.tenantId());
-    assertEquals(7L, dto.versionId());
-    assertEquals(MANIFEST_HASH, dto.manifestHash());
-    assertEquals(1, dto.manifestSchemaVersion());
-    assertEquals(List.of(logoProof()), dto.artifactDigests());
-    assertEquals("genrev-1", dto.generationConfigRevision());
-    assertEquals(List.of("logo.png"), dto.requiredManifestAssetKeys());
-    assertEquals(2, dto.participantDigests().size());
-    assertEquals("GAME_LOGIC", dto.participantDigests().getFirst().participantKey());
-    assertEquals("version:7", dto.participantDigests().getFirst().appliedCommitId());
-    assertEquals("digest-logic", dto.participantDigests().getFirst().contentDigest());
-    assertEquals(1, dto.participantDigests().getFirst().digestSchemaVersion());
-    assertEquals("ability-schema-v1", dto.participantDigests().getFirst().abilitySchemaDigest());
-    assertEquals(List.of(validCommandDefinition()), dto.commandDefinitions());
-    assertEquals("v1", dto.attestationSchemaVersion());
-    assertEquals("owner-issued-reference-11", dto.publishedReleaseBundleRef());
-    assertEquals(sourceIdentity().getCanonicalTenantId(), dto.canonicalTenantId());
-    assertEquals(sourceIdentity().getCanonicalVersionId(), dto.canonicalVersionId());
-    org.mockito.Mockito.verify(repository)
-        .save(
-            org.mockito.ArgumentMatchers.argThat(
-                saved ->
-                    sourceIdentity().getCanonicalTenantId().equals(saved.getCanonicalTenantId())
-                        && sourceIdentity()
-                            .getCanonicalVersionId()
-                            .equals(saved.getCanonicalVersionId())));
+    org.mockito.Mockito.verifyNoInteractions(repository, revisionRepository, versionRepository);
   }
 
   @Test
@@ -372,13 +304,15 @@ class PublishedReleaseBundleServiceImplTest {
 
   private Version sourceIdentity() {
     Version version = new Version();
+    version.setId(7L);
+    version.setTenantId("tenant-1");
     version.setCanonicalTenantId(UUID.fromString("67d7b75b-42d1-4ac6-9572-684c5e633cda"));
     version.setCanonicalVersionId(UUID.fromString("c472ebd1-56d8-49df-b8fa-85963dd940f8"));
     return version;
   }
 
   @Test
-  void createFullVersionBundleRejectsDuplicateAttestation() {
+  void legacyBundleEntryPointRejectsWithoutSelectedPublicationEvidence() {
     VersionDto version =
         new VersionDto(
             7L,
@@ -392,14 +326,13 @@ class PublishedReleaseBundleServiceImplTest {
             "notes",
             LocalDateTime.now(),
             LocalDateTime.now());
-    when(repository.findByTenantIdAndVersionId("tenant-1", 7L))
-        .thenReturn(Optional.of(new PublishedReleaseBundle()));
-
-    assertThrows(
-        IllegalStateException.class,
-        () ->
-            service.createFullVersionBundle(
-                version, "workflow-1", emptyManifest(), "genrev-1", List.of()));
+    assertThatThrownBy(
+            () ->
+                service.createFullVersionBundle(
+                    version, "workflow-1", emptyManifest(), "genrev-1", List.of()))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageStartingWith("PUBLISH_SELECTION_REQUIRED");
+    org.mockito.Mockito.verifyNoInteractions(repository, revisionRepository, versionRepository);
   }
 
   @Test
@@ -413,7 +346,7 @@ class PublishedReleaseBundleServiceImplTest {
   }
 
   @Test
-  void createFullVersionBundleRejectsDuplicateCommandDefinitionAlias() {
+  void legacyBundleEntryPointDoesNotReadMutableCommandRevisionRows() {
     VersionDto version =
         new VersionDto(
             7L,
@@ -427,73 +360,47 @@ class PublishedReleaseBundleServiceImplTest {
             "notes",
             LocalDateTime.now(),
             LocalDateTime.now());
-    when(repository.findByTenantIdAndVersionId("tenant-1", 7L)).thenReturn(Optional.empty());
     Revision first = new Revision();
     first.setData(commandDefinition("salute", "hail"));
-    Revision second = new Revision();
-    second.setData(commandDefinition("greet", "HAIL"));
     when(revisionRepository.findByTenantIdAndVersionIdAndRevisionKindOrderByIdAsc(
             "tenant-1", 7L, "COMMAND_DEFINITION"))
-        .thenReturn(List.of(first, second));
+        .thenReturn(List.of(first));
 
-    assertThrows(
-        IllegalStateException.class,
-        () ->
-            service.createFullVersionBundle(
-                version, "workflow-1", emptyManifest(), "genrev-1", List.of()));
+    assertThatThrownBy(
+            () ->
+                service.createFullVersionBundle(
+                    version, "workflow-1", emptyManifest(), "genrev-1", List.of()))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageStartingWith("PUBLISH_SELECTION_REQUIRED");
+    org.mockito.Mockito.verifyNoInteractions(repository, versionRepository);
+    org.mockito.Mockito.verify(revisionRepository, org.mockito.Mockito.never())
+        .findByTenantIdAndVersionIdAndRevisionKindOrderByIdAsc(
+            "tenant-1", 7L, "COMMAND_DEFINITION");
   }
 
   @Test
-  void createFullVersionBundleRejectsDuplicateCanonicalCommandIds() {
+  void selectedBundleEntryPointRequiresCapturedCommandAndPolicySources() throws Exception {
+    var evidence = selectorEvidence();
+    var participants = PublishedWorldSelectorFixtures.participants(7L, evidence);
     when(repository.findByTenantIdAndVersionId("tenant-1", 7L)).thenReturn(Optional.empty());
-    Revision first = new Revision();
-    first.setData(commandDefinition("salute", "hail"));
-    Revision second = new Revision();
-    second.setData(commandDefinition("SALUTE", "greet"));
-    when(revisionRepository.findByTenantIdAndVersionIdAndRevisionKindOrderByIdAsc(
-            "tenant-1", 7L, "COMMAND_DEFINITION"))
-        .thenReturn(List.of(first, second));
+    when(versionRepository.findByTenantIdAndId("tenant-1", 7L))
+        .thenReturn(Optional.of(sourceIdentity()));
+    when(repository.requireSelectedCommandDefinitions(any(), any(), any(), any()))
+        .thenThrow(new IllegalStateException("SELECTED_SOURCE_CAPTURE_UNAVAILABLE"));
 
-    assertThrows(
-        IllegalStateException.class,
-        () ->
-            service.createFullVersionBundle(
-                version(), "workflow-1", emptyManifest(), "genrev-1", List.of()));
-  }
-
-  @Test
-  void createFullVersionBundleRejectsCanonicalIdAndAliasCollisions() {
-    when(repository.findByTenantIdAndVersionId("tenant-1", 7L)).thenReturn(Optional.empty());
-    Revision first = new Revision();
-    first.setData(commandDefinition("salute", "greet"));
-    Revision second = new Revision();
-    second.setData(commandDefinition("hail", "SALUTE"));
-    when(revisionRepository.findByTenantIdAndVersionIdAndRevisionKindOrderByIdAsc(
-            "tenant-1", 7L, "COMMAND_DEFINITION"))
-        .thenReturn(List.of(first, second));
-
-    assertThrows(
-        IllegalStateException.class,
-        () ->
-            service.createFullVersionBundle(
-                version(), "workflow-1", emptyManifest(), "genrev-1", List.of()));
-  }
-
-  @Test
-  void createFullVersionBundleRejectsMalformedCommandEffectDeclaration() {
-    VersionDto version = version();
-    when(repository.findByTenantIdAndVersionId("tenant-1", 7L)).thenReturn(Optional.empty());
-    Revision commandDefinition = new Revision();
-    commandDefinition.setData(validCommandDefinition().replace("\"value\":1", "\"value\":\"one\""));
-    when(revisionRepository.findByTenantIdAndVersionIdAndRevisionKindOrderByIdAsc(
-            "tenant-1", 7L, "COMMAND_DEFINITION"))
-        .thenReturn(List.of(commandDefinition));
-
-    assertThrows(
-        IllegalArgumentException.class,
-        () ->
-            service.createFullVersionBundle(
-                version, "workflow-1", emptyManifest(), "genrev-1", List.of()));
+    assertThatThrownBy(
+            () ->
+                service.createFullVersionBundle(
+                    selectorVersion(),
+                    "publish-workflow",
+                    emptyManifest(),
+                    "genrev-1",
+                    participants,
+                    evidence))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessage("SELECTED_SOURCE_CAPTURE_UNAVAILABLE");
+    org.mockito.Mockito.verify(repository, org.mockito.Mockito.never()).save(any());
+    org.mockito.Mockito.verifyNoInteractions(revisionRepository);
   }
 
   private VersionDto version() {
@@ -509,6 +416,99 @@ class PublishedReleaseBundleServiceImplTest {
         "notes",
         LocalDateTime.now(),
         LocalDateTime.now());
+  }
+
+  @Test
+  void selectedFullVersionBundlePersistsImmutableAttestation() throws Exception {
+    var evidence = selectorEvidence();
+    var participants = PublishedWorldSelectorFixtures.participants(7L, evidence);
+    when(repository.requireSelectedCommandDefinitions(any(), any(), any(), any()))
+        .thenReturn(List.of(validCommandDefinition()));
+    when(repository.save(any(PublishedReleaseBundle.class)))
+        .thenAnswer(
+            invocation -> {
+              PublishedReleaseBundle saved = invocation.getArgument(0);
+              saved.setId(11L);
+              saved.setPublishedReleaseBundleRef("owner-issued-reference-11");
+              return saved;
+            });
+
+    var dto =
+        service.createFullVersionBundle(
+            selectorVersion(),
+            "publish-workflow",
+            logoManifest(),
+            "genrev-1",
+            participants,
+            evidence);
+
+    assertEquals(11L, dto.id());
+    assertEquals("tenant-1", dto.tenantId());
+    assertEquals(7L, dto.versionId());
+    assertEquals(8, dto.versionNumber());
+    assertEquals(MANIFEST_HASH, dto.manifestHash());
+    assertEquals(1, dto.manifestSchemaVersion());
+    assertEquals(List.of(logoProof()), dto.artifactDigests());
+    assertEquals("genrev-1", dto.generationConfigRevision());
+    assertEquals(List.of("logo.png"), dto.requiredManifestAssetKeys());
+    assertEquals(participants, dto.participantDigests());
+    assertEquals(List.of(validCommandDefinition()), dto.commandDefinitions());
+    assertEquals("v2", dto.attestationSchemaVersion());
+    assertEquals("owner-issued-reference-11", dto.publishedReleaseBundleRef());
+    assertEquals(sourceIdentity().getCanonicalTenantId(), dto.canonicalTenantId());
+    assertEquals(sourceIdentity().getCanonicalVersionId(), dto.canonicalVersionId());
+    assertThat(dto.worldPublishedStartLocationEvidence().canonicalBytes())
+        .containsExactly(evidence.canonicalBytes());
+    org.mockito.Mockito.verifyNoInteractions(revisionRepository);
+  }
+
+  @Test
+  void selectedFullVersionBundleRejectsDuplicateCommandDefinitionAlias() throws Exception {
+    assertSelectedCommandsRejected(
+        List.of(commandDefinition("salute", "hail"), commandDefinition("greet", "HAIL")),
+        IllegalStateException.class);
+  }
+
+  @Test
+  void selectedFullVersionBundleRejectsDuplicateCanonicalCommandIds() throws Exception {
+    assertSelectedCommandsRejected(
+        List.of(commandDefinition("salute", "hail"), commandDefinition("SALUTE", "greet")),
+        IllegalStateException.class);
+  }
+
+  @Test
+  void selectedFullVersionBundleRejectsCanonicalIdAndAliasCollisions() throws Exception {
+    assertSelectedCommandsRejected(
+        List.of(commandDefinition("salute", "greet"), commandDefinition("hail", "SALUTE")),
+        IllegalStateException.class);
+  }
+
+  @Test
+  void selectedFullVersionBundleRejectsMalformedCommandEffectDeclaration() throws Exception {
+    assertSelectedCommandsRejected(
+        List.of(validCommandDefinition().replace("\"value\":1", "\"value\":\"one\"")),
+        IllegalArgumentException.class);
+  }
+
+  private void assertSelectedCommandsRejected(
+      List<String> commandDefinitions, Class<? extends RuntimeException> exceptionType)
+      throws Exception {
+    var evidence = selectorEvidence();
+    when(repository.requireSelectedCommandDefinitions(any(), any(), any(), any()))
+        .thenReturn(commandDefinitions);
+
+    assertThrows(
+        exceptionType,
+        () ->
+            service.createFullVersionBundle(
+                selectorVersion(),
+                "publish-workflow",
+                emptyManifest(),
+                "genrev-1",
+                PublishedWorldSelectorFixtures.participants(7L, evidence),
+                evidence));
+    org.mockito.Mockito.verify(repository, org.mockito.Mockito.never()).save(any());
+    org.mockito.Mockito.verifyNoInteractions(revisionRepository);
   }
 
   private static ExportedAssetManifest emptyManifest() {

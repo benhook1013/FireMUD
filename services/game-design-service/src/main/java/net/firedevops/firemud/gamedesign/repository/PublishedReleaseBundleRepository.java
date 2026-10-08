@@ -181,6 +181,12 @@ public class PublishedReleaseBundleRepository {
     CanonicalSource source = findExactCanonicalSource(tx, bundle);
     rejectCallerIdentitySubstitution(bundle, source);
     verifySelectorSource(bundle, source);
+    if (!"v1".equals(bundle.getAttestationSchemaVersion())
+        && !"v2".equals(bundle.getAttestationSchemaVersion())) {
+      throw new IllegalArgumentException(
+          "Unsupported published release bundle attestation schema "
+              + bundle.getAttestationSchemaVersion());
+    }
     if ("v2".equals(bundle.getAttestationSchemaVersion())) {
       PublishedReleaseBundle existing =
           tx.selectFrom(TABLE_REF)

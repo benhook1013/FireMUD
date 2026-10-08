@@ -301,6 +301,18 @@ public record DraftAuthorizationFenceBinding(
     return output.toByteArray();
   }
 
+  @Override
+  public boolean equals(Object other) {
+    return this == other
+        || (other instanceof DraftAuthorizationFenceBinding binding
+            && Arrays.equals(canonicalBytes(), binding.canonicalBytes()));
+  }
+
+  @Override
+  public int hashCode() {
+    return Arrays.hashCode(canonicalBytes());
+  }
+
   public enum SourceKind {
     ISSUER,
     ACCOUNT,
@@ -383,6 +395,18 @@ public record DraftAuthorizationFenceBinding(
       }
       frame(output, evidence);
       return output.toByteArray();
+    }
+
+    @Override
+    public boolean equals(Object other) {
+      return this == other
+          || (other instanceof SourceEvidence source
+              && Arrays.equals(canonicalBytes(), source.canonicalBytes()));
+    }
+
+    @Override
+    public int hashCode() {
+      return Arrays.hashCode(canonicalBytes());
     }
 
     /** Decodes only the exact immutable framing written by this source owner. */
@@ -579,6 +603,18 @@ public record DraftAuthorizationFenceBinding(
       frame(output, fullBinding);
       frame(output, result);
       return output.toByteArray();
+    }
+
+    @Override
+    public boolean equals(Object other) {
+      return this == other
+          || (other instanceof OwnerReadback readback
+              && Arrays.equals(canonicalBytes(), readback.canonicalBytes()));
+    }
+
+    @Override
+    public int hashCode() {
+      return Arrays.hashCode(canonicalBytes());
     }
 
     private static String readbackSchema(DraftAuthorizationFenceBinding binding) {

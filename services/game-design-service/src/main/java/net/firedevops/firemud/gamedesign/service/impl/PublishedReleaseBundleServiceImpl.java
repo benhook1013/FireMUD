@@ -17,7 +17,6 @@ import net.firedevops.firemud.gamedesign.dto.PublishedReleaseBundleDto;
 import net.firedevops.firemud.gamedesign.dto.VersionDto;
 import net.firedevops.firemud.gamedesign.entity.PublishedReleaseBundle;
 import net.firedevops.firemud.gamedesign.repository.PublishedReleaseBundleRepository;
-import net.firedevops.firemud.gamedesign.repository.RevisionRepository;
 import net.firedevops.firemud.gamedesign.repository.VersionRepository;
 import net.firedevops.firemud.gamedesign.service.ExportedAssetManifest;
 import net.firedevops.firemud.gamedesign.service.PublishedArtifactDigest;
@@ -33,18 +32,14 @@ import tools.jackson.databind.ObjectMapper;
 public class PublishedReleaseBundleServiceImpl implements PublishedReleaseBundleService {
 
   private final PublishedReleaseBundleRepository repository;
-  private final RevisionRepository revisionRepository;
   private final VersionRepository versionRepository;
   private final ObjectMapper objectMapper;
 
   public PublishedReleaseBundleServiceImpl(
       PublishedReleaseBundleRepository repository,
-      RevisionRepository revisionRepository,
       VersionRepository versionRepository,
       ObjectMapper objectMapper) {
     this.repository = Objects.requireNonNull(repository, "repository must not be null");
-    this.revisionRepository =
-        Objects.requireNonNull(revisionRepository, "revisionRepository must not be null");
     this.versionRepository =
         Objects.requireNonNull(versionRepository, "versionRepository must not be null");
     this.objectMapper = Objects.requireNonNull(objectMapper, "objectMapper must not be null");
@@ -58,13 +53,8 @@ public class PublishedReleaseBundleServiceImpl implements PublishedReleaseBundle
       ExportedAssetManifest exportedManifest,
       String generationConfigRevision,
       List<PublishParticipantDigestDto> participantDigests) {
-    return createBundle(
-        version,
-        publishWorkflowId,
-        exportedManifest,
-        generationConfigRevision,
-        participantDigests,
-        null);
+    throw new IllegalStateException(
+        "PUBLISH_SELECTION_REQUIRED: full-version bundles require the captured publication operation");
   }
 
   @Override
@@ -93,14 +83,12 @@ public class PublishedReleaseBundleServiceImpl implements PublishedReleaseBundle
       String generationConfigRevision,
       List<PublishParticipantDigestDto> participantDigests,
       WorldPublishedStartLocationEvidence worldEvidence) {
+    Objects.requireNonNull(worldEvidence, "Authenticated World evidence is required");
     Objects.requireNonNull(version, "version must not be null");
     Objects.requireNonNull(exportedManifest, "exportedManifest must not be null");
     Objects.requireNonNull(participantDigests, "participantDigests must not be null");
     Optional<PublishedReleaseBundle> existing =
         repository.findByTenantIdAndVersionId(version.tenantId(), version.id());
-    if (existing.isPresent() && worldEvidence == null) {
-      throw new IllegalStateException("published release bundle already exists");
-    }
     if (existing.isPresent()) {
       PublishedReleaseBundleDto stored = toDto(existing.orElseThrow());
       PublishedReleaseBundleContract.requireExactSelectorRetry(
@@ -145,13 +133,9 @@ public class PublishedReleaseBundleServiceImpl implements PublishedReleaseBundle
     entity.setCanonicalVersionId(canonicalVersionId);
     entity.setVersionNumber(version.versionNumber());
     entity.setAttestationSchemaVersion(
-        worldEvidence == null
-            ? PublishedReleaseBundleContract.SUPPORTED_ATTESTATION_SCHEMA_VERSION
-            : PublishedReleaseBundleContract.SELECTOR_ATTESTATION_SCHEMA_VERSION);
+        PublishedReleaseBundleContract.SELECTOR_ATTESTATION_SCHEMA_VERSION);
     entity.setWorldPublishedStartLocationEvidenceJson(
-        worldEvidence == null
-            ? null
-            : new String(worldEvidence.canonicalBytes(), StandardCharsets.UTF_8));
+        new String(worldEvidence.canonicalBytes(), StandardCharsets.UTF_8));
     entity.setPublishWorkflowId(publishWorkflowId);
     entity.setManifestHash(exportedManifest.manifestHash());
     entity.setManifestSchemaVersion(exportedManifest.manifestSchemaVersion());
@@ -162,20 +146,13 @@ public class PublishedReleaseBundleServiceImpl implements PublishedReleaseBundle
         serializeKeys(exportedManifest.requiredManifestAssetKeys()));
     entity.setParticipantDigestsJson(serializeParticipantDigests(participantDigests));
     List<String> commandDefinitions =
-        worldEvidence == null
-            ? revisionRepository
-                .findByTenantIdAndVersionIdAndRevisionKindOrderByIdAsc(
-                    version.tenantId(), version.id(), "COMMAND_DEFINITION")
-                .stream()
-                .map(revision -> revision.getData())
-                .toList()
-            : repository.requireSelectedCommandDefinitions(
-                version.tenantId(), version.id(), publishWorkflowId, worldEvidence);
+        repository.requireSelectedCommandDefinitions(
+            version.tenantId(), version.id(), publishWorkflowId, worldEvidence);
     validateDistinctCommandDefinitions(commandDefinitions);
     entity.setCommandDefinitionsJson(serializeCommandDefinitions(commandDefinitions));
     entity.setScriptOnly(version.scriptOnly());
     entity.setScriptPatchVersion(version.scriptPatchVersion());
-    if (worldEvidence != null) toDto(entity);
+    toDto(entity);
     return toDto(repository.save(entity));
   }
 

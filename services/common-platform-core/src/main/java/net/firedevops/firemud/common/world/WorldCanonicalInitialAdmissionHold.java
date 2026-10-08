@@ -18,6 +18,7 @@ import java.util.regex.Pattern;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
 import net.firedevops.firemud.common.json.Rfc8785CanonicalJson;
 import net.firedevops.firemud.common.tenant.AuthoredWorldSourceDigest;
+import net.firedevops.firemud.common.tenant.GameTenantCreationDigest;
 import tools.jackson.core.StreamReadFeature;
 import tools.jackson.databind.DeserializationFeature;
 import tools.jackson.databind.JsonNode;
@@ -332,6 +333,7 @@ public final class WorldCanonicalInitialAdmissionHold {
         || value.codePointCount(0, value.length()) > maximumCodePoints) {
       throw new IllegalArgumentException(field + " must be nonempty and bounded");
     }
+    GameTenantCreationDigest.utf8ByteLength(value);
   }
 
   private static void requireLowerSha256(String value, String field) {

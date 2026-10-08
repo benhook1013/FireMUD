@@ -118,7 +118,11 @@ public final class PublishedRealmEntryPolicyReadGrpcCodec {
     PublishedRealmEntryPolicySetEvidence complete =
         PublishedRealmEntryPolicySetEvidence.fromStored(
             response.getPolicySetEvidence().toByteArray());
-    requireTarget(request.canonicalTenantId(), request.canonicalVersionId(), complete);
+    requireTarget(
+        request.targetNamespace(),
+        request.canonicalTenantId(),
+        request.canonicalVersionId(),
+        complete);
     requireSelector(complete, request.worldSlug(), request.realmSlug());
     return complete;
   }
@@ -148,37 +152,57 @@ public final class PublishedRealmEntryPolicyReadGrpcCodec {
     PublishedRealmEntryPolicySetEvidence complete =
         PublishedRealmEntryPolicySetEvidence.fromStored(
             response.getPolicySetEvidence().toByteArray());
-    requireTarget(request.canonicalTenantId(), request.canonicalVersionId(), complete);
+    requireTarget(
+        request.targetNamespace(),
+        request.canonicalTenantId(),
+        request.canonicalVersionId(),
+        complete);
     return complete;
   }
 
   private static PublishedRealmEntryPolicySetEvidence verifiedFor(
       ResolveRequest request, PublishedRealmEntryPolicySetEvidence evidence) {
     Objects.requireNonNull(request, "request");
-    return verifiedFor(request.canonicalTenantId(), request.canonicalVersionId(), evidence);
+    return verifiedFor(
+        request.targetNamespace(),
+        request.canonicalTenantId(),
+        request.canonicalVersionId(),
+        evidence);
   }
 
   private static PublishedRealmEntryPolicySetEvidence verifiedFor(
       ListRequest request, PublishedRealmEntryPolicySetEvidence evidence) {
     Objects.requireNonNull(request, "request");
-    return verifiedFor(request.canonicalTenantId(), request.canonicalVersionId(), evidence);
+    return verifiedFor(
+        request.targetNamespace(),
+        request.canonicalTenantId(),
+        request.canonicalVersionId(),
+        evidence);
   }
 
   private static PublishedRealmEntryPolicySetEvidence verifiedFor(
-      UUID tenantId, UUID versionId, PublishedRealmEntryPolicySetEvidence evidence) {
+      String targetNamespace,
+      UUID tenantId,
+      UUID versionId,
+      PublishedRealmEntryPolicySetEvidence evidence) {
     Objects.requireNonNull(evidence, "evidence");
     PublishedRealmEntryPolicySetEvidence complete =
         PublishedRealmEntryPolicySetEvidence.fromStored(evidence.canonicalBytes());
-    requireTarget(tenantId, versionId, complete);
+    requireTarget(targetNamespace, tenantId, versionId, complete);
     return complete;
   }
 
   private static void requireTarget(
-      UUID tenantId, UUID versionId, PublishedRealmEntryPolicySetEvidence evidence) {
-    if (!evidence.target().canonicalTenantId().equals(tenantId)
+      String targetNamespace,
+      UUID tenantId,
+      UUID versionId,
+      PublishedRealmEntryPolicySetEvidence evidence) {
+    var operation = GameDesignPublicationOperationBinding.fromStored(evidence.operationBytes());
+    if (!operation.world().request().targetNamespace().equals(targetNamespace)
+        || !evidence.target().canonicalTenantId().equals(tenantId)
         || !evidence.target().canonicalVersionId().equals(versionId)) {
       throw new IllegalArgumentException(
-          "Published policy evidence changed the exact owner target");
+          "Published policy evidence changed the exact owner target namespace or identity");
     }
   }
 

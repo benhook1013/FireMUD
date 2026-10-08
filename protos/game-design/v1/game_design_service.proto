@@ -115,6 +115,13 @@ message PublishVersionRequest {
   string tenant_id = 1;
   string notes = 2;
   string publish_request_id = 3;
+  // Complete together for new publication: the exact existing Draft selection.
+  // When all selection fields are empty, only a retained terminal legacy retry is eligible.
+  string version_id = 4;
+  string expected_version_state_epoch = 5;
+  string selected_commit_request_id = 6;
+  string selected_commit_id = 7;
+  string selected_commit_digest = 8;
 }
 
 message PublishVersionResponse {
