@@ -1540,7 +1540,7 @@ class SqliteReviewRecords:
         if not isinstance(corrections, list) or len(corrections) > 200:
             raise ReviewRecordsError("subagent review-count correction history is malformed")
         if not corrections:
-            return []
+            raise ReviewRecordsError("subagent review-count correction history is malformed")
         self._require_zero_finding_subagent_run(connection, run_id)
         result = []
         correction_ids = set()
@@ -3378,7 +3378,7 @@ class SqliteReviewRecords:
                     )
                 attempts = []
                 corrected_subagent_runs = set()
-                review_count_corrected_subagent_runs = set()
+                review_count_corrections_by_run = {}
                 for row in connection.execute(
                     "SELECT attempt_id, channel, candidate_sha, state, started_at, finished_at, "
                     "duration_seconds, exit_status, trigger_id, provider_review_id, checkpoint_id, run_id, "
@@ -3405,7 +3405,9 @@ class SqliteReviewRecords:
                     if "review_count_corrections" in metadata:
                         if row[1] != "subagent":
                             raise ReviewRecordsError("review-count corrections are only valid for subagent attempts")
-                        review_count_corrected_subagent_runs.add(row[0])
+                        review_count_corrections_by_run[row[0]] = self._subagent_run_count_corrections(
+                            connection, row[0], metadata=metadata
+                        )
                     attempts.append(
                         {
                             "attempt_id": row[0],
@@ -3541,14 +3543,11 @@ class SqliteReviewRecords:
                         if item["run_id"] != run["run_id"] or item["source_finding_key"] not in excluded_keys
                     ]
                 for run in runs:
-                    if run["run_id"] not in review_count_corrected_subagent_runs:
+                    count_corrections = review_count_corrections_by_run.get(run["run_id"])
+                    if count_corrections is None:
                         continue
-                    count_corrections = self._subagent_run_count_corrections(connection, run["run_id"])
-                    if count_corrections:
-                        run["review_count_corrections"] = count_corrections
-                        run["excluded_from_review_counts"] = (
-                            count_corrections[-1]["action"] == "exclude_from_review_counts"
-                        )
+                    run["review_count_corrections"] = count_corrections
+                    run["excluded_from_review_counts"] = count_corrections[-1]["action"] == "exclude_from_review_counts"
                 if include_display:
                     self._add_hosted_display_titles(connection, observations, routes)
                     self._add_run_durations(connection, runs)

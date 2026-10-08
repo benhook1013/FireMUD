@@ -1768,6 +1768,70 @@ class SqliteReviewRecordsTest(unittest.TestCase):
         with self.assertRaisesRegex(ReviewRecordsError, "restores a counted run"):
             self.records.history(2890)
 
+    def test_history_eagerly_validates_review_count_corrections_before_projection(self) -> None:
+        run_id = "subagent-count-history-safety"
+        self.subagent_zero_count_run(run_id)
+        self.records.correct_subagent_run_count(
+            run_id,
+            correction_id="helper-count-history-safety",
+            excluded_from_review_counts=True,
+            actor="root",
+            reason="Implementation support, not a commissioned review",
+        )
+        with sqlite3.connect(self.database) as connection:
+            original = connection.execute(
+                "SELECT source_pr, state, run_id, metadata_json FROM review_attempts WHERE attempt_id = ?",
+                (run_id,),
+            ).fetchone()
+        cases = (
+            ("orphan", 2890, "exact completed linked finalized subagent run"),
+            ("noncompleted", 2890, "exact completed linked finalized subagent run"),
+            ("cross-pr", 2891, "exact completed linked finalized subagent run"),
+            ("empty-corrections", 2890, "correction history is malformed"),
+            ("malformed-cross-pr", 2891, "correction history is malformed"),
+        )
+        for corruption, source_pr, error in cases:
+            with self.subTest(corruption=corruption):
+                metadata = json.loads(original[3])
+                if corruption == "empty-corrections":
+                    metadata["review_count_corrections"] = []
+                elif corruption == "malformed-cross-pr":
+                    metadata["review_count_corrections"] = {"action": "exclude_from_review_counts"}
+                with sqlite3.connect(self.database) as connection:
+                    if corruption == "orphan":
+                        connection.execute("UPDATE review_attempts SET run_id = NULL WHERE attempt_id = ?", (run_id,))
+                    elif corruption == "noncompleted":
+                        connection.execute(
+                            "UPDATE review_attempts SET state = 'failed' WHERE attempt_id = ?", (run_id,)
+                        )
+                    elif corruption == "cross-pr":
+                        connection.execute(
+                            "UPDATE review_attempts SET source_pr = ? WHERE attempt_id = ?", (source_pr, run_id)
+                        )
+                    elif corruption in {"empty-corrections", "malformed-cross-pr"}:
+                        connection.execute(
+                            "UPDATE review_attempts SET source_pr = ?, metadata_json = ? WHERE attempt_id = ?",
+                            (source_pr, json.dumps(metadata), run_id),
+                        )
+                try:
+                    readers = (
+                        ("history", lambda pr=source_pr: self.records.history(pr, include_display=False)),
+                        (
+                            "history_batch",
+                            lambda pr=source_pr: self.records.history_batch((pr,), include_display=False),
+                        ),
+                    )
+                    for reader, read in readers:
+                        with self.subTest(reader=reader), self.assertRaisesRegex(ReviewRecordsError, error):
+                            read()
+                finally:
+                    with sqlite3.connect(self.database) as connection:
+                        connection.execute(
+                            "UPDATE review_attempts SET source_pr = ?, state = ?, run_id = ?, metadata_json = ? "
+                            "WHERE attempt_id = ?",
+                            (*original, run_id),
+                        )
+
     def test_subagent_non_finding_correction_retains_original_and_effective_counts(self) -> None:
         self.subagent_correction_run()
         before = self.records.history(2890)
