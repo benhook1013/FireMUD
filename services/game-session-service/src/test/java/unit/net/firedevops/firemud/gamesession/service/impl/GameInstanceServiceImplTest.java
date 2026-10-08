@@ -149,6 +149,47 @@ class GameInstanceServiceImplTest {
   }
 
   @Test
+  void canonicalTenantUuidCannotBeCoercedIntoLegacyNumericLaunchAuthority() {
+    StartSessionRequest request = new StartSessionRequest(1L, 3L, "cp-canonical-tenant", 42L);
+    doReturn(
+            ResolveLaunchDescriptorResponse.newBuilder()
+                .setLaunchDescriptor(
+                    net.firedevops.firemud.gamedesign.v1.LaunchDescriptor.newBuilder()
+                        .setLaunchDescriptorId("ld-cp-canonical-tenant")
+                        .setCanonicalTenantId("123e4567-e89b-12d3-a456-426614174000")
+                        .setGameTemplateId(request.gameTemplateId())
+                        .setControlPlaneRequestId(request.controlPlaneRequestId())
+                        .setVersionId(11L)
+                        .setScriptPatchVersion("")
+                        .setRuntimeFlagsJson("{}")
+                        .setGenerationConfigRevision("genrev-11")
+                        .setVersionStateEpoch(77L)
+                        .setReleaseBundleId(77L)
+                        .setPublishedReleaseBundleRef("prb:1:11:77")
+                        .build())
+                .build())
+        .when(gameDesignClient)
+        .resolveLaunchDescriptor(
+            request.tenantId(), request.gameTemplateId(), request.controlPlaneRequestId());
+
+    Map<Long, GameInstance> before = new HashMap<>();
+    store.forEach((id, instance) -> before.put(id, copyOf(instance)));
+    IllegalArgumentException error =
+        assertThrows(IllegalArgumentException.class, () -> service.startSession(request));
+
+    assertEquals("tenantId must be numeric", error.getMessage());
+    org.assertj.core.api.Assertions.assertThat(store).usingRecursiveComparison().isEqualTo(before);
+    verify(gameDesignClient)
+        .resolveLaunchDescriptor(
+            request.tenantId(), request.gameTemplateId(), request.controlPlaneRequestId());
+    verify(gameDesignClient).getPublishedReleaseBundle(request.tenantId(), 11L);
+    verify(gameDesignClient).getVersionAssetArtifactState(request.tenantId(), 11L);
+    verify(gameDesignClient).getVersionState(request.tenantId(), 11L);
+    verifyNoMoreInteractions(gameDesignClient);
+    verifyNoInteractions(repository, worldManagementClient, stateService);
+  }
+
+  @Test
   void runOwnedInitialLaunchExactRetryReturnsSameActiveTargetWithoutReplayingActivation() {
     StartSessionRequest request = new StartSessionRequest(1L, 3L, "run-owned-1", 42L);
     configureRunOwnedWorld(request);
@@ -392,7 +433,7 @@ class GameInstanceServiceImplTest {
                 .setLaunchDescriptor(
                     net.firedevops.firemud.gamedesign.v1.LaunchDescriptor.newBuilder()
                         .setLaunchDescriptorId("ld-pinned")
-                        .setTenantId("1")
+                        .setCanonicalTenantId("1")
                         .setGameTemplateId(3L)
                         .setControlPlaneRequestId("cp-pinned")
                         .setVersionId(11L)
@@ -1430,7 +1471,8 @@ class GameInstanceServiceImplTest {
                     .setLaunchDescriptor(
                         net.firedevops.firemud.gamedesign.v1.LaunchDescriptor.newBuilder()
                             .setLaunchDescriptorId("ld-" + invocation.getArgument(2, String.class))
-                            .setTenantId(Long.toString(invocation.getArgument(0, Long.class)))
+                            .setCanonicalTenantId(
+                                Long.toString(invocation.getArgument(0, Long.class)))
                             .setGameTemplateId(invocation.getArgument(1, Long.class))
                             .setControlPlaneRequestId(invocation.getArgument(2, String.class))
                             .setVersionId(11L)
@@ -1541,7 +1583,7 @@ class GameInstanceServiceImplTest {
                 .setLaunchDescriptor(
                     net.firedevops.firemud.gamedesign.v1.LaunchDescriptor.newBuilder()
                         .setLaunchDescriptorId("ld-cp-launch-tenant")
-                        .setTenantId("0")
+                        .setCanonicalTenantId("0")
                         .setGameTemplateId(3L)
                         .setControlPlaneRequestId("cp-launch-tenant")
                         .setVersionId(11L)

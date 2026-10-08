@@ -26,8 +26,8 @@ import net.firedevops.firemud.gamedesign.dto.RevisionDto;
 import net.firedevops.firemud.gamedesign.dto.TemplateRemapEntryDto;
 import net.firedevops.firemud.gamedesign.dto.TemplateRemapSetDto;
 import net.firedevops.firemud.gamedesign.dto.VersionDto;
-import net.firedevops.firemud.gamedesign.service.GameAuthoredHelpTopicService;
 import net.firedevops.firemud.gamedesign.service.CompleteLaunchBindingService;
+import net.firedevops.firemud.gamedesign.service.GameAuthoredHelpTopicService;
 import net.firedevops.firemud.gamedesign.service.LaunchDescriptorService;
 import net.firedevops.firemud.gamedesign.service.PingService;
 import net.firedevops.firemud.gamedesign.service.PublishAttemptPendingReconciliationException;
@@ -2154,8 +2154,7 @@ public class GameDesignGrpcService extends GameDesignServiceGrpc.GameDesignServi
         || message.startsWith("LAUNCH_DESCRIPTOR_NOT_FOUND")) {
       return "NOT_FOUND";
     }
-    if (message.startsWith("AUTHORED_WORLD_SOURCE_")
-        || message.startsWith("LAUNCH_DESCRIPTOR_")) {
+    if (message.startsWith("AUTHORED_WORLD_SOURCE_") || message.startsWith("LAUNCH_DESCRIPTOR_")) {
       return "FAILED_PRECONDITION";
     }
     return "INVALID_ARGUMENT";
@@ -2217,7 +2216,7 @@ public class GameDesignGrpcService extends GameDesignServiceGrpc.GameDesignServi
     }
     return net.firedevops.firemud.gamedesign.v1.LaunchDescriptor.newBuilder()
         .setLaunchDescriptorId(descriptor.launchDescriptorId())
-        .setCanonicalTenantId(descriptor.tenantId())
+        .setCanonicalTenantId(descriptor.canonicalTenantId())
         .setGameTemplateId(descriptor.gameTemplateId())
         .setControlPlaneRequestId(descriptor.controlPlaneRequestId())
         .setVersionId(descriptor.versionId())

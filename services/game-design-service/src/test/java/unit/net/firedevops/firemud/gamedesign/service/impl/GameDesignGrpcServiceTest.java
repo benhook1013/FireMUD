@@ -2,6 +2,7 @@ package net.firedevops.firemud.gamedesign.service.impl;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
+import com.google.protobuf.UnknownFieldSet;
 import io.grpc.Context;
 import io.grpc.stub.StreamObserver;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
@@ -10,7 +11,6 @@ import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicReference;
-import com.google.protobuf.UnknownFieldSet;
 import net.firedevops.firemud.common.gamedesign.AuthoredWorldLaunchDescriptorEvidence;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
 import net.firedevops.firemud.common.security.AdminRoleGuard;
@@ -29,8 +29,8 @@ import net.firedevops.firemud.gamedesign.dto.VersionStateDto;
 import net.firedevops.firemud.gamedesign.model.PublishGateFailureCode;
 import net.firedevops.firemud.gamedesign.model.TemplateRemapSetStatus;
 import net.firedevops.firemud.gamedesign.model.VersionLifecycleState;
-import net.firedevops.firemud.gamedesign.service.GameAuthoredHelpTopicService;
 import net.firedevops.firemud.gamedesign.service.CompleteLaunchBindingService;
+import net.firedevops.firemud.gamedesign.service.GameAuthoredHelpTopicService;
 import net.firedevops.firemud.gamedesign.service.LaunchDescriptorService;
 import net.firedevops.firemud.gamedesign.service.PingService;
 import net.firedevops.firemud.gamedesign.service.PublishAttemptPendingReconciliationException;
@@ -48,14 +48,14 @@ import net.firedevops.firemud.gamedesign.v1.CreateTemplateRemapSetRequest;
 import net.firedevops.firemud.gamedesign.v1.CreateTemplateRemapSetResponse;
 import net.firedevops.firemud.gamedesign.v1.GetDesignControlPlaneDigestRequest;
 import net.firedevops.firemud.gamedesign.v1.GetDesignControlPlaneDigestResponse;
+import net.firedevops.firemud.gamedesign.v1.GetLaunchDescriptorRequest;
+import net.firedevops.firemud.gamedesign.v1.GetLaunchDescriptorResponse;
 import net.firedevops.firemud.gamedesign.v1.GetPublishedPluginVersionRequest;
 import net.firedevops.firemud.gamedesign.v1.GetPublishedPluginVersionResponse;
 import net.firedevops.firemud.gamedesign.v1.GetPublishedReleaseBundleRequest;
 import net.firedevops.firemud.gamedesign.v1.GetPublishedReleaseBundleResponse;
 import net.firedevops.firemud.gamedesign.v1.GetPublishedScriptPatchVersionRequest;
 import net.firedevops.firemud.gamedesign.v1.GetPublishedScriptPatchVersionResponse;
-import net.firedevops.firemud.gamedesign.v1.GetLaunchDescriptorRequest;
-import net.firedevops.firemud.gamedesign.v1.GetLaunchDescriptorResponse;
 import net.firedevops.firemud.gamedesign.v1.GetTemplateRemapSetRequest;
 import net.firedevops.firemud.gamedesign.v1.GetTemplateRemapSetResponse;
 import net.firedevops.firemud.gamedesign.v1.GetVersionAssetArtifactStateRequest;
@@ -1232,7 +1232,8 @@ class GameDesignGrpcServiceTest {
             .build();
     AtomicReference<GetLaunchDescriptorResponse> ref = new AtomicReference<>();
     underLaunchPeer(
-        "world-management-service", () -> service.getLaunchDescriptor(readRequest, observerFor(ref)));
+        "world-management-service",
+        () -> service.getLaunchDescriptor(readRequest, observerFor(ref)));
 
     assertEquals(readRequestId.toString(), ref.get().getRequestId());
     assertEquals("ld-1", ref.get().getLaunchDescriptor().getLaunchDescriptorId());
@@ -1328,8 +1329,7 @@ class GameDesignGrpcServiceTest {
     AtomicReference<net.firedevops.firemud.gamedesign.v1.GetCompleteLaunchBindingResponse> ref =
         new AtomicReference<>();
     underLaunchPeer(
-        "game-session-service",
-        () -> service.getCompleteLaunchBinding(request, observerFor(ref)));
+        "game-session-service", () -> service.getCompleteLaunchBinding(request, observerFor(ref)));
 
     assertEquals("INVALID_ARGUMENT", ref.get().getError().getCode());
     Mockito.verifyNoInteractions(completeLaunchBindingService);
@@ -1363,10 +1363,10 @@ class GameDesignGrpcServiceTest {
     AtomicReference<net.firedevops.firemud.gamedesign.v1.GetCompleteLaunchBindingResponse> ref =
         new AtomicReference<>();
     underLaunchPeer(
-        "game-session-service",
-        () -> service.getCompleteLaunchBinding(request, observerFor(ref)));
+        "game-session-service", () -> service.getCompleteLaunchBinding(request, observerFor(ref)));
 
-    assertEquals("COMPLETE_LAUNCH_BINDING_RELEASE_BUNDLE_NOT_FOUND", ref.get().getError().getCode());
+    assertEquals(
+        "COMPLETE_LAUNCH_BINDING_RELEASE_BUNDLE_NOT_FOUND", ref.get().getError().getCode());
     Mockito.verify(completeLaunchBindingService)
         .getCompleteLaunchBinding(
             readRequestId,
@@ -1379,7 +1379,8 @@ class GameDesignGrpcServiceTest {
 
   @Test
   void resolveLaunchDescriptorRejectsNonCanonicalTenantUuidBeforeOwnerRead() {
-    var request = resolveRequest("cp-invalid-uuid").toBuilder().setCanonicalTenantId("not-a-uuid").build();
+    var request =
+        resolveRequest("cp-invalid-uuid").toBuilder().setCanonicalTenantId("not-a-uuid").build();
     AtomicReference<ResolveLaunchDescriptorResponse> ref = new AtomicReference<>();
     underLaunchPeer(
         "game-session-service", () -> service.resolveLaunchDescriptor(request, observerFor(ref)));
@@ -1703,13 +1704,6 @@ class GameDesignGrpcServiceTest {
     return new GenericObserver<>(ref);
   }
 
-  private void underLaunchPeer(String serviceName, Runnable operation) {
-    ReflectionTestUtils.setField(service, "workloadNamespace", "test");
-    GrpcPeerIdentity peer =
-        GrpcPeerIdentity.parseUri("spiffe://firemud/ns/test/sa/" + serviceName).orElseThrow();
-    Context.current().withValue(GrpcPeerIdentity.CONTEXT_KEY, peer).run(operation);
-  }
-
   private AuthoredWorldLaunchDescriptorEvidence.Request launchRequest(
       String controlPlaneRequestId) {
     return new AuthoredWorldLaunchDescriptorEvidence.Request(
@@ -1747,8 +1741,7 @@ class GameDesignGrpcServiceTest {
         null);
   }
 
-  private ResolvedLaunchDescriptorDto launchDto(
-      AuthoredWorldLaunchDescriptorEvidence evidence) {
+  private ResolvedLaunchDescriptorDto launchDto(AuthoredWorldLaunchDescriptorEvidence evidence) {
     return new ResolvedLaunchDescriptorDto(
         evidence.launchDescriptorId(),
         evidence.canonicalTenantId().toString(),

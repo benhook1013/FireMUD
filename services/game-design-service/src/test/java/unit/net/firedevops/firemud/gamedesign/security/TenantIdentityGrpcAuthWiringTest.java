@@ -80,8 +80,7 @@ class TenantIdentityGrpcAuthWiringTest {
       GameTenantCreationDigest.requestDigest("test", REQUEST_ID, SOURCE_KEY, "Fresh Realm", null);
 
   @Test
-  void defaultAndProductionProfilesKeepExactReadAllowlistAndRequireClientTls()
-      throws IOException {
+  void defaultAndProductionProfilesKeepExactReadAllowlistAndRequireClientTls() throws IOException {
     for (String file : List.of("application.yml", "application-prod.yml")) {
       GrpcConfiguration config = load(file);
       assertThat(config.publicMethods()).containsExactlyElementsOf(ALLOWLISTED_METHODS);

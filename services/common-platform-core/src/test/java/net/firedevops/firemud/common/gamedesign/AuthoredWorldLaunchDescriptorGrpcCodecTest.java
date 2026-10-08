@@ -448,6 +448,24 @@ class AuthoredWorldLaunchDescriptorGrpcCodecTest {
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("Release-attestation evidence is invalid")
         .hasRootCauseMessage("Participant digest schema is unsupported for its owner");
+    assertThatThrownBy(
+            () ->
+                AuthoredWorldLaunchDescriptorGrpcCodec.fromCompleteResponse(
+                    request,
+                    good.toBuilder()
+                        .setReleaseAttestation(
+                            good.getReleaseAttestation().toBuilder()
+                                .setParticipantDigests(
+                                    2,
+                                    good
+                                        .getReleaseAttestation()
+                                        .getParticipantDigests(2)
+                                        .toBuilder()
+                                        .setAbilitySchemaDigest("sha256:" + "e".repeat(64))))
+                        .build()))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessage("Complete launch binding evidence is invalid")
+        .hasRootCauseMessage("Evidence digest does not match the exact release attestation");
   }
 
   private static void assertFlatDuplicateRejected(LaunchDescriptor descriptor) {

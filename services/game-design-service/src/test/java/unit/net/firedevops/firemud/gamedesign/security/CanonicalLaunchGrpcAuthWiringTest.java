@@ -67,8 +67,7 @@ class CanonicalLaunchGrpcAuthWiringTest {
           RESOLVE_LAUNCH_DESCRIPTOR_METHOD,
           GET_LAUNCH_DESCRIPTOR_METHOD,
           GET_COMPLETE_LAUNCH_BINDING_METHOD);
-  private static final String GAME_SESSION_URI =
-      "spiffe://firemud/ns/test/sa/game-session-service";
+  private static final String GAME_SESSION_URI = "spiffe://firemud/ns/test/sa/game-session-service";
   private static final String WORLD_MANAGEMENT_URI =
       "spiffe://firemud/ns/test/sa/world-management-service";
   private static final String ENTITY_MANAGEMENT_URI =
@@ -87,7 +86,8 @@ class CanonicalLaunchGrpcAuthWiringTest {
     Harness harness = harness();
     when(harness.launchDescriptorService().resolveLaunchDescriptor(any()))
         .thenThrow(new IllegalStateException("intentional owner read probe"));
-    when(harness.launchDescriptorService()
+    when(harness
+            .launchDescriptorService()
             .getLaunchDescriptor(
                 any(UUID.class),
                 any(UUID.class),
@@ -96,7 +96,8 @@ class CanonicalLaunchGrpcAuthWiringTest {
                 anyString(),
                 anyString()))
         .thenThrow(new IllegalArgumentException("intentional exact read probe"));
-    when(harness.completeLaunchBindingService()
+    when(harness
+            .completeLaunchBindingService()
             .getCompleteLaunchBinding(
                 any(UUID.class),
                 any(UUID.class),
@@ -152,20 +153,10 @@ class CanonicalLaunchGrpcAuthWiringTest {
     verify(harness.launchDescriptorService()).resolveLaunchDescriptor(any());
     verify(harness.launchDescriptorService())
         .getLaunchDescriptor(
-            any(UUID.class),
-            any(UUID.class),
-            anyString(),
-            anyString(),
-            anyString(),
-            anyString());
+            any(UUID.class), any(UUID.class), anyString(), anyString(), anyString(), anyString());
     verify(harness.completeLaunchBindingService())
         .getCompleteLaunchBinding(
-            any(UUID.class),
-            any(UUID.class),
-            anyString(),
-            anyString(),
-            anyString(),
-            anyString());
+            any(UUID.class), any(UUID.class), anyString(), anyString(), anyString(), anyString());
   }
 
   @Test
@@ -181,7 +172,8 @@ class CanonicalLaunchGrpcAuthWiringTest {
   void worldAndEntityPeersAreLimitedToTheirDeclaredLaunchReadHandlers() {
     AuthTokenInterceptor interceptor = interceptor();
     Harness harness = harness();
-    when(harness.launchDescriptorService()
+    when(harness
+            .launchDescriptorService()
             .getLaunchDescriptor(
                 any(UUID.class),
                 any(UUID.class),
@@ -190,7 +182,8 @@ class CanonicalLaunchGrpcAuthWiringTest {
                 anyString(),
                 anyString()))
         .thenThrow(new IllegalArgumentException("intentional exact read probe"));
-    when(harness.completeLaunchBindingService()
+    when(harness
+            .completeLaunchBindingService()
             .getCompleteLaunchBinding(
                 any(UUID.class),
                 any(UUID.class),
@@ -239,20 +232,10 @@ class CanonicalLaunchGrpcAuthWiringTest {
     assertAllowedHandlerReached(entityCompleteRead);
     verify(harness.launchDescriptorService())
         .getLaunchDescriptor(
-            any(UUID.class),
-            any(UUID.class),
-            anyString(),
-            anyString(),
-            anyString(),
-            anyString());
+            any(UUID.class), any(UUID.class), anyString(), anyString(), anyString(), anyString());
     verify(harness.completeLaunchBindingService(), org.mockito.Mockito.times(2))
         .getCompleteLaunchBinding(
-            any(UUID.class),
-            any(UUID.class),
-            anyString(),
-            anyString(),
-            anyString(),
-            anyString());
+            any(UUID.class), any(UUID.class), anyString(), anyString(), anyString(), anyString());
 
     assertDenied(
         interceptor,
@@ -377,8 +360,7 @@ class CanonicalLaunchGrpcAuthWiringTest {
     assertThat(result.closedStatus()).isNull();
     assertThat(result.response()).isNotNull();
     assertThat(errorCode.apply(result.response())).isEqualTo("PERMISSION_DENIED");
-    verifyNoInteractions(
-        harness.launchDescriptorService(), harness.completeLaunchBindingService());
+    verifyNoInteractions(harness.launchDescriptorService(), harness.completeLaunchBindingService());
   }
 
   private static void assertAllowedHandlerReached(DispatchResult<?> result) {

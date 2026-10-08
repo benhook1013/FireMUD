@@ -57,7 +57,8 @@ class GameDesignGrpcServiceAuthTest {
             Mockito.mock(RevisionService.class),
             Mockito.mock(VersionService.class),
             Mockito.mock(LaunchDescriptorService.class),
-            Mockito.mock(net.firedevops.firemud.gamedesign.service.CompleteLaunchBindingService.class),
+            Mockito.mock(
+                net.firedevops.firemud.gamedesign.service.CompleteLaunchBindingService.class),
             Mockito.mock(TemplateRemapSetService.class),
             Mockito.mock(VersionAssetArtifactService.class),
             Mockito.mock(SettingsAuthorityService.class),
@@ -173,7 +174,8 @@ class GameDesignGrpcServiceAuthTest {
             Mockito.mock(RevisionService.class),
             versionService,
             launchDescriptorService,
-            Mockito.mock(net.firedevops.firemud.gamedesign.service.CompleteLaunchBindingService.class),
+            Mockito.mock(
+                net.firedevops.firemud.gamedesign.service.CompleteLaunchBindingService.class),
             Mockito.mock(TemplateRemapSetService.class),
             Mockito.mock(VersionAssetArtifactService.class),
             Mockito.mock(SettingsAuthorityService.class),
@@ -212,8 +214,7 @@ class GameDesignGrpcServiceAuthTest {
 
     AtomicReference<ResolveLaunchDescriptorResponse> descriptorRef = new AtomicReference<>();
     GrpcPeerIdentity peer =
-        GrpcPeerIdentity.parseUri("spiffe://firemud/ns/test/sa/game-session-service")
-            .orElseThrow();
+        GrpcPeerIdentity.parseUri("spiffe://firemud/ns/test/sa/game-session-service").orElseThrow();
     Context.current()
         .withValue(GrpcPeerIdentity.CONTEXT_KEY, peer)
         .run(
