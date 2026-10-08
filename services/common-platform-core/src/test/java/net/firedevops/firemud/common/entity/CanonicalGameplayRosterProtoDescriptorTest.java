@@ -52,21 +52,17 @@ class CanonicalGameplayRosterProtoDescriptorTest {
   }
 
   @Test
-  void selectedAssignmentResponseReservesUnsupportedAssignmentReceiptSlots() {
+  void selectedAssignmentResponseCarriesTheOriginalAssignmentReference() {
     Descriptor response = CanonicalGameplayRosterSelectedAssignmentResponse.getDescriptor();
 
-    assertThat(response.findFieldByNumber(5)).isNull();
-    assertThat(response.findFieldByNumber(6)).isNull();
-    for (int fieldNumber : new int[] {5, 6}) {
-      assertThat(response.toProto().getReservedRangeList())
-          .anySatisfy(
-              range -> {
-                assertThat(range.getStart()).isLessThanOrEqualTo(fieldNumber);
-                assertThat(range.getEnd()).isGreaterThan(fieldNumber);
-              });
-    }
-    assertThat(response.toProto().getReservedNameList())
-        .contains("assignment_uuid", "intent_digest");
+    assertThat(response.findFieldByNumber(5).getName()).isEqualTo("assignment_uuid");
+    assertThat(response.findFieldByNumber(5).getType()).isEqualTo(FieldDescriptor.Type.STRING);
+    assertThat(response.findFieldByNumber(6).getName()).isEqualTo("intent_digest");
+    assertThat(response.findFieldByNumber(6).getType()).isEqualTo(FieldDescriptor.Type.STRING);
+    assertThat(response.findFieldByNumber(7)).isNull();
+    assertThat(response.toProto().getReservedRangeList())
+        .anySatisfy(range -> assertThat(range.getStart()).isEqualTo(7));
+    assertThat(response.toProto().getReservedNameList()).contains("error");
   }
 
   private static void assertErrorSlotReserved(Descriptor descriptor, int fieldNumber) {
