@@ -434,6 +434,53 @@ class AccountHostedTermsPostgresIntegrationTest {
           fences.claimCommitOrder(originalOrder);
         });
 
+    HostedTermsRepository repository = new HostedTermsRepository(db.dsl());
+    tx(db, () -> repository.ensureScope(scopeId));
+    var scopeAfterEnsure =
+        Objects.requireNonNull(
+            db.dsl()
+                .fetchOne(
+                    "SELECT current_version_id, current_source_version, "
+                        + "current_material_generation FROM account_hosted_terms_scopes "
+                        + "WHERE hosted_scope_id = ?",
+                    scopeId));
+    assertThat(scopeAfterEnsure.get("current_version_id", UUID.class))
+        .isEqualTo(initial.versionId());
+    assertThat(scopeAfterEnsure.get("current_source_version", Long.class))
+        .isEqualTo(initial.sourceVersion());
+    assertThat(scopeAfterEnsure.get("current_material_generation", Long.class))
+        .isEqualTo(initial.materialGeneration());
+    assertThatThrownBy(
+            () ->
+                tx(
+                    db,
+                    () ->
+                        db.dsl()
+                            .execute(
+                                "UPDATE account_hosted_terms_scopes "
+                                    + "SET current_version_id = ?, current_source_version = ?, "
+                                    + "current_material_generation = ? WHERE hosted_scope_id = ?",
+                                UUID.randomUUID(),
+                                2L,
+                                2L,
+                                scopeId)))
+        .isInstanceOf(org.jooq.exception.DataAccessException.class)
+        .hasMessageContaining("Required creator source is held");
+    var scopeAfterRejectedWrite =
+        Objects.requireNonNull(
+            db.dsl()
+                .fetchOne(
+                    "SELECT current_version_id, current_source_version, "
+                        + "current_material_generation FROM account_hosted_terms_scopes "
+                        + "WHERE hosted_scope_id = ?",
+                    scopeId));
+    assertThat(scopeAfterRejectedWrite.get("current_version_id", UUID.class))
+        .isEqualTo(initial.versionId());
+    assertThat(scopeAfterRejectedWrite.get("current_source_version", Long.class))
+        .isEqualTo(initial.sourceVersion());
+    assertThat(scopeAfterRejectedWrite.get("current_material_generation", Long.class))
+        .isEqualTo(initial.materialGeneration());
+
     UUID futureRequest = UUID.randomUUID();
     Instant deadline = databaseNow(db).plus(1, ChronoUnit.DAYS).truncatedTo(ChronoUnit.MICROS);
     publications.put(
@@ -475,6 +522,7 @@ class AccountHostedTermsPostgresIntegrationTest {
     assertThat(service.publish(futureRequest)).isEqualTo(scheduled);
     assertThat(service.requireCurrentness(scopeId, partyId).disclosedDeadline())
         .isEqualTo(scheduled.candidate());
+    assertThat(service.requireCurrentness(scopeId, partyId).validUntil()).isEqualTo(deadline);
   }
 
   private static boolean currentnessBlockedAcrossEffectiveDateIsDenied(

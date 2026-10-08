@@ -1194,11 +1194,10 @@ public final class AccountMountedJwtSignerBundle {
         boolean exactProfileAudience =
             (REPRESENTATIVE_PROFILE.equals(tokenProfile)
                     && REPRESENTATIVE_AUDIENCE.equals(audience))
-                || (READINESS_VALIDATOR_ID.equals(validatorId)
-                    && ((ControlUiJwtProfileValidator.PROFILE.equals(tokenProfile)
-                            && ControlUiJwtProfileValidator.AUDIENCE.equals(audience))
-                        || (PlayerBootstrapJwtProfileValidator.PROFILE.equals(tokenProfile)
-                            && PlayerBootstrapJwtProfileValidator.AUDIENCE.equals(audience))));
+                || (ControlUiJwtProfileValidator.PROFILE.equals(tokenProfile)
+                    && ControlUiJwtProfileValidator.AUDIENCE.equals(audience))
+                || (PlayerBootstrapJwtProfileValidator.PROFILE.equals(tokenProfile)
+                    && PlayerBootstrapJwtProfileValidator.AUDIENCE.equals(audience));
         if (!exactProfileAudience) {
           throw invalid();
         }

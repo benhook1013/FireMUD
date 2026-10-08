@@ -76,6 +76,9 @@ public final class HostedTermsRepository {
   public void ensureScope(UUID scopeId) {
     requireWriteTransaction();
     HostedTermsEncoding.requireUuid(scopeId, "hosted scope");
+    if (dsl.fetchOne("SELECT 1 FROM " + SCOPES + " WHERE hosted_scope_id = ?", scopeId) != null) {
+      return;
+    }
     dsl.execute(
         "INSERT INTO " + SCOPES + " (hosted_scope_id) VALUES (?) ON CONFLICT DO NOTHING", scopeId);
   }

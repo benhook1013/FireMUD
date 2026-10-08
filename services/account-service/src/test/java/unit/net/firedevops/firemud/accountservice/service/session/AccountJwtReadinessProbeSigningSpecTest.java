@@ -34,12 +34,22 @@ class AccountJwtReadinessProbeSigningSpecTest {
   }
 
   @Test
-  void acceptsGameSessionCanaryAndItsOnlyProtectedProductionProfile() {
+  void permitsCanonicalProfilesForGameSessionInapplicableRejectionProbes() {
     assertValid(
         AccountMountedJwtSignerBundle.GAME_SESSION_VALIDATOR_ID,
         ProbeKind.CANARY,
         AccountMountedJwtSignerBundle.READINESS_CANARY_PROFILE,
         AccountMountedJwtSignerBundle.READINESS_CANARY_AUDIENCE);
+    assertValid(
+        AccountMountedJwtSignerBundle.GAME_SESSION_VALIDATOR_ID,
+        ProbeKind.REPRESENTATIVE,
+        "control-ui",
+        "control-ui");
+    assertValid(
+        AccountMountedJwtSignerBundle.GAME_SESSION_VALIDATOR_ID,
+        ProbeKind.REPRESENTATIVE,
+        "player-bootstrap",
+        "player-bootstrap");
     assertValid(
         AccountMountedJwtSignerBundle.GAME_SESSION_VALIDATOR_ID,
         ProbeKind.REPRESENTATIVE,
@@ -48,21 +58,21 @@ class AccountJwtReadinessProbeSigningSpecTest {
   }
 
   @Test
-  void rejectsUnknownAndCrossValidatorProfileAudienceCombinations() {
+  void rejectsUnknownValidatorAndMismatchedProfileAudienceCombinations() {
     assertInvalid(
         "unknown-service",
         ProbeKind.CANARY,
         AccountMountedJwtSignerBundle.READINESS_CANARY_PROFILE,
         AccountMountedJwtSignerBundle.READINESS_CANARY_AUDIENCE);
     assertInvalid(
-        AccountMountedJwtSignerBundle.GAME_SESSION_VALIDATOR_ID,
-        ProbeKind.REPRESENTATIVE,
-        "control-ui",
-        "control-ui");
-    assertInvalid(
         AccountMountedJwtSignerBundle.READINESS_VALIDATOR_ID,
         ProbeKind.REPRESENTATIVE,
         AccountMountedJwtSignerBundle.REPRESENTATIVE_PROFILE,
+        "control-ui");
+    assertInvalid(
+        AccountMountedJwtSignerBundle.GAME_SESSION_VALIDATOR_ID,
+        ProbeKind.REPRESENTATIVE,
+        "player-bootstrap",
         "control-ui");
     assertInvalid(
         AccountMountedJwtSignerBundle.GAME_SESSION_VALIDATOR_ID,
