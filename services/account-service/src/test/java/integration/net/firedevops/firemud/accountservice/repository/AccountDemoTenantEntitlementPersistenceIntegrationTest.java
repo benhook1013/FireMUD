@@ -374,7 +374,9 @@ class AccountDemoTenantEntitlementPersistenceIntegrationTest {
                               tenantId);
                       return null;
                     }))
-        .isInstanceOf(RuntimeException.class);
+        .isInstanceOf(DataAccessException.class)
+        .hasMessageContaining(
+            "Tenant authority generation advance lacks its canonical source event");
     assertThat(inTransaction(context.transaction(), () -> entitlements.readCurrent(tenantId)))
         .isEqualTo(updated);
     assertThatThrownBy(
