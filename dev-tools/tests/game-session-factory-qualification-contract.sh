@@ -120,7 +120,13 @@ def make_inventory():
 
 inventory = make_inventory()
 valid_discovery = {
-    "core": {"kind": "APIVersions", "apiVersion": "v1", "versions": ["v1"]},
+    "core": {
+        "kind": "APIVersions",
+        "versions": ["v1"],
+        "serverAddressByClientCIDRs": [
+            {"clientCIDR": "0.0.0.0/0", "serverAddress": "10.0.1.149:443"}
+        ],
+    },
     "groups": {
         "kind": "APIGroupList",
         "apiVersion": "v1",
@@ -133,6 +139,16 @@ valid_discovery = {
         ],
     },
 }
+
+assert qualification.validate_api_discovery(
+    valid_discovery["core"], valid_discovery["groups"]
+)["coreVersions"] == ["v1"]
+wrong_core_api_version = {**valid_discovery["core"], "apiVersion": "v2"}
+try:
+    qualification.validate_api_discovery(wrong_core_api_version, valid_discovery["groups"])
+    raise AssertionError("unexpected core API discovery version was accepted")
+except qualification.FixtureDenied as error:
+    assert error.reason == "game_session_api_discovery_invalid_or_unbounded"
 
 
 class FakeBackend:
@@ -435,7 +451,7 @@ assert len(truncated_runner.calls) == 1
 assert truncated_runner.calls[0][2] == 1024 * 1024
 
 discovery_results = (
-    {"kind": "APIVersions", "apiVersion": "v1", "versions": ["v1"]},
+    valid_discovery["core"],
     {"kind": "APIGroupList", "apiVersion": "v1", "groups": [{
         "name": "apps", "versions": [{"version": "v1", "groupVersion": "apps/v1"}]
     }]},
