@@ -4,6 +4,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import integration.net.firedevops.firemud.accountservice.repository.AccountPostgresIntegrationFixture;
+import io.grpc.Status;
+import io.grpc.StatusRuntimeException;
 import java.time.Instant;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -16,6 +18,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.function.Supplier;
 import net.firedevops.firemud.account.v1.AbortGameplayAdmissionLeaseRequest;
+import net.firedevops.firemud.account.v1.ReadGameplayAdmissionLeaseRequest;
 import net.firedevops.firemud.accountservice.dto.AccountGameplayAdmissionLeaseOperation;
 import net.firedevops.firemud.accountservice.dto.AccountGameplayAdmissionLeaseOperation.State;
 import net.firedevops.firemud.accountservice.entity.Account;
@@ -60,9 +63,9 @@ class AccountGameplayAdmissionLeasePersistenceIntegrationTest {
     var context = context(null);
     var original = pending(context, account(context));
     var repository = new AccountGameplayAdmissionLeaseRepository(context.dsl());
-    var owner =
-        new AccountGameplayAdmissionAbortOwner(
-            repository, new DataSourceTransactionManager(context.dataSource()), "test");
+    var transactionManager = new DataSourceTransactionManager(context.dataSource());
+    var owner = new AccountGameplayAdmissionAbortOwner(repository, transactionManager, "test");
+    var readOwner = new AccountGameplayAdmissionReadOwner(repository, transactionManager, "test");
     UUID decision = UUID.randomUUID();
     var request =
         AbortGameplayAdmissionLeaseRequest.newBuilder()
@@ -72,6 +75,15 @@ class AccountGameplayAdmissionLeasePersistenceIntegrationTest {
     // The trusted context is synthetic: this exercises real SQL ownership, never actual mTLS.
     syntheticAbortPeer().call(() -> owner.abort(request)); // Discard the first response.
     var stored = tx(context, () -> repository.readExact(original).orElseThrow());
+    var recoveredAfterLostAbortAck =
+        syntheticReadPeer().call(() -> readOwner.read(readRequest(original)));
+    assertThat(recoveredAfterLostAbortAck).isEqualTo(stored);
+    assertThat(recoveredAfterLostAbortAck.state()).isEqualTo(State.ABORTED);
+    assertThat(recoveredAfterLostAbortAck.evidence().canonicalJson())
+        .isEqualTo(original.canonicalJson());
+    assertThat(recoveredAfterLostAbortAck.evidence().sha256()).isEqualTo(original.sha256());
+    assertThat(recoveredAfterLostAbortAck.orphanCleanupId()).isEqualTo(stored.orphanCleanupId());
+    assertThat(recoveredAfterLostAbortAck.hasPendingOrphanCleanup()).isTrue();
     var replay = syntheticAbortPeer().call(() -> owner.abort(request));
     assertThat(replay).isEqualTo(stored);
     assertThat(replay.state()).isEqualTo(State.ABORTED);
@@ -196,6 +208,38 @@ class AccountGameplayAdmissionLeasePersistenceIntegrationTest {
     assertThat(committed.orphanCleanupId()).isNull();
   }
 
+  @Test
+  void exactReadRejectsMissingRawCommittedAndMismatchedOperations() {
+    var context = context(null);
+    UUID account = account(context);
+    var repository = new AccountGameplayAdmissionLeaseRepository(context.dsl());
+    var readOwner =
+        new AccountGameplayAdmissionReadOwner(
+            repository, new DataSourceTransactionManager(context.dataSource()), "test");
+
+    var allocation =
+        tx(context, () -> repository.allocate(account, UUID.randomUUID(), UUID.randomUUID()));
+    var missing = evidence(allocation);
+    assertFailedExactRead(readOwner, missing);
+    assertThat(tx(context, () -> repository.readExact(missing))).isEmpty();
+
+    var original = pending(context, account);
+    var changedCarrier = new LinkedHashMap<>(original.carrier());
+    changedCarrier.put(
+        "leaseFence", Long.toString(Long.parseLong((String) changedCarrier.get("leaseFence")) + 1));
+    assertFailedExactRead(
+        readOwner, AccountGameplayAdmissionLeaseEvidence.fromCarrier(changedCarrier));
+    assertThat(tx(context, () -> repository.readExact(original).orElseThrow().state()))
+        .isEqualTo(State.PENDING);
+
+    var committedEvidence = pending(context, account);
+    var committed =
+        tx(context, () -> repository.recordCommitted(committedEvidence, UUID.randomUUID()));
+    assertThat(committed.state()).isEqualTo(State.COMMITTED);
+    assertFailedExactRead(readOwner, committedEvidence);
+    assertThat(tx(context, () -> repository.readExact(committedEvidence))).contains(committed);
+  }
+
   /** Synthetic trusted caller only; the existing carriers remain fabricated storage fixtures. */
   private static io.grpc.Context syntheticAbortPeer() {
     return io.grpc.Context.current()
@@ -203,6 +247,33 @@ class AccountGameplayAdmissionLeasePersistenceIntegrationTest {
             GrpcPeerIdentity.CONTEXT_KEY,
             GrpcPeerIdentity.parseUri("spiffe://firemud/ns/test/sa/game-session-service")
                 .orElseThrow());
+  }
+
+  /** Synthetic peer only; neither this identity nor the fabricated carrier proves mTLS. */
+  private static io.grpc.Context syntheticReadPeer() {
+    return io.grpc.Context.current()
+        .withValue(
+            GrpcPeerIdentity.CONTEXT_KEY,
+            GrpcPeerIdentity.parseUri("spiffe://firemud/ns/test/sa/game-session-service")
+                .orElseThrow());
+  }
+
+  private static ReadGameplayAdmissionLeaseRequest readRequest(
+      AccountGameplayAdmissionLeaseEvidence evidence) {
+    return ReadGameplayAdmissionLeaseRequest.newBuilder()
+        .setRequestId((String) evidence.carrier().get("requestId"))
+        .setExpectedLease(AccountGameplayAdmissionLeaseWireCodec.encodeReference(evidence))
+        .build();
+  }
+
+  private static void assertFailedExactRead(
+      AccountGameplayAdmissionReadOwner owner, AccountGameplayAdmissionLeaseEvidence evidence) {
+    assertThatThrownBy(() -> syntheticReadPeer().call(() -> owner.read(readRequest(evidence))))
+        .isInstanceOf(StatusRuntimeException.class)
+        .satisfies(
+            failure ->
+                assertThat(Status.fromThrowable(failure).getCode())
+                    .isEqualTo(Status.Code.FAILED_PRECONDITION));
   }
 
   @Test
@@ -514,13 +585,22 @@ class AccountGameplayAdmissionLeasePersistenceIntegrationTest {
   }
 
   @Test
-  void expiredPendingCannotCommitOrRenewButKeepsExactReadbackAndCanAbort() {
+  void expiredPendingCannotCommitOrRenewButKeepsExactReadbackAndCanAbort() throws Exception {
     var context = context(null);
     UUID account = account(context);
     var repository = new AccountGameplayAdmissionLeaseRepository(context.dsl());
     var evidence = pending(context, account);
     tx(context, () -> context.dsl().fetchOne("SELECT pg_sleep(16)"));
     assertThat(tx(context, () -> repository.beginPending(evidence)).evidence()).isEqualTo(evidence);
+    var readOwner =
+        new AccountGameplayAdmissionReadOwner(
+            repository, new DataSourceTransactionManager(context.dataSource()), "test");
+    var expiredRead = syntheticReadPeer().call(() -> readOwner.read(readRequest(evidence)));
+    assertThat(expiredRead.state()).isEqualTo(State.PENDING);
+    assertThat(expiredRead.evidence().canonicalJson()).isEqualTo(evidence.canonicalJson());
+    assertThat(expiredRead.evidence().sha256()).isEqualTo(evidence.sha256());
+    assertThat(expiredRead.bindingDecisionId()).isNull();
+    assertThat(expiredRead.orphanCleanupId()).isNull();
     assertThatThrownBy(
             () -> tx(context, () -> repository.recordCommitted(evidence, UUID.randomUUID())))
         .hasMessageContaining("deadline expired");
@@ -531,9 +611,15 @@ class AccountGameplayAdmissionLeasePersistenceIntegrationTest {
     var renewed = AccountGameplayAdmissionLeaseEvidence.fromCarrier(changed);
     assertThatThrownBy(() -> tx(context, () -> repository.beginPending(renewed)))
         .hasMessageContaining("identity conflict");
-    assertThat(
-            tx(context, () -> repository.recordAborted(evidence, null, UUID.randomUUID())).state())
-        .isEqualTo(State.ABORTED);
+    var aborted = tx(context, () -> repository.recordAborted(evidence, null, UUID.randomUUID()));
+    assertThat(aborted.state()).isEqualTo(State.ABORTED);
+    var expiredAbortRead = syntheticReadPeer().call(() -> readOwner.read(readRequest(evidence)));
+    assertThat(expiredAbortRead).isEqualTo(aborted);
+    assertThat(expiredAbortRead.evidence().canonicalJson()).isEqualTo(evidence.canonicalJson());
+    assertThat(expiredAbortRead.evidence().sha256()).isEqualTo(evidence.sha256());
+    assertThat(expiredAbortRead.bindingDecisionId()).isNull();
+    assertThat(expiredAbortRead.orphanCleanupId()).isEqualTo(aborted.orphanCleanupId());
+    assertThat(expiredAbortRead.hasPendingOrphanCleanup()).isTrue();
   }
 
   @Test

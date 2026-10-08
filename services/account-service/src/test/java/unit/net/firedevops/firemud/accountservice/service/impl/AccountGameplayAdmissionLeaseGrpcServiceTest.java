@@ -32,6 +32,7 @@ import net.firedevops.firemud.accountservice.dto.AccountGameplayAdmissionLeaseOp
 import net.firedevops.firemud.accountservice.repository.AccountGameplayAdmissionAbortOwner;
 import net.firedevops.firemud.accountservice.repository.AccountGameplayAdmissionAbortOwnerTest;
 import net.firedevops.firemud.accountservice.repository.AccountGameplayAdmissionLeaseRepository;
+import net.firedevops.firemud.accountservice.repository.AccountGameplayAdmissionReadOwner;
 import net.firedevops.firemud.common.account.admission.AccountGameplayAdmissionLeaseWireCodec;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
 import org.junit.jupiter.api.Test;
@@ -49,7 +50,7 @@ class AccountGameplayAdmissionLeaseGrpcServiceTest {
             new AccountGameplayAdmissionLeaseOperation(
                 AccountGameplayAdmissionAbortOwnerTest.fixture(), State.ABORTED, null, cleanup));
     var observer = new Capture<AbortGameplayAdmissionLeaseResponse>();
-    new AccountGameplayAdmissionLeaseGrpcService(owner)
+    service(owner)
         .abortGameplayAdmissionLease(AccountGameplayAdmissionAbortOwnerTest.request(), observer);
     assertThat(observer.failure).isNull();
     assertThat(observer.completed).isTrue();
@@ -74,7 +75,7 @@ class AccountGameplayAdmissionLeaseGrpcServiceTest {
                 UUID.randomUUID(),
                 null));
     var observer = new Capture<AbortGameplayAdmissionLeaseResponse>();
-    new AccountGameplayAdmissionLeaseGrpcService(owner)
+    service(owner)
         .abortGameplayAdmissionLease(AccountGameplayAdmissionAbortOwnerTest.request(), observer);
     assertFailure(observer, Status.Code.UNAVAILABLE);
   }
@@ -95,7 +96,8 @@ class AccountGameplayAdmissionLeaseGrpcServiceTest {
     when(manager.getTransaction(any())).thenReturn(mock(TransactionStatus.class));
     var service =
         new AccountGameplayAdmissionLeaseGrpcService(
-            new AccountGameplayAdmissionAbortOwner(repository, manager, "test"));
+            new AccountGameplayAdmissionAbortOwner(repository, manager, "test"),
+            mock(AccountGameplayAdmissionReadOwner.class));
     UUID decision = UUID.randomUUID();
     var aborted =
         new AccountGameplayAdmissionLeaseOperation(
@@ -139,7 +141,8 @@ class AccountGameplayAdmissionLeaseGrpcServiceTest {
     var unavailable = new Capture<AbortGameplayAdmissionLeaseResponse>();
     var failingService =
         new AccountGameplayAdmissionLeaseGrpcService(
-            new AccountGameplayAdmissionAbortOwner(failingRepository, manager, "test"));
+            new AccountGameplayAdmissionAbortOwner(failingRepository, manager, "test"),
+            mock(AccountGameplayAdmissionReadOwner.class));
     peer()
         .run(
             () ->
@@ -155,7 +158,8 @@ class AccountGameplayAdmissionLeaseGrpcServiceTest {
     var manager = mock(PlatformTransactionManager.class);
     var service =
         new AccountGameplayAdmissionLeaseGrpcService(
-            new AccountGameplayAdmissionAbortOwner(repository, manager, "test"));
+            new AccountGameplayAdmissionAbortOwner(repository, manager, "test"),
+            mock(AccountGameplayAdmissionReadOwner.class));
     var unknown =
         UnknownFieldSet.newBuilder()
             .addField(99, UnknownFieldSet.Field.newBuilder().addVarint(1).build())
@@ -198,7 +202,7 @@ class AccountGameplayAdmissionLeaseGrpcServiceTest {
   @Test
   void returnsBoundedRedactedErrorsWithoutSuccessfulOutcome() {
     var owner = mock(AccountGameplayAdmissionAbortOwner.class);
-    var service = new AccountGameplayAdmissionLeaseGrpcService(owner);
+    var service = service(owner);
     for (var failure :
         List.of(
             new IllegalArgumentException("secret evidence"),
@@ -217,24 +221,138 @@ class AccountGameplayAdmissionLeaseGrpcServiceTest {
   }
 
   @Test
-  void everyOtherMethodRemainsUnimplemented() {
+  void acquireFinalizeAndReconcileRemainUnimplemented() {
     var owner = mock(AccountGameplayAdmissionAbortOwner.class);
-    var service = new AccountGameplayAdmissionLeaseGrpcService(owner);
+    var readOwner = mock(AccountGameplayAdmissionReadOwner.class);
+    var service = new AccountGameplayAdmissionLeaseGrpcService(owner, readOwner);
     var acquire = new Capture<AcquirePublicGameplayAdmissionLeaseResponse>();
     var finalize = new Capture<FinalizeGameplayAdmissionLeaseResponse>();
-    var read = new Capture<ReadGameplayAdmissionLeaseResponse>();
     var reconcile = new Capture<ReconcileGameplayAdmissionLeaseResponse>();
     service.acquirePublicGameplayAdmissionLease(
         AcquirePublicGameplayAdmissionLeaseRequest.getDefaultInstance(), acquire);
     service.finalizeGameplayAdmissionLease(
         FinalizeGameplayAdmissionLeaseRequest.getDefaultInstance(), finalize);
-    service.readGameplayAdmissionLease(
-        ReadGameplayAdmissionLeaseRequest.getDefaultInstance(), read);
     service.reconcileGameplayAdmissionLease(
         ReconcileGameplayAdmissionLeaseRequest.getDefaultInstance(), reconcile);
-    for (var observer : List.of(acquire, finalize, read, reconcile))
+    for (var observer : List.of(acquire, finalize, reconcile))
       assertFailure(observer, Status.Code.UNIMPLEMENTED);
-    verifyNoInteractions(owner);
+    verifyNoInteractions(owner, readOwner);
+  }
+
+  @Test
+  void encodesExactPendingAndAbortedReadbackWithoutFabricatingCleanupCompletion() {
+    var abortOwner = mock(AccountGameplayAdmissionAbortOwner.class);
+    var readOwner = mock(AccountGameplayAdmissionReadOwner.class);
+    var service = new AccountGameplayAdmissionLeaseGrpcService(abortOwner, readOwner);
+    var evidence = AccountGameplayAdmissionAbortOwnerTest.fixture();
+    var request = readRequest(evidence);
+    UUID cleanup = UUID.randomUUID();
+    for (var operation :
+        List.of(
+            new AccountGameplayAdmissionLeaseOperation(evidence, State.PENDING, null, null),
+            new AccountGameplayAdmissionLeaseOperation(evidence, State.ABORTED, null, cleanup))) {
+      when(readOwner.read(request)).thenReturn(operation);
+      var observer = new Capture<ReadGameplayAdmissionLeaseResponse>();
+      service.readGameplayAdmissionLease(request, observer);
+      assertThat(observer.failure).isNull();
+      assertThat(observer.completed).isTrue();
+      assertThat(observer.value.hasOperation()).isTrue();
+      assertThat(observer.value.hasNotObserved()).isFalse();
+      var encoded = observer.value.getOperation();
+      assertThat(AccountGameplayAdmissionLeaseWireCodec.validateOperation(encoded))
+          .isEqualTo(evidence);
+      assertThat(encoded.getLease().getEvidenceCanonicalJson())
+          .isEqualTo(com.google.protobuf.ByteString.copyFromUtf8(evidence.canonicalJson()));
+      assertThat(encoded.getLease().getEvidenceSha256()).isEqualTo(evidence.sha256());
+      if (operation.state() == State.PENDING) {
+        assertThat(encoded.getState())
+            .isEqualTo(GameplayAdmissionLeaseState.GAMEPLAY_ADMISSION_LEASE_STATE_PENDING);
+        assertThat(encoded.hasBindingDecisionId()).isFalse();
+        assertThat(encoded.hasOrphanCleanupId()).isFalse();
+        assertThat(encoded.getPendingOrphanCleanup()).isFalse();
+      } else {
+        assertThat(encoded.getState())
+            .isEqualTo(GameplayAdmissionLeaseState.GAMEPLAY_ADMISSION_LEASE_STATE_ABORTED);
+        assertThat(encoded.hasBindingDecisionId()).isFalse();
+        assertThat(encoded.getOrphanCleanupId()).isEqualTo(cleanup.toString());
+        assertThat(encoded.getPendingOrphanCleanup()).isTrue();
+      }
+    }
+    verifyNoInteractions(abortOwner);
+  }
+
+  @Test
+  void readFailuresUseRedactedNonOkStatusAndNeverReturnSuccess() {
+    var abortOwner = mock(AccountGameplayAdmissionAbortOwner.class);
+    var readOwner = mock(AccountGameplayAdmissionReadOwner.class);
+    var service = new AccountGameplayAdmissionLeaseGrpcService(abortOwner, readOwner);
+    var request = readRequest(AccountGameplayAdmissionAbortOwnerTest.fixture());
+    for (var failure :
+        List.of(
+            Status.FAILED_PRECONDITION.withDescription("secret mismatch").asRuntimeException(),
+            Status.UNAVAILABLE.withDescription("secret storage").asRuntimeException())) {
+      doThrow(failure).when(readOwner).read(request);
+      var observer = new Capture<ReadGameplayAdmissionLeaseResponse>();
+      service.readGameplayAdmissionLease(request, observer);
+      assertFailure(observer, Status.fromThrowable(failure).getCode());
+      assertThat(Status.fromThrowable(observer.failure).getDescription()).doesNotContain("secret");
+      assertThat(observer.failure.getCause()).isNull();
+    }
+    doThrow(new IllegalStateException("secret storage")).when(readOwner).read(request);
+    var unavailable = new Capture<ReadGameplayAdmissionLeaseResponse>();
+    service.readGameplayAdmissionLease(request, unavailable);
+    assertFailure(unavailable, Status.Code.UNAVAILABLE);
+    assertThat(Status.fromThrowable(unavailable.failure).getDescription()).doesNotContain("secret");
+
+    var evidence = AccountGameplayAdmissionAbortOwnerTest.fixture();
+    var committedReadOwner = mock(AccountGameplayAdmissionReadOwner.class);
+    var committedService =
+        new AccountGameplayAdmissionLeaseGrpcService(abortOwner, committedReadOwner);
+    when(committedReadOwner.read(request))
+        .thenReturn(
+            new AccountGameplayAdmissionLeaseOperation(
+                evidence, State.COMMITTED, UUID.randomUUID(), null));
+    var committed = new Capture<ReadGameplayAdmissionLeaseResponse>();
+    committedService.readGameplayAdmissionLease(request, committed);
+    assertFailure(committed, Status.Code.FAILED_PRECONDITION);
+    assertThat(Status.fromThrowable(committed.failure).getDescription()).doesNotContain("secret");
+  }
+
+  @Test
+  void mapsMalformedReadEnvelopeToInvalidArgumentBeforeSql() {
+    var repository = mock(AccountGameplayAdmissionLeaseRepository.class);
+    var manager = mock(PlatformTransactionManager.class);
+    var readOwner = new AccountGameplayAdmissionReadOwner(repository, manager, "test");
+    var service =
+        new AccountGameplayAdmissionLeaseGrpcService(
+            mock(AccountGameplayAdmissionAbortOwner.class), readOwner);
+    var observer = new Capture<ReadGameplayAdmissionLeaseResponse>();
+
+    peer()
+        .run(
+            () ->
+                service.readGameplayAdmissionLease(
+                    ReadGameplayAdmissionLeaseRequest.getDefaultInstance(), observer));
+
+    assertFailure(observer, Status.Code.INVALID_ARGUMENT);
+    assertThat(Status.fromThrowable(observer.failure).getDescription())
+        .isEqualTo("Malformed Account admission lease read request");
+    verifyNoInteractions(repository, manager);
+  }
+
+  private static AccountGameplayAdmissionLeaseGrpcService service(
+      AccountGameplayAdmissionAbortOwner abortOwner) {
+    return new AccountGameplayAdmissionLeaseGrpcService(
+        abortOwner, mock(AccountGameplayAdmissionReadOwner.class));
+  }
+
+  private static ReadGameplayAdmissionLeaseRequest readRequest(
+      net.firedevops.firemud.common.account.admission.AccountGameplayAdmissionLeaseEvidence
+          evidence) {
+    return ReadGameplayAdmissionLeaseRequest.newBuilder()
+        .setRequestId((String) evidence.carrier().get("requestId"))
+        .setExpectedLease(AccountGameplayAdmissionLeaseWireCodec.encodeReference(evidence))
+        .build();
   }
 
   private static Context peer() {
