@@ -133,7 +133,12 @@ public final class IsolatedPublicationOwnerSetup {
     attempt.setVersionNumber(versionRow.get(0, Integer.class));
     attempt.setRequestDigest(selection.digest());
     new PublishAttemptRepository(dsl).save(attempt);
-    new GameDesignPublicationOperationRepository(dsl).reserve(operation);
+    var publications = new GameDesignPublicationOperationRepository(dsl);
+    if (captureSources) {
+      publications.reserveSourceBacked(operation);
+    } else {
+      publications.reserve(operation);
+    }
     return operation;
   }
 

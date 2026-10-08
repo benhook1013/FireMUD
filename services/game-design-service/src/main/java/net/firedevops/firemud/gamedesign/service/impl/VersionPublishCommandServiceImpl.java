@@ -7,6 +7,7 @@ import java.util.Objects;
 import java.util.Optional;
 import net.firedevops.firemud.common.LoggingUtil;
 import net.firedevops.firemud.common.publication.PublicationDigestRequestBinding;
+import net.firedevops.firemud.common.world.WorldPublishedStartLocationEvidence;
 import net.firedevops.firemud.gamedesign.dto.PublishParticipantDigestDto;
 import net.firedevops.firemud.gamedesign.dto.PublishedReleaseBundleDto;
 import net.firedevops.firemud.gamedesign.dto.VersionAssetArtifactStateDto;
@@ -300,6 +301,18 @@ public class VersionPublishCommandServiceImpl {
           "pending full-version attempt does not reference a draft version");
     }
 
+    // The pending operation owns the original authenticated capture; never recapture on retry.
+    WorldPublishedStartLocationEvidence worldEvidence;
+    try {
+      worldEvidence =
+          Objects.requireNonNull(
+              publishAttemptRepository.requirePublicationPending(attempt),
+              "Original World publication evidence is required");
+    } catch (RuntimeException unresolved) {
+      // Missing or changed original evidence is not proof that either owner can abort.
+      throw pendingReconciliation(
+          "original World publication evidence requires exact reconciliation", unresolved);
+    }
     VersionDto dto = versionMapper.toDto(version);
     publishAttemptService.recordFullVersionParticipantDigests(
         request.publishWorkflowId(), participantDigests);
@@ -319,7 +332,8 @@ public class VersionPublishCommandServiceImpl {
         request.publishWorkflowId(),
         exportedManifest,
         generationConfigRevision,
-        participantDigests);
+        participantDigests,
+        worldEvidence);
     version.setVersionState(VersionLifecycleState.PUBLISHED);
     version.setVersionStateEpoch(version.getVersionStateEpoch() + 1L);
     version.setUpdatedAt(LocalDateTime.now());

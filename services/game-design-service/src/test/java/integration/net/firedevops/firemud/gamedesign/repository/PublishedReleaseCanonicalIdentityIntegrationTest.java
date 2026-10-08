@@ -14,6 +14,7 @@ import net.firedevops.firemud.gamedesign.entity.Game;
 import net.firedevops.firemud.gamedesign.entity.PublishedReleaseBundle;
 import net.firedevops.firemud.gamedesign.entity.Version;
 import net.firedevops.firemud.gamedesign.model.VersionLifecycleState;
+import net.firedevops.firemud.gamedesign.publication.GameDesignPublicationOperationRepository;
 import net.firedevops.firemud.gamedesign.repository.GameRepository;
 import net.firedevops.firemud.gamedesign.repository.PublishedReleaseBundleRepository;
 import net.firedevops.firemud.gamedesign.repository.VersionRepository;
@@ -791,8 +792,8 @@ class PublishedReleaseCanonicalIdentityIntegrationTest {
   }
 
   /**
-   * ISOLATED upstream sources/freeze; synchronized selection and terminal GD rows are actual DB
-   * writes.
+   * ISOLATED upstream Account/World evidence; actual GD genesis, synchronized source snapshots,
+   * publication captures and terminal rows use the canonical owner repositories.
    */
   private net.firedevops.firemud.gamedesign.publication.GameDesignPublicationOperation
       selectorOperation(Fixture fixture, Version version) {
@@ -810,8 +811,18 @@ class PublishedReleaseCanonicalIdentityIntegrationTest {
         .execute(
             status -> {
               try {
-                return net.firedevops.firemud.gamedesign.draft.IsolatedPublicationOwnerSetup.retain(
-                    fixture.dsl(), target, version.getVersionStateEpoch());
+                var operation =
+                    net.firedevops.firemud.gamedesign.draft.IsolatedPublicationOwnerSetup
+                        .retainSourceBacked(fixture.dsl(), target, version.getVersionStateEpoch());
+                var capture =
+                    new GameDesignPublicationOperationRepository(fixture.dsl())
+                        .readSourceCapture(operation)
+                        .orElseThrow();
+                assertThat(capture.policy().operation()).isEqualTo(operation);
+                assertThat(capture.policy().snapshot().binding())
+                    .isEqualTo(operation.account().input().selection().selectedCommit());
+                assertThat(capture.command().operation()).isEqualTo(operation);
+                return operation;
               } catch (Exception failure) {
                 throw new IllegalStateException(failure);
               }

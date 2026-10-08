@@ -32,6 +32,7 @@ import net.firedevops.firemud.account.v1.FinalizeGameplayAdmissionLeaseRequest;
 import net.firedevops.firemud.account.v1.ReadGameplayAdmissionLeaseRequest;
 import net.firedevops.firemud.accountservice.dto.AccountGameplayAdmissionLeaseOperation;
 import net.firedevops.firemud.accountservice.dto.AccountGameplayAdmissionLeaseOperation.State;
+import net.firedevops.firemud.accountservice.dto.AccountGameplayAdmissionOriginalAckReceipt;
 import net.firedevops.firemud.accountservice.entity.Account;
 import net.firedevops.firemud.common.account.admission.AccountGameplayAdmissionLeaseEvidence;
 import net.firedevops.firemud.common.account.admission.AccountGameplayAdmissionLeaseWireCodec;
@@ -44,6 +45,7 @@ import org.jooq.impl.DSL;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
+import org.postgresql.util.PSQLException;
 import org.springframework.jdbc.datasource.DataSourceTransactionManager;
 import org.springframework.jdbc.datasource.DelegatingDataSource;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
@@ -1183,7 +1185,7 @@ class AccountGameplayAdmissionLeasePersistenceIntegrationTest {
   }
 
   @Test
-  void receiptCommitFailureBeforePhysicalDelegateRollsBackWithoutReceiptOrIndependentRead() {
+  void receiptCommitFailureOrPriorWalDenialRollsBackWithoutReceiptOrIndependentRead() {
     var context = context(null);
     var original = pending(context, account(context));
     UUID decision = UUID.randomUUID();
@@ -1204,10 +1206,16 @@ class AccountGameplayAdmissionLeasePersistenceIntegrationTest {
                     .call(() -> owner.confirm(confirmationRequest(original, decision))))
         .isInstanceOf(StatusRuntimeException.class)
         .satisfies(
-            failure ->
-                assertThat(Status.fromThrowable(failure).getCode())
-                    .isEqualTo(Status.Code.UNAVAILABLE));
-    assertThat(trace.count("commit-attempt")).isEqualTo(1);
+            failure -> {
+              assertThat(Status.fromThrowable(failure).getCode())
+                  .isEqualTo(Status.Code.UNAVAILABLE);
+              int commitAttempts = trace.count("commit-attempt");
+              assertThat(commitAttempts).isBetween(0, 1);
+              if (commitAttempts == 0) assertGlobalWalCoverageFailure(failure);
+              else
+                assertCauseChainContainsMessage(
+                    failure, "Test failed before physical receipt COMMIT");
+            });
     assertThat(trace.count("physical-commit")).isZero();
     assertThat(trace.count("v90-read")).isZero();
     assertThat(
@@ -1938,6 +1946,54 @@ class AccountGameplayAdmissionLeasePersistenceIntegrationTest {
   }
 
   @Test
+  void originalAckReceiptCommitFailureBeforePhysicalDelegateRollsBackWithoutReadOrReceipt() {
+    var context = context(null);
+    var original = pending(context, account(context));
+    UUID decision = UUID.randomUUID();
+    var trace = new ReceiptCommitTrace();
+    var receiptPhase = new AtomicBoolean();
+    var dataSource =
+        originalAckReceiptDataSource(
+            context.dataSource(), trace, receiptPhase, ReceiptCommitFault.BEFORE_FIRST_COMMIT);
+    var acknowledgement =
+        new AccountGameplayAdmissionOriginalCommitExecutor(dataSource).execute(original, decision);
+    receiptPhase.set(true);
+    var committedOperation = operation(context, original).intoMap();
+    var unchanged = storageSnapshot(context);
+
+    assertThat(acknowledgement.evidence().canonicalJson()).isEqualTo(original.canonicalJson());
+    assertThat(acknowledgement.evidence().sha256()).isEqualTo(original.sha256());
+    assertThat(acknowledgement.decisionId()).isEqualTo(decision);
+    assertThat(acknowledgement.finalizationXid())
+        .isEqualTo(committedOperation.get("finalization_xid"));
+    assertThat(acknowledgement.committedBeforeMs()).isPositive().isLessThan(expiresAt(original));
+    assertThat(committedOperation.get("status")).isEqualTo("COMMITTED");
+    assertThat(committedOperation.get("expires_at_ms")).isEqualTo(expiresAt(original));
+
+    var receiptExecutor = new AccountGameplayAdmissionOriginalAckReceiptCommitExecutor(dataSource);
+    assertThatThrownBy(() -> receiptExecutor.confirm(acknowledgement))
+        .hasMessageContaining("Account receipt physical COMMIT unavailable")
+        .satisfies(
+            failure ->
+                assertCauseChainContainsMessage(
+                    failure, "Test failed before physical receipt COMMIT"));
+
+    assertThat(trace.count("original-physical-commit")).isEqualTo(1);
+    assertThat(trace.count("receipt-commit-attempt")).isEqualTo(1);
+    assertThat(trace.count("receipt-physical-commit")).isZero();
+    assertThat(trace.count("receipt-readback-physical-commit")).isZero();
+    assertThat(trace.count("receipt-exact-read")).isZero();
+    assertThat(trace.count("receipt-durable-read")).isZero();
+    assertThat(
+            context
+                .dsl()
+                .fetchCount(DSL.table("account_gameplay_admission_original_commit_ack_receipts")))
+        .isZero();
+    assertThat(operation(context, original).intoMap()).isEqualTo(committedOperation);
+    assertThat(storageSnapshot(context)).isEqualTo(unchanged);
+  }
+
+  @Test
   void originalAckReceiptCreatedInCurrentTransactionIsNotDurableReadback() {
     var context = context(null);
     var original = pending(context, account(context));
@@ -2096,6 +2152,107 @@ class AccountGameplayAdmissionLeasePersistenceIntegrationTest {
     assertThat(trace.count("original-physical-commit")).isEqualTo(1);
   }
 
+  @Test
+  void concurrentOriginalAckReceiptRecoveriesRetainExactProofBeforeAndAfterExpiry()
+      throws Exception {
+    var context = context(null);
+    var original = pending(context, account(context));
+    UUID decision = UUID.randomUUID();
+    var trace = new ReceiptCommitTrace();
+    var receiptPhase = new AtomicBoolean();
+    var dataSource = originalAckReceiptDataSource(context.dataSource(), trace, receiptPhase, true);
+    var originalExecutor = new AccountGameplayAdmissionOriginalCommitExecutor(dataSource);
+    var acknowledgement = originalExecutor.execute(original, decision);
+    receiptPhase.set(true);
+    var receiptExecutor = new AccountGameplayAdmissionOriginalAckReceiptCommitExecutor(dataSource);
+
+    assertThatThrownBy(() -> receiptExecutor.confirm(acknowledgement))
+        .hasMessageContaining("Account receipt physical COMMIT unavailable");
+    assertThat(trace.count("original-physical-commit")).isEqualTo(1);
+    assertThat(trace.count("receipt-durable-read")).isZero();
+    assertThat(databaseNow(context)).isLessThan(expiresAt(original));
+
+    var operationBeforeRecovery = operation(context, original).intoMap();
+    var sourcesBeforeRecovery = storageSnapshot(context);
+    var receiptBeforeRecovery = originalAckReceiptRow(context, original).intoMap();
+    var start = new CountDownLatch(1);
+    Callable<AccountGameplayAdmissionOriginalAckReceipt> duplicateRead =
+        () -> {
+          if (!start.await(10, TimeUnit.SECONDS)) throw new IllegalStateException("start timeout");
+          return retrySerialization(() -> receiptExecutor.read(original, decision));
+        };
+
+    AccountGameplayAdmissionOriginalAckReceipt leftReceipt;
+    AccountGameplayAdmissionOriginalAckReceipt rightReceipt;
+    try (var executor = Executors.newFixedThreadPool(2)) {
+      var left = executor.submit(duplicateRead);
+      var right = executor.submit(duplicateRead);
+      start.countDown();
+      leftReceipt = left.get(30, TimeUnit.SECONDS);
+      rightReceipt = right.get(30, TimeUnit.SECONDS);
+    }
+
+    assertThat(databaseNow(context)).isLessThan(expiresAt(original));
+    assertThat(rightReceipt).isEqualTo(leftReceipt);
+    assertThat(leftReceipt.operation().evidence().canonicalJson())
+        .isEqualTo(original.canonicalJson());
+    assertThat(leftReceipt.operation().evidence().sha256()).isEqualTo(original.sha256());
+    assertThat(leftReceipt.operation().bindingDecisionId()).isEqualTo(decision);
+    assertThat(leftReceipt.requestId()).isEqualTo(requestId(original));
+    assertThat(leftReceipt.accountId())
+        .isEqualTo(
+            UUID.fromString(
+                (String) ((Map<?, ?>) original.carrier().get("bindingScope")).get("accountId")));
+    assertThat(leftReceipt.leaseId())
+        .isEqualTo(UUID.fromString((String) original.carrier().get("leaseId")));
+    assertThat(leftReceipt.leaseFence()).isEqualTo(original.leaseFence().longValueExact());
+    assertThat(leftReceipt.evidenceSha256()).isEqualTo(original.sha256());
+    assertThat(leftReceipt.bindingDecisionId()).isEqualTo(decision);
+    assertThat(leftReceipt.expiresAtMs()).isEqualTo(expiresAt(original));
+    assertThat(leftReceipt.committedBeforeMs())
+        .isEqualTo(acknowledgement.committedBeforeMs())
+        .isPositive()
+        .isLessThan(leftReceipt.expiresAtMs());
+    assertThat(leftReceipt.finalizationXid()).isEqualTo(acknowledgement.finalizationXid());
+    assertThat(leftReceipt.receiptXid())
+        .isEqualTo((String) receiptBeforeRecovery.get("receipt_xid"));
+    assertThat(trace.count("original-physical-commit")).isEqualTo(1);
+    assertThat(trace.count("receipt-durable-read")).isGreaterThanOrEqualTo(2);
+    assertThat(trace.count("receipt-exact-read")).isZero();
+    assertThat(
+            context
+                .dsl()
+                .fetchCount(DSL.table("account_gameplay_admission_original_commit_ack_receipts")))
+        .isEqualTo(1);
+    assertThat(originalAckReceiptRow(context, original).intoMap()).isEqualTo(receiptBeforeRecovery);
+    assertThat(operation(context, original).intoMap()).isEqualTo(operationBeforeRecovery);
+    assertThat(storageSnapshot(context)).isEqualTo(sourcesBeforeRecovery);
+
+    // The V92 receipt is immutable historical proof; expiry does not restamp or renew it.
+    waitPastDeadline(context, original);
+    var recoveredAfterExpiry = receiptExecutor.read(original, decision);
+    assertThat(recoveredAfterExpiry).isEqualTo(leftReceipt);
+    assertThat(recoveredAfterExpiry.expiresAtMs()).isEqualTo(expiresAt(original));
+    assertThat(recoveredAfterExpiry.committedBeforeMs())
+        .isEqualTo(acknowledgement.committedBeforeMs())
+        .isLessThan(expiresAt(original));
+    assertThat(trace.count("original-physical-commit")).isEqualTo(1);
+    assertThat(trace.count("receipt-durable-read")).isGreaterThanOrEqualTo(3);
+    assertThat(
+            context
+                .dsl()
+                .fetchCount(DSL.table("account_gameplay_admission_original_commit_ack_receipts")))
+        .isEqualTo(1);
+    assertThat(originalAckReceiptRow(context, original).intoMap()).isEqualTo(receiptBeforeRecovery);
+    assertThat(operation(context, original).intoMap()).isEqualTo(operationBeforeRecovery);
+    assertThat(storageSnapshot(context)).isEqualTo(sourcesBeforeRecovery);
+    assertThatThrownBy(() -> originalExecutor.execute(original, decision))
+        .hasMessageContaining("Fresh owned Account original COMMIT required");
+    assertThat(trace.count("original-physical-commit")).isEqualTo(1);
+    assertThat(operation(context, original).intoMap()).isEqualTo(operationBeforeRecovery);
+    assertThat(storageSnapshot(context)).isEqualTo(sourcesBeforeRecovery);
+  }
+
   private static Record confirm(
       Context context, AccountGameplayAdmissionLeaseEvidence original, UUID decision) {
     return Objects.requireNonNull(
@@ -2150,16 +2307,16 @@ class AccountGameplayAdmissionLeasePersistenceIntegrationTest {
     private final AtomicInteger commitAttempts = new AtomicInteger();
     private final List<ReceiptCommitEvent> events = new java.util.ArrayList<>();
 
-    private void record(String kind, int connectionId) {
+    private synchronized void record(String kind, int connectionId) {
       events.add(new ReceiptCommitEvent(kind, connectionId));
     }
 
-    private int count(String kind) {
+    private synchronized int count(String kind) {
       return (int) events.stream().filter(event -> event.kind().equals(kind)).count();
     }
 
-    private List<ReceiptCommitEvent> events() {
-      return events;
+    private synchronized List<ReceiptCommitEvent> events() {
+      return List.copyOf(events);
     }
   }
 
@@ -2224,6 +2381,20 @@ class AccountGameplayAdmissionLeasePersistenceIntegrationTest {
       ReceiptCommitTrace trace,
       AtomicBoolean receiptPhase,
       boolean loseFirstReceiptCommitAcknowledgement) {
+    return originalAckReceiptDataSource(
+        source,
+        trace,
+        receiptPhase,
+        loseFirstReceiptCommitAcknowledgement
+            ? ReceiptCommitFault.AFTER_FIRST_COMMIT
+            : ReceiptCommitFault.NONE);
+  }
+
+  private static DataSource originalAckReceiptDataSource(
+      DataSource source,
+      ReceiptCommitTrace trace,
+      AtomicBoolean receiptPhase,
+      ReceiptCommitFault fault) {
     return new DelegatingDataSource(source) {
       @Override
       public Connection getConnection() throws SQLException {
@@ -2251,13 +2422,15 @@ class AccountGameplayAdmissionLeasePersistenceIntegrationTest {
                     }
                     int attempt = trace.commitAttempts.incrementAndGet();
                     trace.record("receipt-commit-attempt", connectionId);
+                    if (attempt == 1 && fault == ReceiptCommitFault.BEFORE_FIRST_COMMIT)
+                      throw new SQLException("Test failed before physical receipt COMMIT", "08006");
                     physical.commit();
                     trace.record(
                         exactReadOnConnection.get()
                             ? "receipt-readback-physical-commit"
                             : "receipt-physical-commit",
                         connectionId);
-                    if (attempt == 1 && loseFirstReceiptCommitAcknowledgement)
+                    if (attempt == 1 && fault == ReceiptCommitFault.AFTER_FIRST_COMMIT)
                       throw new SQLException("Test lost physical receipt COMMIT response", "08006");
                     return null;
                   }
@@ -2341,6 +2514,36 @@ class AccountGameplayAdmissionLeasePersistenceIntegrationTest {
         .filter(event -> event.kind().equals(kind))
         .findFirst()
         .orElseThrow(() -> new AssertionError("Missing receipt JDBC event: " + kind));
+  }
+
+  private static void assertGlobalWalCoverageFailure(Throwable failure) {
+    Throwable cause = failure;
+    while (cause != null) {
+      var serverError =
+          cause instanceof PSQLException postgresFailure
+              ? postgresFailure.getServerErrorMessage()
+              : null;
+      if (cause instanceof PSQLException postgresFailure
+          && serverError != null
+          && "account_admission_confirmation_wal_coverage".equals(serverError.getConstraint())) {
+        assertThat(postgresFailure.getSQLState()).isEqualTo("23514");
+        assertThat(postgresFailure.getMessage())
+            .contains("Account admission confirmation WAL coverage unavailable");
+        return;
+      }
+      cause = cause.getCause();
+    }
+    throw new AssertionError(
+        "Expected the retained Account admission confirmation WAL coverage failure", failure);
+  }
+
+  private static void assertCauseChainContainsMessage(Throwable failure, String expectedMessage) {
+    Throwable cause = failure;
+    while (cause != null) {
+      if (cause.getMessage() != null && cause.getMessage().contains(expectedMessage)) return;
+      cause = cause.getCause();
+    }
+    throw new AssertionError("Expected cause chain to contain: " + expectedMessage, failure);
   }
 
   private static Record readConfirmation(

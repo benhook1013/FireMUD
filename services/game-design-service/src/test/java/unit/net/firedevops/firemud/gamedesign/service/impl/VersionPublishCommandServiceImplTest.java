@@ -4,6 +4,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.same;
 import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -15,6 +16,7 @@ import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
 import net.firedevops.firemud.common.publication.PublicationDigestRequestBinding;
+import net.firedevops.firemud.common.world.WorldPublishedStartLocationEvidence;
 import net.firedevops.firemud.gamedesign.dto.DesignControlPlaneDigestDto;
 import net.firedevops.firemud.gamedesign.dto.PublishParticipantDigestDto;
 import net.firedevops.firemud.gamedesign.dto.PublishedReleaseBundleDto;
@@ -44,6 +46,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.EnumSource;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.mapstruct.factory.Mappers;
 import org.mockito.InOrder;
 import org.mockito.Mock;
@@ -60,12 +63,17 @@ class VersionPublishCommandServiceImplTest {
   @Mock private VersionAssetArtifactService versionAssetArtifactService;
   @Mock private PublishedReleaseBundleService publishedReleaseBundleService;
   @Mock private RecordedParticipantDigestService recordedParticipantDigestService;
+  // Explicit repository/service double: owner storage and authenticated capture have separate
+  // proof.
+  @Mock private WorldPublishedStartLocationEvidence originalWorldEvidence;
 
   private VersionPublishCommandServiceImpl service;
 
   @BeforeEach
   void setup() {
     MockitoAnnotations.openMocks(this);
+    when(publishAttemptRepository.requirePublicationPending(any(PublishAttempt.class)))
+        .thenReturn(originalWorldEvidence);
     when(publishedReleaseBundleService.findPublishedReleaseBundle(
             any(String.class), any(Long.class)))
         .thenReturn(Optional.empty());
@@ -184,7 +192,8 @@ class VersionPublishCommandServiceImplTest {
             any(String.class),
             any(ExportedAssetManifest.class),
             any(String.class),
-            any(List.class)))
+            any(List.class),
+            same(originalWorldEvidence)))
         .thenReturn(
             new PublishedReleaseBundleDto(
                 1L,
@@ -227,6 +236,24 @@ class VersionPublishCommandServiceImplTest {
     assertEquals(8, dto.versionNumber());
     assertEquals(VersionLifecycleState.PUBLISHED, dto.versionState());
     assertEquals(2L, dto.versionStateEpoch());
+    InOrder evidenceOrder = inOrder(publishAttemptRepository, publishedReleaseBundleService);
+    evidenceOrder.verify(publishAttemptRepository).requirePublicationPending(attempt);
+    evidenceOrder
+        .verify(publishedReleaseBundleService)
+        .createFullVersionBundle(
+            any(VersionDto.class),
+            any(String.class),
+            any(ExportedAssetManifest.class),
+            any(String.class),
+            any(List.class),
+            same(originalWorldEvidence));
+    verify(publishedReleaseBundleService, never())
+        .createFullVersionBundle(
+            any(VersionDto.class),
+            any(String.class),
+            any(ExportedAssetManifest.class),
+            any(String.class),
+            any(List.class));
     verify(publishAttemptService)
         .createFullVersionAttempt(any(VersionDto.class), any(String.class), any(String.class));
     verify(assetExportService).exportAssets("tenant-1", 8);
@@ -433,7 +460,8 @@ class VersionPublishCommandServiceImplTest {
             any(String.class),
             any(ExportedAssetManifest.class),
             any(String.class),
-            any(List.class));
+            any(List.class),
+            same(originalWorldEvidence));
 
     assertThrows(
         IllegalStateException.class,
@@ -1008,7 +1036,8 @@ class VersionPublishCommandServiceImplTest {
             any(String.class),
             any(ExportedAssetManifest.class),
             any(String.class),
-            any(List.class)))
+            any(List.class),
+            same(originalWorldEvidence)))
         .thenReturn(bundle);
     when(publishedReleaseBundleService.findPublishedReleaseBundle("tenant-1", 10L))
         .thenReturn(Optional.empty());
@@ -1232,6 +1261,64 @@ class VersionPublishCommandServiceImplTest {
         .markFullVersionFailed(any(String.class), any(String.class), any(String.class));
     verify(assetExportService, never())
         .deleteExportedAssets(any(String.class), any(Integer.class), any(List.class));
+  }
+
+  @ParameterizedTest
+  @ValueSource(booleans = {false, true})
+  void missingOrChangedOriginalWorldEvidenceCannotWriteBundle(boolean changed) {
+    String workflowId = "publish:tenant-1:publish-request:workflow-1";
+    PublishAttempt attempt = fullAttempt(PublishAttemptStatus.PENDING, 10L, 1, workflowId);
+    Version version = fullVersion(10L, 1, VersionLifecycleState.DRAFT);
+    Game game = new Game();
+    game.setId(1L);
+    game.setTenantId("tenant-1");
+    when(gameRepository.findByTenantIdForUpdate("tenant-1")).thenReturn(game);
+    when(publishAttemptRepository.findByPublishWorkflowId(workflowId))
+        .thenReturn(Optional.of(attempt));
+    when(versionRepository.findByTenantIdAndId("tenant-1", 10L)).thenReturn(Optional.of(version));
+    when(publishGateService.collectFullVersionParticipantDigests(
+            any(VersionDto.class), any(String.class), any(String.class)))
+        .thenReturn(participantDigests());
+    when(assetExportService.exportAssets("tenant-1", 1))
+        .thenReturn(new ExportedAssetManifest("manifest-hash", List.of("manifest.json")));
+    // Explicit owner repository double models unavailable or changed/sealed persisted evidence.
+    if (changed) {
+      when(publishAttemptRepository.requirePublicationPending(attempt))
+          .thenThrow(new IllegalStateException("PUBLICATION_OPERATION_SEALED_OR_CHANGED"));
+    } else {
+      when(publishAttemptRepository.requirePublicationPending(attempt)).thenReturn(null);
+    }
+
+    assertThrows(
+        VersionPublishCommandServiceImpl.PendingReconciliationException.class,
+        () ->
+            service.reconcileFullVersionPublish(
+                new PublishWorkflowRequest("tenant-1", "notes", "workflow-1", workflowId)));
+
+    assertEquals(VersionLifecycleState.DRAFT, version.getVersionState());
+    verify(versionRepository, never()).save(any(Version.class));
+    verify(versionAssetArtifactService, never())
+        .markExportedUnattested(
+            any(String.class),
+            any(Long.class),
+            any(Integer.class),
+            any(String.class),
+            any(ExportedAssetManifest.class));
+    verify(publishedReleaseBundleService, never())
+        .createFullVersionBundle(
+            any(VersionDto.class),
+            any(String.class),
+            any(ExportedAssetManifest.class),
+            any(String.class),
+            any(List.class),
+            any(WorldPublishedStartLocationEvidence.class));
+    verify(publishedReleaseBundleService, never())
+        .createFullVersionBundle(
+            any(VersionDto.class),
+            any(String.class),
+            any(ExportedAssetManifest.class),
+            any(String.class),
+            any(List.class));
   }
 
   private PublishAttempt fullAttempt(
