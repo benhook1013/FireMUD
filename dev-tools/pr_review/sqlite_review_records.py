@@ -58,12 +58,20 @@ _RECORDS_TABLES = {
 def _model_metadata(metadata: Mapping[str, Any]) -> None:
     """Validate declared tool identifiers without guessing or pinning versions."""
     model = metadata.get("model")
-    if (not isinstance(model, str) or not model.strip() or len(model) > 200
-            or any(character.isspace() or ord(character) < 32 for character in model)):
+    if (
+        not isinstance(model, str)
+        or not model.strip()
+        or len(model) > 200
+        or any(character.isspace() or ord(character) < 32 for character in model)
+    ):
         raise ReviewRecordsError("new subagent attempts require a nonblank model identifier of at most 200 characters")
     effort = metadata.get("reasoning_effort")
-    if effort is not None and (not isinstance(effort, str) or not effort.strip() or len(effort) > 32
-                               or any(character.isspace() or ord(character) < 32 for character in effort)):
+    if effort is not None and (
+        not isinstance(effort, str)
+        or not effort.strip()
+        or len(effort) > 32
+        or any(character.isspace() or ord(character) < 32 for character in effort)
+    ):
         raise ReviewRecordsError("reasoning effort must be a bounded nonblank identifier when supplied")
 
 
@@ -608,9 +616,7 @@ class SqliteReviewRecords:
         diagnostic = _bounded_text(diagnostic, "attempt diagnostic", maximum=1000, allow_empty=True)
         archived = {kind: _archive_artifact(kind, content) for kind, content in (artifacts or {}).items()}
         with (
-            self._write_connection(deadline=deadline)
-            if _connection is None
-            else contextlib.nullcontext(_connection)
+            self._write_connection(deadline=deadline) if _connection is None else contextlib.nullcontext(_connection)
         ) as connection:
             existing = connection.execute(
                 "SELECT state, finished_at, duration_seconds, exit_status, trigger_id, provider_review_id, "
@@ -748,7 +754,8 @@ class SqliteReviewRecords:
         self._check_deadline(deadline)
         with (
             contextlib.closing(self._connect(read_only=True, deadline=deadline))
-            if _connection is None else contextlib.nullcontext(_connection)
+            if _connection is None
+            else contextlib.nullcontext(_connection)
         ) as connection:
             self._require_compatible(connection, deadline=deadline)
             self._set_busy_timeout(connection, deadline)
@@ -955,8 +962,10 @@ class SqliteReviewRecords:
                 )
             }
             if existing:
-                if "metadata" in existing and "metadata" in archived and self._same_checkpoint_projection(
-                    existing["metadata"][0], archived["metadata"][0]
+                if (
+                    "metadata" in existing
+                    and "metadata" in archived
+                    and self._same_checkpoint_projection(existing["metadata"][0], archived["metadata"][0])
                 ):
                     # The added parsed projection must not rewrite any prior
                     # immutable capture bytes, source hash or redaction count.
@@ -1260,21 +1269,23 @@ class SqliteReviewRecords:
             original = original_by_key.get(key)
             if original is None or original.get("title") != title or original.get("detail") != detail:
                 raise ReviewRecordsError("CLI SQL finding conflicts with its immutable source projection")
-            observations.append({
-                "index": index, "source_finding_key": key, "disposition": disposition,
-                "title": title, "detail": detail, "detail_recorded": detail != "",
-            })
-        if len(observations) != run[7] or sorted(item["index"] for item in observations) != list(
-            range(1, run[7] + 1)
-        ):
+            observations.append(
+                {
+                    "index": index,
+                    "source_finding_key": key,
+                    "disposition": disposition,
+                    "title": title,
+                    "detail": detail,
+                    "detail_recorded": detail != "",
+                }
+            )
+        if len(observations) != run[7] or sorted(item["index"] for item in observations) != list(range(1, run[7] + 1)):
             raise ReviewRecordsError("CLI SQL source findings do not match the stored run count")
         accepted = sum(item["disposition"] == "accepted" for item in observations)
         routed = sum(item["disposition"] == "routed" for item in observations)
         if (run[8], run[9]) != (accepted, routed):
             raise ReviewRecordsError("CLI SQL decisions do not match stored source counts")
-        if run[10] and (
-            len(decisions) != run[7] or any(item["disposition"] == "unresolved" for item in observations)
-        ):
+        if run[10] and (len(decisions) != run[7] or any(item["disposition"] == "unresolved" for item in observations)):
             raise ReviewRecordsError("finalized CLI SQL source run has incomplete decisions")
         return {
             "attempt": {
@@ -1393,14 +1404,187 @@ class SqliteReviewRecords:
                     "UPDATE review_attempts SET metadata_json = ? WHERE attempt_id = ?", (serialized, run_id)
                 )
                 replay = False
-            source_pr = connection.execute(
-                "SELECT source_pr FROM review_runs WHERE run_id = ?", (run_id,)
-            ).fetchone()[0]
-            run = next(item for item in self.history(source_pr, _connection=connection)["runs"]
-                       if item["run_id"] == run_id)
-        return {"run_id": run_id, "source_finding_key": source_finding_key,
-                "counts": run["counts"], "original_counts": run["original_counts"],
-                "idempotent_replay": replay}
+            source_pr = connection.execute("SELECT source_pr FROM review_runs WHERE run_id = ?", (run_id,)).fetchone()[
+                0
+            ]
+            run = next(
+                item for item in self.history(source_pr, _connection=connection)["runs"] if item["run_id"] == run_id
+            )
+        return {
+            "run_id": run_id,
+            "source_finding_key": source_finding_key,
+            "counts": run["counts"],
+            "original_counts": run["original_counts"],
+            "idempotent_replay": replay,
+        }
+
+    @_translate_database_errors
+    def correct_subagent_run_count(
+        self,
+        run_id: str,
+        *,
+        correction_id: str,
+        excluded_from_review_counts: bool,
+        actor: str,
+        reason: str,
+    ) -> dict[str, Any]:
+        """Append an audited correction to one zero-finding subagent run's count status."""
+
+        run_id = _safe_identifier(run_id, "run ID", maximum=100)
+        correction_id = _safe_identifier(correction_id, "correction ID", maximum=200)
+        if type(excluded_from_review_counts) is not bool:
+            raise ReviewRecordsError("review-count correction action must be explicit")
+        action = "exclude_from_review_counts" if excluded_from_review_counts else "restore_to_review_counts"
+        actor = _bounded_text(actor, "actor", maximum=100)
+        reason = _bounded_text(reason, "correction reason", maximum=300)
+        with self._write_connection() as connection:
+            metadata = self._require_zero_finding_subagent_run(connection, run_id)
+            corrections = self._subagent_run_count_corrections(connection, run_id, metadata=metadata)
+            prior = next((item for item in corrections if item["correction_id"] == correction_id), None)
+            if prior is not None:
+                if prior["action"] != action or prior["actor"] != actor or prior["reason"] != reason:
+                    raise ReviewRecordsError("run-count correction ID already has different provenance")
+                replay = True
+            else:
+                currently_excluded = bool(corrections and corrections[-1]["action"] == "exclude_from_review_counts")
+                if currently_excluded == excluded_from_review_counts:
+                    raise ReviewRecordsError("run-count correction must change the current review-count status")
+                if len(corrections) >= 200:
+                    raise ReviewRecordsError("a subagent run may record at most 200 review-count corrections")
+                correction = {
+                    "correction_id": correction_id,
+                    "action": action,
+                    "actor": actor,
+                    "reason": reason,
+                    "corrected_at": _timestamp(None, "correction time"),
+                }
+                metadata.setdefault("review_count_corrections", []).append(correction)
+                serialized = _json(metadata)
+                _, _, redactions = _archive_artifact("metadata", serialized)
+                if redactions:
+                    raise ReviewRecordsError("correction provenance contains credential-shaped material")
+                connection.execute(
+                    "UPDATE review_attempts SET metadata_json = ? WHERE attempt_id = ?", (serialized, run_id)
+                )
+                corrections.append(correction)
+                replay = False
+            latest = corrections[-1]
+        return {
+            "run_id": run_id,
+            "excluded_from_review_counts": latest["action"] == "exclude_from_review_counts",
+            "review_count_corrections": corrections,
+            "idempotent_replay": replay,
+        }
+
+    def _require_zero_finding_subagent_run(self, connection: sqlite3.Connection, run_id: str) -> dict[str, Any]:
+        row = connection.execute(
+            "SELECT a.metadata_json, a.state, a.source_pr, a.channel, a.run_id, r.source_pr, r.channel, "
+            "r.outcome, r.finalized, r.found_count, r.accepted_count, r.routed_count "
+            "FROM review_attempts a LEFT JOIN review_runs r ON r.run_id = a.run_id WHERE a.attempt_id = ?",
+            (run_id,),
+        ).fetchone()
+        if (
+            row is None
+            or row[1] != "completed"
+            or row[2] != row[5]
+            or row[3] != "subagent"
+            or row[4] != run_id
+            or row[6] != "subagent"
+            or row[7] != "completed"
+            or row[8] != 1
+        ):
+            raise ReviewRecordsError(
+                "review-count correction requires an exact completed linked finalized subagent run"
+            )
+        if (row[9], row[10], row[11]) != (0, 0, 0):
+            raise ReviewRecordsError("review-count correction requires zero source counts")
+        evidence = connection.execute(
+            "SELECT "
+            "(SELECT COUNT(*) FROM finding_observations WHERE run_id = ?), "
+            "(SELECT COUNT(*) FROM decisions WHERE run_id = ?), "
+            "(SELECT COUNT(*) FROM routes r JOIN finding_observations o USING (finding_id) WHERE o.run_id = ?), "
+            "(SELECT COUNT(*) FROM source_finding_resolutions WHERE run_id = ?)",
+            (run_id, run_id, run_id, run_id),
+        ).fetchone()
+        if evidence != (0, 0, 0, 0):
+            raise ReviewRecordsError(
+                "review-count correction cannot hide observations, decisions, routes, or fix evidence"
+            )
+        metadata = json.loads(row[0])
+        if not isinstance(metadata, dict):
+            raise ReviewRecordsError("review attempt metadata is not an object")
+        return metadata
+
+    def _subagent_run_count_corrections(
+        self,
+        connection: sqlite3.Connection,
+        run_id: str,
+        *,
+        metadata: dict[str, Any] | None = None,
+    ) -> list[dict[str, Any]]:
+        if metadata is None:
+            row = connection.execute(
+                "SELECT metadata_json FROM review_attempts WHERE attempt_id = ?", (run_id,)
+            ).fetchone()
+            if row is None:
+                return []
+            try:
+                metadata = json.loads(row[0])
+            except json.JSONDecodeError as exc:
+                raise ReviewRecordsError("review attempt metadata is malformed") from exc
+        if not isinstance(metadata, dict):
+            raise ReviewRecordsError("review attempt metadata is not an object")
+        if "review_count_corrections" not in metadata:
+            return []
+        corrections = metadata["review_count_corrections"]
+        if not isinstance(corrections, list) or len(corrections) > 200:
+            raise ReviewRecordsError("subagent review-count correction history is malformed")
+        if not corrections:
+            return []
+        self._require_zero_finding_subagent_run(connection, run_id)
+        result = []
+        correction_ids = set()
+        currently_excluded = False
+        for correction in corrections:
+            if not isinstance(correction, dict) or set(correction) != {
+                "correction_id",
+                "action",
+                "actor",
+                "reason",
+                "corrected_at",
+            }:
+                raise ReviewRecordsError("subagent review-count correction history is malformed")
+            correction_id = _safe_identifier(correction["correction_id"], "correction ID", maximum=200)
+            if correction_id in correction_ids:
+                raise ReviewRecordsError("subagent review-count correction history repeats a correction ID")
+            correction_ids.add(correction_id)
+            action = correction["action"]
+            if action == "exclude_from_review_counts":
+                if currently_excluded:
+                    raise ReviewRecordsError("subagent review-count correction history repeats an exclusion")
+                currently_excluded = True
+            elif action == "restore_to_review_counts":
+                if not currently_excluded:
+                    raise ReviewRecordsError("subagent review-count correction history restores a counted run")
+                currently_excluded = False
+            else:
+                raise ReviewRecordsError("subagent review-count correction action is invalid")
+            actor = _bounded_text(correction["actor"], "actor", maximum=100)
+            reason = _bounded_text(correction["reason"], "correction reason", maximum=300)
+            corrected_at = correction["corrected_at"]
+            if not isinstance(corrected_at, str):
+                raise ReviewRecordsError("stored review-count correction time is malformed")
+            _timestamp(corrected_at, "correction time")
+            result.append(
+                {
+                    "correction_id": correction_id,
+                    "action": action,
+                    "actor": actor,
+                    "reason": reason,
+                    "corrected_at": corrected_at,
+                }
+            )
+        return result
 
     def _subagent_non_finding_observation(
         self, connection: sqlite3.Connection, run_id: str, source_finding_key: str
@@ -1424,20 +1608,23 @@ class SqliteReviewRecords:
             (row[1], row[1], run_id, row[1], run_id, row[1]),
         ).fetchone():
             raise ReviewRecordsError("a finding with route, accepted decision, or fix evidence cannot become a note")
-        if connection.execute(
-            "SELECT COUNT(*) FROM decisions WHERE decision_scope = 'source' AND run_id = ? AND finding_id = ? "
-            "AND decision = 'rejected'", (run_id, row[1])
-        ).fetchone()[0] != 1:
+        if (
+            connection.execute(
+                "SELECT COUNT(*) FROM decisions WHERE decision_scope = 'source' AND run_id = ? AND finding_id = ? "
+                "AND decision = 'rejected'",
+                (run_id, row[1]),
+            ).fetchone()[0]
+            != 1
+        ):
             raise ReviewRecordsError("non-finding correction requires the exact rejected source decision")
         return self._observation_record(row)
 
-    def _subagent_record_corrections(
-        self, connection: sqlite3.Connection, run_id: str
-    ) -> list[dict[str, Any]]:
+    def _subagent_record_corrections(self, connection: sqlite3.Connection, run_id: str) -> list[dict[str, Any]]:
         row = connection.execute(
             "SELECT a.metadata_json, a.state, a.source_pr, r.source_pr, r.channel, r.finalized "
             "FROM review_attempts a JOIN review_runs r ON r.run_id = a.run_id "
-            "WHERE a.attempt_id = ? AND a.run_id = ? AND a.channel = 'subagent'", (run_id, run_id)
+            "WHERE a.attempt_id = ? AND a.run_id = ? AND a.channel = 'subagent'",
+            (run_id, run_id),
         ).fetchone()
         if row is None:
             return []
@@ -1453,7 +1640,10 @@ class SqliteReviewRecords:
         keys = set()
         for correction in corrections:
             if not isinstance(correction, dict) or set(correction) != {
-                "source_finding_key", "actor", "reason", "corrected_at"
+                "source_finding_key",
+                "actor",
+                "reason",
+                "corrected_at",
             }:
                 raise ReviewRecordsError("subagent record correction history is malformed")
             key = _safe_identifier(correction["source_finding_key"], "finding key", maximum=200)
@@ -1506,8 +1696,10 @@ class SqliteReviewRecords:
                 ).fetchone()
                 if row is None:
                     raise ReviewRecordsError("source finding was not observed in that run")
-                if any(item["source_finding_key"] == source_finding_key
-                       for item in self._subagent_record_corrections(connection, run_id)):
+                if any(
+                    item["source_finding_key"] == source_finding_key
+                    for item in self._subagent_record_corrections(connection, run_id)
+                ):
                     raise ReviewRecordsError("a retained non-finding note cannot change its source decision")
                 finding_id, old_decision, finalized = row
                 if old_decision not in {"accepted", "rejected"}:
@@ -1524,10 +1716,14 @@ class SqliteReviewRecords:
                 ).fetchone()
                 if initial is None or supersedes_id != (latest or initial)[0]:
                     raise ReviewRecordsError("correction does not name the latest exact decision")
-                if decision != "accepted" and connection.execute(
-                    "SELECT 1 FROM source_finding_resolutions WHERE run_id = ? AND finding_id = ?",
-                    (run_id, finding_id),
-                ).fetchone() is not None:
+                if (
+                    decision != "accepted"
+                    and connection.execute(
+                        "SELECT 1 FROM source_finding_resolutions WHERE run_id = ? AND finding_id = ?",
+                        (run_id, finding_id),
+                    ).fetchone()
+                    is not None
+                ):
                     raise ReviewRecordsError("a resolved source finding cannot be corrected away from accepted")
                 if connection.execute(
                     "SELECT 1 FROM source_decision_corrections WHERE correction_id = ?", (correction_id,)
@@ -1634,11 +1830,7 @@ class SqliteReviewRecords:
                     "detail": item.detail,
                     "disposition": item.disposition,
                     "target_pr": item.target_pr,
-                    **(
-                        {"display_severity": item.display_severity}
-                        if item.display_severity is not None
-                        else {}
-                    ),
+                    **({"display_severity": item.display_severity} if item.display_severity is not None else {}),
                 }
                 for item in observations
             ],
@@ -1905,10 +2097,13 @@ class SqliteReviewRecords:
                 finding_id, disposition = finding
                 if disposition != "accepted":
                     raise ReviewRecordsError("only an effectively accepted source finding can be resolved")
-                if connection.execute(
-                    "SELECT 1 FROM decisions WHERE decision_scope = 'source' AND run_id = ? AND finding_id = ?",
-                    (run_id, finding_id),
-                ).fetchone() is None:
+                if (
+                    connection.execute(
+                        "SELECT 1 FROM decisions WHERE decision_scope = 'source' AND run_id = ? AND finding_id = ?",
+                        (run_id, finding_id),
+                    ).fetchone()
+                    is None
+                ):
                     raise ReviewRecordsError("accepted source finding has no source decision evidence")
 
                 expected = (
@@ -1950,9 +2145,12 @@ class SqliteReviewRecords:
                         "resolved_at": existing[9],
                         "idempotent_replay": True,
                     }
-                if connection.execute(
-                    "SELECT 1 FROM source_finding_resolutions WHERE resolution_id = ?", (resolution_id,)
-                ).fetchone() is not None:
+                if (
+                    connection.execute(
+                        "SELECT 1 FROM source_finding_resolutions WHERE resolution_id = ?", (resolution_id,)
+                    ).fetchone()
+                    is not None
+                ):
                     raise ReviewRecordsError("source resolution ID is already used")
                 connection.execute(
                     "INSERT INTO source_finding_resolutions "
@@ -2027,7 +2225,16 @@ class SqliteReviewRecords:
                 ).fetchone()
                 if original is None:
                     raise ReviewRecordsError("source resolution does not exist")
-                original_run, _finding_id, original_pr, _source_channel, outcome, original_sha, disposition, original_key = original
+                (
+                    original_run,
+                    _finding_id,
+                    original_pr,
+                    _source_channel,
+                    outcome,
+                    original_sha,
+                    disposition,
+                    original_key,
+                ) = original
                 if (
                     original_run != run_id
                     or original_pr != source_pr
@@ -2119,8 +2326,7 @@ class SqliteReviewRecords:
                 changed = previous_severity != severity
                 if changed:
                     connection.execute(
-                        "UPDATE finding_observations SET display_severity = ? "
-                        "WHERE run_id = ? AND finding_id = ?",
+                        "UPDATE finding_observations SET display_severity = ? WHERE run_id = ? AND finding_id = ?",
                         (severity, run_id, finding_id),
                     )
         except ReviewRecordsError:
@@ -2247,11 +2453,15 @@ class SqliteReviewRecords:
                     ):
                         return "pending"
                     if source_channel == "cli":
-                        if origin[6] != run_id and connection.execute(
-                            "SELECT 1 FROM review_runs WHERE run_id = ? "
-                            "UNION ALL SELECT 1 FROM review_attempts WHERE attempt_id = ? OR run_id = ? LIMIT 1",
-                            (run_id, run_id, run_id),
-                        ).fetchone() is not None:
+                        if (
+                            origin[6] != run_id
+                            and connection.execute(
+                                "SELECT 1 FROM review_runs WHERE run_id = ? "
+                                "UNION ALL SELECT 1 FROM review_attempts WHERE attempt_id = ? OR run_id = ? LIMIT 1",
+                                (run_id, run_id, run_id),
+                            ).fetchone()
+                            is not None
+                        ):
                             return "pending"
                         run_id = origin[6]
                     elif origin[6] != run_id:
@@ -2369,7 +2579,16 @@ class SqliteReviewRecords:
                 if recorded.as_json() != stored:
                     return False
             else:
-                required = ("comment_id", "created_at", "type", "raw_found", "accepted", "reviewed_sha", "file_count", "correction")
+                required = (
+                    "comment_id",
+                    "created_at",
+                    "type",
+                    "raw_found",
+                    "accepted",
+                    "reviewed_sha",
+                    "file_count",
+                    "correction",
+                )
                 recorded = dataclasses.replace(
                     checkpoint,
                     **{key: stored[key] for key in required},
@@ -2385,7 +2604,8 @@ class SqliteReviewRecords:
             # current GitHub author, and still have to reproduce the hash.
             return (
                 _checkpoint_fingerprint(recorded) == fingerprint
-                and _checkpoint_fingerprint(dataclasses.replace(checkpoint, updated_at=recorded.updated_at)) == fingerprint
+                and _checkpoint_fingerprint(dataclasses.replace(checkpoint, updated_at=recorded.updated_at))
+                == fingerprint
             )
         except (KeyError, TypeError, ValueError):
             return False
@@ -2567,11 +2787,7 @@ class SqliteReviewRecords:
                     "detail": item.detail,
                     "disposition": item.disposition,
                     "target_pr": item.target_pr,
-                    **(
-                        {"display_severity": item.display_severity}
-                        if item.display_severity is not None
-                        else {}
-                    ),
+                    **({"display_severity": item.display_severity} if item.display_severity is not None else {}),
                 }
                 for item in observations
             ],
@@ -2824,8 +3040,7 @@ class SqliteReviewRecords:
                     )
                 else:
                     finalized_at = run[1]
-                counts = (counts[0] - len(self._subagent_record_corrections(connection, run_id)),
-                          counts[1], counts[2])
+                counts = (counts[0] - len(self._subagent_record_corrections(connection, run_id)), counts[1], counts[2])
         except ReviewRecordsError:
             raise
         except sqlite3.DatabaseError as exc:
@@ -3163,6 +3378,7 @@ class SqliteReviewRecords:
                     )
                 attempts = []
                 corrected_subagent_runs = set()
+                review_count_corrected_subagent_runs = set()
                 for row in connection.execute(
                     "SELECT attempt_id, channel, candidate_sha, state, started_at, finished_at, "
                     "duration_seconds, exit_status, trigger_id, provider_review_id, checkpoint_id, run_id, "
@@ -3176,10 +3392,20 @@ class SqliteReviewRecords:
                         raise ReviewRecordsError("review attempt metadata is malformed") from exc
                     if not isinstance(metadata, dict):
                         raise ReviewRecordsError("review attempt metadata is not an object")
-                    if row[1] == "subagent" and metadata.get("record_corrections") != [] and "record_corrections" in metadata:
+                    if (
+                        row[1] == "subagent"
+                        and metadata.get("record_corrections") != []
+                        and "record_corrections" in metadata
+                    ):
                         if row[0] != row[11] or row[3] != "completed":
-                            raise ReviewRecordsError("subagent record corrections have no completed exact run association")
+                            raise ReviewRecordsError(
+                                "subagent record corrections have no completed exact run association"
+                            )
                         corrected_subagent_runs.add(row[11])
+                    if "review_count_corrections" in metadata:
+                        if row[1] != "subagent":
+                            raise ReviewRecordsError("review-count corrections are only valid for subagent attempts")
+                        review_count_corrected_subagent_runs.add(row[0])
                     attempts.append(
                         {
                             "attempt_id": row[0],
@@ -3198,8 +3424,16 @@ class SqliteReviewRecords:
                             "origin": metadata.get("origin"),
                             "legacy_outcome": metadata.get("legacy_outcome"),
                             "repository": metadata.get("repository"),
-                            **({"model": metadata["model"]} if row[1] == "subagent" and isinstance(metadata.get("model"), str) else {}),
-                            **({"reasoning_effort": metadata["reasoning_effort"]} if row[1] == "subagent" and isinstance(metadata.get("reasoning_effort"), str) else {}),
+                            **(
+                                {"model": metadata["model"]}
+                                if row[1] == "subagent" and isinstance(metadata.get("model"), str)
+                                else {}
+                            ),
+                            **(
+                                {"reasoning_effort": metadata["reasoning_effort"]}
+                                if row[1] == "subagent" and isinstance(metadata.get("reasoning_effort"), str)
+                                else {}
+                            ),
                         }
                     )
                 corrections = [
@@ -3301,8 +3535,20 @@ class SqliteReviewRecords:
                     if run["counts"]["found"] < run["counts"]["accepted"] + run["counts"]["routed"]:
                         raise ReviewRecordsError("subagent non-finding corrections conflict with retained counts")
                     excluded_keys = {item["source_finding_key"] for item in retained_notes}
-                    observations = [item for item in observations if item["run_id"] != run["run_id"]
-                                    or item["source_finding_key"] not in excluded_keys]
+                    observations = [
+                        item
+                        for item in observations
+                        if item["run_id"] != run["run_id"] or item["source_finding_key"] not in excluded_keys
+                    ]
+                for run in runs:
+                    if run["run_id"] not in review_count_corrected_subagent_runs:
+                        continue
+                    count_corrections = self._subagent_run_count_corrections(connection, run["run_id"])
+                    if count_corrections:
+                        run["review_count_corrections"] = count_corrections
+                        run["excluded_from_review_counts"] = (
+                            count_corrections[-1]["action"] == "exclude_from_review_counts"
+                        )
                 if include_display:
                     self._add_hosted_display_titles(connection, observations, routes)
                     self._add_run_durations(connection, runs)
@@ -3457,11 +3703,7 @@ class SqliteReviewRecords:
                         "created_at": row[7],
                         "updated_at": row[8],
                         "title": row[9],
-                        **(
-                            {"display_severity": row[10]}
-                            if row[3] == "subagent" or row[10] is not None
-                            else {}
-                        ),
+                        **({"display_severity": row[10]} if row[3] == "subagent" or row[10] is not None else {}),
                     }
                     for row in rows
                 ]
@@ -3539,8 +3781,11 @@ class SqliteReviewRecords:
                 try:
                     metadata = json.loads(row[0])
                     fields = (
-                        dict(metadata["checkpoint_fields"]) if "checkpoint_fields" in metadata else {
-                            key: value for key, value in metadata["checkpoint"].items()
+                        dict(metadata["checkpoint_fields"])
+                        if "checkpoint_fields" in metadata
+                        else {
+                            key: value
+                            for key, value in metadata["checkpoint"].items()
                             if key in {field.name for field in dataclasses.fields(Checkpoint)}
                         }
                     )
@@ -3548,7 +3793,8 @@ class SqliteReviewRecords:
                         fields.setdefault(key, None)
                     checkpoint = Checkpoint(**fields)
                     provider_id = (
-                        f"run:{checkpoint.run_id}" if run["channel"] == "cli"
+                        f"run:{checkpoint.run_id}"
+                        if run["channel"] == "cli"
                         else f"review:{checkpoint.hosted_review_id}"
                     )
                     if row[4].startswith("trigger:") and run["channel"] == "hosted":
@@ -3571,7 +3817,9 @@ class SqliteReviewRecords:
                         durations.add(duration)
                     capture_duration = metadata.get("review_duration_seconds") if run["channel"] == "cli" else None
                     if capture_duration is not None:
-                        if not isinstance(capture_duration, str) or not re.fullmatch(r"0|[1-9][0-9]*", capture_duration.strip()):
+                        if not isinstance(capture_duration, str) or not re.fullmatch(
+                            r"0|[1-9][0-9]*", capture_duration.strip()
+                        ):
                             continue
                         durations.add(int(capture_duration.strip()))
                 except (KeyError, TypeError, ValueError, AttributeError):
@@ -3611,13 +3859,19 @@ class SqliteReviewRecords:
                 run_id, title = row
             cache_key = (run_id, record["source_pr"])
             if cache_key not in cache:
-                reader = self._hosted_display_titles if record["source_channel"] == "hosted" else self._cli_display_severities
+                reader = (
+                    self._hosted_display_titles
+                    if record["source_channel"] == "hosted"
+                    else self._cli_display_severities
+                )
                 cache[cache_key] = reader(connection, run_id, record["source_pr"])
             presentation = cache[cache_key].get(record["source_finding_key"])
             if presentation:
                 if "display_severity" not in record:
                     record["display_severity"] = presentation["display_severity"]
-                if (_unusable_hosted_title(title) or title in presentation.get("classification_titles", ())) and presentation.get("display_title"):
+                if (
+                    _unusable_hosted_title(title) or title in presentation.get("classification_titles", ())
+                ) and presentation.get("display_title"):
                     record["display_title"] = presentation["display_title"]
                 if presentation.get("display_title_is_excerpt") and title == presentation.get("display_title"):
                     record["display_title_is_excerpt"] = True
@@ -3649,7 +3903,8 @@ class SqliteReviewRecords:
                     "SELECT i.kind, i.content, o.repository, o.source_pr, o.channel, o.provider_id, "
                     "o.checkpoint_id, o.checkpoint_fingerprint FROM imported_artifacts i "
                     "JOIN provider_origins o USING (run_id) WHERE i.run_id = ? "
-                    "AND i.kind IN ('metadata', 'cli_events')", (run_id,)
+                    "AND i.kind IN ('metadata', 'cli_events')",
+                    (run_id,),
                 ).fetchall()
                 if len(rows) != 2 or {row[0] for row in rows} != {"metadata", "cli_events"}:
                     return {}
@@ -3674,20 +3929,28 @@ class SqliteReviewRecords:
                 if len(findings) != checkpoint.raw_found:
                     return {}
                 capture_id = checkpoint.run_id
-            keys = {row[0] for row in connection.execute(
-                "SELECT f.source_finding_key FROM finding_observations o JOIN findings f USING (finding_id) "
-                "WHERE o.run_id = ? AND o.source_pr = ? AND o.source_channel = 'cli'", (run_id, source_pr)
-            )}
+            keys = {
+                row[0]
+                for row in connection.execute(
+                    "SELECT f.source_finding_key FROM finding_observations o JOIN findings f USING (finding_id) "
+                    "WHERE o.run_id = ? AND o.source_pr = ? AND o.source_channel = 'cli'",
+                    (run_id, source_pr),
+                )
+            }
             expected = {f"cli-run:{capture_id}:finding:{index}" for index in range(1, len(findings) + 1)}
             if keys != expected:
                 return {}
-            labels = {label.casefold(): label for label in
-                      ("Critical", "Major", "Minor", "Trivial", "High", "Medium", "Low", "P0", "P1", "P2", "P3")}
+            labels = {
+                label.casefold(): label
+                for label in ("Critical", "Major", "Minor", "Trivial", "High", "Medium", "Low", "P0", "P1", "P2", "P3")
+            }
             return {
                 f"cli-run:{capture_id}:finding:{index}": {
                     "display_severity": labels.get(finding["severity"].strip().casefold())
-                    if isinstance(finding.get("severity"), str) else None,
-                } for index, finding in enumerate(findings, 1)
+                    if isinstance(finding.get("severity"), str)
+                    else None,
+                }
+                for index, finding in enumerate(findings, 1)
             }
         except (evidence.EvidenceError, ReviewRecordsError, KeyError, TypeError, ValueError, AttributeError):
             return {}
@@ -3700,17 +3963,19 @@ class SqliteReviewRecords:
         from . import github
         from .sqlite_hosted_capture import HostedCaptureError, _hosted_comment_finding_segments
 
-        run = connection.execute(
-            "SELECT source_pr, channel FROM review_runs WHERE run_id = ?", (run_id,)
-        ).fetchone()
+        run = connection.execute("SELECT source_pr, channel FROM review_runs WHERE run_id = ?", (run_id,)).fetchone()
         if run != (source_pr, "hosted"):
             return {}
-        archives = [row[0] for row in connection.execute(
-            "SELECT content FROM imported_artifacts WHERE run_id = ? AND kind = 'hosted_comments'", (run_id,)
-        )]
-        for attempt_id, in connection.execute(
+        archives = [
+            row[0]
+            for row in connection.execute(
+                "SELECT content FROM imported_artifacts WHERE run_id = ? AND kind = 'hosted_comments'", (run_id,)
+            )
+        ]
+        for (attempt_id,) in connection.execute(
             "SELECT attempt_id FROM review_attempts WHERE run_id = ? AND source_pr = ? "
-            "AND channel = 'hosted' AND state = 'completed'", (run_id, source_pr)
+            "AND channel = 'hosted' AND state = 'completed'",
+            (run_id, source_pr),
         ):
             content = self.attempt_artifacts(attempt_id, _connection=connection).get("hosted_comments")
             if content is not None:
@@ -3866,11 +4131,7 @@ class SqliteReviewRecords:
                     "created_at": row[7],
                     "updated_at": row[8],
                     "title": row[9],
-                    **(
-                        {"display_severity": row[10]}
-                        if row[3] == "subagent" or row[10] is not None
-                        else {}
-                    ),
+                    **({"display_severity": row[10]} if row[3] == "subagent" or row[10] is not None else {}),
                     "target_history": targets,
                     "decisions": decisions,
                     "resolutions": resolutions,
@@ -4065,11 +4326,7 @@ class SqliteReviewRecords:
         budget = self._hosted_budget()
         if budget is not None and (deadline is None or deadline == budget.deadline):
             remaining = budget.remaining_seconds()
-            if (
-                error is not None
-                and self._is_sqlite_lock_error(error)
-                and remaining <= 0.002
-            ):
+            if error is not None and self._is_sqlite_lock_error(error) and remaining <= 0.002:
                 time.sleep(remaining)
                 budget.remaining_seconds()
 

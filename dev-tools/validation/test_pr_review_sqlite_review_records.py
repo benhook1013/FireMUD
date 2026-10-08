@@ -36,32 +36,50 @@ class SqliteReviewRecordsTest(unittest.TestCase):
         index = self._duration_index
         self.records.record_run(run_id=run_id, source_pr=2839, channel=channel, findings=())
         checkpoint = Checkpoint(
-            comment_id=123 + index, created_at="2026-10-01T00:00:00Z", type="Hosted" if channel == "hosted" else "CLI",
-            raw_found=0, accepted=0, reviewed_sha="a" * 40, file_count=1, correction=False,
-            updated_at=None, run_id=f"run.Duration{index}" if channel == "cli" else None,
-            hosted_review_id=700 + index if channel == "hosted" else None, duration_seconds=checkpoint_duration,
+            comment_id=123 + index,
+            created_at="2026-10-01T00:00:00Z",
+            type="Hosted" if channel == "hosted" else "CLI",
+            raw_found=0,
+            accepted=0,
+            reviewed_sha="a" * 40,
+            file_count=1,
+            correction=False,
+            updated_at=None,
+            run_id=f"run.Duration{index}" if channel == "cli" else None,
+            hosted_review_id=700 + index if channel == "hosted" else None,
+            duration_seconds=checkpoint_duration,
         )
         fingerprint = sqlite_provider_imports._checkpoint_fingerprint(checkpoint)
-        metadata = {"repository": "owner/repo", "pull_request": 2839,
-                    "checkpoint": checkpoint.as_json(), "checkpoint_fingerprint": fingerprint}
+        metadata = {
+            "repository": "owner/repo",
+            "pull_request": 2839,
+            "checkpoint": checkpoint.as_json(),
+            "checkpoint_fingerprint": fingerprint,
+        }
         if fields:
             metadata["checkpoint_fields"] = dataclasses.asdict(checkpoint)
         if capture_duration is not None:
             metadata["review_duration_seconds"] = capture_duration
         self.records.archive_imported_artifacts(run_id, {"metadata": json.dumps(metadata)})
         self.records.link_provider_origin(
-            repository="owner/repo", source_pr=2839, channel=channel,
+            repository="owner/repo",
+            source_pr=2839,
+            channel=channel,
             provider_id=f"review:{700 + index}" if channel == "hosted" else f"run:run.Duration{index}",
-            checkpoint_id=123 + index, checkpoint_fingerprint=fingerprint, run_id=run_id,
+            checkpoint_id=123 + index,
+            checkpoint_fingerprint=fingerprint,
+            run_id=run_id,
         )
 
     def test_duration_projection_uses_exact_completed_attempt(self) -> None:
         self.bootstrap()
         self.records.record_run(run_id="duration-native", source_pr=2839, channel="hosted", findings=())
-        self.records.start_attempt(attempt_id="native-timer", source_pr=2839, channel="hosted",
-                                   started_at="2026-10-01T00:00:00Z")
-        self.records.finish_attempt("native-timer", state="completed", duration_seconds=180,
-                                    finished_at="2026-10-01T00:03:00Z")
+        self.records.start_attempt(
+            attempt_id="native-timer", source_pr=2839, channel="hosted", started_at="2026-10-01T00:00:00Z"
+        )
+        self.records.finish_attempt(
+            "native-timer", state="completed", duration_seconds=180, finished_at="2026-10-01T00:03:00Z"
+        )
         self.records.link_attempt_run("native-timer", "duration-native")
         history = self.records.history(2839)
         self.assertEqual(history["runs"][0]["duration_seconds"], 180)
@@ -92,10 +110,13 @@ class SqliteReviewRecordsTest(unittest.TestCase):
         self.duration_import("duration-hash-conflict", "hosted")
         self.duration_import("duration-origin-conflict", "hosted")
         with sqlite3.connect(self.database) as connection:
-            connection.execute("UPDATE provider_origins SET checkpoint_fingerprint = ? WHERE run_id = ?",
-                               ("0" * 64, "duration-hash-conflict"))
-            connection.execute("UPDATE provider_origins SET source_pr = ? WHERE run_id = ?",
-                               (2879, "duration-origin-conflict"))
+            connection.execute(
+                "UPDATE provider_origins SET checkpoint_fingerprint = ? WHERE run_id = ?",
+                ("0" * 64, "duration-hash-conflict"),
+            )
+            connection.execute(
+                "UPDATE provider_origins SET source_pr = ? WHERE run_id = ?", (2879, "duration-origin-conflict")
+            )
             before = list(connection.iterdump())
         with patch.object(self.records, "_write_connection", side_effect=AssertionError("read wrote")):
             history = self.records.history(2839)
@@ -107,34 +128,55 @@ class SqliteReviewRecordsTest(unittest.TestCase):
         self.bootstrap()
         key = "hosted-comment:4142913648"
         self.records.import_completed_run(
-            run_id=run_id, source_pr=2839, channel="hosted",
+            run_id=run_id,
+            source_pr=2839,
+            channel="hosted",
             findings=(FindingObservation(source_finding_key=key, title=title, detail="Old bounded detail"),),
-            source_decisions=({
-                "source_finding_key": key, "decision_id": "decision-" + run_id,
-                "decision": "routed" if routed else "accepted",
-                "target_pr": 2879 if routed else None,
-                "actor": "reviewer", "reason": "Original adjudication",
-            },),
-            reviewer="coderabbitai[bot]", scope="broad",
+            source_decisions=(
+                {
+                    "source_finding_key": key,
+                    "decision_id": "decision-" + run_id,
+                    "decision": "routed" if routed else "accepted",
+                    "target_pr": 2879 if routed else None,
+                    "actor": "reviewer",
+                    "reason": "Original adjudication",
+                },
+            ),
+            reviewer="coderabbitai[bot]",
+            scope="broad",
         )
         return key
 
     @staticmethod
-    def hosted_display_archive(*, comment_id=4142913648, issue="Check the existing workflow request identity.\n\nKeep `requestId` consistent with [the contract](https://example.test/contract)."):
-        return json.dumps({"pull_request": 2839, "comments": [{
-            "id": comment_id, "user": {"login": "coderabbitai[bot]"},
-            "body": ("<details>\n<summary>Supported by static analysis</summary>\n"
-                     "Script executed:\n```bash\n" + "echo diagnostic\n" * 100 +
-                     "```\n</details>\n" + issue),
-        }]})
+    def hosted_display_archive(
+        *,
+        comment_id=4142913648,
+        issue="Check the existing workflow request identity.\n\nKeep `requestId` consistent with [the contract](https://example.test/contract).",
+    ):
+        return json.dumps(
+            {
+                "pull_request": 2839,
+                "comments": [
+                    {
+                        "id": comment_id,
+                        "user": {"login": "coderabbitai[bot]"},
+                        "body": (
+                            "<details>\n<summary>Supported by static analysis</summary>\n"
+                            "Script executed:\n```bash\n" + "echo diagnostic\n" * 100 + "```\n</details>\n" + issue
+                        ),
+                    }
+                ],
+            }
+        )
 
     def test_two_field_badge_archive_projects_full_body_without_repeated_heading(self) -> None:
         headline = "Before promoting this change, check that the scheduled backup runs build 6."
         explanation = "Existing backup promotion checks must remain attributable. " * 25
         explanation += "Check that the status site and the shared controller run the same build."
         self.hosted_display_run(title=headline)
-        archive = self.hosted_display_archive(issue="_🩺 Stability & Availability_ | _🔵 Trivial_\n\n"
-                                              f"**{headline}**\n\n{explanation}")
+        archive = self.hosted_display_archive(
+            issue=f"_🩺 Stability & Availability_ | _🔵 Trivial_\n\n**{headline}**\n\n{explanation}"
+        )
         self.records.archive_imported_artifacts("display-run", {"hosted_comments": archive})
         with sqlite3.connect(self.database) as connection:
             before = list(connection.iterdump())
@@ -152,14 +194,19 @@ class SqliteReviewRecordsTest(unittest.TestCase):
 
     def test_archived_authored_two_field_example_keeps_text_without_severity(self) -> None:
         self.hosted_display_run(title="Document the format.")
-        body = ("**Document the format.**\n_Bug_ | _Major_\n"
-                "This is an authored example, not provider metadata.\n"
-                "_Functional Correctness_ | _Major_\n"
-                "_Security & Privacy_ | _Major_\n**Authored classification**\n"
-                "**Exploitability:** Difficult\n**CWE:** CWE-693\n**Keep the authored remedy.**")
-        self.records.archive_imported_artifacts("display-run", {
-            "hosted_comments": self.hosted_display_archive(issue=body),
-        })
+        body = (
+            "**Document the format.**\n_Bug_ | _Major_\n"
+            "This is an authored example, not provider metadata.\n"
+            "_Functional Correctness_ | _Major_\n"
+            "_Security & Privacy_ | _Major_\n**Authored classification**\n"
+            "**Exploitability:** Difficult\n**CWE:** CWE-693\n**Keep the authored remedy.**"
+        )
+        self.records.archive_imported_artifacts(
+            "display-run",
+            {
+                "hosted_comments": self.hosted_display_archive(issue=body),
+            },
+        )
         finding = self.records.history(2839)["findings"][0]
         self.assertEqual(finding["title"], "Document the format.")
         self.assertIn("_Bug_ | _Major_", finding["display_detail"])
@@ -178,10 +225,17 @@ class SqliteReviewRecordsTest(unittest.TestCase):
         valid = archive["comments"][0]
         valid["body"] = "_Bug_ | _Major_ | _Quick win_\n**Preserve the independent issue.**\nActual issue explanation."
         ambiguous = {**valid, "id": 99, "body": "**Variant one.**"}
-        archive["comments"] += [None, "not a comment", {**valid, "id": False},
-                                {**valid, "id": "invalid"}, {**valid, "id": "²"},
-                                {**valid, "id": 100, "body": None}, ambiguous,
-                                {**ambiguous, "body": "**Variant two.**"}, ambiguous]
+        archive["comments"] += [
+            None,
+            "not a comment",
+            {**valid, "id": False},
+            {**valid, "id": "invalid"},
+            {**valid, "id": "²"},
+            {**valid, "id": 100, "body": None},
+            ambiguous,
+            {**ambiguous, "body": "**Variant two.**"},
+            ambiguous,
+        ]
         self.records.archive_imported_artifacts("display-run", {"hosted_comments": json.dumps(archive)})
         with sqlite3.connect(self.database) as connection:
             before = list(connection.iterdump())
@@ -280,8 +334,12 @@ class SqliteReviewRecordsTest(unittest.TestCase):
             90,
         )
 
-        with patch.object(self.records, "_add_hosted_display_titles", wraps=self.records._add_hosted_display_titles) as titles, \
-             patch.object(self.records, "_add_run_durations", wraps=self.records._add_run_durations) as durations:
+        with (
+            patch.object(
+                self.records, "_add_hosted_display_titles", wraps=self.records._add_hosted_display_titles
+            ) as titles,
+            patch.object(self.records, "_add_run_durations", wraps=self.records._add_run_durations) as durations,
+        ):
             no_display = self.records.history(2839, include_display=False)
             batch = self.records.history_batch((2839, 2879), include_display=False)
             titles.assert_not_called()
@@ -290,18 +348,22 @@ class SqliteReviewRecordsTest(unittest.TestCase):
         self.assertEqual(self.without_display_projection(default_history), no_display)
         self.assertEqual(self.without_display_projection(self.records.history(2879)), batch[2879])
         self.assertNotIn("display_title", no_display["findings"][0])
-        self.assertNotIn("duration_seconds", next(
-            run for run in no_display["runs"] if run["run_id"] == "history-display-duration"
-        ))
+        self.assertNotIn(
+            "duration_seconds", next(run for run in no_display["runs"] if run["run_id"] == "history-display-duration")
+        )
 
     def test_native_unheaded_title_excerpt_signal_preserves_full_body(self) -> None:
-        paragraph = "An existing workflow must validate the incoming request identity before accepting repeated admission. " * 5
+        paragraph = (
+            "An existing workflow must validate the incoming request identity before accepting repeated admission. " * 5
+        )
         captured = sqlite_hosted_capture._hosted_comment_finding_segments(4142913648, paragraph)[0]
         self.hosted_display_run(title=captured["title"])
         self.records.start_attempt(attempt_id="native-unheaded", source_pr=2839, channel="hosted")
         archive = json.loads(self.hosted_display_archive())
         archive["comments"][0]["body"] = paragraph
-        self.records.finish_attempt("native-unheaded", state="completed", artifacts={"hosted_comments": json.dumps(archive)})
+        self.records.finish_attempt(
+            "native-unheaded", state="completed", artifacts={"hosted_comments": json.dumps(archive)}
+        )
         self.records.link_attempt_run("native-unheaded", "display-run")
         history = self.records.history(2839)
         finding = history["findings"][0]
@@ -341,7 +403,8 @@ class SqliteReviewRecordsTest(unittest.TestCase):
             "**" + raw_title + "**\n\n"
             "<details><summary>🔎 Supported by static analysis</summary>\n"
             "```bash\n# retained analysis\n```\n</details>\n"
-            f"**{title}**\n\nKeep the focused proof references.")
+            f"**{title}**\n\nKeep the focused proof references."
+        )
         self.records.archive_imported_artifacts("display-run", {"hosted_comments": json.dumps(archive)})
         with sqlite3.connect(self.database) as connection:
             before = list(connection.iterdump())
@@ -362,7 +425,8 @@ class SqliteReviewRecordsTest(unittest.TestCase):
         archive["comments"][0]["body"] = (
             "**🔒 Security & Privacy** | **🛡️ Detected with Advanced Tier** | **🟠 Major** | **🏗️ Heavy lift**\n"
             "**Authorization Bypass**\n**Exploitability:** Difficult\n**CWE:** CWE-693\n"
-            "**Require durability proof for the existing-marker outcome.**\nKeep the proof.")
+            "**Require durability proof for the existing-marker outcome.**\nKeep the proof."
+        )
         self.records.archive_imported_artifacts("display-run", {"hosted_comments": json.dumps(archive)})
         finding = self.records.history(2839)["findings"][0]
         self.assertEqual(finding["title"], "Authorization Bypass")
@@ -376,7 +440,8 @@ class SqliteReviewRecordsTest(unittest.TestCase):
         archive["comments"][0]["body"] = (
             "_🔒 Security & Privacy_ | _🛡️ Detected with Advanced Tier_ | _🟠 Major_ | _🏗️ Heavy lift_\n"
             "**Authorization Bypass**\n**Exploitability:** Difficult\n**CWE:** CWE-693\n"
-            "**Require durability proof for the existing-marker outcome.**\nKeep the proof.")
+            "**Require durability proof for the existing-marker outcome.**\nKeep the proof."
+        )
         self.records.archive_imported_artifacts("display-run", {"hosted_comments": json.dumps(archive)})
         finding = self.records.history(2839)["findings"][0]
         self.assertEqual(finding["title"], "Authorization Bypass")
@@ -387,10 +452,14 @@ class SqliteReviewRecordsTest(unittest.TestCase):
         self.hosted_display_run(title="First actual issue.")
         archive = json.loads(self.hosted_display_archive())
         archive["comments"][0]["body"] = (
-            "**First actual issue.**\n" + "Long first section prose. " * 400 +
-            "\n<!-- cr-comment:v1:" + "a" * 24 + " -->\n"
+            "**First actual issue.**\n"
+            + "Long first section prose. " * 400
+            + "\n<!-- cr-comment:v1:"
+            + "a" * 24
+            + " -->\n"
             "**Second actual issue.**\nLater issue explanation must remain visible.\n"
-            "<!-- cr-comment:v1:" + "b" * 24 + " -->")
+            "<!-- cr-comment:v1:" + "b" * 24 + " -->"
+        )
         self.records.archive_imported_artifacts("display-run", {"hosted_comments": json.dumps(archive)})
         history = self.records.history(2839)
         detail = history["findings"][0]["display_detail"]
@@ -400,7 +469,9 @@ class SqliteReviewRecordsTest(unittest.TestCase):
         self.assertIn("Later issue explanation must remain visible.", detail)
         self.assertIn("Section excerpt truncated", detail)
         self.assertEqual(history["runs"][0]["counts"], {"found": 1, "accepted": 0, "routed": 1})
-        many = [{"title": "Authored issue " + "x" * 280, "display_detail": "Long issue body. " * 600} for _ in range(1000)]
+        many = [
+            {"title": "Authored issue " + "x" * 280, "display_detail": "Long issue body. " * 600} for _ in range(1000)
+        ]
         bounded = _hosted_aggregate_display_detail(many, many[0]["title"])
         self.assertLessEqual(len(bounded), 8000)
         self.assertIn("Omitted ", bounded)
@@ -416,7 +487,8 @@ class SqliteReviewRecordsTest(unittest.TestCase):
                     "_Bug_ | _Major_ | _Quick win_\n**First actual issue.**\nFirst issue explanation.\n"
                     "<!-- cr-comment:v1:" + "a" * 24 + " -->\n"
                     f"_Bug_ | _{second_severity}_ | _Quick win_\n**Second actual issue.**\nSecond issue explanation.\n"
-                    "<!-- cr-comment:v1:" + "b" * 24 + " -->")
+                    "<!-- cr-comment:v1:" + "b" * 24 + " -->"
+                )
                 with sqlite3.connect(self.database) as connection:
                     connection.execute("DELETE FROM imported_artifacts WHERE run_id = 'display-run'")
                 self.records.archive_imported_artifacts("display-run", {"hosted_comments": json.dumps(archive)})
@@ -430,10 +502,12 @@ class SqliteReviewRecordsTest(unittest.TestCase):
                 self.assertEqual(finding["title"], "First actual issue.")
                 self.assertEqual(finding["source_finding_key"], "hosted-comment:4142913648")
                 self.assertEqual(finding["display_severity"], expected)
-                self.assertEqual(finding["display_detail"],
-                                 "Historical aggregate: 2 provider findings were recorded as one item\n\n"
-                                 "**Provider section 1**\n\nFirst issue explanation.\n\n"
-                                 "**Provider section 2: Second actual issue.**\n\nSecond issue explanation.")
+                self.assertEqual(
+                    finding["display_detail"],
+                    "Historical aggregate: 2 provider findings were recorded as one item\n\n"
+                    "**Provider section 1**\n\nFirst issue explanation.\n\n"
+                    "**Provider section 2: Second actual issue.**\n\nSecond issue explanation.",
+                )
                 self.assertEqual(self.records.history(2879)["routes"][0]["display_detail"], finding["display_detail"])
                 with sqlite3.connect(self.database) as connection:
                     self.assertEqual(list(connection.iterdump()), before)
@@ -441,8 +515,13 @@ class SqliteReviewRecordsTest(unittest.TestCase):
     def test_malformed_hosted_sibling_does_not_hide_exact_valid_projection(self) -> None:
         self.hosted_display_run()
         archive = json.loads(self.hosted_display_archive())
-        archive["comments"].append({"id": 4144044340, "user": {"login": "coderabbitai[bot]"},
-                                   "body": "**Invalid sibling.**\n<!-- cr-comment:v1:" + "a" * 24 + " -->\nUnmarked tail."})
+        archive["comments"].append(
+            {
+                "id": 4144044340,
+                "user": {"login": "coderabbitai[bot]"},
+                "body": "**Invalid sibling.**\n<!-- cr-comment:v1:" + "a" * 24 + " -->\nUnmarked tail.",
+            }
+        )
         self.records.archive_imported_artifacts("display-run", {"hosted_comments": json.dumps(archive)})
         with sqlite3.connect(self.database) as connection:
             before = list(connection.iterdump())
@@ -460,7 +539,8 @@ class SqliteReviewRecordsTest(unittest.TestCase):
         archive["comments"][0]["body"] = (
             "_🔒 Security & Privacy_ | _🛡️ Detected with Advanced Tier_ | _🟠 Major_ | _🏗️ Heavy lift_\n"
             "**Broken Authentication**\n**Reachability:** External\n**Exploitability:** Difficult\n**CWE:** CWE-294\n"
-            "**Quarantine replay admission after marker loss.** Keep the fence closed.")
+            "**Quarantine replay admission after marker loss.** Keep the fence closed."
+        )
         self.records.archive_imported_artifacts("display-run", {"hosted_comments": json.dumps(archive)})
         finding = self.records.history(2839)["findings"][0]
         self.assertEqual(finding["title"], "Broken Authentication")
@@ -470,8 +550,7 @@ class SqliteReviewRecordsTest(unittest.TestCase):
 
     def test_hosted_severity_history_and_incoming_routes_are_read_only(self) -> None:
         self.hosted_display_run()
-        for badge, expected in (("**Major**", "Major"), ("No badge", None),
-                                ("**Major**\n**Minor**", None)):
+        for badge, expected in (("**Major**", "Major"), ("No badge", None), ("**Major**\n**Minor**", None)):
             with self.subTest(badge=badge):
                 archive = json.loads(self.hosted_display_archive())
                 archive["comments"][0]["body"] = badge + "\n**Validate the target.**\nIssue explanation."
@@ -498,8 +577,10 @@ class SqliteReviewRecordsTest(unittest.TestCase):
         self.records.archive_imported_artifacts("display-run", {"hosted_comments": archive})
         with sqlite3.connect(self.database) as connection:
             before = list(connection.iterdump())
-        with patch.object(self.records, "_write_connection", side_effect=AssertionError("read wrote")), \
-             patch.object(self.records, "_hosted_display_titles", wraps=self.records._hosted_display_titles) as parser:
+        with (
+            patch.object(self.records, "_write_connection", side_effect=AssertionError("read wrote")),
+            patch.object(self.records, "_hosted_display_titles", wraps=self.records._hosted_display_titles) as parser,
+        ):
             source = self.records.history(2839)
             self.assertEqual(parser.call_count, 1)
             target = self.records.history(2879)
@@ -528,13 +609,19 @@ class SqliteReviewRecordsTest(unittest.TestCase):
         native = json.dumps({"comments": [], "review_threads": [{"comments": {"nodes": [comment]}}]})
         self.records.finish_attempt("native-display", state="completed", artifacts={"hosted_comments": native})
         self.records.link_attempt_run("native-display", "display-run")
-        self.assertEqual(self.records.history(2839)["findings"][0]["display_title"],
-                         "Check the existing workflow request identity.")
+        self.assertEqual(
+            self.records.history(2839)["findings"][0]["display_title"], "Check the existing workflow request identity."
+        )
 
     def test_hosted_display_omits_missing_ambiguous_or_unusable_archive(self) -> None:
-        cases = [None, "not json", "[]", self.hosted_display_archive(comment_id=9),
-                 self.hosted_display_archive(issue=""),
-                 self.hosted_display_archive(issue="<!-- cr-comment:v1:bad -->")]
+        cases = [
+            None,
+            "not json",
+            "[]",
+            self.hosted_display_archive(comment_id=9),
+            self.hosted_display_archive(issue=""),
+            self.hosted_display_archive(issue="<!-- cr-comment:v1:bad -->"),
+        ]
         wrong_pr = json.loads(self.hosted_display_archive())
         wrong_pr["pull_request"] = 2879
         cases.append(json.dumps(wrong_pr))
@@ -552,8 +639,9 @@ class SqliteReviewRecordsTest(unittest.TestCase):
                     if archive == "not json":
                         # Reproduce corrupt retained evidence only in this disposable fixture.
                         with sqlite3.connect(self.database) as connection:
-                            connection.execute("UPDATE imported_artifacts SET content = ? WHERE run_id = ?",
-                                               (archive, run_id))
+                            connection.execute(
+                                "UPDATE imported_artifacts SET content = ? WHERE run_id = ?", (archive, run_id)
+                            )
                 finding = next(item for item in self.records.history(2839)["findings"] if item["run_id"] == run_id)
                 self.assertNotIn("display_title", finding)
                 self.assertEqual(finding["title"], "<details>")
@@ -563,7 +651,9 @@ class SqliteReviewRecordsTest(unittest.TestCase):
         fingerprints = ("a" * 24, "b" * 24)
         keys = ["hosted-comment:4142913648:fingerprint:" + fingerprint for fingerprint in fingerprints]
         self.records.record_run(
-            run_id="atomic-display", source_pr=2839, channel="hosted",
+            run_id="atomic-display",
+            source_pr=2839,
+            channel="hosted",
             findings=tuple(FindingObservation(source_finding_key=key, title="<details>") for key in keys),
         )
         archive = json.loads(self.hosted_display_archive())
@@ -575,8 +665,10 @@ class SqliteReviewRecordsTest(unittest.TestCase):
         with patch.object(self.records, "_hosted_display_titles", wraps=self.records._hosted_display_titles) as parser:
             history = self.records.history(2839)
             self.assertEqual(parser.call_count, 1)
-        self.assertEqual({finding["source_finding_key"]: finding["display_title"] for finding in history["findings"]},
-                         dict(zip(keys, ("First issue.", "Second issue."))))
+        self.assertEqual(
+            {finding["source_finding_key"]: finding["display_title"] for finding in history["findings"]},
+            dict(zip(keys, ("First issue.", "Second issue."))),
+        )
         self.assertEqual(history["runs"][0]["counts"]["found"], 2)
 
     def test_hosted_display_keeps_proper_title_and_exact_fingerprint_key(self) -> None:
@@ -585,9 +677,11 @@ class SqliteReviewRecordsTest(unittest.TestCase):
         finding = self.records.history(2839)["findings"][0]
         self.assertNotIn("display_title", finding)
         self.assertEqual(finding["title"], "Existing meaningful title.")
-        self.assertEqual(finding["display_detail"],
-                         "Check the existing workflow request identity.\n\n"
-                         "Keep `requestId` consistent with [the contract](https://example.test/contract).")
+        self.assertEqual(
+            finding["display_detail"],
+            "Check the existing workflow request identity.\n\n"
+            "Keep `requestId` consistent with [the contract](https://example.test/contract).",
+        )
         incoming = self.records.history(2879)["routes"][0]
         self.assertEqual(incoming["title"], finding["title"])
         self.assertEqual(incoming["title"], self.records.list_routes(target_pr=2879)[0]["title"])
@@ -629,8 +723,10 @@ class SqliteReviewRecordsTest(unittest.TestCase):
         note = "Original audit coverage and context retained. " * 7
         metadata = {"reviewer": "Sol medium", "scope": "narrow", "coverage_limits": [note]}
         # Reproduce metadata accepted by the old start path, without rewriting it.
-        with patch.object(sqlite_review_records, "_coverage_limits", return_value=(note,)), \
-                patch.object(sqlite_review_records, "_model_metadata"):
+        with (
+            patch.object(sqlite_review_records, "_coverage_limits", return_value=(note,)),
+            patch.object(sqlite_review_records, "_model_metadata"),
+        ):
             # Explicit old-writer fixture: retain unknown model without guessing.
             self.records.start_attempt(
                 attempt_id="legacy-long-note",
@@ -757,9 +853,12 @@ class SqliteReviewRecordsTest(unittest.TestCase):
                     severity,
                 )
         for severity in ("major", "Blocker", ["Major"], {"label": "Major"}):
-            with self.subTest(severity=severity), self.assertRaisesRegex(
-                ReviewRecordsError,
-                "display severity is invalid",
+            with (
+                self.subTest(severity=severity),
+                self.assertRaisesRegex(
+                    ReviewRecordsError,
+                    "display severity is invalid",
+                ),
             ):
                 FindingObservation("severity-key", "Finding", display_severity=severity)  # type: ignore[arg-type]
 
@@ -1020,6 +1119,7 @@ class SqliteReviewRecordsTest(unittest.TestCase):
                 github.activate_hosted_preflight_budget(timeout_seconds=0.05) as budget,
                 self.assertRaises(github.HostedPreflightDeadlineExceeded),
             ):
+
                 def register_attempt_in_worker():
                     with github.bind_hosted_preflight_budget(budget):
                         self.records.start_attempt(
@@ -1464,20 +1564,209 @@ class SqliteReviewRecordsTest(unittest.TestCase):
         self.bootstrap()
         if channel != "manual":
             self.records.start_attempt(
-                attempt_id=run_id, source_pr=2890, channel=channel,
+                attempt_id=run_id,
+                source_pr=2890,
+                channel=channel,
                 metadata={"model": "gpt-test-model", "reviewer": "independent reviewer", "scope": "narrow"},
             )
         self.records.import_completed_run(
-            run_id=run_id, source_pr=2890, channel=channel,
-            findings=(self.observation("implementation-handoff", decision,
-                                       target_pr=2891 if decision == "routed" else None),),
-            source_decisions=({"source_finding_key": "implementation-handoff", "decision_id": run_id + "-decision",
-                               "decision": decision, "actor": "reviewer", "reason": "Original recording",
-                               "target_pr": 2891 if decision == "routed" else None},),
+            run_id=run_id,
+            source_pr=2890,
+            channel=channel,
+            findings=(
+                self.observation("implementation-handoff", decision, target_pr=2891 if decision == "routed" else None),
+            ),
+            source_decisions=(
+                {
+                    "source_finding_key": "implementation-handoff",
+                    "decision_id": run_id + "-decision",
+                    "decision": decision,
+                    "actor": "reviewer",
+                    "reason": "Original recording",
+                    "target_pr": 2891 if decision == "routed" else None,
+                },
+            ),
         )
         if channel != "manual":
             self.records.finish_attempt(run_id, state="completed")
             self.records.link_attempt_run(run_id, run_id)
+
+    def subagent_zero_count_run(self, run_id="subagent-zero-count"):
+        self.bootstrap()
+        started_at = "2026-10-07T01:00:00Z"
+        finished_at = "2026-10-07T01:01:00Z"
+        self.records.start_attempt(
+            attempt_id=run_id,
+            source_pr=2890,
+            channel="subagent",
+            started_at=started_at,
+            metadata={
+                "model": "gpt-test-model",
+                "reasoning_effort": "medium",
+                "reviewer": "independent reviewer",
+                "scope": "narrow",
+                "coverage_limits": [],
+            },
+        )
+        self.records.import_completed_run(
+            run_id=run_id,
+            source_pr=2890,
+            channel="subagent",
+            findings=(),
+            source_decisions=(),
+            reviewer="independent reviewer",
+            scope="narrow",
+            started_at=started_at,
+            finished_at=finished_at,
+        )
+        self.records.finish_attempt(run_id, state="completed", finished_at=finished_at)
+        self.records.link_attempt_run(run_id, run_id)
+
+    def test_subagent_zero_run_count_correction_is_audited_reversible_and_append_only(self) -> None:
+        self.subagent_zero_count_run()
+        before = self.records.history(2890)
+        run_before = before["runs"][0]
+        self.assertEqual(run_before["counts"], {"found": 0, "accepted": 0, "routed": 0})
+        self.assertNotIn("excluded_from_review_counts", run_before)
+        self.assertEqual(before["attempts"][0]["model"], "gpt-test-model")
+        with sqlite3.connect(self.database) as connection:
+            raw_payload = connection.execute(
+                "SELECT import_payload_json FROM review_runs WHERE run_id = 'subagent-zero-count'"
+            ).fetchone()[0]
+            raw_counts = connection.execute(
+                "SELECT found_count, accepted_count, routed_count FROM review_runs WHERE run_id = 'subagent-zero-count'"
+            ).fetchone()
+
+        excluded = self.records.correct_subagent_run_count(
+            "subagent-zero-count",
+            correction_id="helper-count-exclusion-1",
+            excluded_from_review_counts=True,
+            actor="root",
+            reason="This recorded pass was implementation support, not a commissioned review",
+        )
+        self.assertFalse(excluded["idempotent_replay"])
+        self.assertTrue(excluded["excluded_from_review_counts"])
+        after_exclusion = self.records.history(2890)
+        excluded_run = after_exclusion["runs"][0]
+        self.assertEqual(excluded_run["counts"], run_before["counts"])
+        self.assertTrue(excluded_run["excluded_from_review_counts"])
+        self.assertEqual(excluded_run["review_count_corrections"], excluded["review_count_corrections"])
+        self.assertEqual(excluded_run["review_count_corrections"][0]["actor"], "root")
+        self.assertEqual(self.records.history_batch((2890,))[2890], after_exclusion)
+        self.assertEqual(after_exclusion["attempts"], before["attempts"])
+
+        restored = self.records.correct_subagent_run_count(
+            "subagent-zero-count",
+            correction_id="helper-count-restoration-1",
+            excluded_from_review_counts=False,
+            actor="root",
+            reason="Restore after correcting the prior classification",
+        )
+        self.assertFalse(restored["idempotent_replay"])
+        self.assertFalse(restored["excluded_from_review_counts"])
+        restored_history = self.records.history(2890)
+        restored_run = restored_history["runs"][0]
+        self.assertFalse(restored_run["excluded_from_review_counts"])
+        self.assertEqual(
+            [item["action"] for item in restored_run["review_count_corrections"]],
+            [
+                "exclude_from_review_counts",
+                "restore_to_review_counts",
+            ],
+        )
+
+        replay = self.records.correct_subagent_run_count(
+            "subagent-zero-count",
+            correction_id="helper-count-exclusion-1",
+            excluded_from_review_counts=True,
+            actor="root",
+            reason="This recorded pass was implementation support, not a commissioned review",
+        )
+        self.assertTrue(replay["idempotent_replay"])
+        self.assertFalse(replay["excluded_from_review_counts"])
+        self.assertEqual(len(self.records.history(2890)["runs"][0]["review_count_corrections"]), 2)
+        with self.assertRaisesRegex(ReviewRecordsError, "different provenance"):
+            self.records.correct_subagent_run_count(
+                "subagent-zero-count",
+                correction_id="helper-count-exclusion-1",
+                excluded_from_review_counts=True,
+                actor="different actor",
+                reason="Conflicting correction",
+            )
+        with self.assertRaisesRegex(ReviewRecordsError, "change the current"):
+            self.records.correct_subagent_run_count(
+                "subagent-zero-count",
+                correction_id="helper-count-restoration-2",
+                excluded_from_review_counts=False,
+                actor="root",
+                reason="Redundant restoration",
+            )
+        with sqlite3.connect(self.database) as connection:
+            self.assertEqual(
+                connection.execute(
+                    "SELECT import_payload_json FROM review_runs WHERE run_id = 'subagent-zero-count'"
+                ).fetchone()[0],
+                raw_payload,
+            )
+            self.assertEqual(
+                connection.execute(
+                    "SELECT found_count, accepted_count, routed_count FROM review_runs WHERE run_id = 'subagent-zero-count'"
+                ).fetchone(),
+                raw_counts,
+            )
+            metadata = json.loads(
+                connection.execute(
+                    "SELECT metadata_json FROM review_attempts WHERE attempt_id = 'subagent-zero-count'"
+                ).fetchone()[0]
+            )
+        self.assertEqual(metadata["model"], "gpt-test-model")
+        self.assertEqual(metadata["reasoning_effort"], "medium")
+        self.assertEqual(len(metadata["review_count_corrections"]), 2)
+
+    def test_subagent_run_count_correction_refuses_nonzero_or_evidenced_runs(self) -> None:
+        self.subagent_correction_run()
+        with self.assertRaisesRegex(ReviewRecordsError, "zero source counts"):
+            self.records.correct_subagent_run_count(
+                "subagent-correction",
+                correction_id="nonzero-run-correction",
+                excluded_from_review_counts=True,
+                actor="root",
+                reason="Not an empty helper run",
+            )
+
+        with sqlite3.connect(self.database) as connection:
+            connection.execute("UPDATE review_runs SET found_count = 0 WHERE run_id = 'subagent-correction'")
+        with self.assertRaisesRegex(ReviewRecordsError, "observations, decisions, routes, or fix evidence"):
+            self.records.correct_subagent_run_count(
+                "subagent-correction",
+                correction_id="evidenced-run-correction",
+                excluded_from_review_counts=True,
+                actor="root",
+                reason="Observation evidence remains attached",
+            )
+
+    def test_subagent_run_count_correction_rejects_malformed_history(self) -> None:
+        self.subagent_zero_count_run()
+        self.records.correct_subagent_run_count(
+            "subagent-zero-count",
+            correction_id="helper-count-exclusion-1",
+            excluded_from_review_counts=True,
+            actor="root",
+            reason="Explicit helper exclusion",
+        )
+        with sqlite3.connect(self.database) as connection:
+            metadata = json.loads(
+                connection.execute(
+                    "SELECT metadata_json FROM review_attempts WHERE attempt_id = 'subagent-zero-count'"
+                ).fetchone()[0]
+            )
+            metadata["review_count_corrections"][0]["action"] = "restore_to_review_counts"
+            connection.execute(
+                "UPDATE review_attempts SET metadata_json = ? WHERE attempt_id = 'subagent-zero-count'",
+                (json.dumps(metadata),),
+            )
+        with self.assertRaisesRegex(ReviewRecordsError, "restores a counted run"):
+            self.records.history(2890)
 
     def test_subagent_non_finding_correction_retains_original_and_effective_counts(self) -> None:
         self.subagent_correction_run()
@@ -1486,7 +1775,10 @@ class SqliteReviewRecordsTest(unittest.TestCase):
             payload = connection.execute("SELECT import_payload_json FROM review_runs").fetchone()[0]
             state = connection.execute("SELECT state_json FROM review_state").fetchone()[0]
         result = self.records.correct_subagent_record(
-            "subagent-correction", "implementation-handoff", actor="root", reason="Implementation handoff; zero discovery findings"
+            "subagent-correction",
+            "implementation-handoff",
+            actor="root",
+            reason="Implementation handoff; zero discovery findings",
         )
         self.assertEqual(result["counts"], {"found": 0, "accepted": 0, "routed": 0})
         self.assertEqual(result["original_counts"], {"found": 1, "accepted": 0, "routed": 0})
@@ -1501,16 +1793,26 @@ class SqliteReviewRecordsTest(unittest.TestCase):
         self.assertEqual(self.records.history(2890, include_display=False), after)
         self.assertEqual(self.records.finalize_run("subagent-correction")["counts"], result["counts"])
         replay = self.records.correct_subagent_record(
-            "subagent-correction", "implementation-handoff", actor="root", reason="Implementation handoff; zero discovery findings"
+            "subagent-correction",
+            "implementation-handoff",
+            actor="root",
+            reason="Implementation handoff; zero discovery findings",
         )
         self.assertTrue(replay["idempotent_replay"])
         self.assertEqual(self.records.history(2890), after)
         with self.assertRaisesRegex(ReviewRecordsError, "different provenance"):
-            self.records.correct_subagent_record("subagent-correction", "implementation-handoff", actor="other", reason="Other reason")
+            self.records.correct_subagent_record(
+                "subagent-correction", "implementation-handoff", actor="other", reason="Other reason"
+            )
         with self.assertRaisesRegex(ReviewRecordsError, "non-finding note"):
             self.records.correct_source_decision(
-                "subagent-correction", "implementation-handoff", supersedes_id="subagent-correction-decision",
-                correction_id="later-acceptance", decision="accepted", actor="root", reason="Must not hide an obligation",
+                "subagent-correction",
+                "implementation-handoff",
+                supersedes_id="subagent-correction-decision",
+                correction_id="later-acceptance",
+                decision="accepted",
+                actor="root",
+                reason="Must not hide an obligation",
             )
         with sqlite3.connect(self.database) as connection:
             self.assertEqual(connection.execute("SELECT import_payload_json FROM review_runs").fetchone()[0], payload)
@@ -1527,49 +1829,71 @@ class SqliteReviewRecordsTest(unittest.TestCase):
             corrections.assert_not_called()
 
     def test_subagent_non_finding_correction_refuses_provider_and_owned_findings(self) -> None:
-        for channel, decision in (("hosted", "rejected"), ("cli", "rejected"), ("manual", "rejected"),
-                                  ("subagent", "accepted"), ("subagent", "routed")):
+        for channel, decision in (
+            ("hosted", "rejected"),
+            ("cli", "rejected"),
+            ("manual", "rejected"),
+            ("subagent", "accepted"),
+            ("subagent", "routed"),
+        ):
             run_id = channel + "-" + decision
             self.subagent_correction_run(run_id, decision, channel)
             with self.subTest(channel=channel, decision=decision):
                 with sqlite3.connect(self.database) as connection:
                     before = list(connection.iterdump())
                 with self.assertRaises(ReviewRecordsError):
-                    self.records.correct_subagent_record(run_id, "implementation-handoff", actor="root", reason="Not a discovery finding")
+                    self.records.correct_subagent_record(
+                        run_id, "implementation-handoff", actor="root", reason="Not a discovery finding"
+                    )
                 with sqlite3.connect(self.database) as connection:
                     self.assertEqual(list(connection.iterdump()), before)
 
     def test_subagent_non_finding_correction_refuses_unresolved_unlinked_and_fix_associations(self) -> None:
         self.subagent_correction_run(decision="accepted")
         self.records.record_source_resolution(
-            "subagent-correction", "implementation-handoff", source_pr=2890, resolution_id="original-fix",
-            fix_sha="a" * 40, actor="root", proof_note="Published proof",
+            "subagent-correction",
+            "implementation-handoff",
+            source_pr=2890,
+            resolution_id="original-fix",
+            fix_sha="a" * 40,
+            actor="root",
+            proof_note="Published proof",
         )
         # Even inconsistent old/private writes must never hide retained fix evidence.
         with sqlite3.connect(self.database) as connection:
             connection.execute("UPDATE finding_observations SET disposition = 'rejected'")
             connection.execute("UPDATE decisions SET decision = 'rejected'")
         with self.assertRaisesRegex(ReviewRecordsError, "fix evidence"):
-            self.records.correct_subagent_record("subagent-correction", "implementation-handoff", actor="root", reason="Not a finding")
+            self.records.correct_subagent_record(
+                "subagent-correction", "implementation-handoff", actor="root", reason="Not a finding"
+            )
         self.subagent_correction_run("unlinked")
         with sqlite3.connect(self.database) as connection:
             connection.execute("UPDATE review_attempts SET run_id = NULL WHERE attempt_id = 'unlinked'")
         with self.assertRaisesRegex(ReviewRecordsError, "linked finalized"):
-            self.records.correct_subagent_record("unlinked", "implementation-handoff", actor="root", reason="Not a finding")
+            self.records.correct_subagent_record(
+                "unlinked", "implementation-handoff", actor="root", reason="Not a finding"
+            )
         self.subagent_correction_run("unresolved")
         with sqlite3.connect(self.database) as connection:
             connection.execute("UPDATE finding_observations SET disposition = 'unresolved' WHERE run_id = 'unresolved'")
         with self.assertRaisesRegex(ReviewRecordsError, "rejected subagent"):
-            self.records.correct_subagent_record("unresolved", "implementation-handoff", actor="root", reason="Not a finding")
+            self.records.correct_subagent_record(
+                "unresolved", "implementation-handoff", actor="root", reason="Not a finding"
+            )
         self.subagent_correction_run("unfinished")
         with sqlite3.connect(self.database) as connection:
             connection.execute("UPDATE review_runs SET finalized = 0, finalized_at = NULL WHERE run_id = 'unfinished'")
         with self.assertRaisesRegex(ReviewRecordsError, "linked finalized"):
-            self.records.correct_subagent_record("unfinished", "implementation-handoff", actor="root", reason="Not a finding")
+            self.records.correct_subagent_record(
+                "unfinished", "implementation-handoff", actor="root", reason="Not a finding"
+            )
 
     def test_malformed_or_changed_subagent_correction_fails_closed(self) -> None:
         self.subagent_correction_run()
-        self.records.correct_subagent_record("subagent-correction", "implementation-handoff", actor="root", reason="Not a finding")
+        self.records.correct_subagent_record(
+            "subagent-correction", "implementation-handoff", actor="root", reason="Not a finding"
+        )
         with sqlite3.connect(self.database) as connection:
             metadata = json.loads(connection.execute("SELECT metadata_json FROM review_attempts").fetchone()[0])
             metadata["record_corrections"][0]["corrected_at"] = None
@@ -1981,8 +2305,10 @@ class SqliteReviewRecordsTest(unittest.TestCase):
                     event = json.loads(lines[0])
                     event["severity"] = severity
                     lines[0] = json.dumps(event)
-                    connection.execute("UPDATE review_artifacts SET content = ? WHERE attempt_id = ? AND kind = 'cli_events'",
-                                       ("\n".join(lines), run_id))
+                    connection.execute(
+                        "UPDATE review_artifacts SET content = ? WHERE attempt_id = ? AND kind = 'cli_events'",
+                        ("\n".join(lines), run_id),
+                    )
                     before = list(connection.iterdump())
                 with patch.object(self.records, "_write_connection", side_effect=AssertionError("read wrote")):
                     finding = self.records.history(2828)["findings"][0]
@@ -2053,9 +2379,7 @@ class SqliteReviewRecordsTest(unittest.TestCase):
     def test_started_cli_association_cannot_be_read_as_legacy_sql_snapshot(self) -> None:
         self.bootstrap()
         run_id = "run.started-snapshot"
-        self.records.start_attempt(
-            attempt_id=run_id, source_pr=2828, channel="cli", candidate_sha="a" * 40
-        )
+        self.records.start_attempt(attempt_id=run_id, source_pr=2828, channel="cli", candidate_sha="a" * 40)
         with self.assertRaisesRegex(ReviewRecordsError, "still in progress"):
             self.records.cli_capture_snapshot(run_id, source_pr=2828)
         self.assertEqual(self.records.completed_cli_capture_snapshots(2828), [])
@@ -2069,13 +2393,15 @@ class SqliteReviewRecordsTest(unittest.TestCase):
             source_head="a" * 40,
             reviewer="CodeRabbit CLI",
             findings=(self.observation("curated-finding"),),
-            source_decisions=({
-                "source_finding_key": "curated-finding",
-                "decision_id": "curated-cli-import-decision",
-                "decision": "rejected",
-                "actor": "reviewer",
-                "reason": "Curated historical observation",
-            },),
+            source_decisions=(
+                {
+                    "source_finding_key": "curated-finding",
+                    "decision_id": "curated-cli-import-decision",
+                    "decision": "rejected",
+                    "actor": "reviewer",
+                    "reason": "Curated historical observation",
+                },
+            ),
         )
 
         self.assertEqual(self.records.completed_cli_capture_snapshots(2828), [])
@@ -2091,13 +2417,15 @@ class SqliteReviewRecordsTest(unittest.TestCase):
             source_head="a" * 40,
             reviewer="CodeRabbit CLI",
             findings=(self.observation(finding_key),),
-            source_decisions=({
-                "source_finding_key": finding_key,
-                "decision_id": "orphan-native-decision",
-                "decision": "rejected",
-                "actor": "reviewer",
-                "reason": "Malformed native association fixture",
-            },),
+            source_decisions=(
+                {
+                    "source_finding_key": finding_key,
+                    "decision_id": "orphan-native-decision",
+                    "decision": "rejected",
+                    "actor": "reviewer",
+                    "reason": "Malformed native association fixture",
+                },
+            ),
         )
 
         with self.assertRaisesRegex(ReviewRecordsError, "missing its attempt"):
@@ -2106,9 +2434,7 @@ class SqliteReviewRecordsTest(unittest.TestCase):
     def test_partial_cli_association_cannot_fall_back_to_legacy_handling(self) -> None:
         self.bootstrap()
         run_id = "run.partial"
-        self.records.start_attempt(
-            attempt_id=run_id, source_pr=2828, channel="cli", candidate_sha="a" * 40
-        )
+        self.records.start_attempt(attempt_id=run_id, source_pr=2828, channel="cli", candidate_sha="a" * 40)
         self.assertEqual(
             self.records.source_resolution_status(
                 run_id, source_pr=2828, source_channel="cli", source_head="a" * 40, accepted_count=1
@@ -2161,79 +2487,149 @@ class SqliteReviewRecordsTest(unittest.TestCase):
     def test_finding_pending_classification_requires_complete_consistent_source_proof(self) -> None:
         self.bootstrap()
         self.records.import_completed_run(
-            run_id="typed-pending-source", source_pr=2828, channel="cli", source_head="a" * 40,
-            reviewer="CodeRabbit", findings=(self.observation("one"), self.observation("two")),
-            source_decisions=tuple({
-                "source_finding_key": key, "decision_id": f"typed-pending-{key}",
-                "decision": "accepted", "actor": "reviewer", "reason": "source owned finding",
-            } for key in ("one", "two")),
+            run_id="typed-pending-source",
+            source_pr=2828,
+            channel="cli",
+            source_head="a" * 40,
+            reviewer="CodeRabbit",
+            findings=(self.observation("one"), self.observation("two")),
+            source_decisions=tuple(
+                {
+                    "source_finding_key": key,
+                    "decision_id": f"typed-pending-{key}",
+                    "decision": "accepted",
+                    "actor": "reviewer",
+                    "reason": "source owned finding",
+                }
+                for key in ("one", "two")
+            ),
         )
         checkpoint = Checkpoint(
-            comment_id=8001, created_at="2026-09-30T12:00:00Z", type="CLI", raw_found=2,
-            accepted=2, reviewed_sha="a" * 40, file_count=1, correction=False,
-            updated_at=None, run_id="typed-pending-source", hosted_review_id=None,
+            comment_id=8001,
+            created_at="2026-09-30T12:00:00Z",
+            type="CLI",
+            raw_found=2,
+            accepted=2,
+            reviewed_sha="a" * 40,
+            file_count=1,
+            correction=False,
+            updated_at=None,
+            run_id="typed-pending-source",
+            hosted_review_id=None,
         )
         fingerprint = sqlite_provider_imports._checkpoint_fingerprint(checkpoint)
-        self.records.archive_imported_artifacts("typed-pending-source", {"metadata": json.dumps({
-            "checkpoint": checkpoint.as_json(), "checkpoint_fields": dataclasses.asdict(checkpoint),
-            "checkpoint_fingerprint": fingerprint,
-        })})
-        self.records.link_provider_origin(
-            repository="owner/repo", source_pr=2828, channel="cli", provider_id="run:typed-pending-source",
-            checkpoint_id=8001, checkpoint_fingerprint=fingerprint, run_id="typed-pending-source",
+        self.records.archive_imported_artifacts(
+            "typed-pending-source",
+            {
+                "metadata": json.dumps(
+                    {
+                        "checkpoint": checkpoint.as_json(),
+                        "checkpoint_fields": dataclasses.asdict(checkpoint),
+                        "checkpoint_fingerprint": fingerprint,
+                    }
+                )
+            },
         )
-        query = {"source_pr": 2828, "source_channel": "cli", "source_head": "a" * 40,
-                 "accepted_count": 2, "source_checkpoint": checkpoint, "source_repository": "owner/repo"}
+        self.records.link_provider_origin(
+            repository="owner/repo",
+            source_pr=2828,
+            channel="cli",
+            provider_id="run:typed-pending-source",
+            checkpoint_id=8001,
+            checkpoint_fingerprint=fingerprint,
+            run_id="typed-pending-source",
+        )
+        query = {
+            "source_pr": 2828,
+            "source_channel": "cli",
+            "source_head": "a" * 40,
+            "accepted_count": 2,
+            "source_checkpoint": checkpoint,
+            "source_repository": "owner/repo",
+        }
         before = self.records.history(2828)["runs"][0]["counts"]
         self.assertEqual(self.records.source_resolution_status("typed-pending-source", **query), "pending")
-        self.assertEqual(self.records.source_resolution_status(
-            "typed-pending-source", **query, classify_pending=True), "finding_pending")
+        self.assertEqual(
+            self.records.source_resolution_status("typed-pending-source", **query, classify_pending=True),
+            "finding_pending",
+        )
         for changed in ({"source_pr": 2879}, {"source_head": "b" * 40}, {"accepted_count": 1}):
             with self.subTest(changed=changed):
-                self.assertEqual(self.records.source_resolution_status(
-                    "typed-pending-source", **{**query, **changed}, classify_pending=True), "pending")
+                self.assertEqual(
+                    self.records.source_resolution_status(
+                        "typed-pending-source", **{**query, **changed}, classify_pending=True
+                    ),
+                    "pending",
+                )
         self.records.record_source_resolution(
-            "typed-pending-source", "one", source_pr=2828, resolution_id="typed-pending-fix-one",
-            fix_sha="b" * 40, actor="owner", proof_note="Verified sibling fix",
+            "typed-pending-source",
+            "one",
+            source_pr=2828,
+            resolution_id="typed-pending-fix-one",
+            fix_sha="b" * 40,
+            actor="owner",
+            proof_note="Verified sibling fix",
             resolved_at="2026-09-30T12:00:00Z",
         )
-        self.assertEqual(self.records.source_resolution_status(
-            "typed-pending-source", **query, classify_pending=True), "finding_pending")
+        self.assertEqual(
+            self.records.source_resolution_status("typed-pending-source", **query, classify_pending=True),
+            "finding_pending",
+        )
         with sqlite3.connect(self.database) as connection:
             finalized_at = connection.execute(
                 "SELECT finalized_at FROM review_runs WHERE run_id = ?", ("typed-pending-source",)
             ).fetchone()[0]
         self.records.correct_source_resolution(
-            "typed-pending-source", "one", source_pr=2828, resolution_id="typed-pending-fix-one",
-            expected_fix_sha="b" * 40, fix_sha="c" * 40, correction_id="typed-pending-correction",
-            actor="owner", reason="Correct retained SHA", proof_note="Verified corrected sibling fix",
+            "typed-pending-source",
+            "one",
+            source_pr=2828,
+            resolution_id="typed-pending-fix-one",
+            expected_fix_sha="b" * 40,
+            fix_sha="c" * 40,
+            correction_id="typed-pending-correction",
+            actor="owner",
+            reason="Correct retained SHA",
+            proof_note="Verified corrected sibling fix",
         )
         for sql, parameters, repair, repair_parameters in (
-            ("UPDATE provider_origins SET checkpoint_fingerprint = ? WHERE run_id = ?",
-             ("0" * 64, "typed-pending-source"),
-             "UPDATE provider_origins SET checkpoint_fingerprint = ? WHERE run_id = ?",
-             (fingerprint, "typed-pending-source")),
-            ("UPDATE provider_origins SET repository = ? WHERE run_id = ?",
-             ("other/repo", "typed-pending-source"),
-             "UPDATE provider_origins SET repository = ? WHERE run_id = ?",
-             ("owner/repo", "typed-pending-source")),
-            ("UPDATE source_finding_resolution_corrections SET expected_fix_sha = ? WHERE correction_id = ?",
-             ("a" * 40, "typed-pending-correction"),
-             "UPDATE source_finding_resolution_corrections SET expected_fix_sha = ? WHERE correction_id = ?",
-             ("b" * 40, "typed-pending-correction")),
-            ("UPDATE review_runs SET finalized = 0, finalized_at = NULL WHERE run_id = ?", ("typed-pending-source",),
-             "UPDATE review_runs SET finalized = 1, finalized_at = ? WHERE run_id = ?",
-             (finalized_at, "typed-pending-source")),
-            ("UPDATE source_finding_resolutions SET fix_sha = ? WHERE resolution_id = ?",
-             ("g" * 40, "typed-pending-fix-one"),
-             "UPDATE source_finding_resolutions SET fix_sha = ? WHERE resolution_id = ?",
-             ("b" * 40, "typed-pending-fix-one")),
+            (
+                "UPDATE provider_origins SET checkpoint_fingerprint = ? WHERE run_id = ?",
+                ("0" * 64, "typed-pending-source"),
+                "UPDATE provider_origins SET checkpoint_fingerprint = ? WHERE run_id = ?",
+                (fingerprint, "typed-pending-source"),
+            ),
+            (
+                "UPDATE provider_origins SET repository = ? WHERE run_id = ?",
+                ("other/repo", "typed-pending-source"),
+                "UPDATE provider_origins SET repository = ? WHERE run_id = ?",
+                ("owner/repo", "typed-pending-source"),
+            ),
+            (
+                "UPDATE source_finding_resolution_corrections SET expected_fix_sha = ? WHERE correction_id = ?",
+                ("a" * 40, "typed-pending-correction"),
+                "UPDATE source_finding_resolution_corrections SET expected_fix_sha = ? WHERE correction_id = ?",
+                ("b" * 40, "typed-pending-correction"),
+            ),
+            (
+                "UPDATE review_runs SET finalized = 0, finalized_at = NULL WHERE run_id = ?",
+                ("typed-pending-source",),
+                "UPDATE review_runs SET finalized = 1, finalized_at = ? WHERE run_id = ?",
+                (finalized_at, "typed-pending-source"),
+            ),
+            (
+                "UPDATE source_finding_resolutions SET fix_sha = ? WHERE resolution_id = ?",
+                ("g" * 40, "typed-pending-fix-one"),
+                "UPDATE source_finding_resolutions SET fix_sha = ? WHERE resolution_id = ?",
+                ("b" * 40, "typed-pending-fix-one"),
+            ),
         ):
             with self.subTest(corruption=sql):
                 with sqlite3.connect(self.database) as connection:
                     connection.execute(sql, parameters)
-                self.assertEqual(self.records.source_resolution_status(
-                    "typed-pending-source", **query, classify_pending=True), "pending")
+                self.assertEqual(
+                    self.records.source_resolution_status("typed-pending-source", **query, classify_pending=True),
+                    "pending",
+                )
                 with sqlite3.connect(self.database) as connection:
                     connection.execute(repair, repair_parameters)
         self.assertEqual(self.records.history(2828)["runs"][0]["counts"], before)
@@ -2675,9 +3071,7 @@ class SqliteReviewRecordsTest(unittest.TestCase):
             self.assertEqual(
                 connection.execute("SELECT min_writer_build FROM review_records_metadata").fetchone()[0], 8
             )
-            self.assertEqual(
-                connection.execute("SELECT min_writer_build FROM controller_metadata").fetchone()[0], 8
-            )
+            self.assertEqual(connection.execute("SELECT min_writer_build FROM controller_metadata").fetchone()[0], 8)
         history = self.records.history(2828)
         self.assertEqual(history["runs"][0]["counts"], counts_before)
         self.assertEqual(history["source_resolutions"][0]["fix_sha"], "b" * 40)

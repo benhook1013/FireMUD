@@ -385,6 +385,25 @@ def _parser() -> argparse.ArgumentParser:
         ),
     )
     records_database(subagent_complete)
+    subagent_correct_run = subagent_commands.add_parser(
+        "correct-run", help="correct whether a completed zero-finding pass counts as a commissioned review"
+    )
+    subagent_correct_run.add_argument("--run-id", required=True)
+    subagent_correct_run.add_argument("--correction-id", required=True)
+    subagent_correct_run.add_argument("--actor", required=True)
+    subagent_correct_run.add_argument("--reason", required=True)
+    count_action = subagent_correct_run.add_mutually_exclusive_group(required=True)
+    count_action.add_argument(
+        "--exclude-from-review-counts",
+        action="store_true",
+        help="exclude this explicitly identified helper pass from commissioned-review counts",
+    )
+    count_action.add_argument(
+        "--restore-to-review-counts",
+        action="store_true",
+        help="restore a previously excluded pass to commissioned-review counts",
+    )
+    records_database(subagent_correct_run)
     subagent_correct = subagent_commands.add_parser(
         "correct", help="retain an incorrectly recorded rejected finding as a non-finding note"
     )
@@ -1257,7 +1276,15 @@ def _dispatch_records(args: argparse.Namespace) -> tuple[Any, int]:
             attempt = store.attempt(args.run_id)
             if attempt["channel"] != "subagent":
                 raise CliError("run ID does not identify a subagent pass")
-            if args.subagent_command == "correct":
+            if args.subagent_command == "correct-run":
+                result = store.correct_subagent_run_count(
+                    args.run_id,
+                    correction_id=args.correction_id,
+                    excluded_from_review_counts=args.exclude_from_review_counts,
+                    actor=args.actor,
+                    reason=args.reason,
+                )
+            elif args.subagent_command == "correct":
                 result = store.correct_subagent_record(
                     args.run_id, args.finding_key, actor=args.actor, reason=args.reason
                 )

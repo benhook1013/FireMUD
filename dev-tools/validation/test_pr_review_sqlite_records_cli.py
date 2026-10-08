@@ -299,6 +299,114 @@ class ReviewRecordsCliTest(unittest.TestCase):
         )
         self.assertEqual(history["result"]["runs"][0]["channel"], "subagent")
 
+    def test_subagent_correct_run_count_is_reversible_and_history_keeps_latest_state(self) -> None:
+        self.invoke("bootstrap", "--database", str(self.database))
+        run_id = "implementation-helper-zero-run"
+        code, _ = self.invoke(
+            "subagent",
+            "start",
+            "--pr",
+            "3012",
+            "--run-id",
+            run_id,
+            "--model",
+            "gpt-test-model",
+            "--reasoning-effort",
+            "medium",
+            "--reviewer",
+            "Independent helper",
+            "--scope",
+            "narrow",
+            "--database",
+            str(self.database),
+        )
+        self.assertEqual(code, 0)
+        code, completed = self.invoke(
+            "subagent", "complete", "--run-id", run_id, "--actor", "root", "--database", str(self.database)
+        )
+        self.assertEqual(code, 0, completed)
+        self.assertEqual(completed["result"]["run"]["counts"], {"found": 0, "accepted": 0, "routed": 0})
+
+        exclusion = (
+            "subagent",
+            "correct-run",
+            "--run-id",
+            run_id,
+            "--correction-id",
+            "helper-exclusion-1",
+            "--actor",
+            "root",
+            "--reason",
+            "This was implementation support, not a commissioned review",
+            "--exclude-from-review-counts",
+            "--database",
+            str(self.database),
+        )
+        code, result = self.invoke(*exclusion)
+        self.assertEqual(code, 0, result)
+        self.assertFalse(result["result"]["idempotent_replay"])
+        self.assertTrue(result["result"]["excluded_from_review_counts"])
+        self.assertEqual(result["result"]["review_count_corrections"][0]["correction_id"], "helper-exclusion-1")
+        code, history = self.invoke("history", "--pr", "3012", "--database", str(self.database))
+        self.assertEqual(code, 0, history)
+        self.assertTrue(history["result"]["runs"][0]["excluded_from_review_counts"])
+        self.assertEqual(history["result"]["runs"][0]["counts"], {"found": 0, "accepted": 0, "routed": 0})
+        self.assertEqual(history["result"]["attempts"][0]["model"], "gpt-test-model")
+        self.assertEqual(history["result"]["attempts"][0]["reasoning_effort"], "medium")
+        code, batch = self.invoke("history-batch", "--pr", "3012", "--database", str(self.database))
+        self.assertEqual(code, 0, batch)
+        self.assertTrue(batch["result"]["prs"]["3012"]["runs"][0]["excluded_from_review_counts"])
+
+        restoration = (
+            "subagent",
+            "correct-run",
+            "--run-id",
+            run_id,
+            "--correction-id",
+            "helper-restoration-1",
+            "--actor",
+            "root",
+            "--reason",
+            "Restore the pass after correcting its classification",
+            "--restore-to-review-counts",
+            "--database",
+            str(self.database),
+        )
+        code, result = self.invoke(*restoration)
+        self.assertEqual(code, 0, result)
+        self.assertFalse(result["result"]["excluded_from_review_counts"])
+        code, replay = self.invoke(*exclusion)
+        self.assertEqual(code, 0, replay)
+        self.assertTrue(replay["result"]["idempotent_replay"])
+        self.assertFalse(replay["result"]["excluded_from_review_counts"])
+        code, history = self.invoke("history", "--pr", "3012", "--database", str(self.database))
+        self.assertEqual(code, 0, history)
+        self.assertFalse(history["result"]["runs"][0]["excluded_from_review_counts"])
+        self.assertEqual(
+            [item["action"] for item in history["result"]["runs"][0]["review_count_corrections"]],
+            ["exclude_from_review_counts", "restore_to_review_counts"],
+        )
+        conflict = (*exclusion[:9], "Conflicting reason", *exclusion[10:])
+        code, error = self.invoke(*conflict)
+        self.assertEqual(code, 2)
+        self.assertIn("different provenance", error["error"])
+        with self.assertRaises(SystemExit):
+            cli._parser().parse_args(
+                [
+                    "records",
+                    "subagent",
+                    "correct-run",
+                    "--run-id",
+                    run_id,
+                    "--correction-id",
+                    "missing-action",
+                    "--actor",
+                    "root",
+                    "--reason",
+                    "Missing action",
+                ]
+            )
+
     def test_subagent_pass_records_attempt_findings_decisions_and_route_without_taper(self) -> None:
         self.invoke("bootstrap", "--database", str(self.database))
         code, started = self.invoke(
