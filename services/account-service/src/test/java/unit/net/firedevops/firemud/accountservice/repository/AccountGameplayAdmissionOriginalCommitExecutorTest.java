@@ -43,6 +43,7 @@ import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.Answers;
 import org.mockito.MockedConstruction;
 import org.springframework.jdbc.datasource.ConnectionHolder;
+import org.springframework.jdbc.datasource.TransactionAwareDataSourceProxy;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 /**
@@ -79,6 +80,9 @@ class AccountGameplayAdmissionOriginalCommitExecutorTest {
       assertThat(acknowledgement.decisionId()).isEqualTo(fixture.decision);
       assertThat(acknowledgement.finalizationXid()).isEqualTo("42");
       assertThat(acknowledgement.committedBeforeMs()).isEqualTo(9000L);
+      assertThat(acknowledgement.belongsTo(fixture.source)).isTrue();
+      assertThat(acknowledgement.belongsTo(mock(DataSource.class))).isFalse();
+      assertThat(acknowledgement.belongsTo(null)).isFalse();
       assertThat(Serializable.class.isAssignableFrom(acknowledgement.getClass())).isFalse();
       assertThat(Arrays.stream(acknowledgement.getClass().getDeclaredConstructors()))
           .allMatch(constructor -> Modifier.isPrivate(constructor.getModifiers()));
@@ -112,6 +116,20 @@ class AccountGameplayAdmissionOriginalCommitExecutorTest {
       assertThat(clockQueries).hasSize(1);
       assertThat(clockQueries[0]).isGreaterThan(commits[0]);
       assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+    }
+  }
+
+  @Test
+  void acknowledgementRetainsConfiguredSourceIdentityWhenSpringUnwrapsProxy() throws Exception {
+    var fixture = new Fixture();
+    var configured = new TransactionAwareDataSourceProxy(fixture.source);
+    try (var repositories = fixture.repositories(State.PENDING)) {
+      var acknowledgement =
+          new AccountGameplayAdmissionOriginalCommitExecutor(configured)
+              .execute(fixture.evidence, fixture.decision);
+      assertThat(acknowledgement.belongsTo(configured)).isTrue();
+      assertThat(acknowledgement.belongsTo(fixture.source)).isFalse();
+      assertThat(repositories.constructed()).hasSize(1);
     }
   }
 

@@ -959,6 +959,85 @@ jobs:
           fi
           echo "::endgroup::"
 
+      - name: 🔎 Verify Account Original Acknowledgement Receipt Proof
+        if: ${{ always() && !cancelled() && matrix.module == 'account-service' }}
+        run: |
+          bash dev-tools/validation/inspect-test-results.sh account-service
+          python3 - <<'PY'
+          from pathlib import Path
+          import sys
+          import xml.etree.ElementTree as ET
+
+          result_root = Path("services/account-service/build/test-results")
+          required_class = (
+              "net.firedevops.firemud.accountservice.repository."
+              "AccountGameplayAdmissionLeasePersistenceIntegrationTest"
+          )
+          required_methods = {
+              "originalAckReceiptMigrationPreservesV91HistoryWithoutInventingAcknowledgement",
+              "originalAckReceiptRecoversExactOriginalProofAfterLostReceiptAcknowledgement",
+              "originalAckReceiptCommitsThenIndependentlyReadsExactOriginalBound",
+              "originalAckReceiptRejectsAnotherDataSourceAndChangedBindings",
+              "lostOriginalAcknowledgementCannotCreateOriginalAckReceipt",
+              "originalAckReceiptCreatedInCurrentTransactionIsNotDurableReadback",
+              "lostOriginalAckReceiptAcknowledgementDeniesWithoutRemintingOriginalProof",
+          }
+
+          xml_files = sorted(result_root.glob("**/TEST-*.xml"))
+          if not xml_files:
+              raise SystemExit(
+                  f"No JUnit XML files found under {result_root}; "
+                  "Account receipt proof is missing."
+              )
+
+          observed = {name: [] for name in required_methods}
+          for xml_file in xml_files:
+              try:
+                  root = ET.parse(xml_file).getroot()
+              except ET.ParseError as exc:
+                  raise SystemExit(f"Could not parse {xml_file}: {exc}") from exc
+              for case in root.iter("testcase"):
+                  if case.attrib.get("classname") != required_class:
+                      continue
+                  name = case.attrib.get("name", "").removesuffix("()")
+                  if name in required_methods:
+                      observed[name].append((xml_file, case))
+
+          missing = sorted(name for name, cases in observed.items() if not cases)
+          duplicates = sorted(name for name, cases in observed.items() if len(cases) > 1)
+          failed = sorted(
+              name
+              for name, cases in observed.items()
+              if any(
+                  any(child.tag in {"failure", "error", "skipped"} for child in case)
+                  for _, case in cases
+              )
+          )
+          if missing or duplicates or failed:
+              if missing:
+                  print("Missing required Account integration tests:", file=sys.stderr)
+                  for name in missing:
+                      print(f"  - {name}", file=sys.stderr)
+              if duplicates:
+                  print("Ambiguous duplicate Account integration tests:", file=sys.stderr)
+                  for name in duplicates:
+                      print(
+                          f"  - {name} ({len(observed[name])} occurrences)",
+                          file=sys.stderr,
+                      )
+              if failed:
+                  print("Required Account integration tests did not pass:", file=sys.stderr)
+                  for name in failed:
+                      files = ", ".join(str(path) for path, _ in observed[name])
+                      print(f"  - {name} ({files})", file=sys.stderr)
+              raise SystemExit(1)
+
+          print(
+              f"Verified {len(required_methods)} passing Account receipt integration tests "
+              f"in {required_class}."
+          )
+          PY
+
       - name: 📦 Build Runtime JAR
         if: ${{ contains(fromJSON(needs.changes.outputs.bootable_modules), matrix.module) }}
         run: ./gradlew :${{ matrix.module }}:bootJar -PfullCheck

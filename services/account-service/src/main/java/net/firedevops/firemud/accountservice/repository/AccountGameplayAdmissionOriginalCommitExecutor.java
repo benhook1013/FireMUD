@@ -81,16 +81,23 @@ final class AccountGameplayAdmissionOriginalCommitExecutor {
    * Non-serializable, immutable in-process capability; only the physical COMMIT path constructs it.
    */
   static final class OriginalCommitAcknowledgement {
+    private final DataSource originatingSource;
     private final AccountGameplayAdmissionLeaseEvidence evidence;
     private final UUID decisionId;
     private final String finalizationXid;
     private final long committedBeforeMs;
 
-    private OriginalCommitAcknowledgement(OriginalBinding binding, long committedBeforeMs) {
+    private OriginalCommitAcknowledgement(
+        DataSource originatingSource, OriginalBinding binding, long committedBeforeMs) {
+      this.originatingSource = originatingSource;
       evidence = binding.evidence();
       decisionId = binding.decisionId();
       finalizationXid = binding.finalizationXid();
       this.committedBeforeMs = committedBeforeMs;
+    }
+
+    boolean belongsTo(DataSource source) {
+      return originatingSource == source;
     }
 
     AccountGameplayAdmissionLeaseEvidence evidence() {
@@ -120,12 +127,14 @@ final class AccountGameplayAdmissionOriginalCommitExecutor {
 
   private static final class OriginalCommitTransactionManager extends DataSourceTransactionManager {
     private static final long serialVersionUID = 1L;
+    private final transient DataSource originatingSource;
     private transient Connection originalConnection;
     private transient OriginalBinding binding;
     private transient OriginalCommitAcknowledgement acknowledgement;
 
     private OriginalCommitTransactionManager(DataSource dataSource) {
       super(dataSource);
+      originatingSource = dataSource;
       // A rejected pre-COMMIT durability check must roll back before cleanup restores auto-commit.
       // A failed/ambiguous physical COMMIT still never produces an acknowledgement.
       setRollbackOnCommitFailure(true);
@@ -204,7 +213,8 @@ final class AccountGameplayAdmissionOriginalCommitExecutor {
         // No callback or caller flag can mint this capability. An ambiguous JDBC outcome throws.
         connection.commit();
         long committedBeforeMs = observeCommitBound(connection, binding.evidence());
-        acknowledgement = new OriginalCommitAcknowledgement(binding, committedBeforeMs);
+        acknowledgement =
+            new OriginalCommitAcknowledgement(originatingSource, binding, committedBeforeMs);
       } catch (SQLException failure) {
         throw new TransactionSystemException(
             "Original Account physical COMMIT unavailable", failure);
