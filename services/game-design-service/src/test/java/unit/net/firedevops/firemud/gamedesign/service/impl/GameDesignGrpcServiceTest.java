@@ -221,12 +221,15 @@ class GameDesignGrpcServiceTest {
 
     AtomicReference<GetPublishedReleaseBundleResponse> ref = new AtomicReference<>();
     try (MockedStatic<AdminRoleGuard> ignored = Mockito.mockStatic(AdminRoleGuard.class)) {
-      service.getPublishedReleaseBundle(
-          GetPublishedReleaseBundleRequest.newBuilder()
-              .setTenantId("tenant-1")
-              .setVersionId(7L)
-              .build(),
-          observerFor(ref));
+      underLaunchPeer(
+          "game-session-service",
+          () ->
+              service.getPublishedReleaseBundle(
+                  GetPublishedReleaseBundleRequest.newBuilder()
+                      .setTenantId("tenant-1")
+                      .setVersionId(7L)
+                      .build(),
+                  observerFor(ref)));
     }
 
     assertEquals("", ref.get().getError().getCode());
@@ -292,12 +295,15 @@ class GameDesignGrpcServiceTest {
     AtomicReference<GetPublishedReleaseBundleResponse> ref = new AtomicReference<>();
 
     try (MockedStatic<AdminRoleGuard> ignored = Mockito.mockStatic(AdminRoleGuard.class)) {
-      service.getPublishedReleaseBundle(
-          GetPublishedReleaseBundleRequest.newBuilder()
-              .setTenantId("tenant-1")
-              .setVersionId(7L)
-              .build(),
-          observerFor(ref));
+      underLaunchPeer(
+          "game-session-service",
+          () ->
+              service.getPublishedReleaseBundle(
+                  GetPublishedReleaseBundleRequest.newBuilder()
+                      .setTenantId("tenant-1")
+                      .setVersionId(7L)
+                      .build(),
+                  observerFor(ref)));
     }
 
     assertEquals("INVALID_ARGUMENT", ref.get().getError().getCode());
@@ -330,12 +336,15 @@ class GameDesignGrpcServiceTest {
     AtomicReference<GetPublishedReleaseBundleResponse> ref = new AtomicReference<>();
 
     try (MockedStatic<AdminRoleGuard> ignored = Mockito.mockStatic(AdminRoleGuard.class)) {
-      service.getPublishedReleaseBundle(
-          GetPublishedReleaseBundleRequest.newBuilder()
-              .setTenantId("tenant-1")
-              .setVersionId(7L)
-              .build(),
-          observerFor(ref));
+      underLaunchPeer(
+          "game-session-service",
+          () ->
+              service.getPublishedReleaseBundle(
+                  GetPublishedReleaseBundleRequest.newBuilder()
+                      .setTenantId("tenant-1")
+                      .setVersionId(7L)
+                      .build(),
+                  observerFor(ref)));
     }
 
     assertEquals("INVALID_ARGUMENT", ref.get().getError().getCode());
@@ -1210,12 +1219,15 @@ class GameDesignGrpcServiceTest {
 
     AtomicReference<GetPublishedReleaseBundleResponse> ref = new AtomicReference<>();
     try (MockedStatic<AdminRoleGuard> ignored = Mockito.mockStatic(AdminRoleGuard.class)) {
-      service.getPublishedReleaseBundle(
-          GetPublishedReleaseBundleRequest.newBuilder()
-              .setTenantId("tenant-1")
-              .setVersionId(7L)
-              .build(),
-          observerFor(ref));
+      underLaunchPeer(
+          "game-session-service",
+          () ->
+              service.getPublishedReleaseBundle(
+                  GetPublishedReleaseBundleRequest.newBuilder()
+                      .setTenantId("tenant-1")
+                      .setVersionId(7L)
+                      .build(),
+                  observerFor(ref)));
     }
 
     assertEquals("NOT_FOUND", ref.get().getError().getCode());
@@ -1247,12 +1259,15 @@ class GameDesignGrpcServiceTest {
 
     AtomicReference<GetPublishedReleaseBundleResponse> ref = new AtomicReference<>();
     try (MockedStatic<AdminRoleGuard> ignored = Mockito.mockStatic(AdminRoleGuard.class)) {
-      service.getPublishedReleaseBundle(
-          GetPublishedReleaseBundleRequest.newBuilder()
-              .setTenantId("tenant-1")
-              .setVersionId(7L)
-              .build(),
-          observerFor(ref));
+      underLaunchPeer(
+          "game-session-service",
+          () ->
+              service.getPublishedReleaseBundle(
+                  GetPublishedReleaseBundleRequest.newBuilder()
+                      .setTenantId("tenant-1")
+                      .setVersionId(7L)
+                      .build(),
+                  observerFor(ref)));
     }
 
     assertEquals("SCHEMA_VERSION_UNSUPPORTED", ref.get().getError().getCode());
