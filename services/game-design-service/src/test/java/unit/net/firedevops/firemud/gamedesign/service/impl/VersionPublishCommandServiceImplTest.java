@@ -145,11 +145,21 @@ class VersionPublishCommandServiceImplTest {
   void freshFullVersionPublishIsDeniedBeforeAnyMutation() {
     String workflowId = "publish:tenant-1:publish-request:workflow-1";
 
-    assertThrows(
-        VersionPublishCommandServiceImpl.FullVersionPublicationUnavailableException.class,
-        () ->
-            service.reconcileFullVersionPublish(
-                new PublishWorkflowRequest("tenant-1", "notes", "workflow-1", workflowId)));
+    VersionPublishCommandServiceImpl.FullVersionPublicationUnavailableException freshDenial =
+        assertThrows(
+            VersionPublishCommandServiceImpl.FullVersionPublicationUnavailableException.class,
+            () ->
+                service.reconcileFullVersionPublish(
+                    new PublishWorkflowRequest("tenant-1", "notes", "workflow-1", workflowId)));
+    assertEquals(
+        VersionPublishCommandServiceImpl.FullVersionPublicationUnavailableException.ERROR_CODE,
+        freshDenial.errorCode());
+    assertEquals(
+        VersionPublishCommandServiceImpl.FullVersionPublicationUnavailableException.ERROR_CODE
+            + ": "
+            + VersionPublishCommandServiceImpl.FullVersionPublicationUnavailableException
+                .SAFE_MESSAGE,
+        freshDenial.getMessage());
     assertThrows(
         VersionPublishCommandServiceImpl.FullVersionPublicationUnavailableException.class,
         () -> service.publishFullVersion("tenant-1", "notes", "workflow-1", workflowId));

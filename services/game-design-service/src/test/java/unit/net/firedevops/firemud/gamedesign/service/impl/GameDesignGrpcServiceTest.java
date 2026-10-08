@@ -28,6 +28,7 @@ import net.firedevops.firemud.gamedesign.model.TemplateRemapSetStatus;
 import net.firedevops.firemud.gamedesign.model.VersionLifecycleState;
 import net.firedevops.firemud.gamedesign.service.GameAuthoredHelpTopicService;
 import net.firedevops.firemud.gamedesign.service.LaunchDescriptorService;
+import net.firedevops.firemud.gamedesign.service.MutationOwnerProofUnavailableException;
 import net.firedevops.firemud.gamedesign.service.PingService;
 import net.firedevops.firemud.gamedesign.service.PublishAttemptPendingReconciliationException;
 import net.firedevops.firemud.gamedesign.service.PublishGateFailureException;
@@ -40,6 +41,8 @@ import net.firedevops.firemud.gamedesign.service.VersionAssetArtifactService;
 import net.firedevops.firemud.gamedesign.service.VersionService;
 import net.firedevops.firemud.gamedesign.v1.ApproveTemplateRemapSetRequest;
 import net.firedevops.firemud.gamedesign.v1.ApproveTemplateRemapSetResponse;
+import net.firedevops.firemud.gamedesign.v1.CompareAndSetVersionStateRequest;
+import net.firedevops.firemud.gamedesign.v1.CompareAndSetVersionStateResponse;
 import net.firedevops.firemud.gamedesign.v1.CreateTemplateRemapSetRequest;
 import net.firedevops.firemud.gamedesign.v1.CreateTemplateRemapSetResponse;
 import net.firedevops.firemud.gamedesign.v1.GetDesignControlPlaneDigestRequest;
@@ -1271,6 +1274,37 @@ class GameDesignGrpcServiceTest {
         net.firedevops.firemud.gamedesign.v1.VersionLifecycleState
             .VERSION_LIFECYCLE_STATE_PUBLISHED,
         ref.get().getVersionState().getVersionState());
+  }
+
+  @Test
+  void compareAndSetVersionStateMapsOwnerProofRefusal() {
+    Mockito.when(
+            versionService.compareAndSetVersionState(
+                "tenant-1", 7L, 17L, VersionLifecycleState.RETIRED, "retire"))
+        .thenThrow(
+            new MutationOwnerProofUnavailableException(
+                "VERSION_STATE_MUTATION_UNAVAILABLE",
+                "Canonical lifecycle transition and owner proof are unavailable"));
+
+    AtomicReference<CompareAndSetVersionStateResponse> ref = new AtomicReference<>();
+    try (MockedStatic<AdminRoleGuard> ignored = Mockito.mockStatic(AdminRoleGuard.class)) {
+      service.compareAndSetVersionState(
+          CompareAndSetVersionStateRequest.newBuilder()
+              .setTenantId("tenant-1")
+              .setVersionId(7L)
+              .setExpectedVersionStateEpoch(17L)
+              .setNewState(
+                  net.firedevops.firemud.gamedesign.v1.VersionLifecycleState
+                      .VERSION_LIFECYCLE_STATE_RETIRED)
+              .setReason("retire")
+              .build(),
+          observerFor(ref));
+    }
+
+    assertEquals("VERSION_STATE_MUTATION_UNAVAILABLE", ref.get().getError().getCode());
+    assertEquals(
+        "VERSION_STATE_MUTATION_UNAVAILABLE: Canonical lifecycle transition and owner proof are unavailable",
+        ref.get().getError().getMessage());
   }
 
   @Test
