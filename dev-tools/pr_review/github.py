@@ -28,6 +28,7 @@ REVIEW_COMMAND_TYPES = {
 REPO_NAME = re.compile(r"^[^/\s]+/[^/\s]+$")
 REVIEW_CONNECTIONS = ("reviewThreads", "comments", "reviews")
 HOSTED_PREFLIGHT_BUDGET_SECONDS = 120
+ISSUE_COMMENT_BATCH_SIZE = 25
 
 
 class HostedPreflightDeadlineExceeded(TimeoutError):
@@ -506,6 +507,115 @@ def fetch_pull_request(repo: str, pr_number: int) -> dict[str, Any]:
     return payload
 
 
+def _issue_comment_batch_query(pr_numbers: Sequence[int], after_by_pr: dict[int, str]) -> str:
+    declarations = ["$owner:String!", "$repo:String!"]
+    declarations.extend(f"$after_{number}:String!" for number in after_by_pr)
+    selections = []
+    for number in pr_numbers:
+        after = f", after:$after_{number}" if number in after_by_pr else ""
+        selections.append(
+            f"pr_{number}: pullRequest(number:{number}) {{ number "
+            f"comments(first:100{after}) {{ "
+            "nodes { id databaseId author { login } body createdAt updatedAt url } "
+            "pageInfo { hasNextPage endCursor } } }"
+        )
+    return f"""
+query({", ".join(declarations)}) {{
+  repository(owner:$owner, name:$repo) {{
+    {" ".join(selections)}
+  }}
+}}
+""".strip()
+
+
+def fetch_issue_comments_batch(repo: str, pr_numbers: Sequence[int]) -> dict[int, list[dict[str, Any]]]:
+    """Fetch complete issue-comment histories for at most 25 PRs per query.
+
+    Each alias is paginated independently until its full comment connection is
+    read. Missing identities, malformed connections, duplicate comment IDs,
+    and cursor loops fail closed so callers cannot treat partial data as a
+    complete repository scan.
+    """
+
+    owner, name = parse_repo(repo)
+    numbers = tuple(pr_numbers)
+    if any(isinstance(number, bool) or not isinstance(number, int) or number <= 0 for number in numbers):
+        raise ValueError("issue-comment batch requires positive PR numbers")
+    if len(set(numbers)) != len(numbers):
+        raise ValueError("issue-comment batch requires unique PR numbers")
+    if len(numbers) > ISSUE_COMMENT_BATCH_SIZE:
+        raise ValueError(f"issue-comment batch is limited to {ISSUE_COMMENT_BATCH_SIZE} PRs")
+    if not numbers:
+        return {}
+
+    comments_by_pr: dict[int, list[dict[str, Any]]] = {number: [] for number in numbers}
+    seen_ids: dict[int, set[int]] = {number: set() for number in numbers}
+    used_cursors: dict[int, set[str]] = {number: set() for number in numbers}
+    active_numbers = numbers
+    after_by_pr: dict[int, str] = {}
+    while active_numbers:
+        query = _issue_comment_batch_query(active_numbers, after_by_pr)
+        variables: dict[str, str | int] = {"owner": owner, "repo": name}
+        variables.update({f"after_{number}": cursor for number, cursor in after_by_pr.items()})
+        payload = run_gh_query(query, variables)
+        errors = payload.get("errors")
+        if errors is not None and (not isinstance(errors, list) or errors):
+            raise RuntimeError("GitHub GraphQL response contains errors")
+        try:
+            repository = payload["data"]["repository"]
+        except (KeyError, TypeError) as exc:
+            raise RuntimeError("GitHub response has no issue-comment batch") from exc
+        if not isinstance(repository, dict):
+            raise TypeError("GitHub response has no issue-comment batch")
+        expected_aliases = {f"pr_{number}" for number in active_numbers}
+        if set(repository) != expected_aliases:
+            raise RuntimeError("GitHub issue-comment batch identities are incomplete or unexpected")
+
+        pending_after: dict[int, str] = {}
+        for number in active_numbers:
+            pull_request = repository.get(f"pr_{number}")
+            if (
+                not isinstance(pull_request, dict)
+                or type(pull_request.get("number")) is not int
+                or pull_request["number"] != number
+            ):
+                raise RuntimeError(f"GitHub issue-comment batch identity is missing or mismatched for PR #{number}")
+            connection = pull_request.get("comments")
+            if not isinstance(connection, dict):
+                raise TypeError(f"GitHub issue-comment connection is missing for PR #{number}")
+            nodes = connection.get("nodes")
+            page_info = connection.get("pageInfo")
+            if not isinstance(nodes, list):
+                raise TypeError(f"GitHub issue-comment nodes are malformed for PR #{number}")
+            if not isinstance(page_info, dict) or type(page_info.get("hasNextPage")) is not bool:
+                raise TypeError(f"GitHub issue-comment page info is malformed for PR #{number}")
+            for comment in nodes:
+                if not isinstance(comment, dict):
+                    raise TypeError(f"GitHub issue-comment node is malformed for PR #{number}")
+                comment_id = immutable_database_id(comment)
+                if comment_id is None:
+                    raise TypeError(f"GitHub issue-comment identity is missing for PR #{number}")
+                if comment_id in seen_ids[number]:
+                    raise RuntimeError(f"GitHub issue-comment identity is duplicated for PR #{number}")
+                if not isinstance(comment.get("body"), str):
+                    raise TypeError(f"GitHub issue-comment body is malformed for PR #{number}")
+                seen_ids[number].add(comment_id)
+                comments_by_pr[number].append(comment)
+
+            if page_info["hasNextPage"]:
+                cursor = page_info.get("endCursor")
+                if not isinstance(cursor, str) or not cursor:
+                    raise RuntimeError(f"GitHub issue-comment pagination has no cursor for PR #{number}")
+                if cursor in used_cursors[number]:
+                    raise RuntimeError(f"GitHub issue-comment pagination repeated cursor for PR #{number}")
+                used_cursors[number].add(cursor)
+                pending_after[number] = cursor
+
+        active_numbers = tuple(pending_after)
+        after_by_pr = pending_after
+    return comments_by_pr
+
+
 def load_pull_request(input_path: str | Path | None, repo: str, pr_number: int) -> dict[str, Any]:
     if input_path is None:
         return fetch_pull_request(repo, pr_number)
@@ -519,9 +629,7 @@ def load_pull_request(input_path: str | Path | None, repo: str, pr_number: int) 
         if connection == "reviewThreads":
             for thread in nodes:
                 if isinstance(thread, dict) and "comments" in thread:
-                    _, thread_page_info = _review_connection(
-                        thread, "comments", require_page_info=False
-                    )
+                    _, thread_page_info = _review_connection(thread, "comments", require_page_info=False)
                     _reject_incomplete_input_connection("review-thread comments", thread_page_info)
     return payload
 

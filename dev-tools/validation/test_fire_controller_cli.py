@@ -59,6 +59,17 @@ class ControllerHelpTest(unittest.TestCase):
         self.assertIn("#2898 Smoke", create)
         self.assertIn("Prerequisite PRs", create)
         self.assertIn("unpublished PRs (estimate)", create)
+        self.assertIn("--checklist-item TEXT", create)
+        self.assertIn("JSON array of objects", create)
+        self.assertIn("item IDs are generated", create)
+        self.assertIn("plain checklist item", self.help("jobs", "create"))
+        self.assertIn("one concise human-readable line per job", self.help("jobs", "list"))
+        self.assertIn("incompatible with --json", self.help("jobs", "list"))
+        read = self.help("jobs", "read")
+        self.assertIn("--checkpoint-only", read)
+        self.assertIn("omit the brief and other context", read)
+        self.assertIn("latest checkpoint", read)
+        self.assertIn("required when status is dismissed", self.help("jobs", "note-status"))
         for command in ("checkpoint", "lane-pause", "lane-resume"):
             with self.subTest(command=command):
                 detail = self.help("jobs", command)
@@ -512,6 +523,133 @@ class ControllerCliTest(unittest.TestCase):
         api_result = store.get(job["id"])
         self.assertEqual(len(api_result["history"]), 2)
         self.assertEqual(api_result["brief"], compact["brief"])
+
+    def test_job_checklist_items_compact_list_and_checkpoint_only_are_narrow_views(self):
+        from fire_controller.cli import main
+        from fire_controller.jobs import JobStore
+
+        created = self.run_cli(
+            "alpha",
+            "create",
+            "checklist-simple",
+            "--worker",
+            "General",
+            "--title",
+            "Simple checklist",
+            "--checklist-item",
+            "Audit common tasks",
+            "--checklist-item",
+            "Collect worker feedback",
+        )
+        store = JobStore(ProjectContext.load(self.contexts["alpha"]).database)
+        stored = store.get(created["id"])
+        self.assertEqual(
+            [item["text"] for item in stored["checklist"]], ["Audit common tasks", "Collect worker feedback"]
+        )
+        self.assertTrue(all(item["done"] is False and item["id"] for item in stored["checklist"]))
+
+        self.run_cli(
+            "alpha",
+            "create",
+            "checklist-json",
+            "--worker",
+            "General",
+            "--title",
+            "JSON checklist",
+            "--status",
+            "parked",
+            "--secondary",
+            "--checklist",
+            '[{"text":"Focused proof"}]',
+        )
+        invalid = self.run_cli(
+            "alpha",
+            "create",
+            "checklist-invalid",
+            "--worker",
+            "General",
+            "--title",
+            "Invalid checklist",
+            "--checklist",
+            "not-json",
+            success=False,
+        )
+        self.assertIn("invalid JSON at column", invalid.stderr)
+        self.assertIn("--checklist-item TEXT", invalid.stderr)
+        non_array = self.run_cli(
+            "alpha",
+            "create",
+            "checklist-object",
+            "--worker",
+            "General",
+            "--title",
+            "Invalid checklist shape",
+            "--checklist",
+            '{"text":"not an array"}',
+            success=False,
+        )
+        self.assertIn("expected a JSON array", non_array.stderr)
+        self.assertIn("--checklist-item TEXT", non_array.stderr)
+
+        output, errors = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(output), contextlib.redirect_stderr(errors):
+            result = main(
+                [
+                    "--context",
+                    str(self.contexts["alpha"]),
+                    "jobs",
+                    "list",
+                    "--worker",
+                    "General",
+                    "--status",
+                    "active",
+                    "--compact",
+                ]
+            )
+        self.assertEqual(result, 0, errors.getvalue())
+        self.assertIn("ID  STATUS  WORKER  NAME / TITLE", output.getvalue())
+        self.assertIn("checklist-simple", output.getvalue())
+        self.assertNotIn("checklist-json", output.getvalue())
+        self.assertNotIn("brief", output.getvalue())
+
+        full_list = self.run_cli("alpha", "list", "--worker", "General")
+        self.assertIsInstance(full_list, list)
+        self.assertEqual({job["name"] for job in full_list}, {"checklist-simple", "checklist-json"})
+        output, errors = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(output), contextlib.redirect_stderr(errors):
+            result = main(
+                [
+                    "--context",
+                    str(self.contexts["alpha"]),
+                    "jobs",
+                    "--json",
+                    "list",
+                    "--worker",
+                    "General",
+                    "--compact",
+                ]
+            )
+        self.assertEqual(result, 2)
+        self.assertIn("omit --json", errors.getvalue())
+
+        checkpoint = self.run_cli(
+            "alpha",
+            "checkpoint",
+            created["id"],
+            "--done",
+            "Audit complete",
+            "--next",
+            "Send findings",
+        )
+        self.assertEqual(checkpoint["next_steps"], "Send findings")
+        full_read = self.run_cli("alpha", "read", created["id"])
+        checkpoint_only = self.run_cli("alpha", "read", created["id"], "--checkpoint-only")
+        self.assertEqual(set(checkpoint_only), {"id", "name", "status", "revision", "latest_checkpoint"})
+        self.assertEqual(checkpoint_only["latest_checkpoint"]["next_steps"], "Send findings")
+        self.assertNotIn("brief", checkpoint_only)
+        self.assertNotIn("updates", checkpoint_only)
+        self.assertIn("brief", full_read)
+        self.assertIn("history", full_read)
 
     def test_note_job_selectors_and_failed_correction_preserve_state(self):
         job = self.run_cli("alpha", "create", "note-target", "--worker", "General", "--title", "Target")

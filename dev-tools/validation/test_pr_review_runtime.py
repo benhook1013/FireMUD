@@ -15,7 +15,7 @@ import tempfile
 import threading
 import time
 import unittest
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -96,9 +96,13 @@ class RuntimeTest(unittest.TestCase):
                 def construct(_args, clock=clock, observed_budgets=observed_budgets):
                     observed_budgets.append(github.active_hosted_preflight_budget())
                     clock.now += 10
-                    return SimpleNamespace(repository="owner/repo", store=None, status_for_pr=stack_status, status=stack_status), None
+                    return SimpleNamespace(
+                        repository="owner/repo", store=None, status_for_pr=stack_status, status=stack_status
+                    ), None
 
-                def gh_call(args, *, timeout, clock=clock, timeouts=timeouts, observed_budgets=observed_budgets, **_kwargs):
+                def gh_call(
+                    args, *, timeout, clock=clock, timeouts=timeouts, observed_budgets=observed_budgets, **_kwargs
+                ):
                     timeouts.append(timeout)
                     observed_budgets.append(github.active_hosted_preflight_budget())
                     clock.now += min(20, timeout)
@@ -132,7 +136,9 @@ class RuntimeTest(unittest.TestCase):
                     patch.object(sys, "stdout", stdout),
                     patch.object(sys, "stderr", stderr),
                 ):
-                    result = review_cli.main(["status", "--pr", "42", "--json", *(["--full-scan"] if full_scan else [])])
+                    result = review_cli.main(
+                        ["status", "--pr", "42", "--json", *(["--full-scan"] if full_scan else [])]
+                    )
 
                 self.assertEqual(result, 1)
                 self.assertEqual(stdout.getvalue(), "")
@@ -240,17 +246,22 @@ class RuntimeTest(unittest.TestCase):
         target = ReviewTarget(snapshot, EffectiveParent("develop", BASE), patch_identity=PATCH, merge_base=BASE)
         live = LiveGitHub("owner/repo")
         manual = {
-            "databaseId": 10, "author": {"login": "maintainer"}, "body": hosted.FULL_COMMAND,
-            "createdAt": "2026-09-30T12:00:00Z", "url": "https://example.test/10",
+            "databaseId": 10,
+            "author": {"login": "maintainer"},
+            "body": hosted.FULL_COMMAND,
+            "createdAt": "2026-09-30T12:00:00Z",
+            "url": "https://example.test/10",
         }
         other_payload = self._payload(comments=[manual])
 
         def api_endpoint(endpoint):
             if endpoint == "repos/owner/repo/pulls?state=open&per_page=100":
                 return [{"number": 42, "state": "open"}, {"number": 99, "state": "open"}]
-            if endpoint == "repos/owner/repo/issues/99/comments?per_page=100":
-                return [self._rest_issue_comment(manual)]
             raise AssertionError(endpoint)
+
+        def comment_batch(_repo, pr_numbers):
+            self.assertEqual(tuple(pr_numbers), (99,))
+            return {99: [manual]}
 
         with tempfile.TemporaryDirectory() as directory:
             common = Path(directory)
@@ -267,8 +278,12 @@ class RuntimeTest(unittest.TestCase):
                 patch.object(live, "pull_request", return_value=snapshot),
                 patch.object(live, "branch_head", return_value=BASE),
                 patch.object(github, "fetch_api_endpoint", side_effect=api_endpoint),
-                patch.object(github, "fetch_pull_request", side_effect=lambda _repo, number:
-                             other_payload if number == 99 else self._payload()),
+                patch.object(github, "fetch_issue_comments_batch", side_effect=comment_batch),
+                patch.object(
+                    github,
+                    "fetch_pull_request",
+                    side_effect=lambda _repo, number: other_payload if number == 99 else self._payload(),
+                ),
                 patch.object(hosted, "default_trigger_record_path", return_value=path),
                 patch.object(evidence, "git_common_dir", side_effect=git_common_dir),
                 patch.object(HostedRunner, "_authenticated_login", return_value="maintainer"),
@@ -381,12 +396,16 @@ class RuntimeTest(unittest.TestCase):
         snapshot = PullRequestSnapshot(42, "OPEN", "develop", BASE, HEAD, "feature", 1)
         target = ReviewTarget(snapshot, EffectiveParent("develop", BASE), patch_identity=PATCH, merge_base=BASE)
         live = LiveGitHub("owner/repo")
-        payload = self._payload(comments=[{
-            "databaseId": 10,
-            "author": {"login": "maintainer"},
-            "body": hosted.FULL_COMMAND,
-            "createdAt": "2026-09-30T12:00:00Z",
-        }])
+        payload = self._payload(
+            comments=[
+                {
+                    "databaseId": 10,
+                    "author": {"login": "maintainer"},
+                    "body": hosted.FULL_COMMAND,
+                    "createdAt": "2026-09-30T12:00:00Z",
+                }
+            ]
+        )
 
         def git_call(args, **_kwargs):
             clock.now = 13
@@ -568,10 +587,19 @@ class RuntimeTest(unittest.TestCase):
                 records = self._new_review_records(Path(directory) / "controller.sqlite3")
                 observer = LiveEvidence("owner/repo", LiveGitHub("owner/repo"), records=records)
                 if read_boundary == "source_resolution":
-                    observer._records_histories[42] = {"provider_origins": [{
-                        "source_pr": 42, "checkpoint_id": 55, "channel": "hosted",
-                        "provider_id": "901", "repository": "owner/repo", "run_id": "cached-run",
-                    }], "attempts": []}
+                    observer._records_histories[42] = {
+                        "provider_origins": [
+                            {
+                                "source_pr": 42,
+                                "checkpoint_id": 55,
+                                "channel": "hosted",
+                                "provider_id": "901",
+                                "repository": "owner/repo",
+                                "run_id": "cached-run",
+                            }
+                        ],
+                        "attempts": [],
+                    }
                 with sqlite3.connect(records.path, isolation_level=None) as writer:
                     writer.execute("BEGIN EXCLUSIVE")
                     started = time.monotonic()
@@ -670,7 +698,14 @@ class RuntimeTest(unittest.TestCase):
             ("mixed-case repository", now - timedelta(minutes=1), terminal_at, "OWNER/REPO", True, False),
             ("delayed observation", now - timedelta(minutes=20), terminal_at, "owner/repo", False, False),
             ("missing response time", None, terminal_at, "owner/repo", False, True),
-            ("naive response time", (now - timedelta(minutes=1)).replace(tzinfo=None), terminal_at, "owner/repo", False, True),
+            (
+                "naive response time",
+                (now - timedelta(minutes=1)).replace(tzinfo=None),
+                terminal_at,
+                "owner/repo",
+                False,
+                True,
+            ),
             ("response after terminal", now + timedelta(minutes=1), terminal_at, "owner/repo", False, True),
         )
         for label, response_at, observed_at, repository, should_hold, fail_closed in cases:
@@ -791,7 +826,12 @@ class RuntimeTest(unittest.TestCase):
             run_id=None,
             hosted_review_id=901,
         )
-        cases = (("missing", None, True), ("null", None, False), ("nonstring", 901, False), ("foreign", "other/repo", False))
+        cases = (
+            ("missing", None, True),
+            ("null", None, False),
+            ("nonstring", 901, False),
+            ("foreign", "other/repo", False),
+        )
         for label, repository, remove_repository in cases:
             with self.subTest(repository=label):
                 candidate = dict(origin)
@@ -808,11 +848,19 @@ class RuntimeTest(unittest.TestCase):
                 self.assertEqual(observer._source_resolution_status(42, "hosted", checkpoint, HEAD), "pending")
                 records.source_resolution_status.assert_not_called()
 
-        attempt = {"attempt_id": "hosted-attempt", "channel": "hosted", "provider_review_id": "901",
-                   "candidate_sha": HEAD, "state": "completed", "repository": "owner/repo",
-                   "checkpoint_id": "55", "run_id": "hosted-run-901"}
+        attempt = {
+            "attempt_id": "hosted-attempt",
+            "channel": "hosted",
+            "provider_review_id": "901",
+            "candidate_sha": HEAD,
+            "state": "completed",
+            "repository": "owner/repo",
+            "checkpoint_id": "55",
+            "run_id": "hosted-run-901",
+        }
         for history in (
-            [], {"provider_origins": "malformed", "attempts": []},
+            [],
+            {"provider_origins": "malformed", "attempts": []},
             {"provider_origins": [origin, origin], "attempts": []},
             {"provider_origins": [{**origin, "channel": "cli"}], "attempts": []},
             {"provider_origins": [{**origin, "checkpoint_id": 56}], "attempts": []},
@@ -852,9 +900,11 @@ class RuntimeTest(unittest.TestCase):
             observer._histories[(42, "hosted")] = [{"stale": True}]
             observer._histories[(42, "cli")] = [{"stale": True}]
             observer._records_histories[42] = {"stale": True}
-            with self.subTest(audit=audit.__name__), patch.object(
-                observer, "_payload", side_effect=ControllerError("stop after invalidation")
-            ), self.assertRaisesRegex(ControllerError, "stop after invalidation"):
+            with (
+                self.subTest(audit=audit.__name__),
+                patch.object(observer, "_payload", side_effect=ControllerError("stop after invalidation")),
+                self.assertRaisesRegex(ControllerError, "stop after invalidation"),
+            ):
                 audit(*arguments)
             self.assertNotIn(42, observer._payloads)
             self.assertNotIn((42, "hosted"), observer._histories)
@@ -898,16 +948,20 @@ class RuntimeTest(unittest.TestCase):
                         "observed_at": observed_at,
                     }
                 ),
-                "hosted_comments": json.dumps({"comments": [
+                "hosted_comments": json.dumps(
                     {
-                        "databaseId": 10,
-                        "author": {"login": "maintainer"},
-                        "body": hosted.FULL_COMMAND,
-                        "createdAt": trigger_created,
-                        "url": record["trigger"]["url"],
-                    },
-                    response,
-                ]}),
+                        "comments": [
+                            {
+                                "databaseId": 10,
+                                "author": {"login": "maintainer"},
+                                "body": hosted.FULL_COMMAND,
+                                "createdAt": trigger_created,
+                                "url": record["trigger"]["url"],
+                            },
+                            response,
+                        ]
+                    }
+                ),
             }
             attempt = {
                 "attempt_id": "attempt-99",
@@ -930,7 +984,9 @@ class RuntimeTest(unittest.TestCase):
                     patch.object(runner, "_repository_current_trigger_paths", return_value={99: [path]}),
                     patch.object(github, "fetch_api_endpoint", return_value=[]),
                     patch.object(hosted, "load_trigger_reservation", return_value=record),
-                    patch.object(github, "fetch_pull_request", side_effect=RuntimeError("closed history unavailable")) as fetch,
+                    patch.object(
+                        github, "fetch_pull_request", side_effect=RuntimeError("closed history unavailable")
+                    ) as fetch,
                 ):
                     if should_hold:
                         with self.assertRaisesRegex(ControllerError, "cooldown.*closed PR"):
@@ -1019,7 +1075,9 @@ class RuntimeTest(unittest.TestCase):
             with (
                 patch.object(runner, "_repository_current_trigger_paths", return_value={99: [path]}),
                 patch.object(github, "fetch_api_endpoint", return_value=[]),
-                patch.object(github, "fetch_pull_request", side_effect=RuntimeError("closed history unavailable")) as fetch,
+                patch.object(
+                    github, "fetch_pull_request", side_effect=RuntimeError("closed history unavailable")
+                ) as fetch,
                 self.assertRaisesRegex(ControllerError, "cooldown remains active on closed PR #99"),
             ):
                 runner._assert_no_other_active_reservations(42, common)
@@ -1123,31 +1181,29 @@ class RuntimeTest(unittest.TestCase):
     def test_repository_comment_histories_are_fetched_concurrently(self) -> None:
         runner = HostedRunner("owner/repo", LiveGitHub("owner/repo"))
         barrier = threading.Barrier(2)
-        observed = []
+        observed_batches = []
+        other_prs = tuple(range(43, 93))
 
         def api_endpoint(endpoint: str) -> list[dict[str, Any]]:
             if endpoint == "repos/owner/repo/pulls?state=open&per_page=100":
-                return [
-                    {"number": 42, "state": "open"},
-                    {"number": 43, "state": "open"},
-                    {"number": 44, "state": "open"},
-                ]
-            observed.append(endpoint)
+                return [{"number": 42, "state": "open"}, *({"number": pr, "state": "open"} for pr in other_prs)]
+            raise AssertionError(endpoint)
+
+        def comment_batch(_repo: str, pr_numbers: tuple[int, ...]) -> dict[int, list[dict[str, Any]]]:
+            observed_batches.append(tuple(pr_numbers))
             barrier.wait(timeout=5)
-            return []
+            return {pr: [] for pr in pr_numbers}
 
         with (
             patch.object(runner, "_repository_current_trigger_paths", return_value={}),
             patch.object(github, "fetch_api_endpoint", side_effect=api_endpoint),
+            patch.object(github, "fetch_issue_comments_batch", side_effect=comment_batch),
         ):
             runner._assert_no_other_active_reservations(42, Path("/unused"))
 
         self.assertCountEqual(
-            observed,
-            [
-                "repos/owner/repo/issues/43/comments?per_page=100",
-                "repos/owner/repo/issues/44/comments?per_page=100",
-            ],
+            observed_batches,
+            [other_prs[:25], other_prs[25:]],
         )
 
     def test_closed_pr_retired_reservation_skips_live_pull_request_lookup(self) -> None:
@@ -1550,6 +1606,7 @@ class RuntimeTest(unittest.TestCase):
         context = patch.object(evidence, "git_common_dir", return_value=Path(directory.name))
         context.start()
         self.addCleanup(context.stop)
+
         def quiet_repository(endpoint: str) -> list[dict[str, Any]]:
             if endpoint == "repos/owner/repo/pulls?state=open&per_page=100":
                 return [{"number": 43, "state": "open"}]
@@ -1559,17 +1616,12 @@ class RuntimeTest(unittest.TestCase):
         endpoint_patcher.start()
         self.addCleanup(endpoint_patcher.stop)
 
-    @staticmethod
-    def _rest_issue_comment(comment: Mapping[str, Any]) -> dict[str, Any]:
-        author = comment.get("author")
-        return {
-            "id": comment.get("databaseId"),
-            "user": {"login": author.get("login")} if isinstance(author, Mapping) else None,
-            "body": comment.get("body"),
-            "created_at": comment.get("createdAt"),
-            "updated_at": comment.get("updatedAt"),
-            "html_url": comment.get("url"),
-        }
+        def empty_comment_batch(_repo: str, pr_numbers: Sequence[int]) -> dict[int, list[dict[str, Any]]]:
+            return {number: [] for number in pr_numbers}
+
+        batch_patcher = patch.object(github, "fetch_issue_comments_batch", side_effect=empty_comment_batch)
+        batch_patcher.start()
+        self.addCleanup(batch_patcher.stop)
 
     def test_prepost_abandoned_trigger_audit_requires_the_existing_closure_proof(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -1636,6 +1688,7 @@ class RuntimeTest(unittest.TestCase):
         trigger_at = now - timedelta(hours=3)
         explicit_at = now - timedelta(minutes=62)
         generic_at = now - timedelta(minutes=61)
+
         def stamp(value: datetime) -> str:
             return value.isoformat().replace("+00:00", "Z")
 
@@ -3500,8 +3553,6 @@ class RuntimeTest(unittest.TestCase):
         def api_endpoint(endpoint: str) -> list[dict[str, Any]]:
             if endpoint == "repos/owner/repo/pulls?state=open&per_page=100":
                 return [{"number": 43, "state": "open"}]
-            if endpoint == "repos/owner/repo/issues/43/comments?per_page=100":
-                return [self._rest_issue_comment(manual)]
             raise AssertionError(f"unexpected REST endpoint: {endpoint}")
 
         with tempfile.TemporaryDirectory() as directory:
@@ -3516,6 +3567,7 @@ class RuntimeTest(unittest.TestCase):
                     side_effect=lambda _repo, pr: {42: payload42, 43: payload43}[pr],
                 ),
                 patch.object(github, "fetch_api_endpoint", side_effect=api_endpoint),
+                patch.object(github, "fetch_issue_comments_batch", return_value={43: [manual]}),
                 patch.object(hosted, "unresolved_preceding_full_trigger", return_value=False),
                 patch.object(hosted, "default_trigger_record_path", return_value=path),
                 patch.object(evidence, "git_common_dir", return_value=common),
@@ -3571,8 +3623,6 @@ class RuntimeTest(unittest.TestCase):
         def api_endpoint(endpoint: str) -> list[dict[str, Any]]:
             if endpoint == "repos/owner/repo/pulls?state=open&per_page=100":
                 return [{"number": 43, "state": "open"}]
-            if endpoint == "repos/owner/repo/issues/43/comments?per_page=100":
-                return [self._rest_issue_comment(comment) for comment in (old_command, old_finish, new_manual)]
             raise AssertionError(f"unexpected REST endpoint: {endpoint}")
 
         with tempfile.TemporaryDirectory() as directory:
@@ -3593,6 +3643,11 @@ class RuntimeTest(unittest.TestCase):
                     github, "fetch_pull_request", side_effect=lambda _repo, pr: {42: payload42, 43: payload43}[pr]
                 ),
                 patch.object(github, "fetch_api_endpoint", side_effect=api_endpoint),
+                patch.object(
+                    github,
+                    "fetch_issue_comments_batch",
+                    return_value={43: [old_command, old_finish, new_manual]},
+                ),
                 patch.object(hosted, "unresolved_preceding_full_trigger", return_value=False),
                 patch.object(hosted, "default_trigger_record_path", return_value=path),
                 patch.object(evidence, "git_common_dir", return_value=common),
@@ -3607,8 +3662,6 @@ class RuntimeTest(unittest.TestCase):
         def api_endpoint(endpoint: str) -> list[dict[str, Any]]:
             if endpoint == "repos/owner/repo/pulls?state=open&per_page=100":
                 return [{"number": 42, "state": "open"}, {"number": 99, "state": "open"}]
-            if endpoint == "repos/owner/repo/issues/99/comments?per_page=100":
-                return []
             raise AssertionError(f"unexpected REST endpoint: {endpoint}")
 
         live = LiveGitHub("owner/repo")
@@ -3616,6 +3669,7 @@ class RuntimeTest(unittest.TestCase):
         with (
             tempfile.TemporaryDirectory() as directory,
             patch.object(github, "fetch_api_endpoint", side_effect=api_endpoint),
+            patch.object(github, "fetch_issue_comments_batch", return_value={99: []}) as batch_read,
             patch.object(
                 github,
                 "fetch_pull_request",
@@ -3623,6 +3677,7 @@ class RuntimeTest(unittest.TestCase):
             ) as fetch_full,
         ):
             runner._assert_no_other_active_reservations(42, Path(directory))
+        batch_read.assert_called_once_with("owner/repo", (99,))
         fetch_full.assert_not_called()
 
     def test_hosted_global_scan_reports_redacted_reservation_readback_cause(self) -> None:
@@ -3640,8 +3695,6 @@ class RuntimeTest(unittest.TestCase):
         def api_endpoint(endpoint: str) -> list[dict[str, Any]]:
             if endpoint == "repos/owner/repo/pulls?state=open&per_page=100":
                 return [{"number": 42, "state": "open"}, {"number": 43, "state": "open"}]
-            if endpoint == "repos/owner/repo/issues/43/comments?per_page=100":
-                return []
             raise AssertionError(f"unexpected REST endpoint: {endpoint}")
 
         def gh_call(args, **_kwargs):
@@ -3661,6 +3714,7 @@ class RuntimeTest(unittest.TestCase):
                 patch.object(LiveGitHub, "branch_head", return_value=BASE),
                 patch.object(github, "fetch_pull_request", return_value=payload),
                 patch.object(github, "fetch_api_endpoint", side_effect=api_endpoint),
+                patch.object(github, "fetch_issue_comments_batch", return_value={43: []}),
                 patch.object(hosted, "load_trigger_reservation", side_effect=ValueError("sensitive fixture detail")),
                 patch.object(hosted, "default_trigger_record_path", return_value=target_path),
                 patch.object(evidence, "git_common_dir", return_value=common),
@@ -3691,13 +3745,12 @@ class RuntimeTest(unittest.TestCase):
         def api_endpoint(endpoint: str) -> list[dict[str, Any]]:
             if endpoint == "repos/owner/repo/pulls?state=open&per_page=100":
                 return [{"number": 42, "state": "open"}, {"number": 99, "state": "open"}]
-            if endpoint == "repos/owner/repo/issues/99/comments?per_page=100":
-                return [self._rest_issue_comment(manual)]
             raise AssertionError(f"unexpected REST endpoint: {endpoint}")
 
         with (
             tempfile.TemporaryDirectory() as directory,
             patch.object(github, "fetch_api_endpoint", side_effect=api_endpoint),
+            patch.object(github, "fetch_issue_comments_batch", return_value={99: [manual]}),
             patch.object(github, "fetch_pull_request", return_value=payload) as fetch_full,
             patch.object(hosted, "unresolved_preceding_full_trigger", return_value=False) as preceding,
             self.assertRaisesRegex(ControllerError, "another manual Hosted request is unresolved for PR #99"),
@@ -3738,8 +3791,6 @@ class RuntimeTest(unittest.TestCase):
         def api_endpoint(endpoint: str) -> list[dict[str, Any]]:
             if endpoint == "repos/owner/repo/pulls?state=open&per_page=100":
                 return [{"number": 42, "state": "open"}, {"number": 99, "state": "open"}]
-            if endpoint == "repos/owner/repo/issues/99/comments?per_page=100":
-                return [self._rest_issue_comment(manual)]
             raise AssertionError(f"unexpected REST endpoint: {endpoint}")
 
         with tempfile.TemporaryDirectory() as directory:
@@ -3759,6 +3810,7 @@ class RuntimeTest(unittest.TestCase):
 
             with (
                 patch.object(github, "fetch_api_endpoint", side_effect=api_endpoint),
+                patch.object(github, "fetch_issue_comments_batch", return_value={99: [manual]}),
                 patch.object(github, "fetch_pull_request", return_value=payload) as fetch_full,
             ):
                 HostedRunner("owner/repo", LiveGitHub("owner/repo"))._assert_no_other_active_reservations(42, common)
@@ -3795,8 +3847,6 @@ class RuntimeTest(unittest.TestCase):
         def api_endpoint(endpoint: str) -> list[dict[str, Any]]:
             if endpoint == "repos/owner/repo/pulls?state=open&per_page=100":
                 return [{"number": 42, "state": "open"}, {"number": 99, "state": "open"}]
-            if endpoint == "repos/owner/repo/issues/99/comments?per_page=100":
-                return [self._rest_issue_comment(old_command), self._rest_issue_comment(new_command)]
             raise AssertionError(f"unexpected REST endpoint: {endpoint}")
 
         record = self._trigger_record(created=old_command["createdAt"])
@@ -3816,6 +3866,7 @@ class RuntimeTest(unittest.TestCase):
             record_path.write_text(json.dumps(record), encoding="utf-8")
             with (
                 patch.object(github, "fetch_api_endpoint", side_effect=api_endpoint),
+                patch.object(github, "fetch_issue_comments_batch", return_value={99: [old_command, new_command]}),
                 patch.object(github, "fetch_pull_request", return_value=payload) as fetch_full,
                 patch.object(hosted, "unresolved_preceding_full_trigger", return_value=False) as preceding,
                 self.assertRaisesRegex(ControllerError, "another manual Hosted request is unresolved for PR #99"),
@@ -3846,13 +3897,12 @@ class RuntimeTest(unittest.TestCase):
         def api_endpoint(endpoint: str) -> list[dict[str, Any]]:
             if endpoint == "repos/owner/repo/pulls?state=open&per_page=100":
                 return [{"number": 42, "state": "open"}, {"number": 99, "state": "open"}]
-            if endpoint == "repos/owner/repo/issues/99/comments?per_page=100":
-                return [self._rest_issue_comment(manual)]
             raise AssertionError(f"unexpected REST endpoint: {endpoint}")
 
         with (
             tempfile.TemporaryDirectory() as directory,
             patch.object(github, "fetch_api_endpoint", side_effect=api_endpoint),
+            patch.object(github, "fetch_issue_comments_batch", return_value={99: [manual]}),
             patch.object(github, "fetch_pull_request", return_value=payload),
             patch.object(hosted, "unresolved_preceding_full_trigger", return_value=False) as preceding,
         ):
@@ -3882,13 +3932,12 @@ class RuntimeTest(unittest.TestCase):
         def api_endpoint(endpoint: str) -> list[dict[str, Any]]:
             if endpoint == "repos/owner/repo/pulls?state=open&per_page=100":
                 return [{"number": 42, "state": "open"}, {"number": 99, "state": "open"}]
-            if endpoint == "repos/owner/repo/issues/99/comments?per_page=100":
-                return [self._rest_issue_comment(manual)]
             raise AssertionError(f"unexpected REST endpoint: {endpoint}")
 
         with (
             tempfile.TemporaryDirectory() as directory,
             patch.object(github, "fetch_api_endpoint", side_effect=api_endpoint),
+            patch.object(github, "fetch_issue_comments_batch", return_value={99: [manual]}),
             patch.object(github, "fetch_pull_request", return_value=payload),
             patch.object(hosted, "unresolved_preceding_full_trigger", return_value=False),
             self.assertRaisesRegex(
@@ -3910,29 +3959,41 @@ class RuntimeTest(unittest.TestCase):
                     response_at = now - timedelta(minutes=1 if reset != "expired" else 60)
                     command_at = response_at - timedelta(minutes=2)
                     manual = {
-                        "databaseId": 901, "author": {"login": "maintainer"}, "body": hosted.FULL_COMMAND,
-                        "createdAt": command_at.isoformat(), "url": "https://example.test/comments/901",
+                        "databaseId": 901,
+                        "author": {"login": "maintainer"},
+                        "body": hosted.FULL_COMMAND,
+                        "createdAt": command_at.isoformat(),
+                        "url": "https://example.test/comments/901",
                     }
                     response = {
-                        "databaseId": 902, "author": {"login": "coderabbitai[bot]"},
-                        "body": "Review rate limited" if reset == "unknown" else
-                                "Review rate limited; next reviews available in 30 minutes",
-                        "createdAt": response_at.isoformat(), "updatedAt": response_at.isoformat(),
+                        "databaseId": 902,
+                        "author": {"login": "coderabbitai[bot]"},
+                        "body": "Review rate limited"
+                        if reset == "unknown"
+                        else "Review rate limited; next reviews available in 30 minutes",
+                        "createdAt": response_at.isoformat(),
+                        "updatedAt": response_at.isoformat(),
                     }
-                    reviews = [{
-                        "databaseId": 903, "author": {"login": "coderabbitai[bot]"},
-                        "body": "<!-- walkthrough_start -->\nActionable comments posted: 0",
-                        "state": "COMMENTED", "commit": {"oid": "d" * 40},
-                        "submittedAt": (command_at + timedelta(minutes=1)).isoformat(),
-                    }] if headed else []
+                    reviews = (
+                        [
+                            {
+                                "databaseId": 903,
+                                "author": {"login": "coderabbitai[bot]"},
+                                "body": "<!-- walkthrough_start -->\nActionable comments posted: 0",
+                                "state": "COMMENTED",
+                                "commit": {"oid": "d" * 40},
+                                "submittedAt": (command_at + timedelta(minutes=1)).isoformat(),
+                            }
+                        ]
+                        if headed
+                        else []
+                    )
                     other_payload = self._payload([manual, response], reviews, head="d" * 40)
                     other_payload["data"]["repository"]["pullRequest"]["number"] = 99
 
                     def api_endpoint(endpoint, manual=manual, response=response):
                         if endpoint == "repos/owner/repo/pulls?state=open&per_page=100":
                             return [{"number": 42, "state": "open"}, {"number": 99, "state": "open"}]
-                        if endpoint == "repos/owner/repo/issues/99/comments?per_page=100":
-                            return [self._rest_issue_comment(manual), self._rest_issue_comment(response)]
                         raise AssertionError(endpoint)
 
                     reservations = []
@@ -3944,10 +4005,20 @@ class RuntimeTest(unittest.TestCase):
 
                     def post(args, posts=posts, **_kwargs):
                         posts.append(args)
-                        return CompletedProcess(args, 0, json.dumps({
-                            "id": 999, "created_at": now.isoformat(), "html_url": "https://example.test/999",
-                            "body": hosted.FULL_COMMAND, "user": {"login": "maintainer"},
-                        }), "")
+                        return CompletedProcess(
+                            args,
+                            0,
+                            json.dumps(
+                                {
+                                    "id": 999,
+                                    "created_at": now.isoformat(),
+                                    "html_url": "https://example.test/999",
+                                    "body": hosted.FULL_COMMAND,
+                                    "user": {"login": "maintainer"},
+                                }
+                            ),
+                            "",
+                        )
 
                     common = Path(directory)
                     path = hosted.default_trigger_record_path("owner/repo", 42, common)
@@ -3956,8 +4027,14 @@ class RuntimeTest(unittest.TestCase):
                         patch.object(live, "pull_request", return_value=snapshot),
                         patch.object(live, "branch_head", return_value=BASE),
                         patch.object(github, "fetch_api_endpoint", side_effect=api_endpoint),
-                        patch.object(github, "fetch_pull_request", side_effect=lambda _repo, number, other_payload=other_payload:
-                                     other_payload if number == 99 else self._payload()),
+                        patch.object(github, "fetch_issue_comments_batch", return_value={99: [manual, response]}),
+                        patch.object(
+                            github,
+                            "fetch_pull_request",
+                            side_effect=lambda _repo, number, other_payload=other_payload: (
+                                other_payload if number == 99 else self._payload()
+                            ),
+                        ),
                         patch.object(evidence, "git_common_dir", return_value=common),
                         patch.object(HostedRunner, "_authenticated_login", return_value="maintainer"),
                         patch("pr_review.runtime.subprocess.run", side_effect=post),
@@ -3970,7 +4047,9 @@ class RuntimeTest(unittest.TestCase):
                             self.assertEqual(len(posts), 1)
                             self.assertTrue(path.exists())
                         else:
-                            with self.assertRaisesRegex(ControllerError, "Hosted repository cooldown remains unresolved on PR #99"):
+                            with self.assertRaisesRegex(
+                                ControllerError, "Hosted repository cooldown remains unresolved on PR #99"
+                            ):
                                 runner(target, expect_pr=42, admit=admit)
                             self.assertEqual(reservations, [])
                             self.assertEqual(posts, [])
@@ -3981,24 +4060,34 @@ class RuntimeTest(unittest.TestCase):
         for headed in (False, True):
             with self.subTest(headed=headed), tempfile.TemporaryDirectory() as directory:
                 manual = {
-                    "databaseId": 901, "author": {"login": "maintainer"}, "body": hosted.FULL_COMMAND,
-                    "createdAt": (now - timedelta(minutes=2)).isoformat(), "url": "https://example.test/901",
+                    "databaseId": 901,
+                    "author": {"login": "maintainer"},
+                    "body": hosted.FULL_COMMAND,
+                    "createdAt": (now - timedelta(minutes=2)).isoformat(),
+                    "url": "https://example.test/901",
                 }
                 spoof = {
-                    "databaseId": 902, "author": {"login": "arbitrary-user"},
+                    "databaseId": 902,
+                    "author": {"login": "arbitrary-user"},
                     "body": "Review rate limited; next reviews available in 30 minutes",
                     "createdAt": (now - timedelta(seconds=10)).isoformat(),
                     "updatedAt": (now - timedelta(seconds=10)).isoformat(),
                 }
                 completed_at = (now - timedelta(minutes=1)).isoformat()
                 terminal = {
-                    "databaseId": 903, "author": {"login": "coderabbitai[bot]"},
-                    "body": hosted.NOOP_MARKER, "createdAt": completed_at, "updatedAt": completed_at,
+                    "databaseId": 903,
+                    "author": {"login": "coderabbitai[bot]"},
+                    "body": hosted.NOOP_MARKER,
+                    "createdAt": completed_at,
+                    "updatedAt": completed_at,
                 }
                 review = {
-                    "databaseId": 904, "author": {"login": "coderabbitai[bot]"},
+                    "databaseId": 904,
+                    "author": {"login": "coderabbitai[bot]"},
                     "body": "<!-- walkthrough_start -->\nActionable comments posted: 0",
-                    "state": "COMMENTED", "submittedAt": completed_at, "commit": {"oid": "d" * 40},
+                    "state": "COMMENTED",
+                    "submittedAt": completed_at,
+                    "commit": {"oid": "d" * 40},
                 }
                 comments = [manual, spoof] if headed else [manual, terminal, spoof]
                 other_payload = self._payload(comments, [review] if headed else [], head="d" * 40)
@@ -4007,12 +4096,11 @@ class RuntimeTest(unittest.TestCase):
                 def api_endpoint(endpoint, comments=comments):
                     if endpoint == "repos/owner/repo/pulls?state=open&per_page=100":
                         return [{"number": 42, "state": "open"}, {"number": 99, "state": "open"}]
-                    if endpoint == "repos/owner/repo/issues/99/comments?per_page=100":
-                        return [self._rest_issue_comment(item) for item in comments]
                     raise AssertionError(endpoint)
 
                 with (
                     patch.object(github, "fetch_api_endpoint", side_effect=api_endpoint),
+                    patch.object(github, "fetch_issue_comments_batch", return_value={99: comments}),
                     patch.object(github, "fetch_pull_request", return_value=other_payload),
                     patch.object(evidence, "git_common_dir", return_value=Path(directory)),
                 ):
@@ -4048,13 +4136,12 @@ class RuntimeTest(unittest.TestCase):
                 def api_endpoint(endpoint: str, manual: Mapping[str, Any] = manual) -> list[dict[str, Any]]:
                     if endpoint == "repos/owner/repo/pulls?state=open&per_page=100":
                         return [{"number": 42, "state": "open"}, {"number": 99, "state": "open"}]
-                    if endpoint == "repos/owner/repo/issues/99/comments?per_page=100":
-                        return [self._rest_issue_comment(manual)]
                     raise AssertionError(f"unexpected REST endpoint: {endpoint}")
 
                 with (
                     tempfile.TemporaryDirectory() as directory,
                     patch.object(github, "fetch_api_endpoint", side_effect=api_endpoint),
+                    patch.object(github, "fetch_issue_comments_batch", return_value={99: [manual, response]}),
                     patch.object(github, "fetch_pull_request", return_value=payload),
                 ):
                     HostedRunner("owner/repo", LiveGitHub("owner/repo"))._assert_no_other_active_reservations(
@@ -4082,13 +4169,12 @@ class RuntimeTest(unittest.TestCase):
         def api_endpoint(endpoint: str) -> list[dict[str, Any]]:
             if endpoint == "repos/owner/repo/pulls?state=open&per_page=100":
                 return [{"number": 42, "state": "open"}, {"number": 99, "state": "open"}]
-            if endpoint == "repos/owner/repo/issues/99/comments?per_page=100":
-                return [self._rest_issue_comment(manual)]
             raise AssertionError(f"unexpected REST endpoint: {endpoint}")
 
         with (
             tempfile.TemporaryDirectory() as directory,
             patch.object(github, "fetch_api_endpoint", side_effect=api_endpoint),
+            patch.object(github, "fetch_issue_comments_batch", return_value={99: [manual, finished_reply]}),
             patch.object(github, "fetch_pull_request", return_value=payload),
         ):
             HostedRunner("owner/repo", LiveGitHub("owner/repo"))._assert_no_other_active_reservations(
@@ -5003,7 +5089,9 @@ class RuntimeTest(unittest.TestCase):
 
             edited_reply = {**unknown_reply, "updatedAt": (local_deadline + timedelta(minutes=30)).isoformat()}
             refreshed = self._history(common, self._payload([trigger, edited_reply]), now=now)
-            self.assertEqual(next(item for item in refreshed if item.get("rate_limited"))["cooldown_until"], hold["cooldown_until"])
+            self.assertEqual(
+                next(item for item in refreshed if item.get("rate_limited"))["cooldown_until"], hold["cooldown_until"]
+            )
 
             expired = self._history(common, unknown_payload, now=local_deadline)
             self.assertFalse(any(item.get("rate_limited") for item in expired))
@@ -5256,9 +5344,17 @@ class RuntimeTest(unittest.TestCase):
             ):
                 return observer.review_stop_audit(42, anchor)
 
-        provisional = {"pr": 42, "head": HEAD, "checkpoint": "public-cli-provisional",
-            "channel": "cli", "completed": True, "attributable": True,
-            "anchored": True, "provisional": True, "accepted": 0}
+        provisional = {
+            "pr": 42,
+            "head": HEAD,
+            "checkpoint": "public-cli-provisional",
+            "channel": "cli",
+            "completed": True,
+            "attributable": True,
+            "anchored": True,
+            "provisional": True,
+            "accepted": 0,
+        }
         provisional_audit = audit_for([provisional])
         self.assertEqual(provisional_audit["unknown_review_evidence"], [])
         self.assertEqual(provisional_audit["channel_histories"]["cli"], [provisional])
@@ -5296,16 +5392,23 @@ class RuntimeTest(unittest.TestCase):
 
         for status in ("finding_pending", "pending", "unavailable", "unfinalized", {}, "resolved"):
             with self.subTest(source_status=status):
-                source = {"pr": 42, "head": HEAD, "checkpoint": "accepted-source",
-                    "completed": True, "attributable": True, "accepted": 1,
-                    "source_resolution_status": status}
+                source = {
+                    "pr": 42,
+                    "head": HEAD,
+                    "checkpoint": "accepted-source",
+                    "completed": True,
+                    "attributable": True,
+                    "accepted": 1,
+                    "source_resolution_status": status,
+                }
                 source_audit = audit_for([source])
                 label = "cli accepted-finding source proof: accepted-source"
                 self.assertEqual(source_audit["unresolved_findings"], [] if status == "resolved" else [label])
-                self.assertEqual(source_audit["finding_only_findings"],
-                                 [label] if status == "finding_pending" else [])
-                self.assertEqual(source_audit["unknown_review_evidence"],
-                                 [] if status in ("finding_pending", "resolved") else [label])
+                self.assertEqual(source_audit["finding_only_findings"], [label] if status == "finding_pending" else [])
+                self.assertEqual(
+                    source_audit["unknown_review_evidence"],
+                    [] if status in ("finding_pending", "resolved") else [label],
+                )
 
     def test_review_stop_audit_checks_retained_base_and_effective_parent_separately(self) -> None:
         retained_base = BASE
@@ -5327,6 +5430,7 @@ class RuntimeTest(unittest.TestCase):
             pr_base_oid=retained_base,
             effective_parent_head=effective_parent,
         )
+
         def run(
             *,
             selected_anchor=anchor,
@@ -5362,7 +5466,10 @@ class RuntimeTest(unittest.TestCase):
         self.assertEqual(result["blockers"], [])
         self.assertEqual(
             result["anchor"],
-            {key: anchor[key] for key in ("pr", "child_head", "parent_identity", "parent_head", "merge_base", "patch_id")},
+            {
+                key: anchor[key]
+                for key in ("pr", "child_head", "parent_identity", "parent_head", "merge_base", "patch_id")
+            },
         )
         audit.assert_called_once()
         self.assertEqual(audit.call_args.args[2]["live_base_tip"], retained_base)
@@ -5409,11 +5516,15 @@ class RuntimeTest(unittest.TestCase):
         ):
             matching_payload = self._payload()
             matching_payload["data"]["repository"]["pullRequest"].update(
-                number=42, headRefOid=selected_snapshot.head_sha,
-                baseRefName=selected_snapshot.base_ref_name, baseRefOid=selected_snapshot.base_sha)
+                number=42,
+                headRefOid=selected_snapshot.head_sha,
+                baseRefName=selected_snapshot.base_ref_name,
+                baseRefOid=selected_snapshot.base_sha,
+            )
             with self.subTest(movement=label):
-                moved, moved_audit = run(selected_snapshot=selected_snapshot,
-                    selected_payload=matching_payload, parent_tip=parent_tip)
+                moved, moved_audit = run(
+                    selected_snapshot=selected_snapshot, selected_payload=matching_payload, parent_tip=parent_tip
+                )
                 self.assertTrue(moved["request_preparation_only"])
                 self.assertIsNone(moved["anchor"])
                 moved_audit.assert_called_once()
@@ -5421,7 +5532,8 @@ class RuntimeTest(unittest.TestCase):
         for change in ({"number": 43}, {"headRefOid": None}, {"headRefOid": "bad"}):
             invalid_payload = self._payload()
             invalid_payload["data"]["repository"]["pullRequest"].update(
-                number=42, headRefOid=HEAD, baseRefName="develop", baseRefOid=retained_base)
+                number=42, headRefOid=HEAD, baseRefName="develop", baseRefOid=retained_base
+            )
             invalid_payload["data"]["repository"]["pullRequest"].update(change)
             with self.subTest(invalid=change), self.assertRaises(ControllerError) as raised:
                 run(selected_payload=invalid_payload)
@@ -5433,11 +5545,16 @@ class RuntimeTest(unittest.TestCase):
 
         # Movement cannot skip safety evidence that exists solely in the
         # refreshed provider audit (there is no duplicate history hold).
-        for field in ("unknown_review_evidence", "unmatched_responses", "active_reservations",
-                      "ambiguous_responses"):
-            complete_audit = {"complete": True, "active_reservations": [], "unmatched_responses": [],
-                "ambiguous_responses": [], "unresolved_findings": [], "finding_only_findings": [],
-                "unknown_review_evidence": []}
+        for field in ("unknown_review_evidence", "unmatched_responses", "active_reservations", "ambiguous_responses"):
+            complete_audit = {
+                "complete": True,
+                "active_reservations": [],
+                "unmatched_responses": [],
+                "ambiguous_responses": [],
+                "unresolved_findings": [],
+                "finding_only_findings": [],
+                "unknown_review_evidence": [],
+            }
             complete_audit[field] = ["unsafe provider evidence"]
             if field == "unknown_review_evidence":
                 complete_audit["unresolved_findings"] = ["unsafe provider evidence"]
@@ -5455,8 +5572,9 @@ class RuntimeTest(unittest.TestCase):
             self.assertEqual(refreshed[field], ["unsafe provider evidence"])
 
         for field in ("pr_base_oid", "base_ref", "effective_parent_head", "enforce_parent_identity_ref"):
-            with self.subTest(missing=field), self.assertRaisesRegex(
-                ControllerError, "complete selected pull-request base identity"
+            with (
+                self.subTest(missing=field),
+                self.assertRaisesRegex(ControllerError, "complete selected pull-request base identity"),
             ):
                 run(selected_anchor={key: value for key, value in anchor.items() if key != field})
 
@@ -7288,15 +7406,9 @@ class RuntimeTest(unittest.TestCase):
                 if threads is None:
                     payload["data"]["repository"]["pullRequest"].pop("reviewThreads")
                 blockers = provider._global_blockers(42, HEAD, payload)
-                thread_holds = [
-                    item for item in blockers if item.get("checkpoint", "").startswith("review-threads:")
-                ]
-                summary_holds = [
-                    item for item in blockers if item.get("checkpoint", "").startswith("summary-actions:")
-                ]
-                thread_blocker = next(
-                    item for item in thread_holds if item.get("checkpoint") == expected_checkpoint
-                )
+                thread_holds = [item for item in blockers if item.get("checkpoint", "").startswith("review-threads:")]
+                summary_holds = [item for item in blockers if item.get("checkpoint", "").startswith("summary-actions:")]
+                thread_blocker = next(item for item in thread_holds if item.get("checkpoint") == expected_checkpoint)
                 self.assertTrue(thread_blocker.get("unstable") is True)
                 self.assertTrue(thread_blocker.get("held") is True)
                 self.assertIsNot(thread_blocker.get("finding_only_hold"), True)
