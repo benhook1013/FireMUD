@@ -219,7 +219,7 @@ public final class CanonicalGameplayMigrationDriverMain {
 
   /*
    * This source cut is intentionally the complete packaged Game Session migration directory
-   * (V1-V15 and V20-V34) plus the three common-saga migrations (V1000-V1002). Flyway computes
+   * (V1-V15, V20-V34, and V34.1) plus the three common-saga migrations (V1000-V1002). Flyway computes
    * checksums from those packaged SQL resources and validates the applied schema history against
    * them; no filesystem, callback, or additional migration location is accepted.
    */
@@ -503,6 +503,7 @@ public final class CanonicalGameplayMigrationDriverMain {
         Map.entry("32", "V32__canonical_gameplay_admission_decision.sql"),
         Map.entry("33", "V33__canonical_legacy_binding_migration_operation.sql"),
         Map.entry("34", "V34__canonical_gameplay_decision_runtime_fence.sql"),
+        Map.entry("34.1", "V34.1__canonical_gameplay_integrity_guards.sql"),
         Map.entry("1000", "V1000__create_saga_schema.sql"),
         Map.entry("1001", "V1001__saga_instance_table.sql"),
         Map.entry("1002", "V1002__saga_step_table.sql"));

@@ -12,6 +12,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 import net.firedevops.firemud.gamesession.binding.CanonicalGameplayLegacyMigrationReadback;
 import net.firedevops.firemud.gamesession.binding.CanonicalGameplayLegacyMigrationSourceSnapshot;
 import net.firedevops.firemud.gamesession.binding.CanonicalGameplayLegacyMigrationStorageIdentity;
+import net.firedevops.firemud.test.TestContainerImages;
 import org.flywaydb.core.Flyway;
 import org.jooq.DSLContext;
 import org.jooq.SQLDialect;
@@ -29,7 +30,8 @@ class CanonicalGameplayLegacyMigrationRepositoryIntegrationTest {
       "filesystem:" + Path.of("src/main/resources/db/migration").toAbsolutePath().normalize();
 
   @Container
-  static PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>("postgres:16-alpine");
+  static PostgreSQLContainer<?> postgres =
+      new PostgreSQLContainer<>(TestContainerImages.postgres());
 
   @Test
   void durableFenceAndPhysicalIdentityDoNotPublishV31BeforeReadback() {
@@ -230,6 +232,103 @@ class CanonicalGameplayLegacyMigrationRepositoryIntegrationTest {
                       + " WHERE singleton_id = 1"),
               "blocked legacy disposition row");
       assertThat(blockedDisposition.get("disposition_state", String.class)).isEqualTo("REQUIRED");
+    } finally {
+      dropSchema(schema);
+    }
+  }
+
+  @Test
+  void ownerRetainsOriginalAdapterFailureAndSuppressedBlockPersistenceFailure() {
+    String schema = "gs_legacy_owner_failure_" + UUID.randomUUID().toString().replace("-", "");
+    DriverManagerDataSource dataSource = dataSource(schema);
+    try {
+      migrate(schema, dataSource);
+      DSLContext dsl = dslForSchema(dataSource, schema);
+      var inventory = new CanonicalGameplayBindingInventoryRepository(dsl);
+      var repository = new CanonicalGameplayLegacyMigrationRepository(dsl, inventory);
+      UUID cohortId = UUID.randomUUID();
+      UUID writerFence = UUID.randomUUID();
+      var identity = identity();
+      IllegalStateException originalFailure =
+          new IllegalStateException("source snapshot adapter failed after cohort fencing");
+      var cohort =
+          new CanonicalGameplayLegacyMigrationOwner.FencedCohort() {
+            @Override
+            public UUID cohortId() {
+              return cohortId;
+            }
+
+            @Override
+            public UUID legacyWriterFence() {
+              return writerFence;
+            }
+
+            @Override
+            public CanonicalGameplayLegacyMigrationStorageIdentity storageIdentity() {
+              return identity;
+            }
+
+            @Override
+            public void requireStillFenced(
+                CanonicalGameplayLegacyMigrationStorageIdentity expectedIdentity) {
+              assertThat(expectedIdentity).isEqualTo(identity);
+            }
+          };
+      var owner =
+          new CanonicalGameplayLegacyMigrationOwner(
+              repository,
+              inventory,
+              () -> {
+                // This test-only constraint forces owner.block() to fail after the adapter error.
+                dsl.execute(
+                    "ALTER TABLE game_session_canonical_legacy_migration_operation"
+                        + " ADD CONSTRAINT reject_owner_block_for_test"
+                        + " CHECK (state <> 'BLOCKED') NOT VALID");
+                return cohort;
+              },
+              ignored -> {
+                throw originalFailure;
+              },
+              new CanonicalGameplayLegacyMigrationOwner.NamespaceIndexOwner() {
+                @Override
+                public void rebuildExact(
+                    CanonicalGameplayLegacyMigrationOwner.FencedCohort ignoredCohort,
+                    CanonicalGameplayLegacyMigrationSourceSnapshot legacySnapshot,
+                    net.firedevops.firemud.gamesession.binding
+                            .CanonicalGameplayBindingInventorySnapshot
+                        canonicalSnapshot) {
+                  throw new AssertionError("rebuild must not run after source capture fails");
+                }
+
+                @Override
+                public CanonicalGameplayLegacyMigrationReadback readBackExact(
+                    CanonicalGameplayLegacyMigrationOwner.FencedCohort ignoredCohort,
+                    net.firedevops.firemud.gamesession.binding
+                            .CanonicalGameplayBindingInventorySnapshot
+                        canonicalSnapshot) {
+                  throw new AssertionError("readback must not run after source capture fails");
+                }
+              });
+
+      assertThatThrownBy(owner::migrate)
+          .isInstanceOf(CanonicalGameplayBindingInventoryConflictException.class)
+          .satisfies(
+              failure -> {
+                assertThat(failure.getCause()).isSameAs(originalFailure);
+                assertThat(originalFailure.getSuppressed()).hasSize(1);
+                assertThat(originalFailure.getSuppressed()[0])
+                    .hasMessageContaining("reject_owner_block_for_test");
+              });
+      UUID operationId =
+          java.util.Objects.requireNonNull(
+                  dsl.fetchOne(
+                      "SELECT operation_id FROM game_session_canonical_legacy_migration_operation"
+                          + " WHERE cohort_id = ?",
+                      cohortId),
+                  "migration operation row")
+              .get("operation_id", UUID.class);
+      assertThat(repository.read(operationId).state())
+          .isEqualTo(CanonicalGameplayLegacyMigrationOperation.State.FENCED);
     } finally {
       dropSchema(schema);
     }

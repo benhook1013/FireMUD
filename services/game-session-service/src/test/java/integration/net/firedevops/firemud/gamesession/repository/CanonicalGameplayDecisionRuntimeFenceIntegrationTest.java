@@ -1,10 +1,14 @@
 package net.firedevops.firemud.gamesession.repository;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.sql.DriverManager;
+import java.sql.Timestamp;
 import java.util.UUID;
+import net.firedevops.firemud.gamesession.dto.CanonicalPlayableTarget;
 import net.firedevops.firemud.test.TestContainerImages;
 import org.flywaydb.core.Flyway;
 import org.jooq.DSLContext;
@@ -16,12 +20,13 @@ import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
-/** PostgreSQL proof that legacy runtime mutations execute the V34 typed-identity fence. */
+/** PostgreSQL proof for the V34.1 canonical gameplay integrity and runtime fences. */
 @Testcontainers(disabledWithoutDocker = true)
 @SuppressWarnings("resource")
 class CanonicalGameplayDecisionRuntimeFenceIntegrationTest {
   private static final String MIGRATION_LOCATION =
       "filesystem:" + Path.of("src/main/resources/db/migration").toAbsolutePath().normalize();
+  private static final String RAW_SHA256 = "a".repeat(64);
   private static final long LEGACY_TENANT_ID = 41L;
   private static final long LEGACY_INSTANCE_ID = 7L;
 
@@ -91,6 +96,441 @@ class CanonicalGameplayDecisionRuntimeFenceIntegrationTest {
     } finally {
       dropSchema(schema);
     }
+  }
+
+  @Test
+  void exactLeaseBoundCandidatePinsRuntimeAndRejectsTerminalTransition() {
+    String schema = "gs_runtime_fence_exact_" + UUID.randomUUID().toString().replace("-", "");
+    DriverManagerDataSource dataSource = dataSource(schema);
+    try {
+      migrate(schema, dataSource);
+      DSLContext dsl = DSL.using(dataSource, SQLDialect.POSTGRES);
+      CanonicalGameplayBindingRuntimeTestFixtures.RuntimeTarget target =
+          CanonicalGameplayBindingRuntimeTestFixtures.seedRunningLaunch(dsl);
+      byte[] candidateRef = seedCandidateAndPreparedTransition(dsl, target, CandidateMismatch.NONE);
+
+      markProvisional(dsl, target, candidateRef);
+
+      assertThatThrownBy(
+              () ->
+                  dsl.execute(
+                      "UPDATE game_instances SET status = 'STOPPED'"
+                          + " WHERE tenant_id = ? AND id = ?",
+                      target.gameSessionTenantId(),
+                      target.gameInstanceId()))
+          .hasMessageContaining("runtime row is fenced");
+      assertThatThrownBy(
+              () ->
+                  dsl.execute(
+                      "DELETE FROM game_instances WHERE tenant_id = ? AND id = ?",
+                      target.gameSessionTenantId(),
+                      target.gameInstanceId()))
+          .hasMessageContaining("runtime row is fenced");
+
+      assertThatThrownBy(
+              () ->
+                  dsl.execute(
+                      "UPDATE game_session_canonical_binding_transition"
+                          + " SET status = 'ABORTED' WHERE transition_id = ("
+                          + " SELECT transition_id FROM game_session_canonical_binding_transition"
+                          + " WHERE candidate_binding_ref = ?)",
+                      candidateRef))
+          .hasMessageContaining("terminal owner reconciliation");
+
+      assertThat(
+              java.util.Objects.requireNonNull(
+                      dsl.fetchOne(
+                          "SELECT status FROM game_instances WHERE tenant_id = ? AND id = ?",
+                          target.gameSessionTenantId(),
+                          target.gameInstanceId()),
+                      "runtime row")
+                  .get("status", String.class))
+          .isEqualTo("RUNNING");
+      assertThat(
+              java.util.Objects.requireNonNull(
+                      dsl.fetchOne(
+                          "SELECT status FROM game_session_canonical_binding_transition"
+                              + " WHERE candidate_binding_ref = ?",
+                          candidateRef),
+                      "binding transition row")
+                  .get("status", String.class))
+          .isEqualTo("PROVISIONAL");
+    } finally {
+      dropSchema(schema);
+    }
+  }
+
+  @Test
+  void stoppedRuntimeCannotAcquireLeaseBoundBindingFence() {
+    String schema = "gs_runtime_fence_stopped_" + UUID.randomUUID().toString().replace("-", "");
+    DriverManagerDataSource dataSource = dataSource(schema);
+    try {
+      migrate(schema, dataSource);
+      DSLContext dsl = DSL.using(dataSource, SQLDialect.POSTGRES);
+      CanonicalGameplayBindingRuntimeTestFixtures.RuntimeTarget target =
+          CanonicalGameplayBindingRuntimeTestFixtures.seedRunningLaunch(dsl);
+      byte[] candidateRef = seedCandidateAndPreparedTransition(dsl, target, CandidateMismatch.NONE);
+      assertThat(
+              dsl.execute(
+                  "UPDATE game_instances SET status = 'STOPPED'"
+                      + " WHERE tenant_id = ? AND id = ?",
+                  target.gameSessionTenantId(),
+                  target.gameInstanceId()))
+          .isEqualTo(1);
+
+      assertThatThrownBy(() -> markProvisional(dsl, target, candidateRef))
+          .hasMessageContaining("exact current RUNNING launch row and candidate identity");
+      assertThat(
+              java.util.Objects.requireNonNull(
+                      dsl.fetchOne(
+                          "SELECT status FROM game_session_canonical_binding_transition"
+                              + " WHERE candidate_binding_ref = ?",
+                          candidateRef),
+                      "binding transition row")
+                  .get("status", String.class))
+          .isEqualTo("PREPARED");
+    } finally {
+      dropSchema(schema);
+    }
+  }
+
+  @Test
+  void mismatchedCandidateTenantRuntimeOrCanonicalInstanceCannotAcquireFence() {
+    String schema = "gs_runtime_fence_candidate_" + UUID.randomUUID().toString().replace("-", "");
+    DriverManagerDataSource dataSource = dataSource(schema);
+    try {
+      migrate(schema, dataSource);
+      DSLContext dsl = DSL.using(dataSource, SQLDialect.POSTGRES);
+      CanonicalGameplayBindingRuntimeTestFixtures.RuntimeTarget target =
+          CanonicalGameplayBindingRuntimeTestFixtures.seedRunningLaunch(dsl);
+
+      for (CandidateMismatch mismatch : CandidateMismatch.values()) {
+        if (mismatch == CandidateMismatch.NONE) {
+          continue;
+        }
+        byte[] candidateRef = seedCandidateAndPreparedTransition(dsl, target, mismatch);
+        assertThatThrownBy(() -> markProvisional(dsl, target, candidateRef))
+            .as("candidate mismatch %s", mismatch)
+            .hasMessageContaining("exact current RUNNING launch row and candidate identity");
+      }
+    } finally {
+      dropSchema(schema);
+    }
+  }
+
+  @Test
+  void retainedTenantPayloadAndHoldCannotBeTruncatedAroundTheirRowGuards() {
+    String schema = "gs_retained_truncate_" + UUID.randomUUID().toString().replace("-", "");
+    DriverManagerDataSource dataSource = dataSource(schema);
+    try {
+      migrate(schema, dataSource);
+      DSLContext dsl = DSL.using(dataSource, SQLDialect.POSTGRES);
+
+      assertThatThrownBy(
+              () -> dsl.execute("TRUNCATE game_session_retained_tenant_association_payload"))
+          .hasMessageContaining("expiry cannot be bypassed");
+      assertThatThrownBy(
+              () -> dsl.execute("TRUNCATE game_session_retained_tenant_association_legal_hold"))
+          .hasMessageContaining("audit cannot be bypassed");
+    } finally {
+      dropSchema(schema);
+    }
+  }
+
+  @Test
+  void launchPreparationMustReferenceTheFullImmutableCatalogIdentity() {
+    String schema = "gs_launch_prep_identity_" + UUID.randomUUID().toString().replace("-", "");
+    DriverManagerDataSource dataSource = dataSource(schema);
+    try {
+      migrate(schema, dataSource);
+      DSLContext dsl = DSL.using(dataSource, SQLDialect.POSTGRES);
+      CanonicalGameplayBindingRuntimeTestFixtures.RuntimeTarget target =
+          CanonicalGameplayBindingRuntimeTestFixtures.seedRunningLaunch(dsl);
+
+      assertThat(
+              insertLaunchPreparation(
+                  dsl,
+                  target,
+                  target.realmId(),
+                  target.catalogCreationRequestId(),
+                  target.catalogRevision(),
+                  target.canonicalTenantId(),
+                  target.sourceIntakeOperationId(),
+                  target.sourceIntakeRequestId()))
+          .isEqualTo(1);
+      assertLaunchPreparationCatalogMismatchRejected(
+          dsl,
+          target,
+          target.realmId(),
+          UUID.randomUUID(),
+          target.catalogRevision(),
+          target.canonicalTenantId(),
+          target.sourceIntakeOperationId(),
+          target.sourceIntakeRequestId());
+      assertLaunchPreparationCatalogMismatchRejected(
+          dsl,
+          target,
+          target.realmId(),
+          target.catalogCreationRequestId(),
+          target.catalogRevision() + 1,
+          target.canonicalTenantId(),
+          target.sourceIntakeOperationId(),
+          target.sourceIntakeRequestId());
+      assertLaunchPreparationCatalogMismatchRejected(
+          dsl,
+          target,
+          target.realmId(),
+          target.catalogCreationRequestId(),
+          target.catalogRevision(),
+          UUID.randomUUID(),
+          target.sourceIntakeOperationId(),
+          target.sourceIntakeRequestId());
+      assertLaunchPreparationCatalogMismatchRejected(
+          dsl,
+          target,
+          target.realmId(),
+          target.catalogCreationRequestId(),
+          target.catalogRevision(),
+          target.canonicalTenantId(),
+          UUID.randomUUID(),
+          target.sourceIntakeRequestId());
+      assertLaunchPreparationCatalogMismatchRejected(
+          dsl,
+          target,
+          target.realmId(),
+          target.catalogCreationRequestId(),
+          target.catalogRevision(),
+          target.canonicalTenantId(),
+          target.sourceIntakeOperationId(),
+          UUID.randomUUID());
+      assertLaunchPreparationCatalogMismatchRejected(
+          dsl,
+          target,
+          UUID.randomUUID(),
+          target.catalogCreationRequestId(),
+          target.catalogRevision(),
+          target.canonicalTenantId(),
+          target.sourceIntakeOperationId(),
+          target.sourceIntakeRequestId());
+    } finally {
+      dropSchema(schema);
+    }
+  }
+
+  private static void migrate(String schema, DriverManagerDataSource dataSource) {
+    Flyway.configure()
+        .dataSource(dataSource)
+        .schemas(schema)
+        .defaultSchema(schema)
+        .table("flyway_schema_history")
+        .locations(MIGRATION_LOCATION)
+        .load()
+        .migrate();
+  }
+
+  private static byte[] seedCandidateAndPreparedTransition(
+      DSLContext dsl,
+      CanonicalGameplayBindingRuntimeTestFixtures.RuntimeTarget target,
+      CandidateMismatch mismatch) {
+    CanonicalPlayableTarget playableTarget = target.playableTarget();
+    UUID candidateTenant =
+        mismatch == CandidateMismatch.TENANT ? UUID.randomUUID() : target.canonicalTenantId();
+    long candidateRuntimeId =
+        mismatch == CandidateMismatch.RUNTIME_GAME_INSTANCE_ID
+            ? target.gameInstanceId() + 1
+            : target.gameInstanceId();
+    UUID candidateGameInstanceUuid =
+        mismatch == CandidateMismatch.CANONICAL_GAME_INSTANCE_UUID
+            ? UUID.randomUUID()
+            : target.gameInstanceUuid();
+    UUID transitionId = UUID.randomUUID();
+    UUID accountId = UUID.randomUUID();
+    UUID characterId = UUID.randomUUID();
+    UUID regionId = UUID.randomUUID();
+    UUID issuerId = UUID.randomUUID();
+    UUID accountIndexFence = UUID.randomUUID();
+    UUID issuerReservationId = UUID.randomUUID();
+    byte[] candidateRef = UUID.randomUUID().toString().getBytes(StandardCharsets.UTF_8);
+
+    dsl.execute(
+        "INSERT INTO game_session_canonical_gameplay_binding_inventory"
+            + " (binding_ref, account_id, tenant_id, playable_state_namespace_id, character_id,"
+            + " playable_state_scope, game_instance_id, runtime_game_instance_id, session_id,"
+            + " binding_generation, region_id, region_epoch, issuer_id, issuer_auth_generation,"
+            + " issuer_index_layout_version, issuer_index_partition_count,"
+            + " issuer_index_partition_capacity, issuer_partition_id, account_index_fence,"
+            + " issuer_reservation_id, transition_id, lifecycle, account_index_state,"
+            + " issuer_index_state, inventory_revision)"
+            + " VALUES (?, ?, ?, ?, ?, 'SHARED', ?, ?, ?, 1, ?, 12, ?, 1, 1, 1, 1, 0, ?, ?, ?,"
+            + " 'CANDIDATE_PREPARED', 'REPAIR_REQUIRED', 'REPAIR_REQUIRED', 1)",
+        candidateRef,
+        accountId,
+        candidateTenant,
+        playableTarget.playableStateNamespaceId(),
+        characterId,
+        candidateGameInstanceUuid,
+        candidateRuntimeId,
+        UUID.randomUUID().toString(),
+        regionId,
+        issuerId,
+        accountIndexFence,
+        issuerReservationId,
+        transitionId);
+    dsl.execute(
+        "INSERT INTO game_session_canonical_binding_transition"
+            + " (transition_id, tenant_id, playable_state_namespace_id, character_id,"
+            + " expected_prior_binding_ref, expected_prior_binding_generation, candidate_binding_ref,"
+            + " candidate_binding_generation, candidate_account_index_fence, issuer_reservation_id,"
+            + " status, inventory_revision)"
+            + " VALUES (?, ?, ?, ?, NULL, NULL, ?, 1, ?, ?, 'PREPARED', 1)",
+        transitionId,
+        target.canonicalTenantId(),
+        playableTarget.playableStateNamespaceId(),
+        characterId,
+        candidateRef,
+        accountIndexFence,
+        issuerReservationId);
+    return candidateRef;
+  }
+
+  private static void markProvisional(
+      DSLContext dsl,
+      CanonicalGameplayBindingRuntimeTestFixtures.RuntimeTarget runtimeTarget,
+      byte[] candidateRef) {
+    CanonicalPlayableTarget target = runtimeTarget.playableTarget();
+    dsl.execute(
+        "UPDATE game_session_canonical_binding_transition SET"
+            + " status = 'PROVISIONAL', admission_request_id = ?, admission_lease_id = ?,"
+            + " admission_lease_fence = 1, admission_lease_kind = 'NEW_BINDING',"
+            + " admission_lease_digest = ?, admission_lease_evidence = '{}',"
+            + " admission_lease_expires_at = 9999999999999,"
+            + " admission_target_namespace = ?, admission_target_tenant_slug = ?,"
+            + " admission_target_tenant_id = ?, admission_target_world_slug = ?,"
+            + " admission_target_world_display_name = ?, admission_target_realm_id = ?,"
+            + " admission_target_realm_slug = ?, admission_target_realm_display_name = ?,"
+            + " admission_target_game_session_tenant_id = ?, admission_target_game_instance_id = ?,"
+            + " admission_target_playable_state_namespace_id = ?, admission_target_playable_state_scope = ?,"
+            + " admission_target_canonical_game_instance_id = ?, admission_target_canonical_version_id = ?,"
+            + " admission_target_runtime_version_id = ?, admission_target_catalog_revision = ?,"
+            + " admission_target_pointer_version = ?, admission_target_pointer_snapshot_digest = ?,"
+            + " admission_target_active_world_epoch = ?, admission_target_initial_admission_request_id = ?,"
+            + " admission_target_initial_admission_request_digest = ?,"
+            + " admission_target_origin_kind = 'NO_PRIOR_POINTER',"
+            + " admission_target_hold_id = ?, admission_target_hold_fence = ?,"
+            + " admission_target_hold_binding_digest = ?, admission_target_audit_event_id = ?,"
+            + " admission_target_owner_proof_digest = ?, admission_target_owner_proof_outcome = 'COMMITTED',"
+            + " admission_target_positive_durable_abort = FALSE, admission_target_terminal_at = ?,"
+            + " admission_target_character_creation_policy = ?"
+            + " WHERE candidate_binding_ref = ?",
+        UUID.randomUUID(),
+        UUID.randomUUID(),
+        RAW_SHA256,
+        target.targetNamespace(),
+        target.tenantSlug(),
+        target.canonicalTenantId(),
+        target.worldSlug(),
+        target.worldDisplayName(),
+        target.realmId(),
+        target.realmSlug(),
+        target.realmDisplayName(),
+        target.gameSessionTenantId(),
+        target.gameInstanceId(),
+        target.playableStateNamespaceId(),
+        target.playableStateScope(),
+        target.canonicalGameInstanceId(),
+        target.canonicalVersionId(),
+        target.runtimeVersionId(),
+        target.catalogRevision(),
+        target.pointerVersion(),
+        target.admissionPointerSnapshotDigest(),
+        target.activeWorldEpoch(),
+        target.initialAdmissionRequestId(),
+        target.initialAdmissionRequestDigest(),
+        target.holdId(),
+        target.holdFence(),
+        target.holdBindingDigest(),
+        target.auditEventId(),
+        target.ownerProofDigest(),
+        Timestamp.from(target.ownerProofTerminalAt()),
+        target.characterCreationPolicy(),
+        candidateRef);
+  }
+
+  private static void assertLaunchPreparationCatalogMismatchRejected(
+      DSLContext dsl,
+      CanonicalGameplayBindingRuntimeTestFixtures.RuntimeTarget target,
+      UUID realmId,
+      UUID catalogCreationRequestId,
+      long catalogRevision,
+      UUID canonicalTenantId,
+      UUID sourceIntakeOperationId,
+      UUID sourceIntakeRequestId) {
+    assertThatThrownBy(
+            () ->
+                insertLaunchPreparation(
+                    dsl,
+                    target,
+                    realmId,
+                    catalogCreationRequestId,
+                    catalogRevision,
+                    canonicalTenantId,
+                    sourceIntakeOperationId,
+                    sourceIntakeRequestId))
+        .hasMessageContaining("fk_gs_canonical_launch_preparation_catalog");
+  }
+
+  private static int insertLaunchPreparation(
+      DSLContext dsl,
+      CanonicalGameplayBindingRuntimeTestFixtures.RuntimeTarget target,
+      UUID realmId,
+      UUID catalogCreationRequestId,
+      long catalogRevision,
+      UUID canonicalTenantId,
+      UUID sourceIntakeOperationId,
+      UUID sourceIntakeRequestId) {
+    return dsl.execute(
+        "INSERT INTO game_session_canonical_launch_preparation"
+            + " (target_namespace, control_plane_request_id, operation_id,"
+            + " acting_account_uuid, canonical_tenant_id, realm_id,"
+            + " catalog_creation_request_id, catalog_revision,"
+            + " source_intake_operation_id, source_intake_request_id,"
+            + " source_registration_request_id, source_operation_id,"
+            + " catalog_request_digest, catalog_receipt_digest,"
+            + " source_intake_request_digest, source_intake_receipt_digest,"
+            + " source_evidence_digest, descriptor_request_digest,"
+            + " descriptor_result_digest, request_digest, receipt_digest,"
+            + " request_evidence_json, catalog_evidence_json,"
+            + " source_intake_evidence_json, launch_descriptor_evidence_json)"
+            + " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,"
+            + " '{}'::jsonb, '{}'::jsonb, '{}'::jsonb, '{}'::jsonb)",
+        target.targetNamespace(),
+        "preparation-" + UUID.randomUUID(),
+        UUID.randomUUID(),
+        UUID.randomUUID(),
+        canonicalTenantId,
+        realmId,
+        catalogCreationRequestId,
+        catalogRevision,
+        sourceIntakeOperationId,
+        sourceIntakeRequestId,
+        target.sourceRegistrationRequestId(),
+        target.sourceOperationId(),
+        "sha256:" + RAW_SHA256,
+        "sha256:" + RAW_SHA256,
+        "sha256:" + RAW_SHA256,
+        "sha256:" + RAW_SHA256,
+        "sha256:" + RAW_SHA256,
+        "sha256:" + RAW_SHA256,
+        "sha256:" + RAW_SHA256,
+        "sha256:" + RAW_SHA256,
+        "sha256:" + RAW_SHA256);
+  }
+
+  private enum CandidateMismatch {
+    NONE,
+    TENANT,
+    RUNTIME_GAME_INSTANCE_ID,
+    CANONICAL_GAME_INSTANCE_UUID
   }
 
   private static DriverManagerDataSource dataSource(String schema) {
