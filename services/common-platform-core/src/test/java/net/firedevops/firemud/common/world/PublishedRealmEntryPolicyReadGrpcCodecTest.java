@@ -207,6 +207,79 @@ class PublishedRealmEntryPolicyReadGrpcCodecTest {
   }
 
   @Test
+  void bothReadShapesBindSealedNamespaceTenantAndVersion() throws Exception {
+    PublishedRealmEntryPolicySetEvidenceTest.Fixture fixture = fixture(false);
+    var originalList = listRequest(fixture, "99999999-9999-4999-8999-999999999999");
+    var crossNamespaceList =
+        new PublishedRealmEntryPolicyReadGrpcCodec.ListRequest(
+            "other",
+            originalList.readRequestId(),
+            originalList.canonicalTenantId(),
+            originalList.canonicalVersionId());
+    assertThatIllegalArgumentException()
+        .isThrownBy(
+            () ->
+                PublishedRealmEntryPolicyReadGrpcCodec.toResponse(
+                    crossNamespaceList, fixture.set()));
+    var substitutedList =
+        ListPublishedRealmEntryPoliciesResponse.newBuilder()
+            .setRequest(PublishedRealmEntryPolicyReadGrpcCodec.toRequest(crossNamespaceList))
+            .setPolicySetEvidence(ByteString.copyFrom(fixture.set().canonicalBytes()))
+            .build();
+    assertThatIllegalArgumentException()
+        .isThrownBy(
+            () ->
+                PublishedRealmEntryPolicyReadGrpcCodec.fromResponse(
+                    crossNamespaceList, substitutedList));
+
+    var crossTenantList =
+        new PublishedRealmEntryPolicyReadGrpcCodec.ListRequest(
+            originalList.targetNamespace(),
+            originalList.readRequestId(),
+            UUID.fromString("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"),
+            originalList.canonicalVersionId());
+    assertThatIllegalArgumentException()
+        .isThrownBy(
+            () ->
+                PublishedRealmEntryPolicyReadGrpcCodec.toResponse(crossTenantList, fixture.set()));
+    var crossVersionList =
+        new PublishedRealmEntryPolicyReadGrpcCodec.ListRequest(
+            originalList.targetNamespace(),
+            originalList.readRequestId(),
+            originalList.canonicalTenantId(),
+            UUID.fromString("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"));
+    assertThatIllegalArgumentException()
+        .isThrownBy(
+            () ->
+                PublishedRealmEntryPolicyReadGrpcCodec.toResponse(crossVersionList, fixture.set()));
+
+    var originalResolve = resolveRequest(fixture, "99999999-9999-4999-8999-999999999999", "main");
+    var crossNamespaceResolve =
+        new PublishedRealmEntryPolicyReadGrpcCodec.ResolveRequest(
+            "other",
+            originalResolve.readRequestId(),
+            originalResolve.canonicalTenantId(),
+            originalResolve.canonicalVersionId(),
+            originalResolve.worldSlug(),
+            originalResolve.realmSlug());
+    assertThatIllegalArgumentException()
+        .isThrownBy(
+            () ->
+                PublishedRealmEntryPolicyReadGrpcCodec.toResponse(
+                    crossNamespaceResolve, fixture.set()));
+    var substitutedResolve =
+        ResolvePublishedRealmEntryPolicyResponse.newBuilder()
+            .setRequest(PublishedRealmEntryPolicyReadGrpcCodec.toRequest(crossNamespaceResolve))
+            .setPolicySetEvidence(ByteString.copyFrom(fixture.set().canonicalBytes()))
+            .build();
+    assertThatIllegalArgumentException()
+        .isThrownBy(
+            () ->
+                PublishedRealmEntryPolicyReadGrpcCodec.fromResponse(
+                    crossNamespaceResolve, substitutedResolve));
+  }
+
+  @Test
   void completeCarrierRejectsCountOrderAndDigestSubstitutionAtTheWireBoundary() throws Exception {
     PublishedRealmEntryPolicySetEvidenceTest.Fixture fixture = fixture(true);
     var request = listRequest(fixture, "99999999-9999-4999-8999-999999999999");

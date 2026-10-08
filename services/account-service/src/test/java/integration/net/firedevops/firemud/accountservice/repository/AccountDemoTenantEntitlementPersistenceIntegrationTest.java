@@ -7,6 +7,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import java.util.UUID;
+import net.firedevops.firemud.accountservice.dto.DemoTenantEntitlementEventV1Codec;
 import net.firedevops.firemud.accountservice.dto.DemoTenantEntitlementRequest;
 import net.firedevops.firemud.accountservice.dto.DemoTenantEntitlementSnapshot;
 import net.firedevops.firemud.accountservice.repository.AccountAuthorityGenerationRepository;
@@ -160,6 +161,45 @@ class AccountDemoTenantEntitlementPersistenceIntegrationTest {
             true);
     DemoTenantEntitlementSnapshot first =
         inTransaction(context.transaction(), () -> entitlements.provision(create, source));
+    var exactEvent =
+        DemoTenantEntitlementEventV1Codec.seal(
+            create,
+            source,
+            first.entitlementVersion(),
+            first.tenantAuthorityGeneration(),
+            first.tenantAuthoritySourceVersion(),
+            first.tenantBillingSequence());
+    var repeatedAppend =
+        inTransaction(
+            context.transaction(),
+            () ->
+                java.util.List.of(
+                    outboxRepository.append(tenantId, create.requestId(), ignored -> exactEvent),
+                    outboxRepository.append(tenantId, create.requestId(), ignored -> exactEvent)));
+    assertThat(repeatedAppend).hasSize(2);
+    for (var replay : repeatedAppend) {
+      assertThat(replay.requestId()).isEqualTo(exactEvent.requestId());
+      assertThat(replay.eventId()).isEqualTo(exactEvent.eventId());
+      assertThat(replay.eventDigest()).isEqualTo(exactEvent.eventDigest());
+      assertThat(replay.tenantBillingSequence()).isEqualTo(exactEvent.tenantBillingSequence());
+      assertThat(replay.payload()).containsExactly(exactEvent.payload());
+    }
+    assertThat(
+            context
+                .dsl()
+                .fetchOne(
+                    "SELECT last_sequence FROM account_tenant_entitlement_outbox_streams WHERE tenant_uuid = ?",
+                    tenantId)
+                .get("last_sequence", Long.class))
+        .isEqualTo(1L);
+    assertThat(
+            context
+                .dsl()
+                .fetchOne(
+                    "SELECT COUNT(*) AS event_count FROM account_tenant_entitlement_outbox_events WHERE tenant_uuid = ?",
+                    tenantId)
+                .get("event_count", Long.class))
+        .isEqualTo(1L);
     assertThat(first.canonicalTenantId()).isEqualTo(tenantId);
     assertThat(first.sourceEvidence()).isEqualTo(source);
     assertThat(first.entitlementKind()).isEqualTo("NON_PAID_DEMO");

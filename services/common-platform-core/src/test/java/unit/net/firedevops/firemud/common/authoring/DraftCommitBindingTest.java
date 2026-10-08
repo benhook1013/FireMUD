@@ -11,6 +11,7 @@ import net.firedevops.firemud.common.authoring.DraftCommitBinding.AffectedUnit;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding.Owner;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding.RevisionPayload;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding.TargetProof;
+import net.firedevops.firemud.common.world.WorldPublishedStartLocationEvidence.OwnedAffectedTuple;
 import org.junit.jupiter.api.Test;
 import tools.jackson.databind.ObjectMapper;
 import tools.jackson.databind.node.ObjectNode;
@@ -175,6 +176,26 @@ class DraftCommitBindingTest {
                     "NEW_GAME_ROW"))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("must match exactly");
+  }
+
+  @Test
+  void worldStartLocationTupleCarriesTheSameUnboundedCanonicalDraftEpoch() {
+    AffectedUnit draftUnit =
+        binding().affectedUnits().stream()
+            .filter(unit -> unit.owner() == Owner.WORLD_MANAGEMENT)
+            .findFirst()
+            .orElseThrow();
+    OwnedAffectedTuple worldTuple =
+        new OwnedAffectedTuple(
+            draftUnit.owner().name(),
+            draftUnit.aggregateType(),
+            draftUnit.aggregateId(),
+            draftUnit.scopeType(),
+            draftUnit.scopeId(),
+            draftUnit.expectedEpoch());
+
+    assertThat(draftUnit.expectedEpoch()).isEqualTo(LARGE_EPOCH);
+    assertThat(worldTuple.expectedEpoch()).isEqualTo(draftUnit.expectedEpoch());
   }
 
   private DraftCommitBinding binding() {

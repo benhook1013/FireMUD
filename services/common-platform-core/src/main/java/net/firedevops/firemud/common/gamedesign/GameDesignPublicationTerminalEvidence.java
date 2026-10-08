@@ -352,6 +352,18 @@ public final class GameDesignPublicationTerminalEvidence {
     return result;
   }
 
+  @Override
+  public boolean equals(Object other) {
+    return this == other
+        || (other instanceof GameDesignPublicationTerminalEvidence evidence
+            && Arrays.equals(canonicalBytes(), evidence.canonicalBytes()));
+  }
+
+  @Override
+  public int hashCode() {
+    return Arrays.hashCode(canonicalBytes());
+  }
+
   private static void uuid(UUID id) {
     if (id == null || id.equals(new UUID(0L, 0L)))
       throw new IllegalArgumentException("Non-nil UUID required");
