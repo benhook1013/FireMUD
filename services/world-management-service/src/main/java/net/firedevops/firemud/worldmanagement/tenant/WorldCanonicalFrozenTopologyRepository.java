@@ -1,6 +1,7 @@
 package net.firedevops.firemud.worldmanagement.tenant;
 
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
+import java.sql.Connection;
 import java.util.Arrays;
 import java.util.LinkedHashMap;
 import java.util.Map;
@@ -59,7 +60,16 @@ public class WorldCanonicalFrozenTopologyRepository {
     if (TransactionSynchronizationManager.isActualTransactionActive()) {
       throw new ConflictException("Frozen topology readback requires no caller transaction");
     }
-    Objects.requireNonNull(request, "request");
+    return readFrozen(Objects.requireNonNull(request, "request"));
+  }
+
+  /** Reads this immutable selector only inside the caller-owned read-only RR snapshot. */
+  Optional<WorldCanonicalFrozenTopology> readInOwnedSnapshot(CaptureRequest request) {
+    requireOwnedReadOnlyRepeatableReadSnapshot();
+    return readFrozen(Objects.requireNonNull(request, "request"));
+  }
+
+  private Optional<WorldCanonicalFrozenTopology> readFrozen(CaptureRequest request) {
     Record row =
         dsl.resultQuery(
                 "SELECT binding_json,binding_digest,owner_binding_json FROM world_canonical_frozen_topology WHERE publication_fence=?",
@@ -72,8 +82,23 @@ public class WorldCanonicalFrozenTopologyRepository {
             required(row, "binding_digest", String.class));
     var ownerBinding =
         JSON.readValue(required(row, "owner_binding_json", String.class), OwnerBinding.class);
-    return readCommitted(
-        new Request(WorldDraftTopologyCommitPlan.create(binding, ownerBinding), request));
+    return Optional.ofNullable(
+        find(new Request(WorldDraftTopologyCommitPlan.create(binding, ownerBinding), request)));
+  }
+
+  private void requireOwnedReadOnlyRepeatableReadSnapshot() {
+    if (!TransactionSynchronizationManager.isActualTransactionActive()
+        || !TransactionSynchronizationManager.isCurrentTransactionReadOnly()
+        || !Integer.valueOf(Connection.TRANSACTION_REPEATABLE_READ)
+            .equals(TransactionSynchronizationManager.getCurrentTransactionIsolationLevel())) {
+      throw new ConflictException(
+          "Frozen topology snapshot read requires an active read-only REPEATABLE READ owner transaction");
+    }
+    Integer jdbcIsolation = dsl.connectionResult(Connection::getTransactionIsolation);
+    if (!Integer.valueOf(Connection.TRANSACTION_REPEATABLE_READ).equals(jdbcIsolation)) {
+      throw new ConflictException(
+          "Frozen topology snapshot read requires actual JDBC REPEATABLE READ isolation");
+    }
   }
 
   WorldCanonicalFrozenTopology capture(Request request) {

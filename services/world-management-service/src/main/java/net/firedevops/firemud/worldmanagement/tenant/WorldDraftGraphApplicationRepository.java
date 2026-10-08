@@ -50,6 +50,18 @@ public class WorldDraftGraphApplicationRepository {
   public Optional<WorldDraftGraphAppliedResult> readCommitted(
       String targetNamespace, byte[] originalAccountBinding) {
     requireCommittedRead();
+    return readByOriginalAccountBinding(targetNamespace, originalAccountBinding);
+  }
+
+  /** Reads the original namespace and Account selection inside the caller-owned RR snapshot. */
+  Optional<WorldDraftGraphAppliedResult> readInOwnedSnapshot(
+      String targetNamespace, byte[] originalAccountBinding) {
+    requireOwnedReadOnlyRepeatableReadSnapshot();
+    return readByOriginalAccountBinding(targetNamespace, originalAccountBinding);
+  }
+
+  private Optional<WorldDraftGraphAppliedResult> readByOriginalAccountBinding(
+      String targetNamespace, byte[] originalAccountBinding) {
     if (!net.firedevops.firemud.common.grpc.GrpcPeerIdentity.isValidNamespace(targetNamespace)) {
       throw new IllegalArgumentException("Canonical World workload namespace is required");
     }
@@ -73,6 +85,21 @@ public class WorldDraftGraphApplicationRepository {
           "World committed recovery differs from original namespace or full Account binding");
     }
     return Optional.of(readExact(application, rows.getFirst()));
+  }
+
+  private void requireOwnedReadOnlyRepeatableReadSnapshot() {
+    if (!TransactionSynchronizationManager.isActualTransactionActive()
+        || !TransactionSynchronizationManager.isCurrentTransactionReadOnly()
+        || !Integer.valueOf(java.sql.Connection.TRANSACTION_REPEATABLE_READ)
+            .equals(TransactionSynchronizationManager.getCurrentTransactionIsolationLevel())) {
+      throw new ConflictException(
+          "World application snapshot read requires an active read-only REPEATABLE READ owner transaction");
+    }
+    Integer jdbcIsolation = dsl.connectionResult(java.sql.Connection::getTransactionIsolation);
+    if (!Integer.valueOf(java.sql.Connection.TRANSACTION_REPEATABLE_READ).equals(jdbcIsolation)) {
+      throw new ConflictException(
+          "World application snapshot read requires actual JDBC REPEATABLE READ isolation");
+    }
   }
 
   WorldDraftGraphAppliedResult apply(

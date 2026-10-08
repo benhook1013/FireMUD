@@ -90,7 +90,10 @@ import net.firedevops.firemud.common.world.WorldDraftStartLocationEvidence;
 import net.firedevops.firemud.common.world.WorldPublicationTerminalCompletionGrpcCodec;
 import net.firedevops.firemud.common.world.WorldPublicationTerminalReadEvidence;
 import net.firedevops.firemud.common.world.WorldPublicationTerminalReadGrpcCodec;
+import net.firedevops.firemud.common.world.WorldPublishedSpawnRequirementsEvidence;
+import net.firedevops.firemud.common.world.WorldPublishedSpawnRequirementsGrpcCodec;
 import net.firedevops.firemud.common.world.WorldPublishedStartLocationEvidence;
+import net.firedevops.firemud.gamedesign.v1.GetLaunchDescriptorRequest;
 import net.firedevops.firemud.gamedesign.v1.VersionLifecycleState;
 import net.firedevops.firemud.gamedesign.v1.WorldDesignMutationRevision;
 import net.firedevops.firemud.test.PostgresBackedServiceTestSupport;
@@ -5142,12 +5145,234 @@ class WorldDraftGraphApplicationPostgresIntegrationTest {
   }
 
   @Test
+  void publishedSelectorOwnedReadUsesOneActualReadOnlyRepeatableReadSnapshot() {
+    Fixture f = fixture();
+    var application = application(f);
+    var applied = appliedComponent().apply(application);
+    var capture = capture(application.plan());
+    var request = capture.request().freeze();
+    byte[] originalApplication = retainedApplicationBytes(application);
+    long applicationCount = count(f, "world_draft_graph_application");
+    long receiptCount = count(f, "world_draft_start_location_receipt");
+    long frozenCount =
+        Objects.requireNonNull(
+                dsl.fetchOne(
+                    "SELECT count(*) FROM world_canonical_frozen_topology WHERE publication_fence=?",
+                    request.publicationFence()))
+            .get(0, Long.class);
+    Map<String, String> preparationRowsBeforeRead = preparationHistoryRows();
+
+    TransactionTemplate ownedSnapshot = new TransactionTemplate(manager);
+    ownedSnapshot.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
+    ownedSnapshot.setIsolationLevel(TransactionDefinition.ISOLATION_REPEATABLE_READ);
+    ownedSnapshot.setReadOnly(true);
+    var source =
+        Objects.requireNonNull(
+            ownedSnapshot.execute(
+                status -> {
+                  assertThat(TransactionSynchronizationManager.isActualTransactionActive())
+                      .isTrue();
+                  assertThat(TransactionSynchronizationManager.isCurrentTransactionReadOnly())
+                      .isTrue();
+                  assertThat(
+                          TransactionSynchronizationManager.getCurrentTransactionIsolationLevel())
+                      .isEqualTo(java.sql.Connection.TRANSACTION_REPEATABLE_READ);
+                  assertThat(dsl.fetchOne("SELECT current_setting('transaction_isolation')").get(0))
+                      .isEqualTo("repeatable read");
+                  assertThat(dsl.fetchOne("SELECT current_setting('transaction_read_only')").get(0))
+                      .isEqualTo("on");
+                  return publishedSelectors().readInOwnedSnapshot(request).orElseThrow();
+                }));
+
+    assertThat(source.selectorReceipt()).isEqualTo(applied.startLocationReceipt().orElseThrow());
+    assertThat(source.frozenTopology().captureId()).isEqualTo(capture.captureId());
+    assertThat(source.frozenTopology().resultBytes()).containsExactly(capture.resultBytes());
+    assertThat(source.appliedResult().canonicalBytes()).containsExactly(applied.canonicalBytes());
+    assertThat(source.appliedResult().application().operation().accountBindingBytes())
+        .containsExactly(application.operation().accountBindingBytes());
+
+    TransactionTemplate wrongIsolation = new TransactionTemplate(manager);
+    wrongIsolation.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
+    wrongIsolation.setIsolationLevel(TransactionDefinition.ISOLATION_READ_COMMITTED);
+    wrongIsolation.setReadOnly(true);
+    assertThatThrownBy(
+            () ->
+                wrongIsolation.execute(status -> publishedSelectors().readInOwnedSnapshot(request)))
+        .hasMessageContaining("read-only REPEATABLE READ owner transaction");
+
+    assertThat(retainedApplicationBytes(application)).containsExactly(originalApplication);
+    assertThat(count(f, "world_draft_graph_application")).isEqualTo(applicationCount);
+    assertThat(count(f, "world_draft_start_location_receipt")).isEqualTo(receiptCount);
+    assertThat(
+            Objects.requireNonNull(
+                    dsl.fetchOne(
+                        "SELECT count(*) FROM world_canonical_frozen_topology WHERE publication_fence=?",
+                        request.publicationFence()))
+                .get(0, Long.class))
+        .isEqualTo(frozenCount);
+    // The source reader is pre-PREPARING: it does not allocate any runtime world row.
+    assertThat(preparationHistoryRows()).isEqualTo(preparationRowsBeforeRead);
+    assertOrigin();
+  }
+
+  @Test
+  void publishedSpawnRequirementsOwnerProjectsOnlyRealFrozenAndAppliedSource() {
+    Fixture f = fixture();
+    var application = application(f);
+    appliedComponent().apply(application);
+    var capture = capture(application.plan());
+    var frozen = capture.request().freeze();
+    var source = publishedSelectors().readCommitted(frozen).orElseThrow();
+    var selector = publishedEvidence(source);
+    var launchBinding =
+        preparationLaunchFixture(f, source.frozenTopology(), selector, 2L, List.of("LOOK"))
+            .evidence();
+    var descriptor = launchBinding.descriptor();
+    UUID readId = UUID.randomUUID();
+    var launchRequest =
+        GetLaunchDescriptorRequest.newBuilder()
+            .setRequestId(readId.toString())
+            .setCanonicalTenantId(descriptor.canonicalTenantId().toString())
+            .setWorldSlug(descriptor.worldSlug())
+            .setControlPlaneRequestId(descriptor.controlPlaneRequestId())
+            .setExpectedRequestDigest(descriptor.requestDigest())
+            .setExpectedResultDigest(descriptor.resultDigest())
+            .build();
+    var request =
+        new WorldPublishedSpawnRequirementsEvidence.Request(
+            NAMESPACE, readId, launchRequest, launchBinding.releaseAttestation().evidenceDigest());
+    var wireRequest = WorldPublishedSpawnRequirementsGrpcCodec.toRequest(request);
+
+    // The authenticated Game Design pair is a labeled upstream double; the World rows below are
+    // the actual migrated PostgreSQL application, original APPLIED receipt, and frozen capture.
+    var gameDesign = Mockito.mock(AuthoredWorldLaunchDescriptorClient.class);
+    Mockito.when(gameDesign.getComplete(launchRequest)).thenReturn(launchBinding);
+    var owner =
+        new WorldPublishedSpawnRequirementsReadOwner(
+            NAMESPACE, gameDesign, publishedSelectors(), manager);
+    Map<String, String> before = preparationHistoryRows();
+    var entityContext =
+        Context.current()
+            .withValue(
+                GrpcPeerIdentity.CONTEXT_KEY,
+                new GrpcPeerIdentity(
+                    "spiffe://firemud/ns/" + NAMESPACE + "/sa/entity-management-service",
+                    NAMESPACE,
+                    "entity-management-service"));
+    Context previous = entityContext.attach();
+    WorldPublishedSpawnRequirementsEvidence evidence;
+    try {
+      SessionContext.clear();
+      evidence = owner.read(wireRequest);
+    } finally {
+      Context.current().detach(previous);
+      SessionContext.clear();
+    }
+
+    assertThat(evidence.captureId()).isEqualTo(capture.captureId());
+    assertThat(evidence.graphDigest())
+        .isEqualTo(WorldDraftGraphAppliedResult.digest(capture.graphBytes()));
+    assertThat(evidence.familyCounts()).hasSize(6);
+    assertThat(evidence.familyCounts()).extracting("count").contains(1);
+    assertThat(evidence.spawnRequirements()).hasSize(1);
+    assertThat(evidence.spawnRequirements().getFirst().respawnDelaySeconds()).isEqualTo(17);
+    assertThat(evidence.spawnRequirements().getFirst().entityTemplate().kind())
+        .isEqualTo(EntityTemplateReferenceType.ENTITY_TEMPLATE_REFERENCE_TYPE_NPC);
+    assertThat(evidence.generationRequirements()).hasSize(1);
+    assertThat(evidence.generationRequirements().getFirst().name()).isEqualTo("rule");
+    assertThat(evidence.generationRequirements().getFirst().value()).isEqualTo("seeded");
+    assertThat(preparationHistoryRows()).isEqualTo(before);
+    Mockito.verify(gameDesign).getComplete(launchRequest);
+    assertOrigin();
+  }
+
+  @Test
+  void publishedSpawnRequirementsOwnerPreservesExplicitZeroOptionalFamilies() {
+    Fixture f = fixture();
+    var application = application(plan(f, true));
+    appliedComponent().apply(application);
+    var capture = capture(application.plan());
+    var source = publishedSelectors().readCommitted(capture.request().freeze()).orElseThrow();
+    var launchBinding =
+        preparationLaunchFixture(
+                f, source.frozenTopology(), publishedEvidence(source), 2L, List.of("LOOK"))
+            .evidence();
+    var descriptor = launchBinding.descriptor();
+    UUID readId = UUID.randomUUID();
+    var launchRequest =
+        GetLaunchDescriptorRequest.newBuilder()
+            .setRequestId(readId.toString())
+            .setCanonicalTenantId(descriptor.canonicalTenantId().toString())
+            .setWorldSlug(descriptor.worldSlug())
+            .setControlPlaneRequestId(descriptor.controlPlaneRequestId())
+            .setExpectedRequestDigest(descriptor.requestDigest())
+            .setExpectedResultDigest(descriptor.resultDigest())
+            .build();
+    var request =
+        new WorldPublishedSpawnRequirementsEvidence.Request(
+            NAMESPACE, readId, launchRequest, launchBinding.releaseAttestation().evidenceDigest());
+    var gameDesign = Mockito.mock(AuthoredWorldLaunchDescriptorClient.class);
+    Mockito.when(gameDesign.getComplete(launchRequest)).thenReturn(launchBinding);
+    var owner =
+        new WorldPublishedSpawnRequirementsReadOwner(
+            NAMESPACE, gameDesign, publishedSelectors(), manager);
+    var context =
+        Context.current()
+            .withValue(
+                GrpcPeerIdentity.CONTEXT_KEY,
+                new GrpcPeerIdentity(
+                    "spiffe://firemud/ns/" + NAMESPACE + "/sa/entity-management-service",
+                    NAMESPACE,
+                    "entity-management-service"));
+    Context previous = context.attach();
+    WorldPublishedSpawnRequirementsEvidence evidence;
+    try {
+      SessionContext.clear();
+      evidence = owner.read(WorldPublishedSpawnRequirementsGrpcCodec.toRequest(request));
+    } finally {
+      Context.current().detach(previous);
+      SessionContext.clear();
+    }
+
+    assertThat(evidence.familyCounts()).hasSize(6);
+    assertThat(evidence.familyCounts())
+        .filteredOn(
+            count ->
+                count.family()
+                    == WorldDesignAggregateType.WORLD_DESIGN_AGGREGATE_TYPE_GENERATION_RULE)
+        .singleElement()
+        .extracting("count")
+        .isEqualTo(0);
+    assertThat(evidence.familyCounts())
+        .filteredOn(
+            count ->
+                count.family()
+                    == WorldDesignAggregateType
+                        .WORLD_DESIGN_AGGREGATE_TYPE_WORLD_ENTITY_SPAWN_BINDING)
+        .singleElement()
+        .extracting("count")
+        .isEqualTo(0);
+    assertThat(evidence.spawnRequirements()).isEmpty();
+    assertThat(evidence.generationRequirements()).isEmpty();
+    assertOrigin();
+  }
+
+  @Test
   void permissionUnverifiedGraphAndFrozenHistoryCannotSupplyPublishedSelector() {
     var plan = plan(fixture());
     component().store(plan);
     var capture = capture(plan);
     assertThat(frozenRepository().readCommitted(capture.request().freeze())).isPresent();
     assertThatThrownBy(() -> publishedSelectors().readCommitted(capture.request().freeze()))
+        .hasMessageContaining("lacks original APPLIED application");
+    TransactionTemplate ownedSnapshot = new TransactionTemplate(manager);
+    ownedSnapshot.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
+    ownedSnapshot.setIsolationLevel(TransactionDefinition.ISOLATION_REPEATABLE_READ);
+    ownedSnapshot.setReadOnly(true);
+    assertThatThrownBy(
+            () ->
+                ownedSnapshot.execute(
+                    status -> publishedSelectors().readInOwnedSnapshot(capture.request().freeze())))
         .hasMessageContaining("lacks original APPLIED application");
     assertOrigin();
   }

@@ -2344,6 +2344,9 @@ jobs:
             --require-case 'net.firedevops.firemud.worldmanagement.tenant.WorldDraftGraphApplicationPostgresIntegrationTest#selectorPreparationLateFenceLossRollsBackSelectorRuntimeAndAssociationTogether()' \
             --require-case 'net.firedevops.firemud.worldmanagement.tenant.WorldDraftGraphApplicationPostgresIntegrationTest#v41MaterializedV1HistoryRemainsByteExactAndRetryableAfterV42WithoutSelectorPromotion()' \
             --require-case 'net.firedevops.firemud.worldmanagement.tenant.WorldDraftGraphApplicationPostgresIntegrationTest#publishedSelectorJoinsExactFrozenCheckpointToOriginalAppliedWithoutWrites()' \
+            --require-case 'net.firedevops.firemud.worldmanagement.tenant.WorldDraftGraphApplicationPostgresIntegrationTest#publishedSelectorOwnedReadUsesOneActualReadOnlyRepeatableReadSnapshot()' \
+            --require-case 'net.firedevops.firemud.worldmanagement.tenant.WorldDraftGraphApplicationPostgresIntegrationTest#publishedSpawnRequirementsOwnerProjectsOnlyRealFrozenAndAppliedSource()' \
+            --require-case 'net.firedevops.firemud.worldmanagement.tenant.WorldDraftGraphApplicationPostgresIntegrationTest#publishedSpawnRequirementsOwnerPreservesExplicitZeroOptionalFamilies()' \
             --require-case 'net.firedevops.firemud.worldmanagement.tenant.WorldDraftGraphApplicationPostgresIntegrationTest#permissionUnverifiedGraphAndFrozenHistoryCannotSupplyPublishedSelector()' \
             --require-case 'net.firedevops.firemud.worldmanagement.tenant.WorldDraftGraphApplicationPostgresIntegrationTest#freshApplicationRetainsCompleteExactGraphAndOriginalAccountReadbackAndRetriesAfterFreeze()' \
             --require-case 'net.firedevops.firemud.worldmanagement.tenant.WorldDraftGraphApplicationPostgresIntegrationTest#explicitEmptyOptionalFamiliesProduceAppliedGraphAndExactTypedStartSelector()' \
