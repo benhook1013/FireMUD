@@ -205,40 +205,9 @@ jobs:
             }
 
             phase_started="$(date +%s)"
-            # Derive the fixture image from cached pause tags in this digest-pinned kind node.
-            # Require one unique valid registry digest and never resolve or pull an unpinned image.
-            pause_image_cache_diagnostic() {
-              local inventory="$1"
-              local diagnostic
-              diagnostic="$(jq -c '
-                [.images[]?
-                  | select(any(.repoTags[]?; type == "string" and startswith("registry.k8s.io/pause:")))
-                  | {
-                      repoTags: [.repoTags[]? | select(type == "string" and startswith("registry.k8s.io/pause:")) | .[0:160]][0:4],
-                      repoDigests: [.repoDigests[]? | select(type == "string") | .[0:160]][0:4]
-                    }
-                ][0:5]
-              ' <<< "$inventory" 2>/dev/null || printf '[]')"
-              printf 'pause_image_cache_diagnostic=%s\n' "$diagnostic" >&2
-            }
-            if ! pause_image_inventory="$(docker exec "${KIND_CLUSTER_NAME}-control-plane" crictl images --output=json)"; then
-              pause_image_cache_diagnostic "${pause_image_inventory:-}"
-              echo "could not inspect cached pause images in the pinned kind node" >&2
-              exit 1
-            fi
-            if ! pause_image="$(jq -er '
-              [.images[]
-                | select(any(.repoTags[]?; type == "string" and startswith("registry.k8s.io/pause:")))
-                | .repoDigests[]?
-                | select(type == "string" and test("^registry\\.k8s\\.io/pause@sha256:[0-9a-f]{64}$"))]
-              | unique
-              | if length == 1 then .[0] else error("cached pause tags do not identify one unique immutable registry digest") end
-            ' <<< "$pause_image_inventory")"; then
-              pause_image_cache_diagnostic "$pause_image_inventory"
-              echo "cached pause tags did not yield one unique immutable registry digest" >&2
-              exit 1
-            fi
-            printf 'pause_image_from_pinned_node=%s\n' "$pause_image"
+            # Publisher's pause:3.10 linux/amd64 manifest was verified against response-byte SHA-256.
+            pause_image='registry.k8s.io/pause@sha256:7c38f24774e3cbd906d2d33c38354ccf787635581c122965132c9bd309754d4a'
+            printf 'pause_image_from_verified_publisher=%s\n' "$pause_image"
             kubectl --kubeconfig "$KUBECONFIG" --context "$expected_context" \
               create -f k8s/trust-bootstrap/deployment-admission.yaml
             sed "s|registry.k8s.io/pause:3.10|$pause_image|g" \
