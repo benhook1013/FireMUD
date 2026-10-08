@@ -14,6 +14,10 @@ Current residual: Game Session's effective-settings read is HTTP-`PRIVILEGED`, b
 
 Official-hosted creator-content acceptance remains an unimplemented target gap; see [ADR 0180](../../architecture/decisions/adr-0180-account-owned-hosted-terms-acceptance-gate.md) and [ADR 0181](../../architecture/decisions/adr-0181-changed-hosted-terms-decline-and-existing-content-continuity.md). These links do not change current capability ratings or imply an operative hosted service.
 
+### Immutable command and realm-policy source
+
+Game Design now has immutable `COMMAND` and `REALM_ENTRY_POLICY` source, reviewed-base evidence, and a durable publication-operation terminal seal. The two published-policy owner-read RPCs are registered behind the default-off provider flag and require the exact same-namespace Game Session workload identity. The focused source and PostgreSQL test fixtures are present; post-A compilation, focused execution, physical PostgreSQL proof, and runtime-consumer composition remain pending. The read provider remains nonactivating, and its fixtures do not establish production Account or World authority.
+
 ### Fresh-tenant identity prerequisite
 
 The Game Design owner-local fresh-creation repository and exact Account/Game Session mTLS receipt read are implemented with immutable request/digest/tenant-source evidence. The canonical behavior is owned by [Game Design API contracts](../../architecture/microservices/game-design-service/api-contracts.md#canonical-tenant-identity-and-fresh-creation-readback). The bounded implementation and its focused proof are named in the [Capability Status](#capability-status) and [Validation and Proof](#validation-and-proof) entries below. These prove bounded storage and readback, not authenticated creator authorization, Account enrollment, runtime admission, or a playable environment. No creation RPC or activation is introduced, and broader capability ratings remain unchanged.

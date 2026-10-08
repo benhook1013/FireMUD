@@ -715,10 +715,11 @@ public class GameDesignGrpcService extends GameDesignServiceGrpc.GameDesignServi
     GetPublishedReleaseBundleResponse.Builder builder =
         GetPublishedReleaseBundleResponse.newBuilder();
     try {
-      requireLaunchAttestationReadAccess();
+      requirePublishedReleaseBundleReadAccess();
       PublishedReleaseBundleDto bundle =
           versionService.getPublishedReleaseBundle(request.getTenantId(), request.getVersionId());
       PublishedReleaseBundleContract.requireSupportedSchemaForRead(bundle);
+      requireCanonicalReleaseIdentityPair(bundle);
       TemporalVersionPublishWorkflowMetadataResolver.WorkflowMetadata workflowMetadata =
           publishWorkflowMetadataResolver.resolve(bundle.publishWorkflowId());
       builder.setBundle(
@@ -758,7 +759,34 @@ public class GameDesignGrpcService extends GameDesignServiceGrpc.GameDesignServi
               .setScriptPatchVersion(
                   bundle.scriptPatchVersion() == null ? "" : bundle.scriptPatchVersion())
               .setPublishedAt(bundle.publishedAt().toString())
+              .setPublishedReleaseBundleRef(
+                  bundle.publishedReleaseBundleRef() == null
+                      ? ""
+                      : bundle.publishedReleaseBundleRef())
+              .setCanonicalTenantId(
+                  bundle.canonicalTenantId() == null ? "" : bundle.canonicalTenantId().toString())
+              .setCanonicalVersionId(
+                  bundle.canonicalVersionId() == null ? "" : bundle.canonicalVersionId().toString())
+              .addAllArtifactDigests(
+                  bundle.artifactDigests() == null
+                      ? List.of()
+                      : bundle.artifactDigests().stream()
+                          .map(
+                              digest ->
+                                  net.firedevops.firemud.gamedesign.v1.PublishedArtifactDigest
+                                      .newBuilder()
+                                      .setUsageKey(digest.usageKey())
+                                      .setArtifactKind(digest.artifactKind())
+                                      .setImmutableObjectKey(digest.immutableObjectKey())
+                                      .setContentDigest(digest.contentDigest())
+                                      .setContentType(digest.contentType())
+                                      .setArtifactSchemaVersion(digest.artifactSchemaVersion())
+                                      .build())
+                          .toList())
               .build());
+      if (bundle.manifestSchemaVersion() != null) {
+        builder.getBundleBuilder().setManifestSchemaVersion(bundle.manifestSchemaVersion());
+      }
     } catch (AdminAuthorizationException ex) {
       builder.setError(
           GrpcAppErrors.error(
@@ -2085,6 +2113,21 @@ public class GameDesignGrpcService extends GameDesignServiceGrpc.GameDesignServi
     return WorldDesignMutationResult.valueOf(result);
   }
 
+  private void requireCanonicalReleaseIdentityPair(PublishedReleaseBundleDto bundle) {
+    UUID canonicalTenantId = bundle.canonicalTenantId();
+    UUID canonicalVersionId = bundle.canonicalVersionId();
+    if (canonicalTenantId == null && canonicalVersionId == null) {
+      return;
+    }
+    UUID nilUuid = new UUID(0L, 0L);
+    if (canonicalTenantId == null
+        || canonicalVersionId == null
+        || canonicalTenantId.equals(nilUuid)
+        || canonicalVersionId.equals(nilUuid)) {
+      throw new IllegalArgumentException("published release canonical identity pair is invalid");
+    }
+  }
+
   private String launchDescriptorErrorCode(String message, boolean allowSchemaUnsupported) {
     if (message == null || message.isBlank()) {
       return "INVALID_ARGUMENT";
@@ -2324,6 +2367,19 @@ public class GameDesignGrpcService extends GameDesignServiceGrpc.GameDesignServi
       return;
     }
     AdminRoleGuard.requireAdminRole();
+  }
+
+  private void requirePublishedReleaseBundleReadAccess() {
+    GrpcPeerIdentity peer = GrpcPeerIdentity.current();
+    if (!GrpcPeerIdentity.isValidNamespace(workloadNamespace)
+        || peer == null
+        || !workloadNamespace.equals(peer.namespace())
+        || !(peer.isService("game-session-service")
+            || peer.isService("world-management-service")
+            || peer.isService("automation-scripting-service"))) {
+      throw new AdminAuthorizationException(
+          "Exact same-namespace Game Session, World Management, or Automation workload identity is required");
+    }
   }
 
   private void requireSettingsAuthorityReadAccess() {

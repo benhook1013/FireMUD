@@ -35,6 +35,7 @@ import net.firedevops.firemud.gamedesign.service.LaunchDescriptorService;
 import net.firedevops.firemud.gamedesign.service.PingService;
 import net.firedevops.firemud.gamedesign.service.PublishAttemptPendingReconciliationException;
 import net.firedevops.firemud.gamedesign.service.PublishGateFailureException;
+import net.firedevops.firemud.gamedesign.service.PublishedArtifactDigest;
 import net.firedevops.firemud.gamedesign.service.RevisionService;
 import net.firedevops.firemud.gamedesign.service.ScriptPatchPublishFailureException;
 import net.firedevops.firemud.gamedesign.service.SettingsAuthorityService;
@@ -199,23 +200,45 @@ class GameDesignGrpcServiceTest {
                 "genrev-1",
                 false,
                 null,
-                LocalDateTime.parse("2026-04-14T12:00:00")));
+                LocalDateTime.parse("2026-04-14T12:00:00"),
+                CANONICAL_TENANT_ID,
+                UUID.fromString("82345678-1234-4234-8234-123456789abc"),
+                "opaque-release-reference-from-owner",
+                1,
+                List.of(
+                    new PublishedArtifactDigest(
+                        "logo.png",
+                        "branding-image",
+                        "artifacts/sha256/" + "b".repeat(64),
+                        "sha256:" + "b".repeat(64),
+                        "image/png",
+                        1))));
 
     AtomicReference<GetPublishedReleaseBundleResponse> ref = new AtomicReference<>();
-    try (MockedStatic<AdminRoleGuard> ignored = Mockito.mockStatic(AdminRoleGuard.class)) {
-      service.getPublishedReleaseBundle(
-          GetPublishedReleaseBundleRequest.newBuilder()
-              .setTenantId("tenant-1")
-              .setVersionId(7L)
-              .build(),
-          observerFor(ref));
-    }
+    underLaunchPeer(
+        "game-session-service",
+        () ->
+            service.getPublishedReleaseBundle(
+                GetPublishedReleaseBundleRequest.newBuilder()
+                    .setTenantId("tenant-1")
+                    .setVersionId(7L)
+                    .build(),
+                observerFor(ref)));
 
     assertEquals("", ref.get().getError().getCode());
     assertEquals(11L, ref.get().getBundle().getId());
     assertEquals("abc123", ref.get().getBundle().getManifestHash());
     assertEquals("genrev-1", ref.get().getBundle().getGenerationConfigRevision());
     assertEquals(2, ref.get().getBundle().getRequiredManifestAssetKeysCount());
+    assertEquals(
+        "opaque-release-reference-from-owner",
+        ref.get().getBundle().getPublishedReleaseBundleRef());
+    assertEquals(CANONICAL_TENANT_ID.toString(), ref.get().getBundle().getCanonicalTenantId());
+    assertEquals(
+        "82345678-1234-4234-8234-123456789abc", ref.get().getBundle().getCanonicalVersionId());
+    assertEquals(1, ref.get().getBundle().getManifestSchemaVersion());
+    assertEquals(1, ref.get().getBundle().getArtifactDigestsCount());
+    assertEquals("logo.png", ref.get().getBundle().getArtifactDigests(0).getUsageKey());
     assertEquals(
         List.of("{\"commandId\":\"block\",\"schemaVersion\":1}"),
         ref.get().getBundle().getCommandDefinitionsList());
@@ -1025,12 +1048,15 @@ class GameDesignGrpcServiceTest {
 
     AtomicReference<GetPublishedReleaseBundleResponse> ref = new AtomicReference<>();
     try (MockedStatic<AdminRoleGuard> ignored = Mockito.mockStatic(AdminRoleGuard.class)) {
-      service.getPublishedReleaseBundle(
-          GetPublishedReleaseBundleRequest.newBuilder()
-              .setTenantId("tenant-1")
-              .setVersionId(7L)
-              .build(),
-          observerFor(ref));
+      underLaunchPeer(
+          "game-session-service",
+          () ->
+              service.getPublishedReleaseBundle(
+                  GetPublishedReleaseBundleRequest.newBuilder()
+                      .setTenantId("tenant-1")
+                      .setVersionId(7L)
+                      .build(),
+                  observerFor(ref)));
     }
 
     assertEquals("NOT_FOUND", ref.get().getError().getCode());
@@ -1047,22 +1073,37 @@ class GameDesignGrpcServiceTest {
                 8,
                 "v999",
                 "workflow-1",
-                "abc123",
+                "sha256:" + "a".repeat(64),
                 List.of("manifest.json"),
                 List.of(),
                 "genrev-1",
                 false,
                 null,
-                LocalDateTime.parse("2026-04-14T12:00:00")));
+                LocalDateTime.parse("2026-04-14T12:00:00"),
+                CANONICAL_TENANT_ID,
+                UUID.fromString("82345678-1234-4234-8234-123456789abc"),
+                "opaque-release-reference-from-owner",
+                1,
+                List.of(
+                    new PublishedArtifactDigest(
+                        "manifest.json",
+                        "manifest",
+                        "artifacts/sha256/" + "b".repeat(64),
+                        "sha256:" + "b".repeat(64),
+                        "application/json",
+                        1))));
 
     AtomicReference<GetPublishedReleaseBundleResponse> ref = new AtomicReference<>();
     try (MockedStatic<AdminRoleGuard> ignored = Mockito.mockStatic(AdminRoleGuard.class)) {
-      service.getPublishedReleaseBundle(
-          GetPublishedReleaseBundleRequest.newBuilder()
-              .setTenantId("tenant-1")
-              .setVersionId(7L)
-              .build(),
-          observerFor(ref));
+      underLaunchPeer(
+          "game-session-service",
+          () ->
+              service.getPublishedReleaseBundle(
+                  GetPublishedReleaseBundleRequest.newBuilder()
+                      .setTenantId("tenant-1")
+                      .setVersionId(7L)
+                      .build(),
+                  observerFor(ref)));
     }
 
     assertEquals("SCHEMA_VERSION_UNSUPPORTED", ref.get().getError().getCode());
@@ -1116,6 +1157,53 @@ class GameDesignGrpcServiceTest {
         () -> service.resolveLaunchDescriptor(resolveRequest("cp-3"), observerFor(ref)));
 
     assertEquals("LAUNCH_REMAP_REQUIRED", ref.get().getError().getCode());
+  }
+
+  @Test
+  void getPublishedReleaseBundleRejectsIncompleteCanonicalIdentityPair() {
+    Mockito.when(versionService.getPublishedReleaseBundle("tenant-1", 7L))
+        .thenReturn(
+            new PublishedReleaseBundleDto(
+                11L,
+                "tenant-1",
+                7L,
+                8,
+                "v1",
+                "workflow-1",
+                "abc123",
+                List.of("manifest.json"),
+                List.of(),
+                "genrev-1",
+                false,
+                null,
+                LocalDateTime.parse("2026-04-14T12:00:00"),
+                CANONICAL_TENANT_ID,
+                null,
+                "opaque-release-reference-from-owner",
+                null,
+                null));
+
+    AtomicReference<GetPublishedReleaseBundleResponse> ref = new AtomicReference<>();
+    underLaunchPeer(
+        "game-session-service",
+        () ->
+            service.getPublishedReleaseBundle(
+                GetPublishedReleaseBundleRequest.newBuilder()
+                    .setTenantId("tenant-1")
+                    .setVersionId(7L)
+                    .build(),
+                observerFor(ref)));
+
+    assertEquals("INVALID_ARGUMENT", ref.get().getError().getCode());
+  }
+
+  @Test
+  void resolveLaunchDescriptorRequiresWorkloadIdentityBeforeOwnerRead() {
+    AtomicReference<ResolveLaunchDescriptorResponse> ref = new AtomicReference<>();
+    service.resolveLaunchDescriptor(resolveRequest("cp-no-peer"), observerFor(ref));
+
+    assertEquals("PERMISSION_DENIED", ref.get().getError().getCode());
+    Mockito.verifyNoInteractions(launchDescriptorService);
   }
 
   @Test
@@ -1602,6 +1690,13 @@ class GameDesignGrpcServiceTest {
     assertEquals(
         "ARTIFACT_STATE_TOMBSTONED", ref.get().getArtifactState().getArtifactState().name());
     assertEquals("wf-1", ref.get().getArtifactState().getLastWorkflowId());
+  }
+
+  private void underLaunchPeer(String serviceName, Runnable operation) {
+    ReflectionTestUtils.setField(service, "workloadNamespace", "test");
+    GrpcPeerIdentity peer =
+        GrpcPeerIdentity.parseUri("spiffe://firemud/ns/test/sa/" + serviceName).orElseThrow();
+    Context.current().withValue(GrpcPeerIdentity.CONTEXT_KEY, peer).run(operation);
   }
 
   private static <T> StreamObserver<T> observerFor(AtomicReference<T> ref) {

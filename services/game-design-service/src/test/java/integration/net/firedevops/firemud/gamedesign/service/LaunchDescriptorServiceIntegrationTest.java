@@ -100,6 +100,7 @@ class LaunchDescriptorServiceIntegrationTest {
   }
 
   @Autowired private LaunchDescriptorService launchDescriptorService;
+  @Autowired private LaunchDescriptorServiceImpl legacyLaunchDescriptorService;
   @Autowired private GameRepository gameRepository;
   @Autowired private GameAuthoredWorldSourceRepository authoredWorldSourceRepository;
   @Autowired private GameTemplateRepository gameTemplateRepository;
@@ -109,6 +110,21 @@ class LaunchDescriptorServiceIntegrationTest {
   @Autowired private LaunchDescriptorRepository launchDescriptorRepository;
   @Autowired private PlatformTransactionManager transactionManager;
   @Autowired private DSLContext dsl;
+
+  @Test
+  void legacyNumericResolveFailsClosedWithoutPersistingDescriptor() {
+    assertThatThrownBy(
+            () ->
+                legacyLaunchDescriptorService.resolveLaunchDescriptor(
+                    "1", 9L, "integration-cp-unbound", null, null, null, null))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessage(
+            "AUTHORED_WORLD_LAUNCH_BINDING_REQUIRED: canonical authored-world source binding is"
+                + " required to resolve a launch descriptor");
+
+    assertThat(launchDescriptorRepository.findByPrivateRequest("1", "integration-cp-unbound"))
+        .isEmpty();
+  }
 
   @Test
   void resolvesPersistedSourceAndReplaysOriginalDescriptorAfterDefaultsAndVersionChange() {

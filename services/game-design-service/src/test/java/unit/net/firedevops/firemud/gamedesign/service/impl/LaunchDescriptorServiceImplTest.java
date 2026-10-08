@@ -37,7 +37,6 @@ import net.firedevops.firemud.gamedesign.repository.LaunchDescriptorRepository;
 import net.firedevops.firemud.gamedesign.repository.VersionRepository;
 import net.firedevops.firemud.gamedesign.service.PublishedReleaseBundleService;
 import net.firedevops.firemud.gamedesign.service.TemplateRemapSetService;
-import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mock;
 import org.mockito.Mockito;
@@ -957,5 +956,25 @@ class LaunchDescriptorServiceImplTest {
         null,
         false,
         null);
+  }
+
+  @Test
+  void legacyNumericResolveFailsClosedBeforeAnyOwnerInteraction() {
+    IllegalArgumentException thrown =
+        assertThrows(
+            IllegalArgumentException.class,
+            () -> service.resolveLaunchDescriptor("1", 9L, "cp-1", null, null, null, null));
+
+    assertEquals(
+        "AUTHORED_WORLD_LAUNCH_BINDING_REQUIRED: canonical authored-world source binding is"
+            + " required to resolve a launch descriptor",
+        thrown.getMessage());
+    verifyNoInteractions(
+        gameTemplateRepository,
+        launchDescriptorRepository,
+        versionRepository,
+        publishedReleaseBundleService,
+        templateRemapSetService,
+        authoredWorldSourceRepository);
   }
 }

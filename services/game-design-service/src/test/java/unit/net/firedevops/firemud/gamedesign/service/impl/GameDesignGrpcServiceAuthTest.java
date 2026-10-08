@@ -19,6 +19,7 @@ import net.firedevops.firemud.gamedesign.dto.ResolvedLaunchDescriptorDto;
 import net.firedevops.firemud.gamedesign.service.GameAuthoredHelpTopicService;
 import net.firedevops.firemud.gamedesign.service.LaunchDescriptorService;
 import net.firedevops.firemud.gamedesign.service.PingService;
+import net.firedevops.firemud.gamedesign.service.PublishedArtifactDigest;
 import net.firedevops.firemud.gamedesign.service.RevisionService;
 import net.firedevops.firemud.gamedesign.service.SettingsAuthorityService;
 import net.firedevops.firemud.gamedesign.service.TemplateRemapSetService;
@@ -36,6 +37,12 @@ import org.mockito.Mockito;
 import org.springframework.test.util.ReflectionTestUtils;
 
 class GameDesignGrpcServiceAuthTest {
+  private static final String MANIFEST_HASH = "sha256:" + "a".repeat(64);
+  private static final UUID CANONICAL_TENANT_ID =
+      UUID.fromString("12345678-1234-4234-8234-123456789abc");
+  private static final UUID CANONICAL_VERSION_ID =
+      UUID.fromString("82345678-1234-4234-8234-123456789abc");
+
   @AfterEach
   void tearDown() {
     SessionContext.clear();
@@ -92,13 +99,25 @@ class GameDesignGrpcServiceAuthTest {
                 8,
                 "v1",
                 "workflow-1",
-                "hash-1",
+                MANIFEST_HASH,
                 List.of("manifest.json"),
                 List.of(),
                 "genrev-1",
                 false,
                 null,
-                java.time.LocalDateTime.parse("2026-04-14T12:00:00")));
+                java.time.LocalDateTime.parse("2026-04-14T12:00:00"),
+                CANONICAL_TENANT_ID,
+                CANONICAL_VERSION_ID,
+                "opaque-release-reference-from-owner",
+                1,
+                List.of(
+                    new PublishedArtifactDigest(
+                        "manifest.json",
+                        "manifest",
+                        "artifacts/sha256/" + "b".repeat(64),
+                        "sha256:" + "b".repeat(64),
+                        "application/json",
+                        1))));
     UUID canonicalTenantId = UUID.fromString("12345678-1234-4234-8234-123456789abc");
     UUID sourceOperationId = UUID.fromString("22345678-1234-4234-8234-123456789abc");
     AuthoredWorldLaunchDescriptorEvidence.Request launchRequest =
@@ -148,7 +167,6 @@ class GameDesignGrpcServiceAuthTest {
                 evidence.publishedReleaseBundleRef(),
                 evidence.remapSetId(),
                 evidence));
-
     GameDesignGrpcService service =
         new GameDesignGrpcService(
             Mockito.mock(PingService.class),
@@ -167,20 +185,30 @@ class GameDesignGrpcServiceAuthTest {
     ReflectionTestUtils.setField(service, "workloadNamespace", "test");
 
     AtomicReference<GetPublishedReleaseBundleResponse> bundleRef = new AtomicReference<>();
-    service.getPublishedReleaseBundle(
-        GetPublishedReleaseBundleRequest.newBuilder().setTenantId("1").setVersionId(7L).build(),
-        new StreamObserver<>() {
-          @Override
-          public void onNext(GetPublishedReleaseBundleResponse value) {
-            bundleRef.set(value);
-          }
+    underGameSessionPeer(
+        () ->
+            service.getPublishedReleaseBundle(
+                GetPublishedReleaseBundleRequest.newBuilder()
+                    .setTenantId("1")
+                    .setVersionId(7L)
+                    .build(),
+                new StreamObserver<>() {
+                  @Override
+                  public void onNext(GetPublishedReleaseBundleResponse value) {
+                    bundleRef.set(value);
+                  }
 
-          @Override
-          public void onError(Throwable t) {}
+                  @Override
+                  public void onError(Throwable t) {}
 
-          @Override
-          public void onCompleted() {}
-        });
+                  @Override
+                  public void onCompleted() {}
+                }));
+
+    assertNotNull(bundleRef.get());
+    assertEquals("", bundleRef.get().getError().getCode());
+    assertEquals(11L, bundleRef.get().getBundle().getId());
+    Mockito.verifyNoInteractions(launchDescriptorService);
 
     AtomicReference<ResolveLaunchDescriptorResponse> descriptorRef = new AtomicReference<>();
     GrpcPeerIdentity peer =
@@ -214,11 +242,15 @@ class GameDesignGrpcServiceAuthTest {
                       public void onCompleted() {}
                     }));
 
-    assertNotNull(bundleRef.get());
-    assertEquals("", bundleRef.get().getError().getCode());
-    assertEquals(11L, bundleRef.get().getBundle().getId());
     assertNotNull(descriptorRef.get());
     assertEquals("", descriptorRef.get().getError().getCode());
     assertEquals("ld-1", descriptorRef.get().getLaunchDescriptor().getLaunchDescriptorId());
+    Mockito.verify(launchDescriptorService).resolveLaunchDescriptor(launchRequest);
+  }
+
+  private void underGameSessionPeer(Runnable operation) {
+    GrpcPeerIdentity peer =
+        GrpcPeerIdentity.parseUri("spiffe://firemud/ns/test/sa/game-session-service").orElseThrow();
+    Context.current().withValue(GrpcPeerIdentity.CONTEXT_KEY, peer).run(operation);
   }
 }

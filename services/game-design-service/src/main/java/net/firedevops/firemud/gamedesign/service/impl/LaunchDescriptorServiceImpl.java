@@ -687,4 +687,18 @@ public class LaunchDescriptorServiceImpl implements LaunchDescriptorService {
   private static String normalizeBlank(String value) {
     return value == null || value.isBlank() ? null : value;
   }
+
+  @Timed(value = "gamedesign.launchDescriptor.resolve")
+  public ResolvedLaunchDescriptorDto resolveLaunchDescriptor(
+      String tenantId,
+      long gameTemplateId,
+      String controlPlaneRequestId,
+      String requestedScriptPatchVersion,
+      Long sourceVersionId,
+      Long targetVersionId,
+      String requestedRuntimeFlagsJson) {
+    throw new IllegalArgumentException(
+        "AUTHORED_WORLD_LAUNCH_BINDING_REQUIRED: canonical authored-world source binding is"
+            + " required to resolve a launch descriptor");
+  }
 }
