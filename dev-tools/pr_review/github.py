@@ -14,6 +14,7 @@ import re
 import subprocess
 import time
 from collections.abc import Iterator, Sequence
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from contextvars import ContextVar, Token
 from pathlib import Path
@@ -895,7 +896,9 @@ def fetch_authenticated_user() -> dict[str, Any]:
     return value
 
 
-def fetch_pr_identity_batch(repo: str, pr_numbers: Sequence[int]) -> dict[int, dict[str, Any] | None]:
+def fetch_pr_identity_batch(
+    repo: str, pr_numbers: Sequence[int], *, concurrent_chunks: bool = False
+) -> dict[int, dict[str, Any] | None]:
     """Fetch bounded live identity/activity summaries for every requested PR.
 
     Aliased ``pullRequest(number: ...)`` fields keep this query bound to the
@@ -917,8 +920,11 @@ def fetch_pr_identity_batch(repo: str, pr_numbers: Sequence[int]) -> dict[int, d
 
     # Keep each request comfortably within GitHub GraphQL's query-cost limit
     # while ensuring every configured number is covered without list truncation.
-    for offset in range(0, len(numbers), 25):
-        chunk = numbers[offset : offset + 25]
+    chunks = tuple(numbers[offset : offset + 25] for offset in range(0, len(numbers), 25))
+
+    def fetch_chunk(chunk: tuple[int, ...]) -> dict[int, dict[str, Any] | None]:
+        if budget is not None:
+            budget.remaining_seconds()
         selections = "\n".join(
             f"pr_{number}: pullRequest(number:{number}) {{ "
             "number state isDraft mergedAt baseRefName baseRefOid headRefName headRefOid mergeable "
@@ -945,6 +951,7 @@ query($owner:String!, $repo:String!) {{
             raise RuntimeError("GitHub response has no repository identity batch") from exc
         if not isinstance(repository, dict):
             raise TypeError("GitHub response has no repository identity batch")
+        chunk_result: dict[int, dict[str, Any] | None] = {number: None for number in chunk}
         for number in chunk:
             item = repository.get(f"pr_{number}")
             if item is None:
@@ -968,9 +975,28 @@ query($owner:String!, $repo:String!) {{
                 if not isinstance(value, dict) or not isinstance(value.get("nodes"), list):
                     break
             else:
-                result[number] = item
-        if budget is not None and budget.current_phase == "target_identity_batch":
-            budget.set_completed(offset // 25 + 1)
+                chunk_result[number] = item
+        return chunk_result
+
+    def fetch_bound_chunk(chunk: tuple[int, ...]) -> dict[int, dict[str, Any] | None]:
+        if budget is None:
+            return fetch_chunk(chunk)
+        with bind_hosted_preflight_budget(budget):
+            return fetch_chunk(chunk)
+
+    def collect(results: Iterator[dict[int, dict[str, Any] | None]]) -> None:
+        # Consume in configured order even when independent reads finish out of
+        # order. Only this caller mutates the assembled result and progress.
+        for completed, chunk_result in enumerate(results, 1):
+            result.update(chunk_result)
+            if budget is not None and budget.current_phase == "target_identity_batch":
+                budget.set_completed(completed)
+
+    if concurrent_chunks and len(chunks) > 1:
+        with ThreadPoolExecutor(max_workers=min(4, len(chunks))) as pool:
+            collect(pool.map(fetch_bound_chunk, chunks))
+    else:
+        collect(map(fetch_chunk, chunks))
     return result
 
 

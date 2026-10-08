@@ -6287,9 +6287,11 @@ class ReviewController:
 
     @staticmethod
     def _batch_live_pull_requests(
-        provider: Any, numbers: Sequence[int]
+        provider: Any, numbers: Sequence[int], *, overview: bool = False
     ) -> tuple[dict[int, LivePullRequest], dict[int, Mapping[str, Any] | None]]:
-        fetch = getattr(provider, "batch_pull_requests", None)
+        fetch = getattr(provider, "batch_pull_requests_overview", None) if overview else None
+        if not callable(fetch):
+            fetch = getattr(provider, "batch_pull_requests", None)
         if not callable(fetch):
             raise ControllerError("GitHub provider does not support batched PR identities")
         values = fetch(tuple(numbers))
@@ -6416,7 +6418,7 @@ class ReviewController:
             }
 
         try:
-            batch_live, raw_identities = self._batch_live_pull_requests(self.github, state.ordered_prs)
+            batch_live, raw_identities = self._batch_live_pull_requests(self.github, state.ordered_prs, overview=True)
             remote_heads = self.git.remote_heads()
             default_tip = _sha(remote_heads.get(self.default_base_ref), "default base tip")
             batch_snapshots = {pr: item.snapshot() for pr, item in batch_live.items()}

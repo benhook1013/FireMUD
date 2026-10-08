@@ -70,6 +70,11 @@ class LiveGitHub:
 
         return github.fetch_pr_identity_batch(self.repo, numbers)
 
+    def batch_pull_requests_overview(self, numbers: Sequence[int]) -> dict[int, dict[str, Any] | None]:
+        """Read independent overview identity chunks with bounded concurrency."""
+
+        return github.fetch_pr_identity_batch(self.repo, numbers, concurrent_chunks=True)
+
     def pull_request(self, number: int) -> PullRequestSnapshot:
         value = github.fetch_pr_identity(self.repo, number)
         if type(value.get("number")) is not int or value["number"] != number:
