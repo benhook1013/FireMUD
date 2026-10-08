@@ -73,6 +73,18 @@ public final class GameDesignPublicationTerminalReadEvidence {
       return out.toByteArray();
     }
 
+    @Override
+    public boolean equals(Object other) {
+      return this == other
+          || (other instanceof ReadRequest request
+              && Arrays.equals(canonicalBytes(), request.canonicalBytes()));
+    }
+
+    @Override
+    public int hashCode() {
+      return Arrays.hashCode(canonicalBytes());
+    }
+
     public static ReadRequest fromStored(byte[] bytes) {
       var r = new DraftAuthorizationFenceBinding.FrameReader(bytes);
       r.expect(SCHEMA);

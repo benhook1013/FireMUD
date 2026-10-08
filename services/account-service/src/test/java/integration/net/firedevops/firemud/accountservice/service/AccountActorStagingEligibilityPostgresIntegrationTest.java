@@ -268,7 +268,8 @@ class AccountActorStagingEligibilityPostgresIntegrationTest {
               generations,
               outbox,
               sourceEvidence,
-              tenantEvents);
+              tenantEvents,
+              entitlements);
       seedMembershipOperation();
     }
 
@@ -314,8 +315,13 @@ class AccountActorStagingEligibilityPostgresIntegrationTest {
                     account.getAccountUuid(), tenantUuid));
             connectScopes.insertCanonical(account.getId(), scope, tenantProvenance);
             joinOperations.insertCanonicalIntent(joinRequestId, scope, callerBinding);
+            DemoTenantEntitlementSnapshot currentEntitlement = entitlements.readCurrent(tenantUuid);
             joinOperations.bindCanonicalPolicyEvidence(
-                joinRequestId, scope, callerBinding, true, 5L);
+                joinRequestId,
+                scope,
+                callerBinding,
+                currentEntitlement.allowPublicJoin(),
+                currentEntitlement.entitlementVersion());
           });
     }
 
