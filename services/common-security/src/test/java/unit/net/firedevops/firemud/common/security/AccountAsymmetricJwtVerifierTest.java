@@ -317,7 +317,14 @@ class AccountAsymmetricJwtVerifierTest {
         .isEqualTo("22222222-2222-4222-8222-222222222222");
     unavailable[0] = true;
     clock.advance(Duration.ofSeconds(6));
-    assertDenied(staleVerifier, valid);
+    assertThatThrownBy(() -> staleVerifier.verify(valid, policy))
+        .isInstanceOf(AccountAsymmetricJwtVerifier.VerificationUnavailableException.class)
+        .hasMessage("Account JWT verification is temporarily unavailable")
+        .hasNoCause();
+    assertThatThrownBy(() -> staleVerifier.verify("not-a-token", policy))
+        .isInstanceOf(AccountAsymmetricJwtVerifier.VerificationException.class)
+        .hasMessage("Account JWT verification failed")
+        .hasNoCause();
   }
 
   @Test

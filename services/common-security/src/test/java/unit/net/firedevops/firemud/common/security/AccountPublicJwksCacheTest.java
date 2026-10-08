@@ -72,6 +72,129 @@ class AccountPublicJwksCacheTest {
   }
 
   @Test
+  void distinctUnknownKidsShareRefreshCooldownAndRotationRefreshWorksAfterOneSecond()
+      throws Exception {
+    KeyPair known = rsa3072();
+    KeyPair rotated = rsa3072();
+    AtomicInteger loads = new AtomicInteger();
+    AtomicReference<String> currentJwks =
+        new AtomicReference<>(jwks(jwk("known", (RSAPublicKey) known.getPublic())));
+    MutableClock clock = new MutableClock(INITIAL);
+    AccountPublicJwksCache cache =
+        cache(
+            clock,
+            () -> {
+              loads.incrementAndGet();
+              return snapshot(currentJwks.get());
+            });
+
+    assertThat(cache.keyFor("known")).isEqualTo(known.getPublic());
+    assertThatThrownBy(() -> cache.keyFor("unknown-one"))
+        .isInstanceOf(AccountPublicJwksCache.UnknownKeyException.class);
+    assertThat(loads).hasValue(2);
+
+    assertThatThrownBy(() -> cache.keyFor("unknown-two"))
+        .isInstanceOf(AccountPublicJwksCache.UnknownKeyException.class);
+    assertThatThrownBy(() -> cache.keyFor("unknown-three"))
+        .isInstanceOf(AccountPublicJwksCache.UnknownKeyException.class);
+    assertThat(cache.keyFor("known")).isEqualTo(known.getPublic());
+    assertThat(loads).hasValue(2);
+
+    currentJwks.set(
+        jwks(
+            jwk("known", (RSAPublicKey) known.getPublic())
+                + ","
+                + jwk("rotated", (RSAPublicKey) rotated.getPublic())));
+    clock.advance(Duration.ofSeconds(1));
+    assertThat(cache.keyFor("rotated")).isEqualTo(rotated.getPublic());
+    assertThat(loads).hasValue(3);
+
+    assertThatThrownBy(() -> cache.keyFor("unknown-after-rotation"))
+        .isInstanceOf(AccountPublicJwksCache.UnknownKeyException.class);
+    assertThat(loads).hasValue(3);
+  }
+
+  @Test
+  void unavailableUnknownKidRefreshIsRateLimitedAndBackwardClockFailsClosed() throws Exception {
+    KeyPair known = rsa3072();
+    AtomicInteger loads = new AtomicInteger();
+    AtomicReference<Boolean> unavailable = new AtomicReference<>(false);
+    MutableClock clock = new MutableClock(INITIAL);
+    AccountPublicJwksCache cache =
+        cache(
+            clock,
+            () -> {
+              loads.incrementAndGet();
+              if (unavailable.get()) {
+                throw new AccountPublicJwksCache.SourceUnavailableException();
+              }
+              return snapshot(jwks(jwk("known", (RSAPublicKey) known.getPublic())));
+            });
+
+    assertThat(cache.keyFor("known")).isEqualTo(known.getPublic());
+    unavailable.set(true);
+    clock.advance(Duration.ofMillis(500));
+    assertThatThrownBy(() -> cache.keyFor("unknown-one"))
+        .isInstanceOf(AccountPublicJwksCache.UnknownKeyException.class);
+    assertThat(loads).hasValue(2);
+
+    clock.advance(Duration.ofMillis(250));
+    clock.advance(Duration.ofMillis(-500));
+    assertThat(cache.keyFor("known")).isEqualTo(known.getPublic());
+    assertThatThrownBy(() -> cache.keyFor("unknown-two"))
+        .isInstanceOf(AccountPublicJwksCache.UnknownKeyException.class);
+    assertThat(loads).hasValue(2);
+
+    clock.advance(Duration.ofSeconds(10));
+    assertThatThrownBy(() -> cache.keyFor("known"))
+        .isInstanceOf(AccountPublicJwksCache.SourceUnavailableException.class);
+    assertThat(loads).hasValue(3);
+  }
+
+  @Test
+  void staleUnavailableDistinctUnknownKidsDoNotGrowRefreshHistoryPastItsBound() throws Exception {
+    KeyPair known = rsa3072();
+    AtomicInteger loads = new AtomicInteger();
+    AtomicReference<Boolean> unavailable = new AtomicReference<>(false);
+    MutableClock clock = new MutableClock(INITIAL);
+    AccountPublicJwksCache cache =
+        cache(
+            clock,
+            () -> {
+              loads.incrementAndGet();
+              if (unavailable.get()) {
+                throw new AccountPublicJwksCache.SourceUnavailableException();
+              }
+              return snapshot(jwks(jwk("known", (RSAPublicKey) known.getPublic())));
+            });
+
+    assertThat(cache.keyFor("known")).isEqualTo(known.getPublic());
+    unavailable.set(true);
+    clock.advance(Duration.ofSeconds(11));
+
+    for (int i = 0; i < 260; i++) {
+      String kid = "unknown-" + i;
+      assertThatThrownBy(() -> cache.keyFor(kid))
+          .isInstanceOf(AccountPublicJwksCache.SourceUnavailableException.class);
+      clock.advance(Duration.ofSeconds(1));
+    }
+
+    assertThat(loads).hasValue(261);
+    assertThat(rememberedUnknownKidRefreshCount(cache)).isEqualTo(256);
+    assertThatThrownBy(() -> cache.keyFor("known"))
+        .isInstanceOf(AccountPublicJwksCache.SourceUnavailableException.class);
+    assertThat(loads).hasValue(262);
+  }
+
+  private static int rememberedUnknownKidRefreshCount(AccountPublicJwksCache cache)
+      throws ReflectiveOperationException {
+    java.lang.reflect.Field field =
+        AccountPublicJwksCache.class.getDeclaredField("unknownKidsRefreshedForSnapshot");
+    field.setAccessible(true);
+    return ((java.util.Set<?>) field.get(cache)).size();
+  }
+
+  @Test
   void previousUnknownKidIsRetriedAfterCacheAgeAndCanResolveALaterPublishedKey() throws Exception {
     KeyPair known = rsa3072();
     KeyPair later = rsa3072();
@@ -171,6 +294,61 @@ class AccountPublicJwksCacheTest {
 
     assertThatThrownBy(() -> cache.keyFor("cut"))
         .isInstanceOf(AccountPublicJwksCache.UnknownKeyException.class);
+  }
+
+  @Test
+  void hardCutoverBoundExhaustionQuarantinesAllKeysWithoutRefreshing() throws Exception {
+    KeyPair revoked = rsa3072();
+    KeyPair current = rsa3072();
+    AtomicInteger loads = new AtomicInteger();
+    AtomicReference<Boolean> unavailable = new AtomicReference<>(false);
+    MutableClock clock = new MutableClock(INITIAL);
+    AccountPublicJwksCache cache =
+        cache(
+            clock,
+            () -> {
+              loads.incrementAndGet();
+              if (unavailable.get()) {
+                throw new AccountPublicJwksCache.SourceUnavailableException();
+              }
+              return snapshot(
+                  jwks(
+                      jwk("revoked65", (RSAPublicKey) revoked.getPublic())
+                          + ","
+                          + jwk("current", (RSAPublicKey) current.getPublic())));
+            });
+
+    assertThat(cache.keyFor("revoked65")).isEqualTo(revoked.getPublic());
+    assertThat(cache.keyFor("current")).isEqualTo(current.getPublic());
+    assertThat(loads).hasValue(1);
+
+    for (int i = 0; i < AccountPublicJwksCache.MAX_KEYS; i++) {
+      cache.invalidateKid("denied" + i);
+    }
+    assertThat(cache.keyFor("current")).isEqualTo(current.getPublic());
+    assertThatThrownBy(() -> cache.keyFor("denied0"))
+        .isInstanceOf(AccountPublicJwksCache.UnknownKeyException.class);
+
+    assertThatThrownBy(() -> cache.invalidateKid("revoked65"))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessage("Account public JWKS hard-cutover bound is exhausted");
+    assertQuarantined(cache, "revoked65", "denied0", "current");
+    assertThat(loads).hasValue(1);
+
+    clock.advance(Duration.ofSeconds(11));
+    assertQuarantined(cache, "revoked65", "denied0", "current");
+    assertThat(loads).hasValue(1);
+
+    unavailable.set(true);
+    assertQuarantined(cache, "revoked65", "denied0", "current");
+    assertThat(loads).hasValue(1);
+  }
+
+  private static void assertQuarantined(AccountPublicJwksCache cache, String... kids) {
+    for (String kid : kids) {
+      assertThatThrownBy(() -> cache.keyFor(kid))
+          .isInstanceOf(AccountPublicJwksCache.UnknownKeyException.class);
+    }
   }
 
   @Test
