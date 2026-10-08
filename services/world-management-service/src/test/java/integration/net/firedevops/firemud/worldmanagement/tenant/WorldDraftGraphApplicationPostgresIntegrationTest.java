@@ -90,7 +90,10 @@ import net.firedevops.firemud.common.world.WorldDraftStartLocationEvidence;
 import net.firedevops.firemud.common.world.WorldPublicationTerminalCompletionGrpcCodec;
 import net.firedevops.firemud.common.world.WorldPublicationTerminalReadEvidence;
 import net.firedevops.firemud.common.world.WorldPublicationTerminalReadGrpcCodec;
+import net.firedevops.firemud.common.world.WorldPublishedSpawnRequirementsEvidence;
+import net.firedevops.firemud.common.world.WorldPublishedSpawnRequirementsGrpcCodec;
 import net.firedevops.firemud.common.world.WorldPublishedStartLocationEvidence;
+import net.firedevops.firemud.gamedesign.v1.GetLaunchDescriptorRequest;
 import net.firedevops.firemud.gamedesign.v1.VersionLifecycleState;
 import net.firedevops.firemud.gamedesign.v1.WorldDesignMutationRevision;
 import net.firedevops.firemud.test.PostgresBackedServiceTestSupport;
@@ -343,6 +346,11 @@ class WorldDraftGraphApplicationPostgresIntegrationTest {
   @Test
   void authenticatedPreparationAdapterBindsFreshLaunchAndReadsActualPreparingLifecycle()
       throws Exception {
+    // Advance only this isolated fixture's allocator; do not rely on test order to escape Java's
+    // boxed-Long cache or fabricate a topology mapping for the regression below.
+    dsl.fetchValue(
+        "SELECT setval('region_instance_id_seq', GREATEST(last_value, 128), true) "
+            + "FROM region_instance_id_seq");
     Fixture f = fixture();
     var original = application(generationFreePlan(f));
     var selectedRoom =
@@ -470,6 +478,9 @@ class WorldDraftGraphApplicationPostgresIntegrationTest {
         assertThat(firstLifecycleRequest).isEqualTo(expectedFirstLifecycleRequest);
         var firstActualLifecycle = lifecycleRepository.read(firstLifecycleRequest).orElseThrow();
         assertThat(firstLifecycle).isEqualTo(firstActualLifecycle);
+        assertThat(firstLifecycle.operationalRegionAssignments())
+            .containsExactlyEntriesOf(
+                materializedOperationalRegionAssignments(ownerRequest.gameInstanceUuid()));
         assertThat(firstLifecycle.lifecycleStatus()).isEqualTo("PREPARING");
         assertThat(firstLifecycle.lifecycleEpoch()).isEqualTo(1L);
         assertThat(firstLifecycle.launchBinding()).isEqualTo(evidence);
@@ -511,6 +522,9 @@ class WorldDraftGraphApplicationPostgresIntegrationTest {
             .isEqualTo(materializedRegion.get("room_region_instance_id", Long.class));
         assertThat(materializedRegion.get("region_row_id", Long.class))
             .isEqualTo(materializedRegion.get("zone_region_instance_id", Long.class));
+        // Exercise the lifecycle reader against PostgreSQL's actual BIGINT key outside the
+        // boxed-Long cache range; the read above must match this persisted topology mapping.
+        assertThat(materializedRegion.get("region_row_id", Long.class)).isGreaterThan(127L);
         assertThat(materializedRegion.get("zone_row_id", Long.class))
             .isEqualTo(materializedRegion.get("room_zone_instance_id", Long.class));
         String retainedOperationalRegionRow =
@@ -1194,6 +1208,118 @@ class WorldDraftGraphApplicationPostgresIntegrationTest {
   }
 
   @Test
+  void canonicalLifecycleReadRejectsIncompleteOrSubstitutedRegionAssignments() {
+    PreparedLifecycleFixture fixture = materializedLifecycleFixture();
+    var firstRegion =
+        Objects.requireNonNull(
+            dsl.fetchOne(
+                "SELECT ri.id AS region_row_id,ri.tenant_id,ri.game_instance_id,ri.world_instance_id,"
+                    + "ri.shard_id,ri.name,ri.weather,ri.generation_seed,ri.generator_type,"
+                    + "ri.generator_params,ri.spacing_multiplier,ri.version,"
+                    + "ri.canonical_region_instance_id,ri.operational_region_id,"
+                    + "m.id AS mapping_id,m.canonical_game_instance_id,m.family,m.template_id,"
+                    + "m.template_private_row_key,m.runtime_row_id,m.runtime_identity,"
+                    + "m.runtime_room_instance_id "
+                    + "FROM region_instance ri JOIN world_canonical_instance_topology_identity m "
+                    + "ON m.runtime_row_id=ri.id AND m.family='REGION' "
+                    + "WHERE m.canonical_game_instance_id=? ORDER BY m.template_id LIMIT 1",
+                fixture.input().canonicalGameInstanceId()));
+    long regionRowId = required(firstRegion, "region_row_id", Long.class);
+    long mappingId = required(firstRegion, "mapping_id", Long.class);
+    UUID originalOperationalId = required(firstRegion, "operational_region_id", UUID.class);
+    UUID originalRuntimeIdentity = required(firstRegion, "runtime_identity", UUID.class);
+
+    mutateWithUserTriggersDisabled(
+        "region_instance",
+        () ->
+            dsl.execute(
+                "UPDATE region_instance SET operational_region_id=NULL WHERE id=?", regionRowId));
+    assertThatThrownBy(() -> fixture.lifecycleRepository().read(fixture.readRequest()))
+        .isInstanceOf(
+            WorldCanonicalInstanceLifecycleReadRepository.InvalidLifecycleEvidenceException.class);
+    mutateWithUserTriggersDisabled(
+        "region_instance",
+        () ->
+            dsl.execute(
+                "UPDATE region_instance SET operational_region_id=? WHERE id=?",
+                originalOperationalId,
+                regionRowId));
+
+    UUID substitutedRuntimeIdentity = UUID.randomUUID();
+    mutateWithUserTriggersDisabled(
+        "world_canonical_instance_topology_identity",
+        () ->
+            dsl.execute(
+                "UPDATE world_canonical_instance_topology_identity SET runtime_identity=? WHERE id=?",
+                substitutedRuntimeIdentity,
+                mappingId));
+    assertThatThrownBy(() -> fixture.lifecycleRepository().read(fixture.readRequest()))
+        .isInstanceOf(
+            WorldCanonicalInstanceLifecycleReadRepository.InvalidLifecycleEvidenceException.class);
+    mutateWithUserTriggersDisabled(
+        "world_canonical_instance_topology_identity",
+        () ->
+            dsl.execute(
+                "UPDATE world_canonical_instance_topology_identity SET runtime_identity=? WHERE id=?",
+                originalRuntimeIdentity,
+                mappingId));
+
+    mutateWithUserTriggersDisabled(
+        "world_canonical_instance_topology_identity",
+        () ->
+            dsl.execute(
+                "DELETE FROM world_canonical_instance_topology_identity WHERE id=?", mappingId));
+    assertThatThrownBy(() -> fixture.lifecycleRepository().read(fixture.readRequest()))
+        .isInstanceOf(
+            WorldCanonicalInstanceLifecycleReadRepository.InvalidLifecycleEvidenceException.class);
+    mutateWithUserTriggersDisabled(
+        "world_canonical_instance_topology_identity",
+        () ->
+            dsl.execute(
+                "INSERT INTO world_canonical_instance_topology_identity "
+                    + "(world_instance_id,canonical_game_instance_id,family,template_id,"
+                    + "template_private_row_key,runtime_row_id,runtime_identity,runtime_room_instance_id) "
+                    + "VALUES (?,?, 'REGION', ?,?,?,?,NULL)",
+                required(firstRegion, "world_instance_id", Long.class),
+                required(firstRegion, "canonical_game_instance_id", UUID.class),
+                required(firstRegion, "template_id", UUID.class),
+                required(firstRegion, "template_private_row_key", Long.class),
+                required(firstRegion, "runtime_row_id", Long.class),
+                originalRuntimeIdentity));
+
+    UUID extraCanonicalId = UUID.randomUUID();
+    UUID extraOperationalId = UUID.randomUUID();
+    while (extraCanonicalId.equals(extraOperationalId)) {
+      extraOperationalId = UUID.randomUUID();
+    }
+    final UUID finalExtraOperationalId = extraOperationalId;
+    Record extraRegion =
+        queryWithUserTriggersDisabled(
+            "region_instance",
+            () ->
+                dsl.fetchOne(
+                    "INSERT INTO region_instance "
+                        + "(tenant_id,game_instance_id,world_instance_id,shard_id,name,weather,"
+                        + "generation_seed,generator_type,generator_params,spacing_multiplier,version,"
+                        + "canonical_region_instance_id,operational_region_id) "
+                        + "SELECT tenant_id,game_instance_id,world_instance_id,shard_id,name,weather,"
+                        + "generation_seed,generator_type,generator_params,spacing_multiplier,version,?,? "
+                        + "FROM region_instance WHERE id=? RETURNING id",
+                    extraCanonicalId,
+                    finalExtraOperationalId,
+                    regionRowId));
+    long extraRegionRowId = required(extraRegion, "id", Long.class);
+    assertThatThrownBy(() -> fixture.lifecycleRepository().read(fixture.readRequest()))
+        .isInstanceOf(
+            WorldCanonicalInstanceLifecycleReadRepository.InvalidLifecycleEvidenceException.class);
+    mutateWithUserTriggersDisabled(
+        "region_instance",
+        () -> dsl.execute("DELETE FROM region_instance WHERE id=?", extraRegionRowId));
+    assertThat(fixture.lifecycleRepository().read(fixture.readRequest()).orElseThrow())
+        .isEqualTo(fixture.preparing());
+  }
+
+  @Test
   void
       lifecycleReadPreservesPreparingStateAndDeniesLegacyNumericFailureWithExactCanonicalServiceEcho() {
     Fixture f = fixture();
@@ -1229,6 +1355,9 @@ class WorldDraftGraphApplicationPostgresIntegrationTest {
                 .startLocation());
     assertThat(preparing.startLocation().roomTemplateId()).isEqualTo(roomTemplateId);
     assertThat(preparing.runtimeRoomInstanceId()).isEqualTo(materialized.runtimeRoomInstanceId());
+    assertThat(preparing.operationalRegionAssignments())
+        .containsExactlyEntriesOf(
+            materializedOperationalRegionAssignments(input.canonicalGameInstanceId()));
     var mappedRoomOwnership =
         Objects.requireNonNull(
             dsl.fetchOne(
@@ -1503,6 +1632,10 @@ class WorldDraftGraphApplicationPostgresIntegrationTest {
     assertThat(active.lifecycleStatus()).isEqualTo("ACTIVE");
     assertThat(active.lifecycleEpoch()).isEqualTo(committed.lifecycleEvidence().lifecycleEpoch());
     assertThat(active.rowVersion()).isEqualTo(committed.lifecycleEvidence().rowVersion());
+    assertThat(active.operationalRegionAssignments())
+        .containsExactlyEntriesOf(fixture.preparing().operationalRegionAssignments());
+    assertThat(committed.lifecycleEvidence().operationalRegionAssignments())
+        .containsExactlyEntriesOf(fixture.preparing().operationalRegionAssignments());
     assertThat(activationManifestCount(fixture.input().canonicalGameInstanceId())).isZero();
 
     var repository =
@@ -1524,7 +1657,8 @@ class WorldDraftGraphApplicationPostgresIntegrationTest {
             fixture.preparing().rowVersion() + 1L,
             fixture.preparing().captureId(),
             fixture.preparing().graphSha256(),
-            fixture.preparing().preparationInputDigest());
+            fixture.preparing().preparationInputDigest(),
+            fixture.preparing().operationalRegionAssignments());
     var changedRetry =
         new WorldCanonicalInstanceActivation.Request(
             committed.request().activationRequestId(), changedExpectedVersion);
@@ -1561,6 +1695,73 @@ class WorldDraftGraphApplicationPostgresIntegrationTest {
     assertThat(verifierCalls).hasValue(callsAfterFirstAttempt);
     assertThat(preparationRows(fixture.input().canonicalGameInstanceId()))
         .containsExactly(preparationBefore);
+    assertOrigin();
+  }
+
+  @Test
+  void canonicalActivationRawSqlRejectsIncompleteOrSubstitutedOperationalRegionAssignments() {
+    PreparedLifecycleFixture fixture = materializedLifecycleFixture();
+    var assignments = fixture.preparing().operationalRegionAssignments();
+    assertThat(assignments).isNotEmpty().hasSize(1);
+    var first = assignments.entrySet().iterator().next();
+
+    Map<UUID, UUID> missing = new LinkedHashMap<>(assignments);
+    missing.remove(first.getKey());
+    UUID missingCanonicalId = UUID.randomUUID();
+    while (assignments.containsKey(missingCanonicalId)
+        || assignments.containsValue(missingCanonicalId)) {
+      missingCanonicalId = UUID.randomUUID();
+    }
+    missing.put(missingCanonicalId, first.getValue());
+    Map<UUID, UUID> extra = new LinkedHashMap<>(assignments);
+    UUID extraCanonicalId = UUID.randomUUID();
+    while (assignments.containsKey(extraCanonicalId)
+        || assignments.containsValue(extraCanonicalId)) {
+      extraCanonicalId = UUID.randomUUID();
+    }
+    UUID extraOperationalId = UUID.randomUUID();
+    while (assignments.containsKey(extraOperationalId)
+        || assignments.containsValue(extraOperationalId)
+        || extraCanonicalId.equals(extraOperationalId)) {
+      extraOperationalId = UUID.randomUUID();
+    }
+    extra.put(extraCanonicalId, extraOperationalId);
+    Map<UUID, UUID> substituted = new LinkedHashMap<>(assignments);
+    UUID substitutedOperationalId = UUID.randomUUID();
+    while (assignments.containsKey(substitutedOperationalId)
+        || assignments.containsValue(substitutedOperationalId)
+        || first.getKey().equals(substitutedOperationalId)) {
+      substitutedOperationalId = UUID.randomUUID();
+    }
+    substituted.put(first.getKey(), substitutedOperationalId);
+
+    ownerTransaction()
+        .execute(
+            status -> {
+              int index = 0;
+              for (Map<UUID, UUID> invalidAssignments : List.of(missing, extra, substituted)) {
+                var proof = rawCommittedActivationProofWithAssignments(fixture, invalidAssignments);
+                String savepoint = "invalid_activation_region_map_" + index++;
+                dsl.execute("SAVEPOINT " + savepoint);
+                assertThatThrownBy(
+                        () ->
+                            insertRawActivationOperation(
+                                proof, fixture.materialized().association().worldInstanceId()))
+                    .hasMessageContaining("exact complete operational REGION assignment map");
+                dsl.execute("ROLLBACK TO SAVEPOINT " + savepoint);
+                assertThat(
+                        activationOperationCountForRequest(proof.request().activationRequestId()))
+                    .isZero();
+                assertThat(activationManifestCountForRequest(proof.request().activationRequestId()))
+                    .isZero();
+              }
+              return null;
+            });
+
+    var retained = fixture.lifecycleRepository().read(fixture.readRequest()).orElseThrow();
+    assertThat(retained.lifecycleStatus()).isEqualTo("PREPARING");
+    assertThat(retained.operationalRegionAssignments()).containsExactlyEntriesOf(assignments);
+    assertThat(activationManifestCount(fixture.input().canonicalGameInstanceId())).isZero();
     assertOrigin();
   }
 
@@ -1694,7 +1895,8 @@ class WorldDraftGraphApplicationPostgresIntegrationTest {
                 fixture.preparing().rowVersion() + 1L,
                 fixture.preparing().captureId(),
                 fixture.preparing().graphSha256(),
-                fixture.preparing().preparationInputDigest());
+                fixture.preparing().preparationInputDigest(),
+                fixture.preparing().operationalRegionAssignments());
         // Reusing the same operation ID with a changed normalized expected version is a conflict
         // probe, not evidence that the persisted PREPARING row had that version.
         var changedRequest =
@@ -2450,7 +2652,8 @@ class WorldDraftGraphApplicationPostgresIntegrationTest {
             fixture.activeEvidence().rowVersion(),
             fixture.activeEvidence().captureId(),
             fixture.activeEvidence().graphSha256(),
-            fixture.activeEvidence().preparationInputDigest());
+            fixture.activeEvidence().preparationInputDigest(),
+            fixture.activeEvidence().operationalRegionAssignments());
     var changedScope =
         initialLocationRequest(
             fixture,
@@ -2492,7 +2695,8 @@ class WorldDraftGraphApplicationPostgresIntegrationTest {
             active.rowVersion(),
             active.captureId(),
             active.graphSha256(),
-            active.preparationInputDigest());
+            active.preparationInputDigest(),
+            active.operationalRegionAssignments());
     var staleRequest =
         initialLocationRequest(
             fixture,
@@ -2516,7 +2720,8 @@ class WorldDraftGraphApplicationPostgresIntegrationTest {
             active.rowVersion(),
             active.captureId(),
             active.graphSha256(),
-            active.preparationInputDigest());
+            active.preparationInputDigest(),
+            active.operationalRegionAssignments());
     var changedRoomRequest =
         initialLocationRequest(
             fixture,
@@ -2892,7 +3097,8 @@ class WorldDraftGraphApplicationPostgresIntegrationTest {
                     active.rowVersion(),
                     active.captureId(),
                     active.graphSha256(),
-                    active.preparationInputDigest()))
+                    active.preparationInputDigest(),
+                    active.operationalRegionAssignments()))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("ROOM selector or graph digest differs");
     var original = active.request();
@@ -2923,7 +3129,8 @@ class WorldDraftGraphApplicationPostgresIntegrationTest {
             active.rowVersion(),
             active.captureId(),
             active.graphSha256(),
-            active.preparationInputDigest());
+            active.preparationInputDigest(),
+            active.operationalRegionAssignments());
     var wrongScopeRequest =
         initialLocationRequest(
             fixture,
@@ -2947,7 +3154,8 @@ class WorldDraftGraphApplicationPostgresIntegrationTest {
             active.rowVersion(),
             active.captureId(),
             active.graphSha256(),
-            active.preparationInputDigest());
+            active.preparationInputDigest(),
+            active.operationalRegionAssignments());
     var wrongRuntimeRequest =
         initialLocationRequest(
             fixture,
@@ -4201,6 +4409,29 @@ class WorldDraftGraphApplicationPostgresIntegrationTest {
             OffsetDateTime.parse("2026-01-01T00:00:00Z")));
   }
 
+  /** Reuses genuine graph/release/materialization/activation; upstream authority is stipulated. */
+  ActivePlayerAdmissionFixture activePlayerAdmissionFixture() {
+    var prepared = materializedLifecycleFixture();
+    var activation =
+        canonicalActivationService(prepared, ignored -> stipulatedActivationAuthority())
+            .activate(
+                new WorldCanonicalInstanceActivation.Request(
+                    UUID.randomUUID(), prepared.preparing()));
+    assertThat(activation.outcome()).isEqualTo(WorldCanonicalInstanceActivation.Outcome.COMMITTED);
+    var current =
+        prepared
+            .lifecycleRepository()
+            .read(lifecycleRequestWithFreshReadId(activation.lifecycleEvidence().request()))
+            .orElseThrow();
+    return new ActivePlayerAdmissionFixture(
+        prepared.materialized().association(), current, prepared.lifecycleRepository());
+  }
+
+  record ActivePlayerAdmissionFixture(
+      WorldCanonicalInstanceAssociation association,
+      WorldCanonicalInstanceLifecycleEvidence activeEvidence,
+      WorldCanonicalInstanceLifecycleReadRepository lifecycleRepository) {}
+
   private PreparedLifecycleFixture materializedLifecycleFixture() {
     Fixture f = fixture();
     var original = application(generationFreePlan(f));
@@ -4590,11 +4821,47 @@ class WorldDraftGraphApplicationPostgresIntegrationTest {
             fixture.preparing().rowVersion() + 1L,
             fixture.preparing().captureId(),
             fixture.preparing().graphSha256(),
-            fixture.preparing().preparationInputDigest());
+            fixture.preparing().preparationInputDigest(),
+            fixture.preparing().operationalRegionAssignments());
     return new ActivationProof(
         request,
         new WorldCanonicalInstanceActivation.Result(
             request, WorldCanonicalInstanceActivation.Outcome.COMMITTED, null, predictedActive));
+  }
+
+  private ActivationProof rawCommittedActivationProofWithAssignments(
+      PreparedLifecycleFixture fixture, Map<UUID, UUID> assignments) {
+    var preparing =
+        new WorldCanonicalInstanceLifecycleEvidence(
+            fixture.preparing().request(),
+            fixture.preparing().launchBinding(),
+            fixture.preparing().startLocation(),
+            fixture.preparing().runtimeRoomInstanceId(),
+            "PREPARING",
+            fixture.preparing().lifecycleEpoch(),
+            fixture.preparing().rowVersion(),
+            fixture.preparing().captureId(),
+            fixture.preparing().graphSha256(),
+            fixture.preparing().preparationInputDigest(),
+            assignments);
+    var request = new WorldCanonicalInstanceActivation.Request(UUID.randomUUID(), preparing);
+    var active =
+        new WorldCanonicalInstanceLifecycleEvidence(
+            preparing.request(),
+            preparing.launchBinding(),
+            preparing.startLocation(),
+            preparing.runtimeRoomInstanceId(),
+            "ACTIVE",
+            preparing.lifecycleEpoch() + 1L,
+            preparing.rowVersion() + 1L,
+            preparing.captureId(),
+            preparing.graphSha256(),
+            preparing.preparationInputDigest(),
+            assignments);
+    return new ActivationProof(
+        request,
+        new WorldCanonicalInstanceActivation.Result(
+            request, WorldCanonicalInstanceActivation.Outcome.COMMITTED, null, active));
   }
 
   private void insertRawActivationOperation(ActivationProof proof, long worldInstanceId) {
@@ -4733,6 +5000,49 @@ class WorldDraftGraphApplicationPostgresIntegrationTest {
             regionTemplateId));
   }
 
+  private Map<UUID, UUID> materializedOperationalRegionAssignments(UUID canonicalGameInstanceId) {
+    var rows =
+        dsl.fetch(
+            "SELECT ri.canonical_region_instance_id,ri.operational_region_id "
+                + "FROM world_canonical_instance_preparation p "
+                + "JOIN region_instance ri ON ri.world_instance_id=p.world_instance_id "
+                + "WHERE p.canonical_game_instance_id=? "
+                + "ORDER BY ri.canonical_region_instance_id",
+            canonicalGameInstanceId);
+    Map<UUID, UUID> assignments = new LinkedHashMap<>();
+    for (Record row : rows) {
+      UUID canonical = row.get("canonical_region_instance_id", UUID.class);
+      UUID operational = row.get("operational_region_id", UUID.class);
+      assertThat(canonical).isNotNull();
+      assertThat(operational).isNotNull().isNotEqualTo(canonical);
+      assertThat(assignments.putIfAbsent(canonical, operational)).isNull();
+    }
+    return assignments;
+  }
+
+  private void mutateWithUserTriggersDisabled(String table, Runnable mutation) {
+    dsl.execute("ALTER TABLE " + table + " DISABLE TRIGGER USER");
+    try {
+      mutation.run();
+    } finally {
+      dsl.execute("ALTER TABLE " + table + " ENABLE TRIGGER USER");
+    }
+  }
+
+  private Record queryWithUserTriggersDisabled(
+      String table, java.util.function.Supplier<Record> mutation) {
+    dsl.execute("ALTER TABLE " + table + " DISABLE TRIGGER USER");
+    try {
+      return mutation.get();
+    } finally {
+      dsl.execute("ALTER TABLE " + table + " ENABLE TRIGGER USER");
+    }
+  }
+
+  private static <T> T required(Record row, String field, Class<T> type) {
+    return Objects.requireNonNull(row.get(field, type), "Persisted " + field + " is null");
+  }
+
   private PrepareCanonicalWorldInstanceResponse invokePreparationAsGameSession(
       WorldCanonicalInstancePreparationGrpcService adapter,
       net.firedevops.firemud.worldmanagement.v1.PrepareCanonicalWorldInstanceRequest request) {
@@ -4835,12 +5145,234 @@ class WorldDraftGraphApplicationPostgresIntegrationTest {
   }
 
   @Test
+  void publishedSelectorOwnedReadUsesOneActualReadOnlyRepeatableReadSnapshot() {
+    Fixture f = fixture();
+    var application = application(f);
+    var applied = appliedComponent().apply(application);
+    var capture = capture(application.plan());
+    var request = capture.request().freeze();
+    byte[] originalApplication = retainedApplicationBytes(application);
+    long applicationCount = count(f, "world_draft_graph_application");
+    long receiptCount = count(f, "world_draft_start_location_receipt");
+    long frozenCount =
+        Objects.requireNonNull(
+                dsl.fetchOne(
+                    "SELECT count(*) FROM world_canonical_frozen_topology WHERE publication_fence=?",
+                    request.publicationFence()))
+            .get(0, Long.class);
+    Map<String, String> preparationRowsBeforeRead = preparationHistoryRows();
+
+    TransactionTemplate ownedSnapshot = new TransactionTemplate(manager);
+    ownedSnapshot.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
+    ownedSnapshot.setIsolationLevel(TransactionDefinition.ISOLATION_REPEATABLE_READ);
+    ownedSnapshot.setReadOnly(true);
+    var source =
+        Objects.requireNonNull(
+            ownedSnapshot.execute(
+                status -> {
+                  assertThat(TransactionSynchronizationManager.isActualTransactionActive())
+                      .isTrue();
+                  assertThat(TransactionSynchronizationManager.isCurrentTransactionReadOnly())
+                      .isTrue();
+                  assertThat(
+                          TransactionSynchronizationManager.getCurrentTransactionIsolationLevel())
+                      .isEqualTo(java.sql.Connection.TRANSACTION_REPEATABLE_READ);
+                  assertThat(dsl.fetchOne("SELECT current_setting('transaction_isolation')").get(0))
+                      .isEqualTo("repeatable read");
+                  assertThat(dsl.fetchOne("SELECT current_setting('transaction_read_only')").get(0))
+                      .isEqualTo("on");
+                  return publishedSelectors().readInOwnedSnapshot(request).orElseThrow();
+                }));
+
+    assertThat(source.selectorReceipt()).isEqualTo(applied.startLocationReceipt().orElseThrow());
+    assertThat(source.frozenTopology().captureId()).isEqualTo(capture.captureId());
+    assertThat(source.frozenTopology().resultBytes()).containsExactly(capture.resultBytes());
+    assertThat(source.appliedResult().canonicalBytes()).containsExactly(applied.canonicalBytes());
+    assertThat(source.appliedResult().application().operation().accountBindingBytes())
+        .containsExactly(application.operation().accountBindingBytes());
+
+    TransactionTemplate wrongIsolation = new TransactionTemplate(manager);
+    wrongIsolation.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
+    wrongIsolation.setIsolationLevel(TransactionDefinition.ISOLATION_READ_COMMITTED);
+    wrongIsolation.setReadOnly(true);
+    assertThatThrownBy(
+            () ->
+                wrongIsolation.execute(status -> publishedSelectors().readInOwnedSnapshot(request)))
+        .hasMessageContaining("read-only REPEATABLE READ owner transaction");
+
+    assertThat(retainedApplicationBytes(application)).containsExactly(originalApplication);
+    assertThat(count(f, "world_draft_graph_application")).isEqualTo(applicationCount);
+    assertThat(count(f, "world_draft_start_location_receipt")).isEqualTo(receiptCount);
+    assertThat(
+            Objects.requireNonNull(
+                    dsl.fetchOne(
+                        "SELECT count(*) FROM world_canonical_frozen_topology WHERE publication_fence=?",
+                        request.publicationFence()))
+                .get(0, Long.class))
+        .isEqualTo(frozenCount);
+    // The source reader is pre-PREPARING: it does not allocate any runtime world row.
+    assertThat(preparationHistoryRows()).isEqualTo(preparationRowsBeforeRead);
+    assertOrigin();
+  }
+
+  @Test
+  void publishedSpawnRequirementsOwnerProjectsOnlyRealFrozenAndAppliedSource() {
+    Fixture f = fixture();
+    var application = application(f);
+    appliedComponent().apply(application);
+    var capture = capture(application.plan());
+    var frozen = capture.request().freeze();
+    var source = publishedSelectors().readCommitted(frozen).orElseThrow();
+    var selector = publishedEvidence(source);
+    var launchBinding =
+        preparationLaunchFixture(f, source.frozenTopology(), selector, 2L, List.of("LOOK"))
+            .evidence();
+    var descriptor = launchBinding.descriptor();
+    UUID readId = UUID.randomUUID();
+    var launchRequest =
+        GetLaunchDescriptorRequest.newBuilder()
+            .setRequestId(readId.toString())
+            .setCanonicalTenantId(descriptor.canonicalTenantId().toString())
+            .setWorldSlug(descriptor.worldSlug())
+            .setControlPlaneRequestId(descriptor.controlPlaneRequestId())
+            .setExpectedRequestDigest(descriptor.requestDigest())
+            .setExpectedResultDigest(descriptor.resultDigest())
+            .build();
+    var request =
+        new WorldPublishedSpawnRequirementsEvidence.Request(
+            NAMESPACE, readId, launchRequest, launchBinding.releaseAttestation().evidenceDigest());
+    var wireRequest = WorldPublishedSpawnRequirementsGrpcCodec.toRequest(request);
+
+    // The authenticated Game Design pair is a labeled upstream double; the World rows below are
+    // the actual migrated PostgreSQL application, original APPLIED receipt, and frozen capture.
+    var gameDesign = Mockito.mock(AuthoredWorldLaunchDescriptorClient.class);
+    Mockito.when(gameDesign.getComplete(launchRequest)).thenReturn(launchBinding);
+    var owner =
+        new WorldPublishedSpawnRequirementsReadOwner(
+            NAMESPACE, gameDesign, publishedSelectors(), manager);
+    Map<String, String> before = preparationHistoryRows();
+    var entityContext =
+        Context.current()
+            .withValue(
+                GrpcPeerIdentity.CONTEXT_KEY,
+                new GrpcPeerIdentity(
+                    "spiffe://firemud/ns/" + NAMESPACE + "/sa/entity-management-service",
+                    NAMESPACE,
+                    "entity-management-service"));
+    Context previous = entityContext.attach();
+    WorldPublishedSpawnRequirementsEvidence evidence;
+    try {
+      SessionContext.clear();
+      evidence = owner.read(wireRequest);
+    } finally {
+      Context.current().detach(previous);
+      SessionContext.clear();
+    }
+
+    assertThat(evidence.captureId()).isEqualTo(capture.captureId());
+    assertThat(evidence.graphDigest())
+        .isEqualTo(WorldDraftGraphAppliedResult.digest(capture.graphBytes()));
+    assertThat(evidence.familyCounts()).hasSize(6);
+    assertThat(evidence.familyCounts()).extracting("count").contains(1);
+    assertThat(evidence.spawnRequirements()).hasSize(1);
+    assertThat(evidence.spawnRequirements().getFirst().respawnDelaySeconds()).isEqualTo(17);
+    assertThat(evidence.spawnRequirements().getFirst().entityTemplate().kind())
+        .isEqualTo(EntityTemplateReferenceType.ENTITY_TEMPLATE_REFERENCE_TYPE_NPC);
+    assertThat(evidence.generationRequirements()).hasSize(1);
+    assertThat(evidence.generationRequirements().getFirst().name()).isEqualTo("rule");
+    assertThat(evidence.generationRequirements().getFirst().value()).isEqualTo("seeded");
+    assertThat(preparationHistoryRows()).isEqualTo(before);
+    Mockito.verify(gameDesign).getComplete(launchRequest);
+    assertOrigin();
+  }
+
+  @Test
+  void publishedSpawnRequirementsOwnerPreservesExplicitZeroOptionalFamilies() {
+    Fixture f = fixture();
+    var application = application(plan(f, true));
+    appliedComponent().apply(application);
+    var capture = capture(application.plan());
+    var source = publishedSelectors().readCommitted(capture.request().freeze()).orElseThrow();
+    var launchBinding =
+        preparationLaunchFixture(
+                f, source.frozenTopology(), publishedEvidence(source), 2L, List.of("LOOK"))
+            .evidence();
+    var descriptor = launchBinding.descriptor();
+    UUID readId = UUID.randomUUID();
+    var launchRequest =
+        GetLaunchDescriptorRequest.newBuilder()
+            .setRequestId(readId.toString())
+            .setCanonicalTenantId(descriptor.canonicalTenantId().toString())
+            .setWorldSlug(descriptor.worldSlug())
+            .setControlPlaneRequestId(descriptor.controlPlaneRequestId())
+            .setExpectedRequestDigest(descriptor.requestDigest())
+            .setExpectedResultDigest(descriptor.resultDigest())
+            .build();
+    var request =
+        new WorldPublishedSpawnRequirementsEvidence.Request(
+            NAMESPACE, readId, launchRequest, launchBinding.releaseAttestation().evidenceDigest());
+    var gameDesign = Mockito.mock(AuthoredWorldLaunchDescriptorClient.class);
+    Mockito.when(gameDesign.getComplete(launchRequest)).thenReturn(launchBinding);
+    var owner =
+        new WorldPublishedSpawnRequirementsReadOwner(
+            NAMESPACE, gameDesign, publishedSelectors(), manager);
+    var context =
+        Context.current()
+            .withValue(
+                GrpcPeerIdentity.CONTEXT_KEY,
+                new GrpcPeerIdentity(
+                    "spiffe://firemud/ns/" + NAMESPACE + "/sa/entity-management-service",
+                    NAMESPACE,
+                    "entity-management-service"));
+    Context previous = context.attach();
+    WorldPublishedSpawnRequirementsEvidence evidence;
+    try {
+      SessionContext.clear();
+      evidence = owner.read(WorldPublishedSpawnRequirementsGrpcCodec.toRequest(request));
+    } finally {
+      Context.current().detach(previous);
+      SessionContext.clear();
+    }
+
+    assertThat(evidence.familyCounts()).hasSize(6);
+    assertThat(evidence.familyCounts())
+        .filteredOn(
+            count ->
+                count.family()
+                    == WorldDesignAggregateType.WORLD_DESIGN_AGGREGATE_TYPE_GENERATION_RULE)
+        .singleElement()
+        .extracting("count")
+        .isEqualTo(0);
+    assertThat(evidence.familyCounts())
+        .filteredOn(
+            count ->
+                count.family()
+                    == WorldDesignAggregateType
+                        .WORLD_DESIGN_AGGREGATE_TYPE_WORLD_ENTITY_SPAWN_BINDING)
+        .singleElement()
+        .extracting("count")
+        .isEqualTo(0);
+    assertThat(evidence.spawnRequirements()).isEmpty();
+    assertThat(evidence.generationRequirements()).isEmpty();
+    assertOrigin();
+  }
+
+  @Test
   void permissionUnverifiedGraphAndFrozenHistoryCannotSupplyPublishedSelector() {
     var plan = plan(fixture());
     component().store(plan);
     var capture = capture(plan);
     assertThat(frozenRepository().readCommitted(capture.request().freeze())).isPresent();
     assertThatThrownBy(() -> publishedSelectors().readCommitted(capture.request().freeze()))
+        .hasMessageContaining("lacks original APPLIED application");
+    TransactionTemplate ownedSnapshot = new TransactionTemplate(manager);
+    ownedSnapshot.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
+    ownedSnapshot.setIsolationLevel(TransactionDefinition.ISOLATION_REPEATABLE_READ);
+    ownedSnapshot.setReadOnly(true);
+    assertThatThrownBy(
+            () ->
+                ownedSnapshot.execute(
+                    status -> publishedSelectors().readInOwnedSnapshot(capture.request().freeze())))
         .hasMessageContaining("lacks original APPLIED application");
     assertOrigin();
   }

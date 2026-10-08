@@ -245,7 +245,8 @@ class CanonicalWorldInstancePreparationGrpcCodecTest {
         source.rowVersion(),
         source.captureId(),
         source.graphSha256(),
-        source.preparationInputDigest());
+        source.preparationInputDigest(),
+        source.operationalRegionAssignments());
   }
 
   private static WorldCanonicalInstanceLifecycleEvidence evidence() throws Exception {
@@ -349,7 +350,10 @@ class CanonicalWorldInstancePreparationGrpcCodecTest {
         ABOVE_JAVASCRIPT_INTEGER + 2,
         uuid("33333333-3333-4333-8333-333333333333"),
         selectorReceipt.graphDigest().substring("sha256:".length()),
-        "sha256:" + "e".repeat(64));
+        "sha256:" + "e".repeat(64),
+        java.util.Map.of(
+            uuid("11111111-1111-4111-8111-111111111111"),
+            uuid("22222222-2222-4222-8222-222222222222")));
   }
 
   private static UUID uuid(String value) {

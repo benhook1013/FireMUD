@@ -709,7 +709,10 @@ class GameSessionWorldCanonicalLifecycleVerifierTest {
             WorldDraftStartLocationEvidence.fromStored(selector.selectorReceiptBytes())
                 .graphDigest()
                 .substring("sha256:".length()),
-            "sha256:" + "e".repeat(64));
+            "sha256:" + "e".repeat(64),
+            java.util.Map.of(
+                uuid("11111111-1111-4111-8111-111111111111"),
+                uuid("22222222-2222-4222-8222-222222222222")));
     return new Fixture(
         new GameSessionWorldCanonicalLifecycleVerifier.Expected(request, binding), evidence);
   }
@@ -816,9 +819,8 @@ class GameSessionWorldCanonicalLifecycleVerifierTest {
         rowVersion,
         captureId == null ? original.captureId() : captureId,
         graphSha256 == null ? original.graphSha256() : graphSha256,
-        preparationInputDigest == null
-            ? original.preparationInputDigest()
-            : preparationInputDigest);
+        preparationInputDigest == null ? original.preparationInputDigest() : preparationInputDigest,
+        original.operationalRegionAssignments());
   }
 
   private static WorldCanonicalInstanceLifecycleEvidence.Request withReadRequestId(

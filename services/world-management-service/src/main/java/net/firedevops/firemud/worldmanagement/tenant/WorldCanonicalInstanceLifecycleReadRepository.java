@@ -5,7 +5,10 @@ import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.sql.Connection;
 import java.util.Arrays;
+import java.util.HashSet;
 import java.util.HexFormat;
+import java.util.LinkedHashMap;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
@@ -169,6 +172,10 @@ public final class WorldCanonicalInstanceLifecycleReadRepository {
       JsonNode input = parseInput(inputJson);
       requireInputIdentity(input, request, association, captureId);
       requirePreparationCounts(input, preparation);
+      Set<UUID> expectedRegionTemplates =
+          requireFrozenGraphIdentity(input, preparation, graphBytes, graphSha256);
+      Map<UUID, UUID> operationalRegionAssignments =
+          readOperationalRegionAssignments(association, preparation, expectedRegionTemplates);
 
       var release = association.completeLaunchBinding().evidence().releaseAttestation();
       if (release.schemaVersion()
@@ -207,7 +214,8 @@ public final class WorldCanonicalInstanceLifecycleReadRepository {
           required(lifecycle, "row_version", Long.class),
           captureId,
           graphSha256,
-          inputDigest);
+          inputDigest,
+          operationalRegionAssignments);
     } catch (InvalidLifecycleEvidenceException invalid) {
       throw invalid;
     } catch (TransientDataAccessException | DataAccessException unavailable) {
@@ -347,6 +355,167 @@ public final class WorldCanonicalInstanceLifecycleReadRepository {
         || required(preparation, "exit_count", Integer.class) < 0) {
       throw invalid("Retained World preparation topology counts are invalid");
     }
+  }
+
+  /** Proves the preparation graph is the immutable graph retained by the exact frozen capture. */
+  private Set<UUID> requireFrozenGraphIdentity(
+      JsonNode input, Record preparation, byte[] graphBytes, String graphSha256) {
+    JsonNode topology = requiredObject(input, "topology");
+    UUID captureId = required(preparation, "capture_id", UUID.class);
+    Record frozen =
+        dsl.fetchOne(
+            "SELECT capture_id,request_id,commit_id,version_identity_operation_id,publication_fence,"
+                + "graph_bytes,graph_sha256,capture_status FROM world_canonical_frozen_topology "
+                + "WHERE capture_id=?",
+            captureId);
+    if (frozen == null
+        || !captureId.equals(required(frozen, "capture_id", UUID.class))
+        || !"CAPTURED_UNVERIFIED".equals(required(frozen, "capture_status", String.class))
+        || !Arrays.equals(graphBytes, required(frozen, "graph_bytes", byte[].class))
+        || !graphSha256.equals(required(frozen, "graph_sha256", String.class))
+        || !HexFormat.of().formatHex(sha256(graphBytes)).equals(graphSha256)) {
+      throw invalid("Canonical preparation graph differs from its exact frozen capture");
+    }
+    requireText(topology, "requestId", required(frozen, "request_id", UUID.class).toString());
+    requireText(topology, "commitId", required(frozen, "commit_id", UUID.class).toString());
+    requireText(
+        topology,
+        "versionIdentityOperationId",
+        required(frozen, "version_identity_operation_id", UUID.class).toString());
+    requireText(
+        topology, "publicationFence", required(frozen, "publication_fence", UUID.class).toString());
+
+    try {
+      JsonNode graph = CLOSED_JSON.readTree(graphBytes);
+      requireFields(
+          graph,
+          Set.of("schemaVersion", "canonicalTenantId", "canonicalVersionId", "rows"),
+          "Frozen canonical graph");
+      requireText(graph, "schemaVersion", "2");
+      requireText(
+          graph, "canonicalTenantId", text(requiredObject(input, "identity"), "canonicalTenantId"));
+      requireText(graph, "canonicalVersionId", text(topology, "canonicalVersionId"));
+      JsonNode rows = graph.get("rows");
+      if (rows == null || !rows.isArray()) {
+        throw invalid("Frozen canonical graph rows must be an array");
+      }
+      Map<String, Integer> expectedCounts =
+          Map.of(
+              "REGION", intValue(topology, "regionCount"),
+              "ZONE", intValue(topology, "zoneCount"),
+              "ROOM", intValue(topology, "roomCount"),
+              "ROOM_EXIT", intValue(topology, "exitCount"),
+              "GENERATION_RULE", intValue(topology, "generationRuleCount"),
+              "WORLD_ENTITY_SPAWN_BINDING", intValue(topology, "spawnBindingCount"));
+      Map<String, Integer> actualCounts = new java.util.HashMap<>();
+      Set<String> graphIdentities = new HashSet<>();
+      Set<UUID> expectedRegionTemplates = new HashSet<>();
+      for (JsonNode row : rows) {
+        JsonNode mapping = requiredObject(row, "mapping");
+        String family = text(mapping, "family");
+        String templateText = text(mapping, "template_id");
+        UUID templateId = parseCanonicalUuid(templateText, "Frozen graph template_id");
+        if (!expectedCounts.containsKey(family)
+            || !graphIdentities.add(family + ":" + templateId)) {
+          throw invalid("Frozen canonical graph has an unsupported or duplicate identity");
+        }
+        actualCounts.merge(family, 1, Integer::sum);
+        if ("REGION".equals(family) && !expectedRegionTemplates.add(templateId)) {
+          throw invalid("Frozen canonical graph repeats a REGION template identity");
+        }
+      }
+      if (expectedCounts.entrySet().stream()
+              .anyMatch(
+                  entry ->
+                      actualCounts.getOrDefault(entry.getKey(), 0).intValue()
+                          != entry.getValue().intValue())
+          || rows.size() != expectedCounts.values().stream().mapToInt(Integer::intValue).sum()
+          || expectedRegionTemplates.size()
+              != required(preparation, "region_count", Integer.class)) {
+        throw invalid("Frozen canonical graph family counts differ from exact preparation input");
+      }
+      return Set.copyOf(expectedRegionTemplates);
+    } catch (tools.jackson.core.JacksonException malformed) {
+      throw new InvalidLifecycleEvidenceException("Frozen canonical graph is invalid", malformed);
+    }
+  }
+
+  /**
+   * Reads every scoped region row together with its REGION topology identity in this same owner
+   * snapshot. The immutable graph's template set and persisted materialization count must match
+   * exactly before World exposes the canonical-runtime UUID to operational-label assignments.
+   */
+  private Map<UUID, UUID> readOperationalRegionAssignments(
+      WorldCanonicalInstanceAssociation association,
+      Record preparation,
+      Set<UUID> expectedRegionTemplates) {
+    long worldInstanceId = association.worldInstanceId();
+    long tenantKey = association.worldPrepareFields().privateTenantKey();
+    long gameInstanceKey = association.worldPrepareFields().privateGameInstanceKey();
+    int expectedCount = required(preparation, "region_count", Integer.class);
+    if (expectedCount <= 0 || expectedRegionTemplates.size() != expectedCount) {
+      throw invalid("Canonical World region count differs from its frozen graph");
+    }
+    var rows =
+        dsl.fetch(
+            "SELECT m.id AS mapping_id,m.world_instance_id AS mapping_world_instance_id,"
+                + "m.canonical_game_instance_id AS mapping_game_instance_id,m.family AS mapping_family,"
+                + "m.template_id AS mapping_template_id,m.runtime_row_id AS mapping_runtime_row_id,"
+                + "m.runtime_identity AS mapping_runtime_identity,ri.id AS region_row_id,"
+                + "ri.world_instance_id AS region_world_instance_id,ri.tenant_id AS region_tenant_key,"
+                + "ri.game_instance_id AS region_game_instance_key,"
+                + "ri.canonical_region_instance_id,ri.operational_region_id "
+                + "FROM world_canonical_instance_topology_identity m FULL OUTER JOIN region_instance ri "
+                + "ON m.family='REGION' AND m.runtime_row_id=ri.id "
+                + "WHERE (m.world_instance_id=? AND m.family='REGION') OR ri.world_instance_id=? "
+                + "OR (ri.tenant_id=? AND ri.game_instance_id=?)",
+            worldInstanceId,
+            worldInstanceId,
+            tenantKey,
+            gameInstanceKey);
+    if (rows.size() != expectedCount) {
+      throw invalid("Canonical World REGION materialization has missing or extra retained rows");
+    }
+    Map<UUID, UUID> assignments = new LinkedHashMap<>();
+    Set<UUID> seenTemplates = new HashSet<>();
+    Set<UUID> seenOperationalIds = new HashSet<>();
+    for (Record row : rows) {
+      Long mappingId = row.get("mapping_id", Long.class);
+      Long regionRowId = row.get("region_row_id", Long.class);
+      if (mappingId == null || regionRowId == null) {
+        throw invalid(
+            "Canonical World REGION row lacks its exact topology identity or runtime row");
+      }
+      if (!"REGION".equals(required(row, "mapping_family", String.class))
+          || required(row, "mapping_world_instance_id", Long.class) != worldInstanceId
+          || !association
+              .identity()
+              .canonicalGameInstanceId()
+              .equals(required(row, "mapping_game_instance_id", UUID.class))
+          || required(row, "mapping_runtime_row_id", Long.class).longValue()
+              != regionRowId.longValue()
+          || required(row, "region_world_instance_id", Long.class) != worldInstanceId
+          || required(row, "region_tenant_key", Long.class) != tenantKey
+          || required(row, "region_game_instance_key", Long.class) != gameInstanceKey) {
+        throw invalid("Canonical World REGION row differs from its exact instance scope");
+      }
+      UUID templateId = required(row, "mapping_template_id", UUID.class);
+      UUID canonicalRegionId = required(row, "canonical_region_instance_id", UUID.class);
+      UUID mappedCanonicalRegionId = required(row, "mapping_runtime_identity", UUID.class);
+      UUID operationalRegionId = required(row, "operational_region_id", UUID.class);
+      if (!expectedRegionTemplates.contains(templateId)
+          || !seenTemplates.add(templateId)
+          || !canonicalRegionId.equals(mappedCanonicalRegionId)
+          || canonicalRegionId.equals(operationalRegionId)
+          || !seenOperationalIds.add(operationalRegionId)
+          || assignments.putIfAbsent(canonicalRegionId, operationalRegionId) != null) {
+        throw invalid("Canonical World REGION assignment is duplicate or differs from its graph");
+      }
+    }
+    if (!seenTemplates.equals(expectedRegionTemplates) || assignments.size() != expectedCount) {
+      throw invalid("Canonical World REGION assignments do not completely cover the frozen graph");
+    }
+    return assignments;
   }
 
   private void requireOriginalSelector(
@@ -573,6 +742,26 @@ public final class WorldCanonicalInstanceLifecycleReadRepository {
     JsonNode value = parent.get(field);
     if (value == null || !value.isObject()) throw invalid(field + " must be an object");
     return value;
+  }
+
+  private static String text(JsonNode parent, String field) {
+    JsonNode value = parent == null ? null : parent.get(field);
+    if (value == null || !value.isTextual() || value.textValue().isBlank()) {
+      throw invalid("Retained World preparation " + field + " is missing");
+    }
+    return value.textValue();
+  }
+
+  private static UUID parseCanonicalUuid(String value, String label) {
+    try {
+      UUID parsed = UUID.fromString(value);
+      if (parsed.equals(new UUID(0L, 0L)) || !parsed.toString().equals(value)) {
+        throw invalid(label + " must be a canonical non-nil UUID");
+      }
+      return parsed;
+    } catch (IllegalArgumentException malformed) {
+      throw invalid(label + " must be a canonical non-nil UUID");
+    }
   }
 
   private static void requireText(JsonNode parent, String field, String expected) {

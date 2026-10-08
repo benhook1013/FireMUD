@@ -1,5 +1,6 @@
 package net.firedevops.firemud.worldmanagement.tenant;
 
+import java.sql.Connection;
 import java.util.Arrays;
 import java.util.Objects;
 import java.util.Optional;
@@ -29,7 +30,19 @@ public final class WorldPublishedStartLocationRepository {
     if (TransactionSynchronizationManager.isActualTransactionActive()) {
       throw new ConflictException("World published selector read requires no caller transaction");
     }
-    var selected = frozen.readCommitted(Objects.requireNonNull(request, "request"));
+    return readSource(Objects.requireNonNull(request, "request"), false);
+  }
+
+  /** Joins both immutable journals within one caller-owned read-only RR snapshot. */
+  Optional<WorldPublishedStartLocationSource> readInOwnedSnapshot(CaptureRequest request) {
+    requireOwnedReadOnlyRepeatableReadSnapshot();
+    return readSource(Objects.requireNonNull(request, "request"), true);
+  }
+
+  private Optional<WorldPublishedStartLocationSource> readSource(
+      CaptureRequest request, boolean ownedSnapshot) {
+    var selected =
+        ownedSnapshot ? frozen.readInOwnedSnapshot(request) : frozen.readCommitted(request);
     if (selected.isEmpty()) return Optional.empty();
     var capture = selected.orElseThrow();
     var plan = capture.request().plan();
@@ -50,11 +63,13 @@ public final class WorldPublishedStartLocationRepository {
     var account =
         DraftAuthorizationFenceBinding.fromStored(
             rows.getFirst().get("account_binding_bytes", byte[].class));
+    var appliedRead =
+        ownedSnapshot
+            ? applications.readInOwnedSnapshot(request.targetNamespace(), account.canonicalBytes())
+            : applications.readCommitted(request.targetNamespace(), account.canonicalBytes());
     var applied =
-        applications
-            .readCommitted(request.targetNamespace(), account.canonicalBytes())
-            .orElseThrow(
-                () -> new ConflictException("World published selector lacks committed APPLIED"));
+        appliedRead.orElseThrow(
+            () -> new ConflictException("World published selector lacks committed APPLIED"));
     var application = applied.application();
     var receipt =
         applied
@@ -75,5 +90,20 @@ public final class WorldPublishedStartLocationRepository {
           "World published selector differs from original frozen application");
     }
     return Optional.of(new WorldPublishedStartLocationSource(capture, applied, receipt));
+  }
+
+  private void requireOwnedReadOnlyRepeatableReadSnapshot() {
+    if (!TransactionSynchronizationManager.isActualTransactionActive()
+        || !TransactionSynchronizationManager.isCurrentTransactionReadOnly()
+        || !Integer.valueOf(Connection.TRANSACTION_REPEATABLE_READ)
+            .equals(TransactionSynchronizationManager.getCurrentTransactionIsolationLevel())) {
+      throw new ConflictException(
+          "World published selector snapshot read requires an active read-only REPEATABLE READ owner transaction");
+    }
+    Integer jdbcIsolation = dsl.connectionResult(Connection::getTransactionIsolation);
+    if (!Integer.valueOf(Connection.TRANSACTION_REPEATABLE_READ).equals(jdbcIsolation)) {
+      throw new ConflictException(
+          "World published selector snapshot read requires actual JDBC REPEATABLE READ isolation");
+    }
   }
 }
