@@ -490,7 +490,11 @@ public final class GameDesignPublicationTerminalEvidence {
     }
 
     int positiveInt() {
-      return Math.toIntExact(positiveLong(text()));
+      long value = positiveLong(text());
+      if (value > Integer.MAX_VALUE) {
+        throw new IllegalArgumentException("Positive integer exceeds supported range");
+      }
+      return (int) value;
     }
 
     int count() {
