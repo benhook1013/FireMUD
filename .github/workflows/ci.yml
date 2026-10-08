@@ -422,6 +422,8 @@ jobs:
           bash ./dev-tools/tests/trust-bootstrap-issuance-contract.sh
           bash ./dev-tools/tests/trust-bootstrap-live-proof-contract.sh
           bash ./dev-tools/tests/trust-bootstrap-provision-contract.sh
+          bash ./dev-tools/tests/account-jwt-bootstrap-fixture-contract.sh
+          bash ./dev-tools/tests/game-session-factory-qualification-contract.sh
           bash ./dev-tools/tests/preview-cleanup-proof-contract.sh
           bash ./dev-tools/tests/hosted-identity-controller-manifest-contract.sh
           bash ./dev-tools/tests/hosted-identity-controller-workflow-contract.sh
@@ -1232,7 +1234,6 @@ jobs:
           workflow-name: CI — Validation
           workflow-file: ci.yml
           workflow-path: .github/workflows/ci.yml
-          assessment-mode: ${{ github.event.pull_request.number == 3081 && github.event.pull_request.head.ref == 'codex/required-gate-native-rehearsal-v2' && 'assess' || 'poll' }}
 
       - name: Report dependency-deferred required gate
         if: ${{ steps.preserved_gate.outputs.assessment == 'dependency-deferred' }}

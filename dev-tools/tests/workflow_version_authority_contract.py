@@ -148,7 +148,7 @@ def main() -> int:
 
     ap = root / "config/workflow-tool-versions.env"
     a = authority(ap)
-    versions = ["KUBECTL", "HELM", "GH", "BUF", "KUBECONFORM", "VELERO", "ACTIONLINT", "TRIVY", "LYCHEE", "ORT", "ZAP"]
+    versions = ["KUBECTL", "KIND", "HELM", "GH", "BUF", "KUBECONFORM", "VELERO", "ACTIONLINT", "TRIVY", "LYCHEE", "ORT", "ZAP"]
     artifact_versions = {
         "SHELLCHECK": r"\d+\.\d+\.\d+",
         "CLOC": r"\d+\.\d+",
@@ -162,7 +162,14 @@ def main() -> int:
             fail(f"{tool} must have an exact pinned release version")
     if a["CHROME_FOR_TESTING_VERSION"] != a["CHROMEDRIVER_VERSION"]:
         fail("Chrome for Testing and ChromeDriver must use the exact same release version")
+    if not re.fullmatch(r"v\d+\.\d+\.\d+", a.get("KIND_NODE_IMAGE_VERSION", "")):
+        fail("KIND_NODE_IMAGE_VERSION must be an exact v-prefixed Kubernetes version")
+    kubectl_minor = a["KUBECTL_VERSION"].split(".")[:2]
+    kind_node_minor = a["KIND_NODE_IMAGE_VERSION"][1:].split(".")[:2]
+    if kind_node_minor != kubectl_minor:
+        fail("kind node image and kubectl must use the same Kubernetes minor")
     pairs = {
+        "KIND": "KIND_LINUX_AMD64",
         "GH": "GH_LINUX_AMD64",
         "BUF": "BUF_LINUX_X86_64",
         "KUBECONFORM": "KUBECONFORM_LINUX_AMD64",
@@ -178,13 +185,13 @@ def main() -> int:
             fail(f"{tool} checksum version is stale")
         if not re.fullmatch(r"[0-9a-f]{64}", a.get(f"{stem}_SHA256", "")):
             fail(f"{tool} checksum is invalid")
-    for tool in ("ORT", "ZAP"):
+    for tool in ("KIND_NODE_IMAGE", "ORT", "ZAP"):
         if not re.fullmatch(r"sha256:[0-9a-f]{64}", a.get(f"{tool}_DIGEST", "")):
             fail(f"{tool} digest is invalid")
     expected = (
         {f"{x}_VERSION" for x in versions + list(artifact_versions)}
         | {f"{s}_{suffix}" for s in pairs.values() for suffix in ("CHECKSUM_VERSION", "SHA256")}
-        | {"ORT_DIGEST", "ZAP_DIGEST"}
+        | {"KIND_NODE_IMAGE_VERSION", "KIND_NODE_IMAGE_DIGEST", "ORT_DIGEST", "ZAP_DIGEST"}
     )
     if set(a) != expected:
         fail("workflow tool authority has unexpected or missing keys")
@@ -200,6 +207,9 @@ def main() -> int:
     loader_run = loader_runs[0]
     expected_loader_outputs = {
         "kubectl-version",
+        "kind-version",
+        "kind-linux-amd64-sha256",
+        "kind-node-image",
         "helm-version",
         "gh-version",
         "gh-linux-amd64-sha256",
@@ -249,6 +259,53 @@ def main() -> int:
         )
         if canonical.returncode != 0:
             fail(f"workflow authority loader rejects canonical authority: {canonical.stderr.strip()}")
+        canonical_outputs = output_path.read_text()
+        for expected_output in (
+            f"kind-version={a['KIND_VERSION']}",
+            f"kind-linux-amd64-sha256={a['KIND_LINUX_AMD64_SHA256']}",
+            f"kind-node-image=kindest/node:{a['KIND_NODE_IMAGE_VERSION']}@{a['KIND_NODE_IMAGE_DIGEST']}",
+        ):
+            if expected_output not in canonical_outputs.splitlines():
+                fail(f"workflow authority loader omitted kind output: {expected_output}")
+        mismatched_kind_checksum = re.sub(
+            r"^KIND_LINUX_AMD64_CHECKSUM_VERSION=.*$",
+            "KIND_LINUX_AMD64_CHECKSUM_VERSION=0.32.0",
+            ap.read_text(),
+            flags=re.MULTILINE,
+        )
+        (authority_path / "workflow-tool-versions.env").write_text(mismatched_kind_checksum)
+        output_path.write_text("sentinel\n")
+        stale_kind_checksum = subprocess.run(
+            ["bash", "-c", loader_run], cwd=temporary, env=env, capture_output=True, text=True, check=False
+        )
+        if stale_kind_checksum.returncode == 0 or output_path.read_text() != "sentinel\n":
+            fail("workflow authority loader accepts a kind binary checksum for another version")
+        invalid_kind_node_digest = re.sub(
+            r"^KIND_NODE_IMAGE_DIGEST=.*$",
+            "KIND_NODE_IMAGE_DIGEST=sha256:" + "A" * 64,
+            ap.read_text(),
+            flags=re.MULTILINE,
+        )
+        (authority_path / "workflow-tool-versions.env").write_text(invalid_kind_node_digest)
+        output_path.write_text("sentinel\n")
+        invalid_node_digest = subprocess.run(
+            ["bash", "-c", loader_run], cwd=temporary, env=env, capture_output=True, text=True, check=False
+        )
+        if invalid_node_digest.returncode == 0 or output_path.read_text() != "sentinel\n":
+            fail("workflow authority loader accepts a non-lowercase kind node image digest")
+        mismatched_kind_minor = re.sub(
+            r"^KIND_NODE_IMAGE_VERSION=.*$",
+            "KIND_NODE_IMAGE_VERSION=v1.36.0",
+            ap.read_text(),
+            flags=re.MULTILINE,
+        )
+        (authority_path / "workflow-tool-versions.env").write_text(mismatched_kind_minor)
+        output_path.write_text("sentinel\n")
+        kind_minor_mismatch = subprocess.run(
+            ["bash", "-c", loader_run], cwd=temporary, env=env, capture_output=True, text=True, check=False
+        )
+        if kind_minor_mismatch.returncode == 0 or output_path.read_text() != "sentinel\n":
+            fail("workflow authority loader accepts a kind node image on another Kubernetes minor")
         chromedriver_parts = a["CHROMEDRIVER_VERSION"].split(".")
         if len(chromedriver_parts) < 2 or not chromedriver_parts[-1].isdigit():
             fail("canonical CHROMEDRIVER_VERSION must be dot-separated with a numeric final segment")
@@ -1465,13 +1522,31 @@ def main() -> int:
     for required in ("publisher checksum", "cluster-version upgrade"):
         if required not in kubectl_notes:
             fail(f"Renovate kubectl guidance is missing: {required}")
+    kind_node_rules = [
+        rule
+        for rule in renovate.get("packageRules", [])
+        if rule.get("matchManagers") == ["custom.regex"] and rule.get("matchPackageNames") == ["kindest/node"]
+    ]
+    if len(kind_node_rules) != 1:
+        fail("Renovate must define exactly one kindest/node compatibility rule")
+    kind_node_rule = kind_node_rules[0]
+    if (
+        kind_node_rule.get("allowedVersions") != "/^v1\\.35\\.[0-9]+$/"
+        or kind_node_rule.get("pinDigests") is not True
+        or kind_node_rule.get("automerge") is not False
+    ):
+        fail("Renovate kindest/node proposals must remain on Kubernetes v1.35 patch and reviewed digest updates")
+    kind_node_notes = "\n".join(kind_node_rule.get("prBodyNotes") or [])
+    for required in ("paired, reviewed Kubernetes minor update", "cluster and kubectl compatibility cap together"):
+        if required not in kind_node_notes:
+            fail(f"Renovate kindest/node guidance is missing: {required}")
     pip_rebase_rules = [
         rule for rule in renovate.get("packageRules", []) if rule.get("matchManagers") == ["pip_requirements"]
     ]
     if len(pip_rebase_rules) != 1 or pip_rebase_rules[0].get("rebaseWhen") != "behind-base-branch":
         fail("Renovate hashed Python requirements must refresh behind-base branches")
     custom_managers = renovate.get("customManagers", [])
-    if len(custom_managers) != 17:
+    if len(custom_managers) != 18:
         fail(
             "Renovate must define workflow authority managers plus the bounded Testcontainers image manager"
         )
@@ -1503,6 +1578,7 @@ def main() -> int:
         fail("Renovate pattern translation must preserve named captures")
     expected_dep_names = {
         "KUBECTL": "kubernetes/kubernetes",
+        "KIND": "kubernetes-sigs/kind",
         "HELM": "helm/helm",
         "GH": "cli/cli",
         "BUF": "bufbuild/buf",
@@ -1514,6 +1590,7 @@ def main() -> int:
         "CLOC": "AlDanial/cloc",
     }
     expected_image_dep_names = {
+        "KIND_NODE_IMAGE": "kindest/node",
         "ORT": "ghcr.io/oss-review-toolkit/ort",
         "ZAP": "ghcr.io/zaproxy/zaproxy",
     }
@@ -1529,6 +1606,7 @@ def main() -> int:
         "ACTIONLINT": "rhysd/actionlint",
     }
     attachment_specs = {
+        "KIND": ("kubernetes-sigs/kind", "v{{{currentValue}}}", "semver", "^v", "KIND_LINUX_AMD64"),
         "SHELLCHECK": ("koalaman/shellcheck", "v{{{currentValue}}}", "semver", "^v", "SHELLCHECK_LINUX_X86_64"),
         "CLOC": ("AlDanial/cloc", "v{{{currentValue}}}", "loose", "^v", "CLOC_SOURCE"),
         "GH": ("cli/cli", "v{{{currentValue}}}", "semver", "^v", "GH_LINUX_AMD64"),
@@ -1714,29 +1792,31 @@ def main() -> int:
         and manager.get("managerFilePatterns") == ["/^config/workflow-tool-versions\\.env$/"]
     ]
     if len(docker_managers) != 1:
-        fail("Renovate must define exactly one ORT/ZAP Docker manager")
-    ort_zap_image_managers = docker_managers
-    ort_zap_image_manager = ort_zap_image_managers[0]
-    if "currentValueTemplate" in ort_zap_image_manager or "autoReplaceStringTemplate" in ort_zap_image_manager:
-        fail("ORT/ZAP image manager must not inherit Velero value or replacement templates")
-    ort_zap_pattern_sources = ort_zap_image_manager.get("matchStrings", [None])
-    if len(ort_zap_pattern_sources) != 1:
-        fail("ORT/ZAP image manager must define one match pattern")
+        fail("Renovate must define exactly one kindest/node and GHCR Docker manager")
+    tool_image_manager = docker_managers[0]
+    if "currentValueTemplate" in tool_image_manager or "autoReplaceStringTemplate" in tool_image_manager:
+        fail("kindest/node and GHCR image manager must not inherit Velero value or replacement templates")
+    tool_image_pattern_sources = tool_image_manager.get("matchStrings", [None])
+    if len(tool_image_pattern_sources) != 1:
+        fail("kindest/node and GHCR image manager must define one match pattern")
     try:
-        ort_zap_pattern = compile_re2_pattern(ort_zap_pattern_sources[0])
+        tool_image_pattern = compile_re2_pattern(tool_image_pattern_sources[0])
     except (re.error, TypeError) as error:
-        fail(f"ORT/ZAP image manager pattern is invalid: {error}")
-    ort_zap_matches = list(ort_zap_pattern.finditer(authority_text))
-    if Counter(match.group("depName") for match in ort_zap_matches) != Counter(
-        expected_image_dep_names[x] for x in ("ORT", "ZAP")
+        fail(f"kindest/node and GHCR image manager pattern is invalid: {error}")
+    tool_image_matches = list(tool_image_pattern.finditer(authority_text))
+    if Counter(match.group("depName") for match in tool_image_matches) != Counter(
+        expected_image_dep_names[x] for x in ("KIND_NODE_IMAGE", "ORT", "ZAP")
     ):
-        fail("ORT/ZAP image manager must match each GHCR image exactly once and exclude Velero")
-    expected_ort_zap_digests = {expected_image_dep_names[key]: a[f"{key}_DIGEST"] for key in ("ORT", "ZAP")}
-    for match in ort_zap_matches:
-        if match.group("currentDigest") != expected_ort_zap_digests[match.group("depName")]:
-            fail("ORT/ZAP image manager must pair each GHCR image with its own authority digest")
-    if any(match.group("depName") == "velero/velero" for match in ort_zap_matches):
-        fail("ORT/ZAP image manager must not match the Velero authority block")
+        fail("kindest/node and GHCR image manager must match every image exactly once and exclude Velero")
+    expected_tool_image_digests = {
+        expected_image_dep_names[key]: a[f"{key}_DIGEST"]
+        for key in ("KIND_NODE_IMAGE", "ORT", "ZAP")
+    }
+    for match in tool_image_matches:
+        if match.group("currentDigest") != expected_tool_image_digests[match.group("depName")]:
+            fail("kindest/node and GHCR image manager must pair each image with its own authority digest")
+    if any(match.group("depName") == "velero/velero" for match in tool_image_matches):
+        fail("kindest/node and GHCR image manager must not match the Velero authority block")
     for manager_index, manager in enumerate(custom_managers):
         patterns = manager.get("matchStrings") if isinstance(manager, dict) else None
         if not isinstance(patterns, list) or not patterns:
