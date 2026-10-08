@@ -55,6 +55,23 @@ public class PublishAttemptRepository {
       DSL.field(DSL.name("game_design_version_tenant_key"), String.class);
   private static final Field<Long> SELECTION_VERSION_ID =
       DSL.field(DSL.name("game_design_version_row_id"), Long.class);
+  private static final Field<?>[] PUBLISH_ATTEMPT_RETURNING_FIELDS = {
+    ID,
+    REVISION,
+    TENANT_ID,
+    PUBLISH_WORKFLOW_ID,
+    PUBLISH_TYPE,
+    STATUS,
+    VERSION_ID,
+    VERSION_NUMBER,
+    SCRIPT_PATCH_VERSION,
+    BASE_VERSION_ID,
+    REQUEST_DIGEST,
+    FAILURE_CODE,
+    FAILURE_MESSAGE,
+    CREATED_AT,
+    COMPLETED_AT
+  };
 
   private final DSLContext dsl;
 
@@ -207,8 +224,11 @@ public class PublishAttemptRepository {
               .set(FAILURE_MESSAGE, attempt.getFailureMessage())
               .set(CREATED_AT, JooqPersistenceSupport.toTimestamp(createdAt))
               .set(COMPLETED_AT, JooqPersistenceSupport.toTimestamp(attempt.getCompletedAt()))
-              .returning()
+              .returning(PUBLISH_ATTEMPT_RETURNING_FIELDS)
               .fetchOne();
+      if (record == null) {
+        throw new IllegalStateException("publish attempt insert returned no row");
+      }
       return toEntity(record);
     }
     Long expectedRevision = attempt.getRevision();
@@ -238,7 +258,7 @@ public class PublishAttemptRepository {
                 ID.eq(attempt.getId())
                     .and(REVISION.eq(expectedRevision))
                     .and(STATUS.eq(PublishAttemptStatus.PENDING.name())))
-            .returning()
+            .returning(PUBLISH_ATTEMPT_RETURNING_FIELDS)
             .fetchOne();
     if (updated == null) {
       throw new IllegalStateException("publish attempt is stale or terminal");

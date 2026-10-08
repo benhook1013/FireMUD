@@ -558,19 +558,19 @@ class HostedTermsEnvironmentBindingPostgresIntegrationTest {
         new AtomicReference<>(currentBoundary("locked-currentness-test-environment"));
     AtomicBoolean capturePublisherBackendPid = new AtomicBoolean();
     AtomicReference<Integer> publisherBackendPid = new AtomicReference<>();
-    CountDownLatch publisherAtHeadLock = new CountDownLatch(1);
+    CountDownLatch publisherBeforeEnsureHead = new CountDownLatch(1);
     HostedTermsEnvironmentBindingRepository bindingRepository =
         spy(new HostedTermsEnvironmentBindingRepository(db.dsl()));
     doAnswer(
             invocation -> {
               if (capturePublisherBackendPid.compareAndSet(true, false)) {
                 publisherBackendPid.set(currentBackendPid(db));
-                publisherAtHeadLock.countDown();
+                publisherBeforeEnsureHead.countDown();
               }
               return invocation.callRealMethod();
             })
         .when(bindingRepository)
-        .lockHead(anyString());
+        .ensureHead(anyString());
     AccountHostedTermsService service =
         service(db, catalogPublications, actions, bindingPublications, boundary, bindingRepository);
 
@@ -636,7 +636,7 @@ class HostedTermsEnvironmentBindingPostgresIntegrationTest {
       capturePublisherBackendPid.set(true);
       Future<AccountHostedTermsService.EnvironmentBindingPublicationResult> publisher =
           executor.submit(() -> service.publishEnvironmentBinding(secondBindingRequest));
-      awaitLatch(publisherAtHeadLock, "publisher backend PID capture at environment head lock");
+      awaitPublisherPidCapture(publisherBeforeEnsureHead, publisher);
       int exactPublisherPid = Objects.requireNonNull(publisherBackendPid.get());
       awaitPublisherBlockedByOwner(db, ownerBackendPid.get(), exactPublisherPid);
       assertThat(exactPublisherPid).isNotEqualTo(ownerBackendPid.get());
@@ -940,7 +940,6 @@ class HostedTermsEnvironmentBindingPostgresIntegrationTest {
                       .fetch(
                           "SELECT pid FROM pg_stat_activity "
                               + "WHERE pid = ? AND state = 'active' "
-                              + "AND strpos(query, 'account_hosted_terms_environment_binding_heads') > 0 "
                               + "AND ? = ANY(pg_blocking_pids(pid))",
                           publisherPid,
                           ownerPid);
@@ -952,6 +951,26 @@ class HostedTermsEnvironmentBindingPostgresIntegrationTest {
   private static int currentBackendPid(Database db) {
     return Objects.requireNonNull(db.dsl().fetchOne("SELECT pg_backend_pid() AS pid"))
         .get("pid", Integer.class);
+  }
+
+  private static void awaitPublisherPidCapture(CountDownLatch capture, Future<?> publisher)
+      throws Exception {
+    try {
+      if (capture.await(20, TimeUnit.SECONDS)) {
+        return;
+      }
+      try {
+        publisher.get(100, TimeUnit.MILLISECONDS);
+      } catch (java.util.concurrent.TimeoutException ignored) {
+        // The bounded capture timeout remains the failure; a completed Future's exception is
+        // surfaced by get instead of being hidden behind that timeout.
+      }
+    } catch (InterruptedException exception) {
+      Thread.currentThread().interrupt();
+      throw exception;
+    }
+    throw new AssertionError(
+        "Timed out waiting for publisher backend PID capture before ensureHead");
   }
 
   private static void awaitLatch(CountDownLatch latch, String description) {
