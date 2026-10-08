@@ -1,6 +1,7 @@
 package net.firedevops.firemud.accountservice.repository;
 
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
+import java.sql.Connection;
 import java.util.Objects;
 import java.util.UUID;
 import net.firedevops.firemud.accountservice.dto.AccountGameplayAdmissionCommitConfirmation;
@@ -9,6 +10,7 @@ import net.firedevops.firemud.accountservice.dto.AccountGameplayAdmissionLeaseOp
 import net.firedevops.firemud.common.account.admission.AccountGameplayAdmissionLeaseEvidence;
 import org.jooq.DSLContext;
 import org.jooq.Record;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 /**
  * Unregistered, non-admitting storage confirmation for an already retained COMMITTED lease.
@@ -32,33 +34,45 @@ public final class AccountGameplayAdmissionCommitConfirmationRepository {
   /** Creates or exactly replays a database-stamped receipt for the original proven COMMIT. */
   AccountGameplayAdmissionCommitConfirmation confirmCommitted(
       AccountGameplayAdmissionLeaseEvidence evidence, UUID bindingDecisionId) {
-    AccountGameplayAdmissionLeaseOperation operation = exactCommitted(evidence, bindingDecisionId);
+    UUID requestId = validateRequest(evidence, bindingDecisionId);
     Record row =
         dsl.fetchOne(
             "SELECT * FROM account_gameplay_admission_confirm_committed(?, ?, ?)",
-            requestId(evidence),
+            requestId,
             evidence.sha256(),
             bindingDecisionId);
+    if (row == null) throw unavailable();
+    AccountGameplayAdmissionLeaseOperation operation = exactCommitted(evidence, bindingDecisionId);
     return confirmation(row, operation);
   }
 
   /** Reads only a committed, independently durable receipt; this path never creates one. */
   AccountGameplayAdmissionCommitConfirmation readCommitConfirmation(
       AccountGameplayAdmissionLeaseEvidence evidence, UUID bindingDecisionId) {
-    AccountGameplayAdmissionLeaseOperation operation = exactCommitted(evidence, bindingDecisionId);
+    UUID requestId = validateRequest(evidence, bindingDecisionId);
     Record row =
         dsl.fetchOne(
             "SELECT * FROM account_gameplay_admission_read_commit_confirmation(?, ?, ?)",
-            requestId(evidence),
+            requestId,
             evidence.sha256(),
             bindingDecisionId);
+    if (row == null) throw unavailable();
+    AccountGameplayAdmissionLeaseOperation operation = exactCommitted(evidence, bindingDecisionId);
     return confirmation(row, operation);
+  }
+
+  private static UUID validateRequest(
+      AccountGameplayAdmissionLeaseEvidence evidence, UUID bindingDecisionId) {
+    requireWritableSerializableTransaction();
+    Objects.requireNonNull(evidence);
+    UUID requestId = requestId(evidence);
+    requireUuidV4(requestId);
+    requireUuidV4(bindingDecisionId);
+    return requestId;
   }
 
   private AccountGameplayAdmissionLeaseOperation exactCommitted(
       AccountGameplayAdmissionLeaseEvidence evidence, UUID bindingDecisionId) {
-    Objects.requireNonNull(evidence);
-    requireUuidV4(bindingDecisionId);
     AccountGameplayAdmissionLeaseOperation operation =
         leaseRepository
             .readExact(evidence)
@@ -102,9 +116,18 @@ public final class AccountGameplayAdmissionCommitConfirmationRepository {
     return UUID.fromString((String) evidence.carrier().get("requestId"));
   }
 
+  private static void requireWritableSerializableTransaction() {
+    if (!TransactionSynchronizationManager.isActualTransactionActive()
+        || TransactionSynchronizationManager.isCurrentTransactionReadOnly()
+        || !Integer.valueOf(Connection.TRANSACTION_SERIALIZABLE)
+            .equals(TransactionSynchronizationManager.getCurrentTransactionIsolationLevel())) {
+      throw new IllegalStateException("Writable SERIALIZABLE Account transaction required");
+    }
+  }
+
   private static void requireUuidV4(UUID value) {
     if (value == null || value.version() != 4 || value.variant() != 2)
-      throw new IllegalArgumentException("Canonical non-nil UUIDv4 decision identity required");
+      throw new IllegalArgumentException("Canonical non-nil UUIDv4 identity required");
   }
 
   private static IllegalStateException unavailable() {

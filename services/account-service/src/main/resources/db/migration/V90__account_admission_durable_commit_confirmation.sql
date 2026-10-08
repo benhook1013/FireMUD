@@ -105,6 +105,7 @@ $$;
 CREATE FUNCTION account_gameplay_admission_confirmation_guard() RETURNS TRIGGER LANGUAGE plpgsql AS $$
 DECLARE
     operation account_gameplay_admission_lease_operations%ROWTYPE;
+    locked_operation account_gameplay_admission_lease_operations%ROWTYPE;
     finalization_status TEXT;
     insert_fence pg_lsn;
     flush_fence pg_lsn;
@@ -128,13 +129,7 @@ BEGIN
         RAISE EXCEPTION 'Account admission confirmation operation missing'
             USING ERRCODE = '23514', CONSTRAINT = 'account_admission_confirmation_operation_required';
     END IF;
-    PERFORM 1 FROM accounts WHERE account_uuid = operation.account_uuid FOR UPDATE;
-    IF NOT FOUND THEN
-        RAISE EXCEPTION 'Account admission confirmation owner missing'
-            USING ERRCODE = '23514', CONSTRAINT = 'account_admission_confirmation_owner_required';
-    END IF;
-    SELECT * INTO operation FROM account_gameplay_admission_lease_operations WHERE request_id = NEW.request_id;
-    IF NOT FOUND OR operation.status <> 'COMMITTED' OR operation.finalization_xid IS NULL
+    IF operation.status <> 'COMMITTED' OR operation.finalization_xid IS NULL
         OR NEW.evidence_sha256 IS DISTINCT FROM operation.evidence_sha256
         OR NEW.binding_decision_id IS DISTINCT FROM operation.binding_decision_id THEN
         RAISE EXCEPTION 'Account admission confirmation exact committed binding required'
@@ -154,15 +149,28 @@ BEGIN
         RAISE EXCEPTION 'Account admission confirmation durable primary required'
             USING ERRCODE = '23514', CONSTRAINT = 'account_admission_confirmation_durable_primary';
     END IF;
-    -- Independent committed visibility precedes this insert fence; its original COMMIT WAL is
-    -- therefore no later than the fence. Never carry an unconfirmed fence across connections.
+    -- Independent committed visibility precedes this fixed insert fence; the original COMMIT
+    -- WAL is therefore covered. Capture BEFORE this proof transaction's tuple locks emit WAL:
+    -- an idle primary need not flush an uncommitted partial page containing those lock records.
     insert_fence := pg_current_wal_insert_lsn();
     IF insert_fence IS NULL OR insert_fence <= '0/0'::pg_lsn THEN
         RAISE EXCEPTION 'Account admission confirmation WAL coverage unavailable'
             USING ERRCODE = '23514', CONSTRAINT = 'account_admission_confirmation_wal_coverage';
     END IF;
-    -- A fixed fence permits read-only polling while lock WAL is flushed naturally. The bounded
-    -- observation budget is not a new lease deadline, and no flush or new marker is forced.
+    PERFORM 1 FROM accounts WHERE account_uuid = operation.account_uuid FOR UPDATE;
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'Account admission confirmation owner missing'
+            USING ERRCODE = '23514', CONSTRAINT = 'account_admission_confirmation_owner_required';
+    END IF;
+    SELECT * INTO locked_operation FROM account_gameplay_admission_lease_operations
+        WHERE request_id = NEW.request_id FOR UPDATE;
+    IF NOT FOUND OR locked_operation IS DISTINCT FROM operation THEN
+        RAISE EXCEPTION 'Account admission confirmation exact committed binding required'
+            USING ERRCODE = '23514', CONSTRAINT = 'account_admission_confirmation_binding_required';
+    END IF;
+    -- Account-first locking serializes first receipt creation, and exact locked revalidation
+    -- preserves the independently observed immutable operation. Only the pre-lock fence needs
+    -- coverage; this bounded polling creates no marker, forces no flush and renews no deadline.
     FOR observation IN 1..50 LOOP
         flush_fence := pg_current_wal_flush_lsn();
         -- A separate statement AFTER each flush observation is essential: SQL expression order
@@ -211,36 +219,52 @@ BEGIN
         RAISE EXCEPTION 'Account admission confirmation operation missing'
             USING ERRCODE = '23514', CONSTRAINT = 'account_admission_confirmation_operation_required';
     END IF;
-    PERFORM 1 FROM accounts WHERE account_uuid = operation.account_uuid FOR UPDATE;
-    IF NOT FOUND THEN
-        RAISE EXCEPTION 'Account admission confirmation owner missing'
-            USING ERRCODE = '23514', CONSTRAINT = 'account_admission_confirmation_owner_required';
-    END IF;
-    SELECT * INTO operation FROM account_gameplay_admission_lease_operations WHERE request_id = requested_request_id;
-    IF NOT FOUND OR operation.status <> 'COMMITTED' OR operation.finalization_xid IS NULL
+    IF operation.status <> 'COMMITTED' OR operation.finalization_xid IS NULL
         OR expected_sha IS DISTINCT FROM operation.evidence_sha256
         OR expected_decision IS DISTINCT FROM operation.binding_decision_id THEN
         RAISE EXCEPTION 'Account admission confirmation exact committed binding required'
             USING ERRCODE = '23514', CONSTRAINT = 'account_admission_confirmation_binding_required';
     END IF;
     SELECT * INTO receipt FROM account_gameplay_admission_commit_confirmations WHERE request_id = requested_request_id;
-    IF FOUND THEN
-        IF receipt.account_uuid IS DISTINCT FROM operation.account_uuid
-            OR receipt.lease_id IS DISTINCT FROM operation.lease_id
-            OR receipt.lease_fence IS DISTINCT FROM operation.lease_fence
-            OR receipt.evidence_sha256 IS DISTINCT FROM operation.evidence_sha256
-            OR receipt.binding_decision_id IS DISTINCT FROM operation.binding_decision_id
-            OR receipt.expires_at_ms IS DISTINCT FROM operation.expires_at_ms
-            OR receipt.finalization_xid IS DISTINCT FROM operation.finalization_xid THEN
-            RAISE EXCEPTION 'Account admission confirmation immutable binding conflict'
-                USING ERRCODE = '23514', CONSTRAINT = 'account_admission_confirmation_binding_conflict';
+    IF NOT FOUND THEN
+        -- The INSERT guard owns initial proof observation and capture before any tuple lock.
+        -- A concurrent stale SERIALIZABLE insertion reports 40001 through ON CONFLICT rather
+        -- than leaking a raw uniqueness failure. No caller proof or renewed deadline is accepted.
+        INSERT INTO account_gameplay_admission_commit_confirmations(request_id, evidence_sha256, binding_decision_id)
+            VALUES (requested_request_id, expected_sha, expected_decision)
+            ON CONFLICT (request_id) DO NOTHING RETURNING * INTO receipt;
+        IF FOUND THEN
+            RETURN NEXT receipt;
+            RETURN;
         END IF;
-        RETURN NEXT receipt;
-        RETURN;
     END IF;
-    -- No supplied timestamps, transaction IDs, WAL positions or renewed deadline are accepted.
-    INSERT INTO account_gameplay_admission_commit_confirmations(request_id, evidence_sha256, binding_decision_id)
-        VALUES (requested_request_id, expected_sha, expected_decision) RETURNING * INTO receipt;
+    -- Exact retained replay may occur after expiry. It locks Account first and revalidates the
+    -- immutable original decision, but neither re-proves nor replaces the receipt's timing bound.
+    PERFORM 1 FROM accounts WHERE account_uuid = operation.account_uuid FOR UPDATE;
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'Account admission confirmation owner missing'
+            USING ERRCODE = '23514', CONSTRAINT = 'account_admission_confirmation_owner_required';
+    END IF;
+    SELECT * INTO operation FROM account_gameplay_admission_lease_operations
+        WHERE request_id = requested_request_id FOR UPDATE;
+    IF NOT FOUND OR operation.status <> 'COMMITTED' OR operation.finalization_xid IS NULL
+        OR expected_sha IS DISTINCT FROM operation.evidence_sha256
+        OR expected_decision IS DISTINCT FROM operation.binding_decision_id THEN
+        RAISE EXCEPTION 'Account admission confirmation exact committed binding required'
+            USING ERRCODE = '23514', CONSTRAINT = 'account_admission_confirmation_binding_required';
+    END IF;
+    SELECT * INTO receipt FROM account_gameplay_admission_commit_confirmations
+        WHERE request_id = requested_request_id FOR UPDATE;
+    IF NOT FOUND OR receipt.account_uuid IS DISTINCT FROM operation.account_uuid
+        OR receipt.lease_id IS DISTINCT FROM operation.lease_id
+        OR receipt.lease_fence IS DISTINCT FROM operation.lease_fence
+        OR receipt.evidence_sha256 IS DISTINCT FROM operation.evidence_sha256
+        OR receipt.binding_decision_id IS DISTINCT FROM operation.binding_decision_id
+        OR receipt.expires_at_ms IS DISTINCT FROM operation.expires_at_ms
+        OR receipt.finalization_xid IS DISTINCT FROM operation.finalization_xid THEN
+        RAISE EXCEPTION 'Account admission confirmation immutable binding conflict'
+            USING ERRCODE = '23514', CONSTRAINT = 'account_admission_confirmation_binding_conflict';
+    END IF;
     RETURN NEXT receipt;
 END;
 $$;
@@ -251,6 +275,8 @@ RETURNS SETOF account_gameplay_admission_commit_confirmations LANGUAGE plpgsql A
 DECLARE
     operation account_gameplay_admission_lease_operations%ROWTYPE;
     receipt account_gameplay_admission_commit_confirmations%ROWTYPE;
+    locked_operation account_gameplay_admission_lease_operations%ROWTYPE;
+    locked_receipt account_gameplay_admission_commit_confirmations%ROWTYPE;
     insert_fence pg_lsn;
     flush_fence pg_lsn;
     observation INTEGER;
@@ -260,12 +286,6 @@ BEGIN
         RAISE EXCEPTION 'Account admission confirmation operation missing'
             USING ERRCODE = '23514', CONSTRAINT = 'account_admission_confirmation_operation_required';
     END IF;
-    PERFORM 1 FROM accounts WHERE account_uuid = operation.account_uuid FOR UPDATE;
-    IF NOT FOUND THEN
-        RAISE EXCEPTION 'Account admission confirmation owner missing'
-            USING ERRCODE = '23514', CONSTRAINT = 'account_admission_confirmation_owner_required';
-    END IF;
-    SELECT * INTO operation FROM account_gameplay_admission_lease_operations WHERE request_id = requested_request_id;
     SELECT * INTO receipt FROM account_gameplay_admission_commit_confirmations WHERE request_id = requested_request_id;
     IF NOT FOUND OR operation.status IS DISTINCT FROM 'COMMITTED'
         OR expected_sha IS DISTINCT FROM operation.evidence_sha256
@@ -291,10 +311,28 @@ BEGIN
         RAISE EXCEPTION 'Account admission confirmation durable primary required'
             USING ERRCODE = '23514', CONSTRAINT = 'account_admission_confirmation_durable_primary';
     END IF;
+    -- Capture after independent receipt visibility, before Account/operation/receipt lock WAL.
     insert_fence := pg_current_wal_insert_lsn();
     IF insert_fence IS NULL OR insert_fence <= '0/0'::pg_lsn THEN
         RAISE EXCEPTION 'Account admission confirmation WAL coverage unavailable'
             USING ERRCODE = '23514', CONSTRAINT = 'account_admission_confirmation_wal_coverage';
+    END IF;
+    PERFORM 1 FROM accounts WHERE account_uuid = operation.account_uuid FOR UPDATE;
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'Account admission confirmation owner missing'
+            USING ERRCODE = '23514', CONSTRAINT = 'account_admission_confirmation_owner_required';
+    END IF;
+    SELECT * INTO locked_operation FROM account_gameplay_admission_lease_operations
+        WHERE request_id = requested_request_id FOR UPDATE;
+    IF NOT FOUND OR locked_operation IS DISTINCT FROM operation THEN
+        RAISE EXCEPTION 'Account admission confirmation exact durable receipt required'
+            USING ERRCODE = '23514', CONSTRAINT = 'account_admission_confirmation_receipt_required';
+    END IF;
+    SELECT * INTO locked_receipt FROM account_gameplay_admission_commit_confirmations
+        WHERE request_id = requested_request_id FOR UPDATE;
+    IF NOT FOUND OR locked_receipt IS DISTINCT FROM receipt THEN
+        RAISE EXCEPTION 'Account admission confirmation exact durable receipt required'
+            USING ERRCODE = '23514', CONSTRAINT = 'account_admission_confirmation_receipt_required';
     END IF;
     FOR observation IN 1..50 LOOP
         flush_fence := pg_current_wal_flush_lsn();

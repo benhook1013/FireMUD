@@ -775,6 +775,126 @@ class AccountGameplayAdmissionLeasePersistenceIntegrationTest {
   }
 
   @Test
+  void idlePrimaryConfirmationCapturesBeforeLocksAndIndependentlyReadsExactReceipt() {
+    var context = context(null);
+    var original = pending(context, account(context));
+    var repository = new AccountGameplayAdmissionLeaseRepository(context.dsl());
+    UUID decision = UUID.randomUUID();
+    tx(context, () -> repository.recordCommitted(original, decision));
+    var unchanged = storageSnapshot(context);
+
+    // This fixture is idle: no marker, forced flush or unrelated writer is used to make proof
+    // succeed. The original finalizer's synchronous COMMIT already covers the pre-lock fence.
+    var receipt =
+        tx(
+            context,
+            () -> {
+              String beforeLocks =
+                  Objects.requireNonNull(
+                          context.dsl().fetchOne("SELECT pg_current_wal_insert_lsn()::text AS lsn"))
+                      .get("lsn", String.class);
+              var created = confirm(context, original, decision);
+              assertThat(created.get("wal_insert_lsn", String.class)).isEqualTo(beforeLocks);
+              assertThat(
+                      Objects.requireNonNull(
+                              context
+                                  .dsl()
+                                  .fetchOne(
+                                      "SELECT pg_current_wal_insert_lsn() > ?::pg_lsn AS advanced",
+                                      beforeLocks))
+                          .get("advanced", Boolean.class))
+                  .isTrue();
+              return created;
+            });
+
+    tx(
+        context,
+        () -> {
+          String beforeLocks =
+              Objects.requireNonNull(
+                      context.dsl().fetchOne("SELECT pg_current_wal_insert_lsn()::text AS lsn"))
+                  .get("lsn", String.class);
+          assertThat(readConfirmation(context, original, decision)).isEqualTo(receipt);
+          // Independent exact readback succeeds with its pre-call fence covered and advances WAL
+          // through its tuple locks. Background flush progress does not affect this assertion.
+          assertThat(
+                  Objects.requireNonNull(
+                          context
+                              .dsl()
+                              .fetchOne(
+                                  "SELECT pg_current_wal_insert_lsn() > ?::pg_lsn "
+                                      + "AND pg_current_wal_flush_lsn() >= ?::pg_lsn AS pre_call_fence_covered",
+                                  beforeLocks,
+                                  beforeLocks))
+                      .get("pre_call_fence_covered", Boolean.class))
+              .isTrue();
+          return null;
+        });
+    assertThat(storageSnapshot(context)).isEqualTo(unchanged);
+  }
+
+  @Test
+  void staleSerializableConfirmationInsertRetriesInsteadOfLeakingUniqueViolation()
+      throws Exception {
+    var context = context(null);
+    var original = pending(context, account(context));
+    var repository = new AccountGameplayAdmissionLeaseRepository(context.dsl());
+    UUID decision = UUID.randomUUID();
+    tx(context, () -> repository.recordCommitted(original, decision));
+    var unchanged = storageSnapshot(context);
+    var snapshotReady = new CountDownLatch(1);
+    var winnerCommitted = new CountDownLatch(1);
+    try (var executor = Executors.newSingleThreadExecutor()) {
+      var stale =
+          executor.submit(
+              () ->
+                  tx(
+                      context,
+                      () -> {
+                        assertThat(
+                                context
+                                    .dsl()
+                                    .fetchCount(
+                                        DSL.table(
+                                            "account_gameplay_admission_commit_confirmations")))
+                            .isZero();
+                        snapshotReady.countDown();
+                        try {
+                          if (!winnerCommitted.await(10, TimeUnit.SECONDS))
+                            throw new IllegalStateException("winner commit timeout");
+                        } catch (InterruptedException interrupted) {
+                          Thread.currentThread().interrupt();
+                          throw new IllegalStateException(interrupted);
+                        }
+                        return confirm(context, original, decision);
+                      }));
+      Record retained;
+      try {
+        assertThat(snapshotReady.await(10, TimeUnit.SECONDS)).isTrue();
+        retained = tx(context, () -> confirm(context, original, decision));
+      } finally {
+        winnerCommitted.countDown();
+      }
+      assertThatThrownBy(() -> stale.get(30, TimeUnit.SECONDS))
+          .satisfies(
+              failure -> {
+                Throwable cause = failure;
+                while (cause != null && !(cause instanceof java.sql.SQLException))
+                  cause = cause.getCause();
+                assertThat(cause).isInstanceOf(java.sql.SQLException.class);
+                assertThat(((java.sql.SQLException) cause).getSQLState()).isEqualTo("40001");
+              });
+      assertThat(tx(context, () -> confirm(context, original, decision))).isEqualTo(retained);
+      assertThat(tx(context, () -> readConfirmation(context, original, decision)))
+          .isEqualTo(retained);
+    }
+    assertThat(
+            context.dsl().fetchCount(DSL.table("account_gameplay_admission_commit_confirmations")))
+        .isEqualTo(1);
+    assertThat(storageSnapshot(context)).isEqualTo(unchanged);
+  }
+
+  @Test
   void updateBeforeExpiryButPhysicalCommitAfterExpiryCannotCreateConfirmation() {
     var context = context(null);
     var original = pending(context, account(context), 1000);
@@ -1038,6 +1158,15 @@ class AccountGameplayAdmissionLeasePersistenceIntegrationTest {
             context.dsl().fetchCount(DSL.table("account_gameplay_admission_commit_confirmations")))
         .isEqualTo(1);
     var retained = tx(context, () -> confirm(context, original, decision));
+    waitPastDeadline(context, original);
+    // Both duplicates now replay an expired retained receipt. They must never enter the fresh
+    // INSERT guard, restamp its temporal bound or allocate replacement evidence.
+    try (var executor = Executors.newFixedThreadPool(2)) {
+      var left = executor.submit(duplicate);
+      var right = executor.submit(duplicate);
+      assertThat(left.get(30, TimeUnit.SECONDS)).isEqualTo(retained);
+      assertThat(right.get(30, TimeUnit.SECONDS)).isEqualTo(retained);
+    }
     assertThat(tx(context, () -> readConfirmation(context, original, decision)))
         .isEqualTo(retained);
     assertThat(storageSnapshot(context)).isEqualTo(unchanged);

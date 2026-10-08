@@ -77,3 +77,9 @@ Entry format:
   - Expected pattern: opt durability-sensitive suites into durable PostgreSQL settings from startup, read back primary and WAL settings explicitly, and reject an unsuitable external database without changing it. Do not weaken a production guard or infer that re-enabling `fsync` repairs previously unsafe data.
   - Current status: the scoped startup/readback repair is prepared; corrected physical confirmation execution remains required, including idle-database WAL coverage. Other test suites retain their existing fixture configuration.
   - Reconsideration trigger: update proof after corrected exact-head PostgreSQL execution; distinguish local compilation/skips and ordinary row visibility from established durability.
+
+- `2026-10-08`: A durability observer can accidentally wait for its own uncommitted lock WAL
+  - Observation: PostgreSQL tuple locks emit WAL. Capturing the insertion fence after those locks can include an uncommitted partial WAL page that an idle primary need not flush, causing conservative confirmation failure despite an already durable original COMMIT. This is an availability defect, not evidence of unsafe positive confirmation.
+  - Expected pattern: independently observe the committed operation or receipt, capture its fixed coverage fence before own tuple locks, then lock in canonical Account-first order and revalidate exact immutable evidence before checking flush coverage and the original database-time bound. Never force a marker or extend the deadline to make proof pass.
+  - Current status: the SQL and Java ordering correction and idle-primary/stale-snapshot definitions are prepared; physical execution remains required. Assertions must not depend on asynchronous background WAL flushing remaining idle.
+  - Reconsideration trigger: consume corrected exact-head PostgreSQL proof; unrelated concurrent WAL can still conservatively prevent coverage, and unavailable proof remains denied.

@@ -3,8 +3,8 @@ package net.firedevops.firemud.accountservice.repository;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -28,6 +28,11 @@ class AccountGameplayAdmissionCommitConfirmationRepositoryTest {
       "SELECT * FROM account_gameplay_admission_confirm_committed(?, ?, ?)";
   private static final String READ_SQL =
       "SELECT * FROM account_gameplay_admission_read_commit_confirmation(?, ?, ?)";
+  private static final String ACCOUNT_LOCK_SQL =
+      "SELECT account_uuid FROM accounts WHERE account_uuid = ? FOR UPDATE";
+  private static final String OPERATION_SELECT_SQL =
+      "SELECT * FROM account_gameplay_admission_lease_operations WHERE request_id = ? FOR UPDATE";
+  private static final UUID ACCOUNT_ID = UUID.fromString("11111111-1111-4111-8111-111111111111");
 
   @AfterEach
   void clearTransaction() {
@@ -70,6 +75,19 @@ class AccountGameplayAdmissionCommitConfirmationRepositoryTest {
             UUID.fromString((String) evidence.carrier().get("requestId")),
             evidence.sha256(),
             decision);
+    var confirmOrder = inOrder(confirmDsl);
+    confirmOrder
+        .verify(confirmDsl)
+        .fetchOne(
+            CONFIRM_SQL,
+            UUID.fromString((String) evidence.carrier().get("requestId")),
+            evidence.sha256(),
+            decision);
+    confirmOrder.verify(confirmDsl).fetchOne(ACCOUNT_LOCK_SQL, ACCOUNT_ID);
+    confirmOrder
+        .verify(confirmDsl)
+        .fetchOne(
+            OPERATION_SELECT_SQL, UUID.fromString((String) evidence.carrier().get("requestId")));
 
     var readDsl = dsl(evidence, operation, proofRow(evidence, decision));
     var readRepository = repository(readDsl);
@@ -80,6 +98,19 @@ class AccountGameplayAdmissionCommitConfirmationRepositoryTest {
             UUID.fromString((String) evidence.carrier().get("requestId")),
             evidence.sha256(),
             decision);
+    var readOrder = inOrder(readDsl);
+    readOrder
+        .verify(readDsl)
+        .fetchOne(
+            READ_SQL,
+            UUID.fromString((String) evidence.carrier().get("requestId")),
+            evidence.sha256(),
+            decision);
+    readOrder.verify(readDsl).fetchOne(ACCOUNT_LOCK_SQL, ACCOUNT_ID);
+    readOrder
+        .verify(readDsl)
+        .fetchOne(
+            OPERATION_SELECT_SQL, UUID.fromString((String) evidence.carrier().get("requestId")));
     verify(readDsl, never()).fetchOne(eq(CONFIRM_SQL), any(Object[].class));
   }
 
@@ -107,7 +138,7 @@ class AccountGameplayAdmissionCommitConfirmationRepositoryTest {
   }
 
   @Test
-  void pendingAbortedMissingAndDecisionMismatchNeverReachConfirmationFunctions() {
+  void pendingAbortedMissingAndDecisionMismatchFailClosedAfterProofLookup() {
     var evidence = AccountGameplayAdmissionAbortOwnerTest.fixture();
     UUID decision = UUID.randomUUID();
     for (var operation :
@@ -120,14 +151,14 @@ class AccountGameplayAdmissionCommitConfirmationRepositoryTest {
       DSLContext dsl = dsl(evidence, operation, proofRow(evidence, decision));
       assertThatThrownBy(() -> repository(dsl).confirmCommitted(evidence, decision))
           .isInstanceOf(IllegalStateException.class);
-      verify(dsl, never()).fetchOne(eq(CONFIRM_SQL), any(Object[].class));
+      verify(dsl).fetchOne(eq(CONFIRM_SQL), any(Object[].class));
       verify(dsl, never()).fetchOne(eq(READ_SQL), any(Object[].class));
     }
 
     DSLContext missingDsl = dsl(evidence, null, proofRow(evidence, decision));
     assertThatThrownBy(() -> repository(missingDsl).readCommitConfirmation(evidence, decision))
         .isInstanceOf(IllegalStateException.class);
-    verify(missingDsl, never()).fetchOne(eq(READ_SQL), any(Object[].class));
+    verify(missingDsl).fetchOne(eq(READ_SQL), any(Object[].class));
   }
 
   @Test
@@ -161,6 +192,8 @@ class AccountGameplayAdmissionCommitConfirmationRepositoryTest {
     DSLContext missing = dsl(evidence, operation, null);
     assertThatThrownBy(() -> repository(missing).readCommitConfirmation(evidence, decision))
         .isInstanceOf(IllegalStateException.class);
+    verify(missing).fetchOne(eq(READ_SQL), any(Object[].class));
+    verify(missing, never()).fetchOne(eq(ACCOUNT_LOCK_SQL), any(Object[].class));
   }
 
   private static AccountGameplayAdmissionCommitConfirmationRepository repository(DSLContext dsl) {
@@ -176,7 +209,10 @@ class AccountGameplayAdmissionCommitConfirmationRepositoryTest {
     DSLContext dsl = mock(DSLContext.class);
     Record account = mock(Record.class);
     Record operationRow = operation == null ? null : operationRow(evidence, operation);
-    when(dsl.fetchOne(anyString(), any(Object[].class))).thenReturn(account, operationRow, proof);
+    when(dsl.fetchOne(eq(CONFIRM_SQL), any(Object[].class))).thenReturn(proof);
+    when(dsl.fetchOne(eq(READ_SQL), any(Object[].class))).thenReturn(proof);
+    when(dsl.fetchOne(eq(ACCOUNT_LOCK_SQL), any(Object[].class))).thenReturn(account);
+    when(dsl.fetchOne(eq(OPERATION_SELECT_SQL), any(Object[].class))).thenReturn(operationRow);
     return dsl;
   }
 
