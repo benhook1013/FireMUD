@@ -9,7 +9,7 @@ permissions:
 jobs:
   qualify-factory:
     if: ${{ github.repository == 'benhook1013/FireMUD' && github.ref == 'refs/heads/develop' }}
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 20
     permissions:
       contents: read
