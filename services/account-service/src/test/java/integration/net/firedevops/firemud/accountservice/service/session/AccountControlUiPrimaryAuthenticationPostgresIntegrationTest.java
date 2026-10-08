@@ -52,7 +52,7 @@ class AccountControlUiPrimaryAuthenticationPostgresIntegrationTest {
   private static final String OTP = "test-only-email-otp";
 
   @Test
-  void passwordAuthenticatesPersistedCanonicalUuidAndInvalidOrLockedAccountDoesNotMutate() {
+  void passwordAuthenticatesPersistedCanonicalUuidAndWrongSecretDoesNotMutate() {
     Context c = context();
     Account account = c.account("PASSWORD");
     String before = c.accountBytes(account.getAccountUuid());
@@ -73,17 +73,29 @@ class AccountControlUiPrimaryAuthenticationPostgresIntegrationTest {
                             account.getEmail(), "wrong-secret")))
         .isInstanceOf(AuthenticationException.class);
     assertThat(c.accountBytes(account.getAccountUuid())).isEqualTo(before);
-    Account lockedAccount = c.account("PASSWORD", AccountLifecycleState.SECURITY_LOCKED);
-    String locked = c.accountBytes(lockedAccount.getAccountUuid());
+  }
+
+  @Test
+  void freshSecurityLockedAccountCannotCompleteOwnerBirthAndLeavesNoRows() {
+    Context c = context();
+    Account lockedAccount = c.accountCandidate("PASSWORD", AccountLifecycleState.SECURITY_LOCKED);
     assertThatThrownBy(
             () ->
                 c.tx(
-                    () ->
-                        c.primary.authenticateControlUiPrimaryIdentity(
-                            lockedAccount.getEmail(), PASSWORD)))
-        .isInstanceOf(AuthenticationException.class);
-    assertThat(c.accountBytes(lockedAccount.getAccountUuid())).isEqualTo(locked);
-    assertThat(c.challenges.findByAccountId(lockedAccount.getId())).isEmpty();
+                    () -> {
+                      c.accounts.save(lockedAccount);
+                      return null;
+                    }))
+        .isInstanceOf(
+            net.firedevops.firemud.accountservice.repository
+                .AccountPlatformRestrictionBirthRepository.BirthSourceUnavailableException.class);
+
+    UUID accountUuid = lockedAccount.getAccountUuid();
+    assertThat(accountUuid).isNotNull();
+    assertThat(c.accountRowCount(accountUuid)).isZero();
+    assertThat(c.accountSourceRowCount(accountUuid)).isZero();
+    assertThat(c.accountGenerationRowCount(accountUuid)).isZero();
+    assertThat(c.restrictionBirthRowCount(accountUuid)).isZero();
   }
 
   @Test
@@ -274,17 +286,46 @@ class AccountControlUiPrimaryAuthenticationPostgresIntegrationTest {
     }
 
     Account account(String modes, AccountLifecycleState lifecycleState) {
-      return tx(
-          () -> {
-            Account account = new Account();
-            String suffix = UUID.randomUUID().toString();
-            account.setUsername("primary-" + suffix);
-            account.setEmail(suffix + "@example.test");
-            account.setPasswordHash(hash(PASSWORD));
-            account.setLoginAuthModes(modes);
-            account.setLifecycleState(lifecycleState);
-            return accounts.save(account);
-          });
+      Account account = accountCandidate(modes, lifecycleState);
+      return tx(() -> accounts.save(account));
+    }
+
+    Account accountCandidate(String modes, AccountLifecycleState lifecycleState) {
+      Account account = new Account();
+      String suffix = UUID.randomUUID().toString();
+      account.setUsername("primary-" + suffix);
+      account.setEmail(suffix + "@example.test");
+      account.setPasswordHash(hash(PASSWORD));
+      account.setLoginAuthModes(modes);
+      account.setLifecycleState(lifecycleState);
+      return account;
+    }
+
+    long accountRowCount(UUID accountUuid) {
+      return count("SELECT COUNT(*) FROM accounts WHERE account_uuid = ?", accountUuid);
+    }
+
+    long accountSourceRowCount(UUID accountUuid) {
+      return count(
+          "SELECT COUNT(*) FROM account_authority_source_records WHERE account_uuid = ?",
+          accountUuid);
+    }
+
+    long accountGenerationRowCount(UUID accountUuid) {
+      return count(
+          "SELECT COUNT(*) FROM account_authority_generations "
+              + "WHERE scope_kind = 'ACCOUNT' AND account_uuid = ?",
+          accountUuid);
+    }
+
+    long restrictionBirthRowCount(UUID accountUuid) {
+      return count(
+          "SELECT COUNT(*) FROM account_platform_restriction_births WHERE account_uuid = ?",
+          accountUuid);
+    }
+
+    private long count(String query, UUID accountUuid) {
+      return Objects.requireNonNull(dsl.fetchOne(query, accountUuid)).get(0, Long.class);
     }
 
     AccountEmailLoginChallenge challenge(Account account) {

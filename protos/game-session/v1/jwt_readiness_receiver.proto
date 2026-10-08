@@ -1,0 +1,37 @@
+syntax = "proto3";
+
+package game_session.v1;
+
+import "account/v1/jwt_readiness_receiver.proto";
+
+option java_package = "net.firedevops.firemud.gamesession.v1";
+option java_multiple_files = true;
+
+// Isolated non-authorizing JWT readiness verification on the exact Game Session Pod.
+service GameSessionJwtReadinessReceiverService {
+  rpc ReceiveReadinessProbe(ReceiveReadinessProbeRequest)
+      returns (ReceiveReadinessProbeResponse);
+}
+
+message ReceiveReadinessProbeRequest {
+  int32 schema_version = 1;
+  account.v1.ReadinessProbeCoordinates coordinates = 2;
+  string compact_jwt = 3;
+}
+
+message ReceiveReadinessProbeResponse {
+  enum ObservationOutcome {
+    OBSERVATION_OUTCOME_UNSPECIFIED = 0;
+    VERIFIED = 1;
+    INAPPLICABLE_REJECT = 2;
+  }
+
+  int32 schema_version = 1;
+  account.v1.ReadinessProbeCoordinates coordinates = 2;
+  string compact_token_sha256 = 3;
+  string verified_key_id = 4;
+  account.v1.ReadinessReceiverLocalIdentity receiver_identity = 5;
+  account.v1.AccountPodTargetBinding account_pod_target = 6;
+  int64 observed_at_epoch_seconds = 7;
+  ObservationOutcome outcome = 8;
+}

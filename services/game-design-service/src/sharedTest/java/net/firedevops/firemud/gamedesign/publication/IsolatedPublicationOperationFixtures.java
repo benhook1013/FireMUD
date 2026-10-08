@@ -36,7 +36,7 @@ public final class IsolatedPublicationOperationFixtures {
             new String(originalDraftAccount.gameDesignBinding(), StandardCharsets.UTF_8),
             originalDraftAccount.inputDigest());
     var appliedEpochs =
-        draft.affectedUnits().stream()
+        draft.affectedUnits(DraftCommitBinding.Owner.WORLD_MANAGEMENT).stream()
             .map(
                 unit ->
                     Map.of(

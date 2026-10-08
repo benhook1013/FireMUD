@@ -141,6 +141,8 @@ public class AccountJwtValidatorInventoryRepository {
   }
 
   private static void requireSameSnapshot(InventorySnapshot expected, StoredSnapshot actual) {
+    // A content digest can be observed again later. Keep the first persisted timestamp immutable;
+    // callers separately use the fresh observation's timestamp for the bounded freshness check.
     if (!expected.digest().equals(actual.digest())
         || !expected.environmentId().equals(actual.environmentId())
         || !expected.clusterId().equals(actual.clusterId())
@@ -151,7 +153,6 @@ public class AccountJwtValidatorInventoryRepository {
         || !expected.apiBindingDigest().equals(actual.apiBindingDigest())
         || !expected.inventoryBindingRevision().equals(actual.inventoryBindingRevision())
         || !expected.inventoryBindingDigest().equals(actual.inventoryBindingDigest())
-        || !expected.observedAt().equals(actual.observedAt())
         || !MessageDigest.isEqual(expected.canonicalBytes(), actual.canonicalBytes())) {
       throw new InventorySnapshotUnavailableException();
     }

@@ -181,7 +181,7 @@ public class AccountJwtJwksPublicationRepository {
    * generation. Ordinary current-publication reads remain unavailable while PREPARED.
    */
   @Transactional(propagation = Propagation.MANDATORY, readOnly = true)
-  public PreparedPublicationEvidence readPreparedPublicationForRecovery(
+  public PromotionPublicationEvidence readPreparedPublicationForRecovery(
       Binding binding, TrustFence trust) {
     requireAccountTransaction();
     PreparedGenerationEvidence prepared =
@@ -209,7 +209,7 @@ public class AccountJwtJwksPublicationRepository {
       throw new AccountJwtSignerDesiredStateRepository.QuarantinedStateException(
           "Prepared promotion no longer matches its immutable prepublication evidence");
     }
-    return new PreparedPublicationEvidence(intent, receipt, mount);
+    return new PromotionPublicationEvidence(intent, receipt, mount);
   }
 
   /**
@@ -1262,11 +1262,11 @@ public class AccountJwtJwksPublicationRepository {
     }
   }
 
-  public record PreparedPublicationEvidence(
+  public record PromotionPublicationEvidence(
       PrepublicationIntent intent,
       PublicationReceipt receipt,
       MountObservation mountedCorrespondence) {
-    public PreparedPublicationEvidence {
+    public PromotionPublicationEvidence {
       Objects.requireNonNull(intent);
       Objects.requireNonNull(receipt);
       Objects.requireNonNull(mountedCorrespondence);

@@ -133,7 +133,7 @@ public final class IsolatedPublicationOwnerSetup {
       ownerOutcomes.add(new GameDesignSourceRepository(dsl).apply(draft).ownerOutcome());
     }
     var epochs =
-        draft.affectedUnits().stream()
+        draft.affectedUnits(DraftCommitBinding.Owner.WORLD_MANAGEMENT).stream()
             .map(
                 unit ->
                     new DraftCommitCoordinatorRepository.AppliedEpoch(

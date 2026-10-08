@@ -421,16 +421,11 @@ public class AccountJwtSignerDesiredStateRepository {
     DesiredState state = decodeState(stateRow);
     requireBinding(state, expectedBinding);
     requireEnrollmentTrust(state, trust);
-    if (!state.preparedOperationId().equals(Optional.of(observation.promotionOperationId()))
-        || state.generationOperationId().isPresent()) {
-      throw new StaleGenerationOperationException(
-          "Private promotion result does not target Account's current PREPARED operation");
-    }
     StoredPromotion promotion = selectPromotion(observation.promotionOperationId(), true);
-    if (promotion == null || !"PREPARED".equals(promotion.status())) {
-      throw new QuarantinedStateException("Account PREPARED JWT signer operation is missing");
+    if (promotion == null) {
+      throw new StaleGenerationOperationException(
+          "Private promotion result does not target an Account-owned operation");
     }
-    requirePromotionMatchesState(promotion, state);
     requireCurrentTrust(promotion, trust);
     if (!promotion.requestDigest().equals(observation.promotionRequestDigest())
         || !promotion.generationOperationId().equals(observation.generationOperationId())
@@ -452,6 +447,35 @@ public class AccountJwtSignerDesiredStateRepository {
     verifyPreparedGenerationMatches(promotion, operation, result);
     requirePrivatePromotionObservation(promotion, observation);
     PrivatePromotionReceipt candidate = PrivatePromotionReceipt.from(promotion, observation);
+
+    if ("COMMITTED".equals(promotion.status())) {
+      ActiveSigner target = new ActiveSigner(promotion.targetGeneration(), promotion.targetKid());
+      if (!promotion.binding().equals(expectedBinding)
+          || !promotion.requestDigest().equals(promotionRequestDigest(promotion))
+          || state.preparedOperationId().isPresent()
+          || state.durableActive().filter(target::equals).isEmpty()
+          || state.publishedActive().filter(target::equals).isEmpty()
+          || promotion.expectedRecordVersion() > Long.MAX_VALUE - 2
+          || state.recordVersion() < promotion.expectedRecordVersion() + 2
+          || promotion.privatePromotionReceiptDigest() == null
+          || promotion.activeJwksReceiptDigest() == null
+          || !candidate.receiptDigest().equals(promotion.privatePromotionReceiptDigest())
+          || !candidate
+              .observedResourceVersion()
+              .equals(promotion.privatePromotionObservedResourceVersion())) {
+        throw new IdempotencyConflictException(
+            "Committed private promotion retry does not match current Account evidence");
+      }
+      return candidate;
+    }
+
+    if (!"PREPARED".equals(promotion.status())
+        || !state.preparedOperationId().equals(Optional.of(observation.promotionOperationId()))
+        || state.generationOperationId().isPresent()) {
+      throw new StaleGenerationOperationException(
+          "Private promotion result does not target Account's current PREPARED operation");
+    }
+    requirePromotionMatchesState(promotion, state);
     if (promotion.privatePromotionReceiptDigest() != null) {
       if (!candidate.receiptDigest().equals(promotion.privatePromotionReceiptDigest())
           || !candidate

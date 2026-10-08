@@ -1,0 +1,137 @@
+syntax = "proto3";
+
+package account.v1;
+
+option java_package = "net.firedevops.firemud.account.v1";
+option java_multiple_files = true;
+
+// Authenticated read-only owner lookup used by one isolated Game Session Pod receiver.
+// The request contains a hash, never the transient compact JWT.
+service AccountJwtReadinessProbeOwnerService {
+  rpc GetCurrentReadinessProbeOwner(GetCurrentReadinessProbeOwnerRequest)
+      returns (GetCurrentReadinessProbeOwnerResponse);
+}
+
+message ReadinessProbeCoordinates {
+  enum ProbeKind {
+    PROBE_KIND_UNSPECIFIED = 0;
+    CANARY = 1;
+    REPRESENTATIVE = 2;
+  }
+  enum ExpectedOutcome {
+    EXPECTED_OUTCOME_UNSPECIFIED = 0;
+    ACCEPT = 1;
+    INAPPLICABLE_REJECT = 2;
+  }
+  enum ExpectedActiveState {
+    EXPECTED_ACTIVE_STATE_UNSPECIFIED = 0;
+    PRESENT = 1;
+    ABSENT = 2;
+    UNKNOWN = 3;
+  }
+
+  string rotation_operation_id = 1;
+  string operation_digest = 2;
+  string plan_digest = 3;
+  int32 plan_version = 4;
+  int32 registry_version = 5;
+  string validator_id = 6;
+  string token_profile = 7;
+  string audience = 8;
+  ProbeKind probe_kind = 9;
+  ExpectedOutcome expected_outcome = 10;
+  string jti = 11;
+  int64 entry_version = 12;
+  string target_generation = 13;
+  string target_kid = 14;
+  ExpectedActiveState expected_active_state = 15;
+  string expected_active_generation = 16;
+  string expected_active_kid = 17;
+  int64 issued_at_epoch_seconds = 18;
+  int64 expires_at_epoch_seconds = 19;
+  int64 plan_expires_at_epoch_seconds = 20;
+}
+
+message AccountSourceIdentity {
+  string environment_id = 1;
+  string cluster_id = 2;
+  string cluster_incarnation_uid = 3;
+  string namespace = 4;
+  string namespace_uid = 5;
+  string config_map_uid = 6;
+  string binding_revision = 7;
+  string api_server_origin = 8;
+  string serving_ca_sha256 = 9;
+}
+
+// Caller-supplied protected local context. Account compares its target-relevant fields with its
+// independent current inventory but must not echo this whole message as owner evidence.
+message ReadinessReceiverLocalIdentity {
+  string validator_id = 1;
+  string deployment_uid = 2;
+  string pod_uid = 3;
+  string pod_ip = 4;
+  string direct_pod_endpoint = 5;
+  string canonical_service_uri = 6;
+  string image = 7;
+  string verifier_config_sha256 = 8;
+  string applicability_matrix_digest = 9;
+  string source_inventory_revision = 10;
+  string source_inventory_digest = 11;
+  string server_leaf_spki_sha256 = 12;
+  AccountSourceIdentity account_jwks_source_identity = 13;
+  int64 account_jwks_trust_config_revision = 14;
+}
+
+// Account's current API/inventory source pins and Pod target. These are not Game Session's
+// verifier-source inventory pins or its Account-JWKS trust-source identity.
+message AccountPodTargetBinding {
+  string inventory_snapshot_digest = 1;
+  string environment_id = 2;
+  string cluster_id = 3;
+  string cluster_incarnation_uid = 4;
+  string namespace = 5;
+  string namespace_uid = 6;
+  string api_binding_revision = 7;
+  string api_binding_digest = 8;
+  string inventory_binding_revision = 9;
+  string inventory_binding_digest = 10;
+  string validator_id = 11;
+  string deployment_uid = 12;
+  string pod_uid = 13;
+  string pod_ip = 14;
+  string image = 15;
+  string verifier_config_sha256 = 16;
+  string applicability_matrix_digest = 17;
+  ReadinessProbeCoordinates.ExpectedOutcome expected_outcome = 18;
+  string direct_pod_endpoint = 19;
+  string canonical_service_uri = 20;
+  string server_leaf_spki_sha256 = 21;
+}
+
+message GetCurrentReadinessProbeOwnerRequest {
+  int32 schema_version = 1;
+  ReadinessProbeCoordinates expected_coordinates = 2;
+  string compact_token_sha256 = 3;
+  ReadinessReceiverLocalIdentity protected_local_identity = 4;
+}
+
+message GetCurrentReadinessProbeOwnerResponse {
+  enum ProbeState {
+    PROBE_STATE_UNSPECIFIED = 0;
+    ISSUED = 1;
+    VERIFIED = 2;
+    RETIRED = 3;
+    CLEANED = 4;
+    EXPIRED = 5;
+    ABORTED = 6;
+  }
+
+  int32 schema_version = 1;
+  bool owner_record_found = 2;
+  ReadinessProbeCoordinates current_coordinates = 3;
+  string compact_token_sha256 = 4;
+  ProbeState current_state = 5;
+  AccountPodTargetBinding current_pod_target = 7;
+  reserved 6;
+}

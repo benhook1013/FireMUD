@@ -2,6 +2,7 @@ package net.firedevops.firemud.accountservice.repository;
 
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.io.IOException;
+import java.net.URI;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
@@ -14,6 +15,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 import java.util.regex.Pattern;
 import net.firedevops.firemud.accountservice.config.AccountJwtReadinessTrustBinding.PeerIdentity;
@@ -24,7 +26,16 @@ import net.firedevops.firemud.accountservice.repository.AccountJwtSignerDesiredS
 import net.firedevops.firemud.accountservice.repository.AccountJwtSignerDesiredStateRepository.GenerationRequest;
 import net.firedevops.firemud.accountservice.repository.AccountJwtSignerDesiredStateRepository.GenerationResult;
 import net.firedevops.firemud.accountservice.repository.AccountJwtSignerDesiredStateRepository.TrustFence;
+import net.firedevops.firemud.accountservice.service.session.AccountJwtReadinessProbeOwnerSelector;
+import net.firedevops.firemud.accountservice.service.session.AccountJwtReadinessReceiverInvocationPort.AuthenticatedAcceptance;
+import net.firedevops.firemud.accountservice.service.session.AccountJwtReadinessReceiverInvocationPort.PodTarget;
+import net.firedevops.firemud.accountservice.service.session.AccountJwtReadinessReceiverInvocationPort.ProbeExpectation;
+import net.firedevops.firemud.accountservice.service.session.AccountJwtReadinessReceiverInvocationPort.ReceiverUnavailableException;
 import net.firedevops.firemud.accountservice.service.session.AccountJwtValidatorInventorySource.InventorySnapshot;
+import net.firedevops.firemud.accountservice.service.session.AccountJwtValidatorInventorySource.ObservationContext;
+import net.firedevops.firemud.accountservice.service.session.AccountJwtValidatorInventorySource.ObservationPurpose;
+import net.firedevops.firemud.accountservice.service.session.AccountJwtValidatorInventorySource.PodObservation;
+import net.firedevops.firemud.accountservice.service.session.AccountJwtValidatorInventorySource.ValidatorObservation;
 import net.firedevops.firemud.accountservice.service.session.AccountMountedJwtSignerBundle.ProbeKind;
 import net.firedevops.firemud.accountservice.service.session.AccountMountedJwtSignerBundle.SignedProbeDigest;
 import net.firedevops.firemud.common.json.Rfc8785CanonicalJson;
@@ -39,6 +50,7 @@ import org.springframework.stereotype.Repository;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
+import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.json.JsonMapper;
 
 /**
@@ -56,11 +68,15 @@ public class AccountJwtReadinessProbeRepository {
   public static final int MAX_VALIDATOR_CACHE_AGE_SECONDS = 300;
   public static final int PROBE_LIFETIME_SECONDS = 300;
   public static final int MAX_ENTRIES_PER_OPERATION = 256;
+  public static final int MAX_POD_RECEIPTS_PER_OPERATION = 256;
   public static final String INVENTORY_STATUS = "PARTIAL_UNCONFIRMED";
+  public static final int INVENTORY_PLAN_VERSION = 2;
 
   private static final String PLAN_TABLE = "account_jwt_readiness_probe_plans";
   private static final String ENTRY_TABLE = "account_jwt_readiness_probe_entries";
   private static final String DELIVERY_CLAIM_TABLE = "account_jwt_readiness_delivery_claims";
+  private static final String EXPECTED_POD_TABLE = "account_jwt_readiness_validator_pods";
+  private static final String POD_RECEIPT_TABLE = "account_jwt_readiness_pod_receipts";
   private static final String VALIDATOR_ID = "account-service";
   private static final String CANARY_PROFILE = "account-jwt-readiness-canary";
   private static final String CANARY_AUDIENCE = "firemud-account-jwt-readiness";
@@ -72,6 +88,11 @@ public class AccountJwtReadinessProbeRepository {
   private static final String REPRESENTATIVE_PROFILE = GameSessionAccountDelegationProfile.PROFILE;
   private static final String REPRESENTATIVE_AUDIENCE =
       GameSessionAccountDelegationProfile.AUDIENCE;
+  private static final List<ProfileCase> PRODUCTION_PROFILE_CASES =
+      List.of(
+          new ProfileCase(CONTROL_UI_PROFILE, CONTROL_UI_AUDIENCE),
+          new ProfileCase(PLAYER_BOOTSTRAP_PROFILE, PLAYER_BOOTSTRAP_AUDIENCE),
+          new ProfileCase(REPRESENTATIVE_PROFILE, REPRESENTATIVE_AUDIENCE));
   private static final Pattern SHA256 = Pattern.compile("[0-9a-f]{64}");
   private static final JsonMapper JSON = JsonMapper.builder().build();
 
@@ -123,6 +144,38 @@ public class AccountJwtReadinessProbeRepository {
   }
 
   /**
+   * Reads the exact current operation context before protected inventory I/O. The caller must
+   * return to an Account transaction and recheck this context before persisting or consuming the
+   * resulting snapshot.
+   */
+  @Transactional(propagation = Propagation.MANDATORY)
+  public ObservationContext readCurrentInventoryObservationContext(
+      Binding binding, TrustFence trust) {
+    requireAccountTransaction();
+    CurrentEvidence current = lockCurrentEvidence(binding, trust);
+    ReadinessProbePlan existing = selectPlan(current.request().operationId(), false);
+    if (existing != null) {
+      requirePlanMatchesCurrent(readbackPlan(existing, false), current);
+    }
+    return observationContext(current);
+  }
+
+  /** Reads the selected context only while its exact current V2 inventory plan remains current. */
+  @Transactional(propagation = Propagation.MANDATORY)
+  public ObservationContext readCurrentInventoryObservationContext(
+      Binding binding, TrustFence trust, UUID operationId) {
+    requireAccountTransaction();
+    requireOperationId(operationId);
+    CurrentEvidence current = lockCurrentEvidence(binding, trust);
+    requireCurrentOperation(current, operationId.toString());
+    ReadinessProbePlan plan = requireStoredPlan(current);
+    if (plan.planVersion() != INVENTORY_PLAN_VERSION || !plan.validatorInventoryComplete()) {
+      throw new ReceiverUnavailableException();
+    }
+    return observationContext(current);
+  }
+
+  /**
    * Creates a still-partial plan bound to the exact Account-owned immutable inventory snapshot. The
    * live inventory observation does not establish per-Pod acceptance or promotion evidence.
    */
@@ -159,15 +212,22 @@ public class AccountJwtReadinessProbeRepository {
     Optional<String> snapshotDigest = Optional.empty();
     if (inventorySnapshot.isPresent()) {
       InventorySnapshot snapshot = inventorySnapshot.orElseThrow();
+      requireObservationContext(current, snapshot);
       requireInventorySnapshotWithinPlanWindow(snapshot, plannedEpoch);
       AccountJwtValidatorInventoryRepository.StoredSnapshot stored =
           inventoryRepository.persistOrReadback(snapshot, binding, trust);
       snapshotDigest = Optional.of(stored.digest());
     }
-    ReadinessProbePlan candidate = newPlan(current, plannedEpoch, snapshotDigest);
+    ReadinessProbePlan candidate =
+        newPlan(current, plannedEpoch, inventorySnapshot, snapshotDigest);
     insertPlan(candidate);
     for (ProbeEntry entry : candidate.entries()) {
-      insertEntry(entry);
+      insertEntry(entry, candidate.planVersion());
+    }
+    if (inventorySnapshot.isPresent()) {
+      for (ExpectedPod expectedPod : expectedPods(candidate, inventorySnapshot.orElseThrow())) {
+        insertExpectedPod(expectedPod);
+      }
     }
     ReadinessProbePlan readback = selectPlan(operationId, true);
     if (readback == null) {
@@ -304,13 +364,23 @@ public class AccountJwtReadinessProbeRepository {
   }
 
   /**
-   * Recovery-only read for the exact generation/publication currently owned by PREPARED state. The
-   * static applicability matrix and immutable Deployment inventory snapshot are not per-Pod
-   * acceptance evidence. These PARTIAL_UNCONFIRMED plans cannot satisfy promotion.
+   * Reads the exact current generation and public publication before PREPARED so the caller can
+   * authorize that same generation's preparation. The static applicability matrix and immutable
+   * Deployment inventory snapshot alone are not per-Pod acceptance evidence; partial plans cannot
+   * satisfy promotion.
    */
   @Transactional(propagation = Propagation.MANDATORY)
   public Optional<ReadinessPromotionProof> readCurrentPromotionPrerequisites(
       Binding binding, TrustFence trust, UUID rotationOperationId) {
+    return readCurrentPromotionPrerequisites(binding, trust, rotationOperationId, null);
+  }
+
+  @Transactional(propagation = Propagation.MANDATORY)
+  public Optional<ReadinessPromotionProof> readCurrentPromotionPrerequisites(
+      Binding binding,
+      TrustFence trust,
+      UUID rotationOperationId,
+      InventorySnapshot liveInventory) {
     // This is a nonmutating proof read, but it joins the writable lifecycle transaction because
     // the existing owner evidence readers lock their rows to fence the adjacent PREPARED CAS.
     requireWritableAccountTransaction();
@@ -332,15 +402,36 @@ public class AccountJwtReadinessProbeRepository {
     if (!stored.validatorInventoryComplete()) {
       return Optional.empty();
     }
-    // The immutable inventory snapshot is not per-Pod acceptance evidence. Never upgrade the
-    // static matrix or receipt set into complete inventory proof.
-    throw new QuarantinedStateException(
-        "Readiness plan claims complete inventory without protected inventory evidence");
+    if (stored.planVersion() != INVENTORY_PLAN_VERSION || liveInventory == null) {
+      return Optional.empty();
+    }
+    requireLiveInventoryMatches(stored, binding, trust, liveInventory, observationContext(current));
+    if (!hasCompletePodReceiptClosure(stored)) {
+      return Optional.empty();
+    }
+    AccountJwtJwksPublicationRepository.PromotionPublicationEvidence publication =
+        promotionPublicationEvidence(current.publication());
+    return Optional.of(
+        new ReadinessPromotionProof(
+            stored,
+            current.result(),
+            publication,
+            "protected-validator-inventory:" + liveInventory.digest(),
+            liveInventory.digest()));
   }
 
   @Transactional(propagation = Propagation.MANDATORY)
   public Optional<ReadinessPromotionProof> readPromotionProof(
       Binding binding, TrustFence trust, UUID rotationOperationId) {
+    return readPromotionProof(binding, trust, rotationOperationId, null);
+  }
+
+  @Transactional(propagation = Propagation.MANDATORY)
+  public Optional<ReadinessPromotionProof> readPromotionProof(
+      Binding binding,
+      TrustFence trust,
+      UUID rotationOperationId,
+      InventorySnapshot liveInventory) {
     // Recovery evidence is likewise a locked, nonmutating read inside the writable reconciliation
     // transaction; do not split these reads into an unlocked read-only snapshot.
     requireWritableAccountTransaction();
@@ -355,7 +446,7 @@ public class AccountJwtReadinessProbeRepository {
       throw new StaleOperationException(
           "Readiness promotion proof does not match the exact PREPARED generation");
     }
-    AccountJwtJwksPublicationRepository.PreparedPublicationEvidence publication =
+    AccountJwtJwksPublicationRepository.PromotionPublicationEvidence publication =
         publicationRepository.readPreparedPublicationForRecovery(binding, trust);
     ReadinessProbePlan plan = selectPlan(rotationOperationId, false);
     if (plan == null) {
@@ -369,10 +460,26 @@ public class AccountJwtReadinessProbeRepository {
     if (!stored.validatorInventoryComplete()) {
       return Optional.empty();
     }
-    // The immutable inventory snapshot is not per-Pod acceptance evidence. Never upgrade the
-    // static matrix or receipt set into complete inventory proof.
-    throw new QuarantinedStateException(
-        "Readiness plan claims complete inventory without protected inventory evidence");
+    if (stored.planVersion() != INVENTORY_PLAN_VERSION || liveInventory == null) {
+      return Optional.empty();
+    }
+    requireLiveInventoryMatches(
+        stored,
+        binding,
+        trust,
+        liveInventory,
+        observationContext(
+            generation.operationId(), generation.operationDigest(), stored.expectedFence()));
+    if (!hasCompletePodReceiptClosure(stored)) {
+      return Optional.empty();
+    }
+    return Optional.of(
+        new ReadinessPromotionProof(
+            stored,
+            generation,
+            publication,
+            "protected-validator-inventory:" + liveInventory.digest(),
+            liveInventory.digest()));
   }
 
   private boolean readinessPlanOutOfWindow(ReadinessProbePlan plan) {
@@ -420,6 +527,9 @@ public class AccountJwtReadinessProbeRepository {
     CurrentEvidence current = lockCurrentEvidence(binding, trust);
     requireCurrentOperation(current, operationId.toString());
     ReadinessProbePlan plan = requireStoredPlan(current);
+    if (plan.planVersion() != 1) {
+      throw new ReceiverUnavailableException();
+    }
     ProbeEntry entry =
         selectEntry(operationId, validatorId, tokenProfile, audience, probeKind, true);
     if (entry == null
@@ -452,6 +562,9 @@ public class AccountJwtReadinessProbeRepository {
     CurrentEvidence current = lockCurrentEvidence(binding, trust);
     requireCurrentOperation(current, operationId.toString());
     ReadinessProbePlan plan = requireStoredPlan(current);
+    if (plan.planVersion() != 1) {
+      throw new ReceiverUnavailableException();
+    }
     ProbeEntry entry =
         selectEntry(operationId, validatorId, tokenProfile, audience, probeKind, true);
     if (entry == null
@@ -824,49 +937,32 @@ public class AccountJwtReadinessProbeRepository {
   private ReadinessProbePlan newPlan(
       CurrentEvidence current,
       long plannedAtEpochSecond,
+      Optional<InventorySnapshot> inventorySnapshot,
       Optional<String> inventorySnapshotDigest) {
     long notBefore = add(plannedAtEpochSecond, MAX_VALIDATOR_CACHE_AGE_SECONDS);
     long expiresAt = add(notBefore, PROBE_LIFETIME_SECONDS);
-    String matrixJson = applicabilityMatrixJson();
+    int planVersion = inventorySnapshot.isPresent() ? INVENTORY_PLAN_VERSION : 1;
+    boolean inventoryComplete =
+        inventorySnapshot
+            .map(AccountJwtReadinessProbeRepository::inventoryPlanComplete)
+            .orElse(false);
+    String matrixJson =
+        inventorySnapshot
+            .map(snapshot -> applicabilityMatrixJson(snapshot, inventoryComplete))
+            .orElseGet(AccountJwtReadinessProbeRepository::applicabilityMatrixJson);
     String matrixDigest = sha256(matrixJson.getBytes(StandardCharsets.UTF_8));
     List<ProbeEntry> entries =
-        List.of(
-                newEntry(
-                    current,
-                    ProbeKind.CANARY,
-                    CANARY_PROFILE,
-                    CANARY_AUDIENCE,
-                    notBefore,
-                    expiresAt),
-                newEntry(
-                    current,
-                    ProbeKind.REPRESENTATIVE,
-                    CONTROL_UI_PROFILE,
-                    CONTROL_UI_AUDIENCE,
-                    notBefore,
-                    expiresAt),
-                newEntry(
-                    current,
-                    ProbeKind.REPRESENTATIVE,
-                    PLAYER_BOOTSTRAP_PROFILE,
-                    PLAYER_BOOTSTRAP_AUDIENCE,
-                    notBefore,
-                    expiresAt),
-                newEntry(
-                    current,
-                    ProbeKind.REPRESENTATIVE,
-                    REPRESENTATIVE_PROFILE,
-                    REPRESENTATIVE_AUDIENCE,
-                    notBefore,
-                    expiresAt))
-            .stream()
-            .sorted(PROBE_ENTRY_ORDER)
-            .toList();
+        (inventorySnapshot.isPresent()
+                ? inventoryEntries(current, inventorySnapshot.orElseThrow(), notBefore, expiresAt)
+                : legacyEntries(current, notBefore, expiresAt))
+            .stream().sorted(PROBE_ENTRY_ORDER).toList();
     String planDigest =
         planDigest(
             current,
             matrixJson,
             matrixDigest,
+            planVersion,
+            inventoryComplete,
             plannedAtEpochSecond,
             notBefore,
             expiresAt,
@@ -878,18 +974,88 @@ public class AccountJwtReadinessProbeRepository {
         current,
         matrixJson,
         matrixDigest,
-        false,
+        inventoryComplete,
         MAX_VALIDATOR_CACHE_AGE_SECONDS,
         plannedAtEpochSecond,
         notBefore,
         expiresAt,
         planDigest,
         boundEntries,
-        inventorySnapshotDigest);
+        inventorySnapshotDigest,
+        planVersion);
+  }
+
+  private static List<ProbeEntry> legacyEntries(
+      CurrentEvidence current, long notBefore, long expiresAt) {
+    return List.of(
+        newEntry(
+            current,
+            VALIDATOR_ID,
+            ProbeKind.CANARY,
+            CANARY_PROFILE,
+            CANARY_AUDIENCE,
+            notBefore,
+            expiresAt),
+        newEntry(
+            current,
+            VALIDATOR_ID,
+            ProbeKind.REPRESENTATIVE,
+            CONTROL_UI_PROFILE,
+            CONTROL_UI_AUDIENCE,
+            notBefore,
+            expiresAt),
+        newEntry(
+            current,
+            VALIDATOR_ID,
+            ProbeKind.REPRESENTATIVE,
+            PLAYER_BOOTSTRAP_PROFILE,
+            PLAYER_BOOTSTRAP_AUDIENCE,
+            notBefore,
+            expiresAt),
+        newEntry(
+            current,
+            VALIDATOR_ID,
+            ProbeKind.REPRESENTATIVE,
+            REPRESENTATIVE_PROFILE,
+            REPRESENTATIVE_AUDIENCE,
+            notBefore,
+            expiresAt));
+  }
+
+  private static List<ProbeEntry> inventoryEntries(
+      CurrentEvidence current, InventorySnapshot snapshot, long notBefore, long expiresAt) {
+    List<ProbeEntry> entries = new ArrayList<>();
+    for (ValidatorObservation validator : snapshot.validators()) {
+      entries.add(
+          newEntry(
+              current,
+              validator.validatorId(),
+              ProbeKind.CANARY,
+              CANARY_PROFILE,
+              CANARY_AUDIENCE,
+              notBefore,
+              expiresAt));
+      for (ProfileCase profile : PRODUCTION_PROFILE_CASES) {
+        entries.add(
+            newEntry(
+                current,
+                validator.validatorId(),
+                ProbeKind.REPRESENTATIVE,
+                profile.tokenProfile(),
+                profile.audience(),
+                notBefore,
+                expiresAt));
+      }
+    }
+    if (entries.isEmpty() || entries.size() > MAX_ENTRIES_PER_OPERATION) {
+      throw new InventoryPlanConflictException();
+    }
+    return List.copyOf(entries);
   }
 
   private static ProbeEntry newEntry(
       CurrentEvidence current,
+      String validatorId,
       ProbeKind kind,
       String profile,
       String audience,
@@ -898,7 +1064,7 @@ public class AccountJwtReadinessProbeRepository {
     return new ProbeEntry(
         current.request().operationId(),
         "0".repeat(64),
-        VALIDATOR_ID,
+        validatorId,
         profile,
         audience,
         kind,
@@ -966,7 +1132,7 @@ public class AccountJwtReadinessProbeRepository {
     fields.put("planned_at_epoch_seconds", plan.plannedAtEpochSecond());
     fields.put("not_before_epoch_seconds", plan.notBeforeEpochSecond());
     fields.put("expires_at_epoch_seconds", plan.expiresAtEpochSecond());
-    fields.put("plan_version", 1);
+    fields.put("plan_version", plan.planVersion());
     fields.put("plan_digest", plan.planDigest());
     insertOne(dsl, PLAN_TABLE, fields);
   }
@@ -1040,7 +1206,7 @@ public class AccountJwtReadinessProbeRepository {
     return result;
   }
 
-  private void insertEntry(ProbeEntry entry) {
+  private void insertEntry(ProbeEntry entry, int planVersion) {
     Map<String, Object> fields = new LinkedHashMap<>();
     fields.put("rotation_operation_id", entry.rotationOperationId());
     fields.put("plan_digest", entry.planDigest());
@@ -1060,10 +1226,915 @@ public class AccountJwtReadinessProbeRepository {
     fields.put("planned_issued_at_epoch_seconds", entry.plannedIssuedAtEpochSecond());
     fields.put("expires_at_epoch_seconds", entry.expiresAtEpochSecond());
     fields.put("state", entry.state().name());
+    fields.put("entry_plan_version", planVersion);
     fields.put("terminal_outcome", null);
     fields.put("signing_attempted_at_epoch_seconds", null);
     fields.put("compact_token_sha256", null);
     insertOne(dsl, ENTRY_TABLE, fields);
+  }
+
+  private void insertExpectedPod(ExpectedPod expected) {
+    PodTarget target = expected.target();
+    target.requireRoutablePodIdentity();
+    Map<String, Object> fields = new LinkedHashMap<>();
+    fields.put("rotation_operation_id", expected.rotationOperationId());
+    fields.put("plan_digest", expected.planDigest());
+    fields.put("validator_id", expected.validatorId());
+    fields.put("token_profile", expected.tokenProfile());
+    fields.put("audience", expected.audience());
+    fields.put("probe_kind", expected.probeKind().name());
+    fields.put("jti", expected.jti());
+    fields.put("inventory_snapshot_digest", target.inventorySnapshotDigest());
+    fields.put("environment_id", target.environmentId());
+    fields.put("cluster_id", target.clusterId());
+    fields.put("cluster_incarnation_uid", UUID.fromString(target.clusterIncarnationUid()));
+    fields.put("kubernetes_namespace", target.namespace());
+    fields.put("namespace_uid", UUID.fromString(target.namespaceUid()));
+    fields.put("api_binding_revision", target.apiBindingRevision());
+    fields.put("api_binding_digest", target.apiBindingDigest());
+    fields.put("inventory_binding_revision", target.inventoryBindingRevision());
+    fields.put("inventory_binding_digest", target.inventoryBindingDigest());
+    fields.put("deployment_uid", UUID.fromString(target.deploymentUid()));
+    fields.put("pod_uid", UUID.fromString(target.podUid()));
+    fields.put("pod_ip", target.podIp());
+    fields.put("image", target.image());
+    fields.put("verifier_config_sha256", target.verifierConfigSha256());
+    fields.put("applicability_matrix_digest", target.applicabilityMatrixDigest());
+    fields.put("expected_outcome", target.expectation().name());
+    fields.put("exact_pod_endpoint", target.exactPodEndpoint().map(URI::toString).orElse(null));
+    fields.put("canonical_service_uri", target.canonicalServiceUri().orElse(null));
+    fields.put("expected_pod_leaf_spki_sha256", target.podLeafSpkiSha256().orElse(null));
+    insertOne(dsl, EXPECTED_POD_TABLE, fields);
+  }
+
+  /** Reads the immutable, exact per-Pod plan rows for one current V2 entry. */
+  @Transactional(propagation = Propagation.MANDATORY)
+  public List<ExpectedPod> readCurrentExpectedPods(
+      Binding binding, TrustFence trust, ProbeEntry expectedEntry) {
+    throw new ReceiverUnavailableException();
+  }
+
+  /** Reads exact expected Pod rows only after a fresh independent owner observation. */
+  @Transactional(propagation = Propagation.MANDATORY)
+  public List<ExpectedPod> readCurrentExpectedPods(
+      Binding binding,
+      TrustFence trust,
+      ProbeEntry expectedEntry,
+      InventorySnapshot liveInventory) {
+    requireAccountTransaction();
+    Objects.requireNonNull(expectedEntry, "Exact readiness entry is required");
+    CurrentEvidence current = lockCurrentEvidence(binding, trust);
+    requireCurrentOperation(current, expectedEntry.rotationOperationId().toString());
+    ReadinessProbePlan plan = requireStoredPlan(current);
+    if (plan.planVersion() != INVENTORY_PLAN_VERSION
+        || !plan.validatorInventoryComplete()
+        || !plan.planDigest().equals(expectedEntry.planDigest())) {
+      throw new ReceiverUnavailableException();
+    }
+    requireLiveInventoryMatches(plan, binding, trust, liveInventory, observationContext(current));
+    ProbeEntry stored =
+        selectEntry(
+            expectedEntry.rotationOperationId(),
+            expectedEntry.validatorId(),
+            expectedEntry.tokenProfile(),
+            expectedEntry.audience(),
+            expectedEntry.probeKind(),
+            true);
+    if (stored == null
+        || !stored.equals(expectedEntry)
+        || stored.state() != ProbeState.ISSUED
+        || stored.compactTokenSha256().isEmpty()) {
+      throw new StaleOperationException("Readiness receiver entry changed before invocation");
+    }
+    plan.inventorySnapshotDigest()
+        .ifPresent(digest -> inventoryRepository.readRequired(digest, binding, trust));
+    List<ExpectedPod> expectedPods = selectExpectedPods(stored, true);
+    if (expectedPods.isEmpty() || expectedPods.size() > MAX_POD_RECEIPTS_PER_OPERATION) {
+      throw new QuarantinedStateException("Readiness V2 entry has no bounded expected Pod set");
+    }
+    return expectedPods;
+  }
+
+  /**
+   * Reads only the owner-retained coordinates and one Pod target for the authenticated V2 receiver
+   * lookup. The caller's tuple is a selector: every returned coordinate is projected from locked
+   * current owner rows, never copied from the request.
+   */
+  @Transactional(propagation = Propagation.MANDATORY)
+  public OwnerProbeEvidence readCurrentProbeOwner(
+      Binding binding,
+      TrustFence trust,
+      AccountJwtReadinessProbeOwnerSelector selector,
+      InventorySnapshot liveInventory,
+      String authenticatedWorkloadNamespace) {
+    requireAccountTransaction();
+    Objects.requireNonNull(selector, "Exact readiness probe selector is required");
+    if (authenticatedWorkloadNamespace == null || authenticatedWorkloadNamespace.isBlank()) {
+      throw new ReceiverUnavailableException();
+    }
+    CurrentEvidence current = lockCurrentEvidence(binding, trust);
+    if (!current.request().operationId().equals(selector.rotationOperationId())) {
+      throw new ReceiverUnavailableException();
+    }
+    ReadinessProbePlan plan = requireStoredPlan(current);
+    if (plan.planVersion() != INVENTORY_PLAN_VERSION
+        || !plan.validatorInventoryComplete()
+        || !plan.operationId().equals(selector.rotationOperationId())
+        || !plan.operationDigest().equals(selector.operationDigest())
+        || !plan.planDigest().equals(selector.planDigest())
+        || plan.planVersion() != selector.planVersion()
+        || plan.expiresAtEpochSecond() != selector.planExpiresAtEpochSecond()
+        || !plan.targetGeneration().equals(selector.targetGeneration())
+        || !plan.targetKid().equals(selector.targetKid())
+        || !plan.expectedFence().durableActive().equals(selector.expectedActive())
+        || !plan.expectedFence().publishedActive().equals(selector.expectedActive())) {
+      throw new ReceiverUnavailableException();
+    }
+    requireLiveInventoryMatches(plan, binding, trust, liveInventory, observationContext(current));
+    if (readinessPlanOutOfWindow(plan)) {
+      throw new ReceiverUnavailableException();
+    }
+
+    ProbeEntry entry =
+        selectEntry(
+            selector.rotationOperationId(),
+            selector.validatorId(),
+            selector.tokenProfile(),
+            selector.audience(),
+            selector.probeKind(),
+            true);
+    if (entry == null
+        || entry.state() != ProbeState.ISSUED
+        || entry.verificationReceipt().isPresent()
+        || !entry.rotationOperationId().equals(selector.rotationOperationId())
+        || !entry.planDigest().equals(plan.planDigest())
+        || !entry.jti().equals(selector.jti())
+        || entry.registryVersion() != selector.registryVersion()
+        || entry.entryVersion() != selector.entryVersion()
+        || !entry.targetGeneration().equals(selector.targetGeneration())
+        || !entry.targetKid().equals(selector.targetKid())
+        || !entry.expectedActive().equals(selector.expectedActive())
+        || entry.plannedIssuedAtEpochSecond() != selector.issuedAtEpochSecond()
+        || entry.expiresAtEpochSecond() != selector.expiresAtEpochSecond()
+        || !entry.compactTokenSha256().equals(Optional.of(selector.compactTokenSha256()))) {
+      throw new ReceiverUnavailableException();
+    }
+    Long databaseNow =
+        dsl.resultQuery("SELECT floor(extract(epoch FROM CURRENT_TIMESTAMP))::bigint")
+            .fetchOne(0, Long.class);
+    if (databaseNow == null
+        || databaseNow < entry.plannedIssuedAtEpochSecond()
+        || databaseNow >= entry.expiresAtEpochSecond()) {
+      throw new ReceiverUnavailableException();
+    }
+
+    List<ExpectedPod> expectedPods = selectExpectedPods(entry, true);
+    if (expectedPods.isEmpty() || expectedPods.size() > MAX_POD_RECEIPTS_PER_OPERATION) {
+      throw new ReceiverUnavailableException();
+    }
+    List<ExpectedPod> selectedPods =
+        expectedPods.stream()
+            .filter(value -> value.target().podUid().equals(selector.localIdentity().podUid()))
+            .toList();
+    if (selectedPods.size() != 1) {
+      throw new ReceiverUnavailableException();
+    }
+    ExpectedPod expectedPod = selectedPods.getFirst();
+    PodTarget target = expectedPod.target();
+    target.requireRoutablePodIdentity();
+    AccountJwtReadinessProbeOwnerSelector.LocalIdentity local = selector.localIdentity();
+    if (!target.validatorId().equals(selector.validatorId())
+        || !expectedPod.rotationOperationId().equals(selector.rotationOperationId())
+        || !expectedPod.planDigest().equals(plan.planDigest())
+        || !expectedPod.jti().equals(entry.jti())
+        || target.expectation() != selector.expectedOutcome()
+        || !target.namespace().equals(authenticatedWorkloadNamespace)
+        || !local.validatorId().equals(target.validatorId())
+        || !local.deploymentUid().equals(target.deploymentUid())
+        || !local.podUid().equals(target.podUid())
+        || !local.podIp().equals(target.podIp())
+        || !local.directPodEndpoint().equals(target.exactPodEndpoint().orElseThrow().toString())
+        || !local.canonicalServiceUri().equals(target.canonicalServiceUri().orElseThrow())
+        || !local.image().equals(target.image())
+        || !local.verifierConfigSha256().equals(target.verifierConfigSha256())
+        || !local.applicabilityMatrixDigest().equals(plan.applicabilityMatrixDigest())
+        || !local.serverLeafSpkiSha256().equals(target.podLeafSpkiSha256().orElseThrow())) {
+      throw new ReceiverUnavailableException();
+    }
+    return new OwnerProbeEvidence(plan, entry, expectedPod);
+  }
+
+  /**
+   * Records one owner-authenticated production verifier result for one exact expected Pod. A
+   * logical entry remains ISSUED until every immutable expected Pod has a matching unique receipt.
+   */
+  @Transactional(propagation = Propagation.MANDATORY)
+  public ProbeEntry recordPodAcceptance(
+      Binding binding,
+      TrustFence trust,
+      ProbeEntry expectedEntry,
+      ExpectedPod expectedPod,
+      AuthenticatedAcceptance acceptance,
+      InventorySnapshot liveInventory) {
+    requireWritableAccountTransaction();
+    Objects.requireNonNull(expectedEntry, "Exact readiness entry is required");
+    Objects.requireNonNull(expectedPod, "Exact expected Pod row is required");
+    Objects.requireNonNull(acceptance, "Owner-authenticated receiver result is required");
+    CurrentEvidence current = lockCurrentEvidence(binding, trust);
+    requireCurrentOperation(current, expectedEntry.rotationOperationId().toString());
+    ReadinessProbePlan plan = requireStoredPlan(current);
+    if (plan.planVersion() != INVENTORY_PLAN_VERSION
+        || !plan.validatorInventoryComplete()
+        || !plan.planDigest().equals(expectedEntry.planDigest())
+        || !expectedPod.rotationOperationId().equals(plan.operationId())
+        || !expectedPod.planDigest().equals(plan.planDigest())
+        || !expectedPod.validatorId().equals(expectedEntry.validatorId())
+        || !expectedPod.tokenProfile().equals(expectedEntry.tokenProfile())
+        || !expectedPod.audience().equals(expectedEntry.audience())
+        || expectedPod.probeKind() != expectedEntry.probeKind()
+        || !expectedPod.jti().equals(expectedEntry.jti())) {
+      throw new StaleOperationException("Readiness Pod receipt is outside the exact current entry");
+    }
+    requireLiveInventoryMatches(plan, binding, trust, liveInventory, observationContext(current));
+    ProbeEntry entry =
+        selectEntry(
+            expectedEntry.rotationOperationId(),
+            expectedEntry.validatorId(),
+            expectedEntry.tokenProfile(),
+            expectedEntry.audience(),
+            expectedEntry.probeKind(),
+            true);
+    if (entry == null
+        || entry.compactTokenSha256().isEmpty()
+        || !entry.rotationOperationId().equals(expectedEntry.rotationOperationId())
+        || !entry.planDigest().equals(expectedEntry.planDigest())
+        || !entry.validatorId().equals(expectedEntry.validatorId())
+        || !entry.tokenProfile().equals(expectedEntry.tokenProfile())
+        || !entry.audience().equals(expectedEntry.audience())
+        || entry.probeKind() != expectedEntry.probeKind()
+        || !entry.jti().equals(expectedEntry.jti())
+        || !entry.targetGeneration().equals(expectedEntry.targetGeneration())
+        || !entry.targetKid().equals(expectedEntry.targetKid())
+        || !entry.expectedActive().equals(expectedEntry.expectedActive())
+        || entry.registryVersion() != expectedEntry.registryVersion()
+        || entry.plannedIssuedAtEpochSecond() != expectedEntry.plannedIssuedAtEpochSecond()
+        || entry.expiresAtEpochSecond() != expectedEntry.expiresAtEpochSecond()) {
+      throw new AmbiguousDeliveryException("Readiness Pod receipt requires its exact ISSUED entry");
+    }
+    boolean alreadyVerified = entry.state() == ProbeState.VERIFIED;
+    if ((!alreadyVerified && entry.state() != ProbeState.ISSUED)
+        || (!alreadyVerified && !entry.equals(expectedEntry))
+        || (alreadyVerified
+            && (entry.entryVersion() <= 1L
+                || entry
+                    .verificationReceipt()
+                    .filter(value -> value.receiptVersion() == 2)
+                    .isEmpty()))) {
+      throw new AmbiguousDeliveryException("Readiness Pod receipt requires its exact ISSUED entry");
+    }
+    List<ExpectedPod> expectedPods = selectExpectedPods(entry, true);
+    ExpectedPod persistedPod =
+        expectedPods.stream()
+            .filter(value -> value.target().podUid().equals(expectedPod.target().podUid()))
+            .findFirst()
+            .orElseThrow(ReceiverUnavailableException::new);
+    if (!persistedPod.equals(expectedPod)) {
+      throw new QuarantinedStateException("Readiness Pod target changed after its immutable plan");
+    }
+    PodTarget target = persistedPod.target();
+    target.requireRoutablePodIdentity();
+    long observedAt = acceptance.observedAtEpochSecond();
+    if (!acceptance.podUid().equals(target.podUid())
+        || !acceptance
+            .actualPodEndpoint()
+            .equals(target.exactPodEndpoint().orElseThrow().toString())
+        || !acceptance.image().equals(target.image())
+        || !acceptance.verifierConfigSha256().equals(target.verifierConfigSha256())
+        || !acceptance.actualServiceUri().equals(target.canonicalServiceUri().orElseThrow())
+        || !acceptance.actualPeerSpkiSha256().equals(target.podLeafSpkiSha256().orElseThrow())
+        || !acceptance.jti().equals(entry.jti())
+        || !acceptance.compactTokenSha256().equals(entry.compactTokenSha256().orElseThrow())
+        || acceptance.result() != target.expectation()
+        || !entry.targetKid().equals(acceptance.verifiedKid())) {
+      throw new IdempotencyConflictException(
+          "Authenticated receiver evidence differs from the exact protected Pod target");
+    }
+    requireNotExpired(entry, observedAt);
+    if (observedAt < entry.plannedIssuedAtEpochSecond()) {
+      throw new CacheAgeNotElapsedException();
+    }
+
+    PodReceipt candidate =
+        podReceipt(
+            entry,
+            persistedPod,
+            acceptance,
+            alreadyVerified ? entry.entryVersion() - 1L : entry.entryVersion());
+    PodReceipt existing = selectPodReceipt(candidate, true);
+    if (alreadyVerified) {
+      List<PodReceipt> retainedReceipts = selectPodReceipts(entry, true);
+      ProbeEntry sourceEntry = sourceEntryForVerifiedClosure(entry);
+      VerificationReceipt recomputed =
+          podReceiptClosure(plan, sourceEntry, expectedPods, retainedReceipts);
+      if (existing == null
+          || !existing.equals(candidate)
+          || retainedReceipts.size() != expectedPods.size()
+          || entry.verificationReceipt().filter(recomputed::equals).isEmpty()) {
+        throw new IdempotencyConflictException(
+            "A completed readiness Pod receipt retry differs from its immutable evidence");
+      }
+      return entry;
+    }
+    if (existing != null) {
+      if (!existing.equals(candidate)) {
+        throw new IdempotencyConflictException(
+            "A per-Pod readiness receipt already exists with different evidence");
+      }
+    } else {
+      insertPodReceipt(candidate);
+      PodReceipt readback = selectPodReceipt(candidate, true);
+      if (readback == null || !readback.equals(candidate)) {
+        throw new QuarantinedStateException("Readiness Pod receipt did not read back exactly");
+      }
+    }
+
+    List<PodReceipt> receipts = selectPodReceipts(entry, true);
+    if (receipts.size() != expectedPods.size()) {
+      if (receipts.size() > expectedPods.size()) {
+        throw new QuarantinedStateException("Readiness Pod receipt set exceeds its exact target");
+      }
+      ProbeEntry partial = selectEntry(entry, true);
+      if (partial == null || partial.state() != ProbeState.ISSUED) {
+        throw new QuarantinedStateException("Partial per-Pod receipt changed its logical entry");
+      }
+      return partial;
+    }
+    VerificationReceipt closure = podReceiptClosure(plan, entry, expectedPods, receipts);
+    long resultEntryVersion = Math.addExact(entry.entryVersion(), 1L);
+    VerificationReceipt finalReceipt =
+        new VerificationReceipt(
+            closure.receiptVersion(),
+            entry.entryVersion(),
+            resultEntryVersion,
+            closure.observedAtEpochSecond(),
+            closure.receiptSha256(),
+            closure.verifiedKid(),
+            closure.validatorInstanceId(),
+            closure.validatorBindingDigest(),
+            closure.validatorConfigRevision(),
+            closure.validatorPeerUri(),
+            closure.validatorPeerSpkiSha256(),
+            closure.podReceiptCount(),
+            closure.podReceiptClosureSha256());
+    int changed =
+        dsl.execute(
+            "UPDATE "
+                + ENTRY_TABLE
+                + " SET state = 'VERIFIED', entry_version = ?, verification_receipt_version = ?, "
+                + "verification_source_entry_version = ?, verified_at_epoch_seconds = ?, "
+                + "verified_kid = ?, validator_instance_id = ?, validator_binding_digest = ?, "
+                + "validator_config_revision = ?, validator_peer_uri = ?, "
+                + "validator_peer_spki_sha256 = ?, verification_receipt_sha256 = ?, "
+                + "pod_receipt_count = ?, pod_receipt_closure_sha256 = ? "
+                + "WHERE rotation_operation_id = ? AND validator_id = ? AND token_profile = ? "
+                + "AND audience = ? AND probe_kind = ? AND jti = ? AND plan_digest = ? "
+                + "AND entry_plan_version = 2 AND state = 'ISSUED' AND entry_version = ? "
+                + "AND target_generation = ? AND target_kid = ? AND compact_token_sha256 = ? "
+                + "AND verification_receipt_sha256 IS NULL "
+                + "AND CURRENT_TIMESTAMP >= to_timestamp(planned_issued_at_epoch_seconds) "
+                + "AND CURRENT_TIMESTAMP < to_timestamp(expires_at_epoch_seconds)",
+            finalReceipt.resultEntryVersion(),
+            finalReceipt.receiptVersion(),
+            finalReceipt.sourceEntryVersion(),
+            finalReceipt.observedAtEpochSecond(),
+            finalReceipt.verifiedKid(),
+            finalReceipt.validatorInstanceId(),
+            finalReceipt.validatorBindingDigest(),
+            finalReceipt.validatorConfigRevision(),
+            finalReceipt.validatorPeerUri(),
+            finalReceipt.validatorPeerSpkiSha256(),
+            finalReceipt.receiptSha256(),
+            finalReceipt.podReceiptCount(),
+            finalReceipt.podReceiptClosureSha256(),
+            entry.rotationOperationId(),
+            entry.validatorId(),
+            entry.tokenProfile(),
+            entry.audience(),
+            entry.probeKind().name(),
+            entry.jti(),
+            entry.planDigest(),
+            entry.entryVersion(),
+            Long.parseLong(entry.targetGeneration()),
+            entry.targetKid(),
+            entry.compactTokenSha256().orElseThrow());
+    if (changed != 1) {
+      throw new VersionConflictException("Readiness per-Pod closure lost its exact CAS");
+    }
+    ProbeEntry readback = selectEntry(entry, true);
+    if (readback == null
+        || readback.state() != ProbeState.VERIFIED
+        || readback.entryVersion() != finalReceipt.resultEntryVersion()
+        || readback.verificationReceipt().filter(finalReceipt::equals).isEmpty()) {
+      throw new QuarantinedStateException("Readiness per-Pod closure did not read back exactly");
+    }
+    return readback;
+  }
+
+  private List<ExpectedPod> selectExpectedPods(ProbeEntry entry, boolean lock) {
+    Result<Record> rows =
+        dsl.fetch(
+            "SELECT * FROM "
+                + EXPECTED_POD_TABLE
+                + " WHERE rotation_operation_id = ? AND validator_id = ? AND token_profile = ? "
+                + "AND audience = ? AND probe_kind = ? ORDER BY pod_uid"
+                + (lock ? " FOR KEY SHARE" : ""),
+            entry.rotationOperationId(),
+            entry.validatorId(),
+            entry.tokenProfile(),
+            entry.audience(),
+            entry.probeKind().name());
+    List<ExpectedPod> expected = new ArrayList<>(rows.size());
+    for (Record row : rows) {
+      String endpoint = row.get("exact_pod_endpoint", String.class);
+      expected.add(
+          new ExpectedPod(
+              row.get("rotation_operation_id", UUID.class),
+              row.get("plan_digest", String.class),
+              row.get("validator_id", String.class),
+              row.get("token_profile", String.class),
+              row.get("audience", String.class),
+              ProbeKind.valueOf(row.get("probe_kind", String.class)),
+              row.get("jti", UUID.class),
+              new PodTarget(
+                  row.get("inventory_snapshot_digest", String.class),
+                  row.get("environment_id", String.class),
+                  row.get("cluster_id", String.class),
+                  row.get("cluster_incarnation_uid", UUID.class).toString(),
+                  row.get("kubernetes_namespace", String.class),
+                  row.get("namespace_uid", UUID.class).toString(),
+                  row.get("api_binding_revision", String.class),
+                  row.get("api_binding_digest", String.class),
+                  row.get("inventory_binding_revision", String.class),
+                  row.get("inventory_binding_digest", String.class),
+                  row.get("validator_id", String.class),
+                  row.get("deployment_uid", UUID.class).toString(),
+                  row.get("pod_uid", UUID.class).toString(),
+                  row.get("pod_ip", String.class),
+                  row.get("image", String.class),
+                  row.get("verifier_config_sha256", String.class),
+                  row.get("applicability_matrix_digest", String.class),
+                  ProbeExpectation.valueOf(row.get("expected_outcome", String.class)),
+                  Optional.ofNullable(endpoint).map(URI::create),
+                  Optional.ofNullable(row.get("canonical_service_uri", String.class)),
+                  Optional.ofNullable(row.get("expected_pod_leaf_spki_sha256", String.class)))));
+    }
+    return List.copyOf(expected);
+  }
+
+  private void requireLiveInventoryMatches(
+      ReadinessProbePlan plan,
+      Binding binding,
+      TrustFence trust,
+      InventorySnapshot liveInventory,
+      ObservationContext expectedContext) {
+    Objects.requireNonNull(liveInventory, "Fresh protected live inventory is required");
+    requireFreshLiveInventory(liveInventory);
+    String expectedDigest =
+        plan.inventorySnapshotDigest().orElseThrow(ReceiverUnavailableException::new);
+    AccountJwtValidatorInventoryRepository.StoredSnapshot stored =
+        inventoryRepository.readRequired(expectedDigest, binding, trust);
+    if (liveInventory.observationContext().filter(expectedContext::equals).isEmpty()
+        || !expectedDigest.equals(liveInventory.digest())
+        || !stored.digest().equals(liveInventory.digest())
+        || !stored.environmentId().equals(liveInventory.environmentId())
+        || !stored.clusterId().equals(liveInventory.clusterId())
+        || !stored.clusterIncarnationUid().equals(liveInventory.clusterIncarnationUid())
+        || !stored.namespace().equals(liveInventory.namespace())
+        || !stored.namespaceUid().equals(liveInventory.namespaceUid())
+        || !stored.apiBindingRevision().equals(liveInventory.apiBindingRevision())
+        || !stored.apiBindingDigest().equals(liveInventory.apiBindingDigest())
+        || !stored.inventoryBindingRevision().equals(liveInventory.inventoryBindingRevision())
+        || !stored.inventoryBindingDigest().equals(liveInventory.inventoryBindingDigest())
+        || !MessageDigest.isEqual(stored.canonicalBytes(), liveInventory.canonicalBytes())) {
+      throw new ReceiverUnavailableException();
+    }
+  }
+
+  private static void requireObservationContext(
+      CurrentEvidence current, InventorySnapshot snapshot) {
+    if (snapshot.observationContext().filter(observationContext(current)::equals).isEmpty()) {
+      throw new InventoryPlanConflictException();
+    }
+  }
+
+  private static ObservationContext observationContext(CurrentEvidence current) {
+    return observationContext(
+        current.request().operationId(),
+        current.request().operationDigest(),
+        new SignerFence(current.state().durableActive(), current.state().publishedActive()));
+  }
+
+  private static ObservationContext observationContext(
+      UUID operationId, String operationDigest, SignerFence expectedFence) {
+    if (!expectedFence.durableActive().equals(expectedFence.publishedActive())) {
+      throw new StaleOperationException("JWT active signer fence changed during inventory proof");
+    }
+    ObservationPurpose purpose =
+        expectedFence.durableActive().isEmpty()
+            ? ObservationPurpose.INITIAL_NO_ACTIVE_SIGNER_CANDIDATES
+            : ObservationPurpose.STRICT_READY;
+    return new ObservationContext(purpose, operationId, operationDigest);
+  }
+
+  private void requireFreshLiveInventory(InventorySnapshot snapshot) {
+    long observedAt = snapshot.observedAt().getEpochSecond();
+    Long databaseNow =
+        dsl.resultQuery("SELECT floor(extract(epoch FROM CURRENT_TIMESTAMP))::bigint")
+            .fetchOne(0, Long.class);
+    if (databaseNow == null) {
+      throw new StorageUnavailableException("Account validator inventory clock is unavailable");
+    }
+    if (observedAt <= 0L
+        || observedAt > databaseNow
+        || databaseNow - observedAt > MAX_VALIDATOR_CACHE_AGE_SECONDS) {
+      throw new ReceiverUnavailableException();
+    }
+  }
+
+  private boolean hasCompletePodReceiptClosure(ReadinessProbePlan plan) {
+    if (plan.planVersion() != INVENTORY_PLAN_VERSION || !plan.validatorInventoryComplete()) {
+      return false;
+    }
+    int totalReceipts = 0;
+    for (ProbeEntry entry : plan.entries()) {
+      if (entry.state() != ProbeState.VERIFIED) {
+        return false;
+      }
+      VerificationReceipt receipt = entry.verificationReceipt().orElseThrow();
+      if (receipt.receiptVersion() != 2) {
+        throw new QuarantinedStateException(
+            "V2 readiness entry has no per-Pod verification closure receipt");
+      }
+      List<ExpectedPod> expectedPods = selectExpectedPods(entry, true);
+      List<PodReceipt> podReceipts = selectPodReceipts(entry, true);
+      if (expectedPods.isEmpty() || expectedPods.size() != receipt.podReceiptCount()) {
+        throw new QuarantinedStateException(
+            "V2 readiness receipt count differs from its exact expected Pod inventory");
+      }
+      if (podReceipts.size() < expectedPods.size()) {
+        return false;
+      }
+      if (podReceipts.size() != expectedPods.size()) {
+        throw new QuarantinedStateException(
+            "V2 readiness receipt set exceeds its exact expected Pod inventory");
+      }
+      ProbeEntry sourceEntry = sourceEntryForVerifiedClosure(entry);
+      VerificationReceipt recomputed =
+          podReceiptClosure(plan, sourceEntry, expectedPods, podReceipts);
+      if (!recomputed.equals(receipt)) {
+        throw new QuarantinedStateException(
+            "V2 readiness entry closure differs from retained per-Pod receipts");
+      }
+      totalReceipts = Math.addExact(totalReceipts, podReceipts.size());
+      if (totalReceipts > MAX_POD_RECEIPTS_PER_OPERATION) {
+        throw new QuarantinedStateException("Readiness Pod receipt closure exceeds its bound");
+      }
+    }
+    return totalReceipts > 0;
+  }
+
+  private void insertPodReceipt(PodReceipt receipt) {
+    dsl.execute(
+        "INSERT INTO "
+            + POD_RECEIPT_TABLE
+            + " (rotation_operation_id, plan_digest, validator_id, token_profile, audience, "
+            + "probe_kind, pod_uid, receipt_version, jti, source_entry_version, "
+            + "compact_token_sha256, target_generation, target_kid, expected_active_generation, "
+            + "expected_active_kid, outcome, observed_pod_uid, observed_image, "
+            + "observed_verifier_config_sha256, verified_kid, receiver_endpoint, "
+            + "receiver_service_uri, receiver_peer_spki_sha256, observed_at_epoch_seconds, receipt_sha256) "
+            + "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
+            + "ON CONFLICT (rotation_operation_id, validator_id, token_profile, audience, probe_kind, pod_uid) "
+            + "DO NOTHING",
+        receipt.rotationOperationId(),
+        receipt.planDigest(),
+        receipt.validatorId(),
+        receipt.tokenProfile(),
+        receipt.audience(),
+        receipt.probeKind().name(),
+        UUID.fromString(receipt.podUid()),
+        1,
+        receipt.jti(),
+        receipt.sourceEntryVersion(),
+        receipt.compactTokenSha256(),
+        Long.parseLong(receipt.targetGeneration()),
+        receipt.targetKid(),
+        receipt.expectedActive().map(value -> Long.parseLong(value.generation())).orElse(null),
+        receipt.expectedActive().map(ActiveSigner::kid).orElse(null),
+        receipt.outcome().name(),
+        UUID.fromString(receipt.observedPodUid()),
+        receipt.image(),
+        receipt.verifierConfigSha256(),
+        receipt.verifiedKid(),
+        receipt.receiverEndpoint().toString(),
+        receipt.receiverServiceUri(),
+        receipt.receiverPeerSpkiSha256(),
+        receipt.observedAtEpochSecond(),
+        receipt.receiptSha256());
+  }
+
+  private PodReceipt selectPodReceipt(PodReceipt key, boolean lock) {
+    Record row =
+        dsl.fetchOne(
+            "SELECT * FROM "
+                + POD_RECEIPT_TABLE
+                + " WHERE rotation_operation_id = ? AND validator_id = ? AND token_profile = ? "
+                + "AND audience = ? AND probe_kind = ? AND pod_uid = ?"
+                + (lock ? " FOR UPDATE" : ""),
+            key.rotationOperationId(),
+            key.validatorId(),
+            key.tokenProfile(),
+            key.audience(),
+            key.probeKind().name(),
+            UUID.fromString(key.podUid()));
+    return row == null ? null : decodePodReceipt(row);
+  }
+
+  private List<PodReceipt> selectPodReceipts(ProbeEntry entry, boolean lock) {
+    Result<Record> rows =
+        dsl.fetch(
+            "SELECT * FROM "
+                + POD_RECEIPT_TABLE
+                + " WHERE rotation_operation_id = ? AND validator_id = ? AND token_profile = ? "
+                + "AND audience = ? AND probe_kind = ? ORDER BY pod_uid"
+                + (lock ? " FOR UPDATE" : ""),
+            entry.rotationOperationId(),
+            entry.validatorId(),
+            entry.tokenProfile(),
+            entry.audience(),
+            entry.probeKind().name());
+    List<PodReceipt> receipts = new ArrayList<>(rows.size());
+    for (Record row : rows) {
+      receipts.add(decodePodReceipt(row));
+    }
+    return List.copyOf(receipts);
+  }
+
+  private static PodReceipt decodePodReceipt(Record row) {
+    Long activeGeneration = row.get("expected_active_generation", Long.class);
+    String activeKid = row.get("expected_active_kid", String.class);
+    PodReceipt receipt =
+        new PodReceipt(
+            row.get("rotation_operation_id", UUID.class),
+            row.get("plan_digest", String.class),
+            row.get("validator_id", String.class),
+            row.get("token_profile", String.class),
+            row.get("audience", String.class),
+            ProbeKind.valueOf(row.get("probe_kind", String.class)),
+            row.get("pod_uid", UUID.class).toString(),
+            row.get("jti", UUID.class),
+            row.get("source_entry_version", Long.class),
+            row.get("compact_token_sha256", String.class),
+            String.valueOf(row.get("target_generation", Long.class)),
+            row.get("target_kid", String.class),
+            decodeActive(activeGeneration, activeKid),
+            ProbeExpectation.valueOf(row.get("outcome", String.class)),
+            row.get("observed_pod_uid", UUID.class).toString(),
+            row.get("observed_image", String.class),
+            row.get("observed_verifier_config_sha256", String.class),
+            row.get("verified_kid", String.class),
+            URI.create(row.get("receiver_endpoint", String.class)),
+            row.get("receiver_service_uri", String.class),
+            row.get("receiver_peer_spki_sha256", String.class),
+            row.get("observed_at_epoch_seconds", Long.class),
+            row.get("receipt_sha256", String.class));
+    if (!receipt.receiptSha256().equals(podReceiptDigest(receipt))) {
+      throw new QuarantinedStateException("Immutable per-Pod readiness receipt digest is invalid");
+    }
+    return receipt;
+  }
+
+  private static PodReceipt podReceipt(
+      ProbeEntry entry,
+      ExpectedPod expected,
+      AuthenticatedAcceptance acceptance,
+      long sourceEntryVersion) {
+    PodTarget target = expected.target();
+    PodReceipt unsigned =
+        new PodReceipt(
+            entry.rotationOperationId(),
+            entry.planDigest(),
+            entry.validatorId(),
+            entry.tokenProfile(),
+            entry.audience(),
+            entry.probeKind(),
+            target.podUid(),
+            entry.jti(),
+            sourceEntryVersion,
+            entry.compactTokenSha256().orElseThrow(),
+            entry.targetGeneration(),
+            entry.targetKid(),
+            entry.expectedActive(),
+            acceptance.result(),
+            acceptance.podUid(),
+            acceptance.image(),
+            acceptance.verifierConfigSha256(),
+            acceptance.verifiedKid(),
+            URI.create(acceptance.actualPodEndpoint()),
+            acceptance.actualServiceUri(),
+            acceptance.actualPeerSpkiSha256(),
+            acceptance.observedAtEpochSecond(),
+            "0".repeat(64));
+    return new PodReceipt(
+        unsigned.rotationOperationId(),
+        unsigned.planDigest(),
+        unsigned.validatorId(),
+        unsigned.tokenProfile(),
+        unsigned.audience(),
+        unsigned.probeKind(),
+        unsigned.podUid(),
+        unsigned.jti(),
+        unsigned.sourceEntryVersion(),
+        unsigned.compactTokenSha256(),
+        unsigned.targetGeneration(),
+        unsigned.targetKid(),
+        unsigned.expectedActive(),
+        unsigned.outcome(),
+        unsigned.observedPodUid(),
+        unsigned.image(),
+        unsigned.verifierConfigSha256(),
+        unsigned.verifiedKid(),
+        unsigned.receiverEndpoint(),
+        unsigned.receiverServiceUri(),
+        unsigned.receiverPeerSpkiSha256(),
+        unsigned.observedAtEpochSecond(),
+        podReceiptDigest(unsigned));
+  }
+
+  private static ProbeEntry sourceEntryForVerifiedClosure(ProbeEntry verified) {
+    VerificationReceipt receipt = verified.verificationReceipt().orElseThrow();
+    if (receipt.receiptVersion() != 2
+        || receipt.sourceEntryVersion() + 1L != verified.entryVersion()) {
+      throw new QuarantinedStateException("Verified per-Pod closure has an invalid source version");
+    }
+    return new ProbeEntry(
+        verified.rotationOperationId(),
+        verified.planDigest(),
+        verified.validatorId(),
+        verified.tokenProfile(),
+        verified.audience(),
+        verified.probeKind(),
+        verified.jti(),
+        verified.targetGeneration(),
+        verified.targetKid(),
+        verified.expectedActive(),
+        verified.registryVersion(),
+        receipt.sourceEntryVersion(),
+        verified.plannedIssuedAtEpochSecond(),
+        verified.expiresAtEpochSecond(),
+        ProbeState.ISSUED,
+        Optional.empty(),
+        verified.signingAttemptedAtEpochSecond(),
+        verified.compactTokenSha256(),
+        Optional.empty());
+  }
+
+  private static String podReceiptDigest(PodReceipt receipt) {
+    Map<String, Object> value = new LinkedHashMap<>();
+    value.put("domain", "account-jwt-readiness-per-pod-receipt/v1");
+    value.put("rotationOperationId", receipt.rotationOperationId().toString());
+    value.put("planDigest", receipt.planDigest());
+    value.put("validatorId", receipt.validatorId());
+    value.put("tokenProfile", receipt.tokenProfile());
+    value.put("audience", receipt.audience());
+    value.put("probeKind", receipt.probeKind().name());
+    value.put("podUid", receipt.podUid());
+    value.put("jti", receipt.jti().toString());
+    value.put("sourceEntryVersion", receipt.sourceEntryVersion());
+    value.put("compactTokenSha256", receipt.compactTokenSha256());
+    value.put("targetGeneration", receipt.targetGeneration());
+    value.put("targetKid", receipt.targetKid());
+    value.put("expectedActive", activeMap(receipt.expectedActive()));
+    value.put("outcome", receipt.outcome().name());
+    value.put("observedPodUid", receipt.observedPodUid());
+    value.put("image", receipt.image());
+    value.put("verifierConfigSha256", receipt.verifierConfigSha256());
+    value.put("verifiedKid", receipt.verifiedKid());
+    value.put("receiverEndpoint", receipt.receiverEndpoint().toString());
+    value.put("receiverServiceUri", receipt.receiverServiceUri());
+    value.put("receiverPeerSpkiSha256", receipt.receiverPeerSpkiSha256());
+    value.put("observedAtEpochSecond", receipt.observedAtEpochSecond());
+    return digest(value);
+  }
+
+  private static VerificationReceipt podReceiptClosure(
+      ReadinessProbePlan plan,
+      ProbeEntry entry,
+      List<ExpectedPod> expectedPods,
+      List<PodReceipt> receipts) {
+    Map<String, ExpectedPod> expectedByUid = new LinkedHashMap<>();
+    for (ExpectedPod expected : expectedPods) {
+      if (expectedByUid.putIfAbsent(expected.target().podUid(), expected) != null) {
+        throw new QuarantinedStateException("Readiness Pod plan contains duplicate Pod UIDs");
+      }
+    }
+    Map<String, PodReceipt> receiptsByUid = new LinkedHashMap<>();
+    for (PodReceipt receipt : receipts) {
+      ExpectedPod expected = expectedByUid.get(receipt.podUid());
+      if (expected == null
+          || receiptsByUid.putIfAbsent(receipt.podUid(), receipt) != null
+          || !receipt.rotationOperationId().equals(entry.rotationOperationId())
+          || !receipt.planDigest().equals(entry.planDigest())
+          || !receipt.validatorId().equals(entry.validatorId())
+          || !receipt.tokenProfile().equals(entry.tokenProfile())
+          || !receipt.audience().equals(entry.audience())
+          || receipt.probeKind() != entry.probeKind()
+          || !receipt.jti().equals(entry.jti())
+          || receipt.sourceEntryVersion() != entry.entryVersion()
+          || !receipt.compactTokenSha256().equals(entry.compactTokenSha256().orElseThrow())
+          || !receipt.targetGeneration().equals(entry.targetGeneration())
+          || !receipt.targetKid().equals(entry.targetKid())
+          || !receipt.expectedActive().equals(entry.expectedActive())
+          || receipt.outcome() != expected.target().expectation()
+          || !receipt.observedPodUid().equals(expected.target().podUid())
+          || !receipt.image().equals(expected.target().image())
+          || !receipt.verifierConfigSha256().equals(expected.target().verifierConfigSha256())
+          || !receipt.receiverEndpoint().equals(expected.target().exactPodEndpoint().orElseThrow())
+          || !receipt
+              .receiverServiceUri()
+              .equals(expected.target().canonicalServiceUri().orElseThrow())
+          || !receipt
+              .receiverPeerSpkiSha256()
+              .equals(expected.target().podLeafSpkiSha256().orElseThrow())
+          || !receipt.receiptSha256().equals(podReceiptDigest(receipt))) {
+        throw new QuarantinedStateException(
+            "Readiness Pod receipt does not match its exact target");
+      }
+    }
+    if (expectedByUid.size() != receiptsByUid.size()
+        || expectedByUid.isEmpty()
+        || expectedByUid.size() > MAX_POD_RECEIPTS_PER_OPERATION) {
+      throw new QuarantinedStateException("Readiness Pod receipt closure is incomplete");
+    }
+    ProbeExpectation expectedOutcome = null;
+    List<Map<String, Object>> closurePods = new ArrayList<>();
+    List<ExpectedPod> ordered =
+        expectedPods.stream()
+            .sorted(java.util.Comparator.comparing(value -> value.target().podUid()))
+            .toList();
+    long observedAt = 0L;
+    for (ExpectedPod expected : ordered) {
+      PodTarget target = expected.target();
+      PodReceipt receipt = receiptsByUid.get(target.podUid());
+      if (receipt == null || (expectedOutcome != null && expectedOutcome != target.expectation())) {
+        throw new QuarantinedStateException("Readiness Pod expectations are not a closed matrix");
+      }
+      expectedOutcome = target.expectation();
+      observedAt = Math.max(observedAt, receipt.observedAtEpochSecond());
+      Map<String, Object> pod = new LinkedHashMap<>();
+      pod.put("podUid", target.podUid());
+      pod.put("podIpEndpoint", target.exactPodEndpoint().orElseThrow().toString());
+      pod.put("serviceUri", target.canonicalServiceUri().orElseThrow());
+      pod.put("leafSpkiSha256", target.podLeafSpkiSha256().orElseThrow());
+      pod.put("image", target.image());
+      pod.put("verifierConfigSha256", target.verifierConfigSha256());
+      pod.put("receiptSha256", receipt.receiptSha256());
+      closurePods.add(pod);
+    }
+    ExpectedPod first = ordered.get(0);
+    PodTarget firstTarget = first.target();
+    Map<String, Object> closure = new LinkedHashMap<>();
+    closure.put("domain", "account-jwt-readiness-per-pod-closure/v1");
+    closure.put("rotationOperationId", plan.operationId().toString());
+    closure.put("planDigest", plan.planDigest());
+    closure.put("applicabilityMatrixDigest", plan.applicabilityMatrixDigest());
+    closure.put("inventorySnapshotDigest", plan.inventorySnapshotDigest().orElseThrow());
+    closure.put("validatorId", entry.validatorId());
+    closure.put("tokenProfile", entry.tokenProfile());
+    closure.put("audience", entry.audience());
+    closure.put("probeKind", entry.probeKind().name());
+    closure.put("jti", entry.jti().toString());
+    closure.put("sourceEntryVersion", entry.entryVersion());
+    closure.put("compactTokenSha256", entry.compactTokenSha256().orElseThrow());
+    closure.put("targetGeneration", entry.targetGeneration());
+    closure.put("targetKid", entry.targetKid());
+    closure.put("expectedActive", activeMap(entry.expectedActive()));
+    closure.put("pods", closurePods);
+    String closureSha256 = digest(closure);
+    return new VerificationReceipt(
+        2,
+        entry.entryVersion(),
+        entry.entryVersion() + 1L,
+        observedAt,
+        closureSha256,
+        entry.targetKid(),
+        firstTarget.podUid(),
+        firstTarget.inventoryBindingDigest(),
+        firstTarget.inventoryBindingRevision(),
+        firstTarget.canonicalServiceUri().orElseThrow(),
+        firstTarget.podLeafSpkiSha256().orElseThrow(),
+        expectedPods.size(),
+        closureSha256);
   }
 
   private ReadinessProbePlan selectPlan(UUID operationId, boolean lock) {
@@ -1114,13 +2185,10 @@ public class AccountJwtReadinessProbeRepository {
     return List.copyOf(entries);
   }
 
-  // Keep the candidate's digest/equality order identical to the durable key order. If a future
-  // schema adds identity dimensions (for example Pod membership), append them to both this
-  // comparator and SELECT's ORDER BY; V1 plans retain their existing tuple and digest semantics.
+  // V1 digests bind the established canary/control/player/delegation profile order. V2 adds
+  // validator identity as the leading key; per-Pod requirements remain separately bound rows.
   private static final Comparator<ProbeEntry> PROBE_ENTRY_ORDER =
       Comparator.comparing(ProbeEntry::validatorId)
-          // V1 plan digests bind the established tuple order. Keep it explicit and shared with
-          // durable readback while appending any future identity dimensions consistently.
           .thenComparingInt(entry -> profileOrder(entry.tokenProfile()))
           .thenComparing(ProbeEntry::audience)
           .thenComparing(entry -> entry.probeKind().name());
@@ -1206,6 +2274,8 @@ public class AccountJwtReadinessProbeRepository {
     String peerUri = row.get("validator_peer_uri", String.class);
     String peerSpki = row.get("validator_peer_spki_sha256", String.class);
     String receiptSha256 = row.get("verification_receipt_sha256", String.class);
+    Short podReceiptCount = row.get("pod_receipt_count", Short.class);
+    String podReceiptClosureSha256 = row.get("pod_receipt_closure_sha256", String.class);
     if (version == null
         && sourceVersion == null
         && verifiedAt == null
@@ -1215,13 +2285,14 @@ public class AccountJwtReadinessProbeRepository {
         && configRevision == null
         && peerUri == null
         && peerSpki == null
-        && receiptSha256 == null) {
+        && receiptSha256 == null
+        && podReceiptCount == null
+        && podReceiptClosureSha256 == null) {
       return null;
     }
     if (version == null
         || sourceVersion == null
         || verifiedAt == null
-        || verifiedKid == null
         || validatorInstanceId == null
         || bindingDigest == null
         || configRevision == null
@@ -1229,6 +2300,11 @@ public class AccountJwtReadinessProbeRepository {
         || peerSpki == null
         || receiptSha256 == null) {
       throw new QuarantinedStateException("Readiness verification receipt is partial");
+    }
+    if ((version == 1
+            && (verifiedKid == null || podReceiptCount != null || podReceiptClosureSha256 != null))
+        || (version == 2 && (podReceiptCount == null || podReceiptClosureSha256 == null))) {
+      throw new QuarantinedStateException("Readiness verification receipt version is partial");
     }
     Long resultVersion = Math.addExact(sourceVersion, 1L);
     return new VerificationReceipt(
@@ -1242,7 +2318,9 @@ public class AccountJwtReadinessProbeRepository {
         bindingDigest,
         configRevision,
         peerUri,
-        peerSpki);
+        peerSpki,
+        podReceiptCount == null ? 0 : podReceiptCount.intValue(),
+        podReceiptClosureSha256);
   }
 
   private ReadinessProbePlan decodePlan(Record row, List<ProbeEntry> entries) {
@@ -1325,21 +2403,112 @@ public class AccountJwtReadinessProbeRepository {
         || !plan.publicationIntentDigest().equals(intent.intentDigest())
         || !plan.publicationReceiptDigest().equals(receipt.receiptDigest())
         || !plan.mountedObservationDigest().equals(mount.observationDigest())
-        || !plan.applicabilityMatrixJson().equals(applicabilityMatrixJson())
+        || (plan.planVersion() == 1
+            && !plan.applicabilityMatrixJson().equals(applicabilityMatrixJson()))
         || !plan.applicabilityMatrixDigest()
             .equals(sha256(plan.applicabilityMatrixJson().getBytes(StandardCharsets.UTF_8)))
-        || plan.validatorInventoryComplete()
+        || (plan.planVersion() == 1 && plan.validatorInventoryComplete())
+        || (plan.planVersion() == INVENTORY_PLAN_VERSION && !matchesStoredV2Inventory(plan))
         || !plan.planDigest().equals(planDigest(plan))) {
       throw new StaleOperationException(
           "Readiness probe plan no longer matches current Account evidence");
     }
   }
 
+  private static AccountJwtJwksPublicationRepository.PromotionPublicationEvidence
+      promotionPublicationEvidence(
+          AccountJwtJwksPublicationRepository.PublicationEvidence publication) {
+    return new AccountJwtJwksPublicationRepository.PromotionPublicationEvidence(
+        publication.intent(),
+        publication.receipt().orElseThrow(() -> new MissingPublicationEvidenceException()),
+        publication
+            .mountedCorrespondence()
+            .orElseThrow(() -> new MissingPublicationEvidenceException()));
+  }
+
+  private boolean matchesStoredV2Inventory(ReadinessProbePlan plan) {
+    String inventoryDigest = plan.inventorySnapshotDigest().orElse(null);
+    if (inventoryDigest == null) {
+      return false;
+    }
+    AccountJwtValidatorInventoryRepository.StoredSnapshot snapshot =
+        inventoryRepository.readRequired(inventoryDigest, plan.binding(), plan.trustFence());
+    try {
+      JsonNode matrix = JSON.readTree(plan.applicabilityMatrixJson());
+      JsonNode source = matrix == null ? null : matrix.get("source");
+      if (matrix == null
+          || !matrix.isObject()
+          || !"2".equals(matrix.path("schemaVersion").asText())
+          || !inventoryDigest.equals(matrix.path("inventorySnapshotDigest").asText())
+          || source == null
+          || !snapshot.apiBindingRevision().equals(source.path("apiBindingRevision").asText())
+          || !snapshot.apiBindingDigest().equals(source.path("apiBindingDigest").asText())
+          || !snapshot
+              .inventoryBindingRevision()
+              .equals(source.path("inventoryBindingRevision").asText())
+          || !snapshot
+              .inventoryBindingDigest()
+              .equals(source.path("inventoryBindingDigest").asText())
+          || !snapshot.clusterIncarnationUid().equals(source.path("clusterIncarnationUid").asText())
+          || !snapshot.namespace().equals(source.path("namespace").asText())
+          || !snapshot.namespaceUid().equals(source.path("namespaceUid").asText())
+          || !snapshot.environmentId().equals(source.path("environmentId").asText())
+          || !snapshot.clusterId().equals(source.path("clusterId").asText())) {
+        return false;
+      }
+      JsonNode validators = matrix.get("validators");
+      if (validators == null
+          || !validators.isArray()
+          || validators.isEmpty()
+          || validators.size() > 32) {
+        return false;
+      }
+      if (!plan.validatorInventoryComplete()) {
+        return "PARTIAL_UNCONFIRMED".equals(matrix.path("inventoryStatus").asText());
+      }
+      if (!"PROTECTED_LIVE_COMPLETE".equals(matrix.path("inventoryStatus").asText())
+          || validators.size() != 2) {
+        return false;
+      }
+      JsonNode accountProfiles = null;
+      JsonNode gameSessionProfiles = null;
+      for (JsonNode validator : validators) {
+        String validatorId = validator.path("validatorId").asText();
+        if (VALIDATOR_ID.equals(validatorId)) {
+          accountProfiles = validator.get("applicableProfiles");
+        } else if ("game-session-service".equals(validatorId)) {
+          gameSessionProfiles = validator.get("applicableProfiles");
+        } else {
+          return false;
+        }
+      }
+      return hasExactProfiles(accountProfiles, PRODUCTION_PROFILE_CASES)
+          && hasExactProfiles(
+              gameSessionProfiles,
+              List.of(new ProfileCase(REPRESENTATIVE_PROFILE, REPRESENTATIVE_AUDIENCE)));
+    } catch (Exception failure) {
+      throw new QuarantinedStateException("V2 readiness inventory matrix cannot be read back");
+    }
+  }
+
+  private static boolean hasExactProfiles(JsonNode node, List<ProfileCase> expected) {
+    if (node == null || !node.isArray() || node.size() != expected.size()) {
+      return false;
+    }
+    Set<ProfileCase> actual = new java.util.HashSet<>();
+    for (JsonNode profile : node) {
+      actual.add(
+          new ProfileCase(
+              profile.path("tokenProfile").asText(), profile.path("audience").asText()));
+    }
+    return actual.equals(Set.copyOf(expected));
+  }
+
   private static void requirePreparedPlanMatches(
       ReadinessProbePlan plan,
       GenerationResult generation,
       AccountJwtSignerDesiredStateRepository.PromotionOperationEvidence promotion,
-      AccountJwtJwksPublicationRepository.PreparedPublicationEvidence publication) {
+      AccountJwtJwksPublicationRepository.PromotionPublicationEvidence publication) {
     AccountJwtJwksPublicationRepository.PrepublicationIntent intent = publication.intent();
     AccountJwtJwksPublicationRepository.PublicationReceipt receipt = publication.receipt();
     AccountJwtJwksPublicationRepository.MountObservation mount =
@@ -1569,10 +2738,198 @@ public class AccountJwtReadinessProbeRepository {
     }
   }
 
+  private static String applicabilityMatrixJson(
+      InventorySnapshot snapshot, boolean inventoryComplete) {
+    List<Map<String, Object>> validators =
+        snapshot.validators().stream()
+            .sorted(java.util.Comparator.comparing(ValidatorObservation::validatorId))
+            .map(
+                validator -> {
+                  List<Map<String, Object>> applicable =
+                      validator.profiles().stream()
+                          .map(
+                              profile ->
+                                  Map.<String, Object>of(
+                                      "audience", profile.audience(),
+                                      "tokenProfile", profile.tokenProfile()))
+                          .sorted(
+                              java.util.Comparator.comparing(
+                                      (Map<String, Object> value) ->
+                                          value.get("tokenProfile").toString())
+                                  .thenComparing(value -> value.get("audience").toString()))
+                          .toList();
+                  List<Map<String, Object>> inapplicable =
+                      PRODUCTION_PROFILE_CASES.stream()
+                          .filter(
+                              profile ->
+                                  validator.profiles().stream()
+                                      .noneMatch(
+                                          actual ->
+                                              actual.tokenProfile().equals(profile.tokenProfile())
+                                                  && actual.audience().equals(profile.audience())))
+                          .map(
+                              profile ->
+                                  Map.<String, Object>of(
+                                      "audience", profile.audience(),
+                                      "tokenProfile", profile.tokenProfile()))
+                          .toList();
+                  Map<String, Object> value = new LinkedHashMap<>();
+                  value.put("applicableProfiles", applicable);
+                  value.put("deploymentUid", validator.deploymentUid());
+                  value.put("image", validator.image());
+                  value.put("podCount", validator.pods().size());
+                  value.put(
+                      "pods",
+                      validator.pods().stream()
+                          .sorted(java.util.Comparator.comparing(PodObservation::uid))
+                          .map(
+                              pod ->
+                                  Map.of(
+                                      "podUid", pod.uid(),
+                                      "podIp", pod.podIp(),
+                                      "exactPodEndpoint", pod.endpoint().toString(),
+                                      "canonicalServiceUri", pod.receiverServiceUri(),
+                                      "leafSpkiSha256", pod.leafSpkiSha256(),
+                                      "image", pod.image(),
+                                      "verifierConfigSha256", pod.verifierConfigSha256()))
+                          .toList());
+                  value.put("inapplicableProfiles", inapplicable);
+                  value.put("validatorId", validator.validatorId());
+                  value.put("verifierConfigSha256", validator.verifierConfigSha256());
+                  return value;
+                })
+            .toList();
+    Map<String, Object> source = new LinkedHashMap<>();
+    source.put("apiBindingDigest", snapshot.apiBindingDigest());
+    source.put("apiBindingRevision", snapshot.apiBindingRevision());
+    source.put("clusterIncarnationUid", snapshot.clusterIncarnationUid());
+    source.put("environmentId", snapshot.environmentId());
+    source.put("inventoryBindingDigest", snapshot.inventoryBindingDigest());
+    source.put("inventoryBindingRevision", snapshot.inventoryBindingRevision());
+    source.put("namespace", snapshot.namespace());
+    source.put("namespaceUid", snapshot.namespaceUid());
+    Map<String, Object> matrix = new LinkedHashMap<>();
+    matrix.put("inventoryStatus", inventoryComplete ? "PROTECTED_LIVE_COMPLETE" : INVENTORY_STATUS);
+    matrix.put("inventorySnapshotDigest", snapshot.digest());
+    matrix.put(
+        "productionProfiles",
+        PRODUCTION_PROFILE_CASES.stream()
+            .map(
+                profile ->
+                    Map.of(
+                        "audience", profile.audience(),
+                        "tokenProfile", profile.tokenProfile()))
+            .toList());
+    matrix.put("schemaVersion", INVENTORY_PLAN_VERSION);
+    matrix.put("source", source);
+    matrix.put("validators", validators);
+    try {
+      String canonical =
+          new String(
+              Rfc8785CanonicalJson.canonicalizeUtf8(JSON.writeValueAsString(matrix)),
+              StandardCharsets.UTF_8);
+      if (canonical.getBytes(StandardCharsets.UTF_8).length > 8192) {
+        throw new InventoryPlanConflictException();
+      }
+      return canonical;
+    } catch (IOException ex) {
+      throw new StorageUnavailableException(
+          "Readiness inventory applicability matrix cannot be canonicalized");
+    }
+  }
+
+  private static boolean inventoryPlanComplete(InventorySnapshot snapshot) {
+    Map<String, Set<ProfileCase>> actual = new LinkedHashMap<>();
+    for (ValidatorObservation validator : snapshot.validators()) {
+      Set<ProfileCase> profiles = new java.util.HashSet<>();
+      for (var profile : validator.profiles()) {
+        ProfileCase candidate = new ProfileCase(profile.tokenProfile(), profile.audience());
+        if (!PRODUCTION_PROFILE_CASES.contains(candidate) || !profiles.add(candidate)) {
+          return false;
+        }
+      }
+      if (validator.pods().isEmpty()
+          || actual.putIfAbsent(validator.validatorId(), profiles) != null) {
+        return false;
+      }
+    }
+    Set<ProfileCase> accountProfiles = actual.get(VALIDATOR_ID);
+    Set<ProfileCase> gameSessionProfiles = actual.get("game-session-service");
+    return actual.keySet().equals(Set.of(VALIDATOR_ID, "game-session-service"))
+        && accountProfiles != null
+        && accountProfiles.equals(Set.copyOf(PRODUCTION_PROFILE_CASES))
+        && gameSessionProfiles != null
+        && gameSessionProfiles.equals(
+            Set.of(new ProfileCase(REPRESENTATIVE_PROFILE, REPRESENTATIVE_AUDIENCE)));
+  }
+
+  private static List<ExpectedPod> expectedPods(
+      ReadinessProbePlan plan, InventorySnapshot snapshot) {
+    List<ExpectedPod> expected = new ArrayList<>();
+    for (ProbeEntry entry : plan.entries()) {
+      ValidatorObservation validator =
+          snapshot.validators().stream()
+              .filter(value -> value.validatorId().equals(entry.validatorId()))
+              .findFirst()
+              .orElseThrow(InventoryPlanConflictException::new);
+      ProbeExpectation expectation =
+          entry.probeKind() == ProbeKind.CANARY
+              ? ProbeExpectation.ACCEPT
+              : validator.profiles().stream()
+                      .anyMatch(
+                          profile ->
+                              profile.tokenProfile().equals(entry.tokenProfile())
+                                  && profile.audience().equals(entry.audience()))
+                  ? ProbeExpectation.ACCEPT
+                  : ProbeExpectation.INAPPLICABLE_REJECT;
+      for (PodObservation pod : validator.pods()) {
+        PodTarget target =
+            new PodTarget(
+                snapshot.digest(),
+                snapshot.environmentId(),
+                snapshot.clusterId(),
+                snapshot.clusterIncarnationUid(),
+                snapshot.namespace(),
+                snapshot.namespaceUid(),
+                snapshot.apiBindingRevision(),
+                snapshot.apiBindingDigest(),
+                snapshot.inventoryBindingRevision(),
+                snapshot.inventoryBindingDigest(),
+                validator.validatorId(),
+                validator.deploymentUid(),
+                pod.uid(),
+                pod.podIp(),
+                pod.image(),
+                pod.verifierConfigSha256(),
+                plan.applicabilityMatrixDigest(),
+                expectation,
+                Optional.of(pod.endpoint()),
+                Optional.of(pod.receiverServiceUri()),
+                Optional.of(pod.leafSpkiSha256()));
+        expected.add(
+            new ExpectedPod(
+                plan.operationId(),
+                plan.planDigest(),
+                entry.validatorId(),
+                entry.tokenProfile(),
+                entry.audience(),
+                entry.probeKind(),
+                entry.jti(),
+                target));
+      }
+    }
+    if (expected.isEmpty() || expected.size() > MAX_POD_RECEIPTS_PER_OPERATION) {
+      throw new InventoryPlanConflictException();
+    }
+    return List.copyOf(expected);
+  }
+
   private static String planDigest(
       CurrentEvidence current,
       String matrixJson,
       String matrixDigest,
+      int planVersion,
+      boolean validatorInventoryComplete,
       long plannedAt,
       long notBefore,
       long expiresAt,
@@ -1582,7 +2939,7 @@ public class AccountJwtReadinessProbeRepository {
     GenerationRequest request = current.request();
     GenerationResult result = current.result();
     AccountJwtJwksPublicationRepository.PublicationEvidence publication = current.publication();
-    preimage.put("digestVersion", "account-jwt-readiness-probe-plan/v1");
+    preimage.put("digestVersion", "account-jwt-readiness-probe-plan/v" + planVersion);
     preimage.put("rotationOperationId", request.operationId().toString());
     preimage.put("environmentId", request.binding().environmentId());
     preimage.put("clusterId", request.binding().clusterId());
@@ -1611,7 +2968,10 @@ public class AccountJwtReadinessProbeRepository {
         publication.mountedCorrespondence().orElseThrow().observationDigest());
     preimage.put("applicabilityMatrixJson", matrixJson);
     preimage.put("applicabilityMatrixDigest", matrixDigest);
-    preimage.put("validatorInventoryComplete", false);
+    preimage.put("validatorInventoryComplete", validatorInventoryComplete);
+    if (planVersion != 1) {
+      preimage.put("planVersion", planVersion);
+    }
     inventorySnapshotDigest.ifPresent(digest -> preimage.put("inventorySnapshotDigest", digest));
     preimage.put("maximumCacheAgeSeconds", MAX_VALIDATOR_CACHE_AGE_SECONDS);
     preimage.put("plannedAtEpochSecond", plannedAt);
@@ -1630,7 +2990,7 @@ public class AccountJwtReadinessProbeRepository {
 
   private static Map<String, Object> planDigestMap(ReadinessProbePlan plan) {
     Map<String, Object> preimage = new LinkedHashMap<>();
-    preimage.put("digestVersion", "account-jwt-readiness-probe-plan/v1");
+    preimage.put("digestVersion", "account-jwt-readiness-probe-plan/v" + plan.planVersion());
     preimage.put("rotationOperationId", plan.operationId().toString());
     preimage.put("environmentId", plan.binding().environmentId());
     preimage.put("clusterId", plan.binding().clusterId());
@@ -1658,6 +3018,9 @@ public class AccountJwtReadinessProbeRepository {
     preimage.put("applicabilityMatrixJson", plan.applicabilityMatrixJson());
     preimage.put("applicabilityMatrixDigest", plan.applicabilityMatrixDigest());
     preimage.put("validatorInventoryComplete", plan.validatorInventoryComplete());
+    if (plan.planVersion() != 1) {
+      preimage.put("planVersion", plan.planVersion());
+    }
     plan.inventorySnapshotDigest()
         .ifPresent(digest -> preimage.put("inventorySnapshotDigest", digest));
     preimage.put("maximumCacheAgeSeconds", plan.maximumCacheAgeSeconds());
@@ -1726,7 +3089,7 @@ public class AccountJwtReadinessProbeRepository {
   private static String readinessPromotionDigest(
       ReadinessProbePlan plan,
       GenerationResult generation,
-      AccountJwtJwksPublicationRepository.PreparedPublicationEvidence publication,
+      AccountJwtJwksPublicationRepository.PromotionPublicationEvidence publication,
       String inventoryEvidenceReference,
       String inventoryEvidenceDigest,
       List<VerifiedProbeEvidence> verifiedProbes) {
@@ -1735,7 +3098,7 @@ public class AccountJwtReadinessProbeRepository {
     preimage.put("plan", planDigestMap(plan));
     preimage.put("planDigest", plan.planDigest());
     preimage.put("generation", generationEvidenceMap(generation));
-    preimage.put("publication", preparedPublicationEvidenceMap(publication));
+    preimage.put("publication", promotionPublicationEvidenceMap(publication));
     preimage.put("inventoryEvidenceReference", inventoryEvidenceReference);
     preimage.put("inventoryEvidenceDigest", inventoryEvidenceDigest);
     preimage.put(
@@ -1778,8 +3141,8 @@ public class AccountJwtReadinessProbeRepository {
         "configRevision", trust.configRevision());
   }
 
-  private static Map<String, Object> preparedPublicationEvidenceMap(
-      AccountJwtJwksPublicationRepository.PreparedPublicationEvidence evidence) {
+  private static Map<String, Object> promotionPublicationEvidenceMap(
+      AccountJwtJwksPublicationRepository.PromotionPublicationEvidence evidence) {
     var intent = evidence.intent();
     var receipt = evidence.receipt();
     var mount = evidence.mountedCorrespondence();
@@ -1858,6 +3221,8 @@ public class AccountJwtReadinessProbeRepository {
     receiptValue.put("validatorConfigRevision", receipt.validatorConfigRevision());
     receiptValue.put("validatorPeerUri", receipt.validatorPeerUri());
     receiptValue.put("validatorPeerSpkiSha256", receipt.validatorPeerSpkiSha256());
+    receiptValue.put("podReceiptCount", receipt.podReceiptCount());
+    receiptValue.put("podReceiptClosureSha256", receipt.podReceiptClosureSha256());
     value.put("verificationReceipt", receiptValue);
     return value;
   }
@@ -1900,6 +3265,23 @@ public class AccountJwtReadinessProbeRepository {
     }
   }
 
+  private static String requireCanonicalKubeUuid(String value, String label) {
+    try {
+      UUID parsed = UUID.fromString(value);
+      String canonical = parsed.toString();
+      if (!canonical.equals(value)
+          || parsed.equals(new UUID(0L, 0L))
+          || parsed.version() < 1
+          || parsed.version() > 8
+          || parsed.variant() != 2) {
+        throw new IllegalArgumentException();
+      }
+      return canonical;
+    } catch (RuntimeException invalid) {
+      throw new QuarantinedStateException(label + " is malformed");
+    }
+  }
+
   private static void requireAccountTransaction() {
     if (!TransactionSynchronizationManager.isActualTransactionActive()) {
       throw new IllegalStateException("An owning Account transaction is required");
@@ -1926,6 +3308,115 @@ public class AccountJwtReadinessProbeRepository {
       GenerationRequest request,
       GenerationResult result,
       AccountJwtJwksPublicationRepository.PublicationEvidence publication) {}
+
+  private record ProfileCase(String tokenProfile, String audience) {}
+
+  /** Exact immutable per-Pod requirement for one logical registry entry. */
+  public record ExpectedPod(
+      UUID rotationOperationId,
+      String planDigest,
+      String validatorId,
+      String tokenProfile,
+      String audience,
+      ProbeKind probeKind,
+      UUID jti,
+      PodTarget target) {
+    public ExpectedPod {
+      requireOperationId(rotationOperationId);
+      requireDigest(planDigest, "expected Pod plan digest");
+      requireValidatorId(validatorId);
+      requireProfile(tokenProfile);
+      requireAudience(audience);
+      Objects.requireNonNull(probeKind);
+      Objects.requireNonNull(jti);
+      Objects.requireNonNull(target);
+      if (jti.version() != 4 || jti.variant() != 2 || !validatorId.equals(target.validatorId())) {
+        throw new QuarantinedStateException("Expected readiness Pod binding is malformed");
+      }
+    }
+  }
+
+  /** Owner-derived current plan, ISSUED entry, and exact expected Pod; contains no JWT. */
+  public record OwnerProbeEvidence(
+      ReadinessProbePlan plan, ProbeEntry entry, ExpectedPod expectedPod) {
+    public OwnerProbeEvidence {
+      Objects.requireNonNull(plan);
+      Objects.requireNonNull(entry);
+      Objects.requireNonNull(expectedPod);
+      if (plan.planVersion() != INVENTORY_PLAN_VERSION
+          || !plan.validatorInventoryComplete()
+          || entry.state() != ProbeState.ISSUED
+          || !plan.operationId().equals(entry.rotationOperationId())
+          || !plan.planDigest().equals(entry.planDigest())
+          || !entry.rotationOperationId().equals(expectedPod.rotationOperationId())
+          || !entry.planDigest().equals(expectedPod.planDigest())
+          || !entry.jti().equals(expectedPod.jti())) {
+        throw new ReceiverUnavailableException();
+      }
+    }
+  }
+
+  /** Immutable digest-covered one-Pod verifier receipt; no token or private key material. */
+  private record PodReceipt(
+      UUID rotationOperationId,
+      String planDigest,
+      String validatorId,
+      String tokenProfile,
+      String audience,
+      ProbeKind probeKind,
+      String podUid,
+      UUID jti,
+      long sourceEntryVersion,
+      String compactTokenSha256,
+      String targetGeneration,
+      String targetKid,
+      Optional<ActiveSigner> expectedActive,
+      ProbeExpectation outcome,
+      String observedPodUid,
+      String image,
+      String verifierConfigSha256,
+      String verifiedKid,
+      URI receiverEndpoint,
+      String receiverServiceUri,
+      String receiverPeerSpkiSha256,
+      long observedAtEpochSecond,
+      String receiptSha256) {
+    private PodReceipt {
+      requireOperationId(rotationOperationId);
+      requireDigest(planDigest, "per-Pod readiness plan digest");
+      requireValidatorId(validatorId);
+      requireProfile(tokenProfile);
+      requireAudience(audience);
+      Objects.requireNonNull(probeKind);
+      requireCanonicalKubeUuid(podUid, "per-Pod readiness target UID");
+      Objects.requireNonNull(jti);
+      if (jti.version() != 4 || jti.variant() != 2 || sourceEntryVersion <= 0L) {
+        throw new QuarantinedStateException("Per-Pod readiness receipt identity is malformed");
+      }
+      requireDigest(compactTokenSha256, "per-Pod readiness token digest");
+      requireGeneration(targetGeneration);
+      requireKid(targetKid);
+      expectedActive = Objects.requireNonNull(expectedActive);
+      Objects.requireNonNull(outcome);
+      requireCanonicalKubeUuid(observedPodUid, "observed readiness Pod UID");
+      if (image == null || !image.matches("[^\\s@]+@sha256:[0-9a-f]{64}")) {
+        throw new QuarantinedStateException("Per-Pod verifier image is not pinned");
+      }
+      requireDigest(verifierConfigSha256, "per-Pod verifier config digest");
+      if (verifiedKid == null || !verifiedKid.equals(targetKid)) {
+        throw new QuarantinedStateException("Per-Pod verifier outcome does not match its key ID");
+      }
+      Objects.requireNonNull(receiverEndpoint);
+      requireDigest(receiverPeerSpkiSha256, "per-Pod receiver SPKI digest");
+      if (receiverServiceUri == null
+          || !receiverServiceUri.matches(
+              "spiffe://firemud/ns/[a-z0-9-]{1,63}/sa/[a-z0-9][a-z0-9-]{0,62}")
+          || observedAtEpochSecond <= 0L) {
+        throw new QuarantinedStateException("Per-Pod receiver identity is malformed");
+      }
+      requireDigest(receiptSha256, "per-Pod readiness receipt digest");
+    }
+  }
 
   public enum ProbeState {
     PLANNED,
@@ -2026,7 +3517,10 @@ public class AccountJwtReadinessProbeRepository {
       }
       verificationReceipt.ifPresent(
           receipt -> {
-            if (!receipt.verifiedKid().equals(targetKid)
+            if ((receipt.receiptVersion() == 1 && !receipt.verifiedKid().equals(targetKid))
+                || (receipt.receiptVersion() == 2
+                    && receipt.verifiedKid() != null
+                    && !receipt.verifiedKid().equals(targetKid))
                 || receipt.resultEntryVersion() > entryVersion
                 || receipt.sourceEntryVersion() + 1L != receipt.resultEntryVersion()
                 || (state == ProbeState.VERIFIED && receipt.resultEntryVersion() != entryVersion)) {
@@ -2107,23 +3601,67 @@ public class AccountJwtReadinessProbeRepository {
       String validatorBindingDigest,
       String validatorConfigRevision,
       String validatorPeerUri,
-      String validatorPeerSpkiSha256) {
+      String validatorPeerSpkiSha256,
+      int podReceiptCount,
+      String podReceiptClosureSha256) {
+    public VerificationReceipt(
+        int receiptVersion,
+        long sourceEntryVersion,
+        long resultEntryVersion,
+        long observedAtEpochSecond,
+        String receiptSha256,
+        String verifiedKid,
+        String validatorInstanceId,
+        String validatorBindingDigest,
+        String validatorConfigRevision,
+        String validatorPeerUri,
+        String validatorPeerSpkiSha256) {
+      this(
+          receiptVersion,
+          sourceEntryVersion,
+          resultEntryVersion,
+          observedAtEpochSecond,
+          receiptSha256,
+          verifiedKid,
+          validatorInstanceId,
+          validatorBindingDigest,
+          validatorConfigRevision,
+          validatorPeerUri,
+          validatorPeerSpkiSha256,
+          0,
+          null);
+    }
+
     public VerificationReceipt {
-      if (receiptVersion != 1
+      if ((receiptVersion != 1 && receiptVersion != 2)
           || sourceEntryVersion <= 0L
           || resultEntryVersion != sourceEntryVersion + 1L
           || observedAtEpochSecond <= 0L) {
         throw new QuarantinedStateException("Readiness verification receipt version is malformed");
       }
       requireDigest(receiptSha256, "readiness verification receipt digest");
-      requireKid(verifiedKid);
+      if (receiptVersion == 1) {
+        requireKid(verifiedKid);
+        if (podReceiptCount != 0 || podReceiptClosureSha256 != null) {
+          throw new QuarantinedStateException("Legacy receipt cannot carry per-Pod closure fields");
+        }
+      } else {
+        requireKid(verifiedKid);
+        if (podReceiptCount <= 0 || podReceiptCount > MAX_POD_RECEIPTS_PER_OPERATION) {
+          throw new QuarantinedStateException("Per-Pod receipt closure count is malformed");
+        }
+        requireDigest(podReceiptClosureSha256, "per-Pod receipt closure digest");
+        if (!receiptSha256.equals(podReceiptClosureSha256)) {
+          throw new QuarantinedStateException("Per-Pod closure and verification digests differ");
+        }
+      }
       if (validatorInstanceId == null
           || !validatorInstanceId.matches("[A-Za-z0-9][A-Za-z0-9._:-]{0,127}")
           || validatorConfigRevision == null
           || !validatorConfigRevision.matches("[A-Za-z0-9][A-Za-z0-9._:-]{0,127}")
           || validatorPeerUri == null
           || !validatorPeerUri.matches(
-              "spiffe://firemud/ns/[a-z0-9-]{1,63}/sa/account-jwt-readiness-harness")) {
+              "spiffe://firemud/ns/[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?/sa/[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?")) {
         throw new QuarantinedStateException("Readiness verification receipt identity is malformed");
       }
       requireDigest(validatorBindingDigest, "validator trust binding digest");
@@ -2237,7 +3775,8 @@ public class AccountJwtReadinessProbeRepository {
           || notBeforeEpochSecond < plannedAtEpochSecond + maximumCacheAgeSeconds
           || expiresAtEpochSecond <= notBeforeEpochSecond
           || expiresAtEpochSecond - notBeforeEpochSecond > PROBE_LIFETIME_SECONDS
-          || planVersion != 1
+          || (planVersion != 1 && planVersion != INVENTORY_PLAN_VERSION)
+          || (planVersion == INVENTORY_PLAN_VERSION && inventorySnapshotDigest.isEmpty())
           || entries.isEmpty()
           || entries.size() > MAX_ENTRIES_PER_OPERATION) {
         throw new QuarantinedStateException("Readiness probe plan is malformed");
@@ -2255,7 +3794,8 @@ public class AccountJwtReadinessProbeRepository {
         long expiresAt,
         String planDigest,
         List<ProbeEntry> entries,
-        Optional<String> inventorySnapshotDigest) {
+        Optional<String> inventorySnapshotDigest,
+        int planVersion) {
       GenerationRequest request = current.request();
       GenerationResult result = current.result();
       var publication = current.publication();
@@ -2281,7 +3821,7 @@ public class AccountJwtReadinessProbeRepository {
           plannedAt,
           notBefore,
           expiresAt,
-          1,
+          planVersion,
           planDigest,
           entries,
           inventorySnapshotDigest);
@@ -2295,7 +3835,7 @@ public class AccountJwtReadinessProbeRepository {
   public static final class ReadinessPromotionProof {
     private final ReadinessProbePlan plan;
     private final GenerationResult generationResult;
-    private final AccountJwtJwksPublicationRepository.PreparedPublicationEvidence publication;
+    private final AccountJwtJwksPublicationRepository.PromotionPublicationEvidence publication;
     private final String inventoryEvidenceReference;
     private final String inventoryEvidenceDigest;
     private final List<VerifiedProbeEvidence> verifiedProbes;
@@ -2304,7 +3844,7 @@ public class AccountJwtReadinessProbeRepository {
     private ReadinessPromotionProof(
         ReadinessProbePlan plan,
         GenerationResult generationResult,
-        AccountJwtJwksPublicationRepository.PreparedPublicationEvidence publication,
+        AccountJwtJwksPublicationRepository.PromotionPublicationEvidence publication,
         String inventoryEvidenceReference,
         String inventoryEvidenceDigest) {
       this.plan = Objects.requireNonNull(plan);
@@ -2325,6 +3865,8 @@ public class AccountJwtReadinessProbeRepository {
           plan.entries().stream().map(VerifiedProbeEvidence::from).toList();
       if (verifiedProbes.isEmpty()
           || verifiedProbes.size() > MAX_ENTRIES_PER_OPERATION
+          || plan.planVersion() != INVENTORY_PLAN_VERSION
+          || verifiedProbes.stream().anyMatch(probe -> probe.receipt().receiptVersion() != 2)
           || !plan.operationId().equals(generationResult.operationId())
           || !plan.operationDigest().equals(generationResult.operationDigest())
           || !plan.generationRequestDigest().equals(generationResult.generationRequestDigest())
@@ -2356,7 +3898,7 @@ public class AccountJwtReadinessProbeRepository {
       return generationResult;
     }
 
-    public AccountJwtJwksPublicationRepository.PreparedPublicationEvidence publication() {
+    public AccountJwtJwksPublicationRepository.PromotionPublicationEvidence publication() {
       return publication;
     }
 
@@ -2413,7 +3955,10 @@ public class AccountJwtReadinessProbeRepository {
           || entryVersion <= 0L
           || plannedIssuedAtEpochSecond <= 0L
           || expiresAtEpochSecond <= plannedIssuedAtEpochSecond
-          || !targetKid.equals(receipt.verifiedKid())
+          || (receipt.receiptVersion() == 1 && !targetKid.equals(receipt.verifiedKid()))
+          || (receipt.receiptVersion() == 2
+              && receipt.verifiedKid() != null
+              && !targetKid.equals(receipt.verifiedKid()))
           || receipt.resultEntryVersion() != entryVersion) {
         throw new QuarantinedStateException(
             "Verified probe evidence does not match its immutable receipt");

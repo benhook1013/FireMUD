@@ -213,7 +213,7 @@ public final class AccountControlUiIssuanceRepository {
     byte[] active = registry(current, signer, tokenHash, true);
     dsl.execute(
         "INSERT INTO account_control_ui_response_envelopes"
-            + " (operation_id, encrypted_response, owner_binding, recovery_expires_at) VALUES (?, ?, ?, ?)",
+            + " (operation_id, encrypted_response, owner_binding, recovery_expires_at) VALUES (?, ?, ?, ?::timestamptz)",
         current.operationId,
         envelope,
         binding,

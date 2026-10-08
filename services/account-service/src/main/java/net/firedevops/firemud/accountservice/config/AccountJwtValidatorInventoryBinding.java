@@ -1,6 +1,8 @@
 package net.firedevops.firemud.accountservice.config;
 
 import java.io.IOException;
+import java.net.Inet6Address;
+import java.net.InetAddress;
 import java.nio.ByteBuffer;
 import java.nio.channels.SeekableByteChannel;
 import java.nio.charset.CharacterCodingException;
@@ -44,7 +46,7 @@ public final class AccountJwtValidatorInventoryBinding {
   public static final Path PROTECTED_BINDING_PATH =
       Path.of("/etc/firemud/account-jwt-api/validator-inventory.json");
   private static final Path PROTECTED_ROOT = Path.of("/etc/firemud/account-jwt-api");
-  private static final String VERSION = "account-jwt-validator-inventory-binding/v1";
+  private static final String VERSION = "account-jwt-validator-inventory-binding/v2";
   private static final String RUNTIME_CONFIG_ENV = "FIREMUD_JWT_VERIFIER_CONFIG";
   private static final Set<String> ROOT_FIELDS =
       Set.of(
@@ -71,8 +73,13 @@ public final class AccountJwtValidatorInventoryBinding {
           "image",
           "jwksUri",
           "maxCacheAgeSeconds",
-          "profiles");
+          "profiles",
+          "receiverServiceUri",
+          "receiverPort",
+          "receiverPods");
   private static final Set<String> PROFILE_FIELDS = Set.of("tokenProfile", "audience");
+  private static final Set<String> RECEIVER_POD_FIELDS =
+      Set.of("podUid", "podIp", "leafSpkiSha256");
   private static final JsonMapper JSON =
       JsonMapper.builder()
           .enable(StreamReadFeature.STRICT_DUPLICATE_DETECTION)
@@ -92,6 +99,9 @@ public final class AccountJwtValidatorInventoryBinding {
       Pattern.compile("(?:[A-Za-z0-9](?:[A-Za-z0-9_.-]{0,61}[A-Za-z0-9])?)?");
   private static final Pattern PROFILE = Pattern.compile("[a-z][a-z0-9-]{0,63}");
   private static final Pattern AUDIENCE = Pattern.compile("[A-Za-z0-9][A-Za-z0-9._:/-]{0,255}");
+  private static final Pattern RECEIVER_SERVICE_URI =
+      Pattern.compile(
+          "spiffe://firemud/ns/[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?/sa/[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?");
 
   private final boolean enabled;
   private final String configuredPath;
@@ -206,6 +216,9 @@ public final class AccountJwtValidatorInventoryBinding {
     List<ValidatorExpectation> result = new ArrayList<>();
     Set<String> ids = new LinkedHashSet<>();
     Set<String> deployments = new LinkedHashSet<>();
+    Set<String> expectedPodUids = new LinkedHashSet<>();
+    Set<String> expectedPodIps = new LinkedHashSet<>();
+    Set<String> expectedPodSpkis = new LinkedHashSet<>();
     for (JsonNode validator : node) {
       requireObjectFields(validator, VALIDATOR_FIELDS);
       String id = requiredText(validator, "validatorId", 63);
@@ -229,6 +242,18 @@ public final class AccountJwtValidatorInventoryBinding {
       if (profiles.isEmpty()) {
         throw unavailable();
       }
+      List<ReceiverPodPin> receiverPods =
+          parseReceiverPods(validator.get("receiverPods"), replicas);
+      for (ReceiverPodPin pin : receiverPods) {
+        // Validator workloads are distinct expected instances in this closed LOGIN matrix. A
+        // shared leaf key would make the TLS peer prove only possession by either Pod, not the
+        // exact Pod UID selected by the owner-observed inventory.
+        if (!expectedPodUids.add(pin.podUid())
+            || !expectedPodIps.add(pin.podIp())
+            || !expectedPodSpkis.add(pin.leafSpkiSha256())) {
+          throw unavailable();
+        }
+      }
       String runtimeConfig = canonicalRuntimeConfig(jwksUri, maximumCacheAge, profiles);
       if (runtimeConfig.getBytes(StandardCharsets.UTF_8).length > MAX_RUNTIME_CONFIG_BYTES) {
         throw unavailable();
@@ -245,9 +270,125 @@ public final class AccountJwtValidatorInventoryBinding {
               jwksUri,
               maximumCacheAge,
               profiles,
-              runtimeConfig));
+              runtimeConfig,
+              canonicalReceiverServiceUri(requiredText(validator, "receiverServiceUri", 256)),
+              exactInt(validator.get("receiverPort"), 1, 65535),
+              receiverPods));
     }
     return List.copyOf(result);
+  }
+
+  private static List<ReceiverPodPin> parseReceiverPods(JsonNode node, int replicas) {
+    if (node == null || !node.isArray() || node.size() != replicas || node.size() > 128) {
+      throw unavailable();
+    }
+    List<ReceiverPodPin> pins = new ArrayList<>();
+    Set<String> podUids = new LinkedHashSet<>();
+    Set<String> podIps = new LinkedHashSet<>();
+    Set<String> podSpkis = new LinkedHashSet<>();
+    String previousUid = null;
+    for (JsonNode pod : node) {
+      requireObjectFields(pod, RECEIVER_POD_FIELDS);
+      String uid = canonicalUid(requiredText(pod, "podUid", 36));
+      String ip = canonicalPodIp(requiredText(pod, "podIp", 45));
+      String spki = requiredText(pod, "leafSpkiSha256", 64);
+      if (!SHA256.matcher(spki).matches()
+          || !podUids.add(uid)
+          || !podIps.add(ip)
+          || !podSpkis.add(spki)
+          || (previousUid != null && previousUid.compareTo(uid) >= 0)) {
+        throw unavailable();
+      }
+      previousUid = uid;
+      pins.add(new ReceiverPodPin(uid, ip, spki));
+    }
+    return List.copyOf(pins);
+  }
+
+  private static String canonicalReceiverServiceUri(String value) {
+    if (!RECEIVER_SERVICE_URI.matcher(value).matches()) {
+      throw unavailable();
+    }
+    return value;
+  }
+
+  public static String canonicalPodIp(String value) {
+    if (value == null || value.isBlank() || value.indexOf('%') >= 0) {
+      throw unavailable();
+    }
+    try {
+      if (value.indexOf(':') < 0) {
+        String[] components = value.split("\\.", -1);
+        if (components.length != 4) {
+          throw unavailable();
+        }
+        for (String component : components) {
+          if (component.isEmpty()
+              || (component.length() > 1 && component.charAt(0) == '0')
+              || !component.matches("[0-9]{1,3}")
+              || Integer.parseInt(component) > 255) {
+            throw unavailable();
+          }
+        }
+        if ("0.0.0.0".equals(value) || "255.255.255.255".equals(value)) {
+          throw unavailable();
+        }
+        return value;
+      }
+      if (!value.matches("[0-9A-Fa-f:]+")) {
+        throw unavailable();
+      }
+      InetAddress address = InetAddress.getByName(value);
+      if (!(address instanceof Inet6Address)
+          || !canonicalIpv6(address.getAddress()).equals(value)) {
+        throw unavailable();
+      }
+      return value;
+    } catch (IOException | NumberFormatException failure) {
+      throw unavailable();
+    }
+  }
+
+  private static String canonicalIpv6(byte[] bytes) {
+    if (bytes.length != 16) {
+      throw unavailable();
+    }
+    int[] groups = new int[8];
+    for (int index = 0; index < groups.length; index++) {
+      groups[index] =
+          Byte.toUnsignedInt(bytes[index * 2]) << 8 | Byte.toUnsignedInt(bytes[index * 2 + 1]);
+    }
+    int bestStart = -1;
+    int bestLength = 1;
+    for (int index = 0; index < groups.length; ) {
+      if (groups[index] != 0) {
+        index++;
+        continue;
+      }
+      int end = index;
+      while (end < groups.length && groups[end] == 0) {
+        end++;
+      }
+      if (end - index > bestLength) {
+        bestStart = index;
+        bestLength = end - index;
+      }
+      index = end;
+    }
+    StringBuilder canonical = new StringBuilder();
+    for (int index = 0; index < groups.length; ) {
+      if (index == bestStart) {
+        canonical.append("::");
+        index += bestLength;
+        continue;
+      }
+      if (canonical.length() > 0 && canonical.charAt(canonical.length() - 1) != ':') {
+        canonical.append(':');
+      }
+      canonical.append(Integer.toHexString(groups[index]));
+      index++;
+    }
+    return canonical.toString();
   }
 
   private static Map<String, String> parseSelector(JsonNode node) {
@@ -603,6 +744,9 @@ public final class AccountJwtValidatorInventoryBinding {
     private final int maxCacheAgeSeconds;
     private final List<ProfileExpectation> profiles;
     private final String canonicalRuntimeConfig;
+    private final String receiverServiceUri;
+    private final int receiverPort;
+    private final List<ReceiverPodPin> receiverPods;
 
     private ValidatorExpectation(
         String validatorId,
@@ -615,7 +759,10 @@ public final class AccountJwtValidatorInventoryBinding {
         String jwksUri,
         int maxCacheAgeSeconds,
         List<ProfileExpectation> profiles,
-        String canonicalRuntimeConfig) {
+        String canonicalRuntimeConfig,
+        String receiverServiceUri,
+        int receiverPort,
+        List<ReceiverPodPin> receiverPods) {
       this.validatorId = validatorId;
       this.deploymentName = deploymentName;
       this.deploymentUid = deploymentUid;
@@ -627,6 +774,9 @@ public final class AccountJwtValidatorInventoryBinding {
       this.maxCacheAgeSeconds = maxCacheAgeSeconds;
       this.profiles = List.copyOf(profiles);
       this.canonicalRuntimeConfig = canonicalRuntimeConfig;
+      this.receiverServiceUri = receiverServiceUri;
+      this.receiverPort = receiverPort;
+      this.receiverPods = List.copyOf(receiverPods);
     }
 
     public String validatorId() {
@@ -672,7 +822,21 @@ public final class AccountJwtValidatorInventoryBinding {
     public String canonicalRuntimeConfig() {
       return canonicalRuntimeConfig;
     }
+
+    public String receiverServiceUri() {
+      return receiverServiceUri;
+    }
+
+    public int receiverPort() {
+      return receiverPort;
+    }
+
+    public List<ReceiverPodPin> receiverPods() {
+      return receiverPods;
+    }
   }
+
+  public record ReceiverPodPin(String podUid, String podIp, String leafSpkiSha256) {}
 
   public record ProfileExpectation(String tokenProfile, String audience) {}
 }

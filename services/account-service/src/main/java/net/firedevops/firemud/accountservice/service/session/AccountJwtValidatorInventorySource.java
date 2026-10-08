@@ -1,6 +1,7 @@
 package net.firedevops.firemud.accountservice.service.session;
 
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
+import java.net.URI;
 import java.nio.ByteBuffer;
 import java.nio.charset.CharacterCodingException;
 import java.nio.charset.CodingErrorAction;
@@ -16,7 +17,9 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.Set;
+import java.util.UUID;
 import java.util.regex.Pattern;
 import net.firedevops.firemud.accountservice.config.AccountJwtJwksApiBinding;
 import net.firedevops.firemud.accountservice.config.AccountJwtJwksApiBinding.ApiOperation;
@@ -25,6 +28,7 @@ import net.firedevops.firemud.accountservice.config.AccountJwtJwksApiBinding.Par
 import net.firedevops.firemud.accountservice.config.AccountJwtValidatorInventoryBinding;
 import net.firedevops.firemud.accountservice.config.AccountJwtValidatorInventoryBinding.ProfileExpectation;
 import net.firedevops.firemud.accountservice.config.AccountJwtValidatorInventoryBinding.ProtectedInventory;
+import net.firedevops.firemud.accountservice.config.AccountJwtValidatorInventoryBinding.ReceiverPodPin;
 import net.firedevops.firemud.accountservice.config.AccountJwtValidatorInventoryBinding.ValidatorExpectation;
 import net.firedevops.firemud.common.json.Rfc8785CanonicalJson;
 import tools.jackson.core.StreamReadFeature;
@@ -41,7 +45,7 @@ public final class AccountJwtValidatorInventorySource {
   private static final int MAX_PAGES = 16;
   private static final int MAX_PODS_PER_VALIDATOR = 128;
   private static final int MAX_CANONICAL_SNAPSHOT_BYTES = 4 * 1024 * 1024;
-  private static final String INVENTORY_DOMAIN = "firemud-account-validator-inventory/v1";
+  private static final String INVENTORY_DOMAIN = "firemud-account-validator-inventory/v2";
   private static final String SELF_REVIEW_REQUEST =
       "{\"apiVersion\":\"authentication.k8s.io/v1\",\"kind\":\"SelfSubjectReview\",\"spec\":{}}";
   private static final String RUNTIME_CONFIG_ENV = "FIREMUD_JWT_VERIFIER_CONFIG";
@@ -49,6 +53,7 @@ public final class AccountJwtValidatorInventorySource {
       Pattern.compile("[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}");
   private static final Pattern RESOURCE_VERSION = Pattern.compile("[!-~]{1,256}");
   private static final Pattern IMAGE_DIGEST = Pattern.compile("sha256:[0-9a-f]{64}");
+  private static final Pattern OPERATION_DIGEST = Pattern.compile("[0-9a-f]{64}");
   private static final Pattern POD_TEMPLATE_HASH = Pattern.compile("[a-z0-9]{5,20}");
   private static final JsonMapper JSON =
       JsonMapper.builder()
@@ -78,8 +83,24 @@ public final class AccountJwtValidatorInventorySource {
    * or unpinned state is returned as one redacted failure; no Kubernetes response body is retained.
    */
   public InventorySnapshot observe() {
+    return observeInternal(null);
+  }
+
+  /**
+   * Produces an observation bound to an Account-selected durable generation operation. Only an
+   * initial operation with no durable or published active signer may enumerate non-ready Running
+   * Pods as candidates; those candidates still require the existing authenticated per-Pod probes
+   * before they can satisfy a promotion proof.
+   */
+  public InventorySnapshot observe(ObservationContext observationContext) {
+    return observeInternal(Objects.requireNonNull(observationContext));
+  }
+
+  private InventorySnapshot observeInternal(ObservationContext observationContext) {
     ProtectedInventory expected =
         inventoryBinding.current().orElseThrow(InventoryUnavailableException::new);
+    boolean requireOrdinaryReady =
+        observationContext == null || observationContext.purpose().requiresOrdinaryReady();
     try (ApiOperation operation = apiBinding.beginOperation()) {
       ParsedBinding api = operation.binding();
       if (!expected.matchesApiBinding(api)) {
@@ -88,15 +109,20 @@ public final class AccountJwtValidatorInventorySource {
       verifyApiIdentity(operation, expected);
       List<ValidatorObservation> observations = new ArrayList<>();
       for (ValidatorExpectation validator : expected.validators()) {
-        DeploymentObservation beforeDeployment = readDeployment(operation, expected, validator);
+        DeploymentObservation beforeDeployment =
+            readDeployment(operation, expected, validator, requireOrdinaryReady);
         List<PodObservation> beforePods =
-            readPods(operation, expected, validator, beforeDeployment);
+            readPods(operation, expected, validator, beforeDeployment, requireOrdinaryReady);
         List<ReplicaSetObservation> beforeReplicaSets =
-            readReplicaSets(operation, expected, validator, beforeDeployment, beforePods);
-        DeploymentObservation afterDeployment = readDeployment(operation, expected, validator);
-        List<PodObservation> afterPods = readPods(operation, expected, validator, afterDeployment);
+            readReplicaSets(
+                operation, expected, validator, beforeDeployment, beforePods, requireOrdinaryReady);
+        DeploymentObservation afterDeployment =
+            readDeployment(operation, expected, validator, requireOrdinaryReady);
+        List<PodObservation> afterPods =
+            readPods(operation, expected, validator, afterDeployment, requireOrdinaryReady);
         List<ReplicaSetObservation> afterReplicaSets =
-            readReplicaSets(operation, expected, validator, afterDeployment, afterPods);
+            readReplicaSets(
+                operation, expected, validator, afterDeployment, afterPods, requireOrdinaryReady);
         if (!beforeDeployment.equals(afterDeployment)
             || !beforePods.equals(afterPods)
             || !beforeReplicaSets.equals(afterReplicaSets)) {
@@ -128,7 +154,7 @@ public final class AccountJwtValidatorInventorySource {
       if (observedAt == null || observedAt.isBefore(Instant.EPOCH)) {
         throw new InventoryUnavailableException();
       }
-      return createSnapshot(expected, observations, observedAt);
+      return createSnapshot(expected, observations, observedAt, observationContext);
     } catch (InventoryUnavailableException failure) {
       throw failure;
     } catch (RuntimeException failure) {
@@ -192,7 +218,10 @@ public final class AccountJwtValidatorInventorySource {
   }
 
   private static DeploymentObservation readDeployment(
-      ApiOperation operation, ProtectedInventory inventory, ValidatorExpectation expected) {
+      ApiOperation operation,
+      ProtectedInventory inventory,
+      ValidatorExpectation expected,
+      boolean requireOrdinaryReady) {
     ApiResponse response = operation.readValidatorDeployment(inventory, expected);
     if (response.statusCode() != 200) {
       throw new InventoryUnavailableException();
@@ -229,14 +258,24 @@ public final class AccountJwtValidatorInventorySource {
     String resourceVersion = resourceVersion(text(metadata.get("resourceVersion")));
     long generation = positiveLong(metadata.get("generation"));
     int replicas = exactInt(spec.get("replicas"), 1, 128);
+    int readyReplicas = observedReplicaCount(status, "readyReplicas", !requireOrdinaryReady);
+    int updatedReplicas = exactInt(status.get("updatedReplicas"), 0, 128);
+    int availableReplicas =
+        observedReplicaCount(status, "availableReplicas", !requireOrdinaryReady);
+    int unavailableReplicas =
+        status.has("unavailableReplicas") && !status.get("unavailableReplicas").isNull()
+            ? exactInt(status.get("unavailableReplicas"), 0, 128)
+            : 0;
     if (replicas != expected.replicas()
         || positiveLong(status.get("observedGeneration")) != generation
-        || exactInt(status.get("readyReplicas"), 0, 128) != replicas
-        || exactInt(status.get("updatedReplicas"), 0, 128) != replicas
-        || exactInt(status.get("availableReplicas"), 0, 128) != replicas
-        || (status.has("unavailableReplicas")
-            && !status.get("unavailableReplicas").isNull()
-            && exactInt(status.get("unavailableReplicas"), 0, 128) != 0)) {
+        || readyReplicas > replicas
+        || updatedReplicas != replicas
+        || availableReplicas > readyReplicas
+        || unavailableReplicas > replicas
+        || (requireOrdinaryReady
+            && (readyReplicas != replicas
+                || availableReplicas != replicas
+                || unavailableReplicas != 0))) {
       throw new InventoryUnavailableException();
     }
     ContainerConfig container =
@@ -248,15 +287,31 @@ public final class AccountJwtValidatorInventorySource {
         resourceVersion,
         generation,
         replicas,
+        readyReplicas,
+        availableReplicas,
         container.image(),
         container.runtimeConfigSha256());
+  }
+
+  private static int observedReplicaCount(
+      JsonNode status, String fieldName, boolean allowOmittedZero) {
+    if (!status.has(fieldName)) {
+      if (allowOmittedZero) {
+        // Kubernetes omits zero-valued optional status replica counts. This is safe only for the
+        // owner-bound initial candidate observation; strict readiness still requires both fields.
+        return 0;
+      }
+      throw new InventoryUnavailableException();
+    }
+    return exactInt(status.get(fieldName), 0, 128);
   }
 
   private static List<PodObservation> readPods(
       ApiOperation operation,
       ProtectedInventory inventory,
       ValidatorExpectation expected,
-      DeploymentObservation deployment) {
+      DeploymentObservation deployment,
+      boolean requireOrdinaryReady) {
     String continuation = null;
     String listResourceVersion = null;
     int pageCount = 0;
@@ -291,7 +346,8 @@ public final class AccountJwtValidatorInventorySource {
         if (pods.size() >= MAX_PODS_PER_VALIDATOR) {
           throw new InventoryUnavailableException();
         }
-        PodObservation pod = parsePod(item, inventory.namespace(), expected, deployment);
+        PodObservation pod =
+            parsePod(item, inventory.namespace(), expected, deployment, requireOrdinaryReady);
         if (!podUids.add(pod.uid()) || !podNames.add(pod.name())) {
           throw new InventoryUnavailableException();
         }
@@ -313,6 +369,12 @@ public final class AccountJwtValidatorInventorySource {
       throw new InventoryUnavailableException();
     }
     pods.sort(Comparator.comparing(PodObservation::uid));
+    List<String> observedPodUids = pods.stream().map(PodObservation::uid).toList();
+    List<String> protectedPodUids =
+        expected.receiverPods().stream().map(ReceiverPodPin::podUid).sorted().toList();
+    if (!observedPodUids.equals(protectedPodUids)) {
+      throw new InventoryUnavailableException();
+    }
     return List.copyOf(pods);
   }
 
@@ -320,7 +382,8 @@ public final class AccountJwtValidatorInventorySource {
       JsonNode pod,
       String namespace,
       ValidatorExpectation expected,
-      DeploymentObservation deployment) {
+      DeploymentObservation deployment,
+      boolean requireOrdinaryReady) {
     if (pod == null || pod.isNull()) {
       throw new InventoryUnavailableException();
     }
@@ -340,6 +403,15 @@ public final class AccountJwtValidatorInventorySource {
     }
     String name = dnsLabel(text(metadata.get("name")));
     String uid = canonicalUid(text(metadata.get("uid")));
+    String podIp = canonicalPodIp(text(status.get("podIP")));
+    ReceiverPodPin receiverPin =
+        expected.receiverPods().stream()
+            .filter(pin -> pin.podUid().equals(uid))
+            .findFirst()
+            .orElseThrow(InventoryUnavailableException::new);
+    if (!receiverPin.podIp().equals(podIp)) {
+      throw new InventoryUnavailableException();
+    }
     String resourceVersion = resourceVersion(text(metadata.get("resourceVersion")));
     String templateHash = podTemplateHash(metadata.get("labels"));
     JsonNode owners = metadata.get("ownerReferences");
@@ -360,8 +432,9 @@ public final class AccountJwtValidatorInventorySource {
         || !deployment.verifierConfigSha256().equals(container.runtimeConfigSha256())) {
       throw new InventoryUnavailableException();
     }
-    verifyReadyCondition(status.get("conditions"));
-    verifyContainerReady(status.get("containerStatuses"), expected, deployment.image());
+    verifyReadyCondition(status.get("conditions"), requireOrdinaryReady);
+    verifyContainerReady(
+        status.get("containerStatuses"), expected, deployment.image(), requireOrdinaryReady);
     return new PodObservation(
         name,
         uid,
@@ -370,7 +443,11 @@ public final class AccountJwtValidatorInventorySource {
         ownerUid,
         templateHash,
         deployment.image(),
-        deployment.verifierConfigSha256());
+        deployment.verifierConfigSha256(),
+        podIp,
+        podEndpoint(podIp, expected.receiverPort()),
+        expected.receiverServiceUri(),
+        receiverPin.leafSpkiSha256());
   }
 
   private static List<ReplicaSetObservation> readReplicaSets(
@@ -378,7 +455,8 @@ public final class AccountJwtValidatorInventorySource {
       ProtectedInventory inventory,
       ValidatorExpectation expected,
       DeploymentObservation deployment,
-      List<PodObservation> pods) {
+      List<PodObservation> pods,
+      boolean requireOrdinaryReady) {
     Map<String, String> observedOwners = new LinkedHashMap<>();
     Map<String, String> templateHashes = new LinkedHashMap<>();
     for (PodObservation pod : pods) {
@@ -403,7 +481,8 @@ public final class AccountJwtValidatorInventorySource {
               deployment,
               owner.getKey(),
               owner.getValue(),
-              templateHashes.get(owner.getKey())));
+              templateHashes.get(owner.getKey()),
+              requireOrdinaryReady));
     }
     observations.sort(Comparator.comparing(ReplicaSetObservation::uid));
     return List.copyOf(observations);
@@ -416,7 +495,8 @@ public final class AccountJwtValidatorInventorySource {
       DeploymentObservation deployment,
       String expectedName,
       String expectedUid,
-      String expectedTemplateHash) {
+      String expectedTemplateHash,
+      boolean requireOrdinaryReady) {
     JsonNode root = parseJson(responseBody);
     JsonNode metadata = root.get("metadata");
     JsonNode spec = root.get("spec");
@@ -464,9 +544,11 @@ public final class AccountJwtValidatorInventorySource {
     String resourceVersion = resourceVersion(text(metadata.get("resourceVersion")));
     long generation = positiveLong(metadata.get("generation"));
     int replicas = exactInt(spec.get("replicas"), 1, 128);
+    int readyReplicas = observedReplicaCount(status, "readyReplicas", !requireOrdinaryReady);
     if (positiveLong(status.get("observedGeneration")) != generation
-        || exactInt(status.get("readyReplicas"), 0, 128) != replicas
-        || replicas != expected.replicas()) {
+        || readyReplicas > replicas
+        || replicas != expected.replicas()
+        || (requireOrdinaryReady && readyReplicas != replicas)) {
       throw new InventoryUnavailableException();
     }
     ContainerConfig container =
@@ -638,14 +720,18 @@ public final class AccountJwtValidatorInventorySource {
     }
   }
 
-  private static void verifyReadyCondition(JsonNode conditions) {
+  private static void verifyReadyCondition(JsonNode conditions, boolean requireOrdinaryReady) {
     if (conditions == null || !conditions.isArray() || conditions.size() > 64) {
       throw new InventoryUnavailableException();
     }
     boolean ready = false;
     for (JsonNode condition : conditions) {
       if ("Ready".equals(text(condition.get("type")))) {
-        if (ready || !"True".equals(text(condition.get("status")))) {
+        String status = text(condition.get("status"));
+        if (ready || (!"True".equals(status) && !"False".equals(status))) {
+          throw new InventoryUnavailableException();
+        }
+        if (requireOrdinaryReady && !"True".equals(status)) {
           throw new InventoryUnavailableException();
         }
         ready = true;
@@ -657,7 +743,10 @@ public final class AccountJwtValidatorInventorySource {
   }
 
   private static void verifyContainerReady(
-      JsonNode statuses, ValidatorExpectation expected, String expectedImage) {
+      JsonNode statuses,
+      ValidatorExpectation expected,
+      String expectedImage,
+      boolean requireOrdinaryReady) {
     if (statuses == null || !statuses.isArray() || statuses.isEmpty() || statuses.size() > 32) {
       throw new InventoryUnavailableException();
     }
@@ -673,22 +762,29 @@ public final class AccountJwtValidatorInventorySource {
     String imageId = found == null ? null : text(found.get("imageID"));
     String digest = imageDigest(imageId);
     String expectedDigest = expected.image().substring(expected.image().lastIndexOf('@') + 1);
+    Boolean ready = found == null ? null : booleanValue(found.get("ready"));
     if (found == null
-        || !Boolean.TRUE.equals(booleanValue(found.get("ready")))
+        || ready == null
+        || (requireOrdinaryReady && !ready)
         || !expectedDigest.equals(digest)) {
       throw new InventoryUnavailableException();
     }
   }
 
   private static InventorySnapshot createSnapshot(
-      ProtectedInventory expected, List<ValidatorObservation> validators, Instant observedAt) {
+      ProtectedInventory expected,
+      List<ValidatorObservation> validators,
+      Instant observedAt,
+      ObservationContext observationContext) {
     List<ValidatorObservation> sorted =
         validators.stream()
             .sorted(Comparator.comparing(ValidatorObservation::validatorId))
             .toList();
     Map<String, Object> preimage = new LinkedHashMap<>();
     preimage.put("domain", INVENTORY_DOMAIN);
-    preimage.put("observedAt", observedAt.toString());
+    // Acquisition time is independently bounded freshness metadata, not inventory content. The
+    // v2 digest must remain stable across an unchanged later reread while retaining this time in
+    // the immutable snapshot row and in the in-memory observation.
     preimage.put("environmentId", expected.environmentId());
     preimage.put("clusterId", expected.clusterId());
     preimage.put("clusterIncarnationUid", expected.expectedClusterIncarnationUid());
@@ -698,6 +794,9 @@ public final class AccountJwtValidatorInventorySource {
     preimage.put("apiBindingDigest", expected.apiBindingDigest());
     preimage.put("inventoryBindingRevision", expected.configRevision());
     preimage.put("inventoryBindingDigest", expected.bindingDigest());
+    if (observationContext != null) {
+      preimage.put("observationContext", observationContext.canonicalMap());
+    }
     preimage.put(
         "validators",
         sorted.stream().map(AccountJwtValidatorInventorySource::validatorMap).toList());
@@ -718,6 +817,7 @@ public final class AccountJwtValidatorInventorySource {
         expected.configRevision(),
         expected.bindingDigest(),
         sorted,
+        Optional.ofNullable(observationContext),
         canonicalSnapshot,
         digest);
   }
@@ -742,6 +842,8 @@ public final class AccountJwtValidatorInventorySource {
             .toList());
     result.put(
         "pods", validator.pods().stream().map(AccountJwtValidatorInventorySource::podMap).toList());
+    result.put("receiverServiceUri", validator.pods().getFirst().receiverServiceUri());
+    result.put("receiverPort", validator.pods().getFirst().endpoint().getPort());
     result.put(
         "replicaSets",
         validator.replicaSets().stream()
@@ -765,15 +867,32 @@ public final class AccountJwtValidatorInventorySource {
   }
 
   private static Map<String, Object> podMap(PodObservation pod) {
-    return Map.of(
-        "name", pod.name(),
-        "uid", pod.uid(),
-        "resourceVersion", pod.resourceVersion(),
-        "ownerReplicaSetName", pod.ownerName(),
-        "ownerReplicaSetUid", pod.ownerUid(),
-        "podTemplateHash", pod.podTemplateHash(),
-        "image", pod.image(),
-        "verifierConfigSha256", pod.verifierConfigSha256());
+    return Map.ofEntries(
+        Map.entry("name", pod.name()),
+        Map.entry("uid", pod.uid()),
+        Map.entry("resourceVersion", pod.resourceVersion()),
+        Map.entry("ownerReplicaSetName", pod.ownerName()),
+        Map.entry("ownerReplicaSetUid", pod.ownerUid()),
+        Map.entry("podTemplateHash", pod.podTemplateHash()),
+        Map.entry("image", pod.image()),
+        Map.entry("verifierConfigSha256", pod.verifierConfigSha256()),
+        Map.entry("podIp", pod.podIp()),
+        Map.entry("exactPodEndpoint", pod.endpoint().toString()),
+        Map.entry("canonicalServiceUri", pod.receiverServiceUri()),
+        Map.entry("leafSpkiSha256", pod.leafSpkiSha256()));
+  }
+
+  private static URI podEndpoint(String podIp, int port) {
+    String host = podIp.indexOf(':') >= 0 ? "[" + podIp + "]" : podIp;
+    return URI.create("grpcs://" + host + ":" + port);
+  }
+
+  private static String canonicalPodIp(String value) {
+    try {
+      return AccountJwtValidatorInventoryBinding.canonicalPodIp(value);
+    } catch (RuntimeException failure) {
+      throw new InventoryUnavailableException();
+    }
   }
 
   private static boolean selectorMatches(JsonNode actual, Map<String, String> expected) {
@@ -924,6 +1043,8 @@ public final class AccountJwtValidatorInventorySource {
       String resourceVersion,
       long generation,
       int replicas,
+      int readyReplicas,
+      int availableReplicas,
       String image,
       String verifierConfigSha256) {}
 
@@ -948,7 +1069,11 @@ public final class AccountJwtValidatorInventorySource {
       String ownerUid,
       String podTemplateHash,
       String image,
-      String verifierConfigSha256) {}
+      String verifierConfigSha256,
+      String podIp,
+      URI endpoint,
+      String receiverServiceUri,
+      String leafSpkiSha256) {}
 
   public record ValidatorObservation(
       String validatorId,
@@ -970,6 +1095,45 @@ public final class AccountJwtValidatorInventorySource {
     }
   }
 
+  /**
+   * Account-owner-derived context for one validator inventory acquisition. Bootstrap candidate
+   * observation is available only for the exact current operation whose active signer fence is
+   * absent; the repository re-derives and checks this context before consuming the snapshot.
+   */
+  public record ObservationContext(
+      ObservationPurpose purpose, UUID operationId, String operationDigest) {
+    public ObservationContext {
+      Objects.requireNonNull(purpose, "Inventory observation purpose is required");
+      Objects.requireNonNull(operationId, "Inventory observation operation is required");
+      if (operationId.version() != 4
+          || operationId.variant() != 2
+          || operationDigest == null
+          || !OPERATION_DIGEST.matcher(operationDigest).matches()) {
+        throw new InventoryUnavailableException();
+      }
+    }
+
+    public boolean isInitialNoActiveSigner() {
+      return purpose == ObservationPurpose.INITIAL_NO_ACTIVE_SIGNER_CANDIDATES;
+    }
+
+    private Map<String, Object> canonicalMap() {
+      return Map.of(
+          "purpose", purpose.name(),
+          "operationId", operationId.toString(),
+          "operationDigest", operationDigest);
+    }
+  }
+
+  public enum ObservationPurpose {
+    STRICT_READY,
+    INITIAL_NO_ACTIVE_SIGNER_CANDIDATES;
+
+    private boolean requiresOrdinaryReady() {
+      return this == STRICT_READY;
+    }
+  }
+
   public static final class InventorySnapshot {
     private final Instant observedAt;
     private final String environmentId;
@@ -982,6 +1146,7 @@ public final class AccountJwtValidatorInventorySource {
     private final String inventoryBindingRevision;
     private final String inventoryBindingDigest;
     private final List<ValidatorObservation> validators;
+    private final Optional<ObservationContext> observationContext;
     private final byte[] canonicalBytes;
     private final String digest;
 
@@ -997,6 +1162,7 @@ public final class AccountJwtValidatorInventorySource {
         String inventoryBindingRevision,
         String inventoryBindingDigest,
         List<ValidatorObservation> validators,
+        Optional<ObservationContext> observationContext,
         byte[] canonicalBytes,
         String digest) {
       this.observedAt = Objects.requireNonNull(observedAt);
@@ -1010,6 +1176,7 @@ public final class AccountJwtValidatorInventorySource {
       this.inventoryBindingRevision = Objects.requireNonNull(inventoryBindingRevision);
       this.inventoryBindingDigest = Objects.requireNonNull(inventoryBindingDigest);
       this.validators = List.copyOf(validators);
+      this.observationContext = Objects.requireNonNull(observationContext);
       this.canonicalBytes = Objects.requireNonNull(canonicalBytes).clone();
       this.digest = Objects.requireNonNull(digest);
       if (this.canonicalBytes.length == 0
@@ -1063,6 +1230,10 @@ public final class AccountJwtValidatorInventorySource {
       return validators;
     }
 
+    public Optional<ObservationContext> observationContext() {
+      return observationContext;
+    }
+
     public byte[] canonicalBytes() {
       return canonicalBytes.clone();
     }
@@ -1085,6 +1256,7 @@ public final class AccountJwtValidatorInventorySource {
           && inventoryBindingRevision.equals(that.inventoryBindingRevision)
           && inventoryBindingDigest.equals(that.inventoryBindingDigest)
           && validators.equals(that.validators)
+          && observationContext.equals(that.observationContext)
           && java.util.Arrays.equals(canonicalBytes, that.canonicalBytes)
           && digest.equals(that.digest);
     }
@@ -1104,6 +1276,7 @@ public final class AccountJwtValidatorInventorySource {
                   inventoryBindingRevision,
                   inventoryBindingDigest,
                   validators,
+                  observationContext,
                   digest)
           + java.util.Arrays.hashCode(canonicalBytes);
     }

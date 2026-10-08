@@ -10,6 +10,7 @@ plugins {
 
 firemudJooq {
     packageName.set("net.firedevops.firemud.accountservice.jooq")
+    accountInventoryMigrationProjection.set(true)
 }
 
 dependencies {
