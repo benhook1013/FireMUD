@@ -18,6 +18,7 @@ import net.firedevops.firemud.gamesession.binding.CanonicalGameplayBindingProvis
 import net.firedevops.firemud.gamesession.binding.CanonicalGameplayBindingTransitionRequest;
 import net.firedevops.firemud.gamesession.binding.CanonicalIssuerReservationFenceEvidence;
 import net.firedevops.firemud.gamesession.dto.CanonicalPlayableTarget;
+import net.firedevops.firemud.test.TestContainerImages;
 import org.flywaydb.core.Flyway;
 import org.jooq.DSLContext;
 import org.jooq.SQLDialect;
@@ -58,7 +59,8 @@ class CanonicalGameplayBindingInventoryRepositoryIntegrationTest {
       UUID.fromString("ffffffff-ffff-4fff-8fff-ffffffffffff");
 
   @Container
-  static PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>("postgres:16-alpine");
+  static PostgreSQLContainer<?> postgres =
+      new PostgreSQLContainer<>(TestContainerImages.postgres());
 
   @Test
   void failsClosedWhenInventoryAbsenceCannotProveLegacyControllerAbsence() {

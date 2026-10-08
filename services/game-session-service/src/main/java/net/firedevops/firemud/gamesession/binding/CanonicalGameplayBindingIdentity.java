@@ -60,6 +60,7 @@ public record CanonicalGameplayBindingIdentity(
       if (!canonicalSessionId.toString().equals(sessionId)) {
         throw new IllegalArgumentException("sessionId must use canonical UUID text");
       }
+      requireNonNil(canonicalSessionId, "sessionId");
     } catch (IllegalArgumentException malformed) {
       throw new IllegalArgumentException("sessionId must use canonical UUID text", malformed);
     }

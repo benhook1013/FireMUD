@@ -79,6 +79,8 @@ public final class AccountAsymmetricJwtVerifier {
       policy.claimShapeValidator().validate(immutableClaims);
       return new VerifiedClaims(
           policy.routeId(), policy.profile(), policy.tokenType(), keyId, immutableClaims);
+    } catch (AccountPublicJwksCache.SourceUnavailableException unavailable) {
+      throw new VerificationUnavailableException();
     } catch (VerificationException ex) {
       throw ex;
     } catch (RuntimeException ex) {
@@ -372,6 +374,15 @@ public final class AccountAsymmetricJwtVerifier {
   public static final class VerificationException extends RuntimeException {
     public VerificationException() {
       super("Account JWT verification failed");
+    }
+  }
+
+  /**
+   * Source availability failure without retaining token, JWK, source, or underlying cause detail.
+   */
+  public static final class VerificationUnavailableException extends RuntimeException {
+    public VerificationUnavailableException() {
+      super("Account JWT verification is temporarily unavailable");
     }
   }
 

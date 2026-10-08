@@ -99,6 +99,7 @@ tasks.named<BootRun>("bootRun") {
 val isWindows = System.getProperty("os.name").lowercase().contains("windows")
 
 tasks.withType<Test>().configureEach {
+    systemProperty("firemud.migration-driver-test-classpath", classpath.asPath)
     if (isWindows) {
         maxParallelForks = 1
         forkEvery = 0
@@ -107,7 +108,7 @@ tasks.withType<Test>().configureEach {
 }
 
 val migrationDriverMainClass =
-    "net.firedevops.firemud.gamesession.repository.CanonicalGameplayMigrationDriverMain"
+    "net.firedevops.firemud.gamesession.repository.CanonicalGameplayMigrationDriverLauncher"
 val migrationDriverDistribution = layout.buildDirectory.dir("distributions/game-session-migration-driver")
 val migrationDriverScripts = layout.buildDirectory.dir("generated/game-session-migration-driver-scripts")
 
