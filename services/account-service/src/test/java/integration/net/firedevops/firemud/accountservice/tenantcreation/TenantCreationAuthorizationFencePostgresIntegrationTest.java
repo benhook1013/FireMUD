@@ -414,7 +414,7 @@ class TenantCreationAuthorizationFencePostgresIntegrationTest {
   }
 
   private void draftOwners(Context c, DraftAuthorizationFenceBinding b) {
-    for (var owner : DraftAuthorizationFenceBinding.Owner.values()) {
+    for (var owner : b.requiredOwners()) {
       tx(
           c,
           () -> {

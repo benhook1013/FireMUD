@@ -203,7 +203,7 @@ class PublicationAuthorizationFencePostgresIntegrationTest {
         () -> {
           context.draft().reserve(draft);
           context.draft().claimCommitOrder(draft);
-          for (var owner : DraftAuthorizationFenceBinding.Owner.values()) {
+          for (var owner : draft.requiredOwners()) {
             context
                 .draft()
                 .recordOwnerReadback(
