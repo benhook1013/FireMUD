@@ -52,10 +52,11 @@ service CanonicalGameplayRosterService {
   // mTLS caller allowlisting. Context account_id equals canonical_account_uuid; request_id equals
   // request_uuid; tenant_id, realm_id, playable_state_namespace_id, playable_state_scope, and
   // game_instance_id equal the corresponding expected_target values; session_id identifies the
-  // authenticated session. No character_id is selected yet. The target policy must be
-  // PRESEEDED_ONLY. These equality checks do not require an additional Account lookup. A
-  // successful response includes its immutable snapshot UUID and digest, including when the
-  // roster is empty.
+  // authenticated session. Context playable_state_scope is the exact text "SHARED" or
+  // "ISOLATED" corresponding to the target enum value; numeric enum text is invalid. No
+  // character_id is selected yet. The target policy must be PRESEEDED_ONLY. These equality
+  // checks do not require an additional Account lookup. A successful response includes its
+  // immutable snapshot UUID and digest, including when the roster is empty.
   rpc ListPreseededRoster(CanonicalGameplayRosterRequest)
       returns (CanonicalGameplayRosterResponse);
   // Reads the selected assignment only if the supplied snapshot UUID and digest still identify
@@ -141,11 +142,13 @@ message CanonicalGameplayRosterSelectedAssignmentResponse {
   string canonical_account_uuid = 2;
   string selected_character_uuid = 3;
   CanonicalGameplayRosterTarget target = 4;
-  string assignment_uuid = 5;
-  string intent_digest = 6;
+  reserved 5, 6;
   reserved 7;
-  reserved "error";
-  // Exact snapshot reference supplied by the caller and validated by this operation.
+  reserved "assignment_uuid", "intent_digest", "error";
+  // Exact snapshot reference supplied by the caller and validated by this operation. The
+  // response echoes discovery bindings only; it does not mint an assignment receipt or prove
+  // admission. Any later assignment/admission write and its authoritative readback belong to
+  // the owning downstream operation.
   CanonicalGameplayRosterSnapshotReference snapshot = 8;
 }
 

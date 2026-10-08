@@ -51,6 +51,24 @@ class CanonicalGameplayRosterProtoDescriptorTest {
         .isEqualTo("snapshot");
   }
 
+  @Test
+  void selectedAssignmentResponseReservesUnsupportedAssignmentReceiptSlots() {
+    Descriptor response = CanonicalGameplayRosterSelectedAssignmentResponse.getDescriptor();
+
+    assertThat(response.findFieldByNumber(5)).isNull();
+    assertThat(response.findFieldByNumber(6)).isNull();
+    for (int fieldNumber : new int[] {5, 6}) {
+      assertThat(response.toProto().getReservedRangeList())
+          .anySatisfy(
+              range -> {
+                assertThat(range.getStart()).isLessThanOrEqualTo(fieldNumber);
+                assertThat(range.getEnd()).isGreaterThan(fieldNumber);
+              });
+    }
+    assertThat(response.toProto().getReservedNameList())
+        .contains("assignment_uuid", "intent_digest");
+  }
+
   private static void assertErrorSlotReserved(Descriptor descriptor, int fieldNumber) {
     assertThat(descriptor.toProto().getReservedRangeList())
         .anySatisfy(range -> assertThat(range.getStart()).isEqualTo(fieldNumber));
