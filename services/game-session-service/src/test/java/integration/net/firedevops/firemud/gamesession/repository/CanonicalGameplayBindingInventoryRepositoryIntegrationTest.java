@@ -351,7 +351,8 @@ class CanonicalGameplayBindingInventoryRepositoryIntegrationTest {
                                 projectionRuntimeRowLocked.countDown();
                                 awaitLatch(allowFencedRuntimeMutation);
                                 return transaction.execute(
-                                    "UPDATE game_instances SET row_version = row_version + 1"
+                                    "UPDATE game_instances SET status = 'STOPPED',"
+                                        + " row_version = row_version + 1"
                                         + " WHERE tenant_id = ? AND id = ?",
                                     target.gameSessionTenantId(),
                                     target.gameInstanceId());

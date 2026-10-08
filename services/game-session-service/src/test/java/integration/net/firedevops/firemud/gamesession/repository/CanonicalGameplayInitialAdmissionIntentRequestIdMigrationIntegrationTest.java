@@ -54,7 +54,9 @@ class CanonicalGameplayInitialAdmissionIntentRequestIdMigrationIntegrationTest {
       assertThat(insertIntent(dsl, length121, "r".repeat(121))).isEqualTo(1);
       assertThat(insertIntent(dsl, length128, "r".repeat(128))).isEqualTo(1);
       assertThatThrownBy(() -> insertIntent(dsl, length129, "r".repeat(129)))
-          .isInstanceOf(DataAccessException.class);
+          .isInstanceOfSatisfying(
+              DataAccessException.class,
+              exception -> assertThat(exception.sqlState()).isEqualTo("22001"));
     } finally {
       dropSchema(schema);
     }
