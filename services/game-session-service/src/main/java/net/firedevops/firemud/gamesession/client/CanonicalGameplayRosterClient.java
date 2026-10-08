@@ -33,11 +33,13 @@ import net.firedevops.firemud.entitymanagement.v1.CanonicalGameplayRosterRequest
 import net.firedevops.firemud.entitymanagement.v1.CanonicalGameplayRosterResponse;
 import net.firedevops.firemud.entitymanagement.v1.CanonicalGameplayRosterSelectedAssignmentRequest;
 import net.firedevops.firemud.entitymanagement.v1.CanonicalGameplayRosterSelectedAssignmentResponse;
+import net.firedevops.firemud.entitymanagement.v1.CanonicalGameplayRosterSnapshotReference;
 import net.firedevops.firemud.entitymanagement.v1.CanonicalGameplayRosterServiceGrpc;
 import net.firedevops.firemud.entitymanagement.v1.CanonicalGameplayRosterTarget;
 import net.firedevops.firemud.entitymanagement.v1.PlayableStateScope;
 import net.firedevops.firemud.gamesession.dto.CanonicalPlayableTarget;
 import net.firedevops.firemud.gamesession.dto.CanonicalPublishedPlayerRoute;
+import net.firedevops.firemud.shared.v1.PlayerExecutionContext;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Component;
@@ -105,18 +107,21 @@ public final class CanonicalGameplayRosterClient
   /**
    * Reads one complete Entity snapshot for an exact current published route. The result is
    * discovery evidence only: it does not establish Account membership, admission, or PLAY.
-   */
+  */
   public PreseededRosterSnapshot listPreseededRoster(
-      CanonicalPublishedPlayerRoute publishedRoute, UUID canonicalAccountUuid) {
+      CanonicalPublishedPlayerRoute publishedRoute,
+      PlayerExecutionContext playerExecutionContext) {
     Objects.requireNonNull(publishedRoute, "publishedRoute");
-    requireNonNil(canonicalAccountUuid, "canonicalAccountUuid");
     CanonicalGameplayRosterTarget expectedTarget = toExpectedTarget(publishedRoute);
+    UUID canonicalAccountUuid =
+        validatePlayerExecutionContext(playerExecutionContext, expectedTarget, false);
+    UUID requestUuid = parseContextUuid(playerExecutionContext.getRequestId(), "request_id");
     CanonicalGameplayRosterRequest request =
         CanonicalGameplayRosterRequest.newBuilder()
-            // This random UUID identifies only the read request; actor identity comes from Entity.
-            .setRequestUuid(UUID.randomUUID().toString())
+            .setRequestUuid(requestUuid.toString())
             .setCanonicalAccountUuid(canonicalAccountUuid.toString())
             .setExpectedTarget(expectedTarget)
+            .setPlayerExecutionContext(playerExecutionContext)
             .build();
 
     var currentStub = stub();
@@ -131,17 +136,25 @@ public final class CanonicalGameplayRosterClient
   }
 
   /**
-   * Reads Entity's owner-issued assignment reference for one actor selected from the exact
-   * previously validated SHARED PRESEEDED_ONLY roster snapshot. This point-in-time reference is not
-   * Account eligibility or admission evidence; the later World hold revalidates assignment.
+   * Reads Entity's owner-issued assignment reference for the actor selected in the typed context
+   * from the exact previously validated SHARED PRESEEDED_ONLY roster snapshot. This point-in-time
+   * reference is not Account eligibility or admission evidence; the later World hold revalidates
+   * assignment.
    */
   public VerifiedPreseededAssignment readSelectedPreseededAssignment(
-      PreseededRosterSnapshot roster, UUID selectedCharacterUuid) {
+      PreseededRosterSnapshot roster, PlayerExecutionContext playerExecutionContext) {
     requireOutsideTransactionAndSynchronization();
     Objects.requireNonNull(roster, "roster");
-    requireNonNil(selectedCharacterUuid, "selectedCharacterUuid");
     requireValidSelectedRosterSnapshot(roster);
     CanonicalGameplayRosterTarget expectedTarget = roster.target();
+    UUID contextAccountUuid =
+        validatePlayerExecutionContext(playerExecutionContext, expectedTarget, true);
+    if (!roster.canonicalAccountUuid().equals(contextAccountUuid)) {
+      throw new IllegalArgumentException(
+          "Player execution context account does not match the validated Entity roster");
+    }
+    UUID selectedCharacterUuid =
+        parseContextUuid(playerExecutionContext.getCharacterId(), "character_id");
     long actorMatches =
         roster.actors().stream()
             .filter(actor -> actor.characterUuid().equals(selectedCharacterUuid))
@@ -151,13 +164,18 @@ public final class CanonicalGameplayRosterClient
           "Selected character must occur exactly once in the validated Entity roster");
     }
 
-    UUID requestUuid = UUID.randomUUID();
+    UUID requestUuid = parseContextUuid(playerExecutionContext.getRequestId(), "request_id");
     CanonicalGameplayRosterSelectedAssignmentRequest request =
         CanonicalGameplayRosterSelectedAssignmentRequest.newBuilder()
             .setRequestUuid(requestUuid.toString())
             .setCanonicalAccountUuid(roster.canonicalAccountUuid().toString())
             .setSelectedCharacterUuid(selectedCharacterUuid.toString())
             .setExpectedTarget(expectedTarget)
+            .setExpectedSnapshot(
+                CanonicalGameplayRosterSnapshotReference.newBuilder()
+                    .setSnapshotUuid(roster.snapshotUuid().toString())
+                    .setSnapshotDigest(roster.snapshotDigest()))
+            .setPlayerExecutionContext(playerExecutionContext)
             .build();
 
     var currentStub = stub();
@@ -169,6 +187,78 @@ public final class CanonicalGameplayRosterClient
             .withDeadlineAfter(CALL_DEADLINE_SECONDS, TimeUnit.SECONDS)
             .readSelectedPreseededAssignment(request);
     return validateSelectedAssignmentResponse(requestUuid, roster, selectedCharacterUuid, response);
+  }
+
+  private static UUID validatePlayerExecutionContext(
+      PlayerExecutionContext context,
+      CanonicalGameplayRosterTarget expectedTarget,
+      boolean selectedCharacterRequired) {
+    if (context == null) {
+      throw new IllegalArgumentException("Player execution context is required");
+    }
+    if (!context.getUnknownFields().asMap().isEmpty()) {
+      throw new IllegalArgumentException("Player execution context contains unknown fields");
+    }
+
+    UUID accountUuid = parseContextUuid(context.getAccountId(), "account_id");
+    parseContextUuid(context.getSessionId(), "session_id");
+    parseContextUuid(context.getRequestId(), "request_id");
+    requireContextUuidEquals(context.getTenantId(), expectedTarget.getTenantUuid(), "tenant_id");
+    requireContextUuidEquals(context.getRealmId(), expectedTarget.getRealmUuid(), "realm_id");
+    requireContextUuidEquals(
+        context.getPlayableStateNamespaceId(),
+        expectedTarget.getPlayableStateNamespaceUuid(),
+        "playable_state_namespace_id");
+    requireContextUuidEquals(
+        context.getGameInstanceId(), expectedTarget.getGameInstanceUuid(), "game_instance_id");
+
+    PlayableStateScope contextScope =
+        switch (context.getPlayableStateScope()) {
+          case "SHARED" -> PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED;
+          case "ISOLATED" -> PlayableStateScope.PLAYABLE_STATE_SCOPE_ISOLATED;
+          default ->
+              throw new IllegalArgumentException(
+                  "Player execution context playable_state_scope must be exact SHARED or ISOLATED");
+        };
+    if (contextScope != expectedTarget.getPlayableStateScope()) {
+      throw new IllegalArgumentException(
+          "Player execution context playable_state_scope does not match the expected target");
+    }
+
+    if (selectedCharacterRequired) {
+      parseContextUuid(context.getCharacterId(), "character_id");
+    } else if (!context.getCharacterId().isEmpty()) {
+      throw new IllegalArgumentException(
+          "Initial roster reads must not select an actor in player execution context");
+    }
+    return accountUuid;
+  }
+
+  private static void requireContextUuidEquals(String value, String expected, String fieldName) {
+    UUID parsed = parseContextUuid(value, fieldName);
+    if (!parsed.toString().equals(expected)) {
+      throw new IllegalArgumentException(
+          "Player execution context " + fieldName + " does not match the expected target");
+    }
+  }
+
+  private static UUID parseContextUuid(String value, String fieldName) {
+    if (value == null || value.isBlank()) {
+      throw new IllegalArgumentException("Player execution context " + fieldName + " is required");
+    }
+    UUID parsed;
+    try {
+      parsed = UUID.fromString(value);
+    } catch (IllegalArgumentException malformed) {
+      throw new IllegalArgumentException(
+          "Player execution context " + fieldName + " must be a canonical non-nil UUID",
+          malformed);
+    }
+    if (parsed.equals(NIL_UUID) || !parsed.toString().equals(value)) {
+      throw new IllegalArgumentException(
+          "Player execution context " + fieldName + " must be a canonical non-nil UUID");
+    }
+    return parsed;
   }
 
   private static void requireOutsideTransactionAndSynchronization() {
@@ -230,15 +320,6 @@ public final class CanonicalGameplayRosterClient
     if (!response.getUnknownFields().asMap().isEmpty()) {
       throw invalidSelectedAssignmentResponse("response contains unknown fields");
     }
-    if (response.hasError()) {
-      if (!response.getError().getUnknownFields().asMap().isEmpty()) {
-        throw invalidSelectedAssignmentResponse("error contains unknown fields");
-      }
-      String code = response.getError().getCode();
-      throw new IllegalStateException(
-          "Entity selected assignment read failed"
-              + (code == null || code.isBlank() ? "" : ": " + code));
-    }
     if (!requestUuid.toString().equals(response.getRequestUuid())) {
       throw invalidSelectedAssignmentResponse("response changed the request correlation");
     }
@@ -252,6 +333,18 @@ public final class CanonicalGameplayRosterClient
         || !response.getTarget().getUnknownFields().asMap().isEmpty()
         || !roster.target().equals(response.getTarget())) {
       throw invalidSelectedAssignmentResponse("response changed the complete expected target");
+    }
+    if (!response.hasSnapshot()
+        || !response.getSnapshot().getUnknownFields().asMap().isEmpty()) {
+      throw invalidSelectedAssignmentResponse("response snapshot is absent or malformed");
+    }
+    UUID echoedSnapshotUuid =
+        parseCanonicalUuid(response.getSnapshot().getSnapshotUuid(), "snapshot_uuid");
+    String echoedSnapshotDigest = response.getSnapshot().getSnapshotDigest();
+    if (!roster.snapshotUuid().equals(echoedSnapshotUuid)
+        || !roster.snapshotDigest().equals(echoedSnapshotDigest)) {
+      throw invalidSelectedAssignmentResponse(
+          "response changed the exact roster snapshot UUID or digest");
     }
     UUID assignmentOperationId =
         parseCanonicalUuid(response.getAssignmentUuid(), "assignment_uuid");
@@ -280,12 +373,6 @@ public final class CanonicalGameplayRosterClient
       CanonicalGameplayRosterResponse response) {
     if (response == null) {
       throw invalidResponse("response is absent");
-    }
-    if (response.hasError()) {
-      String code = response.getError().getCode();
-      throw new IllegalStateException(
-          "Entity canonical gameplay roster read failed"
-              + (code == null || code.isBlank() ? "" : ": " + code));
     }
     if (!response.getUnknownFields().asMap().isEmpty()) {
       throw invalidResponse("response contains unknown fields");
