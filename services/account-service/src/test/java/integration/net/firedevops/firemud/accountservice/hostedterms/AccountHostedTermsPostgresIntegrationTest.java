@@ -69,12 +69,14 @@ class AccountHostedTermsPostgresIntegrationTest {
                 db.dsl().fetchOne("SELECT * FROM accounts WHERE account_uuid = ?", accountId))
             .intoMap();
     Map<String, Object> partyBefore =
-        Objects.requireNonNull(
-                db.dsl()
-                    .fetchOne(
-                        "SELECT * FROM account_individual_creator_party_sources WHERE creator_party_id = ?",
-                        party.creatorPartyId()))
-            .intoMap();
+        new HashMap<>(
+            Objects.requireNonNull(
+                    db.dsl()
+                        .fetchOne(
+                            "SELECT * FROM account_individual_creator_party_sources WHERE creator_party_id = ?",
+                            party.creatorPartyId()))
+                .intoMap());
+    byte[] partySourceBefore = (byte[]) partyBefore.remove("source_payload");
 
     migrate(db, "94");
 
@@ -83,14 +85,17 @@ class AccountHostedTermsPostgresIntegrationTest {
                     db.dsl().fetchOne("SELECT * FROM accounts WHERE account_uuid = ?", accountId))
                 .intoMap())
         .isEqualTo(accountBefore);
-    assertThat(
+    Map<String, Object> partyAfter =
+        new HashMap<>(
             Objects.requireNonNull(
                     db.dsl()
                         .fetchOne(
                             "SELECT * FROM account_individual_creator_party_sources WHERE creator_party_id = ?",
                             party.creatorPartyId()))
-                .intoMap())
-        .isEqualTo(partyBefore);
+                .intoMap());
+    byte[] partySourceAfter = (byte[]) partyAfter.remove("source_payload");
+    assertThat(partyAfter).isEqualTo(partyBefore);
+    assertThat(partySourceAfter).containsExactly(partySourceBefore);
     assertThat(count(db, "account_hosted_terms_scopes")).isZero();
     assertThat(count(db, "account_hosted_terms_catalog_versions")).isZero();
     assertThat(count(db, "account_hosted_terms_publication_operations")).isZero();

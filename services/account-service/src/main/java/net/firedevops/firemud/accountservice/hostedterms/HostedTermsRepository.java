@@ -205,7 +205,7 @@ public final class HostedTermsRepository {
             + "materiality_evidence_version, publication_evidence_reference, "
             + "publication_evidence_version, notice_evidence_reference, notice_evidence_version, "
             + "effective_at, version_payload, version_digest) "
-            + "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            + "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?::timestamptz, ?, ?)",
         candidate.versionId(),
         candidate.hostedScopeId(),
         candidate.predecessorVersionId(),
