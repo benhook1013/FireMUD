@@ -948,7 +948,8 @@ jobs:
     permissions:
       contents: read
       id-token: write
-    timeout-minutes: 20
+    # The World PostgreSQL proof can run close to 20 minutes before Gradle post-job cleanup.
+    timeout-minutes: ${{ matrix.module == 'world-management-service' && 30 || 20 }}
     strategy:
       fail-fast: false
       matrix:
