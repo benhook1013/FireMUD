@@ -1691,11 +1691,33 @@ def _dispatch(args: argparse.Namespace) -> tuple[Any, int]:
             budget.set_phase("pr_review_evidence", total=1)
         state_store = getattr(controller, "store", None)
         summary_dispositions = state_store.load().summary_dispositions if state_store is not None else ()
-        report = status_module.status(args.pr, repo=controller.repository, summary_dispositions=summary_dispositions)
+        conversation_payload: dict[str, Any] | None = None
+
+        def capture_conversation_payload(payload: dict[str, Any]) -> None:
+            nonlocal conversation_payload
+            conversation_payload = payload
+
+        report = status_module.status(
+            args.pr,
+            repo=controller.repository,
+            summary_dispositions=summary_dispositions,
+            raw_payload_observer=None if args.full_scan else capture_conversation_payload,
+        )
         if selected_pr_status:
             budget.set_completed(1)
             budget.set_phase("stack_review_evidence", total=1)
-        stack_report = controller.status() if args.full_scan else controller.status_for_pr(args.pr)
+        if args.full_scan:
+            stack_report = controller.status()
+        else:
+            status_options = {"summary_only": True} if args.summary else {}
+            if conversation_payload is not None:
+                stack_report = controller.status_for_pr(
+                    args.pr,
+                    conversation_payload=conversation_payload,
+                    **status_options,
+                )
+            else:
+                stack_report = controller.status_for_pr(args.pr, **status_options)
         if selected_pr_status:
             budget.set_completed(1)
             budget.set_phase("incoming_record_routes", total=1)

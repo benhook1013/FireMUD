@@ -23,6 +23,7 @@ from unittest.mock import Mock, patch
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "dev-tools"))
 
+from pr_review import cli as cli_module
 from pr_review import cli_runner, evidence, github, hosted, sqlite_provider_imports, stack
 from pr_review.cli import _dispatch, _parser
 from pr_review.cli_runner import StaleReviewTargetError
@@ -59,6 +60,7 @@ from pr_review.sqlite_review_records import FindingObservation, ReviewRecordsErr
 from pr_review.sqlite_store import SqliteStateStore
 from pr_review.state import (
     ControllerStateStore,
+    FindingRoute,
     Judgment,
     LegacyEvidenceTransition,
     ReviewState,
@@ -7708,7 +7710,7 @@ class ControllerTests(unittest.TestCase):
                               if item.get("checkpoint") == "fresh-accepted"]), 1)
 
     def test_selected_status_and_allocation_evidence_use_final_audit_histories(self):
-        for operation in ("status", "evidence"):
+        for operation in ("status", "summary", "evidence"):
             for change in ("activity", "credit"):
                 with self.subTest(operation=operation, change=change):
                     values, heads = _stacked_prs(2)
@@ -7742,8 +7744,8 @@ class ControllerTests(unittest.TestCase):
                     evidence.on_audit = refresh_during_audit
                     self._enable_batch_status(controller, values)
                     evidence.history_reads.clear()
-                    if operation == "status":
-                        report = controller.status_for_pr(1)
+                    if operation in {"status", "summary"}:
+                        report = controller.status_for_pr(1, summary_only=operation == "summary")
                         self.assertNotIn("review_targets", report)
                         row = report["prs"][0]
                         self.assertIn("fresh-thread", row["review_obligations"]["cli"])
@@ -8737,6 +8739,8 @@ class ControllerTests(unittest.TestCase):
         evidence.history_reads.clear()
         batch_calls = self._enable_batch_status(controller, values)
         pull_calls = []
+        seeded_payloads = []
+        controller._evidence_provider.prefetch_payload = lambda pr, payload: seeded_payloads.append((pr, payload))
         original = controller.github.pull_request
 
         def pull(number):
@@ -8745,9 +8749,11 @@ class ControllerTests(unittest.TestCase):
 
         controller.github.pull_request = pull
 
-        report = controller.status_for_pr(6)
+        conversation_payload = {"data": {"repository": {"pullRequest": {"number": 6}}}}
+        report = controller.status_for_pr(6, conversation_payload=conversation_payload)
 
         self.assertEqual([item["pr"] for item in report["prs"]], [1, 2, 3, 4, 5, 6])
+        self.assertEqual(seeded_payloads, [(6, conversation_payload)])
         self.assertEqual(pull_calls, [6])
         self.assertEqual(batch_calls, [(1, 2, 3, 4, 5, 6)])
         self.assertEqual(report["prs"], expected["prs"])
@@ -8756,6 +8762,203 @@ class ControllerTests(unittest.TestCase):
             {(number, channel) for number in range(1, 7) for channel in ("hosted", "cli")},
         )
         self.assertEqual(report["scope"], "selected PR and configured ancestors")
+
+    def test_selected_summary_checks_selected_and_unmerged_prefix_evidence_only(self):
+        values, heads = _stacked_prs(7, merged=(1, 3))
+        values[4] = dataclasses.replace(values[4], state="CLOSED")
+        evidence = CountingEvidence()
+        evidence[(1, "hosted")] = "malformed merged history"
+        evidence[(1, "cli")] = {"malformed": "merged history"}
+        controller = self.make(values, evidence, heads=heads)
+        controller.set_stack(list(values))
+        batch_calls = self._enable_batch_status(controller, values)
+        evidence.history_reads.clear()
+        pull_calls = []
+        original = controller.github.pull_request
+
+        def pull(number):
+            pull_calls.append(number)
+            return original(number)
+
+        controller.github.pull_request = pull
+        conversation_payload = {"data": {"repository": {"pullRequest": {"number": 6}}}}
+
+        report = controller.status_for_pr(
+            6,
+            conversation_payload=conversation_payload,
+            summary_only=True,
+        )
+
+        checked = {2, 4, 5, 6}
+        self.assertEqual([item["pr"] for item in report["prs"]], [2, 4, 5, 6])
+        self.assertEqual(report["ordered_prs"], list(range(1, 8)))
+        self.assertIn("merged ancestors identity-only", report["scope"])
+        self.assertEqual(pull_calls, [6])
+        self.assertEqual(batch_calls, [tuple(range(1, 7))])
+        self.assertEqual(
+            set(evidence.history_reads),
+            {(number, channel) for number in checked for channel in ("hosted", "cli")},
+        )
+        self.assertEqual(report["prs"][1]["state"], "CLOSED")
+
+    def test_selected_merged_summary_still_checks_selected_evidence(self):
+        values, heads = _stacked_prs(2, merged=(1, 2))
+        evidence = CountingEvidence()
+        evidence[(1, "hosted")] = "malformed merged history"
+        controller = self.make(values, evidence, heads=heads)
+        controller.set_stack(list(values))
+        self._enable_batch_status(controller, values)
+        evidence.history_reads.clear()
+
+        report = controller.status_for_pr(2, summary_only=True)
+
+        self.assertEqual([item["pr"] for item in report["prs"]], [2])
+        self.assertEqual(set(evidence.history_reads), {(2, "hosted"), (2, "cli")})
+
+    def test_selected_summary_retains_later_identity_and_fresh_base_checks(self):
+        values, heads = _stacked_prs(2)
+        controller = self.make(values, heads=heads)
+        controller.set_stack(list(values))
+        self._enable_batch_status(controller, values)
+        moved = dataclasses.replace(values[2], head=HEAD_3)
+        with patch.object(controller.github, "pull_request", return_value=moved) as pull:
+            report = controller.status_for_pr(2, summary_only=True)
+        pull.assert_called_once_with(2)
+        self.assertEqual(report["prs"][-1]["head"], HEAD_3)
+        self.assertNotEqual(report["prs"][-1]["reconciliation"], "COHERENT")
+
+        for selected, ref_name in ((1, "develop"), (2, "feature-1")):
+            with self.subTest(selected=selected, ref_name=ref_name):
+                values, heads = _stacked_prs(2)
+                heads[ref_name] = PARENT
+                controller = self.make(values, heads=heads)
+                controller.set_stack(list(values))
+                self._enable_batch_status(controller, values)
+                expected_parent = PARENT if selected == 1 else values[1].head
+
+                report = controller.status_for_pr(selected, summary_only=True)
+
+                row = next(item for item in report["prs"] if item["pr"] == selected)
+                self.assertEqual(row["reconciliation"], "PARENT_MOVED")
+                self.assertEqual(row["parent_head"], expected_parent)
+                self.assertGreater(controller.git.remote_heads_calls, 0)
+
+    def test_selected_summary_rejects_missing_merged_prefix_identity(self):
+        values, heads = _stacked_prs(2, merged=(1,))
+        evidence = CountingEvidence()
+        controller = self.make(values, evidence, heads=heads)
+        controller.set_stack(list(values))
+        controller.github.batch_pull_requests = lambda numbers: {
+            number: None if number == 1 else _batch_identity(values[number]) for number in numbers
+        }
+
+        with self.assertRaisesRegex(ControllerError, "missing PR #1"):
+            controller.status_for_pr(2, summary_only=True)
+
+        self.assertEqual(evidence.history_reads, [])
+
+    def test_summary_dispatch_preserves_selected_readiness_reasons_and_unmerged_rows(self):
+        values, heads = _stacked_prs(4, merged=(1,))
+        evidence = CountingEvidence()
+        for number in (2, 3, 4):
+            evidence[(number, "hosted")] = [
+                Evidence(
+                    number,
+                    values[number].head,
+                    f"hosted-dry-{number}",
+                    completed=True,
+                    attributable=True,
+                    anchored=True,
+                    corrected_state=True,
+                )
+            ]
+            evidence[(number, "cli")] = [
+                Evidence(
+                    number,
+                    values[number].head,
+                    f"cli-dry-{number}-{index}",
+                    completed=True,
+                    attributable=True,
+                    anchored=True,
+                    corrected_state=True,
+                )
+                for index in range(3)
+            ]
+        controller = self.make(values, evidence, heads=heads, sqlite=True)
+        controller.set_stack(list(values))
+        self._enable_batch_status(controller, values)
+        controller.decide_stop(pr=4, channel="hosted", reason="human stop", head=values[4].head)
+        route = FindingRoute(
+            source_pr=2,
+            source_channel="hosted",
+            source_review="checkpoint-2",
+            source_finding="finding-4",
+            observations=("owned by selected PR #4",),
+            target_pr=4,
+        )
+        controller.store.update(lambda state: dataclasses.replace(state, routes=(route,)))
+        controller.git.heads["feature-3"] = PARENT
+        live_report = {
+            "pull_request": {
+                "headRefOid": values[4].head,
+                "baseRefName": values[4].base_ref,
+                "baseRefOid": values[4].base_tip,
+            },
+            "review_decision": {"status": "APPROVED"},
+            "checkpoint_counts": {"hosted": 1, "cli": 3},
+            "threads": {"current": 0, "outdated": 0, "total": 0},
+            "ci": {"aggregate": {"state": "SUCCESS"}, "required": {}, "optional": {}},
+            "ready": True,
+            "verdict": "READY",
+            "reasons": [],
+            "mergeability": {"clean": True, "diagnosis": "CLEAN"},
+        }
+        arguments = (
+            _parser().parse_args(["status", "--pr", "4", "--json"]),
+            _parser().parse_args(["status", "--pr", "4", "--summary", "--json"]),
+        )
+        results = []
+        with (
+            patch.object(cli_module, "_controller", return_value=(controller, None)),
+            patch.object(cli_module.status_module, "status", return_value=live_report),
+            patch.object(cli_module, "_read_record_incoming_routes", return_value=([], {"status": "available"})),
+        ):
+            for args in arguments:
+                result, exit_status = _dispatch(args)
+                self.assertEqual(exit_status, 0)
+                results.append(result)
+
+        detailed, summary = results
+        for key in ("ready", "verdict", "reasons", "mergeability", "pull_request"):
+            self.assertEqual(summary[key], detailed[key])
+        detailed_rows = {item["pr"]: item for item in detailed["review_stack"]["prs"]}
+        selected_fields = (
+            "pr",
+            "head",
+            "base",
+            "pr_base_oid",
+            "parent",
+            "parent_head",
+            "state",
+            "merged",
+            "is_draft",
+            "reconciliation",
+            "reason",
+            "channels",
+            "review_progress",
+            "review_obligations",
+            "channel_reasons",
+            "allocations",
+        )
+        self.assertEqual(
+            summary["review_stack"]["prs"],
+            [{key: detailed_rows[4][key] for key in selected_fields if key in detailed_rows[4]}],
+        )
+        self.assertEqual(summary["review_stack"]["scope"], "selected PR summary")
+        self.assertEqual(detailed_rows[4]["channels"]["hosted"], "HUMAN_STOPPED")
+        self.assertEqual(detailed_rows[4]["channels"]["cli"], "COMPLETE")
+        self.assertEqual(detailed_rows[4]["reconciliation"], "PARENT_MOVED")
+        self.assertEqual(detailed_rows[4]["incoming_routes"], [route.to_dict()])
 
     def test_selected_status_retains_later_selected_identity_observation(self):
         values, heads = _stacked_prs(3)

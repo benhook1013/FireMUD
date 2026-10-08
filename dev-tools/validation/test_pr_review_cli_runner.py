@@ -422,7 +422,7 @@ class SelectedPrStatusSummaryTests(unittest.TestCase):
         controller = SimpleNamespace(
             repository="owner/repo",
             store=SimpleNamespace(load=lambda: SimpleNamespace(summary_dispositions=())),
-            status_for_pr=lambda pr: stack_report,
+            status_for_pr=lambda pr, **_kwargs: stack_report,
         )
         output = io.StringIO()
         with (

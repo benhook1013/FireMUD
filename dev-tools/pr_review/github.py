@@ -835,6 +835,33 @@ def fetch_pr_metadata(repo: str, pr_number: int) -> dict[str, Any]:
     return value
 
 
+def fetch_pr_identity(repo: str, pr_number: int) -> dict[str, Any]:
+    """Read only the current identity fields consumed by a live snapshot."""
+
+    owner, name = parse_repo(repo)
+    query = """
+query($owner:String!, $repo:String!, $number:Int!) {
+  repository(owner:$owner, name:$repo) { pullRequest(number:$number) {
+    number
+    state
+    baseRefName
+    baseRefOid
+    headRefName
+    headRefOid
+    headRepository { nameWithOwner name owner { login } }
+    changedFiles
+    mergeable
+    mergedAt
+  } }
+}
+""".strip()
+    payload = run_gh_query(query, {"owner": owner, "repo": name, "number": pr_number})
+    pull_request = _pull_request_from_graphql_payload(payload)
+    if type(pull_request.get("number")) is not int or pull_request["number"] != pr_number:
+        raise RuntimeError("GitHub response has no matching pull-request identity")
+    return pull_request
+
+
 def fetch_authenticated_user() -> dict[str, Any]:
     """Read the current gh identity under the active Hosted preflight budget."""
 
