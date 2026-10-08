@@ -16,6 +16,8 @@ import java.util.UUID;
 import org.jooq.DSLContext;
 import org.jooq.Record;
 import org.springframework.stereotype.Repository;
+import org.springframework.transaction.TransactionDefinition;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 /** Owner-local persistence boundary for Draft asset mappings and durable export snapshots. */
 @Repository
@@ -36,9 +38,11 @@ public class VersionAssetPublicationRepository {
 
   /**
    * Associates an ordinary source asset with an exact tenant-owned Draft Version. Numeric ids in
-   * this method are private Game Design owner keys and are not public identity aliases.
+   * this method are private Game Design owner keys and are not public identity aliases. The caller
+   * must hold a writable READ_COMMITTED transaction.
    */
   public void associateDraftAsset(String tenantId, long versionId, long assetId, String usageType) {
+    requireWritableReadCommittedTransaction();
     requireTenantId(tenantId);
     if (versionId <= 0 || assetId <= 0) {
       throw new IllegalArgumentException("Version and asset owner keys must be positive");
@@ -95,9 +99,11 @@ public class VersionAssetPublicationRepository {
 
   /**
    * Freezes the current exact Draft mapping set or reads an earlier frozen snapshot. The caller
-   * must hold a transaction because the Version lock serializes mapping writes with first freeze.
+   * must hold a writable READ_COMMITTED transaction because the Version lock serializes mapping
+   * writes with first freeze.
    */
   public ExportSnapshot freezeOrReadSnapshot(String tenantId, int versionNumber) {
+    requireWritableReadCommittedTransaction();
     requireTenantId(tenantId);
     if (versionNumber <= 0) {
       throw new IllegalArgumentException("Version number must be positive");
@@ -456,6 +462,16 @@ public class VersionAssetPublicationRepository {
   private static void requireTenantId(String tenantId) {
     if (tenantId == null || tenantId.isBlank()) {
       throw new IllegalArgumentException("Owner-local tenant key is required");
+    }
+  }
+
+  private static void requireWritableReadCommittedTransaction() {
+    if (!TransactionSynchronizationManager.isActualTransactionActive()
+        || TransactionSynchronizationManager.isCurrentTransactionReadOnly()
+        || !Integer.valueOf(TransactionDefinition.ISOLATION_READ_COMMITTED)
+            .equals(TransactionSynchronizationManager.getCurrentTransactionIsolationLevel())) {
+      throw new IllegalStateException(
+          "Version asset publication writes require caller-owned writable READ_COMMITTED transaction");
     }
   }
 

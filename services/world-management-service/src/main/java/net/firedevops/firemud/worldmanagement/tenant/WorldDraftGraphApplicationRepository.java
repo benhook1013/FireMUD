@@ -10,6 +10,7 @@ import java.util.UUID;
 import net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding;
 import net.firedevops.firemud.common.gamedesign.DraftSynchronizedVisibilityEvidence;
+import net.firedevops.firemud.common.publication.AuthoredDraftPublishSelectionBinding;
 import net.firedevops.firemud.worldmanagement.tenant.WorldDesignPublicationFenceEvidence.OwnerBinding;
 import net.firedevops.firemud.worldmanagement.tenant.WorldDesignPublicationFenceRepository.ConflictException;
 import net.firedevops.firemud.worldmanagement.tenant.WorldDraftGraphApplicationService.CommitOrderProof;
@@ -44,6 +45,76 @@ public class WorldDraftGraphApplicationRepository {
     if (rows.size() != 1)
       throw new ConflictException("World application identities select conflicting results");
     return Optional.of(readExact(application, rows.getFirst()));
+  }
+
+  /**
+   * Resolves one exact immutable selected commit to its retained World APPLIED application.
+   *
+   * <p>The complete Game Design selection is only a lookup and equality constraint. This read
+   * derives the private World owner binding from persisted APPLIED evidence and never constructs a
+   * World operation, guesses a local owner key, or grants permission to freeze.
+   */
+  Optional<WorldDraftGraphApplication> readSelectedPublicationApplication(
+      String targetNamespace,
+      UUID canonicalTenantId,
+      UUID canonicalVersionId,
+      AuthoredDraftPublishSelectionBinding suppliedSelection) {
+    requireCommittedRead();
+    if (!net.firedevops.firemud.common.grpc.GrpcPeerIdentity.isValidNamespace(targetNamespace)) {
+      throw new IllegalArgumentException("Canonical World workload namespace is required");
+    }
+    Objects.requireNonNull(canonicalTenantId, "canonicalTenantId");
+    Objects.requireNonNull(canonicalVersionId, "canonicalVersionId");
+    Objects.requireNonNull(suppliedSelection, "suppliedSelection");
+    final AuthoredDraftPublishSelectionBinding selection;
+    try {
+      selection =
+          AuthoredDraftPublishSelectionBinding.fromStored(
+              suppliedSelection.canonicalJson(), suppliedSelection.digest());
+    } catch (RuntimeException invalid) {
+      throw new ConflictException("World selected-publication lookup has invalid selection bytes");
+    }
+    if (!selection.intent().canonicalTenantId().equals(canonicalTenantId)
+        || !selection.intent().canonicalVersionId().equals(canonicalVersionId)) {
+      throw new ConflictException(
+          "World selected-publication lookup differs from its canonical tenant or version");
+    }
+
+    DraftCommitBinding selectedCommit = selection.selectedCommit();
+    var rows =
+        dsl.fetch(
+            selectSql() + " WHERE a.request_id=? OR a.commit_id=?",
+            selectedCommit.requestId(),
+            selectedCommit.commitId());
+    if (rows.isEmpty()) return Optional.empty();
+    if (rows.size() != 1) {
+      throw new ConflictException(
+          "World selected-publication request and commit identify conflicting applications");
+    }
+
+    Record row = rows.getFirst();
+    WorldDraftGraphApplication application = reconstruct(row);
+    WorldDraftGraphAppliedResult result = readExact(application, row);
+    if (!"APPLIED".equals(result.status())
+        || !selectedCommit.equals(application.operation().binding())
+        || !Arrays.equals(
+            selectedCommit.canonicalBytes(), application.operation().binding().canonicalBytes())
+        || !selectedCommit.digest().equals(application.operation().binding().digest())
+        || !selectedCommit.requestId().equals(application.operation().requestId())
+        || !selectedCommit.commitId().equals(application.operation().commitId())
+        || !selection.target().equals(application.operation().binding().target())
+        || application.plan().graph().freshGraphDeclaration().isEmpty()
+        || !targetNamespace.equals(application.operation().ownerBinding().targetNamespace())
+        || !canonicalTenantId.equals(application.operation().canonicalTenantId())
+        || !canonicalVersionId.equals(application.operation().canonicalVersionId())
+        || !canonicalTenantId.equals(application.operation().ownerBinding().canonicalTenantId())
+        || !canonicalVersionId.equals(application.operation().ownerBinding().canonicalVersionId())
+        || selection.target().gameDesignVersionRowId()
+            != application.operation().ownerBinding().gameDesignVersionId()) {
+      throw new ConflictException(
+          "World retained APPLIED application differs from the complete selected Draft binding");
+    }
+    return Optional.of(application);
   }
 
   /** Exact original Account recovery selector; decoding is not workload authentication. */

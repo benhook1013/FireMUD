@@ -51,6 +51,8 @@ import net.firedevops.firemud.common.publication.AuthoredDraftPublishSelectionBi
 import net.firedevops.firemud.common.publication.AuthoredDraftPublishSelectionBinding.VisibilityFence;
 import net.firedevops.firemud.common.publication.AuthoredDraftPublishSelectionReadClient;
 import net.firedevops.firemud.common.publication.AuthoredDraftPublishSelectionReadGrpcCodec;
+import net.firedevops.firemud.common.publication.WorldSelectedDraftPublicationFreezeClient;
+import net.firedevops.firemud.common.publication.WorldSelectedDraftPublicationFreezeEvidence;
 import net.firedevops.firemud.common.tenant.AuthoredWorldSourceDigest;
 import net.firedevops.firemud.common.tenant.AuthoredWorldSourceEvidence;
 import net.firedevops.firemud.common.world.WorldPublishedStartLocationClient;
@@ -292,6 +294,7 @@ class WorldAccountAuthorizedDraftPostgresIntegrationTest {
                       world.owner().gameDesignVersionId(),
                       1L,
                       versionStateReadCalls));
+          endpoints.setGameDesignService("localhost:" + gameDesignServer.getPort());
           try (var selectionRead =
                   new AuthoredDraftPublishSelectionReadClient(
                       endpoints,
@@ -310,7 +313,6 @@ class WorldAccountAuthorizedDraftPostgresIntegrationTest {
                       pki.worldClient.properties(pki.ca),
                       new GrpcChannelFactory(),
                       NAMESPACE)) {
-            endpoints.setGameDesignService("localhost:" + gameDesignServer.getPort());
             selectionRead.init();
             versionStateRead.init();
             accountRead.init();
@@ -388,9 +390,26 @@ class WorldAccountAuthorizedDraftPostgresIntegrationTest {
             assertThat(stateAfterFirstQualifiedCaptureRollback.publicationAttemptRows()).isEmpty();
             assertThat(stateAfterFirstQualifiedCaptureRollback.publicationAuthorizationRows())
                 .isEmpty();
-            var frozenAttempt =
-                withGameDesignCaller(
-                    () -> selectedFreezeService.freeze(freezeEvidence, plan, publicationOrder));
+            var freezeRequest =
+                WorldSelectedDraftPublicationFreezeEvidence.Request.create(
+                    NAMESPACE,
+                    world.owner().canonicalTenantId(),
+                    world.version().canonicalVersionId(),
+                    publicationRequest,
+                    1L,
+                    publicationSelection.digest().substring("sha256:".length()),
+                    publicationOrder);
+            var firstFreeze = beginOverMtls(selectedFreezeService, freezeRequest, pki);
+            var frozenAttempt = fence.readAttempt(freezeEvidence).orElseThrow();
+            assertThat(firstFreeze.request()).isEqualTo(freezeRequest);
+            assertThat(firstFreeze.acknowledgement().publicationFence())
+                .isEqualTo(frozenAttempt.publicationFence());
+            assertThat(firstFreeze.acknowledgement().appliedCommitId())
+                .isEqualTo(frozenAttempt.checkpoint().appliedCommitId());
+            assertThat(firstFreeze.acknowledgement().contentDigest())
+                .isEqualTo(frozenAttempt.checkpoint().contentDigest());
+            assertThat(firstFreeze.acknowledgement().digestSchemaVersion())
+                .isEqualTo(frozenAttempt.checkpoint().digestSchemaVersion());
             account.assertPublicationSourcesHeld(publicationOrder);
             var frozen = capture(plan, freezeEvidence, frozenAttempt);
             assertThat(frozenAttempt.checkpoint().appliedCommitId())
@@ -399,9 +418,12 @@ class WorldAccountAuthorizedDraftPostgresIntegrationTest {
             var stateBeforeExactRetry = ownerSnapshot(world, plan);
             int selectedReadsBeforeRetry = selectedReadCalls.get();
             int stateReadsBeforeRetry = versionStateReadCalls.get();
-            var exactRetry =
-                withGameDesignCaller(
-                    () -> selectedFreezeService.freeze(retryEvidence, plan, publicationOrder));
+            // A fresh authenticated transport recovers the committed acknowledgement without
+            // repeating the stipulated Game Design selection/current-Draft reads.
+            var retryFreeze = beginOverMtls(selectedFreezeService, freezeRequest, pki);
+            assertThat(retryFreeze.request()).isEqualTo(firstFreeze.request());
+            assertThat(retryFreeze.acknowledgement()).isEqualTo(firstFreeze.acknowledgement());
+            var exactRetry = fence.readAttempt(retryEvidence).orElseThrow();
             assertThat(exactRetry.request()).isEqualTo(retryEvidence);
             assertThat(exactRetry.publicationFence()).isEqualTo(frozenAttempt.publicationFence());
             assertThat(exactRetry.checkpoint()).isEqualTo(frozenAttempt.checkpoint());
@@ -422,6 +444,23 @@ class WorldAccountAuthorizedDraftPostgresIntegrationTest {
                     publicationOrder.fenceId(),
                     publicationOrder.input(),
                     publicationOrder.sources());
+            var changedFreezeRequest =
+                WorldSelectedDraftPublicationFreezeEvidence.Request.create(
+                    NAMESPACE,
+                    freezeRequest.canonicalTenantId(),
+                    freezeRequest.canonicalVersionId(),
+                    publicationRequest,
+                    freezeRequest.expectedVersionStateEpoch(),
+                    freezeRequest.requestDigest(),
+                    changedOperation);
+            assertThatThrownBy(
+                    () -> beginOverMtls(selectedFreezeService, changedFreezeRequest, pki))
+                .isInstanceOf(StatusRuntimeException.class)
+                .satisfies(
+                    failure ->
+                        assertThat(Status.fromThrowable(failure).getCode())
+                            .isEqualTo(Status.Code.FAILED_PRECONDITION));
+            assertThat(ownerSnapshot(world, plan)).isEqualTo(stateBeforeExactRetry);
             assertThatThrownBy(
                     () ->
                         withGameDesignCaller(
@@ -1183,7 +1222,35 @@ class WorldAccountAuthorizedDraftPostgresIntegrationTest {
         fence,
         checkpointRepository(),
         publicationAuthorizationRepository(),
+        appliedRepository(),
         manager);
+  }
+
+  private WorldSelectedDraftPublicationFreezeEvidence beginOverMtls(
+      WorldSelectedDraftPublicationFreezeService service,
+      WorldSelectedDraftPublicationFreezeEvidence.Request request,
+      TestPki pki)
+      throws Exception {
+    var server =
+        serveAll(
+            pki.worldServer,
+            pki,
+            new WorldSelectedDraftPublicationFreezeGrpcService(service, NAMESPACE));
+    try {
+      var endpoints = new ServiceEndpointsProperties();
+      endpoints.setWorldManagementService("localhost:" + server.getPort());
+      try (var client =
+          new WorldSelectedDraftPublicationFreezeClient(
+              endpoints,
+              pki.gameDesignClient.properties(pki.ca),
+              new GrpcChannelFactory(),
+              NAMESPACE)) {
+        client.init();
+        return client.begin(request);
+      }
+    } finally {
+      stop(server);
+    }
   }
 
   private static <T> T withGameDesignCaller(Supplier<T> action) {

@@ -88,6 +88,7 @@ final class AccountControlUiOwnerSourcesFixture {
   final DSLContext dsl;
   final TransactionTemplate transactions;
   final Account account;
+  final AccountRepository accounts;
   final UUID tenant = UUID.randomUUID(),
       request = UUID.randomUUID(),
       callerContext = UUID.randomUUID();
@@ -125,7 +126,7 @@ final class AccountControlUiOwnerSourcesFixture {
     var generations = new AccountAuthorityGenerationRepository(dsl);
     var outbox = new AccountAuthorityOutboxRepository(dsl);
     var sourceEvidence = new AccountAuthoritySourceEvidenceRepository(dsl, generations, outbox);
-    var accounts = new AccountRepository(dsl, sourceEvidence);
+    accounts = new AccountRepository(dsl, sourceEvidence);
     account =
         tx(
             () -> {
@@ -376,6 +377,13 @@ final class AccountControlUiOwnerSourcesFixture {
 
   <T> T tx(Supplier<T> action) {
     return transactions.execute(ignored -> action.get());
+  }
+
+  /** Uses the real owner to advance generation, fence and source event with the scalar role. */
+  Account changeRoleToAdmin() {
+    Account current = accounts.findById(account.getId()).orElseThrow();
+    current.setRole("admin");
+    return accounts.save(current);
   }
 
   void assertNoIssuance() {

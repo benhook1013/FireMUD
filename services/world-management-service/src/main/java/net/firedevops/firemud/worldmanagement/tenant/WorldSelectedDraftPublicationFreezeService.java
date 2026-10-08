@@ -16,6 +16,9 @@ import net.firedevops.firemud.common.publication.AuthoredDraftPublishSelectionBi
 import net.firedevops.firemud.common.publication.AuthoredDraftPublishSelectionReadClient;
 import net.firedevops.firemud.common.publication.AuthoredDraftPublishSelectionReadEvidence;
 import net.firedevops.firemud.common.publication.PublicationDigestRequestBinding;
+import net.firedevops.firemud.common.publication.WorldSelectedDraftPublicationFreezeEvidence.Acknowledgement;
+import net.firedevops.firemud.common.publication.WorldSelectedDraftPublicationFreezeEvidence.OwnerFreezePhase;
+import net.firedevops.firemud.common.publication.WorldSelectedDraftPublicationFreezeEvidence.Request;
 import net.firedevops.firemud.common.security.SessionContext;
 import net.firedevops.firemud.gamedesign.v1.VersionLifecycleState;
 import net.firedevops.firemud.worldmanagement.tenant.WorldDesignPublicationFenceEvidence.Checkpoint;
@@ -42,6 +45,7 @@ final class WorldSelectedDraftPublicationFreezeService {
   private final WorldDesignPublicationFenceRepository fence;
   private final WorldSelectedDraftPublicationCheckpointRepository checkpointRepository;
   private final WorldSelectedDraftPublicationAuthorizationRepository authorizationRepository;
+  private final WorldDraftGraphApplicationRepository graphApplicationRepository;
   private final TransactionTemplate ownerTransaction;
 
   WorldSelectedDraftPublicationFreezeService(
@@ -53,6 +57,30 @@ final class WorldSelectedDraftPublicationFreezeService {
       WorldDesignPublicationFenceRepository fence,
       WorldSelectedDraftPublicationCheckpointRepository checkpointRepository,
       WorldSelectedDraftPublicationAuthorizationRepository authorizationRepository,
+      PlatformTransactionManager transactionManager) {
+    this(
+        workloadNamespace,
+        selectionReadClient,
+        versionStateClient,
+        accountReadClient,
+        intakeRepository,
+        fence,
+        checkpointRepository,
+        authorizationRepository,
+        null,
+        transactionManager);
+  }
+
+  WorldSelectedDraftPublicationFreezeService(
+      String workloadNamespace,
+      AuthoredDraftPublishSelectionReadClient selectionReadClient,
+      AuthoredWorldVersionStateClient versionStateClient,
+      AccountPublicationAuthorizationReadClient accountReadClient,
+      WorldAuthoredSourceIntakeRepository intakeRepository,
+      WorldDesignPublicationFenceRepository fence,
+      WorldSelectedDraftPublicationCheckpointRepository checkpointRepository,
+      WorldSelectedDraftPublicationAuthorizationRepository authorizationRepository,
+      WorldDraftGraphApplicationRepository graphApplicationRepository,
       PlatformTransactionManager transactionManager) {
     if (!GrpcPeerIdentity.isValidNamespace(workloadNamespace)) {
       throw new IllegalArgumentException("World workload namespace is invalid");
@@ -67,10 +95,96 @@ final class WorldSelectedDraftPublicationFreezeService {
         Objects.requireNonNull(checkpointRepository, "checkpointRepository");
     this.authorizationRepository =
         Objects.requireNonNull(authorizationRepository, "authorizationRepository");
+    this.graphApplicationRepository = graphApplicationRepository;
     this.ownerTransaction = new TransactionTemplate(Objects.requireNonNull(transactionManager));
     this.ownerTransaction.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
     this.ownerTransaction.setIsolationLevel(TransactionDefinition.ISOLATION_READ_COMMITTED);
     this.ownerTransaction.setReadOnly(false);
+  }
+
+  /**
+   * Owner-resolves the exact selected APPLIED graph before deriving private World freeze evidence.
+   *
+   * <p>The caller supplies no plan or private World identity. A committed retry resolves the same
+   * immutable APPLIED carrier, then returns the retained freeze and Account correlation before any
+   * mutable Game Design or Account remote read is repeated.
+   */
+  Acknowledgement begin(Request request) {
+    requireAuthenticatedGameDesignCaller();
+    requireNoAmbientTransaction();
+    Objects.requireNonNull(request, "request");
+    if (!workloadNamespace.equals(request.targetNamespace())) {
+      throw new SecurityException(
+          "World selected-publication freeze target namespace differs from this workload");
+    }
+    if (graphApplicationRepository == null) {
+      throw new IllegalStateException(
+          "World selected-publication freeze requires its committed APPLIED resolver");
+    }
+
+    AccountPublicationAuthorizationBinding accountBinding = request.accountBinding();
+    AuthoredDraftPublishSelectionBinding selection = accountBinding.input().selection();
+    WorldDraftGraphApplication application =
+        graphApplicationRepository
+            .readSelectedPublicationApplication(
+                workloadNamespace,
+                request.canonicalTenantId(),
+                request.canonicalVersionId(),
+                selection)
+            .orElseThrow(
+                () ->
+                    conflict(
+                        "World selected-publication request has no exact retained APPLIED graph"));
+    WorldDraftTopologyCommitPlan selectedPlan = application.plan();
+    WorldDraftTerminalOperation operation = application.operation();
+    WorldDesignPublicationFenceEvidence.OwnerBinding owner = operation.ownerBinding();
+    if (!selection.selectedCommit().equals(selectedPlan.binding())
+        || !Arrays.equals(
+            selection.selectedCommit().canonicalBytes(), selectedPlan.binding().canonicalBytes())
+        || !selection.selectedCommit().equals(operation.binding())
+        || !Arrays.equals(
+            selection.selectedCommit().canonicalBytes(), operation.binding().canonicalBytes())
+        || !selectedPlan.graph().freshGraphDeclaration().isPresent()
+        || !workloadNamespace.equals(owner.targetNamespace())
+        || !request.canonicalTenantId().equals(operation.canonicalTenantId())
+        || !request.canonicalVersionId().equals(operation.canonicalVersionId())
+        || !request.canonicalTenantId().equals(owner.canonicalTenantId())
+        || !request.canonicalVersionId().equals(owner.canonicalVersionId())
+        || selection.target().gameDesignVersionRowId() != owner.gameDesignVersionId()) {
+      throw conflict(
+          "World retained APPLIED graph differs from the complete selected publication request");
+    }
+
+    WorldDesignPublicationFenceEvidence evidence =
+        new WorldDesignPublicationFenceEvidence(
+            owner.targetNamespace(),
+            owner.canonicalTenantId(),
+            owner.canonicalVersionId(),
+            owner.versionIdentityOperationId(),
+            owner.gameDesignVersionId(),
+            owner.intakeRequestId(),
+            owner.intakeOperationId(),
+            owner.intakeRequestDigest(),
+            owner.sourceOperationId(),
+            owner.sourceEvidenceDigest(),
+            owner.intakeReceiptDigest(),
+            request.publicationRequestId(),
+            request.requestDigest(),
+            request.expectedVersionStateEpoch(),
+            PublicationDigestRequestBinding.full(
+                    request.canonicalTenantId().toString(),
+                    Long.toString(selection.target().gameDesignVersionRowId()),
+                    request.publicationRequestId())
+                .derivedWorkflowIdentity());
+    FrozenAttempt attempt = freeze(evidence, selectedPlan, accountBinding);
+    return new Acknowledgement(
+        request,
+        attempt.request().versionStateEpoch(),
+        attempt.publicationFence(),
+        OwnerFreezePhase.FROZEN,
+        attempt.checkpoint().appliedCommitId(),
+        attempt.checkpoint().contentDigest(),
+        attempt.checkpoint().digestSchemaVersion());
   }
 
   /**

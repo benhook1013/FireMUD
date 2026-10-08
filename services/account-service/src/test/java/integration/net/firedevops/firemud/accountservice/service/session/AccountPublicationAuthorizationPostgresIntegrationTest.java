@@ -121,14 +121,9 @@ class AccountPublicationAuthorizationPostgresIntegrationTest {
               repository.readHeld(order);
               return null;
             });
-        assertThatThrownBy(
-                () ->
-                    f.tx(
-                        () ->
-                            f.dsl.execute(
-                                "UPDATE accounts SET role = 'admin' WHERE id = ?",
-                                f.account.getId())))
-            .isInstanceOf(org.jooq.exception.DataAccessException.class);
+        assertThatThrownBy(() -> f.tx(f::changeRoleToAdmin))
+            .isInstanceOf(org.jooq.exception.DataAccessException.class)
+            .hasMessageContaining("selected-publication");
 
         byte[] originalBinding = order.canonicalBytes();
         byte[] receipt =
@@ -176,12 +171,7 @@ class AccountPublicationAuthorizationPostgresIntegrationTest {
                 failure ->
                     assertThat(((io.grpc.StatusRuntimeException) failure).getStatus().getCode())
                         .isEqualTo(io.grpc.Status.Code.FAILED_PRECONDITION));
-        assertThat(
-                f.tx(
-                    () ->
-                        f.dsl.execute(
-                            "UPDATE accounts SET role = 'admin' WHERE id = ?", f.account.getId())))
-            .isEqualTo(1);
+        assertThat(f.tx(f::changeRoleToAdmin).getRole()).isEqualTo("admin");
         // Even after the source changes, the original committed issuance and receipt replay.
         assertThat(
                 f.tx(
@@ -539,21 +529,14 @@ class AccountPublicationAuthorizationPostgresIntegrationTest {
                                 // pending
                                 // transaction cannot release its protection to a different writer
                                 // connection.
-                                return f.dsl.execute(
-                                    "UPDATE accounts SET role = 'admin' WHERE id = ?",
-                                    f.account.getId());
+                                return f.changeRoleToAdmin();
                               }));
               assertThatThrownBy(() -> writer.get(10, java.util.concurrent.TimeUnit.SECONDS))
                   .isInstanceOf(java.util.concurrent.ExecutionException.class)
                   .hasCauseInstanceOf(org.jooq.exception.DataAccessException.class);
               return null;
             });
-        assertThat(
-                f.tx(
-                    () ->
-                        f.dsl.execute(
-                            "UPDATE accounts SET role = 'admin' WHERE id = ?", f.account.getId())))
-            .isEqualTo(1);
+        assertThat(f.tx(f::changeRoleToAdmin).getRole()).isEqualTo("admin");
       } finally {
         executor.shutdownNow();
         assertThat(executor.awaitTermination(10, java.util.concurrent.TimeUnit.SECONDS)).isTrue();

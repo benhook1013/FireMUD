@@ -585,13 +585,7 @@ class AccountPublicationAuthorizationMtlsPostgresIntegrationTest {
                                 NAMESPACE, order));
                         return null;
                       }));
-          assertThat(
-                  sources.tx(
-                      () ->
-                          sources.dsl.execute(
-                              "UPDATE accounts SET role = 'admin' WHERE id = ?",
-                              sources.account.getId())))
-              .isEqualTo(1);
+          assertThat(sources.tx(sources::changeRoleToAdmin).getRole()).isEqualTo("admin");
           corruptReadback.set(true);
           assertThatThrownBy(
                   () -> asGameDesign(() -> composition.settle(operation.canonicalBytes())))
@@ -626,14 +620,9 @@ class AccountPublicationAuthorizationMtlsPostgresIntegrationTest {
           repository.readHeld(order);
           return null;
         });
-    assertThatThrownBy(
-            () ->
-                sources.tx(
-                    () ->
-                        sources.dsl.execute(
-                            "UPDATE accounts SET role = 'admin' WHERE id = ?",
-                            sources.account.getId())))
-        .isInstanceOf(org.jooq.exception.DataAccessException.class);
+    assertThatThrownBy(() -> sources.tx(sources::changeRoleToAdmin))
+        .isInstanceOf(org.jooq.exception.DataAccessException.class)
+        .hasMessageContaining("selected-publication");
   }
 
   private static void requireAccountClient() {

@@ -773,6 +773,7 @@ class WorldDraftGraphApplicationPostgresIntegrationTest {
     var committedRead =
         new WorldPublicationTerminalRepository(dsl, manager).readCommitted(request).orElseThrow();
     assertThat(committedRead.canonicalBytes()).containsExactly(first.canonicalBytes());
+    var ownerAfterCompletion = ownerSnapshot(f, graphApplication.plan());
     for (AccountPublicationAuthorizationBinding changed :
         List.of(changedOperation, changedFence, changedBytes)) {
       var altered = isolatedTerminalEvidence(original, changed);
@@ -791,7 +792,7 @@ class WorldDraftGraphApplicationPostgresIntegrationTest {
           .isInstanceOf(
               WorldPublicationTerminalRepository.PublicationTerminalConflictException.class)
           .hasMessageContaining("original Account publication qualification");
-      assertThat(ownerSnapshot(f, graphApplication.plan())).isEqualTo(ownerBefore);
+      assertThat(ownerSnapshot(f, graphApplication.plan())).isEqualTo(ownerAfterCompletion);
       assertThat(publicationOwnerPhase(fence)).isEqualTo("PUBLISHED");
       assertThat(publicationTerminalCount(fence)).isEqualTo(1L);
       assertThat(publicationTerminalBytes(fence)).containsExactly(first.canonicalBytes());
