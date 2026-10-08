@@ -6,6 +6,13 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import integration.net.firedevops.firemud.accountservice.repository.AccountPostgresIntegrationFixture;
 import io.grpc.Status;
 import io.grpc.StatusRuntimeException;
+import java.lang.reflect.InvocationTargetException;
+import java.lang.reflect.Proxy;
+import java.sql.Connection;
+import java.sql.PreparedStatement;
+import java.sql.ResultSet;
+import java.sql.SQLException;
+import java.sql.Statement;
 import java.time.Instant;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -16,7 +23,10 @@ import java.util.concurrent.Callable;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Supplier;
+import javax.sql.DataSource;
 import net.firedevops.firemud.account.v1.AbortGameplayAdmissionLeaseRequest;
 import net.firedevops.firemud.account.v1.FinalizeGameplayAdmissionLeaseRequest;
 import net.firedevops.firemud.account.v1.ReadGameplayAdmissionLeaseRequest;
@@ -35,6 +45,7 @@ import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.springframework.jdbc.datasource.DataSourceTransactionManager;
+import org.springframework.jdbc.datasource.DelegatingDataSource;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
 import org.springframework.jdbc.datasource.TransactionAwareDataSourceProxy;
 import org.springframework.transaction.TransactionDefinition;
@@ -66,6 +77,309 @@ class AccountGameplayAdmissionLeasePersistenceIntegrationTest {
     assertThat(settings.inRecovery()).isFalse();
     assertThat(settings.fsync()).isEqualTo("on");
     assertThat(settings.synchronousCommit()).isEqualTo("on");
+  }
+
+  @Test
+  void originalExecutorAcknowledgesActualCommitWithoutCreatingTemporalReceipt() {
+    var context = context(null);
+    var original = pending(context, account(context));
+    UUID decision = UUID.randomUUID();
+    var before = operation(context, original);
+    // Upstream carrier and authority fields are component-only fixtures, never admission proof.
+    var acknowledgement =
+        new AccountGameplayAdmissionOriginalCommitExecutor(context.dataSource())
+            .execute(original, decision);
+    var committed = operation(context, original);
+    assertThat(acknowledgement.evidence().canonicalJson()).isEqualTo(original.canonicalJson());
+    assertThat(acknowledgement.evidence().sha256()).isEqualTo(original.sha256());
+    assertThat(acknowledgement.decisionId()).isEqualTo(decision);
+    assertThat(acknowledgement.finalizationXid())
+        .isEqualTo(committed.get("finalization_xid", String.class));
+    assertThat(acknowledgement.committedBeforeMs()).isPositive().isLessThan(expiresAt(original));
+    assertThat(committed.get("status", String.class)).isEqualTo("COMMITTED");
+    assertThat(committed.get("binding_decision_id", UUID.class)).isEqualTo(decision);
+    for (String field :
+        List.of(
+            "request_id",
+            "account_uuid",
+            "lease_id",
+            "lease_fence",
+            "evidence_json",
+            "evidence_sha256",
+            "evaluated_at_ms",
+            "expires_at_ms")) {
+      assertThat(committed.get(field)).as(field).isEqualTo(before.get(field));
+    }
+    assertThat(committed.get("expires_at_ms", Long.class)).isEqualTo(expiresAt(original));
+    assertThat(
+            context.dsl().fetchCount(DSL.table("account_gameplay_admission_commit_confirmations")))
+        .isZero();
+    // The in-process ACK and bound are not a persisted temporal confirmation or durable receipt.
+  }
+
+  @Test
+  void originalExecutorReadsClockOnOriginalConnectionOnlyAfterActualCommitAcknowledgement() {
+    var context = context(null);
+    var original = pending(context, account(context));
+    UUID decision = UUID.randomUUID();
+    var clockQueries = new AtomicInteger();
+    // Component-only upstream evidence. The wrapper delegates the actual commit and clock query.
+    var acknowledgement =
+        new AccountGameplayAdmissionOriginalCommitExecutor(
+                postCommitClockDataSource(context.dataSource(), 0L, false, clockQueries))
+            .execute(original, decision);
+    assertThat(clockQueries.get()).isEqualTo(1);
+    assertThat(acknowledgement.committedBeforeMs()).isPositive().isLessThan(expiresAt(original));
+    assertThat(databaseNow(context)).isGreaterThanOrEqualTo(acknowledgement.committedBeforeMs());
+    var committed = operation(context, original);
+    assertThat(committed.get("finalization_xid", String.class))
+        .isEqualTo(acknowledgement.finalizationXid());
+    assertThat(committed.get("binding_decision_id", UUID.class)).isEqualTo(decision);
+    assertThat(committed.get("evidence_json", String.class)).isEqualTo(original.canonicalJson());
+    assertThat(committed.get("evidence_sha256", String.class)).isEqualTo(original.sha256());
+    assertThat(committed.get("expires_at_ms", Long.class)).isEqualTo(expiresAt(original));
+    assertThat(
+            context.dsl().fetchCount(DSL.table("account_gameplay_admission_commit_confirmations")))
+        .isZero();
+  }
+
+  @Test
+  void delayedPostAcknowledgementClockDeniesWithoutUndoingOriginalCommitOrRenewingExpiry() {
+    var context = context(null);
+    var original = pending(context, account(context), 1000L);
+    UUID decision = UUID.randomUUID();
+    var clockQueries = new AtomicInteger();
+    var executor =
+        new AccountGameplayAdmissionOriginalCommitExecutor(
+            postCommitClockDataSource(
+                context.dataSource(), expiresAt(original), false, clockQueries));
+    assertThatThrownBy(() -> executor.execute(original, decision))
+        .hasMessageContaining("post-COMMIT clock bound unavailable");
+    assertThat(clockQueries.get()).isEqualTo(1);
+    assertThat(databaseNow(context)).isGreaterThanOrEqualTo(expiresAt(original));
+    var committed = operation(context, original);
+    assertThat(committed.get("status", String.class)).isEqualTo("COMMITTED");
+    assertThat(committed.get("binding_decision_id", UUID.class)).isEqualTo(decision);
+    assertThat(committed.get("finalization_xid", String.class)).isNotBlank();
+    assertThat(committed.get("evidence_json", String.class)).isEqualTo(original.canonicalJson());
+    assertThat(committed.get("expires_at_ms", Long.class)).isEqualTo(expiresAt(original));
+    assertThatThrownBy(
+            () ->
+                new AccountGameplayAdmissionOriginalCommitExecutor(context.dataSource())
+                    .execute(original, decision))
+        .hasMessageContaining("Fresh owned Account original COMMIT required");
+    assertThat(operation(context, original)).isEqualTo(committed);
+    assertThat(
+            context.dsl().fetchCount(DSL.table("account_gameplay_admission_commit_confirmations")))
+        .isZero();
+  }
+
+  @Test
+  void lostPostAcknowledgementClockResponseCannotBeRemintedFromCommittedRetry() {
+    var context = context(null);
+    var original = pending(context, account(context));
+    UUID decision = UUID.randomUUID();
+    var clockQueries = new AtomicInteger();
+    var executor =
+        new AccountGameplayAdmissionOriginalCommitExecutor(
+            postCommitClockDataSource(context.dataSource(), 0L, true, clockQueries));
+    assertThatThrownBy(() -> executor.execute(original, decision))
+        .hasMessageContaining("post-COMMIT clock unavailable");
+    assertThat(clockQueries.get()).isEqualTo(1);
+    var committed = operation(context, original);
+    assertThat(committed.get("status", String.class)).isEqualTo("COMMITTED");
+    assertThat(committed.get("binding_decision_id", UUID.class)).isEqualTo(decision);
+    assertThat(committed.get("finalization_xid", String.class)).isNotBlank();
+    assertThat(committed.get("evidence_json", String.class)).isEqualTo(original.canonicalJson());
+    assertThat(committed.get("expires_at_ms", Long.class)).isEqualTo(expiresAt(original));
+    assertThatThrownBy(
+            () ->
+                new AccountGameplayAdmissionOriginalCommitExecutor(context.dataSource())
+                    .execute(original, decision))
+        .hasMessageContaining("Fresh owned Account original COMMIT required");
+    assertThat(operation(context, original)).isEqualTo(committed);
+    assertThat(
+            context.dsl().fetchCount(DSL.table("account_gameplay_admission_commit_confirmations")))
+        .isZero();
+  }
+
+  /** Real database clock faults on the original connection, strictly after successful COMMIT. */
+  private static DataSource postCommitClockDataSource(
+      DataSource source, long waitUntilMs, boolean loseClockResponse, AtomicInteger clockQueries) {
+    return new DelegatingDataSource(source) {
+      @Override
+      public Connection getConnection() throws SQLException {
+        return clockConnection(super.getConnection());
+      }
+
+      @Override
+      public Connection getConnection(String username, String password) throws SQLException {
+        return clockConnection(super.getConnection(username, password));
+      }
+
+      private Connection clockConnection(Connection physical) {
+        var committed = new AtomicBoolean();
+        return (Connection)
+            Proxy.newProxyInstance(
+                Connection.class.getClassLoader(),
+                new Class<?>[] {Connection.class},
+                (proxy, method, arguments) -> {
+                  if (method.getName().equals("commit") && method.getParameterCount() == 0) {
+                    physical.commit();
+                    committed.set(true);
+                    return null;
+                  }
+                  if (method.getName().equals("createStatement") && method.getParameterCount() == 0)
+                    return clockStatement(physical.createStatement(), committed);
+                  try {
+                    return method.invoke(physical, arguments);
+                  } catch (InvocationTargetException failure) {
+                    throw failure.getCause();
+                  }
+                });
+      }
+
+      private Statement clockStatement(Statement physical, AtomicBoolean committed) {
+        return (Statement)
+            Proxy.newProxyInstance(
+                Statement.class.getClassLoader(),
+                new Class<?>[] {Statement.class},
+                (proxy, method, arguments) -> {
+                  if (method.getName().equals("executeQuery")
+                      && arguments != null
+                      && arguments.length == 1
+                      && "SELECT ceil(extract(epoch FROM clock_timestamp()) * 1000)::bigint"
+                          .equals(arguments[0])) {
+                    assertThat(committed.get()).isTrue();
+                    clockQueries.incrementAndGet();
+                    if (waitUntilMs > 0) {
+                      // Delay only this test's post-ACK clock query using database time.
+                      physical.execute(
+                          "SELECT pg_sleep(GREATEST(0, ("
+                              + waitUntilMs
+                              + " - ceil(extract(epoch FROM clock_timestamp()) * 1000) + 50) / 1000.0))");
+                    }
+                    if (loseClockResponse) {
+                      try (ResultSet discarded = physical.executeQuery((String) arguments[0])) {
+                        assertThat(discarded.next()).isTrue();
+                      }
+                      throw new SQLException("Test lost post-COMMIT clock response", "08006");
+                    }
+                  }
+                  try {
+                    return method.invoke(physical, arguments);
+                  } catch (InvocationTargetException failure) {
+                    throw failure.getCause();
+                  }
+                });
+      }
+    };
+  }
+
+  @Test
+  void originalExecutorRejectsCommittedRetryWithoutRefreshingEvidence() {
+    var context = context(null);
+    var original = pending(context, account(context));
+    UUID decision = UUID.randomUUID();
+    var executor = new AccountGameplayAdmissionOriginalCommitExecutor(context.dataSource());
+    var acknowledgement = executor.execute(original, decision);
+    var committed = operation(context, original);
+    assertThatThrownBy(() -> executor.execute(original, decision))
+        .hasMessageContaining("Fresh owned Account original COMMIT required");
+    assertThat(operation(context, original)).isEqualTo(committed);
+    assertThat(operation(context, original).get("finalization_xid", String.class))
+        .isEqualTo(acknowledgement.finalizationXid());
+    assertThat(
+            context.dsl().fetchCount(DSL.table("account_gameplay_admission_commit_confirmations")))
+        .isZero();
+  }
+
+  @Test
+  void lostOriginalCommitAcknowledgementDeniesDespiteActualCommittedReadback() {
+    var context = context(null);
+    var original = pending(context, account(context));
+    UUID decision = UUID.randomUUID();
+    var physicalCommits = new AtomicInteger();
+    var executor =
+        new AccountGameplayAdmissionOriginalCommitExecutor(
+            originalCommitFailureDataSource(context.dataSource(), true, physicalCommits));
+    assertThatThrownBy(() -> executor.execute(original, decision))
+        .hasMessageContaining("Original Account physical COMMIT unavailable");
+    assertThat(physicalCommits.get()).isEqualTo(1);
+    var committed = operation(context, original);
+    assertThat(committed.get("status", String.class)).isEqualTo("COMMITTED");
+    assertThat(committed.get("binding_decision_id", UUID.class)).isEqualTo(decision);
+    assertThat(committed.get("finalization_xid", String.class)).isNotBlank();
+    assertThat(committed.get("evidence_json", String.class)).isEqualTo(original.canonicalJson());
+    assertThat(committed.get("evidence_sha256", String.class)).isEqualTo(original.sha256());
+    assertThat(committed.get("expires_at_ms", Long.class)).isEqualTo(expiresAt(original));
+    // Retry on a normal physical connection cannot turn raw visibility into the missing ACK.
+    assertThatThrownBy(
+            () ->
+                new AccountGameplayAdmissionOriginalCommitExecutor(context.dataSource())
+                    .execute(original, decision))
+        .hasMessageContaining("Fresh owned Account original COMMIT required");
+    assertThat(operation(context, original)).isEqualTo(committed);
+    assertThat(
+            context.dsl().fetchCount(DSL.table("account_gameplay_admission_commit_confirmations")))
+        .isZero();
+  }
+
+  @Test
+  void rejectionBeforeOriginalPhysicalCommitRollsBackPendingWithoutAcknowledgement() {
+    var context = context(null);
+    var original = pending(context, account(context));
+    var unchanged = storageSnapshot(context);
+    var physicalCommits = new AtomicInteger();
+    var executor =
+        new AccountGameplayAdmissionOriginalCommitExecutor(
+            originalCommitFailureDataSource(context.dataSource(), false, physicalCommits));
+    assertThatThrownBy(() -> executor.execute(original, UUID.randomUUID()))
+        .hasMessageContaining("Original Account physical COMMIT unavailable");
+    assertThat(physicalCommits.get()).isZero();
+    assertThat(operation(context, original).get("status", String.class)).isEqualTo("PENDING");
+    assertThat(operation(context, original).get("finalization_xid", String.class)).isNull();
+    assertThat(storageSnapshot(context)).isEqualTo(unchanged);
+    assertThat(
+            context.dsl().fetchCount(DSL.table("account_gameplay_admission_commit_confirmations")))
+        .isZero();
+  }
+
+  /** Test-only transport fault around real JDBC COMMIT, with no production success injection. */
+  private static DataSource originalCommitFailureDataSource(
+      DataSource source, boolean afterPhysicalCommit, AtomicInteger physicalCommits) {
+    return new DelegatingDataSource(source) {
+      @Override
+      public Connection getConnection() throws SQLException {
+        return faultConnection(super.getConnection());
+      }
+
+      @Override
+      public Connection getConnection(String username, String password) throws SQLException {
+        return faultConnection(super.getConnection(username, password));
+      }
+
+      private Connection faultConnection(Connection physical) {
+        return (Connection)
+            Proxy.newProxyInstance(
+                Connection.class.getClassLoader(),
+                new Class<?>[] {Connection.class},
+                (proxy, method, arguments) -> {
+                  if (method.getName().equals("commit") && method.getParameterCount() == 0) {
+                    if (!afterPhysicalCommit)
+                      throw new SQLException("Test rejection before physical COMMIT", "08006");
+                    physical.commit();
+                    physicalCommits.incrementAndGet();
+                    throw new SQLException("Test lost original COMMIT acknowledgement", "08006");
+                  }
+                  try {
+                    return method.invoke(physical, arguments);
+                  } catch (InvocationTargetException failure) {
+                    throw failure.getCause();
+                  }
+                });
+      }
+    };
   }
 
   @Test
@@ -691,18 +1005,15 @@ class AccountGameplayAdmissionLeasePersistenceIntegrationTest {
     var unchanged = storageSnapshot(context);
     var transactionManager = new DataSourceTransactionManager(context.dataSource());
     var confirmationOwner =
-        new AccountGameplayAdmissionCommitConfirmationOwner(
-            new AccountGameplayAdmissionCommitConfirmationRepository(context.dsl(), repository),
-            transactionManager,
-            "test");
+        new AccountGameplayAdmissionCommitConfirmationOwner(context.dataSource(), "test");
     var request =
         FinalizeGameplayAdmissionLeaseRequest.newBuilder()
             .setLease(AccountGameplayAdmissionLeaseWireCodec.encodeReference(original))
             .setBindingDecisionId(decision.toString())
             .build();
 
-    // The exact Game Session peer, carrier and decision are synthetic upstream fixtures. The real
-    // Java owner creates and independently reads Account SQL proof; this does not prove mTLS.
+    // The loopback peer, carrier and decision are synthetic upstream fixtures. The real Java
+    // owner creates and independently reads Account SQL proof; this does not prove mTLS.
     syntheticReadPeer().call(() -> confirmationOwner.confirm(request)); // Discard the response.
     // Inspect stored fields separately; this visible row alone is not durable readback proof.
     var receipt =
@@ -772,6 +1083,138 @@ class AccountGameplayAdmissionLeasePersistenceIntegrationTest {
     assertThat(storageSnapshot(context)).isEqualTo(unchanged);
     var readOwner = new AccountGameplayAdmissionReadOwner(repository, transactionManager, "test");
     assertFailedExactRead(readOwner, original);
+  }
+
+  @Test
+  void receiptPhysicalCommitPrecedesIndependentV90ReadOnAnotherConnection() throws Exception {
+    var context = context(null);
+    var original = pending(context, account(context));
+    UUID decision = UUID.randomUUID();
+    new AccountGameplayAdmissionOriginalCommitExecutor(context.dataSource())
+        .execute(original, decision);
+    var trace = new ReceiptCommitTrace();
+    var owner =
+        new AccountGameplayAdmissionCommitConfirmationOwner(
+            receiptCommitDataSource(context.dataSource(), ReceiptCommitFault.NONE, trace), "test");
+
+    var receipt =
+        syntheticReadPeer().call(() -> owner.confirm(confirmationRequest(original, decision)));
+
+    assertThat(trace.count("physical-commit")).isEqualTo(2);
+    assertThat(trace.count("v90-read")).isEqualTo(1);
+    var receiptCommit = firstEvent(trace, "physical-commit");
+    var independentRead = firstEvent(trace, "v90-read");
+    assertThat(trace.events().indexOf(receiptCommit))
+        .isLessThan(trace.events().indexOf(independentRead));
+    assertThat(independentRead.connectionId()).isNotEqualTo(receiptCommit.connectionId());
+    assertThat(receipt.operation().evidence().canonicalJson()).isEqualTo(original.canonicalJson());
+    assertThat(receipt.operation().evidence().sha256()).isEqualTo(original.sha256());
+    assertThat(receipt.bindingDecisionId()).isEqualTo(decision);
+    assertThat(receipt.expiresAtMs()).isEqualTo(expiresAt(original));
+    assertThat(receipt.committedBeforeMs()).isPositive().isLessThan(expiresAt(original));
+    assertThat(receipt.confirmationXid()).isNotEqualTo(receipt.finalizationXid());
+    assertThat(operation(context, original).get("finalization_xid", String.class))
+        .isEqualTo(receipt.finalizationXid());
+    assertThat(
+            context.dsl().fetchCount(DSL.table("account_gameplay_admission_commit_confirmations")))
+        .isEqualTo(1);
+  }
+
+  @Test
+  void lostReceiptCommitAcknowledgementDeniesThenRecoversOnlyThroughIndependentV90Read()
+      throws Exception {
+    var context = context(null);
+    var original = pending(context, account(context));
+    UUID decision = UUID.randomUUID();
+    new AccountGameplayAdmissionOriginalCommitExecutor(context.dataSource())
+        .execute(original, decision);
+    var trace = new ReceiptCommitTrace();
+    var owner =
+        new AccountGameplayAdmissionCommitConfirmationOwner(
+            receiptCommitDataSource(
+                context.dataSource(), ReceiptCommitFault.AFTER_FIRST_COMMIT, trace),
+            "test");
+    var request = confirmationRequest(original, decision);
+
+    assertThatThrownBy(() -> syntheticReadPeer().call(() -> owner.confirm(request)))
+        .isInstanceOf(StatusRuntimeException.class)
+        .satisfies(
+            failure ->
+                assertThat(Status.fromThrowable(failure).getCode())
+                    .isEqualTo(Status.Code.UNAVAILABLE));
+    assertThat(trace.count("physical-commit")).isEqualTo(1);
+    assertThat(trace.count("v90-read")).isZero();
+
+    var retainedRow = confirmationRow(context, original);
+    assertThat(retainedRow.get("request_id", UUID.class)).isEqualTo(requestId(original));
+    assertThat(retainedRow.get("evidence_sha256", String.class)).isEqualTo(original.sha256());
+    assertThat(retainedRow.get("binding_decision_id", UUID.class)).isEqualTo(decision);
+    assertThat(retainedRow.get("expires_at_ms", Long.class)).isEqualTo(expiresAt(original));
+    assertThat(retainedRow.get("committed_before_ms", Long.class))
+        .isPositive()
+        .isLessThan(expiresAt(original));
+    assertThat(retainedRow.get("finalization_xid", String.class))
+        .isEqualTo(operation(context, original).get("finalization_xid", String.class));
+    assertThat(retainedRow.get("confirmation_xid", String.class))
+        .isNotEqualTo(retainedRow.get("finalization_xid", String.class));
+
+    // Recovery is an explicit fresh owner read, which invokes the existing V90 independent WAL
+    // coverage observer. No confirm retry can mint or acknowledge the lost receipt COMMIT.
+    var recovered = syntheticReadPeer().call(() -> owner.read(request));
+    assertThat(trace.count("v90-read")).isEqualTo(1);
+    var lostAckCommit = firstEvent(trace, "physical-commit");
+    var independentRead = firstEvent(trace, "v90-read");
+    assertThat(trace.events().indexOf(lostAckCommit))
+        .isLessThan(trace.events().indexOf(independentRead));
+    assertThat(independentRead.connectionId()).isNotEqualTo(lostAckCommit.connectionId());
+    assertThat(recovered.requestId()).isEqualTo(retainedRow.get("request_id", UUID.class));
+    assertThat(recovered.evidenceSha256())
+        .isEqualTo(retainedRow.get("evidence_sha256", String.class));
+    assertThat(recovered.bindingDecisionId())
+        .isEqualTo(retainedRow.get("binding_decision_id", UUID.class));
+    assertThat(recovered.expiresAtMs()).isEqualTo(retainedRow.get("expires_at_ms", Long.class));
+    assertThat(recovered.committedBeforeMs())
+        .isEqualTo(retainedRow.get("committed_before_ms", Long.class));
+    assertThat(recovered.finalizationXid())
+        .isEqualTo(retainedRow.get("finalization_xid", String.class));
+    assertThat(recovered.confirmationXid())
+        .isEqualTo(retainedRow.get("confirmation_xid", String.class));
+    assertThat(confirmationRow(context, original).intoMap()).isEqualTo(retainedRow.intoMap());
+  }
+
+  @Test
+  void receiptCommitFailureBeforePhysicalDelegateRollsBackWithoutReceiptOrIndependentRead() {
+    var context = context(null);
+    var original = pending(context, account(context));
+    UUID decision = UUID.randomUUID();
+    new AccountGameplayAdmissionOriginalCommitExecutor(context.dataSource())
+        .execute(original, decision);
+    var committedOperation = operation(context, original).intoMap();
+    var unchanged = storageSnapshot(context);
+    var trace = new ReceiptCommitTrace();
+    var owner =
+        new AccountGameplayAdmissionCommitConfirmationOwner(
+            receiptCommitDataSource(
+                context.dataSource(), ReceiptCommitFault.BEFORE_FIRST_COMMIT, trace),
+            "test");
+
+    assertThatThrownBy(
+            () ->
+                syntheticReadPeer()
+                    .call(() -> owner.confirm(confirmationRequest(original, decision))))
+        .isInstanceOf(StatusRuntimeException.class)
+        .satisfies(
+            failure ->
+                assertThat(Status.fromThrowable(failure).getCode())
+                    .isEqualTo(Status.Code.UNAVAILABLE));
+    assertThat(trace.count("commit-attempt")).isEqualTo(1);
+    assertThat(trace.count("physical-commit")).isZero();
+    assertThat(trace.count("v90-read")).isZero();
+    assertThat(
+            context.dsl().fetchCount(DSL.table("account_gameplay_admission_commit_confirmations")))
+        .isZero();
+    assertThat(operation(context, original).intoMap()).isEqualTo(committedOperation);
+    assertThat(storageSnapshot(context)).isEqualTo(unchanged);
   }
 
   @Test
@@ -1240,6 +1683,419 @@ class AccountGameplayAdmissionLeasePersistenceIntegrationTest {
     assertThat(storageSnapshot(context)).isEqualTo(unchanged);
   }
 
+  @Test
+  void originalAckReceiptMigrationPreservesV91HistoryWithoutInventingAcknowledgement() {
+    var context = context("91");
+    UUID committedAccount = account(context);
+    var retainedCommittedEvidence = pending(context, committedAccount);
+    UUID retainedDecision = UUID.randomUUID();
+    var leaseRepository = new AccountGameplayAdmissionLeaseRepository(context.dsl());
+    var retainedCommitted =
+        tx(
+            context,
+            () -> leaseRepository.recordCommitted(retainedCommittedEvidence, retainedDecision));
+    assertThat(retainedCommitted.state()).isEqualTo(State.COMMITTED);
+    var committedBefore = operation(context, retainedCommittedEvidence).intoMap();
+
+    UUID pendingAccount = account(context);
+    var retainedPendingEvidence = pending(context, pendingAccount);
+    var pendingBefore = operation(context, retainedPendingEvidence).intoMap();
+    var v91Checksums = flywayChecksums(context);
+    assertThat(v91Checksums).containsKey("91").doesNotContainKey("92");
+
+    migrate(context, null);
+
+    var latestChecksums = flywayChecksums(context);
+    for (var entry : v91Checksums.entrySet())
+      assertThat(latestChecksums).containsEntry(entry.getKey(), entry.getValue());
+    assertThat(latestChecksums.get("92")).isNotNull();
+    assertThat(operation(context, retainedCommittedEvidence).intoMap()).isEqualTo(committedBefore);
+    assertThat(operation(context, retainedPendingEvidence).intoMap()).isEqualTo(pendingBefore);
+    assertThat(
+            context
+                .dsl()
+                .fetchCount(DSL.table("account_gameplay_admission_original_commit_ack_receipts")))
+        .isZero();
+
+    var originalExecutor = new AccountGameplayAdmissionOriginalCommitExecutor(context.dataSource());
+    UUID pendingDecision = UUID.randomUUID();
+    var acknowledgement = originalExecutor.execute(retainedPendingEvidence, pendingDecision);
+    var receipt =
+        new AccountGameplayAdmissionOriginalAckReceiptCommitExecutor(context.dataSource())
+            .confirm(acknowledgement);
+    var newlyCommitted = operation(context, retainedPendingEvidence);
+    for (String field :
+        List.of(
+            "request_id",
+            "account_uuid",
+            "lease_id",
+            "lease_fence",
+            "evidence_json",
+            "evidence_sha256",
+            "evaluated_at_ms",
+            "expires_at_ms")) {
+      assertThat(newlyCommitted.get(field)).as(field).isEqualTo(pendingBefore.get(field));
+    }
+    assertThat(receipt.operation().evidence()).isEqualTo(retainedPendingEvidence);
+    assertThat(receipt.operation().bindingDecisionId()).isEqualTo(pendingDecision);
+    assertThat(receipt.expiresAtMs()).isEqualTo((Long) pendingBefore.get("expires_at_ms"));
+    assertThat(receipt.committedBeforeMs())
+        .isEqualTo(acknowledgement.committedBeforeMs())
+        .isLessThan(receipt.expiresAtMs());
+    assertThat(receipt.finalizationXid())
+        .isEqualTo(newlyCommitted.get("finalization_xid", String.class));
+
+    assertThatThrownBy(() -> originalExecutor.execute(retainedCommittedEvidence, retainedDecision))
+        .hasMessageContaining("Fresh owned Account original COMMIT required");
+    assertThat(operation(context, retainedCommittedEvidence).intoMap()).isEqualTo(committedBefore);
+
+    var retainedReceiptRow = originalAckReceiptRow(context, retainedPendingEvidence).intoMap();
+    String receiptTable = "account_gameplay_admission_original_commit_ack_receipts";
+    assertThatThrownBy(
+            () ->
+                tx(
+                    context,
+                    () ->
+                        context
+                            .dsl()
+                            .execute(
+                                "UPDATE "
+                                    + receiptTable
+                                    + " SET committed_before_ms = committed_before_ms + 1 "
+                                    + "WHERE request_id = ?",
+                                requestId(retainedPendingEvidence))))
+        .hasMessageContaining("Original Account COMMIT acknowledgement receipt is immutable");
+    assertThat(originalAckReceiptRow(context, retainedPendingEvidence).intoMap())
+        .isEqualTo(retainedReceiptRow);
+    assertThatThrownBy(
+            () ->
+                tx(
+                    context,
+                    () ->
+                        context
+                            .dsl()
+                            .execute(
+                                "DELETE FROM " + receiptTable + " WHERE request_id = ?",
+                                requestId(retainedPendingEvidence))))
+        .hasMessageContaining("Original Account COMMIT acknowledgement receipt is immutable");
+    assertThat(originalAckReceiptRow(context, retainedPendingEvidence).intoMap())
+        .isEqualTo(retainedReceiptRow);
+    assertThatThrownBy(() -> tx(context, () -> context.dsl().execute("TRUNCATE " + receiptTable)))
+        .hasMessageContaining("Original Account COMMIT acknowledgement receipt is immutable");
+    assertThat(originalAckReceiptRow(context, retainedPendingEvidence).intoMap())
+        .isEqualTo(retainedReceiptRow);
+    var finalChecksums = flywayChecksums(context);
+    for (var entry : latestChecksums.entrySet())
+      assertThat(finalChecksums).containsEntry(entry.getKey(), entry.getValue());
+    assertThat(
+            context
+                .dsl()
+                .fetchCount(DSL.table("account_gameplay_admission_original_commit_ack_receipts")))
+        .isEqualTo(1);
+  }
+
+  @Test
+  void originalAckReceiptCommitsThenIndependentlyReadsExactOriginalBound() {
+    var context = context(null);
+    var original = pending(context, account(context));
+    var before = operation(context, original).intoMap();
+    UUID decision = UUID.randomUUID();
+    var trace = new ReceiptCommitTrace();
+    var receiptPhase = new AtomicBoolean();
+    var dataSource = originalAckReceiptDataSource(context.dataSource(), trace, receiptPhase, false);
+
+    var acknowledgement =
+        new AccountGameplayAdmissionOriginalCommitExecutor(dataSource).execute(original, decision);
+    receiptPhase.set(true);
+    var receipt =
+        new AccountGameplayAdmissionOriginalAckReceiptCommitExecutor(dataSource)
+            .confirm(acknowledgement);
+
+    var committed = operation(context, original);
+    assertThat(receipt.operation().evidence().canonicalJson()).isEqualTo(original.canonicalJson());
+    assertThat(receipt.operation().evidence().sha256()).isEqualTo(original.sha256());
+    assertThat(receipt.operation().bindingDecisionId()).isEqualTo(decision);
+    assertThat(receipt.schemaVersion()).isEqualTo((short) 1);
+    assertThat(receipt.requestId()).isEqualTo(requestId(original));
+    var scope = (Map<?, ?>) original.carrier().get("bindingScope");
+    assertThat(receipt.accountId()).isEqualTo(UUID.fromString((String) scope.get("accountId")));
+    assertThat(receipt.leaseId())
+        .isEqualTo(UUID.fromString((String) original.carrier().get("leaseId")));
+    assertThat(receipt.leaseFence()).isEqualTo(original.leaseFence().longValueExact());
+    assertThat(receipt.evidenceSha256()).isEqualTo(original.sha256());
+    assertThat(receipt.bindingDecisionId()).isEqualTo(decision);
+    assertThat(receipt.expiresAtMs()).isEqualTo(expiresAt(original));
+    assertThat(receipt.committedBeforeMs())
+        .isEqualTo(acknowledgement.committedBeforeMs())
+        .isPositive()
+        .isLessThan(receipt.expiresAtMs());
+    assertThat(receipt.finalizationXid()).isEqualTo(acknowledgement.finalizationXid());
+    assertThat(receipt.finalizationXid())
+        .isEqualTo(committed.get("finalization_xid", String.class));
+    assertThat(receipt.receiptXid()).isNotEqualTo(receipt.finalizationXid());
+    assertThat(committed.get("expires_at_ms", Long.class)).isEqualTo(before.get("expires_at_ms"));
+    assertThat(trace.count("original-physical-commit")).isEqualTo(1);
+    assertThat(trace.count("receipt-physical-commit")).isEqualTo(1);
+    assertThat(trace.count("receipt-exact-read")).isEqualTo(1);
+    assertThat(trace.count("receipt-readback-physical-commit")).isEqualTo(1);
+    var receiptCommit = firstEvent(trace, "receipt-physical-commit");
+    var exactRead = firstEvent(trace, "receipt-exact-read");
+    var readbackCommit = firstEvent(trace, "receipt-readback-physical-commit");
+    assertThat(trace.events().indexOf(receiptCommit)).isLessThan(trace.events().indexOf(exactRead));
+    assertThat(trace.events().indexOf(exactRead))
+        .isLessThan(trace.events().indexOf(readbackCommit));
+    assertThat(exactRead.connectionId()).isNotEqualTo(receiptCommit.connectionId());
+    assertThat(exactRead.connectionId()).isEqualTo(readbackCommit.connectionId());
+    assertThat(
+            context
+                .dsl()
+                .fetchCount(DSL.table("account_gameplay_admission_original_commit_ack_receipts")))
+        .isEqualTo(1);
+    // This immutable storage receipt is non-authorizing and does not establish gameplay admission.
+  }
+
+  @Test
+  void originalAckReceiptRejectsAnotherDataSourceAndChangedBindings() throws SQLException {
+    var context = context(null);
+    var original = pending(context, account(context));
+    UUID decision = UUID.randomUUID();
+    var acknowledgement =
+        new AccountGameplayAdmissionOriginalCommitExecutor(context.dataSource())
+            .execute(original, decision);
+
+    var foreignAcquisitions = new AtomicInteger();
+    DataSource anotherIdentityForSamePostgres =
+        new DelegatingDataSource(context.dataSource()) {
+          @Override
+          public Connection getConnection() throws SQLException {
+            foreignAcquisitions.incrementAndGet();
+            return super.getConnection();
+          }
+
+          @Override
+          public Connection getConnection(String username, String password) throws SQLException {
+            foreignAcquisitions.incrementAndGet();
+            return super.getConnection(username, password);
+          }
+        };
+    assertThatThrownBy(
+            () ->
+                new AccountGameplayAdmissionOriginalAckReceiptCommitExecutor(
+                        anotherIdentityForSamePostgres)
+                    .confirm(acknowledgement))
+        .hasMessageContaining("Fresh owned Account receipt COMMIT required");
+    assertThat(foreignAcquisitions.get()).isZero();
+
+    var executor =
+        new AccountGameplayAdmissionOriginalAckReceiptCommitExecutor(context.dataSource());
+    var receipt = executor.confirm(acknowledgement);
+    var retained = originalAckReceiptRow(context, original).intoMap();
+    var changedCarrier = new LinkedHashMap<>(original.carrier());
+    changedCarrier.put("leaseId", UUID.randomUUID().toString());
+    var changedEvidence = AccountGameplayAdmissionLeaseEvidence.fromCarrier(changedCarrier);
+
+    assertThatThrownBy(() -> executor.read(original, UUID.randomUUID()))
+        .isInstanceOf(RuntimeException.class);
+    assertThatThrownBy(() -> executor.read(changedEvidence, decision))
+        .isInstanceOf(RuntimeException.class);
+    assertThat(originalAckReceiptRow(context, original).intoMap()).isEqualTo(retained);
+    assertThat(receipt.requestId()).isEqualTo(requestId(original));
+    assertThat(
+            context
+                .dsl()
+                .fetchCount(DSL.table("account_gameplay_admission_original_commit_ack_receipts")))
+        .isEqualTo(1);
+  }
+
+  @Test
+  void lostOriginalAcknowledgementCannotCreateOriginalAckReceipt() {
+    var context = context(null);
+    var original = pending(context, account(context));
+    UUID decision = UUID.randomUUID();
+    var physicalCommits = new AtomicInteger();
+    var executor =
+        new AccountGameplayAdmissionOriginalCommitExecutor(
+            originalCommitFailureDataSource(context.dataSource(), true, physicalCommits));
+
+    assertThatThrownBy(() -> executor.execute(original, decision))
+        .hasMessageContaining("Original Account physical COMMIT unavailable");
+    assertThat(physicalCommits.get()).isEqualTo(1);
+    var committed = operation(context, original).intoMap();
+    assertThat(committed.get("status")).isEqualTo("COMMITTED");
+    assertThat(committed.get("binding_decision_id")).isEqualTo(decision);
+    assertThat(committed.get("expires_at_ms")).isEqualTo(expiresAt(original));
+    assertThatThrownBy(
+            () ->
+                new AccountGameplayAdmissionOriginalCommitExecutor(context.dataSource())
+                    .execute(original, decision))
+        .hasMessageContaining("Fresh owned Account original COMMIT required");
+    assertThat(operation(context, original).intoMap()).isEqualTo(committed);
+    assertThat(
+            context
+                .dsl()
+                .fetchCount(DSL.table("account_gameplay_admission_original_commit_ack_receipts")))
+        .isZero();
+  }
+
+  @Test
+  void originalAckReceiptCreatedInCurrentTransactionIsNotDurableReadback() {
+    var context = context(null);
+    var original = pending(context, account(context));
+    UUID decision = UUID.randomUUID();
+    var acknowledgement =
+        new AccountGameplayAdmissionOriginalCommitExecutor(context.dataSource())
+            .execute(original, decision);
+
+    assertThatThrownBy(
+            () ->
+                tx(
+                    context,
+                    () -> {
+                      var dsl = context.dsl();
+                      var repository =
+                          new AccountGameplayAdmissionOriginalAckReceiptRepository(
+                              dsl, new AccountGameplayAdmissionLeaseRepository(dsl));
+                      repository.create(acknowledgement);
+                      repository.readDurably(original, decision);
+                      return null;
+                    }))
+        .satisfies(
+            failure -> {
+              Throwable cause = failure;
+              while (cause != null && !(cause instanceof SQLException)) cause = cause.getCause();
+              assertThat(cause).isInstanceOf(SQLException.class);
+              assertThat(((SQLException) cause).getSQLState()).isEqualTo("23514");
+              assertThat(cause.getMessage())
+                  .contains("Original Account acknowledgement receipt requires independent commit");
+            });
+    assertThat(
+            context
+                .dsl()
+                .fetchCount(DSL.table("account_gameplay_admission_original_commit_ack_receipts")))
+        .isZero();
+  }
+
+  @Test
+  void lostOriginalAckReceiptAcknowledgementDeniesWithoutRemintingOriginalProof() {
+    var context = context(null);
+    var original = pending(context, account(context));
+    UUID decision = UUID.randomUUID();
+    var trace = new ReceiptCommitTrace();
+    var receiptPhase = new AtomicBoolean();
+    var dataSource = originalAckReceiptDataSource(context.dataSource(), trace, receiptPhase, true);
+    var originalExecutor = new AccountGameplayAdmissionOriginalCommitExecutor(dataSource);
+    var acknowledgement = originalExecutor.execute(original, decision);
+    receiptPhase.set(true);
+    var receiptExecutor = new AccountGameplayAdmissionOriginalAckReceiptCommitExecutor(dataSource);
+
+    assertThatThrownBy(() -> receiptExecutor.confirm(acknowledgement))
+        .hasMessageContaining("Account receipt physical COMMIT unavailable");
+    assertThat(trace.count("original-physical-commit")).isEqualTo(1);
+    assertThat(trace.count("receipt-commit-attempt")).isEqualTo(1);
+    assertThat(trace.count("receipt-physical-commit")).isEqualTo(1);
+    assertThat(trace.count("receipt-exact-read")).isZero();
+    assertThat(trace.count("receipt-durable-read")).isZero();
+
+    // This raw row inspection is diagnostic visibility only, not the executor's historical
+    // WAL-coverage recovery proof. No independent receipt read is attempted after lost COMMIT ACK.
+    var retained = originalAckReceiptRow(context, original);
+    assertThat(retained.get("request_id", UUID.class)).isEqualTo(requestId(original));
+    assertThat(retained.get("evidence_sha256", String.class)).isEqualTo(original.sha256());
+    assertThat(retained.get("binding_decision_id", UUID.class)).isEqualTo(decision);
+    assertThat(retained.get("expires_at_ms", Long.class)).isEqualTo(expiresAt(original));
+    assertThat(retained.get("committed_before_ms", Long.class))
+        .isEqualTo(acknowledgement.committedBeforeMs())
+        .isPositive()
+        .isLessThan(expiresAt(original));
+    assertThat(retained.get("finalization_xid", String.class))
+        .isEqualTo(acknowledgement.finalizationXid());
+    assertThat(retained.get("receipt_xid", String.class))
+        .isNotEqualTo(retained.get("finalization_xid", String.class));
+
+    var committed = operation(context, original).intoMap();
+    assertThatThrownBy(() -> originalExecutor.execute(original, decision))
+        .hasMessageContaining("Fresh owned Account original COMMIT required");
+    assertThat(operation(context, original).intoMap()).isEqualTo(committed);
+    assertThat(trace.count("original-physical-commit")).isEqualTo(1);
+    assertThat(trace.count("receipt-exact-read")).isZero();
+    assertThat(trace.count("receipt-durable-read")).isZero();
+    assertThat(
+            context
+                .dsl()
+                .fetchCount(DSL.table("account_gameplay_admission_original_commit_ack_receipts")))
+        .isEqualTo(1);
+  }
+
+  @Test
+  void originalAckReceiptRecoversExactOriginalProofAfterLostReceiptAcknowledgement() {
+    var context = context(null);
+    var original = pending(context, account(context));
+    UUID decision = UUID.randomUUID();
+    var trace = new ReceiptCommitTrace();
+    var receiptPhase = new AtomicBoolean();
+    var dataSource = originalAckReceiptDataSource(context.dataSource(), trace, receiptPhase, true);
+    var originalExecutor = new AccountGameplayAdmissionOriginalCommitExecutor(dataSource);
+    var acknowledgement = originalExecutor.execute(original, decision);
+    receiptPhase.set(true);
+    var receiptExecutor = new AccountGameplayAdmissionOriginalAckReceiptCommitExecutor(dataSource);
+
+    assertThatThrownBy(() -> receiptExecutor.confirm(acknowledgement))
+        .hasMessageContaining("Account receipt physical COMMIT unavailable");
+    assertThat(trace.count("receipt-durable-read")).isZero();
+    var operationBeforeRecovery = operation(context, original).intoMap();
+    var rowBeforeRecoveryRecord = originalAckReceiptRow(context, original);
+    var rowBeforeRecovery = rowBeforeRecoveryRecord.intoMap();
+    assertThat(rowBeforeRecoveryRecord.get("committed_before_ms", Long.class))
+        .isEqualTo(acknowledgement.committedBeforeMs());
+    assertThat(rowBeforeRecoveryRecord.get("finalization_xid", String.class))
+        .isEqualTo(acknowledgement.finalizationXid());
+    assertThat(rowBeforeRecoveryRecord.get("expires_at_ms", Long.class))
+        .isEqualTo(expiresAt(original));
+    assertThat(rowBeforeRecoveryRecord.get("receipt_xid", String.class))
+        .isNotEqualTo(rowBeforeRecoveryRecord.get("finalization_xid", String.class));
+
+    var recovered = receiptExecutor.read(original, decision);
+
+    assertThat(trace.count("receipt-physical-commit")).isEqualTo(2);
+    assertThat(trace.count("receipt-durable-read")).isEqualTo(1);
+    assertThat(trace.count("receipt-exact-read")).isZero();
+    var lostReceiptCommit = firstEvent(trace, "receipt-physical-commit");
+    var historicalRead = firstEvent(trace, "receipt-durable-read");
+    assertThat(trace.events().indexOf(lostReceiptCommit))
+        .isLessThan(trace.events().indexOf(historicalRead));
+    assertThat(historicalRead.connectionId()).isNotEqualTo(lostReceiptCommit.connectionId());
+    assertThat(recovered.operation().evidence().canonicalJson())
+        .isEqualTo(original.canonicalJson());
+    assertThat(recovered.operation().evidence().sha256()).isEqualTo(original.sha256());
+    assertThat(recovered.operation().bindingDecisionId()).isEqualTo(decision);
+    assertThat(recovered.schemaVersion())
+        .isEqualTo(rowBeforeRecoveryRecord.get("schema_version", Short.class));
+    assertThat(recovered.requestId()).isEqualTo(requestId(original));
+    assertThat(recovered.accountId())
+        .isEqualTo(rowBeforeRecoveryRecord.get("account_uuid", UUID.class));
+    assertThat(recovered.leaseId()).isEqualTo(rowBeforeRecoveryRecord.get("lease_id", UUID.class));
+    assertThat(recovered.leaseFence())
+        .isEqualTo(rowBeforeRecoveryRecord.get("lease_fence", Long.class));
+    assertThat(recovered.evidenceSha256()).isEqualTo(original.sha256());
+    assertThat(recovered.bindingDecisionId()).isEqualTo(decision);
+    assertThat(recovered.expiresAtMs())
+        .isEqualTo(rowBeforeRecoveryRecord.get("expires_at_ms", Long.class));
+    assertThat(recovered.committedBeforeMs())
+        .isEqualTo(rowBeforeRecoveryRecord.get("committed_before_ms", Long.class))
+        .isLessThan(recovered.expiresAtMs());
+    assertThat(recovered.finalizationXid())
+        .isEqualTo(rowBeforeRecoveryRecord.get("finalization_xid", String.class));
+    assertThat(recovered.receiptXid())
+        .isEqualTo(rowBeforeRecoveryRecord.get("receipt_xid", String.class));
+    assertThat(originalAckReceiptRow(context, original).intoMap()).isEqualTo(rowBeforeRecovery);
+    assertThat(operation(context, original).intoMap()).isEqualTo(operationBeforeRecovery);
+
+    assertThatThrownBy(() -> originalExecutor.execute(original, decision))
+        .hasMessageContaining("Fresh owned Account original COMMIT required");
+    assertThat(operation(context, original).intoMap()).isEqualTo(operationBeforeRecovery);
+    assertThat(trace.count("original-physical-commit")).isEqualTo(1);
+  }
+
   private static Record confirm(
       Context context, AccountGameplayAdmissionLeaseEvidence original, UUID decision) {
     return Objects.requireNonNull(
@@ -1250,6 +2106,241 @@ class AccountGameplayAdmissionLeasePersistenceIntegrationTest {
                 requestId(original),
                 original.sha256(),
                 decision));
+  }
+
+  private static FinalizeGameplayAdmissionLeaseRequest confirmationRequest(
+      AccountGameplayAdmissionLeaseEvidence evidence, UUID decision) {
+    return FinalizeGameplayAdmissionLeaseRequest.newBuilder()
+        .setLease(AccountGameplayAdmissionLeaseWireCodec.encodeReference(evidence))
+        .setBindingDecisionId(decision.toString())
+        .build();
+  }
+
+  private static Record confirmationRow(
+      Context context, AccountGameplayAdmissionLeaseEvidence original) {
+    return Objects.requireNonNull(
+        context
+            .dsl()
+            .fetchOne(
+                "SELECT * FROM account_gameplay_admission_commit_confirmations WHERE request_id = ?",
+                requestId(original)));
+  }
+
+  private static Record originalAckReceiptRow(
+      Context context, AccountGameplayAdmissionLeaseEvidence original) {
+    return Objects.requireNonNull(
+        context
+            .dsl()
+            .fetchOne(
+                "SELECT * FROM account_gameplay_admission_original_commit_ack_receipts "
+                    + "WHERE request_id = ?",
+                requestId(original)));
+  }
+
+  private enum ReceiptCommitFault {
+    NONE,
+    BEFORE_FIRST_COMMIT,
+    AFTER_FIRST_COMMIT
+  }
+
+  private record ReceiptCommitEvent(String kind, int connectionId) {}
+
+  private static final class ReceiptCommitTrace {
+    private final AtomicInteger connectionIds = new AtomicInteger();
+    private final AtomicInteger commitAttempts = new AtomicInteger();
+    private final List<ReceiptCommitEvent> events = new java.util.ArrayList<>();
+
+    private void record(String kind, int connectionId) {
+      events.add(new ReceiptCommitEvent(kind, connectionId));
+    }
+
+    private int count(String kind) {
+      return (int) events.stream().filter(event -> event.kind().equals(kind)).count();
+    }
+
+    private List<ReceiptCommitEvent> events() {
+      return events;
+    }
+  }
+
+  /** Traces only JDBC work performed by the real receipt owner over the supplied PostgreSQL DS. */
+  private static DataSource receiptCommitDataSource(
+      DataSource source, ReceiptCommitFault fault, ReceiptCommitTrace trace) {
+    return new DelegatingDataSource(source) {
+      @Override
+      public Connection getConnection() throws SQLException {
+        return tracedConnection(super.getConnection());
+      }
+
+      @Override
+      public Connection getConnection(String username, String password) throws SQLException {
+        return tracedConnection(super.getConnection(username, password));
+      }
+
+      private Connection tracedConnection(Connection physical) {
+        int connectionId = trace.connectionIds.incrementAndGet();
+        return (Connection)
+            Proxy.newProxyInstance(
+                Connection.class.getClassLoader(),
+                new Class<?>[] {Connection.class},
+                (proxy, method, arguments) -> {
+                  if (method.getName().equals("commit") && method.getParameterCount() == 0) {
+                    int attempt = trace.commitAttempts.incrementAndGet();
+                    if (attempt == 1 && fault == ReceiptCommitFault.BEFORE_FIRST_COMMIT) {
+                      trace.record("commit-attempt", connectionId);
+                      throw new SQLException("Test failed before physical receipt COMMIT", "08006");
+                    }
+                    physical.commit();
+                    trace.record("physical-commit", connectionId);
+                    if (attempt == 1 && fault == ReceiptCommitFault.AFTER_FIRST_COMMIT)
+                      throw new SQLException("Test lost physical receipt COMMIT response", "08006");
+                    return null;
+                  }
+                  try {
+                    Object result = method.invoke(physical, arguments);
+                    if (result instanceof PreparedStatement statement) {
+                      String sql = "";
+                      if (arguments != null
+                          && arguments.length > 0
+                          && arguments[0] instanceof String statementSql) {
+                        sql = statementSql;
+                      }
+                      return tracedStatement(statement, sql, connectionId, trace);
+                    }
+                    return result;
+                  } catch (InvocationTargetException failure) {
+                    throw failure.getCause();
+                  }
+                });
+      }
+    };
+  }
+
+  /**
+   * Traces real original/receipt JDBC commits and ensures the exact read follows receipt COMMIT.
+   */
+  private static DataSource originalAckReceiptDataSource(
+      DataSource source,
+      ReceiptCommitTrace trace,
+      AtomicBoolean receiptPhase,
+      boolean loseFirstReceiptCommitAcknowledgement) {
+    return new DelegatingDataSource(source) {
+      @Override
+      public Connection getConnection() throws SQLException {
+        return tracedConnection(super.getConnection());
+      }
+
+      @Override
+      public Connection getConnection(String username, String password) throws SQLException {
+        return tracedConnection(super.getConnection(username, password));
+      }
+
+      private Connection tracedConnection(Connection physical) {
+        int connectionId = trace.connectionIds.incrementAndGet();
+        var exactReadOnConnection = new AtomicBoolean();
+        return (Connection)
+            Proxy.newProxyInstance(
+                Connection.class.getClassLoader(),
+                new Class<?>[] {Connection.class},
+                (proxy, method, arguments) -> {
+                  if (method.getName().equals("commit") && method.getParameterCount() == 0) {
+                    if (!receiptPhase.get()) {
+                      physical.commit();
+                      trace.record("original-physical-commit", connectionId);
+                      return null;
+                    }
+                    int attempt = trace.commitAttempts.incrementAndGet();
+                    trace.record("receipt-commit-attempt", connectionId);
+                    physical.commit();
+                    trace.record(
+                        exactReadOnConnection.get()
+                            ? "receipt-readback-physical-commit"
+                            : "receipt-physical-commit",
+                        connectionId);
+                    if (attempt == 1 && loseFirstReceiptCommitAcknowledgement)
+                      throw new SQLException("Test lost physical receipt COMMIT response", "08006");
+                    return null;
+                  }
+                  try {
+                    Object result = method.invoke(physical, arguments);
+                    if (result instanceof PreparedStatement statement) {
+                      String sql =
+                          arguments != null
+                                  && arguments.length > 0
+                                  && arguments[0] instanceof String statementSql
+                              ? statementSql
+                              : "";
+                      return originalAckReceiptStatement(
+                          statement, sql, connectionId, trace, exactReadOnConnection);
+                    }
+                    return result;
+                  } catch (InvocationTargetException failure) {
+                    throw failure.getCause();
+                  }
+                });
+      }
+    };
+  }
+
+  private static PreparedStatement originalAckReceiptStatement(
+      PreparedStatement physical,
+      String sql,
+      int connectionId,
+      ReceiptCommitTrace trace,
+      AtomicBoolean exactReadOnConnection) {
+    String normalized = sql.toLowerCase(java.util.Locale.ROOT).stripLeading();
+    boolean exactRead =
+        normalized.startsWith("select")
+            && normalized.contains("account_gameplay_admission_original_commit_ack_receipts");
+    boolean durableRead =
+        normalized.contains("account_gameplay_admission_read_original_ack_receipt_durably");
+    return (PreparedStatement)
+        Proxy.newProxyInstance(
+            PreparedStatement.class.getClassLoader(),
+            new Class<?>[] {PreparedStatement.class},
+            (proxy, method, arguments) -> {
+              if (method.getName().startsWith("execute")) {
+                if (exactRead) {
+                  exactReadOnConnection.set(true);
+                  trace.record("receipt-exact-read", connectionId);
+                }
+                if (durableRead) trace.record("receipt-durable-read", connectionId);
+              }
+              try {
+                return method.invoke(physical, arguments);
+              } catch (InvocationTargetException failure) {
+                throw failure.getCause();
+              }
+            });
+  }
+
+  private static PreparedStatement tracedStatement(
+      PreparedStatement physical, String sql, int connectionId, ReceiptCommitTrace trace) {
+    return (PreparedStatement)
+        Proxy.newProxyInstance(
+            PreparedStatement.class.getClassLoader(),
+            new Class<?>[] {PreparedStatement.class},
+            (proxy, method, arguments) -> {
+              if (method.getName().startsWith("execute") && isV90IndependentRead(sql))
+                trace.record("v90-read", connectionId);
+              try {
+                return method.invoke(physical, arguments);
+              } catch (InvocationTargetException failure) {
+                throw failure.getCause();
+              }
+            });
+  }
+
+  private static boolean isV90IndependentRead(String sql) {
+    return sql.toLowerCase(java.util.Locale.ROOT)
+        .contains("account_gameplay_admission_read_commit_confirmation");
+  }
+
+  private static ReceiptCommitEvent firstEvent(ReceiptCommitTrace trace, String kind) {
+    return trace.events().stream()
+        .filter(event -> event.kind().equals(kind))
+        .findFirst()
+        .orElseThrow(() -> new AssertionError("Missing receipt JDBC event: " + kind));
   }
 
   private static Record readConfirmation(
@@ -1520,6 +2611,19 @@ class AccountGameplayAdmissionLeasePersistenceIntegrationTest {
             .locations("classpath:db/migration");
     if (target != null) configuration.target(target);
     configuration.load().migrate();
+  }
+
+  private static Map<String, Integer> flywayChecksums(Context context) {
+    Map<String, Integer> checksums = new LinkedHashMap<>();
+    for (Record row :
+        context
+            .dsl()
+            .fetch(
+                "SELECT version, checksum FROM flyway_schema_history "
+                    + "WHERE version IS NOT NULL ORDER BY installed_rank")) {
+      checksums.put(row.get("version", String.class), row.get("checksum", Integer.class));
+    }
+    return checksums;
   }
 
   private static <T> T tx(Context context, Supplier<T> action) {

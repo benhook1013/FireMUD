@@ -2,35 +2,34 @@ package net.firedevops.firemud.accountservice.repository;
 
 import io.grpc.Status;
 import java.util.Objects;
+import javax.sql.DataSource;
 import net.firedevops.firemud.account.v1.FinalizeGameplayAdmissionLeaseRequest;
 import net.firedevops.firemud.accountservice.dto.AccountGameplayAdmissionCommitConfirmation;
 import net.firedevops.firemud.common.account.admission.AccountGameplayAdmissionLeaseEvidence;
 import net.firedevops.firemud.common.account.admission.AccountGameplayAdmissionLeaseWireCodec;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
-import org.springframework.transaction.PlatformTransactionManager;
-import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
-import org.springframework.transaction.support.TransactionTemplate;
 
 /**
  * Unregistered, non-admitting owner for database proof that an original lease COMMIT preceded its
  * unchanged expiry. It evaluates no current source authority and does not finalize or admit.
  */
 public final class AccountGameplayAdmissionCommitConfirmationOwner {
-  private final AccountGameplayAdmissionCommitConfirmationRepository repository;
-  private final TransactionTemplate createTransaction;
-  private final TransactionTemplate readTransaction;
+  private final DataSource dataSource;
+  private final AccountGameplayAdmissionReceiptCommitExecutor executor;
   private final String namespace;
 
-  public AccountGameplayAdmissionCommitConfirmationOwner(
-      AccountGameplayAdmissionCommitConfirmationRepository repository,
-      PlatformTransactionManager transactionManager,
+  public AccountGameplayAdmissionCommitConfirmationOwner(DataSource dataSource, String namespace) {
+    this(dataSource, new AccountGameplayAdmissionReceiptCommitExecutor(dataSource), namespace);
+  }
+
+  AccountGameplayAdmissionCommitConfirmationOwner(
+      DataSource dataSource,
+      AccountGameplayAdmissionReceiptCommitExecutor executor,
       String namespace) {
-    this.repository = Objects.requireNonNull(repository);
+    this.dataSource = Objects.requireNonNull(dataSource);
+    this.executor = Objects.requireNonNull(executor);
     this.namespace = namespace;
-    PlatformTransactionManager manager = Objects.requireNonNull(transactionManager);
-    createTransaction = transaction(manager);
-    readTransaction = transaction(manager);
   }
 
   /**
@@ -42,19 +41,7 @@ public final class AccountGameplayAdmissionCommitConfirmationOwner {
     RequestIdentity identity = authenticateAndParse(request);
     rejectAmbientTransaction();
     try {
-      AccountGameplayAdmissionCommitConfirmation created =
-          Objects.requireNonNull(
-              createTransaction.execute(
-                  ignored ->
-                      repository.confirmCommitted(identity.evidence(), identity.decisionId())));
-      AccountGameplayAdmissionCommitConfirmation read =
-          Objects.requireNonNull(
-              readTransaction.execute(
-                  ignored ->
-                      repository.readCommitConfirmation(
-                          identity.evidence(), identity.decisionId())));
-      if (!created.equals(read)) throw unavailable();
-      return read;
+      return Objects.requireNonNull(executor.confirm(identity.evidence(), identity.decisionId()));
     } catch (RuntimeException failure) {
       throw unavailable();
     }
@@ -66,10 +53,7 @@ public final class AccountGameplayAdmissionCommitConfirmationOwner {
     RequestIdentity identity = authenticateAndParse(request);
     rejectAmbientTransaction();
     try {
-      return Objects.requireNonNull(
-          readTransaction.execute(
-              ignored ->
-                  repository.readCommitConfirmation(identity.evidence(), identity.decisionId())));
+      return Objects.requireNonNull(executor.read(identity.evidence(), identity.decisionId()));
     } catch (RuntimeException failure) {
       throw unavailable();
     }
@@ -104,17 +88,10 @@ public final class AccountGameplayAdmissionCommitConfirmationOwner {
     return new RequestIdentity(evidence, decision);
   }
 
-  private static TransactionTemplate transaction(PlatformTransactionManager manager) {
-    TransactionTemplate template = new TransactionTemplate(manager);
-    template.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
-    template.setIsolationLevel(TransactionDefinition.ISOLATION_SERIALIZABLE);
-    template.setReadOnly(false);
-    return template;
-  }
-
-  private static void rejectAmbientTransaction() {
+  private void rejectAmbientTransaction() {
     if (TransactionSynchronizationManager.isActualTransactionActive()
-        || TransactionSynchronizationManager.isSynchronizationActive())
+        || TransactionSynchronizationManager.isSynchronizationActive()
+        || TransactionSynchronizationManager.hasResource(dataSource))
       throw Status.FAILED_PRECONDITION
           .withDescription("Owned Account transaction required")
           .asRuntimeException();

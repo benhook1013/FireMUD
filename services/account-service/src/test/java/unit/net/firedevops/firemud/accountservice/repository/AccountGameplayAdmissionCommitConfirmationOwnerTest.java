@@ -3,8 +3,6 @@ package net.firedevops.firemud.accountservice.repository;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.Mockito.doThrow;
-import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -20,6 +18,7 @@ import io.grpc.StatusRuntimeException;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.UUID;
+import javax.sql.DataSource;
 import net.firedevops.firemud.account.v1.FinalizeGameplayAdmissionLeaseRequest;
 import net.firedevops.firemud.accountservice.dto.AccountGameplayAdmissionCommitConfirmation;
 import net.firedevops.firemud.accountservice.dto.AccountGameplayAdmissionLeaseOperation;
@@ -29,116 +28,34 @@ import net.firedevops.firemud.common.account.admission.AccountGameplayAdmissionL
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
-import org.mockito.ArgumentCaptor;
-import org.springframework.transaction.PlatformTransactionManager;
-import org.springframework.transaction.TransactionDefinition;
-import org.springframework.transaction.TransactionStatus;
+import org.springframework.jdbc.datasource.ConnectionHolder;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 
-/** Owner and transaction doubles only; no PostgreSQL durability or live mTLS is established. */
+/** Owner/executor doubles only; no PostgreSQL durability or live mTLS is established. */
 class AccountGameplayAdmissionCommitConfirmationOwnerTest {
-  private final AccountGameplayAdmissionCommitConfirmationRepository repository =
-      mock(AccountGameplayAdmissionCommitConfirmationRepository.class);
-  private final PlatformTransactionManager manager = mock(PlatformTransactionManager.class);
-  private final TransactionStatus transactionStatus = mock(TransactionStatus.class);
+  private final AccountGameplayAdmissionReceiptCommitExecutor executor =
+      mock(AccountGameplayAdmissionReceiptCommitExecutor.class);
+  private final DataSource source = mock(DataSource.class);
   private final AccountGameplayAdmissionCommitConfirmationOwner owner =
-      new AccountGameplayAdmissionCommitConfirmationOwner(repository, manager, "test");
+      new AccountGameplayAdmissionCommitConfirmationOwner(source, executor, "test");
 
   @AfterEach
   void clearTransaction() {
+    if (TransactionSynchronizationManager.hasResource(source)) {
+      TransactionSynchronizationManager.unbindResource(source);
+    }
     TransactionSynchronizationManager.clear();
   }
 
   @Test
-  void confirmsOnlyAfterCreationCommitThenReadsExactReceiptInIndependentSerializableTransaction()
-      throws Exception {
+  void authenticatedConfirmationDelegatesOnlyToPhysicalReceiptExecutor() throws Exception {
     var evidence = AccountGameplayAdmissionAbortOwnerTest.fixture();
     UUID decision = UUID.randomUUID();
     var receipt = receipt(evidence, decision);
-    when(manager.getTransaction(any())).thenReturn(transactionStatus);
-    when(repository.confirmCommitted(evidence, decision)).thenReturn(receipt);
-    when(repository.readCommitConfirmation(evidence, decision)).thenReturn(receipt);
-
-    var returned = peer().call(() -> owner.confirm(request(evidence, decision)));
-    var retry = peer().call(() -> owner.confirm(request(evidence, decision)));
-
-    assertThat(returned).isSameAs(receipt);
-    assertThat(retry).isSameAs(receipt);
-    assertThat(returned.operation().evidence().canonicalJson()).isEqualTo(evidence.canonicalJson());
-    assertThat(returned.operation().evidence().sha256()).isEqualTo(evidence.sha256());
-    assertThat(returned.operation().state()).isEqualTo(State.COMMITTED);
-    assertThat(returned.operation().bindingDecisionId()).isEqualTo(decision);
-    assertThat(returned.committedBeforeMs()).isLessThan(returned.expiresAtMs());
-    var definition = ArgumentCaptor.forClass(TransactionDefinition.class);
-    var ordered = inOrder(manager, repository);
-    ordered.verify(manager).getTransaction(definition.capture());
-    ordered.verify(repository).confirmCommitted(evidence, decision);
-    ordered.verify(manager).commit(transactionStatus);
-    ordered.verify(manager).getTransaction(definition.capture());
-    ordered.verify(repository).readCommitConfirmation(evidence, decision);
-    ordered.verify(manager).commit(transactionStatus);
-    ordered.verify(manager).getTransaction(definition.capture());
-    ordered.verify(repository).confirmCommitted(evidence, decision);
-    ordered.verify(manager).commit(transactionStatus);
-    ordered.verify(manager).getTransaction(definition.capture());
-    ordered.verify(repository).readCommitConfirmation(evidence, decision);
-    ordered.verify(manager).commit(transactionStatus);
-    assertThat(definition.getAllValues())
-        .allSatisfy(
-            value -> {
-              assertThat(value.getIsolationLevel())
-                  .isEqualTo(TransactionDefinition.ISOLATION_SERIALIZABLE);
-              assertThat(value.getPropagationBehavior())
-                  .isEqualTo(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
-              assertThat(value.isReadOnly()).isFalse();
-            });
-  }
-
-  @Test
-  void failedCreationOrLostCreationCommitNeverStartsIndependentReadOrReturnsProof() {
-    var evidence = AccountGameplayAdmissionAbortOwnerTest.fixture();
-    UUID decision = UUID.randomUUID();
-    when(manager.getTransaction(any())).thenReturn(transactionStatus);
-    when(repository.confirmCommitted(evidence, decision)).thenReturn(receipt(evidence, decision));
-    doThrow(new IllegalStateException("commit uncertain")).when(manager).commit(transactionStatus);
-    assertStatus(
-        Status.Code.UNAVAILABLE,
-        () -> peer().call(() -> owner.confirm(request(evidence, decision))));
-    verify(repository, never()).readCommitConfirmation(any(), any());
-    verify(manager).commit(transactionStatus);
-
-    TransactionSynchronizationManager.clear();
-    org.mockito.Mockito.reset(manager, repository);
-    when(manager.getTransaction(any())).thenReturn(transactionStatus);
-    when(repository.confirmCommitted(evidence, decision))
-        .thenThrow(new IllegalStateException("creation unavailable"));
-    assertStatus(
-        Status.Code.UNAVAILABLE,
-        () -> peer().call(() -> owner.confirm(request(evidence, decision))));
-    verify(repository, never()).readCommitConfirmation(any(), any());
-  }
-
-  @Test
-  void changedIndependentReadAndReadFailureNeverExposeCreationResult() {
-    var evidence = AccountGameplayAdmissionAbortOwnerTest.fixture();
-    UUID decision = UUID.randomUUID();
-    var created = receipt(evidence, decision);
-    var changed = receipt(evidence, UUID.randomUUID());
-    when(manager.getTransaction(any())).thenReturn(transactionStatus);
-    when(repository.confirmCommitted(evidence, decision)).thenReturn(created);
-    when(repository.readCommitConfirmation(evidence, decision)).thenReturn(changed);
-    assertStatus(
-        Status.Code.UNAVAILABLE,
-        () -> peer().call(() -> owner.confirm(request(evidence, decision))));
-
-    org.mockito.Mockito.reset(manager, repository);
-    when(manager.getTransaction(any())).thenReturn(transactionStatus);
-    when(repository.confirmCommitted(evidence, decision)).thenReturn(created);
-    when(repository.readCommitConfirmation(evidence, decision))
-        .thenThrow(new IllegalStateException("read unavailable"));
-    assertStatus(
-        Status.Code.UNAVAILABLE,
-        () -> peer().call(() -> owner.confirm(request(evidence, decision))));
+    when(executor.confirm(evidence, decision)).thenReturn(receipt);
+    assertThat(peer().call(() -> owner.confirm(request(evidence, decision)))).isSameAs(receipt);
+    verify(executor).confirm(evidence, decision);
+    verify(executor, never()).read(any(), any());
   }
 
   @Test
@@ -153,24 +70,14 @@ class AccountGameplayAdmissionCommitConfirmationOwnerTest {
         Status.UNAVAILABLE
             .withDescription("private dependency description")
             .asRuntimeException(trailers);
-    when(manager.getTransaction(any())).thenReturn(transactionStatus);
-    when(repository.confirmCommitted(evidence, decision)).thenThrow(dependencyFailure);
+    when(executor.confirm(evidence, decision)).thenThrow(dependencyFailure);
 
     assertUnavailableIsRedacted(
         () -> peer().call(() -> owner.confirm(request(evidence, decision))));
 
     TransactionSynchronizationManager.clear();
-    org.mockito.Mockito.reset(manager, repository);
-    when(manager.getTransaction(any())).thenReturn(transactionStatus);
-    when(repository.confirmCommitted(evidence, decision)).thenReturn(receipt(evidence, decision));
-    when(repository.readCommitConfirmation(evidence, decision)).thenThrow(dependencyFailure);
-    assertUnavailableIsRedacted(
-        () -> peer().call(() -> owner.confirm(request(evidence, decision))));
-
-    TransactionSynchronizationManager.clear();
-    org.mockito.Mockito.reset(manager, repository);
-    when(manager.getTransaction(any())).thenReturn(transactionStatus);
-    when(repository.readCommitConfirmation(evidence, decision)).thenThrow(dependencyFailure);
+    org.mockito.Mockito.reset(executor);
+    when(executor.read(evidence, decision)).thenThrow(dependencyFailure);
     assertUnavailableIsRedacted(() -> peer().call(() -> owner.read(request(evidence, decision))));
   }
 
@@ -180,17 +87,15 @@ class AccountGameplayAdmissionCommitConfirmationOwnerTest {
     var evidence = AccountGameplayAdmissionAbortOwnerTest.fixture();
     UUID decision = UUID.randomUUID();
     var receipt = receipt(evidence, decision);
-    when(manager.getTransaction(any())).thenReturn(transactionStatus);
-    when(repository.readCommitConfirmation(evidence, decision)).thenReturn(receipt);
+    when(executor.read(evidence, decision)).thenReturn(receipt);
 
     var returned = peer().call(() -> owner.read(request(evidence, decision)));
 
     assertThat(returned).isSameAs(receipt);
     assertThat(returned.expiresAtMs()).isEqualTo(1_015_000L);
     assertThat(returned.committedBeforeMs()).isLessThan(returned.expiresAtMs());
-    verify(repository).readCommitConfirmation(evidence, decision);
-    verify(repository, never()).confirmCommitted(any(), any());
-    verify(manager).commit(transactionStatus);
+    verify(executor).read(evidence, decision);
+    verify(executor, never()).confirm(any(), any());
   }
 
   @Test
@@ -207,7 +112,7 @@ class AccountGameplayAdmissionCommitConfirmationOwnerTest {
     }
     assertStatus(
         Status.Code.UNAUTHENTICATED, () -> owner.read(request(evidence, UUID.randomUUID())));
-    verifyNoInteractions(repository, manager);
+    verifyNoInteractions(executor, source);
   }
 
   @Test
@@ -245,7 +150,7 @@ class AccountGameplayAdmissionCommitConfirmationOwnerTest {
     assertStatus(
         Status.Code.PERMISSION_DENIED,
         () -> peer().call(() -> owner.read(request(otherCaller, decision))));
-    verifyNoInteractions(repository, manager);
+    verifyNoInteractions(executor, source);
   }
 
   @Test
@@ -261,10 +166,16 @@ class AccountGameplayAdmissionCommitConfirmationOwnerTest {
     assertStatus(
         Status.Code.FAILED_PRECONDITION,
         () -> peer().call(() -> owner.read(request(evidence, decision))));
-    verifyNoInteractions(repository, manager);
+    TransactionSynchronizationManager.clear();
+    TransactionSynchronizationManager.bindResource(
+        source, new ConnectionHolder(mock(java.sql.Connection.class)));
+    assertStatus(
+        Status.Code.FAILED_PRECONDITION,
+        () -> peer().call(() -> owner.confirm(request(evidence, decision))));
+    verifyNoInteractions(executor, source);
   }
 
-  private static AccountGameplayAdmissionCommitConfirmation receipt(
+  static AccountGameplayAdmissionCommitConfirmation receipt(
       AccountGameplayAdmissionLeaseEvidence evidence, UUID decision) {
     var operation =
         new AccountGameplayAdmissionLeaseOperation(evidence, State.COMMITTED, decision, null);
