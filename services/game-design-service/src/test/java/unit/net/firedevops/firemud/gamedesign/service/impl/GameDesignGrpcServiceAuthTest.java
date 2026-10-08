@@ -9,13 +9,10 @@ import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
-import java.util.UUID;
 import java.util.concurrent.atomic.AtomicReference;
-import net.firedevops.firemud.common.gamedesign.AuthoredWorldLaunchDescriptorEvidence;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
 import net.firedevops.firemud.common.security.SessionContext;
 import net.firedevops.firemud.gamedesign.dto.PublishedReleaseBundleDto;
-import net.firedevops.firemud.gamedesign.dto.ResolvedLaunchDescriptorDto;
 import net.firedevops.firemud.gamedesign.service.GameAuthoredHelpTopicService;
 import net.firedevops.firemud.gamedesign.service.LaunchDescriptorService;
 import net.firedevops.firemud.gamedesign.service.PingService;
@@ -28,8 +25,6 @@ import net.firedevops.firemud.gamedesign.v1.GetPublishedReleaseBundleRequest;
 import net.firedevops.firemud.gamedesign.v1.GetPublishedReleaseBundleResponse;
 import net.firedevops.firemud.gamedesign.v1.ListVersionsRequest;
 import net.firedevops.firemud.gamedesign.v1.ListVersionsResponse;
-import net.firedevops.firemud.gamedesign.v1.ResolveLaunchDescriptorRequest;
-import net.firedevops.firemud.gamedesign.v1.ResolveLaunchDescriptorResponse;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
@@ -79,7 +74,7 @@ class GameDesignGrpcServiceAuthTest {
   }
 
   @Test
-  void launchReadsRequireExactSameNamespaceWorkloadIdentity() {
+  void publishedReleaseBundleReadRequiresExactSameNamespaceWorkloadIdentity() {
     VersionService versionService = Mockito.mock(VersionService.class);
     LaunchDescriptorService launchDescriptorService = Mockito.mock(LaunchDescriptorService.class);
     Mockito.when(versionService.getPublishedReleaseBundle("1", 7L))
@@ -98,54 +93,6 @@ class GameDesignGrpcServiceAuthTest {
                 false,
                 null,
                 java.time.LocalDateTime.parse("2026-04-14T12:00:00")));
-    AuthoredWorldLaunchDescriptorEvidence.Request launchRequest =
-        new AuthoredWorldLaunchDescriptorEvidence.Request(
-            "test",
-            "cp-1",
-            UUID.fromString("12345678-1234-4234-8234-123456789abc"),
-            "silver-march",
-            UUID.fromString("22345678-1234-4234-8234-123456789abc"),
-            "sha256:" + "a".repeat(64),
-            9L,
-            false,
-            null,
-            false,
-            null,
-            false,
-            null,
-            false,
-            null);
-    AuthoredWorldLaunchDescriptorEvidence evidence =
-        AuthoredWorldLaunchDescriptorEvidence.create(
-            launchRequest,
-            "ld-1",
-            7L,
-            false,
-            null,
-            "{}",
-            "genrev-1",
-            11L,
-            11L,
-            "release-bundle:12345678-1234-4234-8234-123456789abc:7:11",
-            false,
-            null);
-    Mockito.when(launchDescriptorService.resolveLaunchDescriptor(Mockito.any()))
-        .thenReturn(
-            new ResolvedLaunchDescriptorDto(
-                evidence.launchDescriptorId(),
-                evidence.canonicalTenantId().toString(),
-                evidence.gameTemplateId(),
-                evidence.controlPlaneRequestId(),
-                evidence.versionId(),
-                evidence.scriptPatchVersion(),
-                evidence.runtimeFlagsJson(),
-                evidence.generationConfigRevision(),
-                evidence.versionStateEpoch(),
-                evidence.releaseBundleId(),
-                evidence.publishedReleaseBundleRef(),
-                evidence.remapSetId(),
-                evidence));
-
     GameDesignGrpcService service =
         new GameDesignGrpcService(
             Mockito.mock(PingService.class),
@@ -183,37 +130,10 @@ class GameDesignGrpcServiceAuthTest {
                   public void onCompleted() {}
                 }));
 
-    AtomicReference<ResolveLaunchDescriptorResponse> descriptorRef = new AtomicReference<>();
-    underGameSessionPeer(
-        () ->
-            service.resolveLaunchDescriptor(
-                ResolveLaunchDescriptorRequest.newBuilder()
-                    .setCanonicalTenantId("12345678-1234-4234-8234-123456789abc")
-                    .setGameTemplateId(9L)
-                    .setControlPlaneRequestId("cp-1")
-                    .setWorldSlug("silver-march")
-                    .setAuthoredWorldSourceOperationId("22345678-1234-4234-8234-123456789abc")
-                    .setExpectedAuthoredWorldSourceEvidenceDigest("sha256:" + "a".repeat(64))
-                    .build(),
-                new StreamObserver<>() {
-                  @Override
-                  public void onNext(ResolveLaunchDescriptorResponse value) {
-                    descriptorRef.set(value);
-                  }
-
-                  @Override
-                  public void onError(Throwable t) {}
-
-                  @Override
-                  public void onCompleted() {}
-                }));
-
     assertNotNull(bundleRef.get());
     assertEquals("", bundleRef.get().getError().getCode());
     assertEquals(11L, bundleRef.get().getBundle().getId());
-    assertNotNull(descriptorRef.get());
-    assertEquals("", descriptorRef.get().getError().getCode());
-    assertEquals("ld-1", descriptorRef.get().getLaunchDescriptor().getLaunchDescriptorId());
+    Mockito.verifyNoInteractions(launchDescriptorService);
   }
 
   private void underGameSessionPeer(Runnable operation) {

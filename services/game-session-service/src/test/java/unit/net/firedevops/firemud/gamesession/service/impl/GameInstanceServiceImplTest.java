@@ -133,6 +133,18 @@ class GameInstanceServiceImplTest {
   @Test
   void legacyNumericLaunchFailsClosedBeforeMutation() {
     StartSessionRequest request = new StartSessionRequest(1L, 3L, "cp-numeric-launch", 42L);
+    when(
+            gameDesignClient.resolveLaunchDescriptor(
+                request.tenantId(), request.gameTemplateId(), request.controlPlaneRequestId()))
+        .thenReturn(
+            ResolveLaunchDescriptorResponse.newBuilder()
+                .setError(
+                    net.firedevops.firemud.shared.v1.ErrorDetail.newBuilder()
+                        .setCode("AUTHORED_WORLD_LAUNCH_BINDING_REQUIRED")
+                        .setMessage(
+                            "Canonical authored-world source binding is required to resolve a launch descriptor")
+                        .build())
+                .build());
 
     assertNumericLaunchDeniedWithoutMutation(request);
   }
@@ -1483,11 +1495,15 @@ class GameInstanceServiceImplTest {
         assertThrows(IllegalArgumentException.class, () -> service.startSession(request));
 
     assertEquals(
-        "AUTHORED_WORLD_LAUNCH_BINDING_REQUIRED: canonical authored-world launch binding is"
-            + " required",
+        "AUTHORED_WORLD_LAUNCH_BINDING_REQUIRED: Canonical authored-world source binding is"
+            + " required to resolve a launch descriptor",
         error.getMessage());
     org.assertj.core.api.Assertions.assertThat(store).usingRecursiveComparison().isEqualTo(before);
-    verifyNoInteractions(repository, gameDesignClient, worldManagementClient, stateService);
+    verify(gameDesignClient)
+        .resolveLaunchDescriptor(
+            request.tenantId(), request.gameTemplateId(), request.controlPlaneRequestId());
+    verifyNoMoreInteractions(gameDesignClient);
+    verifyNoInteractions(repository, worldManagementClient, stateService);
   }
 
   @Test
