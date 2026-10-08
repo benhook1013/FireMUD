@@ -39,14 +39,17 @@ public class InitialAdmissionBindHoldRepository {
         "SELECT "
             + SELECT_COLUMNS
             + " FROM initial_admission_bind_hold WHERE tenant_id = ? "
-            + "AND initial_admission_request_id = ?",
+            + "AND initial_admission_request_id = ? AND canonical_request_bytes IS NULL",
         tenantId,
         initialAdmissionRequestId);
   }
 
   public Optional<InitialAdmissionBindHold> findByHoldId(String holdId) {
     return one(
-        "SELECT " + SELECT_COLUMNS + " FROM initial_admission_bind_hold WHERE hold_id = ?::uuid",
+        "SELECT "
+            + SELECT_COLUMNS
+            + " FROM initial_admission_bind_hold WHERE hold_id = ?::uuid "
+            + "AND canonical_request_bytes IS NULL",
         UUID.fromString(holdId));
   }
 
@@ -54,7 +57,8 @@ public class InitialAdmissionBindHoldRepository {
     return one(
         "SELECT "
             + SELECT_COLUMNS
-            + " FROM initial_admission_bind_hold WHERE hold_id = ?::uuid FOR UPDATE",
+            + " FROM initial_admission_bind_hold WHERE hold_id = ?::uuid "
+            + "AND canonical_request_bytes IS NULL FOR UPDATE",
         UUID.fromString(holdId));
   }
 
@@ -64,7 +68,8 @@ public class InitialAdmissionBindHoldRepository {
             "SELECT "
                 + SELECT_COLUMNS
                 + " FROM initial_admission_bind_hold WHERE status IN "
-                + "('PENDING', 'RECONCILIATION_REQUIRED') ORDER BY updated_at, hold_id LIMIT ?",
+                + "('PENDING', 'RECONCILIATION_REQUIRED') AND canonical_request_bytes IS NULL "
+                + "ORDER BY updated_at, hold_id LIMIT ?",
             Math.max(1, Math.min(limit, 256)));
     return rows.map(this::toEntity);
   }
@@ -128,6 +133,7 @@ public class InitialAdmissionBindHoldRepository {
                 + "AND active_lifecycle_epoch = ? AND initial_admission_request_id = ? "
                 + "AND request_digest = ? AND expected_no_prior_pointer = ? "
                 + "AND expected_catalog_revision = ? AND row_version = ? "
+                + "AND canonical_request_bytes IS NULL "
                 + "AND status IN ('PENDING', 'RECONCILIATION_REQUIRED')",
             errorCode,
             toLocalDateTime(now),
@@ -167,7 +173,8 @@ public class InitialAdmissionBindHoldRepository {
                 + "AND game_instance_id = ? AND version_id = ? AND active_lifecycle_epoch = ? "
                 + "AND initial_admission_request_id = ? AND request_digest = ? "
                 + "AND expected_no_prior_pointer = ? AND expected_catalog_revision = ? "
-                + "AND row_version = ? AND status IN ('PENDING', 'RECONCILIATION_REQUIRED')",
+                + "AND row_version = ? AND canonical_request_bytes IS NULL "
+                + "AND status IN ('PENDING', 'RECONCILIATION_REQUIRED')",
             terminalStatus,
             ownerProofId,
             ownerProofDigest,

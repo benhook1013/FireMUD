@@ -7,10 +7,15 @@ import net.firedevops.firemud.common.gamedesign.AuthoredWorldLaunchDescriptorCli
 import net.firedevops.firemud.common.gamedesign.AuthoredWorldLaunchDescriptorEvidence;
 import net.firedevops.firemud.common.gamedesign.AuthoredWorldLaunchDescriptorGrpcCodec;
 import net.firedevops.firemud.common.gamedesign.AuthoredWorldLaunchDescriptorGrpcCodec.GetRequest;
+import net.firedevops.firemud.common.gamedesign.AuthoredWorldReleaseAttestationEvidence;
 import net.firedevops.firemud.common.gamedesign.AuthoredWorldVersionStateClient;
 import net.firedevops.firemud.common.gamedesign.AuthoredWorldVersionStateEvidence;
 import net.firedevops.firemud.common.gamedesign.CompleteLaunchBindingEvidence;
+import net.firedevops.firemud.common.gamesession.CanonicalGameInstanceLaunchAssociationClient;
+import net.firedevops.firemud.common.gamesession.CanonicalGameInstanceLaunchAssociationReadEvidence;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
+import net.firedevops.firemud.common.security.SessionContext;
+import net.firedevops.firemud.gamedesign.v1.GetLaunchDescriptorRequest;
 import net.firedevops.firemud.gamedesign.v1.VersionLifecycleState;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.TransactionDefinition;
@@ -28,6 +33,7 @@ public final class WorldCompleteLaunchBindingService {
   private final AuthoredWorldVersionStateClient versionStateClient;
   private final WorldCompleteLaunchBindingRepository repository;
   private final WorldAuthoredSourceIntakeRepository sourceIntakeRepository;
+  private final CanonicalGameInstanceLaunchAssociationClient gameSessionClient;
   private final TransactionTemplate ownerTransaction;
   private final String workloadNamespace;
 
@@ -37,7 +43,15 @@ public final class WorldCompleteLaunchBindingService {
       WorldAuthoredSourceIntakeRepository sourceIntakeRepository,
       PlatformTransactionManager transactionManager,
       String workloadNamespace) {
-    this(client, repository, sourceIntakeRepository, transactionManager, workloadNamespace, null);
+    this(
+        client,
+        repository,
+        sourceIntakeRepository,
+        transactionManager,
+        workloadNamespace,
+        null,
+        null,
+        true);
   }
 
   /**
@@ -51,8 +65,55 @@ public final class WorldCompleteLaunchBindingService {
       PlatformTransactionManager transactionManager,
       String workloadNamespace,
       AuthoredWorldVersionStateClient versionStateClient) {
+    this(
+        client,
+        repository,
+        sourceIntakeRepository,
+        transactionManager,
+        workloadNamespace,
+        versionStateClient,
+        null,
+        true);
+  }
+
+  /**
+   * Constructs the explicitly unwired committed-launch producer with its actual Game Session
+   * owner-read client. The client is required for the committed-launch entry point.
+   */
+  public WorldCompleteLaunchBindingService(
+      AuthoredWorldLaunchDescriptorClient client,
+      WorldCompleteLaunchBindingRepository repository,
+      WorldAuthoredSourceIntakeRepository sourceIntakeRepository,
+      PlatformTransactionManager transactionManager,
+      String workloadNamespace,
+      AuthoredWorldVersionStateClient versionStateClient,
+      CanonicalGameInstanceLaunchAssociationClient gameSessionClient) {
+    this(
+        client,
+        repository,
+        sourceIntakeRepository,
+        transactionManager,
+        workloadNamespace,
+        versionStateClient,
+        Objects.requireNonNull(gameSessionClient, "gameSessionClient"),
+        false);
+  }
+
+  private WorldCompleteLaunchBindingService(
+      AuthoredWorldLaunchDescriptorClient client,
+      WorldCompleteLaunchBindingRepository repository,
+      WorldAuthoredSourceIntakeRepository sourceIntakeRepository,
+      PlatformTransactionManager transactionManager,
+      String workloadNamespace,
+      AuthoredWorldVersionStateClient versionStateClient,
+      CanonicalGameInstanceLaunchAssociationClient gameSessionClient,
+      boolean allowMissingGameSessionClient) {
     this.client = Objects.requireNonNull(client, "client");
     this.versionStateClient = versionStateClient;
+    if (!allowMissingGameSessionClient) {
+      Objects.requireNonNull(gameSessionClient, "gameSessionClient");
+    }
+    this.gameSessionClient = gameSessionClient;
     this.repository = Objects.requireNonNull(repository, "repository");
     this.sourceIntakeRepository =
         Objects.requireNonNull(sourceIntakeRepository, "sourceIntakeRepository");
@@ -65,6 +126,92 @@ public final class WorldCompleteLaunchBindingService {
     this.ownerTransaction.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
     this.ownerTransaction.setIsolationLevel(TransactionDefinition.ISOLATION_READ_COMMITTED);
     this.ownerTransaction.setReadOnly(false);
+  }
+
+  /**
+   * Authenticates Game Session's exact committed launch association, independently rereads the
+   * complete immutable pair from Game Design, and retains that pair against its exact committed
+   * World source intake. This is released-content evidence only; it does not prove local content,
+   * current authorization, lifecycle preparation, or runtime admission.
+   */
+  public WorldCompleteLaunchBindingReceipt bindCommittedLaunch(
+      CanonicalGameInstanceLaunchAssociationReadEvidence.Request request) {
+    requireAuthenticatedGameSessionCaller();
+    requireNoAmbientCommittedLaunchTransaction();
+    if (gameSessionClient == null) {
+      throw new IllegalStateException(
+          "World committed-launch binding has no configured Game Session owner reader");
+    }
+    Objects.requireNonNull(request, "request");
+    if (!workloadNamespace.equals(request.targetNamespace())) {
+      throw new SecurityException(
+          "Committed launch binding namespace does not match this World workload");
+    }
+
+    GetLaunchDescriptorRequest gameDesignReadRequest =
+        committedLaunchGameDesignReadRequest(request);
+    CompleteLaunchBindingEvidence fetched = client.getComplete(gameDesignReadRequest);
+    requireCommittedLaunchEvidence(fetched, gameDesignReadRequest, request);
+
+    CanonicalGameInstanceLaunchAssociationReadEvidence.Result association =
+        gameSessionClient.read(request);
+    WorldCanonicalInstancePreparationAssemblyService.requireGameSessionBinding(
+        request, association, fetched);
+
+    AuthoredWorldLaunchDescriptorEvidence descriptor = fetched.descriptor();
+    WorldAuthoredSourceIntakeReceipt sourceReceipt = readExactSourceReceipt(fetched);
+    requireFreshCommittedLaunchReadId(
+        gameDesignReadRequest.getRequestId(), request, descriptor, sourceReceipt);
+    requireCommittedLaunchSourcePair(fetched, sourceReceipt);
+    Optional<WorldCompleteLaunchBindingRepository.StoredBinding> prior =
+        repository.read(
+            workloadNamespace, descriptor.canonicalTenantId(), descriptor.controlPlaneRequestId());
+    if (prior.isPresent()) {
+      return loadCommittedLaunchReceipt(prior.orElseThrow(), request, fetched, sourceReceipt);
+    }
+
+    WorldCompleteLaunchBindingReceipt accepted;
+    try {
+      accepted =
+          ownerTransaction.execute(
+              status -> repository.acceptFresh(workloadNamespace, sourceReceipt, fetched));
+    } catch (RuntimeException ownerFailure) {
+      Optional<WorldCompleteLaunchBindingRepository.StoredBinding> uncertainCommit =
+          repository.read(
+              workloadNamespace,
+              descriptor.canonicalTenantId(),
+              descriptor.controlPlaneRequestId());
+      if (uncertainCommit.isEmpty()) {
+        throw ownerFailure;
+      }
+      return loadCommittedLaunchReceipt(
+          uncertainCommit.orElseThrow(), request, fetched, sourceReceipt);
+    }
+    if (accepted == null) {
+      throw new WorldCompleteLaunchBindingRepository.InvalidBindingEvidenceException(
+          "World owner transaction returned no committed launch binding receipt");
+    }
+    requireCommittedLaunchRequest(accepted, request);
+    requireSamePair(accepted, fetched);
+    if (!accepted.sourceIntakeReceipt().equals(sourceReceipt)) {
+      throw new WorldCompleteLaunchBindingRepository.RegistrationConflictException(
+          "World committed launch binding changed its exact source intake");
+    }
+
+    Optional<WorldCompleteLaunchBindingRepository.StoredBinding> committed =
+        repository.read(
+            workloadNamespace, descriptor.canonicalTenantId(), descriptor.controlPlaneRequestId());
+    if (committed.isEmpty()) {
+      throw new WorldCompleteLaunchBindingRepository.InvalidBindingEvidenceException(
+          "World committed launch binding is missing after its owner commit");
+    }
+    WorldCompleteLaunchBindingReceipt readback =
+        loadCommittedLaunchReceipt(committed.orElseThrow(), request, fetched, sourceReceipt);
+    if (!accepted.equals(readback)) {
+      throw new WorldCompleteLaunchBindingRepository.InvalidBindingEvidenceException(
+          "World committed launch binding changed during independent owner readback");
+    }
+    return readback;
   }
 
   /**
@@ -239,6 +386,187 @@ public final class WorldCompleteLaunchBindingService {
                     "Complete launch binding has no exact committed World source intake"));
   }
 
+  private void requireFreshCommittedLaunchReadId(
+      String readRequestId,
+      CanonicalGameInstanceLaunchAssociationReadEvidence.Request associationRequest,
+      AuthoredWorldLaunchDescriptorEvidence descriptor,
+      WorldAuthoredSourceIntakeReceipt sourceReceipt) {
+    if (readRequestId.equals(associationRequest.readRequestId().toString())
+        || readRequestId.equals(descriptor.authoredWorldSourceOperationId().toString())
+        || readRequestId.equals(sourceReceipt.operationId().toString())
+        || readRequestId.equals(sourceReceipt.intakeRequestId().toString())
+        || readRequestId.equals(sourceReceipt.sourceOperationId().toString())
+        || readRequestId.equals(sourceReceipt.source().registrationRequestId().toString())
+        || readRequestId.equals(descriptor.controlPlaneRequestId())) {
+      throw new IllegalArgumentException(
+          "Game Design committed-launch read ID must be distinct from original source and association identities");
+    }
+  }
+
+  private void requireCommittedLaunchSourcePair(
+      CompleteLaunchBindingEvidence evidence, WorldAuthoredSourceIntakeReceipt sourceReceipt) {
+    AuthoredWorldLaunchDescriptorEvidence descriptor = evidence.descriptor();
+    if (!workloadNamespace.equals(sourceReceipt.targetNamespace())
+        || !descriptor.canonicalTenantId().equals(sourceReceipt.canonicalTenantId())
+        || !descriptor.worldSlug().equals(sourceReceipt.worldSlug())
+        || !descriptor.authoredWorldSourceOperationId().equals(sourceReceipt.sourceOperationId())
+        || !descriptor
+            .authoredWorldSourceEvidenceDigest()
+            .equals(sourceReceipt.sourceEvidenceDigest())
+        || !sourceReceipt
+            .intakeRequestId()
+            .equals(
+                evidence
+                    .releaseAttestation()
+                    .worldStartLocationEvidence()
+                    .request()
+                    .intakeRequestId())) {
+      throw new WorldCompleteLaunchBindingRepository.RegistrationConflictException(
+          "Complete launch binding differs from the exact committed World source intake");
+    }
+  }
+
+  private GetLaunchDescriptorRequest committedLaunchGameDesignReadRequest(
+      CanonicalGameInstanceLaunchAssociationReadEvidence.Request request) {
+    UUID requestId;
+    do {
+      requestId = UUID.randomUUID();
+    } while (requestId.equals(request.readRequestId())
+        || requestId.equals(request.canonicalTenantId())
+        || requestId.equals(request.gameInstanceUuid())
+        || requestId.toString().equals(request.controlPlaneRequestId()));
+    return GetLaunchDescriptorRequest.newBuilder()
+        .setRequestId(requestId.toString())
+        .setCanonicalTenantId(request.canonicalTenantId().toString())
+        .setWorldSlug(request.worldSlug())
+        .setControlPlaneRequestId(request.controlPlaneRequestId())
+        .setExpectedRequestDigest(request.expectedDescriptorRequestDigest())
+        .setExpectedResultDigest(request.expectedDescriptorResultDigest())
+        .build();
+  }
+
+  private void requireCommittedLaunchEvidence(
+      CompleteLaunchBindingEvidence evidence,
+      GetLaunchDescriptorRequest gameDesignReadRequest,
+      CanonicalGameInstanceLaunchAssociationReadEvidence.Request associationRequest) {
+    if (evidence == null) {
+      throw new WorldCompleteLaunchBindingRepository.InvalidBindingEvidenceException(
+          "Game Design returned no complete committed launch binding evidence");
+    }
+    AuthoredWorldLaunchDescriptorEvidence descriptor = evidence.descriptor();
+    descriptor.requireValid();
+    evidence.releaseAttestation().requireValid(descriptor);
+    if (gameDesignReadRequest
+        .getRequestId()
+        .equals(descriptor.authoredWorldSourceOperationId().toString())) {
+      throw new WorldCompleteLaunchBindingRepository.InvalidBindingEvidenceException(
+          "Game Design committed launch read ID is not distinct from its source operation");
+    }
+    if (!workloadNamespace.equals(descriptor.targetNamespace())
+        || !associationRequest.canonicalTenantId().equals(descriptor.canonicalTenantId())
+        || !associationRequest.worldSlug().equals(descriptor.worldSlug())
+        || !associationRequest.controlPlaneRequestId().equals(descriptor.controlPlaneRequestId())
+        || !associationRequest.launchDescriptorId().equals(descriptor.launchDescriptorId())
+        || !associationRequest.expectedDescriptorRequestDigest().equals(descriptor.requestDigest())
+        || !associationRequest.expectedDescriptorResultDigest().equals(descriptor.resultDigest())
+        || !associationRequest
+            .expectedReleaseAttestationEvidenceDigest()
+            .equals(evidence.releaseAttestation().evidenceDigest())
+        || !gameDesignReadRequest
+            .getCanonicalTenantId()
+            .equals(descriptor.canonicalTenantId().toString())
+        || !gameDesignReadRequest.getWorldSlug().equals(descriptor.worldSlug())
+        || !gameDesignReadRequest
+            .getControlPlaneRequestId()
+            .equals(descriptor.controlPlaneRequestId())
+        || !gameDesignReadRequest.getExpectedRequestDigest().equals(descriptor.requestDigest())
+        || !gameDesignReadRequest.getExpectedResultDigest().equals(descriptor.resultDigest())) {
+      throw new WorldCompleteLaunchBindingRepository.RegistrationConflictException(
+          "Game Design complete launch pair differs from the exact committed association selector");
+    }
+    if (evidence.releaseAttestation().schemaVersion()
+            != AuthoredWorldReleaseAttestationEvidence.SELECTOR_SCHEMA_VERSION
+        || evidence.releaseAttestation().worldStartLocationEvidence() == null) {
+      throw new WorldCompleteLaunchBindingRepository.InvalidBindingEvidenceException(
+          "Committed launch binding requires the full selector-bearing release attestation v2");
+    }
+  }
+
+  private WorldCompleteLaunchBindingReceipt loadCommittedLaunchReceipt(
+      WorldCompleteLaunchBindingRepository.StoredBinding stored,
+      CanonicalGameInstanceLaunchAssociationReadEvidence.Request request,
+      CompleteLaunchBindingEvidence expectedPair,
+      WorldAuthoredSourceIntakeReceipt expectedSourceReceipt) {
+    requireCommittedLaunchRequest(stored, request);
+    requireSameStoredPair(stored.evidence(), expectedPair);
+    WorldAuthoredSourceIntakeReceipt sourceReadback = readExactSourceReceipt(expectedPair);
+    if (!expectedSourceReceipt.equals(sourceReadback)) {
+      throw new WorldCompleteLaunchBindingRepository.RegistrationConflictException(
+          "World committed launch binding source intake changed during exact readback");
+    }
+    WorldCompleteLaunchBindingReceipt receipt = repository.toReceipt(stored, sourceReadback);
+    requireCommittedLaunchRequest(receipt, request);
+    requireSamePair(receipt, expectedPair);
+    return receipt;
+  }
+
+  private void requireCommittedLaunchRequest(
+      WorldCompleteLaunchBindingRepository.StoredBinding stored,
+      CanonicalGameInstanceLaunchAssociationReadEvidence.Request request) {
+    AuthoredWorldLaunchDescriptorEvidence descriptor = stored.evidence().descriptor();
+    if (!workloadNamespace.equals(stored.targetNamespace())
+        || !request.canonicalTenantId().equals(stored.canonicalTenantId())
+        || !request.controlPlaneRequestId().equals(stored.controlPlaneRequestId())
+        || !request.worldSlug().equals(stored.worldSlug())
+        || !workloadNamespace.equals(descriptor.targetNamespace())
+        || !request.canonicalTenantId().equals(descriptor.canonicalTenantId())
+        || !request.worldSlug().equals(descriptor.worldSlug())
+        || !request.controlPlaneRequestId().equals(descriptor.controlPlaneRequestId())
+        || !request.launchDescriptorId().equals(descriptor.launchDescriptorId())
+        || !request.expectedDescriptorRequestDigest().equals(descriptor.requestDigest())
+        || !request.expectedDescriptorResultDigest().equals(descriptor.resultDigest())
+        || !request
+            .expectedReleaseAttestationEvidenceDigest()
+            .equals(stored.evidence().releaseAttestation().evidenceDigest())) {
+      throw new WorldCompleteLaunchBindingRepository.RegistrationConflictException(
+          "World committed launch binding differs from its exact Game Session selector");
+    }
+  }
+
+  private void requireCommittedLaunchRequest(
+      WorldCompleteLaunchBindingReceipt receipt,
+      CanonicalGameInstanceLaunchAssociationReadEvidence.Request request) {
+    AuthoredWorldLaunchDescriptorEvidence descriptor = receipt.descriptor();
+    if (!workloadNamespace.equals(receipt.targetNamespace())
+        || !request.canonicalTenantId().equals(receipt.canonicalTenantId())
+        || !request.worldSlug().equals(receipt.worldSlug())
+        || !request.controlPlaneRequestId().equals(receipt.controlPlaneRequestId())
+        || !workloadNamespace.equals(descriptor.targetNamespace())
+        || !request.canonicalTenantId().equals(descriptor.canonicalTenantId())
+        || !request.worldSlug().equals(descriptor.worldSlug())
+        || !request.controlPlaneRequestId().equals(descriptor.controlPlaneRequestId())
+        || !request.launchDescriptorId().equals(descriptor.launchDescriptorId())
+        || !request.expectedDescriptorRequestDigest().equals(descriptor.requestDigest())
+        || !request.expectedDescriptorResultDigest().equals(descriptor.resultDigest())
+        || !request
+            .expectedReleaseAttestationEvidenceDigest()
+            .equals(receipt.evidence().releaseAttestation().evidenceDigest())) {
+      throw new WorldCompleteLaunchBindingRepository.RegistrationConflictException(
+          "World committed launch binding differs from its exact Game Session selector");
+    }
+  }
+
+  private void requireSameStoredPair(
+      CompleteLaunchBindingEvidence stored, CompleteLaunchBindingEvidence expected) {
+    if (stored == null
+        || !stored.equals(expected)
+        || !stored.descriptor().equals(expected.descriptor())
+        || !stored.releaseAttestation().equals(expected.releaseAttestation())) {
+      throw new WorldCompleteLaunchBindingRepository.RegistrationConflictException(
+          "World committed launch binding identity was reused with a changed descriptor or release");
+    }
+  }
+
   private void requireStoredRequest(WorldCompleteLaunchBindingReceipt receipt, GetRequest request) {
     requireStoredRequest(receipt.descriptor(), receipt.targetNamespace(), request);
   }
@@ -325,9 +653,18 @@ public final class WorldCompleteLaunchBindingService {
     GrpcPeerIdentity peer = GrpcPeerIdentity.current();
     if (peer == null
         || !peer.isService("game-session-service")
-        || !peer.isInNamespace(workloadNamespace)) {
+        || !peer.isInNamespace(workloadNamespace)
+        || SessionContext.hasAuthenticatedCallerContext()) {
       throw new SecurityException(
-          "World complete launch binding requires the authenticated same-namespace Game Session workload");
+          "World complete launch binding requires only the authenticated same-namespace Game Session workload");
+    }
+  }
+
+  private static void requireNoAmbientCommittedLaunchTransaction() {
+    if (TransactionSynchronizationManager.isActualTransactionActive()
+        || TransactionSynchronizationManager.isSynchronizationActive()) {
+      throw new IllegalStateException(
+          "World committed launch binding requires independent owner reads outside ambient transactions");
     }
   }
 

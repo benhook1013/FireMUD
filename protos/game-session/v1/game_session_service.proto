@@ -4,6 +4,7 @@ package game_session.v1;
 
 import "entity-management/v1/entity_management_service.proto";
 import "game-design/v1/game_design_service.proto";
+import "google/protobuf/timestamp.proto";
 import "shared/v1/errors.proto";
 
 option java_package = "net.firedevops.firemud.gamesession.v1";
@@ -41,6 +42,10 @@ service GameSessionControlPlaneService {
   // Read exact durable owner proof for a World-owned initial-admission hold.
   rpc GetInitialAdmissionBindProof(GetInitialAdmissionBindProofRequest)
       returns (GetInitialAdmissionBindProofResponse);
+  // Read the exact canonical Game Session-owned initial-admission terminal outcome for World.
+  rpc GetCanonicalInitialAdmissionOwnerProof(
+      GetCanonicalInitialAdmissionOwnerProofRequest)
+      returns (GetCanonicalInitialAdmissionOwnerProofResponse);
   // Read the exact Game Session-owned STARTING launch association for World composition.
   rpc GetCanonicalGameInstanceLaunchAssociation(
       GetCanonicalGameInstanceLaunchAssociationRequest)
@@ -502,6 +507,73 @@ message GetInitialAdmissionBindProofResponse {
   string pointer_audit_request_digest = 18;
   bool future_commit_prevented = 19;
   shared.v1.ErrorDetail error = 20;
+}
+
+enum CanonicalInitialAdmissionOrigin {
+  CANONICAL_INITIAL_ADMISSION_ORIGIN_UNSPECIFIED = 0;
+  CANONICAL_INITIAL_ADMISSION_ORIGIN_NO_PRIOR_POINTER = 1;
+  CANONICAL_INITIAL_ADMISSION_ORIGIN_EXPECT_CLOSED = 2;
+}
+
+enum CanonicalInitialAdmissionOwnerProofOutcome {
+  CANONICAL_INITIAL_ADMISSION_OWNER_PROOF_OUTCOME_UNSPECIFIED = 0;
+  CANONICAL_INITIAL_ADMISSION_OWNER_PROOF_OUTCOME_PENDING = 1;
+  CANONICAL_INITIAL_ADMISSION_OWNER_PROOF_OUTCOME_COMMITTED = 2;
+  CANONICAL_INITIAL_ADMISSION_OWNER_PROOF_OUTCOME_ABORTED = 3;
+}
+
+// World supplies the complete immutable request it acquired the hold for. No numeric runtime
+// identifier is substituted for a canonical UUID, and World's hold digest remains distinct from
+// the bare Game Session request digest.
+message GetCanonicalInitialAdmissionOwnerProofRequest {
+  string target_namespace = 1;
+  string initial_admission_request_id = 2;
+  string initial_admission_request_digest = 3;
+  string canonical_tenant_id = 4;
+  string world_slug = 5;
+  string realm_id = 6;
+  string playable_state_namespace_id = 7;
+  string playable_state_scope = 8;
+  string canonical_game_instance_id = 9;
+  string canonical_version_id = 10;
+  int64 active_lifecycle_epoch = 11;
+  int64 expected_catalog_revision = 12;
+  CanonicalInitialAdmissionOrigin origin = 13;
+  optional int64 expected_prior_pointer_version = 14;
+  string hold_id = 15;
+  string hold_fence = 16;
+  string hold_binding_digest = 17;
+}
+
+// Every successful domain result echoes the complete expected operation tuple. Only a COMMITTED
+// pointer/audit result or a positively fenced durable ABORTED result is terminal proof. Missing
+// owner attempts and reads that cannot establish an exact result use non-OK gRPC status, never a
+// NOT_FOUND/UNAVAILABLE outcome or an inferred abort.
+message GetCanonicalInitialAdmissionOwnerProofResponse {
+  string target_namespace = 1;
+  string initial_admission_request_id = 2;
+  string initial_admission_request_digest = 3;
+  string canonical_tenant_id = 4;
+  string world_slug = 5;
+  string realm_id = 6;
+  string playable_state_namespace_id = 7;
+  string playable_state_scope = 8;
+  string canonical_game_instance_id = 9;
+  string canonical_version_id = 10;
+  int64 active_lifecycle_epoch = 11;
+  int64 expected_catalog_revision = 12;
+  CanonicalInitialAdmissionOrigin origin = 13;
+  optional int64 expected_prior_pointer_version = 14;
+  string hold_id = 15;
+  string hold_fence = 16;
+  string hold_binding_digest = 17;
+  CanonicalInitialAdmissionOwnerProofOutcome outcome = 18;
+  optional int64 committed_pointer_version = 19;
+  optional int64 audit_event_id = 20;
+  // Terminal Game Session proof digest; sha256:-prefixed and distinct from the bare request digest.
+  string proof_digest = 21;
+  bool positive_durable_abort = 22;
+  google.protobuf.Timestamp terminal_at = 23;
 }
 
 // A transport retry has a separate read identity and cannot create a new launch operation.

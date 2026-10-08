@@ -98,6 +98,14 @@ public final class WorldCanonicalInstanceLifecycleReadRepository {
     return Optional.ofNullable(readInCurrentOwnerTransaction(request, true));
   }
 
+  /** Reconstructs current lifecycle evidence inside an existing read-only owner snapshot. */
+  Optional<WorldCanonicalInstanceLifecycleEvidence> readForCurrentLocationInOwnerTransaction(
+      WorldCanonicalInstanceLifecycleEvidence.Request request) {
+    Objects.requireNonNull(request, "request");
+    requireReadOnlyRepeatableReadOwnerTransaction();
+    return Optional.ofNullable(readInCurrentOwnerTransaction(request, false));
+  }
+
   private WorldCanonicalInstanceLifecycleEvidence readInCurrentOwnerTransaction(
       WorldCanonicalInstanceLifecycleEvidence.Request request, boolean lockLifecycleRow) {
     try {
@@ -631,7 +639,8 @@ public final class WorldCanonicalInstanceLifecycleReadRepository {
   }
 
   private static void requireNoActiveTransaction(String label) {
-    if (TransactionSynchronizationManager.isActualTransactionActive()) {
+    if (TransactionSynchronizationManager.isActualTransactionActive()
+        || TransactionSynchronizationManager.isSynchronizationActive()) {
       throw new IllegalStateException(label + " must not join an ambient transaction");
     }
   }

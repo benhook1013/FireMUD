@@ -1,0 +1,31 @@
+syntax = "proto3";
+
+package world_management.v1;
+
+option java_package = "net.firedevops.firemud.worldmanagement.v1";
+option java_multiple_files = true;
+
+// Standalone canonical World owner activation. This is separate from the legacy numeric
+// WorldManagementService.ActivatePreparedWorldInstance operation.
+service WorldCanonicalInstanceActivationService {
+  rpc ActivateCanonicalWorldInstance(ActivateCanonicalWorldInstanceRequest)
+      returns (ActivateCanonicalWorldInstanceResponse);
+}
+
+message ActivateCanonicalWorldInstanceRequest {
+  // Stable non-nil UUID for the canonical activation operation.
+  string activation_request_id = 1;
+
+  // Complete original canonical PREPARING lifecycle evidence, including its read correlation.
+  // These bytes are caller-supplied evidence and do not authenticate a producer or authorize the
+  // owner operation; World verifies current authority independently.
+  bytes preparing_lifecycle_evidence_bytes = 2;
+}
+
+message ActivateCanonicalWorldInstanceResponse {
+  // Stable correlation for this activation operation; it is not an authority claim.
+  string activation_request_id = 1;
+
+  // Complete immutable canonical World activation result, including its original request proof.
+  bytes canonical_result_bytes = 2;
+}

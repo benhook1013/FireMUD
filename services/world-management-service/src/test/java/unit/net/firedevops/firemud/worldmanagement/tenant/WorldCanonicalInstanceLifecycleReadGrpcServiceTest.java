@@ -23,8 +23,33 @@ import net.firedevops.firemud.worldmanagement.tenant.WorldCanonicalInstanceLifec
 import net.firedevops.firemud.worldmanagement.v1.ReadWorldCanonicalInstanceLifecycleRequest;
 import net.firedevops.firemud.worldmanagement.v1.ReadWorldCanonicalInstanceLifecycleResponse;
 import org.junit.jupiter.api.Test;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 class WorldCanonicalInstanceLifecycleReadGrpcServiceTest {
+  @Test
+  void rejectsActualOrSynchronizationTransactionBeforeParsingOrOwnerAccess() {
+    var repository = mock(WorldCanonicalInstanceLifecycleReadRepository.class);
+    var service = new WorldCanonicalInstanceLifecycleReadGrpcService(repository, "test");
+    var malformed = ReadWorldCanonicalInstanceLifecycleRequest.getDefaultInstance();
+    Collector actual;
+    TransactionSynchronizationManager.setActualTransactionActive(true);
+    try {
+      actual = call(service, malformed, peer("game-session-service", "test"));
+    } finally {
+      TransactionSynchronizationManager.setActualTransactionActive(false);
+    }
+    Collector synchronization;
+    TransactionSynchronizationManager.initSynchronization();
+    try {
+      synchronization = call(service, malformed, peer("game-session-service", "test"));
+    } finally {
+      TransactionSynchronizationManager.clearSynchronization();
+    }
+    assertThat(actual.error).isEqualTo(Status.Code.FAILED_PRECONDITION);
+    assertThat(synchronization.error).isEqualTo(Status.Code.FAILED_PRECONDITION);
+    verifyNoInteractions(repository);
+  }
+
   @Test
   void rejectsWrongServiceOrNamespaceBeforeDecodingAndStorageAccess() {
     var repository = mock(WorldCanonicalInstanceLifecycleReadRepository.class);

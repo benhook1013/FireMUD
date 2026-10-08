@@ -24,9 +24,16 @@ import net.firedevops.firemud.common.gamedesign.AuthoredWorldReleaseAttestationE
 import net.firedevops.firemud.common.gamedesign.AuthoredWorldVersionStateClient;
 import net.firedevops.firemud.common.gamedesign.AuthoredWorldVersionStateEvidence;
 import net.firedevops.firemud.common.gamedesign.CompleteLaunchBindingEvidence;
+import net.firedevops.firemud.common.gamesession.CanonicalGameInstanceLaunchAssociationClient;
+import net.firedevops.firemud.common.gamesession.CanonicalGameInstanceLaunchAssociationReadEvidence;
+import net.firedevops.firemud.common.gamesession.CanonicalGameInstanceLaunchAssociationReadEvidence.CurrentGameInstanceStatus;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
+import net.firedevops.firemud.common.publication.RealmEntryPolicy;
+import net.firedevops.firemud.common.security.SessionContext;
 import net.firedevops.firemud.common.tenant.AuthoredWorldSourceDigest;
 import net.firedevops.firemud.common.tenant.AuthoredWorldSourceEvidence;
+import net.firedevops.firemud.common.world.WorldPublishedStartLocationEvidence;
+import net.firedevops.firemud.gamedesign.v1.GetLaunchDescriptorRequest;
 import net.firedevops.firemud.gamedesign.v1.VersionLifecycleState;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
@@ -67,6 +74,8 @@ class WorldCompleteLaunchBindingServiceTest {
       mock(AuthoredWorldLaunchDescriptorClient.class);
   private final AuthoredWorldVersionStateClient versionStateClient =
       mock(AuthoredWorldVersionStateClient.class);
+  private final CanonicalGameInstanceLaunchAssociationClient gameSessionClient =
+      mock(CanonicalGameInstanceLaunchAssociationClient.class);
   private final WorldCompleteLaunchBindingRepository repository =
       mock(WorldCompleteLaunchBindingRepository.class);
   private final WorldAuthoredSourceIntakeRepository sourceRepository =
@@ -79,6 +88,318 @@ class WorldCompleteLaunchBindingServiceTest {
   @AfterEach
   void clearTransactionState() {
     TransactionSynchronizationManager.clear();
+    SessionContext.clear();
+  }
+
+  @Test
+  void committedLaunchRequiresSameNamespaceGameSessionWithoutEndUserContextBeforeAccess() {
+    CommittedLaunchFixture fixture = committedLaunchFixture();
+    WorldCompleteLaunchBindingService committedService = committedLaunchService();
+
+    assertThatThrownBy(
+            () -> withoutPeer(() -> committedService.bindCommittedLaunch(fixture.request())))
+        .isInstanceOf(SecurityException.class);
+    assertThatThrownBy(
+            () ->
+                withPeer(
+                    peer(NAMESPACE, "game-design-service"),
+                    () -> committedService.bindCommittedLaunch(fixture.request())))
+        .isInstanceOf(SecurityException.class);
+    assertThatThrownBy(
+            () ->
+                withPeer(
+                    peer("other", "game-session-service"),
+                    () -> committedService.bindCommittedLaunch(fixture.request())))
+        .isInstanceOf(SecurityException.class);
+
+    SessionContext.setContext(
+        "99999999-9999-4999-8999-999999999999", List.of(), java.util.Map.of());
+    assertThatThrownBy(
+            () -> withGameSession(() -> committedService.bindCommittedLaunch(fixture.request())))
+        .isInstanceOf(SecurityException.class);
+
+    var wrongNamespaceRequest =
+        new CanonicalGameInstanceLaunchAssociationReadEvidence.Request(
+            fixture.request().readRequestId(),
+            "other",
+            fixture.request().canonicalTenantId(),
+            fixture.request().worldSlug(),
+            fixture.request().gameInstanceUuid(),
+            fixture.request().controlPlaneRequestId(),
+            fixture.request().launchDescriptorId(),
+            fixture.request().expectedDescriptorRequestDigest(),
+            fixture.request().expectedDescriptorResultDigest(),
+            fixture.request().expectedReleaseAttestationEvidenceDigest());
+    SessionContext.clear();
+    assertThatThrownBy(
+            () ->
+                withGameSession(() -> committedService.bindCommittedLaunch(wrongNamespaceRequest)))
+        .isInstanceOf(SecurityException.class);
+    verifyNoInteractions(client, gameSessionClient, repository, sourceRepository);
+    assertThat(transactionManager.startedWith).isNull();
+  }
+
+  @Test
+  void committedLaunchFailsClosedWhenGameSessionClientWasNotConfigured() {
+    CommittedLaunchFixture fixture = committedLaunchFixture();
+
+    assertThatThrownBy(() -> withGameSession(() -> service.bindCommittedLaunch(fixture.request())))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("no configured Game Session owner reader");
+    verifyNoInteractions(client, gameSessionClient, repository, sourceRepository);
+    assertThat(transactionManager.startedWith).isNull();
+  }
+
+  @Test
+  void committedLaunchRefusesAmbientTransactionBeforeRemoteOrOwnerAccess() {
+    CommittedLaunchFixture fixture = committedLaunchFixture();
+    TransactionSynchronizationManager.setActualTransactionActive(true);
+    TransactionSynchronizationManager.setCurrentTransactionReadOnly(false);
+
+    assertThatThrownBy(
+            () ->
+                withGameSession(
+                    () -> committedLaunchService().bindCommittedLaunch(fixture.request())))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("outside ambient transactions");
+    verifyNoInteractions(client, gameSessionClient, repository, sourceRepository);
+    assertThat(transactionManager.startedWith).isNull();
+  }
+
+  @Test
+  void committedLaunchRejectsChangedDigestAndV1ReleaseBeforeWorldOwnerWrite() {
+    AuthoredWorldSourceEvidence source = source();
+    CompleteLaunchBindingEvidence v1Binding = evidence(source);
+    var wrongDigestRequest =
+        new CanonicalGameInstanceLaunchAssociationReadEvidence.Request(
+            UUID.fromString("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"),
+            NAMESPACE,
+            TENANT,
+            WORLD,
+            UUID.fromString("abababab-abab-4bab-8bab-abababababab"),
+            CONTROL_PLANE_REQUEST,
+            v1Binding.descriptor().launchDescriptorId(),
+            v1Binding.descriptor().requestDigest(),
+            digest('a'),
+            v1Binding.releaseAttestation().evidenceDigest());
+    WorldCompleteLaunchBindingService committedService = committedLaunchService();
+    when(client.getComplete(any(GetLaunchDescriptorRequest.class))).thenReturn(v1Binding);
+
+    assertThatThrownBy(
+            () -> withGameSession(() -> committedService.bindCommittedLaunch(wrongDigestRequest)))
+        .isInstanceOf(WorldCompleteLaunchBindingRepository.RegistrationConflictException.class);
+
+    var v1Request = committedAssociationRequest(v1Binding);
+    assertThatThrownBy(() -> withGameSession(() -> committedService.bindCommittedLaunch(v1Request)))
+        .isInstanceOf(WorldCompleteLaunchBindingRepository.InvalidBindingEvidenceException.class)
+        .hasMessageContaining("release attestation v2");
+    verify(gameSessionClient, never()).read(any());
+    verifyNoInteractions(repository, sourceRepository);
+    verify(repository, never()).acceptFresh(any(), any(), any());
+    assertThat(transactionManager.startedWith).isNull();
+  }
+
+  @Test
+  void committedLaunchRejectsGameSessionPairThatDiffersFromGameDesignBeforeSourceOrWrite() {
+    CommittedLaunchFixture fixture = committedLaunchFixture();
+    CompleteLaunchBindingEvidence otherPair =
+        committedPair(fixture.evidence().descriptor(), digest('8'));
+    CanonicalGameInstanceLaunchAssociationReadEvidence.Result mismatchedAssociation =
+        mock(CanonicalGameInstanceLaunchAssociationReadEvidence.Result.class);
+    when(mismatchedAssociation.request()).thenReturn(fixture.request());
+    when(mismatchedAssociation.playableStateScope()).thenReturn(RealmEntryPolicy.StateScope.SHARED);
+    when(mismatchedAssociation.publicProduction()).thenReturn(true);
+    when(mismatchedAssociation.launchBindingEvidence()).thenReturn(otherPair);
+    when(client.getComplete(any(GetLaunchDescriptorRequest.class))).thenReturn(fixture.evidence());
+    when(gameSessionClient.read(fixture.request())).thenReturn(mismatchedAssociation);
+
+    assertThatThrownBy(
+            () ->
+                withGameSession(
+                    () -> committedLaunchService().bindCommittedLaunch(fixture.request())))
+        .isInstanceOf(
+            WorldCanonicalInstancePreparationAssemblyService.AssemblyRejectedException.class);
+    verify(sourceRepository, never()).readBySource(any(), any(), any(), any(), any());
+    verifyNoInteractions(repository);
+    verify(repository, never()).acceptFresh(any(), any(), any());
+    assertThat(transactionManager.startedWith).isNull();
+  }
+
+  @Test
+  void exactCommittedLaunchRetryUsesTheOriginalPairWithoutAnotherOwnerWrite() {
+    CommittedLaunchFixture fixture = committedLaunchFixture();
+    WorldCompleteLaunchBindingService committedService = committedLaunchService();
+    stubCommittedLaunchReads(fixture);
+    when(repository.read(NAMESPACE, TENANT, CONTROL_PLANE_REQUEST))
+        .thenReturn(Optional.of(fixture.stored()));
+    when(repository.toReceipt(fixture.stored(), fixture.sourceReceipt()))
+        .thenReturn(fixture.receipt());
+
+    WorldCompleteLaunchBindingReceipt result =
+        withGameSession(() -> committedService.bindCommittedLaunch(fixture.request()));
+
+    assertThat(result).isSameAs(fixture.receipt());
+    verify(client).getComplete(any(GetLaunchDescriptorRequest.class));
+    verify(gameSessionClient).read(fixture.request());
+    verify(repository, never()).acceptFresh(any(), any(), any());
+    assertThat(transactionManager.startedWith).isNull();
+  }
+
+  @Test
+  void committedLaunchRetryRejectsAChangedRetainedReleasePairWithoutReplacement() {
+    CommittedLaunchFixture fixture = committedLaunchFixture();
+    CompleteLaunchBindingEvidence changedPair =
+        committedPair(
+            fixture.evidence().descriptor(),
+            fixture.request().expectedReleaseAttestationEvidenceDigest());
+    WorldCompleteLaunchBindingRepository.StoredBinding changedStored =
+        stored(fixture.sourceReceipt(), changedPair);
+    stubCommittedLaunchReads(fixture);
+    when(repository.read(NAMESPACE, TENANT, CONTROL_PLANE_REQUEST))
+        .thenReturn(Optional.of(changedStored));
+
+    assertThatThrownBy(
+            () ->
+                withGameSession(
+                    () -> committedLaunchService().bindCommittedLaunch(fixture.request())))
+        .isInstanceOf(WorldCompleteLaunchBindingRepository.RegistrationConflictException.class);
+    verify(repository, never()).acceptFresh(any(), any(), any());
+    verify(repository, never()).toReceipt(any(), any());
+    assertThat(transactionManager.startedWith).isNull();
+  }
+
+  @Test
+  void committedLaunchRequiresExactSourceIntakeBeforeWorldBindingOwnerAccess() {
+    CommittedLaunchFixture fixture = committedLaunchFixture();
+    stubCommittedLaunchReads(fixture);
+    when(sourceRepository.readBySource(
+            NAMESPACE,
+            TENANT,
+            WORLD,
+            SOURCE_OPERATION,
+            fixture.sourceReceipt().sourceEvidenceDigest()))
+        .thenReturn(Optional.empty());
+
+    assertThatThrownBy(
+            () ->
+                withGameSession(
+                    () -> committedLaunchService().bindCommittedLaunch(fixture.request())))
+        .isInstanceOf(WorldCompleteLaunchBindingRepository.InvalidBindingEvidenceException.class)
+        .hasMessageContaining("no exact committed World source intake");
+    verifyNoInteractions(repository);
+    verify(repository, never()).acceptFresh(any(), any(), any());
+    assertThat(transactionManager.startedWith).isNull();
+  }
+
+  @Test
+  void committedLaunchRetainsThenIndependentlyReadsBackTheExactPairInFreshOwnerTransaction() {
+    CommittedLaunchFixture fixture = committedLaunchFixture();
+    WorldCompleteLaunchBindingService committedService = committedLaunchService();
+    stubCommittedLaunchReads(fixture);
+    when(repository.read(NAMESPACE, TENANT, CONTROL_PLANE_REQUEST))
+        .thenReturn(Optional.empty(), Optional.of(fixture.stored()));
+    when(repository.acceptFresh(NAMESPACE, fixture.sourceReceipt(), fixture.evidence()))
+        .thenReturn(fixture.receipt());
+    when(repository.toReceipt(fixture.stored(), fixture.sourceReceipt()))
+        .thenReturn(fixture.receipt());
+
+    WorldCompleteLaunchBindingReceipt result =
+        withGameSession(() -> committedService.bindCommittedLaunch(fixture.request()));
+
+    assertThat(result).isSameAs(fixture.receipt());
+    assertThat(transactionManager.startedWith.getPropagationBehavior())
+        .isEqualTo(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
+    assertThat(transactionManager.startedWith.getIsolationLevel())
+        .isEqualTo(TransactionDefinition.ISOLATION_READ_COMMITTED);
+    assertThat(transactionManager.startedWith.isReadOnly()).isFalse();
+    ArgumentCaptor<GetLaunchDescriptorRequest> descriptorRead =
+        ArgumentCaptor.forClass(GetLaunchDescriptorRequest.class);
+    verify(client).getComplete(descriptorRead.capture());
+    assertThat(descriptorRead.getValue().getRequestId())
+        .isNotEqualTo(fixture.request().readRequestId().toString());
+    assertThat(descriptorRead.getValue().getCanonicalTenantId()).isEqualTo(TENANT.toString());
+    assertThat(descriptorRead.getValue().getWorldSlug()).isEqualTo(WORLD);
+    assertThat(descriptorRead.getValue().getControlPlaneRequestId())
+        .isEqualTo(CONTROL_PLANE_REQUEST);
+    assertThat(descriptorRead.getValue().getExpectedRequestDigest())
+        .isEqualTo(fixture.request().expectedDescriptorRequestDigest());
+    assertThat(descriptorRead.getValue().getExpectedResultDigest())
+        .isEqualTo(fixture.request().expectedDescriptorResultDigest());
+    InOrder committedReadOrder = inOrder(client, gameSessionClient, sourceRepository, repository);
+    committedReadOrder.verify(client).getComplete(any(GetLaunchDescriptorRequest.class));
+    committedReadOrder.verify(gameSessionClient).read(fixture.request());
+    committedReadOrder
+        .verify(sourceRepository)
+        .readBySource(
+            NAMESPACE,
+            TENANT,
+            WORLD,
+            SOURCE_OPERATION,
+            fixture.sourceReceipt().sourceEvidenceDigest());
+    committedReadOrder.verify(repository).read(NAMESPACE, TENANT, CONTROL_PLANE_REQUEST);
+    committedReadOrder
+        .verify(repository)
+        .acceptFresh(NAMESPACE, fixture.sourceReceipt(), fixture.evidence());
+    committedReadOrder.verify(repository).read(NAMESPACE, TENANT, CONTROL_PLANE_REQUEST);
+    committedReadOrder
+        .verify(sourceRepository)
+        .readBySource(
+            NAMESPACE,
+            TENANT,
+            WORLD,
+            SOURCE_OPERATION,
+            fixture.sourceReceipt().sourceEvidenceDigest());
+    committedReadOrder.verify(repository).toReceipt(fixture.stored(), fixture.sourceReceipt());
+    verify(gameSessionClient).read(fixture.request());
+    verify(repository).acceptFresh(NAMESPACE, fixture.sourceReceipt(), fixture.evidence());
+    verify(repository).toReceipt(fixture.stored(), fixture.sourceReceipt());
+  }
+
+  @Test
+  void committedLaunchRecoversLostCommitAcknowledgmentOnlyForTheSamePair() {
+    CommittedLaunchFixture fixture = committedLaunchFixture();
+    stubCommittedLaunchReads(fixture);
+    when(repository.read(NAMESPACE, TENANT, CONTROL_PLANE_REQUEST))
+        .thenReturn(Optional.empty(), Optional.of(fixture.stored()));
+    when(repository.acceptFresh(NAMESPACE, fixture.sourceReceipt(), fixture.evidence()))
+        .thenReturn(fixture.receipt());
+    when(repository.toReceipt(fixture.stored(), fixture.sourceReceipt()))
+        .thenReturn(fixture.receipt());
+    transactionManager.loseCommitAcknowledgment = true;
+
+    WorldCompleteLaunchBindingReceipt recovered =
+        withGameSession(() -> committedLaunchService().bindCommittedLaunch(fixture.request()));
+
+    assertThat(recovered).isSameAs(fixture.receipt());
+    verify(repository).acceptFresh(NAMESPACE, fixture.sourceReceipt(), fixture.evidence());
+    verify(repository).toReceipt(fixture.stored(), fixture.sourceReceipt());
+    assertThat(transactionManager.commitFailureThrown).isTrue();
+  }
+
+  @Test
+  void committedLaunchRejectsChangedPairDuringLostCommitAcknowledgmentRecovery() {
+    CommittedLaunchFixture fixture = committedLaunchFixture();
+    CompleteLaunchBindingEvidence changedPair =
+        committedPair(
+            fixture.evidence().descriptor(),
+            fixture.request().expectedReleaseAttestationEvidenceDigest());
+    WorldCompleteLaunchBindingRepository.StoredBinding changedStored =
+        stored(fixture.sourceReceipt(), changedPair);
+    stubCommittedLaunchReads(fixture);
+    when(repository.read(NAMESPACE, TENANT, CONTROL_PLANE_REQUEST))
+        .thenReturn(Optional.empty(), Optional.of(changedStored));
+    when(repository.acceptFresh(NAMESPACE, fixture.sourceReceipt(), fixture.evidence()))
+        .thenReturn(fixture.receipt());
+    transactionManager.loseCommitAcknowledgment = true;
+
+    assertThatThrownBy(
+            () ->
+                withGameSession(
+                    () -> committedLaunchService().bindCommittedLaunch(fixture.request())))
+        .isInstanceOf(WorldCompleteLaunchBindingRepository.RegistrationConflictException.class);
+    verify(repository).acceptFresh(NAMESPACE, fixture.sourceReceipt(), fixture.evidence());
+    verify(repository, never()).toReceipt(any(), any());
+    assertThat(transactionManager.commitFailureThrown).isTrue();
   }
 
   @Test
@@ -603,6 +924,140 @@ class WorldCompleteLaunchBindingServiceTest {
         .hasMessageContaining("separate from source and registration IDs");
     verifyNoInteractions(versionStateClient);
   }
+
+  private WorldCompleteLaunchBindingService committedLaunchService() {
+    return new WorldCompleteLaunchBindingService(
+        client,
+        repository,
+        sourceRepository,
+        transactionManager,
+        NAMESPACE,
+        versionStateClient,
+        gameSessionClient);
+  }
+
+  private void stubCommittedLaunchReads(CommittedLaunchFixture fixture) {
+    when(client.getComplete(any(GetLaunchDescriptorRequest.class))).thenReturn(fixture.evidence());
+    when(gameSessionClient.read(fixture.request())).thenReturn(fixture.associationResult());
+    when(sourceRepository.readBySource(
+            NAMESPACE,
+            TENANT,
+            WORLD,
+            SOURCE_OPERATION,
+            fixture.sourceReceipt().sourceEvidenceDigest()))
+        .thenReturn(Optional.of(fixture.sourceReceipt()));
+  }
+
+  private static CommittedLaunchFixture committedLaunchFixture() {
+    AuthoredWorldSourceEvidence source = source();
+    WorldAuthoredSourceIntakeReceipt sourceReceipt = sourceReceipt(source);
+    AuthoredWorldLaunchDescriptorEvidence descriptor = evidence(source).descriptor();
+    CompleteLaunchBindingEvidence pair = committedPair(descriptor, digest('7'));
+    var request = committedAssociationRequest(pair);
+    var associationResult =
+        new CanonicalGameInstanceLaunchAssociationReadEvidence.Result(
+            request,
+            UUID.fromString("abababab-abab-4bab-8bab-abababababab"),
+            RealmEntryPolicy.StateScope.SHARED,
+            true,
+            CurrentGameInstanceStatus.RUNNING,
+            7L,
+            pair);
+    WorldCompleteLaunchBindingReceipt receipt = mock(WorldCompleteLaunchBindingReceipt.class);
+    when(receipt.targetNamespace()).thenReturn(NAMESPACE);
+    when(receipt.canonicalTenantId()).thenReturn(TENANT);
+    when(receipt.worldSlug()).thenReturn(WORLD);
+    when(receipt.controlPlaneRequestId()).thenReturn(CONTROL_PLANE_REQUEST);
+    when(receipt.sourceIntakeReceipt()).thenReturn(sourceReceipt);
+    when(receipt.evidence()).thenReturn(pair);
+    when(receipt.descriptor()).thenReturn(descriptor);
+
+    WorldCompleteLaunchBindingRepository.StoredBinding stored =
+        new WorldCompleteLaunchBindingRepository.StoredBinding(
+            BINDING_OPERATION,
+            NAMESPACE,
+            TENANT,
+            WORLD,
+            CONTROL_PLANE_REQUEST,
+            sourceReceipt.operationId(),
+            sourceReceipt.intakeRequestId(),
+            sourceReceipt.localTenantKey(),
+            sourceReceipt.sourceOperationId(),
+            sourceReceipt.sourceEvidenceDigest(),
+            sourceReceipt.receiptDigest(),
+            descriptor.requestDigest(),
+            descriptor.resultDigest(),
+            pair.releaseAttestation().evidenceDigest(),
+            pair);
+    return new CommittedLaunchFixture(
+        source, sourceReceipt, pair, request, associationResult, stored, receipt);
+  }
+
+  private static WorldCompleteLaunchBindingRepository.StoredBinding stored(
+      WorldAuthoredSourceIntakeReceipt sourceReceipt, CompleteLaunchBindingEvidence pair) {
+    AuthoredWorldLaunchDescriptorEvidence descriptor = pair.descriptor();
+    return new WorldCompleteLaunchBindingRepository.StoredBinding(
+        BINDING_OPERATION,
+        NAMESPACE,
+        TENANT,
+        WORLD,
+        CONTROL_PLANE_REQUEST,
+        sourceReceipt.operationId(),
+        sourceReceipt.intakeRequestId(),
+        sourceReceipt.localTenantKey(),
+        sourceReceipt.sourceOperationId(),
+        sourceReceipt.sourceEvidenceDigest(),
+        sourceReceipt.receiptDigest(),
+        descriptor.requestDigest(),
+        descriptor.resultDigest(),
+        pair.releaseAttestation().evidenceDigest(),
+        pair);
+  }
+
+  // The closed pair is mocked in these component tests; this is not authenticated owner-storage
+  // proof.
+  private static CompleteLaunchBindingEvidence committedPair(
+      AuthoredWorldLaunchDescriptorEvidence descriptor, String releaseEvidenceDigest) {
+    AuthoredWorldReleaseAttestationEvidence release =
+        mock(AuthoredWorldReleaseAttestationEvidence.class);
+    WorldPublishedStartLocationEvidence selector = mock(WorldPublishedStartLocationEvidence.class);
+    WorldPublishedStartLocationEvidence.Request selectorRequest =
+        mock(WorldPublishedStartLocationEvidence.Request.class);
+    when(selector.request()).thenReturn(selectorRequest);
+    when(selectorRequest.intakeRequestId()).thenReturn(INTAKE_REQUEST);
+    when(release.schemaVersion())
+        .thenReturn(AuthoredWorldReleaseAttestationEvidence.SELECTOR_SCHEMA_VERSION);
+    when(release.evidenceDigest()).thenReturn(releaseEvidenceDigest);
+    when(release.worldStartLocationEvidence()).thenReturn(selector);
+    CompleteLaunchBindingEvidence pair = mock(CompleteLaunchBindingEvidence.class);
+    when(pair.descriptor()).thenReturn(descriptor);
+    when(pair.releaseAttestation()).thenReturn(release);
+    return pair;
+  }
+
+  private static CanonicalGameInstanceLaunchAssociationReadEvidence.Request
+      committedAssociationRequest(CompleteLaunchBindingEvidence evidence) {
+    return new CanonicalGameInstanceLaunchAssociationReadEvidence.Request(
+        UUID.fromString("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"),
+        NAMESPACE,
+        evidence.descriptor().canonicalTenantId(),
+        evidence.descriptor().worldSlug(),
+        UUID.fromString("abababab-abab-4bab-8bab-abababababab"),
+        evidence.descriptor().controlPlaneRequestId(),
+        evidence.descriptor().launchDescriptorId(),
+        evidence.descriptor().requestDigest(),
+        evidence.descriptor().resultDigest(),
+        evidence.releaseAttestation().evidenceDigest());
+  }
+
+  private record CommittedLaunchFixture(
+      AuthoredWorldSourceEvidence source,
+      WorldAuthoredSourceIntakeReceipt sourceReceipt,
+      CompleteLaunchBindingEvidence evidence,
+      CanonicalGameInstanceLaunchAssociationReadEvidence.Request request,
+      CanonicalGameInstanceLaunchAssociationReadEvidence.Result associationResult,
+      WorldCompleteLaunchBindingRepository.StoredBinding stored,
+      WorldCompleteLaunchBindingReceipt receipt) {}
 
   private WorldCompleteLaunchBindingReceipt stubCommittedBinding(
       AuthoredWorldSourceEvidence source, CompleteLaunchBindingEvidence evidence) {

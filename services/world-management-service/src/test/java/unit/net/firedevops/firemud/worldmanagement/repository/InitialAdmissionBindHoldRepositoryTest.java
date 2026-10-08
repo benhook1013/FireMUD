@@ -7,6 +7,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoMoreInteractions;
 import static org.mockito.Mockito.when;
@@ -14,10 +15,12 @@ import static org.mockito.Mockito.when;
 import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
+import java.util.List;
 import java.util.UUID;
 import net.firedevops.firemud.worldmanagement.entity.InitialAdmissionBindHold;
 import org.jooq.DSLContext;
 import org.jooq.Record;
+import org.jooq.Result;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mockito;
@@ -54,7 +57,45 @@ class InitialAdmissionBindHoldRepositoryTest {
     verify(dsl).execute(query.capture(), bindings.capture());
     assertTrue(query.getValue().contains("updated_at = ?"));
     assertTrue(query.getValue().contains("row_version = row_version + 1"));
+    assertTrue(query.getValue().contains("canonical_request_bytes IS NULL"));
     assertEquals(LocalDateTime.ofInstant(attemptedAt, ZoneOffset.UTC), bindings.getValue()[1]);
+  }
+
+  @Test
+  void legacyIdentityAndReconciliationReadsExcludeCanonicalRows() {
+    DSLContext dsl = Mockito.mock(DSLContext.class);
+    @SuppressWarnings("unchecked")
+    Result<Record> empty = Mockito.mock(Result.class);
+    when(empty.isEmpty()).thenReturn(true);
+    when(empty.map(any())).thenReturn(List.of());
+    when(dsl.fetch(anyString(), any(Object[].class))).thenReturn(empty);
+    InitialAdmissionBindHoldRepository repository = new InitialAdmissionBindHoldRepository(dsl);
+
+    repository.findByTenantIdAndRequestId(42L, "initial-admission-1");
+    repository.findByHoldId(HOLD_ID);
+    repository.findByHoldIdForUpdate(HOLD_ID);
+    repository.findNonterminal(32);
+
+    ArgumentCaptor<String> query = ArgumentCaptor.forClass(String.class);
+    verify(dsl, times(4)).fetch(query.capture(), any(Object[].class));
+    assertTrue(
+        query.getAllValues().stream()
+            .allMatch(sql -> sql.contains("canonical_request_bytes IS NULL")));
+    verify(empty, times(3)).isEmpty();
+  }
+
+  @Test
+  void terminalProofMutationIsFencedAwayFromCanonicalRows() {
+    DSLContext dsl = Mockito.mock(DSLContext.class);
+    when(dsl.execute(anyString(), any(Object[].class))).thenReturn(0);
+    InitialAdmissionBindHoldRepository repository = new InitialAdmissionBindHoldRepository(dsl);
+
+    repository.recordTerminalProof(
+        hold(), "COMMITTED", "owner-proof", "b".repeat(64), "pointer-audit", 2L, Instant.now());
+
+    ArgumentCaptor<String> query = ArgumentCaptor.forClass(String.class);
+    verify(dsl).execute(query.capture(), any(Object[].class));
+    assertTrue(query.getValue().contains("canonical_request_bytes IS NULL"));
   }
 
   @Test
@@ -73,6 +114,7 @@ class InitialAdmissionBindHoldRepositoryTest {
     ArgumentCaptor<Object[]> bindings = ArgumentCaptor.forClass(Object[].class);
     verify(dsl).fetchOne(query.capture(), bindings.capture());
     assertTrue(query.getValue().contains("tenant_id = ? AND realm_uuid = ?::uuid"));
+    assertFalse(query.getValue().contains("canonical_request_bytes"));
     assertArrayEquals(
         new Object[] {42L, UUID.fromString("00000000-0000-0000-0000-000000000001")},
         bindings.getValue());
