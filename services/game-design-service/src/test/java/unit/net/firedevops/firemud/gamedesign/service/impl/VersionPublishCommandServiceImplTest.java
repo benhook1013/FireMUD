@@ -561,11 +561,11 @@ class VersionPublishCommandServiceImplTest {
 
     assertEquals("FAILED", service.reconcileFullVersionPublish(request).status());
     verify(publishAttemptRepository).requireNoPublicationOperation(attempt);
-    org.mockito.Mockito.doThrow(new IllegalStateException("PUBLICATION_OPERATION_SEALED_OR_CHANGED"))
+    org.mockito.Mockito.doThrow(
+            new IllegalStateException("PUBLICATION_OPERATION_SEALED_OR_CHANGED"))
         .when(publishAttemptRepository)
         .requireNoPublicationOperation(attempt);
-    assertThrows(
-        IllegalStateException.class, () -> service.reconcileFullVersionPublish(request));
+    assertThrows(IllegalStateException.class, () -> service.reconcileFullVersionPublish(request));
     verify(publishAttemptRepository, never()).save(any(PublishAttempt.class));
   }
 
