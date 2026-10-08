@@ -168,15 +168,161 @@ test("non-PR runs always execute the complete path", () => {
   assert.deepEqual(result.affectedServices, ALL_SERVICES);
 });
 
-test("GitHub non-PR events always execute the complete path", async () => {
+test("GitHub non-PR non-push events always execute the complete path", async () => {
   const result = await classifyGithubChangeScope({}, {
-    eventName: "push",
+    eventName: "repository_dispatch",
+    payload: {},
   });
 
   assert.equal(result.runAll, true);
   assert.equal(result.lightweightOnly, false);
   assert.equal(result.pythonChanged, true);
+  assert.equal(result.postgresRuntimeProofChanged, false);
   assert.deepEqual(result.affectedServices, ALL_SERVICES);
+});
+
+test("PostgreSQL physical proof follows PostgreSQL, backup, guard, and CI paths", async () => {
+  for (const path of [
+    "docker/docker-compose.yml",
+    "docker/pg-dump-cron.Dockerfile",
+    "docker/postgres-data-layout-entrypoint.sh",
+    "dev-tools/backups/pg-dump-rotate.sh",
+    "dev-tools/restores/restore-latest-db.sh",
+    "k8s/helm/firemud/templates/stateful-core.yaml",
+    "k8s/postgres/pg-dump-cronjob.yaml",
+    "dev-tools/tests/postgres-runtime-upgrade-contract.sh",
+    ".github/workflows/ci.yml",
+  ]) {
+    assert.equal(
+      classifyChangeScope([path]).postgresRuntimeProofChanged,
+      true,
+      path,
+    );
+  }
+
+  for (const path of [
+    "design/architecture/README.md",
+    "docker/Dockerfile",
+    "k8s/helm/firemud/templates/identity-controller.yaml",
+    "services/account-service/src/main/java/example/Account.java",
+  ]) {
+    assert.equal(
+      classifyChangeScope([path]).postgresRuntimeProofChanged,
+      false,
+      path,
+    );
+  }
+
+  const before = "1".repeat(40);
+  const after = "2".repeat(40);
+  const compareRequests = [];
+  const push = await classifyGithubChangeScope({
+    rest: {
+      repos: {
+        compareCommitsWithBasehead: async (parameters) => {
+          compareRequests.push(parameters);
+          return {
+            data: {
+              status: "ahead",
+              base_commit: { sha: before },
+              merge_base_commit: { sha: before },
+              files: [{ filename: "design/architecture/README.md", status: "modified" }],
+            },
+          };
+        },
+      },
+    },
+  }, {
+    eventName: "push",
+    repo: { owner: "example", repo: "firemud" },
+    payload: {
+      before,
+      after,
+      forced: false,
+    },
+  });
+  assert.equal(push.postgresRuntimeProofChanged, false);
+  assert.deepEqual(compareRequests, [{
+    owner: "example",
+    repo: "firemud",
+    basehead: `${before}...${after}`,
+    per_page: 100,
+  }]);
+
+  const relevantRename = await classifyGithubChangeScope({
+    rest: {
+      repos: {
+        compareCommitsWithBasehead: async () => ({
+          data: {
+            status: "ahead",
+            base_commit: { sha: before },
+            merge_base_commit: { sha: before },
+            files: [{
+              filename: "design/operations/postgres.md",
+              previous_filename: "k8s/postgres/pg-dump-cronjob.yaml",
+              status: "renamed",
+            }],
+          },
+        }),
+      },
+    },
+  }, {
+    eventName: "push",
+    repo: { owner: "example", repo: "firemud" },
+    payload: { before, after, forced: false },
+  });
+  assert.equal(relevantRename.postgresRuntimeProofChanged, true);
+
+  const failedComparisons = [
+    { status: "diverged", base_commit: { sha: before }, merge_base_commit: { sha: before }, files: [] },
+    { status: "ahead", base_commit: { sha: after }, merge_base_commit: { sha: before }, files: [] },
+    { status: "ahead", base_commit: { sha: before }, merge_base_commit: { sha: before }, files: Array(300).fill({ filename: "design/README.md", status: "modified" }) },
+    { status: "ahead", base_commit: { sha: before }, merge_base_commit: { sha: before }, files: [{ filename: "", status: "modified" }] },
+  ];
+  for (const comparison of failedComparisons) {
+    const incompletePush = await classifyGithubChangeScope({
+      rest: { repos: { compareCommitsWithBasehead: async () => ({ data: comparison }) } },
+    }, {
+      eventName: "push",
+      repo: { owner: "example", repo: "firemud" },
+      payload: { before, after, forced: false },
+    });
+    assert.equal(incompletePush.postgresRuntimeProofChanged, true);
+  }
+
+  for (const payload of [
+    { before, after, forced: true },
+    { before: "0".repeat(40), after, forced: false },
+    { before: "not-a-sha", after, forced: false },
+    { before, after },
+    { before, after, forced: false },
+  ]) {
+    let requestCount = 0;
+    const incompletePush = await classifyGithubChangeScope({
+      rest: { repos: { compareCommitsWithBasehead: async () => { requestCount += 1; throw new Error("API unavailable"); } } },
+    }, {
+      eventName: "push",
+      repo: { owner: "example", repo: "firemud" },
+      payload,
+    });
+    assert.equal(incompletePush.postgresRuntimeProofChanged, true);
+    const shouldCompare =
+      payload.forced === false &&
+      /^[0-9a-f]{40}$/i.test(payload.before) &&
+      !/^0{40}$/i.test(payload.before) &&
+      /^[0-9a-f]{40}$/i.test(payload.after) &&
+      !/^0{40}$/i.test(payload.after);
+    assert.equal(requestCount, shouldCompare ? 1 : 0);
+  }
+
+  const docsPullRequest = await classifyGithubFiles(["design/architecture/README.md"], 1);
+  assert.equal(docsPullRequest.postgresRuntimeProofChanged, false);
+
+  const incompletePullRequest = await classifyGithubFiles(
+    ["design/architecture/README.md"],
+    2,
+  );
+  assert.equal(incompletePullRequest.postgresRuntimeProofChanged, true);
 });
 
 test("GitHub file-count mismatches fail closed to the complete path", async () => {

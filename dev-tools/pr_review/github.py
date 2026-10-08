@@ -14,6 +14,7 @@ import re
 import subprocess
 import time
 from collections.abc import Iterator, Sequence
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from contextvars import ContextVar, Token
 from pathlib import Path
@@ -28,6 +29,7 @@ REVIEW_COMMAND_TYPES = {
 REPO_NAME = re.compile(r"^[^/\s]+/[^/\s]+$")
 REVIEW_CONNECTIONS = ("reviewThreads", "comments", "reviews")
 HOSTED_PREFLIGHT_BUDGET_SECONDS = 120
+ISSUE_COMMENT_BATCH_SIZE = 25
 
 
 class HostedPreflightDeadlineExceeded(TimeoutError):
@@ -506,6 +508,115 @@ def fetch_pull_request(repo: str, pr_number: int) -> dict[str, Any]:
     return payload
 
 
+def _issue_comment_batch_query(pr_numbers: Sequence[int], after_by_pr: dict[int, str]) -> str:
+    declarations = ["$owner:String!", "$repo:String!"]
+    declarations.extend(f"$after_{number}:String!" for number in after_by_pr)
+    selections = []
+    for number in pr_numbers:
+        after = f", after:$after_{number}" if number in after_by_pr else ""
+        selections.append(
+            f"pr_{number}: pullRequest(number:{number}) {{ number "
+            f"comments(first:100{after}) {{ "
+            "nodes { id databaseId author { login } body createdAt updatedAt url } "
+            "pageInfo { hasNextPage endCursor } } }"
+        )
+    return f"""
+query({", ".join(declarations)}) {{
+  repository(owner:$owner, name:$repo) {{
+    {" ".join(selections)}
+  }}
+}}
+""".strip()
+
+
+def fetch_issue_comments_batch(repo: str, pr_numbers: Sequence[int]) -> dict[int, list[dict[str, Any]]]:
+    """Fetch complete issue-comment histories for at most 25 PRs per query.
+
+    Each alias is paginated independently until its full comment connection is
+    read. Missing identities, malformed connections, duplicate comment IDs,
+    and cursor loops fail closed so callers cannot treat partial data as a
+    complete repository scan.
+    """
+
+    owner, name = parse_repo(repo)
+    numbers = tuple(pr_numbers)
+    if any(isinstance(number, bool) or not isinstance(number, int) or number <= 0 for number in numbers):
+        raise ValueError("issue-comment batch requires positive PR numbers")
+    if len(set(numbers)) != len(numbers):
+        raise ValueError("issue-comment batch requires unique PR numbers")
+    if len(numbers) > ISSUE_COMMENT_BATCH_SIZE:
+        raise ValueError(f"issue-comment batch is limited to {ISSUE_COMMENT_BATCH_SIZE} PRs")
+    if not numbers:
+        return {}
+
+    comments_by_pr: dict[int, list[dict[str, Any]]] = {number: [] for number in numbers}
+    seen_ids: dict[int, set[int]] = {number: set() for number in numbers}
+    used_cursors: dict[int, set[str]] = {number: set() for number in numbers}
+    active_numbers = numbers
+    after_by_pr: dict[int, str] = {}
+    while active_numbers:
+        query = _issue_comment_batch_query(active_numbers, after_by_pr)
+        variables: dict[str, str | int] = {"owner": owner, "repo": name}
+        variables.update({f"after_{number}": cursor for number, cursor in after_by_pr.items()})
+        payload = run_gh_query(query, variables)
+        errors = payload.get("errors")
+        if errors is not None and (not isinstance(errors, list) or errors):
+            raise RuntimeError("GitHub GraphQL response contains errors")
+        try:
+            repository = payload["data"]["repository"]
+        except (KeyError, TypeError) as exc:
+            raise RuntimeError("GitHub response has no issue-comment batch") from exc
+        if not isinstance(repository, dict):
+            raise TypeError("GitHub response has no issue-comment batch")
+        expected_aliases = {f"pr_{number}" for number in active_numbers}
+        if set(repository) != expected_aliases:
+            raise RuntimeError("GitHub issue-comment batch identities are incomplete or unexpected")
+
+        pending_after: dict[int, str] = {}
+        for number in active_numbers:
+            pull_request = repository.get(f"pr_{number}")
+            if (
+                not isinstance(pull_request, dict)
+                or type(pull_request.get("number")) is not int
+                or pull_request["number"] != number
+            ):
+                raise RuntimeError(f"GitHub issue-comment batch identity is missing or mismatched for PR #{number}")
+            connection = pull_request.get("comments")
+            if not isinstance(connection, dict):
+                raise TypeError(f"GitHub issue-comment connection is missing for PR #{number}")
+            nodes = connection.get("nodes")
+            page_info = connection.get("pageInfo")
+            if not isinstance(nodes, list):
+                raise TypeError(f"GitHub issue-comment nodes are malformed for PR #{number}")
+            if not isinstance(page_info, dict) or type(page_info.get("hasNextPage")) is not bool:
+                raise TypeError(f"GitHub issue-comment page info is malformed for PR #{number}")
+            for comment in nodes:
+                if not isinstance(comment, dict):
+                    raise TypeError(f"GitHub issue-comment node is malformed for PR #{number}")
+                comment_id = immutable_database_id(comment)
+                if comment_id is None:
+                    raise TypeError(f"GitHub issue-comment identity is missing for PR #{number}")
+                if comment_id in seen_ids[number]:
+                    raise RuntimeError(f"GitHub issue-comment identity is duplicated for PR #{number}")
+                if not isinstance(comment.get("body"), str):
+                    raise TypeError(f"GitHub issue-comment body is malformed for PR #{number}")
+                seen_ids[number].add(comment_id)
+                comments_by_pr[number].append(comment)
+
+            if page_info["hasNextPage"]:
+                cursor = page_info.get("endCursor")
+                if not isinstance(cursor, str) or not cursor:
+                    raise RuntimeError(f"GitHub issue-comment pagination has no cursor for PR #{number}")
+                if cursor in used_cursors[number]:
+                    raise RuntimeError(f"GitHub issue-comment pagination repeated cursor for PR #{number}")
+                used_cursors[number].add(cursor)
+                pending_after[number] = cursor
+
+        active_numbers = tuple(pending_after)
+        after_by_pr = pending_after
+    return comments_by_pr
+
+
 def load_pull_request(input_path: str | Path | None, repo: str, pr_number: int) -> dict[str, Any]:
     if input_path is None:
         return fetch_pull_request(repo, pr_number)
@@ -519,9 +630,7 @@ def load_pull_request(input_path: str | Path | None, repo: str, pr_number: int) 
         if connection == "reviewThreads":
             for thread in nodes:
                 if isinstance(thread, dict) and "comments" in thread:
-                    _, thread_page_info = _review_connection(
-                        thread, "comments", require_page_info=False
-                    )
+                    _, thread_page_info = _review_connection(thread, "comments", require_page_info=False)
                     _reject_incomplete_input_connection("review-thread comments", thread_page_info)
     return payload
 
@@ -727,6 +836,34 @@ def fetch_pr_metadata(repo: str, pr_number: int) -> dict[str, Any]:
     return value
 
 
+def fetch_pr_identity(repo: str, pr_number: int) -> dict[str, Any]:
+    """Read only the current identity fields consumed by a live snapshot."""
+
+    owner, name = parse_repo(repo)
+    query = """
+query($owner:String!, $repo:String!, $number:Int!) {
+  repository(owner:$owner, name:$repo) { pullRequest(number:$number) {
+    number
+    state
+    isDraft
+    baseRefName
+    baseRefOid
+    headRefName
+    headRefOid
+    headRepository { nameWithOwner name owner { login } }
+    changedFiles
+    mergeable
+    mergedAt
+  } }
+}
+""".strip()
+    payload = run_gh_query(query, {"owner": owner, "repo": name, "number": pr_number})
+    pull_request = _pull_request_from_graphql_payload(payload)
+    if type(pull_request.get("number")) is not int or pull_request["number"] != pr_number:
+        raise RuntimeError("GitHub response has no matching pull-request identity")
+    return pull_request
+
+
 def fetch_authenticated_user() -> dict[str, Any]:
     """Read the current gh identity under the active Hosted preflight budget."""
 
@@ -760,7 +897,9 @@ def fetch_authenticated_user() -> dict[str, Any]:
     return value
 
 
-def fetch_pr_identity_batch(repo: str, pr_numbers: Sequence[int]) -> dict[int, dict[str, Any] | None]:
+def fetch_pr_identity_batch(
+    repo: str, pr_numbers: Sequence[int], *, concurrent_chunks: bool = False
+) -> dict[int, dict[str, Any] | None]:
     """Fetch bounded live identity/activity summaries for every requested PR.
 
     Aliased ``pullRequest(number: ...)`` fields keep this query bound to the
@@ -782,8 +921,11 @@ def fetch_pr_identity_batch(repo: str, pr_numbers: Sequence[int]) -> dict[int, d
 
     # Keep each request comfortably within GitHub GraphQL's query-cost limit
     # while ensuring every configured number is covered without list truncation.
-    for offset in range(0, len(numbers), 25):
-        chunk = numbers[offset : offset + 25]
+    chunks = tuple(numbers[offset : offset + 25] for offset in range(0, len(numbers), 25))
+
+    def fetch_chunk(chunk: tuple[int, ...]) -> dict[int, dict[str, Any] | None]:
+        if budget is not None:
+            budget.remaining_seconds()
         selections = "\n".join(
             f"pr_{number}: pullRequest(number:{number}) {{ "
             "number state isDraft mergedAt baseRefName baseRefOid headRefName headRefOid mergeable "
@@ -810,6 +952,7 @@ query($owner:String!, $repo:String!) {{
             raise RuntimeError("GitHub response has no repository identity batch") from exc
         if not isinstance(repository, dict):
             raise TypeError("GitHub response has no repository identity batch")
+        chunk_result: dict[int, dict[str, Any] | None] = {number: None for number in chunk}
         for number in chunk:
             item = repository.get(f"pr_{number}")
             if item is None:
@@ -833,9 +976,28 @@ query($owner:String!, $repo:String!) {{
                 if not isinstance(value, dict) or not isinstance(value.get("nodes"), list):
                     break
             else:
-                result[number] = item
-        if budget is not None and budget.current_phase == "target_identity_batch":
-            budget.set_completed(offset // 25 + 1)
+                chunk_result[number] = item
+        return chunk_result
+
+    def fetch_bound_chunk(chunk: tuple[int, ...]) -> dict[int, dict[str, Any] | None]:
+        if budget is None:
+            return fetch_chunk(chunk)
+        with bind_hosted_preflight_budget(budget):
+            return fetch_chunk(chunk)
+
+    def collect(results: Iterator[dict[int, dict[str, Any] | None]]) -> None:
+        # Consume in configured order even when independent reads finish out of
+        # order. Only this caller mutates the assembled result and progress.
+        for completed, chunk_result in enumerate(results, 1):
+            result.update(chunk_result)
+            if budget is not None and budget.current_phase == "target_identity_batch":
+                budget.set_completed(completed)
+
+    if concurrent_chunks and len(chunks) > 1:
+        with ThreadPoolExecutor(max_workers=min(4, len(chunks))) as pool:
+            collect(pool.map(fetch_bound_chunk, chunks))
+    else:
+        collect(map(fetch_chunk, chunks))
     return result
 
 

@@ -13,6 +13,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import net.firedevops.firemud.gamesession.command.text.GameplayWorldCatalog;
+import net.firedevops.firemud.test.TestContainerImages;
 import org.flywaydb.core.Flyway;
 import org.flywaydb.core.api.MigrationVersion;
 import org.jooq.DSLContext;
@@ -39,7 +40,8 @@ class GameplayAdmissionPointerMigrationIntegrationTest {
       "Repair duplicate public production in retained bootstrap catalog";
 
   @Container
-  static PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>("postgres:16-alpine");
+  static PostgreSQLContainer<?> postgres =
+      new PostgreSQLContainer<>(TestContainerImages.postgres());
 
   @Test
   void v8RepairsOnlyProvenRetainedBootstrapPairAndLeavesDemoAndRuntimeIdentityUnchanged()

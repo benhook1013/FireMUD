@@ -13,12 +13,17 @@ inputs:
   workflow-path:
     description: Exact workflow path returned by the Actions API.
     required: true
+outputs:
+  assessment:
+    description: Successful proof or dependency-deferred assessment; invalid proof fails the action.
+    value: ${{ steps.preserve.outputs.assessment }}
 runs:
   using: composite
   steps:
     - name: Set up canonical GitHub CLI
       uses: ./.github/actions/setup-gh
-    - name: Poll prior required gate
+    - name: Assess prior required gate
+      id: preserve
       shell: bash
       env:
         GH_TOKEN: ${{ github.token }}
@@ -29,4 +34,4 @@ runs:
         EXPECTED_WORKFLOW_NAME: ${{ inputs.workflow-name }}
         EXPECTED_WORKFLOW_FILE: ${{ inputs.workflow-file }}
         EXPECTED_WORKFLOW_PATH: ${{ inputs.workflow-path }}
-      run: bash "$GITHUB_ACTION_PATH/poll-required-gate.sh"
+      run: bash "$GITHUB_ACTION_PATH/assess-required-gate.sh"

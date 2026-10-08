@@ -13,11 +13,24 @@ from zoneinfo import ZoneInfo
 from .context import worker_alias as _worker_alias
 
 PUBLIC_FIELDS = (
-    "id", "name", "worker", "workstream_id", "title", "status", "primary", "summary", "progress", "blocker",
+    "id",
+    "name",
+    "worker",
+    "workstream_id",
+    "title",
+    "status",
+    "primary",
+    "summary",
+    "progress",
+    "blocker",
+    "created_at",
+    "updated_at",
+    "last_activity_at",
 )
 JOB_STATUSES = frozenset({"active", "parked", "blocked", "completed"})
 LANE_STATUSES = frozenset({"active", "blocked", "paused", "idle"})
 HISTORY_PAGE_SIZE = 50
+INBOX_NOTE_PAGE_SIZE = 50
 MAX_HISTORY_OFFSET = 1_000_000
 _JOB_ID = re.compile(r"[A-Za-z0-9._-]{1,128}\Z")
 _WORKSTREAM_ID = re.compile(r"[a-z0-9][a-z0-9-]{0,99}\Z")
@@ -28,7 +41,6 @@ _MARKDOWN_TOKEN = re.compile(
 _CHECKLIST_ITEM = re.compile(r"^\s*(?:[-*+]\s+|\d+\.\s+)(.*)$")
 _HEADING = re.compile(r"^(#{1,6})\s+(.+?)\s*#*\s*$")
 _LOCAL_TIMEZONE = ZoneInfo("Pacific/Auckland")
-
 
 
 def public_jobs(rows) -> list[dict]:
@@ -117,16 +129,18 @@ def public_lanes(rows) -> list[dict]:
             primary = public_jobs([primary])[0]
             if primary["worker"] != worker or not primary["primary"]:
                 raise ValueError("lane primary does not match its worker")
-        projected.append({
-            "worker": worker,
-            "status": status,
-            "paused": paused,
-            "pause_reason": pause_reason,
-            **counts,
-            "primary": primary,
-            "jobs": nested_jobs,
-            "jobs_truncated": truncated,
-        })
+        projected.append(
+            {
+                "worker": worker,
+                "status": status,
+                "paused": paused,
+                "pause_reason": pause_reason,
+                **counts,
+                "primary": primary,
+                "jobs": nested_jobs,
+                "jobs_truncated": truncated,
+            }
+        )
     return projected
 
 
@@ -160,8 +174,7 @@ def public_workstreams(snapshot) -> dict:
         if any(not isinstance(fields[key], str) for key in ("state", "now", "milestone")):
             raise TypeError("public workstream text fields must be strings")
         if not isinstance(fields["phase_states"], dict) or any(
-            not isinstance(name, str) or not isinstance(state, str)
-            for name, state in fields["phase_states"].items()
+            not isinstance(name, str) or not isinstance(state, str) for name, state in fields["phase_states"].items()
         ):
             raise TypeError("public phase states must be a text mapping")
         workstreams.append({"id": identifier, **fields})
@@ -170,8 +183,13 @@ def public_workstreams(snapshot) -> dict:
         if not isinstance(row, dict):
             raise TypeError("return-point records must be objects")
         identifier, name, trigger, state = (row.get(key) for key in ("id", "name", "trigger", "state"))
-        if (not isinstance(identifier, str) or not _WORKSTREAM_ID.fullmatch(identifier)
-                or not isinstance(name, str) or not isinstance(trigger, str) or not isinstance(state, str)):
+        if (
+            not isinstance(identifier, str)
+            or not _WORKSTREAM_ID.fullmatch(identifier)
+            or not isinstance(name, str)
+            or not isinstance(trigger, str)
+            or not isinstance(state, str)
+        ):
             raise TypeError("public return-point fields are invalid")
         points.append({"id": identifier, "name": name, "trigger": trigger, "state": state})
     return {"workstreams": workstreams, "return_points": points}
@@ -191,10 +209,11 @@ def review_model_label(run, attempts) -> str:
     if not isinstance(run, dict) or run.get("channel") != "subagent":
         return ""
     run_id = run.get("run_id")
-    linked = [
-        attempt for attempt in attempts if isinstance(attempt, dict)
-        and attempt.get("run_id") == run_id
-    ] if isinstance(attempts, list) and run_id is not None else []
+    linked = (
+        [attempt for attempt in attempts if isinstance(attempt, dict) and attempt.get("run_id") == run_id]
+        if isinstance(attempts, list) and run_id is not None
+        else []
+    )
     model = linked[0].get("model") if len(linked) == 1 else None
     effort = linked[0].get("reasoning_effort") if len(linked) == 1 else None
     if not isinstance(model, str) or not model.strip():
@@ -226,8 +245,11 @@ def _safe_href(value: str) -> str | None:
     for _ in range(2):
         decoded = unquote(decoded)
     normalized = posixpath.normpath(decoded)
-    if (not decoded.startswith("/jobs/") or normalized != decoded
-            or any(segment in {".", ".."} for segment in decoded.split("/"))):
+    if (
+        not decoded.startswith("/jobs/")
+        or normalized != decoded
+        or any(segment in {".", ".."} for segment in decoded.split("/"))
+    ):
         return None
     return html.escape(target, quote=True)
 
@@ -236,7 +258,7 @@ def _inline_markdown(value: str, *, public: bool = False) -> str:
     pieces = []
     cursor = 0
     for match in _MARKDOWN_TOKEN.finditer(value):
-        pieces.append(html.escape(value[cursor:match.start()], quote=True))
+        pieces.append(html.escape(value[cursor : match.start()], quote=True))
         token = match.group(0)
         if token == "\n":
             pieces.append("<br>\n")
@@ -279,7 +301,7 @@ def _markdown(value, *, public: bool = False) -> str:
 
     def flush_paragraph():
         if paragraph:
-            blocks.append(f'<p>{_inline_markdown(chr(10).join(paragraph), public=public)}</p>')
+            blocks.append(f"<p>{_inline_markdown(chr(10).join(paragraph), public=public)}</p>")
             paragraph.clear()
 
     def flush_list():
@@ -296,7 +318,7 @@ def _markdown(value, *, public: bool = False) -> str:
             flush_paragraph()
             flush_list()
             if in_code:
-                blocks.append(f'<pre><code>{html.escape(chr(10).join(code_lines), quote=True)}</code></pre>')
+                blocks.append(f"<pre><code>{html.escape(chr(10).join(code_lines), quote=True)}</code></pre>")
                 code_lines = []
                 in_code = False
             else:
@@ -328,7 +350,7 @@ def _markdown(value, *, public: bool = False) -> str:
         flush_list()
         paragraph.append(line)
     if in_code:
-        blocks.append(f'<pre><code>{html.escape(chr(10).join(code_lines), quote=True)}</code></pre>')
+        blocks.append(f"<pre><code>{html.escape(chr(10).join(code_lines), quote=True)}</code></pre>")
     flush_paragraph()
     flush_list()
     return "\n".join(blocks)
@@ -346,63 +368,89 @@ def render_public_inline(value) -> str:
     return _inline_markdown(value if isinstance(value, str) else str(value), public=True)
 
 
-def _private_document(title: str, content: str) -> str:
+def _private_document(title: str, content: str, *, delivery_link: bool = True) -> str:
+    navigation = (
+        '<nav class="private-actions" aria-label="Local navigation"><a href="/">← Local Delivery Status page</a></nav>'
+        if delivery_link
+        else ""
+    )
     return (
         '<!doctype html><html lang="en"><head><meta charset="utf-8">'
         '<meta name="viewport" content="width=device-width, initial-scale=1">'
-        f'<title>{html.escape(title, quote=True)}</title>'
+        f"<title>{html.escape(title, quote=True)}</title>"
         '<link rel="stylesheet" href="/shared.css">'
-        '<style>body{margin:0;background:var(--ash,#d4d4d4);color:var(--ink,#242832);'
-        'font:16px ui-sans-serif,system-ui,sans-serif}*{box-sizing:border-box}'
-        'main.private-pages{max-width:1440px;margin:auto;padding:1rem clamp(1rem,4vw,3.5rem) 4rem;line-height:1.5}'
-        '.private-pages .job-private,.private-pages .job-history-entry{background:var(--paper,#e7e7e7);'
-        'border:1px solid var(--line,#b9b9b9);border-radius:0;padding:clamp(1rem,2vw,1.5rem);margin:1rem 0;'
-        'overflow-wrap:anywhere;min-width:0}'
-        '.private-pages h1{margin:.15rem 0 1rem;font-size:clamp(1.65rem,3vw,2.4rem);line-height:1.2;letter-spacing:-.03em}'
-        '.private-pages .job-meta{display:flex;flex-wrap:wrap;gap:.5rem .75rem;align-items:center;'
-        'padding:1rem;background:var(--surface-muted,#dedede);border-bottom:1px solid var(--line,#b9b9b9)}'
-        '.private-pages .job-meta h1,.private-pages .job-meta h2{flex-basis:100%;margin:0 0 .35rem}'
-        '.private-pages .job-meta h2{font-size:1.3rem;line-height:1.25}'
-        '.private-pages .job-state,.private-pages .job-badge{display:inline-block;border:1px solid var(--line,#b9b9b9);'
-        'padding:.12rem .45rem;background:var(--surface,#f0f0f0);font-size:.75rem;font-weight:750;text-transform:capitalize}'
-        '.private-pages .job-alias,.private-pages .job-times{color:var(--muted,#57636c);font-size:.85rem}'
-        '.private-pages .job-times{display:flex;flex-wrap:wrap;gap:.35rem 1.5rem;margin:.8rem 0}'
-        '.private-pages section{margin-top:1.25rem;padding-top:1rem;border-top:1px solid var(--line,#b9b9b9)}'
-        '.private-pages section>h2{margin:0 0 .75rem;font-size:1.2rem;letter-spacing:normal}'
-        '.private-pages h3{margin:.75rem 0 .4rem;font-size:1rem}.private-pages p{margin:.5rem 0 .85rem}'
-        '.private-pages .job-update,.private-pages .job-note{padding:1rem;margin:.75rem 0;'
-        'border:1px solid var(--line,#b9b9b9);background:var(--surface,#f0f0f0)}'
-        '.private-pages .job-update-head{display:flex;flex-wrap:wrap;justify-content:space-between;gap:.5rem 1rem;'
-        'color:var(--muted,#57636c);font-size:.85rem}.private-pages .job-note h3{margin-top:0}'
-        '.private-pages .job-checklist{padding-left:1.5rem}.private-pages .job-checklist li{padding:.3rem 0}'
-        '.private-pages .job-blocker{border-left:4px solid var(--fire,#c3262d);padding-left:1rem}'
-        '.private-pages .job-blocker section{border-top:0}.private-pages pre{white-space:pre-wrap;'
-        'padding:1rem;max-width:100%;background:var(--surface-muted,#dedede);overflow-wrap:anywhere}'
-        '.private-pages table{display:block;max-width:100%;overflow-x:auto;border-collapse:collapse}'
-        '.private-pages th,.private-pages td{padding:.5rem .65rem;border:1px solid var(--line,#b9b9b9);text-align:left}'
-        '.private-pages a{color:var(--red-ink,#963149);text-underline-offset:3px}'
-        '.private-pages a:focus-visible{outline:3px solid #f6aa61;outline-offset:3px}'
-        '.private-pages .private-actions,.private-pages .job-links,.private-pages .job-history-paging{display:flex;'
-        'flex-wrap:wrap;gap:.5rem .75rem;align-items:center;margin:1rem 0}'
-        '.private-pages .private-actions a,.private-pages .job-links a,.private-pages .job-history-paging a{'
-        'display:inline-block;border:1px solid var(--line,#b9b9b9);padding:.4rem .7rem;'
-        'background:var(--surface,#f0f0f0);font-size:.85rem;font-weight:650;text-decoration:none}'
-        '.private-pages .private-actions a[aria-current=page]{background:var(--surface-muted,#dedede);'
-        'border-color:var(--muted,#57636c);color:var(--ink,#242832)}'
-        '.private-pages .private-actions a:hover,.private-pages .job-links a:hover,.private-pages .job-history-paging a:hover{'
-        'background:var(--surface-muted,#dedede);text-decoration:underline}'
-        '.private-pages .private-list{list-style:none;padding:0;display:grid;gap:.75rem;margin:1.25rem 0}'
-        '.private-pages .private-row{padding:1rem;border:1px solid var(--line,#b9b9b9);background:var(--surface,#f0f0f0)}'
-        '.private-pages .private-row h2{margin:0 0 .5rem;font-size:1.15rem}'
-        '.private-pages .private-list .job-private{margin:0;background:var(--surface,#f0f0f0)}'
-        '.private-pages .private-empty{padding:1.2rem;border:1px dashed var(--line,#b9b9b9);'
-        'background:var(--surface,#f0f0f0);color:var(--muted,#57636c)}'
-        '@media(max-width:760px){.private-pages .job-meta{align-items:flex-start}.private-pages .job-times{'
-        'flex-direction:column}.private-pages .job-update-head{justify-content:flex-start}'
-        '.private-pages .private-actions a,.private-pages .job-links a{max-width:100%;overflow-wrap:anywhere}}</style>'
-        '</head><body><main class="private-pages"><nav class="private-actions" aria-label="Local navigation">'
-        '<a href="/">← Local status page</a></nav>'
-        f'{content}</main></body></html>'
+        "<style>body{margin:0;background:var(--ash,#d4d4d4);color:var(--ink,#242832);"
+        "font:16px ui-sans-serif,system-ui,sans-serif}*{box-sizing:border-box}"
+        "main.private-pages{max-width:1440px;margin:auto;padding:1rem clamp(1rem,4vw,3.5rem) 4rem;line-height:1.5}"
+        ".private-pages .job-private,.private-pages .job-history-entry{background:var(--paper,#e7e7e7);"
+        "border:1px solid var(--line,#b9b9b9);border-radius:0;padding:clamp(1rem,2vw,1.5rem);margin:1rem 0;"
+        "overflow-wrap:anywhere;min-width:0}"
+        ".private-pages h1{margin:.15rem 0 1rem;font-size:clamp(1.65rem,3vw,2.4rem);line-height:1.2;letter-spacing:-.03em}"
+        ".private-pages .job-meta{display:flex;flex-wrap:wrap;gap:.5rem .75rem;align-items:center;"
+        "padding:1rem;background:var(--surface-muted,#dedede);border-bottom:1px solid var(--line,#b9b9b9)}"
+        ".private-pages .job-meta h1,.private-pages .job-meta h2{flex-basis:100%;margin:0 0 .35rem}"
+        ".private-pages .job-meta h2{font-size:1.3rem;line-height:1.25}"
+        ".private-pages .job-state,.private-pages .job-badge{display:inline-block;border:1px solid var(--line,#b9b9b9);"
+        "padding:.12rem .45rem;background:var(--surface,#f0f0f0);font-size:.75rem;font-weight:750;text-transform:capitalize}"
+        ".private-pages .job-alias,.private-pages .job-times{color:var(--muted,#57636c);font-size:.85rem}"
+        ".private-pages .job-times{display:flex;flex-wrap:wrap;gap:.35rem 1.5rem;margin:.8rem 0}"
+        ".private-pages section{margin-top:1.25rem;padding-top:1rem;border-top:1px solid var(--line,#b9b9b9)}"
+        ".private-pages section>h2{margin:0 0 .75rem;font-size:1.2rem;letter-spacing:normal}"
+        ".private-pages section.job-brief>h2{font-size:1.4rem}"
+        ".private-pages .job-brief-body{font-size:.95rem}"
+        ".private-pages .job-brief-body h1{font-size:1.15rem;line-height:1.3;letter-spacing:normal}"
+        ".private-pages .job-brief-body h2{font-size:1.05rem;line-height:1.3}"
+        ".private-pages .job-brief-body h3{font-size:1rem;line-height:1.3}"
+        ".private-pages .job-brief-body h4{font-size:.95rem;line-height:1.3}"
+        ".private-pages .job-brief-body h5{font-size:.9rem;line-height:1.3}"
+        ".private-pages .job-brief-body h6{font-size:.85rem;line-height:1.3}"
+        ".private-pages h3{margin:.75rem 0 .4rem;font-size:1rem}.private-pages p{margin:.5rem 0 .85rem}"
+        ".private-pages .job-update,.private-pages .job-note{padding:1rem;margin:.75rem 0;"
+        "border:1px solid var(--line,#b9b9b9);background:var(--surface,#f0f0f0)}"
+        ".private-pages .inbox-notes .job-note,.private-pages .conversation-card{border-radius:9px}"
+        ".private-pages .job-update-head{display:flex;flex-wrap:wrap;justify-content:space-between;gap:.5rem 1rem;"
+        "color:var(--muted,#57636c);font-size:.85rem}.private-pages .job-note h3{margin-top:0}"
+        ".private-pages .job-checklist{padding-left:1.5rem}.private-pages .job-checklist li{padding:.3rem 0}"
+        ".private-pages .job-blocker{border-left:4px solid var(--fire,#c3262d);padding-left:1rem}"
+        ".private-pages .job-blocker section{border-top:0}.private-pages pre{white-space:pre-wrap;"
+        "padding:1rem;max-width:100%;background:var(--surface-muted,#dedede);overflow-wrap:anywhere}"
+        ".private-pages table{display:block;max-width:100%;overflow-x:auto;border-collapse:collapse}"
+        ".private-pages th,.private-pages td{padding:.5rem .65rem;border:1px solid var(--line,#b9b9b9);text-align:left}"
+        ".private-pages a{color:var(--red-ink,#963149);text-underline-offset:3px}"
+        ".private-pages a:focus-visible{outline:3px solid #f6aa61;outline-offset:3px}"
+        ".private-pages .private-actions,.private-pages .job-links,.private-pages .job-history-paging{display:flex;"
+        "flex-wrap:wrap;gap:.5rem .75rem;align-items:center;margin:1rem 0}"
+        ".private-pages .private-actions a,.private-pages .job-links a,.private-pages .job-history-paging a{"
+        "display:inline-block;border:1px solid var(--line,#b9b9b9);padding:.4rem .7rem;"
+        "background:var(--surface,#f0f0f0);font-size:.85rem;font-weight:650;text-decoration:none}"
+        ".private-pages .private-actions a[aria-current=page]{background:var(--surface-muted,#dedede);"
+        "border-color:var(--muted,#57636c);color:var(--ink,#242832)}"
+        ".private-pages .private-actions a:hover,.private-pages .job-links a:hover,.private-pages .job-history-paging a:hover{"
+        "background:var(--surface-muted,#dedede);text-decoration:underline}"
+        ".private-pages .private-list{list-style:none;padding:0;display:grid;grid-template-columns:minmax(0,1fr);gap:.75rem;margin:1.25rem 0}"
+        ".private-pages .private-list>li{min-width:0;max-width:100%}"
+        ".private-pages .conversation-list{gap:.5rem;margin:.75rem 0}"
+        ".private-pages .conversation-card{display:flex;align-items:center;justify-content:space-between;min-width:0;max-width:100%;"
+        "gap:.5rem 1rem;padding:.65rem .8rem!important}"
+        ".private-pages .conversation-copy{min-width:0;flex:1}"
+        ".private-pages .job-private.conversation-card .conversation-copy>h3{margin:0;font-size:1rem;line-height:1.3}"
+        ".private-pages .conversation-meta{display:flex;flex-wrap:wrap;gap:.15rem .65rem;align-items:baseline;"
+        "margin:.2rem 0 0!important;color:var(--muted,#57636c);font-size:.85rem}"
+        ".private-pages .conversation-open{display:inline-flex;align-items:center;justify-content:center;"
+        "min-height:44px;padding:.45rem .75rem;border:1px solid var(--line,#b9b9b9);"
+        "background:var(--surface-muted,#dedede);font-size:.85rem;font-weight:650;text-decoration:none;white-space:nowrap}"
+        ".private-pages .private-row{padding:1rem;border:1px solid var(--line,#b9b9b9);background:var(--surface,#f0f0f0)}"
+        ".private-pages .inbox-messages .private-row>h3{margin:0 0 .5rem;font-size:1.15rem}"
+        ".private-pages .private-list .job-private{margin:0;background:var(--surface,#f0f0f0)}"
+        ".private-pages .private-empty{padding:1.2rem;border:1px dashed var(--line,#b9b9b9);"
+        "background:var(--surface,#f0f0f0);color:var(--muted,#57636c)}"
+        "@media(max-width:760px){.private-pages .job-meta{align-items:flex-start}.private-pages .job-times{"
+        "flex-direction:column}.private-pages .job-update-head{justify-content:flex-start}"
+        ".private-pages .conversation-card{align-items:flex-start;flex-direction:column}"
+        ".private-pages .conversation-open{max-width:100%;white-space:normal}"
+        ".private-pages .private-actions a,.private-pages .job-links a{max-width:100%;overflow-wrap:anywhere}}</style>"
+        f'</head><body><main class="private-pages">{navigation}'
+        f"{content}</main></body></html>"
     )
 
 
@@ -438,15 +486,14 @@ def _job_times(job: dict) -> str:
     for label, field in (("Created", "created_at"), ("Last activity", "last_activity_at")):
         timestamp = job.get(field)
         rendered = _time_metadata(timestamp, relative=True) if timestamp else "Not recorded"
-        items.append(f'<span><strong>{label}</strong> · {rendered}</span>')
+        items.append(f"<span><strong>{label}</strong> · {rendered}</span>")
     return f'<div class="job-times">{"".join(items)}</div>'
 
 
 def _field(label: str, value) -> str:
     if not isinstance(value, str) or not value:
         return ""
-    return f'<section><h3>{label}</h3>{_markdown(value)}</section>'
-
+    return f"<section><h3>{label}</h3>{_markdown(value)}</section>"
 
 
 def _render_checklist(checklist) -> str:
@@ -458,7 +505,7 @@ def _render_checklist(checklist) -> str:
             marker = "Done" if item.get("done") is True else "Open"
             entries.append(
                 f'<li><span class="checklist-state">{marker}</span> '
-                f'{html.escape(str(item.get("text", "")), quote=True)}</li>'
+                f"{html.escape(str(item.get('text', '')), quote=True)}</li>"
             )
         return f'<section><h2>Checklist</h2><ul class="job-checklist">{"".join(entries)}</ul></section>'
     return ""
@@ -478,21 +525,26 @@ def render_job(job, history=False) -> str:
     title = html.escape(raw_title, quote=True)
     status = html.escape(str(job.get("status", "unknown")), quote=True)
     primary = " · Primary" if job.get("primary") is True else ""
-    content = [(
-        f'<article class="job-private"><div class="job-meta"><h1>{title}</h1>'
-        f'<span class="job-state">{status}</span><span>{html.escape(str(job.get("worker", "")), quote=True)}'
-        f'{primary}</span><span class="job-alias">Job alias · {name}</span></div>'
-    )]
+    content = [
+        (
+            f'<article class="job-private"><div class="job-meta"><h1>{title}</h1>'
+            f'<span class="job-state">{status}</span><span>{html.escape(str(job.get("worker", "")), quote=True)}'
+            f'{primary}</span><span class="job-alias">Alias: {name}</span></div>'
+        )
+    ]
     content.append(_job_times(job))
     for label, field in (("Summary", "summary"), ("Progress", "progress"), ("Blocker", "blocker")):
         section = _field(label, job.get(field))
         if section:
             content.append(f'<div class="job-{field}">{section}</div>')
     content.append(_render_checklist(job.get("checklist", [])))
-    content.append(f'<section><h2>Private working brief</h2>{_markdown(job.get("brief", ""))}</section>')
+    content.append(
+        f'<section class="job-brief"><h2>Private working brief</h2>'
+        f'<div class="job-brief-body">{_markdown(job.get("brief", ""))}</div></section>'
+    )
     checkpoint = job.get("latest_checkpoint")
     if isinstance(checkpoint, dict):
-        content.append('<section><h2>Latest checkpoint</h2>')
+        content.append("<section><h2>Latest checkpoint</h2>")
         for label, field in (("Done", "done"), ("Next steps", "next_steps"), ("Blocker", "blocker")):
             section = _field(label, checkpoint.get(field))
             if section:
@@ -500,19 +552,19 @@ def render_job(job, history=False) -> str:
         pointers = checkpoint.get("pointers")
         if pointers is not None:
             rendered = json.dumps(pointers, ensure_ascii=False, sort_keys=True, indent=2, default=str)
-            content.append(f'<h3>Handoff pointers</h3><pre>{html.escape(rendered, quote=True)}</pre>')
+            content.append(f"<h3>Handoff pointers</h3><pre>{html.escape(rendered, quote=True)}</pre>")
         content.append("</section>")
     updates = job.get("updates", [])
-    content.append('<section><h2>Latest updates</h2>')
+    content.append("<section><h2>Latest updates</h2>")
     if isinstance(updates, list) and updates:
         for update in updates:
             if not isinstance(update, dict):
                 continue
             content.append(
                 '<article class="job-update"><div class="job-update-head">'
-                f'<strong>{html.escape(str(update.get("kind", "update")), quote=True)}</strong>'
-                f'{_time_metadata(update.get("created_at", ""))}</div>'
-                f'{_markdown(update.get("body", ""))}</article>'
+                f"<strong>{html.escape(str(update.get('kind', 'update')), quote=True)}</strong>"
+                f"{_time_metadata(update.get('created_at', ''))}</div>"
+                f"{_markdown(update.get('body', ''))}</article>"
             )
     else:
         content.append('<p class="private-empty">No updates recorded.</p>')
@@ -525,7 +577,7 @@ def render_job(job, history=False) -> str:
             labels = " · ".join(str(note.get(key, "")) for key in ("kind", "phase", "status") if note.get(key))
             content.append(
                 f'<article class="job-note"><h3>{html.escape(labels, quote=True)}</h3>'
-                f'{_markdown(note.get("body", ""))}</article>'
+                f"{_markdown(note.get('body', ''))}</article>"
             )
     else:
         content.append('<p class="private-empty">No pending notes or reminders.</p>')
@@ -540,36 +592,40 @@ def _render_history(data: dict) -> str:
     job_id = quote(str(job.get("id", "")), safe="")
     name = html.escape(str(job.get("name", "Job")), quote=True)
     raw_title = str(job.get("title") or job.get("name") or "Job")
-    title = html.escape(raw_title, quote=True)
+    history_title = f"Job History for {raw_title}"
     entry = data.get("revision_entry")
     if isinstance(entry, dict):
         revision = entry.get("revision", "?")
         body = [
-            f'<article class="job-history-entry"><h1>{title} · Revision {html.escape(str(revision), quote=True)}</h1>',
-            f'<p class="job-alias">Job alias · {name}</p>',
-            f'<p>{_time_metadata(entry.get("created_at", ""))}</p>',
+            f'<article class="job-history-entry"><div class="job-meta"><h1>{html.escape(history_title, quote=True)} · Revision {html.escape(str(revision), quote=True)}</h1>',
+            f'<span class="job-alias">Alias: {name}</span></div>',
+            f"<p>{_time_metadata(entry.get('created_at', ''))}</p>",
         ]
         body.append(
             f'<p class="job-state">{html.escape(str(entry.get("status", "")), quote=True)} · '
-            f'{html.escape(str(entry.get("worker", "")), quote=True)}'
-            f'{" · Primary" if entry.get("primary") is True else ""}</p>'
-            f'<p>{html.escape(str(entry.get("title", "")), quote=True)}</p>'
+            f"{html.escape(str(entry.get('worker', '')), quote=True)}"
+            f"{' · Primary' if entry.get('primary') is True else ''}</p>"
+            f"<p>{html.escape(str(entry.get('title', '')), quote=True)}</p>"
         )
         body.append(_render_checklist(entry.get("checklist", [])))
         for label, field in (("Summary", "summary"), ("Progress", "progress"), ("Blocker", "blocker")):
             section = _field(label, entry.get(field))
             if section:
                 body.append(section)
-        body.append(f'<section><h2>Private working brief</h2>{_markdown(entry.get("brief", ""))}</section>')
-        body.append(f'<p class="job-links"><a href="/jobs/{job_id}/history">All revisions</a> <a href="/jobs/{job_id}">Current job</a></p></article>')
-        return _private_document(f"{raw_title} history", "".join(body))
+        body.append(f"<section><h2>Private working brief</h2>{_markdown(entry.get('brief', ''))}</section>")
+        body.append(
+            f'<p class="job-links"><a href="/jobs/{job_id}/history">All revisions</a> <a href="/jobs/{job_id}">Current job</a></p></article>'
+        )
+        return _private_document(f"{history_title} · Revision {revision}", "".join(body))
 
     offset = data.get("offset", 0)
     rows = data.get("history", [])
-    content = [(
-        f'<article class="job-private"><h1>{title} history</h1>'
-        f'<p class="job-alias">Job alias · {name}</p><p>Recent revisions</p><ol class="private-list">'
-    )]
+    content = [
+        (
+            f'<article class="job-private"><div class="job-meta"><h1>{html.escape(history_title, quote=True)}</h1>'
+            f'<span class="job-alias">Alias: {name}</span></div><p>Recent revisions</p><ol class="private-list">'
+        )
+    ]
     if isinstance(rows, list):
         for row in rows:
             if not isinstance(row, dict):
@@ -578,21 +634,20 @@ def _render_history(data: dict) -> str:
             revision_url = f"/jobs/{job_id}/history?revision={quote(str(revision), safe='')}"
             content.append(
                 f'<li class="private-row"><a href="{revision_url}">Revision {html.escape(str(revision), quote=True)}</a>'
-                f' · {_time_metadata(row.get("created_at", ""))}'
-                f' · {html.escape(str(row.get("status", "")), quote=True)}'
-                f' · {html.escape(str(row.get("title", "")), quote=True)}</li>'
+                f" · {_time_metadata(row.get('created_at', ''))}"
+                f" · {html.escape(str(row.get('status', '')), quote=True)}"
+                f" · {html.escape(str(row.get('title', '')), quote=True)}</li>"
             )
     if not rows:
         content.append('<li class="private-empty">No revisions recorded.</li>')
-    content.append("</ol><nav class=\"job-history-paging\">")
+    content.append('</ol><nav class="job-history-paging">')
     if type(offset) is int and offset > 0:
         previous = max(0, offset - HISTORY_PAGE_SIZE)
         content.append(f'<a href="/jobs/{job_id}/history?offset={previous}">Newer revisions</a>')
     if isinstance(rows, list) and len(rows) == HISTORY_PAGE_SIZE and type(offset) is int:
         content.append(f'<a href="/jobs/{job_id}/history?offset={offset + HISTORY_PAGE_SIZE}">Older revisions</a>')
     content.append(f'</nav><p class="job-links"><a href="/jobs/{job_id}">Current job</a></p></article>')
-    return _private_document(f"{raw_title} history", "".join(content))
-
+    return _private_document(history_title, "".join(content))
 
 
 def _render_phases(phases) -> str:
@@ -601,8 +656,8 @@ def _render_phases(phases) -> str:
         content.append("<section><h2>Phases</h2><ul>")
         for phase, state in phases.items():
             content.append(
-                f'<li><strong>{html.escape(str(phase), quote=True)}</strong> · '
-                f'{html.escape(str(state), quote=True)}</li>'
+                f"<li><strong>{html.escape(str(phase), quote=True)}</strong> · "
+                f"{html.escape(str(state), quote=True)}</li>"
             )
         content.append("</ul></section>")
     return "".join(content)
@@ -629,21 +684,25 @@ def render_workstream(record: dict, notes=(), history=False) -> str:
                 revision = html.escape(str(item.get("revision", "?")), quote=True)
                 entries.append(
                     f'<article class="job-history-entry"><h2>Revision {revision}</h2>'
-                    f'{_time_metadata(item.get("created_at", ""))}'
-                    f'{_field("Status", item.get("state"))}{_field("Where it stands", item.get("now"))}'
-                    f'{_field("Next milestone", item.get("milestone"))}'
-                    f'{_render_phases(item.get("phase_states", {}))}</article>'
+                    f"{_time_metadata(item.get('created_at', ''))}"
+                    f"{_field('Status', item.get('state'))}{_field('Where it stands', item.get('now'))}"
+                    f"{_field('Next milestone', item.get('milestone'))}"
+                    f"{_render_phases(item.get('phase_states', {}))}</article>"
                 )
         offset = record.get("offset")
         paging = []
         if type(offset) is int and offset > 0:
-            paging.append(f'<a href="/workstreams/{encoded_id}/history?offset={max(0, offset - HISTORY_PAGE_SIZE)}">Newer revisions</a>')
+            paging.append(
+                f'<a href="/workstreams/{encoded_id}/history?offset={max(0, offset - HISTORY_PAGE_SIZE)}">Newer revisions</a>'
+            )
         if type(offset) is int and isinstance(rows, list) and len(rows) == HISTORY_PAGE_SIZE:
-            paging.append(f'<a href="/workstreams/{encoded_id}/history?offset={offset + HISTORY_PAGE_SIZE}">Older revisions</a>')
+            paging.append(
+                f'<a href="/workstreams/{encoded_id}/history?offset={offset + HISTORY_PAGE_SIZE}">Older revisions</a>'
+            )
         history_entries = "".join(entries) if entries else '<p class="private-empty">No revisions recorded.</p>'
         content = (
-            f'<h1>{name} history</h1><p>Recent workstream revisions</p>'
-            f'{history_entries}'
+            f"<h1>{name} history</h1><p>Recent workstream revisions</p>"
+            f"{history_entries}"
             f'<nav class="job-history-paging">{"".join(paging)}</nav>'
             f'<p class="job-links"><a href="/workstreams/{encoded_id}">Current workstream</a></p>'
         )
@@ -666,10 +725,10 @@ def render_workstream(record: dict, notes=(), history=False) -> str:
                 continue
             content.append(
                 '<article class="job-update"><div class="job-update-head">'
-                f'<strong>{html.escape(str(note.get("kind", "note")), quote=True)} · '
-                f'{html.escape(str(note.get("status", "")), quote=True)}</strong>'
-                f'{_time_metadata(note.get("created_at", ""))}</div>'
-                f'{_markdown(note.get("body", ""))}</article>'
+                f"<strong>{html.escape(str(note.get('kind', 'note')), quote=True)} · "
+                f"{html.escape(str(note.get('status', '')), quote=True)}</strong>"
+                f"{_time_metadata(note.get('created_at', ''))}</div>"
+                f"{_markdown(note.get('body', ''))}</article>"
             )
     else:
         content.append('<p class="private-empty">No private map notes.</p>')
@@ -680,12 +739,29 @@ def render_workstream(record: dict, notes=(), history=False) -> str:
     return _private_document(f"{raw_name} · local workstream", "".join(content))
 
 
-def _inbox_views(worker: str, *, messages: bool = False) -> str:
+def _inbox_page_url(
+    worker: str, *, messages: bool, inbox_offset: int = 0, notes_offset: int = 0, preserve_zero_offset: bool = False
+) -> str:
     base = f"/inbox/{quote(worker, safe='')}"
+    query = []
+    if messages:
+        query.append("view=messages")
+    if inbox_offset > 0 or preserve_zero_offset:
+        query.append(f"offset={inbox_offset}")
+    if notes_offset > 0:
+        query.append(f"notes_offset={notes_offset}")
+    return base if not query else f"{base}?{'&amp;'.join(query)}"
+
+
+def _inbox_views(worker: str, *, messages: bool = False, notes_offset: int = 0) -> str:
     conversations = ' aria-current="page"' if not messages else ""
     all_messages = ' aria-current="page"' if messages else ""
-    return (f'<nav class="private-actions" aria-label="Inbox views"><a href="{base}"{conversations}>Conversations</a> '
-            f'<a href="{base}?view=messages"{all_messages}>All messages</a></nav>')
+    conversations_url = _inbox_page_url(worker, messages=False, notes_offset=notes_offset)
+    messages_url = _inbox_page_url(worker, messages=True, notes_offset=notes_offset)
+    return (
+        f'<nav class="private-actions" aria-label="Inbox views"><a href="{conversations_url}"{conversations}>Conversations</a> '
+        f'<a href="{messages_url}"{all_messages}>All messages</a></nav>'
+    )
 
 
 def _inbox_direction(worker: str, message: dict) -> str:
@@ -694,8 +770,76 @@ def _inbox_direction(worker: str, message: dict) -> str:
     return "Outgoing"
 
 
-def render_inbox_conversations(worker: str, conversations, *, offset: int = 0,
-                               unread_count: int | None = None, has_more: bool = False) -> str:
+def _render_inbox_notes(
+    worker: str, notes, *, available: bool, notes_offset: int, has_more: bool, messages: bool, inbox_offset: int
+) -> str:
+    content = ['<section class="inbox-notes"><h2>Pending notes and reminders</h2>']
+    if not available:
+        content.append('<p class="private-empty">Pending notes are unavailable.</p>')
+    elif not notes:
+        content.append('<p class="private-empty">No pending notes or reminders.</p>')
+    else:
+        for note in notes:
+            if not isinstance(note, dict):
+                continue
+            labels = [str(note.get("status", "")), str(note.get("kind", "note"))]
+            phase = note.get("phase")
+            if isinstance(phase, str) and phase:
+                labels.append(f"Phase: {phase}")
+            metadata = [f'<span class="job-badge">{html.escape(labels[0], quote=True)}</span>']
+            metadata.extend(html.escape(label, quote=True) for label in labels[1:])
+            job = note.get("job")
+            if isinstance(job, str) and job:
+                escaped_job = html.escape(job, quote=True)
+                if _JOB_ID.fullmatch(job) and job not in {".", ".."}:
+                    job_ref = f'<a href="/jobs/{quote(job, safe="")}">Job: {escaped_job}</a>'
+                else:
+                    job_ref = f"Job: {escaped_job}"
+                metadata.append(job_ref)
+            content.append(
+                '<article class="job-note"><h3>' + " · ".join(metadata) + "</h3>"
+                f"<div>{_markdown(note.get('body', ''))}</div></article>"
+            )
+        if has_more:
+            content.append(
+                '<p class="job-note-truncation">Showing up to 50 pending notes; older notes are available below.</p>'
+            )
+    if available:
+        paging = []
+        if notes_offset > 0:
+            previous = max(0, notes_offset - INBOX_NOTE_PAGE_SIZE)
+            previous_url = _inbox_page_url(
+                worker,
+                messages=messages,
+                inbox_offset=inbox_offset,
+                notes_offset=previous,
+            )
+            paging.append(f'<a href="{previous_url}">Newer notes</a>')
+        if has_more:
+            next_url = _inbox_page_url(
+                worker,
+                messages=messages,
+                inbox_offset=inbox_offset,
+                notes_offset=notes_offset + INBOX_NOTE_PAGE_SIZE,
+            )
+            paging.append(f'<a href="{next_url}">Older notes</a>')
+        content.append(f'<nav class="job-history-paging" aria-label="Pending note pages">{"".join(paging)}</nav>')
+    content.append("</section>")
+    return "".join(content)
+
+
+def render_inbox_conversations(
+    worker: str,
+    conversations,
+    *,
+    offset: int = 0,
+    unread_count: int | None = None,
+    has_more: bool = False,
+    pending_notes=(),
+    notes_available: bool = True,
+    notes_has_more: bool = False,
+    notes_offset: int = 0,
+) -> str:
     """Render reply conversations ordered by this worker's latest participation."""
 
     if not _worker_alias(worker) or not isinstance(conversations, list):
@@ -703,7 +847,11 @@ def render_inbox_conversations(worker: str, conversations, *, offset: int = 0,
     base = f"/inbox/{quote(worker, safe='')}"
     raw_title = f"{worker} inbox"
     title = html.escape(raw_title, quote=True)
-    count = "" if unread_count is None else f'<p>{unread_count} unread incoming message(s).</p>'
+    count = (
+        ""
+        if unread_count is None
+        else (f"<p>{unread_count} unread incoming {'message' if unread_count == 1 else 'messages'}.</p>")
+    )
     entries = []
     for conversation in conversations:
         root_id = conversation["root_id"]
@@ -712,31 +860,59 @@ def render_inbox_conversations(worker: str, conversations, *, offset: int = 0,
             continue
         author = html.escape(str(message.get("author") or "Unspecified sender"), quote=True)
         recipient = html.escape(str(message.get("recipient") or "Unspecified recipient"), quote=True)
+        message_count = conversation["message_count"]
+        unread_message_count = conversation["unread_count"]
         entries.append(
-            '<li><article class="job-private">'
-            f'<h2>{author} → {recipient}</h2>'
-            f'<p><span class="job-badge">{conversation["message_count"]} message(s)</span> · '
-            f'<span class="job-badge">{conversation["unread_count"]} unread incoming</span></p>'
-            f'<p>Latest: {_time_metadata(message.get("created_at", "Message"))} · '
-            f'{_inbox_direction(worker, message)}</p><p class="job-links">'
-            f'<a href="{base}/thread/{quote(root_id, safe="")}">Open conversation</a></p></article></li>'
+            '<li class="conversation-entry"><article class="job-private conversation-card">'
+            f'<div class="conversation-copy"><h3>{author} → {recipient}</h3>'
+            '<p class="conversation-meta">'
+            f"<span>{message_count} {'message' if message_count == 1 else 'messages'}</span>"
+            f"<span>{unread_message_count} unread incoming "
+            f"{'message' if unread_message_count == 1 else 'messages'}</span>"
+            f"<span>{_inbox_direction(worker, message)}</span>"
+            f"<span>Latest {_time_metadata(message.get('created_at', 'Message'))}</span>"
+            "</p></div>"
+            f'<a class="conversation-open" href="{base}/thread/{quote(root_id, safe="")}">Open conversation</a>'
+            "</article></li>"
         )
     rendered_entries = "".join(entries) if entries else '<li class="private-empty">No conversations on this page.</li>'
+    notes_section = _render_inbox_notes(
+        worker,
+        pending_notes,
+        available=notes_available,
+        notes_offset=notes_offset,
+        has_more=notes_has_more,
+        messages=False,
+        inbox_offset=offset,
+    )
     content = (
-        f'<article class="job-private"><h1>{title}</h1>{_inbox_views(worker)}{count}'
-        '<p>Conversations are ordered by your latest incoming or outgoing message. '
-        'Opening this list or a conversation does not mark messages seen or acknowledge them.</p>'
-        f'<ol class="private-list">{rendered_entries}</ol><nav class="job-history-paging" aria-label="Conversation pages">'
+        f'<article class="job-private"><h1>{title}</h1>'
+        f"{notes_section}<section class=\"inbox-conversations\"><h2>Conversations</h2>"
+        f'{_inbox_views(worker, notes_offset=notes_offset)}{count}'
+        "<p>Conversations are ordered by your latest incoming or outgoing message. "
+        "Opening this list or a conversation does not mark messages seen or acknowledge them.</p>"
+        f'<ol class="private-list conversation-list">{rendered_entries}</ol>'
+        '<nav class="job-history-paging" aria-label="Conversation pages">'
     )
     if offset > 0:
-        content += f'<a href="{base}?offset={max(0, offset - HISTORY_PAGE_SIZE)}">Newer conversations</a> '
+        content += f'<a href="{_inbox_page_url(worker, messages=False, inbox_offset=max(0, offset - HISTORY_PAGE_SIZE), notes_offset=notes_offset, preserve_zero_offset=True)}">Newer conversations</a> '
     if has_more:
-        content += f'<a href="{base}?offset={offset + HISTORY_PAGE_SIZE}">Older conversations</a>'
-    return _private_document(f"{raw_title} · FireController", content + "</nav></article>")
+        content += f'<a href="{_inbox_page_url(worker, messages=False, inbox_offset=offset + HISTORY_PAGE_SIZE, notes_offset=notes_offset)}">Older conversations</a>'
+    return _private_document(f"{raw_title} · FireController", content + "</nav></section></article>", delivery_link=False)
 
 
-def render_inbox(worker: str, messages, *, offset: int = 0, unread_count: int | None = None,
-                 has_more: bool = False) -> str:
+def render_inbox(
+    worker: str,
+    messages,
+    *,
+    offset: int = 0,
+    unread_count: int | None = None,
+    has_more: bool = False,
+    pending_notes=(),
+    notes_available: bool = True,
+    notes_has_more: bool = False,
+    notes_offset: int = 0,
+) -> str:
     """Render a bounded private worker inbox without acknowledging messages."""
 
     if not _worker_alias(worker):
@@ -746,7 +922,11 @@ def render_inbox(worker: str, messages, *, offset: int = 0, unread_count: int | 
         raise TypeError("inbox messages must be a list")
     raw_title = f"{worker} inbox"
     title = html.escape(raw_title, quote=True)
-    count = "" if unread_count is None else f'<p>{unread_count} unread incoming message(s).</p>'
+    count = (
+        ""
+        if unread_count is None
+        else (f"<p>{unread_count} unread incoming {'message' if unread_count == 1 else 'messages'}.</p>")
+    )
     entries = []
     for message in messages:
         if not isinstance(message, dict):
@@ -756,16 +936,16 @@ def render_inbox(worker: str, messages, *, offset: int = 0, unread_count: int | 
             continue
         message_url = f"/inbox/{encoded_worker}/{quote(message_id, safe='')}"
         if message.get("recipient") != worker:
-            message_url = (f"/inbox/{encoded_worker}/thread/{quote(message_id, safe='')}"
-                           f"?focus={quote(message_id, safe='')}#message-{quote(message_id, safe='')}")
-        state = "Acknowledged" if message.get("acknowledged_at") else (
-            "Seen" if message.get("seen_at") else "Unread"
-        )
+            message_url = (
+                f"/inbox/{encoded_worker}/thread/{quote(message_id, safe='')}"
+                f"?focus={quote(message_id, safe='')}#message-{quote(message_id, safe='')}"
+            )
+        state = "Acknowledged" if message.get("acknowledged_at") else ("Seen" if message.get("seen_at") else "Unread")
         refs = []
         if isinstance(message.get("job"), str) and message["job"]:
-            refs.append(f'Job: {html.escape(message["job"], quote=True)}')
+            refs.append(f"Job: {html.escape(message['job'], quote=True)}")
         if isinstance(message.get("pr"), int) and not isinstance(message.get("pr"), bool):
-            refs.append(f'PR: #{message["pr"]}')
+            refs.append(f"PR: #{message['pr']}")
         if isinstance(message.get("reply_to"), str) and message["reply_to"]:
             parent_id = message["reply_to"]
             parent_url = (
@@ -775,29 +955,44 @@ def render_inbox(worker: str, messages, *, offset: int = 0, unread_count: int | 
             refs.append(f'Reply to <a href="{parent_url}">{html.escape(parent_id, quote=True)}</a>')
         entries.append(
             '<li class="private-row">'
-            f'<h2>{html.escape(str(message.get("author") or "Unspecified sender"), quote=True)} → '
-            f'{html.escape(str(message.get("recipient") or "Unspecified recipient"), quote=True)}</h2>'
-            f'<p>{_time_metadata(message.get("created_at", "Message"))} · {_inbox_direction(worker, message)} · '
+            f"<h3>{html.escape(str(message.get('author') or 'Unspecified sender'), quote=True)} → "
+            f"{html.escape(str(message.get('recipient') or 'Unspecified recipient'), quote=True)}</h3>"
+            f"<p>{_time_metadata(message.get('created_at', 'Message'))} · {_inbox_direction(worker, message)} · "
             f'<span class="job-badge">{state}</span>{(" · " + " · ".join(refs)) if refs else ""}</p>'
             f'<p class="job-links"><a href="{message_url}">'
-            f'{"Read message" if message.get("recipient") == worker else "View sent message"}</a>'
+            f"{'Read message' if message.get('recipient') == worker else 'View sent message'}</a>"
             f'<a href="/inbox/{encoded_worker}/thread/{quote(message_id, safe="")}">Conversation</a></p></li>'
         )
     rendered_entries = "".join(entries) if entries else '<li class="private-empty">No messages on this page.</li>'
+    notes_section = _render_inbox_notes(
+        worker,
+        pending_notes,
+        available=notes_available,
+        notes_offset=notes_offset,
+        has_more=notes_has_more,
+        messages=True,
+        inbox_offset=offset,
+    )
     content = (
-        f'<article class="job-private"><h1>{title}</h1>{_inbox_views(worker, messages=True)}{count}'
-        '<p>Incoming and outgoing messages are shown newest first. Seen and acknowledged state belongs to the recipient. '
-        'Messages remain private. Opening this list does not mark them seen or acknowledge them.</p>'
+        f'<article class="job-private"><h1>{title}</h1>'
+        f"{notes_section}<section class=\"inbox-messages\"><h2>Messages</h2>"
+        f'{_inbox_views(worker, messages=True, notes_offset=notes_offset)}{count}'
+        "<p>Incoming and outgoing messages are shown newest first. Seen and acknowledged state belongs to the recipient. "
+        "Messages remain private. Opening this list does not mark them seen or acknowledge them.</p>"
         f'<ol class="private-list">{rendered_entries}</ol><nav class="job-history-paging" aria-label="Message pages">'
     )
     if offset > 0:
-        content += (f'<a href="/inbox/{encoded_worker}?view=messages&amp;offset='
-                    f'{max(0, offset - HISTORY_PAGE_SIZE)}">Newer messages</a> ')
+        content += (
+            f'<a href="{_inbox_page_url(worker, messages=True, inbox_offset=max(0, offset - HISTORY_PAGE_SIZE), notes_offset=notes_offset, preserve_zero_offset=True)}">'
+            "Newer messages</a> "
+        )
     if has_more:
-        content += (f'<a href="/inbox/{encoded_worker}?view=messages&amp;offset='
-                    f'{offset + HISTORY_PAGE_SIZE}">Older messages</a>')
-    content += "</nav></article>"
-    return _private_document(f"{raw_title} · FireController", content)
+        content += (
+            f'<a href="{_inbox_page_url(worker, messages=True, inbox_offset=offset + HISTORY_PAGE_SIZE, notes_offset=notes_offset)}">'
+            "Older messages</a>"
+        )
+    content += "</nav></section></article>"
+    return _private_document(f"{raw_title} · FireController", content, delivery_link=False)
 
 
 def render_inbox_thread(worker: str, messages, *, message_id: str, offset: int = 0, has_more: bool = False) -> str:
@@ -820,16 +1015,14 @@ def render_inbox_thread(worker: str, messages, *, message_id: str, offset: int =
         current_id = str(message.get("id", ""))
         if not _JOB_ID.fullmatch(current_id):
             continue
-        state = "Acknowledged" if message.get("acknowledged_at") else (
-            "Seen" if message.get("seen_at") else "Unread"
-        )
+        state = "Acknowledged" if message.get("acknowledged_at") else ("Seen" if message.get("seen_at") else "Unread")
         recipient = html.escape(str(message.get("recipient") or "Unspecified recipient"), quote=True)
         author = html.escape(str(message.get("author") or "Unspecified sender"), quote=True)
-        details = [f'{_time_metadata(message.get("created_at", "Message"))} · {author} → {recipient} · {state}']
+        details = [f"{_time_metadata(message.get('created_at', 'Message'))} · {author} → {recipient} · {state}"]
         if isinstance(message.get("job"), str) and message["job"]:
-            details.append(f'Job: {html.escape(message["job"], quote=True)}')
+            details.append(f"Job: {html.escape(message['job'], quote=True)}")
         if isinstance(message.get("pr"), int) and not isinstance(message.get("pr"), bool):
-            details.append(f'PR: #{message["pr"]}')
+            details.append(f"PR: #{message['pr']}")
         reply_to = message.get("reply_to")
         if isinstance(reply_to, str) and reply_to and _JOB_ID.fullmatch(reply_to):
             parent_url = (
@@ -839,12 +1032,12 @@ def render_inbox_thread(worker: str, messages, *, message_id: str, offset: int =
             details.append(f'<span>Reply to <a href="{parent_url}">{html.escape(reply_to, quote=True)}</a></span>')
         entries.append(
             f'<li id="message-{html.escape(current_id, quote=True)}"><article class="job-private inbox-thread-message">'
-            f'<p>{" · ".join(details)}</p>{_markdown(message.get("body", ""))}</article></li>'
+            f"<p>{' · '.join(details)}</p>{_markdown(message.get('body', ''))}</article></li>"
         )
     rendered_entries = "".join(entries) if entries else '<li class="private-empty">No messages on this page.</li>'
     content = (
         f'<article class="job-private"><h1>{title}</h1>'
-        '<p>Messages from every recipient are shown in chronological order. Opening this conversation does not mark messages seen or acknowledge them.</p>'
+        "<p>Messages from every recipient are shown in chronological order. Opening this conversation does not mark messages seen or acknowledge them.</p>"
         f'<ol class="private-list">{rendered_entries}</ol><nav class="job-history-paging" aria-label="Conversation message pages">'
     )
     base = f"/inbox/{encoded_worker}/thread/{encoded_id}"
@@ -853,7 +1046,7 @@ def render_inbox_thread(worker: str, messages, *, message_id: str, offset: int =
     if has_more:
         content += f'<a href="{base}?offset={offset + HISTORY_PAGE_SIZE}">Later messages</a>'
     content += f'</nav><p class="job-links"><a href="/inbox/{encoded_worker}">Back to {html.escape(worker, quote=True)} inbox</a></p></article>'
-    return _private_document(f"{title_text} · FireController", content)
+    return _private_document(f"{title_text} · FireController", content, delivery_link=False)
 
 
 def render_worker_history(worker: str, jobs) -> str:
@@ -865,7 +1058,9 @@ def render_worker_history(worker: str, jobs) -> str:
         raise TypeError("worker jobs must be a list")
     entries = []
     ordered_jobs = [job for job in jobs if isinstance(job, dict)]
-    ordered_jobs.sort(key=lambda job: (job.get("primary") is True, str(job.get("last_activity_at") or "")), reverse=True)
+    ordered_jobs.sort(
+        key=lambda job: (job.get("primary") is True, str(job.get("last_activity_at") or "")), reverse=True
+    )
     for job in ordered_jobs:
         job_id = str(job.get("id", ""))
         if not _JOB_ID.fullmatch(job_id):
@@ -876,22 +1071,24 @@ def render_worker_history(worker: str, jobs) -> str:
         name = html.escape(str(job.get("name", "")), quote=True)
         title = html.escape(str(job.get("title", "")), quote=True)
         summary = job.get("summary")
-        summary_html = f'<p><strong>Summary</strong> · {_markdown(summary)}</p>' if isinstance(summary, str) and summary else ""
-        primary = '<span>Primary</span>' if job.get("primary") is True else ""
+        summary_html = (
+            f"<p><strong>Summary</strong> · {_markdown(summary)}</p>" if isinstance(summary, str) and summary else ""
+        )
+        primary = "<span>Primary</span>" if job.get("primary") is True else ""
         encoded_job = quote(job_id, safe="")
         entries.append(
             '<article class="job-private worker-job-entry"><div class="job-meta">'
             f'<h2><a href="/jobs/{encoded_job}">{title}</a></h2>'
             f'<span class="job-state">{html.escape(status, quote=True)}</span>'
-            f'<span>{name}</span>{primary}</div>{_job_times(job)}{summary_html}'
+            f"<span>{name}</span>{primary}</div>{_job_times(job)}{summary_html}"
             f'<p class="job-links"><a href="/jobs/{encoded_job}/history">Job history</a></p></article>'
         )
     content = (
         f'<article class="job-private"><h1>{html.escape(worker, quote=True)} worker history</h1>'
-        '<p>All statuses are shown. The current primary is listed first, followed by the jobs with the most recent activity.</p>'
-        f'{"".join(entries) if entries else "<p class=private-empty>No jobs recorded.</p>"}</article>'
+        "<p>All statuses are shown. The current primary is listed first, followed by the jobs with the most recent activity.</p>"
+        f"{''.join(entries) if entries else '<p class=private-empty>No jobs recorded.</p>'}</article>"
     )
-    return _private_document(f"{worker} worker history · FireController", content)
+    return _private_document(f"{worker} worker history · FireController", content, delivery_link=False)
 
 
 def render_inbox_message(worker: str, message: dict) -> str:
@@ -906,15 +1103,15 @@ def render_inbox_message(worker: str, message: dict) -> str:
     content = [
         '<article class="job-private"><h1>Private worker message</h1>',
         (
-            f'<p>{_time_metadata(message.get("created_at", ""))} · '
-            f'{html.escape(str(message.get("author") or "Unspecified sender"), quote=True)}</p>'
+            f"<p>{_time_metadata(message.get('created_at', ''))} · "
+            f"{html.escape(str(message.get('author') or 'Unspecified sender'), quote=True)}</p>"
         ),
     ]
     for label, key in (("Job", "job"), ("PR", "pr")):
         value = message.get(key)
         if value is not None and value != "":
             display = f"#{value}" if key == "pr" else str(value)
-            content.append(f'<p><strong>{label}</strong> · {html.escape(display, quote=True)}</p>')
+            content.append(f"<p><strong>{label}</strong> · {html.escape(display, quote=True)}</p>")
     reply_to = message.get("reply_to")
     if isinstance(reply_to, str) and reply_to and _JOB_ID.fullmatch(reply_to):
         parent_url = (
@@ -929,7 +1126,7 @@ def render_inbox_message(worker: str, message: dict) -> str:
         f'<p class="job-links"><a href="/inbox/{encoded_worker}/thread/{quote(message_id, safe="")}">Conversation</a> '
         f'<a href="/inbox/{encoded_worker}">Back to {html.escape(worker, quote=True)} inbox</a></p></article>'
     )
-    return _private_document(f"{worker} inbox message", "".join(content))
+    return _private_document(f"{worker} inbox message", "".join(content), delivery_link=False)
 
 
 def _response(status: int, document: str) -> tuple[int, dict[str, str], bytes]:
@@ -967,6 +1164,28 @@ def _history_offset(query: dict) -> int | tuple[int, tuple]:
     if offset > MAX_HISTORY_OFFSET:
         return 0, _error(400, "Offset is outside the supported range")
     return offset
+
+
+def _pending_worker_notes(jobs_store, worker: str, offset: int) -> tuple[list[dict], bool, bool]:
+    """Return one bounded page of pending notes assigned to the worker or their jobs."""
+
+    if jobs_store is None:
+        return [], False, False
+    page_limit = INBOX_NOTE_PAGE_SIZE + 1
+    try:
+        rows = jobs_store.notes(
+            worker=worker,
+            status="pending",
+            limit=page_limit,
+            offset=offset,
+            include_assigned_jobs=True,
+        )
+        if not isinstance(rows, list) or any(not isinstance(note, dict) for note in rows):
+            raise TypeError("pending notes must be a list of objects")
+        return rows[:INBOX_NOTE_PAGE_SIZE], len(rows) > INBOX_NOTE_PAGE_SIZE, True
+    except (OSError, RuntimeError, TypeError, ValueError, KeyError):
+        # Keep the inbox usable when the job schema is absent or incompatible.
+        return [], False, False
 
 
 def _private_job_route(parsed, store):
@@ -1035,8 +1254,10 @@ def _private_workstream_route(parsed, jobs_store, workstream_store, editorial):
                     return _error(400, "Revision must be a positive integer")
                 entry = workstream_store.history("workstream", workstream_id, revision=int(raw_revision))
                 entry["name"] = workstream_store.get(workstream_id, editorial)["name"]
-                return _response(200, render_workstream({"id": workstream_id, "name": entry["name"],
-                                                         "history": [entry]}, history=True))
+                return _response(
+                    200,
+                    render_workstream({"id": workstream_id, "name": entry["name"], "history": [entry]}, history=True),
+                )
             offset = _history_offset(query)
             if isinstance(offset, tuple):
                 return offset[1]
@@ -1052,7 +1273,7 @@ def _private_workstream_route(parsed, jobs_store, workstream_store, editorial):
         return _error(500, "Workstream page could not be loaded")
 
 
-def _private_inbox_route(parsed, inbox_store):
+def _private_inbox_route(parsed, inbox_store, jobs_store):
     segments = parsed.path.split("/")
     if len(segments) not in {3, 4, 5} or not segments[2]:
         return _error(404, "Inbox page not found")
@@ -1065,7 +1286,9 @@ def _private_inbox_route(parsed, inbox_store):
     is_thread = len(segments) == 5 and segments[3] == "thread" and bool(segments[4])
     if (len(segments) == 4 and not is_message) or (len(segments) == 5 and not is_thread):
         return _error(404, "Inbox message not found")
-    allowed_query = {"focus", "offset"} if is_thread else {"view", "offset"} if not is_message else set()
+    allowed_query = (
+        {"focus", "offset"} if is_thread else {"view", "offset", "notes_offset"} if not is_message else set()
+    )
     query, error = _query(parsed, allowed_query)
     if error:
         return error
@@ -1089,27 +1312,56 @@ def _private_inbox_route(parsed, inbox_store):
             offset = _history_offset(query) if focus_id is None else 0
             if isinstance(offset, tuple):
                 return offset[1]
-            page = inbox_store.thread_page(message_id, limit=HISTORY_PAGE_SIZE, offset=offset,
-                                          focus_id=focus_id, worker=worker)
-            return _response(200, render_inbox_thread(
-                worker, page["messages"], message_id=message_id, offset=page["offset"],
-                has_more=page["has_more"],
-            ))
+            page = inbox_store.thread_page(
+                message_id, limit=HISTORY_PAGE_SIZE, offset=offset, focus_id=focus_id, worker=worker
+            )
+            return _response(
+                200,
+                render_inbox_thread(
+                    worker,
+                    page["messages"],
+                    message_id=message_id,
+                    offset=page["offset"],
+                    has_more=page["has_more"],
+                ),
+            )
         view = query.get("view", ["conversations"])[0]
         if view not in {"conversations", "messages"}:
             return _error(400, "Unsupported inbox view")
         offset = _history_offset(query)
         if isinstance(offset, tuple):
             return offset[1]
+        notes_offset = _history_offset({"offset": query.get("notes_offset", ["0"])})
+        if isinstance(notes_offset, tuple):
+            return notes_offset[1]
+        pending_notes, notes_has_more, notes_available = _pending_worker_notes(jobs_store, worker, notes_offset)
         unread = inbox_store.unread_count(worker)
         if view == "messages":
             page = inbox_store.messages_page(worker, limit=HISTORY_PAGE_SIZE, offset=offset)
-            document = render_inbox(worker, page["messages"], offset=offset, unread_count=unread,
-                                    has_more=page["has_more"])
+            document = render_inbox(
+                worker,
+                page["messages"],
+                offset=offset,
+                unread_count=unread,
+                has_more=page["has_more"],
+                pending_notes=pending_notes,
+                notes_available=notes_available,
+                notes_has_more=notes_has_more,
+                notes_offset=notes_offset,
+            )
         else:
             page = inbox_store.conversations_page(worker, limit=HISTORY_PAGE_SIZE, offset=offset)
-            document = render_inbox_conversations(worker, page["conversations"], offset=offset,
-                                                  unread_count=unread, has_more=page["has_more"])
+            document = render_inbox_conversations(
+                worker,
+                page["conversations"],
+                offset=offset,
+                unread_count=unread,
+                has_more=page["has_more"],
+                pending_notes=pending_notes,
+                notes_available=notes_available,
+                notes_has_more=notes_has_more,
+                notes_offset=notes_offset,
+            )
         return _response(200, document)
     except (KeyError, LookupError, ValueError):
         return _error(404, "Inbox page not found")
@@ -1156,5 +1408,5 @@ def private_route(path, store, *, inbox=None, workstreams=None, editorial=None):
     if parsed.path.startswith("/workstreams/"):
         return _private_workstream_route(parsed, store, workstreams, editorial)
     if parsed.path.startswith("/inbox/"):
-        return _private_inbox_route(parsed, inbox)
+        return _private_inbox_route(parsed, inbox, store)
     return None

@@ -1,0 +1,106 @@
+name: Game Session Factory Inventory Qualification
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  qualify-factory:
+    if: ${{ github.repository == 'benhook1013/FireMUD' && github.ref == 'refs/heads/develop' }}
+    runs-on: ubuntu-26.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - name: Check out exact dispatch commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Set up canonical Python
+        uses: ./.github/actions/setup-python
+
+      - name: Load workflow tool versions
+        id: workflow-tool-versions
+        uses: ./.github/actions/load-workflow-tool-versions
+
+      - name: Set up canonical kubectl
+        uses: ./.github/actions/setup-kubectl
+
+      - name: Install checksum-verified kind
+        env:
+          KIND_VERSION: ${{ steps.workflow-tool-versions.outputs.kind-version }}
+          KIND_LINUX_AMD64_SHA256: ${{ steps.workflow-tool-versions.outputs.kind-linux-amd64-sha256 }}
+        run: |
+          set -euo pipefail
+          if [[ "${RUNNER_OS:-}" != Linux || "${RUNNER_ARCH:-}" != X64 || "$(uname -m)" != x86_64 ]]; then
+            echo "kind qualification requires a GitHub-hosted Linux X64 runner" >&2
+            exit 1
+          fi
+          install_directory="${RUNNER_TEMP:?}/game-session-factory-tools"
+          mkdir -p -- "$install_directory"
+          chmod 0700 "$install_directory"
+          kind_binary="$install_directory/kind"
+          curl -fsSL --retry 3 --retry-delay 2 --retry-max-time 30 \
+            --connect-timeout 10 --max-time 90 --max-filesize 134217728 \
+            "https://kind.sigs.k8s.io/dl/v${KIND_VERSION:?}/kind-linux-amd64" \
+            -o "$kind_binary"
+          binary_bytes="$(wc -c < "$kind_binary")"
+          if [[ "$binary_bytes" -le 0 || "$binary_bytes" -gt 134217728 ]]; then
+            echo "downloaded kind binary is outside the allowed size" >&2
+            exit 1
+          fi
+          printf '%s  %s\n' "${KIND_LINUX_AMD64_SHA256:?}" "$kind_binary" | sha256sum --check --status
+          chmod 0755 "$kind_binary"
+          printf '%s\n' "$install_directory" >> "$GITHUB_PATH"
+
+      - name: Qualify the fresh factory inventory
+        id: qualify
+        env:
+          PYTHONUNBUFFERED: '1'
+        run: |
+          set -euo pipefail
+          set +e
+          result="$(python3 dev-tools/hosted/account-bootstrap/game-session-factory-qualification.py \
+            --authority config/workflow-tool-versions.env \
+            --operation qualify-factory)"
+          status=$?
+          set -e
+          if [[ -z "$result" ]]; then
+            echo "factory qualification returned no status record" >&2
+            exit 1
+          fi
+          mapfile -t summary < <(python3 -c 'import json,sys; value=json.loads(sys.stdin.read()); print("\n".join(str(value.get(key, "")) for key in ("outcome", "cleanup", "reason", "totalItems", "apiGroupCount", "apiGroupVersionCount", "approvedFactoryBaseline")))' <<< "$result")
+          outcome="${summary[0]:-unknown}"
+          cleanup="${summary[1]:-unknown}"
+          reason="${summary[2]:-}"
+          total_items="${summary[3]:-}"
+          api_groups="${summary[4]:-}"
+          api_versions="${summary[5]:-}"
+          approved="${summary[6]:-}"
+          printf 'outcome=%s cleanup=%s approvedFactoryBaseline=%s totalItems=%s apiGroups=%s apiGroupVersions=%s\n' \
+            "$outcome" "$cleanup" "$approved" "$total_items" "$api_groups" "$api_versions"
+          if [[ "$status" -ne 0 ]]; then
+            printf 'factory qualification denied: %s\n' "$reason" >&2
+            exit "$status"
+          fi
+          if [[ "$outcome" != qualified_for_review_only || "$cleanup" != removed || "$approved" != False ]]; then
+            echo "factory qualification did not meet the review-only cleanup boundary" >&2
+            exit 1
+          fi
+          inventory_path="${RUNNER_TEMP:?}/account-jwt-bootstrap-${GITHUB_RUN_ID:?}-${GITHUB_RUN_ATTEMPT:?}-${GITHUB_SHA:0:12}/game-session-factory-inventory-qualification.json"
+          printf 'qualified=true\ninventory_path=%s\n' "$inventory_path" >> "$GITHUB_OUTPUT"
+
+      # GitHub Actions artifacts are visible to repository users; this contains only the
+      # sanitized fresh-factory review inventory and is not a private artifact.
+      - name: Upload sanitized non-private review inventory
+        if: ${{ steps.qualify.outputs.qualified == 'true' }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: game-session-factory-inventory-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ steps.qualify.outputs.inventory_path }}
+          if-no-files-found: error
+          retention-days: 1

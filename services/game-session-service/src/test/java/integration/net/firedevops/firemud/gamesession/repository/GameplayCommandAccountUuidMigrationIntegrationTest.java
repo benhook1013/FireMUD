@@ -6,6 +6,7 @@ import static org.assertj.core.api.Assertions.tuple;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.UUID;
+import net.firedevops.firemud.test.TestContainerImages;
 import org.flywaydb.core.Flyway;
 import org.flywaydb.core.api.MigrationVersion;
 import org.jooq.DSLContext;
@@ -25,7 +26,8 @@ class GameplayCommandAccountUuidMigrationIntegrationTest {
 
   @Test
   void migrationRetainsLegacyCommandRowsAndDoesNotInventAccountUuids() {
-    try (PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>("postgres:16-alpine")) {
+    try (PostgreSQLContainer<?> postgres =
+        new PostgreSQLContainer<>(TestContainerImages.postgres())) {
       postgres.start();
       DriverManagerDataSource dataSource = new DriverManagerDataSource();
       dataSource.setDriverClassName(postgres.getDriverClassName());

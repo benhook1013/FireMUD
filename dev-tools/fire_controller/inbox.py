@@ -31,7 +31,16 @@ _TABLES = ("inbox_metadata", "inbox_messages")
 INBOX_COLUMNS: dict[str, tuple[str, ...]] = {
     "inbox_metadata": ("singleton", "inbox_schema_version"),
     "inbox_messages": (
-        "id", "recipient", "body", "author", "job", "pr", "reply_to", "created_at", "seen_at", "acknowledged_at",
+        "id",
+        "recipient",
+        "body",
+        "author",
+        "job",
+        "pr",
+        "reply_to",
+        "created_at",
+        "seen_at",
+        "acknowledged_at",
     ),
 }
 
@@ -48,7 +57,15 @@ INBOX_INDEXES: dict[str, str] = {
 INBOX_TEXT_COLUMNS: dict[str, tuple[str, ...]] = {
     "inbox_metadata": (),
     "inbox_messages": (
-        "id", "recipient", "body", "author", "job", "reply_to", "created_at", "seen_at", "acknowledged_at",
+        "id",
+        "recipient",
+        "body",
+        "author",
+        "job",
+        "reply_to",
+        "created_at",
+        "seen_at",
+        "acknowledged_at",
     ),
 }
 
@@ -85,12 +102,12 @@ def _text(value: Any, label: str, *, maximum: int = 200, allow_empty: bool = Fal
     return value
 
 
-
 def _worker(value, label) -> str:
     selected = _text(value, label, maximum=100)
     if not worker_alias(selected):
         raise InboxError(f"{label} must be a worker alias without surrounding whitespace or control characters")
     return selected
+
 
 def _limit(value: Any) -> int:
     if isinstance(value, bool) or not isinstance(value, int) or not 1 <= value <= _MAX_PAGE:
@@ -112,7 +129,12 @@ class InboxStore:
     """Store private messages in a standalone schema beside other controller data."""
 
     def __init__(self, path: str | os.PathLike[str], *, timeout: float = 10.0) -> None:
-        if isinstance(timeout, bool) or not isinstance(timeout, (int, float)) or not math.isfinite(timeout) or timeout <= 0:
+        if (
+            isinstance(timeout, bool)
+            or not isinstance(timeout, (int, float))
+            or not math.isfinite(timeout)
+            or timeout <= 0
+        ):
             raise InboxError("timeout must be a positive finite number")
         self.path = Path(path).expanduser().absolute()
         self.timeout = float(timeout)
@@ -234,19 +256,37 @@ class InboxStore:
         message_id = str(uuid.uuid4())
         timestamp = _now()
         with self._write() as connection:
-            if selected_reply is not None and connection.execute(
-                "SELECT 1 FROM inbox_messages WHERE id = ?", (selected_reply,)
-            ).fetchone() is None:
+            if (
+                selected_reply is not None
+                and connection.execute("SELECT 1 FROM inbox_messages WHERE id = ?", (selected_reply,)).fetchone()
+                is None
+            ):
                 raise MessageNotFound(f"reply target {selected_reply} was not found")
             connection.execute(
                 "INSERT INTO inbox_messages(id, recipient, body, author, job, pr, reply_to, created_at, seen_at, acknowledged_at) "
                 "VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL)",
-                (message_id, selected_recipient, selected_body, selected_author, selected_job, pr, selected_reply, timestamp),
+                (
+                    message_id,
+                    selected_recipient,
+                    selected_body,
+                    selected_author,
+                    selected_job,
+                    pr,
+                    selected_reply,
+                    timestamp,
+                ),
             )
             return {
-                "id": message_id, "recipient": selected_recipient, "body": selected_body, "author": selected_author,
-                "job": selected_job, "pr": pr, "reply_to": selected_reply, "created_at": timestamp,
-                "seen_at": None, "acknowledged_at": None,
+                "id": message_id,
+                "recipient": selected_recipient,
+                "body": selected_body,
+                "author": selected_author,
+                "job": selected_job,
+                "pr": pr,
+                "reply_to": selected_reply,
+                "created_at": timestamp,
+                "seen_at": None,
+                "acknowledged_at": None,
             }
 
     def list(
@@ -255,18 +295,29 @@ class InboxStore:
         unread: bool = False,
         limit: int = 50,
         offset: int = 0,
+        *,
+        unacknowledged: bool = False,
     ) -> list[dict[str, Any]]:
-        """List a recipient's private messages newest first with a bounded page."""
+        """List a recipient's private messages newest first with a bounded page.
+
+        ``unread`` filters to messages not yet seen. ``unacknowledged`` filters
+        to messages not yet acknowledged; using both applies both filters.
+        """
 
         selected_recipient = _worker(recipient, "recipient")
         if not isinstance(unread, bool):
             raise InboxError("unread must be a boolean")
+        if not isinstance(unacknowledged, bool):
+            raise InboxError("unacknowledged must be a boolean")
         selected_limit = _limit(limit)
         selected_offset = _offset(offset)
-        where = "recipient = ?"
+        filters = ["recipient = ?"]
         parameters: list[Any] = [selected_recipient]
         if unread:
-            where += " AND seen_at IS NULL"
+            filters.append("seen_at IS NULL")
+        if unacknowledged:
+            filters.append("acknowledged_at IS NULL")
+        where = " AND ".join(filters)
         with self._read() as connection:
             rows = connection.execute(
                 f"SELECT {', '.join(INBOX_COLUMNS['inbox_messages'])} FROM inbox_messages WHERE {where} "
@@ -288,8 +339,11 @@ class InboxStore:
                 "ORDER BY created_at DESC, rowid DESC LIMIT ? OFFSET ?",
                 (selected_worker, selected_worker, selected_limit + 1, selected_offset),
             ).fetchall()
-            return {"messages": [self._message_dict(row) for row in rows[:selected_limit]],
-                    "offset": selected_offset, "has_more": len(rows) > selected_limit}
+            return {
+                "messages": [self._message_dict(row) for row in rows[:selected_limit]],
+                "offset": selected_offset,
+                "has_more": len(rows) > selected_limit,
+            }
 
     def conversations_page(self, worker: str, limit: int = 50, offset: int = 0) -> dict[str, Any]:
         """Page reply roots by the worker's latest incoming or outgoing activity.
@@ -321,9 +375,15 @@ class InboxStore:
                 "ORDER BY created_at DESC, activity_order DESC LIMIT ? OFFSET ?",
                 (selected_worker, selected_worker, selected_worker, selected_limit + 1, selected_offset),
             ).fetchall()
-            conversations = [{"root_id": row["root_id"], "latest_message": self._message_dict(row),
-                              "message_count": row["message_count"], "unread_count": row["unread_count"]}
-                             for row in rows[:selected_limit]]
+            conversations = [
+                {
+                    "root_id": row["root_id"],
+                    "latest_message": self._message_dict(row),
+                    "message_count": row["message_count"],
+                    "unread_count": row["unread_count"],
+                }
+                for row in rows[:selected_limit]
+            ]
             return {"conversations": conversations, "offset": selected_offset, "has_more": len(rows) > selected_limit}
 
     def thread(
@@ -358,14 +418,18 @@ class InboxStore:
         selected_worker = None if worker is None else _worker(worker, "worker")
         with self._read() as connection:
             root_id = self._thread_root(connection, selected_id)
-            if selected_worker is not None and connection.execute(
-                "WITH RECURSIVE thread(id) AS ("
-                "SELECT id FROM inbox_messages WHERE id = ? UNION "
-                "SELECT message.id FROM inbox_messages AS message JOIN thread ON message.reply_to = thread.id) "
-                "SELECT 1 FROM inbox_messages WHERE id IN (SELECT id FROM thread) "
-                "AND (recipient = ? OR author = ?) LIMIT 1",
-                (root_id, selected_worker, selected_worker),
-            ).fetchone() is None:
+            if (
+                selected_worker is not None
+                and connection.execute(
+                    "WITH RECURSIVE thread(id) AS ("
+                    "SELECT id FROM inbox_messages WHERE id = ? UNION "
+                    "SELECT message.id FROM inbox_messages AS message JOIN thread ON message.reply_to = thread.id) "
+                    "SELECT 1 FROM inbox_messages WHERE id IN (SELECT id FROM thread) "
+                    "AND (recipient = ? OR author = ?) LIMIT 1",
+                    (root_id, selected_worker, selected_worker),
+                ).fetchone()
+                is None
+            ):
                 raise MessageNotFound(f"conversation was not found for worker {selected_worker}")
             if selected_focus is not None:
                 focus = connection.execute(
@@ -403,8 +467,11 @@ class InboxStore:
                 "WHERE id IN (SELECT id FROM thread) ORDER BY created_at ASC, rowid ASC LIMIT ? OFFSET ?",
                 (root_id, selected_limit + 1, selected_offset),
             ).fetchall()
-            return {"messages": [self._message_dict(row) for row in rows[:selected_limit]],
-                    "offset": selected_offset, "has_more": len(rows) > selected_limit}
+            return {
+                "messages": [self._message_dict(row) for row in rows[:selected_limit]],
+                "offset": selected_offset,
+                "has_more": len(rows) > selected_limit,
+            }
 
     def read(self, message_id: str, recipient: str | None = None) -> dict[str, Any]:
         """Mark one message seen and return it; recipient is an optional selector."""
@@ -435,10 +502,12 @@ class InboxStore:
                     "UPDATE inbox_messages SET seen_at = COALESCE(seen_at, ?) WHERE id = ?",
                     (timestamp, selected_id),
                 )
-            return self._message_dict(connection.execute(
-                f"SELECT {', '.join(INBOX_COLUMNS['inbox_messages'])} FROM inbox_messages WHERE id = ?",
-                (selected_id,),
-            ).fetchone())
+            return self._message_dict(
+                connection.execute(
+                    f"SELECT {', '.join(INBOX_COLUMNS['inbox_messages'])} FROM inbox_messages WHERE id = ?",
+                    (selected_id,),
+                ).fetchone()
+            )
 
     def unread_count(self, worker: str) -> int:
         """Return an unread count without creating missing inbox tables."""
@@ -524,15 +593,14 @@ class InboxStore:
         # Reuse only the base controller metadata guard: no job schema, status,
         # review record, or allocation is consulted by the inbox.
         from .jobs import JobStore
+
         JobStore._require_controller_compatible_connection(connection)
         present = self._table_names(connection) & set(_TABLES)
         if not present:
             raise InboxNotBootstrapped("inbox schema is not bootstrapped; call bootstrap() explicitly")
         if present != set(_TABLES):
             raise InboxSchemaIncompatible("inbox schema is partial")
-        row = connection.execute(
-            "SELECT inbox_schema_version FROM inbox_metadata WHERE singleton = 1"
-        ).fetchone()
+        row = connection.execute("SELECT inbox_schema_version FROM inbox_metadata WHERE singleton = 1").fetchone()
         if row is None or row[0] != INBOX_SCHEMA_VERSION:
             raise InboxSchemaIncompatible("inbox schema requires an unsupported version")
 

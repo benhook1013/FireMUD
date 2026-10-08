@@ -148,7 +148,20 @@ def main() -> int:
 
     ap = root / "config/workflow-tool-versions.env"
     a = authority(ap)
-    versions = ["KUBECTL", "HELM", "GH", "BUF", "KUBECONFORM", "VELERO", "ACTIONLINT", "TRIVY", "LYCHEE", "ORT", "ZAP"]
+    versions = [
+        "KUBECTL",
+        "KIND",
+        "HELM",
+        "GH",
+        "BUF",
+        "KUBECONFORM",
+        "VELERO",
+        "ACTIONLINT",
+        "TRIVY",
+        "LYCHEE",
+        "ORT",
+        "ZAP",
+    ]
     artifact_versions = {
         "SHELLCHECK": r"\d+\.\d+\.\d+",
         "CLOC": r"\d+\.\d+",
@@ -162,7 +175,14 @@ def main() -> int:
             fail(f"{tool} must have an exact pinned release version")
     if a["CHROME_FOR_TESTING_VERSION"] != a["CHROMEDRIVER_VERSION"]:
         fail("Chrome for Testing and ChromeDriver must use the exact same release version")
+    if not re.fullmatch(r"v\d+\.\d+\.\d+", a.get("KIND_NODE_IMAGE_VERSION", "")):
+        fail("KIND_NODE_IMAGE_VERSION must be an exact v-prefixed Kubernetes version")
+    kubectl_minor = a["KUBECTL_VERSION"].split(".")[:2]
+    kind_node_minor = a["KIND_NODE_IMAGE_VERSION"][1:].split(".")[:2]
+    if kind_node_minor != kubectl_minor:
+        fail("kind node image and kubectl must use the same Kubernetes minor")
     pairs = {
+        "KIND": "KIND_LINUX_AMD64",
         "GH": "GH_LINUX_AMD64",
         "BUF": "BUF_LINUX_X86_64",
         "KUBECONFORM": "KUBECONFORM_LINUX_AMD64",
@@ -178,13 +198,13 @@ def main() -> int:
             fail(f"{tool} checksum version is stale")
         if not re.fullmatch(r"[0-9a-f]{64}", a.get(f"{stem}_SHA256", "")):
             fail(f"{tool} checksum is invalid")
-    for tool in ("ORT", "ZAP"):
+    for tool in ("KIND_NODE_IMAGE", "ORT", "ZAP"):
         if not re.fullmatch(r"sha256:[0-9a-f]{64}", a.get(f"{tool}_DIGEST", "")):
             fail(f"{tool} digest is invalid")
     expected = (
         {f"{x}_VERSION" for x in versions + list(artifact_versions)}
         | {f"{s}_{suffix}" for s in pairs.values() for suffix in ("CHECKSUM_VERSION", "SHA256")}
-        | {"ORT_DIGEST", "ZAP_DIGEST"}
+        | {"KIND_NODE_IMAGE_VERSION", "KIND_NODE_IMAGE_DIGEST", "ORT_DIGEST", "ZAP_DIGEST"}
     )
     if set(a) != expected:
         fail("workflow tool authority has unexpected or missing keys")
@@ -200,6 +220,9 @@ def main() -> int:
     loader_run = loader_runs[0]
     expected_loader_outputs = {
         "kubectl-version",
+        "kind-version",
+        "kind-linux-amd64-sha256",
+        "kind-node-image",
         "helm-version",
         "gh-version",
         "gh-linux-amd64-sha256",
@@ -249,6 +272,53 @@ def main() -> int:
         )
         if canonical.returncode != 0:
             fail(f"workflow authority loader rejects canonical authority: {canonical.stderr.strip()}")
+        canonical_outputs = output_path.read_text()
+        for expected_output in (
+            f"kind-version={a['KIND_VERSION']}",
+            f"kind-linux-amd64-sha256={a['KIND_LINUX_AMD64_SHA256']}",
+            f"kind-node-image=kindest/node:{a['KIND_NODE_IMAGE_VERSION']}@{a['KIND_NODE_IMAGE_DIGEST']}",
+        ):
+            if expected_output not in canonical_outputs.splitlines():
+                fail(f"workflow authority loader omitted kind output: {expected_output}")
+        mismatched_kind_checksum = re.sub(
+            r"^KIND_LINUX_AMD64_CHECKSUM_VERSION=.*$",
+            "KIND_LINUX_AMD64_CHECKSUM_VERSION=0.32.0",
+            ap.read_text(),
+            flags=re.MULTILINE,
+        )
+        (authority_path / "workflow-tool-versions.env").write_text(mismatched_kind_checksum)
+        output_path.write_text("sentinel\n")
+        stale_kind_checksum = subprocess.run(
+            ["bash", "-c", loader_run], cwd=temporary, env=env, capture_output=True, text=True, check=False
+        )
+        if stale_kind_checksum.returncode == 0 or output_path.read_text() != "sentinel\n":
+            fail("workflow authority loader accepts a kind binary checksum for another version")
+        invalid_kind_node_digest = re.sub(
+            r"^KIND_NODE_IMAGE_DIGEST=.*$",
+            "KIND_NODE_IMAGE_DIGEST=sha256:" + "A" * 64,
+            ap.read_text(),
+            flags=re.MULTILINE,
+        )
+        (authority_path / "workflow-tool-versions.env").write_text(invalid_kind_node_digest)
+        output_path.write_text("sentinel\n")
+        invalid_node_digest = subprocess.run(
+            ["bash", "-c", loader_run], cwd=temporary, env=env, capture_output=True, text=True, check=False
+        )
+        if invalid_node_digest.returncode == 0 or output_path.read_text() != "sentinel\n":
+            fail("workflow authority loader accepts a non-lowercase kind node image digest")
+        mismatched_kind_minor = re.sub(
+            r"^KIND_NODE_IMAGE_VERSION=.*$",
+            "KIND_NODE_IMAGE_VERSION=v1.36.0",
+            ap.read_text(),
+            flags=re.MULTILINE,
+        )
+        (authority_path / "workflow-tool-versions.env").write_text(mismatched_kind_minor)
+        output_path.write_text("sentinel\n")
+        kind_minor_mismatch = subprocess.run(
+            ["bash", "-c", loader_run], cwd=temporary, env=env, capture_output=True, text=True, check=False
+        )
+        if kind_minor_mismatch.returncode == 0 or output_path.read_text() != "sentinel\n":
+            fail("workflow authority loader accepts a kind node image on another Kubernetes minor")
         chromedriver_parts = a["CHROMEDRIVER_VERSION"].split(".")
         if len(chromedriver_parts) < 2 or not chromedriver_parts[-1].isdigit():
             fail("canonical CHROMEDRIVER_VERSION must be dot-separated with a numeric final segment")
@@ -1362,13 +1432,18 @@ def main() -> int:
 
     velero_terraform = (root / "k8s/terraform-production/main.tf").read_text()
     postgres_release = extract_hcl_block(velero_terraform, 'resource "helm_release" "postgresql"')
-    if postgres_release is None or not re.search(r"(?m)^\s*version\s*=\s*var\.postgres_chart_version\s*$", postgres_release):
+    if postgres_release is None or not re.search(
+        r"(?m)^\s*version\s*=\s*var\.postgres_chart_version\s*$", postgres_release
+    ):
         fail("Production PostgreSQL must require an explicit operator-selected chart version")
     postgres_variables = (root / "k8s/terraform-production/variables.tf").read_text()
     postgres_version_input = extract_hcl_block(postgres_variables, 'variable "postgres_chart_version"')
     if postgres_version_input is None or re.search(r"(?m)^\s*default\s*=", postgres_version_input):
         fail("Production PostgreSQL must not default to an unproven chart version")
-    if "validation {" not in postgres_version_input or "latest and version ranges are not allowed" not in postgres_version_input:
+    if (
+        "validation {" not in postgres_version_input
+        or "latest and version ranges are not allowed" not in postgres_version_input
+    ):
         fail("Production PostgreSQL chart input must reject floating version selections")
     if velero_terraform.count('resource "helm_release" "velero"') != 1:
         fail("Terraform must define exactly one Velero Helm release")
@@ -1449,8 +1524,29 @@ def main() -> int:
         fail("backup verifier Dockerfile Velero projection is stale")
 
     renovate = json.loads((root / "renovate.json").read_text())
-    if not {"nodenv", "pyenv", "pip_requirements", "terraform", "custom.regex", "docker-compose", "gradle-wrapper", "helm-values", "kubernetes"} <= set(renovate["enabledManagers"]):
+    if not {
+        "nodenv",
+        "pyenv",
+        "pip-compile",
+        "terraform",
+        "custom.regex",
+        "docker-compose",
+        "dockerfile",
+        "github-actions",
+        "gradle",
+        "gradle-wrapper",
+        "helm-values",
+        "helmv3",
+        "kubernetes",
+        "kustomize",
+        "npm",
+    } <= set(renovate["enabledManagers"]):
         fail("Renovate managers incomplete")
+    if (
+        "pip_requirements" in renovate["enabledManagers"]
+        or renovate.get("pip_requirements", {}).get("enabled") is not False
+    ):
+        fail("Renovate pip_requirements manager must be disabled to avoid overlapping pip-compile ownership")
     kubectl_rules = [
         rule
         for rule in renovate.get("packageRules", [])
@@ -1465,16 +1561,38 @@ def main() -> int:
     for required in ("publisher checksum", "cluster-version upgrade"):
         if required not in kubectl_notes:
             fail(f"Renovate kubectl guidance is missing: {required}")
-    pip_rebase_rules = [
-        rule for rule in renovate.get("packageRules", []) if rule.get("matchManagers") == ["pip_requirements"]
+    kind_node_rules = [
+        rule
+        for rule in renovate.get("packageRules", [])
+        if rule.get("matchManagers") == ["custom.regex"] and rule.get("matchPackageNames") == ["kindest/node"]
     ]
-    if len(pip_rebase_rules) != 1 or pip_rebase_rules[0].get("rebaseWhen") != "behind-base-branch":
+    if len(kind_node_rules) != 1:
+        fail("Renovate must define exactly one kindest/node compatibility rule")
+    kind_node_rule = kind_node_rules[0]
+    if (
+        kind_node_rule.get("allowedVersions") != "/^v1\\.35\\.[0-9]+$/"
+        or kind_node_rule.get("pinDigests") is not True
+        or kind_node_rule.get("automerge") is not False
+    ):
+        fail("Renovate kindest/node proposals must remain on Kubernetes v1.35 patch and reviewed digest updates")
+    kind_node_notes = "\n".join(kind_node_rule.get("prBodyNotes") or [])
+    for required in ("paired, reviewed Kubernetes minor update", "cluster and kubectl compatibility cap together"):
+        if required not in kind_node_notes:
+            fail(f"Renovate kindest/node guidance is missing: {required}")
+    pip_rebase_rules = [
+        rule for rule in renovate.get("packageRules", []) if rule.get("matchManagers") == ["pip-compile"]
+    ]
+    if (
+        len(pip_rebase_rules) != 1
+        or pip_rebase_rules[0].get("rangeStrategy") != "update-lockfile"
+        or pip_rebase_rules[0].get("rebaseWhen") != "behind-base-branch"
+        or renovate.get("pip-compile", {}).get("managerFilePatterns")
+        != ["/^config\\/(?:docs\\/requirements|python\\/(?:ci|smoke|yaml)-requirements)\\.txt$/"]
+    ):
         fail("Renovate hashed Python requirements must refresh behind-base branches")
     custom_managers = renovate.get("customManagers", [])
-    if len(custom_managers) != 17:
-        fail(
-            "Renovate must define workflow authority managers plus the bounded Testcontainers image manager"
-        )
+    if len(custom_managers) != 19:
+        fail("Renovate must define workflow authority managers plus bounded runtime image managers")
 
     def translate_renovate_pattern(pattern_source):
         return re.sub(r"\(\?<([A-Za-z_])", r"(?P<\1", pattern_source)
@@ -1503,6 +1621,7 @@ def main() -> int:
         fail("Renovate pattern translation must preserve named captures")
     expected_dep_names = {
         "KUBECTL": "kubernetes/kubernetes",
+        "KIND": "kubernetes-sigs/kind",
         "HELM": "helm/helm",
         "GH": "cli/cli",
         "BUF": "bufbuild/buf",
@@ -1514,6 +1633,7 @@ def main() -> int:
         "CLOC": "AlDanial/cloc",
     }
     expected_image_dep_names = {
+        "KIND_NODE_IMAGE": "kindest/node",
         "ORT": "ghcr.io/oss-review-toolkit/ort",
         "ZAP": "ghcr.io/zaproxy/zaproxy",
     }
@@ -1529,6 +1649,7 @@ def main() -> int:
         "ACTIONLINT": "rhysd/actionlint",
     }
     attachment_specs = {
+        "KIND": ("kubernetes-sigs/kind", "v{{{currentValue}}}", "semver", "^v", "KIND_LINUX_AMD64"),
         "SHELLCHECK": ("koalaman/shellcheck", "v{{{currentValue}}}", "semver", "^v", "SHELLCHECK_LINUX_X86_64"),
         "CLOC": ("AlDanial/cloc", "v{{{currentValue}}}", "loose", "^v", "CLOC_SOURCE"),
         "GH": ("cli/cli", "v{{{currentValue}}}", "semver", "^v", "GH_LINUX_AMD64"),
@@ -1714,29 +1835,30 @@ def main() -> int:
         and manager.get("managerFilePatterns") == ["/^config/workflow-tool-versions\\.env$/"]
     ]
     if len(docker_managers) != 1:
-        fail("Renovate must define exactly one ORT/ZAP Docker manager")
-    ort_zap_image_managers = docker_managers
-    ort_zap_image_manager = ort_zap_image_managers[0]
-    if "currentValueTemplate" in ort_zap_image_manager or "autoReplaceStringTemplate" in ort_zap_image_manager:
-        fail("ORT/ZAP image manager must not inherit Velero value or replacement templates")
-    ort_zap_pattern_sources = ort_zap_image_manager.get("matchStrings", [None])
-    if len(ort_zap_pattern_sources) != 1:
-        fail("ORT/ZAP image manager must define one match pattern")
+        fail("Renovate must define exactly one kindest/node and GHCR Docker manager")
+    tool_image_manager = docker_managers[0]
+    if "currentValueTemplate" in tool_image_manager or "autoReplaceStringTemplate" in tool_image_manager:
+        fail("kindest/node and GHCR image manager must not inherit Velero value or replacement templates")
+    tool_image_pattern_sources = tool_image_manager.get("matchStrings", [None])
+    if len(tool_image_pattern_sources) != 1:
+        fail("kindest/node and GHCR image manager must define one match pattern")
     try:
-        ort_zap_pattern = compile_re2_pattern(ort_zap_pattern_sources[0])
+        tool_image_pattern = compile_re2_pattern(tool_image_pattern_sources[0])
     except (re.error, TypeError) as error:
-        fail(f"ORT/ZAP image manager pattern is invalid: {error}")
-    ort_zap_matches = list(ort_zap_pattern.finditer(authority_text))
-    if Counter(match.group("depName") for match in ort_zap_matches) != Counter(
-        expected_image_dep_names[x] for x in ("ORT", "ZAP")
+        fail(f"kindest/node and GHCR image manager pattern is invalid: {error}")
+    tool_image_matches = list(tool_image_pattern.finditer(authority_text))
+    if Counter(match.group("depName") for match in tool_image_matches) != Counter(
+        expected_image_dep_names[x] for x in ("KIND_NODE_IMAGE", "ORT", "ZAP")
     ):
-        fail("ORT/ZAP image manager must match each GHCR image exactly once and exclude Velero")
-    expected_ort_zap_digests = {expected_image_dep_names[key]: a[f"{key}_DIGEST"] for key in ("ORT", "ZAP")}
-    for match in ort_zap_matches:
-        if match.group("currentDigest") != expected_ort_zap_digests[match.group("depName")]:
-            fail("ORT/ZAP image manager must pair each GHCR image with its own authority digest")
-    if any(match.group("depName") == "velero/velero" for match in ort_zap_matches):
-        fail("ORT/ZAP image manager must not match the Velero authority block")
+        fail("kindest/node and GHCR image manager must match every image exactly once and exclude Velero")
+    expected_tool_image_digests = {
+        expected_image_dep_names[key]: a[f"{key}_DIGEST"] for key in ("KIND_NODE_IMAGE", "ORT", "ZAP")
+    }
+    for match in tool_image_matches:
+        if match.group("currentDigest") != expected_tool_image_digests[match.group("depName")]:
+            fail("kindest/node and GHCR image manager must pair each image with its own authority digest")
+    if any(match.group("depName") == "velero/velero" for match in tool_image_matches):
+        fail("kindest/node and GHCR image manager must not match the Velero authority block")
     for manager_index, manager in enumerate(custom_managers):
         patterns = manager.get("matchStrings") if isinstance(manager, dict) else None
         if not isinstance(patterns, list) or not patterns:
@@ -1764,8 +1886,9 @@ def main() -> int:
     if matched != expected_renovate_dependencies:
         fail("Renovate does not discover every workflow tool authority exactly once")
     testcontainer_managers = [
-        manager for manager in custom_managers
-        if manager.get("description") == "Update literal upstream database images used by Java Testcontainers"
+        manager
+        for manager in custom_managers
+        if manager.get("description") == "Update shared Testcontainers database image references"
     ]
     if len(testcontainer_managers) != 1:
         fail("Renovate must extract Testcontainers database images exactly once")
@@ -1773,42 +1896,158 @@ def main() -> int:
     if testcontainer_manager.get("datasourceTemplate") != "docker":
         fail("Testcontainers database images must use the Docker datasource")
     testcontainer_pattern = compile_re2_pattern(testcontainer_manager["matchStrings"][0])
-    fixture = 'new PostgreSQLContainer<>("postgres:16-alpine"); new GenericContainer<>("redis:7.2-alpine");'
-    expected_images = Counter((("postgres", "16-alpine"), ("redis", "7.2-alpine")))
-    if Counter((m.group("depName"), m.group("currentValue")) for m in testcontainer_pattern.finditer(fixture)) != expected_images:
+    fixture = "postgres.image=postgres:18@sha256:" + "b" * 64 + "\nredis.image=redis:7.2-alpine\n"
+    expected_images = Counter((("postgres", "18"), ("redis", "7.2-alpine")))
+    if (
+        Counter((m.group("depName"), m.group("currentValue")) for m in testcontainer_pattern.finditer(fixture))
+        != expected_images
+    ):
         fail("Testcontainers image extraction loses database version or image suffix")
     if list(testcontainer_pattern.finditer('"ghcr.io/benhook1013/logging-admin-service:latest"')):
         fail("Testcontainers manager must not update repository-built service images")
     digest_image_managers = [
         testcontainer_manager,
-        next(manager for manager in custom_managers if manager.get("description") == "Update the PostgreSQL image used by ERD generation"),
-        next(manager for manager in custom_managers if manager.get("description") == "Update the embedded dev-demo bootstrap Pod runtime image"),
+        next(
+            manager
+            for manager in custom_managers
+            if manager.get("description") == "Update the PostgreSQL image used by ERD generation"
+        ),
+        next(
+            manager
+            for manager in custom_managers
+            if manager.get("description") == "Update the embedded dev-demo bootstrap Pod runtime image"
+        ),
     ]
     old_digest = "sha256:" + "a" * 64
-    for manager, image in zip(digest_image_managers, ('"postgres:16-alpine"', 'postgres:16', 'image: python:3.12-alpine')):
+    for manager, image in zip(
+        digest_image_managers, ("postgres.image=postgres:18", "postgres:16", "image: python:3.12-alpine")
+    ):
         pattern = compile_re2_pattern(manager["matchStrings"][0])
         pinned_image = image[:-1] + "@" + old_digest + '"' if image.startswith('"') else image + "@" + old_digest
         match = pattern.search(pinned_image)
         if match is None or match.group("currentDigest") != old_digest:
             fail("Custom runtime image managers must extract pinned digests separately from tags")
         replacement = manager.get("autoReplaceStringTemplate", "")
-        if "{{#if newDigest}}@{{{newDigest}}}" not in replacement or "{{#if currentDigest}}@{{{currentDigest}}}" not in replacement:
+        if (
+            "{{#if newDigest}}@{{{newDigest}}}" not in replacement
+            or "{{#if currentDigest}}@{{{currentDigest}}}" not in replacement
+        ):
             fail("Custom runtime image replacements must insert/update digests and retain existing pins")
-    k3s_manager = next(manager for manager in custom_managers if manager.get("description") == "Update the disposable Helm proof K3s image version and digest")
+    k3s_manager = next(
+        manager
+        for manager in custom_managers
+        if manager.get("description") == "Update the disposable Helm proof K3s image version and digest"
+    )
     k3s_pattern = compile_re2_pattern(k3s_manager["matchStrings"][0])
     k3s_matches = list(k3s_pattern.finditer((root / ".github/workflows/ci.yml").read_text()))
-    if len(k3s_matches) != 1 or k3s_matches[0].group("depName") != "rancher/k3s" or not k3s_matches[0].group("currentDigest"):
+    if (
+        len(k3s_matches) != 1
+        or k3s_matches[0].group("depName") != "rancher/k3s"
+        or not k3s_matches[0].group("currentDigest")
+    ):
         fail("Renovate must extract the single immutable disposable K3s authority")
+    busybox_managers = [
+        manager
+        for manager in custom_managers
+        if manager.get("description") == "Update the pinned BusyBox image used by the Redis AOF reset job"
+    ]
+    if len(busybox_managers) != 1:
+        fail("Renovate must define exactly one Redis AOF reset BusyBox manager")
+    busybox_manager = busybox_managers[0]
+    busybox_path = root / "charts/firemud/templates/redis-aof-reset-job.yaml"
+    busybox_source = busybox_path.read_text()
+    busybox_pattern = compile_re2_pattern(busybox_manager["matchStrings"][0])
+    busybox_matches = list(busybox_pattern.finditer(busybox_source))
+    busybox_context = busybox_matches[0].groupdict() if len(busybox_matches) == 1 else {}
+    busybox_indentation = busybox_context.get("indentation", "not captured")
+    if (
+        busybox_manager.get("managerFilePatterns") != ["/^charts\\/firemud\\/templates\\/redis-aof-reset-job\\.yaml$/"]
+        or busybox_manager.get("datasourceTemplate") != "docker"
+        or busybox_manager.get("versioningTemplate") != "docker"
+        or len(busybox_matches) != 1
+        or busybox_context.get("depName") != "busybox"
+        or not re.fullmatch(r"\d+\.\d+\.\d+", busybox_context.get("currentValue", ""))
+        or not re.fullmatch(r"sha256:[0-9a-f]{64}", busybox_context.get("currentDigest", ""))
+        or not isinstance(busybox_indentation, str)
+        or (busybox_indentation and not busybox_indentation.isspace())
+    ):
+        fail("Renovate must extract the pinned BusyBox hook with supported version, digest, and indentation fields")
+    busybox_rule = [
+        rule
+        for rule in renovate.get("packageRules", [])
+        if rule.get("matchManagers") == ["custom.regex"] and rule.get("matchPackageNames") == ["busybox"]
+    ]
+    if len(busybox_rule) != 1 or busybox_rule[0].get("pinDigests") is not True:
+        fail("Redis AOF reset BusyBox updates must preserve digest pinning")
+    busybox_replacement = busybox_manager.get("autoReplaceStringTemplate", "")
+    synthetic_busybox_digest = "sha256:" + "c" * 64
+
+    def render_busybox_replacement(new_value, new_digest):
+        rendered = re.sub(
+            r"{{#if newValue}}(.*?){{else}}(.*?){{/if}}",
+            lambda match: match.group(1) if new_value else match.group(2),
+            busybox_replacement,
+        )
+        rendered = re.sub(
+            r"{{#if newDigest}}(.*?){{else}}(.*?){{/if}}",
+            lambda match: match.group(1) if new_digest else match.group(2),
+            rendered,
+        )
+        return (
+            rendered.replace("{{{indentation}}}", busybox_context["indentation"])
+            .replace("{{{depName}}}", busybox_context["depName"])
+            .replace("{{{newValue}}}", new_value or busybox_context["currentValue"])
+            .replace("{{{currentValue}}}", busybox_context["currentValue"])
+            .replace("{{{newDigest}}}", new_digest or busybox_context["currentDigest"])
+            .replace("{{{currentDigest}}}", busybox_context["currentDigest"])
+        )
+
+    current_value = busybox_context["currentValue"]
+    current_digest = busybox_context["currentDigest"]
+    unchanged_busybox_source = busybox_source.replace(busybox_matches[0].group(0), "")
+    for new_value, new_digest, expected_value, expected_digest in (
+        ("1.38.1", synthetic_busybox_digest, "1.38.1", synthetic_busybox_digest),
+        ("", synthetic_busybox_digest, current_value, synthetic_busybox_digest),
+        ("1.38.1", "", "1.38.1", current_digest),
+        ("", "", current_value, current_digest),
+    ):
+        replacement = render_busybox_replacement(new_value, new_digest)
+        replaced_source, replacement_count = busybox_pattern.subn(replacement, busybox_source)
+        expected_line = busybox_context["indentation"] + f"image: busybox:{expected_value}@{expected_digest}"
+        if (
+            replacement_count != 1
+            or expected_line not in replaced_source
+            or replaced_source.replace(expected_line, "") != unchanged_busybox_source
+        ):
+            fail("BusyBox manager replacement must retain pins and change only supplied fields")
+    pip_compile_patterns = [
+        re.compile(translate_renovate_pattern(pattern[1:-1]))
+        for pattern in renovate.get("pip-compile", {}).get("managerFilePatterns", [])
+    ]
+    expected_pip_compile_files = {path.relative_to(root).as_posix() for path in requirements_profiles.values()}
+    extracted_pip_compile_files = {
+        relative
+        for relative in (
+            "config/docs/requirements.txt",
+            "config/python/ci-requirements.txt",
+            "config/python/smoke-requirements.txt",
+            "config/python/yaml-requirements.txt",
+            "config/docs/requirements.in",
+            "config/python/ci-requirements.in",
+            "config/python/smoke-requirements.in",
+            "config/python/yaml-requirements.in",
+        )
+        if any(pattern.search(relative) for pattern in pip_compile_patterns)
+    }
+    if extracted_pip_compile_files != expected_pip_compile_files:
+        fail("Renovate pip-compile must match exactly the four generated output locks and no source inputs")
     k3s_rule = next(rule for rule in renovate["packageRules"] if rule.get("matchPackageNames") == ["rancher/k3s"])
-    if k3s_rule.get("allowedVersions") != "/^v1\\.34\\.[0-9]+-k3s[0-9]+$/" or k3s_rule.get("pinDigests") is not True or k3s_rule.get("automerge") is not False:
+    if (
+        k3s_rule.get("allowedVersions") != "/^v1\\.34\\.[0-9]+-k3s[0-9]+$/"
+        or k3s_rule.get("pinDigests") is not True
+        or k3s_rule.get("automerge") is not False
+    ):
         fail("K3s updates must preserve the supported Kubernetes minor and reviewed digest updates")
-    # Version comments let the native manager update immutable action commits.
-    # Exact upstream tag/SHA identity is verified separately during coverage proof.
-    action_pattern = re.compile(r"(?m)^\s*uses:\s+[^./\s][^\s]*@[0-9a-f]{40}(?P<comment>[^\n]*)$")
-    for action_file in (root / ".github").rglob("*.yml"):
-        for action in action_pattern.finditer(action_file.read_text()):
-            if not re.search(r"# v[0-9]+(?:\.[0-9]+){0,2}(?:[ -]|$)", action.group("comment")):
-                fail(f"Pinned external action lacks a managed release ref: {action_file.relative_to(root)}")
     if "**/test/**" in renovate.get("ignorePaths", []):
         fail("Renovate must include service test image authorities")
     manifest_patterns = renovate.get("kubernetes", {}).get("managerFilePatterns", [])
@@ -1847,7 +2086,15 @@ def main() -> int:
         or velero_rule.get("automerge") is not False
     ):
         fail("Velero native managers must remain grouped, digest-pinned, and manually merged")
-    cli_digest_rule = next((rule for rule in rules if rule.get("description") == "Velero CLI authority is a binary release version rather than a container image reference"), None)
+    cli_digest_rule = next(
+        (
+            rule
+            for rule in rules
+            if rule.get("description")
+            == "Velero CLI authority is a binary release version rather than a container image reference"
+        ),
+        None,
+    )
     if (
         cli_digest_rule is None
         or rules.index(cli_digest_rule) <= rules.index(velero_rule)

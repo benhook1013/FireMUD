@@ -59,6 +59,8 @@ read_run_state() {
   python3 -c '
 import json
 import sys
+import re
+from datetime import datetime, timezone
 
 wait_mode, image_tag, merge_sha, base_sha, head_sha = sys.argv[1:]
 try:
@@ -111,16 +113,104 @@ if not matching_runs:
     raise SystemExit(0)
 
 run = sorted(matching_runs, key=lambda item: item.get("created_at", ""), reverse=True)[0]
+# Every tab-delimited field must be nonempty so Bash IFS cannot shift positions.
+def clean_field(value):
+    return isinstance(value, str) and bool(value) and not any(character.isspace() or ord(character) < 32 or ord(character) == 127 for character in value)
+
+run_id = run.get("id")
+if type(run_id) is not int or run_id <= 0:
+    raise SystemExit(1)
+if not all(clean_field(run.get(field)) for field in ("status", "html_url", "event")):
+    raise SystemExit(1)
+conclusion = run.get("conclusion")
+if conclusion is None or conclusion == "":
+    if run["status"] == "completed":
+        raise SystemExit(1)
+    conclusion = "pending"
+elif not clean_field(conclusion):
+    raise SystemExit(1)
+created_at = run.get("created_at")
+if not isinstance(created_at, str) or not re.fullmatch(r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z", created_at):
+    raise SystemExit(1)
+try:
+    created = datetime.strptime(created_at, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
+except ValueError:
+    raise SystemExit(1)
+if created > datetime.now(timezone.utc):
+    raise SystemExit(1)
 print(
-    "found\t{}\t{}\t{}\t{}\t{}".format(
-        run.get("id", ""),
-        run.get("status", ""),
-        run.get("conclusion", ""),
-        run.get("html_url", ""),
-        run.get("event", ""),
+    "found\t{}\t{}\t{}\t{}\t{}\t{}".format(
+        run_id,
+        run["status"],
+        conclusion,
+        run["html_url"],
+        run["event"],
+        created_at,
     )
 )
 ' "${wait_mode}" "${image_tag}" "${merge_sha}" "${base_sha}" "${head_sha}"
+}
+
+fetch_publisher_runs() {
+  python3 - "${GITHUB_REPOSITORY}" "$1" "$2" "$3" <<'PY_PUBLISHERS'
+import json
+import re
+import subprocess
+import sys
+from datetime import datetime, timezone
+
+repository, event, lower_text, upper_text = sys.argv[1:]
+
+def unavailable(reason):
+    print(f"Publisher coverage unavailable: {reason}.", file=sys.stderr)
+    raise SystemExit(1)
+
+def timestamp(value):
+    if not isinstance(value, str) or not re.fullmatch(r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z", value):
+        unavailable("creation-window timestamp is malformed")
+    try:
+        return datetime.strptime(value, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
+    except ValueError:
+        unavailable("creation-window timestamp is invalid")
+
+lower, upper = timestamp(lower_text), timestamp(upper_text)
+if lower > upper or event not in {"workflow_run", "repository_dispatch"}:
+    unavailable("creation window or event is invalid")
+endpoint = f"repos/{repository}/actions/workflows/publish-pr-runtime-images.yml/runs?event={event}&created={lower_text}..{upper_text}&per_page=100"
+records, seen, total = [], set(), None
+page_number = 1
+while True:
+    result = subprocess.run(["gh", "api", f"{endpoint}&page={page_number}"], capture_output=True, text=True)
+    if result.returncode:
+        unavailable("exact-window GitHub API lookup failed")
+    try:
+        page = json.loads(result.stdout)
+    except json.JSONDecodeError:
+        unavailable("exact-window API response is malformed")
+    if not isinstance(page, dict) or type(page.get("total_count")) is not int or not isinstance(page.get("workflow_runs"), list):
+        unavailable("exact-window API envelope is malformed")
+    count = page["total_count"]
+    if count < 0 or count > 1000:
+        unavailable("exact-window run count exceeds the 1000-record filtered API ceiling")
+    if total is None:
+        total = count
+    elif total != count:
+        unavailable("exact-window page totals changed")
+    runs = page["workflow_runs"]
+    if len(runs) != min(100, total - len(records)):
+        unavailable("exact-window page coverage is incomplete")
+    for run in runs:
+        if not isinstance(run, dict) or type(run.get("id")) is not int or run["id"] <= 0 or run["id"] in seen or run.get("event") != event:
+            unavailable("exact-window run identity or event is malformed")
+        if not lower <= timestamp(run.get("created_at")) <= upper:
+            unavailable("run creation time is outside the exact window")
+        seen.add(run["id"])
+        records.append(run)
+    if len(records) == total:
+        break
+    page_number += 1
+print(json.dumps({"workflow_runs": records}))
+PY_PUBLISHERS
 }
 
 read_publisher_state() {
@@ -129,7 +219,9 @@ import json
 import re
 import sys
 
-wait_mode, image_tag, merge_sha, base_sha, head_sha = sys.argv[1:]
+wait_mode, image_tag, merge_sha, base_sha, head_sha, source_run_id = sys.argv[1:]
+if not re.fullmatch(r"[1-9][0-9]*", source_run_id):
+    raise SystemExit(1)
 try:
     payload = json.load(sys.stdin)
 except json.JSONDecodeError:
@@ -150,7 +242,10 @@ if any(not isinstance(run, dict) for run in workflow_runs):
 if wait_mode == "pull-request":
     matching_runs = [
         run for run in workflow_runs
-        if (tokens := run.get("display_title", "").split())[:8] == [
+        if (run.get("event") == "repository_dispatch" and
+            run.get("display_title") == f"Publish PR Runtime Images source-run-{source_run_id}")
+        or (run.get("event") == "workflow_run" and
+        (tokens := run.get("display_title", "").split())[:8] == [
             "Publish", "PR", "Runtime", "Images", "Build", "Runtime", "Images",
             "secure-pr-artifact",
         ]
@@ -159,7 +254,7 @@ if wait_mode == "pull-request":
         and tokens[9] == f"base-{base_sha}"
         and tokens[10] == f"head-{head_sha}"
         and tokens[11] == f"merge-{merge_sha}"
-        and tokens[12] == "mode-required"
+        and tokens[12] == "mode-required")
     ]
 else:
     matching_runs = []
@@ -176,23 +271,39 @@ print(
         run.get("html_url", ""),
     )
 )
-' "${wait_mode}" "${image_tag}" "${merge_sha}" "${base_sha}" "${head_sha}"
+' "${wait_mode}" "${image_tag}" "${merge_sha}" "${base_sha}" "${head_sha}" "$1"
 }
 
 wait_for_pr_publisher() {
+  local source_run_id="$1"
+  local source_created_at="$2"
+  local coverage_unavailable=false
   local publisher_start_epoch="${SECONDS}"
   local publisher_deadline=$((SECONDS + publisher_timeout_seconds))
   while (( SECONDS < publisher_deadline )); do
-    local publisher_payload publisher_state
-    if ! publisher_payload="$(
-      fetch_workflow_runs \
-        "repos/${GITHUB_REPOSITORY}/actions/workflows/publish-pr-runtime-images.yml/runs?event=workflow_run&per_page=100" \
-        "waiting for the trusted PR image publisher"
-    )"; then
+    local publisher_payload publisher_state event_payload publisher_event fetch_failed
+    publisher_payload=""
+    fetch_failed=false
+    local poll_upper_bound
+    poll_upper_bound="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    # Preserve complete discovery within the verified source creation window.
+    for publisher_event in workflow_run repository_dispatch; do
+      if ! event_payload="$(
+        fetch_publisher_runs "${publisher_event}" "${source_created_at}" "${poll_upper_bound}"
+      )"; then
+        fetch_failed=true
+        break
+      fi
+      publisher_payload+="${publisher_payload:+,}${event_payload}"
+    done
+    if [[ "${fetch_failed}" == "true" ]]; then
+      coverage_unavailable=true
       sleep "${sleep_seconds}"
       continue
     fi
-    if ! publisher_state="$(read_publisher_state <<<"${publisher_payload}")"; then
+    coverage_unavailable=false
+    publisher_payload="[${publisher_payload}]"
+    if ! publisher_state="$(read_publisher_state "${source_run_id}" <<<"${publisher_payload}")"; then
       printf 'GitHub API response was empty or invalid while waiting for the trusted PR image publisher; retrying.\n' >&2
       sleep "${sleep_seconds}"
       continue
@@ -230,6 +341,10 @@ wait_for_pr_publisher() {
     sleep "${sleep_seconds}"
   done
 
+  if [[ "${coverage_unavailable}" == "true" ]]; then
+    printf 'Publisher coverage unavailable at the wait deadline for %s.\n' "${image_tag}" >&2
+    exit 1
+  fi
   printf 'Timed out waiting for trusted PR image publisher for %s.\n' "${image_tag}" >&2
   exit 1
 }
@@ -249,7 +364,7 @@ while (( SECONDS < deadline )); do
     continue
   fi
 
-  IFS=$'\t' read -r state run_id run_status run_conclusion run_url run_event <<<"${run_state}"
+  IFS=$'\t' read -r state run_id run_status run_conclusion run_url _run_event run_created_at <<<"${run_state}"
 
   if [[ "${state}" == "missing" ]]; then
     elapsed_seconds=$((SECONDS - start_epoch))
@@ -274,8 +389,8 @@ while (( SECONDS < deadline )); do
   if [[ "${run_status}" == "completed" && "${run_conclusion}" == "success" ]]; then
     printf 'Matching runtime-images workflow %s succeeded for %s after %ss.\n' \
       "${run_id}" "${image_tag}" "$((SECONDS - start_epoch))"
-    if [[ "${wait_mode}" == "pull-request" && ("${run_event}" == "pull_request" || "${run_event}" == "repository_dispatch") ]]; then
-      wait_for_pr_publisher
+    if [[ "${wait_mode}" == "pull-request" ]]; then
+      wait_for_pr_publisher "${run_id}" "${run_created_at}"
     fi
     exit 0
   fi

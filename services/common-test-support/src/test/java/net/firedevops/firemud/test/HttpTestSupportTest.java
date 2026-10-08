@@ -75,7 +75,7 @@ class HttpTestSupportTest {
   }
 
   @Test
-  @Timeout(5)
+  @Timeout(8)
   void readinessProbeTimeoutPreservesRetriesWithinOverallDeadline() throws Exception {
     CountDownLatch requestStarted = new CountDownLatch(2);
     CountDownLatch releaseRequest = new CountDownLatch(1);

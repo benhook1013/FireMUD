@@ -9,6 +9,7 @@ from unittest.mock import patch
 sys.path.insert(0, str(Path(__file__).parents[1]))
 
 from fire_controller.jobs import (
+    _MAX_LANE_JOBS,
     JOB_WORKERS,
     JobError,
     JobNotFound,
@@ -108,6 +109,39 @@ class JobStoreTest(unittest.TestCase):
         self.assertIn("job_updates_sequence_idx", details)
         self.assertIn("job_checkpoints_sequence_idx", details)
         self.assertIn("job_notes_job_status_idx", details)
+        self.assertIn("job_note_revisions_job_created_idx", details)
+
+    def test_bootstrap_adds_job_note_activity_index_to_previous_layout_without_rewriting_history(self) -> None:
+        self.bootstrap()
+        job = self.store.create("history-index", "Gameplay", "History index")
+        note = self.store.note("Initial note", job=job["id"])
+        self.store.revise_note(note["id"], expected_revision=1, body="Revised note")
+        activity_before = self.store.get(job["id"])["last_activity_at"]
+        with sqlite3.connect(self.database) as connection:
+            revisions_before = list(connection.execute(
+                "SELECT note_id, revision, created_at, state_json FROM job_note_revisions ORDER BY note_id, revision"
+            ))
+            notes_before = list(connection.execute("SELECT * FROM job_notes ORDER BY id"))
+            connection.execute("DROP INDEX job_note_revisions_job_created_idx")
+
+        self.store.bootstrap()
+
+        with sqlite3.connect(self.database) as connection:
+            revisions_after = list(connection.execute(
+                "SELECT note_id, revision, created_at, state_json FROM job_note_revisions ORDER BY note_id, revision"
+            ))
+            notes_after = list(connection.execute("SELECT * FROM job_notes ORDER BY id"))
+            self.assertEqual(revisions_after, revisions_before)
+            self.assertEqual(notes_after, notes_before)
+            statements = []
+            connection.set_trace_callback(statements.append)
+            self.assertEqual(JobStore._last_activity(connection, [job["id"]])[job["id"]], activity_before)
+            connection.set_trace_callback(None)
+            plan = connection.execute("EXPLAIN QUERY PLAN " + statements[0]).fetchall()
+            JobStore.validate(connection)
+        revision_plan = next(row[3] for row in plan if "job_note_revisions" in row[3])
+        self.assertIn("SEARCH job_note_revisions USING INDEX job_note_revisions_job_created_idx", revision_plan)
+        self.assertNotIn("SCAN job_note_revisions", revision_plan)
 
     def test_bootstrap_preserves_review_state_and_writer_metadata(self) -> None:
         controller = SqliteStateStore(self.database)
@@ -167,6 +201,36 @@ class JobStoreTest(unittest.TestCase):
         self.assertEqual([item["body"] for item in full["updates"]], [f"Update {index}" for index in range(12)])
         self.assertEqual(len(full["checkpoints"]), 2)
         self.assertEqual(full["notes"][0]["status"], "consumed")
+
+    def test_assigned_worker_notes_include_worker_and_current_job_scopes_with_one_page(self) -> None:
+        self.store.bootstrap()
+        gameplay_job = self.store.create("assigned-gameplay", "Gameplay", "Gameplay assignment")
+        general_job = self.store.create("assigned-general", "General", "General assignment")
+        worker_note = self.store.note("Worker-wide reminder", worker="Gameplay")
+        assigned_job_note = self.store.note("Job-only reminder", job=gameplay_job["name"], phase="production")
+        worker_linked_note = self.store.note("Worker note with another job link", worker="Gameplay", job=general_job["id"])
+        foreign_job_note = self.store.note("Foreign job note", job=general_job["id"])
+        dismissed_note = self.store.note("Dismissed assigned note", job=gameplay_job["id"])
+        self.store.note_status(dismissed_note["id"], "dismissed", "Closed", expected_revision=1)
+        consumed_note = self.store.note("Consumed assigned note", job=gameplay_job["id"])
+        self.store.note_status(consumed_note["id"], "consumed", expected_revision=1)
+        future_note = self.store.note("Unassigned future source", phase="Unit 3A")
+
+        assigned = self.store.notes(worker="Gameplay", status="pending", include_assigned_jobs=True, limit=None)
+        assigned_ids = {note["id"] for note in assigned}
+        self.assertEqual(assigned_ids, {worker_note["id"], assigned_job_note["id"], worker_linked_note["id"]})
+        self.assertNotIn(foreign_job_note["id"], assigned_ids)
+        self.assertNotIn(dismissed_note["id"], assigned_ids)
+        self.assertNotIn(consumed_note["id"], assigned_ids)
+        self.assertNotIn(future_note["id"], assigned_ids)
+
+        first_page = self.store.notes(worker="Gameplay", include_assigned_jobs=True, limit=2, offset=0)
+        second_page = self.store.notes(worker="Gameplay", include_assigned_jobs=True, limit=2, offset=2)
+        self.assertEqual([note["id"] for note in first_page + second_page], [note["id"] for note in assigned])
+        with self.assertRaisesRegex(JobError, "requires an exact worker"):
+            self.store.notes(include_assigned_jobs=True)
+        with self.assertRaisesRegex(JobError, "must be a boolean"):
+            self.store.notes(worker="Gameplay", include_assigned_jobs=1)
 
     def test_worker_aliases_are_exact_bounded_project_values(self) -> None:
         self.bootstrap()
@@ -507,6 +571,84 @@ class JobStoreTest(unittest.TestCase):
         self.assertEqual(self.store.lane_state("Gameplay")["status"], "idle")
         with self.assertRaisesRegex(JobError, "requires a job"):
             self.store.resume("Gameplay", checkpoint={"done": "Done", "next_steps": "Next"})
+
+    def test_lane_cards_order_by_activity_then_name_with_status_priority(self) -> None:
+        self.bootstrap()
+        with patch("fire_controller.jobs._now", return_value="2026-10-01T00:00:00Z"):
+            primary = self.store.create("primary-stale", "Gameplay", "Primary", primary=True)
+        with patch("fire_controller.jobs._now", return_value="2026-10-02T00:00:00Z"):
+            checkpoint_job = self.store.create("checkpoint-recent", "Gameplay", "Recent checkpoint", primary=False)
+        with patch("fire_controller.jobs._now", return_value="2026-10-03T00:00:00Z"):
+            brief_job = self.store.create("brief-updated", "Gameplay", "Recent brief", primary=False)
+        with patch("fire_controller.jobs._now", return_value="2026-10-04T00:00:00Z"):
+            self.store.revise(brief_job["id"], brief_job["revision"], brief="# New brief")
+        with patch("fire_controller.jobs._now", return_value="2026-10-05T00:00:00Z"):
+            self.store.checkpoint(checkpoint_job["id"], "Checkpointed", "Continue")
+        with patch("fire_controller.jobs._now", return_value="2026-10-06T00:00:00Z"):
+            blocked = self.store.create("blocked-later", "Gameplay", "Blocked", status="blocked", primary=False)
+        with patch("fire_controller.jobs._now", return_value="2026-10-07T00:00:00Z"):
+            parked = self.store.create("parked-later", "Gameplay", "Parked", status="parked", primary=False)
+        with patch("fire_controller.jobs._now", return_value="2026-10-08T00:00:00Z"):
+            tie_zeta = self.store.create("tie-zeta", "Gameplay", "Tie zeta", primary=False)
+            tie_alpha = self.store.create("tie-alpha", "Gameplay", "Tie alpha", primary=False)
+
+        lane = self.store.lane_state("Gameplay")
+        jobs = lane["jobs"]
+        self.assertEqual(lane["primary"]["id"], primary["id"])
+        self.assertEqual([job["status"] for job in jobs], ["active"] * 5 + ["blocked", "parked"])
+        self.assertEqual([job["id"] for job in jobs[:5]], [
+            tie_alpha["id"], tie_zeta["id"], checkpoint_job["id"], brief_job["id"], primary["id"],
+        ])
+        self.assertLess(
+            next(index for index, job in enumerate(jobs) if job["id"] == checkpoint_job["id"]),
+            next(index for index, job in enumerate(jobs) if job["id"] == brief_job["id"]),
+        )
+        self.assertEqual(jobs[-2]["id"], blocked["id"])
+        self.assertEqual(jobs[-1]["id"], parked["id"])
+
+    def test_lane_activity_selects_recent_checkpoint_before_per_status_cap(self) -> None:
+        self.bootstrap()
+        jobs = []
+        with patch("fire_controller.jobs._now", return_value="2026-10-01T00:00:00Z"):
+            for index in range(_MAX_LANE_JOBS + 1):
+                jobs.append(self.store.create(
+                    f"job-{index:02d}", "Gameplay", f"Job {index}", primary=index == 0
+                ))
+        checkpointed = jobs[-1]
+        with patch("fire_controller.jobs._now", return_value="2026-10-02T00:00:00Z"):
+            self.store.checkpoint(checkpointed["id"], "Recent work", "Continue")
+
+        lane = self.store.lane_state("Gameplay")
+        self.assertTrue(lane["jobs_truncated"])
+        self.assertEqual(len(lane["jobs"]), _MAX_LANE_JOBS)
+        self.assertEqual(lane["jobs"][0]["id"], checkpointed["id"])
+        self.assertIn(checkpointed["id"], {job["id"] for job in lane["jobs"]})
+        self.assertEqual(lane["primary"]["id"], jobs[0]["id"])
+
+    def test_lane_cards_keep_capped_out_blocked_primary_in_activity_order(self) -> None:
+        self.bootstrap()
+        with patch("fire_controller.jobs._now", return_value="2026-10-01T00:00:00Z"):
+            primary = self.store.create(
+                "blocked-primary", "Gameplay", "Old blocked primary", status="blocked", primary=True
+            )
+        siblings = []
+        for index in range(_MAX_LANE_JOBS + 1):
+            timestamp = f"2026-10-02T00:{index:02d}:00Z"
+            with patch("fire_controller.jobs._now", return_value=timestamp):
+                siblings.append(self.store.create(
+                    f"blocked-sibling-{index:02d}", "Gameplay", f"Blocked sibling {index}",
+                    status="blocked", primary=False,
+                ))
+
+        lane = self.store.lane_state("Gameplay")
+
+        self.assertTrue(lane["jobs_truncated"])
+        self.assertEqual(len(lane["jobs"]), _MAX_LANE_JOBS)
+        self.assertEqual(lane["primary"]["id"], primary["id"])
+        self.assertEqual(
+            [job["id"] for job in lane["jobs"]],
+            [*(job["id"] for job in reversed(siblings[2:])), primary["id"]],
+        )
 
     def test_current_operations_honour_selected_writer_build_without_changing_floor(self) -> None:
         from pr_review.sqlite_store import WRITER_BUILD

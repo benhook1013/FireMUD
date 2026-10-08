@@ -30,7 +30,7 @@ jobs:
       telnet_port: ${{ steps.derive.outputs.telnet_port }}
     steps:
       - name: Harden runner
-        uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5 # v2.19.3
+        uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25 # v2.22.1
         with:
           egress-policy: audit
 
@@ -391,7 +391,7 @@ jobs:
 
       - name: Upload rendered dev-demo artifacts
         if: ${{ steps.cluster-access.outputs.available == 'true' }}
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: dev-demo-render-${{ needs.dev-demo-plan.outputs.release_name }}
           path: |

@@ -35,10 +35,11 @@ jobs:
       python_changed: ${{ steps.compute.outputs.python_changed }}
       design_docs_changed: ${{ steps.compute.outputs.design_docs_changed }}
       validation_python_changed: ${{ steps.compute.outputs.validation_python_changed }}
+      postgres_runtime_proof_changed: ${{ steps.compute.outputs.postgres_runtime_proof_changed }}
       lightweight_only: ${{ steps.compute.outputs.lightweight_only }}
     steps:
       - name: Harden runner
-        uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5 # v2.19.3
+        uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25 # v2.22.1
         with:
           egress-policy: audit
 
@@ -107,6 +108,8 @@ jobs:
                 python_changed: scope.pythonChanged,
                 design_docs_changed: scope.designDocsChanged,
                 validation_python_changed: scope.validationPythonChanged,
+                postgres_runtime_proof_changed:
+                  scope.postgresRuntimeProofChanged === undefined ? true : scope.postgresRuntimeProofChanged,
                 lightweight_only: scope.lightweightOnly,
               };
             } else {
@@ -133,6 +136,7 @@ jobs:
                 python_changed: true,
                 design_docs_changed: true,
                 validation_python_changed: true,
+                postgres_runtime_proof_changed: true,
                 lightweight_only: false,
               };
             }
@@ -143,6 +147,35 @@ jobs:
               );
             }
 
+  postgres-runtime-upgrade-proof:
+    name: PostgreSQL Runtime Upgrade Proof
+    needs: [changes]
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    if: ${{ (github.event_name != 'pull_request' || github.event.action != 'edited' || github.event.changes.base.ref != null) && needs.changes.outputs.postgres_runtime_proof_changed == 'true' }}
+    steps:
+      - name: Harden runner
+        uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25 # v2.22.1
+        with:
+          egress-policy: audit
+
+      - name: Check out validation candidate
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Set up canonical Python dependencies
+        uses: ./.github/actions/setup-python
+        with:
+          requirements: yaml
+
+      - name: Prove PostgreSQL 16 to 18 logical restore on isolated Docker volumes
+        env:
+          FIREMUD_POSTGRES_RUNTIME_DOCKER_PROOF: required
+        run: bash ./dev-tools/tests/postgres-runtime-upgrade-contract.sh
+
   # Static generation, lint, and policy checks
   buf-check:
     name: Buf Generation
@@ -151,7 +184,7 @@ jobs:
     if: ${{ (github.event_name != 'pull_request' || github.event.action != 'edited' || github.event.changes.base.ref != null) && needs.changes.outputs.lightweight_only != 'true' }}
     steps:
       - name: Harden runner
-        uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5 # v2.19.3
+        uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25 # v2.22.1
         with:
           egress-policy: audit
 
@@ -199,7 +232,7 @@ jobs:
     if: ${{ (github.event_name != 'pull_request' || github.event.action != 'edited' || github.event.changes.base.ref != null) && needs.changes.outputs.lightweight_only != 'true' }}
     steps:
       - name: Harden runner
-        uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5 # v2.19.3
+        uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25 # v2.22.1
         with:
           egress-policy: audit
 
@@ -220,7 +253,7 @@ jobs:
     if: ${{ (github.event_name != 'pull_request' || github.event.action != 'edited' || github.event.changes.base.ref != null) && needs.changes.outputs.lightweight_only != 'true' }}
     steps:
       - name: Harden runner
-        uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5 # v2.19.3
+        uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25 # v2.22.1
         with:
           egress-policy: audit
 
@@ -266,7 +299,7 @@ jobs:
     if: ${{ (github.event_name != 'pull_request' || github.event.action != 'edited' || github.event.changes.base.ref != null) && (needs.changes.outputs.lightweight_only != 'true' || needs.changes.outputs.python_changed == 'true') }}
     steps:
       - name: Harden runner
-        uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5 # v2.19.3
+        uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25 # v2.22.1
         with:
           egress-policy: audit
 
@@ -292,10 +325,11 @@ jobs:
     name: Dev Tool Contract Checks
     needs: [changes]
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     if: ${{ (github.event_name != 'pull_request' || github.event.action != 'edited' || github.event.changes.base.ref != null) && (needs.changes.outputs.lightweight_only != 'true' || needs.changes.outputs.design_docs_changed == 'true' || needs.changes.outputs.validation_python_changed == 'true') }}
     steps:
       - name: Harden runner
-        uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5 # v2.19.3
+        uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25 # v2.22.1
         with:
           egress-policy: audit
 
@@ -322,7 +356,7 @@ jobs:
 
       - name: Set up Node for Python Markdown contracts
         if: ${{ needs.changes.outputs.lightweight_only != 'true' || needs.changes.outputs.validation_python_changed == 'true' }}
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
           node-version-file: '.node-version'
           cache: npm
@@ -355,6 +389,7 @@ jobs:
       - name: 🧪 Validate dev tool contracts
         if: ${{ needs.changes.outputs.lightweight_only != 'true' }}
         run: |
+          set -x
           bash ./dev-tools/tests/cloc-report-contract.sh
           bash ./dev-tools/tests/ci-lightweight-scope-contract.sh
           bash ./dev-tools/tests/workflow-version-authority-contract.sh
@@ -369,6 +404,7 @@ jobs:
           bash ./dev-tools/tests/ci-validation-summary-contract.sh
           bash ./dev-tools/tests/security-summary-contract.sh
           bash ./dev-tools/tests/pr-runtime-image-publication-contract.sh
+          bash ./dev-tools/tests/runtime-base-image-apt-contract.sh
           bash ./dev-tools/tests/pr-required-gate-context-contract.sh
           bash ./dev-tools/tests/dev-demo-workflow-contract.sh
           bash ./dev-tools/tests/erd-workflow-contract.sh
@@ -378,6 +414,7 @@ jobs:
           bash ./dev-tools/tests/preview-priority-contract.sh
           bash ./dev-tools/tests/gameplay-bridge-network-policy-contract.sh
           bash ./dev-tools/tests/hosted-gateway-bridge-contract.sh
+          bash ./dev-tools/tests/postgres-runtime-upgrade-contract.sh
           bash ./dev-tools/tests/preview-runner-isolation-contract.sh
           bash ./dev-tools/tests/preview-standalone-transport-certificates-contract.sh
           bash ./dev-tools/tests/preview-ca-recovery-contract.sh
@@ -385,6 +422,8 @@ jobs:
           bash ./dev-tools/tests/trust-bootstrap-issuance-contract.sh
           bash ./dev-tools/tests/trust-bootstrap-live-proof-contract.sh
           bash ./dev-tools/tests/trust-bootstrap-provision-contract.sh
+          bash ./dev-tools/tests/account-jwt-bootstrap-fixture-contract.sh
+          bash ./dev-tools/tests/game-session-factory-qualification-contract.sh
           bash ./dev-tools/tests/preview-cleanup-proof-contract.sh
           bash ./dev-tools/tests/hosted-identity-controller-manifest-contract.sh
           bash ./dev-tools/tests/hosted-identity-controller-workflow-contract.sh
@@ -427,7 +466,7 @@ jobs:
     if: ${{ (github.event_name != 'pull_request' || github.event.action != 'edited' || github.event.changes.base.ref != null) && needs.changes.outputs.lightweight_only == 'true' }}
     steps:
       - name: Harden runner
-        uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5 # v2.19.3
+        uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25 # v2.22.1
         with:
           egress-policy: audit
 
@@ -451,7 +490,7 @@ jobs:
     if: ${{ (github.event_name != 'pull_request' || github.event.action != 'edited' || github.event.changes.base.ref != null) && needs.changes.outputs.lightweight_only != 'true' }}
     steps:
       - name: Harden runner
-        uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5 # v2.19.3
+        uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25 # v2.22.1
         with:
           egress-policy: audit
 
@@ -473,7 +512,7 @@ jobs:
     if: ${{ (github.event_name != 'pull_request' || github.event.action != 'edited' || github.event.changes.base.ref != null) && needs.changes.outputs.lightweight_only != 'true' }}
     steps:
       - name: Harden runner
-        uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5 # v2.19.3
+        uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25 # v2.22.1
         with:
           egress-policy: audit
 
@@ -493,7 +532,7 @@ jobs:
     if: ${{ (github.event_name != 'pull_request' || github.event.action != 'edited' || github.event.changes.base.ref != null) && needs.changes.outputs.lightweight_only != 'true' }}
     steps:
       - name: Harden runner
-        uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5 # v2.19.3
+        uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25 # v2.22.1
         with:
           egress-policy: audit
 
@@ -507,7 +546,7 @@ jobs:
           java-version: '25'
 
       - name: ⚙️ Set Up Node
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
           node-version-file: '.node-version'
 
@@ -529,7 +568,7 @@ jobs:
     if: ${{ (github.event_name != 'pull_request' || github.event.action != 'edited' || github.event.changes.base.ref != null) && needs.changes.outputs.lightweight_only != 'true' }}
     steps:
       - name: Harden runner
-        uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5 # v2.19.3
+        uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25 # v2.22.1
         with:
           egress-policy: audit
 
@@ -543,7 +582,7 @@ jobs:
           java-version: '25'
 
       - name: ⚙️ Set Up Node
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
           node-version-file: '.node-version'
 
@@ -565,7 +604,7 @@ jobs:
     if: ${{ (github.event_name != 'pull_request' || github.event.action != 'edited' || github.event.changes.base.ref != null) && needs.changes.outputs.lightweight_only != 'true' }}
     steps:
       - name: Harden runner
-        uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5 # v2.19.3
+        uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25 # v2.22.1
         with:
           egress-policy: audit
 
@@ -596,7 +635,7 @@ jobs:
     if: ${{ (github.event_name != 'pull_request' || github.event.action != 'edited' || github.event.changes.base.ref != null) && needs.changes.outputs.lightweight_only != 'true' }}
     steps:
       - name: Harden runner
-        uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5 # v2.19.3
+        uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25 # v2.22.1
         with:
           egress-policy: audit
 
@@ -621,7 +660,7 @@ jobs:
     if: ${{ (github.event_name != 'pull_request' || github.event.action != 'edited' || github.event.changes.base.ref != null) && needs.changes.outputs.lightweight_only != 'true' }}
     steps:
       - name: Harden runner
-        uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5 # v2.19.3
+        uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25 # v2.22.1
         with:
           egress-policy: audit
 
@@ -668,7 +707,7 @@ jobs:
     if: ${{ (github.event_name != 'pull_request' || github.event.action != 'edited' || github.event.changes.base.ref != null) && needs.changes.outputs.lightweight_only != 'true' }}
     steps:
       - name: Harden runner
-        uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5 # v2.19.3
+        uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25 # v2.22.1
         with:
           egress-policy: audit
 
@@ -746,7 +785,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Harden runner
-        uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5 # v2.19.3
+        uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25 # v2.22.1
         with:
           egress-policy: audit
 
@@ -762,7 +801,7 @@ jobs:
         run: python3 dev-tools/observability/validate-observability-contract.py
 
       - name: ⚙️ Set Up Node
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
           node-version-file: '.node-version'
           cache: npm
@@ -790,7 +829,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Harden runner
-        uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5 # v2.19.3
+        uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25 # v2.22.1
         with:
           egress-policy: audit
 
@@ -805,7 +844,7 @@ jobs:
         uses: ./.github/actions/setup-python
 
       - name: ⚙️ Set Up Node
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
           node-version-file: '.node-version'
           cache: npm
@@ -909,7 +948,8 @@ jobs:
     permissions:
       contents: read
       id-token: write
-    timeout-minutes: 20
+    # Account and World PostgreSQL proofs can run close to 20 minutes before Gradle post-job cleanup.
+    timeout-minutes: ${{ (matrix.module == 'account-service' || matrix.module == 'world-management-service') && 30 || 20 }}
     strategy:
       fail-fast: false
       matrix:
@@ -918,7 +958,7 @@ jobs:
 
     steps:
       - name: Harden runner
-        uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5 # v2.19.3
+        uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25 # v2.22.1
         with:
           egress-policy: audit
 
@@ -991,7 +1031,7 @@ jobs:
             --require-covered-method net/firedevops/firemud/common/saga/persistence/SagaInstanceRepository#findAll
 
       - name: 📤 Upload Coverage Report
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: jacoco-${{ matrix.module }}-report-${{ github.sha }}
           path: ${{ matrix.module == 'load-testing' && 'dev-tools/load-testing/build/reports/jacoco/test/' || format('services/{0}/build/reports/jacoco/test/', matrix.module) }}
@@ -1011,7 +1051,7 @@ jobs:
 
       - name: 📤 Upload Test Logs if Failed
         if: failure()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: test-logs-${{ matrix.module }}-${{ github.sha }}
           path: ${{ matrix.module == 'load-testing' && 'dev-tools/load-testing/build/reports/tests/' || format('services/{0}/build/reports/tests/', matrix.module) }}
@@ -1027,7 +1067,7 @@ jobs:
     if: ${{ !cancelled() && github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]' && (github.event.action != 'edited' || github.event.changes.base.ref != null) }}
     steps:
       - name: Harden runner
-        uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5 # v2.19.3
+        uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25 # v2.22.1
         with:
           egress-policy: audit
 
@@ -1171,11 +1211,11 @@ jobs:
       checks: read # Preserve a prior successful required context on metadata-only edits.
       contents: read # Check out the shared required-gate composite action.
       actions: read # Inspect the matching required-gate job's preservation step.
-    needs: [changes, buf-check, docker-lint, shellcheck, python-script-validation, dev-tool-contract-checks, dev-tools-readme-contract, yaml-lint, metrics-cardinality-check, flyway-migration-sanity-checks, grpc-transport-config-sanity-checks, workflow-lint, helm-lint, helm-render-validation, helm-transaction-proof, docs-check, frontend-checks, build-and-test]
+    needs: [changes, postgres-runtime-upgrade-proof, buf-check, docker-lint, shellcheck, python-script-validation, dev-tool-contract-checks, dev-tools-readme-contract, yaml-lint, metrics-cardinality-check, flyway-migration-sanity-checks, grpc-transport-config-sanity-checks, workflow-lint, helm-lint, helm-render-validation, helm-transaction-proof, docs-check, frontend-checks, build-and-test]
     if: ${{ always() }}
     steps:
       - name: Harden runner
-        uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5 # v2.19.3
+        uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25 # v2.22.1
         with:
           egress-policy: audit
 
@@ -1187,6 +1227,7 @@ jobs:
           persist-credentials: false
 
       - name: Preserve successful required gate on metadata-only edit
+        id: preserved_gate
         if: ${{ github.event_name == 'pull_request' && github.event.action == 'edited' && github.event.changes.base.ref == null }}
         uses: ./.github/actions/preserve-required-gate
         with:
@@ -1194,6 +1235,12 @@ jobs:
           workflow-name: CI — Validation
           workflow-file: ci.yml
           workflow-path: .github/workflows/ci.yml
+
+      - name: Report dependency-deferred required gate
+        if: ${{ steps.preserved_gate.outputs.assessment == 'dependency-deferred' }}
+        run: |
+          echo "Original required-gate proof is pending; dependency-deferred failure." >&2
+          exit 1
 
       - name: Enforce validation success
         if: ${{ github.event_name != 'pull_request' || github.event.action != 'edited' || github.event.changes.base.ref != null }}
@@ -1203,6 +1250,8 @@ jobs:
           PYTHON_CHANGED: ${{ needs.changes.outputs.python_changed }}
           DESIGN_DOCS_CHANGED: ${{ needs.changes.outputs.design_docs_changed }}
           VALIDATION_PYTHON_CHANGED: ${{ needs.changes.outputs.validation_python_changed }}
+          POSTGRES_RUNTIME_PROOF_CHANGED: ${{ needs.changes.outputs.postgres_runtime_proof_changed }}
+          POSTGRES_RUNTIME_UPGRADE_PROOF: ${{ needs.postgres-runtime-upgrade-proof.result }}
           LIGHTWEIGHT_ONLY: ${{ needs.changes.outputs.lightweight_only }}
           AFFECTED_MODULES: ${{ needs.changes.outputs.affected_modules }}
           CHANGES_RESULT: ${{ needs.changes.result }}
@@ -1233,6 +1282,15 @@ jobs:
 
           if [ "$CHANGES_RESULT" != "success" ]; then
             echo "Change detection did not succeed: $CHANGES_RESULT" >&2
+            failed=1
+          fi
+
+          echo "PostgreSQL Runtime Upgrade Proof => $POSTGRES_RUNTIME_UPGRADE_PROOF (changed=$POSTGRES_RUNTIME_PROOF_CHANGED)"
+          if [ "$POSTGRES_RUNTIME_PROOF_CHANGED" = "true" ]; then
+            if [ "$POSTGRES_RUNTIME_UPGRADE_PROOF" != "success" ]; then
+              failed=1
+            fi
+          elif [ "$POSTGRES_RUNTIME_UPGRADE_PROOF" != "success" ] && [ "$POSTGRES_RUNTIME_UPGRADE_PROOF" != "skipped" ]; then
             failed=1
           fi
 

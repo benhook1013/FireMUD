@@ -29,6 +29,7 @@ import net.firedevops.firemud.tcpproxy.testsupport.GameplayTelnetDriver;
 import net.firedevops.firemud.tcpproxy.testsupport.GameplayTelnetScenarios;
 import net.firedevops.firemud.test.AccountRuntimeStubServer;
 import net.firedevops.firemud.test.HttpTestSupport;
+import net.firedevops.firemud.test.TestContainerImages;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -51,7 +52,6 @@ import org.testcontainers.containers.GenericContainer;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
-import org.testcontainers.utility.DockerImageName;
 
 @Testcontainers(disabledWithoutDocker = true)
 @SuppressWarnings("resource")
@@ -74,14 +74,14 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
 
   @Container
   static final PostgreSQLContainer<?> POSTGRES =
-      new PostgreSQLContainer<>("postgres:16-alpine")
+      new PostgreSQLContainer<>(TestContainerImages.postgres())
           .withDatabaseName("firemud")
           .withUsername("firemud")
           .withPassword("firemud");
 
   @Container
   static final GenericContainer<?> REDIS =
-      new GenericContainer<>(DockerImageName.parse("redis:7.2-alpine")).withExposedPorts(6379);
+      new GenericContainer<>(TestContainerImages.redis()).withExposedPorts(6379);
 
   private static GameplayCrossServiceStack STACK;
   private static long DEFAULT_GAME_INSTANCE_ID;

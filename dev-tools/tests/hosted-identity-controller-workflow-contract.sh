@@ -100,13 +100,53 @@ from pathlib import Path
 
 import yaml
 
-workflow = yaml.safe_load(Path(sys.argv[1]).read_text(encoding="utf-8"))
+runtime_source = Path(sys.argv[1]).read_text(encoding="utf-8")
+workflow = yaml.safe_load(runtime_source)
 publisher_workflow = yaml.safe_load(Path(sys.argv[2]).read_text(encoding="utf-8"))
 
 
+def has_immutable_action_pin(step, action):
+    return isinstance(step, dict) and re.fullmatch(
+        rf"{re.escape(action)}@[0-9a-f]{{40}}", step.get("uses", "")
+    ) is not None
+
+
 def assert_immutable_action_pin(step, action):
-    uses = step.get("uses", "")
-    assert re.fullmatch(rf"{re.escape(action)}@[0-9a-f]{{40}}", uses), uses
+    uses = step.get("uses", "") if isinstance(step, dict) else ""
+    assert has_immutable_action_pin(step, action), uses
+
+
+def fixture_has_target_pin(target_uses, earlier_uses=None):
+    steps = []
+    if earlier_uses is not None:
+        steps.append({"name": "target", "uses": earlier_uses})
+    steps.append({"name": "target", "uses": target_uses})
+    fixture = yaml.safe_load("jobs:\n  contract:\n    steps:\n" + "".join(
+        f"      - name: {step['name']}\n        uses: {step['uses']}\n"
+        for step in steps
+    ))
+    steps_by_name = {
+        step.get("name"): step
+        for step in fixture["jobs"]["contract"]["steps"]
+        if isinstance(step, dict)
+    }
+    return has_immutable_action_pin(
+        steps_by_name["target"], "docker/setup-buildx-action"
+    )
+
+
+changed_pin = "docker/setup-buildx-action@" + "a" * 40
+assert fixture_has_target_pin(changed_pin)
+assert fixture_has_target_pin(f'"{changed_pin}"')
+assert fixture_has_target_pin(f"{changed_pin} # v3.11.0")
+for invalid_uses in (
+    "docker/setup-buildx-action@v3",
+    "docker/setup-buildx-action@" + "a" * 39,
+    "docker/other-action@" + "a" * 40,
+):
+    assert not fixture_has_target_pin(invalid_uses), invalid_uses
+assert not fixture_has_target_pin("docker/setup-buildx-action@v3", changed_pin)
+assert fixture_has_target_pin(changed_pin, "docker/setup-buildx-action@v3")
 
 
 for job in workflow["jobs"].values():
@@ -338,12 +378,8 @@ build_step = controller_steps_by_name[
 smoke_step = controller_steps_by_name["Smoke controller image entrypoint and paused health"]
 assert controller_steps.index(buildx_step) < controller_steps.index(base_step)
 assert controller_steps.index(base_step) < controller_steps.index(build_step) < controller_steps.index(smoke_step)
-assert buildx_step["uses"] == (
-    "docker/setup-buildx-action@d7f5e7f509e45cec5c76c4d5afdd7de93d0b3df5"
-)
-assert base_step["uses"] == (
-    "docker/build-push-action@f9f3042f7e2789586610d6e8b85c8f03e5195baf"
-)
+assert_immutable_action_pin(buildx_step, "docker/setup-buildx-action")
+assert_immutable_action_pin(base_step, "docker/build-push-action")
 assert base_step["with"] == {
     "context": ".",
     "file": "docker/base.Dockerfile",
@@ -454,7 +490,7 @@ for required in \
   'using: composite' \
   'uses: ./.github/actions/load-workflow-tool-versions' \
   'id: versions' \
-  'uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9' \
+  'uses: actions/cache@' \
   'path: ${{ runner.temp }}/firemud-helm/v${{ steps.versions.outputs.helm-version }}/helm.tar.gz' \
   'key: firemud-helm-${{ runner.os }}-${{ runner.arch }}-v${{ steps.versions.outputs.helm-version }}' \
   'HELM_VERSION: v${{ steps.versions.outputs.helm-version }}' \
@@ -500,6 +536,7 @@ if grep -Fq -- '--retry-all-errors' "$helm_action"; then
 fi
 python3 - "$helm_action" <<'PY'
 import os
+import re
 import subprocess
 import sys
 
@@ -514,6 +551,7 @@ validation = step_by_name["Validate supported runner"]
 restore = step_by_name["Restore pinned Helm archive"]
 install = step_by_name["Install pinned Helm"]
 assert steps.index(validation) < steps.index(restore) < steps.index(install)
+assert re.fullmatch(r"actions/cache@[0-9a-f]{40}", restore.get("uses", "")), restore
 
 validation_run = validation["run"]
 for runner_os, runner_arch, expected_returncode in (
@@ -840,9 +878,7 @@ assert [step["name"] for step in artifact_action_steps] == [
     "Verify artifact provenance, checksum, and closed object set",
 ]
 artifact_download = artifact_action_steps[0]
-assert artifact_download["uses"] == (
-    "actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c"
-)
+assert_immutable_action_pin(artifact_download, "actions/download-artifact")
 assert artifact_download["with"] == {
     "name": "${{ inputs['artifact-name'] }}",
     "path": "${{ inputs['artifact-directory'] }}",
@@ -1429,8 +1465,8 @@ assert controller_build_steps[export_index]["env"] == {
 assert 'docker save "$CONTROLLER_IMAGE" | gzip -1 > "$RUNNER_TEMP/hosted-identity-controller.tar.gz"' in export_run
 assert 'current_image_id="$(docker image inspect --format' in export_run
 assert '[[ "$current_image_id" == "$VERIFIED_IMAGE_ID" ]]' in export_run
-assert controller_build_steps[upload_index]["uses"] == (
-    "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a"
+assert_immutable_action_pin(
+    controller_build_steps[upload_index], "actions/upload-artifact"
 )
 assert controller_build_steps[upload_index]["with"] == {
     "name": "hosted-identity-controller-${{ needs.image-meta.outputs.image_tag }}",
@@ -1472,8 +1508,8 @@ assert controller_publish_steps[checkout_index]["with"] == {
     "ref": "${{ needs.image-meta.outputs.checkout_ref }}",
     "persist-credentials": False,
 }
-assert controller_publish_steps[download_index]["uses"] == (
-    "actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c"
+assert_immutable_action_pin(
+    controller_publish_steps[download_index], "actions/download-artifact"
 )
 assert controller_publish_steps[download_index]["with"] == {
     "name": "hosted-identity-controller-${{ needs.image-meta.outputs.image_tag }}",
@@ -1513,7 +1549,12 @@ for required in (
 ):
     assert required in push_verified_image_text, required
 assert 'done\n\npushed_digests=()' in push_verified_image_text
-attest_step = next(step for step in controller_publish_steps if step.get("uses") == "actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6")
+attest_step = next(
+    step
+    for step in controller_publish_steps
+    if step.get("name") == "Attest trusted controller image provenance"
+)
+assert_immutable_action_pin(attest_step, "actions/attest")
 assert attest_step["with"]["subject-name"] == "${{ env.CONTROLLER_IMAGE_NAME }}"
 assert attest_step["with"]["subject-digest"] == "${{ steps.publish.outputs.digest }}"
 assert controller_publish_steps.index(attest_step) > publish_index
@@ -1706,7 +1747,7 @@ for artifact_job_name in ("prepare-runtime", "deploy-runtime"):
         artifact_call
     )
 assert trusted_source.count("./.github/actions/download-validated-preview-artifact") == 2
-assert "actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c" not in trusted_source
+assert "actions/download-artifact@" not in trusted_source
 active_request = deploy_by_name["Apply canonical Active request"]
 assert active_request["run"] == (
     'bash ./dev-tools/hosted/shared/request-hosted-identity.sh "$IDENTITY_NAME" Active'
@@ -2209,7 +2250,7 @@ assert deploy_failure["if"] == (
     "(steps.allocate-capacity.outputs.allocation_status != 'unavailable' || "
     "steps.publish-capacity-unavailable.outcome == 'failure') }}"
 )
-assert deploy_failure["uses"] == "actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3"
+assert_immutable_action_pin(deploy_failure, "actions/github-script")
 assert deploy_failure["env"] == {
     "PREVIEW_PR_NUMBER": "${{ needs.validate-target.outputs.pr_number }}",
     "PREVIEW_HEAD_SHA": "${{ needs.validate-target.outputs.head_sha }}",
@@ -3266,6 +3307,8 @@ chmod +x "$capture_retry_step"
 capture_retry_stub_dir="$TEMP_DIR/capture-retry-stubs"
 capture_retry_namespace_json="$TEMP_DIR/capture-retry-namespace.json"
 capture_retry_output="$TEMP_DIR/capture-retry-output"
+capture_retry_partial_stdout="$TEMP_DIR/capture-retry-partial.stdout"
+capture_retry_partial_stderr="$TEMP_DIR/capture-retry-partial.stderr"
 mkdir -p "$capture_retry_stub_dir"
 cat >"$capture_retry_stub_dir/kubectl" <<'SH'
 #!/usr/bin/env bash
@@ -3314,11 +3357,17 @@ jq -nc \
     "firemud.dev/proof-retry-base-sha":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
   }}}' >"$capture_retry_namespace_json"
 : >"$capture_retry_output"
-if run_capture_retry; then
+if run_capture_retry >"$capture_retry_partial_stdout" 2>"$capture_retry_partial_stderr"; then
   echo "capture accepted a partial proof-retry annotation record" >&2
   exit 1
 fi
 [[ ! -s "$capture_retry_output" ]]
+grep -Fqx '::error title=Malformed proof-retry annotations::Retry annotations must be a complete string record before namespace recreation.' \
+  "$capture_retry_partial_stderr" || {
+    echo "capture rejected a partial proof-retry record without the expected error; observed stderr:" >&2
+    cat "$capture_retry_partial_stderr" >&2
+    exit 1
+  }
 
 invalid_preview_annotator_cases=(
   "pr-042|042|public|32000|2026-09-13T01:02:03Z"
@@ -3502,7 +3551,7 @@ controller_sleep_log="$TEMP_DIR/controller-sleep.log"
 controller_publish_output="$TEMP_DIR/controller-publish.output"
 controller_publish_stdout="$TEMP_DIR/controller-publish.stdout"
 successful_digest="sha256:$(printf '2%.0s' {1..64})"
-(
+if (
   cd "$ROOT_DIR"
   env \
     PATH="$controller_publish_stub_dir:$PATH" \
@@ -3513,12 +3562,47 @@ successful_digest="sha256:$(printf '2%.0s' {1..64})"
     CONTROLLER_SLEEP_LOG="$controller_sleep_log" \
     GITHUB_OUTPUT="$controller_publish_output" \
     bash "$controller_publish_step" >"$controller_publish_stdout"
-)
-test "$(<"$controller_push_count")" -eq 2
-grep -Fxq '5' "$controller_sleep_log"
-grep -Fxq "digest=$successful_digest" "$controller_publish_output"
+); then
+  controller_publish_step_status=0
+else
+  controller_publish_step_status=$?
+fi
+controller_publish_push_count_observed='<missing>'
+if [[ -f "$controller_push_count" ]]; then
+  controller_publish_push_count_observed="$(<"$controller_push_count")"
+fi
+controller_publish_sleep_log_observed='<missing>'
+if [[ -f "$controller_sleep_log" ]]; then
+  controller_publish_sleep_log_observed="$(<"$controller_sleep_log")"
+fi
+controller_publish_output_observed='<missing>'
+if [[ -f "$controller_publish_output" ]]; then
+  controller_publish_output_observed="$(<"$controller_publish_output")"
+fi
+if [[ "$controller_publish_step_status" -ne 0 ]]; then
+  printf 'controller publisher retry fixture extracted step failed: exit=%s pushes=%q sleeps=%q output=%q\n' \
+    "$controller_publish_step_status" "$controller_publish_push_count_observed" \
+    "$controller_publish_sleep_log_observed" "$controller_publish_output_observed" >&2
+  exit 1
+fi
+if ! test "$controller_publish_push_count_observed" -eq 2; then
+  printf 'controller publisher retry fixture push-count assertion failed: expected=2 observed=%q\n' \
+    "$controller_publish_push_count_observed" >&2
+  exit 1
+fi
+if ! grep -Fxq '5' "$controller_sleep_log"; then
+  printf 'controller publisher retry fixture sleep assertion failed: expected a 5-second backoff entry observed=%q\n' \
+    "$controller_publish_sleep_log_observed" >&2
+  exit 1
+fi
+if ! grep -Fxq "digest=$successful_digest" "$controller_publish_output"; then
+  printf 'controller publisher retry fixture digest assertion failed: expected=%q observed=%q\n' \
+    "digest=$successful_digest" "$controller_publish_output_observed" >&2
+  exit 1
+fi
 if grep -Fq "sha256:$(printf '1%.0s' {1..64})" "$controller_publish_output"; then
-  echo "failed controller push digest leaked into the attestation output" >&2
+  printf 'controller publisher retry fixture leaked the failed digest into output: observed=%q\n' \
+    "$controller_publish_output_observed" >&2
   exit 1
 fi
 

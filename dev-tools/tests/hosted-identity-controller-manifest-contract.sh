@@ -634,6 +634,19 @@ for policy in policy_documents:
         )
 policies = {document["metadata"]["name"]: document for document in policy_documents}
 assert len(policies) == len(policy_documents)
+for policy_name in (
+    "firemud-hosted-identity-main",
+    "firemud-hosted-identity-secret-boundary",
+    "firemud-hosted-identity-certificate-boundary",
+    "firemud-hosted-identity-scope-roles",
+    "firemud-hosted-identity-scope-rolebindings",
+):
+    # DELETECOLLECTION supplies a stored object for each admission call but no
+    # request name. This static contract proves name independence, not CEL
+    # execution or live namespace garbage collection.
+    for group in ("matchConditions", "validations"):
+        for entry in policies[policy_name]["spec"].get(group, []):
+            assert not re.search(r"\brequest\.name\b", entry["expression"]), policy_name
 policy_names = set(policies)
 binding_policy_names = [
     binding.get("spec", {}).get("policyName") for binding in binding_documents
@@ -1180,9 +1193,9 @@ namespace_controller_scope_delete = (
     "request.operation == 'DELETE' && "
     "((request.namespace.matches('^(dev-identity|' + "
     "variables.hostedPreviewIdentityNamespacePattern + ')$') && "
-    "request.name == 'firemud-hosted-identity-scope') || "
+    "oldObject.metadata.name == 'firemud-hosted-identity-scope') || "
     "(request.namespace.matches('^(dev|pr-[1-9][0-9]{0,50})$') && "
-    "request.name == 'firemud-hosted-runtime-scope')))"
+    "oldObject.metadata.name == 'firemud-hosted-runtime-scope')))"
 )
 assert namespace_controller_scope_delete in normalized_role_expression
 assert normalized_role_expression.count(namespace_controller) == 1
@@ -1283,7 +1296,7 @@ assert namespace_validation["message"] == (
 assert namespace_rule["operations"] == ["CREATE", "UPDATE", "DELETE"]
 assert namespace_rule["resources"] == ["namespaces", "namespaces/status", "namespaces/finalize"]
 assert namespace_expression.startswith(f"({break_glass} &&")
-assert "(request.operation == 'DELETE' ? request.name : object.metadata.name)" in namespace_expression
+assert "(request.operation == 'DELETE' ? oldObject.metadata.name : object.metadata.name)" in namespace_expression
 assert "'^(firemud-system|dev-identity|pr-[1-9][0-9]{0,50}-identity)$'" in namespace_expression
 assert "request.subResource == ''" in namespace_expression
 assert "request.subResource in ['status', 'finalize']" in namespace_expression
@@ -1371,12 +1384,12 @@ assert "request.userInfo.username == 'system:serviceaccount:firemud-system:firem
 assert "request.namespace.matches('^(dev|dev-identity|pr-[1-9][0-9]{0,50}|pr-[1-9][0-9]{0,50}-identity)$')" in normalized_secret_match
 assert "request.operation == 'DELETE'" in secret_match
 assert "request.operation != 'DELETE'" in secret_match
-assert "request.name == 'firemud-grpc-tls'" in secret_match
+assert "oldObject.metadata.name == 'firemud-grpc-tls'" in secret_match
 assert "object.metadata.name == 'firemud-grpc-tls'" in secret_match
 for publication_secret_pattern in (
-    "request.name.matches('^firemud-grpc-(game-design-service|world-management-service|entity-management-service|game-logic-service|automation-scripting-service|account-service|game-session-service|social-groups-service)$')",
+    "oldObject.metadata.name.matches('^firemud-grpc-(game-design-service|world-management-service|entity-management-service|game-logic-service|automation-scripting-service|account-service|game-session-service|social-groups-service)$')",
     "object.metadata.name.matches('^firemud-grpc-(game-design-service|world-management-service|entity-management-service|game-logic-service|automation-scripting-service|account-service|game-session-service|social-groups-service)$')",
-    "request.name.matches('^(dev|pr-[1-9][0-9]{0,50})-(tls|telnet-tls|gateway-internal-ws|tcp-proxy-bridge|grpc-(game-design-service|world-management-service|entity-management-service|game-logic-service|automation-scripting-service|account-service|game-session-service|social-groups-service))$')",
+    "oldObject.metadata.name.matches('^(dev|pr-[1-9][0-9]{0,50})-(tls|telnet-tls|gateway-internal-ws|tcp-proxy-bridge|grpc-(game-design-service|world-management-service|entity-management-service|game-logic-service|automation-scripting-service|account-service|game-session-service|social-groups-service))$')",
     "object.metadata.name.matches('^(dev|pr-[1-9][0-9]{0,50})-(tls|telnet-tls|gateway-internal-ws|tcp-proxy-bridge|grpc-(game-design-service|world-management-service|entity-management-service|game-logic-service|automation-scripting-service|account-service|game-session-service|social-groups-service))$')",
 ):
     assert publication_secret_pattern in normalized_secret_match
@@ -1399,7 +1412,7 @@ namespace_controller_secret_expression = next(
 normalized_namespace_controller_secret_expression = " ".join(
     namespace_controller_secret_expression.split()
 )
-assert "request.name.matches('^firemud-grpc-' + variables.grpcWorkloadServiceRegexGroup + '(-previous)?$')" in normalized_namespace_controller_secret_expression
+assert "oldObject.metadata.name.matches('^firemud-grpc-' + variables.grpcWorkloadServiceRegexGroup + '(-previous)?$')" in normalized_namespace_controller_secret_expression
 assert "object.metadata.labels['firemud.dev/role'].startsWith('grpc-publication-')" in controller_secret_expression
 assert "'grpc-account-service'" in controller_secret_expression
 assert "'grpc-game-session-service'" in controller_secret_expression
@@ -1407,7 +1420,7 @@ assert "'grpc-social-groups-service'" in controller_secret_expression
 assert "object.metadata.name == 'firemud-grpc-tls'" in controller_secret_expression
 assert "object.metadata.name == 'firemud-grpc-account-service'" in controller_secret_expression
 assert "object.metadata.name == 'firemud-grpc-game-session-service'" in controller_secret_expression
-assert normalized_controller_secret_expression.count("request.name.startsWith(") == 3
+assert normalized_controller_secret_expression.count("oldObject.metadata.name.startsWith(") == 3
 assert normalized_controller_secret_expression.count("object.metadata.name.startsWith(") == 2
 assert "request.namespace.size() - 9" in normalized_controller_secret_expression
 
@@ -1438,7 +1451,9 @@ def canonical_primary_name(namespace, name):
     }
 
 
-def namespace_controller_secret_delete_is_allowed(namespace, name):
+def namespace_controller_secret_delete_is_allowed(namespace, name, username=namespace_controller):
+    if username != namespace_controller:
+        return False
     if namespace not in {"dev", "dev-identity"} and not re.fullmatch(
         r"pr-[1-9][0-9]{0,50}(-identity)?", namespace
     ):
@@ -1470,6 +1485,12 @@ assert not namespace_controller_secret_delete_is_allowed(
 assert not namespace_controller_secret_delete_is_allowed(
     "pr-42", "pr-43-grpc-game-design-service-previous"
 )
+assert not namespace_controller_secret_delete_is_allowed(
+    "firemud-system", "firemud-grpc-game-design-service"
+)
+assert not namespace_controller_secret_delete_is_allowed(
+    "pr-42", "firemud-grpc-game-design-service", "system:serviceaccount:untrusted:controller"
+)
 
 publication_workloads = (
     "game-design-service",
@@ -1492,7 +1513,7 @@ assert "request.operation in ['CREATE', 'UPDATE']" in controller_grants
 assert "object.metadata.labels['firemud.dev/managed-by'] == 'hosted-identity-controller'" in controller_grants
 assert "object.metadata.labels['firemud.dev/retention'] == 'retained'" in controller_grants
 for workload in publication_workloads:
-    assert "request.name.matches('^firemud-grpc-' + variables.grpcWorkloadServiceRegexGroup + '$')" in controller_grants
+    assert "oldObject.metadata.name.matches('^firemud-grpc-' + variables.grpcWorkloadServiceRegexGroup + '$')" in controller_grants
     assert (
         f"object.metadata.name == 'firemud-grpc-{workload}' && "
         f"object.metadata.labels['firemud.dev/role'] == 'grpc-publication-{workload}'"
@@ -1576,8 +1597,8 @@ assert "request.namespace.matches('^(dev-identity|pr-[1-9][0-9]{0,50}-identity)$
 assert "request.namespace == 'dev-identity'" in certificate_namespace_match
 assert "request.namespace.matches('^pr-[1-9][0-9]{0,50}-identity$')" in certificate_namespace_match
 assert "request.operation == 'DELETE'" in certificate_namespace_match
-assert "request.name.matches('^(dev|pr-[1-9][0-9]{0,50})-(tls|telnet-tls|gateway-internal-ws|tcp-proxy-bridge|grpc-" in certificate_namespace_match
-assert "request.name.startsWith(" in certificate_namespace_match
+assert "oldObject.metadata.name.matches('^(dev|pr-[1-9][0-9]{0,50})-(tls|telnet-tls|gateway-internal-ws|tcp-proxy-bridge|grpc-" in certificate_namespace_match
+assert "oldObject.metadata.name.startsWith(" in certificate_namespace_match
 assert "request.operation != 'DELETE'" in certificate_namespace_match
 assert "object.metadata.name.matches('^(dev|pr-[1-9][0-9]{0,50})-(tls|telnet-tls|gateway-internal-ws|tcp-proxy-bridge|grpc-" in certificate_namespace_match
 assert "object.metadata.name.startsWith(" in certificate_namespace_match
@@ -1605,7 +1626,7 @@ controller_delete_expression = controller_certificate_expression.split(
     "(request.operation != 'DELETE' &&", 1
 )[0]
 assert "firemud-grpc-tls" not in controller_delete_expression
-assert "request.name.startsWith(" in controller_delete_expression
+assert "oldObject.metadata.name.startsWith(" in controller_delete_expression
 assert "(request.operation != 'DELETE' && has(object.metadata.labels)" in certificate_match
 assert "object.metadata.labels['firemud.dev/identity-name'] == ((request.namespace == 'dev-identity') ? 'dev-demo' : request.namespace.substring(0, request.namespace.size() - 9))" in certificate_match
 assert "object.metadata.labels['firemud.dev/role'] in ['ingress', 'telnet', 'gateway-internal-ws', 'tcp-proxy-bridge', 'grpc-account-service', 'grpc-game-session-service', 'grpc-social-groups-service']" in certificate_match

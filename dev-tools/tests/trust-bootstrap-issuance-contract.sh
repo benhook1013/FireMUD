@@ -16,6 +16,7 @@ python3 - "$MANIFEST" <<'PY'
 from __future__ import annotations
 
 import copy
+import re
 import sys
 from pathlib import Path
 
@@ -147,6 +148,12 @@ def check_contract(items: list[dict]) -> None:
     certificate_validation = actual_policies["firemud-trust-bootstrap-certificate"]["spec"][
         "validations"
     ][0]["expression"]
+    # Both named and collection DELETE authorize the concrete stored name.
+    # This source contract does not evaluate CEL or prove live collection GC.
+    if re.search(r"\brequest\.name\b", certificate_validation):
+        fail("Certificate DELETE authorization must not depend on the request name")
+    if certificate_validation.count("oldObject.metadata.name.matches(") != 2:
+        fail("both Certificate DELETE callers must retain stored-name checks")
     certificate_match = actual_policies["firemud-trust-bootstrap-certificate"]["spec"][
         "matchConditions"
     ][0]["expression"]
@@ -330,6 +337,23 @@ except AssertionError:
     pass
 else:
     fail("negative mutation changing the CA issuer binding from Deny was accepted")
+
+mutation = copy.deepcopy(documents)
+mutation_policy = next(
+    item
+    for item in mutation
+    if item.get("kind") == "ValidatingAdmissionPolicy"
+    and item.get("metadata", {}).get("name") == "firemud-trust-bootstrap-certificate"
+)
+mutation_policy["spec"]["validations"][0]["expression"] = mutation_policy["spec"][
+    "validations"
+][0]["expression"].replace("oldObject.metadata.name", "request.name")
+try:
+    check_contract(mutation)
+except AssertionError:
+    pass
+else:
+    fail("negative mutation restoring request-name Certificate DELETE checks was accepted")
 
 print(f"trust-bootstrap issuance contract: {len(documents)} documents, fail-closed bindings verified")
 PY

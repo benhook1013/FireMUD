@@ -442,6 +442,116 @@ class StatusTest(unittest.TestCase):
                         with self.assertRaisesRegex(TypeError, expected):
                             github.load_pull_request(path, "owner/repo", 2838)
 
+    def test_live_status_captures_complete_unenriched_paginated_payload(self) -> None:
+        payload = github_payload()
+        pull_request = payload["data"]["repository"]["pullRequest"]
+        metadata = {
+            "number": pull_request["number"],
+            "title": pull_request["title"],
+            "state": "OPEN",
+            "headRefName": pull_request["headRefName"],
+            "headRefOid": HEAD,
+            "headRepository": {"nameWithOwner": "owner/repo"},
+            "headRepositoryOwner": {"login": "owner"},
+            "baseRefName": "develop",
+            "baseRefOid": BASE,
+            "changedFiles": 4,
+            "body": pull_request["body"],
+            "statusCheckRollup": pull_request["statusCheckRollup"],
+            "mergeable": "MERGEABLE",
+            "mergeStateStatus": "CLEAN",
+            "reviewDecision": "",
+            "isDraft": False,
+            "url": "https://github.test/pull/2838",
+            "mergedAt": None,
+        }
+        required_checks = pull_request["required_status_checks"]
+        check_inventory = pull_request["statusCheckRollup"]
+        for field in (
+            "title",
+            "headRefName",
+            "body",
+            "statusCheckRollup",
+            "mergeable",
+            "mergeStateStatus",
+            "reviewDecision",
+            "isDraft",
+            "url",
+            "required_status_checks",
+        ):
+            pull_request.pop(field, None)
+        pull_request["comments"] = {
+            "nodes": [
+                {
+                    "id": "comment-1",
+                    "databaseId": 1,
+                    "author": {"login": "ben"},
+                    "body": "first page",
+                    "createdAt": "2026-09-23T00:00:00Z",
+                    "updatedAt": "2026-09-23T00:00:00Z",
+                    "url": "https://github.test/comments/1",
+                }
+            ],
+            "pageInfo": {"hasNextPage": True, "endCursor": "comments-page-1"},
+        }
+        for connection in ("reviewThreads", "reviews"):
+            pull_request[connection]["pageInfo"] = {"hasNextPage": False, "endCursor": None}
+        for thread in pull_request["reviewThreads"]["nodes"]:
+            thread["comments"]["pageInfo"] = {"hasNextPage": False, "endCursor": None}
+        continuation = {
+            "data": {
+                "repository": {
+                    "pullRequest": {
+                        "comments": {
+                            "nodes": [
+                                {
+                                    "id": "comment-2",
+                                    "databaseId": 2,
+                                    "author": {"login": "ben"},
+                                    "body": "second page",
+                                    "createdAt": "2026-09-23T00:01:00Z",
+                                    "updatedAt": "2026-09-23T00:01:00Z",
+                                    "url": "https://github.test/comments/2",
+                                }
+                            ],
+                            "pageInfo": {"hasNextPage": False, "endCursor": None},
+                        }
+                    }
+                }
+            }
+        }
+        observed: list[dict] = []
+
+        def graphql(query: str, variables: dict) -> dict:
+            if "after" in variables:
+                self.assertEqual(variables["after"], "comments-page-1")
+                self.assertIn("comments(first:100, after:$after)", query)
+                return continuation
+            return payload
+
+        with (
+            patch.object(github, "run_gh_query", side_effect=graphql) as query,
+            patch.object(github, "fetch_pr_metadata", return_value=metadata),
+            patch.object(status, "_loc_status", return_value={"status": "fresh", "merge_base_checked": True}),
+        ):
+            report = status.build_report(
+                "owner/repo",
+                2838,
+                checkpoint_payload=checkpoint_payload(),
+                required_status_checks_payload=required_checks,
+                check_inventory_payload=check_inventory,
+                raw_payload_observer=observed.append,
+            )
+
+        self.assertEqual(query.call_count, 2)
+        self.assertEqual(len(observed), 1)
+        self.assertIs(observed[0], payload)
+        captured_pull = observed[0]["data"]["repository"]["pullRequest"]
+        self.assertEqual([item["id"] for item in captured_pull["comments"]["nodes"]], ["comment-1", "comment-2"])
+        self.assertNotIn("title", captured_pull)
+        self.assertNotIn("mergeStateStatus", captured_pull)
+        self.assertEqual(report["pull_request"]["title"], metadata["title"])
+
     def test_identity_batch_names_every_configured_pr_without_repository_list_limit(self) -> None:
         numbers = (12, 931)
 
@@ -568,6 +678,111 @@ class StatusTest(unittest.TestCase):
         self.assertEqual(controller.selected, [6])
         self.assertEqual(controller.full_status_calls, 0)
         self.assertEqual([item["pr"] for item in result["review_stack"]["prs"]], list(range(1, 7)))
+
+    def test_selected_status_seeds_each_command_with_its_fresh_raw_conversation(self) -> None:
+        class FakeController:
+            repository = "owner/repo"
+
+            def __init__(self, selected: dict) -> None:
+                self.store = SimpleNamespace(load=lambda: SimpleNamespace(summary_dispositions=()))
+                self.selected = selected
+                self.conversation_payloads: list[dict] = []
+                self.summary_modes: list[bool] = []
+
+            def status_for_pr(
+                self,
+                number: int,
+                *,
+                conversation_payload: dict | None = None,
+                summary_only: bool = False,
+            ) -> dict:
+                self.conversation_payloads.append(conversation_payload)
+                self.summary_modes.append(summary_only)
+                return {
+                    "prs": [
+                        {
+                            "pr": number,
+                            "head": self.selected["head"],
+                            "base": self.selected["base"],
+                            "pr_base_oid": self.selected["base_oid"],
+                            "reconciliation": "COHERENT",
+                            "channels": {"hosted": "COMPLETE", "cli": "COMPLETE"},
+                            "allocations": {
+                                "hosted": {"status": "HANDED_OFF", "reason": ""},
+                                "cli": {"status": "HANDED_OFF", "reason": ""},
+                            },
+                            "incoming_routes": [],
+                            "routes_out": [],
+                        }
+                    ]
+                }
+
+        def conversation(head: str, base: str, base_oid: str) -> dict:
+            return {
+                "data": {
+                    "repository": {
+                        "pullRequest": {
+                            "number": 2838,
+                            "headRefOid": head,
+                            "baseRefName": base,
+                            "baseRefOid": base_oid,
+                            "comments": {
+                                "nodes": [{"id": head}],
+                                "pageInfo": {"hasNextPage": False, "endCursor": None},
+                            },
+                        }
+                    }
+                }
+            }
+
+        selected = [
+            {"head": HEAD, "base": "develop", "base_oid": BASE},
+            {"head": "e" * 40, "base": "release", "base_oid": "f" * 40},
+        ]
+        payloads = [conversation(item["head"], item["base"], item["base_oid"]) for item in selected]
+        controllers = [FakeController(item) for item in selected]
+        next_payload = iter(payloads)
+
+        def report_for(
+            pr: int,
+            *,
+            raw_payload_observer,
+            **_kwargs,
+        ) -> dict:
+            payload = next(next_payload)
+            raw_payload_observer(payload)
+            pull = payload["data"]["repository"]["pullRequest"]
+            return {
+                "pr_number": pr,
+                "pull_request": {
+                    "headRefOid": pull["headRefOid"],
+                    "baseRefName": pull["baseRefName"],
+                    "baseRefOid": pull["baseRefOid"],
+                },
+                "reasons": [],
+                "ready": True,
+                "verdict": "READY",
+                "mergeability": {"clean": True, "diagnosis": "READY"},
+            }
+
+        summary_args = cli._parser().parse_args(["status", "--pr", "2838", "--summary", "--json"])
+        detailed_args = cli._parser().parse_args(["status", "--pr", "2838", "--json"])
+        with (
+            patch.object(cli, "_controller", side_effect=[(controllers[0], None), (controllers[1], None)]),
+            patch.object(status, "status", side_effect=report_for),
+            patch.object(cli, "_read_record_incoming_routes", return_value=([], {"status": "available"})),
+        ):
+            first, first_exit = cli._dispatch(summary_args)
+            second, second_exit = cli._dispatch(detailed_args)
+
+        self.assertEqual((first_exit, second_exit), (0, 0))
+        self.assertTrue(first["ready"])
+        self.assertTrue(second["ready"])
+        self.assertIs(controllers[0].conversation_payloads[0], payloads[0])
+        self.assertIs(controllers[1].conversation_payloads[0], payloads[1])
+        self.assertIsNot(controllers[0].conversation_payloads[0], controllers[1].conversation_payloads[0])
+        self.assertEqual(controllers[0].summary_modes, [True])
+        self.assertEqual(controllers[1].summary_modes, [False])
 
     def test_live_comment_shape_is_converted_to_historical_checkpoint_evidence(self) -> None:
         payload = github_payload()
@@ -775,6 +990,54 @@ class StatusTest(unittest.TestCase):
         self.assertEqual(result["classification"], "unavailable/no-current-request")
         self.assertEqual(result["historical"]["classification"], "historical")
         self.assertNotEqual(result["historical"]["state"], result["state"])
+
+    def test_current_rate_limit_status_identifies_local_retry_backoff(self) -> None:
+        payload = github_payload()
+        payload["data"]["repository"]["pullRequest"]["comments"] = {
+            "nodes": [
+                {
+                    "databaseId": 10,
+                    "author": {"login": "maintainer"},
+                    "body": status.hosted.FULL_COMMAND,
+                    "createdAt": "2026-09-21T00:00:00Z",
+                    "url": "https://github.test/comments/10",
+                },
+                {
+                    "databaseId": 11,
+                    "author": {"login": "coderabbitai[bot]"},
+                    "body": "Review rate limited.",
+                    "createdAt": "2026-09-22T01:00:00Z",
+                    "updatedAt": "2026-09-25T01:00:00Z",
+                    "url": "https://github.test/comments/11",
+                },
+            ]
+        }
+        record = {
+            "schema_version": 1,
+            "status": "posted",
+            "repository": "owner/repo",
+            "pr_number": 2838,
+            "head_sha": HEAD,
+            "trigger": {
+                "id": 10,
+                "created_at": "2026-09-21T00:00:00Z",
+                "url": "https://github.test/comments/10",
+                "type": "full",
+                "command": "@coderabbitai full review",
+            },
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            current = Path(directory) / "trigger.json"
+            current.write_text(json.dumps(record), encoding="utf-8")
+            with (
+                patch.object(status.evidence, "git_common_dir", return_value=Path(directory)),
+                patch.object(status.hosted, "trigger_record_paths", return_value=[current]),
+            ):
+                result = status._trigger("owner/repo", 2838, payload, HEAD)
+        self.assertEqual(result["state"], "rate_limited", result)
+        self.assertEqual(result["cooldown_basis"], "local_retry_backoff")
+        self.assertEqual(result["cooldown_until"], "2026-09-22T02:00:00+00:00")
+        self.assertIn("local one-hour retry backoff", result["reason"])
 
     def test_current_posting_reservation_is_ambiguous_not_malformed(self) -> None:
         payload = github_payload()
@@ -1212,15 +1475,19 @@ class StatusTest(unittest.TestCase):
             "verdict": "READY",
             "mergeability": {"clean": True, "diagnosis": "READY"},
         }
-        for stack_head, stack_pr_base_oid in (("e" * 40, BASE), (HEAD, "f" * 40)):
-            with self.subTest(head=stack_head, pr_base_oid=stack_pr_base_oid):
+        for stack_head, stack_base, stack_pr_base_oid in (
+            ("e" * 40, "develop", BASE),
+            (HEAD, "release", BASE),
+            (HEAD, "develop", "f" * 40),
+        ):
+            with self.subTest(head=stack_head, base=stack_base, pr_base_oid=stack_pr_base_oid):
                 controller = Mock()
                 controller.status.return_value = {
                     "prs": [
                         {
                             "pr": 2838,
                             "head": stack_head,
-                            "base": "develop",
+                            "base": stack_base,
                             "parent_head": BASE,
                             "pr_base_oid": stack_pr_base_oid,
                             "reconciliation": "COHERENT",
@@ -1361,6 +1628,66 @@ class StatusTest(unittest.TestCase):
                         value, _ = cli._dispatch(cli._parser().parse_args(["status", "--pr", "2838", "--json"]))
                     self.assertFalse(value["ready"])
                     self.assertIn(f"{channel}: {obligation}", value["reasons"])
+
+    def test_completed_discovery_keeps_fresh_controller_obligations_as_readiness_gates(self) -> None:
+        for obligation in (
+            "accepted findings remain pending; source resolution proof is uncertain",
+            "accepted findings remain pending; their fixes are mandatory",
+            "unresolved review thread discovered after public status read",
+        ):
+            for channel in ("hosted", "cli"):
+                with self.subTest(obligation=obligation, channel=channel):
+                    report = {
+                        "pull_request": {"headRefOid": HEAD, "baseRefName": "develop", "baseRefOid": BASE},
+                        "reasons": [],
+                        "ready": True,
+                        "verdict": "READY",
+                        "mergeability": {"clean": True, "diagnosis": "READY"},
+                    }
+                    stack_report = {
+                        "prs": [
+                            {
+                                "pr": 2838,
+                                "head": HEAD,
+                                "base": "develop",
+                                "pr_base_oid": BASE,
+                                "reconciliation": "COHERENT",
+                                "channels": {"hosted": "COMPLETE", "cli": "COMPLETE"},
+                                "review_obligations": {channel: [obligation]},
+                            }
+                        ],
+                        "review_fronts": {"hosted": 2839, "cli": 2839},
+                    }
+                    controller = Mock()
+
+                    def fresh_stack_status(number: int, report: dict = report, stack_report: dict = stack_report) -> dict:
+                        public_status.assert_called_once()
+                        self.assertEqual(number, 2838)
+                        self.assertTrue(report["ready"])
+                        self.assertEqual(report["reasons"], [])
+                        return stack_report
+
+                    controller.status_for_pr.side_effect = fresh_stack_status
+                    with (
+                        patch.object(cli, "default_controller", return_value=controller),
+                        patch.object(status, "status", return_value=report) as public_status,
+                        patch.object(
+                            cli, "_read_record_incoming_routes", return_value=([], {"status": "not_bootstrapped"})
+                        ),
+                    ):
+                        value, exit_status = cli._dispatch(
+                            cli._parser().parse_args(["status", "--pr", "2838", "--json"])
+                        )
+                    self.assertEqual(exit_status, 0)
+                    self.assertFalse(value["ready"])
+                    self.assertEqual(value["verdict"], "NOT READY")
+                    self.assertEqual(value["reasons"], [f"{channel}: {obligation}"])
+                    self.assertFalse(value["mergeability"]["clean"])
+                    self.assertEqual(value["mergeability"]["diagnosis"], "NOT READY")
+                    self.assertEqual(value["review_stack"], stack_report)
+                    self.assertEqual(stack_report["review_fronts"], {"hosted": 2839, "cli": 2839})
+                    controller.status_for_pr.assert_called_once_with(2838)
+                    controller.status.assert_not_called()
 
     def test_cli_status_supplies_persisted_summary_dispositions_to_report(self) -> None:
         disposition = SummaryFindingDisposition(

@@ -19,13 +19,14 @@ import net.firedevops.firemud.socialgroups.v1.ChatType;
 import net.firedevops.firemud.socialgroups.v1.FriendPresenceActivityState;
 import net.firedevops.firemud.socialgroups.v1.FriendPresenceEntry;
 import net.firedevops.firemud.socialgroups.v1.FriendPresenceVisibilityPolicy;
+import net.firedevops.firemud.test.TestContainerImages;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.Test;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.testcontainers.containers.GenericContainer;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
-import org.testcontainers.utility.DockerImageName;
 
 @Testcontainers(disabledWithoutDocker = true)
 @SuppressWarnings("resource")
@@ -41,14 +42,14 @@ class CommunicationWebSocketCrossServiceTest {
 
   @Container
   static final PostgreSQLContainer<?> POSTGRES =
-      new PostgreSQLContainer<>("postgres:16-alpine")
+      new PostgreSQLContainer<>(TestContainerImages.postgres())
           .withDatabaseName("firemud")
           .withUsername("firemud")
           .withPassword("firemud");
 
   @Container
   static final GenericContainer<?> REDIS =
-      new GenericContainer<>(DockerImageName.parse("redis:7.2-alpine")).withExposedPorts(6379);
+      new GenericContainer<>(TestContainerImages.redis()).withExposedPorts(6379);
 
   private static GameplayCrossServiceStack STACK;
 
@@ -262,6 +263,32 @@ class CommunicationWebSocketCrossServiceTest {
                     "Sora [acct #"
                         + SORA_ACCOUNT_ID
                         + "] - online in Demo World / Live Realm (idle)"));
+  }
+
+  @Test
+  void freshGameplayBaselineRestoresAlwaysEnabledLaunchTruncateGuard() throws Exception {
+    ensureTestServicesStarted();
+    prepareGameInstance();
+    JdbcTemplate jdbc = STACK.jdbc();
+    String originalState = launchGuardState(jdbc);
+    assertThat(originalState).isIn("O", "A");
+
+    try {
+      jdbc.execute(
+          "ALTER TABLE game_session_canonical_instance_launch ENABLE ALWAYS TRIGGER "
+              + "game_session_canonical_instance_launch_no_truncate");
+      assertThat(launchGuardState(jdbc)).isEqualTo("A");
+
+      prepareGameInstance();
+
+      assertThat(launchGuardState(jdbc)).isEqualTo("A");
+    } finally {
+      String enableMode = "A".equals(originalState) ? "ENABLE ALWAYS" : "ENABLE";
+      jdbc.execute(
+          "ALTER TABLE game_session_canonical_instance_launch "
+              + enableMode
+              + " TRIGGER game_session_canonical_instance_launch_no_truncate");
+    }
   }
 
   @Test
@@ -889,6 +916,14 @@ class CommunicationWebSocketCrossServiceTest {
         ACCOUNT_ID,
         Long.parseLong(ChatTestFixtures.PLAYER_SORA),
         Long.parseLong(ChatTestFixtures.PLAYER_NYX));
+  }
+
+  private static String launchGuardState(JdbcTemplate jdbc) {
+    return jdbc.queryForObject(
+        "SELECT tgenabled::text FROM pg_trigger WHERE tgrelid = "
+            + "'game_session_canonical_instance_launch'::regclass AND tgname = "
+            + "'game_session_canonical_instance_launch_no_truncate' AND NOT tgisinternal",
+        String.class);
   }
 
   private void seedLiveTargetSession() {

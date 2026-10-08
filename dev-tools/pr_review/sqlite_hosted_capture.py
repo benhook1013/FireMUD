@@ -177,6 +177,7 @@ def record_hosted_terminal_result(
         finished_at=finish_time,
         response_id=result.response_id,
         checkpoint_id=checkpoint_id,
+        preserve_unresolved_rate_limits=(result.state == "rate_limited" and result.cooldown_basis == "unknown"),
     )
     capture_metadata = {
         "state": result.state,
@@ -591,6 +592,7 @@ def sync_hosted_pending(
             )
 
     payloads: dict[int, dict[str, Any] | None] = {}
+    recovery_histories: dict[int, dict[str, Any]] = {}
     for pr in sorted(grouped):
         attempt_rows: dict[str, dict[str, Any]] = {}
         try:
@@ -701,6 +703,28 @@ def sync_hosted_pending(
                 if attempt_state != "started":
                     if attempt["trigger_id"] != trigger_id:
                         raise HostedCaptureError("terminal Hosted attempt has a different trigger ID")
+                    if attempt_state == "ambiguous":
+                        if pr not in recovery_histories:
+                            recovery_histories[pr] = records.history(pr, include_display=False)
+                        recovered = _linked_ambiguous_reply_recovery(
+                            recovery_histories[pr], repo, pr, attempt, trigger_id
+                        )
+                        if recovered is not None:
+                            add(
+                                "synced",
+                                pr,
+                                path,
+                                attempt_id=attempt_id,
+                                trigger_id=trigger_id,
+                                state="completed",
+                                attempt_state="ambiguous",
+                                run_id=recovered["run_id"],
+                                checkpoint_id=recovered["checkpoint_id"],
+                                counts=recovered["counts"],
+                                recovered_from_reply=True,
+                                idempotent_replay=True,
+                            )
+                            continue
                     bucket = "ambiguous" if attempt_state in {"ambiguous", "timed_out"} else "synced"
                     add(
                         bucket,
@@ -806,6 +830,68 @@ def sync_hosted_pending(
                 report["synced"].append(entry)
 
     return report
+
+
+def _linked_ambiguous_reply_recovery(
+    history: Mapping[str, Any],
+    repo: str,
+    pr_number: int,
+    attempt: Mapping[str, Any],
+    trigger_id: str,
+) -> dict[str, Any] | None:
+    """Return an exact durable zero-reply recovery for an immutable ambiguous attempt."""
+
+    if attempt.get("state") != "ambiguous" or attempt.get("run_id") is not None:
+        return None
+    if not isinstance(attempt.get("provider_review_id"), str) or not attempt["provider_review_id"]:
+        return None
+
+    origins = history.get("provider_origins")
+    runs = history.get("runs")
+    if not isinstance(origins, list) or not isinstance(runs, list):
+        return None
+
+    provider_id = f"trigger:{trigger_id}"
+    matching_origins = [
+        origin
+        for origin in origins
+        if isinstance(origin, Mapping)
+        and origin.get("repository") == repo.casefold()
+        and origin.get("source_pr") == pr_number
+        and origin.get("channel") == "hosted"
+        and origin.get("provider_id") == provider_id
+    ]
+    if len(matching_origins) != 1:
+        return None
+
+    origin = matching_origins[0]
+    run_id = origin.get("run_id")
+    checkpoint_id = origin.get("checkpoint_id")
+    if not isinstance(run_id, str) or not run_id or attempt.get("checkpoint_id") not in (None, str(checkpoint_id)):
+        return None
+    origins_for_run = [item for item in origins if isinstance(item, Mapping) and item.get("run_id") == run_id]
+    linked_runs = [run for run in runs if isinstance(run, Mapping) and run.get("run_id") == run_id]
+    if len(origins_for_run) != 1 or origins_for_run[0] != origin or len(linked_runs) != 1:
+        return None
+
+    run = linked_runs[0]
+    counts = run.get("counts")
+    if (
+        run.get("source_pr") != pr_number
+        or run.get("channel") != "hosted"
+        or run.get("outcome") != "completed"
+        or run.get("attributable") is not True
+        or run.get("finalized") is not True
+        or run.get("source_head") != attempt.get("candidate_sha")
+        or not isinstance(counts, Mapping)
+        or any(type(counts.get(key)) is not int or counts[key] != 0 for key in ("found", "accepted", "routed"))
+    ):
+        return None
+    return {
+        "checkpoint_id": checkpoint_id,
+        "counts": dict(counts),
+        "run_id": run_id,
+    }
 
 
 def _sync_hosted_record_paths(
@@ -1042,6 +1128,7 @@ def archive_window(
     finished_at: str,
     response_id: int | None = None,
     checkpoint_id: str | None = None,
+    preserve_unresolved_rate_limits: bool = False,
 ) -> dict[str, list[dict[str, Any]]]:
     """Retain complete review evidence in this request window, not old PR history."""
 
@@ -1063,11 +1150,21 @@ def archive_window(
         body = item.get("body")
         author = item.get("author")
         login = author.get("login") if isinstance(author, dict) else None
-        if github.immutable_database_id(item) in preserved_ids or (
-            in_window(item.get("createdAt"))
-            and (
-                github.is_coderabbit_login(login)
-                or (isinstance(body, str) and hosted.normalize_command(body) == hosted.FULL_COMMAND)
+        unresolved_rate_limit = (
+            preserve_unresolved_rate_limits
+            and github.is_coderabbit_login(login)
+            and hosted.is_rate_limit_reply_body(body)
+            and hosted.strict_provider_timestamp(item.get("createdAt")) is None
+        )
+        if (
+            github.immutable_database_id(item) in preserved_ids
+            or unresolved_rate_limit
+            or (
+                in_window(item.get("createdAt"))
+                and (
+                    github.is_coderabbit_login(login)
+                    or (isinstance(body, str) and hosted.normalize_command(body) == hosted.FULL_COMMAND)
+                )
             )
         ):
             comments.append(item)

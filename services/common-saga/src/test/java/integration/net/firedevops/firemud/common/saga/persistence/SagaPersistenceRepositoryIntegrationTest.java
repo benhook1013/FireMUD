@@ -7,6 +7,7 @@ import java.sql.Connection;
 import java.sql.DriverManager;
 import java.time.Instant;
 import java.util.List;
+import net.firedevops.firemud.test.TestContainerImages;
 import org.jooq.DSLContext;
 import org.jooq.SQLDialect;
 import org.jooq.impl.DSL;
@@ -25,7 +26,7 @@ class SagaPersistenceRepositoryIntegrationTest {
   @Container
   @SuppressWarnings("resource")
   private static final PostgreSQLContainer<?> POSTGRES =
-      new PostgreSQLContainer<>("postgres:17-alpine");
+      new PostgreSQLContainer<>(TestContainerImages.postgres());
 
   private static Connection connection;
   private static DSLContext dsl;
