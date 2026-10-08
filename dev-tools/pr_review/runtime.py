@@ -2639,10 +2639,16 @@ class HostedRunner:
         """Project a complete REST issue-comment history into the matcher shape."""
 
         nodes: list[dict[str, Any]] = []
+        seen_ids: set[int] = set()
         for item in comments:
             if not isinstance(item, Mapping):
                 raise ControllerError(f"issue-comment history for PR #{pr} contains a malformed comment")
             comment_id = github.immutable_database_id(dict(item))
+            if comment_id is None:
+                raise ControllerError(f"issue-comment history for PR #{pr} has a missing or invalid comment identity")
+            if comment_id in seen_ids:
+                raise ControllerError(f"issue-comment history for PR #{pr} contains duplicate comment identities")
+            seen_ids.add(comment_id)
             body = item.get("body")
             created_at = item.get("created_at")
             if not isinstance(body, str):
@@ -3051,6 +3057,22 @@ class HostedRunner:
                         ) from error
                     comments_by_pr.update(batch_comments)
                     budget.set_completed(len(comments_by_pr))
+
+        seen_comment_ids: dict[int, int] = {}
+        for other_pr, history in comments_by_pr.items():
+            nodes = history["data"]["repository"]["pullRequest"]["comments"]["nodes"]
+            for comment in nodes:
+                comment_id = github.immutable_database_id(comment)
+                if comment_id is None:
+                    raise ControllerError(
+                        f"issue-comment history for PR #{other_pr} has a missing or invalid comment identity"
+                    )
+                if comment_id in seen_comment_ids:
+                    raise ControllerError(
+                        "issue-comment identity is shared across repository histories "
+                        f"for PRs #{seen_comment_ids[comment_id]} and #{other_pr}"
+                    )
+                seen_comment_ids[comment_id] = other_pr
 
         reservation_paths = sorted(
             (other_pr, paths[0])

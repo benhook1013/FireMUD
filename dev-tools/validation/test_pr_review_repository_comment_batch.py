@@ -112,6 +112,64 @@ class RepositoryCommentBatchTests(unittest.TestCase):
             [endpoint for endpoint in rest_endpoints if "/issues/" in endpoint],
         )
 
+    def test_repository_comment_ids_are_unique_across_graphql_chunks_and_rest_fallback(self):
+        numbers = tuple(range(100, 153))
+        open_prs = self._open_prs((42, *numbers))
+        runner = HostedRunner("owner/repo", LiveGitHub("owner/repo"))
+        graphql_groups = []
+        rest_endpoints = []
+
+        def fetch_batch(_repo, batch):
+            batch = tuple(batch)
+            graphql_groups.append(batch)
+            if batch[0] == 150:
+                return {}
+            comment = {"databaseId": 901, "body": f"GraphQL comment for PR #{batch[0]}"}
+            return {number: [comment] if number == batch[0] else [] for number in batch}
+
+        def fetch_rest(endpoint):
+            rest_endpoints.append(endpoint)
+            if endpoint == "repos/owner/repo/pulls?state=open&per_page=100":
+                return open_prs
+            if endpoint == "repos/owner/repo/issues/150/comments?per_page=100":
+                return [{"id": 901, "body": "REST comment", "user": {"login": "maintainer"}}]
+            return []
+
+        with (
+            github.activate_hosted_preflight_budget(timeout_seconds=30),
+            patch.object(runner, "_repository_current_trigger_paths", return_value={}),
+            patch.object(github, "fetch_issue_comments_batch", side_effect=fetch_batch),
+            patch.object(github, "fetch_api_endpoint", side_effect=fetch_rest),
+            self.assertRaisesRegex(ControllerError, "shared across repository histories"),
+        ):
+            runner._assert_no_other_active_reservations(42, Path("/unused"))
+
+        self.assertCountEqual(
+            graphql_groups,
+            [tuple(range(100, 125)), tuple(range(125, 150)), tuple(range(150, 153))],
+        )
+        self.assertCountEqual(
+            [endpoint for endpoint in rest_endpoints if "/issues/" in endpoint],
+            [f"repos/owner/repo/issues/{number}/comments?per_page=100" for number in range(150, 153)],
+        )
+
+    def test_rest_fallback_rejects_missing_nonpositive_and_duplicate_comment_ids(self):
+        malformed_histories = (
+            ("missing", [{"body": "comment without id"}], "missing or invalid comment identity"),
+            ("nonpositive", [{"id": 0, "body": "comment with invalid id"}], "missing or invalid comment identity"),
+            (
+                "duplicate",
+                [
+                    {"id": 901, "body": "first comment"},
+                    {"id": 901, "body": "second comment"},
+                ],
+                "duplicate comment identities",
+            ),
+        )
+        for case, comments, expected in malformed_histories:
+            with self.subTest(case=case), self.assertRaisesRegex(ControllerError, expected):
+                HostedRunner._normalize_rest_issue_comments(43, comments)
+
     def test_expired_batch_does_not_restart_with_rest_fallback(self):
         runner = HostedRunner("owner/repo", LiveGitHub("owner/repo"))
         rest_endpoints = []
