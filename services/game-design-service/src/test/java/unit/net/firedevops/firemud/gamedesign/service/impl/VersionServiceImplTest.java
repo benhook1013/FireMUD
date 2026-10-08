@@ -43,6 +43,7 @@ import net.firedevops.firemud.gamedesign.repository.PublishedPluginVersionReposi
 import net.firedevops.firemud.gamedesign.repository.VersionRepository;
 import net.firedevops.firemud.gamedesign.service.AssetExportService;
 import net.firedevops.firemud.gamedesign.service.ControlPlaneDigestService;
+import net.firedevops.firemud.gamedesign.service.MutationOwnerProofUnavailableException;
 import net.firedevops.firemud.gamedesign.service.ParsedPluginBundle;
 import net.firedevops.firemud.gamedesign.service.PluginBundleIntakeService;
 import net.firedevops.firemud.gamedesign.service.PluginBundleStorageService;
@@ -162,6 +163,49 @@ class VersionServiceImplTest {
         .exportAssets(any(String.class), any(Integer.class));
     verify(publishGateService, org.mockito.Mockito.never())
         .assertGatePassed(any(VersionDto.class), any(List.class));
+  }
+
+  @Test
+  void versionStateMutationRefusesBeforeChangingStateEpochOrPersisting() {
+    Version version = new Version();
+    version.setId(7L);
+    version.setTenantId("tenant-1");
+    version.setVersionState(VersionLifecycleState.DRAFT);
+    version.setVersionStateEpoch(4L);
+    LocalDateTime originalUpdatedAt = LocalDateTime.parse("2026-10-09T12:00:00");
+    version.setUpdatedAt(originalUpdatedAt);
+    when(versionRepository.findByTenantIdAndId("tenant-1", 7L)).thenReturn(Optional.of(version));
+
+    MutationOwnerProofUnavailableException thrown =
+        assertThrows(
+            MutationOwnerProofUnavailableException.class,
+            () ->
+                service.compareAndSetVersionState(
+                    "tenant-1", 7L, 4L, VersionLifecycleState.PUBLISHED, "publish"));
+
+    assertEquals("VERSION_STATE_MUTATION_UNAVAILABLE", thrown.errorCode());
+    assertEquals(VersionLifecycleState.DRAFT, version.getVersionState());
+    assertEquals(4L, version.getVersionStateEpoch());
+    assertEquals(originalUpdatedAt, version.getUpdatedAt());
+    verify(versionRepository, org.mockito.Mockito.never()).save(any(Version.class));
+  }
+
+  @Test
+  void versionStateSameStateRequestRemainsAReadOnlyNoOp() {
+    Version version = new Version();
+    version.setId(7L);
+    version.setTenantId("tenant-1");
+    version.setVersionState(VersionLifecycleState.RETIRED);
+    version.setVersionStateEpoch(9L);
+    when(versionRepository.findByTenantIdAndId("tenant-1", 7L)).thenReturn(Optional.of(version));
+
+    var result =
+        service.compareAndSetVersionState(
+            "tenant-1", 7L, 9L, VersionLifecycleState.RETIRED, "retry");
+
+    assertEquals(VersionLifecycleState.RETIRED, result.versionState());
+    assertEquals(9L, result.versionStateEpoch());
+    verify(versionRepository, org.mockito.Mockito.never()).save(any(Version.class));
   }
 
   @Test

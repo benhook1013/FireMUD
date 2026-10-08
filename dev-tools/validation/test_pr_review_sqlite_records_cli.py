@@ -1058,12 +1058,285 @@ class ReviewRecordsCliTest(unittest.TestCase):
         self.assertEqual(attempt["outcome"], "rate_limited")
         self.assertEqual(attempt["origin"], "legacy_private_capture")
         self.assertNotIn("private provider details", str(single))
-
         code, batch = self.invoke("history-batch", "--pr", "2881", "--pr", "2882", "--database", str(self.database))
         self.assertEqual(code, 0)
         batch_attempts = batch["result"]["prs"]["2881"]["cli_attempts"]["attempts"]
         self.assertEqual(batch_attempts[0]["origin"], "legacy_private_capture")
         self.assertEqual(batch["result"]["prs"]["2882"]["cli_attempts"]["attempts"], [])
+
+    def test_cli_observations_recovers_only_exact_failed_native_capture_and_replays_safely(self) -> None:
+        self.invoke("bootstrap", "--database", str(self.database))
+        records = SqliteReviewRecords(self.database)
+        run_id = "run." + "8" * 32
+        head = "a" * 40
+        started_at = "2026-10-01T00:00:00Z"
+        finished_at = "2026-10-01T00:00:03Z"
+        started_metadata = {
+            "run_id": run_id,
+            "kind": "cli",
+            "capture_completion_marker": "capture-complete",
+            "repository": "owner/repo",
+            "pull_request": 2933,
+            "candidate_sha": head,
+        }
+        final_metadata = {**started_metadata, "duration_seconds": 3, "exit_status": 0}
+        stdout = "".join(
+            json.dumps(event) + "\n"
+            for event in (
+                {
+                    "type": "review_context",
+                    "baseBranch": "main",
+                    "currentBranch": "feature",
+                    "expectedDuration": "short",
+                    "reviewType": "full",
+                    "workingDirectory": "/workspace",
+                },
+                {"type": "heartbeat", "status": "working"},
+                {"type": "heartbeat", "status": "working"},
+                {"type": "reviewing", "message": "Review started"},
+                {"type": "reviewing", "message": "Reviewing changed files"},
+                {
+                    "type": "finding",
+                    "severity": "Trivial",
+                    "codegenInstructions": "Review comment at @src/Example.java:1\nTrivial: useful partial result.",
+                },
+                {
+                    "type": "error",
+                    "errorType": "connection",
+                    "message": "Provider connection closed",
+                    "recoverable": True,
+                    "details": {},
+                },
+            )
+        )
+        stderr = "connection WebSocket closed\n"
+        diagnostic = "CodeRabbit CLI did not return a complete JSON review"
+        records.start_attempt(
+            attempt_id=run_id,
+            source_pr=2933,
+            channel="cli",
+            candidate_sha=head,
+            started_at=started_at,
+            metadata=started_metadata,
+        )
+        records.finish_attempt(
+            run_id,
+            state="failed",
+            finished_at=finished_at,
+            duration_seconds=3,
+            exit_status=0,
+            diagnostic=diagnostic,
+            artifacts={
+                "cli_raw_output": stdout,
+                "cli_diagnostic": stderr,
+                "metadata": json.dumps(final_metadata, sort_keys=True),
+            },
+        )
+        capture = self.database.parent / "pr-review" / "runs" / run_id
+        capture.mkdir(parents=True)
+        (capture / "metadata.json").write_text(json.dumps(final_metadata) + "\n", encoding="utf-8")
+        (capture / "stdout").write_text(stdout, encoding="utf-8")
+        (capture / "stderr").write_text(stderr, encoding="utf-8")
+        (capture / "exit-status").write_text("0\n", encoding="utf-8")
+        (capture / "review-duration-seconds").write_text("3\n", encoding="utf-8")
+        (capture / "capture-complete").write_text(f"{run_id}\n", encoding="utf-8")
+
+        code, recovered = self.invoke("cli-observations", "--run-id", run_id, "--database", str(self.database))
+        self.assertEqual(code, 0, recovered)
+        self.assertEqual(recovered["result"]["finding_count"], 1)
+        self.assertFalse(recovered["result"]["idempotent_replay"])
+        attempt = records.attempt(run_id)
+        run = records.history(2933)["runs"][0]
+        self.assertEqual(attempt["state"], "failed")
+        self.assertEqual(attempt["run_id"], run_id)
+        self.assertEqual(run["outcome"], "failed")
+        self.assertFalse(run["attributable"])
+        self.assertFalse(run["finalized"])
+        self.assertEqual(
+            [json.loads(line) for line in records.attempt_artifacts(run_id)["cli_events"].splitlines()],
+            [json.loads(line) for line in stdout.splitlines()],
+        )
+        self.assertEqual(records.completed_cli_capture_snapshots(2933), [])
+
+        code, replay = self.invoke("cli-observations", "--run-id", run_id, "--database", str(self.database))
+        self.assertEqual(code, 0, replay)
+        self.assertTrue(replay["result"]["idempotent_replay"])
+        (capture / "stdout").write_text(stdout + "\n", encoding="utf-8")
+        code, conflict = self.invoke("cli-observations", "--run-id", run_id, "--database", str(self.database))
+        self.assertEqual(code, 2)
+        self.assertIn("archived digest", conflict["error"])
+        self.assertEqual(len(records.history(2933)["runs"]), 1)
+
+    def test_cli_observations_refuses_completed_attempt(self) -> None:
+        self.invoke("bootstrap", "--database", str(self.database))
+        records = SqliteReviewRecords(self.database)
+        run_id = "run." + "9" * 32
+        metadata = {
+            "run_id": run_id,
+            "kind": "cli",
+            "capture_completion_marker": "capture-complete",
+            "pull_request": 2934,
+            "candidate_sha": "b" * 40,
+        }
+        records.start_attempt(
+            attempt_id=run_id,
+            source_pr=2934,
+            channel="cli",
+            candidate_sha="b" * 40,
+            metadata=metadata,
+        )
+        records.finish_attempt(run_id, state="completed", finished_at="2026-10-01T00:00:01Z", exit_status=0)
+
+        code, result = self.invoke("cli-observations", "--run-id", run_id, "--database", str(self.database))
+
+        self.assertEqual(code, 2)
+        self.assertIn("terminal failed native CLI attempt", result["error"])
+        self.assertIsNone(records.attempt(run_id)["run_id"])
+        self.assertEqual(records.history(2934)["runs"], [])
+
+    def test_cli_observations_classifies_zero_exit_rate_limit_and_refuses_state_mismatch(self) -> None:
+        self.invoke("bootstrap", "--database", str(self.database))
+        records = SqliteReviewRecords(self.database)
+        stdout = (
+            json.dumps({"type": "finding", "codegenInstructions": "A partial finding before the rate limit."}) + "\n"
+        )
+
+        def prepare(run_id: str, state: str, stderr: str) -> Path:
+            started_at = "2026-10-01T00:00:00Z"
+            finished_at = "2026-10-01T00:00:03Z"
+            head = "c" * 40
+            metadata = {
+                "run_id": run_id,
+                "kind": "cli",
+                "capture_completion_marker": "capture-complete",
+                "repository": "owner/repo",
+                "pull_request": 2935,
+                "candidate_sha": head,
+            }
+            final_metadata = {**metadata, "duration_seconds": 3, "exit_status": 0}
+            diagnostic = "CodeRabbit CLI was rate limited" if state == "rate_limited" else "failed attempt"
+            records.start_attempt(
+                attempt_id=run_id,
+                source_pr=2935,
+                channel="cli",
+                candidate_sha=head,
+                started_at=started_at,
+                metadata=metadata,
+            )
+            records.finish_attempt(
+                run_id,
+                state=state,
+                finished_at=finished_at,
+                duration_seconds=3,
+                exit_status=0,
+                diagnostic=diagnostic,
+                artifacts={
+                    "cli_raw_output": stdout,
+                    "cli_diagnostic": stderr,
+                    "metadata": json.dumps(final_metadata, sort_keys=True),
+                },
+            )
+            capture = self.database.parent / "pr-review" / "runs" / run_id
+            capture.mkdir(parents=True)
+            (capture / "metadata.json").write_text(json.dumps(final_metadata) + "\n", encoding="utf-8")
+            (capture / "stdout").write_text(stdout, encoding="utf-8")
+            (capture / "stderr").write_text(stderr, encoding="utf-8")
+            (capture / "exit-status").write_text("0\n", encoding="utf-8")
+            (capture / "review-duration-seconds").write_text("3\n", encoding="utf-8")
+            (capture / "capture-complete").write_text(f"{run_id}\n", encoding="utf-8")
+            return capture
+
+        valid_run_id = "run." + "6" * 32
+        prepare(valid_run_id, "rate_limited", "rate limit exceeded\n")
+        code, recovered = self.invoke("cli-observations", "--run-id", valid_run_id, "--database", str(self.database))
+        self.assertEqual(code, 0, recovered)
+        self.assertEqual(records.attempt(valid_run_id)["state"], "rate_limited")
+        source_run = records.history(2935)["runs"][0]
+        self.assertEqual(source_run["outcome"], "failed")
+        self.assertFalse(source_run["attributable"])
+        self.assertFalse(recovered["result"]["idempotent_replay"])
+        code, replay = self.invoke("cli-observations", "--run-id", valid_run_id, "--database", str(self.database))
+        self.assertEqual(code, 0, replay)
+        self.assertTrue(replay["result"]["idempotent_replay"])
+
+        mismatch_run_id = "run." + "7" * 32
+        prepare(mismatch_run_id, "failed", "rate limit exceeded\n")
+        before = records.attempt(mismatch_run_id)
+        code, rejected = self.invoke("cli-observations", "--run-id", mismatch_run_id, "--database", str(self.database))
+        self.assertEqual(code, 2)
+        self.assertIn("terminal state conflicts", rejected["error"])
+        self.assertEqual(records.attempt(mismatch_run_id), before)
+        self.assertEqual(records.attempt_artifacts(mismatch_run_id)["cli_raw_output"], stdout)
+        self.assertEqual(len(records.history(2935)["runs"]), 1)
+
+    def test_cli_observations_invalid_events_refuse_without_database_changes(self) -> None:
+        self.invoke("bootstrap", "--database", str(self.database))
+        records = SqliteReviewRecords(self.database)
+        cases = (
+            ("event-type", b'{"type":[]}\n'),
+            ("overflow-number", b'{"type":"finding","codegenInstructions":"Useful","extra":{"score":1e999}}\n'),
+            ("nested-surrogate", b'{"type":"finding","codegenInstructions":"Useful","extra":{"text":"\\ud800"}}\n'),
+            ("locator-only", b'{"type":"finding","codegenInstructions":"Review comment at @src/Foo.java:1"}\n'),
+            ("invalid-utf8", b'{"type":"finding","codegenInstructions":"Useful \xff finding"}\n'),
+        )
+
+        for offset, (label, stdout_bytes) in enumerate(cases, start=5):
+            with self.subTest(case=label):
+                run_id = "run." + str(offset) * 32
+                source_pr = 2936 + offset - 5
+                head = "abcdef"[offset - 5] * 40
+                started_at = "2026-10-01T00:00:00Z"
+                finished_at = "2026-10-01T00:00:03Z"
+                stdout = stdout_bytes.decode("utf-8", errors="replace")
+                stderr = "connection closed\n"
+                metadata = {
+                    "run_id": run_id,
+                    "kind": "cli",
+                    "capture_completion_marker": "capture-complete",
+                    "repository": "owner/repo",
+                    "pull_request": source_pr,
+                    "candidate_sha": head,
+                }
+                final_metadata = {**metadata, "duration_seconds": 3, "exit_status": 1}
+                records.start_attempt(
+                    attempt_id=run_id,
+                    source_pr=source_pr,
+                    channel="cli",
+                    candidate_sha=head,
+                    started_at=started_at,
+                    metadata=metadata,
+                )
+                records.finish_attempt(
+                    run_id,
+                    state="failed",
+                    finished_at=finished_at,
+                    duration_seconds=3,
+                    exit_status=1,
+                    diagnostic="CodeRabbit CLI did not return a complete JSON review",
+                    artifacts={
+                        "cli_raw_output": stdout,
+                        "cli_diagnostic": stderr,
+                        "metadata": json.dumps(final_metadata, sort_keys=True),
+                    },
+                )
+                capture = self.database.parent / "pr-review" / "runs" / run_id
+                capture.mkdir(parents=True)
+                (capture / "metadata.json").write_text(json.dumps(final_metadata) + "\n", encoding="utf-8")
+                (capture / "stdout").write_bytes(stdout_bytes)
+                (capture / "stderr").write_text(stderr, encoding="utf-8")
+                (capture / "exit-status").write_text("1\n", encoding="utf-8")
+                (capture / "review-duration-seconds").write_text("3\n", encoding="utf-8")
+                (capture / "capture-complete").write_text(f"{run_id}\n", encoding="utf-8")
+                attempt_before = records.attempt(run_id)
+                artifacts_before = records.attempt_artifacts(run_id)
+
+                code, result = self.invoke("cli-observations", "--run-id", run_id, "--database", str(self.database))
+
+                self.assertEqual(code, 2, result)
+                self.assertEqual(records.attempt(run_id), attempt_before)
+                self.assertEqual(records.attempt_artifacts(run_id), artifacts_before)
+                self.assertEqual(records.history(source_pr)["runs"], [])
+                self.assertEqual(records.completed_cli_capture_snapshots(source_pr), [])
 
     def test_legacy_failed_cli_reimport_reports_changed_source_fingerprint(self) -> None:
         self.invoke("bootstrap", "--database", str(self.database))

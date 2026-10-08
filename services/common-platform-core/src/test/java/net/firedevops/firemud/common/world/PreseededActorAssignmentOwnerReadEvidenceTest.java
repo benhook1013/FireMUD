@@ -10,7 +10,7 @@ import net.firedevops.firemud.gamesession.v1.GetPreseededActorAssignmentOwnerRea
 import org.junit.jupiter.api.Test;
 
 class PreseededActorAssignmentOwnerReadEvidenceTest {
-  private static final String TARGET_NAMESPACE = "gameplay";
+  private static final String TARGET_NAMESPACE = "test";
   private static final UUID ACCOUNT = uuid("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa");
   private static final UUID REALM = uuid("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb");
   private static final UUID PLAYABLE_NAMESPACE = uuid("cccccccc-cccc-4ccc-8ccc-cccccccccccc");
