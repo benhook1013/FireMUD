@@ -639,7 +639,7 @@ class LiveEvidence:
         # belong to another head as historical; current-head or unknown results
         # remain blockers. No transition fingerprints are reauthorized here.
         audit_now = datetime.now(timezone.utc)
-        audit = self.legacy_transition_reauthorization_audit(
+        audit = self._audit_complete_hosted_history(
             pr,
             (),
             {
@@ -647,6 +647,7 @@ class LiveEvidence:
                 "live_base_ref": current.base_ref_name,
                 "live_base_tip": current.base_sha,
             },
+            payload=payload,
             allow_historical_unmatched=True,
             now=audit_now,
         )
@@ -845,7 +846,32 @@ class LiveEvidence:
         self._histories.pop((pr, "hosted"), None)
         self._histories.pop((pr, "cli"), None)
         self._records_histories.pop(pr, None)
-        payload = self._payload(pr)
+        return self._audit_complete_hosted_history(
+            pr,
+            expected_hosted_fingerprints,
+            expected_anchor,
+            payload=self._payload(pr),
+            allow_historical_unmatched=allow_historical_unmatched,
+            now=now,
+        )
+
+    def _audit_complete_hosted_history(
+        self,
+        pr: int,
+        expected_hosted_fingerprints: tuple[str, ...],
+        expected_anchor: dict[str, Any],
+        *,
+        payload: dict[str, Any],
+        allow_historical_unmatched: bool = False,
+        now: datetime | None = None,
+    ) -> dict[str, Any]:
+        """Evaluate the caller's freshly paginated snapshot with a later identity check.
+
+        Both public audit entrypoints invalidate operation-local caches first.
+        The stop audit shares that fresh payload here instead of fetching it twice;
+        its independent identity observations and branch-tip check remain required.
+        """
+
         self.history(pr, "hosted", now=now)
         self.history(pr, "cli")
         try:
