@@ -433,14 +433,14 @@ def _private_document(title: str, content: str, *, delivery_link: bool = True) -
         ".private-pages .conversation-card{display:flex;align-items:center;justify-content:space-between;min-width:0;max-width:100%;"
         "gap:.5rem 1rem;padding:.65rem .8rem!important}"
         ".private-pages .conversation-copy{min-width:0;flex:1}"
-        ".private-pages .conversation-card h2{margin:0;font-size:1rem;line-height:1.3}"
+        ".private-pages .conversation-card h3{margin:0;font-size:1rem;line-height:1.3}"
         ".private-pages .conversation-meta{display:flex;flex-wrap:wrap;gap:.15rem .65rem;align-items:baseline;"
         "margin:.2rem 0 0!important;color:var(--muted,#57636c);font-size:.85rem}"
         ".private-pages .conversation-open{display:inline-flex;align-items:center;justify-content:center;"
         "min-height:44px;padding:.45rem .75rem;border:1px solid var(--line,#b9b9b9);"
         "background:var(--surface-muted,#dedede);font-size:.85rem;font-weight:650;text-decoration:none;white-space:nowrap}"
         ".private-pages .private-row{padding:1rem;border:1px solid var(--line,#b9b9b9);background:var(--surface,#f0f0f0)}"
-        ".private-pages .private-row h2{margin:0 0 .5rem;font-size:1.15rem}"
+        ".private-pages .private-row h3{margin:0 0 .5rem;font-size:1.15rem}"
         ".private-pages .private-list .job-private{margin:0;background:var(--surface,#f0f0f0)}"
         ".private-pages .private-empty{padding:1.2rem;border:1px dashed var(--line,#b9b9b9);"
         "background:var(--surface,#f0f0f0);color:var(--muted,#57636c)}"
@@ -864,7 +864,7 @@ def render_inbox_conversations(
         unread_message_count = conversation["unread_count"]
         entries.append(
             '<li class="conversation-entry"><article class="job-private conversation-card">'
-            f'<div class="conversation-copy"><h2>{author} → {recipient}</h2>'
+            f'<div class="conversation-copy"><h3>{author} → {recipient}</h3>'
             '<p class="conversation-meta">'
             f"<span>{message_count} {'message' if message_count == 1 else 'messages'}</span>"
             f"<span>{unread_message_count} unread incoming "
@@ -955,8 +955,8 @@ def render_inbox(
             refs.append(f'Reply to <a href="{parent_url}">{html.escape(parent_id, quote=True)}</a>')
         entries.append(
             '<li class="private-row">'
-            f"<h2>{html.escape(str(message.get('author') or 'Unspecified sender'), quote=True)} → "
-            f"{html.escape(str(message.get('recipient') or 'Unspecified recipient'), quote=True)}</h2>"
+            f"<h3>{html.escape(str(message.get('author') or 'Unspecified sender'), quote=True)} → "
+            f"{html.escape(str(message.get('recipient') or 'Unspecified recipient'), quote=True)}</h3>"
             f"<p>{_time_metadata(message.get('created_at', 'Message'))} · {_inbox_direction(worker, message)} · "
             f'<span class="job-badge">{state}</span>{(" · " + " · ".join(refs)) if refs else ""}</p>'
             f'<p class="job-links"><a href="{message_url}">'
