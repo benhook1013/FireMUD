@@ -20,16 +20,28 @@ import java.util.Base64;
 import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.Supplier;
+import net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding;
 import net.firedevops.firemud.common.config.ServiceEndpointsProperties;
+import net.firedevops.firemud.common.gamedesign.GameDesignPublicationTerminalEvidence;
 import net.firedevops.firemud.common.grpc.CommonGrpcClientProperties;
 import net.firedevops.firemud.common.grpc.GrpcChannelFactory;
+import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentityInterceptor;
 import net.firedevops.firemud.common.publication.AccountPublicationAuthorizationBinding;
 import net.firedevops.firemud.common.publication.AccountPublicationAuthorizationReadClient;
 import net.firedevops.firemud.common.publication.AccountPublicationAuthorizationReadEvidence;
+import net.firedevops.firemud.common.publication.GameDesignPublicationOperationBinding;
+import net.firedevops.firemud.common.publication.GameDesignPublicationTerminalReadClient;
+import net.firedevops.firemud.common.publication.GameDesignPublicationTerminalReadGrpcCodec;
+import net.firedevops.firemud.common.publication.WorldPublicationTerminalReadClient;
+import net.firedevops.firemud.common.publication.WorldPublicationTerminalReadGrpcCodec;
 import net.firedevops.firemud.test.TestContainerImages;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.testcontainers.containers.GenericContainer;
 import org.testcontainers.containers.Network;
 import org.testcontainers.containers.PostgreSQLContainer;
@@ -88,6 +100,358 @@ class AccountPublicationAuthorizationMtlsPostgresIntegrationTest {
               "6379");
 
   @TempDir Path temporary;
+
+  /**
+   * Real Account storage and two strict loopback mTLS clients. Remote immutable terminals and the
+   * incoming Game Design request context are stipulated; remote owner databases are not exercised.
+   */
+  @Test
+  void twoAuthenticatedTerminalOwnersSettleActualAccountOrderAndReadBackAfterCommit()
+      throws Exception {
+    var pki = new TestPki(Files.createDirectories(temporary.resolve("settlement-pki")));
+    for (var outcome : GameDesignPublicationTerminalEvidence.Outcome.values()) {
+      try (var fixture =
+          new AccountControlUiOriginalOrderFixture(
+              postgres.getJdbcUrl(),
+              postgres.getUsername(),
+              postgres.getPassword(),
+              redis.getHost(),
+              redis.getMappedPort(6379),
+              Files.createDirectories(temporary.resolve(outcome.name())))) {
+        var issued = fixture.issueCreator();
+        var sources = issued.sources();
+        var descriptor =
+            AccountPublicationAuthorizationPostgresIntegrationTest.proof(
+                sources, issued.environment());
+        var repository =
+            org.mockito.Mockito.spy(new AccountPublicationAuthorizationRepository(sources.dsl));
+        var order =
+            new AccountPublicationAuthorizationService(issued.actors(), sources.fences, repository)
+                .authorize(issued.compact(), descriptor.selection(), issued.environment());
+        var operation = new GameDesignPublicationOperationBinding(order, descriptor.world());
+        var terminal =
+            AccountPublicationAuthorizationPostgresIntegrationTest.terminal(operation, outcome);
+        var mode = new AtomicReference<>("exact");
+        var gdReads = new java.util.concurrent.CopyOnWriteArrayList<String>();
+        var worldReads = new java.util.concurrent.CopyOnWriteArrayList<String>();
+        var gdEndpoint =
+            new net.firedevops.firemud.gamedesign.v1.GameDesignPublicationTerminalReadServiceGrpc
+                .GameDesignPublicationTerminalReadServiceImplBase() {
+              @Override
+              public void readPublicationTerminal(
+                  net.firedevops.firemud.gamedesign.v1.ReadPublicationTerminalRequest wire,
+                  io.grpc.stub.StreamObserver<
+                          net.firedevops.firemud.gamedesign.v1.ReadPublicationTerminalResponse>
+                      observer) {
+                try {
+                  requireAccountClient();
+                  var request = GameDesignPublicationTerminalReadGrpcCodec.fromRequest(wire);
+                  gdReads.add(wire.getReadRequestId());
+                  if (mode.get().equals("gd-missing")) throw Status.NOT_FOUND.asRuntimeException();
+                  if (mode.get().equals("gd-unavailable"))
+                    throw Status.UNAVAILABLE.asRuntimeException();
+                  var response =
+                      GameDesignPublicationTerminalReadGrpcCodec.toResponse(request, terminal)
+                          .toBuilder();
+                  if (mode.get().equals("gd-correlation"))
+                    response.setReadRequestId(UUID.randomUUID().toString());
+                  if (mode.get().equals("gd-operation"))
+                    response.setOriginalOperation(com.google.protobuf.ByteString.EMPTY);
+                  if (mode.get().equals("gd-unknown")) {
+                    var invalid = new java.io.ByteArrayOutputStream();
+                    DraftAuthorizationFenceBinding.frame(
+                        invalid, GameDesignPublicationTerminalEvidence.SCHEMA);
+                    DraftAuthorizationFenceBinding.frame(invalid, operation.canonicalBytes());
+                    DraftAuthorizationFenceBinding.frame(invalid, "UNKNOWN");
+                    response.setTerminalEvidence(
+                        com.google.protobuf.ByteString.copyFrom(invalid.toByteArray()));
+                  }
+                  observer.onNext(response.build());
+                  observer.onCompleted();
+                } catch (RuntimeException failure) {
+                  observer.onError(failure);
+                }
+              }
+            };
+        var worldEndpoint =
+            new net.firedevops.firemud.worldmanagement.v1.WorldPublicationTerminalReadServiceGrpc
+                .WorldPublicationTerminalReadServiceImplBase() {
+              @Override
+              public void readPublicationTerminal(
+                  net.firedevops.firemud.worldmanagement.v1.ReadPublicationTerminalRequest wire,
+                  io.grpc.stub.StreamObserver<
+                          net.firedevops.firemud.worldmanagement.v1.ReadPublicationTerminalResponse>
+                      observer) {
+                try {
+                  requireAccountClient();
+                  var request = WorldPublicationTerminalReadGrpcCodec.fromRequest(wire);
+                  worldReads.add(wire.getReadRequestId());
+                  if (mode.get().equals("world-missing"))
+                    throw Status.NOT_FOUND.asRuntimeException();
+                  if (mode.get().equals("world-unavailable"))
+                    throw Status.UNAVAILABLE.asRuntimeException();
+                  var response =
+                      WorldPublicationTerminalReadGrpcCodec.toResponse(request, terminal)
+                          .toBuilder();
+                  if (mode.get().equals("world-correlation"))
+                    response.setReadRequestId(UUID.randomUUID().toString());
+                  if (mode.get().equals("world-operation"))
+                    response.setOriginalOperation(com.google.protobuf.ByteString.EMPTY);
+                  if (mode.get().equals("world-terminal"))
+                    response.setWorldTerminalEvidence(com.google.protobuf.ByteString.EMPTY);
+                  if (mode.get().equals("world-unknown")) response.setWorldOutcomeValue(99);
+                  if (mode.get().equals("world-phase"))
+                    response.setWorldOutcomeValue(
+                        outcome == GameDesignPublicationTerminalEvidence.Outcome.PUBLISHED ? 2 : 1);
+                  observer.onNext(response.build());
+                  observer.onCompleted();
+                } catch (RuntimeException failure) {
+                  observer.onError(failure);
+                }
+              }
+            };
+        Server gdServer = terminalServer(pki.gameDesignServer, pki.ca, gdEndpoint);
+        Server worldServer = terminalServer(pki.worldServer, pki.ca, worldEndpoint);
+        Server wrongServer = terminalServer(pki.server, pki.ca, gdEndpoint, worldEndpoint);
+        try (var gdClient = gameDesignClient(gdServer.getPort(), pki.accountClient, pki.ca);
+            var worldClient = worldClient(worldServer.getPort(), pki.accountClient, pki.ca)) {
+          var composition =
+              new AccountSelectedDraftPublicationSettlementService(
+                  repository, gdClient, worldClient, sources.manager, NAMESPACE);
+          for (String failure :
+              List.of(
+                  "gd-missing",
+                  "gd-unavailable",
+                  "gd-correlation",
+                  "gd-operation",
+                  "gd-unknown",
+                  "world-missing",
+                  "world-unavailable",
+                  "world-correlation",
+                  "world-operation",
+                  "world-terminal",
+                  "world-unknown",
+                  "world-phase")) {
+            mode.set(failure);
+            assertThatThrownBy(
+                    () -> asGameDesign(() -> composition.settle(operation.canonicalBytes())))
+                .isInstanceOf(RuntimeException.class);
+            assertPending(sources, repository, order);
+          }
+          mode.set("exact");
+          try (var wrongGd = gameDesignClient(wrongServer.getPort(), pki.accountClient, pki.ca);
+              var wrongWorld = worldClient(wrongServer.getPort(), pki.accountClient, pki.ca)) {
+            var wrongGdComposition =
+                new AccountSelectedDraftPublicationSettlementService(
+                    repository, wrongGd, worldClient, sources.manager, NAMESPACE);
+            var wrongWorldComposition =
+                new AccountSelectedDraftPublicationSettlementService(
+                    repository, gdClient, wrongWorld, sources.manager, NAMESPACE);
+            assertThatThrownBy(
+                    () -> asGameDesign(() -> wrongGdComposition.settle(operation.canonicalBytes())))
+                .isInstanceOf(RuntimeException.class);
+            assertPending(sources, repository, order);
+            assertThatThrownBy(
+                    () ->
+                        asGameDesign(
+                            () -> wrongWorldComposition.settle(operation.canonicalBytes())))
+                .isInstanceOf(RuntimeException.class);
+            assertPending(sources, repository, order);
+          }
+          var invocations = new AtomicInteger();
+          var corruptReadback = new java.util.concurrent.atomic.AtomicBoolean();
+          String schema =
+              java.util.Objects.requireNonNull(
+                      sources.dsl.fetchOne("SELECT current_schema() AS schema"))
+                  .get("schema", String.class);
+          org.mockito.Mockito.doAnswer(
+                  call -> {
+                    int invocation = invocations.incrementAndGet();
+                    assertThat(TransactionSynchronizationManager.isActualTransactionActive())
+                        .isTrue();
+                    assertThat(TransactionSynchronizationManager.isCurrentTransactionReadOnly())
+                        .isFalse();
+                    assertThat(
+                            TransactionSynchronizationManager.getCurrentTransactionIsolationLevel())
+                        .isEqualTo(java.sql.Connection.TRANSACTION_READ_COMMITTED);
+                    if (invocation == 2) {
+                      // Independent connection cannot see the first transaction's uncommitted
+                      // insert.
+                      // Seeing its exact row before the second owner invocation proves prior
+                      // commit.
+                      try (var connection =
+                          java.sql.DriverManager.getConnection(
+                              postgres.getJdbcUrl(),
+                              postgres.getUsername(),
+                              postgres.getPassword())) {
+                        connection.setSchema(schema);
+                        try (var statement =
+                            connection.prepareStatement(
+                                "SELECT game_design_terminal FROM account_selected_publication_settlements WHERE operation_id = ?")) {
+                          statement.setObject(1, order.operationId());
+                          try (var result = statement.executeQuery()) {
+                            assertThat(result.next()).isTrue();
+                            assertThat(result.getBytes(1)).isEqualTo(terminal.canonicalBytes());
+                            assertThat(result.next()).isFalse();
+                          }
+                        }
+                      }
+                    }
+                    byte[] readback = (byte[]) call.callRealMethod();
+                    return corruptReadback.get() && invocation % 2 == 0
+                        ? new byte[] {99}
+                        : readback;
+                  })
+              .when(repository)
+              .settle(
+                  org.mockito.ArgumentMatchers.any(),
+                  org.mockito.ArgumentMatchers.any(),
+                  org.mockito.ArgumentMatchers.anyString(),
+                  org.mockito.ArgumentMatchers.any());
+          gdReads.clear();
+          worldReads.clear();
+          byte[] receipt = asGameDesign(() -> composition.settle(operation.canonicalBytes()));
+          assertThat(asGameDesign(() -> composition.settle(operation.canonicalBytes())))
+              .isEqualTo(receipt);
+          assertThat(invocations).hasValue(4);
+          assertThat(gdReads).hasSize(2).doesNotHaveDuplicates();
+          assertThat(worldReads).hasSize(2).doesNotHaveDuplicates();
+          assertThat(
+                  sources.dsl.fetchCount(
+                      org.jooq.impl.DSL.table("account_selected_publication_settlements")))
+              .isEqualTo(1);
+          var heldReader =
+              new AccountPublicationAuthorizationReadService(
+                  repository, sources.manager, NAMESPACE);
+          assertCode(
+              Status.Code.FAILED_PRECONDITION,
+              () ->
+                  asGameDesign(
+                      () -> {
+                        heldReader.requireHeld(
+                            AccountPublicationAuthorizationReadEvidence.Request.create(
+                                NAMESPACE, order));
+                        return null;
+                      }));
+          assertThat(
+                  sources.tx(
+                      () ->
+                          sources.dsl.execute(
+                              "UPDATE accounts SET role = 'admin' WHERE id = ?",
+                              sources.account.getId())))
+              .isEqualTo(1);
+          corruptReadback.set(true);
+          assertThatThrownBy(
+                  () -> asGameDesign(() -> composition.settle(operation.canonicalBytes())))
+              .isInstanceOf(IllegalStateException.class)
+              .hasMessageContaining("readback differs");
+          assertThat(
+                  java.util.Objects.requireNonNull(
+                          sources.dsl.fetchOne(
+                              "SELECT receipt FROM account_selected_publication_settlements WHERE operation_id = ?",
+                              order.operationId()))
+                      .get("receipt", byte[].class))
+              .isEqualTo(receipt);
+        } finally {
+          for (Server server : List.of(gdServer, worldServer, wrongServer)) server.shutdownNow();
+          for (Server server : List.of(gdServer, worldServer, wrongServer))
+            assertThat(server.awaitTermination(5, TimeUnit.SECONDS)).isTrue();
+        }
+      }
+    }
+  }
+
+  private static void assertPending(
+      AccountControlUiOwnerSourcesFixture sources,
+      AccountPublicationAuthorizationRepository repository,
+      AccountPublicationAuthorizationBinding order) {
+    assertThat(
+            sources.dsl.fetchCount(
+                org.jooq.impl.DSL.table("account_selected_publication_settlements")))
+        .isZero();
+    sources.tx(
+        () -> {
+          repository.readHeld(order);
+          return null;
+        });
+    assertThatThrownBy(
+            () ->
+                sources.tx(
+                    () ->
+                        sources.dsl.execute(
+                            "UPDATE accounts SET role = 'admin' WHERE id = ?",
+                            sources.account.getId())))
+        .isInstanceOf(org.jooq.exception.DataAccessException.class);
+  }
+
+  private static void requireAccountClient() {
+    var peer = GrpcPeerIdentity.current();
+    if (peer == null
+        || !("spiffe://firemud/ns/" + NAMESPACE + "/sa/account-service").equals(peer.uri()))
+      throw Status.PERMISSION_DENIED.asRuntimeException();
+  }
+
+  private static <T> T asGameDesign(Supplier<T> action) {
+    var context =
+        io.grpc.Context.current()
+            .withValue(
+                GrpcPeerIdentity.CONTEXT_KEY,
+                GrpcPeerIdentity.parseUri(
+                        "spiffe://firemud/ns/" + NAMESPACE + "/sa/game-design-service")
+                    .orElseThrow());
+    var prior = context.attach();
+    try {
+      return action.get();
+    } finally {
+      context.detach(prior);
+    }
+  }
+
+  private static Server terminalServer(
+      TestIdentity identity, Path ca, io.grpc.BindableService... endpoints) throws Exception {
+    var builder =
+        NettyServerBuilder.forAddress(new InetSocketAddress("127.0.0.1", 0))
+            .sslContext(
+                GrpcSslContexts.forServer(identity.certificate().toFile(), identity.key().toFile())
+                    .trustManager(ca.toFile())
+                    .clientAuth(ClientAuth.REQUIRE)
+                    .build());
+    for (var endpoint : endpoints)
+      builder.addService(ServerInterceptors.intercept(endpoint, new GrpcPeerIdentityInterceptor()));
+    return builder.build().start();
+  }
+
+  private static GameDesignPublicationTerminalReadClient gameDesignClient(
+      int port, TestIdentity identity, Path ca) throws Exception {
+    var endpoints = new ServiceEndpointsProperties();
+    endpoints.setGameDesignService("127.0.0.1:" + port);
+    var client =
+        new GameDesignPublicationTerminalReadClient(
+            endpoints, identity.properties(ca), new GrpcChannelFactory(), NAMESPACE);
+    try {
+      client.init();
+      return client;
+    } catch (Exception failure) {
+      client.close();
+      throw failure;
+    }
+  }
+
+  private static WorldPublicationTerminalReadClient worldClient(
+      int port, TestIdentity identity, Path ca) throws Exception {
+    var endpoints = new ServiceEndpointsProperties();
+    endpoints.setWorldManagementService("127.0.0.1:" + port);
+    var client =
+        new WorldPublicationTerminalReadClient(
+            endpoints, identity.properties(ca), new GrpcChannelFactory(), NAMESPACE);
+    try {
+      client.init();
+      return client;
+    } catch (Exception failure) {
+      client.close();
+      throw failure;
+    }
+  }
 
   @Test
   void genuineProducerToGameDesignAndWorldMtlsReadersReplaysExactlyAndRejectsSubstitution()
@@ -232,6 +596,9 @@ class AccountPublicationAuthorizationMtlsPostgresIntegrationTest {
     private static final String PASSWORD = "test-only-publication-mtls-password";
     final Path ca;
     final TestIdentity server,
+        accountClient,
+        gameDesignServer,
+        worldServer,
         gameDesign,
         worldManagement,
         wrongWorkload,
@@ -279,6 +646,11 @@ class AccountPublicationAuthorizationMtlsPostgresIntegrationTest {
           ca.toString(),
           "-rfc");
       server = issue(root, caStore, "account-server", NAMESPACE, "account-service", true);
+      accountClient = issue(root, caStore, "account-client", NAMESPACE, "account-service", false);
+      gameDesignServer =
+          issue(root, caStore, "game-design-server", NAMESPACE, "game-design-service", true);
+      worldServer =
+          issue(root, caStore, "world-server", NAMESPACE, "world-management-service", true);
       gameDesign =
           issue(root, caStore, "game-design-client", NAMESPACE, "game-design-service", false);
       worldManagement =

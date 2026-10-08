@@ -7,7 +7,11 @@ import java.util.Arrays;
 import java.util.HexFormat;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.UUID;
+import net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding;
 import net.firedevops.firemud.common.gamedesign.GameDesignPublicationTerminalEvidence;
+import net.firedevops.firemud.common.publication.AccountPublicationAuthorizationBinding;
+import net.firedevops.firemud.common.publication.GameDesignPublicationOperationBinding;
 import net.firedevops.firemud.common.world.WorldPublishedStartLocationEvidence;
 import org.jooq.DSLContext;
 import org.jooq.Record;
@@ -34,7 +38,11 @@ public final class WorldPublicationTerminalRepository {
           + "a.publish_workflow_id AS joined_attempt_publish_workflow_id, "
           + "a.applied_commit_id AS joined_attempt_applied_commit_id, "
           + "a.content_digest AS joined_attempt_content_digest, "
-          + "a.digest_schema_version AS joined_attempt_digest_schema_version "
+          + "a.digest_schema_version AS joined_attempt_digest_schema_version, "
+          + "q.account_operation_id AS joined_account_operation_id, "
+          + "q.account_fence_id AS joined_account_fence_id, "
+          + "q.account_binding_bytes AS joined_account_binding_bytes, "
+          + "q.account_binding_digest AS joined_account_binding_digest "
           + "FROM world_design_publication_terminal t "
           + "LEFT JOIN world_design_publication_fence_attempt a "
           + "ON a.publication_fence=t.publication_fence "
@@ -42,14 +50,22 @@ public final class WorldPublicationTerminalRepository {
           + "ON o.target_namespace=a.target_namespace "
           + "AND o.canonical_tenant_id=a.canonical_tenant_id "
           + "AND o.local_tenant_key=a.local_tenant_key AND o.version_id=a.version_id "
+          + "LEFT JOIN world_design_publication_account_binding q "
+          + "ON q.publication_fence=t.publication_fence "
           + "WHERE t.publication_fence=?";
   private static final String ORIGINAL_OWNER_READ =
-      "SELECT a.*, o.owner_freeze_phase, o.current_publication_fence "
+      "SELECT a.*, o.owner_freeze_phase, o.current_publication_fence, "
+          + "q.account_operation_id AS joined_account_operation_id, "
+          + "q.account_fence_id AS joined_account_fence_id, "
+          + "q.account_binding_bytes AS joined_account_binding_bytes, "
+          + "q.account_binding_digest AS joined_account_binding_digest "
           + "FROM world_design_publication_fence_attempt a "
           + "JOIN world_design_publication_fence_owner o "
           + "ON o.target_namespace=a.target_namespace "
           + "AND o.canonical_tenant_id=a.canonical_tenant_id "
           + "AND o.local_tenant_key=a.local_tenant_key AND o.version_id=a.version_id "
+          + "LEFT JOIN world_design_publication_account_binding q "
+          + "ON q.publication_fence=a.publication_fence "
           + "WHERE a.publication_fence=? AND a.target_namespace=? "
           + "AND a.canonical_tenant_id=? AND a.canonical_version_id=? "
           + "AND o.current_publication_fence=a.publication_fence";
@@ -172,7 +188,7 @@ public final class WorldPublicationTerminalRepository {
             world.targetNamespace(),
             world.canonicalTenantId(),
             world.canonicalVersionId());
-    requireOriginalOwnerBinding(world, row);
+    requireOriginalOwnerBinding(request, row);
     return row;
   }
 
@@ -189,7 +205,7 @@ public final class WorldPublicationTerminalRepository {
       throw new PublicationTerminalConflictException(
           "World terminal request has no exact retained V25 attempt and current owner association");
     }
-    requireOriginalOwnerBinding(world, owner);
+    requireOriginalOwnerBinding(request, owner);
     if (!"FROZEN".equals(required(owner, "owner_freeze_phase", String.class))) {
       throw new PublicationTerminalConflictException(
           "Missing World publication terminal conflicts with the retained owner phase");
@@ -197,7 +213,8 @@ public final class WorldPublicationTerminalRepository {
   }
 
   private static void requireOriginalOwnerBinding(
-      WorldPublishedStartLocationEvidence.Request world, Record row) {
+      WorldPublicationTerminal.Request request, Record row) {
+    WorldPublishedStartLocationEvidence.Request world = request.worldEvidence().request();
     if (row == null) {
       throw new PublicationTerminalConflictException(
           "World terminal request has no exact retained V25 attempt and current owner association");
@@ -218,6 +235,34 @@ public final class WorldPublicationTerminalRepository {
         || world.digestSchemaVersion() != required(row, "digest_schema_version", Integer.class)) {
       throw new PublicationTerminalConflictException(
           "World terminal evidence differs from its exact immutable V25 publication checkpoint");
+    }
+    requireQualifiedAccountBinding(request, row);
+  }
+
+  private static void requireQualifiedAccountBinding(
+      WorldPublicationTerminal.Request request, Record row) {
+    var operation = GameDesignPublicationOperationBinding.fromStored(request.operationBytes());
+    UUID storedOperationId = required(row, "joined_account_operation_id", java.util.UUID.class);
+    UUID storedFenceId = required(row, "joined_account_fence_id", java.util.UUID.class);
+    byte[] storedBytes = required(row, "joined_account_binding_bytes", byte[].class);
+    String storedDigest = required(row, "joined_account_binding_digest", String.class);
+    final AccountPublicationAuthorizationBinding retained;
+    try {
+      retained = AccountPublicationAuthorizationBinding.fromStored(storedBytes);
+    } catch (RuntimeException invalid) {
+      throw new InvalidPublicationTerminalEvidenceException(
+          "Retained World Account publication qualification is not canonical");
+    }
+    AccountPublicationAuthorizationBinding original = operation.account();
+    if (!DraftAuthorizationFenceBinding.digest(storedBytes).equals(storedDigest)
+        || !storedOperationId.equals(retained.operationId())
+        || !storedFenceId.equals(retained.fenceId())
+        || !original.operationId().equals(storedOperationId)
+        || !original.fenceId().equals(storedFenceId)
+        || !Arrays.equals(original.canonicalBytes(), storedBytes)
+        || !Arrays.equals(retained.canonicalBytes(), storedBytes)) {
+      throw new PublicationTerminalConflictException(
+          "World terminal operation differs from its exact original Account publication qualification");
     }
   }
 
@@ -274,6 +319,7 @@ public final class WorldPublicationTerminalRepository {
 
   private GameDesignPublicationTerminalEvidence exactReadback(
       WorldPublicationTerminal.Request request, Record row) {
+    requireQualifiedAccountBinding(request, row);
     byte[] stored = required(row, "terminal_evidence_bytes", byte[].class);
     if (!request.exactBytes(stored)) {
       throw new PublicationTerminalConflictException(

@@ -98,3 +98,13 @@ Entry format:
   - Observation: A global-frontier shortfall does not identify an unflushed target transaction. Conversely, record presence or a COMMIT start address alone does not establish durability; alignment, continuation pages, exact transaction identity and an independent flush observation matter. COMMIT record timestamps are not authenticated physical-flush deadline evidence.
   - Expected pattern: Preserve fail-closed acceptance while distinguishing an unavailable conservative proof from a demonstrated durability failure. A production exact-record recovery mechanism needs a supported locator, retained WAL availability, timeline/transaction-epoch checks and separate flush coverage; offline artifact decoding cannot silently replace that mechanism.
   - Current status: The production recovery path has no independent exact-COMMIT locator and remains denied. A bounded supported-mechanism proposal has been routed to Overseer; no database extension, privilege expansion, deadline relaxation or runtime activation is authorized by this diagnostic.
+
+- `2026-10-08`: Attribute composed CI to the actual checked-out merge parents
+  - Context: PR #3105 Validation run 37834941641 reported the expected child head and recorded base, but its checked-out synthetic merge's first parent differed from that base.
+  - Observation: Exact child-head metadata and passing owner tests do not establish which composed parent was executed. The reason for this parent discrepancy remains unresolved; no branch or queue change was inferred from it.
+  - Expected pattern: Retain the actual checkout commit, tree and ordered parents with physical test results. Credit executed cases to that composition and keep intended-parent alignment open until independently verified.
+
+- `2026-10-08`: Distinguish dependent compilation heap exhaustion from owner test failure
+  - Context: PR #3105 Game Session and TCP matrix jobs exhausted Gradle's 1.5 GiB Java heap while compiling dependent services, before owner integration tests ran.
+  - Observation: These jobs supplied no owner execution proof and no demonstrated semantic compiler error. Configuration-cache diagnostics were separate from the heap failure.
+  - Expected pattern: Preserve the complete validation tasks and artifact capture while applying a bounded resource profile, then require corrected-head CI. The local 3 GiB, nonparallel, two-worker profile is preparation, not proof that hosted compilation is repaired.

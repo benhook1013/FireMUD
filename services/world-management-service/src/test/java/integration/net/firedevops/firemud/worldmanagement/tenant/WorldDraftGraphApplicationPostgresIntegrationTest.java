@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.google.protobuf.ByteString;
 import com.google.protobuf.InvalidProtocolBufferException;
+import com.google.protobuf.UnknownFieldSet;
 import com.google.protobuf.util.JsonFormat;
 import io.grpc.Context;
 import io.grpc.ManagedChannel;
@@ -67,6 +68,9 @@ import net.firedevops.firemud.common.publication.AccountPublicationAuthorization
 import net.firedevops.firemud.common.publication.AuthoredDraftPublishSelectionBinding;
 import net.firedevops.firemud.common.publication.GameDesignPublicationOperationBinding;
 import net.firedevops.firemud.common.publication.RealmEntryPolicy;
+import net.firedevops.firemud.common.publication.WorldPublicationTerminalReadClient;
+import net.firedevops.firemud.common.publication.WorldPublicationTerminalReadEvidence;
+import net.firedevops.firemud.common.publication.WorldPublicationTerminalReadGrpcCodec;
 import net.firedevops.firemud.common.security.SessionContext;
 import net.firedevops.firemud.common.tenant.AuthoredWorldSourceDigest;
 import net.firedevops.firemud.common.tenant.AuthoredWorldSourceEvidence;
@@ -105,6 +109,7 @@ import net.firedevops.firemud.worldmanagement.v1.ActivateCanonicalWorldInstanceR
 import net.firedevops.firemud.worldmanagement.v1.EntityTemplateReferenceType;
 import net.firedevops.firemud.worldmanagement.v1.GenerationRuleDesignMutation;
 import net.firedevops.firemud.worldmanagement.v1.PrepareCanonicalWorldInstanceResponse;
+import net.firedevops.firemud.worldmanagement.v1.ReadPublicationTerminalRequest;
 import net.firedevops.firemud.worldmanagement.v1.RegionDesignMutation;
 import net.firedevops.firemud.worldmanagement.v1.RoomDesignMutation;
 import net.firedevops.firemud.worldmanagement.v1.RoomExitDesignMutation;
@@ -115,6 +120,7 @@ import net.firedevops.firemud.worldmanagement.v1.WorldDesignScopeType;
 import net.firedevops.firemud.worldmanagement.v1.WorldEntitySpawnBindingDesignMutation;
 import net.firedevops.firemud.worldmanagement.v1.WorldFreshGraphDeclaration;
 import net.firedevops.firemud.worldmanagement.v1.WorldFreshGraphFamilyCount;
+import net.firedevops.firemud.worldmanagement.v1.WorldPublicationTerminalReadServiceGrpc;
 import net.firedevops.firemud.worldmanagement.v1.ZoneDesignMutation;
 import org.flywaydb.core.Flyway;
 import org.flywaydb.core.api.MigrationVersion;
@@ -217,7 +223,8 @@ class WorldDraftGraphApplicationPostgresIntegrationTest {
             .getLast();
     var application = withStartRoom(original, lastRoom);
     appliedComponent().apply(application);
-    var frozen = capture(application.plan());
+    var frozen =
+        captureForTerminal(application.plan(), application.operation().accountBindingBytes());
     var selector =
         publishedEvidence(
             publishedSelectors().readCommitted(frozen.request().freeze()).orElseThrow());
@@ -244,9 +251,13 @@ class WorldDraftGraphApplicationPostgresIntegrationTest {
     byte[] originalTerminalBytes = originalTerminal.canonicalBytes();
     publicationTerminalComponent(originalTerminal)
         .complete(originalTerminal.operationBytes(), originalTerminalBytes);
+    publicationTerminalComponent(originalTerminal)
+        .complete(originalTerminal.operationBytes(), originalTerminalBytes);
     UUID publicationFence = selector.request().publicationFence();
     assertThat(publicationOwnerPhase(publicationFence)).isEqualTo("PUBLISHED");
     assertThat(publicationTerminalBytes(publicationFence)).containsExactly(originalTerminalBytes);
+    assertThat(publicationTerminalCount(publicationFence)).isEqualTo(1L);
+    assertThat(publicationAccountQualificationCount(publicationFence)).isEqualTo(1L);
 
     UUID canonicalGameInstanceId = UUID.randomUUID();
     var stableSelector =
@@ -356,7 +367,8 @@ class WorldDraftGraphApplicationPostgresIntegrationTest {
             .getLast();
     var application = withStartRoom(original, selectedRoom);
     appliedComponent().apply(application);
-    var frozen = capture(application.plan());
+    var frozen =
+        captureForTerminal(application.plan(), application.operation().accountBindingBytes());
     var selector =
         publishedEvidence(
             publishedSelectors().readCommitted(frozen.request().freeze()).orElseThrow());
@@ -632,7 +644,7 @@ class WorldDraftGraphApplicationPostgresIntegrationTest {
             .getLast();
     var applied = withStartRoom(original, selectedRoom);
     appliedComponent().apply(applied);
-    var frozen = capture(applied.plan());
+    var frozen = captureForTerminal(applied.plan(), applied.operation().accountBindingBytes());
     var selector =
         publishedEvidence(
             publishedSelectors().readCommitted(frozen.request().freeze()).orElseThrow());
@@ -691,6 +703,399 @@ class WorldDraftGraphApplicationPostgresIntegrationTest {
   }
 
   @Test
+  void terminalRequiresTheExactV53AccountOrderForFirstCompletionAndExactRetry() {
+    Fixture f = fixture();
+    var graphApplication = application(f);
+    appliedComponent().apply(graphApplication);
+    var frozen =
+        captureForTerminal(
+            graphApplication.plan(), graphApplication.operation().accountBindingBytes());
+    var selector =
+        publishedEvidence(
+            publishedSelectors().readCommitted(frozen.request().freeze()).orElseThrow());
+    var input = preparationInput(f, frozen, selector);
+    var original = isolatedTerminalEvidence(input);
+    var request = WorldPublicationTerminal.Request.fromStored(original.canonicalBytes());
+    UUID fence = selector.request().publicationFence();
+    var ownerBefore = ownerSnapshot(f, graphApplication.plan());
+    var account =
+        GameDesignPublicationOperationBinding.fromStored(original.operationBytes()).account();
+
+    var changedOperation =
+        new AccountPublicationAuthorizationBinding(
+            UUID.randomUUID(), account.fenceId(), account.input(), account.sources());
+    var changedFence =
+        new AccountPublicationAuthorizationBinding(
+            account.operationId(), UUID.randomUUID(), account.input(), account.sources());
+    var source = account.sources().getFirst();
+    var changedBytes =
+        new AccountPublicationAuthorizationBinding(
+            account.operationId(),
+            account.fenceId(),
+            account.input(),
+            List.of(
+                new DraftAuthorizationFenceBinding.SourceEvidence(
+                    source.kind(),
+                    source.scopeId(),
+                    source.generation(),
+                    source.sourceVersion(),
+                    source.checkpointStream(),
+                    source.checkpointSequence(),
+                    new byte[] {2})));
+
+    for (AccountPublicationAuthorizationBinding changed :
+        List.of(changedOperation, changedFence, changedBytes)) {
+      var altered = isolatedTerminalEvidence(original, changed);
+      assertThatThrownBy(
+              () ->
+                  publicationTerminalComponent(altered)
+                      .complete(altered.operationBytes(), altered.canonicalBytes()))
+          .isInstanceOf(
+              WorldPublicationTerminalRepository.PublicationTerminalConflictException.class)
+          .hasMessageContaining("original Account publication qualification");
+      assertThat(ownerSnapshot(f, graphApplication.plan())).isEqualTo(ownerBefore);
+      assertThat(publicationOwnerPhase(fence)).isEqualTo("FROZEN");
+      assertThat(publicationTerminalCount(fence)).isZero();
+      assertThat(publicationAccountQualificationCount(fence)).isEqualTo(1L);
+    }
+
+    var first =
+        publicationTerminalComponent(original)
+            .complete(request.operationBytes(), request.terminalBytes());
+    var retry =
+        publicationTerminalComponent(original)
+            .complete(request.operationBytes(), request.terminalBytes());
+    assertThat(retry.canonicalBytes()).containsExactly(first.canonicalBytes());
+    assertThat(publicationOwnerPhase(fence)).isEqualTo("PUBLISHED");
+    assertThat(publicationTerminalCount(fence)).isEqualTo(1L);
+    assertThat(publicationAccountQualificationCount(fence)).isEqualTo(1L);
+
+    var committedRead =
+        new WorldPublicationTerminalRepository(dsl, manager).readCommitted(request).orElseThrow();
+    assertThat(committedRead.canonicalBytes()).containsExactly(first.canonicalBytes());
+    for (AccountPublicationAuthorizationBinding changed :
+        List.of(changedOperation, changedFence, changedBytes)) {
+      var altered = isolatedTerminalEvidence(original, changed);
+      var alteredRequest = WorldPublicationTerminal.Request.fromStored(altered.canonicalBytes());
+      assertThatThrownBy(
+              () ->
+                  publicationTerminalComponent(altered)
+                      .complete(altered.operationBytes(), altered.canonicalBytes()))
+          .isInstanceOf(
+              WorldPublicationTerminalRepository.PublicationTerminalConflictException.class)
+          .hasMessageContaining("original Account publication qualification");
+      assertThatThrownBy(
+              () ->
+                  new WorldPublicationTerminalRepository(dsl, manager)
+                      .readCommitted(alteredRequest))
+          .isInstanceOf(
+              WorldPublicationTerminalRepository.PublicationTerminalConflictException.class)
+          .hasMessageContaining("original Account publication qualification");
+      assertThat(ownerSnapshot(f, graphApplication.plan())).isEqualTo(ownerBefore);
+      assertThat(publicationOwnerPhase(fence)).isEqualTo("PUBLISHED");
+      assertThat(publicationTerminalCount(fence)).isEqualTo(1L);
+      assertThat(publicationTerminalBytes(fence)).containsExactly(first.canonicalBytes());
+      assertThat(publicationAccountQualificationCount(fence)).isEqualTo(1L);
+    }
+  }
+
+  @Test
+  void worldTerminalReadUsesIndependentQualifiedOwnerAndRequiredMtls() throws Exception {
+    var pki = WorldTerminalReadTestPki.create(temporaryDirectory.resolve("terminal-read-pki"));
+    for (Outcome outcome : List.of(Outcome.PUBLISHED, Outcome.NO_PUBLICATION)) {
+      Fixture f = fixture();
+      var graphApplication = application(f);
+      appliedComponent().apply(graphApplication);
+      var frozen =
+          captureForTerminal(
+              graphApplication.plan(), graphApplication.operation().accountBindingBytes());
+      var selector =
+          publishedEvidence(
+              publishedSelectors().readCommitted(frozen.request().freeze()).orElseThrow());
+      var input = preparationInput(f, frozen, selector);
+      var published = isolatedTerminalEvidence(input);
+      var terminal =
+          outcome == Outcome.PUBLISHED
+              ? published
+              : new GameDesignPublicationTerminalEvidence(
+                  published.operationBytes(), Outcome.NO_PUBLICATION, null, null);
+      var request =
+          WorldPublicationTerminalReadEvidence.Request.create(
+              NAMESPACE, terminal.operationBytes(), terminal.canonicalBytes());
+      UUID fence = selector.request().publicationFence();
+      var terminalRepository = Mockito.spy(new WorldPublicationTerminalRepository(dsl, manager));
+      var ownerRead = new WorldPublicationTerminalReadService(terminalRepository, NAMESPACE);
+      var adapter = new WorldPublicationTerminalReadGrpcService(ownerRead, NAMESPACE);
+      Server server = startWorldPublicationTerminalReadTransport(adapter, pki);
+      try (WorldPublicationTerminalReadClient client =
+          worldPublicationTerminalReadClient(
+              server, pki.accountClient.clientProperties(pki.caCertificate))) {
+        assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+
+        // A valid exact lookup remains unavailable while the real retained terminal is pending.
+        assertStatus(Status.Code.FAILED_PRECONDITION, () -> client.read(request));
+        Mockito.verify(terminalRepository).readCommitted(Mockito.any());
+        assertThat(publicationOwnerPhase(fence)).isEqualTo("FROZEN");
+        assertThat(publicationTerminalCount(fence)).isZero();
+        assertThat(publicationAccountQualificationCount(fence)).isEqualTo(1L);
+
+        // The owner transition and terminal are committed before any RPC is issued.
+        var committed =
+            publicationTerminalComponent(terminal)
+                .complete(terminal.operationBytes(), terminal.canonicalBytes());
+        assertThat(committed.canonicalBytes()).containsExactly(terminal.canonicalBytes());
+        assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+        var ownerStateAfterCommit = publicationOwnerState(fence);
+        assertThat(publicationOwnerPhase(fence))
+            .isEqualTo(outcome == Outcome.PUBLISHED ? "PUBLISHED" : "ABORTED");
+        assertThat(publicationTerminalBytes(fence)).containsExactly(terminal.canonicalBytes());
+        assertThat(publicationTerminalCount(fence)).isEqualTo(1L);
+        assertThat(publicationAccountQualificationCount(fence)).isEqualTo(1L);
+
+        // Same correlation is an idempotent read; a fresh UUID is transport-only correlation.
+        var firstRead = client.read(request);
+        var exactRetry = client.read(request);
+        var freshRequest =
+            WorldPublicationTerminalReadEvidence.Request.create(
+                NAMESPACE, terminal.operationBytes(), terminal.canonicalBytes());
+        var freshRetry = client.read(freshRequest);
+        assertThat(firstRead.request()).isEqualTo(request);
+        assertThat(exactRetry.request()).isEqualTo(request);
+        assertThat(freshRetry.request().readRequestId()).isNotEqualTo(request.readRequestId());
+        for (var evidence : List.of(firstRead, exactRetry, freshRetry)) {
+          assertThat(evidence.worldOutcome())
+              .isEqualTo(
+                  outcome == Outcome.PUBLISHED
+                      ? WorldPublicationTerminalReadEvidence.WorldOutcome.PUBLISHED
+                      : WorldPublicationTerminalReadEvidence.WorldOutcome.ABORTED);
+          assertThat(evidence.worldTerminalEvidence()).containsExactly(terminal.canonicalBytes());
+        }
+        assertThat(publicationOwnerState(fence)).isEqualTo(ownerStateAfterCommit);
+        assertThat(publicationTerminalBytes(fence)).containsExactly(terminal.canonicalBytes());
+        assertThat(publicationTerminalCount(fence)).isEqualTo(1L);
+        assertThat(publicationAccountQualificationCount(fence)).isEqualTo(1L);
+
+        // A trusted Account peer cannot smuggle malformed or unknown wire fields into owner reads.
+        var wireRequest = WorldPublicationTerminalReadGrpcCodec.toRequest(request);
+        var malformedWireRequest = wireRequest.toBuilder().setReadRequestId("not-a-uuid").build();
+        var unknownFieldWireRequest =
+            wireRequest.toBuilder()
+                .setUnknownFields(
+                    UnknownFieldSet.newBuilder()
+                        .addField(127, UnknownFieldSet.Field.newBuilder().addVarint(1L).build())
+                        .build())
+                .build();
+        var otherNamespaceWireRequest =
+            wireRequest.toBuilder().setTargetNamespace("other-namespace").build();
+        ManagedChannel channel =
+            publicationTerminalReadChannel(
+                server, pki.accountClient.clientProperties(pki.caCertificate));
+        try {
+          var rawStub = publicationTerminalReadStub(channel);
+          for (ReadPublicationTerminalRequest malformed :
+              List.of(malformedWireRequest, unknownFieldWireRequest)) {
+            Mockito.clearInvocations(terminalRepository);
+            assertStatus(
+                Status.Code.INVALID_ARGUMENT, () -> rawStub.readPublicationTerminal(malformed));
+            Mockito.verify(terminalRepository, Mockito.never()).readCommitted(Mockito.any());
+          }
+          Mockito.clearInvocations(terminalRepository);
+          assertStatus(
+              Status.Code.INVALID_ARGUMENT,
+              () -> rawStub.readPublicationTerminal(otherNamespaceWireRequest));
+          Mockito.verify(terminalRepository, Mockito.never()).readCommitted(Mockito.any());
+        } finally {
+          channel.shutdownNow();
+          assertThat(channel.awaitTermination(2, TimeUnit.SECONDS)).isTrue();
+        }
+
+        // The server authenticates the exact same-namespace Account SPIFFE identity first.
+        for (var identity : List.of(pki.wrongWorkloadClient, pki.crossNamespaceAccountClient)) {
+          try (WorldPublicationTerminalReadClient untrustedClient =
+              worldPublicationTerminalReadClient(
+                  server, identity.clientProperties(pki.caCertificate))) {
+            Mockito.clearInvocations(terminalRepository);
+            assertStatus(Status.Code.PERMISSION_DENIED, () -> untrustedClient.read(request));
+            Mockito.verify(terminalRepository, Mockito.never()).readCommitted(Mockito.any());
+          }
+        }
+        assertThat(publicationOwnerState(fence)).isEqualTo(ownerStateAfterCommit);
+        assertThat(publicationTerminalBytes(fence)).containsExactly(terminal.canonicalBytes());
+        assertThat(publicationTerminalCount(fence)).isEqualTo(1L);
+        assertThat(publicationAccountQualificationCount(fence)).isEqualTo(1L);
+
+        // Canonical but changed immutable Account identity is denied against the retained order.
+        var originalOperation =
+            GameDesignPublicationOperationBinding.fromStored(terminal.operationBytes());
+        var originalAccount = originalOperation.account();
+        var source = originalAccount.sources().getFirst();
+        var changedAccounts =
+            List.of(
+                new AccountPublicationAuthorizationBinding(
+                    UUID.randomUUID(),
+                    originalAccount.fenceId(),
+                    originalAccount.input(),
+                    originalAccount.sources()),
+                new AccountPublicationAuthorizationBinding(
+                    originalAccount.operationId(),
+                    UUID.randomUUID(),
+                    originalAccount.input(),
+                    originalAccount.sources()),
+                new AccountPublicationAuthorizationBinding(
+                    originalAccount.operationId(),
+                    originalAccount.fenceId(),
+                    originalAccount.input(),
+                    List.of(
+                        new DraftAuthorizationFenceBinding.SourceEvidence(
+                            source.kind(),
+                            source.scopeId(),
+                            source.generation(),
+                            source.sourceVersion(),
+                            source.checkpointStream(),
+                            source.checkpointSequence(),
+                            new byte[] {2}))));
+        for (AccountPublicationAuthorizationBinding changedAccount : changedAccounts) {
+          var changedOperation =
+              new GameDesignPublicationOperationBinding(changedAccount, originalOperation.world());
+          var changedTerminal =
+              outcome == Outcome.PUBLISHED
+                  ? new GameDesignPublicationTerminalEvidence(
+                      changedOperation.canonicalBytes(),
+                      Outcome.PUBLISHED,
+                      terminal.releaseContent(),
+                      terminal.publicationVersionStateEpoch())
+                  : new GameDesignPublicationTerminalEvidence(
+                      changedOperation.canonicalBytes(), Outcome.NO_PUBLICATION, null, null);
+          var changedRequest =
+              WorldPublicationTerminalReadEvidence.Request.create(
+                  NAMESPACE, changedOperation.canonicalBytes(), changedTerminal.canonicalBytes());
+          assertStatus(Status.Code.FAILED_PRECONDITION, () -> client.read(changedRequest));
+          assertThat(publicationOwnerState(fence)).isEqualTo(ownerStateAfterCommit);
+          assertThat(publicationTerminalBytes(fence)).containsExactly(terminal.canonicalBytes());
+          assertThat(publicationTerminalCount(fence)).isEqualTo(1L);
+          assertThat(publicationAccountQualificationCount(fence)).isEqualTo(1L);
+        }
+      } finally {
+        server.shutdownNow();
+        assertThat(server.awaitTermination(2, TimeUnit.SECONDS)).isTrue();
+      }
+    }
+  }
+
+  @Test
+  void terminalRejectsUnqualifiedHistoricalFreezeWithoutInventingAccountOrder() {
+    Fixture f = fixture();
+    var graphApplication = application(f);
+    appliedComponent().apply(graphApplication);
+    var frozen = capture(graphApplication.plan());
+    var selector =
+        publishedEvidence(
+            publishedSelectors().readCommitted(frozen.request().freeze()).orElseThrow());
+    var input = preparationInput(f, frozen, selector);
+    var original = isolatedTerminalEvidence(input);
+    var request = WorldPublicationTerminal.Request.fromStored(original.canonicalBytes());
+    UUID fence = selector.request().publicationFence();
+    var ownerBefore = ownerSnapshot(f, graphApplication.plan());
+
+    assertThat(publicationAccountQualificationCount(fence)).isZero();
+    assertThatThrownBy(
+            () ->
+                ownerTransaction()
+                    .execute(
+                        status -> {
+                          insertPublicationTerminal(request);
+                          return null;
+                        }))
+        .isInstanceOf(RuntimeException.class);
+    assertThatThrownBy(
+            () ->
+                publicationTerminalComponent(original)
+                    .complete(request.operationBytes(), request.terminalBytes()))
+        .isInstanceOf(
+            WorldPublicationTerminalRepository.PublicationTerminalConflictException.class);
+    assertThat(ownerSnapshot(f, graphApplication.plan())).isEqualTo(ownerBefore);
+    assertThat(publicationOwnerPhase(fence)).isEqualTo("FROZEN");
+    assertThat(publicationTerminalCount(fence)).isZero();
+    assertThat(publicationAccountQualificationCount(fence)).isZero();
+  }
+
+  @Test
+  void terminalSqlRejectsMalformedOversizedAndTrailingOperationFrames() {
+    Fixture f = fixture();
+    var graphApplication = application(f);
+    appliedComponent().apply(graphApplication);
+    var frozen =
+        captureForTerminal(
+            graphApplication.plan(), graphApplication.operation().accountBindingBytes());
+    var selector =
+        publishedEvidence(
+            publishedSelectors().readCommitted(frozen.request().freeze()).orElseThrow());
+    var input = preparationInput(f, frozen, selector);
+    var request =
+        WorldPublicationTerminal.Request.fromStored(
+            isolatedTerminalEvidence(input).canonicalBytes());
+    UUID fence = selector.request().publicationFence();
+    var ownerBefore = ownerSnapshot(f, graphApplication.plan());
+    byte[] original = request.operationBytes();
+    byte[] wrongSchema = original.clone();
+    wrongSchema[4] ^= 1;
+    byte[] negativeLength = original.clone();
+    Arrays.fill(negativeLength, 0, 4, (byte) 0xff);
+    byte[] oversizedLength = original.clone();
+    oversizedLength[0] = 0x7f;
+    Arrays.fill(oversizedLength, 1, 4, (byte) 0xff);
+    byte[] truncatedHeader = new byte[] {0, 1};
+    byte[] truncatedPayload = Arrays.copyOf(original, original.length - 1);
+    byte[] trailingByte = Arrays.copyOf(original, original.length + 1);
+    byte[] oversizedOperation = Arrays.copyOf(original, 4_194_305);
+
+    for (byte[] malformed :
+        List.of(
+            wrongSchema,
+            negativeLength,
+            oversizedLength,
+            truncatedHeader,
+            truncatedPayload,
+            trailingByte,
+            oversizedOperation)) {
+      assertThatThrownBy(
+              () ->
+                  ownerTransaction()
+                      .execute(
+                          status -> {
+                            insertPublicationTerminal(request, malformed);
+                            return null;
+                          }))
+          .satisfies(failure -> assertPublicationGuardSqlState(failure, "23514"));
+      assertThat(ownerSnapshot(f, graphApplication.plan())).isEqualTo(ownerBefore);
+      assertThat(publicationOwnerPhase(fence)).isEqualTo("FROZEN");
+      assertThat(publicationTerminalCount(fence)).isZero();
+      assertThat(publicationAccountQualificationCount(fence)).isEqualTo(1L);
+    }
+  }
+
+  private GameDesignPublicationTerminalEvidence isolatedTerminalEvidence(
+      GameDesignPublicationTerminalEvidence original,
+      AccountPublicationAuthorizationBinding account) {
+    var operation = new GameDesignPublicationOperationBinding(account, original.worldEvidence());
+    return new GameDesignPublicationTerminalEvidence(
+        operation.canonicalBytes(),
+        original.outcome(),
+        original.releaseContent(),
+        original.publicationVersionStateEpoch());
+  }
+
+  private static void assertPublicationGuardSqlState(Throwable failure, String expectedState) {
+    for (Throwable current = failure; current != null; current = current.getCause()) {
+      if (current instanceof java.sql.SQLException sqlFailure) {
+        assertThat(sqlFailure.getSQLState()).isEqualTo(expectedState);
+        return;
+      }
+    }
+    throw new AssertionError("Expected PostgreSQL publication-operation guard failure", failure);
+  }
+
+  @Test
   void rawTerminalReceiptCannotCommitWithoutMatchingOwnerPhaseCas() {
     Fixture f = fixture();
     var original = application(generationFreePlan(f));
@@ -705,7 +1110,7 @@ class WorldDraftGraphApplicationPostgresIntegrationTest {
             .getLast();
     var applied = withStartRoom(original, selectedRoom);
     appliedComponent().apply(applied);
-    var frozen = capture(applied.plan());
+    var frozen = captureForTerminal(applied.plan(), applied.operation().accountBindingBytes());
     var selector =
         publishedEvidence(
             publishedSelectors().readCommitted(frozen.request().freeze()).orElseThrow());
@@ -746,6 +1151,121 @@ class WorldDraftGraphApplicationPostgresIntegrationTest {
         .get("owner_freeze_phase", String.class);
   }
 
+  private List<String> ownerSnapshot(Fixture fixture, WorldDraftTopologyCommitPlan plan) {
+    long tenant = fixture.intake().localTenantKey();
+    long version = fixture.version().localVersionKey();
+    List<String> snapshot = new ArrayList<>();
+    for (String table :
+        List.of(
+            "region",
+            "zone",
+            "room",
+            "room_exit",
+            "generation_rule",
+            "world_entity_spawn_binding")) {
+      rowJson(
+              "SELECT to_jsonb(t)::text FROM "
+                  + table
+                  + " t WHERE tenant_id=? AND version_id=? ORDER BY id",
+              tenant,
+              version)
+          .forEach(row -> snapshot.add(table + ":" + row));
+    }
+    rowJson(
+            "SELECT to_jsonb(t)::text FROM world_authored_topology_identity t "
+                + "WHERE target_namespace=? AND canonical_tenant_id=? AND canonical_version_id=? "
+                + "ORDER BY family,private_row_key",
+            fixture.owner().targetNamespace(),
+            fixture.owner().canonicalTenantId(),
+            fixture.owner().canonicalVersionId())
+        .forEach(row -> snapshot.add("topology-identity:" + row));
+    rowJson(
+            "SELECT to_jsonb(t)::text FROM world_design_aggregate_epoch t "
+                + "WHERE tenant_id=? AND version_id=? ORDER BY aggregate_type,aggregate_id",
+            tenant,
+            version)
+        .forEach(row -> snapshot.add("aggregate-epoch:" + row));
+    rowJson(
+            "SELECT to_jsonb(t)::text FROM world_design_scope_epoch t "
+                + "WHERE tenant_id=? AND version_id=? ORDER BY scope_type,scope_id",
+            tenant,
+            version)
+        .forEach(row -> snapshot.add("scope-epoch:" + row));
+    rowJson(
+            "SELECT to_jsonb(t)::text FROM world_design_revision_ledger t "
+                + "WHERE tenant_id=? AND version_id=? ORDER BY id",
+            tenant,
+            version)
+        .forEach(row -> snapshot.add("revision:" + row));
+    rowJson(
+            "SELECT to_jsonb(t)::text FROM world_topology_draft_commit t "
+                + "WHERE request_id=? OR commit_id=? ORDER BY request_id",
+            plan.binding().requestId(),
+            plan.binding().commitId())
+        .forEach(row -> snapshot.add("draft-commit:" + row));
+    rowJson(
+            "SELECT to_jsonb(t)::text FROM world_draft_start_location_receipt t "
+                + "WHERE request_id=? OR commit_id=? ORDER BY request_id",
+            plan.binding().requestId(),
+            plan.binding().commitId())
+        .forEach(row -> snapshot.add("start-location-receipt:" + row));
+    rowJson(
+            "SELECT to_jsonb(t)::text FROM world_draft_graph_application t "
+                + "WHERE request_id=? OR commit_id=? ORDER BY request_id",
+            plan.binding().requestId(),
+            plan.binding().commitId())
+        .forEach(row -> snapshot.add("graph-application:" + row));
+    rowJson(
+            "SELECT to_jsonb(t)::text FROM world_draft_graph_terminal_identity t "
+                + "WHERE request_id=? OR commit_id=? ORDER BY request_id",
+            plan.binding().requestId(),
+            plan.binding().commitId())
+        .forEach(row -> snapshot.add("graph-terminal-identity:" + row));
+    rowJson(
+            "SELECT to_jsonb(t)::text FROM world_design_publication_fence_owner t "
+                + "WHERE target_namespace=? AND canonical_tenant_id=? AND version_id=? "
+                + "ORDER BY target_namespace,canonical_tenant_id,version_id",
+            fixture.owner().targetNamespace(),
+            fixture.owner().canonicalTenantId(),
+            version)
+        .forEach(row -> snapshot.add("publication-owner:" + row));
+    rowJson(
+            "SELECT to_jsonb(t)::text FROM world_design_publication_fence_attempt t "
+                + "WHERE target_namespace=? AND canonical_tenant_id=? AND version_id=? "
+                + "ORDER BY publication_fence",
+            fixture.owner().targetNamespace(),
+            fixture.owner().canonicalTenantId(),
+            version)
+        .forEach(row -> snapshot.add("publication-attempt:" + row));
+    rowJson(
+            "SELECT to_jsonb(b)::text FROM world_design_publication_account_binding b "
+                + "JOIN world_design_publication_fence_attempt a USING (publication_fence) "
+                + "WHERE a.target_namespace=? AND a.canonical_tenant_id=? AND a.version_id=? "
+                + "ORDER BY b.publication_fence",
+            fixture.owner().targetNamespace(),
+            fixture.owner().canonicalTenantId(),
+            version)
+        .forEach(row -> snapshot.add("publication-account-binding:" + row));
+    return List.copyOf(snapshot);
+  }
+
+  private List<String> rowJson(String sql, Object... bindings) {
+    return dsl.resultQuery(sql, bindings).fetch(0, String.class);
+  }
+
+  private Map<String, Object> publicationOwnerState(UUID fence) {
+    Record owner =
+        Objects.requireNonNull(
+            dsl.fetchOne(
+                "SELECT owner_freeze_phase,current_publication_fence "
+                    + "FROM world_design_publication_fence_owner "
+                    + "WHERE current_publication_fence=?",
+                fence));
+    return Map.of(
+        "phase", owner.get("owner_freeze_phase", String.class),
+        "fence", owner.get("current_publication_fence", UUID.class));
+  }
+
   private byte[] publicationTerminalBytes(UUID fence) {
     return Objects.requireNonNull(
             dsl.fetchOne(
@@ -755,7 +1275,28 @@ class WorldDraftGraphApplicationPostgresIntegrationTest {
         .get("terminal_evidence_bytes", byte[].class);
   }
 
+  private long publicationTerminalCount(UUID fence) {
+    return Objects.requireNonNull(
+            dsl.fetchOne(
+                "SELECT count(*) FROM world_design_publication_terminal WHERE publication_fence=?",
+                fence))
+        .get(0, Long.class);
+  }
+
+  private long publicationAccountQualificationCount(UUID fence) {
+    return Objects.requireNonNull(
+            dsl.fetchOne(
+                "SELECT count(*) FROM world_design_publication_account_binding WHERE publication_fence=?",
+                fence))
+        .get(0, Long.class);
+  }
+
   private void insertPublicationTerminal(WorldPublicationTerminal.Request request) {
+    insertPublicationTerminal(request, request.operationBytes());
+  }
+
+  private void insertPublicationTerminal(
+      WorldPublicationTerminal.Request request, byte[] operationBytes) {
     var world = request.worldEvidence().request();
     dsl.execute(
         "INSERT INTO world_design_publication_terminal (publication_fence,target_namespace,"
@@ -781,7 +1322,7 @@ class WorldDraftGraphApplicationPostgresIntegrationTest {
         request.publicationVersionStateEpoch(),
         request.releaseBundleRef(),
         request.releaseBundleDigest(),
-        request.operationBytes(),
+        operationBytes,
         request.terminalBytes(),
         sha256Digest(request.terminalBytes()).substring("sha256:".length()),
         request.worldEvidenceBytes(),
@@ -3724,6 +4265,55 @@ class WorldDraftGraphApplicationPostgresIntegrationTest {
         .start();
   }
 
+  private static Server startWorldPublicationTerminalReadTransport(
+      WorldPublicationTerminalReadGrpcService adapter, WorldTerminalReadTestPki pki)
+      throws Exception {
+    return NettyServerBuilder.forAddress(new InetSocketAddress("127.0.0.1", 0))
+        .sslContext(
+            GrpcSslContexts.configure(
+                    SslContextBuilder.forServer(
+                        pki.worldServer.certificate.toFile(), pki.worldServer.privateKey.toFile()))
+                .trustManager(pki.caCertificate.toFile())
+                .clientAuth(ClientAuth.REQUIRE)
+                .build())
+        .addService(ServerInterceptors.intercept(adapter, new GrpcPeerIdentityInterceptor()))
+        .build()
+        .start();
+  }
+
+  private static WorldPublicationTerminalReadClient worldPublicationTerminalReadClient(
+      Server server, CommonGrpcClientProperties tlsProperties) throws Exception {
+    var endpoints = new ServiceEndpointsProperties();
+    endpoints.setWorldManagementService("127.0.0.1:" + server.getPort());
+    var client =
+        new WorldPublicationTerminalReadClient(
+            endpoints, tlsProperties, new GrpcChannelFactory(), NAMESPACE);
+    client.init();
+    return client;
+  }
+
+  private static ManagedChannel publicationTerminalReadChannel(
+      Server server, CommonGrpcClientProperties tlsProperties) throws Exception {
+    return new GrpcChannelFactory()
+        .buildChannel("127.0.0.1:" + server.getPort(), server.getPort(), tlsProperties, false);
+  }
+
+  private static WorldPublicationTerminalReadServiceGrpc
+          .WorldPublicationTerminalReadServiceBlockingStub
+      publicationTerminalReadStub(ManagedChannel channel) {
+    return WorldPublicationTerminalReadServiceGrpc.newBlockingStub(channel)
+        .withCallCredentials(new GrpcServerPeerIdentityCallCredentials(WORLD_SERVER_WORKLOAD_URI))
+        .withInterceptors(new GrpcServerPeerIdentityClientInterceptor(WORLD_SERVER_WORKLOAD_URI));
+  }
+
+  private static void assertStatus(
+      Status.Code expected, org.assertj.core.api.ThrowableAssert.ThrowingCallable action) {
+    assertThatThrownBy(action)
+        .isInstanceOf(StatusRuntimeException.class)
+        .satisfies(
+            failure -> assertThat(Status.fromThrowable(failure).getCode()).isEqualTo(expected));
+  }
+
   private static ActivateCanonicalWorldInstanceRequest activationTransportRequest(
       WorldCanonicalInstanceActivation.Request request) {
     return ActivateCanonicalWorldInstanceRequest.newBuilder()
@@ -3873,8 +4463,6 @@ class WorldDraftGraphApplicationPostgresIntegrationTest {
       WorldCanonicalInstanceTopologyPlan topologyPlan) {
     var release = launchEvidence.releaseAttestation();
     var world = Objects.requireNonNull(release.worldStartLocationEvidence());
-    var originalAccount =
-        DraftAuthorizationFenceBinding.fromStored(world.originalAccountBindingBytes());
     var selection =
         publicationSelection(
             topologyPlan.sourceBinding().plan(),
@@ -3885,24 +4473,8 @@ class WorldDraftGraphApplicationPostgresIntegrationTest {
           "Isolated publication selection differs from the retained World request digest");
     }
     var account =
-        new AccountPublicationAuthorizationBinding(
-            UUID.nameUUIDFromBytes(
-                (world.request().publicationFence() + "/account-operation")
-                    .getBytes(StandardCharsets.UTF_8)),
-            UUID.nameUUIDFromBytes(
-                (world.request().publicationFence() + "/account-fence")
-                    .getBytes(StandardCharsets.UTF_8)),
-            new AccountPublicationAuthorizationBinding.PreallocationInput(
-                originalAccount.actorAccountId(), selection),
-            List.of(
-                new DraftAuthorizationFenceBinding.SourceEvidence(
-                    DraftAuthorizationFenceBinding.SourceKind.ACCOUNT,
-                    originalAccount.actorAccountId().toString(),
-                    "1",
-                    "1",
-                    null,
-                    null,
-                    new byte[] {1})));
+        isolatedPublicationAccountBinding(
+            world.originalAccountBindingBytes(), selection, world.request().publicationRequestId());
     var operation = new GameDesignPublicationOperationBinding(account, world);
     return new GameDesignPublicationTerminalEvidence(
         operation.canonicalBytes(),
@@ -4003,6 +4575,36 @@ class WorldDraftGraphApplicationPostgresIntegrationTest {
             binding.digest(),
             "[]",
             OffsetDateTime.parse("2026-01-01T00:00:00Z")));
+  }
+
+  private AccountPublicationAuthorizationBinding isolatedPublicationAccountBinding(
+      byte[] originalDraftAccountBinding,
+      AuthoredDraftPublishSelectionBinding selection,
+      String publicationRequestId) {
+    var originalAccount = DraftAuthorizationFenceBinding.fromStored(originalDraftAccountBinding);
+    String stableIdentity =
+        selection.target().canonicalTenantId()
+            + ":"
+            + selection.target().canonicalVersionId()
+            + ":"
+            + publicationRequestId;
+    // Fixture-only distinct Account order, retained before the first freeze; not producer proof.
+    return new AccountPublicationAuthorizationBinding(
+        UUID.nameUUIDFromBytes(
+            (stableIdentity + "/account-operation").getBytes(StandardCharsets.UTF_8)),
+        UUID.nameUUIDFromBytes(
+            (stableIdentity + "/account-fence").getBytes(StandardCharsets.UTF_8)),
+        new AccountPublicationAuthorizationBinding.PreallocationInput(
+            originalAccount.actorAccountId(), selection),
+        List.of(
+            new DraftAuthorizationFenceBinding.SourceEvidence(
+                DraftAuthorizationFenceBinding.SourceKind.ACCOUNT,
+                originalAccount.actorAccountId().toString(),
+                "1",
+                "1",
+                null,
+                null,
+                new byte[] {1})));
   }
 
   /** Reuses genuine graph/release/materialization/activation; upstream authority is stipulated. */
@@ -5009,9 +5611,27 @@ class WorldDraftGraphApplicationPostgresIntegrationTest {
   }
 
   private WorldCanonicalFrozenTopology capture(WorldDraftTopologyCommitPlan plan) {
-    var owner = plan.ownerBinding();
     String publicationRequest = "selector-" + UUID.randomUUID();
     var selection = publicationSelection(plan, publicationRequest, 1L);
+    return capture(plan, publicationRequest, selection, null);
+  }
+
+  private WorldCanonicalFrozenTopology captureForTerminal(
+      WorldDraftTopologyCommitPlan plan, byte[] originalDraftAccountBinding) {
+    String publicationRequest = "selector-" + UUID.randomUUID();
+    var selection = publicationSelection(plan, publicationRequest, 1L);
+    var accountBinding =
+        isolatedPublicationAccountBinding(
+            originalDraftAccountBinding, selection, publicationRequest);
+    return capture(plan, publicationRequest, selection, accountBinding);
+  }
+
+  private WorldCanonicalFrozenTopology capture(
+      WorldDraftTopologyCommitPlan plan,
+      String publicationRequest,
+      AuthoredDraftPublishSelectionBinding selection,
+      AccountPublicationAuthorizationBinding accountBinding) {
+    var owner = plan.ownerBinding();
     var evidence =
         new WorldDesignPublicationFenceEvidence(
             owner.targetNamespace(),
@@ -5029,26 +5649,38 @@ class WorldDraftGraphApplicationPostgresIntegrationTest {
             selection.digest().substring("sha256:".length()),
             1,
             "publish:" + owner.canonicalTenantId() + ":publish-request:" + publicationRequest);
+    var attemptCreatedInTransaction = new AtomicBoolean();
     var attempt =
         Objects.requireNonNull(
             ownerTransaction()
                 .execute(
-                    status ->
-                        fence.claimFreeze(
-                            evidence,
-                            () -> {
-                              var identity =
-                                  Objects.requireNonNull(
-                                      dsl.fetchOne(
-                                          "SELECT local_tenant_key,local_version_key FROM world_authored_version_identity WHERE operation_id=?",
-                                          owner.versionIdentityOperationId()));
-                              var digest =
-                                  digestService.getDraftDesignDigest(
-                                      identity.get("local_tenant_key", Long.class).toString(),
-                                      identity.get("local_version_key", Long.class).toString());
-                              return new WorldDesignPublicationFenceEvidence.Checkpoint(
-                                  plan.binding().commitId().toString(), digest.contentDigest(), 3);
-                            })));
+                    status -> {
+                      var frozenAttempt =
+                          fence.claimFreeze(
+                              evidence,
+                              () -> {
+                                var identity =
+                                    Objects.requireNonNull(
+                                        dsl.fetchOne(
+                                            "SELECT local_tenant_key,local_version_key FROM world_authored_version_identity WHERE operation_id=?",
+                                            owner.versionIdentityOperationId()));
+                                var digest =
+                                    digestService.getDraftDesignDigest(
+                                        identity.get("local_tenant_key", Long.class).toString(),
+                                        identity.get("local_version_key", Long.class).toString());
+                                attemptCreatedInTransaction.set(true);
+                                return new WorldDesignPublicationFenceEvidence.Checkpoint(
+                                    plan.binding().commitId().toString(),
+                                    digest.contentDigest(),
+                                    3);
+                              });
+                      if (accountBinding != null) {
+                        new WorldSelectedDraftPublicationAuthorizationRepository(dsl)
+                            .retainOrRequireExact(
+                                frozenAttempt, accountBinding, attemptCreatedInTransaction.get());
+                      }
+                      return frozenAttempt;
+                    }));
     var tuples =
         plan.binding().affectedUnits(Owner.WORLD_MANAGEMENT).stream()
             .map(
@@ -6782,4 +7414,176 @@ class WorldDraftGraphApplicationPostgresIntegrationTest {
       WorldCanonicalInstanceLifecycleReadRepository lifecycleRepository,
       WorldCanonicalInstanceLifecycleEvidence.Request readRequest,
       WorldCanonicalInstanceLifecycleEvidence preparing) {}
+
+  /** Ephemeral identities for the physical World terminal-read mTLS boundary only. */
+  private static final class WorldTerminalReadTestPki {
+    private final Path caCertificate;
+    private final WorldTerminalReadTestIdentity worldServer;
+    private final WorldTerminalReadTestIdentity accountClient;
+    private final WorldTerminalReadTestIdentity wrongWorkloadClient;
+    private final WorldTerminalReadTestIdentity crossNamespaceAccountClient;
+
+    private WorldTerminalReadTestPki(
+        Path caCertificate,
+        WorldTerminalReadTestIdentity worldServer,
+        WorldTerminalReadTestIdentity accountClient,
+        WorldTerminalReadTestIdentity wrongWorkloadClient,
+        WorldTerminalReadTestIdentity crossNamespaceAccountClient) {
+      this.caCertificate = caCertificate;
+      this.worldServer = worldServer;
+      this.accountClient = accountClient;
+      this.wrongWorkloadClient = wrongWorkloadClient;
+      this.crossNamespaceAccountClient = crossNamespaceAccountClient;
+    }
+
+    private static WorldTerminalReadTestPki create(Path directory) throws Exception {
+      java.nio.file.Files.createDirectories(directory);
+      var generator = java.security.KeyPairGenerator.getInstance("RSA");
+      generator.initialize(2048);
+      var caKeys = generator.generateKeyPair();
+      var caName = new org.bouncycastle.asn1.x500.X500Name("CN=World terminal read test CA");
+      var now = java.time.Instant.now();
+      var caBuilder =
+          new org.bouncycastle.cert.jcajce.JcaX509v3CertificateBuilder(
+              caName,
+              java.math.BigInteger.ONE,
+              java.util.Date.from(now.minusSeconds(60)),
+              java.util.Date.from(now.plusSeconds(14L * 24L * 60L * 60L)),
+              caName,
+              caKeys.getPublic());
+      caBuilder.addExtension(
+          org.bouncycastle.asn1.x509.Extension.basicConstraints,
+          true,
+          new org.bouncycastle.asn1.x509.BasicConstraints(true));
+      caBuilder.addExtension(
+          org.bouncycastle.asn1.x509.Extension.keyUsage,
+          true,
+          new org.bouncycastle.asn1.x509.KeyUsage(
+              org.bouncycastle.asn1.x509.KeyUsage.keyCertSign
+                  | org.bouncycastle.asn1.x509.KeyUsage.cRLSign));
+      var caCertificate =
+          new org.bouncycastle.cert.jcajce.JcaX509CertificateConverter()
+              .getCertificate(
+                  caBuilder.build(
+                      new org.bouncycastle.operator.jcajce.JcaContentSignerBuilder("SHA256withRSA")
+                          .build(caKeys.getPrivate())));
+      Path caPath = pem(directory.resolve("test-ca.pem"), caCertificate);
+      return new WorldTerminalReadTestPki(
+          caPath,
+          issue(
+              directory,
+              "world-server",
+              NAMESPACE,
+              "world-management-service",
+              true,
+              caKeys,
+              caCertificate),
+          issue(
+              directory,
+              "account-client",
+              NAMESPACE,
+              "account-service",
+              false,
+              caKeys,
+              caCertificate),
+          issue(
+              directory,
+              "wrong-workload-client",
+              NAMESPACE,
+              "game-design-service",
+              false,
+              caKeys,
+              caCertificate),
+          issue(
+              directory,
+              "cross-namespace-account-client",
+              "other",
+              "account-service",
+              false,
+              caKeys,
+              caCertificate));
+    }
+
+    private static WorldTerminalReadTestIdentity issue(
+        Path directory,
+        String alias,
+        String namespace,
+        String service,
+        boolean server,
+        java.security.KeyPair caKeys,
+        java.security.cert.X509Certificate caCertificate)
+        throws Exception {
+      var generator = java.security.KeyPairGenerator.getInstance("RSA");
+      generator.initialize(2048);
+      var keys = generator.generateKeyPair();
+      var now = java.time.Instant.now();
+      var builder =
+          new org.bouncycastle.cert.jcajce.JcaX509v3CertificateBuilder(
+              caCertificate,
+              new java.math.BigInteger(120, new java.security.SecureRandom()),
+              java.util.Date.from(now.minusSeconds(60)),
+              java.util.Date.from(now.plusSeconds(14L * 24L * 60L * 60L)),
+              new org.bouncycastle.asn1.x500.X500Name("CN=" + alias),
+              keys.getPublic());
+      builder.addExtension(
+          org.bouncycastle.asn1.x509.Extension.basicConstraints,
+          true,
+          new org.bouncycastle.asn1.x509.BasicConstraints(false));
+      builder.addExtension(
+          org.bouncycastle.asn1.x509.Extension.keyUsage,
+          true,
+          new org.bouncycastle.asn1.x509.KeyUsage(
+              org.bouncycastle.asn1.x509.KeyUsage.digitalSignature
+                  | org.bouncycastle.asn1.x509.KeyUsage.keyEncipherment));
+      builder.addExtension(
+          org.bouncycastle.asn1.x509.Extension.extendedKeyUsage,
+          false,
+          new org.bouncycastle.asn1.x509.ExtendedKeyUsage(
+              server
+                  ? org.bouncycastle.asn1.x509.KeyPurposeId.id_kp_serverAuth
+                  : org.bouncycastle.asn1.x509.KeyPurposeId.id_kp_clientAuth));
+      builder.addExtension(
+          org.bouncycastle.asn1.x509.Extension.subjectAlternativeName,
+          false,
+          new org.bouncycastle.asn1.x509.GeneralNames(
+              new org.bouncycastle.asn1.x509.GeneralName[] {
+                new org.bouncycastle.asn1.x509.GeneralName(
+                    org.bouncycastle.asn1.x509.GeneralName.uniformResourceIdentifier,
+                    "spiffe://firemud/ns/" + namespace + "/sa/" + service),
+                new org.bouncycastle.asn1.x509.GeneralName(
+                    org.bouncycastle.asn1.x509.GeneralName.dNSName, "localhost"),
+                new org.bouncycastle.asn1.x509.GeneralName(
+                    org.bouncycastle.asn1.x509.GeneralName.iPAddress, "127.0.0.1")
+              }));
+      var certificate =
+          new org.bouncycastle.cert.jcajce.JcaX509CertificateConverter()
+              .getCertificate(
+                  builder.build(
+                      new org.bouncycastle.operator.jcajce.JcaContentSignerBuilder("SHA256withRSA")
+                          .build(caKeys.getPrivate())));
+      return new WorldTerminalReadTestIdentity(
+          pem(directory.resolve(alias + ".crt"), certificate),
+          pem(directory.resolve(alias + ".key"), keys.getPrivate()));
+    }
+
+    private static Path pem(Path path, Object value) throws Exception {
+      try (var writer =
+          new org.bouncycastle.openssl.jcajce.JcaPEMWriter(
+              java.nio.file.Files.newBufferedWriter(path))) {
+        writer.writeObject(value);
+      }
+      return path;
+    }
+  }
+
+  private record WorldTerminalReadTestIdentity(Path certificate, Path privateKey) {
+    private CommonGrpcClientProperties clientProperties(Path caCertificate) {
+      var properties = new CommonGrpcClientProperties();
+      properties.setPlaintext(false);
+      properties.setCertChain(certificate.toString());
+      properties.setPrivateKey(privateKey.toString());
+      properties.setCaCert(caCertificate.toString());
+      return properties;
+    }
+  }
 }

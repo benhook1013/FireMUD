@@ -15,7 +15,10 @@ import net.firedevops.firemud.accountservice.authordraft.AccountControlUiAuthori
 import net.firedevops.firemud.accountservice.authordraft.DraftAuthorizationFenceRepository;
 import net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding;
+import net.firedevops.firemud.common.gamedesign.AuthoredWorldReleaseAttestationEvidence;
+import net.firedevops.firemud.common.gamedesign.GameDesignPublicationTerminalEvidence;
 import net.firedevops.firemud.common.publication.AuthoredDraftPublishSelectionBinding;
+import net.firedevops.firemud.common.publication.GameDesignPublicationOperationBinding;
 import net.firedevops.firemud.common.publication.PublicationDigestRequestBinding;
 import net.firedevops.firemud.common.world.RoomTemplateRef;
 import net.firedevops.firemud.common.world.WorldDraftStartLocationEvidence;
@@ -79,6 +82,484 @@ class AccountPublicationAuthorizationPostgresIntegrationTest {
               "6379");
 
   @TempDir Path temporary;
+
+  /**
+   * Both owner readbacks here are upstream authenticated-owner stipulations, not transport proof.
+   */
+  @Test
+  void exactTwoOwnerSettlementRollsBackAtomicallyThenReplaysAfterLostAcknowledgement()
+      throws Exception {
+    for (var outcome : GameDesignPublicationTerminalEvidence.Outcome.values()) {
+      try (var fixture = fixture()) {
+        var issued = fixture.issueCreator();
+        var f = issued.sources();
+        var proof = proof(f, issued.environment());
+        var repository = new AccountPublicationAuthorizationRepository(f.dsl);
+        var service =
+            new AccountPublicationAuthorizationService(issued.actors(), f.fences, repository);
+        var order = service.authorize(issued.compact(), proof.selection(), issued.environment());
+        var operation = new GameDesignPublicationOperationBinding(order, proof.world());
+        var terminal = terminal(operation, outcome);
+        String phase =
+            outcome == GameDesignPublicationTerminalEvidence.Outcome.PUBLISHED
+                ? "PUBLISHED"
+                : "ABORTED";
+        assertThatThrownBy(
+                () ->
+                    f.tx(
+                        () -> {
+                          repository.settle(operation, terminal, phase, terminal.canonicalBytes());
+                          throw new IllegalStateException("rollback before owner commit");
+                        }))
+            .isInstanceOf(IllegalStateException.class);
+        assertThat(
+                f.dsl.fetchCount(
+                    org.jooq.impl.DSL.table("account_selected_publication_settlements")))
+            .isZero();
+        f.tx(
+            () -> {
+              repository.readHeld(order);
+              return null;
+            });
+        assertThatThrownBy(
+                () ->
+                    f.tx(
+                        () ->
+                            f.dsl.execute(
+                                "UPDATE accounts SET role = 'admin' WHERE id = ?",
+                                f.account.getId())))
+            .isInstanceOf(org.jooq.exception.DataAccessException.class);
+
+        byte[] originalBinding = order.canonicalBytes();
+        byte[] receipt =
+            f.tx(() -> repository.settle(operation, terminal, phase, terminal.canonicalBytes()));
+        // A committed response may be lost. Fresh outside transport correlations never enter
+        // settlement identity; historical replay does not authenticate a new creator credential.
+        UUID firstTransportRead = UUID.randomUUID(), retryTransportRead = UUID.randomUUID();
+        assertThat(firstTransportRead).isNotEqualTo(retryTransportRead);
+        assertThat(
+                f.tx(
+                    () -> repository.settle(operation, terminal, phase, terminal.canonicalBytes())))
+            .isEqualTo(receipt);
+        assertThat(
+                f.dsl.fetchCount(
+                    org.jooq.impl.DSL.table("account_selected_publication_settlements")))
+            .isEqualTo(1);
+        assertThat(
+                f.dsl
+                    .fetchSingle(
+                        "SELECT binding FROM account_selected_publication_authorizations WHERE operation_id = ?",
+                        order.operationId())
+                    .get("binding", byte[].class))
+            .isEqualTo(originalBinding);
+        assertThatThrownBy(
+                () ->
+                    f.tx(
+                        () -> {
+                          repository.readHeld(order);
+                          return null;
+                        }))
+            .isInstanceOf(IllegalArgumentException.class)
+            .hasMessageContaining("already settled");
+        var readOwner =
+            new AccountPublicationAuthorizationReadService(repository, f.manager, "test");
+        assertThatThrownBy(
+                () ->
+                    asGameDesign(
+                        () ->
+                            readOwner.requireHeld(
+                                net.firedevops.firemud.common.publication
+                                    .AccountPublicationAuthorizationReadEvidence.Request.create(
+                                    "test", order))))
+            .isInstanceOf(io.grpc.StatusRuntimeException.class)
+            .satisfies(
+                failure ->
+                    assertThat(((io.grpc.StatusRuntimeException) failure).getStatus().getCode())
+                        .isEqualTo(io.grpc.Status.Code.FAILED_PRECONDITION));
+        assertThat(
+                f.tx(
+                    () ->
+                        f.dsl.execute(
+                            "UPDATE accounts SET role = 'admin' WHERE id = ?", f.account.getId())))
+            .isEqualTo(1);
+        // Even after the source changes, the original committed issuance and receipt replay.
+        assertThat(
+                f.tx(
+                    () -> repository.settle(operation, terminal, phase, terminal.canonicalBytes())))
+            .isEqualTo(receipt);
+        for (String mutation :
+            List.of(
+                "UPDATE account_selected_publication_settlements SET world_outcome = 'ABORTED'",
+                "DELETE FROM account_selected_publication_settlements",
+                "TRUNCATE account_selected_publication_settlements")) {
+          assertThatThrownBy(() -> f.tx(() -> f.dsl.execute(mutation)))
+              .isInstanceOf(org.jooq.exception.DataAccessException.class);
+        }
+      }
+    }
+  }
+
+  @Test
+  void missingAmbiguousSubstitutedAndDisagreeingOwnersKeepOriginalSourcesHeld() throws Exception {
+    try (var fixture = fixture()) {
+      var issued = fixture.issueCreator();
+      var f = issued.sources();
+      var proof = proof(f, issued.environment());
+      var repository = new AccountPublicationAuthorizationRepository(f.dsl);
+      var service =
+          new AccountPublicationAuthorizationService(issued.actors(), f.fences, repository);
+      var order = service.authorize(issued.compact(), proof.selection(), issued.environment());
+      var operation = new GameDesignPublicationOperationBinding(order, proof.world());
+      var noPublication =
+          terminal(operation, GameDesignPublicationTerminalEvidence.Outcome.NO_PUBLICATION);
+      var published = terminal(operation, GameDesignPublicationTerminalEvidence.Outcome.PUBLISHED);
+      var wrongFence =
+          new net.firedevops.firemud.common.publication.AccountPublicationAuthorizationBinding(
+              order.operationId(), UUID.randomUUID(), order.input(), order.sources());
+      var wrongOperation = new GameDesignPublicationOperationBinding(wrongFence, proof.world());
+      for (Runnable rejected :
+          List.<Runnable>of(
+              () ->
+                  repository.settle(
+                      operation, noPublication, "PUBLISHED", noPublication.canonicalBytes()),
+              () ->
+                  repository.settle(
+                      operation, noPublication, "ABORTED", published.canonicalBytes()),
+              () ->
+                  repository.settle(
+                      operation,
+                      noPublication,
+                      "RECONCILIATION_REQUIRED",
+                      noPublication.canonicalBytes()),
+              () -> repository.settle(operation, noPublication, "ABORTED", new byte[0]),
+              () -> repository.settle(operation, noPublication, "ABORTED", null),
+              () ->
+                  repository.settle(
+                      wrongOperation,
+                      terminal(
+                          wrongOperation,
+                          GameDesignPublicationTerminalEvidence.Outcome.NO_PUBLICATION),
+                      "ABORTED",
+                      terminal(
+                              wrongOperation,
+                              GameDesignPublicationTerminalEvidence.Outcome.NO_PUBLICATION)
+                          .canonicalBytes()))) {
+        assertThatThrownBy(
+                () ->
+                    f.tx(
+                        () -> {
+                          rejected.run();
+                          return null;
+                        }))
+            .isInstanceOf(RuntimeException.class);
+      }
+      f.tx(
+          () -> {
+            repository.readHeld(order);
+            return null;
+          });
+      assertThat(
+              f.dsl.fetchCount(org.jooq.impl.DSL.table("account_selected_publication_settlements")))
+          .isZero();
+      assertThatThrownBy(
+              () ->
+                  f.tx(
+                      () ->
+                          f.dsl.execute(
+                              "UPDATE accounts SET role = 'admin' WHERE id = ?",
+                              f.account.getId())))
+          .isInstanceOf(org.jooq.exception.DataAccessException.class);
+
+      byte[] receipt =
+          f.tx(
+              () ->
+                  repository.settle(
+                      operation, noPublication, "ABORTED", noPublication.canonicalBytes()));
+      assertThatThrownBy(
+              () ->
+                  f.tx(
+                      () ->
+                          repository.settle(
+                              operation, published, "PUBLISHED", published.canonicalBytes())))
+          .isInstanceOf(IllegalArgumentException.class)
+          .hasMessageContaining("Changed original");
+      assertThat(
+              f.dsl
+                  .fetchSingle(
+                      "SELECT receipt FROM account_selected_publication_settlements WHERE operation_id = ?",
+                      order.operationId())
+                  .get("receipt", byte[].class))
+          .isEqualTo(receipt);
+    }
+  }
+
+  @Test
+  void settlingOneOrderLeavesEveryOtherOriginalSourceParticipationPending() throws Exception {
+    try (var fixture = fixture()) {
+      var issued = fixture.issueCreator();
+      var f = issued.sources();
+      var proof = proof(f, issued.environment());
+      var repository = new AccountPublicationAuthorizationRepository(f.dsl);
+      var service =
+          new AccountPublicationAuthorizationService(issued.actors(), f.fences, repository);
+      var first = service.authorize(issued.compact(), proof.selection(), issued.environment());
+      var secondSelection =
+          selection(proof.selection().selectedCommit(), "other order", "another-publication");
+      var second = service.authorize(issued.compact(), secondSelection, issued.environment());
+      var operation = new GameDesignPublicationOperationBinding(first, proof.world());
+      var terminal =
+          terminal(operation, GameDesignPublicationTerminalEvidence.Outcome.NO_PUBLICATION);
+      f.tx(() -> repository.settle(operation, terminal, "ABORTED", terminal.canonicalBytes()));
+      f.tx(
+          () -> {
+            repository.readHeld(second);
+            return null;
+          });
+      assertThatThrownBy(
+              () ->
+                  f.tx(
+                      () ->
+                          f.dsl.execute(
+                              "UPDATE accounts SET role = 'admin' WHERE id = ?",
+                              f.account.getId())))
+          .isInstanceOf(org.jooq.exception.DataAccessException.class)
+          .hasMessageContaining("selected-publication");
+      var captured =
+          f.tx(
+              () ->
+                  f.authority.capture(f.account.getAccountUuid(), f.tenant, issued.environment()));
+      var change =
+          new DraftAuthorizationFenceRepository.SourceChange(
+              UUID.randomUUID(), captured.sources(), new byte[] {1});
+      assertThat(f.tx(() -> f.fences.requestSourceChange(change))).isFalse();
+      assertThat(f.tx(() -> f.fences.sourceMutationPermitted(change))).isFalse();
+    }
+  }
+
+  static GameDesignPublicationTerminalEvidence terminal(
+      GameDesignPublicationOperationBinding operation,
+      GameDesignPublicationTerminalEvidence.Outcome outcome) {
+    if (outcome == GameDesignPublicationTerminalEvidence.Outcome.NO_PUBLICATION) {
+      return new GameDesignPublicationTerminalEvidence(
+          operation.canonicalBytes(), outcome, null, null);
+    }
+    var request = operation.world().request();
+    var participants =
+        AuthoredWorldReleaseAttestationEvidence.requiredParticipantOrder().stream()
+            .map(
+                owner ->
+                    new GameDesignPublicationTerminalEvidence.Participant(
+                        owner,
+                        Long.toString(
+                            operation
+                                .account()
+                                .input()
+                                .selection()
+                                .target()
+                                .gameDesignVersionRowId()),
+                        null,
+                        request.appliedCommitId(),
+                        request.contentDigest(),
+                        AuthoredWorldReleaseAttestationEvidence.supportedParticipantDigestSchema(
+                            owner),
+                        "GAME_LOGIC".equals(owner) ? "sha256:" + "a".repeat(64) : null,
+                        null,
+                        null))
+            .toList();
+    var release =
+        new GameDesignPublicationTerminalEvidence.ReleaseContent(
+            operation.account().tenantId(),
+            request.canonicalVersionId(),
+            "release-exact",
+            1,
+            "v2",
+            request.publishWorkflowId(),
+            "sha256:" + "c".repeat(64),
+            1,
+            List.of(),
+            List.of(),
+            participants,
+            List.of("look"),
+            "generation-1",
+            operation.world());
+    return new GameDesignPublicationTerminalEvidence(
+        operation.canonicalBytes(),
+        outcome,
+        release,
+        Math.addExact(request.versionStateEpoch(), 1));
+  }
+
+  @Test
+  void directMalformedOrSubstitutedReceiptRowsDoNotRemovePendingProtection() throws Exception {
+    try (var fixture = fixture()) {
+      var issued = fixture.issueCreator();
+      var f = issued.sources();
+      var proof = proof(f, issued.environment());
+      var repository = new AccountPublicationAuthorizationRepository(f.dsl);
+      var order =
+          new AccountPublicationAuthorizationService(issued.actors(), f.fences, repository)
+              .authorize(issued.compact(), proof.selection(), issued.environment());
+      var operation = new GameDesignPublicationOperationBinding(order, proof.world());
+      var terminal =
+          terminal(operation, GameDesignPublicationTerminalEvidence.Outcome.NO_PUBLICATION);
+      var out = new java.io.ByteArrayOutputStream();
+      DraftAuthorizationFenceBinding.frame(out, "account-selected-publication-settlement/v1");
+      DraftAuthorizationFenceBinding.frame(out, order.canonicalBytes());
+      DraftAuthorizationFenceBinding.frame(out, operation.canonicalBytes());
+      DraftAuthorizationFenceBinding.frame(out, terminal.canonicalBytes());
+      DraftAuthorizationFenceBinding.frame(out, "ABORTED");
+      DraftAuthorizationFenceBinding.frame(out, terminal.canonicalBytes());
+      byte[] receipt = out.toByteArray();
+      String insert =
+          "INSERT INTO account_selected_publication_settlements"
+              + " (operation_id, fence_id, account_binding, publication_operation, game_design_outcome,"
+              + " game_design_terminal, world_outcome, world_terminal, receipt) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)";
+      List<Object[]> malformed =
+          List.of(
+              new Object[] {
+                order.operationId(),
+                UUID.randomUUID(),
+                order.canonicalBytes(),
+                operation.canonicalBytes(),
+                "NO_PUBLICATION",
+                terminal.canonicalBytes(),
+                "ABORTED",
+                terminal.canonicalBytes(),
+                receipt
+              },
+              new Object[] {
+                order.operationId(),
+                order.fenceId(),
+                new byte[] {0},
+                operation.canonicalBytes(),
+                "NO_PUBLICATION",
+                terminal.canonicalBytes(),
+                "ABORTED",
+                terminal.canonicalBytes(),
+                receipt
+              },
+              new Object[] {
+                order.operationId(),
+                order.fenceId(),
+                order.canonicalBytes(),
+                new byte[] {0},
+                "NO_PUBLICATION",
+                terminal.canonicalBytes(),
+                "ABORTED",
+                terminal.canonicalBytes(),
+                receipt
+              },
+              new Object[] {
+                order.operationId(),
+                order.fenceId(),
+                order.canonicalBytes(),
+                operation.canonicalBytes(),
+                "NO_PUBLICATION",
+                new byte[] {0},
+                "ABORTED",
+                new byte[] {0},
+                receipt
+              },
+              new Object[] {
+                order.operationId(),
+                order.fenceId(),
+                order.canonicalBytes(),
+                operation.canonicalBytes(),
+                "NO_PUBLICATION",
+                terminal.canonicalBytes(),
+                "PUBLISHED",
+                terminal.canonicalBytes(),
+                receipt
+              },
+              new Object[] {
+                order.operationId(),
+                order.fenceId(),
+                order.canonicalBytes(),
+                operation.canonicalBytes(),
+                "NO_PUBLICATION",
+                terminal.canonicalBytes(),
+                "ABORTED",
+                terminal.canonicalBytes(),
+                new byte[] {0}
+              });
+      for (Object[] values : malformed) {
+        assertThatThrownBy(() -> f.tx(() -> f.dsl.execute(insert, values)))
+            .isInstanceOf(org.jooq.exception.DataAccessException.class);
+      }
+      assertThat(
+              f.dsl.fetchCount(org.jooq.impl.DSL.table("account_selected_publication_settlements")))
+          .isZero();
+      f.tx(
+          () -> {
+            repository.readHeld(order);
+            return null;
+          });
+      assertThatThrownBy(
+              () ->
+                  f.tx(
+                      () ->
+                          f.dsl.execute(
+                              "UPDATE accounts SET role = 'admin' WHERE id = ?",
+                              f.account.getId())))
+          .isInstanceOf(org.jooq.exception.DataAccessException.class);
+    }
+  }
+
+  @Test
+  void sourceWriterCannotPassUncommittedSettlementAndCanRetryAfterItsCommit() throws Exception {
+    try (var fixture = fixture()) {
+      var issued = fixture.issueCreator();
+      var f = issued.sources();
+      var proof = proof(f, issued.environment());
+      var repository = new AccountPublicationAuthorizationRepository(f.dsl);
+      var order =
+          new AccountPublicationAuthorizationService(issued.actors(), f.fences, repository)
+              .authorize(issued.compact(), proof.selection(), issued.environment());
+      var operation = new GameDesignPublicationOperationBinding(order, proof.world());
+      var terminal =
+          terminal(operation, GameDesignPublicationTerminalEvidence.Outcome.NO_PUBLICATION);
+      var executor = java.util.concurrent.Executors.newSingleThreadExecutor();
+      try {
+        f.tx(
+            () -> {
+              repository.settle(operation, terminal, "ABORTED", terminal.canonicalBytes());
+              int settlementPid =
+                  f.dsl.fetchSingle("SELECT pg_backend_pid() AS pid").get("pid", Integer.class);
+              var writer =
+                  executor.submit(
+                      () ->
+                          f.tx(
+                              () -> {
+                                int writerPid =
+                                    f.dsl
+                                        .fetchSingle("SELECT pg_backend_pid() AS pid")
+                                        .get("pid", Integer.class);
+                                assertThat(writerPid).isNotEqualTo(settlementPid);
+                                // The actual source trigger takes the same source locks NOWAIT. A
+                                // pending
+                                // transaction cannot release its protection to a different writer
+                                // connection.
+                                return f.dsl.execute(
+                                    "UPDATE accounts SET role = 'admin' WHERE id = ?",
+                                    f.account.getId());
+                              }));
+              assertThatThrownBy(() -> writer.get(10, java.util.concurrent.TimeUnit.SECONDS))
+                  .isInstanceOf(java.util.concurrent.ExecutionException.class)
+                  .hasCauseInstanceOf(org.jooq.exception.DataAccessException.class);
+              return null;
+            });
+        assertThat(
+                f.tx(
+                    () ->
+                        f.dsl.execute(
+                            "UPDATE accounts SET role = 'admin' WHERE id = ?", f.account.getId())))
+            .isEqualTo(1);
+      } finally {
+        executor.shutdownNow();
+        assertThat(executor.awaitTermination(10, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+      }
+    }
+  }
 
   @Test
   void authenticatesPreFreezeDistinctOrderReplaysExactlyAndBlocksSourceWritersAndDisclosure()
@@ -584,11 +1065,16 @@ class AccountPublicationAuthorizationPostgresIntegrationTest {
 
   private static AuthoredDraftPublishSelectionBinding selection(
       DraftCommitBinding draft, String notes) {
+    return selection(draft, notes, "publication-request");
+  }
+
+  private static AuthoredDraftPublishSelectionBinding selection(
+      DraftCommitBinding draft, String notes, String publishRequestId) {
     return AuthoredDraftPublishSelectionBinding.capture(
         new AuthoredDraftPublishSelectionBinding.PublishIntent(
             draft.target().canonicalTenantId(),
             draft.target().canonicalVersionId(),
-            "publication-request",
+            publishRequestId,
             "5",
             notes,
             draft.requestId(),

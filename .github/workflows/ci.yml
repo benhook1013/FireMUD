@@ -992,7 +992,7 @@ jobs:
         id: checks
         run: |
           echo "::group::Run Module Validation"
-          ./gradlew :${{ matrix.module }}:check -PfullCheck
+          ./gradlew -Dorg.gradle.jvmargs='-Xmx3g -Dfile.encoding=UTF-8' --no-parallel --max-workers=2 :${{ matrix.module }}:check -PfullCheck
           echo "::endgroup::"
 
       - name: 📤 Capture owner integration test XML
@@ -1054,7 +1054,7 @@ jobs:
 
       - name: 📦 Build Runtime JAR
         if: ${{ contains(fromJSON(needs.changes.outputs.bootable_modules), matrix.module) }}
-        run: ./gradlew :${{ matrix.module }}:bootJar -PfullCheck
+        run: ./gradlew -Dorg.gradle.jvmargs='-Xmx3g -Dfile.encoding=UTF-8' --no-parallel --max-workers=2 :${{ matrix.module }}:bootJar -PfullCheck
 
       - name: 📈 Parse Coverage %
         id: coverage

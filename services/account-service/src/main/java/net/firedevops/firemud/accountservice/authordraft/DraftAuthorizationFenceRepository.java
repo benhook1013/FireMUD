@@ -314,7 +314,8 @@ public final class DraftAuthorizationFenceRepository {
   private boolean hasPendingPublication(List<SourceEvidence> sources) {
     for (SourceEvidence source : sources) {
       if (!dsl.fetch(
-              "SELECT operation_id FROM account_selected_publication_sources WHERE source_key = ?",
+              "SELECT operation_id FROM account_selected_publication_sources"
+                  + " WHERE source_key = ? AND NOT account_selected_publication_is_settled(operation_id)",
               source.key())
           .isEmpty()) {
         return true;

@@ -4,6 +4,8 @@ import java.sql.Connection;
 import java.util.Arrays;
 import java.util.Objects;
 import java.util.UUID;
+import net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding;
+import net.firedevops.firemud.common.gamedesign.GameDesignPublicationTerminalEvidence;
 import net.firedevops.firemud.common.publication.AccountPublicationAuthorizationBinding;
 import net.firedevops.firemud.common.publication.GameDesignPublicationOperationBinding;
 import net.firedevops.firemud.common.world.WorldPublishedStartLocationEvidence;
@@ -11,7 +13,9 @@ import org.jooq.DSLContext;
 import org.jooq.Record;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 
-/** Owner-transaction persistence only; no caller-carried terminal proof is accepted. */
+/**
+ * Internal owner-transaction storage; remote evidence must first be authenticated by composition.
+ */
 public final class AccountPublicationAuthorizationRepository {
   private final DSLContext dsl;
 
@@ -79,10 +83,25 @@ public final class AccountPublicationAuthorizationRepository {
 
   /** Exact owner read; caller-carried structure alone can never establish HELD. */
   public void readHeld(AccountPublicationAuthorizationBinding requested) {
+    readOriginal(requested);
+    if (dsl.fetchOne(
+            "SELECT 1 FROM account_selected_publication_settlements WHERE operation_id = ?",
+            requested.operationId())
+        != null) {
+      throw new IllegalArgumentException("Publication authorization is already settled");
+    }
+  }
+
+  /** Historical validation uses the original committed issuance, never current credentials. */
+  private void readOriginal(AccountPublicationAuthorizationBinding requested) {
     requireTransaction();
     Objects.requireNonNull(requested);
     // Sources precede the operation. No transport is permitted in this owner transaction.
-    for (var source : requested.sources()) {
+    for (var source :
+        requested.sources().stream()
+            .sorted(
+                java.util.Comparator.comparing(DraftAuthorizationFenceBinding.SourceEvidence::key))
+            .toList()) {
       if (dsl.fetchOne(
               "SELECT source_key FROM account_draft_authorization_source_locks"
                   + " WHERE source_key = ? FOR UPDATE",
@@ -163,6 +182,80 @@ public final class AccountPublicationAuthorizationRepository {
         throw new IllegalArgumentException("Changed original publication source participation");
       }
     }
+  }
+
+  /**
+   * Persist only after strict authenticated reads from both owners, outside this transaction.
+   * Structure alone is not owner authentication. World retains the same complete terminal bytes
+   * with PUBLISHED or ABORTED phase. Transport request IDs deliberately do not enter identity.
+   */
+  public byte[] settle(
+      GameDesignPublicationOperationBinding operation,
+      GameDesignPublicationTerminalEvidence gameDesign,
+      String worldOutcome,
+      byte[] worldTerminalEvidence) {
+    requireTransaction();
+    operation = GameDesignPublicationOperationBinding.fromStored(operation.canonicalBytes());
+    gameDesign = GameDesignPublicationTerminalEvidence.fromStored(gameDesign.canonicalBytes());
+    var world = GameDesignPublicationTerminalEvidence.fromStored(worldTerminalEvidence);
+    String expectedPhase =
+        gameDesign.outcome() == GameDesignPublicationTerminalEvidence.Outcome.PUBLISHED
+            ? "PUBLISHED"
+            : "ABORTED";
+    if (!expectedPhase.equals(worldOutcome)
+        || !Arrays.equals(operation.canonicalBytes(), gameDesign.operationBytes())
+        || !Arrays.equals(gameDesign.canonicalBytes(), world.canonicalBytes())) {
+      throw new IllegalArgumentException("Exact publication owner outcomes disagree");
+    }
+    readOriginal(operation.account());
+    byte[] receipt = settlementReceipt(operation, gameDesign, worldOutcome, worldTerminalEvidence);
+    Record prior =
+        dsl.fetchOne(
+            "SELECT receipt FROM account_selected_publication_settlements WHERE operation_id = ?",
+            operation.account().operationId());
+    if (prior != null) {
+      if (!Arrays.equals(receipt, prior.get("receipt", byte[].class))) {
+        throw new IllegalArgumentException("Changed original publication settlement");
+      }
+      return prior.get("receipt", byte[].class);
+    }
+    dsl.execute(
+        "INSERT INTO account_selected_publication_settlements"
+            + " (operation_id, fence_id, account_binding, publication_operation,"
+            + " game_design_outcome, game_design_terminal, world_outcome, world_terminal, receipt)"
+            + " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        operation.account().operationId(),
+        operation.account().fenceId(),
+        operation.account().canonicalBytes(),
+        operation.canonicalBytes(),
+        gameDesign.outcome().name(),
+        gameDesign.canonicalBytes(),
+        worldOutcome,
+        worldTerminalEvidence,
+        receipt);
+    Record retained =
+        dsl.fetchOne(
+            "SELECT receipt FROM account_selected_publication_settlements WHERE operation_id = ?",
+            operation.account().operationId());
+    if (retained == null || !Arrays.equals(receipt, retained.get("receipt", byte[].class))) {
+      throw new IllegalStateException("Exact publication settlement readback is absent");
+    }
+    return retained.get("receipt", byte[].class);
+  }
+
+  private static byte[] settlementReceipt(
+      GameDesignPublicationOperationBinding operation,
+      GameDesignPublicationTerminalEvidence gameDesign,
+      String worldOutcome,
+      byte[] worldTerminalEvidence) {
+    var out = new java.io.ByteArrayOutputStream();
+    DraftAuthorizationFenceBinding.frame(out, "account-selected-publication-settlement/v1");
+    DraftAuthorizationFenceBinding.frame(out, operation.account().canonicalBytes());
+    DraftAuthorizationFenceBinding.frame(out, operation.canonicalBytes());
+    DraftAuthorizationFenceBinding.frame(out, gameDesign.canonicalBytes());
+    DraftAuthorizationFenceBinding.frame(out, worldOutcome);
+    DraftAuthorizationFenceBinding.frame(out, worldTerminalEvidence);
+    return out.toByteArray();
   }
 
   private void requireExact(

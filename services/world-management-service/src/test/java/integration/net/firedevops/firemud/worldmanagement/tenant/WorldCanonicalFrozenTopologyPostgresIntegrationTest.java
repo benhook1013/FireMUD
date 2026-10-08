@@ -465,6 +465,8 @@ class WorldCanonicalFrozenTopologyPostgresIntegrationTest {
           .load()
           .migrate();
       assertThat(retainedRows(retained, tables)).isEqualTo(before);
+      assertRetainedAttemptBirthStampsAreNull(
+          retained, before.get("world_design_publication_fence_attempt").size());
       assertNoPromotionOfRetainedTopology(retained);
       assertThat(
               retained
@@ -498,7 +500,9 @@ class WorldCanonicalFrozenTopologyPostgresIntegrationTest {
       String rowJson =
           table.equals("world_topology_draft_commit")
               ? "to_jsonb(t) - 'application_transaction_id'"
-              : "to_jsonb(t)";
+              : table.equals("world_design_publication_fence_attempt")
+                  ? "to_jsonb(t) - 'attempt_created_full_xid'"
+                  : "to_jsonb(t)";
       rows.put(
           table,
           database
@@ -514,6 +518,24 @@ class WorldCanonicalFrozenTopologyPostgresIntegrationTest {
               .fetch(0, String.class));
     }
     return rows;
+  }
+
+  private void assertRetainedAttemptBirthStampsAreNull(
+      DSLContext database, int expectedRetainedRows) {
+    assertThat(
+            database
+                .resultQuery(
+                    "SELECT count(*) FROM world_design_publication_fence_attempt "
+                        + "WHERE attempt_created_full_xid IS NULL")
+                .fetchOne(0, Long.class))
+        .isEqualTo((long) expectedRetainedRows);
+    assertThat(
+            database
+                .resultQuery(
+                    "SELECT count(*) FROM world_design_publication_fence_attempt "
+                        + "WHERE attempt_created_full_xid IS NOT NULL")
+                .fetchOne(0, Long.class))
+        .isZero();
   }
 
   private String retainedColumns(DSLContext database, String schema, String table) {
@@ -797,6 +819,8 @@ class WorldCanonicalFrozenTopologyPostgresIntegrationTest {
           .load()
           .migrate();
       assertThat(retainedRows(retained, tables)).isEqualTo(before);
+      assertRetainedAttemptBirthStampsAreNull(
+          retained, before.get("world_design_publication_fence_attempt").size());
       assertNoPromotionOfRetainedTopology(retained);
       var repo =
           new WorldCanonicalFrozenTopologyRepository(

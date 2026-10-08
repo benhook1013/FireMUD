@@ -534,6 +534,10 @@ class WorldDraftRegionCommitPostgresIntegrationTest {
               scope.getKey().equals("world_authored_version_identity")
                   ? " OVERRIDING SYSTEM VALUE"
                   : "";
+          String historicalColumns =
+              scope.getKey().equals("world_design_publication_fence_attempt")
+                  ? retainedColumns(retained, schema, scope.getKey())
+                  : null;
           String columns =
               scope.getKey().equals("world_entity_spawn_binding")
                   ? "id,tenant_id,version_id,room_id,entity_template_type,entity_template_id,spawn_count,respawn_delay_seconds,version"
@@ -541,10 +545,14 @@ class WorldDraftRegionCommitPostgresIntegrationTest {
           retained.execute(
               "INSERT INTO "
                   + scope.getKey()
-                  + (columns == null ? "" : " (" + columns + ")")
+                  + (historicalColumns != null
+                      ? " (" + historicalColumns + ")"
+                      : columns == null ? "" : " (" + columns + ")")
                   + override
                   + " SELECT "
-                  + (columns == null ? "*" : columns)
+                  + (historicalColumns != null
+                      ? historicalColumns
+                      : columns == null ? "*" : columns)
                   + " FROM world_management_service."
                   + scope.getKey()
                   + " WHERE "
@@ -595,6 +603,8 @@ class WorldDraftRegionCommitPostgresIntegrationTest {
           .load()
           .migrate();
       assertThat(retainedRows(retained, scopes.keySet().stream().toList(), true)).isEqualTo(before);
+      assertHistoricalAttemptBirthStampsAreNull(
+          retained, before.get("world_design_publication_fence_attempt").size());
       assertThat(
               retained
                   .resultQuery(
@@ -653,9 +663,11 @@ class WorldDraftRegionCommitPostgresIntegrationTest {
     Map<String, List<String>> rows = new LinkedHashMap<>();
     for (String table : tables) {
       String expression =
-          retainedSpawnColumnsOnly && table.equals("world_entity_spawn_binding")
-              ? "to_jsonb(t) - 'entity_canonical_tenant_id' - 'entity_canonical_version_id' - 'entity_canonical_template_id'"
-              : "to_jsonb(t)";
+          table.equals("world_design_publication_fence_attempt")
+              ? "to_jsonb(t) - 'attempt_created_full_xid'"
+              : retainedSpawnColumnsOnly && table.equals("world_entity_spawn_binding")
+                  ? "to_jsonb(t) - 'entity_canonical_tenant_id' - 'entity_canonical_version_id' - 'entity_canonical_template_id'"
+                  : "to_jsonb(t)";
       rows.put(
           table,
           retained
@@ -670,6 +682,36 @@ class WorldDraftRegionCommitPostgresIntegrationTest {
               .fetch(0, String.class));
     }
     return rows;
+  }
+
+  private String retainedColumns(DSLContext retained, String schema, String table) {
+    return Objects.requireNonNull(
+        retained
+            .resultQuery(
+                "SELECT string_agg(quote_ident(column_name), ', ' ORDER BY ordinal_position) "
+                    + "FROM information_schema.columns WHERE table_schema = ? AND table_name = ?",
+                schema,
+                table)
+            .fetchOne(0, String.class),
+        "historical fixture must expose its original columns");
+  }
+
+  private void assertHistoricalAttemptBirthStampsAreNull(
+      DSLContext retained, int expectedRetainedRows) {
+    assertThat(
+            retained
+                .resultQuery(
+                    "SELECT count(*) FROM world_design_publication_fence_attempt "
+                        + "WHERE attempt_created_full_xid IS NULL")
+                .fetchOne(0, Long.class))
+        .isEqualTo((long) expectedRetainedRows);
+    assertThat(
+            retained
+                .resultQuery(
+                    "SELECT count(*) FROM world_design_publication_fence_attempt "
+                        + "WHERE attempt_created_full_xid IS NOT NULL")
+                .fetchOne(0, Long.class))
+        .isZero();
   }
 
   private Map<String, List<String>> regionOperationState() {

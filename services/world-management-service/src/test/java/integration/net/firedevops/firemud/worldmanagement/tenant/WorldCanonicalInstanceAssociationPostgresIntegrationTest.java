@@ -26,6 +26,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding;
@@ -1377,7 +1378,8 @@ class WorldCanonicalInstanceAssociationPostgresIntegrationTest {
         fixture.versionIdentity().operationId(),
         ignored -> {
           WorldDraftTopologyCommitPlan draft = topologyPlan(fixture);
-          appliedComponent().apply(draftApplication(draft));
+          var draftApplication = draftApplication(draft);
+          appliedComponent().apply(draftApplication);
           var owner = draft.ownerBinding();
           String publicationRequest = "preparation-capture-" + UUID.randomUUID();
           // V27/release evidence retains the post-publication epoch; the original Draft freeze
@@ -1385,10 +1387,13 @@ class WorldCanonicalInstanceAssociationPostgresIntegrationTest {
           long freezeEpoch =
               Math.subtractExact(
                   fixture.versionIdentity().versionStateEvidence().versionStateEpoch(), 1L);
-          String requestDigest =
-              publicationSelection(draft, publicationRequest, freezeEpoch)
-                  .digest()
-                  .substring("sha256:".length());
+          var selection = publicationSelection(draft, publicationRequest, freezeEpoch);
+          String requestDigest = selection.digest().substring("sha256:".length());
+          var accountBinding =
+              isolatedPublicationAccountBinding(
+                  draftApplication.operation().accountBindingBytes(),
+                  selection,
+                  publicationRequest);
           WorldDesignPublicationFenceEvidence evidence =
               new WorldDesignPublicationFenceEvidence(
                   owner.targetNamespace(),
@@ -1409,25 +1414,35 @@ class WorldCanonicalInstanceAssociationPostgresIntegrationTest {
                       + owner.canonicalTenantId()
                       + ":publish-request:"
                       + publicationRequest);
+          var attemptCreatedInTransaction = new AtomicBoolean();
           var attempt =
               Objects.requireNonNull(
                   ownerTransaction()
                       .execute(
-                          status ->
-                              publicationFence.claimFreeze(
-                                  evidence,
-                                  () -> {
-                                    var digest =
-                                        digestService.getDraftDesignDigest(
-                                            Long.toString(
-                                                fixture.source().receipt().localTenantKey()),
-                                            Long.toString(
-                                                fixture.versionIdentity().localVersionKey()));
-                                    return new WorldDesignPublicationFenceEvidence.Checkpoint(
-                                        draft.binding().commitId().toString(),
-                                        digest.contentDigest(),
-                                        3);
-                                  })),
+                          status -> {
+                            var frozenAttempt =
+                                publicationFence.claimFreeze(
+                                    evidence,
+                                    () -> {
+                                      var digest =
+                                          digestService.getDraftDesignDigest(
+                                              Long.toString(
+                                                  fixture.source().receipt().localTenantKey()),
+                                              Long.toString(
+                                                  fixture.versionIdentity().localVersionKey()));
+                                      attemptCreatedInTransaction.set(true);
+                                      return new WorldDesignPublicationFenceEvidence.Checkpoint(
+                                          draft.binding().commitId().toString(),
+                                          digest.contentDigest(),
+                                          3);
+                                    });
+                            new WorldSelectedDraftPublicationAuthorizationRepository(dsl)
+                                .retainOrRequireExact(
+                                    frozenAttempt,
+                                    accountBinding,
+                                    attemptCreatedInTransaction.get());
+                            return frozenAttempt;
+                          }),
                   "Synthetic frozen preparation fixture returned no publication checkpoint");
           List<OwnedAffectedTuple> tuples =
               draft.binding().affectedUnits(Owner.WORLD_MANAGEMENT).stream()
@@ -1595,8 +1610,6 @@ class WorldCanonicalInstanceAssociationPostgresIntegrationTest {
       throw new IllegalStateException(
           "Isolated PUBLISHED terminal must retain the next publication epoch after its World freeze");
     }
-    var originalAccount =
-        DraftAuthorizationFenceBinding.fromStored(world.originalAccountBindingBytes());
     var selection =
         publicationSelection(
             input.topologyPlan().sourceBinding().plan(),
@@ -1607,30 +1620,45 @@ class WorldCanonicalInstanceAssociationPostgresIntegrationTest {
           "Isolated publication selection differs from the retained World request digest");
     }
     var account =
-        new AccountPublicationAuthorizationBinding(
-            UUID.nameUUIDFromBytes(
-                (world.request().publicationFence() + "/account-operation")
-                    .getBytes(StandardCharsets.UTF_8)),
-            UUID.nameUUIDFromBytes(
-                (world.request().publicationFence() + "/account-fence")
-                    .getBytes(StandardCharsets.UTF_8)),
-            new AccountPublicationAuthorizationBinding.PreallocationInput(
-                originalAccount.actorAccountId(), selection),
-            List.of(
-                new DraftAuthorizationFenceBinding.SourceEvidence(
-                    DraftAuthorizationFenceBinding.SourceKind.ACCOUNT,
-                    originalAccount.actorAccountId().toString(),
-                    "1",
-                    "1",
-                    null,
-                    null,
-                    new byte[] {1})));
+        isolatedPublicationAccountBinding(
+            world.originalAccountBindingBytes(), selection, world.request().publicationRequestId());
     var operation = new GameDesignPublicationOperationBinding(account, world);
     return new GameDesignPublicationTerminalEvidence(
         operation.canonicalBytes(),
         Outcome.PUBLISHED,
         isolatedReleaseContent(input),
         release.versionStateEpoch());
+  }
+
+  private AccountPublicationAuthorizationBinding isolatedPublicationAccountBinding(
+      byte[] originalDraftAccountBinding,
+      AuthoredDraftPublishSelectionBinding selection,
+      String publicationRequestId) {
+    var originalAccount = DraftAuthorizationFenceBinding.fromStored(originalDraftAccountBinding);
+    String stableIdentity =
+        selection.target().canonicalTenantId()
+            + ":"
+            + selection.target().canonicalVersionId()
+            + ":"
+            + publicationRequestId;
+    // Fixture-only distinct Account order retained atomically with the first freeze; not producer
+    // proof.
+    return new AccountPublicationAuthorizationBinding(
+        UUID.nameUUIDFromBytes(
+            (stableIdentity + "/account-operation").getBytes(StandardCharsets.UTF_8)),
+        UUID.nameUUIDFromBytes(
+            (stableIdentity + "/account-fence").getBytes(StandardCharsets.UTF_8)),
+        new AccountPublicationAuthorizationBinding.PreallocationInput(
+            originalAccount.actorAccountId(), selection),
+        List.of(
+            new DraftAuthorizationFenceBinding.SourceEvidence(
+                DraftAuthorizationFenceBinding.SourceKind.ACCOUNT,
+                originalAccount.actorAccountId().toString(),
+                "1",
+                "1",
+                null,
+                null,
+                new byte[] {1})));
   }
 
   private ReleaseContent isolatedReleaseContent(WorldCanonicalInstancePreparation.Input input) {

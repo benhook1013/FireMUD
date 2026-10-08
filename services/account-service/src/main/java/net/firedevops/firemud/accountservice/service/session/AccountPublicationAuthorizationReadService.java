@@ -16,6 +16,9 @@ public final class AccountPublicationAuthorizationReadService {
   private final String trustedNamespace;
   private final TransactionTemplate ownerTransaction;
 
+  @edu.umd.cs.findbugs.annotations.SuppressFBWarnings(
+      value = "EI_EXPOSE_REP2",
+      justification = "Internal Account owner persistence collaborator.")
   public AccountPublicationAuthorizationReadService(
       AccountPublicationAuthorizationRepository repository,
       PlatformTransactionManager transactions,

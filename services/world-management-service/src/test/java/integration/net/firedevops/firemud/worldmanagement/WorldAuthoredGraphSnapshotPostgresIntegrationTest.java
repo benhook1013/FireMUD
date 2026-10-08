@@ -977,11 +977,18 @@ class WorldAuthoredGraphSnapshotPostgresIntegrationTest {
       for (String table : tables) {
         String override =
             table.equals("world_authored_version_identity") ? " OVERRIDING SYSTEM VALUE" : "";
+        String historicalColumns =
+            table.equals("world_design_publication_fence_attempt")
+                ? retainedColumns(retained, schema, table)
+                : null;
         retained.execute(
             "INSERT INTO "
                 + table
+                + (historicalColumns == null ? "" : " (" + historicalColumns + ")")
                 + override
-                + " SELECT * FROM world_management_service."
+                + " SELECT "
+                + (historicalColumns == null ? "*" : historicalColumns)
+                + " FROM world_management_service."
                 + table
                 + " WHERE local_tenant_key=?",
             fixture.intakeReceipt().localTenantKey());
@@ -1013,7 +1020,8 @@ class WorldAuthoredGraphSnapshotPostgresIntegrationTest {
       String attemptBefore =
           Objects.requireNonNull(
                   retained.fetchOne(
-                      "SELECT to_jsonb(t)::text FROM world_design_publication_fence_attempt t"),
+                      "SELECT (to_jsonb(t) - 'attempt_created_full_xid')::text "
+                          + "FROM world_design_publication_fence_attempt t"),
                   "expected retained publication-fence attempt row")
               .get(0, String.class);
       Flyway.configure()
@@ -1034,10 +1042,25 @@ class WorldAuthoredGraphSnapshotPostgresIntegrationTest {
       assertThat(
               Objects.requireNonNull(
                       retained.fetchOne(
-                          "SELECT to_jsonb(t)::text FROM world_design_publication_fence_attempt t"),
+                          "SELECT (to_jsonb(t) - 'attempt_created_full_xid')::text "
+                              + "FROM world_design_publication_fence_attempt t"),
                       "expected retained publication-fence attempt row")
                   .get(0, String.class))
           .isEqualTo(attemptBefore);
+      assertThat(
+              retained
+                  .resultQuery(
+                      "SELECT count(*) FROM world_design_publication_fence_attempt "
+                          + "WHERE attempt_created_full_xid IS NULL")
+                  .fetchOne(0, Long.class))
+          .isEqualTo(1L);
+      assertThat(
+              retained
+                  .resultQuery(
+                      "SELECT count(*) FROM world_design_publication_fence_attempt "
+                          + "WHERE attempt_created_full_xid IS NOT NULL")
+                  .fetchOne(0, Long.class))
+          .isZero();
       var repo = new WorldAuthoredGraphSnapshotRepository(retained);
       var capture =
           new WorldAuthoredGraphSnapshotCapture(
@@ -1332,6 +1355,18 @@ class WorldAuthoredGraphSnapshotPostgresIntegrationTest {
                 fence)
             .fetchOne(0, Long.class),
         "Snapshot count query returned no value");
+  }
+
+  private String retainedColumns(DSLContext retained, String schema, String table) {
+    return Objects.requireNonNull(
+        retained
+            .resultQuery(
+                "SELECT string_agg(quote_ident(column_name), ', ' ORDER BY ordinal_position) "
+                    + "FROM information_schema.columns WHERE table_schema = ? AND table_name = ?",
+                schema,
+                table)
+            .fetchOne(0, String.class),
+        "historical fixture must expose its original columns");
   }
 
   private List<Long> syntheticRetentionRowCounts(Fixture fixture) {

@@ -26,13 +26,19 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding.TargetProof;
 import net.firedevops.firemud.common.config.ServiceEndpointsProperties;
+import net.firedevops.firemud.common.gamedesign.GameDesignPublicationTerminalEvidence.Outcome;
 import net.firedevops.firemud.common.grpc.CommonGrpcClientProperties;
 import net.firedevops.firemud.common.grpc.GrpcChannelFactory;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentityInterceptor;
+import net.firedevops.firemud.common.grpc.GrpcServerPeerIdentityCallCredentials;
 import net.firedevops.firemud.common.publication.AccountPublicationAuthorizationBinding;
 import net.firedevops.firemud.common.publication.AuthoredDraftPublishSelectionBinding;
 import net.firedevops.firemud.common.publication.AuthoredDraftPublishSelectionReadClient;
 import net.firedevops.firemud.common.publication.AuthoredDraftPublishSelectionReadEvidence;
+import net.firedevops.firemud.common.publication.GameDesignPublicationOperationBinding;
+import net.firedevops.firemud.common.publication.GameDesignPublicationTerminalReadClient;
+import net.firedevops.firemud.common.publication.GameDesignPublicationTerminalReadEvidence;
+import net.firedevops.firemud.common.publication.GameDesignPublicationTerminalReadGrpcCodec;
 import net.firedevops.firemud.common.publication.PublicationDigestRequestBinding;
 import net.firedevops.firemud.common.temporal.FiremudWorkflowIds;
 import net.firedevops.firemud.gamedesign.GameDesignServiceApplication;
@@ -53,7 +59,11 @@ import net.firedevops.firemud.gamedesign.model.PublishType;
 import net.firedevops.firemud.gamedesign.model.TemplateRemapSetStatus;
 import net.firedevops.firemud.gamedesign.model.VersionAssetArtifactState;
 import net.firedevops.firemud.gamedesign.model.VersionLifecycleState;
+import net.firedevops.firemud.gamedesign.publication.GameDesignPublicationOperation;
 import net.firedevops.firemud.gamedesign.publication.GameDesignPublicationOperationRepository;
+import net.firedevops.firemud.gamedesign.publication.GameDesignPublicationTerminalReadGrpcService;
+import net.firedevops.firemud.gamedesign.publication.GameDesignPublicationTerminalReadService;
+import net.firedevops.firemud.gamedesign.publication.IsolatedPublicationOperationFixtures;
 import net.firedevops.firemud.gamedesign.publication.SelectedDraftPublicationOwner;
 import net.firedevops.firemud.gamedesign.repository.GameRepository;
 import net.firedevops.firemud.gamedesign.repository.PublishAttemptRepository;
@@ -65,6 +75,7 @@ import net.firedevops.firemud.gamedesign.service.impl.PublishAttemptServiceImpl;
 import net.firedevops.firemud.gamedesign.service.impl.PublishedWorldSelectorFixtures;
 import net.firedevops.firemud.gamedesign.service.impl.TemporalVersionPublishWorkflow;
 import net.firedevops.firemud.gamedesign.service.impl.VersionPublishCommandServiceImpl;
+import net.firedevops.firemud.gamedesign.v1.GameDesignPublicationTerminalReadServiceGrpc;
 import net.firedevops.firemud.test.NoGrpcServerTestConfiguration;
 import net.firedevops.firemud.test.PostgresBackedServiceTestSupport;
 import net.firedevops.firemud.test.TestContainerImages;
@@ -396,7 +407,8 @@ class PublishAttemptServiceTransactionIntegrationTest {
   }
 
   @Test
-  void reconciledFullVersionPublicationCommitsAttemptVersionAndReleaseBundleTogether() {
+  void reconciledFullVersionPublicationCommitsAttemptVersionAndReleaseBundleTogether(
+      @TempDir Path temporary) throws Exception {
     String tenantId = "9002";
     Game game = new Game();
     game.setTenantId(tenantId);
@@ -411,6 +423,8 @@ class PublishAttemptServiceTransactionIntegrationTest {
     candidate.setNotes("successful transaction proof");
     candidate = versionRepository.save(candidate);
     var operation = reserveSelectedDraft(candidate, "successful transaction proof");
+    var terminalPki = new SelectionReadTestPki(Files.createDirectories(temporary.resolve("pki")));
+    assertTerminalOwnerReadOverMtls(operation, null, terminalPki);
     assertThat(candidate.getTenantId()).isEqualTo(tenantId);
     assertThat(candidate.getTenantId()).isNotEqualTo(candidate.getCanonicalTenantId().toString());
     assertThat(operation.workflowId())
@@ -492,6 +506,7 @@ class PublishAttemptServiceTransactionIntegrationTest {
     assertThat(terminalOperation.outcome()).isEqualTo("PUBLISHED");
     assertThat(terminalOperation.terminalEvidenceBytes()).isNotNull();
     publishAttemptRepository.requirePublishedOperation(attempt);
+    assertTerminalOwnerReadOverMtls(operation, Outcome.PUBLISHED, terminalPki);
   }
 
   @Test
@@ -642,7 +657,8 @@ class PublishAttemptServiceTransactionIntegrationTest {
   }
 
   @Test
-  void finalizationFailureAfterExportRetainsCandidateReferencedByApprovedRemapSet() {
+  void finalizationFailureAfterExportRetainsCandidateReferencedByApprovedRemapSet(
+      @TempDir Path temporary) throws Exception {
     String tenantId = "9003";
     Game game = new Game();
     game.setTenantId(tenantId);
@@ -667,6 +683,8 @@ class PublishAttemptServiceTransactionIntegrationTest {
     AtomicReference<Long> candidateVersionId = new AtomicReference<>();
     AtomicReference<Integer> candidateVersionNumber = new AtomicReference<>();
     var operation = reserveSelectedDraft(candidate, "failed remap proof");
+    var terminalPki = new SelectionReadTestPki(Files.createDirectories(temporary.resolve("pki")));
+    assertTerminalOwnerReadOverMtls(operation, null, terminalPki);
     String publishRequestId = operation.account().publishRequestId();
     String publishWorkflowId = operation.workflowId();
     long selectedCandidateVersionId = candidate.getId();
@@ -808,6 +826,7 @@ class PublishAttemptServiceTransactionIntegrationTest {
     assertThat(terminalOperation.outcome()).isEqualTo("NO_PUBLICATION");
     assertThat(terminalOperation.terminalEvidenceBytes()).isNotNull();
     publishAttemptRepository.requireNoPublicationOperation(attempt);
+    assertTerminalOwnerReadOverMtls(operation, Outcome.NO_PUBLICATION, terminalPki);
   }
 
   /**
@@ -945,6 +964,180 @@ class PublishAttemptServiceTransactionIntegrationTest {
     } finally {
       server.shutdownNow();
       assertThat(server.awaitTermination(5, TimeUnit.SECONDS)).isTrue();
+    }
+  }
+
+  /**
+   * Real GD PostgreSQL terminal backing and production loopback mTLS transport. Upstream Account,
+   * World, participant digests and asset export remain stipulated by the surrounding owner case;
+   * this does not prove cross-owner issuance/APPLIED provenance, settlement, custody or activation.
+   * A null expected outcome checks the actual reserved PENDING row before finalization.
+   */
+  private void assertTerminalOwnerReadOverMtls(
+      GameDesignPublicationOperation operation, Outcome expected, SelectionReadTestPki pki)
+      throws Exception {
+    var repository = new GameDesignPublicationOperationRepository(dsl);
+    var before = repository.read(operation.workflowId()).orElseThrow();
+    assertThat(before.operation().canonicalBytes()).containsExactly(operation.canonicalBytes());
+    assertThat(before.outcome()).isEqualTo(expected == null ? "PENDING" : expected.name());
+    byte[] originalTerminal = before.terminalEvidenceBytes();
+    if (expected != null) {
+      assertThat(originalTerminal).isNotEmpty();
+      // Existing immutability guards must reject backing replacement; do not disable them to
+      // manufacture corrupt historical evidence. This write transaction ends before any RPC.
+      assertThatThrownBy(
+              () ->
+                  inOwnerTransaction(
+                      () ->
+                          dsl.execute(
+                              "UPDATE game_design_publication_operation SET terminal_evidence_bytes = ?"
+                                  + " WHERE publish_workflow_id = ?",
+                              new byte[] {1},
+                              operation.workflowId())))
+          .rootCause()
+          .isInstanceOf(java.sql.SQLException.class)
+          .hasMessageContaining("immutable")
+          .satisfies(
+              failure ->
+                  assertThat(((java.sql.SQLException) failure).getSQLState()).isEqualTo("23514"));
+    }
+    var binding = GameDesignPublicationOperationBinding.fromStored(operation.canonicalBytes());
+    var request = GameDesignPublicationTerminalReadEvidence.Request.create("test", binding);
+    var changedAccount =
+        new AccountPublicationAuthorizationBinding(
+            UUID.randomUUID(),
+            UUID.randomUUID(),
+            operation.account().input(),
+            operation.account().sources());
+    var substituted = new GameDesignPublicationOperationBinding(changedAccount, operation.world());
+    var missing =
+        IsolatedPublicationOperationFixtures.fresh(
+            operation.account().input().selection().target());
+    assertThat(repository.read(missing.workflowId())).isEmpty();
+    var endpoint =
+        new GameDesignPublicationTerminalReadGrpcService(
+            new GameDesignPublicationTerminalReadService(repository, transactionManager, "test"),
+            "test");
+    Server server =
+        NettyServerBuilder.forAddress(new InetSocketAddress("127.0.0.1", 0))
+            .sslContext(
+                GrpcSslContexts.forServer(
+                        pki.server.certificate().toFile(), pki.server.key().toFile())
+                    .trustManager(pki.ca.toFile())
+                    .clientAuth(ClientAuth.REQUIRE)
+                    .build())
+            .addService(ServerInterceptors.intercept(endpoint, new GrpcPeerIdentityInterceptor()))
+            .build()
+            .start();
+    try {
+      for (var identity : List.of(pki.account, pki.worldManagement)) {
+        try (var client = terminalReadClient(server.getPort(), identity, pki.ca)) {
+          if (expected == null) {
+            assertSelectionReadCode(Status.Code.FAILED_PRECONDITION, () -> client.read(request));
+          } else {
+            var first = client.read(request);
+            var retry = client.read(request);
+            assertThat(first.request()).isEqualTo(request);
+            assertThat(retry.request()).isEqualTo(request);
+            assertThat(first.request().originalOperation())
+                .containsExactly(operation.canonicalBytes());
+            assertThat(first.terminalEvidence().operationBytes())
+                .containsExactly(operation.canonicalBytes());
+            assertThat(first.terminalEvidence().canonicalBytes()).containsExactly(originalTerminal);
+            assertThat(retry.terminalEvidence().canonicalBytes()).containsExactly(originalTerminal);
+            assertThat(first.terminalEvidence().outcome()).isEqualTo(expected);
+            var fresh = GameDesignPublicationTerminalReadEvidence.Request.create("test", binding);
+            var freshResult = client.read(fresh);
+            assertThat(freshResult.request()).isEqualTo(fresh);
+            assertThat(freshResult.terminalEvidence().canonicalBytes())
+                .containsExactly(originalTerminal);
+          }
+          assertSelectionReadCode(
+              Status.Code.NOT_FOUND,
+              () ->
+                  client.read(
+                      GameDesignPublicationTerminalReadEvidence.Request.create(
+                          "test",
+                          GameDesignPublicationOperationBinding.fromStored(
+                              missing.canonicalBytes()))));
+          assertSelectionReadCode(
+              Status.Code.FAILED_PRECONDITION,
+              () ->
+                  client.read(
+                      GameDesignPublicationTerminalReadEvidence.Request.create(
+                          "test", substituted)));
+        }
+      }
+      for (var identity : List.of(pki.wrongWorkload, pki.otherNamespace, pki.otherWorldNamespace)) {
+        try (var client = terminalReadClient(server.getPort(), identity, pki.ca)) {
+          assertSelectionReadCode(Status.Code.PERMISSION_DENIED, () -> client.read(request));
+        }
+      }
+      // A strict client cannot construct malformed input. Use an authenticated test-only wire
+      // stub to exercise the actual receiver's closed-schema rejection, without minting evidence.
+      var channel =
+          new GrpcChannelFactory()
+              .buildChannel(
+                  "127.0.0.1:" + server.getPort(), 6565, pki.account.properties(pki.ca), true);
+      try {
+        var stub =
+            GameDesignPublicationTerminalReadServiceGrpc.newBlockingStub(channel)
+                .withCallCredentials(
+                    new GrpcServerPeerIdentityCallCredentials(
+                        "spiffe://firemud/ns/test/sa/game-design-service"))
+                .withDeadlineAfter(5, TimeUnit.SECONDS);
+        var wire = GameDesignPublicationTerminalReadGrpcCodec.toRequest(request);
+        for (var invalid :
+            List.of(
+                wire.toBuilder()
+                    .setOriginalOperation(com.google.protobuf.ByteString.copyFrom(new byte[] {1}))
+                    .build(),
+                wire.toBuilder()
+                    .setUnknownFields(
+                        com.google.protobuf.UnknownFieldSet.newBuilder()
+                            .addField(
+                                99,
+                                com.google.protobuf.UnknownFieldSet.Field.newBuilder()
+                                    .addVarint(1)
+                                    .build())
+                            .build())
+                    .build())) {
+          assertSelectionReadCode(
+              Status.Code.INVALID_ARGUMENT, () -> stub.readPublicationTerminal(invalid));
+        }
+        assertSelectionReadCode(
+            Status.Code.PERMISSION_DENIED,
+            () ->
+                stub.readPublicationTerminal(wire.toBuilder().setTargetNamespace("other").build()));
+      } finally {
+        channel.shutdownNow();
+        assertThat(channel.awaitTermination(5, TimeUnit.SECONDS)).isTrue();
+      }
+      var after = repository.read(operation.workflowId()).orElseThrow();
+      assertThat(after.operation().canonicalBytes())
+          .containsExactly(before.operation().canonicalBytes());
+      assertThat(after.outcome()).isEqualTo(before.outcome());
+      assertThat(after.receiptBytes()).isEqualTo(before.receiptBytes());
+      assertThat(after.terminalEvidenceBytes()).isEqualTo(originalTerminal);
+    } finally {
+      server.shutdownNow();
+      assertThat(server.awaitTermination(5, TimeUnit.SECONDS)).isTrue();
+    }
+  }
+
+  private static GameDesignPublicationTerminalReadClient terminalReadClient(
+      int port, SelectionReadTestIdentity identity, Path ca) throws Exception {
+    var endpoints = new ServiceEndpointsProperties();
+    endpoints.setGameDesignService("127.0.0.1:" + port);
+    var client =
+        new GameDesignPublicationTerminalReadClient(
+            endpoints, identity.properties(ca), new GrpcChannelFactory(), "test");
+    try {
+      client.init();
+      return client;
+    } catch (Exception failure) {
+      client.close();
+      throw failure;
     }
   }
 
