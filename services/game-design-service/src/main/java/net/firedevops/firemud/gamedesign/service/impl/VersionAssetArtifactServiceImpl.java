@@ -453,10 +453,14 @@ public class VersionAssetArtifactServiceImpl implements VersionAssetArtifactServ
             .findById(versionId)
             .filter(found -> found.getTenantId().equals(tenantId))
             .orElseThrow(() -> new IllegalArgumentException("version not found"));
-    var exported = assetExportService.exportAssets(tenantId, version.getVersionNumber());
+    ExportedAssetManifest exported;
     try {
-      PublishedReleaseBundleContract.requireExactRepairMatch(bundle, exported);
+      exported =
+          assetExportService.repairPublishedAssets(tenantId, version.getVersionNumber(), bundle);
     } catch (IllegalStateException ex) {
+      if (!isRepairAttestationFailure(ex)) {
+        throw ex;
+      }
       artifact.setLastWorkflowId(repairWorkflowId);
       artifact.setLastErrorCode(ex.getMessage().split(":", 2)[0]);
       artifact.setLastErrorMessage(ex.getMessage().split(":", 2)[1].trim());
@@ -472,6 +476,14 @@ public class VersionAssetArtifactServiceImpl implements VersionAssetArtifactServ
     artifact.setLastErrorMessage(null);
     artifact.setUpdatedAt(LocalDateTime.now());
     return toDto(repository.save(artifact));
+  }
+
+  private boolean isRepairAttestationFailure(IllegalStateException exception) {
+    String message = exception.getMessage();
+    return message != null
+        && (message.startsWith(PublishedReleaseBundleContract.REPAIR_ATTESTATION_MISMATCH)
+            || message.startsWith(PublishedReleaseBundleContract.REPAIR_ATTESTED_ASSET_KEY_MISMATCH)
+            || message.startsWith(PublishedReleaseBundleContract.SCHEMA_VERSION_UNSUPPORTED));
   }
 
   private VersionAssetPurgeWorkflow requireWorkflow(

@@ -38,9 +38,7 @@ import org.mockito.MockitoAnnotations;
 
 class VersionAssetArtifactServiceImplTest {
   private static final String MANIFEST_HASH = "sha256:" + "a".repeat(64);
-  private static final String DIFFERENT_MANIFEST_HASH = "sha256:" + "c".repeat(64);
   private static final String LOGO_DIGEST = "sha256:" + "b".repeat(64);
-  private static final String DIFFERENT_LOGO_DIGEST = "sha256:" + "d".repeat(64);
 
   @Mock private VersionAssetArtifactRepository repository;
   @Mock private VersionAssetPurgeWorkflowRepository purgeWorkflowRepository;
@@ -241,8 +239,13 @@ class VersionAssetArtifactServiceImplTest {
                 "opaque-owner-issued-release-reference",
                 1,
                 List.of()));
-    when(assetExportService.exportAssets("tenant-1", 8))
-        .thenReturn(new ExportedAssetManifest(DIFFERENT_MANIFEST_HASH, 1, List.of(), List.of()));
+    when(assetExportService.repairPublishedAssets(
+            org.mockito.ArgumentMatchers.eq("tenant-1"),
+            org.mockito.ArgumentMatchers.eq(8),
+            any(PublishedReleaseBundleDto.class)))
+        .thenThrow(
+            new IllegalStateException(
+                "REPAIR_ATTESTATION_MISMATCH: repair could not reproduce the attested manifest hash"));
 
     assertThrows(
         IllegalStateException.class,
@@ -289,10 +292,13 @@ class VersionAssetArtifactServiceImplTest {
                 "opaque-owner-issued-release-reference",
                 1,
                 List.of(logoProof(LOGO_DIGEST))));
-    when(assetExportService.exportAssets("tenant-1", 8))
-        .thenReturn(
-            new ExportedAssetManifest(
-                MANIFEST_HASH, 1, List.of("logo.png"), List.of(logoProof(DIFFERENT_LOGO_DIGEST))));
+    when(assetExportService.repairPublishedAssets(
+            org.mockito.ArgumentMatchers.eq("tenant-1"),
+            org.mockito.ArgumentMatchers.eq(8),
+            any(PublishedReleaseBundleDto.class)))
+        .thenThrow(
+            new IllegalStateException(
+                "REPAIR_ATTESTATION_MISMATCH: repair could not reproduce the attested artifact proof"));
 
     IllegalStateException thrown =
         assertThrows(
