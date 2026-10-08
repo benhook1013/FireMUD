@@ -1584,6 +1584,7 @@ def main() -> int:
     ]
     if (
         len(pip_rebase_rules) != 1
+        or pip_rebase_rules[0].get("rangeStrategy") != "update-lockfile"
         or pip_rebase_rules[0].get("rebaseWhen") != "behind-base-branch"
         or renovate.get("pip-compile", {}).get("managerFilePatterns")
         != ["/^config\\/(?:docs\\/requirements|python\\/(?:ci|smoke|yaml)-requirements)\\.txt$/"]

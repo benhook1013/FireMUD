@@ -319,6 +319,7 @@
       "matchManagers": [
         "pip-compile"
       ],
+      "rangeStrategy": "update-lockfile",
       "rebaseWhen": "behind-base-branch"
     },
     {
