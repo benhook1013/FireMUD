@@ -73,6 +73,10 @@ public final class HostedTermsEnvironmentBindingRepository {
   public void ensureHead(String environmentBoundary) {
     requireWriteTransaction();
     String boundary = requireBoundary(environmentBoundary);
+    if (dsl.fetchOne("SELECT 1 FROM " + HEADS + " WHERE environment_boundary = ?", boundary)
+        != null) {
+      return;
+    }
     dsl.execute(
         "INSERT INTO " + HEADS + " (environment_boundary) VALUES (?) ON CONFLICT DO NOTHING",
         boundary);

@@ -314,6 +314,46 @@ class HostedTermsEnvironmentBindingPostgresIntegrationTest {
     var draftFences = new DraftAuthorizationFenceRepository(db.dsl());
     tx(db, () -> draftFences.reserve(pendingDraft));
 
+    var bindingRepository = new HostedTermsEnvironmentBindingRepository(db.dsl());
+    tx(db, () -> bindingRepository.ensureHead("settlement-test-environment"));
+    var headAfterEnsure =
+        Objects.requireNonNull(
+            db.dsl()
+                .fetchOne(
+                    "SELECT current_binding_id, current_source_version "
+                        + "FROM account_hosted_terms_environment_binding_heads "
+                        + "WHERE environment_boundary = ?",
+                    "settlement-test-environment"));
+    assertThat(headAfterEnsure.get("current_binding_id", UUID.class))
+        .isEqualTo(first.candidate().bindingId());
+    assertThat(headAfterEnsure.get("current_source_version", Long.class)).isEqualTo(1L);
+    assertThatThrownBy(
+            () ->
+                tx(
+                    db,
+                    () ->
+                        db.dsl()
+                            .execute(
+                                "UPDATE account_hosted_terms_environment_binding_heads "
+                                    + "SET current_binding_id = ?, current_source_version = ? "
+                                    + "WHERE environment_boundary = ?",
+                                UUID.randomUUID(),
+                                2L,
+                                "settlement-test-environment")))
+        .isInstanceOf(org.jooq.exception.DataAccessException.class)
+        .hasMessageContaining("Required creator source is held");
+    var headAfterRejectedWrite =
+        Objects.requireNonNull(
+            db.dsl()
+                .fetchOne(
+                    "SELECT current_binding_id, current_source_version "
+                        + "FROM account_hosted_terms_environment_binding_heads "
+                        + "WHERE environment_boundary = ?",
+                    "settlement-test-environment"));
+    assertThat(headAfterRejectedWrite.get("current_binding_id", UUID.class))
+        .isEqualTo(first.candidate().bindingId());
+    assertThat(headAfterRejectedWrite.get("current_source_version", Long.class)).isEqualTo(1L);
+
     UUID secondRequest = UUID.randomUUID();
     HostedTermsEnvironmentBinding.PublicationEvidence secondEvidence =
         bindingEvidence(
