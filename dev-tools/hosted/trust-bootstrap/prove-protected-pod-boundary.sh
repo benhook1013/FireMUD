@@ -139,8 +139,23 @@ def probe(description, body, policy=None, message=None, path=None):
         rejection = (r"ValidatingAdmissionPolicy [\"']" + re.escape(policy)
                      + r"[\"'] with binding [\"']" + re.escape(policy)
                      + r"[\"'] denied request: " + re.escape(message))
-        if result.returncode == 0 or not re.search(rejection, result.stderr):
-            fail(description + ": expected exact named admission denial was not observed")
+        if result.returncode == 0:
+            reason = "unexpected success; request was accepted instead of denied"
+        elif re.search(rejection, result.stderr):
+            reason = None
+        elif re.search(r"ValidatingAdmissionPolicy [\"'].* denied request:", result.stderr):
+            reason = "named-policy/message mismatch; denial did not match the exact expected policy, binding, and message"
+        else:
+            reason = "API/schema rejection; this is not evidence of the expected admission-policy denial"
+        if reason:
+            def bounded(value, limit=512):
+                value = value.replace("\r", "\\r").replace("\n", "\\n")
+                if len(value) > limit:
+                    return value[:limit] + "...[truncated " + str(len(value) - limit) + " chars]"
+                return value
+
+            fail(description + ": " + reason + "; kubectl exit status=" + str(result.returncode)
+                 + "; stdout=" + bounded(result.stdout) + "; stderr=" + bounded(result.stderr))
     print("PASS " + description, flush=True)
 
 

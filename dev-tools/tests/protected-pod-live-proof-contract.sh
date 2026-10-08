@@ -146,6 +146,12 @@ if policy:
     if mode == 'allow-escape': print(json.dumps(pod)); sys.exit(0)
     if mode == 'auth-error': print('Error from server (Forbidden): user cannot create pods', file=sys.stderr)
     elif mode == 'conflict': print('Error from server (Conflict): resource version stale', file=sys.stderr)
+    elif mode == 'schema-error':
+        print('partial response from kubectl')
+        print('Error from server (BadRequest): strict decoding error: unknown field "spec.hostNames"', file=sys.stderr)
+    elif mode == 'noisy-error':
+        print('O' * 5000)
+        print('E' * 5000, file=sys.stderr)
     elif mode == 'wrong-policy': print("ValidatingAdmissionPolicy 'other' with binding 'other' denied request: " + message, file=sys.stderr)
     elif mode == 'wrong-message': print("ValidatingAdmissionPolicy '" + policy + "' with binding '" + policy + "' denied request: different constraint", file=sys.stderr)
     else: print("Error from server (Forbidden): ValidatingAdmissionPolicy '" + policy + "' with binding '" + policy + "' denied request: " + message, file=sys.stderr)
@@ -171,10 +177,22 @@ with tempfile.TemporaryDirectory(prefix="firemud-pod-proof-contract-") as direct
                        PROOF_POLICY=str(root / "k8s/trust-bootstrap/deployment-admission.yaml"),
                        PROOF_POD=str(pod_file), PROOF_LOG=str(temporary / "calls"))
     arguments = ["--context", "proof-context", "--namespace", "dev", "--pod", "account-service-existing"]
-    cases = ["normal", "defaulted", "namespace-labels", "warning", "missing-typecheck", "stale-generation", "fail-open", "spec-drift", "audit-only", "wrong-revision", "wrong-pod", "missing-uid", "pod-drift", "allow-escape", "auth-error", "conflict", "wrong-policy", "wrong-message", "valid-denied", "malformed-success"]
+    cases = ["normal", "defaulted", "namespace-labels", "warning", "missing-typecheck", "stale-generation", "fail-open", "spec-drift", "audit-only", "wrong-revision", "wrong-pod", "missing-uid", "pod-drift", "allow-escape", "auth-error", "conflict", "schema-error", "noisy-error", "wrong-policy", "wrong-message", "valid-denied", "malformed-success"]
     for mode in cases:
         result = subprocess.run(["bash", str(tool)] + arguments, env=dict(environment, PROOF_MODE=mode), text=True, capture_output=True)
         assert (result.returncode == 0) == (mode in ("normal", "defaulted")), (mode, result.stdout, result.stderr)
+        if mode == "allow-escape":
+            assert "unexpected success" in result.stderr and "kubectl exit status=0" in result.stderr, result.stderr
+            assert "stdout={" in result.stderr, result.stderr
+        if mode == "schema-error":
+            assert "API/schema rejection" in result.stderr and "kubectl exit status=1" in result.stderr, result.stderr
+            assert "stdout=partial response from kubectl" in result.stderr, result.stderr
+            assert "strict decoding error" in result.stderr, result.stderr
+        if mode in ("wrong-policy", "wrong-message"):
+            assert "named-policy/message mismatch" in result.stderr and "kubectl exit status=1" in result.stderr, result.stderr
+            assert "denied request" in result.stderr, result.stderr
+        if mode == "noisy-error":
+            assert len(result.stderr) < 1800 and "[truncated " in result.stderr, len(result.stderr)
         if mode == "normal":
             assert "UNPROVED: CNI/socket" in result.stdout
             assert "ephemeral privilege escape" in result.stdout

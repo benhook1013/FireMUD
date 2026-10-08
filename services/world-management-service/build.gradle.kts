@@ -13,6 +13,7 @@ firemudJooq {
 }
 
 dependencies {
+    integrationTestImplementation(project(mapOf("path" to ":account-service", "configuration" to "accountOriginalOrderProof")))
     implementation(project(":common-security"))
     testImplementation(libs.bouncycastle.pkix)
     testCompileOnly(libs.spotbugs.annotations)

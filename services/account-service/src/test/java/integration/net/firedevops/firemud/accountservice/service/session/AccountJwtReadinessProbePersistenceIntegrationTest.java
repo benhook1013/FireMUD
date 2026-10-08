@@ -904,7 +904,35 @@ class AccountJwtReadinessProbePersistenceIntegrationTest {
                 () ->
                     readiness.readCurrentProbeOwner(
                         BINDING, trust, selector, refreshedObservation, BINDING.namespace()));
-        assertThat(ownerEvidence.plan()).isEqualTo(plan);
+        assertThat(ownerEvidence.plan())
+            .usingRecursiveComparison()
+            .ignoringFields("entries")
+            .isEqualTo(plan);
+        assertThat(ownerEvidence.plan().entries())
+            .usingRecursiveFieldByFieldElementComparatorIgnoringFields(
+                "entryVersion",
+                "state",
+                "terminalOutcome",
+                "signingAttemptedAtEpochSecond",
+                "compactTokenSha256",
+                "verificationReceipt")
+            .containsExactlyElementsOf(plan.entries());
+        assertThat(ownerEvidence.plan().entries())
+            .extracting(ProbeEntry::state)
+            .containsExactly(
+                ProbeState.VERIFIED,
+                ProbeState.VERIFIED,
+                ProbeState.VERIFIED,
+                ProbeState.VERIFIED,
+                ProbeState.ISSUED,
+                ProbeState.ISSUED,
+                ProbeState.ISSUED,
+                ProbeState.ISSUED);
+        assertThat(ownerEvidence.plan())
+            .isEqualTo(
+                inTransaction(
+                    context,
+                    () -> readiness.readCurrentPlan(BINDING, trust, result.operationId())));
         assertThat(ownerEvidence.entry()).isEqualTo(entry);
         assertThat(ownerEvidence.expectedPod()).isEqualTo(expectedPod);
         var ownerResponse =

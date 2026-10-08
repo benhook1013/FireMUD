@@ -2282,7 +2282,7 @@ public class AccountJwtSignerDesiredStateRepository {
                 + "readiness_evidence_digest, expected_public_jwks_json, "
                 + "expected_active_generation_marker_json) "
                 + "VALUES (?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, 'RS256', ?, ?, ?, ?, ?, "
-                + "'PROMOTE_PENDING', ?, 'PREPARED', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                + "'PROMOTE_PENDING', ?, 'PREPARED', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             promotion.operationId(),
             promotion.binding().environmentId(),
             promotion.binding().clusterId(),
