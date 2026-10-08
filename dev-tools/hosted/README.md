@@ -37,5 +37,6 @@ Use it before ad hoc live inspection so preview debugging stays deterministic an
 
 ## Public Helpers
 
+- [trust-bootstrap/prove-protected-pod-boundary.sh](trust-bootstrap/prove-protected-pod-boundary.sh) – operator-invoked native admission proof: `bash dev-tools/hosted/trust-bootstrap/prove-protected-pod-boundary.sh --context CONTEXT --namespace dev --pod EXACT_PROTECTED_POD` (also canonical `pr-N`). Requires Python/PyYAML and kubectl; verifies installed trusted policy content and compilation, then uses only server dry-run CREATE/UPDATE/ephemeral-container requests. This is partial admission evidence, not routing, replacement-race, shared-key closure or promotion proof; see [the attribution owner](../../design/architecture/system-architecture-jwt-and-token-contracts.md#protected-readiness-receiver-attribution).
 - [shared/show-rollout-diagnostics.sh](shared/show-rollout-diagnostics.sh) – first-look diagnostics for a hosted namespace when a rollout is blocked.
 - [shared/wait-for-hosted-runtime-rollouts.sh](shared/wait-for-hosted-runtime-rollouts.sh) – bounded readiness wait for the canonical hosted runtime deployment inventory.
