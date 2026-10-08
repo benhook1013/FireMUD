@@ -364,13 +364,13 @@ class AccountPublicationAuthorizationPostgresIntegrationTest {
         .run(action);
   }
 
-  private record Proof(
+  record Proof(
       AuthoredDraftPublishSelectionBinding selection,
       WorldPublishedStartLocationEvidence world,
       DraftAuthorizationFenceBinding original) {}
 
   /** Closed World codec bytes copied in spirit from the existing isolated selector fixtures. */
-  private static Proof proof(
+  static Proof proof(
       AccountControlUiOwnerSourcesFixture f,
       net.firedevops.firemud.accountservice.hostedterms.AccountHostedTermsService
               .CapturedEnvironmentBoundary
