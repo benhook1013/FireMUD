@@ -4,6 +4,7 @@ package entity_management.v1;
 
 import "shared/v1/errors.proto";
 import "shared/v1/instance_refs.proto";
+import "shared/v1/player_execution_context.proto";
 
 option java_package = "net.firedevops.firemud.entitymanagement.v1";
 option java_multiple_files = true;
@@ -36,22 +37,33 @@ service EntityManagementService {
       returns (ValidateEntityUpgradeMappingsResponse);
 }
 
-// Canonical gameplay roster discovery is a separate non-admitting boundary. This wire contract
-// does not authorize the legacy numeric ListCharactersByAccount RPC for canonical gameplay. A
-// valid ListPreseededRoster response may contain zero actors; that is a successful lookup. These
-// RPCs use canonical non-OK gRPC statuses rather than in-response errors: malformed requests are
-// INVALID_ARGUMENT, stale snapshots or selections not present in the bound snapshot are
-// FAILED_PRECONDITION, unauthorized callers are UNAUTHENTICATED or PERMISSION_DENIED as
-// applicable, and unavailable dependencies are UNAVAILABLE. No partial success is returned.
+// Canonical gameplay roster discovery is a pre-admission, non-admitting boundary. Both methods
+// are restricted to PRESEEDED_ONLY; other policy values are non-authorizing and fail with
+// FAILED_PRECONDITION. This wire contract does not authorize the legacy numeric
+// ListCharactersByAccount RPC for canonical gameplay. A valid ListPreseededRoster response may
+// contain zero actors; that is a successful lookup. These RPCs use canonical non-OK gRPC statuses
+// rather than in-response errors: malformed requests are INVALID_ARGUMENT, stale snapshots or
+// selections not present in the bound snapshot are FAILED_PRECONDITION, unauthorized callers are
+// UNAUTHENTICATED or PERMISSION_DENIED as applicable, and unavailable dependencies are
+// UNAVAILABLE. No partial success is returned.
 service CanonicalGameplayRosterService {
-  // Returns the persisted preseeded roster for the exact expected target. A successful response
-  // includes its immutable snapshot UUID and digest, including when the roster is empty.
+  // Returns the persisted preseeded roster for the exact expected target. The server requires an
+  // authenticated, server-derived PlayerExecutionContext and exact same-namespace Game Session
+  // mTLS caller allowlisting. Context account_id equals canonical_account_uuid; request_id equals
+  // request_uuid; tenant_id, realm_id, playable_state_namespace_id, playable_state_scope, and
+  // game_instance_id equal the corresponding expected_target values; session_id identifies the
+  // authenticated session. No character_id is selected yet. The target policy must be
+  // PRESEEDED_ONLY. These equality checks do not require an additional Account lookup. A
+  // successful response includes its immutable snapshot UUID and digest, including when the
+  // roster is empty.
   rpc ListPreseededRoster(CanonicalGameplayRosterRequest)
       returns (CanonicalGameplayRosterResponse);
   // Reads the selected assignment only if the supplied snapshot UUID and digest still identify
   // the roster from which selected_character_uuid was chosen. The response echoes that exact
   // snapshot reference. A changed snapshot or selection absent from it fails with
-  // FAILED_PRECONDITION.
+  // FAILED_PRECONDITION. It has the same authenticated context and exact target equality
+  // requirements as ListPreseededRoster, and context.character_id must equal
+  // selected_character_uuid. The target policy must be PRESEEDED_ONLY.
   rpc ReadSelectedPreseededAssignment(CanonicalGameplayRosterSelectedAssignmentRequest)
       returns (CanonicalGameplayRosterSelectedAssignmentResponse);
 }
@@ -60,6 +72,7 @@ message CanonicalGameplayRosterRequest {
   string request_uuid = 1;
   string canonical_account_uuid = 2;
   CanonicalGameplayRosterTarget expected_target = 3;
+  shared.v1.PlayerExecutionContext player_execution_context = 4;
 }
 
 message CanonicalGameplayRosterTarget {
@@ -120,6 +133,7 @@ message CanonicalGameplayRosterSelectedAssignmentRequest {
   // Exact snapshot_uuid and snapshot_digest returned by ListPreseededRoster. Retries must reuse
   // these values and may not silently select against a changed roster.
   CanonicalGameplayRosterSnapshotReference expected_snapshot = 5;
+  shared.v1.PlayerExecutionContext player_execution_context = 6;
 }
 
 message CanonicalGameplayRosterSelectedAssignmentResponse {

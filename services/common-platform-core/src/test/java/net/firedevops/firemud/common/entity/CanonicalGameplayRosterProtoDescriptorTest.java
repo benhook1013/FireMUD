@@ -4,13 +4,22 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import com.google.protobuf.Descriptors.Descriptor;
 import com.google.protobuf.Descriptors.FieldDescriptor;
+import net.firedevops.firemud.entitymanagement.v1.CanonicalGameplayRosterRequest;
 import net.firedevops.firemud.entitymanagement.v1.CanonicalGameplayRosterResponse;
 import net.firedevops.firemud.entitymanagement.v1.CanonicalGameplayRosterSelectedAssignmentRequest;
 import net.firedevops.firemud.entitymanagement.v1.CanonicalGameplayRosterSelectedAssignmentResponse;
 import net.firedevops.firemud.entitymanagement.v1.CanonicalGameplayRosterSnapshotReference;
+import net.firedevops.firemud.shared.v1.PlayerExecutionContext;
 import org.junit.jupiter.api.Test;
 
 class CanonicalGameplayRosterProtoDescriptorTest {
+  @Test
+  void canonicalRosterRequestsCarryTheTypedPlayerExecutionContext() {
+    assertPlayerExecutionContextField(CanonicalGameplayRosterRequest.getDescriptor(), 4);
+    assertPlayerExecutionContextField(
+        CanonicalGameplayRosterSelectedAssignmentRequest.getDescriptor(), 6);
+  }
+
   @Test
   void selectedAssignmentRoundTripsTheExactTypedSnapshotReference() {
     FieldDescriptor expectedSnapshot =
@@ -46,5 +55,11 @@ class CanonicalGameplayRosterProtoDescriptorTest {
     assertThat(descriptor.toProto().getReservedRangeList())
         .anySatisfy(range -> assertThat(range.getStart()).isEqualTo(fieldNumber));
     assertThat(descriptor.toProto().getReservedNameList()).contains("error");
+  }
+
+  private static void assertPlayerExecutionContextField(Descriptor descriptor, int fieldNumber) {
+    FieldDescriptor context = descriptor.findFieldByNumber(fieldNumber);
+    assertThat(context.getName()).isEqualTo("player_execution_context");
+    assertThat(context.getMessageType()).isEqualTo(PlayerExecutionContext.getDescriptor());
   }
 }
