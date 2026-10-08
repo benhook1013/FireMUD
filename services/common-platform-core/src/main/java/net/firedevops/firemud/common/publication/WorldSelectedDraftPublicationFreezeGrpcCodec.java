@@ -72,6 +72,7 @@ public final class WorldSelectedDraftPublicationFreezeGrpcCodec {
         .setContentDigest(acknowledgement.contentDigest())
         .setDigestSchemaVersion(acknowledgement.digestSchemaVersion())
         .setVersionStateEpoch(acknowledgement.versionStateEpoch())
+        .setWorldIntakeRequestId(acknowledgement.intakeRequestId().toString())
         .build();
   }
 
@@ -99,6 +100,7 @@ public final class WorldSelectedDraftPublicationFreezeGrpcCodec {
       acknowledgement =
           new Acknowledgement(
               expected,
+              canonicalUuid(response.getWorldIntakeRequestId()),
               response.getVersionStateEpoch(),
               canonicalUuid(response.getPublicationFence()),
               fromWirePhase(response.getOwnerFreezePhase()),

@@ -205,6 +205,90 @@ class AccountGameplayAdmissionWalBoundaryProofIntegrationTest {
   }
 
   @Test
+  void lostReceiptAcknowledgementRetainsExactEvidenceWhenCommittedWalExhaustsSearchBudget() {
+    var context = context();
+    var evidence = pending(context);
+    UUID decision = UUID.randomUUID();
+    var loseNextCommit = new AtomicBoolean();
+    var source = lostAcknowledgementSource(context.source(), loseNextCommit);
+    var acknowledgement =
+        new AccountGameplayAdmissionOriginalCommitExecutor(source).execute(evidence, decision);
+    loseNextCommit.set(true);
+    assertThatThrownBy(
+            () ->
+                new AccountGameplayAdmissionOriginalAckReceiptCommitExecutor(source)
+                    .confirm(acknowledgement))
+        .hasMessageContaining("Account receipt physical COMMIT unavailable");
+    var operationBefore = operation(independent(context), evidence).intoMap();
+    var receiptBefore = receipt(context, evidence).intoMap();
+    var locatorsBefore =
+        independent(context).fetch("SELECT * FROM wal_proof_locators ORDER BY phase").intoMaps();
+    assertThat(locatorsBefore).hasSize(2);
+    assertThat(receiptBefore.get("committed_before_ms"))
+        .isEqualTo(acknowledgement.committedBeforeMs());
+    assertThat(receiptBefore.get("expires_at_ms")).isEqualTo(expiry(evidence));
+
+    // Fixed-volume logged rows, committed independently of the retained target transactions.
+    // This exhausts the real search budget; it does not simulate WAL loss or recycling.
+    context.dsl().execute("CREATE TABLE wal_proof_search_pressure (payload TEXT NOT NULL)");
+    String before =
+        independent(context)
+            .fetchSingle("SELECT pg_current_wal_insert_lsn()::text")
+            .get(0, String.class);
+    tx(
+        context,
+        () ->
+            context
+                .dsl()
+                .execute(
+                    "INSERT INTO wal_proof_search_pressure SELECT md5(n::text) FROM generate_series(1, 32768) n"));
+    assertThat(independent(context).fetchCount(DSL.table("wal_proof_search_pressure")))
+        .isEqualTo(32768);
+    assertThat(
+            independent(context)
+                .fetchSingle("SELECT pg_current_wal_flush_lsn() - ?::pg_lsn > 1048576", before)
+                .get(0, Boolean.class))
+        .isTrue();
+    assertThatThrownBy(() -> read(context, evidence, decision, "receipt"))
+        .hasMessageContaining("search budget unavailable");
+    assertThatThrownBy(() -> read(context, evidence, decision, "original"))
+        .hasMessageContaining("search budget unavailable");
+    assertThat(operation(independent(context), evidence).intoMap()).isEqualTo(operationBefore);
+    assertThat(receipt(context, evidence).intoMap()).isEqualTo(receiptBefore);
+    assertThat(
+            independent(context)
+                .fetch("SELECT * FROM wal_proof_locators ORDER BY phase")
+                .intoMaps())
+        .isEqualTo(locatorsBefore);
+  }
+
+  @Test
+  void locatorOwnerCannotUpdateDeleteOrTruncateRetainedLocators() throws SQLException {
+    var context = context();
+    var evidence = pending(context);
+    UUID decision = UUID.randomUUID();
+    new AccountGameplayAdmissionOriginalCommitExecutor(context.source())
+        .execute(evidence, decision);
+    var before = locator(context, evidence, "original").intoMap();
+    try (var connection = context.source().getConnection()) {
+      var owner = DSL.using(connection, SQLDialect.POSTGRES);
+      owner.execute("SET ROLE " + context.schema() + "_owner");
+      assertThat(owner.fetchSingle("SELECT current_user").get(0, String.class))
+          .isEqualTo(context.schema() + "_owner");
+      for (String statement :
+          List.of(
+              "UPDATE wal_proof_locators SET target_xid = '1'",
+              "DELETE FROM wal_proof_locators",
+              "TRUNCATE wal_proof_locators")) {
+        assertThatThrownBy(() -> owner.execute(statement))
+            .hasMessageContaining("Test WAL locator is immutable");
+      }
+    }
+    assertThat(locator(context, evidence, "original").intoMap()).isEqualTo(before);
+    assertCovered(context, read(context, evidence, decision, "original"));
+  }
+
+  @Test
   void restrictedReaderCannotUseRawWalOrMutateLocatorsAndRevocationDeniesProof() {
     var context = context();
     var evidence = pending(context);
@@ -235,6 +319,27 @@ class AccountGameplayAdmissionWalBoundaryProofIntegrationTest {
         .hasMessageContaining("permission denied");
     assertThatThrownBy(() -> reader.execute("UPDATE wal_proof_locators SET target_xid = '1'"))
         .hasMessageContaining("permission denied");
+    for (String statement :
+        List.of(
+            "INSERT INTO wal_proof_locators DEFAULT VALUES",
+            "DELETE FROM wal_proof_locators",
+            "TRUNCATE wal_proof_locators",
+            "CREATE TABLE wal_proof_reader_write (value INTEGER)")) {
+      assertThatThrownBy(() -> reader.execute(statement)).hasMessageContaining("permission denied");
+    }
+    assertThatThrownBy(() -> reader.fetch("SELECT pg_read_binary_file('PG_VERSION')"))
+        .hasMessageContaining("permission denied for function");
+    assertThatThrownBy(
+            () ->
+                reader.fetch(
+                    "SELECT * FROM wal_proof_classify('100', '101', '0/1000000'::pg_lsn, "
+                        + "'0/1000080'::pg_lsn, '0/1000080'::pg_lsn, '[]'::jsonb)"))
+        .hasMessageContaining("permission denied for function");
+    assertThatThrownBy(
+            () ->
+                reader.execute(
+                    "ALTER FUNCTION wal_proof_read(UUID, TEXT, TEXT, UUID) RENAME TO wal_proof_reader_replacement"))
+        .hasMessageContaining("must be owner");
     assertThatThrownBy(() -> reader.execute("SET ROLE " + context.schema() + "_owner"))
         .hasMessageContaining("permission denied");
     assertThatThrownBy(

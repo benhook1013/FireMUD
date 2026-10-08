@@ -78,6 +78,7 @@ class WorldSelectedDraftPublicationFreezeClientTest {
           WorldSelectedDraftPublicationFreezeGrpcCodec.toResponse(
               new WorldSelectedDraftPublicationFreezeEvidence.Acknowledgement(
                   request,
+                  java.util.UUID.fromString("cccccccc-cccc-4ccc-8ccc-cccccccccccc"),
                   request.expectedVersionStateEpoch(),
                   java.util.UUID.fromString("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"),
                   WorldSelectedDraftPublicationFreezeEvidence.OwnerFreezePhase.FROZEN,

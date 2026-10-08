@@ -30,6 +30,8 @@ class WorldSelectedDraftPublicationFreezeGrpcCodecTest {
     assertThat(evidence.request()).isEqualTo(request);
     assertThat(evidence.acknowledgement()).isEqualTo(acknowledgement);
     assertThat(evidence.acknowledgement().requestDigest()).isEqualTo(request.requestDigest());
+    assertThat(evidence.acknowledgement().intakeRequestId())
+        .isEqualTo(uuid("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"));
   }
 
   @Test
@@ -101,6 +103,13 @@ class WorldSelectedDraftPublicationFreezeGrpcCodecTest {
             response.toBuilder().setAppliedCommitId(UUID.randomUUID().toString()).build(),
             response.toBuilder().setContentDigest("not-a-digest").build(),
             response.toBuilder().setDigestSchemaVersion(0).build(),
+            response.toBuilder().setWorldIntakeRequestId("").build(),
+            response.toBuilder()
+                .setWorldIntakeRequestId("AAAAAAAA-AAAA-4AAA-8AAA-AAAAAAAAAAAA")
+                .build(),
+            response.toBuilder()
+                .setWorldIntakeRequestId("00000000-0000-0000-0000-000000000000")
+                .build(),
             response.toBuilder().setUnknownFields(unknown).build())) {
       assertThatThrownBy(
               () -> WorldSelectedDraftPublicationFreezeGrpcCodec.fromResponse(request, changed))
@@ -139,6 +148,7 @@ class WorldSelectedDraftPublicationFreezeGrpcCodecTest {
       WorldSelectedDraftPublicationFreezeEvidence.Request request) {
     return new Acknowledgement(
         request,
+        uuid("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"),
         request.expectedVersionStateEpoch(),
         uuid("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"),
         OwnerFreezePhase.FROZEN,

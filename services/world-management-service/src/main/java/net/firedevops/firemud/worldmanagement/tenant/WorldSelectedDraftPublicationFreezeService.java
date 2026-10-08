@@ -179,6 +179,7 @@ final class WorldSelectedDraftPublicationFreezeService {
     FrozenAttempt attempt = freeze(evidence, selectedPlan, accountBinding);
     return new Acknowledgement(
         request,
+        owner.intakeRequestId(),
         attempt.request().versionStateEpoch(),
         attempt.publicationFence(),
         OwnerFreezePhase.FROZEN,

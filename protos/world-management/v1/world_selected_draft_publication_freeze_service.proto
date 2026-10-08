@@ -48,4 +48,7 @@ message BeginVersionPublicationFreezeResponse {
   int32 digest_schema_version = 13;
   // Owner-observed epoch from the committed freeze, separately bound to the request expectation.
   int64 version_state_epoch = 14;
+  // Exact World intake correlation from the retained APPLIED owner binding; not caller input or
+  // publication authority. The later selector read validates it against that same APPLIED result.
+  string world_intake_request_id = 15;
 }

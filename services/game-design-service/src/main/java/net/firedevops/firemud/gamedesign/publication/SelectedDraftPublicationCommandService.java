@@ -6,6 +6,7 @@ import java.util.Optional;
 import net.firedevops.firemud.common.publication.AccountPublicationAuthorizationBinding;
 import net.firedevops.firemud.common.publication.AccountPublicationAuthorizationReadClient;
 import net.firedevops.firemud.common.publication.PublicationDigestRequestBinding;
+import net.firedevops.firemud.common.publication.WorldSelectedDraftPublicationFreezeClient;
 import net.firedevops.firemud.common.world.WorldPublishedStartLocationEvidence;
 import net.firedevops.firemud.gamedesign.client.WorldPublishedStartLocationClient;
 import net.firedevops.firemud.gamedesign.draft.AuthoredDraftPublishSelection;
@@ -33,12 +34,13 @@ public final class SelectedDraftPublicationCommandService {
       DSLContext dsl,
       PlatformTransactionManager transactionManager,
       AccountPublicationAuthorizationReadClient accountClient,
+      WorldSelectedDraftPublicationFreezeClient freezeClient,
       WorldPublishedStartLocationClient worldClient,
       String workloadNamespace,
       VersionPublishCommandServiceImpl finalizer) {
     this(
         new SelectedDraftPublicationAdmissionService(
-            dsl, transactionManager, accountClient, worldClient, workloadNamespace),
+            dsl, transactionManager, accountClient, freezeClient, worldClient, workloadNamespace),
         new DatabaseDurableStateReader(dsl),
         finalizer);
   }
@@ -53,17 +55,15 @@ public final class SelectedDraftPublicationCommandService {
   }
 
   /**
-   * Publishes the exact selected existing Draft. The World request is an identity supplied for
-   * first admission and must match the embedded request on exact retries.
+   * Publishes the exact selected existing Draft. Admission derives the World selector from its
+   * authenticated freeze; exact retries use the original locally retained World request.
    */
   public VersionDto publishSelectedDraftFullVersion(
       AuthoredDraftPublishSelection.PublishIntent intent,
-      AccountPublicationAuthorizationBinding accountBinding,
-      WorldPublishedStartLocationEvidence.Request worldRequest) {
+      AccountPublicationAuthorizationBinding accountBinding) {
     requireNoAmbientTransaction();
     Objects.requireNonNull(intent, "intent");
     Objects.requireNonNull(accountBinding, "accountBinding");
-    Objects.requireNonNull(worldRequest, "worldRequest");
     requireIntentMatchesAccount(intent, accountBinding);
 
     DurableState state = durableStateReader.read(intent, accountBinding);
@@ -81,19 +81,21 @@ public final class SelectedDraftPublicationCommandService {
     AuthoredDraftPublishSelection selection = state.selection().orElseThrow();
     if (!operationExists) {
       // The immutable selection precedes Account authorization on the first publication entry.
-      requireExactSelection(intent, accountBinding, worldRequest, selection);
+      requireExactSelection(intent, accountBinding, selection);
       SelectedDraftPublicationOwner.Reservation reservation =
-          admission.admitAndReserve(intent, accountBinding, worldRequest);
+          admission.admitAndReserve(intent, accountBinding);
       Objects.requireNonNull(reservation, "selected Draft admission returned no reservation");
       if (!Arrays.equals(selection.canonicalBytes(), reservation.selection().canonicalBytes())) {
         throw new IllegalStateException(
             "SELECTED_PUBLICATION_RESERVATION_SELECTION_CONFLICT: admitted selection differs from the immutable preselection");
       }
+      var worldRequest = reservation.operation().world().request();
       requireExactAdmission(intent, accountBinding, worldRequest, reservation);
       return finalizeSelectedDraft(intent, accountBinding, worldRequest, selection);
     }
     GameDesignPublicationOperationRepository.Readback operationReadback =
         state.operation().orElseThrow();
+    var worldRequest = operationReadback.operation().world().request();
     requireExactRetry(intent, accountBinding, worldRequest, selection, operationReadback);
     return finalizeSelectedDraft(intent, accountBinding, worldRequest, selection);
   }
@@ -167,8 +169,22 @@ public final class SelectedDraftPublicationCommandService {
   private static void requireExactSelection(
       AuthoredDraftPublishSelection.PublishIntent intent,
       AccountPublicationAuthorizationBinding accountBinding,
+      AuthoredDraftPublishSelection selection) {
+    if (!intent.equals(selection.intent())
+        || !Arrays.equals(
+            selection.canonicalBytes(), accountBinding.input().selection().canonicalBytes())
+        || !selection.digest().equals(accountBinding.input().selection().digest())) {
+      throw new IllegalStateException(
+          "SELECTED_PUBLICATION_SELECTION_IDENTITY_CONFLICT: selection differs from the complete original intent or Account binding");
+    }
+  }
+
+  private static void requireExactSelection(
+      AuthoredDraftPublishSelection.PublishIntent intent,
+      AccountPublicationAuthorizationBinding accountBinding,
       WorldPublishedStartLocationEvidence.Request worldRequest,
       AuthoredDraftPublishSelection selection) {
+    requireExactSelection(intent, accountBinding, selection);
     var accountSelection = accountBinding.input().selection();
     if (!intent.equals(selection.intent())
         || !Arrays.equals(selection.canonicalBytes(), accountSelection.canonicalBytes())

@@ -402,6 +402,8 @@ class WorldAccountAuthorizedDraftPostgresIntegrationTest {
             var firstFreeze = beginOverMtls(selectedFreezeService, freezeRequest, pki);
             var frozenAttempt = fence.readAttempt(freezeEvidence).orElseThrow();
             assertThat(firstFreeze.request()).isEqualTo(freezeRequest);
+            assertThat(firstFreeze.acknowledgement().intakeRequestId())
+                .isEqualTo(applied.application().operation().ownerBinding().intakeRequestId());
             assertThat(firstFreeze.acknowledgement().publicationFence())
                 .isEqualTo(frozenAttempt.publicationFence());
             assertThat(firstFreeze.acknowledgement().appliedCommitId())

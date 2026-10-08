@@ -14,7 +14,6 @@ import java.util.Optional;
 import java.util.UUID;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding.TargetProof;
 import net.firedevops.firemud.common.publication.AccountPublicationAuthorizationBinding;
-import net.firedevops.firemud.common.world.WorldPublishedStartLocationEvidence;
 import net.firedevops.firemud.gamedesign.draft.AuthoredDraftPublishSelection;
 import net.firedevops.firemud.gamedesign.draft.AuthoredDraftPublishSelection.PublishIntent;
 import net.firedevops.firemud.gamedesign.dto.VersionDto;
@@ -42,8 +41,7 @@ class SelectedDraftPublicationCommandServiceTest {
     var result = mock(VersionDto.class);
     when(reader.read(fixture.intent(), fixture.operation().account()))
         .thenReturn(selectionOnly(fixture));
-    when(admission.admitAndReserve(
-            fixture.intent(), fixture.operation().account(), fixture.worldRequest()))
+    when(admission.admitAndReserve(fixture.intent(), fixture.operation().account()))
         .thenReturn(reservation);
     when(reservation.selection()).thenReturn(fixture.selection());
     when(reservation.operation()).thenReturn(fixture.operation());
@@ -57,14 +55,13 @@ class SelectedDraftPublicationCommandServiceTest {
     var service = service(admission, reader, finalizer);
 
     var actual =
-        service.publishSelectedDraftFullVersion(
-            fixture.intent(), fixture.operation().account(), fixture.worldRequest());
+        service.publishSelectedDraftFullVersion(fixture.intent(), fixture.operation().account());
 
     org.assertj.core.api.Assertions.assertThat(actual).isSameAs(result);
     var publicationOrder = inOrder(admission, finalizer);
     publicationOrder
         .verify(admission)
-        .admitAndReserve(fixture.intent(), fixture.operation().account(), fixture.worldRequest());
+        .admitAndReserve(fixture.intent(), fixture.operation().account());
     publicationOrder
         .verify(finalizer)
         .publishSelectedDraftFullVersion(
@@ -96,11 +93,10 @@ class SelectedDraftPublicationCommandServiceTest {
     var service = service(admission, reader, finalizer);
 
     var actual =
-        service.publishSelectedDraftFullVersion(
-            fixture.intent(), fixture.operation().account(), fixture.worldRequest());
+        service.publishSelectedDraftFullVersion(fixture.intent(), fixture.operation().account());
 
     org.assertj.core.api.Assertions.assertThat(actual).isSameAs(result);
-    verify(admission, never()).admitAndReserve(any(), any(), any());
+    verify(admission, never()).admitAndReserve(any(), any());
     verify(finalizer)
         .publishSelectedDraftFullVersion(
             fixture.selection().target().gameDesignVersionTenantKey(),
@@ -121,15 +117,14 @@ class SelectedDraftPublicationCommandServiceTest {
     var finalizer = mock(VersionPublishCommandServiceImpl.class);
     when(reader.read(fixture.intent(), fixture.operation().account()))
         .thenReturn(selectionOnly(fixture));
-    when(admission.admitAndReserve(
-            fixture.intent(), fixture.operation().account(), fixture.worldRequest()))
+    when(admission.admitAndReserve(fixture.intent(), fixture.operation().account()))
         .thenThrow(denial);
 
     assertThatThrownBy(
             () ->
                 service(admission, reader, finalizer)
                     .publishSelectedDraftFullVersion(
-                        fixture.intent(), fixture.operation().account(), fixture.worldRequest()))
+                        fixture.intent(), fixture.operation().account()))
         .isSameAs(denial);
     verifyNoInteractions(finalizer);
 
@@ -148,7 +143,7 @@ class SelectedDraftPublicationCommandServiceTest {
             () ->
                 service(partialAdmission, partialReader, partialFinalizer)
                     .publishSelectedDraftFullVersion(
-                        fixture.intent(), fixture.operation().account(), fixture.worldRequest()))
+                        fixture.intent(), fixture.operation().account()))
         .isInstanceOf(IllegalStateException.class)
         .hasMessageContaining("LOCAL_IDENTITY_INCOMPLETE");
     verifyNoInteractions(partialAdmission, partialFinalizer);
@@ -167,7 +162,7 @@ class SelectedDraftPublicationCommandServiceTest {
             () ->
                 service(admission, reader, finalizer)
                     .publishSelectedDraftFullVersion(
-                        fixture.intent(), fixture.operation().account(), fixture.worldRequest()))
+                        fixture.intent(), fixture.operation().account()))
         .isInstanceOf(IllegalStateException.class)
         .hasMessageContaining("SELECTION_UNAVAILABLE");
 
@@ -175,11 +170,10 @@ class SelectedDraftPublicationCommandServiceTest {
   }
 
   @Test
-  void exactRetryRejectsChangedIntentAccountBindingOrWorldRequest() throws Exception {
+  void exactRetryRejectsChangedIntentOrAccountBinding() throws Exception {
     var fixture = fixture();
     var alteredIntent = withNotes(fixture.intent(), "substituted notes");
-    assertRejectedRetry(
-        fixture, alteredIntent, fixture.operation().account(), fixture.worldRequest());
+    assertRejectedRetry(fixture, alteredIntent, fixture.operation().account());
 
     var changedAccount =
         new AccountPublicationAuthorizationBinding(
@@ -187,12 +181,7 @@ class SelectedDraftPublicationCommandServiceTest {
             fixture.operation().account().fenceId(),
             fixture.operation().account().input(),
             fixture.operation().account().sources());
-    assertRejectedRetry(fixture, fixture.intent(), changedAccount, fixture.worldRequest());
-
-    var changedWorldRequest =
-        withPublicationRequestId(fixture.worldRequest(), "substituted-publication-request");
-    assertRejectedRetry(
-        fixture, fixture.intent(), fixture.operation().account(), changedWorldRequest);
+    assertRejectedRetry(fixture, fixture.intent(), changedAccount);
   }
 
   @Test
@@ -207,7 +196,7 @@ class SelectedDraftPublicationCommandServiceTest {
             () ->
                 service(admission, reader, finalizer)
                     .publishSelectedDraftFullVersion(
-                        fixture.intent(), fixture.operation().account(), fixture.worldRequest()))
+                        fixture.intent(), fixture.operation().account()))
         .isInstanceOf(IllegalStateException.class)
         .hasMessageContaining("no ambient SQL transaction");
 
@@ -215,10 +204,7 @@ class SelectedDraftPublicationCommandServiceTest {
   }
 
   private static void assertRejectedRetry(
-      Fixture fixture,
-      PublishIntent intent,
-      AccountPublicationAuthorizationBinding account,
-      WorldPublishedStartLocationEvidence.Request worldRequest) {
+      Fixture fixture, PublishIntent intent, AccountPublicationAuthorizationBinding account) {
     var admission = mock(SelectedDraftPublicationAdmissionService.class);
     var reader = mock(SelectedDraftPublicationCommandService.DurableStateReader.class);
     var finalizer = mock(VersionPublishCommandServiceImpl.class);
@@ -227,7 +213,7 @@ class SelectedDraftPublicationCommandServiceTest {
     assertThatThrownBy(
             () ->
                 service(admission, reader, finalizer)
-                    .publishSelectedDraftFullVersion(intent, account, worldRequest))
+                    .publishSelectedDraftFullVersion(intent, account))
         .isInstanceOf(RuntimeException.class);
 
     verifyNoInteractions(admission, finalizer);
@@ -280,7 +266,7 @@ class SelectedDraftPublicationCommandServiceTest {
             bindingIntent.selectedCommitDigest());
     var selection =
         AuthoredDraftPublishSelection.fromStored(binding.canonicalJson(), binding.digest());
-    return new Fixture(operation, selection, intent, operation.world().request());
+    return new Fixture(operation, selection, intent);
   }
 
   private static PublishIntent withNotes(PublishIntent intent, String notes) {
@@ -295,27 +281,8 @@ class SelectedDraftPublicationCommandServiceTest {
         intent.selectedCommitDigest());
   }
 
-  private static WorldPublishedStartLocationEvidence.Request withPublicationRequestId(
-      WorldPublishedStartLocationEvidence.Request request, String publicationRequestId) {
-    return new WorldPublishedStartLocationEvidence.Request(
-        request.targetNamespace(),
-        request.canonicalTenantId(),
-        request.canonicalVersionId(),
-        request.intakeRequestId(),
-        request.publicationFence(),
-        publicationRequestId,
-        request.requestDigest(),
-        request.versionStateEpoch(),
-        request.publishWorkflowId(),
-        request.appliedCommitId(),
-        request.contentDigest(),
-        request.digestSchemaVersion(),
-        request.worldAffectedTuples());
-  }
-
   private record Fixture(
       GameDesignPublicationOperation operation,
       AuthoredDraftPublishSelection selection,
-      PublishIntent intent,
-      WorldPublishedStartLocationEvidence.Request worldRequest) {}
+      PublishIntent intent) {}
 }

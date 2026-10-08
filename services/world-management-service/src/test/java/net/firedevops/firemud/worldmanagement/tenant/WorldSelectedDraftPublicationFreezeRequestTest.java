@@ -81,10 +81,13 @@ class WorldSelectedDraftPublicationFreezeRequestTest {
     var acknowledgement = withGameDesign(() -> service.begin(fixture.request()));
 
     assertThat(acknowledgement.request()).isEqualTo(fixture.request());
+    assertThat(acknowledgement.intakeRequestId()).isEqualTo(fixture.owner().intakeRequestId());
     assertThat(acknowledgement.versionStateEpoch()).isEqualTo(EPOCH);
     assertThat(acknowledgement.publicationFence()).isEqualTo(prior.publicationFence());
     assertThat(acknowledgement.appliedCommitId())
         .isEqualTo(fixture.binding().commitId().toString());
+    assertThat(acknowledgement.contentDigest()).isEqualTo("a".repeat(64));
+    assertThat(acknowledgement.digestSchemaVersion()).isEqualTo(3);
     assertThat(acknowledgement.ownerFreezePhase())
         .isEqualTo(WorldSelectedDraftPublicationFreezeEvidence.OwnerFreezePhase.FROZEN);
     var order =

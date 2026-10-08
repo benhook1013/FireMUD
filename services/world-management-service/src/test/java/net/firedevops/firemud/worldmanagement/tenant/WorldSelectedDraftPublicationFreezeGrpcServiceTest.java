@@ -79,6 +79,7 @@ class WorldSelectedDraftPublicationFreezeGrpcServiceTest {
     var acknowledgement =
         new WorldSelectedDraftPublicationFreezeEvidence.Acknowledgement(
             fixture.request(),
+            fixture.owner().intakeRequestId(),
             fixture.request().expectedVersionStateEpoch(),
             java.util.UUID.fromString("18181818-1818-4818-8818-181818181818"),
             WorldSelectedDraftPublicationFreezeEvidence.OwnerFreezePhase.FROZEN,

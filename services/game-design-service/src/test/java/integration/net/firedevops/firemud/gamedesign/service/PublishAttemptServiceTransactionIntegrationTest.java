@@ -50,6 +50,9 @@ import net.firedevops.firemud.common.publication.GameDesignPublicationTerminalRe
 import net.firedevops.firemud.common.publication.GameDesignPublicationTerminalReadEvidence;
 import net.firedevops.firemud.common.publication.GameDesignPublicationTerminalReadGrpcCodec;
 import net.firedevops.firemud.common.publication.PublicationDigestRequestBinding;
+import net.firedevops.firemud.common.publication.WorldSelectedDraftPublicationFreezeClient;
+import net.firedevops.firemud.common.publication.WorldSelectedDraftPublicationFreezeEvidence;
+import net.firedevops.firemud.common.publication.WorldSelectedDraftPublicationFreezeGrpcCodec;
 import net.firedevops.firemud.common.temporal.FiremudWorkflowIds;
 import net.firedevops.firemud.common.world.WorldPublishedStartLocationEvidence;
 import net.firedevops.firemud.common.world.WorldPublishedStartLocationGrpcCodec;
@@ -93,9 +96,12 @@ import net.firedevops.firemud.gamedesign.v1.GameDesignPublicationTerminalReadSer
 import net.firedevops.firemud.test.NoGrpcServerTestConfiguration;
 import net.firedevops.firemud.test.PostgresBackedServiceTestSupport;
 import net.firedevops.firemud.test.TestContainerImages;
+import net.firedevops.firemud.worldmanagement.v1.BeginVersionPublicationFreezeRequest;
+import net.firedevops.firemud.worldmanagement.v1.BeginVersionPublicationFreezeResponse;
 import net.firedevops.firemud.worldmanagement.v1.ReadWorldPublishedStartLocationRequest;
 import net.firedevops.firemud.worldmanagement.v1.ReadWorldPublishedStartLocationResponse;
 import net.firedevops.firemud.worldmanagement.v1.WorldPublishedStartLocationReadServiceGrpc;
+import net.firedevops.firemud.worldmanagement.v1.WorldSelectedDraftPublicationFreezeServiceGrpc;
 import org.jooq.DSLContext;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -529,8 +535,8 @@ class PublishAttemptServiceTransactionIntegrationTest {
 
   /**
    * Exercises the real GD admission, owner reservation, and finalizer. The Account HELD response,
-   * World selector, original Draft outcomes, participant digests, and empty export are explicitly
-   * stipulated test fixtures; this is not genuine upstream production proof.
+   * World freeze/selector, original Draft outcomes, participant digests, and empty export are
+   * explicitly stipulated test fixtures; this is not genuine upstream production proof.
    */
   @Test
   void selectedDraftCompositionUsesAuthenticatedOwnerReadsAndReconcilesExactV2Release(
@@ -623,17 +629,24 @@ class PublishAttemptServiceTransactionIntegrationTest {
     var accountEndpoint =
         new StipulatedAccountPublicationReadEndpoint(operation.account(), heldDenied);
     var worldEndpoint = new StipulatedWorldPublicationReadEndpoint(operation.world());
+    var freezeEndpoint = new StipulatedWorldFreezeEndpoint(operation);
     Server accountServer =
         publicationOwnerServer(publicationReadIdentities.accountServer(), pki, accountEndpoint);
     Server worldServer =
         publicationOwnerServer(
-            publicationReadIdentities.worldManagementServer(), pki, worldEndpoint);
+            publicationReadIdentities.worldManagementServer(), pki, worldEndpoint, freezeEndpoint);
     var endpoints = new ServiceEndpointsProperties();
     endpoints.setAccountService("127.0.0.1:" + accountServer.getPort());
     endpoints.setWorldManagementService("127.0.0.1:" + worldServer.getPort());
     try {
       try (var accountClient =
               new AccountPublicationAuthorizationReadClient(
+                  endpoints,
+                  publicationReadIdentities.gameDesignClient().properties(pki.ca),
+                  new GrpcChannelFactory(),
+                  NAMESPACE);
+          var freezeClient =
+              new WorldSelectedDraftPublicationFreezeClient(
                   endpoints,
                   publicationReadIdentities.gameDesignClient().properties(pki.ca),
                   new GrpcChannelFactory(),
@@ -645,23 +658,24 @@ class PublishAttemptServiceTransactionIntegrationTest {
                   new GrpcChannelFactory(),
                   NAMESPACE)) {
         accountClient.init();
+        freezeClient.init();
         worldClient.init();
         var command =
             new SelectedDraftPublicationCommandService(
                 dsl,
                 transactionManager,
                 accountClient,
+                freezeClient,
                 worldClient,
                 NAMESPACE,
                 versionPublishCommandService);
 
         assertSelectionReadCode(
             Status.Code.FAILED_PRECONDITION,
-            () ->
-                command.publishSelectedDraftFullVersion(
-                    selection.intent(), operation.account(), operation.world().request()));
+            () -> command.publishSelectedDraftFullVersion(selection.intent(), operation.account()));
         assertThat(accountEndpoint.readCount()).isEqualTo(1);
         assertThat(worldEndpoint.readCount()).isZero();
+        assertThat(freezeEndpoint.beginCount()).isZero();
         assertThat(publishAttemptRepository.findByPublishWorkflowId(workflowId)).isEmpty();
         assertThat(new GameDesignPublicationOperationRepository(dsl).read(workflowId)).isEmpty();
         assertThat(
@@ -692,14 +706,24 @@ class PublishAttemptServiceTransactionIntegrationTest {
         assertThat(versionCountForTenant(tenantId)).isEqualTo(1L);
 
         heldDenied.set(false);
+        // World has acknowledged its stipulated freeze, but the subsequent selector response is
+        // unavailable. No GD reservation exists; retry must send the exact same Begin request.
+        worldEndpoint.unavailable.set(true);
+        assertSelectionReadCode(
+            Status.Code.UNAVAILABLE,
+            () -> command.publishSelectedDraftFullVersion(selection.intent(), operation.account()));
+        assertThat(freezeEndpoint.beginCount()).isEqualTo(1);
+        assertThat(new GameDesignPublicationOperationRepository(dsl).read(workflowId)).isEmpty();
+        assertThat(publishAttemptRepository.findByPublishWorkflowId(workflowId)).isEmpty();
+        worldEndpoint.unavailable.set(false);
         long versionCountBeforePublish = versionCountForTenant(tenantId);
         VersionDto published =
-            command.publishSelectedDraftFullVersion(
-                selection.intent(), operation.account(), operation.world().request());
+            command.publishSelectedDraftFullVersion(selection.intent(), operation.account());
         assertThat(published.id()).isEqualTo(candidate.getId());
         assertThat(versionCountForTenant(tenantId)).isEqualTo(versionCountBeforePublish);
-        assertThat(accountEndpoint.readCount()).isEqualTo(2);
-        assertThat(worldEndpoint.readCount()).isEqualTo(1);
+        assertThat(accountEndpoint.readCount()).isEqualTo(3);
+        assertThat(worldEndpoint.readCount()).isEqualTo(2);
+        assertThat(freezeEndpoint.beginCount()).isEqualTo(2);
 
         PublishAttempt attempt =
             publishAttemptRepository.findByPublishWorkflowId(workflowId).orElseThrow();
@@ -736,8 +760,7 @@ class PublishAttemptServiceTransactionIntegrationTest {
         Long bundleIdBeforeRetry = bundle.getId();
         String releaseRefBeforeRetry = bundle.getPublishedReleaseBundleRef();
         VersionDto exactRetry =
-            command.publishSelectedDraftFullVersion(
-                selection.intent(), operation.account(), operation.world().request());
+            command.publishSelectedDraftFullVersion(selection.intent(), operation.account());
         assertThat(exactRetry.id()).isEqualTo(published.id());
         assertThat(
                 publishAttemptRepository.findByPublishWorkflowId(workflowId).orElseThrow().getId())
@@ -773,30 +796,17 @@ class PublishAttemptServiceTransactionIntegrationTest {
                         workflowId)
                     .get(0, Long.class))
             .isEqualTo(1L);
-        assertThat(accountEndpoint.readCount()).isEqualTo(2);
-        assertThat(worldEndpoint.readCount()).isEqualTo(1);
+        assertThat(accountEndpoint.readCount()).isEqualTo(3);
+        assertThat(worldEndpoint.readCount()).isEqualTo(2);
+        assertThat(freezeEndpoint.beginCount()).isEqualTo(2);
         assertThat(versionCountForTenant(tenantId)).isEqualTo(versionCountBeforePublish);
 
-        var request = operation.world().request();
-        var changedWorldRequest =
-            new WorldPublishedStartLocationEvidence.Request(
-                request.targetNamespace(),
-                request.canonicalTenantId(),
-                request.canonicalVersionId(),
-                UUID.randomUUID(),
-                request.publicationFence(),
-                request.publicationRequestId(),
-                request.requestDigest(),
-                request.versionStateEpoch(),
-                request.publishWorkflowId(),
-                request.appliedCommitId(),
-                request.contentDigest(),
-                request.digestSchemaVersion(),
-                request.worldAffectedTuples());
+        var changedAccount =
+            new AccountPublicationAuthorizationBinding(
+                UUID.randomUUID(), operation.account().fenceId(),
+                operation.account().input(), operation.account().sources());
         assertThatThrownBy(
-                () ->
-                    command.publishSelectedDraftFullVersion(
-                        selection.intent(), operation.account(), changedWorldRequest))
+                () -> command.publishSelectedDraftFullVersion(selection.intent(), changedAccount))
             .isInstanceOf(IllegalStateException.class)
             .hasMessageContaining("LOCAL_IDENTITY_CONFLICT");
         var retainedAfterChangedRetry =
@@ -805,8 +815,9 @@ class PublishAttemptServiceTransactionIntegrationTest {
             .containsExactly(operation.canonicalBytes());
         assertThat(retainedAfterChangedRetry.terminalEvidenceBytes())
             .containsExactly(terminalBeforeChangedRetry);
-        assertThat(accountEndpoint.readCount()).isEqualTo(2);
-        assertThat(worldEndpoint.readCount()).isEqualTo(1);
+        assertThat(accountEndpoint.readCount()).isEqualTo(3);
+        assertThat(worldEndpoint.readCount()).isEqualTo(2);
+        assertThat(freezeEndpoint.beginCount()).isEqualTo(2);
         assertThat(versionCountForTenant(tenantId)).isEqualTo(versionCountBeforePublish);
       }
     } finally {
@@ -1432,17 +1443,19 @@ class PublishAttemptServiceTransactionIntegrationTest {
   }
 
   private static Server publicationOwnerServer(
-      SelectionReadTestIdentity identity, SelectionReadTestPki pki, BindableService endpoint)
+      SelectionReadTestIdentity identity, SelectionReadTestPki pki, BindableService... endpoints)
       throws Exception {
-    return NettyServerBuilder.forAddress(new InetSocketAddress("127.0.0.1", 0))
-        .sslContext(
-            GrpcSslContexts.forServer(identity.certificate().toFile(), identity.key().toFile())
-                .trustManager(pki.ca.toFile())
-                .clientAuth(ClientAuth.REQUIRE)
-                .build())
-        .addService(ServerInterceptors.intercept(endpoint, new GrpcPeerIdentityInterceptor()))
-        .build()
-        .start();
+    var builder =
+        NettyServerBuilder.forAddress(new InetSocketAddress("127.0.0.1", 0))
+            .sslContext(
+                GrpcSslContexts.forServer(identity.certificate().toFile(), identity.key().toFile())
+                    .trustManager(pki.ca.toFile())
+                    .clientAuth(ClientAuth.REQUIRE)
+                    .build());
+    for (var endpoint : endpoints) {
+      builder.addService(ServerInterceptors.intercept(endpoint, new GrpcPeerIdentityInterceptor()));
+    }
+    return builder.build().start();
   }
 
   private static boolean requireGameDesignPeer(StreamObserver<?> observer) {
@@ -1534,12 +1547,74 @@ class PublishAttemptServiceTransactionIntegrationTest {
     }
   }
 
+  /** Test-only freeze RPC: upstream World state and checkpoint are expressly stipulated. */
+  private static final class StipulatedWorldFreezeEndpoint
+      extends WorldSelectedDraftPublicationFreezeServiceGrpc
+          .WorldSelectedDraftPublicationFreezeServiceImplBase {
+    private final GameDesignPublicationOperation operation;
+    private final AtomicInteger begins = new AtomicInteger();
+
+    private StipulatedWorldFreezeEndpoint(GameDesignPublicationOperation operation) {
+      this.operation = operation;
+    }
+
+    @Override
+    public void beginVersionPublicationFreeze(
+        BeginVersionPublicationFreezeRequest request,
+        StreamObserver<BeginVersionPublicationFreezeResponse> observer) {
+      if (!requireGameDesignPeer(observer)) return;
+      begins.incrementAndGet();
+      try {
+        var decoded = WorldSelectedDraftPublicationFreezeGrpcCodec.fromRequest(request);
+        var world = operation.world().request();
+        var expected =
+            WorldSelectedDraftPublicationFreezeEvidence.Request.create(
+                NAMESPACE,
+                world.canonicalTenantId(),
+                world.canonicalVersionId(),
+                world.publicationRequestId(),
+                world.versionStateEpoch(),
+                world.requestDigest(),
+                operation.account());
+        if (!expected.equals(decoded)) {
+          observer.onError(
+              Status.FAILED_PRECONDITION
+                  .withDescription("Different stipulated World freeze request")
+                  .asRuntimeException());
+          return;
+        }
+        var acknowledgement =
+            new WorldSelectedDraftPublicationFreezeEvidence.Acknowledgement(
+                decoded,
+                world.intakeRequestId(),
+                world.versionStateEpoch(),
+                world.publicationFence(),
+                WorldSelectedDraftPublicationFreezeEvidence.OwnerFreezePhase.FROZEN,
+                world.appliedCommitId(),
+                world.contentDigest(),
+                world.digestSchemaVersion());
+        observer.onNext(WorldSelectedDraftPublicationFreezeGrpcCodec.toResponse(acknowledgement));
+        observer.onCompleted();
+      } catch (IllegalArgumentException invalid) {
+        observer.onError(
+            Status.INVALID_ARGUMENT
+                .withDescription("Invalid stipulated freeze request")
+                .asRuntimeException());
+      }
+    }
+
+    int beginCount() {
+      return begins.get();
+    }
+  }
+
   /** Test-only selector endpoint; it returns only the exact stipulated World evidence. */
   private static final class StipulatedWorldPublicationReadEndpoint
       extends WorldPublishedStartLocationReadServiceGrpc
           .WorldPublishedStartLocationReadServiceImplBase {
     private final WorldPublishedStartLocationEvidence expectedEvidence;
     private final AtomicInteger reads = new AtomicInteger();
+    private final AtomicBoolean unavailable = new AtomicBoolean(false);
 
     private StipulatedWorldPublicationReadEndpoint(
         WorldPublishedStartLocationEvidence expectedEvidence) {
@@ -1566,6 +1641,13 @@ class PublishAttemptServiceTransactionIntegrationTest {
         observer.onError(
             Status.FAILED_PRECONDITION
                 .withDescription("Different stipulated World selector")
+                .asRuntimeException());
+        return;
+      }
+      if (unavailable.get()) {
+        observer.onError(
+            Status.UNAVAILABLE
+                .withDescription("Stipulated selector unavailable")
                 .asRuntimeException());
         return;
       }

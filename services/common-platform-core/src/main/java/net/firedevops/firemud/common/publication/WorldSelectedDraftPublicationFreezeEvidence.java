@@ -162,6 +162,7 @@ public final class WorldSelectedDraftPublicationFreezeEvidence {
   /** Acknowledgement of the committed FROZEN event only, never a terminal or admission result. */
   public record Acknowledgement(
       Request request,
+      UUID intakeRequestId,
       long versionStateEpoch,
       UUID publicationFence,
       OwnerFreezePhase ownerFreezePhase,
@@ -173,6 +174,10 @@ public final class WorldSelectedDraftPublicationFreezeEvidence {
 
     public Acknowledgement {
       Objects.requireNonNull(request, "request");
+      if (intakeRequestId == null || NIL_UUID.equals(intakeRequestId)) {
+        throw new IllegalArgumentException(
+            "World intake correlation must be a non-nil owner-produced UUID");
+      }
       if (versionStateEpoch <= 0L || versionStateEpoch != request.expectedVersionStateEpoch()) {
         throw new IllegalArgumentException(
             "World-observed Version state epoch differs from the exact request expectation");
