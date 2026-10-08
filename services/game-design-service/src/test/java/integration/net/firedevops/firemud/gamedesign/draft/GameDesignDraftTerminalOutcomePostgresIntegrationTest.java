@@ -397,7 +397,7 @@ class GameDesignDraftTerminalOutcomePostgresIntegrationTest {
   @Test
   void migrationDoesNotInventAccountOutcomesForRetainedStatusOnlyRows() {
     Fixture legacy = createFixture(MigrationVersion.fromVersion("45"));
-    TargetProof target = legacy.newTarget();
+    TargetProof target = legacy.newHistoricalTarget();
     DraftCommitBinding binding = binding(target);
     List<DraftCommitCoordinatorRepository.OwnerOutcome> outcomes = allAppliedOutcomes(binding);
 
@@ -751,6 +751,43 @@ class GameDesignDraftTerminalOutcomePostgresIntegrationTest {
           savedVersion.getIdentitySourceGameRowId(),
           savedVersion.getIdentitySourceGameTenantKey(),
           savedVersion.getIdentitySourceProvenanceKind());
+    }
+
+    TargetProof newHistoricalTarget() {
+      String tenantKey = "d-" + UUID.randomUUID().toString().replace("-", "");
+      Game game = new Game();
+      game.setTenantId(tenantKey);
+      game.setName("Historical Game Design terminal evidence source");
+      game.setDescription("V45 canonical Version owner fixture");
+      Game savedGame = Objects.requireNonNull(transaction.execute(status -> games.save(game)));
+      UUID canonicalVersionId = UUID.randomUUID();
+      org.jooq.Record savedVersion =
+          Objects.requireNonNull(
+              transaction.execute(
+                  status ->
+                      dsl.resultQuery(
+                              "INSERT INTO version (tenant_id, canonical_version_id, canonical_tenant_id, "
+                                  + "identity_source_game_row_id, identity_source_game_tenant_key, "
+                                  + "identity_source_provenance_kind, version_number, version_state, "
+                                  + "version_state_epoch, script_patch_version, base_version_id, "
+                                  + "is_script_only, notes) SELECT g.tenant_id, ?, g.canonical_tenant_id, "
+                                  + "g.id, g.tenant_id, g.tenant_identity_provenance_kind, 1, 'DRAFT', "
+                                  + "1, NULL, NULL, FALSE, ? FROM game g WHERE g.id = ? RETURNING "
+                                  + "id, tenant_id, canonical_tenant_id, canonical_version_id, "
+                                  + "identity_source_game_row_id, identity_source_game_tenant_key, "
+                                  + "identity_source_provenance_kind",
+                              canonicalVersionId,
+                              "V45 retained status-only migration fixture",
+                              savedGame.getId())
+                          .fetchOne()));
+      return new TargetProof(
+          savedVersion.get("canonical_tenant_id", UUID.class),
+          savedVersion.get("canonical_version_id", UUID.class),
+          savedVersion.get("id", Long.class),
+          savedVersion.get("tenant_id", String.class),
+          savedVersion.get("identity_source_game_row_id", Long.class),
+          savedVersion.get("identity_source_game_tenant_key", String.class),
+          savedVersion.get("identity_source_provenance_kind", String.class));
     }
 
     <T> T inTransaction(Supplier<T> action) {

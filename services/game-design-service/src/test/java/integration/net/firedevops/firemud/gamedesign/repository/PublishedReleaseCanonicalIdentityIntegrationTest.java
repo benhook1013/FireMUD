@@ -425,10 +425,10 @@ class PublishedReleaseCanonicalIdentityIntegrationTest {
               assertThat(row.get(ARTIFACT_DIGESTS_JSON)).isNull();
             });
 
-    Version mappedVersion = saveVersion(fixture, game);
     migrate(fixture.dataSource(), fixture.schema(), null);
     assertThat(retainedTuple(fixture.dsl(), retainedBundleId)).isEqualTo(retainedTupleBeforeV38);
     assertThat(bundleXmin(fixture.dsl(), retainedBundleId)).isEqualTo(retainedXminBeforeV38);
+    Version mappedVersion = saveVersion(fixture, game);
     PublishedReleaseBundle mapped =
         fixture.releaseBundleRepository().save(bundle(game.getTenantId(), mappedVersion.getId()));
     Map<String, Object> mappedTupleBefore = releaseBundleTuple(fixture.dsl(), mapped.getId());

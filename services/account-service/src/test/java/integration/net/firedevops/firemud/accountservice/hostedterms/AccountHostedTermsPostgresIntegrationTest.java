@@ -59,7 +59,7 @@ class AccountHostedTermsPostgresIntegrationTest {
 
   @Test
   void migrationRetainsExistingPartyAndBackfillsNoCatalogOrAcceptance() throws Exception {
-    Database db = database("81");
+    Database db = database("95");
     UUID accountId = insertAccount(db);
     IndividualCreatorPartySource party =
         party(UUID.randomUUID(), accountId, 1, "test-id-evidence-v1");
@@ -78,7 +78,7 @@ class AccountHostedTermsPostgresIntegrationTest {
                 .intoMap());
     byte[] partySourceBefore = (byte[]) partyBefore.remove("source_payload");
 
-    migrate(db, "94");
+    migrate(db, "96");
 
     assertThat(
             Objects.requireNonNull(
@@ -104,7 +104,7 @@ class AccountHostedTermsPostgresIntegrationTest {
 
   @Test
   void realServicePublishesAffirmativelyAcceptsReadsBackAndAdvancesMateriality() throws Exception {
-    Database db = database("94");
+    Database db = database("96");
     UUID accountId = insertAccount(db);
     UUID partyId = UUID.randomUUID();
     UUID scopeId = UUID.randomUUID();
@@ -251,7 +251,7 @@ class AccountHostedTermsPostgresIntegrationTest {
   @Test
   void acceptanceRejectsWrongSignerNegativeActionChangedShownTermsAndUnavailableIdentity()
       throws Exception {
-    Database db = database("94");
+    Database db = database("96");
     UUID accountId = insertAccount(db);
     UUID partyId = UUID.randomUUID();
     UUID scopeId = UUID.randomUUID();
@@ -318,7 +318,7 @@ class AccountHostedTermsPostgresIntegrationTest {
 
   @Test
   void futureTermsCarryDeadlineWithoutFreezingPriorTermsEarly() throws Exception {
-    Database db = database("94");
+    Database db = database("96");
     UUID accountId = insertAccount(db);
     UUID partyId = UUID.randomUUID();
     UUID scopeId = UUID.randomUUID();
@@ -482,7 +482,7 @@ class AccountHostedTermsPostgresIntegrationTest {
 
   @Test
   void ownerTransactionRollbackRemovesUncommittedCatalogAndPublicationIntent() throws Exception {
-    Database db = database("94");
+    Database db = database("96");
     HostedTermsRepository repository = new HostedTermsRepository(db.dsl());
     UUID scopeId = UUID.randomUUID();
     UUID requestId = UUID.randomUUID();

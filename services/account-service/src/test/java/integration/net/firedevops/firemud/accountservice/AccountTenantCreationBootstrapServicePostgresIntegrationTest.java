@@ -73,6 +73,62 @@ class AccountTenantCreationBootstrapServicePostgresIntegrationTest {
   static PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>("postgres:16-alpine");
 
   @Test
+  void provenanceMigrationPreservesRetainedRowsAndRejectsUnknownValues() {
+    String schema = SCHEMA_PREFIX + UUID.randomUUID().toString().replace("-", "");
+    DriverManagerDataSource dataSource = new DriverManagerDataSource();
+    dataSource.setUrl(postgres.getJdbcUrl());
+    dataSource.setUsername(postgres.getUsername());
+    dataSource.setPassword(postgres.getPassword());
+    dataSource.setSchema(schema);
+    migrateSchema(dataSource, schema, "97");
+    DSLContext dsl =
+        DSL.using(new TransactionAwareDataSourceProxy(dataSource), SQLDialect.POSTGRES);
+
+    UUID accountUuid = UUID.randomUUID();
+    dsl.execute(
+        "INSERT INTO accounts (account_uuid, username, email, password_hash) "
+            + "VALUES (?, ?, ?, 'migration-fixture-hash')",
+        accountUuid,
+        "creator-migration-" + accountUuid.toString().substring(0, 8),
+        accountUuid + "@example.test");
+    Long accountId =
+        java.util.Objects.requireNonNull(
+                dsl.fetchOne("SELECT id FROM accounts WHERE account_uuid = ?", accountUuid))
+            .get("id", Long.class);
+    dsl.execute(
+        "INSERT INTO account_tenant_membership "
+            + "(account_id, tenant_id, gameplay_admission_allowed, lifecycle_state, "
+            + "membership_version, membership_authority_generation, authority_provenance) "
+            + "VALUES (?, 42, FALSE, 'LEGACY_UNVERIFIED', 1, 1, 'LEGACY_UNVERIFIED'), "
+            + "(?, 43, FALSE, 'ACTIVE', 1, 1, 'SEEDED_DEMO'), "
+            + "(?, 44, TRUE, 'ACTIVE', 1, 1, 'EXPLICIT_JOIN')",
+        accountId,
+        accountId,
+        accountId);
+    List<Map<String, Object>> retainedBefore =
+        dsl.fetch("SELECT * FROM account_tenant_membership ORDER BY tenant_id").intoMaps();
+
+    migrateSchema(dataSource, schema, "98");
+
+    assertThat(dsl.fetch("SELECT * FROM account_tenant_membership ORDER BY tenant_id").intoMaps())
+        .containsExactlyElementsOf(retainedBefore);
+    assertThatThrownBy(
+            () ->
+                dsl.execute(
+                    "INSERT INTO account_tenant_membership "
+                        + "(account_id, tenant_id, gameplay_admission_allowed, lifecycle_state, "
+                        + "membership_version, membership_authority_generation, authority_provenance) "
+                        + "VALUES (?, 45, FALSE, 'ACTIVE', 1, 1, 'UNRECOGNIZED')",
+                    accountId))
+        .hasMessageContaining("account_membership_provenance_check");
+    assertThat(
+            java.util.Objects.requireNonNull(
+                    dsl.fetchOne("SELECT count(*) FROM account_tenant_membership"))
+                .get(0, Long.class))
+        .isEqualTo(3L);
+  }
+
+  @Test
   void commitIsControlOnlyAndHistoricalRetryDoesNotOverwriteLaterMembershipAdvance() {
     Fixture fixture = fixture(false);
     AccountTenantCreationBootstrapResult original = bootstrap(fixture);
@@ -693,6 +749,19 @@ class AccountTenantCreationBootstrapServicePostgresIntegrationTest {
         outbox,
         operationRepository,
         producer);
+  }
+
+  private static void migrateSchema(
+      DriverManagerDataSource dataSource, String schema, String target) {
+    Flyway.configure()
+        .dataSource(dataSource)
+        .schemas(schema)
+        .defaultSchema(schema)
+        .placeholders(Map.of("serviceSchema", schema))
+        .locations("classpath:db/migration")
+        .target(target)
+        .load()
+        .migrate();
   }
 
   private static FreshTenantCreatorEvidence creatorEvidence(UUID accountUuid, UUID tenantUuid) {

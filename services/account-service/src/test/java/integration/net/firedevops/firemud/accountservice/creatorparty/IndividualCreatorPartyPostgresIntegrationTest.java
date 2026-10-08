@@ -40,7 +40,7 @@ import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
 /**
- * Real owner-row and PostgreSQL guard definitions. Verification/policy and original V64 creation
+ * Real owner-row and PostgreSQL guard definitions. Verification/policy and receiving V94 creation
  * qualification are explicit SQL fixtures, not authentication, legal provisioning or launch proof.
  */
 @Testcontainers(disabledWithoutDocker = true)
@@ -53,9 +53,8 @@ class IndividualCreatorPartyPostgresIntegrationTest {
 
   @Test
   void migrationPreservesExistingAccountAndMembershipAndEnrollsNoParty() throws Exception {
-    // V74 is this source tree's last existing migration before V78; V77 is reserved elsewhere
-    // and is not a historical schema that this candidate can execute or prove.
-    Database db = database("74");
+    // V94 is the receiving tree's last existing migration before the V95 creator-party schema.
+    Database db = database("94");
     UUID account = insertAccount(db);
     long accountKey =
         Objects.requireNonNull(
@@ -83,7 +82,7 @@ class IndividualCreatorPartyPostgresIntegrationTest {
                         "SELECT * FROM account_tenant_membership WHERE account_id = ?", accountKey),
                 "Baseline membership row is missing")
             .intoMap();
-    migrate(db, "78");
+    migrate(db, "95");
     assertThat(
             Objects.requireNonNull(
                     db.dsl().fetchOne("SELECT * FROM accounts WHERE account_uuid = ?", account),
@@ -495,7 +494,7 @@ class IndividualCreatorPartyPostgresIntegrationTest {
   }
 
   private static Fixture fixture() throws Exception {
-    Database db = database("78");
+    Database db = database("95");
     UUID account = insertAccount(db);
     UUID request = UUID.randomUUID();
     UUID operation = UUID.randomUUID();
@@ -585,7 +584,7 @@ class IndividualCreatorPartyPostgresIntegrationTest {
   }
 
   private static void insertBootstrapFixture(Database db, FreshTenantCreatorEvidence creator) {
-    // Stipulated original qualification, using the real guarded V64 lifecycle; no guard is
+    // Stipulated original qualification, using the real guarded V94 lifecycle; no guard is
     // disabled.
     var creation = creator.creationEvidence();
     UUID authorization = creator.accountAuthorizationOperationId();

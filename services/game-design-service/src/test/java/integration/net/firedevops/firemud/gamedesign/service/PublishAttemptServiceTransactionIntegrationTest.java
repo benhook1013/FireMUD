@@ -187,6 +187,7 @@ class PublishAttemptServiceTransactionIntegrationTest {
     publishAttemptRepository.save(attempt);
     PublishAttempt savedAttempt =
         publishAttemptRepository.findByPublishWorkflowId(publishWorkflowId).orElseThrow();
+    assertThat(savedAttempt.getRevision()).isEqualTo(1L);
 
     PublishAttempt backfilled =
         publishAttemptRepository
@@ -200,6 +201,18 @@ class PublishAttemptServiceTransactionIntegrationTest {
             .orElseThrow();
 
     assertThat(backfilled.getRequestDigest()).isEqualTo("exact-identity-digest");
+    assertThat(backfilled.getRevision()).isEqualTo(2L);
+    PublishAttempt retryReadback =
+        publishAttemptRepository
+            .backfillFullVersionRequestDigestIfAbsent(
+                savedAttempt.getId(),
+                tenantId,
+                publishWorkflowId,
+                savedVersion.getId(),
+                savedVersion.getVersionNumber(),
+                "exact-identity-digest")
+            .orElseThrow();
+    assertThat(retryReadback.getRevision()).isEqualTo(2L);
     assertThat(
             publishAttemptRepository.backfillFullVersionRequestDigestIfAbsent(
                 savedAttempt.getId(),
@@ -212,6 +225,93 @@ class PublishAttemptServiceTransactionIntegrationTest {
     PublishAttempt storedAttempt =
         publishAttemptRepository.findByPublishWorkflowId(publishWorkflowId).orElseThrow();
     assertThat(storedAttempt.getRequestDigest()).isEqualTo("exact-identity-digest");
+
+    String terminalWorkflowId = "terminal-digest-backfill-denial-integration-test";
+    PublishAttempt terminalAttempt = new PublishAttempt();
+    terminalAttempt.setTenantId(tenantId);
+    terminalAttempt.setPublishWorkflowId(terminalWorkflowId);
+    terminalAttempt.setPublishType(PublishType.FULL_VERSION);
+    terminalAttempt.setVersionId(savedVersion.getId());
+    terminalAttempt.setVersionNumber(savedVersion.getVersionNumber());
+    publishAttemptRepository.save(terminalAttempt);
+    terminalAttempt =
+        publishAttemptRepository.findByPublishWorkflowId(terminalWorkflowId).orElseThrow();
+    terminalAttempt.setStatus(PublishAttemptStatus.FAILED);
+    terminalAttempt.setFailureCode("fixture-terminal");
+    terminalAttempt.setCompletedAt(LocalDateTime.now());
+    terminalAttempt = publishAttemptRepository.save(terminalAttempt);
+    assertThat(terminalAttempt.getRevision()).isEqualTo(2L);
+    assertThat(
+            publishAttemptRepository.backfillFullVersionRequestDigestIfAbsent(
+                terminalAttempt.getId(),
+                tenantId,
+                terminalWorkflowId,
+                savedVersion.getId(),
+                savedVersion.getVersionNumber(),
+                "terminal-must-not-install-digest"))
+        .isEmpty();
+    PublishAttempt retainedTerminalAttempt =
+        publishAttemptRepository.findByPublishWorkflowId(terminalWorkflowId).orElseThrow();
+    assertThat(retainedTerminalAttempt.getRequestDigest()).isNull();
+    assertThat(retainedTerminalAttempt.getRevision()).isEqualTo(2L);
+  }
+
+  @Test
+  void publishAttemptSaveUsesRevisionCasAndRejectsStaleAndTerminalUpdates() {
+    String tenantId = "9005";
+    Game game = new Game();
+    game.setTenantId(tenantId);
+    game.setName("publish-attempt-revision-proof-game");
+    gameRepository.save(game);
+
+    Version version = new Version();
+    version.setTenantId(tenantId);
+    version.setVersionNumber(1);
+    version.setVersionState(VersionLifecycleState.DRAFT);
+    version.setVersionStateEpoch(1L);
+    Version savedVersion = versionRepository.save(version);
+
+    PublishAttempt attempt = new PublishAttempt();
+    attempt.setTenantId(tenantId);
+    attempt.setPublishWorkflowId("publish-attempt-revision-cas-integration-test");
+    attempt.setPublishType(PublishType.FULL_VERSION);
+    attempt.setVersionId(savedVersion.getId());
+    attempt.setVersionNumber(savedVersion.getVersionNumber());
+    PublishAttempt inserted = publishAttemptRepository.save(attempt);
+    assertThat(inserted.getRevision()).isEqualTo(1L);
+
+    PublishAttempt firstWriter =
+        publishAttemptRepository
+            .findByPublishWorkflowId(attempt.getPublishWorkflowId())
+            .orElseThrow();
+    PublishAttempt staleWriter =
+        publishAttemptRepository
+            .findByPublishWorkflowId(attempt.getPublishWorkflowId())
+            .orElseThrow();
+    firstWriter.setFailureMessage("first revision writer");
+    firstWriter = publishAttemptRepository.save(firstWriter);
+    assertThat(firstWriter.getRevision()).isEqualTo(2L);
+
+    staleWriter.setFailureMessage("stale revision writer");
+    assertThatThrownBy(() -> publishAttemptRepository.save(staleWriter))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("stale or terminal");
+    PublishAttempt afterStaleWrite =
+        publishAttemptRepository
+            .findByPublishWorkflowId(attempt.getPublishWorkflowId())
+            .orElseThrow();
+    assertThat(afterStaleWrite.getRevision()).isEqualTo(2L);
+    assertThat(afterStaleWrite.getFailureMessage()).isEqualTo("first revision writer");
+
+    afterStaleWrite.setStatus(PublishAttemptStatus.FAILED);
+    afterStaleWrite.setFailureCode("terminal-revision-proof");
+    afterStaleWrite.setCompletedAt(LocalDateTime.now());
+    PublishAttempt terminal = publishAttemptRepository.save(afterStaleWrite);
+    assertThat(terminal.getRevision()).isEqualTo(3L);
+    terminal.setFailureMessage("terminal rows cannot be rewritten");
+    assertThatThrownBy(() -> publishAttemptRepository.save(terminal))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("stale or terminal");
   }
 
   @Test
@@ -269,6 +369,7 @@ class PublishAttemptServiceTransactionIntegrationTest {
             .orElseThrow();
 
     assertThat(attempt.getStatus()).isEqualTo(PublishAttemptStatus.SUCCEEDED);
+    assertThat(attempt.getRevision()).isGreaterThan(1L);
     assertThat(attempt.getVersionId()).isEqualTo(publishedVersion.id());
     assertThat(storedVersion.getVersionState()).isEqualTo(VersionLifecycleState.PUBLISHED);
     assertThat(bundle.getPublishWorkflowId()).isEqualTo(publishWorkflowId);
@@ -419,6 +520,7 @@ class PublishAttemptServiceTransactionIntegrationTest {
         .as("asset export uses the candidate's persisted version number")
         .isEqualTo(candidateVersionNumber.get());
     assertThat(attempt.getStatus()).isEqualTo(PublishAttemptStatus.FAILED);
+    assertThat(attempt.getRevision()).isGreaterThan(1L);
     assertThat(attempt.getFailureMessage()).isEqualTo("forced finalization failure");
     Version retainedCandidate =
         versionRepository.findByTenantIdAndId(tenantId, candidateVersionId.get()).orElseThrow();
