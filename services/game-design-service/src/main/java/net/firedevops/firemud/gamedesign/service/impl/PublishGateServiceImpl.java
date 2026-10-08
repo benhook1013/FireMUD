@@ -24,7 +24,7 @@ import org.springframework.stereotype.Service;
 public class PublishGateServiceImpl implements PublishGateService {
   private static final Map<String, Integer> SUPPORTED_DIGEST_SCHEMA_VERSIONS =
       Map.of(
-          PublishParticipantKey.WORLD_MANAGEMENT.name(), 2,
+          PublishParticipantKey.WORLD_MANAGEMENT.name(), 3,
           PublishParticipantKey.ENTITY_MANAGEMENT.name(), 1,
           PublishParticipantKey.GAME_LOGIC.name(), 1,
           PublishParticipantKey.AUTOMATION_SCRIPTING.name(), 5,

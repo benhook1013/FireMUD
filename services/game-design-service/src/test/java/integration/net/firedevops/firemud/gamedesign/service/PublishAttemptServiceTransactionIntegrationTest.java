@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.assertj.core.api.Assertions.catchThrowable;
 
+import io.grpc.BindableService;
 import io.grpc.Server;
 import io.grpc.ServerInterceptors;
 import io.grpc.Status;
@@ -11,6 +12,7 @@ import io.grpc.StatusRuntimeException;
 import io.grpc.netty.shaded.io.grpc.netty.GrpcSslContexts;
 import io.grpc.netty.shaded.io.grpc.netty.NettyServerBuilder;
 import io.grpc.netty.shaded.io.netty.handler.ssl.ClientAuth;
+import io.grpc.stub.StreamObserver;
 import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -23,15 +25,23 @@ import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
+import net.firedevops.firemud.account.v1.AccountPublicationAuthorizationReadServiceGrpc;
+import net.firedevops.firemud.account.v1.ReadHeldPublicationAuthorizationRequest;
+import net.firedevops.firemud.account.v1.ReadHeldPublicationAuthorizationResponse;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding.TargetProof;
 import net.firedevops.firemud.common.config.ServiceEndpointsProperties;
 import net.firedevops.firemud.common.gamedesign.GameDesignPublicationTerminalEvidence.Outcome;
 import net.firedevops.firemud.common.grpc.CommonGrpcClientProperties;
 import net.firedevops.firemud.common.grpc.GrpcChannelFactory;
+import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentityInterceptor;
 import net.firedevops.firemud.common.grpc.GrpcServerPeerIdentityCallCredentials;
 import net.firedevops.firemud.common.publication.AccountPublicationAuthorizationBinding;
+import net.firedevops.firemud.common.publication.AccountPublicationAuthorizationReadClient;
+import net.firedevops.firemud.common.publication.AccountPublicationAuthorizationReadEvidence;
+import net.firedevops.firemud.common.publication.AccountPublicationAuthorizationReadGrpcCodec;
 import net.firedevops.firemud.common.publication.AuthoredDraftPublishSelectionBinding;
 import net.firedevops.firemud.common.publication.AuthoredDraftPublishSelectionReadClient;
 import net.firedevops.firemud.common.publication.AuthoredDraftPublishSelectionReadEvidence;
@@ -41,7 +51,10 @@ import net.firedevops.firemud.common.publication.GameDesignPublicationTerminalRe
 import net.firedevops.firemud.common.publication.GameDesignPublicationTerminalReadGrpcCodec;
 import net.firedevops.firemud.common.publication.PublicationDigestRequestBinding;
 import net.firedevops.firemud.common.temporal.FiremudWorkflowIds;
+import net.firedevops.firemud.common.world.WorldPublishedStartLocationEvidence;
+import net.firedevops.firemud.common.world.WorldPublishedStartLocationGrpcCodec;
 import net.firedevops.firemud.gamedesign.GameDesignServiceApplication;
+import net.firedevops.firemud.gamedesign.client.WorldPublishedStartLocationClient;
 import net.firedevops.firemud.gamedesign.draft.AuthoredDraftPublishSelection;
 import net.firedevops.firemud.gamedesign.draft.AuthoredDraftPublishSelectionRepository;
 import net.firedevops.firemud.gamedesign.draft.DraftCommitCoordinatorRepository;
@@ -64,6 +77,7 @@ import net.firedevops.firemud.gamedesign.publication.GameDesignPublicationOperat
 import net.firedevops.firemud.gamedesign.publication.GameDesignPublicationTerminalReadGrpcService;
 import net.firedevops.firemud.gamedesign.publication.GameDesignPublicationTerminalReadService;
 import net.firedevops.firemud.gamedesign.publication.IsolatedPublicationOperationFixtures;
+import net.firedevops.firemud.gamedesign.publication.SelectedDraftPublicationCommandService;
 import net.firedevops.firemud.gamedesign.publication.SelectedDraftPublicationOwner;
 import net.firedevops.firemud.gamedesign.repository.GameRepository;
 import net.firedevops.firemud.gamedesign.repository.PublishAttemptRepository;
@@ -79,6 +93,9 @@ import net.firedevops.firemud.gamedesign.v1.GameDesignPublicationTerminalReadSer
 import net.firedevops.firemud.test.NoGrpcServerTestConfiguration;
 import net.firedevops.firemud.test.PostgresBackedServiceTestSupport;
 import net.firedevops.firemud.test.TestContainerImages;
+import net.firedevops.firemud.worldmanagement.v1.ReadWorldPublishedStartLocationRequest;
+import net.firedevops.firemud.worldmanagement.v1.ReadWorldPublishedStartLocationResponse;
+import net.firedevops.firemud.worldmanagement.v1.WorldPublishedStartLocationReadServiceGrpc;
 import org.jooq.DSLContext;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -114,6 +131,7 @@ import org.testcontainers.junit.jupiter.Testcontainers;
     })
 @Import(NoGrpcServerTestConfiguration.class)
 class PublishAttemptServiceTransactionIntegrationTest {
+  private static final String NAMESPACE = "test";
   private static final String TENANT_ID = "9001";
   private static final String WORKFLOW_ID = "full-version-transaction-integration-test";
 
@@ -507,6 +525,294 @@ class PublishAttemptServiceTransactionIntegrationTest {
     assertThat(terminalOperation.terminalEvidenceBytes()).isNotNull();
     publishAttemptRepository.requirePublishedOperation(attempt);
     assertTerminalOwnerReadOverMtls(operation, Outcome.PUBLISHED, terminalPki);
+  }
+
+  /**
+   * Exercises the real GD admission, owner reservation, and finalizer. The Account HELD response,
+   * World selector, original Draft outcomes, participant digests, and empty export are explicitly
+   * stipulated test fixtures; this is not genuine upstream production proof.
+   */
+  @Test
+  void selectedDraftCompositionUsesAuthenticatedOwnerReadsAndReconcilesExactV2Release(
+      @TempDir Path temporary) throws Exception {
+    String tenantId = "9010";
+    Game game = new Game();
+    game.setTenantId(tenantId);
+    game.setName("selected-command-composition-proof-game");
+    gameRepository.save(game);
+
+    Version candidate = new Version();
+    candidate.setTenantId(tenantId);
+    candidate.setVersionNumber(1);
+    candidate.setVersionState(VersionLifecycleState.DRAFT);
+    candidate.setVersionStateEpoch(1L);
+    candidate.setNotes("selected command composition proof");
+    candidate = versionRepository.save(candidate);
+    TargetProof target = targetProof(candidate);
+    long candidateEpoch = candidate.getVersionStateEpoch();
+    var prepared =
+        inOwnerTransaction(
+            () -> {
+              try {
+                return IsolatedPublicationOwnerSetup.selectSourceBackedDraftWithWorld(
+                    dsl, target, candidateEpoch, "selected command composition proof");
+              } catch (Exception failure) {
+                throw new IllegalStateException(failure);
+              }
+            });
+    var selectionSnapshot = prepared.selection();
+    var selection = selectionSnapshot.selection();
+    var operation =
+        IsolatedPublicationOperationFixtures.forSelection(
+            AuthoredDraftPublishSelectionBinding.fromStored(
+                selection.canonicalJson(), selection.digest()),
+            prepared.world());
+    assertThat(operation.account().input().selection().canonicalBytes())
+        .containsExactly(selection.canonicalBytes());
+    assertThat(operation.world().selectorReceiptBytes())
+        .containsExactly(prepared.world().selectorReceiptBytes());
+    assertThat(operation.world().originalAccountBindingBytes())
+        .containsExactly(prepared.world().originalAccountBindingBytes());
+    assertThat(operation.world().appliedResultBytes())
+        .containsExactly(prepared.world().appliedResultBytes());
+    var projectedWorldRequest = operation.world().request();
+    assertThat(projectedWorldRequest.targetNamespace()).isEqualTo(NAMESPACE);
+    assertThat(projectedWorldRequest.canonicalTenantId())
+        .isEqualTo(selection.intent().canonicalTenantId());
+    assertThat(projectedWorldRequest.canonicalVersionId())
+        .isEqualTo(selection.intent().canonicalVersionId());
+    assertThat(projectedWorldRequest.intakeRequestId())
+        .isEqualTo(prepared.world().request().intakeRequestId());
+    assertThat(projectedWorldRequest.publicationRequestId())
+        .isEqualTo(selection.intent().publishRequestId());
+    assertThat(projectedWorldRequest.requestDigest())
+        .isEqualTo(selection.digest().substring("sha256:".length()));
+    assertThat(projectedWorldRequest.versionStateEpoch())
+        .isEqualTo(Long.parseLong(selection.intent().expectedVersionStateEpoch()));
+    String expectedWorkflowId =
+        PublicationDigestRequestBinding.full(
+                selection.intent().canonicalTenantId().toString(),
+                Long.toString(selection.target().gameDesignVersionRowId()),
+                selection.intent().publishRequestId())
+            .derivedWorkflowIdentity();
+    assertThat(projectedWorldRequest.publishWorkflowId()).isEqualTo(expectedWorkflowId);
+    assertThat(projectedWorldRequest.appliedCommitId())
+        .isEqualTo(selection.intent().selectedCommitId().toString());
+    assertThat(projectedWorldRequest.contentDigest())
+        .isEqualTo(prepared.world().request().contentDigest());
+    assertThat(projectedWorldRequest.worldAffectedTuples())
+        .isEqualTo(prepared.world().request().worldAffectedTuples());
+
+    String workflowId = operation.workflowId();
+    String publishRequestId = operation.account().publishRequestId();
+    String publishedWorldEvidenceJson =
+        new String(operation.world().canonicalBytes(), StandardCharsets.UTF_8);
+    var participantDigests =
+        PublishedWorldSelectorFixtures.participants(candidate.getId(), operation.world());
+    Mockito.when(
+            publishGateService.collectFullVersionParticipantDigests(
+                Mockito.any(VersionDto.class),
+                Mockito.eq(publishRequestId),
+                Mockito.eq(workflowId)))
+        .thenReturn(participantDigests);
+    Mockito.when(assetExportService.exportAssets(tenantId, 1)).thenReturn(immutableEmptyManifest());
+
+    var pki = new SelectionReadTestPki(Files.createDirectories(temporary.resolve("pki")));
+    var publicationReadIdentities = pki.publicationReadIdentities();
+    var heldDenied = new AtomicBoolean(true);
+    var accountEndpoint =
+        new StipulatedAccountPublicationReadEndpoint(operation.account(), heldDenied);
+    var worldEndpoint = new StipulatedWorldPublicationReadEndpoint(operation.world());
+    Server accountServer =
+        publicationOwnerServer(publicationReadIdentities.accountServer(), pki, accountEndpoint);
+    Server worldServer =
+        publicationOwnerServer(
+            publicationReadIdentities.worldManagementServer(), pki, worldEndpoint);
+    var endpoints = new ServiceEndpointsProperties();
+    endpoints.setAccountService("127.0.0.1:" + accountServer.getPort());
+    endpoints.setWorldManagementService("127.0.0.1:" + worldServer.getPort());
+    try {
+      try (var accountClient =
+              new AccountPublicationAuthorizationReadClient(
+                  endpoints,
+                  publicationReadIdentities.gameDesignClient().properties(pki.ca),
+                  new GrpcChannelFactory(),
+                  NAMESPACE);
+          var worldClient =
+              new WorldPublishedStartLocationClient(
+                  endpoints,
+                  publicationReadIdentities.gameDesignClient().properties(pki.ca),
+                  new GrpcChannelFactory(),
+                  NAMESPACE)) {
+        accountClient.init();
+        worldClient.init();
+        var command =
+            new SelectedDraftPublicationCommandService(
+                dsl,
+                transactionManager,
+                accountClient,
+                worldClient,
+                NAMESPACE,
+                versionPublishCommandService);
+
+        assertSelectionReadCode(
+            Status.Code.FAILED_PRECONDITION,
+            () ->
+                command.publishSelectedDraftFullVersion(
+                    selection.intent(), operation.account(), operation.world().request()));
+        assertThat(accountEndpoint.readCount()).isEqualTo(1);
+        assertThat(worldEndpoint.readCount()).isZero();
+        assertThat(publishAttemptRepository.findByPublishWorkflowId(workflowId)).isEmpty();
+        assertThat(new GameDesignPublicationOperationRepository(dsl).read(workflowId)).isEmpty();
+        assertThat(
+                new AuthoredDraftPublishSelectionRepository(
+                        dsl, new DraftCommitCoordinatorRepository(dsl))
+                    .read(
+                        selection.intent().canonicalTenantId(),
+                        selection.intent().canonicalVersionId(),
+                        selection.intent().publishRequestId())
+                    .orElseThrow()
+                    .selection()
+                    .canonicalBytes())
+            .containsExactly(selection.canonicalBytes());
+        assertThat(
+                versionRepository
+                    .findByTenantIdAndId(tenantId, candidate.getId())
+                    .orElseThrow()
+                    .getVersionState())
+            .isEqualTo(VersionLifecycleState.DRAFT);
+        assertThat(
+                publishedReleaseBundleRepository.findByTenantIdAndVersionId(
+                    tenantId, candidate.getId()))
+            .isEmpty();
+        assertThat(
+                versionAssetArtifactRepository.findByTenantIdAndVersionId(
+                    tenantId, candidate.getId()))
+            .isEmpty();
+        assertThat(versionCountForTenant(tenantId)).isEqualTo(1L);
+
+        heldDenied.set(false);
+        long versionCountBeforePublish = versionCountForTenant(tenantId);
+        VersionDto published =
+            command.publishSelectedDraftFullVersion(
+                selection.intent(), operation.account(), operation.world().request());
+        assertThat(published.id()).isEqualTo(candidate.getId());
+        assertThat(versionCountForTenant(tenantId)).isEqualTo(versionCountBeforePublish);
+        assertThat(accountEndpoint.readCount()).isEqualTo(2);
+        assertThat(worldEndpoint.readCount()).isEqualTo(1);
+
+        PublishAttempt attempt =
+            publishAttemptRepository.findByPublishWorkflowId(workflowId).orElseThrow();
+        Version storedVersion =
+            versionRepository.findByTenantIdAndId(tenantId, candidate.getId()).orElseThrow();
+        PublishedReleaseBundle bundle =
+            publishedReleaseBundleRepository
+                .findByTenantIdAndVersionId(tenantId, candidate.getId())
+                .orElseThrow();
+        VersionAssetArtifact artifact =
+            versionAssetArtifactRepository
+                .findByTenantIdAndVersionId(tenantId, candidate.getId())
+                .orElseThrow();
+        var retainedOperation =
+            new GameDesignPublicationOperationRepository(dsl).read(workflowId).orElseThrow();
+        assertThat(attempt.getStatus()).isEqualTo(PublishAttemptStatus.SUCCEEDED);
+        assertThat(attempt.getVersionId()).isEqualTo(candidate.getId());
+        assertThat(storedVersion.getVersionState()).isEqualTo(VersionLifecycleState.PUBLISHED);
+        assertThat(bundle.getAttestationSchemaVersion()).isEqualTo("v2");
+        assertThat(bundle.getWorldPublishedStartLocationEvidenceJson())
+            .isEqualTo(publishedWorldEvidenceJson);
+        assertThat(bundle.getPublishWorkflowId()).isEqualTo(workflowId);
+        assertThat(artifact.getArtifactState()).isEqualTo(VersionAssetArtifactState.PUBLISHED);
+        assertThat(retainedOperation.operation().canonicalBytes())
+            .containsExactly(operation.canonicalBytes());
+        assertThat(retainedOperation.outcome()).isEqualTo("PUBLISHED");
+        assertThat(retainedOperation.terminalEvidenceBytes()).isNotEmpty();
+        publishAttemptRepository.requirePublishedOperation(attempt);
+
+        assertTerminalOwnerReadOverMtls(operation, Outcome.PUBLISHED, pki);
+        byte[] terminalBeforeChangedRetry = retainedOperation.terminalEvidenceBytes();
+        long attemptIdBeforeRetry = attempt.getId();
+        long attemptRevisionBeforeRetry = attempt.getRevision();
+        Long bundleIdBeforeRetry = bundle.getId();
+        String releaseRefBeforeRetry = bundle.getPublishedReleaseBundleRef();
+        VersionDto exactRetry =
+            command.publishSelectedDraftFullVersion(
+                selection.intent(), operation.account(), operation.world().request());
+        assertThat(exactRetry.id()).isEqualTo(published.id());
+        assertThat(
+                publishAttemptRepository.findByPublishWorkflowId(workflowId).orElseThrow().getId())
+            .isEqualTo(attemptIdBeforeRetry);
+        assertThat(
+                publishAttemptRepository
+                    .findByPublishWorkflowId(workflowId)
+                    .orElseThrow()
+                    .getRevision())
+            .isEqualTo(attemptRevisionBeforeRetry);
+        var bundleAfterExactRetry =
+            publishedReleaseBundleRepository
+                .findByTenantIdAndVersionId(tenantId, candidate.getId())
+                .orElseThrow();
+        assertThat(bundleAfterExactRetry.getId()).isEqualTo(bundleIdBeforeRetry);
+        assertThat(bundleAfterExactRetry.getPublishedReleaseBundleRef())
+            .isEqualTo(releaseRefBeforeRetry);
+        var operationAfterExactRetry =
+            new GameDesignPublicationOperationRepository(dsl).read(workflowId).orElseThrow();
+        assertThat(operationAfterExactRetry.operation().canonicalBytes())
+            .containsExactly(operation.canonicalBytes());
+        assertThat(operationAfterExactRetry.terminalEvidenceBytes())
+            .containsExactly(terminalBeforeChangedRetry);
+        assertThat(
+                dsl.fetchSingle(
+                        "SELECT COUNT(*) FROM published_release_bundle WHERE tenant_id = ?",
+                        tenantId)
+                    .get(0, Long.class))
+            .isEqualTo(1L);
+        assertThat(
+                dsl.fetchSingle(
+                        "SELECT COUNT(*) FROM publish_attempt WHERE publish_workflow_id = ?",
+                        workflowId)
+                    .get(0, Long.class))
+            .isEqualTo(1L);
+        assertThat(accountEndpoint.readCount()).isEqualTo(2);
+        assertThat(worldEndpoint.readCount()).isEqualTo(1);
+        assertThat(versionCountForTenant(tenantId)).isEqualTo(versionCountBeforePublish);
+
+        var request = operation.world().request();
+        var changedWorldRequest =
+            new WorldPublishedStartLocationEvidence.Request(
+                request.targetNamespace(),
+                request.canonicalTenantId(),
+                request.canonicalVersionId(),
+                UUID.randomUUID(),
+                request.publicationFence(),
+                request.publicationRequestId(),
+                request.requestDigest(),
+                request.versionStateEpoch(),
+                request.publishWorkflowId(),
+                request.appliedCommitId(),
+                request.contentDigest(),
+                request.digestSchemaVersion(),
+                request.worldAffectedTuples());
+        assertThatThrownBy(
+                () ->
+                    command.publishSelectedDraftFullVersion(
+                        selection.intent(), operation.account(), changedWorldRequest))
+            .isInstanceOf(IllegalStateException.class)
+            .hasMessageContaining("LOCAL_IDENTITY_CONFLICT");
+        var retainedAfterChangedRetry =
+            new GameDesignPublicationOperationRepository(dsl).read(workflowId).orElseThrow();
+        assertThat(retainedAfterChangedRetry.operation().canonicalBytes())
+            .containsExactly(operation.canonicalBytes());
+        assertThat(retainedAfterChangedRetry.terminalEvidenceBytes())
+            .containsExactly(terminalBeforeChangedRetry);
+        assertThat(accountEndpoint.readCount()).isEqualTo(2);
+        assertThat(worldEndpoint.readCount()).isEqualTo(1);
+        assertThat(versionCountForTenant(tenantId)).isEqualTo(versionCountBeforePublish);
+      }
+    } finally {
+      shutdownServer(accountServer);
+      shutdownServer(worldServer);
+    }
   }
 
   @Test
@@ -1125,6 +1431,153 @@ class PublishAttemptServiceTransactionIntegrationTest {
     }
   }
 
+  private static Server publicationOwnerServer(
+      SelectionReadTestIdentity identity, SelectionReadTestPki pki, BindableService endpoint)
+      throws Exception {
+    return NettyServerBuilder.forAddress(new InetSocketAddress("127.0.0.1", 0))
+        .sslContext(
+            GrpcSslContexts.forServer(identity.certificate().toFile(), identity.key().toFile())
+                .trustManager(pki.ca.toFile())
+                .clientAuth(ClientAuth.REQUIRE)
+                .build())
+        .addService(ServerInterceptors.intercept(endpoint, new GrpcPeerIdentityInterceptor()))
+        .build()
+        .start();
+  }
+
+  private static boolean requireGameDesignPeer(StreamObserver<?> observer) {
+    var peer = GrpcPeerIdentity.current();
+    if (peer == null) {
+      observer.onError(
+          Status.UNAUTHENTICATED
+              .withDescription("Verified workload required")
+              .asRuntimeException());
+      return false;
+    }
+    if (!peer.uri().equals("spiffe://firemud/ns/test/sa/game-design-service")) {
+      observer.onError(
+          Status.PERMISSION_DENIED
+              .withDescription("Exact Game Design peer required")
+              .asRuntimeException());
+      return false;
+    }
+    return true;
+  }
+
+  private static void shutdownServer(Server server) throws InterruptedException {
+    server.shutdownNow();
+    assertThat(server.awaitTermination(5, TimeUnit.SECONDS)).isTrue();
+  }
+
+  private long versionCountForTenant(String tenantId) {
+    return dsl.fetchSingle("SELECT COUNT(*) FROM version WHERE tenant_id = ?", tenantId)
+        .get(0, Long.class);
+  }
+
+  /** Test-only HELD endpoint; it accepts only the exact stipulated Account binding. */
+  private static final class StipulatedAccountPublicationReadEndpoint
+      extends AccountPublicationAuthorizationReadServiceGrpc
+          .AccountPublicationAuthorizationReadServiceImplBase {
+    private final byte[] expectedBinding;
+    private final AtomicBoolean heldDenied;
+    private final AtomicInteger reads = new AtomicInteger();
+
+    private StipulatedAccountPublicationReadEndpoint(
+        AccountPublicationAuthorizationBinding expectedBinding, AtomicBoolean heldDenied) {
+      this.expectedBinding = expectedBinding.canonicalBytes();
+      this.heldDenied = heldDenied;
+    }
+
+    @Override
+    public void readHeldPublicationAuthorization(
+        ReadHeldPublicationAuthorizationRequest request,
+        StreamObserver<ReadHeldPublicationAuthorizationResponse> observer) {
+      if (!requireGameDesignPeer(observer)) return;
+      reads.incrementAndGet();
+      final AccountPublicationAuthorizationReadEvidence.Request decoded;
+      try {
+        decoded = AccountPublicationAuthorizationReadGrpcCodec.fromRequest(request);
+      } catch (IllegalArgumentException invalid) {
+        observer.onError(
+            Status.INVALID_ARGUMENT
+                .withDescription("Invalid stipulated read request")
+                .asRuntimeException());
+        return;
+      }
+      if (!java.util.Arrays.equals(decoded.binding().canonicalBytes(), expectedBinding)) {
+        observer.onError(
+            Status.FAILED_PRECONDITION
+                .withDescription("Different stipulated Account binding")
+                .asRuntimeException());
+        return;
+      }
+      if (!NAMESPACE.equals(decoded.targetNamespace())) {
+        observer.onError(
+            Status.PERMISSION_DENIED
+                .withDescription("Different stipulated Account namespace")
+                .asRuntimeException());
+        return;
+      }
+      if (heldDenied.get()) {
+        observer.onError(
+            Status.FAILED_PRECONDITION
+                .withDescription("Stipulated Account order is not HELD")
+                .asRuntimeException());
+        return;
+      }
+      observer.onNext(AccountPublicationAuthorizationReadGrpcCodec.toHeldResponse(decoded));
+      observer.onCompleted();
+    }
+
+    int readCount() {
+      return reads.get();
+    }
+  }
+
+  /** Test-only selector endpoint; it returns only the exact stipulated World evidence. */
+  private static final class StipulatedWorldPublicationReadEndpoint
+      extends WorldPublishedStartLocationReadServiceGrpc
+          .WorldPublishedStartLocationReadServiceImplBase {
+    private final WorldPublishedStartLocationEvidence expectedEvidence;
+    private final AtomicInteger reads = new AtomicInteger();
+
+    private StipulatedWorldPublicationReadEndpoint(
+        WorldPublishedStartLocationEvidence expectedEvidence) {
+      this.expectedEvidence = expectedEvidence;
+    }
+
+    @Override
+    public void readWorldPublishedStartLocation(
+        ReadWorldPublishedStartLocationRequest request,
+        StreamObserver<ReadWorldPublishedStartLocationResponse> observer) {
+      if (!requireGameDesignPeer(observer)) return;
+      reads.incrementAndGet();
+      final WorldPublishedStartLocationEvidence.Request decoded;
+      try {
+        decoded = WorldPublishedStartLocationGrpcCodec.fromRequest(request);
+      } catch (IllegalArgumentException invalid) {
+        observer.onError(
+            Status.INVALID_ARGUMENT
+                .withDescription("Invalid stipulated selector request")
+                .asRuntimeException());
+        return;
+      }
+      if (!expectedEvidence.request().equals(decoded)) {
+        observer.onError(
+            Status.FAILED_PRECONDITION
+                .withDescription("Different stipulated World selector")
+                .asRuntimeException());
+        return;
+      }
+      observer.onNext(WorldPublishedStartLocationGrpcCodec.toResponse(decoded, expectedEvidence));
+      observer.onCompleted();
+    }
+
+    int readCount() {
+      return reads.get();
+    }
+  }
+
   private static GameDesignPublicationTerminalReadClient terminalReadClient(
       int port, SelectionReadTestIdentity identity, Path ca) throws Exception {
     var endpoints = new ServiceEndpointsProperties();
@@ -1202,6 +1655,8 @@ class PublishAttemptServiceTransactionIntegrationTest {
   /** Ephemeral keytool PKI, following Account's existing loopback test; no runtime credentials. */
   private static final class SelectionReadTestPki {
     private static final String PASSWORD = "test-only-publication-mtls-password";
+    private final Path root;
+    private final Path caStore;
     final Path ca;
     final SelectionReadTestIdentity server,
         account,
@@ -1211,7 +1666,8 @@ class PublishAttemptServiceTransactionIntegrationTest {
         otherWorldNamespace;
 
     SelectionReadTestPki(Path root) throws Exception {
-      Path caStore = root.resolve("ca.p12");
+      this.root = root;
+      this.caStore = root.resolve("ca.p12");
       runKeytool(
           "-genkeypair",
           "-alias",
@@ -1262,6 +1718,19 @@ class PublishAttemptServiceTransactionIntegrationTest {
           issue(
               root, caStore, "other-world-client", "other-test", "world-management-service", false);
     }
+
+    PublicationReadIdentities publicationReadIdentities() throws Exception {
+      return new PublicationReadIdentities(
+          issue(root, caStore, "game-design-client", "test", "game-design-service", false),
+          issue(root, caStore, "account-server", "test", "account-service", true),
+          issue(
+              root, caStore, "world-management-server", "test", "world-management-service", true));
+    }
+
+    private record PublicationReadIdentities(
+        SelectionReadTestIdentity gameDesignClient,
+        SelectionReadTestIdentity accountServer,
+        SelectionReadTestIdentity worldManagementServer) {}
 
     private static SelectionReadTestIdentity issue(
         Path root, Path caStore, String alias, String namespace, String workload, boolean server)

@@ -168,7 +168,7 @@ Implementation Notes:
 - Current concrete `room` digest fields include `id`, `zoneId`, `name`, `description`, `nameLocalizedVariantsJson`, and `descriptionLocalizedVariantsJson`.
 - Current concrete `room_exit` digest fields include `id`, `fromRoomId`, `toRoomId`, `direction`, and `cost`.
 - Current concrete `generation_rule` digest fields include `id`, `name`, `scopeType`, `scopeId`, and `value`; generation-rule mutations that carry a subtree scope must validate that declared scope, share the same scope epoch, and participate in `REPLACE_SCOPE` / `SEED_APPEND_ONLY` enforcement.
-- Current concrete `world_entity_spawn_binding` digest fields include `id`, `roomId`, `entityTemplateType`, `entityTemplateId`, `spawnCount`, and `respawnDelaySeconds`.
+- Current concrete `world_entity_spawn_binding` digest fields include `id`, `roomId`, `entityTemplateType`, `entityReference`, `spawnCount`, and `respawnDelaySeconds`. `entityReference` is a tagged object: `CANONICAL_UUID` carries non-nil UUID `tenantId`, `versionId`, and `templateId`; `RETAINED_PRIVATE_KEY` carries a positive-decimal string `templateId`. A numeric reference mixed with any canonical UUID, an incomplete canonical triple, or a nonpositive numeric reference fails closed. The retained private-key tag records only the existing reference representation; it supplies neither canonical publication identity nor publication admission authority.
 
 - Included objects:
   - version-scoped topology tables such as `region_template`, `zone_template`, `room_template`, `terrain_template`, `room_exit_template`, and equivalent normalized topology relations;
@@ -184,7 +184,7 @@ Implementation Notes:
   - stable table ordering;
   - primary-key ordering within each table;
   - deterministic encoding for included semantic fields.
-- Current implementation note: the concrete first-slice table order is `regions`, `zones`, `rooms`, `roomExits`, `generationRules`, then `worldEntitySpawnBindings`, each ordered by ascending primary key. Null string values are canonicalized as empty strings before hashing. The current World digest schema version is `2` because scoped generation-rule metadata is now hashed.
+- Current implementation note: the concrete first-slice table order is `regions`, `zones`, `rooms`, `roomExits`, `generationRules`, then `worldEntitySpawnBindings`, each ordered by ascending primary key. Nested object fields are sorted by key, and null string values are canonicalized as empty strings before hashing. The current World digest schema version is `3`, superseding schema `2` because spawn references now use the tagged `entityReference` serialization. Previously retained schema-2 evidence must not be relabeled as schema 3; schema adoption requires recomputation and replay or re-recording under the publication digest migration rules in [Game Design Version Control](../game-design-service/version-control.md#digest-schema-migration). This serialization change does not close the generic digest's synthetic applied-commit gap described above.
 - `digestSchemaVersion` must increment whenever included tables, field-selection rules, or canonical serialization semantics change.
 
 Publish gating fails closed if World Management cannot attest a digest consistent with this manifest.

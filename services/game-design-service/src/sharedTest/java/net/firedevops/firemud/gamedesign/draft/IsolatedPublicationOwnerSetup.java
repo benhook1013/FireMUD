@@ -5,6 +5,7 @@ import java.util.List;
 import java.util.function.Supplier;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding;
 import net.firedevops.firemud.common.publication.AuthoredDraftPublishSelectionBinding;
+import net.firedevops.firemud.common.world.WorldPublishedStartLocationEvidence;
 import net.firedevops.firemud.gamedesign.entity.PublishAttempt;
 import net.firedevops.firemud.gamedesign.entity.PublishedReleaseBundle;
 import net.firedevops.firemud.gamedesign.entity.VersionAssetArtifact;
@@ -69,7 +70,19 @@ public final class IsolatedPublicationOwnerSetup {
   public static AuthoredDraftPublishSelectionRepository.SelectionSnapshot selectSourceBackedDraft(
       DSLContext dsl, DraftCommitBinding.TargetProof target, long draftEpoch, String notes)
       throws Exception {
-    return prepareSelection(dsl, target, draftEpoch, notes, true).selection();
+    return selectSourceBackedDraftWithWorld(dsl, target, draftEpoch, notes).selection();
+  }
+
+  /**
+   * Creates actual synchronized source rows and selection, retaining its exact isolated World seed
+   * so publication fixtures can derive matching Account and selector inputs without regenerating
+   * the randomized source binding.
+   */
+  public static SourceBackedSelection selectSourceBackedDraftWithWorld(
+      DSLContext dsl, DraftCommitBinding.TargetProof target, long draftEpoch, String notes)
+      throws Exception {
+    PreparedSelection prepared = prepareSelection(dsl, target, draftEpoch, notes, true);
+    return new SourceBackedSelection(prepared.selection(), prepared.world());
   }
 
   private static GameDesignPublicationOperation retain(
@@ -179,7 +192,16 @@ public final class IsolatedPublicationOwnerSetup {
 
   private record PreparedSelection(
       AuthoredDraftPublishSelectionRepository.SelectionSnapshot selection,
-      net.firedevops.firemud.common.world.WorldPublishedStartLocationEvidence world) {}
+      WorldPublishedStartLocationEvidence world) {}
+
+  public record SourceBackedSelection(
+      AuthoredDraftPublishSelectionRepository.SelectionSnapshot selection,
+      WorldPublishedStartLocationEvidence world) {
+    public SourceBackedSelection {
+      java.util.Objects.requireNonNull(selection, "selection");
+      java.util.Objects.requireNonNull(world, "world");
+    }
+  }
 
   /** Storage fixture commit only; does not substitute for actual command finalization proof. */
   public static PublishedReleaseBundle commitStorage(
