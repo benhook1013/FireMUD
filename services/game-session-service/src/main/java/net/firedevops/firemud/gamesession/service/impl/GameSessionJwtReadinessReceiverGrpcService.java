@@ -15,7 +15,7 @@ import org.springframework.context.annotation.Lazy;
 import org.springframework.grpc.server.service.GrpcService;
 
 /** Default-inactive, non-authorizing receiver for one exact Game Session Pod. */
-@GrpcService
+@GrpcService(interceptorNames = "grpcPeerIdentityInterceptor", blendWithGlobalInterceptors = false)
 @Lazy
 @ConditionalOnProperty(
     prefix = "firemud.game-session.jwt-readiness.receiver",

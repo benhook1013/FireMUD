@@ -232,6 +232,50 @@ public final class DraftAuthorizationFenceRepository {
   }
 
   /**
+   * Serializes an exact disclosure preparation against existing Draft captures and owner
+   * settlement. The caller must persist its immutable handoff in this same transaction. This is
+   * deliberately a non-revoking check: it never changes RESERVED, COMMIT_ORDER, or REVOKE_ORDER,
+   * and it does not install a blanket block on ordinary authoring.
+   *
+   * <p>The lock order is the canonical sorted source-key vector followed by affected operation
+   * UUIDs in canonical order, matching capture, commit-order, source-change, and owner-readback
+   * paths. No lock obtained here may be held across an RPC.
+   */
+  public void requireDisclosurePreparation(List<SourceEvidence> exactSources) {
+    requireTransaction();
+    List<SourceEvidence> sources =
+        List.copyOf(Objects.requireNonNull(exactSources, "exact disclosure sources")).stream()
+            .sorted(Comparator.comparing(SourceEvidence::key))
+            .toList();
+    if (sources.isEmpty()
+        || sources.stream().map(SourceEvidence::key).distinct().count() != sources.size()) {
+      throw new IllegalArgumentException("Distinct exact disclosure source evidence required");
+    }
+    for (SourceEvidence source : sources) {
+      if (source.key().getBytes(java.nio.charset.StandardCharsets.UTF_8).length > 512) {
+        throw new IllegalArgumentException(
+            "Disclosure source key exceeds the existing Account source-lock bound");
+      }
+    }
+    lockSources(sources);
+    if (hasWaitingChange(sources)) {
+      throw new IllegalStateException("Applicable Account source change is unresolved");
+    }
+    for (UUID operationId : affectedOperations(sources)) {
+      Record row = readOperation(operationId);
+      if (row == null) {
+        throw new IllegalStateException("Affected original Draft operation disappeared");
+      }
+      DraftAuthorizationFenceBinding original = originalBinding(row);
+      Ordering ordering = Ordering.valueOf(row.get("ordering", String.class));
+      if (ordering == Ordering.RESERVED || settlement(original, ordering) == Settlement.PENDING) {
+        throw new IllegalStateException(
+            "Disclosure deadline cannot pass an unsettled original Draft operation");
+      }
+    }
+  }
+
+  /**
    * Commit this WAITING result even when false: rolling back would lose revocation intent. True
    * means settled or an exact SOURCE_COMMITTED replay; call sourceMutationPermitted before writing.
    * A distinct request overlapping an already pending source change is not admitted: it must not

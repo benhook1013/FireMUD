@@ -23,6 +23,12 @@ TLS certificates are supplied via [`FIREMUD_GRPC_CERT_CHAIN_PATH`, `FIREMUD_GRPC
 | `FIREMUD_SERVICES_ENTITY_MANAGEMENT_SERVICE` | gRPC endpoint (`host:port`) for Entity Management Service | `entity-management-service:6565` |
 | `FIREMUD_CONFLICT_TTL_SECONDS` | TTL for conflict hotspot tracking in Redis | `300` |
 
+### Isolated JWT Readiness Receiver
+
+The receiver composition for [ADR 0014](../../decisions/adr-0014-phased-jwt-signing-key-rotation-and-readiness.md) is default-inactive. `firemud.game-session.jwt-readiness.receiver.enabled=true` alone does not supply the required protected local identity provider or register a receiver. When selected with its prerequisites, the adapter explicitly extracts the TLS peer and excludes the global application bearer interceptor; the exact Account workload guard remains mandatory. The remaining producer, transport and activation proof belongs in [Game Authoring, Publishing, and Activation](../../../project-management/implementation-tracking/game-authoring-publishing-and-activation.md), not in a configuration toggle.
+
+When constructing the isolated receiver, `firemud.game-session.jwt-readiness.receiver.max-control-ui-tenant-scopes` is required, and `firemud.grpc.workload-namespace` must identify the exact protected workload namespace. Its owner-read client uses the existing Account endpoint and gRPC mTLS configuration. The receiver reads only the fixed public projection `/var/run/secrets/firemud/jwks/jwks.json`; it has no private signing material, alternate-path discovery or classpath fallback. These local prerequisites do not authorize an application auth context, session or admission.
+
 ## FireMUD Settings Domains
 
 The canonical per-key reference for the surfaced pre-`06` platform settings now lives in the generated artifacts below rather than being hand-maintained in this service doc:

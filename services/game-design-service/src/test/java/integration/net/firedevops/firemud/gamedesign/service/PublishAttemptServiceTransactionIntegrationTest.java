@@ -11,6 +11,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding.TargetProof;
 import net.firedevops.firemud.common.publication.AccountPublicationAuthorizationBinding;
+import net.firedevops.firemud.common.publication.PublicationDigestRequestBinding;
 import net.firedevops.firemud.common.temporal.FiremudWorkflowIds;
 import net.firedevops.firemud.gamedesign.GameDesignServiceApplication;
 import net.firedevops.firemud.gamedesign.draft.AuthoredDraftPublishSelection;
@@ -385,6 +386,15 @@ class PublishAttemptServiceTransactionIntegrationTest {
     candidate.setNotes("successful transaction proof");
     candidate = versionRepository.save(candidate);
     var operation = reserveSelectedDraft(candidate, "successful transaction proof");
+    assertThat(candidate.getTenantId()).isEqualTo(tenantId);
+    assertThat(candidate.getTenantId()).isNotEqualTo(candidate.getCanonicalTenantId().toString());
+    assertThat(operation.workflowId())
+        .isEqualTo(
+            PublicationDigestRequestBinding.full(
+                    candidate.getCanonicalTenantId().toString(),
+                    Long.toString(candidate.getId()),
+                    operation.account().publishRequestId())
+                .derivedWorkflowIdentity());
     var selection =
         AuthoredDraftPublishSelection.fromStored(
             operation.account().input().selection().canonicalJson(),

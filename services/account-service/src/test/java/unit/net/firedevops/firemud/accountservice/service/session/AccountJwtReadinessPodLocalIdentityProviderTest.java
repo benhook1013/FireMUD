@@ -22,6 +22,7 @@ import net.firedevops.firemud.accountservice.service.session.AccountJwtValidator
 import net.firedevops.firemud.accountservice.service.session.AccountJwtValidatorInventorySource.ObservationContext;
 import net.firedevops.firemud.accountservice.service.session.AccountJwtValidatorInventorySource.ObservationPurpose;
 import net.firedevops.firemud.accountservice.service.session.AccountJwtValidatorInventorySource.PodObservation;
+import net.firedevops.firemud.accountservice.service.session.AccountJwtValidatorInventorySource.ReplicaSetObservation;
 import net.firedevops.firemud.accountservice.service.session.AccountJwtValidatorInventorySource.ValidatorObservation;
 import net.firedevops.firemud.common.security.AccountPublicJwksCache;
 import org.junit.jupiter.api.Test;
@@ -75,23 +76,83 @@ class AccountJwtReadinessPodLocalIdentityProviderTest {
             AccountJwtReadinessPodLocalIdentityProvider.IdentityUnavailableException.class);
   }
 
+  @Test
+  void refusesWhenLocalPodHasNoMatchingReplicaSet() throws Exception {
+    Fixture fixture = new Fixture(false);
+    when(fixture.validator.replicaSets()).thenReturn(List.of());
+
+    assertIdentityUnavailable(fixture);
+  }
+
+  @Test
+  void refusesWhenLocalPodOwnerUidDoesNotMatchReplicaSet() throws Exception {
+    Fixture fixture = new Fixture(false);
+    when(fixture.pod.ownerUid()).thenReturn("66666666-6666-4666-8666-666666666666");
+
+    assertIdentityUnavailable(fixture);
+  }
+
+  @Test
+  void refusesWhenLocalPodOwnerNameDoesNotMatchReplicaSet() throws Exception {
+    Fixture fixture = new Fixture(false);
+    when(fixture.pod.ownerName()).thenReturn("different-replicaset");
+
+    assertIdentityUnavailable(fixture);
+  }
+
+  @Test
+  void refusesWhenReplicaSetOwnerNamesWrongDeployment() throws Exception {
+    Fixture fixture = new Fixture(false);
+    when(fixture.replicaSet.ownerDeploymentUid())
+        .thenReturn("66666666-6666-4666-8666-666666666666");
+
+    assertIdentityUnavailable(fixture);
+  }
+
+  @Test
+  void refusesDuplicateMatchingReplicaSetObservations() throws Exception {
+    Fixture fixture = new Fixture(false);
+    when(fixture.validator.replicaSets())
+        .thenReturn(List.of(fixture.replicaSet, fixture.replicaSet));
+
+    assertIdentityUnavailable(fixture);
+  }
+
+  @Test
+  void refusesPodMockWhoseOwnerIsDeploymentInsteadOfReplicaSet() throws Exception {
+    Fixture fixture = new Fixture(false);
+    when(fixture.pod.ownerName()).thenReturn("account-service");
+    when(fixture.pod.ownerUid()).thenReturn(Fixture.DEPLOYMENT_UID);
+
+    assertIdentityUnavailable(fixture);
+  }
+
+  private static void assertIdentityUnavailable(Fixture fixture) {
+    assertThatThrownBy(() -> fixture.provider.observe("c".repeat(64)))
+        .isInstanceOf(
+            AccountJwtReadinessPodLocalIdentityProvider.IdentityUnavailableException.class);
+  }
+
   private static final class Fixture {
     private static final String POD_UID = "33333333-3333-4333-8333-333333333333";
     private static final String DEPLOYMENT_UID = "44444444-4444-4444-8444-444444444444";
+    private static final String REPLICA_SET_UID = "77777777-7777-4777-8777-777777777777";
+    private static final String TEMPLATE_HASH = "account12345";
     private final byte[] encodedPublicKey =
         "test server public key".getBytes(java.nio.charset.StandardCharsets.US_ASCII);
     private final String leafSpki = sha256(encodedPublicKey);
     private final AccountJwtValidatorInventorySource inventorySource =
         mock(AccountJwtValidatorInventorySource.class);
     private final InventorySnapshot inventory = mock(InventorySnapshot.class);
+    private final ValidatorObservation validator = mock(ValidatorObservation.class);
+    private final PodObservation pod = mock(PodObservation.class);
+    private final ReplicaSetObservation replicaSet = mock(ReplicaSetObservation.class);
     private final AccountJwtJwksTrustedSource trustedSource =
         mock(AccountJwtJwksTrustedSource.class);
     private final SslBundles sslBundles = mock(SslBundles.class);
     private final AccountJwtReadinessPodLocalIdentityProvider provider;
 
     private Fixture(boolean mismatchProtectedLeafPin) throws Exception {
-      ValidatorObservation validator = mock(ValidatorObservation.class);
-      PodObservation pod = mock(PodObservation.class);
       when(inventory.validators()).thenReturn(List.of(validator));
       when(inventory.environmentId()).thenReturn("prod");
       when(inventory.clusterId()).thenReturn("cluster-a");
@@ -111,16 +172,25 @@ class AccountJwtReadinessPodLocalIdentityProviderTest {
                   .map(value -> new ProfileExpectation(value.profile(), value.audience()))
                   .toList());
       when(validator.pods()).thenReturn(List.of(pod));
+      when(validator.replicaSets()).thenReturn(List.of(replicaSet));
       when(pod.name()).thenReturn("account-0");
       when(pod.uid()).thenReturn(POD_UID);
-      when(pod.ownerName()).thenReturn("account-service");
-      when(pod.ownerUid()).thenReturn(DEPLOYMENT_UID);
+      when(pod.ownerName()).thenReturn("account-service-abcde");
+      when(pod.ownerUid()).thenReturn(REPLICA_SET_UID);
+      when(pod.podTemplateHash()).thenReturn(TEMPLATE_HASH);
       when(pod.podIp()).thenReturn("10.0.0.12");
       when(pod.endpoint()).thenReturn(URI.create("https://10.0.0.12:6565"));
       when(pod.receiverServiceUri()).thenReturn(URI_SAN);
       when(pod.image()).thenReturn("registry.example/account@sha256:" + "a".repeat(64));
       when(pod.verifierConfigSha256()).thenReturn("b".repeat(64));
       when(pod.leafSpkiSha256()).thenReturn(mismatchProtectedLeafPin ? "f".repeat(64) : leafSpki);
+      when(replicaSet.name()).thenReturn("account-service-abcde");
+      when(replicaSet.uid()).thenReturn(REPLICA_SET_UID);
+      when(replicaSet.ownerDeploymentName()).thenReturn("account-service");
+      when(replicaSet.ownerDeploymentUid()).thenReturn(DEPLOYMENT_UID);
+      when(replicaSet.podTemplateHash()).thenReturn(TEMPLATE_HASH);
+      when(replicaSet.image()).thenReturn("registry.example/account@sha256:" + "a".repeat(64));
+      when(replicaSet.verifierConfigSha256()).thenReturn("b".repeat(64));
       when(inventorySource.observe()).thenReturn(inventory);
 
       var sourceIdentity =

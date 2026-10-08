@@ -18,7 +18,7 @@ import org.springframework.context.annotation.Lazy;
 import org.springframework.grpc.server.service.GrpcService;
 
 /** Isolated default-inactive Account Pod verifier; does not share the V1 harness RPC or guard. */
-@GrpcService
+@GrpcService(interceptorNames = "grpcPeerIdentityInterceptor", blendWithGlobalInterceptors = false)
 @ConditionalOnProperty(
     prefix = "firemud.account.jwt-readiness.pod-receiver",
     name = "enabled",

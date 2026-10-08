@@ -79,3 +79,16 @@ Entry format:
   - Observation: Successful earlier generation did not prove the simulator had represented every migration. V52's ignore-marker spelling hid its later ALTER from jOOQ; the donor projection also split that compound ALTER for simulation.
   - Expected pattern: Preserve required build-input transformations with an imported capability, compare the generated input against its canonical migration sources, and distinguish simulator omissions from production schema gaps. Do not remove database constraints or add duplicate runtime columns to conceal projection drift.
   - Current status: The selective Account projection restores schema generation and changes only V52's derived input; Flyway sources remain unchanged. This proves code generation, not PostgreSQL migration execution or readiness activation.
+
+- `2026-10-08`: Distinguish public code identifiers from secrets in controller updates
+  - Context: A Document job update describing the public `AuthTokenInterceptor` class was rejected as resembling credential or raw secret material; the update contained no credential bytes.
+  - Observation: Rephrasing the surrounding authentication description allowed the same non-secret milestone to be recorded. The exact filter condition is unconfirmed and has been reported to the controller owner.
+  - Expected pattern: Secret detection should retain fail-closed protection while permitting public source identifiers and ordinary authentication diagnostics. Do not include secret material or disable the filter to publish a status update.
+  - Current status: The milestone is recorded using neutral wording; filter correction remains unproved.
+  - Outcome: The controller owner confirmed that the conservative guard rejects a value immediately following an authentication-scheme word, including inline code. Preserve the public identifier with wording such as “The global authentication handler is `AuthTokenInterceptor`”; no broader filter change is needed for this case.
+
+- `2026-10-08`: Verify framework interceptor isolation through actual composition
+  - Context: Readiness adapters selected an exact TLS peer interceptor and set Spring gRPC's `blendWithGlobalInterceptors=false`, but the composed service still invoked a global interceptor.
+  - Observation: Installed Spring gRPC 1.0.3 uses that flag to control sorting, not exclusion. Its supported server-factory filter removes global interceptors before explicitly selected interceptors are appended; a null-factory test cannot prove that filtering path.
+  - Expected pattern: Prove isolated and ordinary service composition with the production factory customization, preserving exact peer extraction and ordinary application authentication. Annotation assertions alone are insufficient.
+  - Current status: The composition test exposed the defect before publication of the routing correction. A bounded service-local factory filter and positive/negative proof are being integrated; deployed composition remains unproved.

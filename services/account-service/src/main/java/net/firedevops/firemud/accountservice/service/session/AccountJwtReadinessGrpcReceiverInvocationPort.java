@@ -1,5 +1,8 @@
 package net.firedevops.firemud.accountservice.service.session;
 
+import io.grpc.Attributes;
+import io.grpc.ClientTransportFilter;
+import io.grpc.Grpc;
 import io.grpc.ManagedChannel;
 import io.grpc.netty.shaded.io.grpc.netty.GrpcSslContexts;
 import io.grpc.netty.shaded.io.grpc.netty.NettyChannelBuilder;
@@ -7,6 +10,7 @@ import io.grpc.netty.shaded.io.netty.handler.ssl.SslContext;
 import java.net.Inet6Address;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
+import java.net.SocketAddress;
 import java.net.URI;
 import java.net.UnknownHostException;
 import java.time.Clock;
@@ -123,8 +127,20 @@ public final class AccountJwtReadinessGrpcReceiverInvocationPort
       throw new ReceiverUnavailableException();
     }
 
+    InetSocketAddress expectedRemoteAddress = new InetSocketAddress(podAddress, endpoint.getPort());
+    RemoteAddressObservation remoteAddressObservation = new RemoteAddressObservation();
     ManagedChannel channel =
-        NettyChannelBuilder.forAddress(new InetSocketAddress(podAddress, endpoint.getPort()))
+        NettyChannelBuilder.forAddress(expectedRemoteAddress)
+            .proxyDetector(address -> null)
+            .addTransportFilter(
+                new ClientTransportFilter() {
+                  @Override
+                  public Attributes transportReady(Attributes attributes) {
+                    remoteAddressObservation.observe(
+                        attributes.get(Grpc.TRANSPORT_ATTR_REMOTE_ADDR));
+                    return attributes;
+                  }
+                })
             .sslContext(sslContext)
             .disableRetry()
             .build();
@@ -167,7 +183,34 @@ public final class AccountJwtReadinessGrpcReceiverInvocationPort
       }
     }
 
+    if (!remoteAddressObservation.matches(expectedRemoteAddress)) {
+      throw new ReceiverUnavailableException();
+    }
+
     return acceptance;
+  }
+
+  static final class RemoteAddressObservation {
+    private SocketAddress observedAddress;
+    private boolean inconsistent;
+
+    synchronized void observe(SocketAddress address) {
+      if (address == null) {
+        inconsistent = true;
+      } else if (observedAddress == null) {
+        observedAddress = address;
+      } else if (!observedAddress.equals(address)) {
+        inconsistent = true;
+      }
+    }
+
+    synchronized boolean matches(InetSocketAddress expected) {
+      return !inconsistent
+          && !expected.isUnresolved()
+          && observedAddress instanceof InetSocketAddress observed
+          && !observed.isUnresolved()
+          && observed.equals(expected);
+    }
   }
 
   private AuthenticatedAcceptance authenticatedResponse(

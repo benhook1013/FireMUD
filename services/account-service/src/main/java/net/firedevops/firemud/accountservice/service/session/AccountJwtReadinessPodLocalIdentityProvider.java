@@ -18,6 +18,7 @@ import net.firedevops.firemud.accountservice.service.session.AccountJwtReadiness
 import net.firedevops.firemud.accountservice.service.session.AccountJwtValidatorInventorySource.InventorySnapshot;
 import net.firedevops.firemud.accountservice.service.session.AccountJwtValidatorInventorySource.ObservationContext;
 import net.firedevops.firemud.accountservice.service.session.AccountJwtValidatorInventorySource.PodObservation;
+import net.firedevops.firemud.accountservice.service.session.AccountJwtValidatorInventorySource.ReplicaSetObservation;
 import net.firedevops.firemud.accountservice.service.session.AccountJwtValidatorInventorySource.ValidatorObservation;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
 import net.firedevops.firemud.common.security.AccountPublicJwksCache.PublicJwksSnapshot;
@@ -166,8 +167,20 @@ public final class AccountJwtReadinessPodLocalIdentityProvider {
       throw new IdentityUnavailableException();
     }
     PodObservation pod = matches.getFirst();
-    if (!validator.deploymentUid().equals(pod.ownerUid())
-        || !validator.deploymentName().equals(pod.ownerName())
+    List<ReplicaSetObservation> ownerReplicaSets =
+        validator.replicaSets().stream()
+            .filter(
+                value -> pod.ownerUid().equals(value.uid()) && pod.ownerName().equals(value.name()))
+            .toList();
+    if (ownerReplicaSets.size() != 1) {
+      throw new IdentityUnavailableException();
+    }
+    ReplicaSetObservation ownerReplicaSet = ownerReplicaSets.getFirst();
+    if (!validator.deploymentUid().equals(ownerReplicaSet.ownerDeploymentUid())
+        || !validator.deploymentName().equals(ownerReplicaSet.ownerDeploymentName())
+        || !ownerReplicaSet.podTemplateHash().equals(pod.podTemplateHash())
+        || !validator.image().equals(ownerReplicaSet.image())
+        || !validator.verifierConfigSha256().equals(ownerReplicaSet.verifierConfigSha256())
         || !validator.image().equals(pod.image())
         || !validator.verifierConfigSha256().equals(pod.verifierConfigSha256())) {
       throw new IdentityUnavailableException();

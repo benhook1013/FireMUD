@@ -3,7 +3,7 @@ package net.firedevops.firemud.gamedesign.publication;
 import java.util.Arrays;
 import java.util.Objects;
 import net.firedevops.firemud.common.publication.AccountPublicationAuthorizationBinding;
-import net.firedevops.firemud.common.temporal.FiremudWorkflowIds;
+import net.firedevops.firemud.common.publication.PublicationDigestRequestBinding;
 import net.firedevops.firemud.common.world.WorldPublishedStartLocationEvidence;
 import net.firedevops.firemud.gamedesign.draft.AuthoredDraftPublishSelection;
 import net.firedevops.firemud.gamedesign.draft.AuthoredDraftPublishSelectionRepository;
@@ -16,7 +16,6 @@ import net.firedevops.firemud.gamedesign.model.VersionLifecycleState;
 import net.firedevops.firemud.gamedesign.repository.GameRepository;
 import net.firedevops.firemud.gamedesign.repository.PublishAttemptRepository;
 import net.firedevops.firemud.gamedesign.repository.VersionRepository;
-import net.firedevops.firemud.gamedesign.service.impl.TemporalVersionPublishWorkflow;
 import org.jooq.DSLContext;
 import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
@@ -84,11 +83,11 @@ public final class SelectedDraftPublicationOwner {
 
     var operation = new GameDesignPublicationOperation(account, world);
     String workflowId =
-        FiremudWorkflowIds.workflowId(
-            TemporalVersionPublishWorkflow.WORKFLOW_FAMILY,
-            selection.target().gameDesignVersionTenantKey(),
-            "publish-request",
-            intent.publishRequestId());
+        PublicationDigestRequestBinding.full(
+                selection.target().canonicalTenantId().toString(),
+                Long.toString(selection.target().gameDesignVersionRowId()),
+                intent.publishRequestId())
+            .derivedWorkflowIdentity();
     if (!workflowId.equals(operation.workflowId())
         || !selection.target().canonicalTenantId().equals(world.request().canonicalTenantId())
         || !selection.target().canonicalVersionId().equals(world.request().canonicalVersionId())

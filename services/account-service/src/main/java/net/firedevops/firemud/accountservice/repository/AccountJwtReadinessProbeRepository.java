@@ -2803,6 +2803,7 @@ public class AccountJwtReadinessProbeRepository {
     source.put("apiBindingDigest", snapshot.apiBindingDigest());
     source.put("apiBindingRevision", snapshot.apiBindingRevision());
     source.put("clusterIncarnationUid", snapshot.clusterIncarnationUid());
+    source.put("clusterId", snapshot.clusterId());
     source.put("environmentId", snapshot.environmentId());
     source.put("inventoryBindingDigest", snapshot.inventoryBindingDigest());
     source.put("inventoryBindingRevision", snapshot.inventoryBindingRevision());

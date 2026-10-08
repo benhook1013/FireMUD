@@ -785,6 +785,9 @@ class AccountJwtReadinessProbePersistenceIntegrationTest {
     assertThat(inventoryReadback.entries()).containsExactlyElementsOf(plan.entries());
     assertThat(plan.planVersion()).isEqualTo(2);
     assertThat(plan.validatorInventoryComplete()).isTrue();
+    assertThat(
+            JSON.readTree(plan.applicabilityMatrixJson()).path("source").path("clusterId").asText())
+        .isEqualTo(BINDING.clusterId());
     assertThat(plan.expectedFence().durableActive()).isEmpty();
     assertThat(plan.entries()).allSatisfy(entry -> assertThat(entry.expectedActive()).isEmpty());
     assertThat(plan.entries())

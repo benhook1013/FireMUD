@@ -15,6 +15,10 @@ import io.grpc.stub.StreamObserver;
 import java.io.IOException;
 import java.io.InputStream;
 import java.net.InetSocketAddress;
+import java.net.Proxy;
+import java.net.ProxySelector;
+import java.net.SocketAddress;
+import java.net.URI;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.security.KeyStore;
@@ -241,23 +245,70 @@ class AccountJwtReadinessGrpcReceiverInvocationPortTest {
   }
 
   @Test
-  void matchingLoopbackMtlsResponseYieldsOnlyNonAuthorizingAcceptanceEvidence() throws Exception {
+  void remoteAddressObservationRequiresOneExactResolvedSocket() {
+    InetSocketAddress expected = new InetSocketAddress("127.0.0.1", 43127);
+    InetSocketAddress other = new InetSocketAddress("127.0.0.2", 43127);
+
+    var missing = new AccountJwtReadinessGrpcReceiverInvocationPort.RemoteAddressObservation();
+    assertThat(missing.matches(expected)).isFalse();
+
+    var exact = new AccountJwtReadinessGrpcReceiverInvocationPort.RemoteAddressObservation();
+    exact.observe(expected);
+    assertThat(exact.matches(expected)).isTrue();
+
+    var absentThenPresent =
+        new AccountJwtReadinessGrpcReceiverInvocationPort.RemoteAddressObservation();
+    absentThenPresent.observe(null);
+    absentThenPresent.observe(expected);
+    assertThat(absentThenPresent.matches(expected)).isFalse();
+
+    var mismatched = new AccountJwtReadinessGrpcReceiverInvocationPort.RemoteAddressObservation();
+    mismatched.observe(other);
+    assertThat(mismatched.matches(expected)).isFalse();
+
+    var changed = new AccountJwtReadinessGrpcReceiverInvocationPort.RemoteAddressObservation();
+    changed.observe(expected);
+    changed.observe(other);
+    changed.observe(expected);
+    assertThat(changed.matches(expected)).isFalse();
+  }
+
+  @Test
+  void matchingLoopbackMtlsResponseUsesDirectSocketDespiteJvmProxySelector() throws Exception {
     AtomicReference<Invocation> currentInvocation = new AtomicReference<>();
     startSourceIdentityServer(pki.pinnedServer(), pki.trustedCa(), currentInvocation, false);
     Invocation invocation = invocation(pki.pinnedServer(), server.getPort());
     currentInvocation.set(invocation);
 
-    var acceptance = port(pki.accountClient(), pki.trustedCa()).invoke(invocation);
+    ProxySelector previousProxySelector = ProxySelector.getDefault();
+    AtomicInteger proxySelectorCalls = new AtomicInteger();
+    ProxySelector.setDefault(
+        new ProxySelector() {
+          @Override
+          public List<Proxy> select(URI uri) {
+            proxySelectorCalls.incrementAndGet();
+            return List.of(new Proxy(Proxy.Type.HTTP, new InetSocketAddress("127.0.0.1", 1)));
+          }
 
-    assertThat(acceptance.jti()).isEqualTo(invocation.jti());
-    assertThat(acceptance.compactTokenSha256()).isEqualTo(invocation.compactTokenSha256());
-    assertThat(acceptance.verifiedKid()).isEqualTo(invocation.targetKid());
-    assertThat(acceptance.podUid()).isEqualTo(invocation.target().podUid());
-    assertThat(acceptance.actualServiceUri()).isEqualTo(PEER_URI);
-    assertThat(acceptance.actualPeerSpkiSha256())
-        .isEqualTo(invocation.target().podLeafSpkiSha256().orElseThrow());
-    assertThat(acceptance.result()).isEqualTo(ProbeExpectation.ACCEPT);
-    assertThat(handlerCalls.get()).isEqualTo(1);
+          @Override
+          public void connectFailed(URI uri, SocketAddress socketAddress, IOException failure) {}
+        });
+    try {
+      var acceptance = port(pki.accountClient(), pki.trustedCa()).invoke(invocation);
+
+      assertThat(acceptance.jti()).isEqualTo(invocation.jti());
+      assertThat(acceptance.compactTokenSha256()).isEqualTo(invocation.compactTokenSha256());
+      assertThat(acceptance.verifiedKid()).isEqualTo(invocation.targetKid());
+      assertThat(acceptance.podUid()).isEqualTo(invocation.target().podUid());
+      assertThat(acceptance.actualServiceUri()).isEqualTo(PEER_URI);
+      assertThat(acceptance.actualPeerSpkiSha256())
+          .isEqualTo(invocation.target().podLeafSpkiSha256().orElseThrow());
+      assertThat(acceptance.result()).isEqualTo(ProbeExpectation.ACCEPT);
+      assertThat(proxySelectorCalls).hasValue(0);
+      assertThat(handlerCalls.get()).isEqualTo(1);
+    } finally {
+      ProxySelector.setDefault(previousProxySelector);
+    }
   }
 
   private void startServer(TestCertificate serverCertificate, Path trustedCa) throws Exception {

@@ -16,7 +16,7 @@ import org.springframework.context.annotation.Lazy;
 import org.springframework.grpc.server.service.GrpcService;
 
 /** Isolated, default-inactive mTLS owner lookup; no bearer or readiness-harness route is reused. */
-@GrpcService
+@GrpcService(interceptorNames = "grpcPeerIdentityInterceptor", blendWithGlobalInterceptors = false)
 @ConditionalOnProperty(
     prefix = "firemud.account.jwt-readiness.probe-owner",
     name = "enabled",
