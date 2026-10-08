@@ -61,6 +61,18 @@ public class PublishAttemptRepository {
             .fetchOne(this::toEntity));
   }
 
+  /** The owning Game lock always precedes the exact attempt lock. */
+  public Optional<PublishAttempt> findByPublishWorkflowIdForUpdate(String workflow) {
+    Optional<PublishAttempt> initial = findByPublishWorkflowId(workflow);
+    if (initial.isEmpty()) return initial;
+    dsl.fetchOne("SELECT id FROM game WHERE tenant_id = ? FOR UPDATE", initial.get().getTenantId());
+    return Optional.ofNullable(
+        dsl.selectFrom(PUBLISH_ATTEMPT_TABLE)
+            .where(PUBLISH_WORKFLOW_ID.eq(workflow))
+            .forUpdate()
+            .fetchOne(this::toEntity));
+  }
+
   /**
    * Installs a compatibility digest only once, and only on the exact legacy full-version row whose
    * identity was validated by the caller.

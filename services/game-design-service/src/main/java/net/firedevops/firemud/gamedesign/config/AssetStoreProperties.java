@@ -12,6 +12,7 @@ public class AssetStoreProperties {
   private static final int DEFAULT_FROZEN_SNAPSHOT_CACHE_MAX_ENTRIES = 256;
 
   private String endpoint;
+  private String publicBaseUrl;
   private String bucket;
   private String region;
   private String accessKey;

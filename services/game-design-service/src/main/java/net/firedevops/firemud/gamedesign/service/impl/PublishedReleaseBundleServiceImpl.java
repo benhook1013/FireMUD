@@ -9,13 +9,16 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
+import java.util.UUID;
 import net.firedevops.firemud.gamedesign.dto.PublishParticipantDigestDto;
 import net.firedevops.firemud.gamedesign.dto.PublishedReleaseBundleDto;
 import net.firedevops.firemud.gamedesign.dto.VersionDto;
 import net.firedevops.firemud.gamedesign.entity.PublishedReleaseBundle;
 import net.firedevops.firemud.gamedesign.repository.PublishedReleaseBundleRepository;
 import net.firedevops.firemud.gamedesign.repository.RevisionRepository;
+import net.firedevops.firemud.gamedesign.repository.VersionRepository;
 import net.firedevops.firemud.gamedesign.service.ExportedAssetManifest;
+import net.firedevops.firemud.gamedesign.service.PublishedArtifactDigest;
 import net.firedevops.firemud.gamedesign.service.PublishedReleaseBundleService;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -29,15 +32,19 @@ public class PublishedReleaseBundleServiceImpl implements PublishedReleaseBundle
 
   private final PublishedReleaseBundleRepository repository;
   private final RevisionRepository revisionRepository;
+  private final VersionRepository versionRepository;
   private final ObjectMapper objectMapper;
 
   public PublishedReleaseBundleServiceImpl(
       PublishedReleaseBundleRepository repository,
       RevisionRepository revisionRepository,
+      VersionRepository versionRepository,
       ObjectMapper objectMapper) {
     this.repository = Objects.requireNonNull(repository, "repository must not be null");
     this.revisionRepository =
         Objects.requireNonNull(revisionRepository, "revisionRepository must not be null");
+    this.versionRepository =
+        Objects.requireNonNull(versionRepository, "versionRepository must not be null");
     this.objectMapper = Objects.requireNonNull(objectMapper, "objectMapper must not be null");
   }
 
@@ -49,23 +56,56 @@ public class PublishedReleaseBundleServiceImpl implements PublishedReleaseBundle
       ExportedAssetManifest exportedManifest,
       String generationConfigRevision,
       List<PublishParticipantDigestDto> participantDigests) {
+    return createBundle(
+        version,
+        publishWorkflowId,
+        exportedManifest,
+        generationConfigRevision,
+        participantDigests);
+  }
+
+  private PublishedReleaseBundleDto createBundle(
+      VersionDto version,
+      String publishWorkflowId,
+      ExportedAssetManifest exportedManifest,
+      String generationConfigRevision,
+      List<PublishParticipantDigestDto> participantDigests) {
     Objects.requireNonNull(version, "version must not be null");
     Objects.requireNonNull(exportedManifest, "exportedManifest must not be null");
     Objects.requireNonNull(participantDigests, "participantDigests must not be null");
-    repository
-        .findByTenantIdAndVersionId(version.tenantId(), version.id())
-        .ifPresent(
-            ignored -> {
-              throw new IllegalStateException("published release bundle already exists");
-            });
+    Optional<PublishedReleaseBundle> existing =
+        repository.findByTenantIdAndVersionId(version.tenantId(), version.id());
+    if (existing.isPresent()) {
+      throw new IllegalStateException("published release bundle already exists");
+    }
+    var identitySource =
+        versionRepository
+            .findByTenantIdAndId(version.tenantId(), version.id())
+            .orElseThrow(
+                () ->
+                    new IllegalStateException(
+                        "published release canonical identity source missing"));
+    UUID canonicalTenantId = identitySource.getCanonicalTenantId();
+    UUID canonicalVersionId = identitySource.getCanonicalVersionId();
+    if (!version.id().equals(identitySource.getId())
+        || !version.tenantId().equals(identitySource.getTenantId())
+        || !isCanonicalNonNilUuid(canonicalTenantId)
+        || !isCanonicalNonNilUuid(canonicalVersionId)) {
+      throw new IllegalStateException("published release canonical identity source is invalid");
+    }
     PublishedReleaseBundle entity = new PublishedReleaseBundle();
     entity.setTenantId(version.tenantId());
     entity.setVersionId(version.id());
+    entity.setCanonicalTenantId(canonicalTenantId);
+    entity.setCanonicalVersionId(canonicalVersionId);
     entity.setVersionNumber(version.versionNumber());
     entity.setAttestationSchemaVersion(
         PublishedReleaseBundleContract.SUPPORTED_ATTESTATION_SCHEMA_VERSION);
     entity.setPublishWorkflowId(publishWorkflowId);
     entity.setManifestHash(exportedManifest.manifestHash());
+    entity.setManifestSchemaVersion(exportedManifest.manifestSchemaVersion());
+    entity.setArtifactDigestsJson(
+        objectMapper.writeValueAsString(exportedManifest.artifactDigests()));
     entity.setGenerationConfigRevision(generationConfigRevision);
     entity.setRequiredManifestAssetKeysJson(
         serializeKeys(exportedManifest.requiredManifestAssetKeys()));
@@ -99,21 +139,38 @@ public class PublishedReleaseBundleServiceImpl implements PublishedReleaseBundle
   }
 
   private PublishedReleaseBundleDto toDto(PublishedReleaseBundle entity) {
-    return new PublishedReleaseBundleDto(
-        entity.getId(),
-        entity.getTenantId(),
-        entity.getVersionId(),
-        entity.getVersionNumber(),
-        entity.getAttestationSchemaVersion(),
-        entity.getPublishWorkflowId(),
-        entity.getManifestHash(),
-        deserializeKeys(entity.getRequiredManifestAssetKeysJson()),
-        deserializeParticipantDigests(entity.getParticipantDigestsJson()),
-        deserializeCommandDefinitions(entity.getCommandDefinitionsJson()),
-        entity.getGenerationConfigRevision(),
-        entity.isScriptOnly(),
-        entity.getScriptPatchVersion(),
-        entity.getPublishedAt());
+    PublishedReleaseBundleDto dto =
+        new PublishedReleaseBundleDto(
+            entity.getId(),
+            entity.getTenantId(),
+            entity.getVersionId(),
+            entity.getVersionNumber(),
+            entity.getAttestationSchemaVersion(),
+            entity.getPublishWorkflowId(),
+            entity.getManifestHash(),
+            deserializeKeys(entity.getRequiredManifestAssetKeysJson()),
+            deserializeParticipantDigests(entity.getParticipantDigestsJson()),
+            deserializeCommandDefinitions(entity.getCommandDefinitionsJson()),
+            entity.getGenerationConfigRevision(),
+            entity.isScriptOnly(),
+            entity.getScriptPatchVersion(),
+            entity.getPublishedAt(),
+            entity.getCanonicalTenantId(),
+            entity.getCanonicalVersionId(),
+            entity.getPublishedReleaseBundleRef(),
+            entity.getManifestSchemaVersion(),
+            entity.getArtifactDigestsJson() == null
+                ? null
+                : objectMapper.readValue(
+                    entity.getArtifactDigestsJson(),
+                    objectMapper
+                        .getTypeFactory()
+                        .constructCollectionType(List.class, PublishedArtifactDigest.class)));
+    return dto;
+  }
+
+  private boolean isCanonicalNonNilUuid(UUID value) {
+    return value != null && !value.equals(new UUID(0L, 0L));
   }
 
   private String serializeKeys(List<String> keys) {
@@ -128,7 +185,8 @@ public class PublishedReleaseBundleServiceImpl implements PublishedReleaseBundle
         json, objectMapper.getTypeFactory().constructCollectionType(List.class, String.class));
   }
 
-  private String serializeParticipantDigests(List<PublishParticipantDigestDto> participantDigests) {
+  private String serializeParticipantDigests(
+      List<PublishParticipantDigestDto> participantDigests) {
     return objectMapper.writeValueAsString(
         participantDigests == null ? List.of() : List.copyOf(participantDigests));
   }

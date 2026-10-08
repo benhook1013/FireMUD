@@ -2,6 +2,8 @@ package net.firedevops.firemud.gamedesign.dto;
 
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.UUID;
+import net.firedevops.firemud.gamedesign.service.PublishedArtifactDigest;
 
 public record PublishedReleaseBundleDto(
     Long id,
@@ -17,12 +19,22 @@ public record PublishedReleaseBundleDto(
     String generationConfigRevision,
     boolean scriptOnly,
     String scriptPatchVersion,
-    LocalDateTime publishedAt) {
+    LocalDateTime publishedAt,
+    UUID canonicalTenantId,
+    UUID canonicalVersionId,
+    String publishedReleaseBundleRef,
+    Integer manifestSchemaVersion,
+    List<PublishedArtifactDigest> artifactDigests) {
   public PublishedReleaseBundleDto {
     requiredManifestAssetKeys =
         List.copyOf(requiredManifestAssetKeys == null ? List.of() : requiredManifestAssetKeys);
     participantDigests = List.copyOf(participantDigests == null ? List.of() : participantDigests);
     commandDefinitions = List.copyOf(commandDefinitions == null ? List.of() : commandDefinitions);
+    if ((manifestSchemaVersion == null) != (artifactDigests == null)) {
+      throw new IllegalArgumentException(
+          "Manifest schema and artifact proof must be present together");
+    }
+    artifactDigests = artifactDigests == null ? null : List.copyOf(artifactDigests);
   }
 
   public PublishedReleaseBundleDto(
@@ -38,7 +50,12 @@ public record PublishedReleaseBundleDto(
       String generationConfigRevision,
       boolean scriptOnly,
       String scriptPatchVersion,
-      LocalDateTime publishedAt) {
+      LocalDateTime publishedAt,
+      UUID canonicalTenantId,
+      UUID canonicalVersionId,
+      String publishedReleaseBundleRef,
+      Integer manifestSchemaVersion,
+      List<PublishedArtifactDigest> artifactDigests) {
     this(
         id,
         tenantId,
@@ -53,6 +70,11 @@ public record PublishedReleaseBundleDto(
         generationConfigRevision,
         scriptOnly,
         scriptPatchVersion,
-        publishedAt);
+        publishedAt,
+        canonicalTenantId,
+        canonicalVersionId,
+        publishedReleaseBundleRef,
+        manifestSchemaVersion,
+        artifactDigests);
   }
 }

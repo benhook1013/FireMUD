@@ -1,17 +1,10 @@
 package integration.net.firedevops.firemud.gamedesign.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
-import java.time.LocalDateTime;
 import net.firedevops.firemud.gamedesign.GameDesignServiceApplication;
-import net.firedevops.firemud.gamedesign.entity.GameTemplate;
-import net.firedevops.firemud.gamedesign.entity.PublishedReleaseBundle;
-import net.firedevops.firemud.gamedesign.entity.Version;
-import net.firedevops.firemud.gamedesign.model.TemplateReferencePhase;
-import net.firedevops.firemud.gamedesign.model.VersionLifecycleState;
-import net.firedevops.firemud.gamedesign.repository.GameTemplateRepository;
-import net.firedevops.firemud.gamedesign.repository.PublishedReleaseBundleRepository;
-import net.firedevops.firemud.gamedesign.repository.VersionRepository;
+import net.firedevops.firemud.gamedesign.repository.LaunchDescriptorRepository;
 import net.firedevops.firemud.gamedesign.service.LaunchDescriptorService;
 import net.firedevops.firemud.test.NoGrpcServerTestConfiguration;
 import net.firedevops.firemud.test.PostgresBackedServiceTestSupport;
@@ -53,51 +46,20 @@ class LaunchDescriptorServiceIntegrationTest {
   }
 
   @Autowired private LaunchDescriptorService launchDescriptorService;
-  @Autowired private GameTemplateRepository gameTemplateRepository;
-  @Autowired private VersionRepository versionRepository;
-  @Autowired private PublishedReleaseBundleRepository publishedReleaseBundleRepository;
+  @Autowired private LaunchDescriptorRepository launchDescriptorRepository;
 
   @Test
-  void resolvesLaunchDescriptorForJsonConfiguredTemplate() {
-    Version version = new Version();
-    version.setTenantId("1");
-    version.setVersionNumber(1);
-    version.setVersionState(VersionLifecycleState.PUBLISHED);
-    version.setVersionStateEpoch(1L);
-    version.setNotes("integration test version");
-    version.setUpdatedAt(LocalDateTime.now());
-    version = versionRepository.save(version);
+  void legacyNumericResolveFailsClosedWithoutPersistingDescriptor() {
+    assertThatThrownBy(
+            () ->
+                launchDescriptorService.resolveLaunchDescriptor(
+                    "1", 9L, "integration-cp-unbound", null, null, null, null))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessage(
+            "AUTHORED_WORLD_LAUNCH_BINDING_REQUIRED: canonical authored-world source binding is"
+                + " required to resolve a launch descriptor");
 
-    GameTemplate template = new GameTemplate();
-    template.setTenantId("1");
-    template.setName("Integration Template");
-    template.setDescription("launch descriptor integration template");
-    template.setConfig("{}");
-    template.setDefaultVersionId(version.getId());
-    template.setDefaultRuntimeFlagsJson("{}");
-    template.setTemplateReferencePhase(TemplateReferencePhase.ENFORCED);
-    template = gameTemplateRepository.save(template);
-
-    PublishedReleaseBundle bundle = new PublishedReleaseBundle();
-    bundle.setTenantId("1");
-    bundle.setVersionId(version.getId());
-    bundle.setVersionNumber(1);
-    bundle.setAttestationSchemaVersion("v1");
-    bundle.setPublishWorkflowId("integration-seed");
-    bundle.setManifestHash("integration-manifest");
-    bundle.setGenerationConfigRevision("genrev:integration");
-    bundle.setRequiredManifestAssetKeysJson("[]");
-    bundle.setParticipantDigestsJson("[]");
-    bundle.setScriptOnly(false);
-    publishedReleaseBundleRepository.save(bundle);
-
-    var descriptor =
-        launchDescriptorService.resolveLaunchDescriptor(
-            "1", template.getId(), "integration-cp-1", null, null, null, null);
-
-    assertThat(descriptor.gameTemplateId()).isEqualTo(template.getId());
-    assertThat(descriptor.versionId()).isEqualTo(version.getId());
-    assertThat(descriptor.generationConfigRevision()).isEqualTo("genrev:integration");
-    assertThat(descriptor.versionStateEpoch()).isEqualTo(1L);
+    assertThat(launchDescriptorRepository.findByPrivateRequest("1", "integration-cp-unbound"))
+        .isEmpty();
   }
 }
