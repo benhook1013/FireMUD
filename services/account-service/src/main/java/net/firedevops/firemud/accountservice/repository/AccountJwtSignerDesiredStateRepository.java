@@ -860,6 +860,85 @@ public class AccountJwtSignerDesiredStateRepository {
             ActiveJwksPromotionReceipt.fromStored(promotion)));
   }
 
+  /**
+   * Reads the original committed signer after ordinary rotation. This authenticates retained
+   * lifecycle provenance only; the caller must separately verify that the original public JWK is
+   * still accepted by the current protected JWKS source. No current-active equality is imposed.
+   */
+  @Transactional(propagation = Propagation.MANDATORY)
+  public Optional<OriginalCommittedSignerEvidence> readOriginalCommittedSigner(
+      Binding expectedBinding,
+      TrustFence trust,
+      String currentApiBindingDigest,
+      String currentApiConfigRevision,
+      UUID promotionOperationId,
+      UUID generationOperationId) {
+    requireWritableAccountTransaction();
+    Objects.requireNonNull(expectedBinding);
+    Objects.requireNonNull(trust);
+    requireOperationId(promotionOperationId);
+    requireOperationId(generationOperationId);
+    requireMatch(SHA256_HEX, currentApiBindingDigest, "current public API binding digest");
+    requireMatch(CLUSTER_ID, currentApiConfigRevision, "current public API config revision");
+    Record stateRow = selectState(expectedBinding.environmentId(), true);
+    if (stateRow == null) return Optional.empty();
+    DesiredState current = decodeState(stateRow);
+    requireBinding(current, expectedBinding);
+    requireEnrollmentTrust(current, trust);
+    EnrollmentIdentity enrollment = current.enrollmentIdentity().orElseThrow();
+    if (!enrollment.apiBindingDigest().equals(currentApiBindingDigest)
+        || !enrollment.apiConfigRevision().equals(currentApiConfigRevision)) {
+      throw new BindingMismatchException("Protected Account JWKS API binding changed");
+    }
+    StoredPromotion promotion = selectPromotion(promotionOperationId, false);
+    if (promotion == null) return Optional.empty();
+    requireCurrentTrust(promotion, trust);
+    if (!"COMMITTED".equals(promotion.status())
+        || !expectedBinding.equals(promotion.binding())
+        || !generationOperationId.equals(promotion.generationOperationId())
+        || !currentApiBindingDigest.equals(promotion.apiBindingDigest())
+        || !currentApiConfigRevision.equals(promotion.apiConfigRevision())) {
+      throw new QuarantinedStateException("Original committed signer identity differs");
+    }
+    StoredGenerationOperation generation = selectGenerationOperation(generationOperationId, false);
+    GenerationResult result = selectGenerationResult(generationOperationId, false);
+    if (generation == null || result == null) {
+      throw new QuarantinedStateException("Original committed signer generation is absent");
+    }
+    requireCurrentTrust(generation, trust);
+    verifyPreparedGenerationMatches(promotion, generation, result);
+    if (promotion.privatePromotionReceiptDigest() == null
+        || promotion.activeJwksReceiptDigest() == null) {
+      throw new QuarantinedStateException("Original committed signer resource receipts are absent");
+    }
+    return Optional.of(
+        new OriginalCommittedSignerEvidence(
+            promotion.publicEvidence(),
+            result,
+            PrivatePromotionReceipt.fromStored(promotion),
+            ActiveJwksPromotionReceipt.fromStored(promotion)));
+  }
+
+  /** Immutable historical owner readback, not an active-key or authenticated-actor grant. */
+  public record OriginalCommittedSignerEvidence(
+      PromotionOperationEvidence promotion,
+      GenerationResult generationResult,
+      PrivatePromotionReceipt privateReceipt,
+      ActiveJwksPromotionReceipt publicReceipt) {
+    public OriginalCommittedSignerEvidence {
+      Objects.requireNonNull(promotion);
+      Objects.requireNonNull(generationResult);
+      Objects.requireNonNull(privateReceipt);
+      Objects.requireNonNull(publicReceipt);
+      if (!"COMMITTED".equals(promotion.status())
+          || !promotion.generationOperationId().equals(generationResult.operationId())
+          || !promotion.operationId().equals(privateReceipt.promotionOperationId())
+          || !promotion.operationId().equals(publicReceipt.promotionOperationId())) {
+        throw new QuarantinedStateException("Original committed signer linkage is inconsistent");
+      }
+    }
+  }
+
   /** Persists the pinned materializer's read-only observation of the fixed pre-created Secret. */
   @Transactional(propagation = Propagation.MANDATORY)
   public GenerationRequest recordSecretObservation(

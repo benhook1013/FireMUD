@@ -566,6 +566,32 @@ public final class DraftAuthorizationFenceRepository {
     return value == null ? null : SourceChangeAbortReason.valueOf(value);
   }
 
+  /**
+   * Rows-first creator producer acquisition: never wait on a source-first mutation while retaining
+   * Account/tenant/terms locks. Missing rows or contention must roll back the entire owner capture;
+   * neither condition is a terminal authorization outcome. V99 establishes real-source lock rows.
+   */
+  public void lockProducerSourcesNowait(List<SourceEvidence> sources) {
+    requireTransaction();
+    if (sources == null || sources.isEmpty()) {
+      throw new IllegalArgumentException("Complete existing creator sources required");
+    }
+    String previous = null;
+    for (SourceEvidence source : sources) {
+      if (previous != null && previous.compareTo(source.key()) >= 0) {
+        throw new IllegalArgumentException("Distinct sorted creator source vector required");
+      }
+      if (dsl.fetchOne(
+              "SELECT source_key FROM account_draft_authorization_source_locks"
+                  + " WHERE source_key = ? FOR UPDATE NOWAIT",
+              source.key())
+          == null) {
+        throw new IllegalStateException("Existing creator source lock row unavailable");
+      }
+      previous = source.key();
+    }
+  }
+
   private void lockSources(List<SourceEvidence> sources) {
     for (SourceEvidence source : sources) {
       dsl.execute(

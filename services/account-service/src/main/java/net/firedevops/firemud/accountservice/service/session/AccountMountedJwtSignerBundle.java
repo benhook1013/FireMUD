@@ -341,6 +341,87 @@ public final class AccountMountedJwtSignerBundle {
     }
   }
 
+  /**
+   * Distinct control-ui entry, available only to the Account owner. The owner must have retained
+   * genuine primary authentication and exact committed signer evidence before calling outside SQL
+   * locks. Mounted correspondence alone supplies neither authority nor permission to deliver.
+   */
+  static String signCommittedControlUiDigest(
+      Path privateMountRoot,
+      Path privateBundlePath,
+      Path publicMountRoot,
+      Path publicJwksPath,
+      ExpectedIdentity expectedIdentity,
+      AccountControlUiSigningSpec spec,
+      java.util.function.BiConsumer<String, byte[]> exactCandidateConsumer) {
+    Objects.requireNonNull(spec);
+    Objects.requireNonNull(exactCandidateConsumer);
+    if (org.springframework.transaction.support.TransactionSynchronizationManager
+        .isActualTransactionActive()) {
+      throw new IllegalStateException("Control-ui signing must occur outside owner SQL locks");
+    }
+    VerifiedMountedSigner mounted =
+        readAndVerifyMounted(
+            privateMountRoot, privateBundlePath, publicMountRoot, publicJwksPath, expectedIdentity);
+    byte[] header = null;
+    byte[] claims = null;
+    byte[] input = null;
+    byte[] signature = null;
+    byte[] compact = null;
+    byte[] callback = null;
+    try {
+      ControlUiJwtProfileValidator.validateClaims(spec.claims(), 1);
+      header =
+          canonicalJsonBytes(Map.of("alg", ALGORITHM, "kid", expectedIdentity.kid(), "typ", "JWT"));
+      claims = canonicalJsonBytes(spec.claims());
+      input =
+          joinCompactParts(
+              Base64.getUrlEncoder().withoutPadding().encode(header),
+              Base64.getUrlEncoder().withoutPadding().encode(claims),
+              null);
+      int signatureLength = (mounted.publicKey().getModulus().bitLength() + 7) / 8;
+      int encodedSignatureLength = (signatureLength * 8 + 5) / 6;
+      if (input.length + 1 + encodedSignatureLength > MAX_READINESS_COMPACT_JWT_BYTES) {
+        throw invalid();
+      }
+      Signature signer = Signature.getInstance("SHA256withRSA");
+      signer.initSign(mounted.privateKey());
+      signer.update(input);
+      signature = signer.sign();
+      Signature verifier = Signature.getInstance("SHA256withRSA");
+      verifier.initVerify(mounted.publicKey());
+      verifier.update(input);
+      if (!verifier.verify(signature)) {
+        throw invalid();
+      }
+      compact =
+          joinCompactParts(
+              Base64.getUrlEncoder().withoutPadding().encode(header),
+              Base64.getUrlEncoder().withoutPadding().encode(claims),
+              Base64.getUrlEncoder().withoutPadding().encode(signature));
+      if (compact.length > MAX_READINESS_COMPACT_JWT_BYTES) {
+        throw invalid();
+      }
+      String digest = sha256(compact);
+      callback = compact.clone();
+      exactCandidateConsumer.accept(digest, callback);
+      if (!digest.equals(sha256(callback))) {
+        throw invalid();
+      }
+      return digest;
+    } catch (Exception failure) {
+      // Never retain a credential in a callback exception chain.
+      throw invalid();
+    } finally {
+      wipe(header);
+      wipe(claims);
+      wipe(input);
+      wipe(signature);
+      wipe(compact);
+      wipe(callback);
+    }
+  }
+
   private static Map<String, Object> delegationClaims(
       AccountGameplayDelegationPendingIdentity identity, AccountAuthoritySnapshot authority) {
     if (!authority.accountId().equals(identity.accountId())) {
