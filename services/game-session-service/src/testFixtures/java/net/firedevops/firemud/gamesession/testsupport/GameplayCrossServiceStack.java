@@ -211,7 +211,22 @@ public final class GameplayCrossServiceStack implements AutoCloseable {
       clearDefaultDemoAdmissionBinding(jdbc, tenantId);
     }
     jdbc.execute("TRUNCATE TABLE runtime_region_status RESTART IDENTITY");
-    jdbc.execute("TRUNCATE TABLE game_instances RESTART IDENTITY");
+    // Packaged Game Session migrations add a bounded set of test-owned FK descendants below
+    // game instances. Keep this explicit so PostgreSQL can truncate the shared fixture baseline
+    // without cascading into unrelated tables.
+    jdbc.execute(
+        """
+        TRUNCATE TABLE
+            game_session_canonical_closed_admission_pointer_request,
+            gameplay_initial_admission_bind_attempt,
+            game_session_canonical_initial_admission_intent,
+            game_session_canonical_initial_admission_attempt,
+            gameplay_admission_pointer_event,
+            gameplay_admission_pointer,
+            game_session_canonical_instance_launch,
+            game_instances
+        RESTART IDENTITY
+        """);
     if (characterIds.length > 0) {
       clearScreenBuffers(tenantId, gameplayInstanceId, characterIds);
     }
