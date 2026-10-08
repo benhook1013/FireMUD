@@ -143,7 +143,8 @@ public final class AccountPublicJwksCache {
         refreshFromSource();
       } catch (SourceUnavailableException unavailable) {
         lastStaleSourceUnavailableAt = clock.instant();
-        if (unknownKidsRefreshedForSnapshot.size() < MAX_UNKNOWN_KID_REFRESHES_PER_SNAPSHOT) {
+        if (!cachedKidKnown
+            && unknownKidsRefreshedForSnapshot.size() < MAX_UNKNOWN_KID_REFRESHES_PER_SNAPSHOT) {
           unknownKidsRefreshedForSnapshot.add(kid);
         }
         throw unavailable;

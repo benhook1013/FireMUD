@@ -13,12 +13,16 @@ import static org.mockito.Mockito.when;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.List;
+import java.util.Properties;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicInteger;
 import net.firedevops.firemud.gamesession.binding.CanonicalGameplayLegacyMigrationSourceSnapshot;
 import net.firedevops.firemud.gamesession.binding.CanonicalGameplayLegacyMigrationStorageIdentity;
 import org.junit.jupiter.api.Test;
+import org.springframework.data.redis.connection.RedisClusterConnection;
+import org.springframework.data.redis.connection.RedisClusterServerCommands;
 import org.springframework.data.redis.connection.RedisConnection;
+import org.springframework.data.redis.connection.RedisServerCommands;
 import org.springframework.data.redis.core.Cursor;
 import org.springframework.data.redis.core.RedisCallback;
 import org.springframework.data.redis.core.ScanOptions;
@@ -40,6 +44,69 @@ class CanonicalGameplayLegacyRedisSourceTest {
     assertThat(snapshot.enumeratedEveryKnownFamily()).isTrue();
     assertThat(snapshot.everyEntryIsReconciled()).isTrue();
     verify(redis, times(2)).execute(any(RedisCallback.class));
+  }
+
+  @Test
+  void clusterConnectionIsRefusedBeforeLegacyScanEvenWhenInfoClaimsStandalone() {
+    StringRedisTemplate redis = mock(StringRedisTemplate.class);
+    RedisClusterConnection connection = mock(RedisClusterConnection.class);
+    RedisClusterServerCommands serverCommands = mock(RedisClusterServerCommands.class);
+    Properties clusterInformation = new Properties();
+    clusterInformation.setProperty("cluster_enabled", "0");
+    when(serverCommands.info("cluster")).thenReturn(clusterInformation);
+    when(connection.serverCommands()).thenReturn(serverCommands);
+    invokeThroughRedisCallback(redis, connection);
+
+    assertThatThrownBy(
+            () ->
+                new CanonicalGameplayLegacyRedisSource(redis, limits())
+                    .captureEveryKnownFamily(cohort()))
+        .isInstanceOf(CanonicalGameplayBindingInventoryConflictException.class)
+        .hasMessageContaining("cluster scan cannot prove complete cluster-wide inventory");
+
+    verify(connection, never()).scan(any(ScanOptions.class));
+  }
+
+  @Test
+  void unknownOrMissingStandaloneTopologyIsRefusedBeforeLegacyScan() {
+    Properties unknown = new Properties();
+    unknown.setProperty("cluster_enabled", "unknown");
+    for (Properties clusterInformation : new Properties[] {new Properties(), unknown, null}) {
+      StringRedisTemplate redis = mock(StringRedisTemplate.class);
+      RedisConnection connection = mock(RedisConnection.class);
+      RedisServerCommands serverCommands = mock(RedisServerCommands.class);
+      when(serverCommands.info("cluster")).thenReturn(clusterInformation);
+      when(connection.serverCommands()).thenReturn(serverCommands);
+      invokeThroughRedisCallback(redis, connection);
+
+      assertThatThrownBy(
+              () ->
+                  new CanonicalGameplayLegacyRedisSource(redis, limits())
+                      .captureEveryKnownFamily(cohort()))
+          .isInstanceOf(CanonicalGameplayBindingInventoryConflictException.class)
+          .hasMessageContaining("standalone topology could not be proven");
+
+      verify(connection, never()).scan(any(ScanOptions.class));
+    }
+  }
+
+  @Test
+  void topologyInfoFailureIsRefusedBeforeLegacyScan() {
+    StringRedisTemplate redis = mock(StringRedisTemplate.class);
+    RedisConnection connection = mock(RedisConnection.class);
+    RedisServerCommands serverCommands = mock(RedisServerCommands.class);
+    when(serverCommands.info("cluster")).thenThrow(new IllegalStateException("INFO unavailable"));
+    when(connection.serverCommands()).thenReturn(serverCommands);
+    invokeThroughRedisCallback(redis, connection);
+
+    assertThatThrownBy(
+            () ->
+                new CanonicalGameplayLegacyRedisSource(redis, limits())
+                    .captureEveryKnownFamily(cohort()))
+        .isInstanceOf(CanonicalGameplayBindingInventoryConflictException.class)
+        .hasMessageContaining("standalone topology could not be proven");
+
+    verify(connection, never()).scan(any(ScanOptions.class));
   }
 
   @Test
@@ -91,6 +158,8 @@ class CanonicalGameplayLegacyRedisSourceTest {
     Cursor<byte[]> brokenCursor = mock(Cursor.class);
     when(brokenConnection.scan(any(ScanOptions.class))).thenReturn(brokenCursor);
     when(brokenCursor.hasNext()).thenThrow(new IllegalStateException("incomplete cursor"));
+    RedisServerCommands brokenServerCommands = standaloneServerCommands();
+    when(brokenConnection.serverCommands()).thenReturn(brokenServerCommands);
     invokeThroughRedisCallback(brokenCursorRedis, brokenConnection);
 
     assertThatThrownBy(
@@ -106,6 +175,8 @@ class CanonicalGameplayLegacyRedisSourceTest {
     when(incompleteConnection.scan(any(ScanOptions.class))).thenReturn(incompleteCursor);
     when(incompleteCursor.hasNext()).thenReturn(false);
     when(incompleteCursor.getCursorId()).thenReturn(17L);
+    RedisServerCommands incompleteServerCommands = standaloneServerCommands();
+    when(incompleteConnection.serverCommands()).thenReturn(incompleteServerCommands);
     invokeThroughRedisCallback(incompleteCursorRedis, incompleteConnection);
     assertThatThrownBy(
             () ->
@@ -162,6 +233,14 @@ class CanonicalGameplayLegacyRedisSourceTest {
     return new CanonicalGameplayLegacyRedisSource.ScanLimits(2, 20, 40, 256, Duration.ofSeconds(5));
   }
 
+  private static RedisServerCommands standaloneServerCommands() {
+    RedisServerCommands serverCommands = mock(RedisServerCommands.class);
+    Properties clusterInformation = new Properties();
+    clusterInformation.setProperty("cluster_enabled", "0");
+    when(serverCommands.info("cluster")).thenReturn(clusterInformation);
+    return serverCommands;
+  }
+
   private static StringRedisTemplate redisWithScans(List<List<String>> scans) {
     StringRedisTemplate redis = mock(StringRedisTemplate.class);
     RedisConnection connection = mock(RedisConnection.class);
@@ -175,6 +254,11 @@ class CanonicalGameplayLegacyRedisSourceTest {
               }
               return cursor(scans.get(index));
             });
+    RedisServerCommands serverCommands = mock(RedisServerCommands.class);
+    Properties clusterInformation = new Properties();
+    clusterInformation.setProperty("cluster_enabled", "0");
+    when(serverCommands.info("cluster")).thenReturn(clusterInformation);
+    when(connection.serverCommands()).thenReturn(serverCommands);
     invokeThroughRedisCallback(redis, connection);
     return redis;
   }

@@ -390,6 +390,7 @@ class CanonicalGameplayBindingInventoryRepositoryIntegrationTest {
     carrier.put("schema", AccountGameplayAdmissionLeaseEvidence.SCHEMA);
     carrier.put("schemaVersion", "1");
     carrier.put("mode", "PUBLIC_PRODUCTION");
+    carrier.put("leaseKind", AccountGameplayAdmissionLeaseEvidence.LeaseKind.NEW_BINDING.name());
     carrier.put("targetNamespace", target.targetNamespace());
     carrier.put(
         "callerWorkload",

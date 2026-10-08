@@ -9,6 +9,7 @@ import org.gradle.api.file.ConfigurableFileCollection
 import org.gradle.api.tasks.OutputDirectories
 import org.gradle.api.tasks.TaskAction
 import org.gradle.jvm.application.tasks.CreateStartScripts
+import org.gradle.process.CommandLineArgumentProvider
 import org.springframework.boot.gradle.tasks.run.BootRun
 
 abstract class CreateDirectoriesTask : DefaultTask() {
@@ -99,7 +100,11 @@ tasks.named<BootRun>("bootRun") {
 val isWindows = System.getProperty("os.name").lowercase().contains("windows")
 
 tasks.withType<Test>().configureEach {
-    systemProperty("firemud.migration-driver-test-classpath", classpath.asPath)
+    jvmArgumentProviders.add(
+        CommandLineArgumentProvider {
+            listOf("-Dfiremud.migration-driver-test-classpath=${classpath.asPath}")
+        },
+    )
     if (isWindows) {
         maxParallelForks = 1
         forkEvery = 0

@@ -207,7 +207,7 @@ class CanonicalGameplayFreshNamespaceRedisReconcilerTest {
   }
 
   @Test
-  void clusterConnectionIsRefusedBecauseSingleScanCannotProveClusterCoverage() {
+  void clusterConnectionIsRefusedBeforeLegacyScan() {
     StringRedisTemplate redis = mock(StringRedisTemplate.class);
     RedisClusterConnection connection = mock(RedisClusterConnection.class);
     RedisClusterServerCommands serverCommands = mock(RedisClusterServerCommands.class);
@@ -215,8 +215,6 @@ class CanonicalGameplayFreshNamespaceRedisReconcilerTest {
     clusterInformation.setProperty("cluster_enabled", "0");
     when(serverCommands.info("cluster")).thenReturn(clusterInformation);
     when(connection.serverCommands()).thenReturn(serverCommands);
-    Cursor<byte[]> emptyCursor = cursor(ScanResult.empty());
-    when(connection.scan(any(ScanOptions.class))).thenReturn(emptyCursor);
     invokeThroughRedisCallback(redis, connection);
     CanonicalGameplayFreshNamespaceRedisReconciler reconciler = reconciler(redis);
 
@@ -224,11 +222,10 @@ class CanonicalGameplayFreshNamespaceRedisReconcilerTest {
             () ->
                 reconciler.rebuildExact(cohort(), emptyLegacySnapshot(), emptyCanonicalSnapshot(1)))
         .isInstanceOf(CanonicalGameplayBindingInventoryConflictException.class)
-        .hasMessageContaining("cannot prove complete cluster-wide namespace coverage");
+        .hasMessageContaining(
+            "Legacy Redis cluster scan cannot prove complete cluster-wide inventory");
 
-    // The existing legacy adapter makes two harmless empty scans first; the new target-family
-    // reconciler then refuses to treat a single cluster cursor as complete cluster coverage.
-    verify(connection, times(2)).scan(any(ScanOptions.class));
+    verify(connection, never()).scan(any(ScanOptions.class));
     verifyNoRedisMutationOrValueRead(redis);
   }
 

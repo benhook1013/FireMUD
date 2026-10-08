@@ -249,6 +249,31 @@ class AccountPublicJwksCacheTest {
   }
 
   @Test
+  void repeatedStaleKnownKeyLookupsRemainUnavailableDuringSourceOutage() throws Exception {
+    KeyPair key = rsa3072();
+    AtomicInteger loads = new AtomicInteger();
+    MutableClock clock = new MutableClock(INITIAL);
+    AccountPublicJwksCache cache =
+        cache(
+            clock,
+            () -> {
+              if (loads.incrementAndGet() > 1) {
+                throw new AccountPublicJwksCache.SourceUnavailableException();
+              }
+              return snapshot(jwks(jwk("known", (RSAPublicKey) key.getPublic())));
+            });
+
+    assertThat(cache.keyFor("known")).isEqualTo(key.getPublic());
+    clock.advance(Duration.ofSeconds(11));
+
+    assertThatThrownBy(() -> cache.keyFor("known"))
+        .isInstanceOf(AccountPublicJwksCache.SourceUnavailableException.class);
+    assertThatThrownBy(() -> cache.keyFor("known"))
+        .isInstanceOf(AccountPublicJwksCache.SourceUnavailableException.class);
+    assertThat(loads).hasValue(2);
+  }
+
+  @Test
   void changedSourceIdentityAndReusedKidMaterialAreRejected() throws Exception {
     KeyPair first = rsa3072();
     KeyPair replacement = rsa3072();
