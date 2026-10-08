@@ -24,7 +24,7 @@ class PreseededActorAssignmentOwnerReadEvidenceTest {
     var request = evidence.request();
     var wireRequest = PreseededActorAssignmentOwnerReadGrpcCodec.toRequest(request);
 
-    assertThat(wireRequest.getAllFields().keySet())
+    assertThat(wireRequest.getDescriptorForType().getFields())
         .noneMatch(
             field -> field.getName().contains("pointer") || field.getName().contains("epoch"));
     assertThat(PreseededActorAssignmentOwnerReadGrpcCodec.fromRequest(wireRequest))
