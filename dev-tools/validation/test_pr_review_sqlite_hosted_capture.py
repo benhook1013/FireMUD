@@ -130,8 +130,14 @@ class SqliteHostedCaptureTest(unittest.TestCase):
     def test_two_field_provider_badges_preserve_issue_and_explicit_severity(self) -> None:
         headline = "Before promoting this change, check that the scheduled backup runs build 6."
         explanation = "Check that the status site and the shared controller run the same build."
-        for category in ("🩺 Stability & Availability", "📐 Maintainability & Code Quality", "🔒 Security & Privacy",
-                         "Data Integrity & Integration", "Functional Correctness", "Bug"):
+        for category in (
+            "🩺 Stability & Availability",
+            "📐 Maintainability & Code Quality",
+            "🔒 Security & Privacy",
+            "Data Integrity & Integration",
+            "Functional Correctness",
+            "Bug",
+        ):
             with self.subTest(category=category):
                 body = f"_{category}_ | _🔵 Trivial_\n\n**{headline}**\n\n{explanation}"
                 finding = sqlite_hosted_capture._hosted_comment_finding_segments(4155240659, body)[0]
@@ -143,8 +149,10 @@ class SqliteHostedCaptureTest(unittest.TestCase):
         self.assertEqual(finding["display_detail"], explanation)
 
     def test_two_field_security_badge_does_not_prove_classification_metadata(self) -> None:
-        body = ("_🔒 Security & Privacy_ | _🟠 Major_\n**Authored classification**\n"
-                "**Exploitability:** Difficult\n**CWE:** CWE-693\n**Keep the authored remedy.**\nKeep the prose.")
+        body = (
+            "_🔒 Security & Privacy_ | _🟠 Major_\n**Authored classification**\n"
+            "**Exploitability:** Difficult\n**CWE:** CWE-693\n**Keep the authored remedy.**\nKeep the prose."
+        )
         finding = sqlite_hosted_capture._hosted_comment_finding_segments(202, body)[0]
         self.assertEqual(finding["classification_titles"], [])
         self.assertEqual(finding["title"], "Authored classification")
@@ -153,9 +161,13 @@ class SqliteHostedCaptureTest(unittest.TestCase):
         self.assertIn("**Keep the authored remedy.**", finding["display_detail"])
 
     def test_authored_italic_pairs_and_code_samples_are_not_two_field_badges(self) -> None:
-        for pair in ("_Authored point_ | _Trivial_", "_Stability & Availability narrative_ | _Trivial_",
-                     "_Stability & Availability_ | _Major impact_", "_Stability & Availability_ | _Unknown_",
-                     "```md\n_🩺 Stability & Availability_ | _🔵 Trivial_\n```"):
+        for pair in (
+            "_Authored point_ | _Trivial_",
+            "_Stability & Availability narrative_ | _Trivial_",
+            "_Stability & Availability_ | _Major impact_",
+            "_Stability & Availability_ | _Unknown_",
+            "```md\n_🩺 Stability & Availability_ | _🔵 Trivial_\n```",
+        ):
             with self.subTest(pair=pair):
                 body = "**Preserve the authored issue.**\n" + pair + "\nActual issue prose."
                 finding = sqlite_hosted_capture._hosted_comment_finding_segments(202, body)[0]
@@ -189,9 +201,11 @@ class SqliteHostedCaptureTest(unittest.TestCase):
         finding = sqlite_hosted_capture._hosted_comment_finding_segments(202, detached)[0]
         self.assertEqual(finding["classification_titles"], [])
         self.assertIn("**Exploitability:** Difficult", finding["display_detail"])
-        bound_then_authored = (header + "\n<details><summary>Analysis chain</summary>Diagnostic noise</details>\n"
-                               "**Provider classification**\n**Exploitability:** Difficult\n**CWE:** CWE-693\n"
-                               "**Actual remedy.**\nOrdinary unrelated issue prose.\n" + classification)
+        bound_then_authored = (
+            header + "\n<details><summary>Analysis chain</summary>Diagnostic noise</details>\n"
+            "**Provider classification**\n**Exploitability:** Difficult\n**CWE:** CWE-693\n"
+            "**Actual remedy.**\nOrdinary unrelated issue prose.\n" + classification
+        )
         finding = sqlite_hosted_capture._hosted_comment_finding_segments(202, bound_then_authored)[0]
         self.assertEqual(finding["classification_titles"], ["Provider classification"])
         self.assertIn("**Authored classification**", finding["display_detail"])
@@ -199,15 +213,19 @@ class SqliteHostedCaptureTest(unittest.TestCase):
 
     def test_security_metadata_requires_complete_strict_provider_badge(self) -> None:
         metadata = "\n**Authorization Bypass**\n**Exploitability:** Difficult\n**CWE:** CWE-693\n**Require durable proof.**\nKeep the prose."
-        valid = ("_🔒 Security & Privacy_ | _🟠 Major_ | _🏗️ Heavy lift_",
-                 "_🔒 Security & Privacy_ | _🛡️ Detected with Advanced Tier_ | _🟠 Major_ | _🏗️ Heavy lift_")
-        invalid = ("_Security & Privacy_ | arbitrary authored prose",
-                   "_Security & Privacy narrative_ | _Major_ | _Heavy lift_",
-                   "_Security & Privacy_ | _Major impact_ | _Heavy lift_",
-                   "_Security & Privacy_ | _Unknown_ | _Heavy lift_",
-                   "_Security & Privacy_ | _Major_ | _Something else_",
-                   "_Security & Privacy_ | _Invented tier_ | _Major_ | _Heavy lift_",
-                   "```md\n" + valid[0] + "\n```")
+        valid = (
+            "_🔒 Security & Privacy_ | _🟠 Major_ | _🏗️ Heavy lift_",
+            "_🔒 Security & Privacy_ | _🛡️ Detected with Advanced Tier_ | _🟠 Major_ | _🏗️ Heavy lift_",
+        )
+        invalid = (
+            "_Security & Privacy_ | arbitrary authored prose",
+            "_Security & Privacy narrative_ | _Major_ | _Heavy lift_",
+            "_Security & Privacy_ | _Major impact_ | _Heavy lift_",
+            "_Security & Privacy_ | _Unknown_ | _Heavy lift_",
+            "_Security & Privacy_ | _Major_ | _Something else_",
+            "_Security & Privacy_ | _Invented tier_ | _Major_ | _Heavy lift_",
+            "```md\n" + valid[0] + "\n```",
+        )
         for header in valid:
             with self.subTest(header=header):
                 finding = sqlite_hosted_capture._hosted_comment_finding_segments(202, header + metadata)[0]
@@ -225,20 +243,30 @@ class SqliteHostedCaptureTest(unittest.TestCase):
         header = "_🔒 Security & Privacy_ | _🛡️ Detected with Advanced Tier_ | _🟠 Major_ | _🏗️ Heavy lift_"
         for classification, reachability, headline in (
             ("Authorization Bypass", "", "Require durability proof for the existing-marker outcome."),
-            ("Sensitive Data Exposure", "**Reachability:** Internal\n", "Do not document privileged JWTs with plaintext transport."),
+            (
+                "Sensitive Data Exposure",
+                "**Reachability:** Internal\n",
+                "Do not document privileged JWTs with plaintext transport.",
+            ),
             ("Different provider classification", "", "Preserve the actual remedy."),
         ):
             with self.subTest(classification=classification):
-                body = (header + f"\n**{classification}**\n" + reachability +
-                        "**Exploitability:** Difficult\n**CWE:** [CWE-693](https://cwe.mitre.org/data/definitions/693.html)\n"
-                        f"**{headline}** Keep the substantive explanation.")
+                body = (
+                    header
+                    + f"\n**{classification}**\n"
+                    + reachability
+                    + "**Exploitability:** Difficult\n**CWE:** [CWE-693](https://cwe.mitre.org/data/definitions/693.html)\n"
+                    f"**{headline}** Keep the substantive explanation."
+                )
                 finding = sqlite_hosted_capture._hosted_comment_finding_segments(202, body)[0]
                 self.assertEqual(finding["title"], headline)
                 self.assertEqual(finding["classification_titles"], [classification])
                 self.assertEqual(finding["display_detail"], "Keep the substantive explanation.")
                 self.assertFalse(finding["display_title_is_excerpt"])
         unproven = header + "\n**Authorization Bypass**\n**Exploitability:** Difficult\n**Another authored issue.**"
-        self.assertEqual(sqlite_hosted_capture._hosted_comment_finding_segments(202, unproven)[0]["classification_titles"], [])
+        self.assertEqual(
+            sqlite_hosted_capture._hosted_comment_finding_segments(202, unproven)[0]["classification_titles"], []
+        )
         ordinary = "**Authorization Bypass**\nKeep this authored issue title and explanation."
         finding = sqlite_hosted_capture._hosted_comment_finding_segments(202, ordinary)[0]
         self.assertEqual(finding["title"], "Authorization Bypass")
@@ -264,8 +292,7 @@ class SqliteHostedCaptureTest(unittest.TestCase):
 
     def test_hosted_aggregate_display_stays_bounded_with_omitted_long_sections(self) -> None:
         findings = [
-            {"title": f"Finding {index}", "display_detail": f"Body {index}. " + "x" * 2_000}
-            for index in range(1, 81)
+            {"title": f"Finding {index}", "display_detail": f"Body {index}. " + "x" * 2_000} for index in range(1, 81)
         ]
 
         detail = sqlite_finding_text._hosted_aggregate_display_detail(findings, "Aggregate")
@@ -293,10 +320,13 @@ class SqliteHostedCaptureTest(unittest.TestCase):
 
     def test_explicit_nested_provider_tools_block_is_removed(self) -> None:
         sample = "```xml\n<Tools>ordinary example</Tools>\n```"
-        body = ("**Align the security summary.**\nPreserve the actual explanation.\n" + sample +
-                "\n<details>\n<summary>🧰 Tools</summary>\n<details>\n"
-                "<summary>🪛 Checkov (3.3.17)</summary>\nCKV_OPENAPI_4/5 diagnostic output\n"
-                "</details>\n</details>\n<details><summary>Ordinary evidence</summary>Keep this prose.</details>")
+        body = (
+            "**Align the security summary.**\nPreserve the actual explanation.\n"
+            + sample
+            + "\n<details>\n<summary>🧰 Tools</summary>\n<details>\n"
+            "<summary>🪛 Checkov (3.3.17)</summary>\nCKV_OPENAPI_4/5 diagnostic output\n"
+            "</details>\n</details>\n<details><summary>Ordinary evidence</summary>Keep this prose.</details>"
+        )
         finding = sqlite_hosted_capture._hosted_comment_finding_segments(4151800013, body)[0]
         self.assertNotIn("Checkov", finding["display_detail"])
         self.assertNotIn("CKV_OPENAPI", finding["display_detail"])
@@ -305,71 +335,88 @@ class SqliteHostedCaptureTest(unittest.TestCase):
 
     def test_actual_security_and_orphan_prompt_display_shapes(self) -> None:
         header = "_🔒 Security & Privacy_ | _🛡️ Detected with Advanced Tier_ | _🟠 Major_ | _🏗️ Heavy lift_"
-        body = (header + "\n<details>\n<summary>🧩 Analysis chain</summary>\n"
-                "Script executed:\n```bash\necho diagnostic\n```\n</details>\n"
-                "**Broken Authentication**\n\n**Reachability:** External  \n"
-                "**Exploitability:** Difficult  \n**CWE:** [CWE-294](https://cwe.mitre.org/data/definitions/294.html)\n"
-                "**Quarantine replay admission after marker loss.** Production Redis absence fails closed.\n"
-                "```java\nFoo<T> sample;\n```\n<summary>🤖 Prompt for AI Agents</summary>\n"
-                "```text\nDo not display this truncated prompt")
+        body = (
+            header + "\n<details>\n<summary>🧩 Analysis chain</summary>\n"
+            "Script executed:\n```bash\necho diagnostic\n```\n</details>\n"
+            "**Broken Authentication**\n\n**Reachability:** External  \n"
+            "**Exploitability:** Difficult  \n**CWE:** [CWE-294](https://cwe.mitre.org/data/definitions/294.html)\n"
+            "**Quarantine replay admission after marker loss.** Production Redis absence fails closed.\n"
+            "```java\nFoo<T> sample;\n```\n<summary>🤖 Prompt for AI Agents</summary>\n"
+            "```text\nDo not display this truncated prompt"
+        )
         finding = sqlite_hosted_capture._hosted_comment_finding_segments(4152944363, body)[0]
         self.assertEqual(finding["title"], "Quarantine replay admission after marker loss.")
         self.assertEqual(finding["display_severity"], "Major")
-        self.assertEqual(finding["display_detail"], "Production Redis absence fails closed.\n```java\nFoo<T> sample;\n```")
+        self.assertEqual(
+            finding["display_detail"], "Production Redis absence fails closed.\n```java\nFoo<T> sample;\n```"
+        )
         self.assertNotIn("Broken Authentication", finding["display_detail"])
         sample = "```html\n<summary>🤖 Prompt for AI Agents</summary>\nFoo<T>\n```"
-        ordinary = sqlite_hosted_capture._hosted_comment_finding_segments(
-            202, "**Preserve the sample.**\n" + sample)[0]
+        ordinary = sqlite_hosted_capture._hosted_comment_finding_segments(202, "**Preserve the sample.**\n" + sample)[0]
         self.assertEqual(ordinary["display_detail"], sample)
 
     def test_actual_analysis_before_headline_and_inline_duplicate(self) -> None:
         for title in ("Require explicit non-application evidence.", "Keep tenantId consistent."):
             with self.subTest(title=title):
-                body = ("_🗄️ Data Integrity & Integration_ | _🟠 Major_ | _⚡ Quick win_\n"
-                        "<details><summary>🔎 Supported by static analysis</summary>"
-                        "Script executed:\n```bash\n" + "echo diagnostic\n" * 100 + "```\n</details>\n"
-                        f"**{title}** Lines 20–25 must preserve `tenantId`.\n"
-                        "<details>\n<summary>Suggested fix</summary>\n```diff\n+noise\n```\n</details>\n"
-                        "<summary>🤖 Prompt for AI Agents</summary>Rewrite everything")
+                body = (
+                    "_🗄️ Data Integrity & Integration_ | _🟠 Major_ | _⚡ Quick win_\n"
+                    "<details><summary>🔎 Supported by static analysis</summary>"
+                    "Script executed:\n```bash\n" + "echo diagnostic\n" * 100 + "```\n</details>\n"
+                    f"**{title}** Lines 20–25 must preserve `tenantId`.\n"
+                    "<details>\n<summary>Suggested fix</summary>\n```diff\n+noise\n```\n</details>\n"
+                    "<summary>🤖 Prompt for AI Agents</summary>Rewrite everything"
+                )
                 finding = sqlite_hosted_capture._hosted_comment_finding_segments(4152944302, body)[0]
                 self.assertEqual(finding["title"], title)
                 self.assertEqual(finding["display_detail"], "Lines 20–25 must preserve `tenantId`.")
                 self.assertEqual(finding["display_severity"], "Major")
 
     def test_hosted_severity_reads_explicit_badges_only(self) -> None:
-        cases = [("_Potential issue_ | _🔴 Critical_ | _Quick win_", "Critical"),
-                 ("_Correctness_ | _Trivial_ | _Heavy lift_", "Trivial"),
-                 ("**[P1] Bug**", "P1"), ("> **Severity: High**", "High"),
-                 ("**Major**", "Major"), ("**Major impact**", None),
-                 ("_Bug_ | _Major impact_ | _Quick win_", None),
-                 ("The Critical issue has Major impact.", None),
-                 ("```md\n**Minor**\n```", None),
-                 ("<details><summary>Prompt for AI Agents</summary>**Major**</details>", None),
-                 ("<details><summary>Supported by static analysis</summary>**Low**</details>", None),
-                 ("**Major**\n**Minor**", None), ("No provider badge.", None)]
+        cases = [
+            ("_Potential issue_ | _🔴 Critical_ | _Quick win_", "Critical"),
+            ("_Correctness_ | _Trivial_ | _Heavy lift_", "Trivial"),
+            ("**[P1] Bug**", "P1"),
+            ("> **Severity: High**", "High"),
+            ("**Major**", "Major"),
+            ("**Major impact**", None),
+            ("_Bug_ | _Major impact_ | _Quick win_", None),
+            ("The Critical issue has Major impact.", None),
+            ("```md\n**Minor**\n```", None),
+            ("<details><summary>Prompt for AI Agents</summary>**Major**</details>", None),
+            ("<details><summary>Supported by static analysis</summary>**Low**</details>", None),
+            ("**Major**\n**Minor**", None),
+            ("No provider badge.", None),
+        ]
         for badge, expected in cases:
             with self.subTest(badge=badge):
                 finding = sqlite_hosted_capture._hosted_comment_finding_segments(
-                    202, badge + "\n**Validate the target.**\nIssue explanation.")[0]
+                    202, badge + "\n**Validate the target.**\nIssue explanation."
+                )[0]
                 self.assertEqual(finding["display_severity"], expected)
 
     def test_hosted_severity_is_independent_per_fingerprint(self) -> None:
-        body = ("_Bug_ | _Major_ | _Quick win_\n**First issue.**\n"
-                "<!-- cr-comment:v1:aaaaaaaaaaaaaaaaaaaaaaaa -->\n"
-                "_Bug_ | _Minor_ | _Quick win_\n**Second issue.**\n"
-                "<!-- cr-comment:v1:bbbbbbbbbbbbbbbbbbbbbbbb -->")
+        body = (
+            "_Bug_ | _Major_ | _Quick win_\n**First issue.**\n"
+            "<!-- cr-comment:v1:aaaaaaaaaaaaaaaaaaaaaaaa -->\n"
+            "_Bug_ | _Minor_ | _Quick win_\n**Second issue.**\n"
+            "<!-- cr-comment:v1:bbbbbbbbbbbbbbbbbbbbbbbb -->"
+        )
         findings = sqlite_hosted_capture._hosted_comment_finding_segments(202, body)
         self.assertEqual([item["display_severity"] for item in findings], ["Major", "Minor"])
         self.assertEqual(len({item["key"] for item in findings}), 2)
 
     def test_headline_ignores_analysis_wrappers_and_scripts(self) -> None:
-        issue = ("The `AlreadyStarted` path does not compare the incoming "
-                 "`PreparedWorldInstanceRequest` with the existing workflow's request identity.")
+        issue = (
+            "The `AlreadyStarted` path does not compare the incoming "
+            "`PreparedWorldInstanceRequest` with the existing workflow's request identity."
+        )
         body = (
             "_Data Integrity & Integration_ | _Major_ | _Quick win_\n"
             "<details>\n<summary>Supported by static analysis</summary>\n"
-            "Script executed:\n```bash\n" + "echo diagnostic\n" * 100 +
-            "```\nRepository: owner/repo\nLength of output: 37011\n---\n</details>\n" + issue
+            "Script executed:\n```bash\n"
+            + "echo diagnostic\n" * 100
+            + "```\nRepository: owner/repo\nLength of output: 37011\n---\n</details>\n"
+            + issue
         )
         self.assertEqual(sqlite_provider_imports._first_line(body), issue)
         findings = sqlite_hosted_capture._hosted_comment_finding_segments(4142913648, body)
@@ -377,26 +424,36 @@ class SqliteHostedCaptureTest(unittest.TestCase):
         self.assertEqual(findings[0]["key"], "hosted-comment:4142913648")
         self.assertNotIn(issue, findings[0]["detail"])
         self.assertEqual(findings[0]["display_detail"], issue)
-        self.assertEqual(sqlite_provider_imports._first_line(body + "\n**Check the request identity.**"),
-                         "Check the request identity.")
+        self.assertEqual(
+            sqlite_provider_imports._first_line(body + "\n**Check the request identity.**"),
+            "Check the request identity.",
+        )
 
     def test_headline_preserves_issue_code_and_omits_wrapper_only_content(self) -> None:
         for body, title in (
-            ("<p><strong>Check `x < y` before returning `<T>`.</strong></p>",
-             "Check `x < y` before returning `<T>`."),
+            ("<p><strong>Check `x < y` before returning `<T>`.</strong></p>", "Check `x < y` before returning `<T>`."),
             ("> **[P1] Bug**\n> **Validate the current target.**", "Validate the current target."),
-            (("<details>\n<summary>Supported by static analysis</summary>\n"
-              "Script executed:\n```bash\necho diagnostic\n```\n</details>"), None),
+            (
+                (
+                    "<details>\n<summary>Supported by static analysis</summary>\n"
+                    "Script executed:\n```bash\necho diagnostic\n```\n</details>"
+                ),
+                None,
+            ),
             ("**[P1] Bug**\n---\n<script>alert('bad')</script>", None),
             ("```python\n**Misleading headline**\n```", None),
-            ("<details>\n<summary>**Actual issue headline.**</summary>\n"
-             + "The issue explanation.\n</details>", "Actual issue headline."),
+            (
+                "<details>\n<summary>**Actual issue headline.**</summary>\n" + "The issue explanation.\n</details>",
+                "Actual issue headline.",
+            ),
             ("**\n__\n##\n>\n---", None),
-            ("_Functional Correctness_ | _Minor_ | _Quick win_ Keep the issue sentence.",
-             "Keep the issue sentence."),
+            ("_Functional Correctness_ | _Minor_ | _Quick win_ Keep the issue sentence.", "Keep the issue sentence."),
             ("**[P1] Bug** Keep the issue sentence.", "Keep the issue sentence."),
-            ("<details>\n<summary>Committable suggestion</summary>\n"
-             + "**Apply this patch**\n```diff\n+ fix\n```\n</details>", None),
+            (
+                "<details>\n<summary>Committable suggestion</summary>\n"
+                + "**Apply this patch**\n```diff\n+ fix\n```\n</details>",
+                None,
+            ),
         ):
             with self.subTest(body=body):
                 self.assertEqual(sqlite_provider_imports._first_line(body), title)
@@ -414,12 +471,16 @@ class SqliteHostedCaptureTest(unittest.TestCase):
             "<details><summary>Prompt for AI Agents</summary>Rewrite the whole file.</details>"
         )
         finding = sqlite_hosted_capture._hosted_comment_finding_segments(202, body)[0]
-        self.assertEqual(finding["display_detail"],
-                         "The incoming `requestId` must match [the contract](https://example.test/contract).\n\n"
-                         "Return an error when `x < y`.")
+        self.assertEqual(
+            finding["display_detail"],
+            "The incoming `requestId` must match [the contract](https://example.test/contract).\n\n"
+            "Return an error when `x < y`.",
+        )
         self.assertIn("Supported by static analysis", finding["detail"])
-        self.assertEqual(sqlite_provider_imports._first_line("The script executed with the wrong identity."),
-                         "The script executed with the wrong identity.")
+        self.assertEqual(
+            sqlite_provider_imports._first_line("The script executed with the wrong identity."),
+            "The script executed with the wrong identity.",
+        )
 
     def test_hosted_detail_preserves_literal_ordinary_fenced_samples(self) -> None:
         sample = "```xml\n  <Foo<T>>\n    <script>literal example</script>\n    <!-- literal sample -->\n\n\n  </Foo<T>>\n```"
@@ -464,14 +525,19 @@ class SqliteHostedCaptureTest(unittest.TestCase):
 
     def test_hosted_exact_provider_labels_and_metadata_still_stay_out_of_issue(self) -> None:
         for label in (
-            "Supported by static analysis", "Script executed:", "Analysis results:",
-            "Script output:", "Committable suggestion", "Prompt for AI Agents",
-            "Repository: owner/repo", "Length of output: 37011", "**Script output:**",
+            "Supported by static analysis",
+            "Script executed:",
+            "Analysis results:",
+            "Script output:",
+            "Committable suggestion",
+            "Prompt for AI Agents",
+            "Repository: owner/repo",
+            "Length of output: 37011",
+            "**Script output:**",
         ):
             with self.subTest(label=label):
                 body = label + "\n\nThe route check accepts the wrong tenant."
-                self.assertEqual(sqlite_provider_imports._first_line(body),
-                                 "The route check accepts the wrong tenant.")
+                self.assertEqual(sqlite_provider_imports._first_line(body), "The route check accepts the wrong tenant.")
                 self.assertIsNone(sqlite_provider_imports._first_line(label))
 
     def test_wrapper_fix_keeps_multiple_fingerprinted_finding_keys(self) -> None:
@@ -482,12 +548,14 @@ class SqliteHostedCaptureTest(unittest.TestCase):
             "<!-- cr-comment:v1:bbbbbbbbbbbbbbbbbbbbbbbb -->"
         )
         findings = sqlite_hosted_capture._hosted_comment_finding_segments(202, body)
-        self.assertEqual([item["title"] for item in findings],
-                         ["First actionable issue.", "Second actionable issue."])
-        self.assertEqual([item["key"] for item in findings], [
-            "hosted-comment:202:fingerprint:aaaaaaaaaaaaaaaaaaaaaaaa",
-            "hosted-comment:202:fingerprint:bbbbbbbbbbbbbbbbbbbbbbbb",
-        ])
+        self.assertEqual([item["title"] for item in findings], ["First actionable issue.", "Second actionable issue."])
+        self.assertEqual(
+            [item["key"] for item in findings],
+            [
+                "hosted-comment:202:fingerprint:aaaaaaaaaaaaaaaaaaaaaaaa",
+                "hosted-comment:202:fingerprint:bbbbbbbbbbbbbbbbbbbbbbbb",
+            ],
+        )
 
     def test_checkpoint_id_matches_hosted_type_case_insensitively_and_exact_review_id(self) -> None:
         checkpoints = [
@@ -1370,10 +1438,7 @@ class SqliteHostedCaptureTest(unittest.TestCase):
             old_trigger_at = "2026-09-29T00:50:00Z"
             old_thread_created_at = "2026-09-29T00:50:30Z"
             old_finished_at = "2026-09-29T00:51:00Z"
-            old_body = (
-                "An archived CodeRabbit finding.\n\n"
-                "<!-- cr-comment:v1:0123456789abcdef01234567 -->"
-            )
+            old_body = "An archived CodeRabbit finding.\n\n<!-- cr-comment:v1:0123456789abcdef01234567 -->"
             old_review = {
                 "databaseId": old_response_id,
                 "author": {"login": "coderabbitai[bot]"},
@@ -1526,7 +1591,10 @@ class SqliteHostedCaptureTest(unittest.TestCase):
                     return attempt
 
                 with patch.object(
-                    sqlite_review_records.SqliteReviewRecords, "attempt", autospec=True, side_effect=conflicting_run_link
+                    sqlite_review_records.SqliteReviewRecords,
+                    "attempt",
+                    autospec=True,
+                    side_effect=conflicting_run_link,
                 ):
                     self.assertEqual(
                         hosted.trigger_state(REPO, PR, payload, trigger, record_path).state,
@@ -1549,9 +1617,7 @@ class SqliteHostedCaptureTest(unittest.TestCase):
             self.assertEqual(first["synced"][0]["state"], "completed")
             self.assertEqual(first["synced"][0]["counts"], {"found": 0, "accepted": 0, "routed": 0})
             self.assertEqual(records.attempt(attempt_id)["state"], "completed")
-            current_attempt = next(
-                item for item in records.attempt_history(PR) if item["attempt_id"] == attempt_id
-            )
+            current_attempt = next(item for item in records.attempt_history(PR) if item["attempt_id"] == attempt_id)
             self.assertEqual(current_attempt["trigger_id"], "901")
             self.assertEqual(current_attempt["provider_review_id"], "902")
             self.assertEqual(
@@ -1785,6 +1851,123 @@ class SqliteHostedCaptureTest(unittest.TestCase):
             self.assertEqual(len(second["pending"]), 0)
             self.assertEqual(len(second["errors"]), 0)
             self.assertEqual(records.history(PR)["runs"], [])
+
+    def test_sync_recognizes_only_exact_linked_zero_reply_recovery_for_ambiguous_attempt(self) -> None:
+        scenarios = (
+            ("exact", 703, HEAD, False, True),
+            ("wrong-trigger", 704, HEAD, False, False),
+            ("wrong-head", 703, "b" * 40, False, False),
+            ("nonzero-run", 703, HEAD, True, False),
+        )
+        for name, origin_trigger_id, source_head, with_finding, recovered in scenarios:
+            with self.subTest(recovery=name), tempfile.TemporaryDirectory() as directory:
+                common = Path(directory) / "git-common"
+                records = self.new_records(Path(directory) / "controller.sqlite3")
+                attempt_id = "hosted-sync-late-reply"
+                trigger_id = 703
+                attempt_record = self.trigger_record(
+                    trigger_id=trigger_id,
+                    attempt_id=attempt_id,
+                )
+                self.write_trigger_record(common, attempt_record)
+                sqlite_hosted_capture.start_hosted_attempt(
+                    records,
+                    attempt_id=attempt_id,
+                    source_pr=PR,
+                    candidate_sha=HEAD,
+                    started_at=TRIGGER_AT,
+                    metadata={"repository": REPO},
+                )
+                records.finish_attempt(
+                    attempt_id,
+                    state="ambiguous",
+                    finished_at="2026-09-29T01:02:00Z",
+                    trigger_id=str(trigger_id),
+                    provider_review_id="704",
+                    diagnostic="initial reply has no completion proof",
+                    artifacts={"metadata": '{"initial":"immutable observation"}'},
+                )
+                run_id = "late-reply-zero-run"
+                findings = (
+                    [sqlite_review_records.FindingObservation("finding-1", "Finding", detail="Details")]
+                    if with_finding
+                    else []
+                )
+                source_decisions = (
+                    [
+                        {
+                            "source_finding_key": "finding-1",
+                            "decision_id": "decision-1",
+                            "decision": "rejected",
+                            "actor": "operator",
+                            "reason": "Retain the ordinary finding in the control case.",
+                        }
+                    ]
+                    if with_finding
+                    else []
+                )
+                records.import_completed_run(
+                    run_id=run_id,
+                    source_pr=PR,
+                    channel="hosted",
+                    findings=findings,
+                    source_decisions=source_decisions,
+                    source_head=source_head,
+                    reviewer="coderabbitai",
+                    scope="broad",
+                    started_at="2026-09-29T01:02:01Z",
+                    finished_at="2026-09-29T01:03:00Z",
+                    finalized_at="2026-09-29T01:04:00Z",
+                )
+                records.link_provider_origin(
+                    repository=REPO,
+                    source_pr=PR,
+                    channel="hosted",
+                    provider_id=f"trigger:{origin_trigger_id}",
+                    checkpoint_id=705,
+                    checkpoint_fingerprint="a" * 64,
+                    run_id=run_id,
+                )
+                before = records.history(PR, include_display=False)
+                attempt_before = records.attempt(attempt_id)
+                artifacts_before = records.attempt_artifacts(attempt_id)
+
+                with patch.object(
+                    sqlite_hosted_capture.github,
+                    "fetch_pull_request",
+                    side_effect=AssertionError("terminal recovery classification must not fetch GitHub"),
+                ) as fetch:
+                    report = sqlite_hosted_capture.sync_hosted_pending(records, REPO, common=common, pr_number=PR)
+
+                fetch.assert_not_called()
+                expected_bucket = "synced" if recovered else "ambiguous"
+                self.assertEqual(len(report[expected_bucket]), 1, report)
+                self.assertEqual(len(report["ambiguous"]), 0 if recovered else 1)
+                self.assertEqual(report["pending"], [])
+                self.assertEqual(report["errors"], [])
+                if recovered:
+                    self.assertEqual(
+                        report["synced"][0],
+                        {
+                            "pr": PR,
+                            "record": str(hosted.default_trigger_record_path(REPO, PR, common)),
+                            "attempt_id": attempt_id,
+                            "trigger_id": str(trigger_id),
+                            "state": "completed",
+                            "attempt_state": "ambiguous",
+                            "run_id": run_id,
+                            "checkpoint_id": 705,
+                            "counts": {"found": 0, "accepted": 0, "routed": 0},
+                            "recovered_from_reply": True,
+                            "idempotent_replay": True,
+                        },
+                    )
+                else:
+                    self.assertEqual(report["synced"], [])
+                    self.assertEqual(report["ambiguous"][0]["state"], "ambiguous")
+                self.assertEqual(records.attempt(attempt_id), attempt_before)
+                self.assertEqual(records.attempt_artifacts(attempt_id), artifacts_before)
+                self.assertEqual(records.history(PR, include_display=False), before)
 
     def test_sync_isolates_bad_records_and_reuses_one_payload_per_pr(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
