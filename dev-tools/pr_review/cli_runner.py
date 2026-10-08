@@ -1394,8 +1394,10 @@ def run_cli_review(
                             }
                             if has_timeout_findings:
                                 timeout_artifacts["cli_events"] = stdout
-                                records.record_failed_cli_observations(
+                                attempt_finished, records_warning = _retain_failed_cli_observations(
+                                    records,
                                     run_id,
+                                    stdout=stdout,
                                     finish={
                                         "state": "timed_out",
                                         "finished_at": finished_at,
@@ -1427,13 +1429,15 @@ def run_cli_review(
                                     diagnostic="CodeRabbit CLI timed out before a complete result",
                                     artifacts=timeout_artifacts,
                                 )
+                                attempt_finished = True
                         except (ReviewRecordsError, OSError, sqlite3.DatabaseError):
                             pass
-                        else:
-                            attempt_finished = True
-                    raise ReviewRunnerError(
+                    timeout_failure = ReviewRunnerError(
                         f"CodeRabbit review timed out after {review_timeout_seconds} seconds"
-                    ) from error
+                    )
+                    if records_warning:
+                        _add_exception_note(timeout_failure, records_warning)
+                    raise timeout_failure from error
                 finished = monotonic_ns()
                 if finished < started:
                     raise ReviewRunnerError("process clock moved backwards while measuring review duration")
@@ -1526,11 +1530,14 @@ def run_cli_review(
                                 },
                                 finalize_empty=not observations,
                             )
+                            attempt_finished = True
                         elif parsed_findings:
                             completed_at = hosted.utc_now()
                             if _has_failed_cli_findings(stdout):
-                                records.record_failed_cli_observations(
+                                attempt_finished, records_warning = _retain_failed_cli_observations(
+                                    records,
                                     run_id,
+                                    stdout=stdout,
                                     finish={
                                         "state": result_state,
                                         "finished_at": completed_at,
@@ -1561,6 +1568,7 @@ def run_cli_review(
                                     diagnostic=diagnostic,
                                     artifacts=artifacts,
                                 )
+                                attempt_finished = True
                         else:
                             records.finish_attempt(
                                 run_id,
@@ -1570,7 +1578,7 @@ def run_cli_review(
                                 diagnostic=diagnostic,
                                 artifacts=artifacts,
                             )
-                        attempt_finished = True
+                            attempt_finished = True
                     except (ReviewRecordsError, OSError, sqlite3.DatabaseError):
                         records_warning = (
                             "SQLite review record was not saved; the durable CLI capture remains available for recovery"
@@ -1685,6 +1693,46 @@ def _has_failed_cli_findings(stdout: str) -> bool:
     except evidence.EvidenceError:
         return False
     return bool(findings)
+
+
+def _retain_failed_cli_observations(
+    records: SqliteReviewRecords,
+    run_id: str,
+    *,
+    stdout: str,
+    finish: Mapping[str, Any],
+    run: Mapping[str, Any],
+) -> tuple[bool, str | None]:
+    """Keep a failed attempt terminal if observation projection cannot be stored."""
+
+    try:
+        records.record_failed_cli_observations(run_id, finish=finish, run=run)
+    except (ReviewRecordsError, OSError, sqlite3.DatabaseError) as observation_error:
+        fallback = dict(finish)
+        fallback_artifacts = dict(fallback.get("artifacts", {}))
+        fallback_artifacts.pop("cli_events", None)
+        fallback_artifacts["cli_raw_output"] = stdout
+        fallback["artifacts"] = fallback_artifacts
+        try:
+            records.finish_attempt(run_id, **fallback)
+        except (ReviewRecordsError, OSError, sqlite3.DatabaseError) as fallback_error:
+            return False, (
+                "SQLite could not retain partial CLI observations "
+                f"({_bounded_recording_error(observation_error)}); terminal raw-output fallback also failed "
+                f"({_bounded_recording_error(fallback_error)}). The durable capture remains available."
+            )
+        return True, (
+            "SQLite could not retain partial CLI observations "
+            f"({_bounded_recording_error(observation_error)}); the failed attempt was archived as raw output "
+            "for exact recovery."
+        )
+    return True, None
+
+
+def _bounded_recording_error(error: Exception) -> str:
+    value = "".join(" " if unicodedata.category(character) in {"Cc", "Cs"} else character for character in str(error))
+    value = " ".join(value.split())[:240]
+    return value or type(error).__name__
 
 
 def target_from_resolver(resolver: ReviewTargetResolver, expected_pr: int | None = None) -> ReviewTarget:

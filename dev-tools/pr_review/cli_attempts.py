@@ -176,12 +176,8 @@ def recover_failed_cli_observations(records: Any, database: Path, run_id: str) -
         exit_status = int(exit_text)
         if metadata.get("exit_status") != exit_status or metadata.get("timed_out") not in (None, False):
             raise ReviewRecordsError("native CLI failed capture exit status is inconsistent")
-        if exit_status == 0:
-            if attempt["state"] != "failed":
-                raise ReviewRecordsError("native CLI zero exit is not a failed terminal attempt")
-            state = "failed"
-        else:
-            state = "rate_limited" if "rate limit exceeded" in stderr.casefold() else "failed"
+        capture_rate_limited = "rate limit exceeded" in stderr.casefold()
+        state = "rate_limited" if capture_rate_limited else "failed"
     else:
         raise ReviewRecordsError("native CLI failed capture exit status is invalid")
     if state != attempt["state"] or exit_status != exact_attempt.get("exit_status"):

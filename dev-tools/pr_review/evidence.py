@@ -669,7 +669,16 @@ def _parse_strict_capture_events(value: str) -> tuple[list[dict[str, Any]], list
         if terminal_error_seen:
             raise EvidenceError("capture stdout has events after its terminal error")
         event_type = event.get("type")
+        if not isinstance(event_type, str):
+            raise EvidenceError(f"capture stdout has an invalid event type at line {number}")
         if event_type == "finding":
+            instructions = event.get("codegenInstructions")
+            if not isinstance(instructions, str) or not instructions.strip():
+                raise EvidenceError(f"capture stdout has a finding without instruction text at line {number}")
+            try:
+                instructions.encode("utf-8")
+            except UnicodeEncodeError as exc:
+                raise EvidenceError(f"capture stdout has non-UTF-8 finding text at line {number}") from exc
             if completes:
                 raise EvidenceError("capture stdout has findings after its completion event")
             findings.append(event)

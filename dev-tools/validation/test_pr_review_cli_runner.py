@@ -604,6 +604,7 @@ class FakeCommands:
         files=None,
         patch_bytes=None,
         timeout_review=False,
+        timeout_review_output=b"partial \xff\n",
         timeout_git=False,
         review_output="review output\n",
         review_stderr="",
@@ -626,6 +627,7 @@ class FakeCommands:
         self.files = files or ["src/Representative.java"]
         self.patch_bytes = patch_bytes or f"candidate patch {self.candidate}\n".encode()
         self.timeout_review = timeout_review
+        self.timeout_review_output = timeout_review_output
         self.timeout_git = timeout_git
         self.review_output = review_output
         self.review_stderr = review_stderr
@@ -649,7 +651,12 @@ class FakeCommands:
                     attempt["state"] for attempt in self.records.attempt_history(42)
                 ]
             if self.timeout_review:
-                raise subprocess.TimeoutExpired(args, timeout, output=b"partial \xff\n", stderr=b"timed out\n")
+                raise subprocess.TimeoutExpired(
+                    args,
+                    timeout,
+                    output=self.timeout_review_output,
+                    stderr=b"timed out\n",
+                )
             with self.guard:
                 self.active += 1
                 if self.active > 1:
@@ -1777,9 +1784,19 @@ class CliReviewRunnerTests(unittest.TestCase):
             finding + '{"type":"error","errorType":"connection","recoverable":"yes"}\n',
             finding + '{"type":"heartbeat","status":[]}\n',
             finding + '{"type":"review_context","reviewType":"full"}\n',
+            '{"type":[]}\n',
+            '{"type":{}}\n',
         ):
             with self.subTest(invalid=invalid), self.assertRaises(evidence.EvidenceError):
                 evidence.parse_partial_capture_events(invalid)
+
+        for instructions in (None, {}, 7, " \n\t", "\ud800"):
+            event = {"type": "finding", "codegenInstructions": instructions}
+            with self.subTest(instructions=repr(instructions)), self.assertRaises(evidence.EvidenceError):
+                evidence.parse_partial_capture_events(json.dumps(event) + "\n")
+
+        with self.assertRaises(evidence.EvidenceError):
+            evidence.parse_partial_capture_events(json.dumps({"type": "finding"}) + "\n")
 
         stream = "".join(
             json.dumps(event) + "\n"
@@ -1807,6 +1824,160 @@ class CliReviewRunnerTests(unittest.TestCase):
             )
         )
         self.assertEqual(len(evidence.parse_partial_capture_events(stream)), 1)
+
+    def test_unhashable_event_type_is_terminally_archived_as_raw_failed_output(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / ".git").mkdir()
+            database = root / ".git" / "firemud" / "records.sqlite3"
+            database.parent.mkdir()
+            SqliteStateStore(database).update(lambda state: state)
+            records = SqliteReviewRecords(database)
+            records.bootstrap()
+            output = '{"type":[]}\n'
+
+            result = run_cli_review(
+                target(),
+                github=FakeGitHub(),
+                source_root=root,
+                runner=FakeCommands(root, review_output=output, review_returncode=1),
+                records=records,
+            )
+
+            attempt = next(
+                item for item in records.attempt_history(result.pull_request) if item["attempt_id"] == result.run_id
+            )
+            self.assertEqual(attempt["state"], "failed")
+            self.assertIsNone(attempt["run_id"])
+            artifacts = records.attempt_artifacts(result.run_id)
+            self.assertEqual(artifacts["cli_raw_output"], output)
+            self.assertNotIn("cli_events", artifacts)
+            self.assertEqual(records.history(result.pull_request)["runs"], [])
+
+    def test_unhashable_event_type_is_terminally_archived_as_raw_timeout_output(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / ".git").mkdir()
+            database = root / ".git" / "firemud" / "records.sqlite3"
+            database.parent.mkdir()
+            SqliteStateStore(database).update(lambda state: state)
+            records = SqliteReviewRecords(database)
+            records.bootstrap()
+            output = '{"type":[]}\n'
+
+            with self.assertRaisesRegex(ReviewRunnerError, "CodeRabbit review timed out after 13 seconds"):
+                run_cli_review(
+                    target(),
+                    github=FakeGitHub(),
+                    source_root=root,
+                    runner=FakeCommands(root, timeout_review=True, timeout_review_output=output.encode()),
+                    records=records,
+                    review_timeout_seconds=13,
+                )
+
+            attempt = records.attempt_history(42)[0]
+            artifacts = records.attempt_artifacts(attempt["attempt_id"])
+            self.assertEqual(attempt["state"], "timed_out")
+            self.assertEqual(artifacts["cli_raw_output"], output)
+            self.assertEqual(records.history(42)["runs"], [])
+
+    def test_malformed_finding_text_is_archived_without_source_observations(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / ".git").mkdir()
+            database = root / ".git" / "firemud" / "records.sqlite3"
+            database.parent.mkdir()
+            SqliteStateStore(database).update(lambda state: state)
+            records = SqliteReviewRecords(database)
+            records.bootstrap()
+            output = json.dumps({"type": "finding", "codegenInstructions": {"body": "not text"}}) + "\n"
+
+            result = run_cli_review(
+                target(),
+                github=FakeGitHub(),
+                source_root=root,
+                runner=FakeCommands(root, review_output=output, review_returncode=1),
+                records=records,
+            )
+
+            attempt = next(
+                item for item in records.attempt_history(result.pull_request) if item["attempt_id"] == result.run_id
+            )
+            self.assertEqual(attempt["state"], "failed")
+            self.assertIsNone(attempt["run_id"])
+            self.assertEqual(attempt["diagnostic"], "CodeRabbit CLI did not return a complete JSON review")
+            self.assertEqual(records.attempt_artifacts(result.run_id)["cli_raw_output"], output)
+            self.assertEqual(records.history(result.pull_request)["runs"], [])
+
+    def test_partial_projection_storage_failure_falls_back_to_failed_raw_attempt(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / ".git").mkdir()
+            database = root / ".git" / "firemud" / "records.sqlite3"
+            database.parent.mkdir()
+            SqliteStateStore(database).update(lambda state: state)
+            records = SqliteReviewRecords(database)
+            records.bootstrap()
+            output = json.dumps({"type": "finding", "codegenInstructions": "A useful partial finding."}) + "\n"
+
+            with patch.object(
+                records,
+                "record_failed_cli_observations",
+                side_effect=ReviewRecordsError("injected partial write failure"),
+            ):
+                result = run_cli_review(
+                    target(),
+                    github=FakeGitHub(),
+                    source_root=root,
+                    runner=FakeCommands(root, review_output=output, review_returncode=1),
+                    records=records,
+                )
+
+            attempt = next(
+                item for item in records.attempt_history(result.pull_request) if item["attempt_id"] == result.run_id
+            )
+            self.assertEqual(attempt["state"], "failed")
+            self.assertIsNone(attempt["run_id"])
+            self.assertEqual(attempt["diagnostic"], "CodeRabbit CLI did not return a complete JSON review")
+            self.assertEqual(records.attempt_artifacts(result.run_id)["cli_raw_output"], output)
+            self.assertEqual(records.history(result.pull_request)["runs"], [])
+            self.assertIn("injected partial write failure", result.warning)
+
+    def test_timeout_projection_storage_failure_falls_back_and_preserves_timeout_error(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / ".git").mkdir()
+            database = root / ".git" / "firemud" / "records.sqlite3"
+            database.parent.mkdir()
+            SqliteStateStore(database).update(lambda state: state)
+            records = SqliteReviewRecords(database)
+            records.bootstrap()
+            output = json.dumps({"type": "finding", "codegenInstructions": "A useful partial finding."}) + "\n"
+
+            with (
+                patch.object(
+                    records,
+                    "record_failed_cli_observations",
+                    side_effect=ReviewRecordsError("injected timeout projection failure"),
+                ),
+                self.assertRaisesRegex(ReviewRunnerError, "CodeRabbit review timed out after 13 seconds") as raised,
+            ):
+                run_cli_review(
+                    target(),
+                    github=FakeGitHub(),
+                    source_root=root,
+                    runner=FakeCommands(root, timeout_review=True, timeout_review_output=output.encode()),
+                    records=records,
+                    review_timeout_seconds=13,
+                )
+
+            attempt = records.attempt_history(42)[0]
+            self.assertEqual(attempt["state"], "timed_out")
+            self.assertIsNone(attempt["run_id"])
+            self.assertEqual(attempt["diagnostic"], "CodeRabbit CLI timed out before a complete result")
+            self.assertEqual(records.attempt_artifacts(attempt["attempt_id"])["cli_raw_output"], output)
+            self.assertEqual(records.history(42)["runs"], [])
+            self.assertIn("injected timeout projection failure", " ".join(getattr(raised.exception, "__notes__", [])))
 
     def test_redacted_cli_headline_is_bounded_before_sql_completion(self):
         long_headline = " ".join(["Bearer x"] * 40)
@@ -1958,6 +2129,41 @@ class CliReviewRunnerTests(unittest.TestCase):
             self.assertEqual(len(attempts), 1)
             self.assertEqual(attempts[0]["state"], "rate_limited")
             self.assertEqual(records.history(result.pull_request)["runs"], [])
+
+    def test_zero_exit_partial_rate_limit_is_retained_as_rate_limited(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / ".git").mkdir()
+            database = root / ".git" / "firemud" / "records.sqlite3"
+            database.parent.mkdir()
+            SqliteStateStore(database).update(lambda state: state)
+            records = SqliteReviewRecords(database)
+            records.bootstrap()
+            output = json.dumps({"type": "finding", "codegenInstructions": "Keep this useful finding."}) + "\n"
+
+            result = run_cli_review(
+                target(),
+                github=FakeGitHub(),
+                source_root=root,
+                runner=FakeCommands(
+                    root,
+                    review_output=output,
+                    review_stderr="Rate limit exceeded; retry later\n",
+                    review_returncode=0,
+                ),
+                records=records,
+            )
+
+            attempt = next(
+                item for item in records.attempt_history(result.pull_request) if item["attempt_id"] == result.run_id
+            )
+            source_run = records.history(result.pull_request)["runs"][0]
+            self.assertEqual(attempt["state"], "rate_limited")
+            self.assertEqual(attempt["exit_status"], 0)
+            self.assertEqual(result.exit_status, 1)
+            self.assertEqual(source_run["outcome"], "failed")
+            self.assertFalse(source_run["attributable"])
+            self.assertEqual(source_run["counts"]["found"], 1)
 
     def test_cli_review_accepts_111_changed_files(self):
         files = [f"src/File{index}.java" for index in range(111)]
