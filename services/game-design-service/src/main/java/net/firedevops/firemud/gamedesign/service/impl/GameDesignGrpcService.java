@@ -8,12 +8,17 @@ import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
 import java.util.List;
+import java.util.UUID;
 import lombok.RequiredArgsConstructor;
+import net.firedevops.firemud.common.gamedesign.AuthoredWorldLaunchDescriptorEvidence;
 import net.firedevops.firemud.common.grpc.GrpcAppErrors;
+import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
 import net.firedevops.firemud.common.security.AdminAuthorizationException;
 import net.firedevops.firemud.common.security.AdminRoleGuard;
 import net.firedevops.firemud.common.security.SessionContext;
 import net.firedevops.firemud.common.settings.GameDesignSettingsProtoMapper;
+import net.firedevops.firemud.gamedesign.draft.AuthoredDraftPublishSelection.PublishIntent;
+import net.firedevops.firemud.gamedesign.dto.CompleteLaunchBindingDto;
 import net.firedevops.firemud.gamedesign.dto.DesignControlPlaneDigestDto;
 import net.firedevops.firemud.gamedesign.dto.HelpTopicDto;
 import net.firedevops.firemud.gamedesign.dto.PublishedPluginVersionDto;
@@ -22,8 +27,10 @@ import net.firedevops.firemud.gamedesign.dto.RevisionDto;
 import net.firedevops.firemud.gamedesign.dto.TemplateRemapEntryDto;
 import net.firedevops.firemud.gamedesign.dto.TemplateRemapSetDto;
 import net.firedevops.firemud.gamedesign.dto.VersionDto;
+import net.firedevops.firemud.gamedesign.service.CompleteLaunchBindingService;
 import net.firedevops.firemud.gamedesign.service.GameAuthoredHelpTopicService;
 import net.firedevops.firemud.gamedesign.service.LaunchDescriptorService;
+import net.firedevops.firemud.gamedesign.service.MutationOwnerProofUnavailableException;
 import net.firedevops.firemud.gamedesign.service.PingService;
 import net.firedevops.firemud.gamedesign.service.PublishAttemptPendingReconciliationException;
 import net.firedevops.firemud.gamedesign.service.PublishGateFailureException;
@@ -52,8 +59,11 @@ import net.firedevops.firemud.gamedesign.v1.DeleteSettingsDomainOverrideResponse
 import net.firedevops.firemud.gamedesign.v1.FinalizePurgeVersionAssetsRequest;
 import net.firedevops.firemud.gamedesign.v1.FinalizePurgeVersionAssetsResponse;
 import net.firedevops.firemud.gamedesign.v1.GameDesignServiceGrpc;
+import net.firedevops.firemud.gamedesign.v1.GetCompleteLaunchBindingResponse;
 import net.firedevops.firemud.gamedesign.v1.GetDesignControlPlaneDigestRequest;
 import net.firedevops.firemud.gamedesign.v1.GetDesignControlPlaneDigestResponse;
+import net.firedevops.firemud.gamedesign.v1.GetLaunchDescriptorRequest;
+import net.firedevops.firemud.gamedesign.v1.GetLaunchDescriptorResponse;
 import net.firedevops.firemud.gamedesign.v1.GetPublishedPluginVersionRequest;
 import net.firedevops.firemud.gamedesign.v1.GetPublishedPluginVersionResponse;
 import net.firedevops.firemud.gamedesign.v1.GetPublishedReleaseBundleRequest;
@@ -117,6 +127,7 @@ import net.firedevops.firemud.gamedesign.v1.WorldDesignMutationRevision;
 import net.firedevops.firemud.worldmanagement.v1.WorldDesignMutationResult;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.grpc.server.service.GrpcService;
 
 @GrpcService
@@ -127,11 +138,15 @@ public class GameDesignGrpcService extends GameDesignServiceGrpc.GameDesignServi
   private final RevisionService revisionService;
   private final VersionService versionService;
   private final LaunchDescriptorService launchDescriptorService;
+  private final CompleteLaunchBindingService completeLaunchBindingService;
   private final TemplateRemapSetService templateRemapSetService;
   private final VersionAssetArtifactService versionAssetArtifactService;
   private final SettingsAuthorityService settingsAuthorityService;
   private final GameAuthoredHelpTopicService gameAuthoredHelpTopicService;
   private final TemporalVersionPublishWorkflowMetadataResolver publishWorkflowMetadataResolver;
+
+  @Value("${firemud.grpc.workload-namespace:}")
+  private String workloadNamespace;
 
   @SuppressFBWarnings(
       value = "EI_EXPOSE_REP2",
@@ -211,9 +226,40 @@ public class GameDesignGrpcService extends GameDesignServiceGrpc.GameDesignServi
       if (request.getPublishRequestId().isBlank()) {
         throw new IllegalArgumentException("publish_request_id is required");
       }
-      VersionDto version =
-          versionService.publishVersion(
-              request.getTenantId(), request.getNotes(), request.getPublishRequestId());
+      boolean noSelection =
+          request.getVersionId().isBlank()
+              && request.getExpectedVersionStateEpoch().isBlank()
+              && request.getSelectedCommitRequestId().isBlank()
+              && request.getSelectedCommitId().isBlank()
+              && request.getSelectedCommitDigest().isBlank();
+      boolean completeSelection =
+          !request.getVersionId().isBlank()
+              && !request.getExpectedVersionStateEpoch().isBlank()
+              && !request.getSelectedCommitRequestId().isBlank()
+              && !request.getSelectedCommitId().isBlank()
+              && !request.getSelectedCommitDigest().isBlank();
+      VersionDto version;
+      if (noSelection) {
+        version =
+            versionService.replayLegacyFullVersion(
+                request.getTenantId(), request.getNotes(), request.getPublishRequestId());
+      } else if (completeSelection) {
+        version =
+            versionService.publishVersion(
+                new PublishIntent(
+                    canonicalPublicationUuid(request.getTenantId(), "tenant_id"),
+                    canonicalPublicationUuid(request.getVersionId(), "version_id"),
+                    request.getPublishRequestId(),
+                    request.getExpectedVersionStateEpoch(),
+                    request.getNotes(),
+                    canonicalPublicationUuid(
+                        request.getSelectedCommitRequestId(), "selected_commit_request_id"),
+                    canonicalPublicationUuid(request.getSelectedCommitId(), "selected_commit_id"),
+                    request.getSelectedCommitDigest()));
+      } else {
+        throw new IllegalArgumentException(
+            "all selected version, epoch, commit, and digest fields are required together");
+      }
       builder.setVersionId(version.id());
     } catch (AdminAuthorizationException ex) {
       builder.setError(
@@ -702,10 +748,11 @@ public class GameDesignGrpcService extends GameDesignServiceGrpc.GameDesignServi
     GetPublishedReleaseBundleResponse.Builder builder =
         GetPublishedReleaseBundleResponse.newBuilder();
     try {
-      requireLaunchAttestationReadAccess();
+      requirePublishedReleaseBundleReadAccess();
       PublishedReleaseBundleDto bundle =
           versionService.getPublishedReleaseBundle(request.getTenantId(), request.getVersionId());
       PublishedReleaseBundleContract.requireSupportedSchemaForRead(bundle);
+      requireCanonicalReleaseIdentityPair(bundle);
       TemporalVersionPublishWorkflowMetadataResolver.WorkflowMetadata workflowMetadata =
           publishWorkflowMetadataResolver.resolve(bundle.publishWorkflowId());
       builder.setBundle(
@@ -745,7 +792,34 @@ public class GameDesignGrpcService extends GameDesignServiceGrpc.GameDesignServi
               .setScriptPatchVersion(
                   bundle.scriptPatchVersion() == null ? "" : bundle.scriptPatchVersion())
               .setPublishedAt(bundle.publishedAt().toString())
+              .setPublishedReleaseBundleRef(
+                  bundle.publishedReleaseBundleRef() == null
+                      ? ""
+                      : bundle.publishedReleaseBundleRef())
+              .setCanonicalTenantId(
+                  bundle.canonicalTenantId() == null ? "" : bundle.canonicalTenantId().toString())
+              .setCanonicalVersionId(
+                  bundle.canonicalVersionId() == null ? "" : bundle.canonicalVersionId().toString())
+              .addAllArtifactDigests(
+                  bundle.artifactDigests() == null
+                      ? List.of()
+                      : bundle.artifactDigests().stream()
+                          .map(
+                              digest ->
+                                  net.firedevops.firemud.gamedesign.v1.PublishedArtifactDigest
+                                      .newBuilder()
+                                      .setUsageKey(digest.usageKey())
+                                      .setArtifactKind(digest.artifactKind())
+                                      .setImmutableObjectKey(digest.immutableObjectKey())
+                                      .setContentDigest(digest.contentDigest())
+                                      .setContentType(digest.contentType())
+                                      .setArtifactSchemaVersion(digest.artifactSchemaVersion())
+                                      .build())
+                          .toList())
               .build());
+      if (bundle.manifestSchemaVersion() != null) {
+        builder.getBundleBuilder().setManifestSchemaVersion(bundle.manifestSchemaVersion());
+      }
     } catch (AdminAuthorizationException ex) {
       builder.setError(
           GrpcAppErrors.error(
@@ -834,6 +908,10 @@ public class GameDesignGrpcService extends GameDesignServiceGrpc.GameDesignServi
               "CompareAndSetVersionState",
               "PERMISSION_DENIED",
               ex.getMessage()));
+    } catch (MutationOwnerProofUnavailableException ex) {
+      builder.setError(
+          GrpcAppErrors.error(
+              meterRegistry, logger, "CompareAndSetVersionState", ex.errorCode(), ex.getMessage()));
     } catch (IllegalArgumentException ex) {
       builder.setError(
           GrpcAppErrors.error(
@@ -857,36 +935,38 @@ public class GameDesignGrpcService extends GameDesignServiceGrpc.GameDesignServi
       StreamObserver<ResolveLaunchDescriptorResponse> responseObserver) {
     ResolveLaunchDescriptorResponse.Builder builder = ResolveLaunchDescriptorResponse.newBuilder();
     try {
-      requireLaunchAttestationReadAccess();
-      var descriptor =
-          launchDescriptorService.resolveLaunchDescriptor(
-              request.getTenantId(),
-              request.getGameTemplateId(),
+      requireLaunchDescriptorResolveAccess();
+      UUID canonicalTenantId = parseCanonicalNonNilUuid(request.getCanonicalTenantId());
+      UUID sourceOperationId =
+          parseCanonicalNonNilUuid(request.getAuthoredWorldSourceOperationId());
+      if (canonicalTenantId == null
+          || sourceOperationId == null
+          || !request.getUnknownFields().asMap().isEmpty()) {
+        throw new IllegalArgumentException("Closed canonical authored-world request is required");
+      }
+      AuthoredWorldLaunchDescriptorEvidence.Request bindingRequest =
+          new AuthoredWorldLaunchDescriptorEvidence.Request(
+              workloadNamespace,
               request.getControlPlaneRequestId(),
+              canonicalTenantId,
+              request.getWorldSlug(),
+              sourceOperationId,
+              request.getExpectedAuthoredWorldSourceEvidenceDigest(),
+              request.getGameTemplateId(),
+              request.hasRequestedScriptPatchVersion(),
               request.hasRequestedScriptPatchVersion()
                   ? request.getRequestedScriptPatchVersion()
                   : null,
+              request.hasSourceVersionId(),
               request.hasSourceVersionId() ? request.getSourceVersionId() : null,
+              request.hasTargetVersionId(),
               request.hasTargetVersionId() ? request.getTargetVersionId() : null,
+              request.hasRequestedRuntimeFlagsJson(),
               request.hasRequestedRuntimeFlagsJson()
                   ? request.getRequestedRuntimeFlagsJson()
                   : null);
-      builder.setLaunchDescriptor(
-          net.firedevops.firemud.gamedesign.v1.LaunchDescriptor.newBuilder()
-              .setLaunchDescriptorId(descriptor.launchDescriptorId())
-              .setTenantId(descriptor.tenantId())
-              .setGameTemplateId(descriptor.gameTemplateId())
-              .setControlPlaneRequestId(descriptor.controlPlaneRequestId())
-              .setVersionId(descriptor.versionId())
-              .setScriptPatchVersion(
-                  descriptor.scriptPatchVersion() == null ? "" : descriptor.scriptPatchVersion())
-              .setRuntimeFlagsJson(descriptor.runtimeFlagsJson())
-              .setGenerationConfigRevision(descriptor.generationConfigRevision())
-              .setVersionStateEpoch(descriptor.versionStateEpoch())
-              .setReleaseBundleId(descriptor.releaseBundleId())
-              .setPublishedReleaseBundleRef(descriptor.publishedReleaseBundleRef())
-              .setRemapSetId(descriptor.remapSetId() == null ? "" : descriptor.remapSetId())
-              .build());
+      var descriptor = launchDescriptorService.resolveLaunchDescriptor(bindingRequest);
+      builder.setLaunchDescriptor(toProtoLaunchDescriptor(descriptor));
     } catch (AdminAuthorizationException ex) {
       builder.setError(
           GrpcAppErrors.error(
@@ -909,11 +989,135 @@ public class GameDesignGrpcService extends GameDesignServiceGrpc.GameDesignServi
               meterRegistry,
               logger,
               "ResolveLaunchDescriptor",
-              launchDescriptorErrorCode(ex.getMessage(), false),
+              launchDescriptorErrorCode(ex.getMessage(), true),
               ex.getMessage()));
     } catch (Exception ex) {
       builder.setError(
           GrpcAppErrors.internal(meterRegistry, logger, "ResolveLaunchDescriptor", ex));
+    }
+    responseObserver.onNext(builder.build());
+    responseObserver.onCompleted();
+  }
+
+  @Override
+  @Timed(value = "gamedesignGrpc.getLaunchDescriptor")
+  public void getLaunchDescriptor(
+      GetLaunchDescriptorRequest request,
+      StreamObserver<GetLaunchDescriptorResponse> responseObserver) {
+    GetLaunchDescriptorResponse.Builder builder = GetLaunchDescriptorResponse.newBuilder();
+    try {
+      requireLaunchDescriptorReadAccess();
+      UUID readRequestId = parseCanonicalNonNilUuid(request.getRequestId());
+      UUID canonicalTenantId = parseCanonicalNonNilUuid(request.getCanonicalTenantId());
+      if (readRequestId == null
+          || canonicalTenantId == null
+          || !request.getUnknownFields().asMap().isEmpty()) {
+        throw new IllegalArgumentException("Canonical exact launch descriptor read is required");
+      }
+      var descriptor =
+          launchDescriptorService.getLaunchDescriptor(
+              readRequestId,
+              canonicalTenantId,
+              request.getWorldSlug(),
+              request.getControlPlaneRequestId(),
+              request.getExpectedRequestDigest(),
+              request.getExpectedResultDigest());
+      builder
+          .setRequestId(readRequestId.toString())
+          .setLaunchDescriptor(toProtoLaunchDescriptor(descriptor));
+    } catch (AdminAuthorizationException ex) {
+      builder.setError(
+          GrpcAppErrors.error(
+              meterRegistry, logger, "GetLaunchDescriptor", "PERMISSION_DENIED", ex.getMessage()));
+    } catch (IllegalArgumentException ex) {
+      builder.setError(
+          GrpcAppErrors.error(
+              meterRegistry,
+              logger,
+              "GetLaunchDescriptor",
+              launchDescriptorErrorCode(ex.getMessage(), true),
+              ex.getMessage()));
+    } catch (Exception ex) {
+      builder.setError(GrpcAppErrors.internal(meterRegistry, logger, "GetLaunchDescriptor", ex));
+    }
+    responseObserver.onNext(builder.build());
+    responseObserver.onCompleted();
+  }
+
+  @Override
+  @Timed(value = "gamedesignGrpc.getCompleteLaunchBinding")
+  public void getCompleteLaunchBinding(
+      GetLaunchDescriptorRequest request,
+      StreamObserver<GetCompleteLaunchBindingResponse> responseObserver) {
+    GetCompleteLaunchBindingResponse.Builder builder =
+        GetCompleteLaunchBindingResponse.newBuilder();
+    try {
+      requireCompleteLaunchBindingReadAccess();
+      UUID readRequestId = parseCanonicalNonNilUuid(request.getRequestId());
+      UUID canonicalTenantId = parseCanonicalNonNilUuid(request.getCanonicalTenantId());
+      if (readRequestId == null
+          || canonicalTenantId == null
+          || request.getWorldSlug().isBlank()
+          || request.getControlPlaneRequestId().isBlank()
+          || request.getExpectedRequestDigest().isBlank()
+          || request.getExpectedResultDigest().isBlank()
+          || !request.getUnknownFields().asMap().isEmpty()) {
+        throw new IllegalArgumentException(
+            "Canonical exact complete launch binding read is required");
+      }
+      CompleteLaunchBindingDto binding =
+          completeLaunchBindingService.getCompleteLaunchBinding(
+              readRequestId,
+              canonicalTenantId,
+              request.getWorldSlug(),
+              request.getControlPlaneRequestId(),
+              request.getExpectedRequestDigest(),
+              request.getExpectedResultDigest());
+      AuthoredWorldLaunchDescriptorEvidence descriptorEvidence = binding.descriptor();
+      var descriptorDto =
+          new net.firedevops.firemud.gamedesign.dto.ResolvedLaunchDescriptorDto(
+              descriptorEvidence.launchDescriptorId(),
+              descriptorEvidence.canonicalTenantId().toString(),
+              descriptorEvidence.gameTemplateId(),
+              descriptorEvidence.controlPlaneRequestId(),
+              descriptorEvidence.versionId(),
+              descriptorEvidence.scriptPatchVersionPresent()
+                  ? descriptorEvidence.scriptPatchVersion()
+                  : null,
+              descriptorEvidence.runtimeFlagsJson(),
+              descriptorEvidence.generationConfigRevision(),
+              descriptorEvidence.versionStateEpoch(),
+              descriptorEvidence.releaseBundleId(),
+              descriptorEvidence.publishedReleaseBundleRef(),
+              descriptorEvidence.remapSetIdPresent() ? descriptorEvidence.remapSetId() : null,
+              descriptorEvidence);
+      var protoDescriptor = toProtoLaunchDescriptor(descriptorDto);
+      var protoReleaseAttestation =
+          net.firedevops.firemud.common.gamedesign.AuthoredWorldLaunchDescriptorGrpcCodec
+              .toReleaseAttestation(binding.releaseAttestation());
+      builder
+          .setRequestId(readRequestId.toString())
+          .setLaunchDescriptor(protoDescriptor)
+          .setReleaseAttestation(protoReleaseAttestation);
+    } catch (AdminAuthorizationException ex) {
+      builder.setError(
+          GrpcAppErrors.error(
+              meterRegistry,
+              logger,
+              "GetCompleteLaunchBinding",
+              "PERMISSION_DENIED",
+              ex.getMessage()));
+    } catch (IllegalArgumentException ex) {
+      builder.setError(
+          GrpcAppErrors.error(
+              meterRegistry,
+              logger,
+              "GetCompleteLaunchBinding",
+              completeLaunchBindingErrorCode(ex.getMessage()),
+              ex.getMessage()));
+    } catch (Exception ex) {
+      builder.setError(
+          GrpcAppErrors.internal(meterRegistry, logger, "GetCompleteLaunchBinding", ex));
     }
     responseObserver.onNext(builder.build());
     responseObserver.onCompleted();
@@ -1946,6 +2150,21 @@ public class GameDesignGrpcService extends GameDesignServiceGrpc.GameDesignServi
     return WorldDesignMutationResult.valueOf(result);
   }
 
+  private void requireCanonicalReleaseIdentityPair(PublishedReleaseBundleDto bundle) {
+    UUID canonicalTenantId = bundle.canonicalTenantId();
+    UUID canonicalVersionId = bundle.canonicalVersionId();
+    if (canonicalTenantId == null && canonicalVersionId == null) {
+      return;
+    }
+    UUID nilUuid = new UUID(0L, 0L);
+    if (canonicalTenantId == null
+        || canonicalVersionId == null
+        || canonicalTenantId.equals(nilUuid)
+        || canonicalVersionId.equals(nilUuid)) {
+      throw new IllegalArgumentException("published release canonical identity pair is invalid");
+    }
+  }
+
   private String launchDescriptorErrorCode(String message, boolean allowSchemaUnsupported) {
     if (message == null || message.isBlank()) {
       return "INVALID_ARGUMENT";
@@ -1968,7 +2187,138 @@ public class GameDesignGrpcService extends GameDesignServiceGrpc.GameDesignServi
         return prefix;
       }
     }
+    if (message.startsWith("AUTHORED_WORLD_SOURCE_NOT_FOUND")
+        || message.startsWith("LAUNCH_DESCRIPTOR_NOT_FOUND")) {
+      return "NOT_FOUND";
+    }
+    if (message.startsWith("AUTHORED_WORLD_SOURCE_") || message.startsWith("LAUNCH_DESCRIPTOR_")) {
+      return "FAILED_PRECONDITION";
+    }
     return "INVALID_ARGUMENT";
+  }
+
+  private String completeLaunchBindingErrorCode(String message) {
+    if (message != null && message.startsWith("COMPLETE_LAUNCH_BINDING_")) {
+      int delimiter = message.indexOf(':');
+      if (delimiter > 0) {
+        return message.substring(0, delimiter);
+      }
+    }
+    return launchDescriptorErrorCode(message, true);
+  }
+
+  private net.firedevops.firemud.gamedesign.v1.LaunchDescriptor toProtoLaunchDescriptor(
+      net.firedevops.firemud.gamedesign.dto.ResolvedLaunchDescriptorDto descriptor) {
+    AuthoredWorldLaunchDescriptorEvidence evidence = descriptor.authoredWorldBinding();
+    if (evidence == null) {
+      throw new IllegalStateException("Bound authored-world launch evidence is required");
+    }
+    evidence.requireValid();
+    var binding =
+        net.firedevops.firemud.gamedesign.v1.AuthoredWorldLaunchDescriptorEvidence.newBuilder()
+            .setSchemaVersion(evidence.schemaVersion())
+            .setTargetNamespace(evidence.targetNamespace())
+            .setControlPlaneRequestId(evidence.controlPlaneRequestId())
+            .setCanonicalTenantId(evidence.canonicalTenantId().toString())
+            .setWorldSlug(evidence.worldSlug())
+            .setAuthoredWorldSourceOperationId(evidence.authoredWorldSourceOperationId().toString())
+            .setAuthoredWorldSourceEvidenceDigest(evidence.authoredWorldSourceEvidenceDigest())
+            .setGameTemplateId(evidence.gameTemplateId())
+            .setRequestDigest(evidence.requestDigest())
+            .setLaunchDescriptorId(evidence.launchDescriptorId())
+            .setVersionId(evidence.versionId())
+            .setRuntimeFlagsJson(evidence.runtimeFlagsJson())
+            .setGenerationConfigRevision(evidence.generationConfigRevision())
+            .setVersionStateEpoch(evidence.versionStateEpoch())
+            .setReleaseBundleId(evidence.releaseBundleId())
+            .setPublishedReleaseBundleRef(evidence.publishedReleaseBundleRef())
+            .setResultDigest(evidence.resultDigest());
+    if (evidence.requestedScriptPatchVersionPresent()) {
+      binding.setRequestedScriptPatchVersion(evidence.requestedScriptPatchVersion());
+    }
+    if (evidence.sourceVersionIdPresent()) {
+      binding.setSourceVersionId(evidence.sourceVersionId());
+    }
+    if (evidence.targetVersionIdPresent()) {
+      binding.setTargetVersionId(evidence.targetVersionId());
+    }
+    if (evidence.requestedRuntimeFlagsJsonPresent()) {
+      binding.setRequestedRuntimeFlagsJson(evidence.requestedRuntimeFlagsJson());
+    }
+    if (evidence.scriptPatchVersionPresent()) {
+      binding.setScriptPatchVersion(evidence.scriptPatchVersion());
+    }
+    if (evidence.remapSetIdPresent()) {
+      binding.setRemapSetId(evidence.remapSetId());
+    }
+    return net.firedevops.firemud.gamedesign.v1.LaunchDescriptor.newBuilder()
+        .setLaunchDescriptorId(descriptor.launchDescriptorId())
+        .setCanonicalTenantId(descriptor.canonicalTenantId())
+        .setGameTemplateId(descriptor.gameTemplateId())
+        .setControlPlaneRequestId(descriptor.controlPlaneRequestId())
+        .setVersionId(descriptor.versionId())
+        .setScriptPatchVersion(
+            descriptor.scriptPatchVersion() == null ? "" : descriptor.scriptPatchVersion())
+        .setRuntimeFlagsJson(descriptor.runtimeFlagsJson())
+        .setGenerationConfigRevision(descriptor.generationConfigRevision())
+        .setVersionStateEpoch(descriptor.versionStateEpoch())
+        .setReleaseBundleId(descriptor.releaseBundleId())
+        .setPublishedReleaseBundleRef(descriptor.publishedReleaseBundleRef())
+        .setRemapSetId(descriptor.remapSetId() == null ? "" : descriptor.remapSetId())
+        .setAuthoredWorldBinding(binding.build())
+        .build();
+  }
+
+  private UUID parseCanonicalNonNilUuid(String value) {
+    if (value == null) {
+      return null;
+    }
+    try {
+      UUID parsed = UUID.fromString(value);
+      return parsed.toString().equals(value) && !parsed.equals(new UUID(0L, 0L)) ? parsed : null;
+    } catch (IllegalArgumentException exception) {
+      return null;
+    }
+  }
+
+  private void requireLaunchDescriptorResolveAccess() {
+    requireExactWorkloadPeer("game-session-service");
+  }
+
+  private void requireLaunchDescriptorReadAccess() {
+    GrpcPeerIdentity peer = GrpcPeerIdentity.current();
+    if (!GrpcPeerIdentity.isValidNamespace(workloadNamespace)
+        || peer == null
+        || !workloadNamespace.equals(peer.namespace())
+        || !(peer.isService("game-session-service")
+            || peer.isService("world-management-service"))) {
+      throw new AdminAuthorizationException(
+          "Exact same-namespace Game Session or World Management workload identity is required");
+    }
+  }
+
+  private void requireCompleteLaunchBindingReadAccess() {
+    GrpcPeerIdentity peer = GrpcPeerIdentity.current();
+    if (!GrpcPeerIdentity.isValidNamespace(workloadNamespace)
+        || peer == null
+        || !workloadNamespace.equals(peer.namespace())
+        || !(peer.isService("game-session-service")
+            || peer.isService("world-management-service")
+            || peer.isService("entity-management-service"))) {
+      throw new AdminAuthorizationException(
+          "Exact same-namespace Game Session, World Management, or Entity Management workload identity is required");
+    }
+  }
+
+  private void requireExactWorkloadPeer(String service) {
+    GrpcPeerIdentity peer = GrpcPeerIdentity.current();
+    if (!GrpcPeerIdentity.isValidNamespace(workloadNamespace)
+        || peer == null
+        || !workloadNamespace.equals(peer.namespace())
+        || !peer.isService(service)) {
+      throw new AdminAuthorizationException(
+          "Exact same-namespace workload identity is required for launch descriptor resolution");
+    }
   }
 
   private String remapSetErrorCode(String message) {
@@ -2042,6 +2392,11 @@ public class GameDesignGrpcService extends GameDesignServiceGrpc.GameDesignServi
           "PUBLISH_ATTEMPT_INCONSISTENT",
           "PUBLISH_ATTEMPT_PENDING_RECONCILIATION_REQUIRED",
           "PUBLISH_ATTEMPT_SCOPE_MISMATCH",
+          "FULL_VERSION_PUBLICATION_UNAVAILABLE",
+          "PUBLICATION_AUTHORIZATION_UNAVAILABLE",
+          "PUBLISH_OWNER_CARRIER_UNAVAILABLE",
+          "PUBLISH_SELECTION_REQUIRED",
+          "SELECTED_SOURCE_CAPTURE_UNAVAILABLE",
           "PUBLISH_SCRIPT_PATCH_IDENTITY_CONFLICT" ->
           candidate;
       default -> null;
@@ -2053,6 +2408,27 @@ public class GameDesignGrpcService extends GameDesignServiceGrpc.GameDesignServi
       return;
     }
     AdminRoleGuard.requireAdminRole();
+  }
+
+  private static UUID canonicalPublicationUuid(String value, String field) {
+    UUID parsed = UUID.fromString(value);
+    if (!parsed.toString().equals(value) || parsed.equals(new UUID(0L, 0L))) {
+      throw new IllegalArgumentException(field + " must be a canonical non-nil UUID");
+    }
+    return parsed;
+  }
+
+  private void requirePublishedReleaseBundleReadAccess() {
+    GrpcPeerIdentity peer = GrpcPeerIdentity.current();
+    if (!GrpcPeerIdentity.isValidNamespace(workloadNamespace)
+        || peer == null
+        || !workloadNamespace.equals(peer.namespace())
+        || !(peer.isService("game-session-service")
+            || peer.isService("world-management-service")
+            || peer.isService("automation-scripting-service"))) {
+      throw new AdminAuthorizationException(
+          "Exact same-namespace Game Session, World Management, or Automation workload identity is required");
+    }
   }
 
   private void requireSettingsAuthorityReadAccess() {

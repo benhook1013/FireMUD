@@ -11,6 +11,8 @@ import java.util.UUID;
 import net.firedevops.firemud.accountservice.dto.AccountJoinDigest;
 import net.firedevops.firemud.accountservice.dto.AccountJoinDigest.EntitlementAvailabilityV2;
 import net.firedevops.firemud.accountservice.dto.CanonicalJoinScopeV2;
+import net.firedevops.firemud.accountservice.dto.DemoTenantEntitlementSnapshot;
+import net.firedevops.firemud.accountservice.dto.TenantAuthorityEventV1Codec;
 import net.firedevops.firemud.accountservice.entity.AccountIdentityProvenance;
 import net.firedevops.firemud.accountservice.entity.AccountTenantMembership;
 import net.firedevops.firemud.accountservice.repository.AccountAuthorityGenerationRepository;
@@ -23,6 +25,7 @@ import net.firedevops.firemud.accountservice.repository.AccountAuthorityOutboxRe
 import net.firedevops.firemud.accountservice.repository.AccountAuthorityOutboxRepository.EventEvidence;
 import net.firedevops.firemud.accountservice.repository.AccountAuthoritySourceEvidenceRepository;
 import net.firedevops.firemud.accountservice.repository.AccountAuthoritySourceEvidenceRepository.IssuerAccountSourceSnapshot;
+import net.firedevops.firemud.accountservice.repository.AccountDemoTenantEntitlementRepository;
 import net.firedevops.firemud.accountservice.repository.AccountJoinOperationRepository;
 import net.firedevops.firemud.accountservice.repository.AccountJoinOperationRepository.CanonicalJoinOperationEvidence;
 import net.firedevops.firemud.accountservice.repository.AccountJoinOperationRepository.CanonicalJoinTerminalProof;
@@ -32,6 +35,7 @@ import net.firedevops.firemud.accountservice.repository.AccountMembershipPairAut
 import net.firedevops.firemud.accountservice.repository.AccountMembershipPairAuthorityRepository.TenantProvenanceKind;
 import net.firedevops.firemud.accountservice.repository.AccountMembershipPairAuthorityRepository.VerifiedTenantProvenance;
 import net.firedevops.firemud.accountservice.repository.AccountRepository;
+import net.firedevops.firemud.accountservice.repository.AccountTenantAuthorityEventRepository;
 import net.firedevops.firemud.accountservice.repository.AccountTenantMembershipRepository;
 import net.firedevops.firemud.accountservice.repository.AccountTenantMembershipRoleSnapshotRepository;
 import net.firedevops.firemud.accountservice.repository.AccountTenantMembershipRoleSnapshotRepository.RoleSnapshot;
@@ -59,6 +63,8 @@ public class AccountMembershipAuthorityEventProducer {
   private final AccountAuthorityGenerationRepository authorityGenerationRepository;
   private final AccountAuthorityOutboxRepository authorityOutboxRepository;
   private final AccountAuthoritySourceEvidenceRepository sourceEvidenceRepository;
+  private final AccountTenantAuthorityEventRepository tenantAuthorityEventRepository;
+  private final AccountDemoTenantEntitlementRepository demoTenantEntitlementRepository;
 
   @SuppressFBWarnings(
       value = {"CT_CONSTRUCTOR_THROW", "EI_EXPOSE_REP2"},
@@ -73,7 +79,9 @@ public class AccountMembershipAuthorityEventProducer {
       AccountTenantMembershipRoleSnapshotRepository roleSnapshotRepository,
       AccountAuthorityGenerationRepository authorityGenerationRepository,
       AccountAuthorityOutboxRepository authorityOutboxRepository,
-      AccountAuthoritySourceEvidenceRepository sourceEvidenceRepository) {
+      AccountAuthoritySourceEvidenceRepository sourceEvidenceRepository,
+      AccountTenantAuthorityEventRepository tenantAuthorityEventRepository,
+      AccountDemoTenantEntitlementRepository demoTenantEntitlementRepository) {
     this.joinOperationRepository = Objects.requireNonNull(joinOperationRepository);
     this.accountRepository = Objects.requireNonNull(accountRepository);
     this.pairAuthorityRepository = Objects.requireNonNull(pairAuthorityRepository);
@@ -82,6 +90,8 @@ public class AccountMembershipAuthorityEventProducer {
     this.authorityGenerationRepository = Objects.requireNonNull(authorityGenerationRepository);
     this.authorityOutboxRepository = Objects.requireNonNull(authorityOutboxRepository);
     this.sourceEvidenceRepository = Objects.requireNonNull(sourceEvidenceRepository);
+    this.tenantAuthorityEventRepository = Objects.requireNonNull(tenantAuthorityEventRepository);
+    this.demoTenantEntitlementRepository = Objects.requireNonNull(demoTenantEntitlementRepository);
   }
 
   /**
@@ -168,17 +178,37 @@ public class AccountMembershipAuthorityEventProducer {
       CompositeSnapshot authority =
           authorityGenerationRepository.readCompositeSnapshot(
               ACCOUNT_JWT_ISSUER, accountUuid, List.of(tenantUuid), List.of(tenantUuid));
+      ScopeState tenant = only(authority.tenants(), "tenant");
       IssuerAccountSourceSnapshot sourceSnapshot =
           sourceEvidenceRepository.readCurrentIssuerAccountSources(ACCOUNT_JWT_ISSUER, accountUuid);
+      TenantAuthorityEventV1Codec.Event tenantSourceEvent =
+          readCurrentTenantSourceEvent(tenantUuid, provenance, tenant);
       requireCurrentAuthority(
-          authority, sourceSnapshot, account.getId(), accountUuid, tenantUuid, membership);
+          authority,
+          sourceSnapshot,
+          account.getId(),
+          accountUuid,
+          tenantUuid,
+          membership,
+          provenance,
+          tenantSourceEvent);
+      DemoTenantEntitlementSnapshot entitlementSnapshot =
+          demoTenantEntitlementRepository.readCurrent(tenantUuid);
+      requireCurrentJoinEntitlement(operation, entitlementSnapshot, tenantSourceEvent, tenantUuid);
       if (authorityOutboxRepository.readCheckpoint(streamKey).isPresent()) {
         throw new IllegalStateException(
             "Canonical first JOIN cannot publish over retained membership-event history");
       }
       Checkpoint checkpoint =
           appendFirstJoinEvent(
-              streamKey, requestId, scope, membership, exactRoles, authority, sourceSnapshot);
+              streamKey,
+              requestId,
+              scope,
+              membership,
+              exactRoles,
+              authority,
+              sourceSnapshot,
+              tenantSourceEvent);
       PairAuthority committed =
           pairAuthorityRepository.commitTransition(
               pair,
@@ -209,7 +239,8 @@ public class AccountMembershipAuthorityEventProducer {
       AccountTenantMembership membership,
       List<String> roles,
       CompositeSnapshot authority,
-      IssuerAccountSourceSnapshot sourceSnapshot) {
+      IssuerAccountSourceSnapshot sourceSnapshot,
+      TenantAuthorityEventV1Codec.Event tenantSourceEvent) {
     String eventId = eventIdForRequest(requestId);
     MembershipEvent[] candidate = new MembershipEvent[1];
     Event appended =
@@ -229,6 +260,7 @@ public class AccountMembershipAuthorityEventProducer {
                           roles,
                           authority,
                           sourceSnapshot,
+                          tenantSourceEvent,
                           eventId,
                           requestId,
                           sequence));
@@ -324,6 +356,7 @@ public class AccountMembershipAuthorityEventProducer {
       List<String> roles,
       CompositeSnapshot authority,
       IssuerAccountSourceSnapshot sourceSnapshot,
+      TenantAuthorityEventV1Codec.Event tenantSourceEvent,
       String eventId,
       String requestId,
       long sequence) {
@@ -352,6 +385,21 @@ public class AccountMembershipAuthorityEventProducer {
                         "accountAuthorityGeneration", cutoff.accountAuthorityGeneration(),
                         "outboxStreamKey", cutoff.outboxStreamKey(),
                         "outboxSequence", cutoff.outboxSequence())));
+    if (tenantSourceEvent != null) {
+      authorityTuple.put(
+          "tenantBillingCutoff",
+          Map.of(
+              tenantUuid.toString(),
+              Map.of(
+                  "tenantAuthorityGeneration",
+                  decimal(tenantSourceEvent.tenantAuthorityGeneration()),
+                  "tenantBillingSequence",
+                  decimal(tenantSourceEvent.tenantBillingSequence()),
+                  "outboxStreamKey",
+                  tenantSourceEvent.outboxStreamKey(),
+                  "outboxSequence",
+                  decimal(tenantSourceEvent.outboxSequence()))));
+    }
 
     Map<String, Object> event = new LinkedHashMap<>();
     event.put("schemaVersion", MembershipAuthorityEventV1Codec.SCHEMA_VERSION);
@@ -480,6 +528,35 @@ public class AccountMembershipAuthorityEventProducer {
     }
   }
 
+  private static void requireCurrentJoinEntitlement(
+      CanonicalJoinOperationEvidence operation,
+      DemoTenantEntitlementSnapshot entitlement,
+      TenantAuthorityEventV1Codec.Event tenantSourceEvent,
+      UUID tenantUuid) {
+    if (entitlement == null
+        || !tenantUuid.equals(entitlement.canonicalTenantId())
+        || entitlement.entitlementVersion() != operation.entitlementVersion()
+        || !entitlement.allowPublicJoin()
+        || !entitlement.gameplayAvailable()
+        || tenantSourceEvent == null
+        || !tenantUuid.equals(tenantSourceEvent.tenantId())
+        || !entitlement.sourceEvidence().equals(tenantSourceEvent.sourceEvidence())
+        || entitlement.tenantAuthorityGeneration() != tenantSourceEvent.tenantAuthorityGeneration()
+        || entitlement.tenantAuthoritySourceVersion()
+            != tenantSourceEvent.tenantAuthoritySourceVersion()
+        || !entitlement.tenantAuthorityOutboxStreamKey().equals(tenantSourceEvent.outboxStreamKey())
+        || entitlement.tenantAuthorityOutboxSequence() != tenantSourceEvent.outboxSequence()
+        || !entitlement.tenantAuthorityEventId().equals(tenantSourceEvent.eventId())
+        || !entitlement.tenantAuthorityEventDigest().equals(tenantSourceEvent.eventDigest())
+        || !entitlement.outboxStreamKey().equals(tenantSourceEvent.tenantBillingStreamKey())
+        || entitlement.tenantBillingSequence() != tenantSourceEvent.tenantBillingSequence()
+        || !entitlement.eventId().equals(tenantSourceEvent.tenantBillingEventId())
+        || !entitlement.eventDigest().equals(tenantSourceEvent.tenantBillingEventDigest())) {
+      throw new IllegalStateException(
+          "Canonical first JOIN requires exact current public-join entitlement evidence");
+    }
+  }
+
   private static List<String> requireFirstJoinRoleSnapshot(
       CanonicalJoinScopeV2 scope,
       AccountTenantMembership membership,
@@ -521,17 +598,15 @@ public class AccountMembershipAuthorityEventProducer {
       long accountRowId,
       UUID accountUuid,
       UUID tenantUuid,
-      AccountTenantMembership membership) {
+      AccountTenantMembership membership,
+      VerifiedTenantProvenance provenance,
+      TenantAuthorityEventV1Codec.Event tenantSourceEvent) {
     ScopeState member = only(snapshot.memberships(), "membership");
     ScopeState tenant = only(snapshot.tenants(), "tenant");
     if (!AuthorityScope.issuer(ACCOUNT_JWT_ISSUER).equals(snapshot.issuer().scope())
         || !AuthorityScope.account(accountUuid).equals(snapshot.account().scope())
         || !AuthorityScope.tenant(tenantUuid).equals(tenant.scope())
-        // Account currently has no tenant source-event readback for later tenant mutations. The
-        // exact fresh tenant association proves the original identity only, so do not accept a
-        // changed tenant authority generation until its owner source can prove that transition.
-        || tenant.generation() != 1L
-        || tenant.sourceVersion() != 1L
+        || !tenantSourceEvidenceMatches(tenantSourceEvent, tenant, tenantUuid, provenance)
         || !AuthorityScope.membership(accountUuid, tenantUuid).equals(member.scope())
         || member.generation() != membership.getMembershipAuthorityGeneration()
         || !accountUuid.equals(snapshot.issuanceFence().accountId())
@@ -561,6 +636,40 @@ public class AccountMembershipAuthorityEventProducer {
       throw new IllegalStateException(
           "Canonical first JOIN requires exact current Account, source, and tenant authority evidence");
     }
+  }
+
+  private TenantAuthorityEventV1Codec.Event readCurrentTenantSourceEvent(
+      UUID tenantUuid, VerifiedTenantProvenance provenance, ScopeState tenantAuthority) {
+    if (tenantAuthority.generation() == 1L && tenantAuthority.sourceVersion() == 1L) {
+      return null;
+    }
+    TenantAuthorityEventV1Codec.Event event =
+        tenantAuthorityEventRepository.readCurrentByTenant(tenantUuid);
+    if (!tenantSourceEvidenceMatches(event, tenantAuthority, tenantUuid, provenance)) {
+      throw new IllegalStateException(
+          "Canonical first JOIN requires exact current Account, source, and tenant authority evidence");
+    }
+    return event;
+  }
+
+  private static boolean tenantSourceEvidenceMatches(
+      TenantAuthorityEventV1Codec.Event event,
+      ScopeState tenantAuthority,
+      UUID tenantUuid,
+      VerifiedTenantProvenance provenance) {
+    if (event == null) {
+      return tenantAuthority.generation() == 1L && tenantAuthority.sourceVersion() == 1L;
+    }
+    var source = event.sourceEvidence();
+    return event.tenantId().equals(tenantUuid)
+        && event.tenantAuthorityGeneration() == tenantAuthority.generation()
+        && event.tenantAuthoritySourceVersion() == tenantAuthority.sourceVersion()
+        && "NEW_GAME_ROW".equals(source.provenanceKind())
+        && tenantUuid.equals(source.canonicalTenantId())
+        && provenance.kind() == TenantProvenanceKind.FRESH_GAME_DESIGN
+        && provenance.legacyTenantId() == null
+        && provenance.sourceOperationId().equals(source.operationId())
+        && provenance.digest().equals(source.evidenceDigest());
   }
 
   private static PairAuthority requirePositiveFirstJoinPair(

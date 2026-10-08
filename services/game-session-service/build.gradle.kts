@@ -6,10 +6,19 @@ plugins {
 
 import org.gradle.api.DefaultTask
 import org.gradle.api.file.ConfigurableFileCollection
+import org.gradle.api.tasks.Classpath
 import org.gradle.api.tasks.OutputDirectories
 import org.gradle.api.tasks.TaskAction
 import org.gradle.jvm.application.tasks.CreateStartScripts
+import org.gradle.process.CommandLineArgumentProvider
 import org.springframework.boot.gradle.tasks.run.BootRun
+
+abstract class MigrationDriverTestClasspathArgumentProvider : CommandLineArgumentProvider {
+    @get:Classpath abstract val testClasspath: ConfigurableFileCollection
+
+    override fun asArguments(): Iterable<String> =
+        listOf("-Dfiremud.migration-driver-test-classpath=${testClasspath.asPath}")
+}
 
 abstract class CreateDirectoriesTask : DefaultTask() {
     @get:OutputDirectories abstract val outputDirectories: ConfigurableFileCollection
@@ -99,6 +108,11 @@ tasks.named<BootRun>("bootRun") {
 val isWindows = System.getProperty("os.name").lowercase().contains("windows")
 
 tasks.withType<Test>().configureEach {
+    jvmArgumentProviders.add(
+        objects.newInstance<MigrationDriverTestClasspathArgumentProvider>().apply {
+            testClasspath.from(classpath)
+        },
+    )
     if (isWindows) {
         maxParallelForks = 1
         forkEvery = 0
@@ -107,7 +121,7 @@ tasks.withType<Test>().configureEach {
 }
 
 val migrationDriverMainClass =
-    "net.firedevops.firemud.gamesession.repository.CanonicalGameplayMigrationDriverMain"
+    "net.firedevops.firemud.gamesession.repository.CanonicalGameplayMigrationDriverLauncher"
 val migrationDriverDistribution = layout.buildDirectory.dir("distributions/game-session-migration-driver")
 val migrationDriverScripts = layout.buildDirectory.dir("generated/game-session-migration-driver-scripts")
 

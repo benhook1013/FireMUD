@@ -33,6 +33,7 @@ import java.util.regex.Pattern;
 import javax.sql.DataSource;
 import net.firedevops.firemud.gamesession.binding.CanonicalGameplayLegacyMigrationStorageIdentity;
 import org.flywaydb.core.Flyway;
+import org.flywaydb.core.api.CoreMigrationType;
 import org.flywaydb.core.api.MigrationInfo;
 import org.flywaydb.core.api.configuration.FluentConfiguration;
 import org.jooq.DSLContext;
@@ -46,7 +47,7 @@ import org.springframework.data.redis.connection.lettuce.LettuceClientConfigurat
 import org.springframework.data.redis.connection.lettuce.LettuceConnectionFactory;
 import org.springframework.data.redis.core.StringRedisTemplate;
 
-/** Finite, non-listening entry point for the trusted Game Session empty-cohort migration. */
+/** Finite, non-listening implementation for the trusted Game Session empty-cohort migration. */
 @SuppressFBWarnings(
     value = "DMI_HARDCODED_ABSOLUTE_FILENAME",
     justification =
@@ -219,14 +220,16 @@ public final class CanonicalGameplayMigrationDriverMain {
 
   /*
    * This source cut is intentionally the complete packaged Game Session migration directory
-   * (V1-V15, V20-V34, and V34.1) plus the three common-saga migrations (V1000-V1002). Flyway computes
-   * checksums from those packaged SQL resources and validates the applied schema history against
-   * them; no filesystem, callback, or additional migration location is accepted.
+   * (V1-V15, V20-V34, V34.1, V34.2, and
+   * V34.3__canonical_initial_admission_intent_request_id_width.sql) plus the three common-saga
+   * migrations (V1000-V1002). Flyway computes checksums from those packaged SQL resources and
+   * validates the applied schema history against them; no filesystem, callback, or additional
+   * migration location is accepted.
    */
 
   private CanonicalGameplayMigrationDriverMain() {}
 
-  public static void main(String[] args) {
+  static void launch(String[] args, java.io.PrintStream protocolOutput, java.io.PrintStream error) {
     ScheduledExecutorService deadline =
         Executors.newSingleThreadScheduledExecutor(
             task -> {
@@ -236,7 +239,7 @@ public final class CanonicalGameplayMigrationDriverMain {
             });
     deadline.schedule(
         () -> {
-          System.err.println(
+          error.println(
               "migration driver exceeded its finite run bound; retain the same cohort and writer fence");
           Runtime.getRuntime().halt(4);
         },
@@ -244,7 +247,7 @@ public final class CanonicalGameplayMigrationDriverMain {
         TimeUnit.SECONDS);
     int exitCode;
     try {
-      exitCode = run(args, System.in, System.out, System.err);
+      exitCode = run(args, System.in, protocolOutput, error);
     } finally {
       deadline.shutdownNow();
     }
@@ -512,15 +515,36 @@ public final class CanonicalGameplayMigrationDriverMain {
         Map.entry("33", "V33__canonical_legacy_binding_migration_operation.sql"),
         Map.entry("34", "V34__canonical_gameplay_decision_runtime_fence.sql"),
         Map.entry("34.1", "V34.1__canonical_gameplay_integrity_guards.sql"),
+        Map.entry("34.2", "V34.2__canonical_gameplay_runtime_update_and_identifier_guards.sql"),
+        Map.entry("34.3", "V34.3__canonical_initial_admission_intent_request_id_width.sql"),
         Map.entry("1000", "V1000__create_saga_schema.sql"),
         Map.entry("1001", "V1001__saga_instance_table.sql"),
         Map.entry("1002", "V1002__saga_step_table.sql"));
   }
 
   private static List<MigrationSourceIdentity> migrationSourceInventory(Flyway flyway) {
+    return migrationSourceInventory(flyway.info().all());
+  }
+
+  static List<MigrationSourceIdentity> migrationSourceInventory(MigrationInfo[] migrationInfos) {
+    if (migrationInfos == null) {
+      throw new IllegalStateException("packaged migration source inventory was incomplete");
+    }
     List<MigrationSourceIdentity> migrations = new ArrayList<>();
-    for (MigrationInfo migration : flyway.info().all()) {
-      if (migration.getVersion() == null || migration.getScript() == null) {
+    int schemaMarkers = 0;
+    for (MigrationInfo migration : migrationInfos) {
+      if (migration == null) {
+        throw new IllegalStateException("packaged migration source identity was incomplete");
+      }
+      if (migration.getType() == CoreMigrationType.SCHEMA) {
+        if (++schemaMarkers > 1) {
+          throw new IllegalStateException("packaged Flyway schema marker was ambiguous");
+        }
+        continue;
+      }
+      if (migration.getVersion() == null
+          || migration.getScript() == null
+          || migration.getType() == null) {
         throw new IllegalStateException("packaged migration source identity was incomplete");
       }
       migrations.add(
@@ -1059,8 +1083,7 @@ public final class CanonicalGameplayMigrationDriverMain {
     }
   }
 
-  private record MigrationSourceIdentity(
-      String version, String script, String type, Integer checksum) {}
+  record MigrationSourceIdentity(String version, String script, String type, Integer checksum) {}
 
   private record PhysicalSchemaSnapshot(
       List<String> schemas,

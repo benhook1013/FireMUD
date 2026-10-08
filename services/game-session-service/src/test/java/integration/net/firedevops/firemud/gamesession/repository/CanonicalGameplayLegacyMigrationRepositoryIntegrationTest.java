@@ -38,14 +38,7 @@ class CanonicalGameplayLegacyMigrationRepositoryIntegrationTest {
     String schema = "gs_legacy_migration_" + UUID.randomUUID().toString().replace("-", "");
     DriverManagerDataSource dataSource = dataSource(schema);
     try {
-      Flyway.configure()
-          .dataSource(dataSource)
-          .schemas(schema)
-          .defaultSchema(schema)
-          .table("flyway_schema_history")
-          .locations(MIGRATION_LOCATION)
-          .load()
-          .migrate();
+      migrate(schema, dataSource);
       DSLContext dsl = dslForSchema(dataSource, schema);
       var inventory = new CanonicalGameplayBindingInventoryRepository(dsl);
       var repository = new CanonicalGameplayLegacyMigrationRepository(dsl, inventory);

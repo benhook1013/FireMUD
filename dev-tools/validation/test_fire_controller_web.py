@@ -56,29 +56,47 @@ class FakeStore:
         self.get_calls = []
         self.history_calls = []
         self.detail = {
-            **{key: value for key, value in public_row().items() if key in {
-                "id", "name", "worker", "title", "status", "primary", "summary", "progress", "blocker",
-                "checklist",
-            }},
+            **{
+                key: value
+                for key, value in public_row().items()
+                if key
+                in {
+                    "id",
+                    "name",
+                    "worker",
+                    "title",
+                    "status",
+                    "primary",
+                    "summary",
+                    "progress",
+                    "blocker",
+                    "checklist",
+                }
+            },
             "brief": f"# Private instructions\n\n{PRIVATE_SENTINEL}\n\n[web](https://example.com) "
-                     "[local](/jobs/job-1/history) [unsafe](javascript:alert(1)) "
-                     "![remote image](https://example.com/private.png)\n\n<script>private()</script>",
+            "[local](/jobs/job-1/history) [unsafe](javascript:alert(1)) "
+            "![remote image](https://example.com/private.png)\n\n<script>private()</script>",
             "latest_checkpoint": {
                 "done": "Finished the first milestone.",
                 "next_steps": "Complete the handoff.",
                 "blocker": "Waiting on a dependency.",
                 "pointers": {"branch": "codex/jobs", "path": PRIVATE_SENTINEL},
             },
-            "updates": [{"kind": "progress", "created_at": "2026-10-03T10:00:00Z",
-                         "body": f"Latest update {PRIVATE_SENTINEL}"}],
-            "notes": [{"kind": "reminder", "phase": "after-review", "status": "pending",
-                       "body": f"Remember this {PRIVATE_SENTINEL}"}],
+            "updates": [
+                {"kind": "progress", "created_at": "2026-10-03T10:00:00Z", "body": f"Latest update {PRIVATE_SENTINEL}"}
+            ],
+            "notes": [
+                {
+                    "kind": "reminder",
+                    "phase": "after-review",
+                    "status": "pending",
+                    "body": f"Remember this {PRIVATE_SENTINEL}",
+                }
+            ],
         }
         self.revisions = [
-            {"revision": 2, "created_at": "2026-10-03T10:00:00Z", "status": "blocked",
-             "title": "Latest revision"},
-            {"revision": 1, "created_at": "2026-10-02T10:00:00Z", "status": "active",
-             "title": "Earlier revision"},
+            {"revision": 2, "created_at": "2026-10-03T10:00:00Z", "status": "blocked", "title": "Latest revision"},
+            {"revision": 1, "created_at": "2026-10-02T10:00:00Z", "status": "active", "title": "Earlier revision"},
         ]
 
     def get(self, job_id, *, latest=10, full_history=False):
@@ -98,16 +116,31 @@ class FakeStore:
                 "blocker": "",
                 "brief": f"Archived {PRIVATE_SENTINEL}",
             }
-        return self.revisions[offset:offset + limit]
+        return self.revisions[offset : offset + limit]
 
 
 class FireControllerWebTest(unittest.TestCase):
     def test_public_projection_drops_all_private_and_unselected_fields(self):
         result = web.public_jobs([public_row()])
-        self.assertEqual(set(result[0]), {
-            "id", "name", "worker", "workstream_id", "title", "status", "primary", "summary", "progress",
-            "blocker", "created_at", "updated_at", "last_activity_at", "checklist",
-        })
+        self.assertEqual(
+            set(result[0]),
+            {
+                "id",
+                "name",
+                "worker",
+                "workstream_id",
+                "title",
+                "status",
+                "primary",
+                "summary",
+                "progress",
+                "blocker",
+                "created_at",
+                "updated_at",
+                "last_activity_at",
+                "checklist",
+            },
+        )
         self.assertEqual(result[0]["created_at"], "2026-10-02T10:00:00Z")
         self.assertEqual(result[0]["updated_at"], "2026-10-03T10:00:00Z")
         self.assertEqual(result[0]["last_activity_at"], "2026-10-04T10:00:00Z")
@@ -161,9 +194,17 @@ class FireControllerWebTest(unittest.TestCase):
     def test_lane_projection_batches_and_keeps_blocked_primary_visible(self):
         job = {**public_row(), "worker": "Build & Tools"}
         row = {
-            "worker": "Build & Tools", "status": "blocked", "paused": False, "pause_reason": "",
-            "active_count": 0, "blocked_count": 1, "parked_count": 2, "completed_count": 4,
-            "jobs_truncated": False, "primary": job, "jobs": [job],
+            "worker": "Build & Tools",
+            "status": "blocked",
+            "paused": False,
+            "pause_reason": "",
+            "active_count": 0,
+            "blocked_count": 1,
+            "parked_count": 2,
+            "completed_count": 4,
+            "jobs_truncated": False,
+            "primary": job,
+            "jobs": [job],
             "private_history": PRIVATE_SENTINEL,
         }
         result = web.public_lanes([row])[0]
@@ -191,23 +232,51 @@ class FireControllerWebTest(unittest.TestCase):
 
     def test_workstream_public_projection_drops_private_notes_and_history(self):
         snapshot = {
-            "workstreams": [{
-                "id": "shared-foundations", "name": "Shared Foundations", "revision": 4,
-                "state": "ACTIVE", "now": "Current", "milestone": "Next",
-                "phase_states": {"Phase one": "NOW"}, "notes": PRIVATE_SENTINEL,
-                "history": [{"brief": PRIVATE_SENTINEL}],
-            }],
-            "return_points": [{"id": "adr-0183", "name": "ADR 0183", "trigger": "When human review resumes",
-                               "state": "HUMAN DECISION"}],
+            "workstreams": [
+                {
+                    "id": "shared-foundations",
+                    "name": "Shared Foundations",
+                    "revision": 4,
+                    "state": "ACTIVE",
+                    "now": "Current",
+                    "milestone": "Next",
+                    "phase_states": {"Phase one": "NOW"},
+                    "notes": PRIVATE_SENTINEL,
+                    "history": [{"brief": PRIVATE_SENTINEL}],
+                }
+            ],
+            "return_points": [
+                {
+                    "id": "adr-0183",
+                    "name": "ADR 0183",
+                    "trigger": "When human review resumes",
+                    "state": "HUMAN DECISION",
+                }
+            ],
         }
         result = web.public_workstreams(snapshot)
-        self.assertEqual(set(result["workstreams"][0]), {
-            "id", "name", "state", "now", "milestone", "phase_states",
-        })
-        self.assertEqual(result["return_points"], [{
-            "id": "adr-0183", "name": "ADR 0183", "trigger": "When human review resumes",
-            "state": "HUMAN DECISION",
-        }])
+        self.assertEqual(
+            set(result["workstreams"][0]),
+            {
+                "id",
+                "name",
+                "state",
+                "now",
+                "milestone",
+                "phase_states",
+            },
+        )
+        self.assertEqual(
+            result["return_points"],
+            [
+                {
+                    "id": "adr-0183",
+                    "name": "ADR 0183",
+                    "trigger": "When human review resumes",
+                    "state": "HUMAN DECISION",
+                }
+            ],
+        )
         self.assertNotIn(PRIVATE_SENTINEL, json.dumps(result))
 
     def test_private_markdown_escapes_html_and_rejects_unsafe_links_and_images(self):
@@ -258,8 +327,8 @@ class FireControllerWebTest(unittest.TestCase):
 
     def test_public_inline_markdown_keeps_http_links_and_omits_private_targets(self):
         rendered = web.render_public_inline(
-            '**bold** [safe](https://example.com/path) [local](/jobs/job-1) '
-            '[unsafe](javascript:alert(1)) ![remote](https://example.com/image.png) <script>x</script>'
+            "**bold** [safe](https://example.com/path) [local](/jobs/job-1) "
+            "[unsafe](javascript:alert(1)) ![remote](https://example.com/image.png) <script>x</script>"
         )
         self.assertIn("<strong>bold</strong>", rendered)
         self.assertIn('<a href="https://example.com/path">safe</a>', rendered)
@@ -272,18 +341,37 @@ class FireControllerWebTest(unittest.TestCase):
 
     def test_review_model_label_uses_exact_subagent_attempt_and_escapes_values(self):
         run = {"run_id": "attempt-1", "channel": "subagent"}
-        label = web.review_model_label(run, [{
-            "run_id": "attempt-1", "model": "gpt-5.6-sol", "reasoning_effort": "medium",
-        }])
+        label = web.review_model_label(
+            run,
+            [
+                {
+                    "run_id": "attempt-1",
+                    "model": "gpt-5.6-sol",
+                    "reasoning_effort": "medium",
+                }
+            ],
+        )
         self.assertIn("gpt-5.6-sol", label)
         self.assertIn("Medium", label)
         self.assertIn("Model not recorded", web.review_model_label(run, []))
-        self.assertEqual("", web.review_model_label({"run_id": "attempt-1", "channel": "hosted"}, [
-            {"run_id": "attempt-1", "model": "must-not-appear"},
-        ]))
-        malicious = web.review_model_label(run, [{
-            "run_id": "attempt-1", "model": '<img src=x onerror="alert(1)">',
-        }])
+        self.assertEqual(
+            "",
+            web.review_model_label(
+                {"run_id": "attempt-1", "channel": "hosted"},
+                [
+                    {"run_id": "attempt-1", "model": "must-not-appear"},
+                ],
+            ),
+        )
+        malicious = web.review_model_label(
+            run,
+            [
+                {
+                    "run_id": "attempt-1",
+                    "model": '<img src=x onerror="alert(1)">',
+                }
+            ],
+        )
         self.assertIn("&lt;img", malicious)
         self.assertNotIn("<img", malicious)
 
@@ -325,20 +413,42 @@ class FireControllerWebTest(unittest.TestCase):
             def list(self, *, worker):
                 self.list_calls.append(worker)
                 return [
-                    {"id": "current-job", "name": "current", "worker": worker,
-                     "title": "Current assignment", "status": "active", "primary": True,
-                     "summary": "Current summary", "brief": PRIVATE_SENTINEL},
-                    {"id": "parked-job", "name": "parked", "worker": worker,
-                     "title": "Parked assignment", "status": "parked", "primary": False,
-                     "summary": "Parked summary", "brief": PRIVATE_SENTINEL},
-                    {"id": "completed-job", "name": "completed", "worker": worker,
-                     "title": "Completed CI propagation", "status": "completed", "primary": False,
-                     "summary": "Completed summary", "brief": PRIVATE_SENTINEL},
+                    {
+                        "id": "current-job",
+                        "name": "current",
+                        "worker": worker,
+                        "title": "Current assignment",
+                        "status": "active",
+                        "primary": True,
+                        "summary": "Current summary",
+                        "brief": PRIVATE_SENTINEL,
+                    },
+                    {
+                        "id": "parked-job",
+                        "name": "parked",
+                        "worker": worker,
+                        "title": "Parked assignment",
+                        "status": "parked",
+                        "primary": False,
+                        "summary": "Parked summary",
+                        "brief": PRIVATE_SENTINEL,
+                    },
+                    {
+                        "id": "completed-job",
+                        "name": "completed",
+                        "worker": worker,
+                        "title": "Completed CI propagation",
+                        "status": "completed",
+                        "primary": False,
+                        "summary": "Completed summary",
+                        "brief": PRIVATE_SENTINEL,
+                    },
                 ]
 
         jobs = Jobs()
         status, headers, body = web.private_route(
-            "/workers/@Build%20%26%20Tools/jobs", jobs,
+            "/workers/@Build%20%26%20Tools/jobs",
+            jobs,
         )
         text = body.decode()
         self.assertEqual(status, 200)
@@ -354,7 +464,8 @@ class FireControllerWebTest(unittest.TestCase):
         self.assertNotIn("Private details", text)
         self.assertNotIn(PRIVATE_SENTINEL, text)
         self.assertEqual(
-            web.private_route("/workers/@Build%20%26%20Tools/jobs?offset=1", jobs)[0], 400,
+            web.private_route("/workers/@Build%20%26%20Tools/jobs?offset=1", jobs)[0],
+            400,
         )
         self.assertIsNone(web.private_route("/public/workers/@Build%20%26%20Tools/jobs", jobs))
         for alias in (".", ".."):
@@ -369,25 +480,48 @@ class FireControllerWebTest(unittest.TestCase):
                 self.history_calls = []
 
             def get(self, identifier, editorial):
-                return {"id": identifier, "name": "Shared Foundations", "revision": 1,
-                        "state": "ACTIVE", "now": PRIVATE_SENTINEL, "milestone": "Next",
-                        "phase_states": {"Phase one": "NOW"}}
+                return {
+                    "id": identifier,
+                    "name": "Shared Foundations",
+                    "revision": 1,
+                    "state": "ACTIVE",
+                    "now": PRIVATE_SENTINEL,
+                    "milestone": "Next",
+                    "phase_states": {"Phase one": "NOW"},
+                }
 
             def history(self, record_type, identifier, **kwargs):
                 self.history_calls.append((record_type, identifier, kwargs))
-                return [{"revision": 1, "created_at": "2026-10-03T00:00:00Z", "state": "ACTIVE",
-                         "now": PRIVATE_SENTINEL, "milestone": "Next", "phase_states": {}}]
+                return [
+                    {
+                        "revision": 1,
+                        "created_at": "2026-10-03T00:00:00Z",
+                        "state": "ACTIVE",
+                        "now": PRIVATE_SENTINEL,
+                        "milestone": "Next",
+                        "phase_states": {},
+                    }
+                ]
 
         class Notes:
             def notes(self, **kwargs):
                 self.kwargs = kwargs
-                return [{"id": "note-1", "kind": "reminder", "status": "pending",
-                         "created_at": "2026-10-03T00:00:00Z", "body": PRIVATE_SENTINEL}]
+                return [
+                    {
+                        "id": "note-1",
+                        "kind": "reminder",
+                        "status": "pending",
+                        "created_at": "2026-10-03T00:00:00Z",
+                        "body": PRIVATE_SENTINEL,
+                    }
+                ]
 
         workstreams = Workstreams()
         jobs = Notes()
         status, _headers, body = web.private_route(
-            "/workstreams/shared-foundations", jobs, workstreams=workstreams,
+            "/workstreams/shared-foundations",
+            jobs,
+            workstreams=workstreams,
             editorial={"workstreams": {}, "return_points": {}},
         )
         self.assertEqual(status, 200)
@@ -395,15 +529,23 @@ class FireControllerWebTest(unittest.TestCase):
         self.assertIn(b'<time datetime="2026-10-03T00:00:00Z">3 Oct 2026 13:00 NZDT</time>', body)
         self.assertEqual(jobs.kwargs["phase"], "shared-foundations")
         status, _headers, body = web.private_route(
-            "/workstreams/shared-foundations/history?offset=50", jobs, workstreams=workstreams,
+            "/workstreams/shared-foundations/history?offset=50",
+            jobs,
+            workstreams=workstreams,
             editorial={"workstreams": {}, "return_points": {}},
         )
         self.assertEqual(status, 200)
         self.assertIn(b'<time datetime="2026-10-03T00:00:00Z">3 Oct 2026 13:00 NZDT</time>', body)
         self.assertEqual(workstreams.history_calls[-1][2], {"limit": 50, "offset": 50})
-        self.assertEqual(web.private_route("/workstreams/shared-foundations/history?offset=1000001", jobs,
-                                          workstreams=workstreams,
-                                          editorial={"workstreams": {}, "return_points": {}})[0], 400)
+        self.assertEqual(
+            web.private_route(
+                "/workstreams/shared-foundations/history?offset=1000001",
+                jobs,
+                workstreams=workstreams,
+                editorial={"workstreams": {}, "return_points": {}},
+            )[0],
+            400,
+        )
 
         class Inbox:
             def __init__(self):
@@ -413,35 +555,83 @@ class FireControllerWebTest(unittest.TestCase):
 
             def messages_page(self, worker, *, limit, offset):
                 self.list_calls.append((worker, limit, offset))
-                return {"offset": offset, "has_more": False, "messages": [{"id": "message-1", "recipient": worker, "author": "Overseer",
-                         "body": PRIVATE_SENTINEL, "created_at": "2026-10-03T00:00:00Z",
-                         "reply_to": "message-0"}]}
+                return {
+                    "offset": offset,
+                    "has_more": False,
+                    "messages": [
+                        {
+                            "id": "message-1",
+                            "recipient": worker,
+                            "author": "Overseer",
+                            "body": PRIVATE_SENTINEL,
+                            "created_at": "2026-10-03T00:00:00Z",
+                            "reply_to": "message-0",
+                        }
+                    ],
+                }
 
             def conversations_page(self, worker, *, limit, offset):
-                return {"offset": offset, "has_more": False, "conversations": [{"root_id": "message-0",
-                        "message_count": 2, "unread_count": 1, "latest_message": {
-                            "id": "message-1", "recipient": worker, "author": "Overseer",
-                            "body": PRIVATE_SENTINEL, "created_at": "2026-10-03T00:00:00Z"}}]}
+                return {
+                    "offset": offset,
+                    "has_more": False,
+                    "conversations": [
+                        {
+                            "root_id": "message-0",
+                            "message_count": 2,
+                            "unread_count": 1,
+                            "latest_message": {
+                                "id": "message-1",
+                                "recipient": worker,
+                                "author": "Overseer",
+                                "body": PRIVATE_SENTINEL,
+                                "created_at": "2026-10-03T00:00:00Z",
+                            },
+                        }
+                    ],
+                }
 
             def unread_count(self, worker):
                 return 1
 
             def read(self, message_id, *, recipient):
                 self.read_calls.append((message_id, recipient))
-                return {"id": message_id, "author": "Overseer", "body": PRIVATE_SENTINEL,
-                        "created_at": "2026-10-03T00:00:00Z", "reply_to": "message-0"}
+                return {
+                    "id": message_id,
+                    "author": "Overseer",
+                    "body": PRIVATE_SENTINEL,
+                    "created_at": "2026-10-03T00:00:00Z",
+                    "reply_to": "message-0",
+                }
 
             def thread_page(self, message_id, *, limit, offset, focus_id=None, worker=None):
                 self.thread_calls.append((message_id, limit, offset, focus_id, worker))
-                return {"offset": offset, "has_more": False, "messages": [
-                    {"id": "message-0", "recipient": "Overseer", "author": "Build & Tools",
-                     "body": "Original private request", "created_at": "2026-10-02T00:00:00Z",
-                     "seen_at": None, "acknowledged_at": None},
-                    {"id": "message-1", "recipient": "Build & Tools", "author": "Overseer",
-                     "body": PRIVATE_SENTINEL, "created_at": "2026-10-03T00:00:00Z",
-                     "reply_to": "message-0", "job": "merge-train", "pr": 2898,
-                     "seen_at": None, "acknowledged_at": None},
-                ]}
+                return {
+                    "offset": offset,
+                    "has_more": False,
+                    "messages": [
+                        {
+                            "id": "message-0",
+                            "recipient": "Overseer",
+                            "author": "Build & Tools",
+                            "body": "Original private request",
+                            "created_at": "2026-10-02T00:00:00Z",
+                            "seen_at": None,
+                            "acknowledged_at": None,
+                        },
+                        {
+                            "id": "message-1",
+                            "recipient": "Build & Tools",
+                            "author": "Overseer",
+                            "body": PRIVATE_SENTINEL,
+                            "created_at": "2026-10-03T00:00:00Z",
+                            "reply_to": "message-0",
+                            "job": "merge-train",
+                            "pr": 2898,
+                            "seen_at": None,
+                            "acknowledged_at": None,
+                        },
+                    ],
+                }
 
         inbox = Inbox()
         status, _headers, body = web.private_route("/inbox/Build%20%26%20Tools?offset=0", None, inbox=inbox)
@@ -452,13 +642,17 @@ class FireControllerWebTest(unittest.TestCase):
         self.assertIn(b"Open conversation", body)
         self.assertIn(b"2 messages", body)
         self.assertIn(b"1 unread incoming message", body)
-        self.assertIn(b'conversation-card', body)
+        self.assertIn(b"conversation-card", body)
         self.assertIn(b'class="conversation-meta"', body)
         self.assertIn(b'class="conversation-open"', body)
+        self.assertIn(b"<h2>Conversations</h2>", body)
+        self.assertIn("<h3>Overseer → Build &amp; Tools</h3>".encode(), body)
         self.assertIn(b"@media(max-width:760px)", body)
         status, _headers, body = web.private_route("/inbox/Build%20%26%20Tools?view=messages", None, inbox=inbox)
         self.assertEqual(status, 200)
         self.assertEqual(inbox.list_calls, [("Build & Tools", 50, 0)])
+        self.assertIn(b"<h2>Messages</h2>", body)
+        self.assertIn("<h3>Overseer → Build &amp; Tools</h3>".encode(), body)
         self.assertIn(b"/thread/message-0?focus=message-0#message-message-0", body)
         self.assertEqual(inbox.read_calls, [])
         status, _headers, body = web.private_route("/inbox/Build%20%26%20Tools/message-1", None, inbox=inbox)
@@ -469,7 +663,9 @@ class FireControllerWebTest(unittest.TestCase):
         self.assertIn(b"/thread/message-0?focus=message-0#message-message-0", body)
         self.assertIn(b"Conversation", body)
         status, _headers, body = web.private_route(
-            "/inbox/Build%20%26%20Tools/thread/message-1?offset=50", None, inbox=inbox,
+            "/inbox/Build%20%26%20Tools/thread/message-1?offset=50",
+            None,
+            inbox=inbox,
         )
         self.assertEqual(status, 200)
         self.assertEqual(inbox.thread_calls, [("message-1", 50, 50, None, "Build & Tools")])
@@ -501,6 +697,36 @@ class FireControllerWebTest(unittest.TestCase):
         self.assertIn("2 unread incoming messages.", page)
         self.assertIn("1 message</span>", page)
         self.assertIn("2 unread incoming messages</span>", page)
+        self.assertIn(
+            "main.private-pages{max-width:1440px;margin:auto;padding:1rem clamp(1rem,4vw,3.5rem) 4rem;line-height:1.5}",
+            page,
+        )
+        self.assertIn(
+            ".private-pages .inbox-notes .job-note,.private-pages .conversation-card{border-radius:9px}",
+            page,
+        )
+        self.assertIn(
+            ".private-pages .private-list{list-style:none;padding:0;display:grid;grid-template-columns:minmax(0,1fr);",
+            page,
+        )
+        self.assertIn(".private-pages .private-list>li{min-width:0;max-width:100%}", page)
+        self.assertIn(
+            ".private-pages .conversation-card{display:flex;align-items:center;justify-content:space-between;min-width:0;max-width:100%;",
+            page,
+        )
+        self.assertNotIn("← Local Delivery Status page", page)
+
+        notes_page = web.render_inbox_conversations(
+            "Gameplay",
+            [conversation],
+            pending_notes=[{"kind": "reminder", "status": "pending", "body": "Wait"}],
+        )
+        self.assertIn('<article class="job-private conversation-card">', notes_page)
+        self.assertIn('<article class="job-note"><h3>', notes_page)
+        self.assertIn(
+            ".private-pages .job-private,.private-pages .job-history-entry{background:var(--paper,#e7e7e7);border:1px solid var(--line,#b9b9b9);border-radius:0;",
+            notes_page,
+        )
 
         conversation["message_count"] = 2
         conversation["unread_count"] = 1
@@ -511,15 +737,22 @@ class FireControllerWebTest(unittest.TestCase):
 
     def test_private_conversation_pagination_labels_follow_chronological_order(self):
         first_page = [
-            {"id": f"message-{index}", "recipient": "General", "author": "Overseer",
-             "body": f"Message {index}", "created_at": f"2026-10-01T00:{index:02d}:00Z"}
+            {
+                "id": f"message-{index}",
+                "recipient": "General",
+                "author": "Overseer",
+                "body": f"Message {index}",
+                "created_at": f"2026-10-01T00:{index:02d}:00Z",
+            }
             for index in range(web.HISTORY_PAGE_SIZE)
         ]
         later = web.render_inbox_thread("General", first_page, message_id="message-0", offset=0, has_more=True)
         self.assertIn("Later messages", later)
         self.assertNotIn("Earlier messages", later)
 
-        earlier = web.render_inbox_thread("General", first_page[:1], message_id="message-49", offset=web.HISTORY_PAGE_SIZE)
+        earlier = web.render_inbox_thread(
+            "General", first_page[:1], message_id="message-49", offset=web.HISTORY_PAGE_SIZE
+        )
         self.assertIn("Earlier messages", earlier)
         self.assertNotIn("Later messages", earlier)
 
@@ -531,8 +764,12 @@ class FireControllerWebTest(unittest.TestCase):
             def now(cls, tz=None):
                 return datetime(2026, 10, 6, 0, 0, tzinfo=timezone.utc).astimezone(tz)
 
-        job = {**public_row(), "created_at": "2026-07-01T00:00:00Z",
-               "updated_at": "2026-10-01T00:00:00Z", "last_activity_at": "2026-10-05T22:30:00Z"}
+        job = {
+            **public_row(),
+            "created_at": "2026-07-01T00:00:00Z",
+            "updated_at": "2026-10-01T00:00:00Z",
+            "last_activity_at": "2026-10-05T22:30:00Z",
+        }
         with patch.object(web, "datetime", FixedDateTime):
             document = web.render_worker_history("Gameplay", [job])
         self.assertIn("<strong>Created</strong>", document)
@@ -548,22 +785,30 @@ class FireControllerWebTest(unittest.TestCase):
         missing = web.render_worker_history("Gameplay", [missing_job])
         self.assertEqual(missing.count("Not recorded"), 2)
         self.assertNotIn("1970", missing)
-        invalid = web._time_metadata('<invalid>', relative=True)
+        invalid = web._time_metadata("<invalid>", relative=True)
         self.assertEqual(invalid, "&lt;invalid&gt;")
 
     def test_private_pages_share_card_navigation_and_empty_state_styles_only(self):
-        pages = [web.render_worker_history("Gameplay", []), web.render_job(FakeStore().detail),
-                 web.render_job({"job": FakeStore().detail, "history": []}, history=True),
-                 web.render_inbox("Gameplay", []), web.render_inbox_conversations("Gameplay", []),
-                 web.render_inbox_thread("Gameplay", [], message_id="message-1"),
-                 web.render_workstream({"id": "delivery", "name": "Delivery", "history": []}, history=True)]
+        pages = [
+            web.render_worker_history("Gameplay", []),
+            web.render_job(FakeStore().detail),
+            web.render_job({"job": FakeStore().detail, "history": []}, history=True),
+            web.render_inbox("Gameplay", []),
+            web.render_inbox_conversations("Gameplay", []),
+            web.render_inbox_thread("Gameplay", [], message_id="message-1"),
+            web.render_workstream({"id": "delivery", "name": "Delivery", "history": []}, history=True),
+        ]
         for page in pages:
             with self.subTest(page=page[:120]):
                 self.assertIn('<main class="private-pages">', page)
                 self.assertIn('href="/shared.css"', page)
-                self.assertIn('class="private-actions"', page)
-                self.assertIn('var(--paper,#e7e7e7)', page)
-                self.assertIn('@media(max-width:760px)', page)
+                self.assertIn("var(--paper,#e7e7e7)", page)
+                self.assertIn("@media(max-width:760px)", page)
+        self.assertIn('class="private-actions"', pages[1])
+        self.assertIn('class="private-actions"', pages[3])
+        self.assertIn('class="private-actions"', pages[4])
+        for page in (pages[0], pages[3], pages[4], pages[5]):
+            self.assertNotIn("← Local Delivery Status page", page)
         self.assertIn("private-empty", pages[0])
         self.assertIn("No revisions recorded.", pages[2])
         self.assertIn("No conversations on this page.", pages[4])
@@ -590,11 +835,25 @@ class FireControllerWebTest(unittest.TestCase):
 
     def test_worker_history_orders_all_jobs_by_activity_after_the_primary(self):
         jobs = [
-            {**public_row(), "id": "state-newer", "name": "state-newer", "title": "State newer",
-             "primary": False, "updated_at": "2026-10-05T00:00:00Z", "last_activity_at": "2026-10-05T00:00:00Z"},
+            {
+                **public_row(),
+                "id": "state-newer",
+                "name": "state-newer",
+                "title": "State newer",
+                "primary": False,
+                "updated_at": "2026-10-05T00:00:00Z",
+                "last_activity_at": "2026-10-05T00:00:00Z",
+            },
             {**public_row(), "id": "primary", "title": "Primary first", "last_activity_at": "2026-10-01T00:00:00Z"},
-            {**public_row(), "id": "append-newer", "name": "append-newer", "title": "Appended activity newer",
-             "primary": False, "updated_at": "2026-10-01T00:00:00Z", "last_activity_at": "2026-10-06T00:00:00Z"},
+            {
+                **public_row(),
+                "id": "append-newer",
+                "name": "append-newer",
+                "title": "Appended activity newer",
+                "primary": False,
+                "updated_at": "2026-10-01T00:00:00Z",
+                "last_activity_at": "2026-10-06T00:00:00Z",
+            },
         ]
         document = web.render_worker_history("Gameplay", jobs)
         self.assertLess(document.index('href="/jobs/primary"'), document.index('href="/jobs/append-newer"'))
@@ -625,26 +884,37 @@ class FireControllerWebTest(unittest.TestCase):
             self.assertIn("Outgoing", messages)
             self.assertIn("Self", messages)
             self.assertIn(f'href="/inbox/General/{incoming["id"]}"', messages)
-            self.assertIn(f'?focus={outgoing["id"]}#message-{outgoing["id"]}', messages)
+            self.assertIn(f"?focus={outgoing['id']}#message-{outgoing['id']}", messages)
             self.assertNotIn(f'href="/inbox/General/{outgoing["id"]}"', messages)
             self.assertNotIn(other_branch["id"], messages)
             thread = web.private_route(f"/inbox/General/thread/{other_branch['id']}", None, inbox=inbox)[2].decode()
             self.assertIn("Other participant branch", thread)
             self.assertIn("<strong>Private request</strong>", thread)
-            self.assertEqual(web.private_route(f"/inbox/Gameplay/thread/{self_message['id']}", None, inbox=inbox)[0], 404)
-            self.assertTrue(all(row["seen_at"] is None and row["acknowledged_at"] is None
-                                for row in inbox.thread(incoming["id"])))
+            self.assertEqual(
+                web.private_route(f"/inbox/Gameplay/thread/{self_message['id']}", None, inbox=inbox)[0], 404
+            )
+            self.assertTrue(
+                all(row["seen_at"] is None and row["acknowledged_at"] is None for row in inbox.thread(incoming["id"]))
+            )
             self.assertEqual(inbox.unread_count("General"), 2)
             self.assertEqual(web.private_route(f"/inbox/General/{incoming['id']}", None, inbox=inbox)[0], 200)
             self.assertEqual(inbox.unread_count("General"), 1)
             self.assertIsNone(inbox.list("General")[-1]["acknowledged_at"])
             self.assertEqual(web.private_route(f"/inbox/General/{outgoing['id']}", None, inbox=inbox)[0], 404)
-            for query in ("view=", "view=sent", "view=messages&view=conversations", "view=messages&offset=-1",
-                          "view=messages&offset=1000001", "view=messages&focus=message-1"):
+            for query in (
+                "view=",
+                "view=sent",
+                "view=messages&view=conversations",
+                "view=messages&offset=-1",
+                "view=messages&offset=1000001",
+                "view=messages&focus=message-1",
+            ):
                 self.assertEqual(web.private_route(f"/inbox/General?{query}", None, inbox=inbox)[0], 400)
             for query in ("notes_offset=-1", "notes_offset=1000001", "notes_offset=00"):
                 self.assertEqual(web.private_route(f"/inbox/General?{query}", None, inbox=inbox)[0], 400)
-            self.assertEqual(web.private_route(f"/inbox/General/thread/{incoming['id']}?view=messages", None, inbox=inbox)[0], 400)
+            self.assertEqual(
+                web.private_route(f"/inbox/General/thread/{incoming['id']}?view=messages", None, inbox=inbox)[0], 400
+            )
 
     def test_inbox_landings_show_exact_worker_pending_notes_without_read_side_effects(self):
         import tempfile
@@ -659,17 +929,23 @@ class FireControllerWebTest(unittest.TestCase):
             general_job = jobs.create("current-general", "General", "Keep the general work moving")
             worker_note = jobs.note(
                 "**Worker-wide reminder** [unsafe](javascript:alert) <script>private()</script>",
-                worker="Gameplay", kind="reminder",
+                worker="Gameplay",
+                kind="reminder",
             )
             job_note = jobs.note(
-                "Follow up on production deployment", job=gameplay_job["id"],
-                phase="production", kind="instruction",
+                "Follow up on production deployment",
+                job=gameplay_job["id"],
+                phase="production",
+                kind="instruction",
             )
             foreign_worker_note = jobs.note("Other worker reminder", worker="General")
             foreign_job_note = jobs.note("Other job reminder", job=general_job["id"])
             dismissed_note = jobs.note("Dismissed reminder", worker="Gameplay")
             jobs.note_status(
-                dismissed_note["id"], "dismissed", "No longer needed", expected_revision=dismissed_note["revision"],
+                dismissed_note["id"],
+                "dismissed",
+                "No longer needed",
+                expected_revision=dismissed_note["revision"],
             )
             consumed_note = jobs.note("Consumed source", worker="Gameplay", kind="source")
             jobs.note_status(consumed_note["id"], "consumed", expected_revision=consumed_note["revision"])
@@ -701,8 +977,7 @@ class FireControllerWebTest(unittest.TestCase):
                     self.assertNotIn("Consumed source", rendered)
 
             stored_messages = inbox.messages_page("Gameplay", limit=50, offset=0)["messages"]
-            self.assertTrue(all(row["seen_at"] is None and row["acknowledged_at"] is None
-                                for row in stored_messages))
+            self.assertTrue(all(row["seen_at"] is None and row["acknowledged_at"] is None for row in stored_messages))
             self.assertEqual(inbox.unread_count("Gameplay"), 1)
             self.assertNotIn(worker_note["id"], json.dumps(web.public_jobs(jobs.list(worker="Gameplay"))))
             self.assertNotIn(job_note["body"], json.dumps(web.public_jobs(jobs.list(worker="Gameplay"))))
@@ -719,9 +994,19 @@ class FireControllerWebTest(unittest.TestCase):
 
             def notes(self, **kwargs):
                 self.calls.append(kwargs)
-                return [{"id": f"note-{index}", "body": f"Reminder {index}", "worker": "Gameplay",
-                         "job": None, "phase": None, "kind": "reminder", "status": "pending",
-                         "created_at": f"2026-10-03T00:00:{index:02d}Z"} for index in range(51)]
+                return [
+                    {
+                        "id": f"note-{index}",
+                        "body": f"Reminder {index}",
+                        "worker": "Gameplay",
+                        "job": None,
+                        "phase": None,
+                        "kind": "reminder",
+                        "status": "pending",
+                        "created_at": f"2026-10-03T00:00:{index:02d}Z",
+                    }
+                    for index in range(51)
+                ]
 
         class Inbox:
             def unread_count(self, worker):
@@ -732,17 +1017,28 @@ class FireControllerWebTest(unittest.TestCase):
 
         jobs, inbox = Jobs(), Inbox()
         status, _, body = web.private_route(
-            "/inbox/Gameplay?view=messages&offset=100&notes_offset=50", jobs, inbox=inbox,
+            "/inbox/Gameplay?view=messages&offset=100&notes_offset=50",
+            jobs,
+            inbox=inbox,
         )
         rendered = body.decode()
         self.assertEqual(status, 200)
-        self.assertEqual(jobs.calls, [{
-            "worker": "Gameplay", "status": "pending", "limit": 51, "offset": 50,
-            "include_assigned_jobs": True,
-        }])
+        self.assertEqual(
+            jobs.calls,
+            [
+                {
+                    "worker": "Gameplay",
+                    "status": "pending",
+                    "limit": 51,
+                    "offset": 50,
+                    "include_assigned_jobs": True,
+                }
+            ],
+        )
         self.assertEqual(rendered.count('<article class="job-note">'), 50)
         self.assertIn(
-            'href="/inbox/Gameplay?view=messages&amp;offset=100">Newer notes</a>', rendered,
+            'href="/inbox/Gameplay?view=messages&amp;offset=100">Newer notes</a>',
+            rendered,
         )
         self.assertIn(
             'href="/inbox/Gameplay?view=messages&amp;offset=100&amp;notes_offset=100">Older notes</a>',
@@ -772,7 +1068,9 @@ class FireControllerWebTest(unittest.TestCase):
                 jobs.note(f"Overflow reminder {index}", worker="Gameplay")
             jobs.create("overflow-job", "Gameplay", "An attached job")
             truncated = web.private_route(
-                "/inbox/Gameplay?view=messages&offset=50", jobs, inbox=inbox,
+                "/inbox/Gameplay?view=messages&offset=50",
+                jobs,
+                inbox=inbox,
             )[2].decode()
             self.assertIn("Showing up to 50 pending notes; older notes are available below.", truncated)
             self.assertIn(
@@ -781,7 +1079,9 @@ class FireControllerWebTest(unittest.TestCase):
             )
             self.assertEqual(truncated.count('<article class="job-note">'), 50)
             older_notes = web.private_route(
-                "/inbox/Gameplay?view=messages&offset=50&notes_offset=50", jobs, inbox=inbox,
+                "/inbox/Gameplay?view=messages&offset=50&notes_offset=50",
+                jobs,
+                inbox=inbox,
             )[2].decode()
             self.assertEqual(older_notes.count('<article class="job-note">'), 1)
             self.assertIn(
@@ -790,11 +1090,25 @@ class FireControllerWebTest(unittest.TestCase):
             )
 
     def test_inbox_and_note_pagers_preserve_each_others_offsets_and_view(self):
-        note = {"id": "note-1", "body": "Still pending", "worker": "Gameplay", "job": None,
-                "phase": None, "kind": "reminder", "status": "pending", "created_at": "2026-10-03T00:00:00Z"}
+        note = {
+            "id": "note-1",
+            "body": "Still pending",
+            "worker": "Gameplay",
+            "job": None,
+            "phase": None,
+            "kind": "reminder",
+            "status": "pending",
+            "created_at": "2026-10-03T00:00:00Z",
+        }
         messages = web.render_inbox(
-            "Gameplay", [], offset=50, has_more=True, pending_notes=[note], notes_available=True,
-            notes_has_more=True, notes_offset=50,
+            "Gameplay",
+            [],
+            offset=50,
+            has_more=True,
+            pending_notes=[note],
+            notes_available=True,
+            notes_has_more=True,
+            notes_offset=50,
         )
         self.assertIn(
             'href="/inbox/Gameplay?view=messages&amp;offset=100&amp;notes_offset=50">Older messages</a>',
@@ -814,8 +1128,14 @@ class FireControllerWebTest(unittest.TestCase):
         )
 
         conversations = web.render_inbox_conversations(
-            "Gameplay", [], offset=50, has_more=True, pending_notes=[note], notes_available=True,
-            notes_has_more=True, notes_offset=100,
+            "Gameplay",
+            [],
+            offset=50,
+            has_more=True,
+            pending_notes=[note],
+            notes_available=True,
+            notes_has_more=True,
+            notes_offset=100,
         )
         self.assertIn(
             'href="/inbox/Gameplay?offset=100&amp;notes_offset=100">Older conversations</a>',
@@ -880,7 +1200,10 @@ class FireControllerWebTest(unittest.TestCase):
                     recipient = "Overseer" if index % 2 else "General"
                     author = "General" if recipient == "Overseer" else "Overseer"
                     parent = inbox.send(
-                        recipient, f"THREAD-BODY-{index}", author=author, reply_to=parent["id"],
+                        recipient,
+                        f"THREAD-BODY-{index}",
+                        author=author,
+                        reply_to=parent["id"],
                     )
                     messages.append(parent)
                 unrelated = inbox.send("General", "UNRELATED_THREAD")
@@ -889,13 +1212,13 @@ class FireControllerWebTest(unittest.TestCase):
             parent_id = messages[-2]["id"]
             self.assertEqual(inbox.thread_page(child_id, focus_id=parent_id)["offset"], 50)
             inbox_list = web.render_inbox("Overseer", [messages[-1]])
-            focused_parent = (
-                f"/thread/{parent_id}?focus={parent_id}#message-{parent_id}"
-            )
+            focused_parent = f"/thread/{parent_id}?focus={parent_id}#message-{parent_id}"
             self.assertIn(focused_parent, inbox_list)
 
             status, _headers, body = web.private_route(
-                f"/inbox/Overseer/thread/{child_id}?focus={parent_id}", None, inbox=inbox,
+                f"/inbox/Overseer/thread/{child_id}?focus={parent_id}",
+                None,
+                inbox=inbox,
             )
             page = body.decode("utf-8")
             self.assertEqual(status, 200)
@@ -908,39 +1231,80 @@ class FireControllerWebTest(unittest.TestCase):
             self.assertIn(f'href="/inbox/Overseer/thread/{child_id}?offset=0">Earlier messages', page)
             for index in range(54):
                 self.assertEqual(f"<p>THREAD-BODY-{index}</p>" in page, index >= 50)
-            self.assertTrue(all(message["seen_at"] is None and message["acknowledged_at"] is None
-                                for message in inbox.thread(child_id)))
+            self.assertTrue(
+                all(
+                    message["seen_at"] is None and message["acknowledged_at"] is None
+                    for message in inbox.thread(child_id)
+                )
+            )
 
-            self.assertEqual(web.private_route(
-                f"/inbox/Overseer/thread/{child_id}?focus={unrelated['id']}", None, inbox=inbox,
-            )[0], 404)
-            self.assertEqual(web.private_route(
-                f"/inbox/Overseer/thread/{child_id}?focus=invalid%2Fid", None, inbox=inbox,
-            )[0], 400)
-            self.assertEqual(web.private_route(
-                f"/inbox/Overseer/thread/{child_id}?focus={parent_id}&offset=50", None, inbox=inbox,
-            )[0], 400)
+            self.assertEqual(
+                web.private_route(
+                    f"/inbox/Overseer/thread/{child_id}?focus={unrelated['id']}",
+                    None,
+                    inbox=inbox,
+                )[0],
+                404,
+            )
+            self.assertEqual(
+                web.private_route(
+                    f"/inbox/Overseer/thread/{child_id}?focus=invalid%2Fid",
+                    None,
+                    inbox=inbox,
+                )[0],
+                400,
+            )
+            self.assertEqual(
+                web.private_route(
+                    f"/inbox/Overseer/thread/{child_id}?focus={parent_id}&offset=50",
+                    None,
+                    inbox=inbox,
+                )[0],
+                400,
+            )
             self.assertIsNone(web.private_route(f"/public/inbox/Overseer/thread/{child_id}", None, inbox=inbox))
 
 
 class PrivateWebHistoryTests(unittest.TestCase):
     def test_historical_job_structured_state_is_visible_and_escaped(self):
-        page = web.render_job({"job": {"id": "job-1", "name": "Current", "title": "Current task title"}, "revision_entry": {
-            "revision": 2, "status": "blocked", "worker": "General<script>", "primary": True,
-            "title": "Historical title", "brief": "Old brief", "checklist": [
-                {"id": "old", "text": "Historical <script>check</script>", "done": True}]}}, history=True)
-        for text in ("<title>Job History for Current task title · Revision 2</title>",
-                     "<h1>Job History for Current task title · Revision 2</h1>",
-                     '<span class="job-alias">Alias: Current</span>',
-                     "blocked", "General&lt;script&gt;", "Primary", "Historical title", "Checklist", "Done",
-                     "Historical &lt;script&gt;check&lt;/script&gt;"):
+        page = web.render_job(
+            {
+                "job": {"id": "job-1", "name": "Current", "title": "Current task title"},
+                "revision_entry": {
+                    "revision": 2,
+                    "status": "blocked",
+                    "worker": "General<script>",
+                    "primary": True,
+                    "title": "Historical title",
+                    "brief": "Old brief",
+                    "checklist": [{"id": "old", "text": "Historical <script>check</script>", "done": True}],
+                },
+            },
+            history=True,
+        )
+        for text in (
+            "<title>Job History for Current task title · Revision 2</title>",
+            "<h1>Job History for Current task title · Revision 2</h1>",
+            '<span class="job-alias">Alias: Current</span>',
+            "blocked",
+            "General&lt;script&gt;",
+            "Primary",
+            "Historical title",
+            "Checklist",
+            "Done",
+            "Historical &lt;script&gt;check&lt;/script&gt;",
+        ):
             self.assertIn(text, page)
         self.assertNotIn("<script>", page)
 
     def test_job_revision_list_uses_display_title_and_keeps_alias_and_revision_titles(self):
-        page = web.render_job({"job": {"id": "job-1", "name": "Current", "title": "Current task title"},
-                               "history": [{"revision": 2, "status": "blocked", "title": "Historical title"}]},
-                              history=True)
+        page = web.render_job(
+            {
+                "job": {"id": "job-1", "name": "Current", "title": "Current task title"},
+                "history": [{"revision": 2, "status": "blocked", "title": "Historical title"}],
+            },
+            history=True,
+        )
         self.assertIn("<title>Job History for Current task title</title>", page)
         self.assertIn("<h1>Job History for Current task title</h1>", page)
         self.assertIn('<span class="job-alias">Alias: Current</span>', page)
@@ -948,18 +1312,21 @@ class PrivateWebHistoryTests(unittest.TestCase):
 
     def test_history_page_titles_escape_current_and_historical_titles_once(self):
         title = 'Task <one> & "done"'
-        escaped_title = 'Task &lt;one&gt; &amp; &quot;done&quot;'
+        escaped_title = "Task &lt;one&gt; &amp; &quot;done&quot;"
         job = {"id": "job-1", "name": "Current", "title": title}
         history_title = f"Job History for {escaped_title}"
-        revision = web.render_job({"job": job, "revision_entry": {
-            "revision": 2, "title": 'Past <title> & "kept"'}}, history=True)
+        revision = web.render_job(
+            {"job": job, "revision_entry": {"revision": 2, "title": 'Past <title> & "kept"'}}, history=True
+        )
         self.assertIn(f"<title>{history_title} · Revision 2</title>", revision)
         self.assertIn(f"<h1>{history_title} · Revision 2</h1>", revision)
         self.assertIn("<p>Past &lt;title&gt; &amp; &quot;kept&quot;</p>", revision)
         self.assertNotIn("&amp;amp;", revision)
 
-        history = web.render_job({"job": job, "history": [
-            {"revision": 2, "status": "blocked", "title": 'Past <title> & "kept"'}]}, history=True)
+        history = web.render_job(
+            {"job": job, "history": [{"revision": 2, "status": "blocked", "title": 'Past <title> & "kept"'}]},
+            history=True,
+        )
         self.assertIn(f"<title>{history_title}</title>", history)
         self.assertIn(f"<h1>{history_title}</h1>", history)
         self.assertIn("Past &lt;title&gt; &amp; &quot;kept&quot;", history)
@@ -972,20 +1339,33 @@ class PrivateWebHistoryTests(unittest.TestCase):
 
             def history(self, kind, identifier, **kwargs):
                 if "revision" in kwargs:
-                    return {"revision": kwargs["revision"], "state": "Earlier", "phase_states": {"Earlier phase": "Earlier state"}}
-                return [{"revision": 100 - n, "created_at": "then", "state": "Active",
-                         "phase_states": {"Phase <one>": "Historical <state>"}}
-                        for n in range(50)]
-        status, _, body = web.private_route("/workstreams/track/history?offset=50", FakeStore(),
-                                           workstreams=Store(), editorial={})
+                    return {
+                        "revision": kwargs["revision"],
+                        "state": "Earlier",
+                        "phase_states": {"Earlier phase": "Earlier state"},
+                    }
+                return [
+                    {
+                        "revision": 100 - n,
+                        "created_at": "then",
+                        "state": "Active",
+                        "phase_states": {"Phase <one>": "Historical <state>"},
+                    }
+                    for n in range(50)
+                ]
+
+        status, _, body = web.private_route(
+            "/workstreams/track/history?offset=50", FakeStore(), workstreams=Store(), editorial={}
+        )
         self.assertEqual(status, 200)
         page = body.decode()
         self.assertIn("history?offset=0", page)
         self.assertIn("history?offset=100", page)
         self.assertIn("Phase &lt;one&gt;", page)
         self.assertIn("Historical &lt;state&gt;", page)
-        status, _, body = web.private_route("/workstreams/track/history?revision=2", FakeStore(),
-                                           workstreams=Store(), editorial={})
+        status, _, body = web.private_route(
+            "/workstreams/track/history?revision=2", FakeStore(), workstreams=Store(), editorial={}
+        )
         self.assertEqual(status, 200)
         self.assertIn(b"Earlier phase", body)
         self.assertIn(b"Earlier state", body)

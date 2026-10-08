@@ -41,6 +41,7 @@ public final class AccountPublicJwksCache {
   public static final int MAX_KEYS = 64;
   private static final int MAX_REMEMBERED_KIDS = 256;
   private static final int MAX_UNKNOWN_KID_REFRESHES_PER_SNAPSHOT = 256;
+  private static final Duration MIN_UNKNOWN_KID_REFRESH_INTERVAL = Duration.ofSeconds(1);
   private static final Duration STALE_SOURCE_RETRY_BACKOFF = Duration.ofSeconds(1);
   private static final Pattern KID = Pattern.compile("[A-Za-z0-9_-]{1,64}");
   private static final Pattern SHA256 = Pattern.compile("[0-9a-f]{64}");
@@ -64,9 +65,12 @@ public final class AccountPublicJwksCache {
   private final Set<String> hardDeniedKids = new LinkedHashSet<>();
 
   private Map<String, RSAPublicKey> keys = Map.of();
+  private boolean hardCutoverQuarantined;
   private Instant loadedAt;
   private String loadedJwksFingerprint;
-  private Instant lastStaleSourceUnavailableAt;
+  private Instant lastUnknownKidRefreshAt;
+  private Instant lastStaleRefreshFailureAt;
+  private StaleRefreshFailure lastStaleRefreshFailure;
   private final Set<String> unknownKidsRefreshedForSnapshot = new LinkedHashSet<>();
 
   public AccountPublicJwksCache(
@@ -85,7 +89,9 @@ public final class AccountPublicJwksCache {
     }
   }
 
-  /** Returns a currently usable key, forcing at most one bounded refresh for an unknown kid. */
+  /**
+   * Returns a currently usable key; unknown-kid lookups can trigger at most one refresh per second.
+   */
   public RSAPublicKey keyFor(String kid) {
     if (kid == null || !KID.matcher(kid).matches()) {
       throw new UnknownKeyException();
@@ -93,16 +99,21 @@ public final class AccountPublicJwksCache {
     synchronized (monitor) {
       rejectHardDenied(kid);
       Instant now = clock.instant();
+      boolean cachedKidKnown = keys.containsKey(kid);
+      if (!cachedKidKnown && loadedAt != null) {
+        if (now.isBefore(loadedAt) || !unknownKidRefreshEligible(now)) {
+          throw new UnknownKeyException();
+        }
+      }
       if (!isFresh(now)
-          && lastStaleSourceUnavailableAt != null
-          && !now.isBefore(lastStaleSourceUnavailableAt)
-          && Duration.between(lastStaleSourceUnavailableAt, now)
-                  .compareTo(STALE_SOURCE_RETRY_BACKOFF)
+          && lastStaleRefreshFailureAt != null
+          && !now.isBefore(lastStaleRefreshFailureAt)
+          && Duration.between(lastStaleRefreshFailureAt, now).compareTo(STALE_SOURCE_RETRY_BACKOFF)
               < 0) {
         if (unknownKidsRefreshedForSnapshot.contains(kid)) {
           throw new UnknownKeyException();
         }
-        throw new SourceUnavailableException();
+        throw staleRefreshFailureException();
       }
       if (isFresh(now)) {
         RSAPublicKey existing = keys.get(kid);
@@ -111,7 +122,7 @@ public final class AccountPublicJwksCache {
         }
         if (!unknownKidsRefreshedForSnapshot.contains(kid)
             && unknownKidsRefreshedForSnapshot.size() < MAX_UNKNOWN_KID_REFRESHES_PER_SNAPSHOT) {
-          unknownKidsRefreshedForSnapshot.add(kid);
+          recordUnknownKidRefresh(kid, now);
           refreshFromSource();
           rejectHardDenied(kid);
           RSAPublicKey refreshed = keys.get(kid);
@@ -126,15 +137,22 @@ public final class AccountPublicJwksCache {
       }
 
       try {
+        if (!cachedKidKnown && loadedAt != null) {
+          recordUnknownKidRefresh(kid, now);
+        }
         refreshFromSource();
       } catch (SourceUnavailableException unavailable) {
-        lastStaleSourceUnavailableAt = clock.instant();
-        if (unknownKidsRefreshedForSnapshot.size() < MAX_UNKNOWN_KID_REFRESHES_PER_SNAPSHOT) {
+        recordStaleRefreshFailure(StaleRefreshFailure.SOURCE_UNAVAILABLE);
+        if (loadedAt != null
+            && !cachedKidKnown
+            && unknownKidsRefreshedForSnapshot.size() < MAX_UNKNOWN_KID_REFRESHES_PER_SNAPSHOT) {
           unknownKidsRefreshedForSnapshot.add(kid);
         }
         throw unavailable;
+      } catch (InvalidJwksException invalid) {
+        recordStaleRefreshFailure(StaleRefreshFailure.INVALID_JWKS);
+        throw invalid;
       }
-      lastStaleSourceUnavailableAt = null;
       rejectHardDenied(kid);
       RSAPublicKey refreshed = keys.get(kid);
       if (refreshed == null) {
@@ -147,13 +165,18 @@ public final class AccountPublicJwksCache {
     }
   }
 
-  /** Permanently denies this kid for this cache instance, including during source outages. */
+  /**
+   * Permanently denies this kid for this cache instance, including during source outages. If the
+   * finite deny history is exhausted, the instance enters terminal fail-closed quarantine so no key
+   * can be re-admitted without growing or evicting deny history.
+   */
   public void invalidateKid(String kid) {
     if (kid == null || !KID.matcher(kid).matches()) {
       throw new IllegalArgumentException("Account public JWKS key identifier is invalid");
     }
     synchronized (monitor) {
       if (!hardDeniedKids.contains(kid) && hardDeniedKids.size() >= MAX_KEYS) {
+        hardCutoverQuarantined = true;
         throw new IllegalStateException("Account public JWKS hard-cutover bound is exhausted");
       }
       hardDeniedKids.add(kid);
@@ -173,6 +196,21 @@ public final class AccountPublicJwksCache {
       return false;
     }
     return Duration.between(loadedAt, now).compareTo(maximumAge) < 0;
+  }
+
+  private boolean unknownKidRefreshEligible(Instant now) {
+    return lastUnknownKidRefreshAt == null
+        || (!now.isBefore(lastUnknownKidRefreshAt)
+            && Duration.between(lastUnknownKidRefreshAt, now)
+                    .compareTo(MIN_UNKNOWN_KID_REFRESH_INTERVAL)
+                >= 0);
+  }
+
+  private void recordUnknownKidRefresh(String kid, Instant now) {
+    lastUnknownKidRefreshAt = now;
+    if (unknownKidsRefreshedForSnapshot.size() < MAX_UNKNOWN_KID_REFRESHES_PER_SNAPSHOT) {
+      unknownKidsRefreshedForSnapshot.add(kid);
+    }
   }
 
   private void refreshFromSource() {
@@ -213,11 +251,24 @@ public final class AccountPublicJwksCache {
     }
     loadedJwksFingerprint = nextJwksFingerprint;
     loadedAt = clock.instant();
-    lastStaleSourceUnavailableAt = null;
+    lastStaleRefreshFailureAt = null;
+    lastStaleRefreshFailure = null;
+  }
+
+  private void recordStaleRefreshFailure(StaleRefreshFailure failure) {
+    lastStaleRefreshFailureAt = clock.instant();
+    lastStaleRefreshFailure = failure;
+  }
+
+  private RuntimeException staleRefreshFailureException() {
+    return switch (lastStaleRefreshFailure) {
+      case SOURCE_UNAVAILABLE -> new SourceUnavailableException();
+      case INVALID_JWKS -> new InvalidJwksException();
+    };
   }
 
   private void rejectHardDenied(String kid) {
-    if (hardDeniedKids.contains(kid)) {
+    if (hardCutoverQuarantined || hardDeniedKids.contains(kid)) {
       throw new UnknownKeyException();
     }
   }
@@ -440,5 +491,10 @@ public final class AccountPublicJwksCache {
     public UnknownKeyException() {
       super("Account public JWKS key is unavailable");
     }
+  }
+
+  private enum StaleRefreshFailure {
+    SOURCE_UNAVAILABLE,
+    INVALID_JWKS
   }
 }

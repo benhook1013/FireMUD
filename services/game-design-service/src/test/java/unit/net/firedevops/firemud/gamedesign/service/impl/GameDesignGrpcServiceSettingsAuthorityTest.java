@@ -59,6 +59,8 @@ class GameDesignGrpcServiceSettingsAuthorityTest {
             revisionService,
             versionService,
             launchDescriptorService,
+            Mockito.mock(
+                net.firedevops.firemud.gamedesign.service.CompleteLaunchBindingService.class),
             templateRemapSetService,
             versionAssetArtifactService,
             settingsAuthorityService,

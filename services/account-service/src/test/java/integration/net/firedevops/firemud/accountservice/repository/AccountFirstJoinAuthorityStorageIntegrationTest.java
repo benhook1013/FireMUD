@@ -76,7 +76,7 @@ class AccountFirstJoinAuthorityStorageIntegrationTest {
 
   @Test
   void appendsContiguousPerStreamAndReplaysOnlyExactRequestEvidence() {
-    TestContext context = newTestContext();
+    TestContext context = newTestContextAtV39();
     AccountAuthorityOutboxRepository repository = context.repository();
     TransactionTemplate transaction = context.transaction();
     String stream = membershipStream(UUID.randomUUID(), UUID.randomUUID());
@@ -333,7 +333,7 @@ class AccountFirstJoinAuthorityStorageIntegrationTest {
 
   @Test
   void missingHeadWithNoExactHistoryIsEmptyDespiteAnotherStreamsRetainedEvent() {
-    TestContext context = newTestContext();
+    TestContext context = newTestContextAtV39();
     AccountAuthorityOutboxRepository repository = context.repository();
     TransactionTemplate transaction = context.transaction();
     DSLContext dsl = context.dsl();

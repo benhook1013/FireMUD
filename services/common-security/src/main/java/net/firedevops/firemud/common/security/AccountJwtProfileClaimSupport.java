@@ -274,8 +274,8 @@ final class AccountJwtProfileClaimSupport {
           new GameSessionAccountDelegationProfile.AccountSecurityCutoff(
               generation, streamKey, sequence);
       if (accountGeneration <= 1L
-          || !Long.toString(accountGeneration).equals(validatedCutoff.accountAuthorityGeneration())
-          || !Long.toString(accountGeneration - 1L).equals(validatedCutoff.outboxSequence())) {
+          || !Long.toString(accountGeneration)
+              .equals(validatedCutoff.accountAuthorityGeneration())) {
         throw invalid();
       }
     } catch (IllegalArgumentException failure) {
@@ -314,6 +314,20 @@ final class AccountJwtProfileClaimSupport {
         || text.isBlank()
         || text.length() > maximumLength
         || text.codePoints().anyMatch(Character::isISOControl)) {
+      throw invalid();
+    }
+  }
+
+  static void requireExactAccountAuthorityStream(Object value, String accountId) {
+    String expected = "account:auth-authority:v1:account/" + requireUuid(accountId);
+    if (!expected.equals(value)) {
+      throw invalid();
+    }
+  }
+
+  static void requireExactTenantAuthorityStream(Object value, String tenantId) {
+    String expected = "account:auth-authority:v1:tenant/" + requireUuid(tenantId);
+    if (!expected.equals(value)) {
       throw invalid();
     }
   }

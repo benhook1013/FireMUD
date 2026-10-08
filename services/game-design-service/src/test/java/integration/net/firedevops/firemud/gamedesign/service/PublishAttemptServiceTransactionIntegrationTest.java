@@ -67,6 +67,8 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 class PublishAttemptServiceTransactionIntegrationTest {
   private static final String TENANT_ID = "9001";
   private static final String WORKFLOW_ID = "full-version-transaction-integration-test";
+  private static final String MANIFEST_HASH = "sha256:" + "a".repeat(64);
+  private static final String ARTIFACT_DIGEST = "sha256:" + "b".repeat(64);
 
   @Container
   static PostgreSQLContainer<?> postgres =
@@ -247,9 +249,7 @@ class PublishAttemptServiceTransactionIntegrationTest {
                       null,
                       null));
             });
-    Mockito.when(assetExportService.exportAssets(tenantId, 1))
-        .thenReturn(
-            new ExportedAssetManifest("transaction-proof-manifest", List.of("manifest.json")));
+    Mockito.when(assetExportService.exportAssets(tenantId, 1)).thenReturn(exportedManifest());
 
     VersionDto publishedVersion =
         versionPublishCommandService.publishFullVersion(
@@ -272,7 +272,7 @@ class PublishAttemptServiceTransactionIntegrationTest {
     assertThat(attempt.getVersionId()).isEqualTo(publishedVersion.id());
     assertThat(storedVersion.getVersionState()).isEqualTo(VersionLifecycleState.PUBLISHED);
     assertThat(bundle.getPublishWorkflowId()).isEqualTo(publishWorkflowId);
-    assertThat(bundle.getManifestHash()).isEqualTo("transaction-proof-manifest");
+    assertThat(bundle.getManifestHash()).isEqualTo(MANIFEST_HASH);
     assertThat(artifact.getArtifactState()).isEqualTo(VersionAssetArtifactState.PUBLISHED);
   }
 
@@ -341,8 +341,7 @@ class PublishAttemptServiceTransactionIntegrationTest {
         .when(recordedParticipantDigestService)
         .assertMatchesRecordedDigests(
             Mockito.eq(tenantId), Mockito.eq(PublishType.FULL_VERSION), Mockito.anyList());
-    ExportedAssetManifest exportedManifest =
-        new ExportedAssetManifest("post-export-finalization-manifest", List.of("manifest.json"));
+    ExportedAssetManifest exportedManifest = exportedManifest();
     Mockito.when(assetExportService.exportAssets(Mockito.eq(tenantId), Mockito.anyInt()))
         .thenAnswer(
             invocation -> {
@@ -447,5 +446,20 @@ class PublishAttemptServiceTransactionIntegrationTest {
       return "none";
     }
     return failure.getStackTrace()[0].toString();
+  }
+
+  private static ExportedAssetManifest exportedManifest() {
+    return new ExportedAssetManifest(
+        MANIFEST_HASH,
+        1,
+        List.of("manifest.json"),
+        List.of(
+            new PublishedArtifactDigest(
+                "manifest.json",
+                "manifest",
+                "artifacts/sha256/" + ARTIFACT_DIGEST.substring("sha256:".length()),
+                ARTIFACT_DIGEST,
+                "application/json",
+                1)));
   }
 }

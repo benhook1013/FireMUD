@@ -20,7 +20,7 @@ import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
-/** PostgreSQL proof for the V34.1 canonical gameplay integrity and runtime fences. */
+/** PostgreSQL proof for V34.2 canonical gameplay integrity and runtime fence behavior. */
 @Testcontainers(disabledWithoutDocker = true)
 @SuppressWarnings("resource")
 class CanonicalGameplayDecisionRuntimeFenceIntegrationTest {
@@ -51,6 +51,7 @@ class CanonicalGameplayDecisionRuntimeFenceIntegrationTest {
       DSLContext dsl = DSL.using(dataSource, SQLDialect.POSTGRES);
       var schemaReadback = dsl.fetchOne("SELECT current_schema() AS actual_schema");
       assertThat(schemaReadback.get("actual_schema", String.class)).isEqualTo(schema);
+      assertSnapshotObligationIdentifiersCanonicalized(dsl, schema);
       var triggerReadback =
           dsl.fetchOne(
               "SELECT EXISTS (SELECT 1 FROM pg_trigger trigger_row"
@@ -111,10 +112,67 @@ class CanonicalGameplayDecisionRuntimeFenceIntegrationTest {
 
       markProvisional(dsl, target, candidateRef);
 
+      assertThat(
+              dsl.execute(
+                  "UPDATE game_instances SET runtime_version = 'unrelated-runtime-update',"
+                      + " row_version = row_version + 1 WHERE tenant_id = ? AND id = ?",
+                  target.gameSessionTenantId(),
+                  target.gameInstanceId()))
+          .isEqualTo(1);
+      var unrelatedUpdateReadback =
+          dsl.fetchOne(
+              "SELECT runtime_version, row_version FROM game_instances"
+                  + " WHERE tenant_id = ? AND id = ?",
+              target.gameSessionTenantId(),
+              target.gameInstanceId());
+      assertThat(unrelatedUpdateReadback.get("runtime_version", String.class))
+          .isEqualTo("unrelated-runtime-update");
+      assertThat(unrelatedUpdateReadback.get("row_version", Long.class)).isEqualTo(2L);
+
       assertThatThrownBy(
               () ->
                   dsl.execute(
                       "UPDATE game_instances SET status = 'STOPPED'"
+                          + " WHERE tenant_id = ? AND id = ?",
+                      target.gameSessionTenantId(),
+                      target.gameInstanceId()))
+          .hasMessageContaining("runtime row is fenced");
+      assertThatThrownBy(
+              () ->
+                  dsl.execute(
+                      "UPDATE game_instances SET version_id = version_id + 1"
+                          + " WHERE tenant_id = ? AND id = ?",
+                      target.gameSessionTenantId(),
+                      target.gameInstanceId()))
+          .hasMessageContaining("runtime row is fenced");
+      assertThatThrownBy(
+              () ->
+                  dsl.execute(
+                      "UPDATE game_instances SET run_owned_start_request_id = 'replacement-start'"
+                          + " WHERE tenant_id = ? AND id = ?",
+                      target.gameSessionTenantId(),
+                      target.gameInstanceId()))
+          .hasMessageContaining("runtime row is fenced");
+      assertThatThrownBy(
+              () ->
+                  dsl.execute(
+                      "UPDATE game_instances SET run_owned_start_published_release_bundle_ref ="
+                          + " 'replacement-release-ref' WHERE tenant_id = ? AND id = ?",
+                      target.gameSessionTenantId(),
+                      target.gameInstanceId()))
+          .hasMessageContaining("runtime row is fenced");
+      assertThatThrownBy(
+              () ->
+                  dsl.execute(
+                      "UPDATE game_instances SET run_owned_start_active_epoch ="
+                          + " run_owned_start_active_epoch + 1 WHERE tenant_id = ? AND id = ?",
+                      target.gameSessionTenantId(),
+                      target.gameInstanceId()))
+          .hasMessageContaining("runtime row is fenced");
+      assertThatThrownBy(
+              () ->
+                  dsl.execute(
+                      "UPDATE game_instances SET row_version = row_version - 1"
                           + " WHERE tenant_id = ? AND id = ?",
                       target.gameSessionTenantId(),
                       target.gameInstanceId()))
@@ -246,6 +304,9 @@ class CanonicalGameplayDecisionRuntimeFenceIntegrationTest {
       DSLContext dsl = DSL.using(dataSource, SQLDialect.POSTGRES);
       CanonicalGameplayBindingRuntimeTestFixtures.RuntimeTarget target =
           CanonicalGameplayBindingRuntimeTestFixtures.seedRunningLaunch(dsl);
+      CanonicalGameplayBindingRuntimeTestFixtures.RuntimeTarget otherSourceIntakeOwner =
+          CanonicalGameplayBindingRuntimeTestFixtures.seedRunningLaunch(
+              dsl, UUID.randomUUID(), 2L, 24L, UUID.randomUUID());
 
       assertThat(
               insertLaunchPreparation(
@@ -292,7 +353,7 @@ class CanonicalGameplayDecisionRuntimeFenceIntegrationTest {
           target.catalogCreationRequestId(),
           target.catalogRevision(),
           target.canonicalTenantId(),
-          UUID.randomUUID(),
+          otherSourceIntakeOwner.sourceIntakeOperationId(),
           target.sourceIntakeRequestId());
       assertLaunchPreparationCatalogMismatchRejected(
           dsl,
@@ -326,6 +387,74 @@ class CanonicalGameplayDecisionRuntimeFenceIntegrationTest {
         .locations(MIGRATION_LOCATION)
         .load()
         .migrate();
+  }
+
+  private static void assertSnapshotObligationIdentifiersCanonicalized(
+      DSLContext dsl, String schema) {
+    var canonicalTables =
+        dsl.fetchOne(
+            "SELECT count(*) AS actual_count FROM pg_class relation"
+                + " JOIN pg_namespace relation_schema ON relation_schema.oid = relation.relnamespace"
+                + " WHERE relation_schema.nspname = ? AND relation.relkind = 'r'"
+                + " AND relation.relname IN (?, ?)",
+            schema,
+            "gs_canonical_account_coverage_snapshot_issuer_obligation",
+            "gs_canonical_account_coverage_snapshot_region_obligation");
+    assertThat(canonicalTables.get("actual_count", Long.class)).isEqualTo(2L);
+
+    var canonicalForeignKeys =
+        dsl.fetchOne(
+            "SELECT count(*) AS actual_count FROM pg_constraint constraint_row"
+                + " JOIN pg_class relation ON relation.oid = constraint_row.conrelid"
+                + " JOIN pg_namespace relation_schema ON relation_schema.oid = relation.relnamespace"
+                + " JOIN pg_class referenced_relation ON referenced_relation.oid = constraint_row.confrelid"
+                + " JOIN pg_namespace referenced_schema"
+                + " ON referenced_schema.oid = referenced_relation.relnamespace"
+                + " JOIN pg_attribute source_column ON source_column.attrelid = relation.oid"
+                + " AND source_column.attnum = constraint_row.conkey[1]"
+                + " AND source_column.attname = 'operation_id'"
+                + " JOIN pg_attribute referenced_column"
+                + " ON referenced_column.attrelid = referenced_relation.oid"
+                + " AND referenced_column.attnum = constraint_row.confkey[1]"
+                + " AND referenced_column.attname = 'operation_id'"
+                + " WHERE constraint_row.contype = 'f' AND relation_schema.nspname = ?"
+                + " AND referenced_schema.nspname = ?"
+                + " AND array_length(constraint_row.conkey, 1) = 1"
+                + " AND array_length(constraint_row.confkey, 1) = 1"
+                + " AND referenced_relation.relname ="
+                + " 'game_session_canonical_account_coverage_operation'"
+                + " AND ((relation.relname = ? AND constraint_row.conname = ?)"
+                + " OR (relation.relname = ? AND constraint_row.conname = ?))",
+            schema,
+            schema,
+            "gs_canonical_account_coverage_snapshot_issuer_obligation",
+            "fk_gs_account_coverage_snapshot_issuer_operation",
+            "gs_canonical_account_coverage_snapshot_region_obligation",
+            "fk_gs_account_coverage_snapshot_region_operation");
+    assertThat(canonicalForeignKeys.get("actual_count", Long.class)).isEqualTo(2L);
+
+    var legacyTables =
+        dsl.fetchOne(
+            "SELECT count(*) AS actual_count FROM pg_class relation"
+                + " JOIN pg_namespace relation_schema ON relation_schema.oid = relation.relnamespace"
+                + " WHERE relation_schema.nspname = ? AND relation.relkind = 'r'"
+                + " AND relation.relname IN (?, ?)",
+            schema,
+            "game_session_canonical_account_coverage_snapshot_issuer_obligat",
+            "game_session_canonical_account_coverage_snapshot_region_obligat");
+    assertThat(legacyTables.get("actual_count", Long.class)).isZero();
+
+    var legacyForeignKeys =
+        dsl.fetchOne(
+            "SELECT count(*) AS actual_count FROM pg_constraint constraint_row"
+                + " JOIN pg_class relation ON relation.oid = constraint_row.conrelid"
+                + " JOIN pg_namespace relation_schema ON relation_schema.oid = relation.relnamespace"
+                + " WHERE relation_schema.nspname = ? AND constraint_row.contype = 'f'"
+                + " AND constraint_row.conname IN (?, ?)",
+            schema,
+            "fk_gs_canonical_account_coverage_snapshot_issuer_obligation_ope",
+            "fk_gs_canonical_account_coverage_snapshot_region_obligation_ope");
+    assertThat(legacyForeignKeys.get("actual_count", Long.class)).isZero();
   }
 
   private static byte[] seedCandidateAndPreparedTransition(

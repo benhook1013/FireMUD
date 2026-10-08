@@ -35,6 +35,7 @@ public final class GameSessionAccountDelegationJwtProfileValidator {
         GameSessionAccountDelegationProfile.AUDIENCE);
     AccountJwtProfileClaimSupport.requireDelegationAuthorityTuple(
         claims.get("authorityTuple"), false, true, true);
+    requireExactAuthorityCutoffStreams(claims, null);
     if (!AccountJwtProfileClaimSupport.requireDelegationVersionMap(claims.get("membershipVersion"))
         .isEmpty()) {
       throw AccountJwtProfileClaimSupport.invalid();
@@ -57,9 +58,41 @@ public final class GameSessionAccountDelegationJwtProfileValidator {
         claims,
         GameSessionAccountDelegationProfile.ISSUER,
         GameSessionAccountDelegationProfile.AUDIENCE);
+    String accountId = AccountJwtProfileClaimSupport.requireUuid(claims.get("accountId"));
+    String tenantId = AccountJwtProfileClaimSupport.requireUuid(claims.get("tenantId"));
     GameSessionAccountDelegationProfile.requirePublicTenantBoundAuthority(
-        AccountJwtProfileClaimSupport.requireUuid(claims.get("tenantId")),
+        tenantId,
         AccountJwtProfileClaimSupport.requireObjectMap(claims.get("authorityTuple")),
         AccountJwtProfileClaimSupport.requireObjectMap(claims.get("membershipVersion")));
+    requireExactAuthorityCutoffStreams(claims, accountId, tenantId);
+  }
+
+  private static void requireExactAuthorityCutoffStreams(
+      Map<String, Object> claims, String tenantId) {
+    requireExactAuthorityCutoffStreams(
+        claims, AccountJwtProfileClaimSupport.requireUuid(claims.get("accountId")), tenantId);
+  }
+
+  private static void requireExactAuthorityCutoffStreams(
+      Map<String, Object> claims, String accountId, String tenantId) {
+    Map<String, Object> tuple =
+        AccountJwtProfileClaimSupport.requireObjectMap(claims.get("authorityTuple"));
+    if (tuple.containsKey("accountSecurityCutoff")) {
+      Map<String, Object> cutoff =
+          AccountJwtProfileClaimSupport.requireObjectMap(tuple.get("accountSecurityCutoff"));
+      AccountJwtProfileClaimSupport.requireExactAccountAuthorityStream(
+          cutoff.get("outboxStreamKey"), accountId);
+    }
+    if (tenantId != null && tuple.containsKey("tenantBillingCutoff")) {
+      Map<String, Object> cutoffs =
+          AccountJwtProfileClaimSupport.requireObjectMap(tuple.get("tenantBillingCutoff"));
+      if (!cutoffs.keySet().equals(Set.of(tenantId))) {
+        throw AccountJwtProfileClaimSupport.invalid();
+      }
+      Map<String, Object> cutoff =
+          AccountJwtProfileClaimSupport.requireObjectMap(cutoffs.get(tenantId));
+      AccountJwtProfileClaimSupport.requireExactTenantAuthorityStream(
+          cutoff.get("outboxStreamKey"), tenantId);
+    }
   }
 }

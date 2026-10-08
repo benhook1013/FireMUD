@@ -75,16 +75,37 @@ require(migration_base_match is not None, "migration-driver Dockerfile must decl
 require(migration_base_match.group(1) == service_base, "migration-driver Dockerfile base image must match the game-session service pin")
 require("FROM ${BASE_IMAGE}" in docker_lines, "Dockerfile must use the BASE_IMAGE argument")
 require(
-    "COPY --chown=999:999 services/game-session-service/build/distributions/game-session-migration-driver/ "
+    "COPY --chown=0:0 services/game-session-service/build/distributions/game-session-migration-driver/ "
     "/opt/firemud/game-session-migration-driver/" in docker_lines,
-    "Dockerfile must copy the packaged distribution from the repository-root build context with uid/gid 999 ownership",
+    "Dockerfile must copy the packaged distribution from the repository-root build context with root ownership",
+)
+permission_step_lines = [
+    "RUN chmod -R a+rX /opt/firemud/game-session-migration-driver \\",
+    "&& chmod -R a-w /opt/firemud/game-session-migration-driver \\",
+    "&& chmod a+x /opt/firemud/game-session-migration-driver/bin/game-session-migration-driver",
+]
+require(
+    [line for line in docker_lines if line.startswith(("RUN ", "&& "))] == permission_step_lines,
+    "Dockerfile must make the root-owned distribution readable/executable and non-writable before runtime",
 )
 require("USER 999:999" in docker_lines, "image default user must be uid/gid 999")
+require(
+    [line for line in docker_lines if line.startswith("USER ")] == ["USER 0:0", "USER 999:999"],
+    "image must select root only for distribution permissions, then return to uid/gid 999",
+)
+require(
+    docker_lines.index("USER 0:0") < docker_lines.index(permission_step_lines[0])
+    < docker_lines.index("USER 999:999") < docker_lines.index(f'ENTRYPOINT ["{launcher_path}"]'),
+    "distribution permissions must run as root before the non-root runtime entrypoint",
+)
 require(
     f'ENTRYPOINT ["{launcher_path}"]' in docker_lines,
     "image entrypoint must be the fixed finite migration-driver launcher",
 )
-require(not any(line.startswith(("RUN ", "EXPOSE ", "CMD ")) for line in docker_lines), "image must not add startup commands, ports, or a second default command")
+require(
+    not any(line.startswith(("EXPOSE ", "CMD ")) for line in docker_lines),
+    "image must not add a startup command, port, or second default command",
+)
 require(not re.search(r"\b(?:PGDATA|serviceAccount|kubeconfig|password|secret)\b", docker_text, re.IGNORECASE), "Dockerfile must not configure storage, cluster credentials, or secrets")
 
 if not distribution.is_dir():
@@ -95,8 +116,16 @@ launcher = distribution / launcher_rel
 require(launcher.is_file(), f"packaged launcher is missing: {launcher_rel}")
 require(launcher.stat().st_mode & 0o111, "packaged launcher must be executable")
 launcher_text = launcher.read_text(encoding="utf-8")
-main_class = "net.firedevops.firemud.gamesession.repository.CanonicalGameplayMigrationDriverMain"
-require(main_class in launcher_text, "packaged launcher must invoke the finite driver main class")
+launcher_class = (
+    "net.firedevops.firemud.gamesession.repository.CanonicalGameplayMigrationDriverLauncher"
+)
+implementation_main_class = (
+    "net.firedevops.firemud.gamesession.repository.CanonicalGameplayMigrationDriverMain"
+)
+require(
+    launcher_class in launcher_text,
+    "packaged launcher must invoke the stdout-isolating driver launcher class",
+)
 for dependency in (
     "flyway-core-",
     "flyway-database-postgresql-",
@@ -127,7 +156,14 @@ game_session_source_entries = [
 ]
 with zipfile.ZipFile(app_jars[0]) as app_jar:
     app_entries = app_jar.namelist()
-    require(main_class.replace(".", "/") + ".class" in app_entries, "application jar is missing the migration-driver main class")
+    require(
+        launcher_class.replace(".", "/") + ".class" in app_entries,
+        "application jar is missing the stdout-isolating driver launcher class",
+    )
+    require(
+        implementation_main_class.replace(".", "/") + ".class" in app_entries,
+        "application jar is missing the finite migration-driver implementation class",
+    )
     game_session_packaged_entries = [
         (entry, app_jar.read(entry))
         for entry in app_entries

@@ -12,6 +12,7 @@ public class PublishAttempt {
   private String publishWorkflowId;
   private PublishType publishType;
   private PublishAttemptStatus status = PublishAttemptStatus.PENDING;
+  private long revision = 1L;
 
   private Long versionId;
   private int versionNumber;

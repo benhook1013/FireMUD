@@ -203,6 +203,286 @@ class ReviewReadJsonFlagTests(unittest.TestCase):
         self.assertEqual(output.getvalue(), "ordered_prs=[3092, 3093]\nschema_version=1\n")
 
 
+class StackMutationCliTests(unittest.TestCase):
+    def test_add_and_move_options_parse_with_narrow_placement_controls(self):
+        add = _parser().parse_args(["stack", "add", "3092", "--before", "3088", "--json"])
+        append = _parser().parse_args(["stack", "add", "3092"])
+        move = _parser().parse_args(["stack", "move", "3092", "--after", "3088"])
+        first = _parser().parse_args(["stack", "move", "3092", "--first"])
+
+        self.assertEqual((add.pr, add.before, add.after, add.as_json), (3092, 3088, None, True))
+        self.assertEqual((append.pr, append.before, append.after), (3092, None, None))
+        self.assertEqual((move.pr, move.before, move.after, move.first, move.last), (3092, None, 3088, False, False))
+        self.assertTrue(first.first)
+
+    def test_add_and_move_dispatch_use_short_text_and_explicit_full_json(self):
+        added = {
+            "action": "add",
+            "pr": 3092,
+            "position": "before #3088",
+            "changed": True,
+            "ordered_prs": [3092, 3088],
+            "schema_version": 1,
+        }
+        moved = {**added, "action": "move", "position": "first", "changed": False}
+        controller = SimpleNamespace(
+            add_stack_pr=Mock(return_value=added),
+            move_stack_pr=Mock(return_value=moved),
+        )
+
+        output = io.StringIO()
+        with (
+            patch.object(cli_module, "_controller", return_value=(controller, None)),
+            contextlib.redirect_stdout(output),
+        ):
+            self.assertEqual(cli_module.main(["stack", "add", "3092", "--before", "3088"]), 0)
+        self.assertEqual(output.getvalue(), "Added PR #3092 before #3088 (stack now has 2 PRs).\n")
+        controller.add_stack_pr.assert_called_once_with(3092, before=3088, after=None)
+
+        output = io.StringIO()
+        with (
+            patch.object(cli_module, "_controller", return_value=(controller, None)),
+            contextlib.redirect_stdout(output),
+        ):
+            self.assertEqual(cli_module.main(["stack", "move", "3092", "--first", "--json"]), 0)
+        self.assertEqual(json.loads(output.getvalue()), moved)
+        controller.move_stack_pr.assert_called_once_with(3092, before=None, after=None, first=True, last=False)
+
+    def test_local_move_and_single_pr_add_avoid_full_default_controller(self):
+        move_args = _parser().parse_args(["stack", "move", "3092", "--first"])
+        with (
+            patch.object(cli_module, "ControllerStateStore", return_value=object()),
+            patch.object(cli_module, "default_controller", side_effect=AssertionError("full controller constructed")),
+            patch.object(cli_module.github, "infer_repo", side_effect=AssertionError("repository queried")),
+        ):
+            move_controller, fixture = cli_module._controller(move_args)
+        self.assertIsNone(fixture)
+        self.assertIsNone(move_controller.github)
+
+        add_args = _parser().parse_args(["stack", "add", "3092"])
+        live = object()
+        with (
+            patch.object(cli_module, "ControllerStateStore", return_value=object()),
+            patch.object(cli_module.github, "infer_repo", return_value="owner/repo") as infer_repo,
+            patch.object(cli_module, "LiveGitHub", return_value=live) as live_provider,
+            patch.object(cli_module, "default_controller", side_effect=AssertionError("full controller constructed")),
+        ):
+            add_controller, fixture = cli_module._controller(add_args)
+        self.assertIsNone(fixture)
+        self.assertIs(add_controller.github, live)
+        self.assertEqual(add_controller.repository, "owner/repo")
+        infer_repo.assert_called_once_with()
+        live_provider.assert_called_once_with("owner/repo")
+
+
+class SelectedPrStatusSummaryTests(unittest.TestCase):
+    def test_summary_keeps_selected_readiness_and_global_safety_without_large_inventories(self):
+        selected = {
+            "pr": 3092,
+            "head": "a" * 40,
+            "base": "develop",
+            "pr_base_oid": "b" * 40,
+            "parent": 3091,
+            "parent_head": "c" * 40,
+            "state": "OPEN",
+            "merged": False,
+            "is_draft": False,
+            "reconciliation": "COHERENT",
+            "reason": None,
+            "channels": {"hosted": "COMPLETE", "cli": "HELD"},
+            "review_progress": {"hosted": {"completed": 2}, "cli": {"completed": 1}},
+            "review_obligations": {"cli": ["one finding needs a decision"]},
+            "channel_reasons": {"cli": ["pending finding"]},
+            "allocations": {"cli": {"status": "ACTIVE", "reason": "one more result"}},
+            "check_inventory": [{"name": "large inventory detail"}],
+        }
+        report = {
+            "pull_request": {"number": 3092, "headRefOid": "a" * 40},
+            "review_decision": {"verdict": "CHANGES REQUESTED"},
+            "checkpoint_counts": {"hosted": 2, "cli": 1},
+            "threads": {"current": 1, "outdated": 2, "total": 3, "nodes": [{"body": "large thread detail"}]},
+            "ci": {
+                "aggregate": "FAILURE",
+                "required": {"available": True, "status": "failure", "reason": "required check failed"},
+                "pending": [{"name": "Native tests", "details": "large pending detail"}],
+                "failed": [{"name": "Lint", "details": "large failure detail"}],
+                "observed": True,
+                "optional": {"available": True, "pending": [{"name": "Optional A"}], "failed": []},
+                "inventory_available": True,
+                "inventory_status": "complete",
+                "inventory_reason": None,
+                "aggregate_inventory_conflict": False,
+                "checks": [{"name": "large raw check inventory"}],
+            },
+            "mergeability": {"clean": False, "diagnosis": "NOT READY"},
+            "ready": False,
+            "verdict": "NOT READY",
+            "reasons": ["required check failed", "global safety hold remains active"],
+            "incoming_routes": [{"route_id": "route-1"}],
+            "incoming_record_routes": [{"route_id": "record-route-1"}],
+            "record_route_store": {"status": "available", "reason": None},
+            "review_stack": {
+                "status": "complete",
+                "ordered_prs": [3090, 3091, 3092, 3093],
+                "review_fronts": {"hosted": {"pr": 3094}, "cli": {"pr": 3092}},
+                "prs": [
+                    {"pr": 3091, "check_inventory": [{"name": "ancestor inventory"}]},
+                    selected,
+                    {"pr": 3093, "check_inventory": [{"name": "descendant inventory"}]},
+                ],
+            },
+        }
+
+        summary = cli_module._selected_pr_status_summary(report, 3092)
+
+        self.assertEqual(summary["pull_request"], report["pull_request"])
+        self.assertEqual(summary["mergeability"], report["mergeability"])
+        self.assertFalse(summary["ready"])
+        self.assertEqual(summary["reasons"], report["reasons"])
+        self.assertEqual(summary["threads"], {"current": 1, "outdated": 2, "total": 3})
+        self.assertEqual(summary["ci"]["pending"], ["Native tests"])
+        self.assertEqual(summary["ci"]["failed"], ["Lint"])
+        self.assertEqual(summary["ci"]["optional_checks"]["pending_count"], 1)
+        self.assertEqual(summary["review_stack"]["review_fronts"], report["review_stack"]["review_fronts"])
+        self.assertEqual(
+            summary["review_stack"]["prs"],
+            [
+                {
+                    key: selected[key]
+                    for key in (
+                        "pr",
+                        "head",
+                        "base",
+                        "pr_base_oid",
+                        "parent",
+                        "parent_head",
+                        "state",
+                        "merged",
+                        "is_draft",
+                        "reconciliation",
+                        "reason",
+                        "channels",
+                        "review_progress",
+                        "review_obligations",
+                        "channel_reasons",
+                        "allocations",
+                    )
+                }
+            ],
+        )
+        encoded = json.dumps(summary)
+        for omitted in ("ordered_prs", "large inventory detail", "large raw check inventory", "large thread detail"):
+            self.assertNotIn(omitted, encoded)
+        self.assertIn("global safety hold remains active", encoded)
+
+    def test_summary_json_is_opt_in_and_normal_selected_status_json_keeps_full_contract(self):
+        pull_request = {
+            "number": 3092,
+            "headRefOid": "a" * 40,
+            "baseRefName": "develop",
+            "baseRefOid": "b" * 40,
+        }
+        status_report = {
+            "pull_request": pull_request,
+            "review_decision": {"verdict": "APPROVED"},
+            "checkpoint_counts": {"hosted": 1, "cli": 1},
+            "threads": {"current": 0, "outdated": 0, "total": 0},
+            "ci": {"aggregate": {"state": "SUCCESS"}, "pending": [], "failed": [], "optional": {}, "required": {}},
+            "mergeability": {"clean": True, "diagnosis": "CLEAN"},
+            "ready": True,
+            "verdict": "READY",
+            "reasons": [],
+        }
+        selected = {
+            "pr": 3092,
+            "head": "a" * 40,
+            "base": "develop",
+            "pr_base_oid": "b" * 40,
+            "reconciliation": "COHERENT",
+            "channels": {"hosted": "COMPLETE", "cli": "COMPLETE"},
+            "review_obligations": {},
+            "allocations": {
+                "hosted": {"status": "HANDED_OFF", "reason": "review complete"},
+                "cli": {"status": "HANDED_OFF", "reason": "review complete"},
+            },
+            "review_progress": {
+                "hosted": {"status": "COMPLETE", "rule": {"kind": "normal_taper"}},
+                "cli": {"status": "COMPLETE", "rule": {"kind": "normal_taper"}},
+            },
+            "incoming_routes": [],
+            "routes_out": [],
+        }
+        stack_report = {
+            "ordered_prs": [3090, 3091, 3092, 3093],
+            "status": "COHERENT",
+            "review_fronts": {"hosted": {"pr": 3092}, "cli": {"pr": 3092}},
+            "prs": [selected],
+            "ancestor_inventory": [{"pr": 3090, "details": "large"}],
+        }
+        controller = SimpleNamespace(
+            repository="owner/repo",
+            store=SimpleNamespace(load=lambda: SimpleNamespace(summary_dispositions=())),
+            status_for_pr=lambda pr, **_kwargs: stack_report,
+        )
+        output = io.StringIO()
+        with (
+            patch.object(cli_module, "_controller", return_value=(controller, None)),
+            patch.object(cli_module.status_module, "status", return_value=status_report),
+            patch.object(cli_module, "_read_record_incoming_routes", return_value=([], {"status": "available"})),
+            contextlib.redirect_stdout(output),
+        ):
+            self.assertEqual(cli_module.main(["status", "--pr", "3092", "--summary", "--json"]), 0)
+        summary = json.loads(output.getvalue())
+        self.assertEqual(
+            summary["review_stack"]["prs"],
+            [
+                {
+                    key: selected[key]
+                    for key in (
+                        "pr",
+                        "head",
+                        "base",
+                        "pr_base_oid",
+                        "reconciliation",
+                        "channels",
+                        "review_progress",
+                        "review_obligations",
+                        "channel_reasons",
+                        "allocations",
+                    )
+                    if key in selected
+                }
+            ],
+        )
+        self.assertNotIn("ordered_prs", summary["review_stack"])
+        self.assertNotIn("ancestor_inventory", json.dumps(summary))
+
+        output = io.StringIO()
+        with (
+            patch.object(cli_module, "_controller", return_value=(controller, None)),
+            patch.object(cli_module.status_module, "status", return_value=status_report),
+            patch.object(cli_module, "_read_record_incoming_routes", return_value=([], {"status": "available"})),
+            contextlib.redirect_stdout(output),
+        ):
+            self.assertEqual(cli_module.main(["status", "--pr", "3092", "--json"]), 0)
+        normal = json.loads(output.getvalue())
+        self.assertEqual(normal["review_stack"]["ordered_prs"], [3090, 3091, 3092, 3093])
+
+    def test_summary_requires_one_selected_pr_and_rejects_full_scan_before_controller(self):
+        for arguments, expected in (
+            (["status", "--summary", "--json"], "status --summary requires --pr"),
+            (["status", "--pr", "3092", "--summary", "--full-scan"], "cannot be combined with --full-scan"),
+        ):
+            with self.subTest(arguments=arguments):
+                errors = io.StringIO()
+                with (
+                    patch.object(cli_module, "_controller", side_effect=AssertionError("controller constructed")),
+                    contextlib.redirect_stderr(errors),
+                ):
+                    self.assertEqual(cli_module.main(arguments), 2)
+                self.assertIn(expected, errors.getvalue())
+
+
 class HostedCliPreflightBudgetTests(unittest.TestCase):
     def test_main_starts_one_budget_before_dispatch_and_leaves_other_commands_unchanged(self):
         observed = []
@@ -324,6 +604,7 @@ class FakeCommands:
         files=None,
         patch_bytes=None,
         timeout_review=False,
+        timeout_review_output=b"partial \xff\n",
         timeout_git=False,
         review_output="review output\n",
         review_stderr="",
@@ -346,6 +627,7 @@ class FakeCommands:
         self.files = files or ["src/Representative.java"]
         self.patch_bytes = patch_bytes or f"candidate patch {self.candidate}\n".encode()
         self.timeout_review = timeout_review
+        self.timeout_review_output = timeout_review_output
         self.timeout_git = timeout_git
         self.review_output = review_output
         self.review_stderr = review_stderr
@@ -369,7 +651,12 @@ class FakeCommands:
                     attempt["state"] for attempt in self.records.attempt_history(42)
                 ]
             if self.timeout_review:
-                raise subprocess.TimeoutExpired(args, timeout, output=b"partial \xff\n", stderr=b"timed out\n")
+                raise subprocess.TimeoutExpired(
+                    args,
+                    timeout,
+                    output=self.timeout_review_output,
+                    stderr=b"timed out\n",
+                )
             with self.guard:
                 self.active += 1
                 if self.active > 1:
@@ -1398,6 +1685,406 @@ class CliReviewRunnerTests(unittest.TestCase):
             )
             self.assertEqual(records.history(result.pull_request)["runs"], [])
 
+    def test_terminal_failed_cli_capture_retains_unattributable_findings_for_adjudication(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / ".git").mkdir()
+            database = root / ".git" / "firemud" / "records.sqlite3"
+            database.parent.mkdir()
+            SqliteStateStore(database).update(lambda state: state)
+            records = SqliteReviewRecords(database)
+            records.bootstrap()
+            output = "".join(
+                json.dumps(event) + "\n"
+                for event in (
+                    {
+                        "type": "review_context",
+                        "baseBranch": "main",
+                        "currentBranch": "feature",
+                        "expectedDuration": "short",
+                        "reviewType": "full",
+                        "workingDirectory": "/workspace",
+                    },
+                    {"type": "heartbeat", "status": "working"},
+                    {"type": "heartbeat", "status": "working"},
+                    {"type": "reviewing", "message": "Review started"},
+                    {"type": "reviewing", "message": "Reviewing changed files"},
+                    {
+                        "type": "finding",
+                        "severity": "Trivial",
+                        "codegenInstructions": (
+                            "Review comment at @src/Representative.java:1\nTrivial: retain the useful observation."
+                        ),
+                    },
+                    {
+                        "type": "error",
+                        "errorType": "connection",
+                        "message": "Provider connection closed",
+                        "recoverable": True,
+                        "details": {},
+                    },
+                )
+            )
+
+            result = run_cli_review(
+                target(),
+                github=FakeGitHub(),
+                source_root=root,
+                runner=FakeCommands(root, review_output=output, review_returncode=1),
+                records=records,
+            )
+
+            attempt = records.attempt(result.run_id)
+            history = records.history(result.pull_request)
+            run = next(item for item in history["runs"] if item["run_id"] == result.run_id)
+            self.assertEqual(result.exit_status, 1)
+            self.assertEqual(attempt["state"], "failed")
+            self.assertEqual(attempt["run_id"], result.run_id)
+            self.assertEqual(run["outcome"], "failed")
+            self.assertFalse(run["attributable"])
+            self.assertFalse(run["finalized"])
+            self.assertEqual(run["counts"], {"found": 1, "accepted": 0, "routed": 0})
+            self.assertEqual(history["findings"][0]["source_finding_key"], f"cli-run:{result.run_id}:finding:1")
+            self.assertEqual(records.completed_cli_capture_snapshots(result.pull_request), [])
+            with self.assertRaisesRegex(ReviewRecordsError, "ended without a completed source run"):
+                records.cli_capture_snapshot(result.run_id, source_pr=result.pull_request)
+
+            key = f"cli-run:{result.run_id}:finding:1"
+            records.record_source_decision(
+                result.run_id,
+                key,
+                decision_id=f"{result.run_id}.decision.1",
+                decision="accepted",
+                actor="reviewer",
+                reason="Useful but non-counting partial observation",
+            )
+            records.finalize_run(result.run_id, finalized_at="2026-10-01T00:00:03Z")
+            self.assertEqual(records.completed_cli_capture_snapshots(result.pull_request), [])
+            with self.assertRaisesRegex(ReviewRecordsError, "completed attributable finalized run"):
+                records.record_source_resolution(
+                    result.run_id,
+                    key,
+                    source_pr=result.pull_request,
+                    resolution_id=f"{result.run_id}.resolution.1",
+                    fix_sha="b" * 40,
+                    actor="reviewer",
+                    proof_note="must remain unavailable for a failed review",
+                )
+
+    def test_partial_cli_parser_rejects_truncated_malformed_and_ambiguous_jsonl(self):
+        finding = json.dumps({"type": "finding", "codegenInstructions": "Trivial observation"}) + "\n"
+        self.assertEqual(len(evidence.parse_partial_capture_events(finding)), 1)
+        finite_number = '{"type":"finding","codegenInstructions":"Useful finding","metric":1.25e2}\n'
+        self.assertEqual(evidence.parse_partial_capture_events(finite_number)[0]["metric"], 125.0)
+        for invalid in (
+            finding.rstrip("\n"),
+            finding + '{"type":"finding"\n',
+            finding + '{"type":"finding","type":"complete"}\n',
+            finding + '["not","an object"]\n',
+            finding + '{"type":"complete","status":"review_completed","findings":1,"reviewedFiles":[]}\n',
+            finding + '{"type":"unknown"}\n',
+            finding + '{"type":"error","errorType":"connection","recoverable":"yes"}\n',
+            finding + '{"type":"heartbeat","status":[]}\n',
+            finding + '{"type":"review_context","reviewType":"full"}\n',
+            '{"type":[]}\n',
+            '{"type":{}}\n',
+            '{"type":"finding","codegenInstructions":"Useful finding","extra":{"metric":1e999}}\n',
+            r'{"type":"finding","codegenInstructions":"Useful finding","extra":{"text":"\ud800"}}' + "\n",
+            json.dumps({"type": "finding", "codegenInstructions": "Review comment at @src/Foo.java:1"}) + "\n",
+        ):
+            with self.subTest(invalid=invalid), self.assertRaises(evidence.EvidenceError):
+                evidence.parse_partial_capture_events(invalid)
+
+        for instructions in (None, {}, 7, " \n\t", "\ud800"):
+            event = {"type": "finding", "codegenInstructions": instructions}
+            with self.subTest(instructions=repr(instructions)), self.assertRaises(evidence.EvidenceError):
+                evidence.parse_partial_capture_events(json.dumps(event) + "\n")
+
+        with self.assertRaises(evidence.EvidenceError):
+            evidence.parse_partial_capture_events(json.dumps({"type": "finding"}) + "\n")
+
+        stream = "".join(
+            json.dumps(event) + "\n"
+            for event in (
+                {
+                    "type": "review_context",
+                    "baseBranch": "main",
+                    "currentBranch": "feature",
+                    "expectedDuration": "short",
+                    "reviewType": "full",
+                    "workingDirectory": "/workspace",
+                },
+                {"type": "heartbeat", "status": "working"},
+                {"type": "heartbeat", "status": "working"},
+                {"type": "reviewing", "message": "Review started"},
+                {"type": "reviewing", "message": "Reviewing changed files"},
+                {"type": "finding", "codegenInstructions": "Trivial observation"},
+                {
+                    "type": "error",
+                    "errorType": "connection",
+                    "message": "Provider connection closed",
+                    "recoverable": True,
+                    "details": {},
+                },
+            )
+        )
+        self.assertEqual(len(evidence.parse_partial_capture_events(stream)), 1)
+
+    def test_unhashable_event_type_is_terminally_archived_as_raw_failed_output(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / ".git").mkdir()
+            database = root / ".git" / "firemud" / "records.sqlite3"
+            database.parent.mkdir()
+            SqliteStateStore(database).update(lambda state: state)
+            records = SqliteReviewRecords(database)
+            records.bootstrap()
+            output = '{"type":[]}\n'
+
+            result = run_cli_review(
+                target(),
+                github=FakeGitHub(),
+                source_root=root,
+                runner=FakeCommands(root, review_output=output, review_returncode=1),
+                records=records,
+            )
+
+            attempt = next(
+                item for item in records.attempt_history(result.pull_request) if item["attempt_id"] == result.run_id
+            )
+            self.assertEqual(attempt["state"], "failed")
+            self.assertIsNone(attempt["run_id"])
+            artifacts = records.attempt_artifacts(result.run_id)
+            self.assertEqual(artifacts["cli_raw_output"], output)
+            self.assertNotIn("cli_events", artifacts)
+            self.assertEqual(records.history(result.pull_request)["runs"], [])
+
+    def test_unhashable_event_type_is_terminally_archived_as_raw_timeout_output(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / ".git").mkdir()
+            database = root / ".git" / "firemud" / "records.sqlite3"
+            database.parent.mkdir()
+            SqliteStateStore(database).update(lambda state: state)
+            records = SqliteReviewRecords(database)
+            records.bootstrap()
+            output = '{"type":[]}\n'
+
+            with self.assertRaisesRegex(ReviewRunnerError, "CodeRabbit review timed out after 13 seconds"):
+                run_cli_review(
+                    target(),
+                    github=FakeGitHub(),
+                    source_root=root,
+                    runner=FakeCommands(root, timeout_review=True, timeout_review_output=output.encode()),
+                    records=records,
+                    review_timeout_seconds=13,
+                )
+
+            attempt = records.attempt_history(42)[0]
+            artifacts = records.attempt_artifacts(attempt["attempt_id"])
+            self.assertEqual(attempt["state"], "timed_out")
+            self.assertEqual(artifacts["cli_raw_output"], output)
+            self.assertEqual(records.history(42)["runs"], [])
+
+    def test_malformed_finding_text_is_archived_without_source_observations(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / ".git").mkdir()
+            database = root / ".git" / "firemud" / "records.sqlite3"
+            database.parent.mkdir()
+            SqliteStateStore(database).update(lambda state: state)
+            records = SqliteReviewRecords(database)
+            records.bootstrap()
+            output = json.dumps({"type": "finding", "codegenInstructions": {"body": "not text"}}) + "\n"
+
+            result = run_cli_review(
+                target(),
+                github=FakeGitHub(),
+                source_root=root,
+                runner=FakeCommands(root, review_output=output, review_returncode=1),
+                records=records,
+            )
+
+            attempt = next(
+                item for item in records.attempt_history(result.pull_request) if item["attempt_id"] == result.run_id
+            )
+            self.assertEqual(attempt["state"], "failed")
+            self.assertIsNone(attempt["run_id"])
+            self.assertEqual(attempt["diagnostic"], "CodeRabbit CLI did not return a complete JSON review")
+            self.assertEqual(records.attempt_artifacts(result.run_id)["cli_raw_output"], output)
+            self.assertEqual(records.history(result.pull_request)["runs"], [])
+
+    def test_non_finite_and_invalid_utf8_cli_output_stays_raw_for_failure_and_timeout(self):
+        overflow = (
+            b'{"type":"finding","codegenInstructions":"Useful partial finding",'
+            b'"extra":{"score":1e999},"token":"Bearer synthetic-overflow-secret"}\n'
+        )
+        invalid_utf8 = b'{"type":"finding","codegenInstructions":"Useful \xff partial finding"}\n'
+        scenarios = (
+            ("overflow-failure", overflow, False),
+            ("overflow-timeout", overflow, True),
+            ("invalid-utf8-failure", invalid_utf8, False),
+            ("invalid-utf8-timeout", invalid_utf8, True),
+        )
+
+        for name, output, timed_out in scenarios:
+            with self.subTest(name=name), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                (root / ".git").mkdir()
+                database = root / ".git" / "firemud" / "records.sqlite3"
+                database.parent.mkdir()
+                SqliteStateStore(database).update(lambda state: state)
+                records = SqliteReviewRecords(database)
+                records.bootstrap()
+                runner = FakeCommands(
+                    root,
+                    timeout_review=timed_out,
+                    timeout_review_output=output,
+                    review_output=output,
+                    review_returncode=7,
+                )
+
+                if timed_out:
+                    with self.assertRaisesRegex(ReviewRunnerError, "CodeRabbit review timed out after 13 seconds"):
+                        run_cli_review(
+                            target(),
+                            github=FakeGitHub(),
+                            source_root=root,
+                            runner=runner,
+                            records=records,
+                            review_timeout_seconds=13,
+                        )
+                else:
+                    result = run_cli_review(
+                        target(),
+                        github=FakeGitHub(),
+                        source_root=root,
+                        runner=runner,
+                        records=records,
+                    )
+                    self.assertEqual(result.exit_status, 7)
+
+                attempt = records.attempt_history(42)[0]
+                capture = root / ".git" / "firemud" / "pr-review" / "runs" / attempt["attempt_id"]
+                self.assertEqual((capture / "stdout").read_bytes(), output)
+                self.assertEqual(attempt["state"], "timed_out" if timed_out else "failed")
+                self.assertIsNone(attempt["run_id"])
+                self.assertEqual(
+                    attempt["diagnostic"],
+                    "CodeRabbit CLI timed out before a complete result"
+                    if timed_out
+                    else "CodeRabbit CLI did not return a complete JSON review",
+                )
+                artifacts = records.attempt_artifacts(attempt["attempt_id"])
+                self.assertNotIn("cli_events", artifacts)
+                self.assertIn("cli_raw_output", artifacts)
+                self.assertEqual(records.history(42)["runs"], [])
+                if name.startswith("overflow"):
+                    self.assertIn("1e999", artifacts["cli_raw_output"])
+                    self.assertNotIn("synthetic-overflow-secret", artifacts["cli_raw_output"])
+                    self.assertIn("[redacted credential]", artifacts["cli_raw_output"])
+                if name.startswith("invalid-utf8"):
+                    self.assertIn("\ufffd", artifacts["cli_raw_output"])
+                    self.assertIn("diagnostic only", artifacts["cli_raw_output"])
+                    self.assertIn(hashlib.sha256(output).hexdigest(), artifacts["cli_raw_output"])
+
+    def test_locator_only_partial_finding_is_archived_without_source_projection(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / ".git").mkdir()
+            database = root / ".git" / "firemud" / "records.sqlite3"
+            database.parent.mkdir()
+            SqliteStateStore(database).update(lambda state: state)
+            records = SqliteReviewRecords(database)
+            records.bootstrap()
+            output = json.dumps({"type": "finding", "codegenInstructions": "Review comment at @src/Foo.java:1"}) + "\n"
+
+            result = run_cli_review(
+                target(),
+                github=FakeGitHub(),
+                source_root=root,
+                runner=FakeCommands(root, review_output=output, review_returncode=1),
+                records=records,
+            )
+
+            attempt = records.attempt(result.run_id)
+            self.assertEqual(result.exit_status, 1)
+            self.assertEqual(attempt["state"], "failed")
+            self.assertIsNone(attempt["run_id"])
+            self.assertEqual(records.attempt_artifacts(result.run_id)["cli_raw_output"], output)
+            self.assertEqual(records.history(42)["runs"], [])
+
+    def test_partial_projection_storage_failure_falls_back_to_failed_raw_attempt(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / ".git").mkdir()
+            database = root / ".git" / "firemud" / "records.sqlite3"
+            database.parent.mkdir()
+            SqliteStateStore(database).update(lambda state: state)
+            records = SqliteReviewRecords(database)
+            records.bootstrap()
+            output = json.dumps({"type": "finding", "codegenInstructions": "A useful partial finding."}) + "\n"
+
+            with patch.object(
+                records,
+                "record_failed_cli_observations",
+                side_effect=ReviewRecordsError("injected partial write failure"),
+            ):
+                result = run_cli_review(
+                    target(),
+                    github=FakeGitHub(),
+                    source_root=root,
+                    runner=FakeCommands(root, review_output=output, review_returncode=1),
+                    records=records,
+                )
+
+            attempt = next(
+                item for item in records.attempt_history(result.pull_request) if item["attempt_id"] == result.run_id
+            )
+            self.assertEqual(attempt["state"], "failed")
+            self.assertIsNone(attempt["run_id"])
+            self.assertEqual(attempt["diagnostic"], "CodeRabbit CLI did not return a complete JSON review")
+            self.assertEqual(records.attempt_artifacts(result.run_id)["cli_raw_output"], output)
+            self.assertEqual(records.history(result.pull_request)["runs"], [])
+            self.assertIn("injected partial write failure", result.warning)
+            self.assertEqual(result.exit_status, 1)
+
+    def test_timeout_projection_storage_failure_falls_back_and_preserves_timeout_error(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / ".git").mkdir()
+            database = root / ".git" / "firemud" / "records.sqlite3"
+            database.parent.mkdir()
+            SqliteStateStore(database).update(lambda state: state)
+            records = SqliteReviewRecords(database)
+            records.bootstrap()
+            output = json.dumps({"type": "finding", "codegenInstructions": "A useful partial finding."}) + "\n"
+
+            with (
+                patch.object(
+                    records,
+                    "record_failed_cli_observations",
+                    side_effect=ReviewRecordsError("injected timeout projection failure"),
+                ),
+                self.assertRaisesRegex(ReviewRunnerError, "CodeRabbit review timed out after 13 seconds") as raised,
+            ):
+                run_cli_review(
+                    target(),
+                    github=FakeGitHub(),
+                    source_root=root,
+                    runner=FakeCommands(root, timeout_review=True, timeout_review_output=output.encode()),
+                    records=records,
+                    review_timeout_seconds=13,
+                )
+
+            attempt = records.attempt_history(42)[0]
+            self.assertEqual(attempt["state"], "timed_out")
+            self.assertIsNone(attempt["run_id"])
+            self.assertEqual(attempt["diagnostic"], "CodeRabbit CLI timed out before a complete result")
+            self.assertEqual(records.attempt_artifacts(attempt["attempt_id"])["cli_raw_output"], output)
+            self.assertEqual(records.history(42)["runs"], [])
+            self.assertIn("injected timeout projection failure", " ".join(getattr(raised.exception, "__notes__", [])))
+
     def test_redacted_cli_headline_is_bounded_before_sql_completion(self):
         long_headline = " ".join(["Bearer x"] * 40)
         output = (
@@ -1549,6 +2236,41 @@ class CliReviewRunnerTests(unittest.TestCase):
             self.assertEqual(attempts[0]["state"], "rate_limited")
             self.assertEqual(records.history(result.pull_request)["runs"], [])
 
+    def test_zero_exit_partial_rate_limit_is_retained_as_rate_limited(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / ".git").mkdir()
+            database = root / ".git" / "firemud" / "records.sqlite3"
+            database.parent.mkdir()
+            SqliteStateStore(database).update(lambda state: state)
+            records = SqliteReviewRecords(database)
+            records.bootstrap()
+            output = json.dumps({"type": "finding", "codegenInstructions": "Keep this useful finding."}) + "\n"
+
+            result = run_cli_review(
+                target(),
+                github=FakeGitHub(),
+                source_root=root,
+                runner=FakeCommands(
+                    root,
+                    review_output=output,
+                    review_stderr="Rate limit exceeded; retry later\n",
+                    review_returncode=0,
+                ),
+                records=records,
+            )
+
+            attempt = next(
+                item for item in records.attempt_history(result.pull_request) if item["attempt_id"] == result.run_id
+            )
+            source_run = records.history(result.pull_request)["runs"][0]
+            self.assertEqual(attempt["state"], "rate_limited")
+            self.assertEqual(attempt["exit_status"], 0)
+            self.assertEqual(result.exit_status, 1)
+            self.assertEqual(source_run["outcome"], "failed")
+            self.assertFalse(source_run["attributable"])
+            self.assertEqual(source_run["counts"]["found"], 1)
+
     def test_cli_review_accepts_111_changed_files(self):
         files = [f"src/File{index}.java" for index in range(111)]
         with tempfile.TemporaryDirectory() as directory:
@@ -1594,7 +2316,7 @@ class CliReviewRunnerTests(unittest.TestCase):
             run_dirs = list((root / ".git" / "firemud" / "pr-review" / "runs").glob("run.*"))
             self.assertEqual(len(run_dirs), 1)
             capture_dir = run_dirs[0]
-            self.assertEqual((capture_dir / "stdout").read_text(), "partial �\n")
+            self.assertEqual((capture_dir / "stdout").read_bytes(), b"partial \xff\n")
             self.assertEqual((capture_dir / "stderr").read_text(), "timed out\n")
             self.assertEqual((capture_dir / "exit-status").read_text(), "timeout\n")
             metadata = json.loads((capture_dir / "metadata.json").read_text())

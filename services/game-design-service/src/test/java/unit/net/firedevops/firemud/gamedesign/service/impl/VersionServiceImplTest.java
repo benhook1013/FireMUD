@@ -16,10 +16,12 @@ import io.grpc.StatusRuntimeException;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
+import java.util.UUID;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Supplier;
 import net.firedevops.firemud.common.publication.PublicationDigestRequestBinding;
 import net.firedevops.firemud.gamedesign.client.AutomationScriptingClient;
+import net.firedevops.firemud.gamedesign.draft.AuthoredDraftPublishSelection.PublishIntent;
 import net.firedevops.firemud.gamedesign.dto.DesignControlPlaneDigestDto;
 import net.firedevops.firemud.gamedesign.dto.PluginVersionStatusEventDto;
 import net.firedevops.firemud.gamedesign.dto.PublishParticipantDigestDto;
@@ -41,6 +43,7 @@ import net.firedevops.firemud.gamedesign.repository.PublishedPluginVersionReposi
 import net.firedevops.firemud.gamedesign.repository.VersionRepository;
 import net.firedevops.firemud.gamedesign.service.AssetExportService;
 import net.firedevops.firemud.gamedesign.service.ControlPlaneDigestService;
+import net.firedevops.firemud.gamedesign.service.MutationOwnerProofUnavailableException;
 import net.firedevops.firemud.gamedesign.service.ParsedPluginBundle;
 import net.firedevops.firemud.gamedesign.service.PluginBundleIntakeService;
 import net.firedevops.firemud.gamedesign.service.PluginBundleStorageService;
@@ -49,6 +52,7 @@ import net.firedevops.firemud.gamedesign.service.PublishAttemptPendingReconcilia
 import net.firedevops.firemud.gamedesign.service.PublishAttemptService;
 import net.firedevops.firemud.gamedesign.service.PublishGateFailureException;
 import net.firedevops.firemud.gamedesign.service.PublishGateService;
+import net.firedevops.firemud.gamedesign.service.PublishedArtifactDigest;
 import net.firedevops.firemud.gamedesign.service.PublishedReleaseBundleService;
 import net.firedevops.firemud.gamedesign.service.RecordedParticipantDigestService;
 import net.firedevops.firemud.gamedesign.service.ScriptPatchPublishFailureException;
@@ -65,6 +69,11 @@ import org.springframework.data.domain.Pageable;
 
 class VersionServiceImplTest {
   private static final String PUBLISH_REQUEST_ID = "publish-request-1";
+  private static final String MANIFEST_HASH = "sha256:" + "a".repeat(64);
+  private static final UUID CANONICAL_TENANT_ID =
+      UUID.fromString("12345678-1234-4234-8234-123456789abc");
+  private static final UUID CANONICAL_VERSION_ID =
+      UUID.fromString("82345678-1234-4234-8234-123456789abc");
 
   @Mock private VersionRepository versionRepository;
   @Mock private GameRepository gameRepository;
@@ -84,6 +93,18 @@ class VersionServiceImplTest {
   @Mock private TemporalVersionPublishOrchestrator temporalPublishOrchestrator;
 
   private VersionServiceImpl service;
+
+  private static PublishIntent selectedIntent() {
+    return new PublishIntent(
+        CANONICAL_TENANT_ID,
+        CANONICAL_VERSION_ID,
+        PUBLISH_REQUEST_ID,
+        "1",
+        "notes",
+        UUID.fromString("33333333-3333-4333-8333-333333333333"),
+        UUID.fromString("44444444-4444-4444-8444-444444444444"),
+        "sha256:" + "a".repeat(64));
+  }
 
   @BeforeEach
   void setup() throws Exception {
@@ -124,39 +145,101 @@ class VersionServiceImplTest {
   }
 
   @Test
-  void publishVersionUsesTenantScopedVersionSequence() throws Exception {
+  void publishVersionRequiresCurrentAuthorizationAndOwnerFreeze() {
+    IllegalStateException thrown =
+        assertThrows(IllegalStateException.class, () -> service.publishVersion(selectedIntent()));
+
+    assertTrue(thrown.getMessage().startsWith("PUBLICATION_AUTHORIZATION_UNAVAILABLE:"));
+    verify(publishCommandService, org.mockito.Mockito.never()).reserveSelection(any());
+    verify(publishCommandService, org.mockito.Mockito.never())
+        .publishFullVersion(
+            any(String.class), any(String.class), any(String.class), any(String.class));
+    org.mockito.Mockito.verifyNoInteractions(temporalPublishOrchestrator);
+    verify(versionRepository, org.mockito.Mockito.never()).save(any(Version.class));
+    verify(publishAttemptService, org.mockito.Mockito.never())
+        .createFullVersionAttempt(any(VersionDto.class), any(String.class), any(String.class));
+    verify(publishAttemptService, org.mockito.Mockito.never()).executeFullVersionTransaction(any());
+    verify(assetExportService, org.mockito.Mockito.never())
+        .exportAssets(any(String.class), any(Integer.class));
+    verify(publishGateService, org.mockito.Mockito.never())
+        .assertGatePassed(any(VersionDto.class), any(List.class));
+  }
+
+  @Test
+  void versionStateMutationRefusesBeforeChangingStateEpochOrPersisting() {
+    Version version = new Version();
+    version.setId(7L);
+    version.setTenantId("tenant-1");
+    version.setVersionState(VersionLifecycleState.DRAFT);
+    version.setVersionStateEpoch(4L);
+    LocalDateTime originalUpdatedAt = LocalDateTime.parse("2026-10-09T12:00:00");
+    version.setUpdatedAt(originalUpdatedAt);
+    when(versionRepository.findByTenantIdAndId("tenant-1", 7L)).thenReturn(Optional.of(version));
+
+    MutationOwnerProofUnavailableException thrown =
+        assertThrows(
+            MutationOwnerProofUnavailableException.class,
+            () ->
+                service.compareAndSetVersionState(
+                    "tenant-1", 7L, 4L, VersionLifecycleState.PUBLISHED, "publish"));
+
+    assertEquals("VERSION_STATE_MUTATION_UNAVAILABLE", thrown.errorCode());
+    assertEquals(VersionLifecycleState.DRAFT, version.getVersionState());
+    assertEquals(4L, version.getVersionStateEpoch());
+    assertEquals(originalUpdatedAt, version.getUpdatedAt());
+    verify(versionRepository, org.mockito.Mockito.never()).save(any(Version.class));
+  }
+
+  @Test
+  void versionStateSameStateRequestRemainsAReadOnlyNoOp() {
+    Version version = new Version();
+    version.setId(7L);
+    version.setTenantId("tenant-1");
+    version.setVersionState(VersionLifecycleState.RETIRED);
+    version.setVersionStateEpoch(9L);
+    when(versionRepository.findByTenantIdAndId("tenant-1", 7L)).thenReturn(Optional.of(version));
+
+    var result =
+        service.compareAndSetVersionState(
+            "tenant-1", 7L, 9L, VersionLifecycleState.RETIRED, "retry");
+
+    assertEquals(VersionLifecycleState.RETIRED, result.versionState());
+    assertEquals(9L, result.versionStateEpoch());
+    verify(versionRepository, org.mockito.Mockito.never()).save(any(Version.class));
+  }
+
+  @Test
+  void legacyFullVersionRequestOnlyDelegatesToRetainedTerminalReplay() throws Exception {
+    VersionDto expected =
+        new VersionDto(
+            10L,
+            "tenant-1",
+            8,
+            VersionLifecycleState.PUBLISHED,
+            2L,
+            null,
+            null,
+            false,
+            "notes",
+            LocalDateTime.now(),
+            LocalDateTime.now());
     when(publishCommandService.publishFullVersion(
-            org.mockito.ArgumentMatchers.eq("tenant-1"),
-            org.mockito.ArgumentMatchers.eq("notes"),
-            org.mockito.ArgumentMatchers.eq(PUBLISH_REQUEST_ID),
-            org.mockito.ArgumentMatchers.eq(
-                "publish:tenant-1:publish-request:" + PUBLISH_REQUEST_ID)))
-        .thenReturn(
-            new VersionDto(
-                10L,
-                "tenant-1",
-                8,
-                VersionLifecycleState.PUBLISHED,
-                2L,
-                null,
-                null,
-                false,
-                "notes",
-                LocalDateTime.now(),
-                LocalDateTime.now()));
+            "tenant-1",
+            "notes",
+            PUBLISH_REQUEST_ID,
+            "publish:tenant-1:publish-request:" + PUBLISH_REQUEST_ID))
+        .thenReturn(expected);
 
-    VersionDto dto = service.publishVersion("tenant-1", "notes", PUBLISH_REQUEST_ID);
+    VersionDto actual = service.replayLegacyFullVersion("tenant-1", "notes", PUBLISH_REQUEST_ID);
 
-    assertEquals(8, dto.versionNumber());
-    assertEquals(VersionLifecycleState.PUBLISHED, dto.versionState());
-    assertEquals(2L, dto.versionStateEpoch());
+    assertEquals(expected, actual);
     verify(publishCommandService)
         .publishFullVersion(
-            org.mockito.ArgumentMatchers.eq("tenant-1"),
-            org.mockito.ArgumentMatchers.eq("notes"),
-            org.mockito.ArgumentMatchers.eq(PUBLISH_REQUEST_ID),
-            org.mockito.ArgumentMatchers.eq(
-                "publish:tenant-1:publish-request:" + PUBLISH_REQUEST_ID));
+            "tenant-1",
+            "notes",
+            PUBLISH_REQUEST_ID,
+            "publish:tenant-1:publish-request:" + PUBLISH_REQUEST_ID);
+    org.mockito.Mockito.verifyNoInteractions(temporalPublishOrchestrator);
   }
 
   @Test
@@ -844,27 +927,20 @@ class VersionServiceImplTest {
   }
 
   @Test
-  void publishVersionPropagatesTypedPublishGateFailures() {
-    when(publishCommandService.publishFullVersion(
-            org.mockito.ArgumentMatchers.eq("tenant-1"),
-            org.mockito.ArgumentMatchers.eq("notes"),
-            org.mockito.ArgumentMatchers.eq(PUBLISH_REQUEST_ID),
-            org.mockito.ArgumentMatchers.anyString()))
-        .thenThrow(
-            new PublishGateFailureException(
-                PublishGateFailureCode.RECORDED_CONTENT_DIGEST_MISMATCH,
-                "recorded digest mismatch"));
-
-    PublishGateFailureException thrown =
+  void publishVersionCannotReachPublishGatesWithoutOwnerFreeze() {
+    IllegalStateException thrown =
         org.junit.jupiter.api.Assertions.assertThrows(
-            PublishGateFailureException.class,
-            () -> service.publishVersion("tenant-1", "notes", PUBLISH_REQUEST_ID));
+            IllegalStateException.class, () -> service.publishVersion(selectedIntent()));
 
-    assertEquals(PublishGateFailureCode.RECORDED_CONTENT_DIGEST_MISMATCH, thrown.failureCode());
+    assertTrue(thrown.getMessage().startsWith("PUBLICATION_AUTHORIZATION_UNAVAILABLE:"));
+    verify(publishGateService, org.mockito.Mockito.never()).assertGatePassed(any(), any());
+    verify(publishCommandService, org.mockito.Mockito.never())
+        .publishFullVersion(
+            any(String.class), any(String.class), any(String.class), any(String.class));
   }
 
   @Test
-  void publishVersionDeletesExportedAssetsWhenAttestationWriteFails() {
+  void publishVersionDoesNotStartTemporalWorkflowWithoutOwnerFreeze() {
     VersionServiceImpl temporalService =
         new VersionServiceImpl(
             versionRepository,
@@ -883,25 +959,20 @@ class VersionServiceImplTest {
             pluginBundleStorageService,
             publishCommandService,
             Optional.of(temporalPublishOrchestrator));
-    when(temporalPublishOrchestrator.publishFullVersion("tenant-1", "notes", PUBLISH_REQUEST_ID))
-        .thenReturn(
-            new VersionDto(
-                10L,
-                "tenant-1",
-                8,
-                VersionLifecycleState.PUBLISHED,
-                2L,
-                null,
-                null,
-                false,
-                "notes",
-                LocalDateTime.now(),
-                LocalDateTime.now()));
+    IllegalStateException thrown =
+        assertThrows(
+            IllegalStateException.class, () -> temporalService.publishVersion(selectedIntent()));
 
-    VersionDto dto = temporalService.publishVersion("tenant-1", "notes", PUBLISH_REQUEST_ID);
-
-    assertEquals(10L, dto.id());
-    verify(temporalPublishOrchestrator).publishFullVersion("tenant-1", "notes", PUBLISH_REQUEST_ID);
+    assertTrue(thrown.getMessage().startsWith("PUBLICATION_AUTHORIZATION_UNAVAILABLE:"));
+    org.mockito.Mockito.verifyNoInteractions(temporalPublishOrchestrator);
+    verify(versionRepository, org.mockito.Mockito.never()).save(any(Version.class));
+    verify(publishAttemptService, org.mockito.Mockito.never())
+        .createFullVersionAttempt(any(VersionDto.class), any(String.class), any(String.class));
+    verify(publishAttemptService, org.mockito.Mockito.never()).executeFullVersionTransaction(any());
+    verify(assetExportService, org.mockito.Mockito.never())
+        .exportAssets(any(String.class), any(Integer.class));
+    verify(publishGateService, org.mockito.Mockito.never())
+        .assertGatePassed(any(VersionDto.class), any(List.class));
   }
 
   @Test
@@ -1523,7 +1594,7 @@ class VersionServiceImplTest {
         7,
         "v1",
         "workflow-1",
-        "manifest-1",
+        MANIFEST_HASH,
         List.of("manifest.json"),
         List.of(
             new PublishParticipantDigestDto(
@@ -1537,7 +1608,19 @@ class VersionServiceImplTest {
         "genrev-1",
         false,
         null,
-        LocalDateTime.parse("2026-04-26T10:00:00"));
+        LocalDateTime.parse("2026-04-26T10:00:00"),
+        CANONICAL_TENANT_ID,
+        CANONICAL_VERSION_ID,
+        "opaque-release-reference-from-owner",
+        1,
+        List.of(
+            new PublishedArtifactDigest(
+                "manifest.json",
+                "manifest",
+                "artifacts/sha256/" + "b".repeat(64),
+                "sha256:" + "b".repeat(64),
+                "application/json",
+                1)));
   }
 
   private PublishedPluginVersion uploadedPluginVersion(

@@ -20,7 +20,7 @@ from . import evidence as evidence_module
 from . import status as status_module
 from .cli_runner import PullRequestSnapshot, format_exception_notes
 from .controller import LivePullRequest, ReviewController
-from .runtime import default_controller
+from .runtime import LiveGitHub, default_controller
 from .sqlite_review_records import FindingObservation, RecordsNotBootstrapped, ReviewRecordsError, SqliteReviewRecords
 from .sqlite_store import SqliteStateStore
 from .state import (
@@ -132,6 +132,46 @@ def _parser() -> argparse.ArgumentParser:
         metavar="REASON",
         help="nonblank reason required with --allow-removal; not persisted in controller state",
     )
+    stack_add = stack_commands.add_parser(
+        "add",
+        help="add one PR without rewriting the configured stack",
+        description="Add one pull request to the configured review stack without resubmitting every PR number.",
+        epilog=(
+            "Examples:\n"
+            "  dev-tools/pr-review stack add 3092\n"
+            "  dev-tools/pr-review stack add 3092 --before 3088\n"
+            "Use --json for the resulting full stack."
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    stack_add.add_argument("pr", type=_positive_int)
+    add_position = stack_add.add_mutually_exclusive_group()
+    add_position.add_argument("--before", type=_positive_int, metavar="ANCHOR")
+    add_position.add_argument("--after", type=_positive_int, metavar="ANCHOR")
+    stack_add.add_argument(
+        "--json", action="store_true", dest="as_json", help="return the resulting full stack as JSON"
+    )
+    stack_move = stack_commands.add_parser(
+        "move",
+        help="move one configured PR without rewriting the whole stack",
+        description="Move one configured pull request while preserving every other stack entry and its order.",
+        epilog=(
+            "Examples:\n"
+            "  dev-tools/pr-review stack move 3092 --before 3088\n"
+            "  dev-tools/pr-review stack move 3092 --first\n"
+            "Use --json for the resulting full stack."
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    stack_move.add_argument("pr", type=_positive_int)
+    move_position = stack_move.add_mutually_exclusive_group(required=True)
+    move_position.add_argument("--before", type=_positive_int, metavar="ANCHOR")
+    move_position.add_argument("--after", type=_positive_int, metavar="ANCHOR")
+    move_position.add_argument("--first", action="store_true", help="move the PR to the start of the stack")
+    move_position.add_argument("--last", action="store_true", help="move the PR to the end of the stack")
+    stack_move.add_argument(
+        "--json", action="store_true", dest="as_json", help="return the resulting full stack as JSON"
+    )
     stack_show = stack_commands.add_parser(
         "show",
         help="show the configured review stack",
@@ -143,6 +183,11 @@ def _parser() -> argparse.ArgumentParser:
     status = commands.add_parser("status", help="show live stack or one-PR status")
     status.add_argument("--pr", type=_positive_int)
     status.add_argument("--json", action="store_true", dest="as_json")
+    status.add_argument(
+        "--summary",
+        action="store_true",
+        help="project selected-PR readiness and holds without ancestor rows or check inventories",
+    )
     status.add_argument(
         "--full-scan",
         action="store_true",
@@ -248,6 +293,13 @@ def _parser() -> argparse.ArgumentParser:
     provider_import.add_argument("--scope", required=True, choices=("broad", "narrow"))
     provider_import.add_argument("--coverage-limit", action="append", default=[])
     records_database(provider_import)
+
+    cli_observations = record_commands.add_parser(
+        "cli-observations",
+        help="recover validated findings from one exact terminal failed native CLI capture",
+    )
+    cli_observations.add_argument("--run-id", required=True)
+    records_database(cli_observations)
 
     provider_repair = record_commands.add_parser(
         "repair-provider",
@@ -680,8 +732,18 @@ def _controller(args: argparse.Namespace) -> tuple[ReviewController, acceptance.
     if fixture_path is not None and isolated_state is not None:
         fixture = acceptance.load(fixture_path, isolated_state)
         return fixture.controller(), fixture
-    if args.command == "stack" and args.stack_command == "show":
+    if args.command == "stack" and args.stack_command in {"show", "move"}:
         return ReviewController(store=ControllerStateStore()), None
+    if args.command == "stack" and args.stack_command == "add":
+        repository = github.infer_repo()
+        return (
+            ReviewController(
+                store=ControllerStateStore(),
+                github=LiveGitHub(repository),
+                repository=repository,
+            ),
+            None,
+        )
     return default_controller(), None
 
 
@@ -719,6 +781,23 @@ def _render_status_overview(report: Mapping[str, Any]) -> str:
     if window.get("reason"):
         lines.append(f"live identity batch: unavailable · {window['reason']}")
     return "\n".join(lines)
+
+
+def _render_stack_change(value: Mapping[str, Any]) -> str:
+    action = value["action"]
+    pr = value["pr"]
+    position = value["position"]
+    count = len(value["ordered_prs"])
+    if position == "end":
+        placement = "at the end"
+    elif position in {"first", "last"}:
+        placement = f"at the {position}"
+    else:
+        placement = position
+    if action == "move" and value["changed"] is False:
+        return f"PR #{pr} is already {placement} (stack remains {count} PRs)."
+    verb = "Added" if action == "add" else "Moved"
+    return f"{verb} PR #{pr} {placement} (stack now has {count} PRs)."
 
 
 def _records_database_path(args: argparse.Namespace) -> Path:
@@ -1245,6 +1324,9 @@ def _dispatch_records(args: argparse.Namespace) -> tuple[Any, int]:
             target_pr=args.target_pr,
         )
         return {"api_version": 1, "result": result}, 0
+    if args.records_command == "cli-observations":
+        result = cli_attempts.recover_failed_cli_observations(store, _records_database_path(args), args.run_id)
+        return {"api_version": 1, "result": result}, 0
     if args.records_command == "cli-correct":
         result = store.correct_source_decision(
             args.run_id,
@@ -1411,7 +1493,89 @@ def _render_selected_pr_status(report: Mapping[str, Any]) -> str:
     return "\n".join(lines)
 
 
+def _selected_pr_status_summary(report: Mapping[str, Any], pr: int) -> dict[str, Any]:
+    """Project existing status decisions without ancestor rows or detailed inventories."""
+
+    ci = report.get("ci", {})
+    required = ci.get("required", {}) if isinstance(ci, Mapping) else {}
+    optional = ci.get("optional", {}) if isinstance(ci, Mapping) else {}
+    stack_report = report.get("review_stack", {})
+    stack_report = stack_report if isinstance(stack_report, Mapping) else {}
+    selected = next(
+        (item for item in stack_report.get("prs", []) if isinstance(item, Mapping) and item.get("pr") == pr),
+        None,
+    )
+    selected_fields = (
+        "pr",
+        "head",
+        "base",
+        "pr_base_oid",
+        "parent",
+        "parent_head",
+        "state",
+        "merged",
+        "is_draft",
+        "reconciliation",
+        "reason",
+        "channels",
+        "review_progress",
+        "review_obligations",
+        "channel_reasons",
+        "allocations",
+    )
+    ci_summary = {
+        "aggregate": ci.get("aggregate"),
+        "required_checks": {key: required.get(key) for key in ("available", "status", "reason") if key in required},
+        "pending": [item.get("name") for item in ci.get("pending", []) if isinstance(item, Mapping)],
+        "failed": [item.get("name") for item in ci.get("failed", []) if isinstance(item, Mapping)],
+        "observed": ci.get("observed"),
+        "optional_checks": {
+            "available": optional.get("available"),
+            "pending_count": len(optional.get("pending", [])),
+            "failed_count": len(optional.get("failed", [])),
+        },
+        "inventory_available": ci.get("inventory_available"),
+        "inventory_status": ci.get("inventory_status"),
+        "inventory_reason": ci.get("inventory_reason"),
+        "aggregate_inventory_conflict": ci.get("aggregate_inventory_conflict"),
+    }
+    threads = report.get("threads", {})
+    thread_counts = (
+        {key: threads[key] for key in ("current", "outdated", "total") if key in threads}
+        if isinstance(threads, Mapping)
+        else {}
+    )
+    review_stack = {
+        "status": stack_report.get("status"),
+        "selected_pr": pr,
+        "scope": "selected PR summary",
+        "review_fronts": stack_report.get("review_fronts"),
+        "prs": [{key: selected[key] for key in selected_fields if key in selected}] if selected else [],
+    }
+    return {
+        "pull_request": report.get("pull_request"),
+        "review_decision": report.get("review_decision"),
+        "checkpoint_counts": report.get("checkpoint_counts"),
+        "threads": thread_counts,
+        "ci": ci_summary,
+        "mergeability": report.get("mergeability"),
+        "ready": report.get("ready"),
+        "verdict": report.get("verdict"),
+        "reasons": report.get("reasons", []),
+        "incoming_routes": report.get("incoming_routes", []),
+        "incoming_record_routes": report.get("incoming_record_routes", []),
+        "record_route_store": report.get("record_route_store"),
+        "review_stack": review_stack,
+    }
+
+
 def _dispatch(args: argparse.Namespace) -> tuple[Any, int]:
+    if args.command == "status" and args.summary:
+        if args.pr is None:
+            raise CliError("status --summary requires --pr")
+        if args.full_scan:
+            raise CliError("status --summary cannot be combined with --full-scan")
+
     if args.command == "state":
         if args.acceptance_fixture is not None or args.state_path is not None:
             raise CliError("state management commands do not accept acceptance-fixture options")
@@ -1471,6 +1635,20 @@ def _dispatch(args: argparse.Namespace) -> tuple[Any, int]:
                 reason=args.reason,
                 **snapshot_options,
             )
+        elif args.stack_command == "add":
+            value = controller.add_stack_pr(args.pr, before=args.before, after=args.after)
+            if not args.as_json:
+                return _render_stack_change(value), 0
+        elif args.stack_command == "move":
+            value = controller.move_stack_pr(
+                args.pr,
+                before=args.before,
+                after=args.after,
+                first=args.first,
+                last=args.last,
+            )
+            if not args.as_json:
+                return _render_stack_change(value), 0
         else:
             value = controller.show_stack()
         return value, 0
@@ -1513,16 +1691,43 @@ def _dispatch(args: argparse.Namespace) -> tuple[Any, int]:
             report = controller.status_overview()
             return (report if args.as_json else _render_status_overview(report)), 0
         if fixture is not None:
-            return fixture.status(controller, args.pr), 0
+            report = fixture.status(controller, args.pr)
+            if args.summary and args.as_json:
+                return _selected_pr_status_summary(report, args.pr), 0
+            if args.summary:
+                return _render_selected_pr_status(report), 0
+            return report, 0
         if selected_pr_status:
             budget.set_phase("pr_review_evidence", total=1)
         state_store = getattr(controller, "store", None)
         summary_dispositions = state_store.load().summary_dispositions if state_store is not None else ()
-        report = status_module.status(args.pr, repo=controller.repository, summary_dispositions=summary_dispositions)
+        conversation_payload: dict[str, Any] | None = None
+
+        def capture_conversation_payload(payload: dict[str, Any]) -> None:
+            nonlocal conversation_payload
+            conversation_payload = payload
+
+        report = status_module.status(
+            args.pr,
+            repo=controller.repository,
+            summary_dispositions=summary_dispositions,
+            raw_payload_observer=None if args.full_scan else capture_conversation_payload,
+        )
         if selected_pr_status:
             budget.set_completed(1)
             budget.set_phase("stack_review_evidence", total=1)
-        stack_report = controller.status() if args.full_scan else controller.status_for_pr(args.pr)
+        if args.full_scan:
+            stack_report = controller.status()
+        else:
+            status_options = {"summary_only": True} if args.summary else {}
+            if conversation_payload is not None:
+                stack_report = controller.status_for_pr(
+                    args.pr,
+                    conversation_payload=conversation_payload,
+                    **status_options,
+                )
+            else:
+                stack_report = controller.status_for_pr(args.pr, **status_options)
         if selected_pr_status:
             budget.set_completed(1)
             budget.set_phase("incoming_record_routes", total=1)
@@ -1582,6 +1787,8 @@ def _dispatch(args: argparse.Namespace) -> tuple[Any, int]:
             report["verdict"] = "NOT READY"
             report["mergeability"]["clean"] = False
             report["mergeability"]["diagnosis"] = "NOT READY"
+        if args.summary and args.as_json:
+            return _selected_pr_status_summary(report, args.pr), 0
         return report if args.as_json else _render_selected_pr_status(report), 0
     if args.command == "evidence":
         if args.pr is None:

@@ -5,19 +5,28 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.math.BigInteger;
 import java.nio.file.Path;
+import java.time.OffsetDateTime;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.UUID;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
 import net.firedevops.firemud.common.account.admission.AccountGameplayAdmissionLeaseEvidence;
 import net.firedevops.firemud.gamesession.binding.CanonicalGameplayAccountIndexMember;
 import net.firedevops.firemud.gamesession.binding.CanonicalGameplayAdmissionDecision;
 import net.firedevops.firemud.gamesession.binding.CanonicalGameplayBindingIdentity;
 import net.firedevops.firemud.gamesession.binding.CanonicalGameplayBindingProvisionalCasEvidence;
 import net.firedevops.firemud.gamesession.binding.CanonicalGameplayBindingTransitionRequest;
+import net.firedevops.firemud.gamesession.binding.CanonicalGameplayBindingTransitionSnapshot;
 import net.firedevops.firemud.gamesession.binding.CanonicalIssuerReservationFenceEvidence;
 import net.firedevops.firemud.gamesession.dto.CanonicalPlayableTarget;
+import net.firedevops.firemud.test.TestContainerImages;
 import org.flywaydb.core.Flyway;
 import org.jooq.DSLContext;
 import org.jooq.SQLDialect;
@@ -58,7 +67,8 @@ class CanonicalGameplayBindingInventoryRepositoryIntegrationTest {
       UUID.fromString("ffffffff-ffff-4fff-8fff-ffffffffffff");
 
   @Container
-  static PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>("postgres:16-alpine");
+  static PostgreSQLContainer<?> postgres =
+      new PostgreSQLContainer<>(TestContainerImages.postgres());
 
   @Test
   void failsClosedWhenInventoryAbsenceCannotProveLegacyControllerAbsence() {
@@ -219,6 +229,175 @@ class CanonicalGameplayBindingInventoryRepositoryIntegrationTest {
   }
 
   @Test
+  void persistsLeaseBoundAdmissionTerminalTimestampAsPostgresTimestamptz() {
+    TestSchema testSchema = newTestSchema("gs_binding_terminal_timestamp_");
+    try {
+      LeaseBoundFirstBinding fixture = prepareLeaseBoundFirstBinding(testSchema.dsl());
+
+      var decision =
+          fixture.repository().readAdmissionDecision(TRANSITION_ID, fixture.leaseEvidence());
+      var storedTarget =
+          testSchema
+              .dsl()
+              .fetchOne(
+                  "SELECT admission_target_terminal_at,"
+                      + " pg_typeof(admission_target_terminal_at) AS terminal_at_type"
+                      + " FROM game_session_canonical_binding_transition WHERE transition_id = ?",
+                  TRANSITION_ID);
+
+      assertThat(storedTarget).isNotNull();
+      assertThat(storedTarget.get("terminal_at_type", String.class))
+          .isEqualTo("timestamp with time zone");
+      assertThat(storedTarget.get("admission_target_terminal_at", OffsetDateTime.class).toInstant())
+          .isEqualTo(decision.targetEvidence().ownerProofTerminalAt());
+    } finally {
+      dropSchema(testSchema.schema());
+    }
+  }
+
+  @Test
+  void leaseBoundDecisionAndRuntimeMutationAcquireLocksInOneOrder() throws Exception {
+    String applicationName =
+        "gs_binding_runtime_lock_order_" + UUID.randomUUID().toString().replace("-", "");
+    TestSchema testSchema = newTestSchema("gs_binding_runtime_lock_order_", applicationName);
+    CountDownLatch runtimeRowLocked = new CountDownLatch(1);
+    CountDownLatch allowRuntimeMutation = new CountDownLatch(1);
+    try {
+      PreparedLeaseBoundFirstBinding fixture =
+          prepareLeaseBoundFirstBindingDecision(testSchema.dsl());
+      CanonicalPlayableTarget target = fixture.runtimeTarget().playableTarget();
+      long initialRowVersion =
+          Objects.requireNonNull(
+                  testSchema
+                      .dsl()
+                      .fetchOne(
+                          "SELECT row_version FROM game_instances WHERE tenant_id = ? AND id = ?",
+                          target.gameSessionTenantId(),
+                          target.gameInstanceId()))
+              .get("row_version", Long.class);
+
+      try (ExecutorService executor = Executors.newFixedThreadPool(2)) {
+        try {
+          Future<Integer> runtimeMutation =
+              executor.submit(
+                  () ->
+                      testSchema
+                          .dsl()
+                          .transactionResult(
+                              configuration -> {
+                                DSLContext transaction = DSL.using(configuration);
+                                var runtime =
+                                    transaction.fetchOne(
+                                        "SELECT id FROM game_instances"
+                                            + " WHERE tenant_id = ? AND id = ? FOR UPDATE",
+                                        target.gameSessionTenantId(),
+                                        target.gameInstanceId());
+                                if (runtime == null) {
+                                  throw new IllegalStateException("Expected current runtime row");
+                                }
+                                runtimeRowLocked.countDown();
+                                awaitLatch(allowRuntimeMutation);
+                                return transaction.execute(
+                                    "UPDATE game_instances SET row_version = row_version + 1"
+                                        + " WHERE tenant_id = ? AND id = ?",
+                                    target.gameSessionTenantId(),
+                                    target.gameInstanceId());
+                              }));
+
+          assertThat(runtimeRowLocked.await(5, TimeUnit.SECONDS)).isTrue();
+          Future<CanonicalGameplayBindingTransitionSnapshot> decisionAcquisition =
+              executor.submit(
+                  () ->
+                      fixture.repository().markProvisional(fixture.evidence(), fixture.decision()));
+
+          awaitBindingLockWait(testSchema.dsl(), applicationName);
+          allowRuntimeMutation.countDown();
+
+          assertThat(runtimeMutation.get(10, TimeUnit.SECONDS)).isEqualTo(1);
+          assertThat(decisionAcquisition.get(10, TimeUnit.SECONDS).status())
+              .isEqualTo(
+                  net.firedevops.firemud.gamesession.binding
+                      .CanonicalGameplayBindingTransitionSnapshot.Status.PROVISIONAL);
+          assertThat(
+                  Objects.requireNonNull(
+                          testSchema
+                              .dsl()
+                              .fetchOne(
+                                  "SELECT row_version FROM game_instances WHERE tenant_id = ? AND id = ?",
+                                  target.gameSessionTenantId(),
+                                  target.gameInstanceId()))
+                      .get("row_version", Long.class))
+              .isEqualTo(initialRowVersion + 1);
+
+          CountDownLatch projectionRuntimeRowLocked = new CountDownLatch(1);
+          CountDownLatch allowFencedRuntimeMutation = new CountDownLatch(1);
+          Future<Integer> fencedRuntimeMutation =
+              executor.submit(
+                  () ->
+                      testSchema
+                          .dsl()
+                          .transactionResult(
+                              configuration -> {
+                                DSLContext transaction = DSL.using(configuration);
+                                var runtime =
+                                    transaction.fetchOne(
+                                        "SELECT id FROM game_instances"
+                                            + " WHERE tenant_id = ? AND id = ? FOR UPDATE",
+                                        target.gameSessionTenantId(),
+                                        target.gameInstanceId());
+                                if (runtime == null) {
+                                  throw new IllegalStateException("Expected current runtime row");
+                                }
+                                projectionRuntimeRowLocked.countDown();
+                                awaitLatch(allowFencedRuntimeMutation);
+                                return transaction.execute(
+                                    "UPDATE game_instances SET status = 'STOPPED',"
+                                        + " row_version = row_version + 1"
+                                        + " WHERE tenant_id = ? AND id = ?",
+                                    target.gameSessionTenantId(),
+                                    target.gameInstanceId());
+                              }));
+          Future<?> accountIndexReadback;
+          try {
+            assertThat(projectionRuntimeRowLocked.await(5, TimeUnit.SECONDS)).isTrue();
+            CanonicalGameplayBindingProvisionalCasEvidence provisionalEvidence =
+                fixture.repository().readProvisionalCasEvidence(TRANSITION_ID);
+            String member =
+                CanonicalGameplayAccountIndexMember.of(provisionalEvidence.candidate()).value();
+            accountIndexReadback =
+                executor.submit(
+                    () ->
+                        fixture
+                            .repository()
+                            .markCandidateAccountIndexPresent(provisionalEvidence, member));
+            awaitBindingLockWait(testSchema.dsl(), applicationName);
+          } finally {
+            allowFencedRuntimeMutation.countDown();
+          }
+
+          assertThatThrownBy(() -> fencedRuntimeMutation.get(10, TimeUnit.SECONDS))
+              .hasStackTraceContaining("runtime row is fenced");
+          assertThat(accountIndexReadback.get(10, TimeUnit.SECONDS)).isNotNull();
+          assertThat(
+                  Objects.requireNonNull(
+                          testSchema
+                              .dsl()
+                              .fetchOne(
+                                  "SELECT row_version FROM game_instances WHERE tenant_id = ? AND id = ?",
+                                  target.gameSessionTenantId(),
+                                  target.gameInstanceId()))
+                      .get("row_version", Long.class))
+              .isEqualTo(initialRowVersion + 1);
+        } finally {
+          allowRuntimeMutation.countDown();
+        }
+      }
+    } finally {
+      dropSchema(testSchema.schema());
+    }
+  }
+
+  @Test
   void unresolvedPreparedTransitionFencesASecondTransitionForTheSameController() {
     String schema = "gs_binding_pending_" + UUID.randomUUID().toString().replace("-", "");
     DriverManagerDataSource dataSource = dataSource(schema);
@@ -349,6 +528,16 @@ class CanonicalGameplayBindingInventoryRepositoryIntegrationTest {
   }
 
   private static LeaseBoundFirstBinding prepareLeaseBoundFirstBinding(DSLContext dsl) {
+    PreparedLeaseBoundFirstBinding prepared = prepareLeaseBoundFirstBindingDecision(dsl);
+    prepared.repository().markProvisional(prepared.evidence(), prepared.decision());
+    return new LeaseBoundFirstBinding(
+        prepared.repository(),
+        prepared.leaseEvidence(),
+        prepared.repository().readProvisionalCasEvidence(TRANSITION_ID));
+  }
+
+  private static PreparedLeaseBoundFirstBinding prepareLeaseBoundFirstBindingDecision(
+      DSLContext dsl) {
     var runtimeTarget =
         CanonicalGameplayBindingRuntimeTestFixtures.seedRunningLaunch(
             dsl, TENANT_ID, 1L, RUNTIME_GAME_INSTANCE_ID, INSTANCE_ID, NAMESPACE_ID);
@@ -373,9 +562,8 @@ class CanonicalGameplayBindingInventoryRepositoryIntegrationTest {
             preparedEvidence.transition().bindingGeneration(),
             null,
             target);
-    repository.markProvisional(preparedEvidence, decision);
-    return new LeaseBoundFirstBinding(
-        repository, leaseEvidence, repository.readProvisionalCasEvidence(TRANSITION_ID));
+    return new PreparedLeaseBoundFirstBinding(
+        repository, leaseEvidence, preparedEvidence, decision, runtimeTarget);
   }
 
   private static AccountGameplayAdmissionLeaseEvidence leaseEvidence(
@@ -388,6 +576,7 @@ class CanonicalGameplayBindingInventoryRepositoryIntegrationTest {
     carrier.put("schema", AccountGameplayAdmissionLeaseEvidence.SCHEMA);
     carrier.put("schemaVersion", "1");
     carrier.put("mode", "PUBLIC_PRODUCTION");
+    carrier.put("leaseKind", AccountGameplayAdmissionLeaseEvidence.LeaseKind.NEW_BINDING.name());
     carrier.put("targetNamespace", target.targetNamespace());
     carrier.put(
         "callerWorkload",
@@ -476,8 +665,12 @@ class CanonicalGameplayBindingInventoryRepositoryIntegrationTest {
   }
 
   private static TestSchema newTestSchema(String prefix) {
+    return newTestSchema(prefix, null);
+  }
+
+  private static TestSchema newTestSchema(String prefix, String applicationName) {
     String schema = prefix + UUID.randomUUID().toString().replace("-", "");
-    DriverManagerDataSource dataSource = dataSource(schema);
+    DriverManagerDataSource dataSource = dataSource(schema, applicationName);
     Flyway.configure()
         .dataSource(dataSource)
         .schemas(schema)
@@ -489,10 +682,52 @@ class CanonicalGameplayBindingInventoryRepositoryIntegrationTest {
     return new TestSchema(schema, dslForSchema(dataSource, schema));
   }
 
+  private static void awaitLatch(CountDownLatch latch) {
+    try {
+      if (!latch.await(10, TimeUnit.SECONDS)) {
+        throw new IllegalStateException("Timed out waiting for the lock-order test gate");
+      }
+    } catch (InterruptedException interrupted) {
+      Thread.currentThread().interrupt();
+      throw new IllegalStateException(
+          "Interrupted while waiting for the lock-order test gate", interrupted);
+    }
+  }
+
+  private static void awaitBindingLockWait(DSLContext observer, String applicationName)
+      throws InterruptedException {
+    long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+    while (System.nanoTime() < deadline) {
+      Boolean waiting =
+          Objects.requireNonNull(
+                  observer.fetchOne(
+                      "SELECT EXISTS (SELECT 1 FROM pg_stat_activity"
+                          + " WHERE pid <> pg_backend_pid() AND state = 'active'"
+                          + " AND application_name = ?"
+                          + " AND wait_event_type = 'Lock'"
+                          + " AND (query ILIKE '%game_instances%FOR UPDATE%'"
+                          + " OR query ILIKE '%UPDATE game_session_canonical_binding_transition%'))",
+                      applicationName))
+              .get(0, Boolean.class);
+      if (Boolean.TRUE.equals(waiting)) {
+        return;
+      }
+      Thread.sleep(10);
+    }
+    throw new AssertionError("Lease-bound decision did not wait on the held runtime row");
+  }
+
   private record LeaseBoundFirstBinding(
       CanonicalGameplayBindingInventoryRepository repository,
       AccountGameplayAdmissionLeaseEvidence leaseEvidence,
       CanonicalGameplayBindingProvisionalCasEvidence evidence) {}
+
+  private record PreparedLeaseBoundFirstBinding(
+      CanonicalGameplayBindingInventoryRepository repository,
+      AccountGameplayAdmissionLeaseEvidence leaseEvidence,
+      CanonicalGameplayBindingProvisionalCasEvidence evidence,
+      CanonicalGameplayAdmissionDecision decision,
+      CanonicalGameplayBindingRuntimeTestFixtures.RuntimeTarget runtimeTarget) {}
 
   private record TestSchema(String schema, DSLContext dsl) {}
 
@@ -661,13 +896,19 @@ class CanonicalGameplayBindingInventoryRepositoryIntegrationTest {
   }
 
   private static DriverManagerDataSource dataSource(String schema) {
+    return dataSource(schema, null);
+  }
+
+  private static DriverManagerDataSource dataSource(String schema, String applicationName) {
     DriverManagerDataSource dataSource = new DriverManagerDataSource();
     dataSource.setDriverClassName("org.postgresql.Driver");
     // Testcontainers already appends loggerLevel=OFF to the JDBC URL, so add currentSchema with
     // '&' to keep both parameters and bind later repository connections to Flyway's schema.
     String jdbcUrl = postgres.getJdbcUrl();
     String separator = jdbcUrl.contains("?") ? "&" : "?";
-    dataSource.setUrl(jdbcUrl + separator + "currentSchema=" + schema);
+    String applicationNameParameter =
+        applicationName == null ? "" : "&ApplicationName=" + applicationName;
+    dataSource.setUrl(jdbcUrl + separator + "currentSchema=" + schema + applicationNameParameter);
     dataSource.setUsername(postgres.getUsername());
     dataSource.setPassword(postgres.getPassword());
     return dataSource;

@@ -38,6 +38,8 @@ class GameDesignGrpcServiceHelpTopicTest {
           Mockito.mock(RevisionService.class),
           Mockito.mock(VersionService.class),
           Mockito.mock(LaunchDescriptorService.class),
+          Mockito.mock(
+              net.firedevops.firemud.gamedesign.service.CompleteLaunchBindingService.class),
           Mockito.mock(TemplateRemapSetService.class),
           Mockito.mock(VersionAssetArtifactService.class),
           Mockito.mock(SettingsAuthorityService.class),
