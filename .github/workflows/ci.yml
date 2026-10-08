@@ -3459,6 +3459,36 @@ jobs:
             --require-case 'integration.net.firedevops.firemud.accountservice.creatorparty.IndividualCreatorPartyPostgresIntegrationTest#databaseRejectsSourceAndReceiptRewritesAndOrphanInitialHistory()' \
             account-service
 
+      # Run after creator-party XML is captured: integrationTest replaces reports.
+      - name: Run Account hosted-terms PostgreSQL proof cases
+        if: ${{ matrix.module == 'account-service' }}
+        run: |
+          ./gradlew :account-service:integrationTest \
+            --tests integration.net.firedevops.firemud.accountservice.hostedterms.AccountHostedTermsPostgresIntegrationTest \
+            -PfullCheck --no-build-cache --no-configuration-cache
+
+      - name: Capture Account hosted-terms PostgreSQL raw XML
+        if: ${{ always() && matrix.module == 'account-service' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: account-hosted-terms-postgresql-proof-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: services/account-service/build/test-results/integrationTest/TEST-*AccountHostedTermsPostgresIntegrationTest.xml
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Verify Account hosted-terms PostgreSQL proof cases
+        if: ${{ !cancelled() && matrix.module == 'account-service' }}
+        run: |
+          bash dev-tools/validation/inspect-test-results.sh \
+            --strict \
+            --require-suite integration.net.firedevops.firemud.accountservice.hostedterms.AccountHostedTermsPostgresIntegrationTest \
+            --require-case 'integration.net.firedevops.firemud.accountservice.hostedterms.AccountHostedTermsPostgresIntegrationTest#migrationRetainsExistingPartyAndBackfillsNoCatalogOrAcceptance()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.hostedterms.AccountHostedTermsPostgresIntegrationTest#realServicePublishesAffirmativelyAcceptsReadsBackAndAdvancesMateriality()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.hostedterms.AccountHostedTermsPostgresIntegrationTest#acceptanceRejectsWrongSignerNegativeActionChangedShownTermsAndUnavailableIdentity()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.hostedterms.AccountHostedTermsPostgresIntegrationTest#futureTermsCarryDeadlineWithoutFreezingPriorTermsEarly()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.hostedterms.AccountHostedTermsPostgresIntegrationTest#ownerTransactionRollbackRemovesUncommittedCatalogAndPublicationIntent()' \
+            account-service
+
       - name: Verify Game Session LOGIN fixture isolation proof
         if: ${{ !cancelled() && matrix.module == 'game-session-service' }}
         run: |

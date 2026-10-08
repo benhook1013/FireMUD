@@ -1191,6 +1191,7 @@ class DraftAuthorizationFencePostgresIntegrationTest {
         .defaultSchema(schema)
         .placeholders(Map.of("serviceSchema", schema))
         .locations("classpath:db/migration")
+        .target("81")
         .load()
         .migrate();
     assertThat(
