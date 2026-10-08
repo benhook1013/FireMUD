@@ -1,0 +1,75 @@
+syntax = "proto3";
+
+package account.v1;
+
+import "google/protobuf/timestamp.proto";
+
+option java_package = "net.firedevops.firemud.account.v1";
+option java_multiple_files = true;
+
+// Read-only Account evidence for non-admitting, public-production actor staging.
+service AccountActorStagingEligibilityService {
+  rpc ResolvePreseededActorStagingEligibility(
+      ResolvePreseededActorStagingEligibilityRequest)
+      returns (ResolvePreseededActorStagingEligibilityResponse);
+}
+
+enum ActorStagingEligibilityPurpose {
+  ACTOR_STAGING_ELIGIBILITY_PURPOSE_UNSPECIFIED = 0;
+  PUBLIC_PRODUCTION_STAGING_ONLY = 1;
+}
+
+enum ActorStagingEligibilityDecision {
+  ACTOR_STAGING_ELIGIBILITY_DECISION_UNSPECIFIED = 0;
+  STAGING_ELIGIBLE = 1;
+  STAGING_INELIGIBLE = 2;
+}
+
+enum ActorStagingEligibilityCurrentness {
+  ACTOR_STAGING_ELIGIBILITY_CURRENTNESS_UNSPECIFIED = 0;
+  CURRENT_AT_REVALIDATION = 1;
+}
+
+message ResolvePreseededActorStagingEligibilityRequest {
+  int32 schema_version = 1;
+  string target_namespace = 2;
+  string request_id = 3;
+  string canonical_account_id = 4;
+  string canonical_tenant_id = 5;
+  ActorStagingEligibilityPurpose purpose = 6;
+}
+
+// This response is a current Account and membership snapshot only. It does not assert that a
+// realm is public, that its entry policy is PRESEEDED_ONLY, or that gameplay admission is allowed.
+message ResolvePreseededActorStagingEligibilityResponse {
+  int32 schema_version = 1;
+  string target_namespace = 2;
+  string request_id = 3;
+  string canonical_account_id = 4;
+  string canonical_tenant_id = 5;
+  ActorStagingEligibilityPurpose purpose = 6;
+  ActorStagingEligibilityCurrentness currentness = 7;
+  google.protobuf.Timestamp observed_at = 8;
+  ActorStagingEligibilityDecision decision = 9;
+
+  string account_uuid_provenance = 10;
+  string account_lifecycle_state = 11;
+
+  string membership_lifecycle_state = 12;
+  bool gameplay_admission_allowed = 13;
+  string membership_authority_provenance = 14;
+  int64 membership_version = 15;
+  int64 membership_authority_generation = 16;
+  string tenant_provenance_kind = 17;
+  string tenant_source_operation_id = 18;
+  string tenant_provenance_digest = 19;
+
+  int64 membership_event_sequence = 20;
+  string membership_event_id = 21;
+  string membership_event_digest = 22;
+  bool last_transition_invalidated = 23;
+
+  // Bare lowercase SHA-256 hex values, domain-separated by digest purpose.
+  string eligibility_decision_digest = 24;
+  string authority_snapshot_digest = 25;
+}

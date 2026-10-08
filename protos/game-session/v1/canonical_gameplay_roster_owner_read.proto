@@ -1,0 +1,83 @@
+syntax = "proto3";
+
+package game_session.v1;
+
+option java_multiple_files = true;
+option java_package = "net.firedevops.firemud.gamesession.v1";
+option java_outer_classname = "CanonicalGameplayRosterOwnerReadProto";
+
+// Entity-only source read for a fresh public-production SHARED route and its complete sealed
+// PRESEEDED_ONLY Game Design policy set. This read is not Account membership, PLAY admission, or
+// actor-entry authorization.
+service CanonicalGameplayRosterOwnerReadService {
+  rpc GetCanonicalGameplayRosterOwnerRead(
+      GetCanonicalGameplayRosterOwnerReadRequest)
+      returns (GetCanonicalGameplayRosterOwnerReadResponse);
+  rpc GetPreseededActorAssignmentOwnerRead(
+      GetPreseededActorAssignmentOwnerReadRequest)
+      returns (GetPreseededActorAssignmentOwnerReadResponse);
+}
+
+// All UUID selectors are canonical non-nil UUID strings. Counters are positive signed int64s;
+// callers must send the exact current values they observed and may not infer a version from them.
+message GetCanonicalGameplayRosterOwnerReadRequest {
+  uint32 schema_version = 1;
+  string request_uuid = 2;
+  // Echo/binding only. Account remains the authority for membership and entitlements.
+  string canonical_account_uuid = 3;
+  string target_namespace = 4;
+  string canonical_tenant_uuid = 5;
+  string world_slug = 6;
+  string realm_uuid = 7;
+  string realm_slug = 8;
+  string playable_state_namespace_uuid = 9;
+  string playable_state_scope = 10;
+  string canonical_game_instance_uuid = 11;
+  string canonical_version_uuid = 12;
+  int64 expected_catalog_revision = 13;
+  int64 expected_pointer_version = 14;
+  int64 expected_active_world_epoch = 15;
+}
+
+// Successful responses echo the entire request and carry the complete canonical bytes of the
+// existing Game Session World-hold-bound COMMITTED proof and Game Design sealed policy set, plus
+// the Game Session-owned current-pointer snapshot digest.
+message GetCanonicalGameplayRosterOwnerReadResponse {
+  GetCanonicalGameplayRosterOwnerReadRequest request = 1;
+  bytes game_session_owner_proof = 2;
+  bytes published_policy_set_evidence = 3;
+  // Raw lowercase SHA-256 of the GS-owned canonical current-pointer projection, not the commit proof digest.
+  string admission_pointer_snapshot_digest = 4;
+}
+
+// Assignment staging selects a canonical tenant and exact immutable target selectors. Game
+// Session derives current pointer and World epoch counters from its owner rows; callers do not send
+// guessed or stale counters. This source read is not Account membership, JOIN, PLAY, or admission.
+message GetPreseededActorAssignmentOwnerReadRequest {
+  uint32 schema_version = 1;
+  string assignment_uuid = 2;
+  // Echo/binding only. Account remains the authority for staging eligibility.
+  string canonical_account_uuid = 3;
+  string target_namespace = 4;
+  string canonical_tenant_uuid = 5;
+  string world_slug = 6;
+  string realm_uuid = 7;
+  string realm_slug = 8;
+  string playable_state_namespace_uuid = 9;
+  string playable_state_scope = 10;
+  string canonical_game_instance_uuid = 11;
+  string canonical_version_uuid = 12;
+  int64 expected_catalog_revision = 13;
+  string expected_policy_digest = 14;
+  string expected_published_release_bundle_ref = 15;
+}
+
+// Successful responses echo the selector request and carry the complete canonical bytes of the
+// existing Game Session World-hold-bound COMMITTED proof and Game Design sealed policy set, plus
+// the Game Session-owned current-pointer snapshot digest.
+message GetPreseededActorAssignmentOwnerReadResponse {
+  GetPreseededActorAssignmentOwnerReadRequest request = 1;
+  bytes game_session_owner_proof = 2;
+  bytes published_policy_set_evidence = 3;
+  string admission_pointer_snapshot_digest = 4;
+}
