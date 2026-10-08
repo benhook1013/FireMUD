@@ -8,6 +8,7 @@ import net.firedevops.firemud.common.persistence.jooq.JooqPersistenceSupport;
 import net.firedevops.firemud.gamedesign.entity.PublishAttempt;
 import net.firedevops.firemud.gamedesign.model.PublishAttemptStatus;
 import net.firedevops.firemud.gamedesign.model.PublishType;
+import net.firedevops.firemud.gamedesign.publication.GameDesignPublicationOperation;
 import net.firedevops.firemud.gamedesign.publication.GameDesignPublicationOperationRepository;
 import net.firedevops.firemud.gamedesign.publication.RealmPolicyPublicationRepository;
 import org.jooq.Condition;
@@ -128,17 +129,31 @@ public class PublishAttemptRepository {
     requireTerminalOperation(attempt, "PUBLISHED");
   }
 
+  public void requireNoPublicationOperation(PublishAttempt attempt) {
+    requireTerminalOperation(attempt, "NO_PUBLICATION");
+  }
+
   private void requireTerminalOperation(PublishAttempt attempt, String outcome) {
-    var result =
-        new GameDesignPublicationOperationRepository(dsl)
-            .read(attempt.getPublishWorkflowId())
-            .orElseThrow(() -> new IllegalStateException("PUBLICATION_OPERATION_UNAVAILABLE"));
-    if (!outcome.equals(result.outcome())
-        || !result.operation().selectionDigest().equals(attempt.getRequestDigest())
-        || result.operation().versionId() != attempt.getVersionId()
-        || !result.operation().tenantKey().equals(attempt.getTenantId())) {
-      throw new IllegalStateException("PUBLICATION_OPERATION_SEALED_OR_CHANGED");
+    requireSelectedPublicationReadback(attempt, outcome);
+  }
+
+  /** Read-only exact operation/selection proof for callers outside the final owner transaction. */
+  public GameDesignPublicationOperation requireSelectedPublicationReadback(
+      PublishAttempt attempt, String outcome) {
+    if (attempt == null
+        || attempt.getTenantId() == null
+        || attempt.getPublishWorkflowId() == null
+        || attempt.getVersionId() == null
+        || attempt.getRequestDigest() == null) {
+      throw new IllegalStateException("PUBLICATION_OPERATION_UNAVAILABLE");
     }
+    return new GameDesignPublicationOperationRepository(dsl)
+        .requireOutcome(
+            attempt.getTenantId(),
+            attempt.getPublishWorkflowId(),
+            attempt.getVersionId(),
+            attempt.getRequestDigest(),
+            outcome);
   }
 
   /**

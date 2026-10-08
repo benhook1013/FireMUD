@@ -40,6 +40,8 @@ import org.springframework.stereotype.Service;
     value = "EI_EXPOSE_REP2",
     justification = "Injected collaborators remain internal service dependencies")
 public class VersionPublishCommandServiceImpl {
+  private static final java.util.regex.Pattern SELECTION_DIGEST =
+      java.util.regex.Pattern.compile("sha256:[0-9a-f]{64}");
   private static final Logger logger =
       LoggingUtil.getLogger(VersionPublishCommandServiceImpl.class);
 
@@ -218,6 +220,59 @@ public class VersionPublishCommandServiceImpl {
     }
   }
 
+  /**
+   * Reconciles an already-reserved publication of one existing synchronized Draft. This backend
+   * entry does not allocate a Version or authenticate the retained Account/World evidence; it
+   * requires the exact durable selection and operation, and remains unregistered from creator RPC
+   * or Temporal ingress until their authenticated producers are connected.
+   */
+  public PublishWorkflowSnapshot reconcileSelectedDraftFullVersionPublish(
+      String tenantId,
+      long selectedVersionId,
+      String notes,
+      String publishRequestId,
+      String publishWorkflowId) {
+    PublishWorkflowRequest request =
+        new PublishWorkflowRequest(tenantId, notes, publishRequestId, publishWorkflowId);
+    request = request.recoverMissingPublishRequestId();
+    validateRequestIdentity(request);
+    PublishAttempt attempt =
+        publishAttemptRepository
+            .findByPublishWorkflowId(publishWorkflowId)
+            .orElseThrow(
+                () -> pendingReconciliation("selected Draft publication attempt is unavailable"));
+    if (!Objects.equals(attempt.getTenantId(), tenantId)
+        || !Objects.equals(attempt.getVersionId(), selectedVersionId)
+        || !isSelectionDigest(attempt.getRequestDigest())) {
+      throw pendingReconciliation("selected Draft publication identity is unavailable or changed");
+    }
+    try {
+      requireExactSelectedPublication(attempt, request);
+    } catch (PendingReconciliationException unresolved) {
+      throw unresolved;
+    } catch (RuntimeException unresolved) {
+      throw pendingReconciliation(
+          "selected Draft publication requires exact operation reconciliation", unresolved);
+    }
+    return reconcileFullVersionPublish(request);
+  }
+
+  /** User-facing semantics for the unregistered selected-Draft backend path. */
+  public VersionDto publishSelectedDraftFullVersion(
+      String tenantId,
+      long selectedVersionId,
+      String notes,
+      String publishRequestId,
+      String publishWorkflowId) {
+    PublishWorkflowSnapshot snapshot =
+        reconcileSelectedDraftFullVersionPublish(
+            tenantId, selectedVersionId, notes, publishRequestId, publishWorkflowId);
+    if (!snapshot.isSucceeded()) {
+      throw publishFailure(snapshot.failureCode(), snapshot.failureMessage());
+    }
+    return versionMapper.toDto(requireTenantVersion(tenantId, snapshot.versionId()));
+  }
+
   private PublishAttempt reserveDraftAttempt(PublishWorkflowRequest request) {
     try {
       return publishAttemptService.executeFullVersionTransaction(() -> createDraftAttempt(request));
@@ -347,6 +402,7 @@ public class VersionPublishCommandServiceImpl {
     recordedParticipantDigestService.recordVerifiedDigests(
         dto.tenantId(), PublishType.FULL_VERSION, request.publishWorkflowId(), participantDigests);
     publishAttemptService.markFullVersionSucceeded(request.publishWorkflowId());
+    publishAttemptRepository.sealPublication(attempt, true);
     return succeededSnapshot(attempt);
   }
 
@@ -417,6 +473,9 @@ public class VersionPublishCommandServiceImpl {
                 currentReadback.bundle().participantDigests());
             if (current.getStatus() == PublishAttemptStatus.PENDING) {
               publishAttemptService.markFullVersionSucceeded(request.publishWorkflowId());
+              if (isSelectionDigest(current.getRequestDigest())) {
+                publishAttemptRepository.sealPublication(current, true);
+              }
             }
             return null;
           });
@@ -491,6 +550,9 @@ public class VersionPublishCommandServiceImpl {
             }
             publishAttemptService.markFullVersionFailed(
                 request.publishWorkflowId(), failureCode, failureMessage);
+            if (isSelectionDigest(current.getRequestDigest())) {
+              publishAttemptRepository.sealPublication(current, false);
+            }
             // Approved launch remap sets may reference this failed candidate, so retain the row.
             return Boolean.TRUE;
           });
@@ -578,6 +640,10 @@ public class VersionPublishCommandServiceImpl {
 
   private void validateFullVersionAttempt(PublishAttempt attempt, PublishWorkflowRequest request) {
     validateFullVersionAttemptIdentity(attempt, request);
+    if (isSelectionDigest(attempt.getRequestDigest())) {
+      requireExactSelectedPublication(attempt, request);
+      return;
+    }
     PublicationDigestRequestBinding binding =
         PublicationDigestRequestBinding.full(
             request.tenantId(), String.valueOf(attempt.getVersionId()), request.publishRequestId());
@@ -595,6 +661,10 @@ public class VersionPublishCommandServiceImpl {
   private void validateTerminalFullVersionAttempt(
       PublishAttempt attempt, PublishWorkflowRequest request) {
     validateFullVersionAttemptIdentity(attempt, request);
+    if (isSelectionDigest(attempt.getRequestDigest())) {
+      requireExactSelectedPublication(attempt, request);
+      return;
+    }
     if (attempt.getRequestDigest() == null) {
       // Legacy terminal attempts predate the digest column. Their canonical workflow identity,
       // persisted full-version scope, and exact release-bundle identity are the replay binding.
@@ -607,6 +677,38 @@ public class VersionPublishCommandServiceImpl {
       throw new IllegalStateException(
           "PUBLISH_ATTEMPT_IDENTITY_CONFLICT: full-version request digest does not match request");
     }
+  }
+
+  private void requireExactSelectedPublication(
+      PublishAttempt attempt, PublishWorkflowRequest request) {
+    try {
+      String expectedOutcome =
+          switch (attempt.getStatus()) {
+            case PENDING -> "PENDING";
+            case SUCCEEDED -> "PUBLISHED";
+            case FAILED -> "NO_PUBLICATION";
+          };
+      var operation =
+          publishAttemptRepository.requireSelectedPublicationReadback(attempt, expectedOutcome);
+      var selection = operation.account().input().selection();
+      var intent = selection.intent();
+      if (!Objects.equals(operation.tenantKey(), request.tenantId())
+          || operation.versionId() != attempt.getVersionId()
+          || !Objects.equals(operation.workflowId(), request.publishWorkflowId())
+          || !Objects.equals(intent.publishRequestId(), request.publishRequestId())
+          || !Objects.equals(intent.notes(), request.notes())) {
+        throw new IllegalStateException("SELECTED_PUBLICATION_REQUEST_IDENTITY_CHANGED");
+      }
+    } catch (PendingReconciliationException unresolved) {
+      throw unresolved;
+    } catch (RuntimeException unresolved) {
+      throw pendingReconciliation(
+          "selected Draft publication requires exact operation reconciliation", unresolved);
+    }
+  }
+
+  private static boolean isSelectionDigest(String digest) {
+    return digest != null && SELECTION_DIGEST.matcher(digest).matches();
   }
 
   private void validateFullVersionAttemptIdentity(

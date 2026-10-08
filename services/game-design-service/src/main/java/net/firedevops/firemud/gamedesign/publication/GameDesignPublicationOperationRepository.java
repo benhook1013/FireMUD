@@ -7,6 +7,8 @@ import java.util.Objects;
 import java.util.Optional;
 import net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding;
 import net.firedevops.firemud.common.gamedesign.GameDesignPublicationTerminalEvidence;
+import net.firedevops.firemud.gamedesign.draft.AuthoredDraftPublishSelectionRepository;
+import net.firedevops.firemud.gamedesign.draft.DraftCommitCoordinatorRepository;
 import org.jooq.DSLContext;
 import org.jooq.Record;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
@@ -66,6 +68,42 @@ public final class GameDesignPublicationOperationRepository {
         || !result.outcome().equals("PENDING")) {
       throw new IllegalStateException("PUBLICATION_OPERATION_SEALED_OR_CHANGED");
     }
+    requireExactSelection(operation);
+    return operation;
+  }
+
+  /** Exact durable selection readback; canonical bytes alone do not authenticate its producer. */
+  public void requireExactSelection(GameDesignPublicationOperation operation) {
+    Objects.requireNonNull(operation, "operation");
+    var selected = operation.account().input().selection();
+    var retained =
+        new AuthoredDraftPublishSelectionRepository(dsl, new DraftCommitCoordinatorRepository(dsl))
+            .read(
+                selected.intent().canonicalTenantId(),
+                selected.intent().canonicalVersionId(),
+                selected.intent().publishRequestId())
+            .orElseThrow(() -> new IllegalStateException("PUBLICATION_SELECTION_UNAVAILABLE"))
+            .selection();
+    if (!Arrays.equals(selected.canonicalBytes(), retained.canonicalBytes())
+        || !selected.digest().equals(retained.digest())) {
+      throw new IllegalStateException("PUBLICATION_SELECTION_CHANGED");
+    }
+  }
+
+  /** Requires one exact operation and selection with the requested owner terminal state. */
+  public GameDesignPublicationOperation requireOutcome(
+      String tenant, String workflow, long version, String digest, String outcome) {
+    var result =
+        read(workflow)
+            .orElseThrow(() -> new IllegalStateException("PUBLICATION_OPERATION_UNAVAILABLE"));
+    var operation = result.operation();
+    if (!operation.tenantKey().equals(tenant)
+        || operation.versionId() != version
+        || !operation.selectionDigest().equals(digest)
+        || !Objects.equals(result.outcome(), outcome)) {
+      throw new IllegalStateException("PUBLICATION_OPERATION_SEALED_OR_CHANGED");
+    }
+    requireExactSelection(operation);
     return operation;
   }
 

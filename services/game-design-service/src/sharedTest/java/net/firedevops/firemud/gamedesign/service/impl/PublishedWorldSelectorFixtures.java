@@ -232,6 +232,49 @@ public final class PublishedWorldSelectorFixtures {
                             "WORLD_DESIGN_AGGREGATE_TYPE_WORLD_ENTITY_SPAWN_BINDING",
                             "count",
                             0))));
+    var revisions = policyRevisions();
+    int worldRevisionOrder = revisions.size();
+    revisions.add(
+        new RevisionPayload(
+            Integer.toString(worldRevisionOrder++),
+            REGION_REVISION_ID,
+            DraftCommitBinding.Owner.WORLD_MANAGEMENT,
+            worldRevisionPayload(
+                REGION_REVISION_ID,
+                "WORLD_DESIGN_AGGREGATE_TYPE_REGION",
+                REGION_TEMPLATE_ID,
+                declaration)));
+    revisions.add(
+        new RevisionPayload(
+            Integer.toString(worldRevisionOrder++),
+            ZONE_REVISION_ID,
+            DraftCommitBinding.Owner.WORLD_MANAGEMENT,
+            worldRevisionPayload(
+                ZONE_REVISION_ID, "WORLD_DESIGN_AGGREGATE_TYPE_ZONE", ZONE_TEMPLATE_ID, null)));
+    revisions.add(
+        new RevisionPayload(
+            Integer.toString(worldRevisionOrder),
+            ROOM_REVISION_ID,
+            DraftCommitBinding.Owner.WORLD_MANAGEMENT,
+            worldRevisionPayload(
+                ROOM_REVISION_ID, "WORLD_DESIGN_AGGREGATE_TYPE_ROOM", ROOM_TEMPLATE_ID, null)));
+    var affectedUnits = new java.util.ArrayList<AffectedUnit>();
+    affectedUnits.add(
+        new AffectedUnit(
+            DraftCommitBinding.Owner.GAME_DESIGN_CONTROL_PLANE,
+            "REALM_ENTRY_POLICY_SET",
+            VERSION_ID.toString(),
+            "REALM_ENTRY_POLICY_SET",
+            "effective",
+            "0"));
+    affectedUnits.addAll(
+        List.of(
+                affected("REGION", REGION_TEMPLATE_ID, "REGION_SUBTREE", REGION_TEMPLATE_ID),
+                affected("ZONE", ZONE_TEMPLATE_ID, "REGION_SUBTREE", REGION_TEMPLATE_ID),
+                affected("ROOM", ROOM_TEMPLATE_ID, "ZONE_SUBTREE", ZONE_TEMPLATE_ID))
+            .stream()
+            .flatMap(List::stream)
+            .toList());
     return DraftCommitBinding.create(
         new TargetProof(
             TENANT_ID,
@@ -244,35 +287,46 @@ public final class PublishedWorldSelectorFixtures {
         REQUEST_ID,
         COMMIT_ID,
         "base-1",
-        List.of(
-            new RevisionPayload(
-                "0",
-                REGION_REVISION_ID,
-                DraftCommitBinding.Owner.WORLD_MANAGEMENT,
-                worldRevisionPayload(
-                    REGION_REVISION_ID,
-                    "WORLD_DESIGN_AGGREGATE_TYPE_REGION",
-                    REGION_TEMPLATE_ID,
-                    declaration)),
-            new RevisionPayload(
-                "1",
-                ZONE_REVISION_ID,
-                DraftCommitBinding.Owner.WORLD_MANAGEMENT,
-                worldRevisionPayload(
-                    ZONE_REVISION_ID, "WORLD_DESIGN_AGGREGATE_TYPE_ZONE", ZONE_TEMPLATE_ID, null)),
-            new RevisionPayload(
-                "2",
-                ROOM_REVISION_ID,
-                DraftCommitBinding.Owner.WORLD_MANAGEMENT,
-                worldRevisionPayload(
-                    ROOM_REVISION_ID, "WORLD_DESIGN_AGGREGATE_TYPE_ROOM", ROOM_TEMPLATE_ID, null))),
-        List.of(
-                affected("REGION", REGION_TEMPLATE_ID, "REGION_SUBTREE", REGION_TEMPLATE_ID),
-                affected("ZONE", ZONE_TEMPLATE_ID, "REGION_SUBTREE", REGION_TEMPLATE_ID),
-                affected("ROOM", ROOM_TEMPLATE_ID, "ZONE_SUBTREE", ZONE_TEMPLATE_ID))
-            .stream()
-            .flatMap(List::stream)
-            .toList());
+        revisions,
+        affectedUnits);
+  }
+
+  private List<RevisionPayload> policyRevisions() throws Exception {
+    var revisions = new java.util.ArrayList<RevisionPayload>();
+    UUID revisionId = UUID.randomUUID();
+    var policy =
+        Map.of(
+            "schemaVersion",
+            1,
+            "worldSlug",
+            "starter-world",
+            "worldDisplayName",
+            "Starter World",
+            "realmSlug",
+            "realm-001",
+            "realmDisplayName",
+            "Realm 1",
+            "visible",
+            true,
+            "publicProduction",
+            true,
+            "stateScope",
+            "SHARED",
+            "entryPolicy",
+            "PRESEEDED_ONLY");
+    String payload =
+        JSON.writeValueAsString(
+            Map.of(
+                "revisionKind",
+                "REALM_ENTRY_POLICY",
+                "logicalRevisionId",
+                revisionId.toString(),
+                "policy",
+                policy));
+    revisions.add(
+        new RevisionPayload(
+            "0", revisionId, DraftCommitBinding.Owner.GAME_DESIGN_CONTROL_PLANE, payload));
+    return revisions;
   }
 
   private String worldRevisionPayload(

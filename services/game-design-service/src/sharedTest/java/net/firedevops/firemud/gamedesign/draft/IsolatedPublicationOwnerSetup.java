@@ -14,7 +14,9 @@ import net.firedevops.firemud.gamedesign.model.VersionAssetArtifactState;
 import net.firedevops.firemud.gamedesign.model.VersionLifecycleState;
 import net.firedevops.firemud.gamedesign.publication.GameDesignPublicationOperation;
 import net.firedevops.firemud.gamedesign.publication.GameDesignPublicationOperationRepository;
+import net.firedevops.firemud.gamedesign.publication.GameDesignSourceRepository;
 import net.firedevops.firemud.gamedesign.publication.IsolatedPublicationOperationFixtures;
+import net.firedevops.firemud.gamedesign.publication.SelectedDraftPublicationOwner;
 import net.firedevops.firemud.gamedesign.repository.PublishAttemptRepository;
 import net.firedevops.firemud.gamedesign.repository.VersionAssetArtifactRepository;
 import net.firedevops.firemud.gamedesign.repository.VersionAssetPublicationRepository;
@@ -57,7 +59,61 @@ public final class IsolatedPublicationOwnerSetup {
     return retain(dsl, target, draftEpoch, "ISOLATED remote owner transaction proof", true);
   }
 
+  public static GameDesignPublicationOperation retainSourceBacked(
+      DSLContext dsl, DraftCommitBinding.TargetProof target, long draftEpoch, String notes)
+      throws Exception {
+    return retain(dsl, target, draftEpoch, notes, true);
+  }
+
+  /** Creates actual synchronized source rows and selection, without any publication operation. */
+  public static AuthoredDraftPublishSelectionRepository.SelectionSnapshot selectSourceBackedDraft(
+      DSLContext dsl, DraftCommitBinding.TargetProof target, long draftEpoch, String notes)
+      throws Exception {
+    return prepareSelection(dsl, target, draftEpoch, notes, true).selection();
+  }
+
   private static GameDesignPublicationOperation retain(
+      DSLContext dsl,
+      DraftCommitBinding.TargetProof target,
+      long draftEpoch,
+      String notes,
+      boolean captureSources)
+      throws Exception {
+    PreparedSelection prepared = prepareSelection(dsl, target, draftEpoch, notes, captureSources);
+    var selection = prepared.selection().selection();
+    var intent = selection.intent();
+    var operation =
+        IsolatedPublicationOperationFixtures.forSelection(
+            AuthoredDraftPublishSelectionBinding.fromStored(
+                selection.canonicalJson(), selection.digest()),
+            prepared.world());
+    if (captureSources) {
+      operation =
+          new SelectedDraftPublicationOwner(dsl)
+              .reserve(intent, operation.account(), operation.world())
+              .operation();
+    } else {
+      var attempt = new PublishAttempt();
+      attempt.setTenantId(target.gameDesignVersionTenantKey());
+      attempt.setPublishWorkflowId(operation.workflowId());
+      attempt.setPublishType(PublishType.FULL_VERSION);
+      attempt.setVersionId(target.gameDesignVersionRowId());
+      var versionRow =
+          dsl.fetchOne(
+              "SELECT version_number FROM version WHERE id = ?", target.gameDesignVersionRowId());
+      if (versionRow == null) {
+        throw new IllegalStateException("Selected authored Version row is absent");
+      }
+      attempt.setVersionNumber(versionRow.get(0, Integer.class));
+      attempt.setRequestDigest(selection.digest());
+      new PublishAttemptRepository(dsl).save(attempt);
+      var publications = new GameDesignPublicationOperationRepository(dsl);
+      publications.reserve(operation);
+    }
+    return operation;
+  }
+
+  private static PreparedSelection prepareSelection(
       DSLContext dsl,
       DraftCommitBinding.TargetProof target,
       long draftEpoch,
@@ -71,6 +127,11 @@ public final class IsolatedPublicationOwnerSetup {
     // GD Draft-authorization operation or live Account authority issued by this helper.
     coordinator.claim(draft);
     coordinator.claimApplicationSlot(draft);
+    var ownerOutcomes = new java.util.ArrayList<DraftCommitCoordinatorRepository.OwnerOutcome>();
+    if (captureSources) {
+      coordinator.markOwnerInProgress(draft, DraftCommitBinding.Owner.GAME_DESIGN_CONTROL_PLANE);
+      ownerOutcomes.add(new GameDesignSourceRepository(dsl).apply(draft).ownerOutcome());
+    }
     var epochs =
         draft.affectedUnits().stream()
             .map(
@@ -94,53 +155,31 @@ public final class IsolatedPublicationOwnerSetup {
             epochs);
     coordinator.markOwnerInProgress(draft, DraftCommitBinding.Owner.WORLD_MANAGEMENT);
     coordinator.recordOwnerOutcome(draft, outcome);
-    var proof = new DraftCommitCoordinatorRepository.CoordinatorProof(draft, List.of(outcome));
+    ownerOutcomes.add(outcome);
+    var proof = new DraftCommitCoordinatorRepository.CoordinatorProof(draft, ownerOutcomes);
     if (captureSources) {
       coordinator.advanceSourceVisibilityFence(draft, proof);
     } else {
       coordinator.advanceVisibilityFence(draft, proof);
     }
     coordinator.releaseApplicationSlot(draft);
-    var selection =
-        new AuthoredDraftPublishSelectionRepository(dsl, coordinator)
-            .reserve(
-                new AuthoredDraftPublishSelection.PublishIntent(
-                    target.canonicalTenantId(),
-                    target.canonicalVersionId(),
-                    java.util.UUID.randomUUID().toString(),
-                    Long.toString(draftEpoch),
-                    notes,
-                    draft.requestId(),
-                    draft.commitId(),
-                    draft.digest()))
-            .selection();
-    var operation =
-        IsolatedPublicationOperationFixtures.forSelection(
-            AuthoredDraftPublishSelectionBinding.fromStored(
-                selection.canonicalJson(), selection.digest()),
-            seed.world());
-    var attempt = new PublishAttempt();
-    attempt.setTenantId(target.gameDesignVersionTenantKey());
-    attempt.setPublishWorkflowId(operation.workflowId());
-    attempt.setPublishType(PublishType.FULL_VERSION);
-    attempt.setVersionId(target.gameDesignVersionRowId());
-    var versionRow =
-        dsl.fetchOne(
-            "SELECT version_number FROM version WHERE id = ?", target.gameDesignVersionRowId());
-    if (versionRow == null) {
-      throw new IllegalStateException("Selected authored Version row is absent");
-    }
-    attempt.setVersionNumber(versionRow.get(0, Integer.class));
-    attempt.setRequestDigest(selection.digest());
-    new PublishAttemptRepository(dsl).save(attempt);
-    var publications = new GameDesignPublicationOperationRepository(dsl);
-    if (captureSources) {
-      publications.reserveSourceBacked(operation);
-    } else {
-      publications.reserve(operation);
-    }
-    return operation;
+    var intent =
+        new AuthoredDraftPublishSelection.PublishIntent(
+            target.canonicalTenantId(),
+            target.canonicalVersionId(),
+            java.util.UUID.randomUUID().toString(),
+            Long.toString(draftEpoch),
+            notes,
+            draft.requestId(),
+            draft.commitId(),
+            draft.digest());
+    var selection = new AuthoredDraftPublishSelectionRepository(dsl, coordinator).reserve(intent);
+    return new PreparedSelection(selection, seed.world());
   }
+
+  private record PreparedSelection(
+      AuthoredDraftPublishSelectionRepository.SelectionSnapshot selection,
+      net.firedevops.firemud.common.world.WorldPublishedStartLocationEvidence world) {}
 
   /** Storage fixture commit only; does not substitute for actual command finalization proof. */
   public static PublishedReleaseBundle commitStorage(
