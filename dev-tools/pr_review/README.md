@@ -12,7 +12,16 @@ The output identifies the SQLite schema and writer build. The live shared cutove
 
 ### Configured review stack
 
-Use `dev-tools/pr-review stack set <ordered PR numbers...>` to add or reorder configured PRs. The CLI checks the requested numbers, removal options, and current membership from local state before constructing the live controller or looking up repository metadata. After live identity validation, it checks the exact stack read during that local preflight again inside the state update and refuses a stale update, so a concurrent stack change must be read and retried.
+Use `dev-tools/pr-review stack add <PR> [--before <anchor>|--after <anchor>]` to add one PR without rewriting the full queue; omitting an anchor adds it at the end. Use `dev-tools/pr-review stack move <PR> (--before <anchor>|--after <anchor>|--first|--last)` to move one existing PR. Each operation preserves every other entry and all non-order state in one atomic update. Adding validates only the new PR's same-repository head; moving is a local state operation. Duplicate additions, missing PRs or anchors, and self-anchors are refused. Repeating a move that is already satisfied succeeds without changing the order. Text output is concise; `--json` returns the full resulting stack. Examples:
+
+```sh
+dev-tools/pr-review stack add 3092
+dev-tools/pr-review stack add 3092 --before 3088 --json
+dev-tools/pr-review stack move 3092 --after 3088
+dev-tools/pr-review stack move 3092 --first --json
+```
+
+Use `dev-tools/pr-review stack set <ordered PR numbers...>` for a complete queue replacement or multi-PR reorder. The CLI checks the requested numbers, removal options, and current membership from local state before constructing the live controller or looking up repository metadata. After live identity validation, it checks the exact stack read during that local preflight again inside the state update and refuses a stale update, so a concurrent stack change must be read and retried.
 
 Removing a configured PR requires explicit user authorization and `--allow-removal --reason "<nonblank reason>"`, for example `dev-tools/pr-review stack set --allow-removal --reason "Owner-approved queue retirement" 123 456`. Merging or closing a PR does not authorize removal, and the flag does not grant a worker authority. The reason is required for the command but is not persisted in controller state.
 
@@ -122,6 +131,8 @@ A completed discovery taper and its required minimum can release the channel's n
 ## Read-only status diagnostics
 
 `status --pr <number>` compares published PR identity (head, base branch name and retained GitHub `baseRefOid`) across its reads. Controller rows expose that retained base identity as `pr_base_oid`; `parent_head` separately identifies the current effective parent tip. A retained base differing from that tip can still require `PARENT_MOVED` reconciliation, but does not by itself mean the PR changed between status snapshots. Actual identity or remote-branch changes remain uncertain, and review request preflight and reconciliation requirements are unchanged.
+
+Use `status --pr <number> --summary --json` for a selected-PR projection containing its identity, merge and CI readiness, pending and failed check names, unresolved-thread counts, actual hold reasons, incoming routes, review-channel rules and progress, current review fronts, and selected-PR obligations. It omits ancestor rows and detailed check inventories; the normal JSON shape remains unchanged without `--summary`. The projection runs the same evidence and ancestry checks as normal selected-PR status, so it reduces output but does not claim a faster read or change admission rules. `--summary` requires `--pr` and cannot be combined with `--full-scan`.
 
 Standalone `status --pr <number>` shares one 120-second monotonic GitHub read budget across controller construction, selected-PR evidence, stack evidence, and final report preparation, including `--full-scan`. Subprocess reads use the remaining budget rather than restarting it for each call; expiry reports a `PR status deadline exceeded` diagnostic with phase and progress instead of publishing an incomplete report. This bounds failure when supported reads stall; it does not eliminate upstream latency or interrupt uninterruptible filesystem or kernel operations.
 

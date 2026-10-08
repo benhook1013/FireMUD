@@ -12,6 +12,7 @@ sys.path.insert(0, str(Path(__file__).parents[1]))
 
 from pr_review import github
 from pr_review import state as state_module
+from pr_review.controller import ControllerError, LivePullRequest, ReviewController
 from pr_review.policy import (
     Channel,
     Evidence,
@@ -52,6 +53,140 @@ def _append_pr(path: str, pr: int) -> None:
 def _append_prs(path: str, prs: tuple[int, ...]) -> None:
     for pr in prs:
         _append_pr(path, pr)
+
+
+class StackMutationGitHub:
+    def __init__(self, *, repository="owner/repo", on_pull=None):
+        self.repository = repository
+        self.on_pull = on_pull
+        self.calls = []
+
+    def pull_request(self, number):
+        self.calls.append(number)
+        if self.on_pull is not None:
+            self.on_pull()
+        return LivePullRequest(
+            number=number,
+            head="a" * 40,
+            base_ref="develop",
+            base_tip="b" * 40,
+            head_repository=self.repository,
+        )
+
+
+class StackMutationTests(unittest.TestCase):
+    def make_store(self, directory, ordered_prs=(100, 200, 300)):
+        path = Path(directory) / "stack.json"
+        store = StateStore(path)
+        override = PolicyOverride(
+            hosted_zero_useful=1,
+            head="a" * 40,
+            checkpoint="checkpoint-100",
+            reason="preserve the audited decision",
+        )
+        original = ReviewState(ordered_prs=ordered_prs, policy_overrides={"100:hosted": override})
+        store.save(original)
+        return store, original
+
+    def test_add_inserts_one_validated_pr_and_preserves_non_order_state(self):
+        with tempfile.TemporaryDirectory() as directory:
+            store, original = self.make_store(directory)
+            github_provider = StackMutationGitHub()
+            controller = ReviewController(store=store, github=github_provider, repository="owner/repo")
+
+            result = controller.add_stack_pr(250, before=200)
+
+            updated = store.load()
+            self.assertEqual(updated.ordered_prs, (100, 250, 200, 300))
+            self.assertEqual(updated.policy_overrides, original.policy_overrides)
+            self.assertEqual(github_provider.calls, [250])
+            self.assertEqual(result["action"], "add")
+            self.assertEqual(result["position"], "before #200")
+            self.assertEqual(result["ordered_prs"], [100, 250, 200, 300])
+
+    def test_add_supports_after_and_default_end_positions(self):
+        for kwargs, expected, position in (
+            ({"after": 100}, (100, 250, 200, 300), "after #100"),
+            ({}, (100, 200, 300, 250), "end"),
+        ):
+            with self.subTest(position=position), tempfile.TemporaryDirectory() as directory:
+                store, _ = self.make_store(directory)
+                result = ReviewController(store=store).add_stack_pr(250, **kwargs)
+                self.assertEqual(store.load().ordered_prs, expected)
+                self.assertEqual(result["position"], position)
+
+    def test_add_refuses_duplicate_self_or_missing_anchor_before_provider_read(self):
+        with tempfile.TemporaryDirectory() as directory:
+            store, _ = self.make_store(directory)
+            github_provider = StackMutationGitHub()
+            controller = ReviewController(store=store, github=github_provider, repository="owner/repo")
+
+            cases = (
+                ((200,), {}, "already configured"),
+                ((250,), {"before": 250}, "own stack anchor"),
+                ((250,), {"after": 999}, "anchor PR #999 is not configured"),
+            )
+            for (pr,), kwargs, message in cases:
+                with self.subTest(message=message), self.assertRaisesRegex(ControllerError, message):
+                    controller.add_stack_pr(pr, **kwargs)
+
+            self.assertEqual(github_provider.calls, [])
+            self.assertEqual(store.load().ordered_prs, (100, 200, 300))
+
+    def test_add_refuses_cross_repository_target_and_concurrent_queue_change(self):
+        with tempfile.TemporaryDirectory() as directory:
+            store, _ = self.make_store(directory)
+            cross_repository = StackMutationGitHub(repository="fork/repo")
+            controller = ReviewController(store=store, github=cross_repository, repository="owner/repo")
+            with self.assertRaisesRegex(ControllerError, "unsupported cross-repository head"):
+                controller.add_stack_pr(250)
+            self.assertEqual(store.load().ordered_prs, (100, 200, 300))
+
+        with tempfile.TemporaryDirectory() as directory:
+            store, _ = self.make_store(directory)
+
+            def concurrent_append():
+                store.update(lambda current: dataclasses.replace(current, ordered_prs=(*current.ordered_prs, 400)))
+
+            github_provider = StackMutationGitHub(on_pull=concurrent_append)
+            controller = ReviewController(store=store, github=github_provider, repository="owner/repo")
+            with self.assertRaisesRegex(ControllerError, "changed during PR validation"):
+                controller.add_stack_pr(250)
+            self.assertEqual(store.load().ordered_prs, (100, 200, 300, 400))
+
+    def test_move_preserves_other_entries_and_is_idempotent(self):
+        with tempfile.TemporaryDirectory() as directory:
+            store, original = self.make_store(directory, (100, 200, 300, 400))
+            controller = ReviewController(store=store)
+
+            moved = controller.move_stack_pr(200, before=400)
+            self.assertEqual(store.load().ordered_prs, (100, 300, 200, 400))
+            self.assertTrue(moved["changed"])
+
+            no_op = controller.move_stack_pr(200, before=400)
+            self.assertFalse(no_op["changed"])
+            self.assertEqual(store.load().ordered_prs, (100, 300, 200, 400))
+            self.assertEqual(store.load().policy_overrides, original.policy_overrides)
+
+    def test_move_supports_after_first_last_and_rejects_bad_targets(self):
+        with tempfile.TemporaryDirectory() as directory:
+            store, _ = self.make_store(directory, (100, 200, 300, 400))
+            controller = ReviewController(store=store)
+
+            self.assertEqual(controller.move_stack_pr(200, after=300)["ordered_prs"], [100, 300, 200, 400])
+            self.assertEqual(controller.move_stack_pr(400, first=True)["ordered_prs"], [400, 100, 300, 200])
+            self.assertEqual(controller.move_stack_pr(400, last=True)["ordered_prs"], [100, 300, 200, 400])
+
+            cases = (
+                ((999,), {"first": True}, "not configured in the review stack"),
+                ((200,), {"before": 200}, "own stack anchor"),
+                ((200,), {"before": 999}, "anchor PR #999 is not configured"),
+                ((200,), {}, "exactly one of"),
+                ((200,), {"before": 100, "after": 300}, "exactly one of"),
+            )
+            for (pr,), kwargs, message in cases:
+                with self.subTest(message=message), self.assertRaisesRegex(ControllerError, message):
+                    controller.move_stack_pr(pr, **kwargs)
 
 
 class ReviewStateStackTest(unittest.TestCase):
@@ -1629,14 +1764,11 @@ class ReviewStateStackTest(unittest.TestCase):
         self.assertEqual(completion_status(state, Channel.CLI, (one_dry, cooldown)), ReviewStatus.RATE_LIMITED)
 
         reviews = tuple(
-            dataclasses.replace(one_dry, checkpoint=f"review-{index}", patch_id="review-patch")
-            for index in range(3)
+            dataclasses.replace(one_dry, checkpoint=f"review-{index}", patch_id="review-patch") for index in range(3)
         )
         reopened = ReviewState(
             ordered_prs=(1,),
-            judgments=(
-                Judgment(1, "cli", "reopen", "reviewed", "review-2", "fresh review required", "review-patch"),
-            ),
+            judgments=(Judgment(1, "cli", "reopen", "reviewed", "review-2", "fresh review required", "review-patch"),),
         )
         active = Evidence(1, "current", "active", active_review=True)
         self.assertEqual(completion_status(reopened, Channel.CLI, (*reviews, active)), ReviewStatus.HELD)
