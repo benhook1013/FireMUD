@@ -8,6 +8,7 @@ import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import java.nio.charset.StandardCharsets;
@@ -42,6 +43,36 @@ class IndividualCreatorPartyRepositoryTest {
   @AfterEach
   void clearTransactionMarkers() {
     TransactionSynchronizationManager.clear();
+  }
+
+  @Test
+  void preparationLocksOnlyTenantAndDerivesExistingCandidateIdentities() {
+    Fixture fixture = new Fixture();
+    beginWritableTransaction();
+    var scope = fixture.repository.lockExistingInitialAssociationScope(fixture.tenantId);
+    assertThat(scope.accountId()).isEqualTo(fixture.accountId);
+    assertThat(scope.creatorPartyId()).isEqualTo(fixture.party.creatorPartyId());
+    assertThat(scope.associationRequestId()).isEqualTo(fixture.associationRequestId);
+    verifyNoInteractions(fixture.bootstraps, fixture.freshTenants);
+    verify(fixture.dsl, never())
+        .fetchOne(
+            org.mockito.ArgumentMatchers.contains("account_individual_creator_party_sources"),
+            any(Object[].class));
+    fixture.assertNoWrites();
+  }
+
+  @Test
+  void preparationRejectsMissingIdentityAndAbsentTransaction() {
+    Fixture fixture = new Fixture();
+    assertThatThrownBy(
+            () -> fixture.repository.lockExistingInitialAssociationScope(fixture.tenantId))
+        .isInstanceOf(IllegalStateException.class);
+    beginWritableTransaction();
+    fixture.associationByTenantFields.remove("initiating_account_uuid");
+    assertThatThrownBy(
+            () -> fixture.repository.lockExistingInitialAssociationScope(fixture.tenantId))
+        .isInstanceOf(RuntimeException.class);
+    verifyNoInteractions(fixture.bootstraps, fixture.freshTenants);
   }
 
   @Test
@@ -256,7 +287,8 @@ class IndividualCreatorPartyRepositoryTest {
       if (sql.contains("account_canonical_tenant_identity_claims")) {
         return row(Map.of("identity_kind", "FRESH_GAME_DESIGN"));
       }
-      if (sql.contains("WHERE tenant_uuid = ? FOR UPDATE")) {
+      if (sql.contains("account_fresh_creator_party_association_operations")
+          && sql.contains("WHERE tenant_uuid = ?")) {
         return associationByTenant;
       }
       if (sql.contains("account_individual_creator_party_sources")) {

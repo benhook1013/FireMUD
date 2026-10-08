@@ -250,6 +250,47 @@ public final class IndividualCreatorPartyRepository {
     return new InitialAssociationReadback(creator, receipt, party);
   }
 
+  /**
+   * Locks only the canonical tenant claim and derives candidate identities from existing owner
+   * rows. Bootstrap and party locks are deliberately deferred so a composer can acquire Account
+   * sources and the environment head first. The complete association must subsequently be read back
+   * with {@link #readExistingInitialAssociation(UUID)} in this same transaction.
+   */
+  public InitialAssociationScope lockExistingInitialAssociationScope(UUID tenantUuid) {
+    requireTransaction();
+    lockTenant(tenantUuid);
+    Record association =
+        dsl.fetchOne(
+            "SELECT request_id, tenant_uuid, initiating_account_uuid, creator_party_id "
+                + "FROM account_fresh_creator_party_association_operations WHERE tenant_uuid = ?",
+            tenantUuid);
+    if (association == null) {
+      throw new IllegalStateException(
+          "Immutable fresh initial creator-party association is absent");
+    }
+    InitialAssociationScope scope =
+        new InitialAssociationScope(
+            association.get("tenant_uuid", UUID.class),
+            association.get("request_id", UUID.class),
+            association.get("initiating_account_uuid", UUID.class),
+            association.get("creator_party_id", UUID.class));
+    if (!tenantUuid.equals(scope.tenantId())) {
+      throw new IllegalStateException("Initial association scope differs from canonical tenant");
+    }
+    return scope;
+  }
+
+  /** Candidate persisted identities only; not authenticated caller or association proof. */
+  public record InitialAssociationScope(
+      UUID tenantId, UUID associationRequestId, UUID accountId, UUID creatorPartyId) {
+    public InitialAssociationScope {
+      CreatorPartyEncoding.requireUuid(tenantId);
+      CreatorPartyEncoding.requireUuid(associationRequestId);
+      CreatorPartyEncoding.requireUuid(accountId);
+      CreatorPartyEncoding.requireUuid(creatorPartyId);
+    }
+  }
+
   /** This slice never provides commit-bound party/terms authorization. */
   public void requireHostedAuthoringCurrentness() {
     throw new IllegalStateException(

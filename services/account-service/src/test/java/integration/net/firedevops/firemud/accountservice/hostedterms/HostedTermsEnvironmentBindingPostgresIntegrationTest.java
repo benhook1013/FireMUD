@@ -2,6 +2,10 @@ package integration.net.firedevops.firemud.accountservice.hostedterms;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.awaitility.Awaitility.await;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.doAnswer;
+import static org.mockito.Mockito.spy;
 
 import java.nio.charset.StandardCharsets;
 import java.sql.Connection;
@@ -15,6 +19,12 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 import net.firedevops.firemud.accountservice.authordraft.DraftAuthorizationFenceRepository;
 import net.firedevops.firemud.accountservice.creatorparty.CreatorPartyEncoding;
@@ -28,6 +38,7 @@ import net.firedevops.firemud.accountservice.hostedterms.HostedTermsEnvironmentB
 import net.firedevops.firemud.accountservice.hostedterms.HostedTermsEnvironmentBindingEncoding;
 import net.firedevops.firemud.accountservice.hostedterms.HostedTermsEnvironmentBindingRepository;
 import net.firedevops.firemud.accountservice.hostedterms.HostedTermsRepository;
+import net.firedevops.firemud.accountservice.hostedterms.IndividualHostedTermsAcceptance;
 import net.firedevops.firemud.accountservice.repository.AccountTenantCreationBootstrapOperationRepository;
 import net.firedevops.firemud.accountservice.repository.FreshTenantIdentityAssociationRepository;
 import net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding;
@@ -393,7 +404,10 @@ class HostedTermsEnvironmentBindingPostgresIntegrationTest {
             "test-only scheduled terms".getBytes(StandardCharsets.UTF_8),
             HostedTermsCatalogVersion.Materiality.MATERIAL,
             deadline));
-    HostedTermsCatalogVersion scheduled = service.publish(scheduledRequest).candidate();
+    var scheduledPublication = service.publish(scheduledRequest);
+    assertThat(scheduledPublication.status())
+        .isEqualTo(HostedTermsRepository.PublicationStatus.SCHEDULED);
+    HostedTermsCatalogVersion scheduled = scheduledPublication.candidate();
 
     var currentness = service.requireCurrentnessForCurrentEnvironment(partyId);
     var sameTransactionCurrentness =
@@ -421,6 +435,243 @@ class HostedTermsEnvironmentBindingPostgresIntegrationTest {
               assertThat(new String(source.evidence(), StandardCharsets.UTF_8))
                   .contains(HostedTermsEncoding.digest(HostedTermsEncoding.catalog(scheduled)));
             });
+  }
+
+  @Test
+  void capturedEnvironmentDoesNotExemptCurrentnessAfterScheduledDeadline() throws Exception {
+    Database db = database("97");
+    UUID accountId = insertAccount(db);
+    UUID partyId = UUID.randomUUID();
+    UUID scopeId = UUID.randomUUID();
+    IndividualCreatorPartySource party = party(partyId, accountId);
+    tx(db, () -> insertParty(db, party));
+    Map<UUID, AccountHostedTermsService.PublicationEvidence> catalogPublications = new HashMap<>();
+    Map<UUID, AccountHostedTermsService.AcceptanceAction> actions = new HashMap<>();
+    Map<UUID, HostedTermsEnvironmentBinding.PublicationEvidence> bindingPublications =
+        new HashMap<>();
+    AtomicReference<HostedTermsEnvironmentBinding.CurrentEnvironmentBoundary> boundary =
+        new AtomicReference<>(currentBoundary("expired-deadline-test-environment"));
+    AccountHostedTermsService service =
+        service(db, catalogPublications, actions, bindingPublications, boundary);
+
+    UUID initialRequest = UUID.randomUUID();
+    catalogPublications.put(
+        initialRequest,
+        publication(
+            scopeId,
+            "test-only current terms for deadline proof".getBytes(StandardCharsets.UTF_8),
+            HostedTermsCatalogVersion.Materiality.INITIAL,
+            databaseNow(db).minusSeconds(10)));
+    HostedTermsCatalogVersion currentCatalog = service.publish(initialRequest).candidate();
+    UUID acceptanceRequest = UUID.randomUUID();
+    actions.put(acceptanceRequest, action(acceptanceRequest, accountId, partyId, currentCatalog));
+    IndividualHostedTermsAcceptance acceptance = service.accept(acceptanceRequest);
+
+    UUID bindingRequest = UUID.randomUUID();
+    bindingPublications.put(
+        bindingRequest,
+        bindingEvidence(
+            "expired-deadline-test-environment",
+            currentCatalog,
+            null,
+            null,
+            "test-only-publisher"));
+    service.publishEnvironmentBinding(bindingRequest);
+
+    var capturedBoundary = service.captureCurrentEnvironmentBoundary();
+    Instant deadline = databaseNow(db).plus(5, ChronoUnit.SECONDS).truncatedTo(ChronoUnit.MICROS);
+    UUID scheduledRequest = UUID.randomUUID();
+    catalogPublications.put(
+        scheduledRequest,
+        publication(
+            scopeId,
+            "test-only scheduled material terms".getBytes(StandardCharsets.UTF_8),
+            HostedTermsCatalogVersion.Materiality.MATERIAL,
+            deadline));
+    var scheduledPublication = service.publish(scheduledRequest);
+    assertThat(scheduledPublication.status())
+        .isEqualTo(HostedTermsRepository.PublicationStatus.SCHEDULED);
+    HostedTermsCatalogVersion scheduled = scheduledPublication.candidate();
+
+    var beforeDeadline = service.requireCurrentnessForCurrentEnvironment(partyId);
+    assertThat(beforeDeadline.binding().catalogVersionId()).isEqualTo(currentCatalog.versionId());
+    assertThat(beforeDeadline.terms().acceptanceEvidenceId()).isEqualTo(acceptance.evidenceId());
+    assertThat(beforeDeadline.terms().validUntil()).isEqualTo(deadline);
+    assertThat(beforeDeadline.terms().disclosedDeadline()).isEqualTo(scheduled);
+    var capturedCurrentnessBeforeDeadline =
+        db.transactions()
+            .execute(
+                ignored -> service.requireCurrentnessInOwnerTransaction(capturedBoundary, partyId));
+    assertThat(capturedCurrentnessBeforeDeadline.terms().exactCurrentnessSource())
+        .containsExactly(beforeDeadline.terms().exactCurrentnessSource());
+
+    assertThat(awaitDatabaseTimeAfter(db, deadline)).isAfter(deadline);
+    assertThatThrownBy(
+            () ->
+                db.transactions()
+                    .execute(
+                        ignored ->
+                            service.requireCurrentnessInOwnerTransaction(
+                                capturedBoundary, partyId)))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("effective date has arrived");
+
+    HostedTermsRepository repository = new HostedTermsRepository(db.dsl());
+    HostedTermsRepository.PublicationOperation persistedOperation =
+        db.transactions()
+            .execute(ignored -> repository.readPublication(scheduledRequest, false).orElseThrow());
+    HostedTermsCatalogVersion persistedScheduled =
+        db.transactions().execute(ignored -> repository.readCandidate(persistedOperation));
+    IndividualHostedTermsAcceptance persistedAcceptance =
+        db.transactions()
+            .execute(
+                ignored ->
+                    repository
+                        .readCurrentAcceptance(partyId, scopeId, currentCatalog)
+                        .orElseThrow());
+    HostedTermsRepository.ScopeSnapshot scopeAtDeadline =
+        db.transactions().execute(ignored -> repository.lockScope(scopeId));
+    assertThat(persistedOperation.status())
+        .isEqualTo(HostedTermsRepository.PublicationStatus.SCHEDULED);
+    assertThat(HostedTermsEncoding.catalog(persistedScheduled))
+        .containsExactly(HostedTermsEncoding.catalog(scheduled));
+    assertThat(persistedScheduled.effectiveAt()).isEqualTo(deadline);
+    assertThat(persistedAcceptance).isEqualTo(acceptance);
+    assertThat(scopeAtDeadline.current()).isEqualTo(currentCatalog);
+    assertThat(scopeAtDeadline.unsettledPublication().requestId()).isEqualTo(scheduledRequest);
+  }
+
+  @Test
+  void environmentBindingPublisherWaitsUntilCallerOwnedCurrentnessTransactionEnds()
+      throws Exception {
+    Database db = database("97");
+    UUID accountId = insertAccount(db);
+    UUID partyId = UUID.randomUUID();
+    UUID scopeId = UUID.randomUUID();
+    IndividualCreatorPartySource party = party(partyId, accountId);
+    tx(db, () -> insertParty(db, party));
+    Map<UUID, AccountHostedTermsService.PublicationEvidence> catalogPublications = new HashMap<>();
+    Map<UUID, AccountHostedTermsService.AcceptanceAction> actions = new HashMap<>();
+    Map<UUID, HostedTermsEnvironmentBinding.PublicationEvidence> bindingPublications =
+        new HashMap<>();
+    AtomicReference<HostedTermsEnvironmentBinding.CurrentEnvironmentBoundary> boundary =
+        new AtomicReference<>(currentBoundary("locked-currentness-test-environment"));
+    AtomicBoolean capturePublisherBackendPid = new AtomicBoolean();
+    AtomicReference<Integer> publisherBackendPid = new AtomicReference<>();
+    CountDownLatch publisherAtHeadLock = new CountDownLatch(1);
+    HostedTermsEnvironmentBindingRepository bindingRepository =
+        spy(new HostedTermsEnvironmentBindingRepository(db.dsl()));
+    doAnswer(
+            invocation -> {
+              if (capturePublisherBackendPid.compareAndSet(true, false)) {
+                publisherBackendPid.set(currentBackendPid(db));
+                publisherAtHeadLock.countDown();
+              }
+              return invocation.callRealMethod();
+            })
+        .when(bindingRepository)
+        .lockHead(anyString());
+    AccountHostedTermsService service =
+        service(db, catalogPublications, actions, bindingPublications, boundary, bindingRepository);
+
+    UUID termsRequest = UUID.randomUUID();
+    catalogPublications.put(
+        termsRequest,
+        publication(
+            scopeId,
+            "test-only terms for owner lock proof".getBytes(StandardCharsets.UTF_8),
+            HostedTermsCatalogVersion.Materiality.INITIAL,
+            databaseNow(db).minusSeconds(10)));
+    HostedTermsCatalogVersion catalog = service.publish(termsRequest).candidate();
+    UUID acceptanceRequest = UUID.randomUUID();
+    actions.put(acceptanceRequest, action(acceptanceRequest, accountId, partyId, catalog));
+    IndividualHostedTermsAcceptance acceptance = service.accept(acceptanceRequest);
+
+    UUID firstBindingRequest = UUID.randomUUID();
+    HostedTermsEnvironmentBinding.PublicationEvidence firstEvidence =
+        bindingEvidence(
+            "locked-currentness-test-environment", catalog, null, null, "test-only-publisher-v1");
+    bindingPublications.put(firstBindingRequest, firstEvidence);
+    var firstBinding = service.publishEnvironmentBinding(firstBindingRequest);
+    assertThat(firstBinding.status())
+        .isEqualTo(HostedTermsEnvironmentBindingRepository.PublicationStatus.COMMITTED);
+
+    var capturedBoundary = service.captureCurrentEnvironmentBoundary();
+    UUID secondBindingRequest = UUID.randomUUID();
+    HostedTermsEnvironmentBinding.PublicationEvidence secondEvidence =
+        bindingEvidence(
+            "locked-currentness-test-environment",
+            catalog,
+            firstBinding.candidate().bindingId(),
+            firstBinding.candidate().sourceVersion(),
+            "test-only-publisher-v2");
+    bindingPublications.put(secondBindingRequest, secondEvidence);
+
+    CountDownLatch currentnessLocksHeld = new CountDownLatch(1);
+    CountDownLatch releaseOwnerTransaction = new CountDownLatch(1);
+    AtomicReference<Integer> ownerBackendPid = new AtomicReference<>();
+    AtomicReference<AccountHostedTermsService.EnvironmentBoundCurrentness> heldCurrentness =
+        new AtomicReference<>();
+    ExecutorService executor = Executors.newFixedThreadPool(2);
+    try {
+      Future<?> ownerTransaction =
+          executor.submit(
+              () ->
+                  db.transactions()
+                      .executeWithoutResult(
+                          ignored -> {
+                            heldCurrentness.set(
+                                service.requireCurrentnessInOwnerTransaction(
+                                    capturedBoundary, partyId));
+                            ownerBackendPid.set(currentBackendPid(db));
+                            currentnessLocksHeld.countDown();
+                            awaitLatch(releaseOwnerTransaction, "owner transaction release");
+                          }));
+
+      awaitLatch(currentnessLocksHeld, "currentness locks acquisition");
+      assertThat(heldCurrentness.get().binding()).isEqualTo(firstBinding.candidate());
+      assertThat(heldCurrentness.get().terms().acceptanceEvidenceId())
+          .isEqualTo(acceptance.evidenceId());
+
+      capturePublisherBackendPid.set(true);
+      Future<AccountHostedTermsService.EnvironmentBindingPublicationResult> publisher =
+          executor.submit(() -> service.publishEnvironmentBinding(secondBindingRequest));
+      awaitLatch(publisherAtHeadLock, "publisher backend PID capture at environment head lock");
+      int exactPublisherPid = Objects.requireNonNull(publisherBackendPid.get());
+      awaitPublisherBlockedByOwner(db, ownerBackendPid.get(), exactPublisherPid);
+      assertThat(exactPublisherPid).isNotEqualTo(ownerBackendPid.get());
+      assertThat(publisher.isDone()).isFalse();
+
+      releaseOwnerTransaction.countDown();
+      ownerTransaction.get(10, TimeUnit.SECONDS);
+      var secondBinding = publisher.get(10, TimeUnit.SECONDS);
+      assertThat(secondBinding.status())
+          .isEqualTo(HostedTermsEnvironmentBindingRepository.PublicationStatus.COMMITTED);
+      assertThat(secondBinding.candidate().sourceVersion())
+          .isEqualTo(firstBinding.candidate().sourceVersion() + 1);
+      assertThat(secondBinding.candidate().predecessorBindingId())
+          .isEqualTo(firstBinding.candidate().bindingId());
+      assertThat(secondBinding.candidate().catalogVersionId()).isEqualTo(catalog.versionId());
+      HostedTermsEnvironmentBinding currentBinding =
+          db.transactions()
+              .execute(
+                  ignored ->
+                      service
+                          .requireCurrentnessInOwnerTransaction(capturedBoundary, partyId)
+                          .binding());
+      assertThat(currentBinding).isEqualTo(secondBinding.candidate());
+      IndividualHostedTermsAcceptance currentAcceptance =
+          db.transactions()
+              .execute(
+                  ignored ->
+                      new HostedTermsRepository(db.dsl())
+                          .readCurrentAcceptance(partyId, scopeId, catalog)
+                          .orElseThrow());
+      assertThat(currentAcceptance).isEqualTo(acceptance);
+    } finally {
+      releaseOwnerTransaction.countDown();
+      executor.shutdownNow();
+    }
   }
 
   private static DraftAuthorizationFenceBinding testDraftBinding(
@@ -485,6 +736,22 @@ class HostedTermsEnvironmentBindingPostgresIntegrationTest {
       Map<UUID, AccountHostedTermsService.AcceptanceAction> actions,
       Map<UUID, HostedTermsEnvironmentBinding.PublicationEvidence> bindingPublications,
       AtomicReference<HostedTermsEnvironmentBinding.CurrentEnvironmentBoundary> boundary) {
+    return service(
+        db,
+        catalogPublications,
+        actions,
+        bindingPublications,
+        boundary,
+        new HostedTermsEnvironmentBindingRepository(db.dsl()));
+  }
+
+  private static AccountHostedTermsService service(
+      Database db,
+      Map<UUID, AccountHostedTermsService.PublicationEvidence> catalogPublications,
+      Map<UUID, AccountHostedTermsService.AcceptanceAction> actions,
+      Map<UUID, HostedTermsEnvironmentBinding.PublicationEvidence> bindingPublications,
+      AtomicReference<HostedTermsEnvironmentBinding.CurrentEnvironmentBoundary> boundary,
+      HostedTermsEnvironmentBindingRepository bindingRepository) {
     IndividualCreatorPartyRepository parties =
         new IndividualCreatorPartyRepository(
             db.dsl(),
@@ -505,7 +772,7 @@ class HostedTermsEnvironmentBindingPostgresIntegrationTest {
           return Objects.requireNonNull(
               actions.get(request), "test-only affirmative action fixture");
         },
-        new HostedTermsEnvironmentBindingRepository(db.dsl()),
+        bindingRepository,
         request -> {
           assertOutsideOwnerTransaction();
           return Objects.requireNonNull(
@@ -646,6 +913,56 @@ class HostedTermsEnvironmentBindingPostgresIntegrationTest {
         .get("database_now", OffsetDateTime.class)
         .toInstant()
         .truncatedTo(ChronoUnit.MICROS);
+  }
+
+  private static Instant awaitDatabaseTimeAfter(Database db, Instant deadline) {
+    AtomicReference<Instant> observed = new AtomicReference<>();
+    await()
+        .atMost(15, TimeUnit.SECONDS)
+        .pollInterval(50, TimeUnit.MILLISECONDS)
+        .untilAsserted(
+            () -> {
+              Instant databaseInstant = databaseNow(db);
+              assertThat(databaseInstant).isAfter(deadline);
+              observed.set(databaseInstant);
+            });
+    return Objects.requireNonNull(observed.get());
+  }
+
+  private static void awaitPublisherBlockedByOwner(Database db, int ownerPid, int publisherPid) {
+    await()
+        .atMost(10, TimeUnit.SECONDS)
+        .pollInterval(25, TimeUnit.MILLISECONDS)
+        .untilAsserted(
+            () -> {
+              var blockedSessions =
+                  db.dsl()
+                      .fetch(
+                          "SELECT pid FROM pg_stat_activity "
+                              + "WHERE pid = ? AND state = 'active' "
+                              + "AND strpos(query, 'account_hosted_terms_environment_binding_heads') > 0 "
+                              + "AND ? = ANY(pg_blocking_pids(pid))",
+                          publisherPid,
+                          ownerPid);
+              assertThat(blockedSessions).hasSize(1);
+              assertThat(blockedSessions.get(0).get("pid", Integer.class)).isEqualTo(publisherPid);
+            });
+  }
+
+  private static int currentBackendPid(Database db) {
+    return Objects.requireNonNull(db.dsl().fetchOne("SELECT pg_backend_pid() AS pid"))
+        .get("pid", Integer.class);
+  }
+
+  private static void awaitLatch(CountDownLatch latch, String description) {
+    try {
+      if (!latch.await(20, TimeUnit.SECONDS)) {
+        throw new AssertionError("Timed out waiting for " + description);
+      }
+    } catch (InterruptedException exception) {
+      Thread.currentThread().interrupt();
+      throw new IllegalStateException("Interrupted while waiting for " + description, exception);
+    }
   }
 
   private static long count(Database db, String table) {
