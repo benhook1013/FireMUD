@@ -783,26 +783,41 @@ class AccountGameplayAdmissionLeasePersistenceIntegrationTest {
     tx(context, () -> repository.recordCommitted(original, decision));
     var unchanged = storageSnapshot(context);
 
-    // This fixture is idle: no marker, forced flush or unrelated writer is used to make proof
-    // succeed. The original finalizer's synchronous COMMIT already covers the pre-lock fence.
+    String finalizationXid = operation(context, original).get("finalization_xid", String.class);
+    // No marker, forced flush or unrelated writer is used to make proof succeed. Establish a
+    // fixed snapshot before the call and prove the original finalizer is independently visible.
+    // Background WAL may advance, so a pre-call global LSN need not equal the stored fence.
     var receipt =
         tx(
             context,
             () -> {
-              String beforeLocks =
-                  Objects.requireNonNull(
-                          context.dsl().fetchOne("SELECT pg_current_wal_insert_lsn()::text AS lsn"))
-                      .get("lsn", String.class);
-              var created = confirm(context, original, decision);
-              assertThat(created.get("wal_insert_lsn", String.class)).isEqualTo(beforeLocks);
               assertThat(
                       Objects.requireNonNull(
                               context
                                   .dsl()
                                   .fetchOne(
-                                      "SELECT pg_current_wal_insert_lsn() > ?::pg_lsn AS advanced",
-                                      beforeLocks))
-                          .get("advanced", Boolean.class))
+                                      "SELECT pg_visible_in_snapshot(?::xid8, pg_current_snapshot()) "
+                                          + "AND pg_current_xact_id_if_assigned() IS NULL AS independent",
+                                      finalizationXid))
+                          .get("independent", Boolean.class))
+                  .isTrue();
+              String beforeHeapReads =
+                  Objects.requireNonNull(
+                          context.dsl().fetchOne("SELECT pg_current_wal_insert_lsn()::text AS lsn"))
+                      .get("lsn", String.class);
+              var created = confirm(context, original, decision);
+              assertThat(
+                      Objects.requireNonNull(
+                              context
+                                  .dsl()
+                                  .fetchOne(
+                                      "SELECT ?::pg_lsn >= ?::pg_lsn "
+                                          + "AND ?::pg_lsn >= ?::pg_lsn AS snapshot_fence_covered",
+                                      created.get("wal_insert_lsn", String.class),
+                                      beforeHeapReads,
+                                      created.get("wal_flush_lsn", String.class),
+                                      created.get("wal_insert_lsn", String.class)))
+                          .get("snapshot_fence_covered", Boolean.class))
                   .isTrue();
               return created;
             });
@@ -810,24 +825,17 @@ class AccountGameplayAdmissionLeasePersistenceIntegrationTest {
     tx(
         context,
         () -> {
-          String beforeLocks =
-              Objects.requireNonNull(
-                      context.dsl().fetchOne("SELECT pg_current_wal_insert_lsn()::text AS lsn"))
-                  .get("lsn", String.class);
-          assertThat(readConfirmation(context, original, decision)).isEqualTo(receipt);
-          // Independent exact readback succeeds with its pre-call fence covered and advances WAL
-          // through its tuple locks. Background flush progress does not affect this assertion.
           assertThat(
                   Objects.requireNonNull(
                           context
                               .dsl()
                               .fetchOne(
-                                  "SELECT pg_current_wal_insert_lsn() > ?::pg_lsn "
-                                      + "AND pg_current_wal_flush_lsn() >= ?::pg_lsn AS pre_call_fence_covered",
-                                  beforeLocks,
-                                  beforeLocks))
-                      .get("pre_call_fence_covered", Boolean.class))
+                                  "SELECT pg_visible_in_snapshot(?::xid8, pg_current_snapshot()) "
+                                      + "AND pg_current_xact_id_if_assigned() IS NULL AS independent",
+                                  receipt.get("confirmation_xid", String.class)))
+                      .get("independent", Boolean.class))
               .isTrue();
+          assertThat(readConfirmation(context, original, decision)).isEqualTo(receipt);
           return null;
         });
     assertThat(storageSnapshot(context)).isEqualTo(unchanged);
@@ -945,6 +953,17 @@ class AccountGameplayAdmissionLeasePersistenceIntegrationTest {
                 context,
                 () -> confirm(context, original, decision),
                 "requires independent finalization commit");
+            assertDeniedInSavepoint(
+                context,
+                () ->
+                    context
+                        .dsl()
+                        .execute(
+                            "INSERT INTO account_gameplay_admission_commit_confirmations(request_id, evidence_sha256, binding_decision_id) VALUES (?, ?, ?)",
+                            requestId(original),
+                            original.sha256(),
+                            decision),
+                "requires independent finalization commit");
             return null;
           });
     }
@@ -1028,6 +1047,38 @@ class AccountGameplayAdmissionLeasePersistenceIntegrationTest {
         .hasMessageContaining("finalization transaction is database stamped");
     tx(context, () -> repository.recordCommitted(original, decision));
     var unchanged = storageSnapshot(context);
+    // SQL owns the transaction prerequisite even for callers bypassing the Java owner.
+    for (int isolation :
+        List.of(
+            TransactionDefinition.ISOLATION_READ_COMMITTED,
+            TransactionDefinition.ISOLATION_REPEATABLE_READ)) {
+      var unsupported =
+          new TransactionTemplate(new DataSourceTransactionManager(context.dataSource()));
+      unsupported.setIsolationLevel(isolation);
+      for (Supplier<?> action :
+          List.<Supplier<?>>of(
+              () -> confirm(context, original, decision),
+              () -> readConfirmation(context, original, decision),
+              () ->
+                  context
+                      .dsl()
+                      .execute(
+                          "INSERT INTO account_gameplay_admission_commit_confirmations(request_id, evidence_sha256, binding_decision_id) VALUES (?, ?, ?)",
+                          request,
+                          original.sha256(),
+                          decision))) {
+        assertThatThrownBy(() -> unsupported.execute(status -> action.get()))
+            .hasMessageContaining("writable SERIALIZABLE transaction required");
+      }
+    }
+    var readOnly = new TransactionTemplate(new DataSourceTransactionManager(context.dataSource()));
+    readOnly.setIsolationLevel(TransactionDefinition.ISOLATION_SERIALIZABLE);
+    readOnly.setReadOnly(true);
+    assertThatThrownBy(
+            () -> readOnly.execute(status -> readConfirmation(context, original, decision)))
+        .hasMessageContaining("writable SERIALIZABLE transaction required");
+    assertThatThrownBy(() -> readOnly.execute(status -> confirm(context, original, decision)))
+        .hasMessageContaining("read-only transaction");
     assertThatThrownBy(
             () ->
                 tx(
@@ -1112,19 +1163,24 @@ class AccountGameplayAdmissionLeasePersistenceIntegrationTest {
     var repository = new AccountGameplayAdmissionLeaseRepository(context.dsl());
     UUID decision = UUID.randomUUID();
     tx(context, () -> repository.recordCommitted(original, decision));
-    assertThatThrownBy(
-            () ->
-                tx(
-                    context,
-                    () -> {
-                      confirm(context, original, decision);
-                      assertDeniedInSavepoint(
-                          context,
-                          () -> readConfirmation(context, original, decision),
-                          "requires independent receipt commit");
-                      throw new IllegalStateException("roll back confirmation commit");
-                    }))
-        .hasMessageContaining("roll back confirmation commit");
+    for (boolean subtransaction : List.of(false, true)) {
+      assertThatThrownBy(
+              () ->
+                  tx(
+                      context,
+                      () -> {
+                        if (subtransaction) context.dsl().execute("SAVEPOINT receipt_creation");
+                        confirm(context, original, decision);
+                        if (subtransaction)
+                          context.dsl().execute("RELEASE SAVEPOINT receipt_creation");
+                        assertDeniedInSavepoint(
+                            context,
+                            () -> readConfirmation(context, original, decision),
+                            "requires independent receipt commit");
+                        throw new IllegalStateException("roll back confirmation commit");
+                      }))
+          .hasMessageContaining("roll back confirmation commit");
+    }
     assertThat(
             context.dsl().fetchCount(DSL.table("account_gameplay_admission_commit_confirmations")))
         .isZero();
@@ -1159,8 +1215,20 @@ class AccountGameplayAdmissionLeasePersistenceIntegrationTest {
         .isEqualTo(1);
     var retained = tx(context, () -> confirm(context, original, decision));
     waitPastDeadline(context, original);
-    // Both duplicates now replay an expired retained receipt. They must never enter the fresh
-    // INSERT guard, restamp its temporal bound or allocate replacement evidence.
+    assertThat(
+            tx(
+                context,
+                () ->
+                    context
+                        .dsl()
+                        .execute(
+                            "INSERT INTO account_gameplay_admission_commit_confirmations(request_id, evidence_sha256, binding_decision_id) VALUES (?, ?, ?) ON CONFLICT (request_id) DO NOTHING",
+                            requestId(original),
+                            original.sha256(),
+                            decision)))
+        .isZero();
+    // Both duplicates enter the INSERT guard but replay the expired retained receipt without
+    // taking fresh temporal proof, restamping its bound or allocating replacement evidence.
     try (var executor = Executors.newFixedThreadPool(2)) {
       var left = executor.submit(duplicate);
       var right = executor.submit(duplicate);

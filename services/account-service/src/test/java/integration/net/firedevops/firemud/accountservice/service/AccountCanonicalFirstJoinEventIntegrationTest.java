@@ -508,7 +508,6 @@ class AccountCanonicalFirstJoinEventIntegrationTest {
       input.setUsername("canonical-join-" + suffix);
       input.setEmail("canonical-join-" + suffix + "@example.test");
       input.setPasswordHash("integration-fixture-hash");
-      input.setRole("player");
       return inTransaction(() -> accounts.save(input));
     }
 

@@ -106,6 +106,9 @@ CREATE FUNCTION account_gameplay_admission_confirmation_guard() RETURNS TRIGGER 
 DECLARE
     operation account_gameplay_admission_lease_operations%ROWTYPE;
     locked_operation account_gameplay_admission_lease_operations%ROWTYPE;
+    receipt account_gameplay_admission_commit_confirmations%ROWTYPE;
+    locked_receipt account_gameplay_admission_commit_confirmations%ROWTYPE;
+    own_xid TEXT;
     finalization_status TEXT;
     insert_fence pg_lsn;
     flush_fence pg_lsn;
@@ -124,6 +127,25 @@ BEGIN
         RAISE EXCEPTION 'Account admission confirmation proof is database derived'
             USING ERRCODE = '23514', CONSTRAINT = 'account_admission_confirmation_db_proof';
     END IF;
+    IF current_setting('transaction_isolation') IS DISTINCT FROM 'serializable'
+        OR current_setting('transaction_read_only') IS DISTINCT FROM 'off' THEN
+        RAISE EXCEPTION 'Account admission confirmation writable SERIALIZABLE transaction required'
+            USING ERRCODE = '23514', CONSTRAINT = 'account_admission_confirmation_transaction_required';
+    END IF;
+    IF pg_is_in_recovery() OR current_setting('fsync') IS DISTINCT FROM 'on' THEN
+        RAISE EXCEPTION 'Account admission confirmation durable primary required'
+            USING ERRCODE = '23514', CONSTRAINT = 'account_admission_confirmation_durable_primary';
+    END IF;
+    -- Establish the fixed transaction snapshot before the fence and before any heap read.
+    -- A subsequently visible independent row committed before this snapshot, hence before
+    -- this WAL upper bound. Even a SELECT can emit heap-pruning WAL; capture must precede it.
+    PERFORM pg_current_snapshot();
+    own_xid := pg_current_xact_id_if_assigned()::text;
+    insert_fence := pg_current_wal_insert_lsn();
+    IF insert_fence IS NULL OR insert_fence <= '0/0'::pg_lsn THEN
+        RAISE EXCEPTION 'Account admission confirmation WAL coverage unavailable'
+            USING ERRCODE = '23514', CONSTRAINT = 'account_admission_confirmation_wal_coverage';
+    END IF;
     SELECT * INTO operation FROM account_gameplay_admission_lease_operations WHERE request_id = NEW.request_id;
     IF NOT FOUND THEN
         RAISE EXCEPTION 'Account admission confirmation operation missing'
@@ -135,28 +157,12 @@ BEGIN
         RAISE EXCEPTION 'Account admission confirmation exact committed binding required'
             USING ERRCODE = '23514', CONSTRAINT = 'account_admission_confirmation_binding_required';
     END IF;
-    BEGIN
-        finalization_status := pg_xact_status(operation.finalization_xid::xid8);
-    EXCEPTION WHEN OTHERS THEN
-        RAISE EXCEPTION 'Account admission confirmation finalization proof unavailable'
-            USING ERRCODE = '23514', CONSTRAINT = 'account_admission_confirmation_finalization_unavailable';
-    END;
-    IF finalization_status IS DISTINCT FROM 'committed' THEN
+    -- The stamp is top-level even when finalization ran in a released subtransaction.
+    IF operation.finalization_xid = own_xid THEN
         RAISE EXCEPTION 'Account admission confirmation requires independent finalization commit'
             USING ERRCODE = '23514', CONSTRAINT = 'account_admission_confirmation_finalization_independent';
     END IF;
-    IF pg_is_in_recovery() OR current_setting('fsync') IS DISTINCT FROM 'on' THEN
-        RAISE EXCEPTION 'Account admission confirmation durable primary required'
-            USING ERRCODE = '23514', CONSTRAINT = 'account_admission_confirmation_durable_primary';
-    END IF;
-    -- Independent committed visibility precedes this fixed insert fence; the original COMMIT
-    -- WAL is therefore covered. Capture BEFORE this proof transaction's tuple locks emit WAL:
-    -- an idle primary need not flush an uncommitted partial page containing those lock records.
-    insert_fence := pg_current_wal_insert_lsn();
-    IF insert_fence IS NULL OR insert_fence <= '0/0'::pg_lsn THEN
-        RAISE EXCEPTION 'Account admission confirmation WAL coverage unavailable'
-            USING ERRCODE = '23514', CONSTRAINT = 'account_admission_confirmation_wal_coverage';
-    END IF;
+    SELECT * INTO receipt FROM account_gameplay_admission_commit_confirmations WHERE request_id = NEW.request_id;
     PERFORM 1 FROM accounts WHERE account_uuid = operation.account_uuid FOR UPDATE;
     IF NOT FOUND THEN
         RAISE EXCEPTION 'Account admission confirmation owner missing'
@@ -167,6 +173,34 @@ BEGIN
     IF NOT FOUND OR locked_operation IS DISTINCT FROM operation THEN
         RAISE EXCEPTION 'Account admission confirmation exact committed binding required'
             USING ERRCODE = '23514', CONSTRAINT = 'account_admission_confirmation_binding_required';
+    END IF;
+    IF receipt.request_id IS NOT NULL THEN
+        SELECT * INTO locked_receipt FROM account_gameplay_admission_commit_confirmations
+            WHERE request_id = NEW.request_id FOR UPDATE;
+        IF NOT FOUND OR locked_receipt IS DISTINCT FROM receipt
+            OR receipt.account_uuid IS DISTINCT FROM operation.account_uuid
+            OR receipt.lease_id IS DISTINCT FROM operation.lease_id
+            OR receipt.lease_fence IS DISTINCT FROM operation.lease_fence
+            OR receipt.evidence_sha256 IS DISTINCT FROM operation.evidence_sha256
+            OR receipt.binding_decision_id IS DISTINCT FROM operation.binding_decision_id
+            OR receipt.expires_at_ms IS DISTINCT FROM operation.expires_at_ms
+            OR receipt.finalization_xid IS DISTINCT FROM operation.finalization_xid THEN
+            RAISE EXCEPTION 'Account admission confirmation immutable binding conflict'
+                USING ERRCODE = '23514', CONSTRAINT = 'account_admission_confirmation_binding_conflict';
+        END IF;
+        -- Suppress an exact replay INSERT, including after expiry. The caller reads the retained
+        -- receipt; no new proof, XID, deadline or timing bound replaces its original evidence.
+        RETURN NULL;
+    END IF;
+    BEGIN
+        finalization_status := pg_xact_status(operation.finalization_xid::xid8);
+    EXCEPTION WHEN OTHERS THEN
+        RAISE EXCEPTION 'Account admission confirmation finalization proof unavailable'
+            USING ERRCODE = '23514', CONSTRAINT = 'account_admission_confirmation_finalization_unavailable';
+    END;
+    IF finalization_status IS DISTINCT FROM 'committed' THEN
+        RAISE EXCEPTION 'Account admission confirmation requires independent finalization commit'
+            USING ERRCODE = '23514', CONSTRAINT = 'account_admission_confirmation_finalization_independent';
     END IF;
     -- Account-first locking serializes first receipt creation, and exact locked revalidation
     -- preserves the independently observed immutable operation. Only the pre-lock fence needs
@@ -214,6 +248,16 @@ DECLARE
     operation account_gameplay_admission_lease_operations%ROWTYPE;
     receipt account_gameplay_admission_commit_confirmations%ROWTYPE;
 BEGIN
+    -- Enter the guard before either operation/receipt heap read. It owns the snapshot/fence
+    -- and suppresses exact retained replay without renewing proof. A stale SERIALIZABLE
+    -- conflict must surface as 40001 rather than a raw uniqueness failure.
+    INSERT INTO account_gameplay_admission_commit_confirmations(request_id, evidence_sha256, binding_decision_id)
+        VALUES (requested_request_id, expected_sha, expected_decision)
+        ON CONFLICT (request_id) DO NOTHING RETURNING * INTO receipt;
+    IF FOUND THEN
+        RETURN NEXT receipt;
+        RETURN;
+    END IF;
     SELECT * INTO operation FROM account_gameplay_admission_lease_operations WHERE request_id = requested_request_id;
     IF NOT FOUND THEN
         RAISE EXCEPTION 'Account admission confirmation operation missing'
@@ -224,19 +268,6 @@ BEGIN
         OR expected_decision IS DISTINCT FROM operation.binding_decision_id THEN
         RAISE EXCEPTION 'Account admission confirmation exact committed binding required'
             USING ERRCODE = '23514', CONSTRAINT = 'account_admission_confirmation_binding_required';
-    END IF;
-    SELECT * INTO receipt FROM account_gameplay_admission_commit_confirmations WHERE request_id = requested_request_id;
-    IF NOT FOUND THEN
-        -- The INSERT guard owns initial proof observation and capture before any tuple lock.
-        -- A concurrent stale SERIALIZABLE insertion reports 40001 through ON CONFLICT rather
-        -- than leaking a raw uniqueness failure. No caller proof or renewed deadline is accepted.
-        INSERT INTO account_gameplay_admission_commit_confirmations(request_id, evidence_sha256, binding_decision_id)
-            VALUES (requested_request_id, expected_sha, expected_decision)
-            ON CONFLICT (request_id) DO NOTHING RETURNING * INTO receipt;
-        IF FOUND THEN
-            RETURN NEXT receipt;
-            RETURN;
-        END IF;
     END IF;
     -- Exact retained replay may occur after expiry. It locks Account first and revalidates the
     -- immutable original decision, but neither re-proves nor replaces the receipt's timing bound.
@@ -277,10 +308,29 @@ DECLARE
     receipt account_gameplay_admission_commit_confirmations%ROWTYPE;
     locked_operation account_gameplay_admission_lease_operations%ROWTYPE;
     locked_receipt account_gameplay_admission_commit_confirmations%ROWTYPE;
+    own_xid TEXT;
     insert_fence pg_lsn;
     flush_fence pg_lsn;
     observation INTEGER;
 BEGIN
+    IF current_setting('transaction_isolation') IS DISTINCT FROM 'serializable'
+        OR current_setting('transaction_read_only') IS DISTINCT FROM 'off' THEN
+        RAISE EXCEPTION 'Account admission confirmation writable SERIALIZABLE transaction required'
+            USING ERRCODE = '23514', CONSTRAINT = 'account_admission_confirmation_transaction_required';
+    END IF;
+    IF pg_is_in_recovery() OR current_setting('fsync') IS DISTINCT FROM 'on' THEN
+        RAISE EXCEPTION 'Account admission confirmation durable primary required'
+            USING ERRCODE = '23514', CONSTRAINT = 'account_admission_confirmation_durable_primary';
+    END IF;
+    -- Fix the snapshot and WAL upper bound before heap reads or assigning our own XID.
+    -- Independent receipt visibility in that same snapshot covers its prior COMMIT.
+    PERFORM pg_current_snapshot();
+    own_xid := pg_current_xact_id_if_assigned()::text;
+    insert_fence := pg_current_wal_insert_lsn();
+    IF insert_fence IS NULL OR insert_fence <= '0/0'::pg_lsn THEN
+        RAISE EXCEPTION 'Account admission confirmation WAL coverage unavailable'
+            USING ERRCODE = '23514', CONSTRAINT = 'account_admission_confirmation_wal_coverage';
+    END IF;
     SELECT * INTO operation FROM account_gameplay_admission_lease_operations WHERE request_id = requested_request_id;
     IF NOT FOUND THEN
         RAISE EXCEPTION 'Account admission confirmation operation missing'
@@ -303,19 +353,9 @@ BEGIN
     -- MVCC visibility plus exclusion of our own top-level XID also excludes our subtransactions.
     -- Historical receipts need not retain pg_xact_status data forever: fresh WAL coverage below
     -- covers their independently visible original COMMIT without consulting vacuum-pruned status.
-    IF receipt.confirmation_xid = pg_current_xact_id()::text THEN
+    IF receipt.confirmation_xid = own_xid THEN
         RAISE EXCEPTION 'Account admission confirmation requires independent receipt commit'
             USING ERRCODE = '23514', CONSTRAINT = 'account_admission_confirmation_receipt_independent';
-    END IF;
-    IF pg_is_in_recovery() OR current_setting('fsync') IS DISTINCT FROM 'on' THEN
-        RAISE EXCEPTION 'Account admission confirmation durable primary required'
-            USING ERRCODE = '23514', CONSTRAINT = 'account_admission_confirmation_durable_primary';
-    END IF;
-    -- Capture after independent receipt visibility, before Account/operation/receipt lock WAL.
-    insert_fence := pg_current_wal_insert_lsn();
-    IF insert_fence IS NULL OR insert_fence <= '0/0'::pg_lsn THEN
-        RAISE EXCEPTION 'Account admission confirmation WAL coverage unavailable'
-            USING ERRCODE = '23514', CONSTRAINT = 'account_admission_confirmation_wal_coverage';
     END IF;
     PERFORM 1 FROM accounts WHERE account_uuid = operation.account_uuid FOR UPDATE;
     IF NOT FOUND THEN
