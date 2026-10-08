@@ -88,6 +88,7 @@ public final class HostedTermsDisclosureHandoffRepository {
     requireWriteTransaction();
     Objects.requireNonNull(handoff);
     byte[] exactBinding = handoff.canonicalBytes();
+    fenceRepository.lockDisclosureSources(handoff.sources());
     Record existing = findByIdentity(handoff.handoffId(), handoff.requestId());
     if (existing != null) {
       return exactSnapshot(existing, handoff, exactBinding);
@@ -142,14 +143,19 @@ public final class HostedTermsDisclosureHandoffRepository {
    * Durably authorizes one dispatch before the caller leaves the transaction. A pre-existing
    * DISPATCH_AUTHORIZED row is recovered by readback, not by guessing that a previous RPC failed.
    * An exact retry after explicit ambiguity may reauthorize the same stable request identity; the
-   * external receiver must deduplicate it.
+   * external receiver must deduplicate it. Sorted source locks precede journal and operation locks;
+   * a prepared handoff rechecks original settlement before its first dispatch authorization.
    */
   public DispatchPermit authorizeDispatch(HostedTermsDisclosureHandoff handoff) {
     requireWriteTransaction();
     Objects.requireNonNull(handoff);
+    fenceRepository.lockDisclosureSources(handoff.sources());
     Record row = requireExactRow(handoff);
     Status status = Status.valueOf(row.get("status", String.class));
     boolean newlyAuthorized = false;
+    if (status == Status.PREPARED) {
+      fenceRepository.requireDisclosurePreparation(handoff.sources());
+    }
     if (status == Status.PREPARED || status == Status.AMBIGUOUS) {
       int updated =
           dsl.execute(
@@ -172,6 +178,7 @@ public final class HostedTermsDisclosureHandoffRepository {
   public Snapshot recordAmbiguous(HostedTermsDisclosureHandoff handoff) {
     requireWriteTransaction();
     Objects.requireNonNull(handoff);
+    fenceRepository.lockDisclosureSources(handoff.sources());
     Record row = requireExactRow(handoff);
     Status status = Status.valueOf(row.get("status", String.class));
     if (status == Status.DISPATCH_AUTHORIZED) {
@@ -200,6 +207,7 @@ public final class HostedTermsDisclosureHandoffRepository {
     requireWriteTransaction();
     Objects.requireNonNull(handoff);
     Objects.requireNonNull(result);
+    fenceRepository.lockDisclosureSources(handoff.sources());
     Record row = requireExactRow(handoff);
     byte[] resultBytes = result.canonicalBytes();
     String resultDigest = HostedTermsEncoding.digest(resultBytes);

@@ -186,6 +186,7 @@ public final class DraftAuthorizationFenceRepository {
     if (hasWaitingChange(binding.sources())) {
       throw new IllegalStateException("Applicable authority source change is waiting");
     }
+    requireNoAuthorizedDisclosure(binding.sources());
     dsl.execute(
         "INSERT INTO "
             + FENCES
@@ -222,6 +223,7 @@ public final class DraftAuthorizationFenceRepository {
     if (ordering == Ordering.REVOKE_ORDER || hasWaitingChange(binding.sources())) {
       throw new IllegalStateException("Revocation precedes this owner commit");
     }
+    requireNoAuthorizedDisclosure(binding.sources());
     dsl.execute(
         "UPDATE "
             + FENCES
@@ -242,6 +244,27 @@ public final class DraftAuthorizationFenceRepository {
    * paths. No lock obtained here may be held across an RPC.
    */
   public void requireDisclosurePreparation(List<SourceEvidence> exactSources) {
+    lockDisclosureSources(exactSources);
+    List<SourceEvidence> sources = List.copyOf(exactSources);
+    if (hasWaitingChange(sources)) {
+      throw new IllegalStateException("Applicable Account source change is unresolved");
+    }
+    for (UUID operationId : affectedOperations(sources)) {
+      Record row = readOperation(operationId);
+      if (row == null) {
+        throw new IllegalStateException("Affected original Draft operation disappeared");
+      }
+      DraftAuthorizationFenceBinding original = originalBinding(row);
+      Ordering ordering = Ordering.valueOf(row.get("ordering", String.class));
+      if (ordering == Ordering.RESERVED || settlement(original, ordering) == Settlement.PENDING) {
+        throw new IllegalStateException(
+            "Disclosure deadline cannot pass an unsettled original Draft operation");
+      }
+    }
+  }
+
+  /** Locks the complete sorted vector before any disclosure journal or operation row lock. */
+  public void lockDisclosureSources(List<SourceEvidence> exactSources) {
     requireTransaction();
     List<SourceEvidence> sources =
         List.copyOf(Objects.requireNonNull(exactSources, "exact disclosure sources")).stream()
@@ -258,19 +281,21 @@ public final class DraftAuthorizationFenceRepository {
       }
     }
     lockSources(sources);
-    if (hasWaitingChange(sources)) {
-      throw new IllegalStateException("Applicable Account source change is unresolved");
-    }
-    for (UUID operationId : affectedOperations(sources)) {
-      Record row = readOperation(operationId);
-      if (row == null) {
-        throw new IllegalStateException("Affected original Draft operation disappeared");
-      }
-      DraftAuthorizationFenceBinding original = originalBinding(row);
-      Ordering ordering = Ordering.valueOf(row.get("ordering", String.class));
-      if (ordering == Ordering.RESERVED || settlement(original, ordering) == Settlement.PENDING) {
-        throw new IllegalStateException(
-            "Disclosure deadline cannot pass an unsettled original Draft operation");
+  }
+
+  private void requireNoAuthorizedDisclosure(List<SourceEvidence> sources) {
+    for (SourceEvidence source : sources) {
+      if (source.kind() == SourceKind.HOSTED_TERMS
+          && !dsl.fetch(
+                  "SELECT 1 FROM account_hosted_terms_disclosure_handoffs h "
+                      + "JOIN account_hosted_terms_disclosure_sources s ON s.handoff_id = h.handoff_id "
+                      + "WHERE h.source_key = ? AND s.source_key = h.source_key "
+                      + "AND s.source_evidence = ? "
+                      + "AND h.status IN ('DISPATCH_AUTHORIZED', 'AMBIGUOUS', 'DISCLOSED')",
+                  source.key(),
+                  source.canonicalBytes())
+              .isEmpty()) {
+        throw new IllegalStateException("Exact hosted terms source has authorized disclosure");
       }
     }
   }

@@ -78,7 +78,7 @@ class HostedTermsEnvironmentBindingPostgresIntegrationTest {
   @Test
   void realAccountWorkflowBindsCurrentEnvironmentAndFencesIndependentSourceVersions()
       throws Exception {
-    Database db = database("97");
+    Database db = database("latest");
     UUID accountId = insertAccount(db);
     UUID partyId = UUID.randomUUID();
     UUID scopeId = UUID.randomUUID();
@@ -271,7 +271,7 @@ class HostedTermsEnvironmentBindingPostgresIntegrationTest {
 
   @Test
   void bindingUpdateWaitsForExactTerminalSettlementOfAffectedDraftOperation() throws Exception {
-    Database db = database("97");
+    Database db = database("latest");
     UUID accountId = insertAccount(db);
     UUID partyId = UUID.randomUUID();
     UUID scopeId = UUID.randomUUID();
@@ -359,7 +359,7 @@ class HostedTermsEnvironmentBindingPostgresIntegrationTest {
 
   @Test
   void boundCurrentnessCarriesExactScheduledCatalogAndUnextendedDeadline() throws Exception {
-    Database db = database("97");
+    Database db = database("latest");
     UUID accountId = insertAccount(db);
     UUID partyId = UUID.randomUUID();
     UUID scopeId = UUID.randomUUID();
@@ -439,7 +439,7 @@ class HostedTermsEnvironmentBindingPostgresIntegrationTest {
 
   @Test
   void capturedEnvironmentDoesNotExemptCurrentnessAfterScheduledDeadline() throws Exception {
-    Database db = database("97");
+    Database db = database("latest");
     UUID accountId = insertAccount(db);
     UUID partyId = UUID.randomUUID();
     UUID scopeId = UUID.randomUUID();
@@ -544,7 +544,7 @@ class HostedTermsEnvironmentBindingPostgresIntegrationTest {
   @Test
   void environmentBindingPublisherWaitsUntilCallerOwnedCurrentnessTransactionEnds()
       throws Exception {
-    Database db = database("97");
+    Database db = database("latest");
     UUID accountId = insertAccount(db);
     UUID partyId = UUID.randomUUID();
     UUID scopeId = UUID.randomUUID();

@@ -104,7 +104,7 @@ class AccountHostedTermsPostgresIntegrationTest {
 
   @Test
   void realServicePublishesAffirmativelyAcceptsReadsBackAndAdvancesMateriality() throws Exception {
-    Database db = database("96");
+    Database db = database("latest");
     UUID accountId = insertAccount(db);
     UUID partyId = UUID.randomUUID();
     UUID scopeId = UUID.randomUUID();
@@ -251,7 +251,7 @@ class AccountHostedTermsPostgresIntegrationTest {
   @Test
   void acceptanceRejectsWrongSignerNegativeActionChangedShownTermsAndUnavailableIdentity()
       throws Exception {
-    Database db = database("96");
+    Database db = database("latest");
     UUID accountId = insertAccount(db);
     UUID partyId = UUID.randomUUID();
     UUID scopeId = UUID.randomUUID();
@@ -318,7 +318,7 @@ class AccountHostedTermsPostgresIntegrationTest {
 
   @Test
   void futureTermsCarryDeadlineWithoutFreezingPriorTermsEarly() throws Exception {
-    Database db = database("96");
+    Database db = database("latest");
     UUID accountId = insertAccount(db);
     UUID partyId = UUID.randomUUID();
     UUID scopeId = UUID.randomUUID();
@@ -482,7 +482,7 @@ class AccountHostedTermsPostgresIntegrationTest {
 
   @Test
   void ownerTransactionRollbackRemovesUncommittedCatalogAndPublicationIntent() throws Exception {
-    Database db = database("96");
+    Database db = database("latest");
     HostedTermsRepository repository = new HostedTermsRepository(db.dsl());
     UUID scopeId = UUID.randomUUID();
     UUID requestId = UUID.randomUUID();

@@ -9,7 +9,14 @@ import java.sql.Statement;
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.UUID;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Supplier;
 import net.firedevops.firemud.accountservice.authordraft.DraftAuthorizationFenceRepository;
 import net.firedevops.firemud.accountservice.hostedterms.HostedTermsDisclosureHandoff;
@@ -244,6 +251,288 @@ class HostedTermsDisclosureHandoffPostgresIntegrationTest {
     assertThat(prepared.status()).isEqualTo(Status.PREPARED);
     assertThat(tx(database, () -> fences.read(original).ordering()))
         .isEqualTo(DraftAuthorizationFenceRepository.Ordering.COMMIT_ORDER);
+  }
+
+  @Test
+  void preparedHandoffAllowsOriginalOrderingButDispatchWaitsForExactSettlement() throws Exception {
+    Database database = database();
+    DraftAuthorizationFenceRepository fences =
+        new DraftAuthorizationFenceRepository(database.dsl());
+    HostedTermsDisclosureHandoffRepository journal =
+        new HostedTermsDisclosureHandoffRepository(database.dsl(), fences);
+    SourceEvidence source = source("prepare-first");
+    HostedTermsDisclosureHandoff handoff = handoff(source);
+    DraftAuthorizationFenceBinding original = draftBinding(source);
+
+    tx(database, () -> journal.prepare(handoff));
+    tx(database, () -> fences.reserve(original));
+    assertDispatchUnsettled(database, journal, handoff);
+    tx(database, () -> fences.claimCommitOrder(original));
+    assertDispatchUnsettled(database, journal, handoff);
+    tx(
+        database,
+        () -> {
+          recordOwnerResult(fences, original, Owner.GAME_DESIGN);
+          return null;
+        });
+    assertDispatchUnsettled(database, journal, handoff);
+    tx(
+        database,
+        () -> {
+          recordOwnerResult(fences, original, Owner.WORLD);
+          return null;
+        });
+    assertThat(tx(database, () -> journal.authorizeDispatch(handoff)).newlyAuthorized()).isTrue();
+    assertThat(tx(database, () -> fences.reserve(original)).ordering())
+        .isEqualTo(DraftAuthorizationFenceRepository.Ordering.COMMIT_ORDER);
+    assertThat(tx(database, () -> fences.claimCommitOrder(original)).ordering())
+        .isEqualTo(DraftAuthorizationFenceRepository.Ordering.COMMIT_ORDER);
+    assertDisclosureBlocked(database, fences, draftBinding(source));
+  }
+
+  @Test
+  void dispatchGuardUsesOnlyExactChangedTermsEvidenceAndDefinitiveNegativeReleasesIt()
+      throws Exception {
+    Database database = database();
+    DraftAuthorizationFenceRepository fences =
+        new DraftAuthorizationFenceRepository(database.dsl());
+    HostedTermsDisclosureHandoffRepository journal =
+        new HostedTermsDisclosureHandoffRepository(database.dsl(), fences);
+    SourceEvidence changed = source("exact-changed-source");
+    SourceEvidence unrelated = source("unrelated-terms-source");
+    SourceEvidence account =
+        new SourceEvidence(
+            SourceKind.ACCOUNT,
+            UUID.randomUUID().toString(),
+            "1",
+            "1",
+            null,
+            null,
+            "test-only-account-evidence".getBytes(StandardCharsets.UTF_8));
+    HostedTermsDisclosureHandoff original = handoff(changed);
+    HostedTermsDisclosureHandoff handoff =
+        new HostedTermsDisclosureHandoff(
+            original.handoffId(),
+            original.requestId(),
+            original.kind(),
+            original.sourceKey(),
+            original.predecessorDigest(),
+            original.candidateDigest(),
+            original.effectiveAt(),
+            List.of(changed, unrelated, account),
+            original.authenticatedAuthorityEvidence());
+    tx(database, () -> journal.prepare(handoff));
+    tx(database, () -> journal.authorizeDispatch(handoff));
+    assertDisclosureBlocked(database, fences, draftBinding(changed));
+    // Other vector members and newer source bytes cannot inherit the changed source's guard.
+    tx(database, () -> fences.reserve(draftBinding(unrelated)));
+    tx(database, () -> fences.reserve(draftBinding(account)));
+    SourceEvidence newer =
+        new SourceEvidence(
+            changed.kind(),
+            changed.scopeId(),
+            changed.generation(),
+            "8",
+            null,
+            null,
+            "test-only-newer-terms-evidence".getBytes(StandardCharsets.UTF_8));
+    DraftAuthorizationFenceBinding newerOriginal = draftBinding(newer);
+    tx(database, () -> fences.reserve(newerOriginal));
+    tx(database, () -> fences.claimCommitOrder(newerOriginal));
+    tx(database, () -> journal.recordAmbiguous(handoff));
+    assertDisclosureBlocked(database, fences, draftBinding(changed));
+    assertThat(tx(database, () -> journal.authorizeDispatch(handoff)).newlyAuthorized()).isTrue();
+    tx(
+        database,
+        () ->
+            journal.recordResult(
+                handoff,
+                new DisclosureResult(
+                    handoff.handoffId(),
+                    handoff.requestId(),
+                    HostedTermsEncoding.digest(handoff.canonicalBytes()),
+                    Outcome.DEFINITIVELY_NOT_DISCLOSED,
+                    "test-only-definitive-negative".getBytes(StandardCharsets.UTF_8))));
+    DraftAuthorizationFenceBinding afterNegative = draftBinding(changed);
+    tx(database, () -> fences.reserve(afterNegative));
+    tx(database, () -> fences.claimCommitOrder(afterNegative));
+
+    SourceEvidence disclosedSource = source("disclosed-guard");
+    HostedTermsDisclosureHandoff disclosed = handoff(disclosedSource);
+    tx(database, () -> journal.prepare(disclosed));
+    tx(database, () -> journal.authorizeDispatch(disclosed));
+    tx(
+        database,
+        () ->
+            journal.recordResult(
+                disclosed,
+                new DisclosureResult(
+                    disclosed.handoffId(),
+                    disclosed.requestId(),
+                    HostedTermsEncoding.digest(disclosed.canonicalBytes()),
+                    Outcome.DISCLOSED,
+                    "test-only-disclosed-result".getBytes(StandardCharsets.UTF_8))));
+    assertDisclosureBlocked(database, fences, draftBinding(disclosedSource));
+    SourceEvidence differentBytes =
+        new SourceEvidence(
+            disclosedSource.kind(),
+            disclosedSource.scopeId(),
+            disclosedSource.generation(),
+            disclosedSource.sourceVersion(),
+            null,
+            null,
+            "test-only-different-source-bytes".getBytes(StandardCharsets.UTF_8));
+    tx(database, () -> fences.reserve(draftBinding(differentBytes)));
+    SourceEvidence newerDisclosed =
+        new SourceEvidence(
+            disclosedSource.kind(),
+            disclosedSource.scopeId(),
+            disclosedSource.generation(),
+            "8",
+            null,
+            null,
+            "test-only-new-version".getBytes(StandardCharsets.UTF_8));
+    tx(database, () -> fences.reserve(draftBinding(newerDisclosed)));
+  }
+
+  @Test
+  void sourceLocksSerializeConcurrentOriginalAcquisitionBeforeDispatch() throws Exception {
+    concurrentAcquisitionAndDispatch(false);
+  }
+
+  @Test
+  void sourceLocksSerializeConcurrentDispatchBeforeOriginalAcquisition() throws Exception {
+    concurrentAcquisitionAndDispatch(true);
+  }
+
+  private static void concurrentAcquisitionAndDispatch(boolean dispatchFirst) throws Exception {
+    Database database = database();
+    DraftAuthorizationFenceRepository fences =
+        new DraftAuthorizationFenceRepository(database.dsl());
+    HostedTermsDisclosureHandoffRepository journal =
+        new HostedTermsDisclosureHandoffRepository(database.dsl(), fences);
+    SourceEvidence source = source("concurrent-" + dispatchFirst);
+    HostedTermsDisclosureHandoff handoff = handoff(source);
+    DraftAuthorizationFenceBinding original = draftBinding(source);
+    tx(database, () -> journal.prepare(handoff));
+    CountDownLatch firstLocked = new CountDownLatch(1);
+    CountDownLatch releaseFirst = new CountDownLatch(1);
+    CountDownLatch secondStarted = new CountDownLatch(1);
+    AtomicInteger firstPid = new AtomicInteger();
+    AtomicInteger secondPid = new AtomicInteger();
+    var executor = Executors.newFixedThreadPool(2);
+    try {
+      var first =
+          executor.submit(
+              () ->
+                  tx(
+                      database,
+                      () -> {
+                        firstPid.set(
+                            Objects.requireNonNull(
+                                    database.dsl().fetchOne("SELECT pg_backend_pid()"),
+                                    "Expected first transaction PostgreSQL backend PID row")
+                                .get(0, Integer.class));
+                        if (dispatchFirst) {
+                          journal.authorizeDispatch(handoff);
+                        } else {
+                          fences.reserve(original);
+                          fences.claimCommitOrder(original);
+                        }
+                        firstLocked.countDown();
+                        await(releaseFirst);
+                        return null;
+                      }));
+      assertThat(firstLocked.await(10, TimeUnit.SECONDS)).isTrue();
+      var second =
+          executor.submit(
+              () ->
+                  tx(
+                      database,
+                      () -> {
+                        secondPid.set(
+                            Objects.requireNonNull(
+                                    database.dsl().fetchOne("SELECT pg_backend_pid()"),
+                                    "Expected second transaction PostgreSQL backend PID row")
+                                .get(0, Integer.class));
+                        secondStarted.countDown();
+                        if (dispatchFirst) {
+                          fences.reserve(original);
+                        } else {
+                          journal.authorizeDispatch(handoff);
+                        }
+                        return null;
+                      }));
+      assertThat(secondStarted.await(10, TimeUnit.SECONDS)).isTrue();
+      awaitBlocked(database, secondPid.get(), firstPid.get());
+      assertThatThrownBy(() -> second.get(200, TimeUnit.MILLISECONDS))
+          .isInstanceOf(TimeoutException.class);
+      releaseFirst.countDown();
+      first.get(10, TimeUnit.SECONDS);
+      assertThatThrownBy(() -> second.get(10, TimeUnit.SECONDS))
+          .isInstanceOf(ExecutionException.class)
+          .hasCauseInstanceOf(IllegalStateException.class)
+          .hasRootCauseMessage(
+              dispatchFirst
+                  ? "Exact hosted terms source has authorized disclosure"
+                  : "Disclosure deadline cannot pass an unsettled original Draft operation");
+      assertThat(tx(database, () -> journal.read(handoff.handoffId())).orElseThrow().status())
+          .isEqualTo(dispatchFirst ? Status.DISPATCH_AUTHORIZED : Status.PREPARED);
+    } finally {
+      releaseFirst.countDown();
+      executor.shutdownNow();
+    }
+  }
+
+  private static void awaitBlocked(Database database, int waitingPid, int blockerPid)
+      throws InterruptedException {
+    long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
+    while (System.nanoTime() < deadline) {
+      if (Boolean.TRUE.equals(
+          Objects.requireNonNull(
+                  database
+                      .dsl()
+                      .fetchOne("SELECT ? = ANY(pg_blocking_pids(?))", blockerPid, waitingPid),
+                  "Expected PostgreSQL blocking-state row")
+              .get(0, Boolean.class))) {
+        return;
+      }
+      Thread.sleep(10);
+    }
+    throw new IllegalStateException(
+        "Expected original and dispatch transactions to share source locks");
+  }
+
+  private static void await(CountDownLatch latch) {
+    try {
+      if (!latch.await(10, TimeUnit.SECONDS)) {
+        throw new IllegalStateException("Timed out waiting for test transaction release");
+      }
+    } catch (InterruptedException interrupted) {
+      Thread.currentThread().interrupt();
+      throw new IllegalStateException(
+          "Interrupted waiting for test transaction release", interrupted);
+    }
+  }
+
+  private static void assertDispatchUnsettled(
+      Database database,
+      HostedTermsDisclosureHandoffRepository journal,
+      HostedTermsDisclosureHandoff handoff) {
+    assertThatThrownBy(() -> tx(database, () -> journal.authorizeDispatch(handoff)))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("unsettled original Draft operation");
+    assertThat(tx(database, () -> journal.read(handoff.handoffId())).orElseThrow().status())
+        .isEqualTo(Status.PREPARED);
+  }
+
+  private static void assertDisclosureBlocked(
+      Database database,
+      DraftAuthorizationFenceRepository fences,
+      DraftAuthorizationFenceBinding binding) {
+    assertThatThrownBy(() -> tx(database, () -> fences.reserve(binding)))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("Exact hosted terms source has authorized disclosure");
   }
 
   private static void recordOwnerResult(
