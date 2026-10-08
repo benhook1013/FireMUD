@@ -243,6 +243,18 @@ security = load_workflow(sys.argv[2])
 preview = load_workflow(sys.argv[3])
 zap = load_workflow(sys.argv[4])
 
+module_checks_step = find_step(
+    ci, "build-and-test", "Run Gradle Checks", "ci workflow"
+)
+require_equal(
+    module_checks_step,
+    ("run",),
+    "echo \"::group::Run Module Validation\"\n"
+    "./gradlew --refresh-dependencies :${{ matrix.module }}:check -PfullCheck\n"
+    "echo \"::endgroup::\"\n",
+    "ci workflow",
+)
+
 require_equal(
     ci,
     ("jobs", "changes", "permissions", "pull-requests"),

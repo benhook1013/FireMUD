@@ -992,7 +992,7 @@ jobs:
         id: checks
         run: |
           echo "::group::Run Module Validation"
-          ./gradlew :${{ matrix.module }}:check -PfullCheck
+          ./gradlew --refresh-dependencies :${{ matrix.module }}:check -PfullCheck
           echo "::endgroup::"
 
       - name: 📦 Build Runtime JAR
