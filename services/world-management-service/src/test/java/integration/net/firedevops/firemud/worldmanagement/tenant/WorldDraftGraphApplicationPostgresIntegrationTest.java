@@ -1699,11 +1699,17 @@ class WorldDraftGraphApplicationPostgresIntegrationTest {
   void canonicalActivationRawSqlRejectsIncompleteOrSubstitutedOperationalRegionAssignments() {
     PreparedLifecycleFixture fixture = materializedLifecycleFixture();
     var assignments = fixture.preparing().operationalRegionAssignments();
-    assertThat(assignments).hasSizeGreaterThan(1);
+    assertThat(assignments).isNotEmpty().hasSize(1);
     var first = assignments.entrySet().iterator().next();
 
     Map<UUID, UUID> missing = new LinkedHashMap<>(assignments);
     missing.remove(first.getKey());
+    UUID missingCanonicalId = UUID.randomUUID();
+    while (assignments.containsKey(missingCanonicalId)
+        || assignments.containsValue(missingCanonicalId)) {
+      missingCanonicalId = UUID.randomUUID();
+    }
+    missing.put(missingCanonicalId, first.getValue());
     Map<UUID, UUID> extra = new LinkedHashMap<>(assignments);
     UUID extraCanonicalId = UUID.randomUUID();
     while (assignments.containsKey(extraCanonicalId)
