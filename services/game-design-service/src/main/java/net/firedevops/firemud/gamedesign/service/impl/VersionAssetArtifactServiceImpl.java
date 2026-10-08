@@ -285,7 +285,9 @@ public class VersionAssetArtifactServiceImpl implements VersionAssetArtifactServ
           "version assets must be tombstoned before purge can begin");
     }
     var version =
-        versionRepository.findById(versionId).filter(found -> found.getTenantId().equals(tenantId));
+        versionRepository
+            .findById(versionId)
+            .filter(found -> Objects.equals(found.getTenantId(), tenantId));
     boolean hasPublishedReleaseBundle =
         publishedReleaseBundleRepository
             .findByTenantIdAndVersionId(tenantId, versionId)
@@ -333,15 +335,19 @@ public class VersionAssetArtifactServiceImpl implements VersionAssetArtifactServ
           "VERSION_STATE_NOT_RETIRED",
           "version assets cannot be purged until the version is retired");
     }
-    if (version.isEmpty() && hasPublishedReleaseBundle) {
+    if (version.isEmpty()) {
       return new VersionAssetDeletionEligibilityDto(
           artifact.getTenantId(),
           artifact.getVersionId(),
           false,
           artifact.getArtifactState().name(),
           artifact.getStateEpoch(),
-          "PUBLISHED_RELEASE_BUNDLE_STILL_PRESENT",
-          "version assets cannot be purged while an attested release bundle still exists without version state");
+          hasPublishedReleaseBundle
+              ? "PUBLISHED_RELEASE_BUNDLE_STILL_PRESENT"
+              : "VERSION_AUTHORITY_NOT_FOUND",
+          hasPublishedReleaseBundle
+              ? "version assets cannot be purged while an attested release bundle still exists without version state"
+              : "an exact caller-tenant Version authority is required before purge eligibility can be granted");
     }
     return new VersionAssetDeletionEligibilityDto(
         artifact.getTenantId(),

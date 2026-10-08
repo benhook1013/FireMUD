@@ -21,7 +21,6 @@ import net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding.Ou
 import net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding.Owner;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding;
 import net.firedevops.firemud.common.authoring.WorldDraftTerminalReadEvidence;
-import net.firedevops.firemud.common.authoring.WorldDraftTerminalReadGrpcCodec;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
 import net.firedevops.firemud.common.json.Rfc8785CanonicalJson;
 import tools.jackson.core.StreamReadFeature;
@@ -219,10 +218,7 @@ public record WorldPublishedStartLocationEvidence(
             account.inputDigest(),
             accountBytes,
             appliedBytes);
-    var terminalResponse =
-        WorldDraftTerminalReadGrpcCodec.toResponse(
-            terminalRequest, java.util.Optional.of(terminalReadback));
-    WorldDraftTerminalReadGrpcCodec.fromResponse(terminalRequest, terminalResponse);
+    new WorldDraftTerminalReadEvidence(terminalRequest, java.util.Optional.of(terminalReadback));
 
     JsonNode applied = readApplied(appliedBytes);
     if (!"APPLIED".equals(text(applied, "status"))) {

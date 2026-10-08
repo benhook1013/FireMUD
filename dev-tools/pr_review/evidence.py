@@ -8,6 +8,7 @@ never turns an absent, malformed, or unlinked capture into review evidence.
 from __future__ import annotations
 
 import json
+import math
 import re
 import subprocess
 from dataclasses import dataclass, field
@@ -32,9 +33,7 @@ CHECKPOINT_CANDIDATE = re.compile(r"^(?:\*\*)?(?:Correction — )?(?:Hosted|CLI)
 RUN_MARKER = re.compile(r"^<!-- firemud-cli-run: (?P<run_id>run\.[A-Za-z0-9]{1,32}) -->$")
 HOSTED_MARKER = re.compile(r"^<!-- firemud-hosted-review: (?P<review_id>[1-9][0-9]*) -->$")
 DURATION_MARKER = re.compile(r"^<!-- firemud-review-duration-seconds: (?P<seconds>0|[1-9][0-9]*) -->$")
-HUMAN_DURATION = re.compile(
-    r"^(?:(?P<hours>[0-9]+)h )?(?:(?P<minutes>[0-9]+)m )?(?P<seconds>[0-9]+)s$"
-)
+HUMAN_DURATION = re.compile(r"^(?:(?P<hours>[0-9]+)h )?(?:(?P<minutes>[0-9]+)m )?(?P<seconds>[0-9]+)s$")
 SCOPE_CHANGE = re.compile(r"^\*\*Review scope changed:\*\* (?P<description>.+)$")
 SCOPE_MARKER = "<!-- firemud-review-scope-change -->"
 RUN_ID = re.compile(r"^run\.[A-Za-z0-9]{1,32}$")
@@ -132,9 +131,7 @@ def _visible_duration_seconds(value: str) -> int | None:
     if match is None:
         return None
     seconds = (
-        int(match.group("hours") or 0) * 3600
-        + int(match.group("minutes") or 0) * 60
-        + int(match.group("seconds"))
+        int(match.group("hours") or 0) * 3600 + int(match.group("minutes") or 0) * 60 + int(match.group("seconds"))
     )
     return seconds if format_duration_seconds(seconds) == value else None
 
@@ -208,7 +205,7 @@ def _summary_marker_context(line: str, marker: str) -> tuple[bool, str] | None:
         previous = text
         if text.startswith(">"):
             text = text[1:].lstrip()
-        elif (heading := re.match(r"^#{1,6}\s+", text)):
+        elif heading := re.match(r"^#{1,6}\s+", text):
             text = text[heading.end() :]
             explicit = True
         elif text.startswith(("- ", "+ ", "* ")):
@@ -322,9 +319,7 @@ def _run_id(body: str) -> tuple[str | None, bool]:
 
 
 def _hosted_id(body: str) -> tuple[int | None, bool]:
-    markers = [
-        line.strip() for line in body.splitlines()[1:] if line.strip().startswith("<!-- firemud-hosted-review:")
-    ]
+    markers = [line.strip() for line in body.splitlines()[1:] if line.strip().startswith("<!-- firemud-hosted-review:")]
     if len(markers) > 1:
         return None, True
     if not markers:
@@ -452,11 +447,7 @@ def duration_marker_audit(comments: list[dict[str, Any]]) -> dict[str, int]:
             result["duplicate_count"] += 1
         if visible is not None and (malformed or not found) or visible is None and (found or malformed):
             result["missing_count"] += 1
-        elif (
-            visible is not None
-            and len(found) == 1
-            and _visible_duration_seconds(visible) != found[0]
-        ):
+        elif visible is not None and len(found) == 1 and _visible_duration_seconds(visible) != found[0]:
             result["mismatch_count"] += 1
     return result
 
@@ -580,15 +571,26 @@ def parse_capture_events(value: str) -> tuple[list[dict[str, Any]], dict[str, An
             continue
         try:
             event = json.loads(line)
-        except json.JSONDecodeError as exc:
+        except (json.JSONDecodeError, ValueError, OverflowError, RecursionError) as exc:
             raise EvidenceError(f"linked capture stdout has invalid JSON at line {number}") from exc
         if not isinstance(event, dict):
             raise EvidenceError(f"linked capture stdout has a non-object event at line {number}")
+        _validate_event_archivability(event, number)
         if event.get("type") == "finding":
+            instructions = event.get("codegenInstructions")
+            if isinstance(instructions, str) and instructions.strip():
+                from .sqlite_provider_imports import _cli_detail
+
+                if not _cli_detail(instructions).strip():
+                    raise EvidenceError(f"linked capture stdout has a finding without issue content at line {number}")
             findings.append(event)
         elif event.get("type") == "complete":
             completes.append(event)
-    if len(completes) != 1 or completes[0].get("status") != "review_completed":
+    if (
+        len(completes) != 1
+        or completes[0].get("status") != "review_completed"
+        or type(completes[0].get("findings")) is not int
+    ):
         raise EvidenceError("linked capture has no unique successful completion")
     complete = completes[0]
     if complete.get("findings") != len(findings) or not isinstance(complete.get("reviewedFiles"), list):
@@ -598,10 +600,170 @@ def parse_capture_events(value: str) -> tuple[list[dict[str, Any]], dict[str, An
     return findings, complete
 
 
+def parse_partial_capture_events(value: str) -> list[dict[str, Any]]:
+    """Validate an incomplete CLI event stream without treating it as completion.
+
+    This is only for retaining observations from an already terminal failed
+    attempt. A malformed event, an unterminated final line, or any completion
+    event makes the partial stream unusable; callers can still keep the original
+    bounded raw output as diagnostic evidence.
+    """
+
+    findings, completes = _parse_strict_capture_events(value)
+    if completes:
+        raise EvidenceError("partial capture stdout contains a completion event")
+    return findings
+
+
+def parse_failed_capture_events(value: str) -> list[dict[str, Any]]:
+    """Validate provider events retained from a terminal failed attempt.
+
+    A valid completion record does not change the caller's failed attempt into
+    a completed review. It only lets that caller retain the finding objects
+    which were present before the CLI process failed.
+    """
+
+    findings, completes = _parse_strict_capture_events(value)
+    if completes and (
+        len(completes) != 1
+        or completes[0].get("status") != "review_completed"
+        or type(completes[0].get("findings")) is not int
+        or completes[0]["findings"] != len(findings)
+        or not isinstance(completes[0].get("reviewedFiles"), list)
+    ):
+        raise EvidenceError("failed capture completion does not match its findings/files")
+    return findings
+
+
+def _parse_strict_capture_events(value: str) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    if not isinstance(value, str):
+        raise EvidenceError("capture stdout is not text")
+    try:
+        encoded_size = len(value.encode("utf-8"))
+    except UnicodeEncodeError as exc:
+        raise EvidenceError("capture stdout is not valid UTF-8 text") from exc
+    if encoded_size > 8 * 1024 * 1024:
+        raise EvidenceError("capture stdout exceeds its evidence size limit")
+    if value and not value.endswith("\n"):
+        raise EvidenceError("capture stdout ends with an incomplete JSONL line")
+
+    def reject_duplicate_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+        result: dict[str, Any] = {}
+        for key, item in pairs:
+            if key in result:
+                raise ValueError("duplicate JSON object key")
+            result[key] = item
+        return result
+
+    def reject_json_constant(constant: str) -> None:
+        raise ValueError(f"non-standard JSON constant {constant}")
+
+    def parse_finite_float(value: str) -> float:
+        number = float(value)
+        if not math.isfinite(number):
+            raise ValueError("JSON number is outside the finite float range")
+        return number
+
+    findings: list[dict[str, Any]] = []
+    completes: list[dict[str, Any]] = []
+    event_count = 0
+    terminal_error_seen = False
+    for number, line in enumerate(_capture_lines(value), 1):
+        if not line.strip():
+            continue
+        event_count += 1
+        if event_count > 10_000:
+            raise EvidenceError("capture stdout has too many JSONL events")
+        try:
+            event = json.loads(
+                line,
+                object_pairs_hook=reject_duplicate_keys,
+                parse_constant=reject_json_constant,
+                parse_float=parse_finite_float,
+            )
+        except (json.JSONDecodeError, ValueError, OverflowError, RecursionError) as exc:
+            raise EvidenceError(f"capture stdout has invalid JSON at line {number}") from exc
+        if not isinstance(event, dict):
+            raise EvidenceError(f"capture stdout has a non-object event at line {number}")
+        _validate_event_archivability(event, number)
+        if terminal_error_seen:
+            raise EvidenceError("capture stdout has events after its terminal error")
+        event_type = event.get("type")
+        if not isinstance(event_type, str):
+            raise EvidenceError(f"capture stdout has an invalid event type at line {number}")
+        if event_type == "finding":
+            instructions = event.get("codegenInstructions")
+            if not isinstance(instructions, str) or not instructions.strip():
+                raise EvidenceError(f"capture stdout has a finding without instruction text at line {number}")
+            try:
+                instructions.encode("utf-8")
+            except UnicodeEncodeError as exc:
+                raise EvidenceError(f"capture stdout has non-UTF-8 finding text at line {number}") from exc
+            # Reuse the canonical CLI projection to remove the provider's
+            # location preamble before deciding whether a finding has any
+            # issue content. A locator alone must not become a generic title
+            # paired with an empty detail.
+            from .sqlite_provider_imports import _cli_detail
+
+            if not _cli_detail(instructions).strip():
+                raise EvidenceError(f"capture stdout has a finding without issue content at line {number}")
+            if completes:
+                raise EvidenceError("capture stdout has findings after its completion event")
+            findings.append(event)
+        elif event_type == "complete":
+            if completes:
+                raise EvidenceError("capture stdout has multiple completion events")
+            completes.append(event)
+        elif event_type in {"start", "reviewing", "review_context", "heartbeat"}:
+            if completes:
+                raise EvidenceError("capture stdout has progress events after its completion event")
+            if event_type == "review_context":
+                required = {"baseBranch", "currentBranch", "expectedDuration", "reviewType", "workingDirectory"}
+                if not required <= event.keys() or any(not isinstance(event[key], str) for key in required):
+                    raise EvidenceError(f"capture stdout has an invalid review context at line {number}")
+            elif event_type == "heartbeat":
+                status = event.get("status")
+                if not isinstance(status, str) or not status.strip() or len(status) > 256:
+                    raise EvidenceError(f"capture stdout has an invalid heartbeat event at line {number}")
+            else:
+                message = event.get("message")
+                if message is not None and not isinstance(message, str):
+                    raise EvidenceError(f"capture stdout has an invalid reviewing event at line {number}")
+        elif event_type == "error":
+            error_type = event.get("errorType")
+            recoverable = event.get("recoverable")
+            message = event.get("message")
+            details = event.get("details")
+            if (
+                not isinstance(error_type, str)
+                or not error_type.strip()
+                or len(error_type) > 128
+                or type(recoverable) is not bool
+                or (message is not None and not isinstance(message, str))
+                or (details is not None and not isinstance(details, dict))
+            ):
+                raise EvidenceError(f"capture stdout has an invalid error event at line {number}")
+            terminal_error_seen = True
+        else:
+            raise EvidenceError(f"capture stdout has an unsupported event at line {number}")
+        if len(findings) > MAX_CAPTURE_FINDINGS:
+            raise EvidenceError("capture stdout has too many findings")
+    return findings, completes
+
+
 def _capture_lines(value: str) -> list[str]:
     """Split capture records on literal newlines while accepting trailing CR."""
 
     return [line.removesuffix("\r") for line in value.split("\n")]
+
+
+def _validate_event_archivability(event: dict[str, Any], number: int) -> None:
+    """Reject nested JSON values that the canonical archive cannot encode safely."""
+
+    try:
+        json.dumps(event, ensure_ascii=False, sort_keys=True, allow_nan=False).encode("utf-8")
+    except (TypeError, ValueError, OverflowError, UnicodeEncodeError, RecursionError) as exc:
+        raise EvidenceError(f"capture stdout has an unarchivable JSON value at line {number}") from exc
 
 
 def _validate_cli_checkpoint_decisions(checkpoint: Checkpoint, capture: CaptureData) -> None:
@@ -715,8 +877,10 @@ def _cli_capture_from_sql(
         or attempt_metadata.get("candidate_sha") != candidate_sha
     ):
         raise CaptureInvalid("linked SQLite CLI candidate SHA does not match its source run")
-    if checkpoint is not None and checkpoint.reviewed_sha and not candidate_sha.lower().startswith(
-        checkpoint.reviewed_sha.lower()
+    if (
+        checkpoint is not None
+        and checkpoint.reviewed_sha
+        and not candidate_sha.lower().startswith(checkpoint.reviewed_sha.lower())
     ):
         raise CaptureInvalid("linked SQLite CLI candidate SHA does not match checkpoint")
 
@@ -790,7 +954,10 @@ def _cli_capture_from_sql(
         if observation is not None and observation.get("detail_recorded") is False:
             continue
         if observation is None or (
-            (compare_titles and observation.get("title") != _cli_finding_title(instructions, f"CodeRabbit CLI finding {index}"))
+            (
+                compare_titles
+                and observation.get("title") != _cli_finding_title(instructions, f"CodeRabbit CLI finding {index}")
+            )
             or observation.get("detail") != _safe_finding_detail(_cli_detail(instructions))
         ):
             raise CaptureInvalid("linked SQLite CLI finding content conflicts with its source projection")
@@ -802,7 +969,10 @@ def _cli_capture_from_sql(
             raise CaptureInvalid("linked SQLite CLI finding count does not match checkpoint")
         if checkpoint.file_count not in (None, candidate_files):
             raise CaptureInvalid("linked SQLite CLI file count does not match checkpoint")
-        if checkpoint.duration_seconds is not None and checkpoint.duration_seconds != metadata_value["duration_seconds"]:
+        if (
+            checkpoint.duration_seconds is not None
+            and checkpoint.duration_seconds != metadata_value["duration_seconds"]
+        ):
             raise CaptureInvalid("checkpoint duration does not match linked SQLite CLI metadata")
         if run.get("finalized") is not True:
             raise CaptureInvalid("linked SQLite CLI source decisions are not finalized")
@@ -992,8 +1162,12 @@ def _load_cli_capture(
 
 
 def load_cli_capture(
-    checkpoint: Checkpoint, repo: str, pr_number: int, common: Path | None = None,
-    *, records: SqliteReviewRecords | None | object = _UNRESOLVED_RECORDS,
+    checkpoint: Checkpoint,
+    repo: str,
+    pr_number: int,
+    common: Path | None = None,
+    *,
+    records: SqliteReviewRecords | None | object = _UNRESOLVED_RECORDS,
 ) -> CaptureData:
     """Load a public checkpoint's capture and require its decisions to match."""
 

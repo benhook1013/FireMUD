@@ -36,6 +36,7 @@ import net.firedevops.firemud.gamedesign.repository.PluginVersionStatusEventRepo
 import net.firedevops.firemud.gamedesign.repository.PublishedPluginVersionRepository;
 import net.firedevops.firemud.gamedesign.repository.VersionRepository;
 import net.firedevops.firemud.gamedesign.service.ControlPlaneDigestService;
+import net.firedevops.firemud.gamedesign.service.MutationOwnerProofUnavailableException;
 import net.firedevops.firemud.gamedesign.service.ParsedPluginBundle;
 import net.firedevops.firemud.gamedesign.service.PluginBundleIntakeService;
 import net.firedevops.firemud.gamedesign.service.PluginBundleStorageService;
@@ -860,18 +861,11 @@ public class VersionServiceImpl implements VersionService {
     if (version.getVersionState() == newState) {
       return toVersionStateDto(version);
     }
-    version.setVersionState(newState);
-    version.setVersionStateEpoch(version.getVersionStateEpoch() + 1L);
-    version.setUpdatedAt(LocalDateTime.now());
-    Version saved = versionRepository.save(version);
-    logger.info(
-        "Updated version state tenant={} version={} state={} epoch={} reason={}",
-        tenantId,
-        versionId,
-        newState,
-        saved.getVersionStateEpoch(),
-        reason == null ? "" : reason);
-    return toVersionStateDto(saved);
+    return CreatorMutationOwnerProofGuard.denyUntilAccountCommitBoundProof(
+        () ->
+            new MutationOwnerProofUnavailableException(
+                "VERSION_STATE_MUTATION_UNAVAILABLE",
+                "Canonical lifecycle transition and owner proof are unavailable"));
   }
 
   private int calculateNextNumber(String tenantId) {
