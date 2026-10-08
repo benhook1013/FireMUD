@@ -1,0 +1,39 @@
+syntax = "proto3";
+
+package account.v1;
+
+option java_package = "net.firedevops.firemud.account.v1";
+option java_multiple_files = true;
+
+// Standalone read of a distinct immutable selected-publication authorization. Account must
+// authenticate only the exact same-namespace Game Design workload peer for this method. It does
+// not read or reuse the original Draft COMMIT_ORDER.
+service AccountPublicationAuthorizationReadService {
+  rpc ReadHeldPublicationAuthorization(ReadHeldPublicationAuthorizationRequest)
+      returns (ReadHeldPublicationAuthorizationResponse);
+}
+
+message ReadHeldPublicationAuthorizationRequest {
+  int32 schema_version = 1;
+  string target_namespace = 2;
+  string read_request_id = 3;
+  // Complete canonical AccountPublicationAuthorizationBinding bytes and their SHA-256 digest.
+  // The tuple is a lookup identity, not caller authority.
+  bytes original_publication_authorization_binding = 4;
+  string publication_authorization_digest = 5;
+}
+
+enum HeldPublicationAuthorizationStatus {
+  HELD_PUBLICATION_AUTHORIZATION_STATUS_UNSPECIFIED = 0;
+  HELD_PUBLICATION_AUTHORIZATION_STATUS_HELD = 1;
+}
+
+message ReadHeldPublicationAuthorizationResponse {
+  // The complete request tuple is echoed exactly. Only HELD is a successful response.
+  int32 schema_version = 1;
+  string target_namespace = 2;
+  string read_request_id = 3;
+  bytes original_publication_authorization_binding = 4;
+  string publication_authorization_digest = 5;
+  HeldPublicationAuthorizationStatus status = 6;
+}

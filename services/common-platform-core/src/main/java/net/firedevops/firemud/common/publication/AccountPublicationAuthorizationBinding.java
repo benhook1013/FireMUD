@@ -15,8 +15,8 @@ import net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding.So
 /**
  * Distinct publication operation's immutable original input and Account source participation. This
  * validates complete selected Draft structure, not actor authentication or positive source
- * authority. The future Account producer must independently establish the complete current source
- * vector, including party and operative hosted terms. Draft COMMIT_ORDER and creation results never
+ * authority. The Account producer must independently establish the complete current source vector,
+ * including party and operative hosted terms. Draft COMMIT_ORDER and creation results never
  * authorize or settle this operation. Later World captures and release/artifact results remain
  * separate and must never rewrite the original selection digest.
  */

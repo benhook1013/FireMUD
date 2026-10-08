@@ -121,6 +121,11 @@ if args[0] == 'replace':
 spec = pod['spec']
 container = spec['containers'][0]
 security = container['securityContext']
+# Kubernetes rejects privileged=true with allowPrivilegeEscalation=false at
+# schema validation, before the protected-Pod admission policy can deny it.
+if security.get('privileged') and security.get('allowPrivilegeEscalation') is False:
+    print('Error from server (BadRequest): privileged containers require allowPrivilegeEscalation=true', file=sys.stderr)
+    sys.exit(1)
 policy = None
 message = None
 if any(spec.get(k) for k in ('hostNetwork', 'hostPID', 'hostIPC')) or any('hostPath' in v for v in spec['volumes']) or spec['securityContext'].get('sysctls'):
@@ -197,6 +202,8 @@ with tempfile.TemporaryDirectory(prefix="firemud-pod-proof-contract-") as direct
             assert "UNPROVED: CNI/socket" in result.stdout
             assert "ephemeral privilege escape" in result.stdout
             assert "game-session-service CREATE shadow-" in result.stdout
+            assert "PASS account-service CREATE privileged" in result.stdout
+            assert "PASS game-session-service CREATE privileged" in result.stdout
         print("PASS mock-kubectl " + mode)
     pod["metadata"]["namespace"] = "pr-23"
     pod_file.write_text(json.dumps(pod), encoding="utf-8")

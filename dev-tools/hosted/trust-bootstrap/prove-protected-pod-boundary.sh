@@ -188,7 +188,8 @@ for app in ("account-service", "game-session-service"):
         deny(field, lambda p, field=field: p["spec"].update({field: True}), boundary, host_message)
     deny("hostPath", lambda p: p["spec"]["volumes"].append({"name": "host", "hostPath": {"path": "/tmp"}}), boundary, host_message)
     deny("sysctls", lambda p: p["spec"]["securityContext"].update({"sysctls": [{"name": "net.ipv4.ip_local_port_range", "value": "1024 65535"}]}), boundary, host_message)
-    for label, change in (("privileged", {"privileged": True}), ("escalation", {"allowPrivilegeEscalation": True}),
+    for label, change in (("privileged", {"privileged": True, "allowPrivilegeEscalation": True}),
+                          ("escalation", {"allowPrivilegeEscalation": True}),
                           ("NET_ADMIN", {"capabilities": {"drop": ["ALL"], "add": ["NET_ADMIN"]}}),
                           ("missing-drop", {"capabilities": {"drop": []}}), ("procMount", {"procMount": "Unmasked"})):
         deny(label, lambda p, change=change: p["spec"]["containers"][0]["securityContext"].update(change), boundary, container_message)

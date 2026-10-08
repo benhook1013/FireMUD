@@ -896,6 +896,7 @@ class AccountJwtReadinessProbePersistenceIntegrationTest {
               () -> readiness.readCurrentExpectedPods(BINDING, trust, entry, refreshedObservation));
       assertThat(targets).isNotEmpty();
       if (!testedCurrentProbeOwnerRead && entry.validatorId().equals("game-session-service")) {
+        long receiptsBeforeOwnerRead = count(context, "account_jwt_readiness_pod_receipts");
         var expectedPod = targets.getFirst();
         var selector = ownerSelector(plan, entry, expectedPod);
         var ownerEvidence =
@@ -1085,7 +1086,8 @@ class AccountJwtReadinessProbePersistenceIntegrationTest {
                                 BINDING.namespace())))
             .isInstanceOf(
                 AccountJwtReadinessReceiverInvocationPort.ReceiverUnavailableException.class);
-        assertThat(count(context, "account_jwt_readiness_pod_receipts")).isZero();
+        assertThat(count(context, "account_jwt_readiness_pod_receipts"))
+            .isEqualTo(receiptsBeforeOwnerRead);
         testedCurrentProbeOwnerRead = true;
       }
       for (AccountJwtReadinessProbeRepository.ExpectedPod target : targets) {

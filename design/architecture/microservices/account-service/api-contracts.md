@@ -78,6 +78,8 @@ For `security_locked` accounts, Account's successful recovery authorization issu
 
 ## gRPC APIs
 
+The standalone, unregistered `AccountPublicationAuthorizationReadService.ReadHeldPublicationAuthorization` contract is defined in [its proto](../../../../protos/account/v1/publication_authorization_service.proto). Only the verified same-namespace Game Design workload may read an exact retained, distinct publication authorization; the complete canonical binding and digest are lookup evidence, not caller authority. `HELD` confirms the original Account order and source participation, not Game Design publication, World application, owner settlement, or admission. Original Draft permission cannot substitute. Runtime registration and composed proof remain gated in [Game Authoring, Publishing and Activation](../../../project-management/implementation-tracking/game-authoring-publishing-and-activation.md).
+
 `IssueConnectToken` is not a gRPC method. It is the local Account application operation behind the REST `POST /auth/connect-token` route documented below; no `IssueConnectToken` RPC or protobuf transport is implied.
 
 - `Ping(PingRequest) returns (PingResponse)` – connectivity check defined in `account_service.proto`.

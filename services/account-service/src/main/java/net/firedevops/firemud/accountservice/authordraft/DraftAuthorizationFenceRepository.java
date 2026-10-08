@@ -249,6 +249,7 @@ public final class DraftAuthorizationFenceRepository {
     if (hasWaitingChange(sources)) {
       throw new IllegalStateException("Applicable Account source change is unresolved");
     }
+    requireNoPendingPublication(sources);
     for (UUID operationId : affectedOperations(sources)) {
       Record row = readOperation(operationId);
       if (row == null) {
@@ -297,6 +298,34 @@ public final class DraftAuthorizationFenceRepository {
               .isEmpty()) {
         throw new IllegalStateException("Exact hosted terms source has authorized disclosure");
       }
+    }
+  }
+
+  /** Distinct publication admission after authenticated source capture and sorted source locks. */
+  public void requirePublicationAdmission(List<SourceEvidence> sources) {
+    requireTransaction();
+    lockProducerSourcesNowait(sources);
+    if (hasWaitingChange(sources)) {
+      throw new IllegalStateException("Applicable authority source change is waiting");
+    }
+    requireNoAuthorizedDisclosure(sources);
+  }
+
+  private boolean hasPendingPublication(List<SourceEvidence> sources) {
+    for (SourceEvidence source : sources) {
+      if (!dsl.fetch(
+              "SELECT operation_id FROM account_selected_publication_sources WHERE source_key = ?",
+              source.key())
+          .isEmpty()) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  private void requireNoPendingPublication(List<SourceEvidence> sources) {
+    if (hasPendingPublication(sources)) {
+      throw new IllegalStateException("Distinct selected-publication operation remains pending");
     }
   }
 
@@ -730,6 +759,9 @@ public final class DraftAuthorizationFenceRepository {
    * evidence always remains pending.
    */
   private boolean allAffectedSettled(List<SourceEvidence> sources) {
+    if (hasPendingPublication(sources)) {
+      return false;
+    }
     for (UUID operation : affectedOperations(sources)) {
       Record row = readOperation(operation);
       if (settlement(originalBinding(row), Ordering.valueOf(row.get("ordering", String.class)))

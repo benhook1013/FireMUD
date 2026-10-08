@@ -105,7 +105,7 @@ public final class AccountControlUiActorService {
         });
   }
 
-  private <T> T withCurrent(
+  <T> T withCurrent(
       String compactJwt,
       UUID selectedTenant,
       CapturedEnvironmentBoundary environment,
@@ -186,7 +186,7 @@ public final class AccountControlUiActorService {
     return true;
   }
 
-  private record Current(
+  record Current(
       AccountControlUiIssuanceRepository.Stored stored,
       AccountControlUiAuthority.Snapshot source) {}
 
