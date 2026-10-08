@@ -5,4 +5,8 @@ public final class CanonicalGameplayBindingInventoryConflictException extends Ru
   public CanonicalGameplayBindingInventoryConflictException(String message) {
     super(message);
   }
+
+  public CanonicalGameplayBindingInventoryConflictException(String message, Throwable cause) {
+    super(message, cause);
+  }
 }

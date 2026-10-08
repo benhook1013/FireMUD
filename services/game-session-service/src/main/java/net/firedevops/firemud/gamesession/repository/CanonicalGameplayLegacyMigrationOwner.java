@@ -120,7 +120,8 @@ final class CanonicalGameplayLegacyMigrationOwner {
         }
       }
       throw new CanonicalGameplayBindingInventoryConflictException(
-          "Legacy migration remains fenced and unresolved; retain the same cohort and operation");
+          "Legacy migration remains fenced and unresolved; retain the same cohort and operation",
+          ambiguous);
     }
   }
 

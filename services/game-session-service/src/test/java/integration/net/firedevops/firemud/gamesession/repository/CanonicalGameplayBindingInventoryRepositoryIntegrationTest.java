@@ -5,10 +5,19 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.math.BigInteger;
 import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
 import java.util.UUID;
+import net.firedevops.firemud.common.account.admission.AccountGameplayAdmissionLeaseEvidence;
+import net.firedevops.firemud.gamesession.binding.CanonicalGameplayAccountIndexMember;
+import net.firedevops.firemud.gamesession.binding.CanonicalGameplayAdmissionDecision;
 import net.firedevops.firemud.gamesession.binding.CanonicalGameplayBindingIdentity;
+import net.firedevops.firemud.gamesession.binding.CanonicalGameplayBindingProvisionalCasEvidence;
 import net.firedevops.firemud.gamesession.binding.CanonicalGameplayBindingTransitionRequest;
 import net.firedevops.firemud.gamesession.binding.CanonicalIssuerReservationFenceEvidence;
+import net.firedevops.firemud.gamesession.dto.CanonicalPlayableTarget;
 import org.flywaydb.core.Flyway;
 import org.jooq.DSLContext;
 import org.jooq.SQLDialect;
@@ -159,6 +168,57 @@ class CanonicalGameplayBindingInventoryRepositoryIntegrationTest {
   }
 
   @Test
+  void persistsFirstBindingAccountIndexReadbackWithoutPriorObligation() {
+    TestSchema testSchema = newTestSchema("gs_binding_first_projection_");
+    try {
+      LeaseBoundFirstBinding fixture = prepareLeaseBoundFirstBinding(testSchema.dsl());
+      assertThat(fixture.evidence().expectedPrior()).isNull();
+      String member =
+          CanonicalGameplayAccountIndexMember.of(fixture.evidence().candidate()).value();
+
+      var receipt =
+          fixture.repository().markCandidateAccountIndexPresent(fixture.evidence(), member);
+
+      assertThat(receipt.obligationOrdinal()).isZero();
+      assertThat(receipt.member()).isEqualTo(member);
+      assertThat(receipt.state())
+          .isEqualTo(
+              net.firedevops.firemud.gamesession.binding
+                  .CanonicalGameplayBindingAccountIndexProjectionReceipt.State
+                  .PRESENT_AWAITING_COVERAGE);
+      assertThat(fixture.repository().readSnapshot().accountIndexObligations())
+          .singleElement()
+          .satisfies(
+              obligation ->
+                  assertThat(obligation.projectionState())
+                      .isEqualTo(
+                          net.firedevops.firemud.gamesession.binding
+                              .CanonicalGameplayBindingAccountIndexObligation.ProjectionState
+                              .PRESENT_AWAITING_COVERAGE));
+    } finally {
+      dropSchema(testSchema.schema());
+    }
+  }
+
+  @Test
+  void readsLeaseBoundAdmissionDecisionInReadOnlyTransaction() {
+    TestSchema testSchema = newTestSchema("gs_binding_readonly_decision_");
+    try {
+      LeaseBoundFirstBinding fixture = prepareLeaseBoundFirstBinding(testSchema.dsl());
+
+      var decision =
+          fixture.repository().readAdmissionDecision(TRANSITION_ID, fixture.leaseEvidence());
+
+      assertThat(decision.bindingDecisionId()).isEqualTo(TRANSITION_ID);
+      assertThat(decision.leaseEvidence().hasSameIdentity(fixture.leaseEvidence())).isTrue();
+      assertThat(decision.candidate()).isEqualTo(fixture.evidence().candidate().identity());
+      assertThat(decision.expectedOldBindingGeneration()).isNull();
+    } finally {
+      dropSchema(testSchema.schema());
+    }
+  }
+
+  @Test
   void unresolvedPreparedTransitionFencesASecondTransitionForTheSameController() {
     String schema = "gs_binding_pending_" + UUID.randomUUID().toString().replace("-", "");
     DriverManagerDataSource dataSource = dataSource(schema);
@@ -183,11 +243,19 @@ class CanonicalGameplayBindingInventoryRepositoryIntegrationTest {
               UUID.fromString("eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee"),
               UUID.fromString("ffffffff-ffff-4fff-8fff-ffffffffffff"),
               identity(candidateSession(2)),
-              reservation(UUID.fromString("abababab-abab-4bab-8bab-abababababab")),
+              new CanonicalIssuerReservationFenceEvidence(
+                  UUID.fromString("abababab-abab-4bab-8bab-abababababab"),
+                  UUID.fromString("acacacac-acac-4cac-8cac-acacacacacac"),
+                  ISSUER_COVERAGE_OPERATION_ID,
+                  BigInteger.valueOf(13),
+                  BigInteger.valueOf(17),
+                  BigInteger.valueOf(41)),
               prior.bindingRef(),
               BigInteger.valueOf(5));
       assertThatThrownBy(() -> repository.prepare(otherOperation))
-          .isInstanceOf(CanonicalGameplayBindingInventoryConflictException.class);
+          .isInstanceOf(CanonicalGameplayBindingInventoryConflictException.class)
+          .hasMessage(
+              "An unresolved candidate or repair obligation already fences this controller");
       assertThat(repository.readSnapshot().inventoryRevision()).isEqualTo(BigInteger.valueOf(9));
     } finally {
       dropSchema(schema);
@@ -279,6 +347,154 @@ class CanonicalGameplayBindingInventoryRepositoryIntegrationTest {
         null,
         null);
   }
+
+  private static LeaseBoundFirstBinding prepareLeaseBoundFirstBinding(DSLContext dsl) {
+    var runtimeTarget =
+        CanonicalGameplayBindingRuntimeTestFixtures.seedRunningLaunch(
+            dsl, TENANT_ID, 1L, RUNTIME_GAME_INSTANCE_ID, INSTANCE_ID, NAMESPACE_ID);
+    // This synthetic disposition opens the repository branch for proof; it is not real migration
+    // or bootstrap authorization.
+    seedSyntheticVerifiedLegacyDisposition(dsl);
+    CanonicalGameplayBindingInventoryRepository repository =
+        new CanonicalGameplayBindingInventoryRepository(dsl);
+    CanonicalGameplayBindingTransitionRequest request = request(candidateSession(1));
+    repository.prepare(request);
+    CanonicalGameplayBindingProvisionalCasEvidence preparedEvidence =
+        repository.readProvisionalCasEvidence(TRANSITION_ID);
+    var candidate = preparedEvidence.candidate().identity();
+    CanonicalPlayableTarget target = runtimeTarget.playableTarget();
+    AccountGameplayAdmissionLeaseEvidence leaseEvidence =
+        leaseEvidence(candidate, preparedEvidence.transition().bindingGeneration(), target);
+    CanonicalGameplayAdmissionDecision decision =
+        new CanonicalGameplayAdmissionDecision(
+            TRANSITION_ID,
+            leaseEvidence,
+            candidate,
+            preparedEvidence.transition().bindingGeneration(),
+            null,
+            target);
+    repository.markProvisional(preparedEvidence, decision);
+    return new LeaseBoundFirstBinding(
+        repository, leaseEvidence, repository.readProvisionalCasEvidence(TRANSITION_ID));
+  }
+
+  private static AccountGameplayAdmissionLeaseEvidence leaseEvidence(
+      CanonicalGameplayBindingIdentity candidate,
+      BigInteger bindingGeneration,
+      CanonicalPlayableTarget target) {
+    long now = System.currentTimeMillis();
+    String nowSeconds = Long.toString(now / 1000L);
+    Map<String, Object> carrier = new LinkedHashMap<>();
+    carrier.put("schema", AccountGameplayAdmissionLeaseEvidence.SCHEMA);
+    carrier.put("schemaVersion", "1");
+    carrier.put("mode", "PUBLIC_PRODUCTION");
+    carrier.put("targetNamespace", target.targetNamespace());
+    carrier.put(
+        "callerWorkload",
+        "spiffe://firemud/ns/" + target.targetNamespace() + "/sa/game-session-service");
+    carrier.put("requestId", "10101010-1010-4010-8010-101010101010");
+    carrier.put("leaseId", "20202020-2020-4020-8020-202020202020");
+    carrier.put("leaseFence", "1");
+
+    Map<String, Object> scope = new LinkedHashMap<>();
+    scope.put("accountId", candidate.accountId().toString());
+    scope.put("tenantId", candidate.tenantId().toString());
+    scope.put("realmId", target.realmId().toString());
+    scope.put("worldSlug", target.worldSlug());
+    scope.put("realmSlug", target.realmSlug());
+    scope.put("playableStateNamespaceId", target.playableStateNamespaceId().toString());
+    scope.put("playableStateScope", target.playableStateScope());
+    scope.put("gameInstanceId", target.canonicalGameInstanceId().toString());
+    scope.put("characterId", candidate.characterId().toString());
+    scope.put("sessionId", candidate.sessionId());
+    scope.put("bindingGeneration", bindingGeneration.toString());
+    scope.put("catalogRevision", Long.toString(target.catalogRevision()));
+    scope.put("pointerVersion", Long.toString(target.pointerVersion()));
+    scope.put("regionId", candidate.regionId().toString());
+    scope.put("regionEpoch", candidate.regionEpoch().toString());
+    carrier.put("bindingScope", scope);
+
+    Map<String, Object> authority = new LinkedHashMap<>();
+    authority.put("issuerAuthGeneration", candidate.issuerAuthGeneration().toString());
+    authority.put("accountAuthorityGeneration", "1");
+    authority.put("tenantAuthorityGeneration", Map.of(candidate.tenantId().toString(), "1"));
+    authority.put("membershipAuthorityGeneration", Map.of(candidate.tenantId().toString(), "1"));
+    authority.put("privateRealmGrantVersions", List.of());
+    carrier.put("authorityTuple", authority);
+    carrier.put("issuanceFence", "1");
+
+    Map<String, Object> membershipVersions =
+        new LinkedHashMap<>(Map.of(candidate.tenantId().toString(), "1"));
+    carrier.put(
+        "membershipBaseline",
+        new LinkedHashMap<>(
+            Map.of(
+                "membershipLifecycleState",
+                "ACTIVE",
+                "membershipVersion",
+                membershipVersions,
+                "membershipAuthorityGeneration",
+                "1")));
+
+    String prefix = "account:auth-authority:v1:";
+    List<Map<String, Object>> checkpoints = new ArrayList<>();
+    for (String stream :
+        List.of(
+            "account/" + candidate.accountId(),
+            "issuer/firemud-account-service",
+            "membership/" + candidate.accountId() + "/" + candidate.tenantId(),
+            "tenant/" + candidate.tenantId())) {
+      checkpoints.add(
+          new LinkedHashMap<>(
+              Map.of(
+                  "outboxStreamKey",
+                  prefix + stream,
+                  "outboxSequence",
+                  stream.startsWith("membership/") || stream.startsWith("tenant/") ? "1" : "0")));
+    }
+    carrier.put("outboxCheckpoints", checkpoints);
+
+    Map<String, Object> tokenIdentity = new LinkedHashMap<>();
+    tokenIdentity.put("accountId", candidate.accountId().toString());
+    tokenIdentity.put("operationId", "40404040-4040-4040-8040-404040404040");
+    tokenIdentity.put("issuanceRequestId", "50505050-5050-4050-8050-505050505050");
+    tokenIdentity.put("tokenJti", "60606060-6060-4060-8060-606060606060");
+    tokenIdentity.put("tokenSHA256", "a".repeat(64));
+    tokenIdentity.put("tokenProfile", "game-session-account-delegation");
+    tokenIdentity.put("tokenGeneration", "1");
+    tokenIdentity.put("issuanceFence", "1");
+    tokenIdentity.put("tokenIdentityFence", "1");
+    tokenIdentity.put("issuedAt", nowSeconds);
+    tokenIdentity.put("notBefore", nowSeconds);
+    tokenIdentity.put("expiresAt", Long.toString(now / 1000L + 60L));
+    carrier.put("tokenIdentityEvidence", tokenIdentity);
+    carrier.put("evaluatedAt", Long.toString(now));
+    carrier.put(
+        "expiresAt",
+        Long.toString(now + AccountGameplayAdmissionLeaseEvidence.MAX_DURATION_MILLIS));
+    return AccountGameplayAdmissionLeaseEvidence.fromCarrier(carrier);
+  }
+
+  private static TestSchema newTestSchema(String prefix) {
+    String schema = prefix + UUID.randomUUID().toString().replace("-", "");
+    DriverManagerDataSource dataSource = dataSource(schema);
+    Flyway.configure()
+        .dataSource(dataSource)
+        .schemas(schema)
+        .defaultSchema(schema)
+        .table("flyway_schema_history")
+        .locations(MIGRATION_LOCATION)
+        .load()
+        .migrate();
+    return new TestSchema(schema, dslForSchema(dataSource, schema));
+  }
+
+  private record LeaseBoundFirstBinding(
+      CanonicalGameplayBindingInventoryRepository repository,
+      AccountGameplayAdmissionLeaseEvidence leaseEvidence,
+      CanonicalGameplayBindingProvisionalCasEvidence evidence) {}
+
+  private record TestSchema(String schema, DSLContext dsl) {}
 
   private static CanonicalGameplayBindingTransitionRequest transferRequest(
       String candidateSessionId, CanonicalGameplayBindingIdentity prior) {

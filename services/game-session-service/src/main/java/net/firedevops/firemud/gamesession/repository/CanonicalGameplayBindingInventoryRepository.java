@@ -215,7 +215,7 @@ public final class CanonicalGameplayBindingInventoryRepository {
                   != CanonicalGameplayBindingInventoryEntry.Lifecycle.PROVISIONAL) {
             throw conflict("Only an exact durable PROVISIONAL transition is a decision");
           }
-          Record row = findTransition(transaction, bindingDecisionId);
+          Record row = readTransition(transaction, bindingDecisionId);
           CanonicalGameplayAdmissionDecision stored = toAdmissionDecision(row, operation);
           if (!stored.leaseEvidence().hasSameIdentity(expectedLeaseEvidence)) {
             throw conflict("Expected Account lease differs from the immutable stored decision");
@@ -347,7 +347,7 @@ public final class CanonicalGameplayBindingInventoryRepository {
                   candidateObligation.accountIndexFence(),
                   decimal(transitionRevision)),
               "Durable candidate account-index obligation changed before readback persistence");
-          requireOne(
+          requireCount(
               transaction.execute(
                   "UPDATE "
                       + ACCOUNT_OBLIGATION
@@ -357,6 +357,7 @@ public final class CanonicalGameplayBindingInventoryRepository {
                   decimal(nextRevision),
                   transitionId,
                   decimal(transitionRevision)),
+              current.expectedPrior() == null ? 0 : 1,
               "Durable prior account-index obligation changed before readback persistence");
           requireOne(
               transaction.execute(
@@ -1420,6 +1421,12 @@ public final class CanonicalGameplayBindingInventoryRepository {
   private static Record findTransition(DSLContext transaction, UUID transitionId) {
     return transaction.fetchOne(
         "SELECT * FROM " + TRANSITION + " WHERE transition_id = ? FOR UPDATE", transitionId);
+  }
+
+  /** Reads a transition without acquiring a row lock for callers in read-only transactions. */
+  private static Record readTransition(DSLContext transaction, UUID transitionId) {
+    return transaction.fetchOne(
+        "SELECT * FROM " + TRANSITION + " WHERE transition_id = ?", transitionId);
   }
 
   private static Record findActiveController(
