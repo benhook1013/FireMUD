@@ -1,0 +1,30 @@
+syntax = "proto3";
+
+package account.v1;
+option java_package = "net.firedevops.firemud.account.v1";
+option java_multiple_files = true;
+
+// Standalone, unregistered Game Design-only producer. No environment authority is caller supplied.
+service AccountSelectedPublicationOrderService {
+  rpc AuthorizeSelectedPublication(AuthorizeSelectedPublicationRequest)
+      returns (AuthorizeSelectedPublicationResponse);
+}
+
+message AuthorizeSelectedPublicationRequest {
+  int32 schema_version = 1;
+  string target_namespace = 2;
+  // Transport correlation only; the selected publication request owns durable identity.
+  string request_id = 3;
+  bytes original_selection = 4;
+  // The original creator credential travels only in protected per-call metadata.
+  reserved 5;
+  reserved "original_creator_credential";
+}
+
+message AuthorizeSelectedPublicationResponse {
+  int32 schema_version = 1;
+  string target_namespace = 2;
+  string request_id = 3;
+  bytes original_selection = 4;
+  bytes publication_authorization_binding = 5;
+}

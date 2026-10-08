@@ -705,7 +705,7 @@ class WorldDraftGraphApplicationPostgresIntegrationTest {
   @Test
   void terminalRequiresTheExactV53AccountOrderForFirstCompletionAndExactRetry() {
     Fixture f = fixture();
-    var graphApplication = application(f);
+    var graphApplication = application(generationFreePlan(f));
     appliedComponent().apply(graphApplication);
     var frozen =
         captureForTerminal(
@@ -804,7 +804,7 @@ class WorldDraftGraphApplicationPostgresIntegrationTest {
     var pki = WorldTerminalReadTestPki.create(temporaryDirectory.resolve("terminal-read-pki"));
     for (Outcome outcome : List.of(Outcome.PUBLISHED, Outcome.NO_PUBLICATION)) {
       Fixture f = fixture();
-      var graphApplication = application(f);
+      var graphApplication = application(generationFreePlan(f));
       appliedComponent().apply(graphApplication);
       var frozen =
           captureForTerminal(
@@ -985,7 +985,7 @@ class WorldDraftGraphApplicationPostgresIntegrationTest {
   @Test
   void terminalRejectsUnqualifiedHistoricalFreezeWithoutInventingAccountOrder() {
     Fixture f = fixture();
-    var graphApplication = application(f);
+    var graphApplication = application(generationFreePlan(f));
     appliedComponent().apply(graphApplication);
     var frozen = capture(graphApplication.plan());
     var selector =
@@ -1022,7 +1022,7 @@ class WorldDraftGraphApplicationPostgresIntegrationTest {
   @Test
   void terminalSqlRejectsMalformedOversizedAndTrailingOperationFrames() {
     Fixture f = fixture();
-    var graphApplication = application(f);
+    var graphApplication = application(generationFreePlan(f));
     appliedComponent().apply(graphApplication);
     var frozen =
         captureForTerminal(
@@ -1461,7 +1461,8 @@ class WorldDraftGraphApplicationPostgresIntegrationTest {
             .getLast();
     var application = withStartRoom(original, roomTemplateId);
     appliedComponent().apply(application);
-    var frozen = capture(application.plan());
+    var frozen =
+        captureForTerminal(application.plan(), application.operation().accountBindingBytes());
     var selector =
         publishedEvidence(
             publishedSelectors().readCommitted(frozen.request().freeze()).orElseThrow());
@@ -3563,7 +3564,8 @@ class WorldDraftGraphApplicationPostgresIntegrationTest {
     Fixture f = fixture();
     var application = application(generationFreePlan(f));
     appliedComponent().apply(application);
-    var frozen = capture(application.plan());
+    var frozen =
+        captureForTerminal(application.plan(), application.operation().accountBindingBytes());
     var selector =
         publishedEvidence(
             publishedSelectors().readCommitted(frozen.request().freeze()).orElseThrow());
@@ -4644,7 +4646,9 @@ class WorldDraftGraphApplicationPostgresIntegrationTest {
             .getLast();
     var applied = withStartRoom(original, selectedRoom);
     appliedComponent().apply(applied);
-    var frozen = capture(applied.plan());
+    // Retain the fixture-only distinct Account order at first freeze; preparation derives its
+    // later terminal from the exact same binding carried by the frozen selector.
+    var frozen = captureForTerminal(applied.plan(), applied.operation().accountBindingBytes());
     var selector =
         publishedEvidence(
             publishedSelectors().readCommitted(frozen.request().freeze()).orElseThrow());

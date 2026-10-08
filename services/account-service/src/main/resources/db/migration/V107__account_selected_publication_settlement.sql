@@ -97,7 +97,7 @@ BEGIN
     IF terminal_frames[1] IS DISTINCT FROM convert_to('game-design-publication-terminal/v1', 'UTF8')
         OR terminal_frames[2] IS DISTINCT FROM NEW.publication_operation
         OR terminal_frames[3] IS DISTINCT FROM convert_to(NEW.game_design_outcome, 'UTF8')
-        OR cardinality(terminal_frames) <> CASE WHEN NEW.game_design_outcome = 'PUBLISHED' THEN 5 ELSE 3 END THEN
+        OR cardinality(terminal_frames) <> (CASE WHEN NEW.game_design_outcome = 'PUBLISHED' THEN 5 ELSE 3 END) THEN
         RAISE EXCEPTION 'Changed complete publication terminal relationship' USING ERRCODE = '23514';
     END IF;
     IF NEW.game_design_outcome = 'PUBLISHED' THEN

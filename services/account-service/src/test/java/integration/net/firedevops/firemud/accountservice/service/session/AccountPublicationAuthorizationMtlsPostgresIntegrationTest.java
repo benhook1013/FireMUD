@@ -33,6 +33,11 @@ import net.firedevops.firemud.common.grpc.GrpcPeerIdentityInterceptor;
 import net.firedevops.firemud.common.publication.AccountPublicationAuthorizationBinding;
 import net.firedevops.firemud.common.publication.AccountPublicationAuthorizationReadClient;
 import net.firedevops.firemud.common.publication.AccountPublicationAuthorizationReadEvidence;
+import net.firedevops.firemud.common.publication.AccountSelectedPublicationOrderClient;
+import net.firedevops.firemud.common.publication.AccountSelectedPublicationOrderCredentials;
+import net.firedevops.firemud.common.publication.AccountSelectedPublicationOrderGrpcCodec;
+import net.firedevops.firemud.common.publication.AuthoredDraftPublishSelectionReadClient;
+import net.firedevops.firemud.common.publication.AuthoredDraftPublishSelectionReadGrpcCodec;
 import net.firedevops.firemud.common.publication.GameDesignPublicationOperationBinding;
 import net.firedevops.firemud.common.publication.GameDesignPublicationTerminalReadClient;
 import net.firedevops.firemud.common.publication.GameDesignPublicationTerminalReadGrpcCodec;
@@ -100,6 +105,253 @@ class AccountPublicationAuthorizationMtlsPostgresIntegrationTest {
               "6379");
 
   @TempDir Path temporary;
+
+  /**
+   * Real creator issuance, automatic Account environment capture and publication transaction over
+   * loopback mTLS. The strict upstream Game Design reader serves a stipulated immutable selection,
+   * not an actual Game Design reservation/database. Platform/legal/trust inputs remain fixtures.
+   */
+  @Test
+  void selectedOrderProducerTransportUsesOriginalCreatorAndReplaysOneDurableHeldOrder()
+      throws Exception {
+    var pki = new TestPki(Files.createDirectories(temporary.resolve("producer-pki")));
+    try (var fixture =
+        new AccountControlUiOriginalOrderFixture(
+            postgres.getJdbcUrl(),
+            postgres.getUsername(),
+            postgres.getPassword(),
+            redis.getHost(),
+            redis.getMappedPort(6379),
+            Files.createDirectories(temporary.resolve("producer-owner")))) {
+      // Exactly one issuance/OTP consumption; no owner order is fabricated or preseeded.
+      var issued = fixture.issueCreator();
+      var sources = issued.sources();
+      var selection =
+          AccountPublicationAuthorizationPostgresIntegrationTest.proof(
+                  sources, issued.environment())
+              .selection();
+      var issuance =
+          sources.dsl.fetchSingle(
+              "SELECT operation_id, token_hash FROM account_control_ui_issuance_operations WHERE status = 'COMMITTED'");
+      var reads = new java.util.concurrent.CopyOnWriteArrayList<String>();
+      var upstream =
+          new net.firedevops.firemud.gamedesign.v1.GameDesignSelectedDraftPublicationReadServiceGrpc
+              .GameDesignSelectedDraftPublicationReadServiceImplBase() {
+            @Override
+            public void readSelectedDraftPublication(
+                net.firedevops.firemud.gamedesign.v1.ReadSelectedDraftPublicationRequest wire,
+                io.grpc.stub.StreamObserver<
+                        net.firedevops.firemud.gamedesign.v1.ReadSelectedDraftPublicationResponse>
+                    observer) {
+              try {
+                requireAccountClient();
+                assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+                assertThat(TransactionSynchronizationManager.isSynchronizationActive()).isFalse();
+                var request = AuthoredDraftPublishSelectionReadGrpcCodec.fromRequest(wire);
+                assertThat(request.targetNamespace()).isEqualTo(NAMESPACE);
+                assertThat(request.originalSelection()).isEqualTo(selection.canonicalBytes());
+                reads.add(wire.getReadRequestId());
+                observer.onNext(
+                    AuthoredDraftPublishSelectionReadGrpcCodec.toSelectedResponse(request));
+                observer.onCompleted();
+              } catch (RuntimeException failure) {
+                observer.onError(failure);
+              }
+            }
+          };
+      Server gdServer = terminalServer(pki.gameDesignServer, pki.ca, upstream);
+      try (var selectionClient = selectionClient(gdServer.getPort(), pki.accountClient, pki.ca)) {
+        var repository = new AccountPublicationAuthorizationRepository(sources.dsl);
+        var owner =
+            new AccountSelectedDraftPublicationOrderService(
+                selectionClient,
+                new AccountPublicationAuthorizationService(
+                    issued.actors(), sources.fences, repository),
+                NAMESPACE);
+        var producer =
+            new AccountSelectedDraftPublicationOrderGrpcService(owner, sources.terms, NAMESPACE);
+        var held =
+            new AccountPublicationAuthorizationReadGrpcService(
+                new AccountPublicationAuthorizationReadService(
+                    repository, sources.manager, NAMESPACE),
+                NAMESPACE);
+        Server accountServer = terminalServer(pki.server, pki.ca, producer, held);
+        try {
+          var request =
+              AccountSelectedPublicationOrderGrpcCodec.Request.create(
+                  NAMESPACE, selection, issued.compact());
+          var wire = AccountSelectedPublicationOrderGrpcCodec.toRequest(request);
+          assertThat(wire.toString()).doesNotContain(issued.compact());
+          var rawKey =
+              io.grpc.Metadata.Key.of(
+                  AccountSelectedPublicationOrderCredentials.HEADER.name(),
+                  io.grpc.Metadata.BINARY_BYTE_MARSHALLER);
+          var malformed = new io.grpc.Metadata();
+          malformed.put(rawKey, new byte[] {(byte) 128});
+          var duplicate = new io.grpc.Metadata();
+          duplicate.put(rawKey, issued.compact().getBytes(StandardCharsets.US_ASCII));
+          duplicate.put(rawKey, issued.compact().getBytes(StandardCharsets.US_ASCII));
+          for (var wrongPeer : List.of(pki.worldManagement, pki.otherNamespace)) {
+            assertProducerHeaderDenied(
+                accountServer.getPort(),
+                wrongPeer,
+                pki.ca,
+                wire,
+                malformed,
+                Status.Code.PERMISSION_DENIED);
+          }
+          for (var headers : List.of(new io.grpc.Metadata(), malformed, duplicate)) {
+            assertProducerHeaderDenied(
+                accountServer.getPort(),
+                pki.gameDesign,
+                pki.ca,
+                wire,
+                headers,
+                Status.Code.UNAUTHENTICATED);
+          }
+          assertThat(reads).isEmpty();
+          assertThat(
+                  sources.dsl.fetchCount(
+                      org.jooq.impl.DSL.table("account_selected_publication_authorizations")))
+              .isZero();
+          assertThat(
+                  sources.dsl.fetchCount(
+                      org.jooq.impl.DSL.table("account_selected_publication_sources")))
+              .isZero();
+          for (var wrongPeer : List.of(pki.worldManagement, pki.otherNamespace)) {
+            try (var client = producerClient(accountServer.getPort(), wrongPeer, pki.ca)) {
+              assertCode(Status.Code.PERMISSION_DENIED, () -> client.authorize(request));
+            }
+            assertThat(reads).isEmpty();
+            assertThat(
+                    sources.dsl.fetchCount(
+                        org.jooq.impl.DSL.table("account_selected_publication_authorizations")))
+                .isZero();
+            assertThat(
+                    sources.dsl.fetchCount(
+                        org.jooq.impl.DSL.table("account_selected_publication_sources")))
+                .isZero();
+          }
+          try (var client = producerClient(accountServer.getPort(), pki.gameDesign, pki.ca)) {
+            var first = client.authorize(request);
+            var retry = client.authorize(request);
+            var fresh =
+                AccountSelectedPublicationOrderGrpcCodec.Request.create(
+                    NAMESPACE, selection, issued.compact());
+            assertThat(fresh.requestId()).isNotEqualTo(request.requestId());
+            assertThat(fresh.originalCreatorCredential())
+                .isEqualTo(request.originalCreatorCredential());
+            var correlatedRetry = client.authorize(fresh);
+            assertThat(retry.canonicalBytes()).isEqualTo(first.canonicalBytes());
+            assertThat(correlatedRetry.canonicalBytes()).isEqualTo(first.canonicalBytes());
+            assertThat(first.input().selection().canonicalBytes())
+                .isEqualTo(selection.canonicalBytes());
+            assertThat(first.input().actorAccountId()).isEqualTo(sources.account.getAccountUuid());
+            assertThat(reads).hasSize(3).doesNotHaveDuplicates();
+            assertThat(
+                    sources.dsl.fetchCount(
+                        org.jooq.impl.DSL.table("account_selected_publication_authorizations")))
+                .isEqualTo(1);
+            assertThat(
+                    sources.dsl.fetchCount(
+                        org.jooq.impl.DSL.table("account_selected_publication_sources")))
+                .isEqualTo(first.sources().size());
+            var stored =
+                sources.dsl.fetchSingle(
+                    "SELECT binding, issuance_operation_id FROM account_selected_publication_authorizations WHERE operation_id = ?",
+                    first.operationId());
+            assertThat(stored.get("binding", byte[].class)).isEqualTo(first.canonicalBytes());
+            assertThat(stored.get("issuance_operation_id", UUID.class))
+                .isEqualTo(issuance.get("operation_id", UUID.class));
+            assertThat(
+                    sources.dsl.fetchCount(
+                        org.jooq.impl.DSL.table("account_control_ui_issuance_operations")))
+                .isEqualTo(1);
+            assertThat(
+                    sources.dsl.fetchSingle(
+                        "SELECT operation_id, token_hash FROM account_control_ui_issuance_operations WHERE status = 'COMMITTED'"))
+                .isEqualTo(issuance);
+            assertPending(sources, repository, first);
+            try (var reader = client(accountServer.getPort(), pki.worldManagement, pki.ca)) {
+              var exactHeld =
+                  AccountPublicationAuthorizationReadEvidence.Request.create(NAMESPACE, first);
+              assertThat(reader.read(exactHeld).request()).isEqualTo(exactHeld);
+            }
+          }
+        } finally {
+          accountServer.shutdownNow();
+          assertThat(accountServer.awaitTermination(5, TimeUnit.SECONDS)).isTrue();
+        }
+      } finally {
+        gdServer.shutdownNow();
+        assertThat(gdServer.awaitTermination(5, TimeUnit.SECONDS)).isTrue();
+      }
+    }
+  }
+
+  private static AccountSelectedPublicationOrderClient producerClient(
+      int port, TestIdentity identity, Path ca) throws Exception {
+    var endpoints = new ServiceEndpointsProperties();
+    endpoints.setAccountService("127.0.0.1:" + port);
+    var client =
+        new AccountSelectedPublicationOrderClient(
+            endpoints, identity.properties(ca), new GrpcChannelFactory(), NAMESPACE);
+    try {
+      client.init();
+      return client;
+    } catch (Exception failure) {
+      client.close();
+      throw failure;
+    }
+  }
+
+  /** Negative transport only: deliberately bypasses the production credential emitter. */
+  private static void assertProducerHeaderDenied(
+      int port,
+      TestIdentity identity,
+      Path ca,
+      net.firedevops.firemud.account.v1.AuthorizeSelectedPublicationRequest wire,
+      io.grpc.Metadata headers,
+      Status.Code expected)
+      throws Exception {
+    var channel =
+        new GrpcChannelFactory()
+            .buildChannel("127.0.0.1:" + port, 6565, identity.properties(ca), true);
+    try {
+      var peer = "spiffe://firemud/ns/" + NAMESPACE + "/sa/account-service";
+      var stub =
+          net.firedevops.firemud.account.v1.AccountSelectedPublicationOrderServiceGrpc
+              .newBlockingStub(channel)
+              .withCallCredentials(
+                  new net.firedevops.firemud.common.grpc.GrpcServerPeerIdentityCallCredentials(
+                      peer))
+              .withInterceptors(
+                  new net.firedevops.firemud.common.grpc.GrpcServerPeerIdentityClientInterceptor(
+                      peer),
+                  io.grpc.stub.MetadataUtils.newAttachHeadersInterceptor(headers))
+              .withDeadlineAfter(5, TimeUnit.SECONDS);
+      assertCode(expected, () -> stub.authorizeSelectedPublication(wire));
+    } finally {
+      channel.shutdownNow();
+      assertThat(channel.awaitTermination(5, TimeUnit.SECONDS)).isTrue();
+    }
+  }
+
+  private static AuthoredDraftPublishSelectionReadClient selectionClient(
+      int port, TestIdentity identity, Path ca) throws Exception {
+    var endpoints = new ServiceEndpointsProperties();
+    endpoints.setGameDesignService("127.0.0.1:" + port);
+    var client =
+        new AuthoredDraftPublishSelectionReadClient(
+            endpoints, identity.properties(ca), new GrpcChannelFactory(), NAMESPACE);
+    try {
+      client.init();
+      return client;
+    } catch (Exception failure) {
+      client.close();
+      throw failure;
+    }
+  }
 
   /**
    * Real Account storage and two strict loopback mTLS clients. Remote immutable terminals and the

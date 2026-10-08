@@ -108,3 +108,15 @@ Entry format:
   - Context: PR #3105 Game Session and TCP matrix jobs exhausted Gradle's 1.5 GiB Java heap while compiling dependent services, before owner integration tests ran.
   - Observation: These jobs supplied no owner execution proof and no demonstrated semantic compiler error. Configuration-cache diagnostics were separate from the heap failure.
   - Expected pattern: Preserve the complete validation tasks and artifact capture while applying a bounded resource profile, then require corrected-head CI. The local 3 GiB, nonparallel, two-worker profile is preparation, not proof that hosted compilation is repaired.
+
+- `2026-10-08`: Verify protobuf credential redaction in the actual language runtime
+  - Context: The new unpublished Account publication-order transport marked its credential field with protobuf `debug_redact`, but the Java generated message's text representation still exposed a synthetic credential in focused proof.
+  - Observation: The schema annotation did not supply the assumed Java redaction guarantee. The redacted domain request was insufficient to protect the generated wire representation.
+  - Expected pattern: Prove credential-safe representations in the actual generated runtime, keep credentials out of message text and diagnostics, and never log protected authorization metadata. Do not remove a failing safety assertion to claim redaction.
+  - Current status: The focused gate caught the mismatch before publication. The credential is now absent from the protobuf request and travels in method-specific protected metadata; the corrected 316-case Common unit run passes, including redacted wrappers, protected-method emission and malformed-header denial. Physical transport execution remains required, and runtime registration stays denied.
+
+- `2026-10-08`: Resolve synthetic-merge attribution against the current target ref
+  - Context: The exact `2560d12a` observer compared PR metadata's base `1a8eefe` with the live target ref and synthetic merge first parent `fe15a31`.
+  - Observation: The target had advanced 21 commits beyond the recorded base, accounting for 33 extra paths in the merge tree, with no Account, Game Design or World owner paths. This explains the observed tree difference without proving each job's checkout from metadata alone.
+  - Expected pattern: Distinguish recorded-base metadata, current target ref, merge-object ancestry and actual job checkout. Parent movement does not authorize topology changes or confer exact-integrated-base proof.
+  - Current status: The completed observer verified Account, World, Game Design, Game Session and TCP job logs actually checked out synthetic merge `e2bdaf5`, with parents `fe15a31` and published `2560d12a`; intended-parent alignment remains a separate gate.

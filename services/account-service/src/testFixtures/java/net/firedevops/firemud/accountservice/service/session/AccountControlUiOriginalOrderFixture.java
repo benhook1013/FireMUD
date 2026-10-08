@@ -1,6 +1,7 @@
 package net.firedevops.firemud.accountservice.service.session;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import io.lettuce.core.ClientOptions;
 import io.lettuce.core.RedisClient;
@@ -17,6 +18,10 @@ import java.util.UUID;
 import net.firedevops.firemud.accountservice.hostedterms.AccountHostedTermsService.CapturedEnvironmentBoundary;
 import net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding;
+import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
+import net.firedevops.firemud.common.publication.AccountPublicationAuthorizationBinding;
+import net.firedevops.firemud.common.publication.AuthoredDraftPublishSelectionBinding;
+import net.firedevops.firemud.common.publication.AuthoredDraftPublishSelectionReadClient;
 import net.firedevops.firemud.common.redis.contracts.RedisScriptCatalog;
 import net.firedevops.firemud.common.redis.contracts.RedisScriptContribution;
 import net.firedevops.firemud.common.redis.contracts.RedisScriptDescriptor;
@@ -31,6 +36,7 @@ public final class AccountControlUiOriginalOrderFixture implements AutoCloseable
   private final AccountControlUiIssuanceService issuance;
   private final RedisClient accountClient;
   private final Path temporary;
+  private IssuedCreator originalCreator;
 
   public AccountControlUiOriginalOrderFixture(
       String jdbcUrl,
@@ -167,7 +173,92 @@ public final class AccountControlUiOriginalOrderFixture implements AutoCloseable
     assertThat(retained.ordering().name()).isEqualTo("COMMIT_ORDER");
     assertThat(retained.binding()).isEqualTo(binding.canonicalBytes());
     assertThat(retained.orderedAt()).isNotNull();
+    originalCreator = issued;
     return binding;
+  }
+
+  /**
+   * Uses the original Draft creator credential unchanged, after an actual strict selected-Draft
+   * read. The incoming Game Design context and upstream selection/platform/legal evidence remain
+   * explicit test stipulations; this helper does not establish production publication authority.
+   */
+  public AccountPublicationAuthorizationBinding authorizePublication(
+      AuthoredDraftPublishSelectionBinding selection,
+      AuthoredDraftPublishSelectionReadClient selectionClient,
+      String namespace) {
+    if (originalCreator == null) {
+      throw new IllegalStateException("Claim the original Draft before publication authorization");
+    }
+    var owner =
+        new AccountPublicationAuthorizationService(
+            actors, f.fences, new AccountPublicationAuthorizationRepository(f.dsl));
+    var composition =
+        new AccountSelectedDraftPublicationOrderService(selectionClient, owner, namespace);
+    var context =
+        io.grpc.Context.current()
+            .withValue(
+                GrpcPeerIdentity.CONTEXT_KEY,
+                GrpcPeerIdentity.parseUri(
+                        "spiffe://firemud/ns/" + namespace + "/sa/game-design-service")
+                    .orElseThrow());
+    var prior = context.attach();
+    try {
+      return composition.authorize(
+          originalCreator.compact(), selection, originalCreator.environment());
+    } finally {
+      context.detach(prior);
+    }
+  }
+
+  /** Real exact retained-order read owner; no publication registration or settlement is implied. */
+  public AccountPublicationAuthorizationReadService heldPublicationOwner(String namespace) {
+    return new AccountPublicationAuthorizationReadService(
+        new AccountPublicationAuthorizationRepository(f.dsl), f.manager, namespace);
+  }
+
+  /**
+   * Verifies the complete original publication/source vector and guarded mutation denial. The
+   * original Draft is also pending, so writer denial does not isolate publication as its sole
+   * cause.
+   */
+  public void assertPublicationSourcesHeld(AccountPublicationAuthorizationBinding order) {
+    var repository = new AccountPublicationAuthorizationRepository(f.dsl);
+    f.tx(
+        () -> {
+          repository.readHeld(order);
+          return null;
+        });
+    var participation =
+        f.dsl.fetch(
+            "SELECT source_key, source_evidence FROM account_selected_publication_sources"
+                + " WHERE operation_id = ? ORDER BY account_publication_authorization_source_sort_key(source_key)",
+            order.operationId());
+    assertThat(participation).hasSize(order.sources().size());
+    for (int i = 0; i < order.sources().size(); i++) {
+      assertThat(participation.get(i).get("source_key", String.class))
+          .isEqualTo(order.sources().get(i).key());
+      assertThat(participation.get(i).get("source_evidence", byte[].class))
+          .isEqualTo(order.sources().get(i).canonicalBytes());
+    }
+    String originalRole =
+        f.dsl
+            .fetchSingle("SELECT role FROM accounts WHERE id = ?", f.account.getId())
+            .get("role", String.class);
+    String changedRole = "admin".equals(originalRole) ? "player" : "admin";
+    assertThatThrownBy(
+            () ->
+                f.tx(
+                    () ->
+                        f.dsl.execute(
+                            "UPDATE accounts SET role = ? WHERE id = ?",
+                            changedRole,
+                            f.account.getId())))
+        .isInstanceOf(org.jooq.exception.DataAccessException.class);
+    assertThat(
+            f.dsl
+                .fetchSingle("SELECT role FROM accounts WHERE id = ?", f.account.getId())
+                .get("role", String.class))
+        .isEqualTo(originalRole);
   }
 
   /** Same-package proof reuse; returns only an actual owner-issued and authenticated credential. */
