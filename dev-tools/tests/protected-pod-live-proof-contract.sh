@@ -14,6 +14,44 @@ import yaml
 
 root = Path(sys.argv[1])
 tool = root / "dev-tools/hosted/trust-bootstrap/prove-protected-pod-boundary.sh"
+# Fixture shape proof is local only: no API admission or CEL success is inferred.
+fixture_path = root / "dev-tools/hosted/trust-bootstrap/fixtures/protected-pod-admission-proof.yaml"
+fixture_text = fixture_path.read_text(encoding="utf-8")
+assert "ADMISSION-ONLY TEST FIXTURE" in fixture_text and "Execution gate:" in fixture_text
+fixture = list(yaml.safe_load_all(fixture_text))
+assert len(fixture) == 4
+assert {(item["kind"], item["metadata"]["name"]) for item in fixture} == {
+    ("Namespace", "dev"), ("ServiceAccount", "firemud-app"),
+    ("Deployment", "account-service"), ("Deployment", "game-session-service")}
+namespace_fixture = next(item for item in fixture if item["kind"] == "Namespace")
+assert namespace_fixture["metadata"]["labels"] == {
+    "firemud.dev/dev-demo": "true", "firemud.dev/environment-class": "dev-demo-cluster",
+    "firemud.dev/admission-proof-only": "true"}
+for item in fixture:
+    if item["kind"] == "Namespace":
+        continue
+    assert item["metadata"]["namespace"] == "dev"
+    if item["kind"] == "ServiceAccount":
+        assert item["automountServiceAccountToken"] is False
+        assert set(item) == {"apiVersion", "kind", "metadata", "automountServiceAccountToken"}
+        continue
+    app = item["metadata"]["name"]
+    assert item["spec"]["replicas"] == 1
+    assert item["spec"]["selector"] == {"matchLabels": {"app": app}}
+    template = item["spec"]["template"]
+    assert template["metadata"] == {"labels": {"app": app, "firemud.dev/admission-proof-only": "true"}}
+    spec = template["spec"]
+    assert set(spec) == {"serviceAccountName", "automountServiceAccountToken", "securityContext", "containers", "volumes"}
+    assert spec["serviceAccountName"] == "firemud-app" and spec["automountServiceAccountToken"] is False
+    assert spec["securityContext"] == {"runAsNonRoot": True, "runAsUser": 1000, "runAsGroup": 1000, "fsGroup": 1000, "seccompProfile": {"type": "RuntimeDefault"}}
+    assert len(spec["containers"]) == 1
+    container = spec["containers"][0]
+    assert set(container) == {"name", "image", "imagePullPolicy", "securityContext", "resources", "volumeMounts"}
+    assert container["name"] == app and container["image"] == "registry.k8s.io/pause:3.10"
+    assert container["securityContext"] == {"allowPrivilegeEscalation": False, "runAsUser": 1000, "runAsGroup": 1000, "capabilities": {"drop": ["ALL"]}}
+    assert container["volumeMounts"] == [{"name": "pod-identity", "mountPath": "/var/run/secrets/firemud/pod-identity", "readOnly": True}]
+    assert spec["volumes"] == [{"name": "pod-identity", "downwardAPI": {"defaultMode": 292, "items": [{"path": "uid", "fieldRef": {"apiVersion": "v1", "fieldPath": "metadata.uid"}}]}}]
+print("PASS local admission-only fixture shape (not API/CEL proof)", flush=True)
 # This fake API exercises the executable transport and outcomes; it is not a
 # CEL evaluator or evidence that a live API server compiles/enforces the policy.
 mock = r'''

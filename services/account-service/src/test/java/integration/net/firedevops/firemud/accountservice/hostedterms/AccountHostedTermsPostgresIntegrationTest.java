@@ -10,6 +10,7 @@ import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.time.temporal.ChronoUnit;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
@@ -31,6 +32,16 @@ import net.firedevops.firemud.accountservice.hostedterms.HostedTermsEncoding;
 import net.firedevops.firemud.accountservice.hostedterms.HostedTermsRepository;
 import net.firedevops.firemud.accountservice.repository.AccountTenantCreationBootstrapOperationRepository;
 import net.firedevops.firemud.accountservice.repository.FreshTenantIdentityAssociationRepository;
+import net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding;
+import net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding.Outcome;
+import net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding.Owner;
+import net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding.OwnerReadback;
+import net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding.SourceEvidence;
+import net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding.SourceKind;
+import net.firedevops.firemud.common.authoring.DraftCommitBinding;
+import net.firedevops.firemud.common.authoring.DraftCommitBinding.AffectedUnit;
+import net.firedevops.firemud.common.authoring.DraftCommitBinding.RevisionPayload;
+import net.firedevops.firemud.common.authoring.DraftCommitBinding.TargetProof;
 import org.flywaydb.core.Flyway;
 import org.jooq.DSLContext;
 import org.jooq.Record;
@@ -373,6 +384,99 @@ class AccountHostedTermsPostgresIntegrationTest {
         .isTrue();
   }
 
+  @Test
+  void futureTermsCannotPassUnsettledOriginalCommitOrderAndExactRetryWaitsForSettlement()
+      throws Exception {
+    Database db = database("latest");
+    UUID accountId = insertAccount(db);
+    UUID partyId = UUID.randomUUID();
+    UUID scopeId = UUID.randomUUID();
+    IndividualCreatorPartySource party = party(partyId, accountId, 1, "test-id-evidence-v1");
+    tx(db, () -> insertParty(db, party));
+    Map<UUID, AccountHostedTermsService.PublicationEvidence> publications = new HashMap<>();
+    Map<UUID, AccountHostedTermsService.AcceptanceAction> actions = new HashMap<>();
+    AccountHostedTermsService service = service(db, publications, actions);
+
+    UUID initialRequest = UUID.randomUUID();
+    publications.put(
+        initialRequest,
+        publication(
+            scopeId,
+            "test-terms-v1".getBytes(),
+            "Test Operator",
+            1,
+            HostedTermsCatalogVersion.Materiality.INITIAL,
+            databaseNow(db).minusSeconds(10)));
+    HostedTermsCatalogVersion initial = service.publish(initialRequest).candidate();
+    UUID actionId = UUID.randomUUID();
+    actions.put(actionId, action(actionId, accountId, partyId, scopeId, initial, true));
+    service.accept(actionId);
+
+    AccountHostedTermsService.CurrentnessEvidence beforeDeadline =
+        service.requireCurrentness(scopeId, partyId);
+    assertThat(beforeDeadline.disclosedDeadline()).isNull();
+    SourceEvidence currentTermsSource =
+        new SourceEvidence(
+            SourceKind.HOSTED_TERMS,
+            scopeId.toString(),
+            Long.toString(beforeDeadline.materialGeneration()),
+            Long.toString(beforeDeadline.sourceVersion()),
+            null,
+            null,
+            beforeDeadline.exactCurrentnessSource());
+    DraftAuthorizationFenceBinding originalOrder =
+        testDraftBinding(accountId, List.of(currentTermsSource));
+    DraftAuthorizationFenceRepository fences = new DraftAuthorizationFenceRepository(db.dsl());
+    tx(
+        db,
+        () -> {
+          fences.reserve(originalOrder);
+          fences.claimCommitOrder(originalOrder);
+        });
+
+    UUID futureRequest = UUID.randomUUID();
+    Instant deadline = databaseNow(db).plus(1, ChronoUnit.DAYS).truncatedTo(ChronoUnit.MICROS);
+    publications.put(
+        futureRequest,
+        publication(
+            scopeId,
+            "test-terms-v2".getBytes(),
+            "Test Operator",
+            1,
+            HostedTermsCatalogVersion.Materiality.MATERIAL,
+            deadline));
+    assertThatThrownBy(() -> service.publish(futureRequest))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining(
+            "Disclosure deadline cannot pass an unsettled original Draft operation");
+    assertThat(
+            db.dsl()
+                .fetchOne(
+                    "SELECT request_id FROM account_hosted_terms_publication_operations "
+                        + "WHERE request_id = ?",
+                    futureRequest))
+        .isNull();
+    assertThat(service.requireCurrentness(scopeId, partyId).disclosedDeadline()).isNull();
+    String originalOrdering =
+        db.transactions().execute(ignored -> fences.read(originalOrder).ordering().name());
+    assertThat(originalOrdering).isEqualTo("COMMIT_ORDER");
+
+    tx(
+        db,
+        () -> {
+          fences.recordOwnerReadback(
+              originalOrder, testReadback(originalOrder, Owner.WORLD, Outcome.COMMITTED));
+          fences.recordOwnerReadback(
+              originalOrder, testReadback(originalOrder, Owner.GAME_DESIGN, Outcome.COMMITTED));
+        });
+    AccountHostedTermsService.PublicationResult scheduled = service.publish(futureRequest);
+    assertThat(scheduled.status()).isEqualTo(HostedTermsRepository.PublicationStatus.SCHEDULED);
+    assertThat(scheduled.candidate().effectiveAt()).isEqualTo(deadline);
+    assertThat(service.publish(futureRequest)).isEqualTo(scheduled);
+    assertThat(service.requireCurrentness(scopeId, partyId).disclosedDeadline())
+        .isEqualTo(scheduled.candidate());
+  }
+
   private static boolean currentnessBlockedAcrossEffectiveDateIsDenied(
       Database db, AccountHostedTermsService service, UUID scopeId, UUID partyId, Instant deadline)
       throws Exception {
@@ -537,6 +641,62 @@ class AccountHostedTermsPostgresIntegrationTest {
             Objects.requireNonNull(publications.get(requestId), "test-only operator fixture"),
         actionId ->
             Objects.requireNonNull(actions.get(actionId), "test-only identity/action fixture"));
+  }
+
+  private static DraftAuthorizationFenceBinding testDraftBinding(
+      UUID actorAccountId, List<SourceEvidence> sources) {
+    UUID tenantId = UUID.randomUUID();
+    UUID versionId = UUID.randomUUID();
+    UUID requestId = UUID.randomUUID();
+    UUID commitId = UUID.randomUUID();
+    DraftCommitBinding complete =
+        DraftCommitBinding.create(
+            new TargetProof(tenantId, versionId, 1, "tenant-key", 2, "tenant-key", "NEW_GAME_ROW"),
+            requestId,
+            commitId,
+            "opaque/base:1",
+            List.of(
+                new RevisionPayload(
+                    "0",
+                    UUID.randomUUID(),
+                    DraftCommitBinding.Owner.WORLD_MANAGEMENT,
+                    "test-only")),
+            List.of(
+                new AffectedUnit(
+                    DraftCommitBinding.Owner.WORLD_MANAGEMENT,
+                    "region",
+                    "test-region",
+                    "aggregate",
+                    "test-region",
+                    "0")));
+    return new DraftAuthorizationFenceBinding(
+            UUID.randomUUID(),
+            requestId,
+            commitId,
+            UUID.randomUUID(),
+            actorAccountId,
+            tenantId,
+            versionId,
+            complete.baseCommitId(),
+            "0",
+            complete.canonicalBytes(),
+            complete.canonicalBytes(),
+            complete.digest(),
+            sources)
+        .withRequiredOwners();
+  }
+
+  private static OwnerReadback testReadback(
+      DraftAuthorizationFenceBinding binding, Owner owner, Outcome outcome) {
+    return new OwnerReadback(
+        owner,
+        outcome,
+        binding.operationId(),
+        binding.commitId(),
+        binding.fenceId(),
+        binding.inputDigest(),
+        binding.canonicalBytes(),
+        new byte[] {1});
   }
 
   private static AccountHostedTermsService.PublicationEvidence publication(

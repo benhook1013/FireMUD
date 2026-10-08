@@ -358,6 +358,156 @@ class HostedTermsEnvironmentBindingPostgresIntegrationTest {
   }
 
   @Test
+  void bindingDeadlineIntroductionWaitsForOriginalOrderAndExactRetryReusesItsRequest()
+      throws Exception {
+    Database db = database("latest");
+    UUID accountId = insertAccount(db);
+    UUID partyId = UUID.randomUUID();
+    UUID priorScopeId = UUID.randomUUID();
+    UUID targetScopeId = UUID.randomUUID();
+    IndividualCreatorPartySource party = party(partyId, accountId);
+    tx(db, () -> insertParty(db, party));
+    Map<UUID, AccountHostedTermsService.PublicationEvidence> catalogPublications = new HashMap<>();
+    Map<UUID, AccountHostedTermsService.AcceptanceAction> actions = new HashMap<>();
+    Map<UUID, HostedTermsEnvironmentBinding.PublicationEvidence> bindingPublications =
+        new HashMap<>();
+    String boundaryName = "deadline-introduction-test-environment";
+    AtomicReference<HostedTermsEnvironmentBinding.CurrentEnvironmentBoundary> boundary =
+        new AtomicReference<>(currentBoundary(boundaryName));
+    AccountHostedTermsService service =
+        service(db, catalogPublications, actions, bindingPublications, boundary);
+
+    UUID priorTermsRequest = UUID.randomUUID();
+    catalogPublications.put(
+        priorTermsRequest,
+        publication(
+            priorScopeId,
+            "test-only prior scope terms".getBytes(StandardCharsets.UTF_8),
+            HostedTermsCatalogVersion.Materiality.INITIAL,
+            databaseNow(db).minusSeconds(10)));
+    HostedTermsCatalogVersion priorCatalog = service.publish(priorTermsRequest).candidate();
+    UUID priorAcceptanceRequest = UUID.randomUUID();
+    actions.put(
+        priorAcceptanceRequest, action(priorAcceptanceRequest, accountId, partyId, priorCatalog));
+    service.accept(priorAcceptanceRequest);
+
+    UUID firstBindingRequest = UUID.randomUUID();
+    bindingPublications.put(
+        firstBindingRequest,
+        bindingEvidence(boundaryName, priorCatalog, null, null, "test-only-prior-publisher"));
+    var priorBinding = service.publishEnvironmentBinding(firstBindingRequest);
+
+    UUID targetTermsRequest = UUID.randomUUID();
+    catalogPublications.put(
+        targetTermsRequest,
+        publication(
+            targetScopeId,
+            "test-only target scope terms".getBytes(StandardCharsets.UTF_8),
+            HostedTermsCatalogVersion.Materiality.INITIAL,
+            databaseNow(db).minusSeconds(10)));
+    HostedTermsCatalogVersion targetCatalog = service.publish(targetTermsRequest).candidate();
+    UUID targetAcceptanceRequest = UUID.randomUUID();
+    actions.put(
+        targetAcceptanceRequest,
+        action(targetAcceptanceRequest, accountId, partyId, targetCatalog));
+    service.accept(targetAcceptanceRequest);
+
+    UUID scheduledRequest = UUID.randomUUID();
+    Instant deadline = databaseNow(db).plus(1, ChronoUnit.DAYS).truncatedTo(ChronoUnit.MICROS);
+    catalogPublications.put(
+        scheduledRequest,
+        publication(
+            targetScopeId,
+            "test-only scheduled target terms".getBytes(StandardCharsets.UTF_8),
+            HostedTermsCatalogVersion.Materiality.MATERIAL,
+            deadline));
+    var scheduled = service.publish(scheduledRequest);
+    assertThat(scheduled.status()).isEqualTo(HostedTermsRepository.PublicationStatus.SCHEDULED);
+
+    var priorCurrentness = service.requireCurrentnessForCurrentEnvironment(partyId);
+    assertThat(priorCurrentness.binding()).isEqualTo(priorBinding.candidate());
+    assertThat(priorCurrentness.terms().disclosedDeadline()).isNull();
+    DraftAuthorizationFenceBinding originalOrder =
+        testDraftBinding(accountId, priorCurrentness.sourceEvidence());
+    var fences = new DraftAuthorizationFenceRepository(db.dsl());
+    tx(
+        db,
+        () -> {
+          fences.reserve(originalOrder);
+          fences.claimCommitOrder(originalOrder);
+        });
+
+    UUID targetBindingRequest = UUID.randomUUID();
+    HostedTermsEnvironmentBinding.PublicationEvidence targetBindingEvidence =
+        bindingEvidence(
+            boundaryName,
+            targetCatalog,
+            priorBinding.candidate().bindingId(),
+            priorBinding.candidate().sourceVersion(),
+            "test-only-target-publisher");
+    bindingPublications.put(targetBindingRequest, targetBindingEvidence);
+    assertThatThrownBy(() -> service.publishEnvironmentBinding(targetBindingRequest))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining(
+            "Disclosure deadline cannot pass an unsettled original Draft operation");
+    assertThat(
+            db.dsl()
+                .fetchOne(
+                    "SELECT request_id FROM account_hosted_terms_environment_binding_publications "
+                        + "WHERE request_id = ?",
+                    targetBindingRequest))
+        .isNull();
+    String originalOrdering =
+        db.transactions().execute(ignored -> fences.read(originalOrder).ordering().name());
+    assertThat(originalOrdering).isEqualTo("COMMIT_ORDER");
+    assertThat(service.requireCurrentnessForCurrentEnvironment(partyId).binding())
+        .isEqualTo(priorBinding.candidate());
+
+    tx(
+        db,
+        () -> {
+          fences.recordOwnerReadback(
+              originalOrder, testCommittedReadback(originalOrder, Owner.WORLD));
+          fences.recordOwnerReadback(
+              originalOrder, testCommittedReadback(originalOrder, Owner.GAME_DESIGN));
+        });
+    var retriedBinding = service.publishEnvironmentBinding(targetBindingRequest);
+    assertThat(retriedBinding.status())
+        .isEqualTo(HostedTermsEnvironmentBindingRepository.PublicationStatus.COMMITTED);
+    assertThat(retriedBinding.candidate().hostedScopeId()).isEqualTo(targetScopeId);
+    assertThat(service.publishEnvironmentBinding(targetBindingRequest)).isEqualTo(retriedBinding);
+    var targetCurrentness = service.requireCurrentnessForCurrentEnvironment(partyId);
+    assertThat(targetCurrentness.terms().disclosedDeadline()).isEqualTo(scheduled.candidate());
+    assertThat(targetCurrentness.terms().validUntil()).isEqualTo(deadline);
+
+    DraftAuthorizationFenceBinding deadlineQualifiedOrder =
+        testDraftBinding(accountId, targetCurrentness.sourceEvidence());
+    tx(
+        db,
+        () -> {
+          fences.reserve(deadlineQualifiedOrder);
+          fences.claimCommitOrder(deadlineQualifiedOrder);
+        });
+    UUID sameScopeRefreshRequest = UUID.randomUUID();
+    bindingPublications.put(
+        sameScopeRefreshRequest,
+        bindingEvidence(
+            boundaryName,
+            targetCatalog,
+            retriedBinding.candidate().bindingId(),
+            retriedBinding.candidate().sourceVersion(),
+            "test-only-same-scope-refresh"));
+    var pendingSameScopeRefresh = service.publishEnvironmentBinding(sameScopeRefreshRequest);
+    assertThat(pendingSameScopeRefresh.status())
+        .isEqualTo(
+            HostedTermsEnvironmentBindingRepository.PublicationStatus.PENDING_OWNER_SETTLEMENT);
+    assertThat(pendingSameScopeRefresh.candidate().hostedScopeId()).isEqualTo(targetScopeId);
+    String deadlineQualifiedOrdering =
+        db.transactions().execute(ignored -> fences.read(deadlineQualifiedOrder).ordering().name());
+    assertThat(deadlineQualifiedOrdering).isEqualTo("COMMIT_ORDER");
+  }
+
+  @Test
   void boundCurrentnessCarriesExactScheduledCatalogAndUnextendedDeadline() throws Exception {
     Database db = database("latest");
     UUID accountId = insertAccount(db);
@@ -728,6 +878,19 @@ class HostedTermsEnvironmentBindingPostgresIntegrationTest {
         binding.inputDigest(),
         binding.canonicalBytes(),
         exactTestResult);
+  }
+
+  private static OwnerReadback testCommittedReadback(
+      DraftAuthorizationFenceBinding binding, Owner owner) {
+    return new OwnerReadback(
+        owner,
+        Outcome.COMMITTED,
+        binding.operationId(),
+        binding.commitId(),
+        binding.fenceId(),
+        binding.inputDigest(),
+        binding.canonicalBytes(),
+        new byte[] {1});
   }
 
   private static AccountHostedTermsService service(

@@ -298,6 +298,17 @@ public final class AccountHostedTermsService {
     HostedTermsCatalogVersion targetCatalog = targetScope.current();
     requireExactBindingCatalog(evidence, targetCatalog, targetScope.databaseNow());
 
+    boolean introducesFutureDeadline =
+        hasFutureScheduledDeadline(targetScope)
+            && (predecessor == null
+                || !predecessor.hostedScopeId().equals(evidence.hostedScopeId()));
+    if (introducesFutureDeadline) {
+      List<SourceEvidence> protectedSources =
+          predecessor == null
+              ? List.of(catalogSourceEvidence(targetCatalog))
+              : bindingSourceEvidence(predecessor, catalogScopes);
+      draftFences.requireDisclosurePreparation(protectedSources);
+    }
     HostedTermsEnvironmentBinding candidate =
         environmentBindings.insertCandidate(UUID.randomUUID(), requestId, evidence, predecessor);
     DraftAuthorizationFenceRepository.SourceChange change =
@@ -383,6 +394,15 @@ public final class AccountHostedTermsService {
       HostedTermsEnvironmentBinding predecessor,
       Map<UUID, HostedTermsRepository.ScopeSnapshot> catalogScopes,
       HostedTermsEnvironmentBinding candidate) {
+    return new DraftAuthorizationFenceRepository.SourceChange(
+        changeId,
+        bindingSourceEvidence(predecessor, catalogScopes),
+        HostedTermsEnvironmentBindingEncoding.receipt(candidate));
+  }
+
+  private List<SourceEvidence> bindingSourceEvidence(
+      HostedTermsEnvironmentBinding predecessor,
+      Map<UUID, HostedTermsRepository.ScopeSnapshot> catalogScopes) {
     Map<String, SourceEvidence> sources = new LinkedHashMap<>();
     SourceEvidence bindingSource = predecessor.sourceEvidence();
     sources.put(bindingSource.key(), bindingSource);
@@ -391,10 +411,7 @@ public final class AccountHostedTermsService {
         .filter(Objects::nonNull)
         .map(this::catalogSourceEvidence)
         .forEach(source -> sources.put(source.key(), source));
-    return new DraftAuthorizationFenceRepository.SourceChange(
-        changeId,
-        List.copyOf(sources.values()),
-        HostedTermsEnvironmentBindingEncoding.receipt(candidate));
+    return sources.values().stream().sorted(Comparator.comparing(SourceEvidence::key)).toList();
   }
 
   private SourceEvidence catalogSourceEvidence(HostedTermsCatalogVersion catalog) {
@@ -406,6 +423,14 @@ public final class AccountHostedTermsService {
         null,
         null,
         HostedTermsEncoding.catalog(catalog));
+  }
+
+  private boolean hasFutureScheduledDeadline(HostedTermsRepository.ScopeSnapshot scope) {
+    HostedTermsRepository.PublicationOperation pending = scope.unsettledPublication();
+    if (pending == null || pending.status() != HostedTermsRepository.PublicationStatus.SCHEDULED) {
+      return false;
+    }
+    return repository.readCandidate(pending).effectiveAt().isAfter(scope.databaseNow().toInstant());
   }
 
   private void requireExactBindingCatalog(
@@ -553,11 +578,15 @@ public final class AccountHostedTermsService {
       throw new IllegalStateException("Another hosted terms publication is scheduled or pending");
     }
     HostedTermsCatalogVersion candidate = candidate(evidence, scope.current());
-    repository.insertCandidate(candidate);
     if (candidate.effectiveAt().isAfter(scope.databaseNow().toInstant())) {
+      if (scope.current() != null) {
+        draftFences.requireDisclosurePreparation(List.of(catalogSourceEvidence(scope.current())));
+      }
+      repository.insertCandidate(candidate);
       repository.markScheduled(requestId, candidate);
       return result(HostedTermsRepository.PublicationStatus.SCHEDULED, candidate);
     }
+    repository.insertCandidate(candidate);
     return activate(operation, candidate, scope.current(), null, scope.databaseNow());
   }
 
