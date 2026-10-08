@@ -10,6 +10,7 @@ import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
 import java.nio.file.attribute.BasicFileAttributes;
 import java.nio.file.attribute.PosixFilePermission;
+import java.security.MessageDigest;
 import java.util.Objects;
 import java.util.Set;
 import net.firedevops.firemud.common.security.AccountPublicJwksCache;
@@ -23,13 +24,13 @@ import net.firedevops.firemud.common.security.AccountPublicJwksCache.TrustedPubl
 public final class GameSessionJwtReadinessProtectedJwksSource implements TrustedPublicJwksSource {
   public static final Path JWKS_PATH = fixedJwksPath();
 
-  private static final Path JWKS_DIRECTORY =
-      Objects.requireNonNull(
-          JWKS_PATH.getParent(), "The fixed Account JWKS path must have a parent");
-  private static final Path DATA_LINK = JWKS_DIRECTORY.resolve("..data");
   private static final int MAX_FILE_BYTES = AccountPublicJwksCache.MAX_JWKS_BYTES;
 
   private final GameSessionJwtReadinessLocalIdentityProvider identityProvider;
+  private final Path jwksPath;
+  private final Path jwksDirectory;
+  private final Path dataLink;
+  private final long expectedOwnerUid;
 
   @SuppressFBWarnings(
       value = "DMI_HARDCODED_ABSOLUTE_FILENAME",
@@ -41,7 +42,27 @@ public final class GameSessionJwtReadinessProtectedJwksSource implements Trusted
 
   public GameSessionJwtReadinessProtectedJwksSource(
       GameSessionJwtReadinessLocalIdentityProvider identityProvider) {
+    this(identityProvider, JWKS_PATH, 0L);
+  }
+
+  GameSessionJwtReadinessProtectedJwksSource(
+      GameSessionJwtReadinessLocalIdentityProvider identityProvider,
+      Path jwksPath,
+      long expectedOwnerUid) {
     this.identityProvider = Objects.requireNonNull(identityProvider);
+    this.jwksPath = Objects.requireNonNull(jwksPath);
+    this.jwksDirectory =
+        Objects.requireNonNull(jwksPath.getParent(), "The Account JWKS path must have a parent");
+    this.dataLink = jwksDirectory.resolve("..data");
+    Path fileName = jwksPath.getFileName();
+    if (!jwksPath.isAbsolute()
+        || !jwksPath.equals(jwksPath.normalize())
+        || fileName == null
+        || !"jwks.json".equals(fileName.toString())
+        || expectedOwnerUid < 0L) {
+      throw new IllegalArgumentException("Protected Account JWKS path or owner is invalid");
+    }
+    this.expectedOwnerUid = expectedOwnerUid;
   }
 
   @Override
@@ -51,6 +72,9 @@ public final class GameSessionJwtReadinessProtectedJwksSource implements Trusted
           Objects.requireNonNull(identityProvider.observe());
       byte[] bytes = readProjectedFile();
       try {
+        if (!before.wireIdentity().getAccountPublicJwksSha256().equals(sha256(bytes))) {
+          throw unavailable();
+        }
         GameSessionJwtReadinessLocalIdentityProvider.LocalObservation after =
             Objects.requireNonNull(identityProvider.observe());
         if (!before.equals(after)) {
@@ -67,38 +91,38 @@ public final class GameSessionJwtReadinessProtectedJwksSource implements Trusted
     }
   }
 
-  private static byte[] readProjectedFile() throws IOException {
-    Path normalizedDirectory = JWKS_DIRECTORY.toAbsolutePath().normalize();
-    if (!normalizedDirectory.equals(JWKS_DIRECTORY)
-        || Files.isSymbolicLink(JWKS_DIRECTORY)
-        || !Files.isSymbolicLink(DATA_LINK)
-        || !Files.isSymbolicLink(JWKS_PATH)
-        || !Path.of("..data/jwks.json").equals(Files.readSymbolicLink(JWKS_PATH))) {
+  private byte[] readProjectedFile() throws IOException {
+    Path normalizedDirectory = jwksDirectory.toAbsolutePath().normalize();
+    if (!normalizedDirectory.equals(jwksDirectory)
+        || Files.isSymbolicLink(jwksDirectory)
+        || !Files.isSymbolicLink(dataLink)
+        || !Files.isSymbolicLink(jwksPath)
+        || !Path.of("..data/jwks.json").equals(Files.readSymbolicLink(jwksPath))) {
       throw unavailable();
     }
-    Path dataVersion = Files.readSymbolicLink(DATA_LINK);
+    Path dataVersion = Files.readSymbolicLink(dataLink);
     if (dataVersion.isAbsolute()
         || dataVersion.getNameCount() != 1
         || !dataVersion.toString().matches("\\.\\.[A-Za-z0-9._-]{1,128}")) {
       throw unavailable();
     }
-    Path trustedDirectory = JWKS_DIRECTORY.toRealPath(LinkOption.NOFOLLOW_LINKS);
-    verifyRootOwnedReadOnly(trustedDirectory, true);
-    Path dataTarget = DATA_LINK.toRealPath();
+    Path trustedDirectory = jwksDirectory.toRealPath(LinkOption.NOFOLLOW_LINKS);
+    verifyOwnedProjectionPath(trustedDirectory, true);
+    Path dataTarget = dataLink.toRealPath();
     Path dataTargetParent = dataTarget.getParent();
     if (dataTargetParent == null
         || !dataTargetParent.equals(trustedDirectory)
         || !Files.isDirectory(dataTarget, LinkOption.NOFOLLOW_LINKS)) {
       throw unavailable();
     }
-    verifyRootOwnedReadOnly(dataTarget, true);
+    verifyOwnedProjectionPath(dataTarget, true);
     Path file = dataTarget.resolve("jwks.json");
     BasicFileAttributes before =
         Files.readAttributes(file, BasicFileAttributes.class, LinkOption.NOFOLLOW_LINKS);
     if (!before.isRegularFile() || before.size() <= 0L || before.size() > MAX_FILE_BYTES) {
       throw unavailable();
     }
-    verifyRootOwnedReadOnly(file, false);
+    verifyOwnedProjectionPath(file, false);
     byte[] bytes = new byte[(int) before.size()];
     try (SeekableByteChannel channel =
         Files.newByteChannel(file, StandardOpenOption.READ, LinkOption.NOFOLLOW_LINKS)) {
@@ -117,17 +141,17 @@ public final class GameSessionJwtReadinessProtectedJwksSource implements Trusted
     if (!Objects.equals(before.fileKey(), after.fileKey())
         || before.size() != after.size()
         || !before.lastModifiedTime().equals(after.lastModifiedTime())
-        || !dataVersion.equals(Files.readSymbolicLink(DATA_LINK))
-        || !dataTarget.equals(DATA_LINK.toRealPath())
-        || !Path.of("..data/jwks.json").equals(Files.readSymbolicLink(JWKS_PATH))) {
+        || !dataVersion.equals(Files.readSymbolicLink(dataLink))
+        || !dataTarget.equals(dataLink.toRealPath())
+        || !Path.of("..data/jwks.json").equals(Files.readSymbolicLink(jwksPath))) {
       java.util.Arrays.fill(bytes, (byte) 0);
       throw unavailable();
     }
-    verifyRootOwnedReadOnly(file, false);
+    verifyOwnedProjectionPath(file, false);
     return bytes;
   }
 
-  private static void verifyRootOwnedReadOnly(Path path, boolean directory) throws IOException {
+  private void verifyOwnedProjectionPath(Path path, boolean directory) throws IOException {
     BasicFileAttributes attributes =
         Files.readAttributes(path, BasicFileAttributes.class, LinkOption.NOFOLLOW_LINKS);
     if ((directory && !attributes.isDirectory()) || (!directory && !attributes.isRegularFile())) {
@@ -135,12 +159,20 @@ public final class GameSessionJwtReadinessProtectedJwksSource implements Trusted
     }
     Object owner = Files.getAttribute(path, "unix:uid", LinkOption.NOFOLLOW_LINKS);
     Set<PosixFilePermission> mode = Files.getPosixFilePermissions(path, LinkOption.NOFOLLOW_LINKS);
-    if (!(owner instanceof Number uid)
-        || uid.longValue() != 0L
-        || mode.contains(PosixFilePermission.OWNER_WRITE)
-        || mode.contains(PosixFilePermission.GROUP_WRITE)
-        || mode.contains(PosixFilePermission.OTHERS_WRITE)) {
+    boolean unsafeWrite =
+        mode.contains(PosixFilePermission.GROUP_WRITE)
+            || mode.contains(PosixFilePermission.OTHERS_WRITE)
+            || (!directory && mode.contains(PosixFilePermission.OWNER_WRITE));
+    if (!(owner instanceof Number uid) || uid.longValue() != expectedOwnerUid || unsafeWrite) {
       throw unavailable();
+    }
+  }
+
+  private static String sha256(byte[] bytes) {
+    try {
+      return java.util.HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(bytes));
+    } catch (Exception unavailable) {
+      throw new SourceUnavailableException();
     }
   }
 

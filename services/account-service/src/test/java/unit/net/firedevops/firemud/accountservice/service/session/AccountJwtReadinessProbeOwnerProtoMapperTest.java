@@ -7,6 +7,7 @@ import com.google.protobuf.UnknownFieldSet;
 import net.firedevops.firemud.account.v1.AccountJwtReadinessProbeOwnerServiceGrpc;
 import net.firedevops.firemud.account.v1.GetCurrentReadinessProbeOwnerRequest;
 import net.firedevops.firemud.account.v1.GetCurrentReadinessProbeOwnerResponse;
+import net.firedevops.firemud.account.v1.GetCurrentReadinessReceiverMetadataRequest;
 import net.firedevops.firemud.account.v1.ReadinessProbeCoordinates;
 import org.junit.jupiter.api.Test;
 
@@ -61,6 +62,93 @@ class AccountJwtReadinessProbeOwnerProtoMapperTest {
         .isEqualTo("account.v1.AccountJwtReadinessProbeOwnerService/GetCurrentReadinessProbeOwner");
   }
 
+  @Test
+  void receiverMetadataRequestIsClosedAndContainsOnlyCanonicalLocalSelectors() {
+    var request =
+        GetCurrentReadinessReceiverMetadataRequest.newBuilder()
+            .setSchemaVersion(1)
+            .setProjectedPodUid("66666666-6666-4666-8666-666666666666")
+            .setServerLeafSpkiSha256("a".repeat(64))
+            .build();
+
+    var parsed = mapper.parseReceiverMetadataRequest(request);
+
+    assertThat(parsed.projectedPodUid()).isEqualTo("66666666-6666-4666-8666-666666666666");
+    assertThat(parsed.serverLeafSpkiSha256()).isEqualTo("a".repeat(64));
+    assertThatThrownBy(
+            () ->
+                mapper.parseReceiverMetadataRequest(
+                    GetCurrentReadinessReceiverMetadataRequest.getDefaultInstance()))
+        .isInstanceOf(
+            AccountJwtReadinessProbeOwnerProtoMapper.InvalidOwnerReadRequestException.class);
+    assertThatThrownBy(
+            () ->
+                mapper.parseReceiverMetadataRequest(
+                    request.toBuilder()
+                        .setProjectedPodUid("66666666-6666-4666-8666-66666666666A")
+                        .build()))
+        .isInstanceOf(
+            AccountJwtReadinessProbeOwnerProtoMapper.InvalidOwnerReadRequestException.class);
+    assertThatThrownBy(
+            () ->
+                mapper.parseReceiverMetadataRequest(
+                    request.toBuilder().setServerLeafSpkiSha256("A".repeat(64)).build()))
+        .isInstanceOf(
+            AccountJwtReadinessProbeOwnerProtoMapper.InvalidOwnerReadRequestException.class);
+    assertThatThrownBy(
+            () ->
+                mapper.parseReceiverMetadataRequest(
+                    request.toBuilder().setProjectedPodUid("6".repeat(4096)).build()))
+        .isInstanceOf(
+            AccountJwtReadinessProbeOwnerProtoMapper.InvalidOwnerReadRequestException.class);
+    UnknownFieldSet unknown =
+        UnknownFieldSet.newBuilder()
+            .addField(100, UnknownFieldSet.Field.newBuilder().addVarint(1L).build())
+            .build();
+    assertThatThrownBy(
+            () ->
+                mapper.parseReceiverMetadataRequest(
+                    request.toBuilder().setUnknownFields(unknown).build()))
+        .isInstanceOf(
+            AccountJwtReadinessProbeOwnerProtoMapper.InvalidOwnerReadRequestException.class);
+  }
+
+  @Test
+  void rejectsReservedNumericTrustRevisionAndRequiresExactOpaqueSourceRevisionAndHash() {
+    UnknownFieldSet reservedNumericRevision =
+        UnknownFieldSet.newBuilder()
+            .addField(14, UnknownFieldSet.Field.newBuilder().addVarint(4L).build())
+            .build();
+    var oldRevision =
+        request()
+            .setProtectedLocalIdentity(
+                request().getProtectedLocalIdentity().toBuilder()
+                    .setUnknownFields(reservedNumericRevision))
+            .build();
+    assertThatThrownBy(() -> mapper.parse(oldRevision))
+        .isInstanceOf(
+            AccountJwtReadinessProbeOwnerProtoMapper.InvalidOwnerReadRequestException.class);
+
+    var mismatchedOpaqueRevision =
+        request()
+            .setProtectedLocalIdentity(
+                request().getProtectedLocalIdentity().toBuilder()
+                    .setAccountJwksTrustBindingRevision("other-r2"))
+            .build();
+    assertThatThrownBy(() -> mapper.parse(mismatchedOpaqueRevision))
+        .isInstanceOf(
+            AccountJwtReadinessProbeOwnerProtoMapper.InvalidOwnerReadRequestException.class);
+
+    var missingPublicJwksHash =
+        request()
+            .setProtectedLocalIdentity(
+                request().getProtectedLocalIdentity().toBuilder().clearAccountPublicJwksSha256())
+            .build();
+    assertThatThrownBy(() -> mapper.parse(missingPublicJwksHash))
+        .isInstanceOf(
+            AccountJwtReadinessProbeOwnerProtoMapper.InvalidOwnerReadRequestException.class);
+  }
+
   private static GetCurrentReadinessProbeOwnerRequest.Builder request() {
     var coordinates =
         ReadinessProbeCoordinates.newBuilder()
@@ -108,7 +196,8 @@ class AccountJwtReadinessProbeOwnerProtoMapperTest {
             .setSourceInventoryDigest("9".repeat(64))
             .setServerLeafSpkiSha256("8".repeat(64))
             .setAccountJwksSourceIdentity(source)
-            .setAccountJwksTrustConfigRevision(4);
+            .setAccountJwksTrustBindingRevision("source-r1")
+            .setAccountPublicJwksSha256("7".repeat(64));
     return GetCurrentReadinessProbeOwnerRequest.newBuilder()
         .setSchemaVersion(1)
         .setExpectedCoordinates(coordinates)

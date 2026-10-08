@@ -235,7 +235,8 @@ class AccountJwtReadinessGrpcReceiverInvocationPortTest {
   @Test
   void loopbackMtlsInvocationRejectsStructurallyValidOtherAccountSourceCluster() throws Exception {
     AtomicReference<Invocation> currentInvocation = new AtomicReference<>();
-    startSourceIdentityServer(pki.pinnedServer(), pki.trustedCa(), currentInvocation, true);
+    startSourceIdentityServer(
+        pki.pinnedServer(), pki.trustedCa(), currentInvocation, true, false, false);
     Invocation invocation = invocation(pki.pinnedServer(), server.getPort());
     currentInvocation.set(invocation);
 
@@ -276,7 +277,8 @@ class AccountJwtReadinessGrpcReceiverInvocationPortTest {
   @Test
   void matchingLoopbackMtlsResponseUsesDirectSocketDespiteJvmProxySelector() throws Exception {
     AtomicReference<Invocation> currentInvocation = new AtomicReference<>();
-    startSourceIdentityServer(pki.pinnedServer(), pki.trustedCa(), currentInvocation, false);
+    startSourceIdentityServer(
+        pki.pinnedServer(), pki.trustedCa(), currentInvocation, false, false, false);
     Invocation invocation = invocation(pki.pinnedServer(), server.getPort());
     currentInvocation.set(invocation);
 
@@ -309,6 +311,32 @@ class AccountJwtReadinessGrpcReceiverInvocationPortTest {
     } finally {
       ProxySelector.setDefault(previousProxySelector);
     }
+  }
+
+  @Test
+  void loopbackMtlsResponseRequiresOpaqueTrustRevisionToMatchAccountSource() throws Exception {
+    AtomicReference<Invocation> currentInvocation = new AtomicReference<>();
+    startSourceIdentityServer(
+        pki.pinnedServer(), pki.trustedCa(), currentInvocation, false, true, false);
+    Invocation invocation = invocation(pki.pinnedServer(), server.getPort());
+    currentInvocation.set(invocation);
+
+    assertThatThrownBy(() -> port(pki.accountClient(), pki.trustedCa()).invoke(invocation))
+        .isInstanceOf(AccountJwtReadinessReceiverInvocationPort.ReceiverUnavailableException.class);
+    assertThat(handlerCalls.get()).isEqualTo(1);
+  }
+
+  @Test
+  void loopbackMtlsResponseRequiresPublicJwksSha256() throws Exception {
+    AtomicReference<Invocation> currentInvocation = new AtomicReference<>();
+    startSourceIdentityServer(
+        pki.pinnedServer(), pki.trustedCa(), currentInvocation, false, false, true);
+    Invocation invocation = invocation(pki.pinnedServer(), server.getPort());
+    currentInvocation.set(invocation);
+
+    assertThatThrownBy(() -> port(pki.accountClient(), pki.trustedCa()).invoke(invocation))
+        .isInstanceOf(AccountJwtReadinessReceiverInvocationPort.ReceiverUnavailableException.class);
+    assertThat(handlerCalls.get()).isEqualTo(1);
   }
 
   private void startServer(TestCertificate serverCertificate, Path trustedCa) throws Exception {
@@ -387,7 +415,9 @@ class AccountJwtReadinessGrpcReceiverInvocationPortTest {
       TestCertificate serverCertificate,
       Path trustedCa,
       AtomicReference<Invocation> currentInvocation,
-      boolean otherCluster)
+      boolean otherCluster,
+      boolean mismatchTrustRevision,
+      boolean malformedPublicJwksHash)
       throws Exception {
     SslContext tlsContext = tlsContext(serverCertificate, trustedCa);
     server =
@@ -437,10 +467,13 @@ class AccountJwtReadinessGrpcReceiverInvocationPortTest {
                                             .setNamespace(target.namespace())
                                             .setNamespaceUid(target.namespaceUid())
                                             .setConfigMapUid("88888888-8888-4888-8888-888888888888")
-                                            .setBindingRevision("unrelated-trust-revision")
+                                            .setBindingRevision("account-api-r1")
                                             .setApiServerOrigin("https://kubernetes.example:6443")
                                             .setServingCaSha256("9".repeat(64)))
-                                    .setAccountJwksTrustConfigRevision(1L))
+                                    .setAccountJwksTrustBindingRevision(
+                                        mismatchTrustRevision ? "account-api-r2" : "account-api-r1")
+                                    .setAccountPublicJwksSha256(
+                                        malformedPublicJwksHash ? "not-a-digest" : "9".repeat(64)))
                             .setAccountPodTarget(accountTargetBinding(target))
                             .setObservedAtEpochSeconds(System.currentTimeMillis() / 1000)
                             .setOutcome(ReceiveReadinessProbeResponse.ObservationOutcome.VERIFIED)

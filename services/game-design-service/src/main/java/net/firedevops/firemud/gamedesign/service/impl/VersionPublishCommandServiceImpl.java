@@ -96,12 +96,17 @@ public class VersionPublishCommandServiceImpl {
   public PublishWorkflowSnapshot reconcileFullVersionPublish(PublishWorkflowRequest request) {
     request = request.recoverMissingPublishRequestId();
     validateRequestIdentity(request);
+    PublishAttempt attempt =
+        publishAttemptRepository.findByPublishWorkflowId(request.publishWorkflowId()).orElse(null);
+    return reconcileFullVersionPublish(request, attempt);
+  }
+
+  private PublishWorkflowSnapshot reconcileFullVersionPublish(
+      PublishWorkflowRequest request, PublishAttempt attempt) {
     logger.info(
         "Reconciling full-version publish workflow tenant={} workflowId={}",
         request.tenantId(),
         request.publishWorkflowId());
-    PublishAttempt attempt =
-        publishAttemptRepository.findByPublishWorkflowId(request.publishWorkflowId()).orElse(null);
     if (attempt == null) {
       attempt = reserveDraftAttempt(request);
     }
@@ -235,7 +240,6 @@ public class VersionPublishCommandServiceImpl {
     PublishWorkflowRequest request =
         new PublishWorkflowRequest(tenantId, notes, publishRequestId, publishWorkflowId);
     request = request.recoverMissingPublishRequestId();
-    validateRequestIdentity(request);
     PublishAttempt attempt =
         publishAttemptRepository
             .findByPublishWorkflowId(publishWorkflowId)
@@ -247,6 +251,7 @@ public class VersionPublishCommandServiceImpl {
       throw pendingReconciliation("selected Draft publication identity is unavailable or changed");
     }
     try {
+      validateFullVersionAttemptIdentity(attempt, request);
       requireExactSelectedPublication(attempt, request);
     } catch (PendingReconciliationException unresolved) {
       throw unresolved;
@@ -254,7 +259,7 @@ public class VersionPublishCommandServiceImpl {
       throw pendingReconciliation(
           "selected Draft publication requires exact operation reconciliation", unresolved);
     }
-    return reconcileFullVersionPublish(request);
+    return reconcileFullVersionPublish(request, attempt);
   }
 
   /** User-facing semantics for the unregistered selected-Draft backend path. */
@@ -692,8 +697,16 @@ public class VersionPublishCommandServiceImpl {
           publishAttemptRepository.requireSelectedPublicationReadback(attempt, expectedOutcome);
       var selection = operation.account().input().selection();
       var intent = selection.intent();
+      String expectedWorkflowId =
+          PublicationDigestRequestBinding.full(
+                  intent.canonicalTenantId().toString(),
+                  Long.toString(operation.versionId()),
+                  intent.publishRequestId())
+              .derivedWorkflowIdentity();
       if (!Objects.equals(operation.tenantKey(), request.tenantId())
           || operation.versionId() != attempt.getVersionId()
+          || !Objects.equals(operation.selectionDigest(), attempt.getRequestDigest())
+          || !Objects.equals(operation.workflowId(), expectedWorkflowId)
           || !Objects.equals(operation.workflowId(), request.publishWorkflowId())
           || !Objects.equals(intent.publishRequestId(), request.publishRequestId())
           || !Objects.equals(intent.notes(), request.notes())) {

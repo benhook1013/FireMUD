@@ -28,6 +28,8 @@ import javax.net.ssl.SSLSession;
 import net.firedevops.firemud.account.v1.AccountServiceGrpc;
 import net.firedevops.firemud.account.v1.GetCurrentReadinessProbeOwnerRequest;
 import net.firedevops.firemud.account.v1.GetCurrentReadinessProbeOwnerResponse;
+import net.firedevops.firemud.account.v1.GetCurrentReadinessReceiverMetadataRequest;
+import net.firedevops.firemud.account.v1.GetCurrentReadinessReceiverMetadataResponse;
 import net.firedevops.firemud.accountservice.config.AccountJwtJwksApiBinding;
 import net.firedevops.firemud.accountservice.config.AccountJwtReadinessIsolatedGrpcRoutingConfiguration;
 import net.firedevops.firemud.accountservice.config.AccountJwtReadinessProbeOwnerWorkloadGuard;
@@ -36,6 +38,7 @@ import net.firedevops.firemud.accountservice.service.impl.AccountJwtReadinessPro
 import net.firedevops.firemud.accountservice.service.session.AccountJwtReadinessProbeOwnerProtoMapper;
 import net.firedevops.firemud.accountservice.service.session.AccountJwtReadinessProbeOwnerService;
 import net.firedevops.firemud.accountservice.service.session.AccountJwtReadinessProbeService;
+import net.firedevops.firemud.accountservice.service.session.AccountJwtReadinessReceiverMetadataService;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentityInterceptor;
 import org.junit.jupiter.api.Test;
@@ -90,10 +93,28 @@ class AccountJwtReadinessProbeOwnerGrpcServiceTest {
               })
           .when(owner)
           .getCurrentReadinessProbeOwner(org.mockito.ArgumentMatchers.any());
-      var service = new AccountJwtReadinessProbeOwnerGrpcService(owner);
+      var metadata = mock(AccountJwtReadinessReceiverMetadataService.class);
+      AtomicReference<GrpcPeerIdentity> observedMetadataPeer = new AtomicReference<>();
+      doAnswer(
+              invocation -> {
+                observedMetadataPeer.set(GrpcPeerIdentity.current());
+                return GetCurrentReadinessReceiverMetadataResponse.getDefaultInstance();
+              })
+          .when(metadata)
+          .getCurrentReadinessReceiverMetadata(org.mockito.ArgumentMatchers.any());
+      var service = new AccountJwtReadinessProbeOwnerGrpcService(owner, metadata);
       var serviceDefinition =
           configurer.configure(new GrpcServiceSpec(service, GrpcServiceInfo.from(grpc)), factory);
-      var methodDefinition = serviceDefinition.getMethods().iterator().next();
+      var methodDefinition =
+          serviceDefinition.getMethods().stream()
+              .filter(
+                  method ->
+                      method
+                          .getMethodDescriptor()
+                          .getFullMethodName()
+                          .endsWith("/GetCurrentReadinessProbeOwner"))
+              .findFirst()
+              .orElseThrow();
       ServerCall serverCall = mock(ServerCall.class);
       when(serverCall.getMethodDescriptor()).thenReturn(methodDefinition.getMethodDescriptor());
       String peerUri = "spiffe://firemud/ns/firemud-prod/sa/game-session-service";
@@ -112,6 +133,32 @@ class AccountJwtReadinessProbeOwnerGrpcServiceTest {
       assertThat(context.getBean(GlobalPeerIdentityMarker.class).invocations()).hasValue(0);
       assertThat(observedPeer.get()).isEqualTo(GrpcPeerIdentity.parseUri(peerUri).orElseThrow());
       verify(sslSession, times(1)).getPeerCertificates();
+
+      var metadataMethodDefinition =
+          serviceDefinition.getMethods().stream()
+              .filter(
+                  method ->
+                      method
+                          .getMethodDescriptor()
+                          .getFullMethodName()
+                          .endsWith("/GetCurrentReadinessReceiverMetadata"))
+              .findFirst()
+              .orElseThrow();
+      ServerCall metadataCall = mock(ServerCall.class);
+      when(metadataCall.getMethodDescriptor())
+          .thenReturn(metadataMethodDefinition.getMethodDescriptor());
+      when(metadataCall.getAttributes())
+          .thenReturn(
+              Attributes.newBuilder().set(Grpc.TRANSPORT_ATTR_SSL_SESSION, sslSession).build());
+      ServerCall.Listener metadataListener =
+          metadataMethodDefinition.getServerCallHandler().startCall(metadataCall, new Metadata());
+      metadataListener.onMessage(GetCurrentReadinessReceiverMetadataRequest.getDefaultInstance());
+      metadataListener.onHalfClose();
+
+      assertThat(observedMetadataPeer.get())
+          .isEqualTo(GrpcPeerIdentity.parseUri(peerUri).orElseThrow());
+      verify(metadata).getCurrentReadinessReceiverMetadata(org.mockito.ArgumentMatchers.any());
+      assertThat(context.getBean(GlobalPeerIdentityMarker.class).invocations()).hasValue(0);
 
       var ordinary =
           configurer.configure(
@@ -149,7 +196,9 @@ class AccountJwtReadinessProbeOwnerGrpcServiceTest {
             materializerBinding,
             guard,
             new AccountJwtReadinessProbeOwnerProtoMapper());
-    var service = new AccountJwtReadinessProbeOwnerGrpcService(owner);
+    var service =
+        new AccountJwtReadinessProbeOwnerGrpcService(
+            owner, mock(AccountJwtReadinessReceiverMetadataService.class));
     RecordingObserver response = new RecordingObserver();
 
     service.getCurrentReadinessProbeOwner(

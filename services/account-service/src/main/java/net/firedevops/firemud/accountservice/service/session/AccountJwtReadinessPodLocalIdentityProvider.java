@@ -11,6 +11,8 @@ import java.util.HexFormat;
 import java.util.List;
 import java.util.Objects;
 import java.util.Set;
+import java.util.function.Supplier;
+import java.util.regex.Pattern;
 import net.firedevops.firemud.account.v1.AccountJwtPodReceiverIdentity;
 import net.firedevops.firemud.account.v1.AccountSourceIdentity;
 import net.firedevops.firemud.accountservice.config.AccountJwtValidatorInventoryBinding.ProfileExpectation;
@@ -23,37 +25,46 @@ import net.firedevops.firemud.accountservice.service.session.AccountJwtValidator
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
 import net.firedevops.firemud.common.security.AccountPublicJwksCache.PublicJwksSnapshot;
 import net.firedevops.firemud.common.security.AccountPublicJwksCache.SourceIdentity;
+import net.firedevops.firemud.common.security.ProtectedPodUidProjection;
 import org.springframework.boot.ssl.SslBundle;
 import org.springframework.boot.ssl.SslBundles;
 
 /**
- * Derives the local Account Pod identity only from protected live inventory, the active server
- * certificate, and Account's protected JWKS source. No receiver-request identity is accepted.
+ * Derives the local Account Pod identity only from its protected UID projection, live inventory,
+ * the active server certificate, and Account's protected JWKS source. No receiver-request identity
+ * is accepted.
  */
 public final class AccountJwtReadinessPodLocalIdentityProvider {
   private static final String ACCOUNT_VALIDATOR_ID = AccountJwtReadinessProbeCrypto.VALIDATOR_ID;
   private static final String TLS_BUNDLE_NAME = "firemud-grpc";
+  private static final Pattern KUBERNETES_UID =
+      Pattern.compile("[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}");
 
   private final AccountJwtValidatorInventorySource inventorySource;
   private final AccountJwtJwksTrustedSource trustedJwksSource;
   private final SslBundles sslBundles;
   private final Clock clock;
-  private final String localPodName;
+  private final Supplier<String> localPodUidSource;
 
-  @SuppressFBWarnings(
-      value = "EI_EXPOSE_REP2",
-      justification = "Spring-managed SslBundles is retained for live server-certificate reads.")
   public AccountJwtReadinessPodLocalIdentityProvider(
       AccountJwtValidatorInventorySource inventorySource,
       AccountJwtJwksTrustedSource trustedJwksSource,
       SslBundles sslBundles,
+      Clock clock) {
+    this(inventorySource, trustedJwksSource, sslBundles, clock, ProtectedPodUidProjection::read);
+  }
+
+  AccountJwtReadinessPodLocalIdentityProvider(
+      AccountJwtValidatorInventorySource inventorySource,
+      AccountJwtJwksTrustedSource trustedJwksSource,
+      SslBundles sslBundles,
       Clock clock,
-      String localPodName) {
+      Supplier<String> localPodUidSource) {
     this.inventorySource = Objects.requireNonNull(inventorySource);
     this.trustedJwksSource = Objects.requireNonNull(trustedJwksSource);
     this.sslBundles = Objects.requireNonNull(sslBundles);
     this.clock = Objects.requireNonNull(clock);
-    this.localPodName = localPodName == null ? "" : localPodName.trim();
+    this.localPodUidSource = Objects.requireNonNull(localPodUidSource);
   }
 
   /** Re-reads every protected identity source and requires the actual local TLS leaf to match. */
@@ -67,15 +78,19 @@ public final class AccountJwtReadinessPodLocalIdentityProvider {
   public LocalObservation observe(
       String applicabilityMatrixDigest, ObservationContext observationContext) {
     try {
+      String localPodUid = readLocalPodUid();
       InventorySnapshot inventory =
           observationContext == null
               ? inventorySource.observe()
               : inventorySource.observe(observationContext);
+      requireStableLocalPodUid(localPodUid);
       ValidatorObservation validator = exactAccountValidator(inventory);
-      PodObservation pod = exactLocalPod(validator, inventory.namespace());
+      PodObservation pod = exactLocalPod(validator, inventory.namespace(), localPodUid);
       SourceIdentity jwksSourceIdentity = readCurrentJwksSourceIdentity();
+      requireStableLocalPodUid(localPodUid);
       requireSameAccountCluster(inventory, jwksSourceIdentity);
       String actualLeafSpki = localServerLeafSpki(sslBundles, clock, pod.receiverServiceUri());
+      requireStableLocalPodUid(localPodUid);
       if (!actualLeafSpki.equals(pod.leafSpkiSha256())) {
         throw new IdentityUnavailableException();
       }
@@ -111,12 +126,31 @@ public final class AccountJwtReadinessPodLocalIdentityProvider {
               .setAccountJwksSourceIdentity(toProto(jwksSourceIdentity))
               .setJwksTrustBindingRevision(jwksSourceIdentity.bindingRevision())
               .build();
+      requireStableLocalPodUid(localPodUid);
       return new LocalObservation(selectorIdentity, wireIdentity);
     } catch (IdentityUnavailableException failure) {
       throw failure;
     } catch (RuntimeException unavailable) {
       throw new IdentityUnavailableException();
     }
+  }
+
+  private String readLocalPodUid() {
+    String uid = localPodUidSource.get();
+    if (!isCanonicalUid(uid)) {
+      throw new IdentityUnavailableException();
+    }
+    return uid;
+  }
+
+  private void requireStableLocalPodUid(String expectedUid) {
+    if (!expectedUid.equals(readLocalPodUid())) {
+      throw new IdentityUnavailableException();
+    }
+  }
+
+  private static boolean isCanonicalUid(String value) {
+    return value != null && KUBERNETES_UID.matcher(value).matches();
   }
 
   private SourceIdentity readCurrentJwksSourceIdentity() {
@@ -157,12 +191,10 @@ public final class AccountJwtReadinessPodLocalIdentityProvider {
     return validator;
   }
 
-  private PodObservation exactLocalPod(ValidatorObservation validator, String namespace) {
-    if (localPodName.isBlank()) {
-      throw new IdentityUnavailableException();
-    }
+  private PodObservation exactLocalPod(
+      ValidatorObservation validator, String namespace, String localPodUid) {
     List<PodObservation> matches =
-        validator.pods().stream().filter(value -> localPodName.equals(value.name())).toList();
+        validator.pods().stream().filter(value -> localPodUid.equals(value.uid())).toList();
     if (matches.size() != 1) {
       throw new IdentityUnavailableException();
     }

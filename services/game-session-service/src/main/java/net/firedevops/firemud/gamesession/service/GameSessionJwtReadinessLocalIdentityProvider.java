@@ -2,6 +2,7 @@ package net.firedevops.firemud.gamesession.service;
 
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.util.Objects;
+import java.util.regex.Pattern;
 import net.firedevops.firemud.account.v1.AccountSourceIdentity;
 import net.firedevops.firemud.account.v1.ReadinessReceiverLocalIdentity;
 import net.firedevops.firemud.common.security.AccountPublicJwksCache.SourceIdentity;
@@ -14,6 +15,8 @@ public interface GameSessionJwtReadinessLocalIdentityProvider {
 
   record LocalObservation(
       ReadinessReceiverLocalIdentity wireIdentity, SourceIdentity jwksSourceIdentity) {
+    private static final Pattern SHA256 = Pattern.compile("[0-9a-f]{64}");
+
     @SuppressFBWarnings(
         value = "EI_EXPOSE_REP2",
         justification = "ReadinessReceiverLocalIdentity is an immutable generated protobuf value.")
@@ -22,7 +25,10 @@ public interface GameSessionJwtReadinessLocalIdentityProvider {
       Objects.requireNonNull(jwksSourceIdentity, "protected JWKS source identity is required");
       if (!wireIdentity.hasAccountJwksSourceIdentity()
           || !jwksSourceIdentity.equals(fromProto(wireIdentity.getAccountJwksSourceIdentity()))
-          || wireIdentity.getAccountJwksTrustConfigRevision() <= 0L) {
+          || !wireIdentity
+              .getAccountJwksTrustBindingRevision()
+              .equals(jwksSourceIdentity.bindingRevision())
+          || !SHA256.matcher(wireIdentity.getAccountPublicJwksSha256()).matches()) {
         throw new IllegalArgumentException("Protected receiver JWKS identity is inconsistent");
       }
     }

@@ -10,6 +10,9 @@ option java_multiple_files = true;
 service AccountJwtReadinessProbeOwnerService {
   rpc GetCurrentReadinessProbeOwner(GetCurrentReadinessProbeOwnerRequest)
       returns (GetCurrentReadinessProbeOwnerResponse);
+  // Non-authorizing protected local identity bootstrap; Account selects the current operation.
+  rpc GetCurrentReadinessReceiverMetadata(GetCurrentReadinessReceiverMetadataRequest)
+      returns (GetCurrentReadinessReceiverMetadataResponse);
 }
 
 message ReadinessProbeCoordinates {
@@ -80,7 +83,26 @@ message ReadinessReceiverLocalIdentity {
   string source_inventory_digest = 11;
   string server_leaf_spki_sha256 = 12;
   AccountSourceIdentity account_jwks_source_identity = 13;
-  int64 account_jwks_trust_config_revision = 14;
+  reserved 14;
+  reserved "account_jwks_trust_config_revision";
+  string account_jwks_trust_binding_revision = 15;
+  string account_public_jwks_sha256 = 16;
+}
+
+// Neither the operation, plan nor source pins are caller-selectable. The UID must come from the
+// protected kubelet projection; the leaf pin must describe the caller's actual local TLS leaf.
+message GetCurrentReadinessReceiverMetadataRequest {
+  int32 schema_version = 1;
+  string projected_pod_uid = 2;
+  string server_leaf_spki_sha256 = 3;
+}
+
+message GetCurrentReadinessReceiverMetadataResponse {
+  int32 schema_version = 1;
+  string rotation_operation_id = 2;
+  string operation_digest = 3;
+  string plan_digest = 4;
+  ReadinessReceiverLocalIdentity current_identity = 5;
 }
 
 // Account's current API/inventory source pins and Pod target. These are not Game Session's

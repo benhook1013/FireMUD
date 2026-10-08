@@ -12,28 +12,40 @@ import net.firedevops.firemud.gamesession.service.GameSessionJwtReadinessProbeCr
 import net.firedevops.firemud.gamesession.service.GameSessionJwtReadinessProbeOwnerClient;
 import net.firedevops.firemud.gamesession.service.GameSessionJwtReadinessProbeOwnerReadPort;
 import net.firedevops.firemud.gamesession.service.GameSessionJwtReadinessProtectedJwksSource;
+import net.firedevops.firemud.gamesession.service.GameSessionJwtReadinessProtectedLocalIdentityProvider;
 import net.firedevops.firemud.gamesession.service.GameSessionJwtReadinessReceiverEngine;
 import net.firedevops.firemud.gamesession.service.GameSessionJwtReadinessReceiverProtoMapper;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
+import org.springframework.boot.ssl.SslBundles;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Lazy;
 
 /**
- * Explicit default-off composition; absence of protected Pod identity leaves the route
- * unregistered.
+ * Explicit default-off composition; every identity read requires current protected Pod and TLS
+ * evidence plus authenticated Account metadata.
  */
 @Configuration(proxyBeanMethods = false)
 @ConditionalOnProperty(
     prefix = "firemud.game-session.jwt-readiness.receiver",
     name = "enabled",
     havingValue = "true")
-@ConditionalOnBean(GameSessionJwtReadinessLocalIdentityProvider.class)
+@ConditionalOnBean(SslBundles.class)
 @Lazy
 public class GameSessionJwtReadinessReceiverConfiguration {
+  @Bean
+  @Lazy
+  public GameSessionJwtReadinessLocalIdentityProvider gameSessionJwtReadinessLocalIdentityProvider(
+      GameSessionJwtReadinessProbeOwnerClient metadataReadClient,
+      SslBundles sslBundles,
+      @Value("${firemud.grpc.workload-namespace:}") String workloadNamespace) {
+    return new GameSessionJwtReadinessProtectedLocalIdentityProvider(
+        metadataReadClient, sslBundles, workloadNamespace);
+  }
+
   @Bean
   @Lazy
   public GameSessionJwtReadinessProtectedJwksSource gameSessionJwtReadinessPublicJwksSource(
@@ -75,7 +87,7 @@ public class GameSessionJwtReadinessReceiverConfiguration {
 
   @Bean
   @Lazy
-  public GameSessionJwtReadinessProbeOwnerReadPort gameSessionJwtReadinessProbeOwnerReadPort(
+  public GameSessionJwtReadinessProbeOwnerClient gameSessionJwtReadinessProbeOwnerReadPort(
       ServiceEndpointsProperties endpoints,
       CommonGrpcClientProperties tlsProperties,
       GrpcChannelFactory channelFactory,

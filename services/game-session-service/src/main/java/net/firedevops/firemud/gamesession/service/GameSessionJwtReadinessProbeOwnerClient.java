@@ -4,18 +4,23 @@ import io.grpc.ClientInterceptors;
 import io.grpc.ManagedChannel;
 import java.util.Objects;
 import java.util.concurrent.TimeUnit;
+import java.util.function.Function;
 import net.firedevops.firemud.account.v1.AccountJwtReadinessProbeOwnerServiceGrpc;
 import net.firedevops.firemud.account.v1.GetCurrentReadinessProbeOwnerRequest;
 import net.firedevops.firemud.account.v1.GetCurrentReadinessProbeOwnerResponse;
+import net.firedevops.firemud.account.v1.GetCurrentReadinessReceiverMetadataRequest;
+import net.firedevops.firemud.account.v1.GetCurrentReadinessReceiverMetadataResponse;
 import net.firedevops.firemud.common.config.ServiceEndpointsProperties;
 import net.firedevops.firemud.common.grpc.CommonGrpcClientProperties;
 import net.firedevops.firemud.common.grpc.GrpcChannelFactory;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
 import net.firedevops.firemud.common.grpc.GrpcServerPeerIdentityClientInterceptor;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 /** Direct mTLS-only client for the exact Account readiness owner read; attaches no bearer token. */
 public final class GameSessionJwtReadinessProbeOwnerClient
-    implements GameSessionJwtReadinessProbeOwnerReadPort {
+    implements GameSessionJwtReadinessProbeOwnerReadPort,
+        GameSessionJwtReadinessReceiverMetadataReadPort {
   private static final int DEFAULT_ACCOUNT_PORT = 6565;
   private static final long DEADLINE_SECONDS = 5L;
   private static final long SHUTDOWN_SECONDS = 2L;
@@ -47,6 +52,25 @@ public final class GameSessionJwtReadinessProbeOwnerClient
   public GetCurrentReadinessProbeOwnerResponse readCurrent(
       GetCurrentReadinessProbeOwnerRequest request) {
     Objects.requireNonNull(request, "Current Account owner read request is required");
+    return callAccount(service -> service.getCurrentReadinessProbeOwner(request));
+  }
+
+  @Override
+  public GetCurrentReadinessReceiverMetadataResponse readCurrent(
+      GetCurrentReadinessReceiverMetadataRequest request) {
+    Objects.requireNonNull(request, "Current Account receiver metadata request is required");
+    return callAccount(service -> service.getCurrentReadinessReceiverMetadata(request));
+  }
+
+  private <T> T callAccount(
+      Function<
+              AccountJwtReadinessProbeOwnerServiceGrpc
+                  .AccountJwtReadinessProbeOwnerServiceBlockingStub,
+              T>
+          call) {
+    if (TransactionSynchronizationManager.isActualTransactionActive()) {
+      throw new OwnerReadUnavailableException();
+    }
     ManagedChannel channel = null;
     try {
       String target = endpoints.getAccountService();
@@ -59,9 +83,9 @@ public final class GameSessionJwtReadinessProbeOwnerClient
       var accountChannel =
           ClientInterceptors.intercept(
               channel, new GrpcServerPeerIdentityClientInterceptor(expectedAccountUri));
-      return AccountJwtReadinessProbeOwnerServiceGrpc.newBlockingStub(accountChannel)
-          .withDeadlineAfter(DEADLINE_SECONDS, TimeUnit.SECONDS)
-          .getCurrentReadinessProbeOwner(request);
+      return call.apply(
+          AccountJwtReadinessProbeOwnerServiceGrpc.newBlockingStub(accountChannel)
+              .withDeadlineAfter(DEADLINE_SECONDS, TimeUnit.SECONDS));
     } catch (RuntimeException | javax.net.ssl.SSLException unavailable) {
       throw new OwnerReadUnavailableException();
     } finally {

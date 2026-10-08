@@ -17,6 +17,8 @@ import java.util.Collections;
 import java.util.HexFormat;
 import java.util.List;
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.Supplier;
 import net.firedevops.firemud.accountservice.config.AccountJwtValidatorInventoryBinding.ProfileExpectation;
 import net.firedevops.firemud.accountservice.service.session.AccountJwtValidatorInventorySource.InventorySnapshot;
 import net.firedevops.firemud.accountservice.service.session.AccountJwtValidatorInventorySource.ObservationContext;
@@ -51,6 +53,31 @@ class AccountJwtReadinessPodLocalIdentityProviderTest {
   }
 
   @Test
+  void selectsTheLocalPodByProtectedUidRegardlessOfPodName() throws Exception {
+    Fixture fixture = new Fixture(false);
+    when(fixture.pod.name()).thenReturn("unrelated-kubelet-name");
+
+    var identity = fixture.provider.observe("c".repeat(64));
+
+    assertThat(identity.selectorIdentity().podUid()).isEqualTo(Fixture.POD_UID);
+  }
+
+  @Test
+  void refusesWhenProtectedPodUidChangesDuringInventoryObservation() throws Exception {
+    Fixture fixture = new Fixture(false);
+    AtomicInteger reads = new AtomicInteger();
+    fixture.provider =
+        fixture.provider(
+            () ->
+                reads.getAndIncrement() == 0
+                    ? Fixture.POD_UID
+                    : "66666666-6666-4666-8666-666666666666");
+
+    assertIdentityUnavailable(fixture);
+    assertThat(reads.get()).isEqualTo(2);
+  }
+
+  @Test
   void localIdentityRereadUsesTheOwnerBoundInitialCandidateContext() throws Exception {
     Fixture fixture = new Fixture(false);
     ObservationContext context =
@@ -80,6 +107,22 @@ class AccountJwtReadinessPodLocalIdentityProviderTest {
   void refusesWhenLocalPodHasNoMatchingReplicaSet() throws Exception {
     Fixture fixture = new Fixture(false);
     when(fixture.validator.replicaSets()).thenReturn(List.of());
+
+    assertIdentityUnavailable(fixture);
+  }
+
+  @Test
+  void refusesWhenProtectedPodUidIsAbsentFromInventory() throws Exception {
+    Fixture fixture = new Fixture(false);
+    when(fixture.pod.uid()).thenReturn("66666666-6666-4666-8666-666666666666");
+
+    assertIdentityUnavailable(fixture);
+  }
+
+  @Test
+  void refusesDuplicatePodsWithTheProtectedUid() throws Exception {
+    Fixture fixture = new Fixture(false);
+    when(fixture.validator.pods()).thenReturn(List.of(fixture.pod, fixture.pod));
 
     assertIdentityUnavailable(fixture);
   }
@@ -150,7 +193,7 @@ class AccountJwtReadinessPodLocalIdentityProviderTest {
     private final AccountJwtJwksTrustedSource trustedSource =
         mock(AccountJwtJwksTrustedSource.class);
     private final SslBundles sslBundles = mock(SslBundles.class);
-    private final AccountJwtReadinessPodLocalIdentityProvider provider;
+    private AccountJwtReadinessPodLocalIdentityProvider provider;
 
     private Fixture(boolean mismatchProtectedLeafPin) throws Exception {
       when(inventory.validators()).thenReturn(List.of(validator));
@@ -224,9 +267,12 @@ class AccountJwtReadinessPodLocalIdentityProviderTest {
       SslBundle sslBundle = mock(SslBundle.class);
       when(sslBundle.getStores()).thenReturn(stores);
       when(sslBundles.getBundle("firemud-grpc")).thenReturn(sslBundle);
-      provider =
-          new AccountJwtReadinessPodLocalIdentityProvider(
-              inventorySource, trustedSource, sslBundles, CLOCK, "account-0");
+      provider = provider(() -> POD_UID);
+    }
+
+    private AccountJwtReadinessPodLocalIdentityProvider provider(Supplier<String> podUidSource) {
+      return new AccountJwtReadinessPodLocalIdentityProvider(
+          inventorySource, trustedSource, sslBundles, CLOCK, podUidSource);
     }
   }
 

@@ -68,6 +68,7 @@
 {{- range $service := .Values.previewStack.services }}
 {{- $serviceType := default "ClusterIP" $service.serviceType }}
 {{- $usesGrpcWorkloadIdentity := has $service.name $grpcWorkloadNames }}
+{{- $mountPodIdentity := has $service.name (list "account-service" "game-session-service") }}
 {{- $mountGrpcTrustBundle := and $service.mountGrpcTls $usesGrpcWorkloadIdentity }}
 {{- $publicTelnetService := and (eq $service.name "tcp-proxy-service") (or (eq $serviceType "NodePort") (eq $serviceType "LoadBalancer")) }}
 {{- $telnetPort := "" }}
@@ -224,8 +225,13 @@ spec:
             - secretRef:
                 name: firemud-secret
           {{- end }}
-          {{- if or $service.mountGrpcTls $mountGrpcTrustBundle $mountTelnetTls $mountGatewayWsServerTls $mountGatewayWsClientTls (and $previewJwt.enabled $service.envFromShared) }}
+          {{- if or $mountPodIdentity $service.mountGrpcTls $mountGrpcTrustBundle $mountTelnetTls $mountGatewayWsServerTls $mountGatewayWsClientTls (and $previewJwt.enabled $service.envFromShared) }}
           volumeMounts:
+            {{- if $mountPodIdentity }}
+            - name: pod-identity
+              mountPath: /var/run/secrets/firemud/pod-identity
+              readOnly: true
+            {{- end }}
             {{- if $service.mountGrpcTls }}
             - name: grpc-tls
               mountPath: /tls
@@ -295,8 +301,18 @@ spec:
             limits:
               cpu: {{ default "750m" $.Values.previewStack.resources.app.limits.cpu | quote }}
               memory: {{ default "512Mi" $.Values.previewStack.resources.app.limits.memory | quote }}
-      {{- if or $service.mountGrpcTls $mountGrpcTrustBundle $mountTelnetTls $mountGatewayWsServerTls $mountGatewayWsClientTls (and $previewJwt.enabled $service.envFromShared) }}
+      {{- if or $mountPodIdentity $service.mountGrpcTls $mountGrpcTrustBundle $mountTelnetTls $mountGatewayWsServerTls $mountGatewayWsClientTls (and $previewJwt.enabled $service.envFromShared) }}
       volumes:
+        {{- if $mountPodIdentity }}
+        - name: pod-identity
+          downwardAPI:
+            defaultMode: 0444
+            items:
+              - path: uid
+                fieldRef:
+                  apiVersion: v1
+                  fieldPath: metadata.uid
+        {{- end }}
         {{- if $service.mountGrpcTls }}
         - name: grpc-tls
           secret:

@@ -257,7 +257,10 @@ public final class AccountJwtReadinessGrpcReceiverInvocationPort
         || response.accountJwksSourceIdentity().isEmpty()
         || !sourceIdentityMatchesTarget(
             response.accountJwksSourceIdentity().orElseThrow(), invocation.target())
-        || !response.trustBindingRevisionValid()) {
+        || !response
+            .trustBindingRevision()
+            .equals(response.accountJwksSourceIdentity().orElseThrow().bindingRevision())
+        || (response.publicJwksHashRequired() && !isSha256(response.publicJwksSha256()))) {
       throw new ReceiverUnavailableException();
     }
 
@@ -309,7 +312,9 @@ public final class AccountJwtReadinessGrpcReceiverInvocationPort
         identity.getSourceInventoryDigest(),
         identity.getServerLeafSpkiSha256(),
         accountSourceIdentity(identity.getAccountJwksSourceIdentity()),
-        identity.getAccountJwksTrustConfigRevision() > 0L,
+        identity.getAccountJwksTrustBindingRevision(),
+        identity.getAccountPublicJwksSha256(),
+        true,
         response.hasAccountPodTarget()
             ? response.getAccountPodTarget()
             : AccountPodTargetBinding.getDefaultInstance(),
@@ -343,7 +348,9 @@ public final class AccountJwtReadinessGrpcReceiverInvocationPort
         identity.getSourceInventoryDigest(),
         identity.getServerLeafSpkiSha256(),
         accountSourceIdentity(identity.getAccountJwksSourceIdentity()),
-        isCanonicalRevision(identity.getJwksTrustBindingRevision()),
+        identity.getJwksTrustBindingRevision(),
+        "",
+        false,
         response.hasAccountPodTarget()
             ? response.getAccountPodTarget()
             : AccountPodTargetBinding.getDefaultInstance(),
@@ -537,7 +544,9 @@ public final class AccountJwtReadinessGrpcReceiverInvocationPort
       String sourceInventoryDigest,
       String serverLeafSpkiSha256,
       Optional<SourceIdentity> accountJwksSourceIdentity,
-      boolean trustBindingRevisionValid,
+      String trustBindingRevision,
+      String publicJwksSha256,
+      boolean publicJwksHashRequired,
       AccountPodTargetBinding accountPodTarget,
       boolean targetUnknownFields,
       ProbeExpectation outcome,

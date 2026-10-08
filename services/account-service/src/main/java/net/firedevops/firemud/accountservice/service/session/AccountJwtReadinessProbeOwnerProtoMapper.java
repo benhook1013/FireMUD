@@ -2,20 +2,58 @@ package net.firedevops.firemud.accountservice.service.session;
 
 import java.util.UUID;
 import net.firedevops.firemud.account.v1.AccountPodTargetBinding;
+import net.firedevops.firemud.account.v1.AccountSourceIdentity;
 import net.firedevops.firemud.account.v1.GetCurrentReadinessProbeOwnerRequest;
 import net.firedevops.firemud.account.v1.GetCurrentReadinessProbeOwnerResponse;
+import net.firedevops.firemud.account.v1.GetCurrentReadinessReceiverMetadataRequest;
+import net.firedevops.firemud.account.v1.GetCurrentReadinessReceiverMetadataResponse;
 import net.firedevops.firemud.account.v1.ReadinessProbeCoordinates;
+import net.firedevops.firemud.account.v1.ReadinessReceiverLocalIdentity;
 import net.firedevops.firemud.accountservice.repository.AccountJwtReadinessProbeRepository.OwnerProbeEvidence;
 import net.firedevops.firemud.accountservice.repository.AccountJwtReadinessProbeRepository.ProbeEntry;
 import net.firedevops.firemud.accountservice.repository.AccountJwtReadinessProbeRepository.ReadinessProbePlan;
 import net.firedevops.firemud.accountservice.repository.AccountJwtSignerDesiredStateRepository.ActiveSigner;
 import net.firedevops.firemud.accountservice.service.session.AccountJwtReadinessReceiverInvocationPort.ProbeExpectation;
+import net.firedevops.firemud.accountservice.service.session.AccountJwtValidatorInventorySource.InventorySnapshot;
+import net.firedevops.firemud.accountservice.service.session.AccountJwtValidatorInventorySource.PodObservation;
+import net.firedevops.firemud.accountservice.service.session.AccountJwtValidatorInventorySource.ValidatorObservation;
 import net.firedevops.firemud.accountservice.service.session.AccountMountedJwtSignerBundle.ProbeKind;
 import net.firedevops.firemud.common.security.AccountPublicJwksCache.SourceIdentity;
 
 /** Strict closed-wire mapper; caller-local Account JWKS pins are validated but never echoed. */
 public final class AccountJwtReadinessProbeOwnerProtoMapper {
   private static final int SCHEMA_VERSION = 1;
+  private static final int MAX_RECEIVER_METADATA_REQUEST_BYTES = 256;
+  private static final String SHA256 = "[0-9a-f]{64}";
+  private static final String UID =
+      "[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}";
+
+  /** Strict parse of the two caller-selected local values; neither is owner evidence. */
+  public ReceiverMetadataSelector parseReceiverMetadataRequest(
+      GetCurrentReadinessReceiverMetadataRequest request) {
+    if (request == null
+        || request.getSchemaVersion() != SCHEMA_VERSION
+        || request.getSerializedSize() > MAX_RECEIVER_METADATA_REQUEST_BYTES
+        || !request.getUnknownFields().asMap().isEmpty()) {
+      throw new InvalidOwnerReadRequestException();
+    }
+    String podUid = request.getProjectedPodUid();
+    String serverLeafSpkiSha256 = request.getServerLeafSpkiSha256();
+    try {
+      if (podUid.length() != 36 || serverLeafSpkiSha256.length() != 64) {
+        throw new IllegalArgumentException();
+      }
+      UUID parsedUid = UUID.fromString(podUid);
+      if (!parsedUid.toString().equals(podUid)
+          || !podUid.matches(UID)
+          || !serverLeafSpkiSha256.matches(SHA256)) {
+        throw new IllegalArgumentException();
+      }
+      return new ReceiverMetadataSelector(podUid, serverLeafSpkiSha256);
+    } catch (RuntimeException invalid) {
+      throw new InvalidOwnerReadRequestException();
+    }
+  }
 
   public AccountJwtReadinessProbeOwnerSelector parse(GetCurrentReadinessProbeOwnerRequest request) {
     if (request == null
@@ -82,7 +120,9 @@ public final class AccountJwtReadinessProbeOwnerProtoMapper {
           source.getBindingRevision(),
           source.getApiServerOrigin(),
           source.getServingCaSha256());
-      if (local.getAccountJwksTrustConfigRevision() <= 0L) {
+      if (local.getAccountJwksTrustBindingRevision().isEmpty()
+          || !local.getAccountJwksTrustBindingRevision().equals(source.getBindingRevision())
+          || !local.getAccountPublicJwksSha256().matches(SHA256)) {
         throw new IllegalArgumentException();
       }
       return new AccountJwtReadinessProbeOwnerSelector(
@@ -200,6 +240,52 @@ public final class AccountJwtReadinessProbeOwnerProtoMapper {
         .build();
   }
 
+  public GetCurrentReadinessReceiverMetadataResponse toReceiverMetadataResponse(
+      ReadinessProbePlan plan,
+      InventorySnapshot inventory,
+      ValidatorObservation validator,
+      PodObservation pod,
+      SourceIdentity jwksSourceIdentity,
+      String publicJwksSha256) {
+    AccountSourceIdentity sourceIdentity =
+        AccountSourceIdentity.newBuilder()
+            .setEnvironmentId(jwksSourceIdentity.environmentId())
+            .setClusterId(jwksSourceIdentity.clusterId())
+            .setClusterIncarnationUid(jwksSourceIdentity.clusterIncarnationUid())
+            .setNamespace(jwksSourceIdentity.namespace())
+            .setNamespaceUid(jwksSourceIdentity.namespaceUid())
+            .setConfigMapUid(jwksSourceIdentity.configMapUid())
+            .setBindingRevision(jwksSourceIdentity.bindingRevision())
+            .setApiServerOrigin(jwksSourceIdentity.apiServerOrigin())
+            .setServingCaSha256(jwksSourceIdentity.servingCaSha256())
+            .build();
+    ReadinessReceiverLocalIdentity identity =
+        ReadinessReceiverLocalIdentity.newBuilder()
+            .setValidatorId(validator.validatorId())
+            .setDeploymentUid(validator.deploymentUid())
+            .setPodUid(pod.uid())
+            .setPodIp(pod.podIp())
+            .setDirectPodEndpoint(pod.endpoint().toString())
+            .setCanonicalServiceUri(pod.receiverServiceUri())
+            .setImage(pod.image())
+            .setVerifierConfigSha256(pod.verifierConfigSha256())
+            .setApplicabilityMatrixDigest(plan.applicabilityMatrixDigest())
+            .setSourceInventoryRevision(inventory.inventoryBindingRevision())
+            .setSourceInventoryDigest(inventory.digest())
+            .setServerLeafSpkiSha256(pod.leafSpkiSha256())
+            .setAccountJwksSourceIdentity(sourceIdentity)
+            .setAccountJwksTrustBindingRevision(jwksSourceIdentity.bindingRevision())
+            .setAccountPublicJwksSha256(publicJwksSha256)
+            .build();
+    return GetCurrentReadinessReceiverMetadataResponse.newBuilder()
+        .setSchemaVersion(SCHEMA_VERSION)
+        .setRotationOperationId(plan.operationId().toString())
+        .setOperationDigest(plan.operationDigest())
+        .setPlanDigest(plan.planDigest())
+        .setCurrentIdentity(identity)
+        .build();
+  }
+
   private static UUID canonicalUuid(String value) {
     UUID parsed = UUID.fromString(value);
     if (!parsed.toString().equals(value)) {
@@ -207,6 +293,8 @@ public final class AccountJwtReadinessProbeOwnerProtoMapper {
     }
     return parsed;
   }
+
+  public record ReceiverMetadataSelector(String projectedPodUid, String serverLeafSpkiSha256) {}
 
   public static final class InvalidOwnerReadRequestException extends RuntimeException {
     public InvalidOwnerReadRequestException() {

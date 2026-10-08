@@ -2,9 +2,11 @@ package net.firedevops.firemud.accountservice.config;
 
 import java.time.Clock;
 import net.firedevops.firemud.accountservice.repository.AccountJwtReadinessProbeRepository;
+import net.firedevops.firemud.accountservice.service.session.AccountJwtJwksTrustedSource;
 import net.firedevops.firemud.accountservice.service.session.AccountJwtReadinessProbeOwnerProtoMapper;
 import net.firedevops.firemud.accountservice.service.session.AccountJwtReadinessProbeOwnerService;
 import net.firedevops.firemud.accountservice.service.session.AccountJwtReadinessProbeService;
+import net.firedevops.firemud.accountservice.service.session.AccountJwtReadinessReceiverMetadataService;
 import net.firedevops.firemud.accountservice.service.session.AccountJwtValidatorInventorySource;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
@@ -17,7 +19,7 @@ import org.springframework.context.annotation.Lazy;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
 
-/** Default-false composition for the isolated exact-probe owner lookup RPC. */
+/** Default-false composition for isolated protected readiness owner and metadata RPCs. */
 @Configuration(proxyBeanMethods = false)
 @ConditionalOnProperty(
     prefix = "firemud.account.jwt-readiness.probe-owner",
@@ -82,5 +84,25 @@ public class AccountJwtReadinessProbeOwnerConfiguration {
       AccountJwtReadinessProbeOwnerProtoMapper protoMapper) {
     return new AccountJwtReadinessProbeOwnerService(
         probeService, materializerTrustBinding, workloadGuard, protoMapper);
+  }
+
+  @Bean
+  @Lazy
+  public AccountJwtReadinessReceiverMetadataService accountJwtReadinessReceiverMetadataService(
+      AccountJwtReadinessProbeService probeService,
+      AccountJwtValidatorInventorySource inventorySource,
+      @Qualifier("accountJwtReadinessTrustedJwksSource")
+          AccountJwtJwksTrustedSource trustedJwksSource,
+      AccountJwtReadinessProbeOwnerWorkloadGuard workloadGuard,
+      AccountJwtSignerMaterializerTrustBinding materializerTrustBinding,
+      AccountJwtReadinessProbeOwnerProtoMapper protoMapper) {
+    return new AccountJwtReadinessReceiverMetadataService(
+        probeService,
+        inventorySource,
+        trustedJwksSource,
+        workloadGuard,
+        materializerTrustBinding,
+        protoMapper,
+        Clock.systemUTC());
   }
 }

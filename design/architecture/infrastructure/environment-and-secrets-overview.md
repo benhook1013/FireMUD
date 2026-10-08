@@ -149,6 +149,14 @@ Current implementation drift includes the runtime classpath JWKS fallback when t
 
 ---
 
+### Hosted Readiness Pod Projection and Routing Boundary
+
+The attribution contract is owned by [JWT and Token Contracts](../system-architecture-jwt-and-token-contracts.md#protected-readiness-receiver-attribution). The bounded hosted implementation targets the protected `dev` and canonical `pr-N` runtime namespaces on the documented k3s Flannel VXLAN/kube-router platform; it is not proof for arbitrary CNI implementations or player-facing environments. The existing trusted bootstrap installs fail-closed native admission policies, and the trusted namespace manager must read back their exact content before granting runtime deployment roles. Runtime deployers must not be able to replace that policy authority. Policy matching must not depend on a removable opt-in Pod label.
+
+Account and Game Session receive the fixed kubelet downward-API UID projection read-only. The hosted Pod policy must reject host/network escape and protected receiver injection or projection substitution after mutating admission, including updates and ephemeral-container subresources. Existing workload TLS delivery remains unchanged. Kubelet AtomicWriter directories may retain root-owned `0755` permissions on a read-only mount; filesystem mode checks alone neither prove a read-only mount nor authenticate kubelet provenance. Base Kustomize sidecar/hostPath layouts do not inherit the hosted single-container proof.
+
+Local rendering, source-contract tests and socket fixtures are only preparatory evidence. Live API policy compilation/enforcement, trusted installation/readback, actual CNI direct routing and shared-key wrong-replica/replacement-race proof remain activation gates. Do not enable readiness promotion or remove a shared-SPKI denial from these static artifacts alone.
+
 ## JWT Trust Model by Environment
 
 The canonical JWT profile, registry, authority-generation, outage, signing, and rotation contract is [JWT and Token Contracts](../system-architecture-jwt-and-token-contracts.md). The matrix below records only environment-local resource and readiness consequences:

@@ -53,6 +53,8 @@ import net.firedevops.firemud.account.v1.AccountPodTargetBinding;
 import net.firedevops.firemud.account.v1.AccountSourceIdentity;
 import net.firedevops.firemud.account.v1.GetCurrentReadinessProbeOwnerRequest;
 import net.firedevops.firemud.account.v1.GetCurrentReadinessProbeOwnerResponse;
+import net.firedevops.firemud.account.v1.GetCurrentReadinessReceiverMetadataRequest;
+import net.firedevops.firemud.account.v1.GetCurrentReadinessReceiverMetadataResponse;
 import net.firedevops.firemud.account.v1.ReadinessProbeCoordinates;
 import net.firedevops.firemud.account.v1.ReadinessReceiverLocalIdentity;
 import net.firedevops.firemud.common.config.ServiceEndpointsProperties;
@@ -93,6 +95,7 @@ import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 import tools.jackson.databind.json.JsonMapper;
 
 /**
@@ -123,21 +126,29 @@ class GameSessionJwtReadinessReceiverMtlsIntegrationTest {
   private static TestPki pki;
   private Server gameSessionServer;
   private Server accountOwnerServer;
+  private GameSessionJwtReadinessProbeOwnerClient ownerClient;
   private TestIdentityFiles accountClientFiles;
   private TestIdentityFiles gameSessionFiles;
   private Path caCertificateFile;
   private final AtomicReference<OwnerResponseMode> ownerResponseMode =
       new AtomicReference<>(OwnerResponseMode.EXACT);
   private final AtomicInteger ownerReadCalls = new AtomicInteger();
+  private final AtomicInteger metadataReadCalls = new AtomicInteger();
   private final AtomicReference<GetCurrentReadinessProbeOwnerRequest> lastOwnerRequest =
       new AtomicReference<>();
+  private final AtomicReference<GetCurrentReadinessReceiverMetadataRequest> lastMetadataRequest =
+      new AtomicReference<>();
   private final AtomicReference<String> ownerSawPeerUri = new AtomicReference<>();
+  private final AtomicReference<String> metadataSawPeerUri = new AtomicReference<>();
+  private final AtomicReference<GetCurrentReadinessReceiverMetadataResponse> metadataResponse =
+      new AtomicReference<>();
   private final AtomicReference<AccountPodTargetBinding> ownerTarget = new AtomicReference<>();
   private final AtomicReference<GameSessionJwtReadinessLocalIdentityProvider.LocalObservation>
       localObservation = new AtomicReference<>();
   private final AtomicBoolean responseHadNoApplicationAuthContext = new AtomicBoolean();
   private KeyPair signingKey;
   private AccountPublicJwksCache.SourceIdentity jwksSourceIdentity;
+  private String fixturePublicJwksSha256;
   private ReadinessReceiverLocalIdentity localIdentity;
   private AccountPodTargetBinding exactOwnerTarget;
   private ReceiveReadinessProbeRequest validRequest;
@@ -171,8 +182,12 @@ class GameSessionJwtReadinessReceiverMtlsIntegrationTest {
   void startIsolatedTransports() throws Exception {
     ownerResponseMode.set(OwnerResponseMode.EXACT);
     ownerReadCalls.set(0);
+    metadataReadCalls.set(0);
     lastOwnerRequest.set(null);
+    lastMetadataRequest.set(null);
     ownerSawPeerUri.set(null);
+    metadataSawPeerUri.set(null);
+    metadataResponse.set(null);
     ownerTarget.set(null);
     localObservation.set(null);
     responseHadNoApplicationAuthContext.set(false);
@@ -183,13 +198,14 @@ class GameSessionJwtReadinessReceiverMtlsIntegrationTest {
     accountOwnerServer = startAccountOwnerServer();
     ServiceEndpointsProperties endpoints = new ServiceEndpointsProperties();
     endpoints.setAccountService("127.0.0.1:" + accountOwnerServer.getPort());
-    GameSessionJwtReadinessProbeOwnerClient ownerClient =
+    ownerClient =
         new GameSessionJwtReadinessProbeOwnerClient(
             endpoints, clientProperties(gameSessionFiles), new GrpcChannelFactory(), NAMESPACE);
 
     signingKey = rsaKeyPair(3072);
     jwksSourceIdentity = sourceIdentity();
     String jwks = jwks(KID, (RSAPublicKey) signingKey.getPublic());
+    fixturePublicJwksSha256 = sha256(jwks);
     AccountPublicJwksCache keyCache =
         new AccountPublicJwksCache(
             () ->
@@ -225,6 +241,14 @@ class GameSessionJwtReadinessReceiverMtlsIntegrationTest {
             .start();
 
     localIdentity = localIdentity(gameSessionServer.getPort());
+    metadataResponse.set(
+        GetCurrentReadinessReceiverMetadataResponse.newBuilder()
+            .setSchemaVersion(1)
+            .setRotationOperationId("66666666-6666-4666-8666-666666666666")
+            .setOperationDigest("a".repeat(64))
+            .setPlanDigest("b".repeat(64))
+            .setCurrentIdentity(localIdentity)
+            .build());
     exactOwnerTarget = ownerTarget(localIdentity);
     localObservation.set(
         new GameSessionJwtReadinessLocalIdentityProvider.LocalObservation(
@@ -276,6 +300,54 @@ class GameSessionJwtReadinessReceiverMtlsIntegrationTest {
     assertThat(SessionContext.isInternalService()).isFalse();
     assertThat(SessionContext.getServiceName()).isNull();
     assertThat(SessionContext.getServiceInstanceId()).isNull();
+  }
+
+  @Test
+  void currentMetadataBootstrapUsesAccountMtlsAndOnlyProjectedUidAndActualLeafPin()
+      throws Exception {
+    GetCurrentReadinessReceiverMetadataRequest request =
+        GetCurrentReadinessReceiverMetadataRequest.newBuilder()
+            .setSchemaVersion(1)
+            .setProjectedPodUid(POD_UID)
+            .setServerLeafSpkiSha256(spkiSha256(pki.gameSession().certificate()))
+            .build();
+
+    GetCurrentReadinessReceiverMetadataResponse response = ownerClient.readCurrent(request);
+
+    assertThat(response).isEqualTo(metadataResponse.get());
+    assertThat(metadataReadCalls).hasValue(1);
+    assertThat(lastMetadataRequest.get()).isEqualTo(request);
+    assertThat(lastMetadataRequest.get().getUnknownFields().asMap()).isEmpty();
+    assertThat(metadataSawPeerUri).hasValue(GAME_SESSION_URI);
+    assertThat(SessionContext.getAccountId()).isNull();
+    assertThat(SessionContext.getGlobalRoles()).isEmpty();
+    assertThat(SessionContext.getScopedRolesMap()).isEmpty();
+    assertThat(SessionContext.isInternalService()).isFalse();
+  }
+
+  @Test
+  void ambientSqlTransactionDeniesBothAccountReadsBeforeDispatch() {
+    boolean previousTransactionState =
+        TransactionSynchronizationManager.isActualTransactionActive();
+    TransactionSynchronizationManager.setActualTransactionActive(true);
+    try {
+      assertThatThrownBy(
+              () ->
+                  ownerClient.readCurrent(
+                      GetCurrentReadinessProbeOwnerRequest.newBuilder().build()))
+          .isInstanceOf(
+              GameSessionJwtReadinessProbeOwnerClient.OwnerReadUnavailableException.class);
+      assertThatThrownBy(
+              () ->
+                  ownerClient.readCurrent(
+                      GetCurrentReadinessReceiverMetadataRequest.newBuilder().build()))
+          .isInstanceOf(
+              GameSessionJwtReadinessProbeOwnerClient.OwnerReadUnavailableException.class);
+      assertThat(ownerReadCalls).hasValue(0);
+      assertThat(metadataReadCalls).hasValue(0);
+    } finally {
+      TransactionSynchronizationManager.setActualTransactionActive(previousTransactionState);
+    }
   }
 
   @Test
@@ -421,6 +493,18 @@ class GameSessionJwtReadinessReceiverMtlsIntegrationTest {
             ownerSawPeerUri.set(peer == null ? null : peer.uri());
             responseObserver.onNext(
                 ownerResponse(request, ownerResponseMode.get(), ownerReadCalls.get()));
+            responseObserver.onCompleted();
+          }
+
+          @Override
+          public void getCurrentReadinessReceiverMetadata(
+              GetCurrentReadinessReceiverMetadataRequest request,
+              StreamObserver<GetCurrentReadinessReceiverMetadataResponse> responseObserver) {
+            metadataReadCalls.incrementAndGet();
+            lastMetadataRequest.set(request);
+            GrpcPeerIdentity peer = GrpcPeerIdentity.current();
+            metadataSawPeerUri.set(peer == null ? null : peer.uri());
+            responseObserver.onNext(metadataResponse.get());
             responseObserver.onCompleted();
           }
         };
@@ -609,7 +693,8 @@ class GameSessionJwtReadinessReceiverMtlsIntegrationTest {
         .setSourceInventoryDigest("d".repeat(64))
         .setServerLeafSpkiSha256(spkiSha256(pki.gameSession().certificate()))
         .setAccountJwksSourceIdentity(sourceIdentityProto())
-        .setAccountJwksTrustConfigRevision(1L)
+        .setAccountJwksTrustBindingRevision(jwksSourceIdentity.bindingRevision())
+        .setAccountPublicJwksSha256(fixturePublicJwksSha256)
         .build();
   }
 

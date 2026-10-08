@@ -1,6 +1,7 @@
 package net.firedevops.firemud.gamedesign.service.impl;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
@@ -15,6 +16,9 @@ import io.grpc.StatusRuntimeException;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
+import java.util.UUID;
+import net.firedevops.firemud.common.publication.AccountPublicationAuthorizationBinding;
+import net.firedevops.firemud.common.publication.AuthoredDraftPublishSelectionBinding;
 import net.firedevops.firemud.common.publication.PublicationDigestRequestBinding;
 import net.firedevops.firemud.common.world.WorldPublishedStartLocationEvidence;
 import net.firedevops.firemud.gamedesign.dto.DesignControlPlaneDigestDto;
@@ -30,6 +34,7 @@ import net.firedevops.firemud.gamedesign.model.PublishAttemptStatus;
 import net.firedevops.firemud.gamedesign.model.PublishGateFailureCode;
 import net.firedevops.firemud.gamedesign.model.PublishType;
 import net.firedevops.firemud.gamedesign.model.VersionLifecycleState;
+import net.firedevops.firemud.gamedesign.publication.GameDesignPublicationOperation;
 import net.firedevops.firemud.gamedesign.repository.GameRepository;
 import net.firedevops.firemud.gamedesign.repository.PublishAttemptRepository;
 import net.firedevops.firemud.gamedesign.repository.VersionRepository;
@@ -103,6 +108,66 @@ class VersionPublishCommandServiceImplTest {
             versionAssetArtifactService,
             publishedReleaseBundleService,
             recordedParticipantDigestService);
+  }
+
+  @Test
+  void selectedPublicationRejectsPrivateTenantDerivedWorkflowIdentity() {
+    String tenantId = "9002";
+    long versionId = 10L;
+    String publishRequestId = "selected-request-7";
+    String notes = "selected draft notes";
+    UUID canonicalTenantId = UUID.fromString("11111111-1111-4111-8111-111111111111");
+    String privateTenantWorkflowId =
+        TemporalVersionPublishOrchestrator.workflowId(tenantId, publishRequestId);
+    String selectedWorkflowId =
+        PublicationDigestRequestBinding.full(
+                canonicalTenantId.toString(), Long.toString(versionId), publishRequestId)
+            .derivedWorkflowIdentity();
+    assertNotEquals(selectedWorkflowId, privateTenantWorkflowId);
+
+    String selectionDigest = "sha256:" + "a".repeat(64);
+    PublishAttempt attempt =
+        fullAttempt(PublishAttemptStatus.PENDING, versionId, 1, privateTenantWorkflowId);
+    attempt.setTenantId(tenantId);
+    attempt.setRequestDigest(selectionDigest);
+    when(publishAttemptRepository.findByPublishWorkflowId(privateTenantWorkflowId))
+        .thenReturn(Optional.of(attempt));
+
+    GameDesignPublicationOperation operation =
+        org.mockito.Mockito.mock(GameDesignPublicationOperation.class);
+    AccountPublicationAuthorizationBinding account =
+        org.mockito.Mockito.mock(AccountPublicationAuthorizationBinding.class);
+    AccountPublicationAuthorizationBinding.PreallocationInput input =
+        org.mockito.Mockito.mock(AccountPublicationAuthorizationBinding.PreallocationInput.class);
+    AuthoredDraftPublishSelectionBinding selection =
+        org.mockito.Mockito.mock(AuthoredDraftPublishSelectionBinding.class);
+    AuthoredDraftPublishSelectionBinding.PublishIntent intent =
+        org.mockito.Mockito.mock(AuthoredDraftPublishSelectionBinding.PublishIntent.class);
+    when(operation.account()).thenReturn(account);
+    when(account.input()).thenReturn(input);
+    when(input.selection()).thenReturn(selection);
+    when(selection.intent()).thenReturn(intent);
+    when(intent.canonicalTenantId()).thenReturn(canonicalTenantId);
+    when(intent.publishRequestId()).thenReturn(publishRequestId);
+    when(intent.notes()).thenReturn(notes);
+    when(operation.tenantKey()).thenReturn(tenantId);
+    when(operation.versionId()).thenReturn(versionId);
+    when(operation.selectionDigest()).thenReturn(selectionDigest);
+    when(operation.workflowId()).thenReturn(privateTenantWorkflowId);
+    when(publishAttemptRepository.requireSelectedPublicationReadback(attempt, "PENDING"))
+        .thenReturn(operation);
+
+    VersionPublishCommandServiceImpl.PendingReconciliationException thrown =
+        assertThrows(
+            VersionPublishCommandServiceImpl.PendingReconciliationException.class,
+            () ->
+                service.reconcileSelectedDraftFullVersionPublish(
+                    tenantId, versionId, notes, publishRequestId, privateTenantWorkflowId));
+
+    assertTrue(
+        thrown.getCause().getMessage().contains("SELECTED_PUBLICATION_REQUEST_IDENTITY_CHANGED"));
+    verify(publishAttemptRepository).requireSelectedPublicationReadback(attempt, "PENDING");
+    verify(versionRepository, never()).findByTenantIdAndId(any(String.class), any(Long.class));
   }
 
   @Test

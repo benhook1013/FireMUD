@@ -822,6 +822,49 @@ class AccountJwtReadinessProbePersistenceIntegrationTest {
             validator.caller().binding(),
             validator.caller().peer(),
             now);
+    assertThatThrownBy(
+            () ->
+                inTransaction(
+                    context,
+                    () -> {
+                      assertThat(
+                              context
+                                  .dsl()
+                                  .execute(
+                                      "UPDATE account_jwt_readiness_probe_entries "
+                                          + "SET compact_token_sha256 = ?, "
+                                          + "signing_attempted_at_epoch_seconds = ?, "
+                                          + "entry_version = entry_version + 1 "
+                                          + "WHERE rotation_operation_id = ? "
+                                          + "AND plan_digest = ? "
+                                          + "AND validator_id = 'account-service' "
+                                          + "AND token_profile = 'control-ui' "
+                                          + "AND audience = 'control-ui' "
+                                          + "AND probe_kind = 'REPRESENTATIVE' "
+                                          + "AND state = 'PLANNED'",
+                                      "0".repeat(64),
+                                      now,
+                                      result.operationId(),
+                                      plan.planDigest()))
+                          .isEqualTo(1);
+                      context
+                          .dsl()
+                          .execute(
+                              "INSERT INTO account_jwt_readiness_delivery_claims "
+                                  + "SELECT * FROM account_jwt_readiness_delivery_claims "
+                                  + "WHERE rotation_operation_id = ?",
+                              result.operationId());
+                      return null;
+                    }))
+        .isInstanceOf(org.jooq.exception.DataAccessException.class)
+        .hasMessageContaining(
+            "Account readiness delivery claim requires untouched planned entries");
+    assertThat(
+            inTransaction(
+                context,
+                () -> readiness.readCurrentPlan(BINDING, trust, result.operationId()).entries()))
+        .containsExactlyElementsOf(plan.entries());
+    assertThat(count(context, "account_jwt_readiness_delivery_claims")).isEqualTo(1L);
     AccountJwtReadinessProbeService probeService =
         new AccountJwtReadinessProbeService(
             readiness,

@@ -9,6 +9,9 @@ python3 - "$repo_root" "$deployment_rbac" "$deployment_admission" <<'PY'
 import sys
 import copy
 import re
+import json
+import subprocess
+from unittest.mock import patch
 from pathlib import Path
 
 import yaml
@@ -127,7 +130,10 @@ manager_resources = {
     for rule in rules(manager_role)
     for resource in rule.get("resources", [])
 }
-assert manager_resources <= {"namespaces", "rolebindings", "clusterroles"}
+assert manager_resources <= {
+    "namespaces", "rolebindings", "clusterroles",
+    "validatingadmissionpolicies", "validatingadmissionpolicybindings",
+}
 assert "secrets" not in manager_resources
 assert "certificaterequests" not in manager_resources
 assert "issuers" not in manager_resources
@@ -154,6 +160,8 @@ admission = documents(admission_path)
 policy_names = {
     "firemud-trust-runtime-namespace-boundary",
     "firemud-trust-runtime-binding-boundary",
+    "firemud-trust-runtime-pod-boundary",
+    "firemud-trust-runtime-pod-identity",
 }
 policies = {item["metadata"]["name"]: item for item in admission if item["kind"] == "ValidatingAdmissionPolicy"}
 policy_bindings = {item["metadata"]["name"]: item for item in admission if item["kind"] == "ValidatingAdmissionPolicyBinding"}
@@ -163,6 +171,131 @@ for name in policy_names:
     assert policies[name]["spec"]["failurePolicy"] == "Fail"
     assert policy_bindings[name]["spec"]["policyName"] == name
     assert policy_bindings[name]["spec"]["validationActions"] == ["Deny"]
+    for resource in (policies[name], policy_bindings[name]):
+        assert resource["metadata"]["annotations"]["firemud.dev/admission-revision"] == "hosted-pod-identity-v1"
+
+admission_reads = [
+    rule for rule in rules(manager_role)
+    if "admissionregistration.k8s.io" in (rule.get("apiGroups") or [])
+]
+assert admission_reads == [{
+    "apiGroups": ["admissionregistration.k8s.io"],
+    "resources": ["validatingadmissionpolicies", "validatingadmissionpolicybindings"],
+    "resourceNames": [
+        "firemud-trust-runtime-namespace-boundary",
+        "firemud-trust-runtime-binding-boundary",
+        "firemud-trust-runtime-pod-boundary",
+        "firemud-trust-runtime-pod-identity",
+    ],
+    "verbs": ["get"],
+}]
+for role in (runtime_role, cert_role):
+    assert not any("admissionregistration.k8s.io" in rule.get("apiGroups", []) for rule in rules(role))
+
+# These assertions cover routing and security-critical syntax, not execution
+# of native CEL. Server-side allow/deny and post-webhook proof remain required.
+for name in ("firemud-trust-runtime-pod-boundary", "firemud-trust-runtime-pod-identity"):
+    spec = policies[name]["spec"]
+    assert spec["matchConstraints"] == {
+        "matchPolicy": "Equivalent",
+        "resourceRules": [{
+            "apiGroups": [""], "apiVersions": ["v1"],
+            "operations": ["CREATE", "UPDATE"],
+            "resources": ["pods", "pods/ephemeralcontainers"],
+            "scope": "Namespaced",
+        }],
+    }
+    assert spec["matchConditions"] == [{
+        "name": "hosted-runtime-namespace",
+        "expression": "request.namespace == 'dev' || request.namespace.matches('^pr-[1-9][0-9]{0,50}$')",
+    }]
+    assert "objectSelector" not in spec["matchConstraints"]
+    assert "namespaceSelector" not in spec["matchConstraints"]
+
+escape_spec = str(policies["firemud-trust-runtime-pod-boundary"]["spec"])
+for needle in (
+    "hostNetwork", "hostPID", "hostIPC", "hostPath", "sysctls",
+    "hostPort", "allowPrivilegeEscalation", "privileged", "procMount",
+    "hostProcess", "capabilities.drop", "capabilities.add", "ephemeralContainers",
+):
+    assert needle in escape_spec, f"missing all-Pod escape restriction: {needle}"
+identity_spec = str(policies["firemud-trust-runtime-pod-identity"]["spec"])
+for needle in (
+    "[oldObject]", "p.metadata.labels", "p.metadata.name", "p.metadata.generateName",
+    "p.spec.serviceAccountName", "p.spec.containers.exists", "account-service", "game-session-service",
+    "containers.size() == 1", "initContainers.size() == 0", "ephemeralContainers.size() == 0",
+    "annotations.size() == 0", "runAsNonRoot", "runAsUser > 0", "RuntimeDefault",
+    "/var/run/secrets/firemud/pod-identity", "v.name == 'pod-identity'", "v.downwardAPI",
+    "defaultMode == 292", "items.size() == 1", "path == 'uid'", "fieldPath == 'metadata.uid'",
+    "m.readOnly", "!has(m.subPath)", "!has(m.subPathExpr)", "mountPropagation == 'None'",
+    "!m.mountPath.endsWith('/')", "segment in ['.', '..']",
+    "!variables.identityPath.startsWith(m.mountPath + '/')",
+    "!m.mountPath.startsWith(variables.identityPath + '/')",
+):
+    assert needle in identity_spec, f"missing protected UID restriction: {needle}"
+
+# Exercise the actual embedded readback gate against canonical and tampered
+# API responses. No Kubernetes process or cluster mutation is involved.
+bind_script = (root / "dev-tools/hosted/trust-bootstrap/bind-runtime-roles.sh").read_text(encoding="utf-8")
+readback_gate = bind_script.split("<<'PY'\n", 1)[1].split("\nPY\n", 1)[0]
+assert bind_script.index("<<'PY'") < bind_script.index('namespace_json="$(kubectl')
+assert bind_script.index("\nPY\n") < bind_script.index("binding_document()")
+canonical = {(item["kind"], item["metadata"]["name"]): item for item in admission}
+
+
+def readback(responses):
+    calls = []
+
+    def fake_get(args, **kwargs):
+        assert args[:2] == ["kubectl", "get"]
+        assert args[4:] == ["-o", "json"]
+        key = (args[2].split(".", 1)[0], args[3])
+        calls.append(key)
+        if key not in responses:
+            raise subprocess.CalledProcessError(1, args)
+        return json.dumps(responses[key])
+
+    with patch.object(sys, "argv", ["readback", str(admission_path)]), patch.object(subprocess, "check_output", fake_get):
+        exec(compile(readback_gate, "bind-runtime-roles:readback", "exec"), {})
+    assert set(calls) == set(canonical)
+
+
+readback(canonical)
+defaulted = copy.deepcopy(canonical)
+for (kind, name), item in defaulted.items():
+    match_key = "matchConstraints" if kind == "ValidatingAdmissionPolicy" else "matchResources"
+    match = item["spec"].setdefault(match_key, {})
+    match.setdefault("matchPolicy", "Equivalent")
+    match.setdefault("namespaceSelector", {})
+    match.setdefault("objectSelector", {})
+readback(defaulted)
+for key in canonical:
+    for mutation in ("missing", "revision", "spec", "terminating", "type-warning", "unknown-field"):
+        if mutation == "type-warning" and key[0] != "ValidatingAdmissionPolicy":
+            continue
+        changed = copy.deepcopy(canonical)
+        if mutation == "missing":
+            del changed[key]
+        elif mutation == "revision":
+            changed[key]["metadata"]["annotations"]["firemud.dev/admission-revision"] = "stale"
+        elif mutation == "spec":
+            # Keep Fail/Deny and the same name while dropping actual enforcement.
+            if key[0] == "ValidatingAdmissionPolicy":
+                changed[key]["spec"]["validations"][0]["expression"] = "true"
+            else:
+                changed[key]["spec"]["matchResources"] = {"namespaceSelector": {"matchLabels": {"bypass": "true"}}}
+        elif mutation == "terminating":
+            changed[key]["metadata"]["deletionTimestamp"] = "2026-10-09T00:00:00Z"
+        elif mutation == "unknown-field":
+            changed[key]["spec"]["unexpected"] = True
+        else:
+            changed[key]["status"] = {"typeChecking": {"expressionWarnings": [{"warning": "invalid CEL"}]}}
+        try:
+            readback(changed)
+        except (SystemExit, subprocess.CalledProcessError):
+            pass
+        else:
+            raise AssertionError(f"readback accepted {mutation}: {key}")
 namespace_expression = str(policies["firemud-trust-runtime-namespace-boundary"]["spec"])
 binding_expression = str(policies["firemud-trust-runtime-binding-boundary"]["spec"])
 assert "system:serviceaccount:firemud-system:firemud-preview-namespace-manager" in namespace_expression

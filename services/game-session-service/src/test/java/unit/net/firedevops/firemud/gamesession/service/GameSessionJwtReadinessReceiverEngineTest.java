@@ -234,8 +234,22 @@ class GameSessionJwtReadinessReceiverEngineTest {
                   .setBindingRevision("account-api-r1")
                   .setApiServerOrigin("https://kubernetes.example.test:6443")
                   .setServingCaSha256("9".repeat(64)))
-          .setAccountJwksTrustConfigRevision(1L)
+          .setAccountJwksTrustBindingRevision("account-api-r1")
+          .setAccountPublicJwksSha256(fixturePublicJwksSha256())
           .build();
+    }
+
+    private static String fixturePublicJwksSha256() {
+      try {
+        return java.util.HexFormat.of()
+            .formatHex(
+                java.security.MessageDigest.getInstance("SHA-256")
+                    .digest(
+                        "{\"keys\":[{\"kty\":\"RSA\",\"kid\":\"fixture\"}]}"
+                            .getBytes(java.nio.charset.StandardCharsets.US_ASCII)));
+      } catch (java.security.NoSuchAlgorithmException unavailable) {
+        throw new AssertionError(unavailable);
+      }
     }
 
     private static AccountPublicJwksCache.SourceIdentity sourceIdentity() {

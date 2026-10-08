@@ -210,6 +210,11 @@ public final class AccountJwtReadinessProbeService {
   }
 
   /** Reads only an owner-derived current V2 operation context for the Pod-local receiver proof. */
+  ObservationContext readCurrentInventoryObservationContext(Binding binding, TrustFence trust) {
+    return inTransaction(() -> repository.readCurrentInventoryObservationContext(binding, trust));
+  }
+
+  /** Reads only an owner-derived current V2 operation context for the Pod-local receiver proof. */
   ObservationContext readCurrentInventoryObservationContext(
       Binding binding, TrustFence trust, UUID operationId) {
     return inTransaction(

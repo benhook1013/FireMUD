@@ -80,11 +80,7 @@ public class AccountJwtReadinessPodReceiverConfiguration {
           AccountJwtJwksTrustedSource trustedJwksSource,
       SslBundles sslBundles) {
     return new AccountJwtReadinessPodLocalIdentityProvider(
-        inventorySource,
-        trustedJwksSource,
-        sslBundles,
-        Clock.systemUTC(),
-        System.getenv("HOSTNAME"));
+        inventorySource, trustedJwksSource, sslBundles, Clock.systemUTC());
   }
 
   @Bean
