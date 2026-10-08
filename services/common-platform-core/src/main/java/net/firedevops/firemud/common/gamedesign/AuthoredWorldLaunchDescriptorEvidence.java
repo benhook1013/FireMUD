@@ -245,90 +245,13 @@ public record AuthoredWorldLaunchDescriptorEvidence(
 
   public static String requestDigest(Request request) {
     Objects.requireNonNull(request, "request");
-    return digest(
-        REQUEST_DOMAIN,
-        field("schemaVersion", Integer.toString(SCHEMA_VERSION)),
-        field("targetNamespace", request.targetNamespace()),
-        field("controlPlaneRequestId", request.controlPlaneRequestId()),
-        field("canonicalTenantId", request.canonicalTenantId().toString()),
-        field("worldSlug", request.worldSlug()),
-        field(
-            "authoredWorldSourceOperationId", request.authoredWorldSourceOperationId().toString()),
-        field("authoredWorldSourceEvidenceDigest", request.authoredWorldSourceEvidenceDigest()),
-        field("gameTemplateId", Long.toString(request.gameTemplateId())),
-        optionalPresence(
-            "requestedScriptPatchVersion", request.requestedScriptPatchVersionPresent()),
-        optionalValue(
-            "requestedScriptPatchVersion",
-            request.requestedScriptPatchVersionPresent(),
-            request.requestedScriptPatchVersion()),
-        optionalPresence("sourceVersionId", request.sourceVersionIdPresent()),
-        optionalValue(
-            "sourceVersionId",
-            request.sourceVersionIdPresent(),
-            decimal(request.sourceVersionId())),
-        optionalPresence("targetVersionId", request.targetVersionIdPresent()),
-        optionalValue(
-            "targetVersionId",
-            request.targetVersionIdPresent(),
-            decimal(request.targetVersionId())),
-        optionalPresence("requestedRuntimeFlagsJson", request.requestedRuntimeFlagsJsonPresent()),
-        optionalValue(
-            "requestedRuntimeFlagsJson",
-            request.requestedRuntimeFlagsJsonPresent(),
-            request.requestedRuntimeFlagsJson()));
+    return digest(requestPreimage(request));
   }
 
   /** Computes the result digest while deliberately excluding only {@code resultDigest}. */
   public static String resultDigest(AuthoredWorldLaunchDescriptorEvidence evidence) {
     Objects.requireNonNull(evidence, "evidence");
-    return digest(
-        RESULT_DOMAIN,
-        field("schemaVersion", Integer.toString(evidence.schemaVersion())),
-        field("targetNamespace", evidence.targetNamespace()),
-        field("controlPlaneRequestId", evidence.controlPlaneRequestId()),
-        field("canonicalTenantId", evidence.canonicalTenantId().toString()),
-        field("worldSlug", evidence.worldSlug()),
-        field(
-            "authoredWorldSourceOperationId", evidence.authoredWorldSourceOperationId().toString()),
-        field("authoredWorldSourceEvidenceDigest", evidence.authoredWorldSourceEvidenceDigest()),
-        field("gameTemplateId", Long.toString(evidence.gameTemplateId())),
-        optionalPresence(
-            "requestedScriptPatchVersion", evidence.requestedScriptPatchVersionPresent()),
-        optionalValue(
-            "requestedScriptPatchVersion",
-            evidence.requestedScriptPatchVersionPresent(),
-            evidence.requestedScriptPatchVersion()),
-        optionalPresence("sourceVersionId", evidence.sourceVersionIdPresent()),
-        optionalValue(
-            "sourceVersionId",
-            evidence.sourceVersionIdPresent(),
-            decimal(evidence.sourceVersionId())),
-        optionalPresence("targetVersionId", evidence.targetVersionIdPresent()),
-        optionalValue(
-            "targetVersionId",
-            evidence.targetVersionIdPresent(),
-            decimal(evidence.targetVersionId())),
-        optionalPresence("requestedRuntimeFlagsJson", evidence.requestedRuntimeFlagsJsonPresent()),
-        optionalValue(
-            "requestedRuntimeFlagsJson",
-            evidence.requestedRuntimeFlagsJsonPresent(),
-            evidence.requestedRuntimeFlagsJson()),
-        field("requestDigest", evidence.requestDigest()),
-        field("launchDescriptorId", evidence.launchDescriptorId()),
-        field("versionId", Long.toString(evidence.versionId())),
-        optionalPresence("scriptPatchVersion", evidence.scriptPatchVersionPresent()),
-        optionalValue(
-            "scriptPatchVersion",
-            evidence.scriptPatchVersionPresent(),
-            evidence.scriptPatchVersion()),
-        field("runtimeFlagsJson", evidence.runtimeFlagsJson()),
-        field("generationConfigRevision", evidence.generationConfigRevision()),
-        field("versionStateEpoch", Long.toString(evidence.versionStateEpoch())),
-        field("releaseBundleId", Long.toString(evidence.releaseBundleId())),
-        field("publishedReleaseBundleRef", evidence.publishedReleaseBundleRef()),
-        optionalPresence("remapSetId", evidence.remapSetIdPresent()),
-        optionalValue("remapSetId", evidence.remapSetIdPresent(), evidence.remapSetId()));
+    return digest(resultPreimage(evidence));
   }
 
   /** Returns the exact UTF-8 request preimage for shared producer and consumer proof. */
@@ -475,11 +398,10 @@ public record AuthoredWorldLaunchDescriptorEvidence(
     return new Field(name, value);
   }
 
-  private static String digest(String domain, Field... fields) {
+  private static String digest(byte[] preimage) {
     try {
       return "sha256:"
-          + HexFormat.of()
-              .formatHex(MessageDigest.getInstance("SHA-256").digest(preimage(domain, fields)));
+          + HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(preimage));
     } catch (NoSuchAlgorithmException exception) {
       throw new IllegalStateException("SHA-256 is unavailable", exception);
     }

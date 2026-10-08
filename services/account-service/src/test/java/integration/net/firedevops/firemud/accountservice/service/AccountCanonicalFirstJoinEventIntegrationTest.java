@@ -425,14 +425,15 @@ class AccountCanonicalFirstJoinEventIntegrationTest {
     }
 
     private DemoTenantEntitlementSnapshot provisionCurrentTenantEntitlement() {
+      DemoTenantEntitlementSnapshot created =
+          inTransaction(
+              () ->
+                  demoEntitlements.provision(
+                      entitlementRequest(UUID.randomUUID(), null), tenantEvidence));
       return inTransaction(
-          () -> {
-            DemoTenantEntitlementSnapshot created =
-                demoEntitlements.provision(
-                    entitlementRequest(UUID.randomUUID(), null), tenantEvidence);
-            return demoEntitlements.provision(
-                entitlementRequest(UUID.randomUUID(), created), tenantEvidence);
-          });
+          () ->
+              demoEntitlements.provision(
+                  entitlementRequest(UUID.randomUUID(), created), tenantEvidence));
     }
 
     private DemoTenantEntitlementRequest entitlementRequest(
