@@ -47,6 +47,29 @@ java {
     }
 }
 
+// Compile the actual remote Buf output against the same catalog-managed Java runtimes.
+// Service builds retain their canonical Gradle protoc generation path.
+val bufGeneratedJavaClasspath = configurations.create("bufGeneratedJavaClasspath")
+
+dependencies {
+    bufGeneratedJavaClasspath(libs.protobuf.java)
+    bufGeneratedJavaClasspath(libs.grpc.protobuf)
+    bufGeneratedJavaClasspath(libs.grpc.stub)
+    bufGeneratedJavaClasspath("javax.annotation:javax.annotation-api:1.3.2")
+}
+
+tasks.register<JavaCompile>("compileBufGeneratedJava") {
+    description = "Verify remote Buf Java output against the catalog runtimes on Java 21"
+    group = "verification"
+    source(fileTree(providers.gradleProperty("bufGeneratedJavaDir").getOrElse("protos/gen/java")) { include("**/*.java") })
+    classpath = bufGeneratedJavaClasspath
+    destinationDirectory.set(layout.buildDirectory.dir("buf-generated-classes"))
+    options.release.set(21)
+    javaCompiler.set(javaToolchains.compilerFor {
+        languageVersion.set(JavaLanguageVersion.of(21))
+    })
+}
+
 val fullCheck = project.hasProperty("fullCheck") || System.getenv("CI") != null
 val checkstyleToolVersion = "14.3.0"
 val spotbugsToolVersion = "4.10.4"
