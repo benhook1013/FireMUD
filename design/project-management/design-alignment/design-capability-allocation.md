@@ -45,16 +45,16 @@ This file intentionally owns the detailed allocation-validation history; the des
 | Top-level architecture | 83 | 83 | 0 | 100% classified |
 | Infrastructure | 6 | 6 | 0 | 100% classified |
 | Generated references | 2 | 2 | 0 | 100% classified |
-| Microservice architecture | 76 | 74 | 0; 2 explicit governance/template exemptions | 100% classified |
+| Microservice architecture | 77 | 75 | 0; 2 explicit governance/template exemptions | 100% classified |
 | Architecture decisions | 183 | 182 | 0; 1 registry exemption | 100% classified |
 | Product documentation | 7 | 7 | 0 | 100% classified |
-| **Total** | **357** | **354** | **0; 3 explicit exemptions** | **100% classified** |
+| **Total** | **358** | **355** | **0; 3 explicit exemptions** | **100% classified** |
 
 ## Allocation Ledger
 
 | Design source | Heading or scope | Primary capability | Secondary handoffs | Source class | Notes or gap |
 | --- | --- | --- | --- | --- | --- |
-| [Microservice architecture allocation](./design-capability-allocation-microservices.md) | All 76 files under `design/architecture/microservices/**` | Per-source allocation | Per-source handoffs | Service design, contract, runtime/data, configuration, operations, and reference sources | All 76 files are accounted for as 74 allocated sources plus 2 exempt governance/template files: `service-documentation-structure.md` and `service-template.md`; complete path-set coverage |
+| [Microservice architecture allocation](./design-capability-allocation-microservices.md) | All 77 files under `design/architecture/microservices/**` | Per-source allocation | Per-source handoffs | Service design, contract, runtime/data, configuration, operations, and reference sources | All 77 files are accounted for as 75 allocated sources plus 2 exempt governance/template files: `service-documentation-structure.md` and `service-template.md`; complete path-set coverage |
 | [Architecture decision registry](../../architecture/decisions/README.md) | Registry plus 182 ADRs | Per-record allocation | Per-record affected capabilities | Decision record | The registry is an index; reviewed, accepted, superseded, withdrawn, and pending records remain distinguishable |
 | [System architecture allocation](./design-capability-allocation-system.md) | All 83 direct architecture, 6 infrastructure, and 2 generated sources | Per-source allocation | Per-source handoffs | Normative design, runbook, reference, index, and generated sources | Complete path-set coverage |
 | [Product documentation](../../product/README.md#canonical-sources) | All 7 files under `design/product/**` | Per-source allocation | Per-source product behavior scope | Requirements, taxonomy, index, and observable product behavior | Complete path-set coverage |

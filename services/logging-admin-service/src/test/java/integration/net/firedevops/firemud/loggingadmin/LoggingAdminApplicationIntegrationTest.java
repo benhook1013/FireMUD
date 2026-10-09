@@ -21,6 +21,7 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.context.SpringBootTest.WebEnvironment;
 import org.springframework.boot.test.web.server.LocalServerPort;
 import org.springframework.http.HttpHeaders;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
@@ -68,6 +69,7 @@ class LoggingAdminApplicationIntegrationTest {
   @LocalServerPort private int port;
 
   @Autowired private RequestMappingHandlerMapping requestMappingHandlerMapping;
+  @Autowired private JdbcTemplate jdbcTemplate;
 
   @MockitoBean private AccountClient accountClient;
   @MockitoBean private GameSessionClient gameSessionClient;
@@ -87,6 +89,31 @@ class LoggingAdminApplicationIntegrationTest {
     HttpResponse<String> response = HTTP_CLIENT.send(request, HttpResponse.BodyHandlers.ofString());
     assertThat(response.statusCode()).isEqualTo(200);
     assertThat(response.body()).contains("pong");
+  }
+
+  @Test
+  void applicationBootAppliesReservationMigrationsThroughV4() {
+    assertThat(
+            jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM flyway_schema_history_logging_admin_service "
+                    + "WHERE version IN ('3', '4') AND success",
+                Integer.class))
+        .isEqualTo(2);
+    assertThat(
+            jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM information_schema.tables "
+                    + "WHERE table_schema = 'logging_admin_service' "
+                    + "AND table_name = 'start_session_pre_authorization_reservations'",
+                Integer.class))
+        .isEqualTo(1);
+    assertThat(
+            jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM information_schema.columns "
+                    + "WHERE table_schema = 'logging_admin_service' "
+                    + "AND table_name = 'start_session_pre_authorization_reservations' "
+                    + "AND column_name = 'claim_purpose'",
+                Integer.class))
+        .isEqualTo(1);
   }
 
   @Test
