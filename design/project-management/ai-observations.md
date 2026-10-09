@@ -67,3 +67,17 @@ Entry format:
   - Context: The PR #3078 watcher initially counted the first 30 jobs as the full run; complete coverage showed 40 jobs, with 38 successful and two skipped. Required gates were green and the merge remained valid.
   - Observation: The run header also transiently reported queued while jobs progressed, then completed successfully; its cause remains unknown. Partial job pages and a transient header cannot establish a full-run count or terminal outcome.
   - Expected pattern: Fetch complete pagination, reconcile `total_count`, and verify unique job IDs before reporting full-run counts. Report required-job/gate proof separately from the terminal run header, without inferring the cause of inconsistent intermediate snapshots.
+
+- `2026-10-09`: A shell workdir does not redirect patch-tool targets
+  - Context: Gameplay's Account integration helper used relative patch headers despite its absolute-target instruction. The patch tool wrote 53 additions into the shared inspection checkout instead of the assigned worktree; 16 paths were inside directories already reported as untracked, without retained before-images.
+  - Observation: For those 16 paths, the prior contents and whether they were overwritten remain unknown because no before-images were retained; matching replacement copies do not establish preservation.
+  - Expected pattern: Verify the absolute worktree, branch, head, and relevant status before editing; use absolute paths in every patch header and verify the first write in the assigned checkout. A shell command's working directory does not establish a separate patch tool's destination. Preserve before-images when an assigned path already contains uncommitted work.
+  - Current status: The helper corrected all owned targets. Only 37 confirmed new wrong-checkout paths were removed after verifying identical receiver and owned-target copies; the 16 uncertain paths remain untouched for independent recovery assessment. Matching the newly written bytes does not prove prior contents survived. Exact paths and evidence are retained in the controller inbox and active job, not another ledger.
+  - Reconsideration trigger: Close the uncertain recovery only after a trusted before-image or the owning human establishes the previous content; do not infer preservation from hashes of replacement copies.
+
+- `2026-10-09`: Credential screening can reject ordinary authentication prose
+  - Context: A guarded Gameplay job-brief update was rejected as credential material even though it contained only implementation and proof status.
+  - Observation: The strict screening rule interpreted the ordinary phrase `no-bearer dispatch` as a bearer credential. The prior brief remained intact; a checkpoint succeeded, and rephrasing the description as workload-only dispatch allowed the guarded update.
+  - Expected pattern: Preserve the rejected update and prior brief, report the non-secret triggering phrase without raw credential material, and use field/category/line diagnostics to distinguish prose from accidental disclosure. Do not disable screening or bypass the controller.
+  - Current status: The corrected brief is saved. Overseer reports merged #3116 now supplies the diagnostic location while preserving the strict detector; ordinary authentication prose can still trigger false positives.
+  - Reconsideration trigger: revisit if an authorized guarded update shows that location diagnostics do not make an ordinary-prose false positive actionable; any detector refinement must preserve strict credential screening.

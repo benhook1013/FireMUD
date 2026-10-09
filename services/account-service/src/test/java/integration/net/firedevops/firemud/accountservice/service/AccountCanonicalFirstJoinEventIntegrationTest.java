@@ -11,12 +11,15 @@ import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import net.firedevops.firemud.accountservice.dto.CanonicalJoinScopeV2;
+import net.firedevops.firemud.accountservice.dto.DemoTenantEntitlementRequest;
+import net.firedevops.firemud.accountservice.dto.DemoTenantEntitlementSnapshot;
 import net.firedevops.firemud.accountservice.entity.Account;
 import net.firedevops.firemud.accountservice.repository.AccountAuditOutboxRepository;
 import net.firedevops.firemud.accountservice.repository.AccountAuthorityGenerationRepository;
 import net.firedevops.firemud.accountservice.repository.AccountAuthorityOutboxRepository;
 import net.firedevops.firemud.accountservice.repository.AccountAuthoritySourceEvidenceRepository;
 import net.firedevops.firemud.accountservice.repository.AccountConnectScopeRepository;
+import net.firedevops.firemud.accountservice.repository.AccountDemoTenantEntitlementRepository;
 import net.firedevops.firemud.accountservice.repository.AccountJoinOperationRepository;
 import net.firedevops.firemud.accountservice.repository.AccountJoinOperationRepository.CanonicalJoinOperationConflictException;
 import net.firedevops.firemud.accountservice.repository.AccountMembershipPairAuthorityRepository;
@@ -24,6 +27,8 @@ import net.firedevops.firemud.accountservice.repository.AccountMembershipPairAut
 import net.firedevops.firemud.accountservice.repository.AccountMembershipPairAuthorityRepository.TenantProvenanceKind;
 import net.firedevops.firemud.accountservice.repository.AccountMembershipPairAuthorityRepository.VerifiedTenantProvenance;
 import net.firedevops.firemud.accountservice.repository.AccountRepository;
+import net.firedevops.firemud.accountservice.repository.AccountTenantAuthorityEventRepository;
+import net.firedevops.firemud.accountservice.repository.AccountTenantEntitlementOutboxRepository;
 import net.firedevops.firemud.accountservice.repository.AccountTenantIdentityResolver;
 import net.firedevops.firemud.accountservice.repository.AccountTenantMembershipRepository;
 import net.firedevops.firemud.accountservice.repository.AccountTenantMembershipRoleSnapshotRepository;
@@ -109,7 +114,12 @@ class AccountCanonicalFirstJoinEventIntegrationTest {
     assertThat(decoded.membershipAuthorityGeneration()).isEqualTo("1");
     assertThat(decoded.authorityTuple().privateRealmGrantVersions()).isEmpty();
     assertThat(decoded.authorityTuple().accountSecurityCutoff()).isEmpty();
-    assertThat(decoded.authorityTuple().tenantBillingCutoff()).isEmpty();
+    assertThat(decoded.authorityTuple().tenantBillingCutoff())
+        .contains(
+            Map.of(
+                fixture.tenantUuid.toString(),
+                new MembershipAuthorityEventV1Codec.TenantBillingCutoff(
+                    "2", "1", "account:auth-authority:v1:tenant/" + fixture.tenantUuid, "1")));
     assertThat(decoded.roles()).containsExactly("player");
     assertThat(pair.membershipExists()).isTrue();
     assertThat(pair.membershipVersion()).isEqualTo(2L);
@@ -134,6 +144,42 @@ class AccountCanonicalFirstJoinEventIntegrationTest {
         .isEqualTo(1L);
     assertThat(fixture.count("account_tenant_membership", "tenant_uuid", fixture.tenantUuid))
         .isEqualTo(1L);
+  }
+
+  @Test
+  void changedEntitlementPreventsAStalePendingJoinFromCommittingMembership() {
+    Fixture fixture = newFixture();
+    DemoTenantEntitlementSnapshot entitlement = fixture.provisionCurrentTenantEntitlement();
+
+    assertThatThrownBy(fixture::commitFirstJoin)
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("exact current public-join entitlement evidence");
+    String stream = fixture.membershipStream();
+    var currentTenantEvent =
+        fixture.inTransaction(
+            () -> fixture.tenantAuthorityEvents.readCurrentByTenant(fixture.tenantUuid));
+    var pendingOperation =
+        fixture.inTransaction(
+            () -> {
+              fixture.operations.lockAccount(fixture.account.getId());
+              return fixture.operations.findCanonicalEvidenceForUpdateByRequestId(
+                  fixture.requestId);
+            });
+
+    assertThat(entitlement.entitlementVersion()).isEqualTo(2L);
+    assertThat(pendingOperation).isPresent();
+    assertThat(pendingOperation.orElseThrow().status()).isEqualTo("PENDING");
+    assertThat(pendingOperation.orElseThrow().entitlementVersion()).isEqualTo(1L);
+    assertThat(entitlement.tenantAuthorityGeneration()).isEqualTo(3L);
+    assertThat(entitlement.tenantAuthoritySourceVersion()).isEqualTo(3L);
+    assertThat(entitlement.tenantBillingSequence()).isEqualTo(2L);
+    assertThat(entitlement.tenantAuthorityOutboxSequence()).isEqualTo(2L);
+    assertThat(currentTenantEvent.tenantBillingEventId()).isEqualTo(entitlement.eventId());
+    assertThat(currentTenantEvent.tenantBillingEventDigest()).isEqualTo(entitlement.eventDigest());
+    assertThat(fixture.count("account_tenant_membership", "tenant_uuid", fixture.tenantUuid))
+        .isZero();
+    assertThat(fixture.count("account_authority_outbox_events", "outbox_stream_key", stream))
+        .isZero();
   }
 
   @Test
@@ -287,6 +333,8 @@ class AccountCanonicalFirstJoinEventIntegrationTest {
     private final AccountAuthorityGenerationRepository generations;
     private final AccountAuthorityOutboxRepository outbox;
     private final AccountAuthoritySourceEvidenceRepository sourceEvidence;
+    private final AccountTenantAuthorityEventRepository tenantAuthorityEvents;
+    private final AccountDemoTenantEntitlementRepository demoEntitlements;
     private final AccountAuditOutboxRepository auditOutbox;
     private final AccountJoinOperationRepository operations;
     private final AccountMembershipAuthorityEventProducer producer;
@@ -312,6 +360,13 @@ class AccountCanonicalFirstJoinEventIntegrationTest {
       this.generations = new AccountAuthorityGenerationRepository(dsl);
       this.outbox = new AccountAuthorityOutboxRepository(dsl);
       this.sourceEvidence = new AccountAuthoritySourceEvidenceRepository(dsl, generations, outbox);
+      var billingOutbox = new AccountTenantEntitlementOutboxRepository(dsl);
+      this.tenantAuthorityEvents =
+          new AccountTenantAuthorityEventRepository(
+              dsl, outbox, billingOutbox, freshTenants, generations);
+      this.demoEntitlements =
+          new AccountDemoTenantEntitlementRepository(
+              dsl, freshTenants, generations, billingOutbox, tenantAuthorityEvents);
       this.auditOutbox = new AccountAuditOutboxRepository(dsl);
       var legacyAssociationRepository =
           org.mockito.Mockito.mock(ApprovedLegacyTenantAssociationRepository.class);
@@ -322,7 +377,16 @@ class AccountCanonicalFirstJoinEventIntegrationTest {
       this.operations = new AccountJoinOperationRepository(dsl, connectScopes);
       this.producer =
           new AccountMembershipAuthorityEventProducer(
-              operations, accounts, pairs, memberships, roles, generations, outbox, sourceEvidence);
+              operations,
+              accounts,
+              pairs,
+              memberships,
+              roles,
+              generations,
+              outbox,
+              sourceEvidence,
+              tenantAuthorityEvents,
+              demoEntitlements);
       this.terminalCoordinator =
           new AccountCanonicalFirstJoinTerminalCoordinator(
               accounts, operations, memberships, roles, outbox, pairs, auditOutbox, producer);
@@ -359,9 +423,49 @@ class AccountCanonicalFirstJoinEventIntegrationTest {
                     account.getAccountUuid(), tenantUuid));
             connectScopes.insertCanonical(account.getId(), scope, provenance);
             operations.insertCanonicalIntent(requestId, scope, callerBinding);
-            operations.bindCanonicalPolicyEvidence(requestId, scope, callerBinding, true, 5L);
             return null;
           });
+      DemoTenantEntitlementSnapshot currentEntitlement =
+          inTransaction(
+              () ->
+                  demoEntitlements.provision(
+                      entitlementRequest(UUID.randomUUID(), null), tenantEvidence));
+      inTransaction(
+          () -> {
+            operations.bindCanonicalPolicyEvidence(
+                requestId,
+                scope,
+                callerBinding,
+                currentEntitlement.allowPublicJoin(),
+                currentEntitlement.entitlementVersion());
+            return null;
+          });
+    }
+
+    private DemoTenantEntitlementSnapshot provisionCurrentTenantEntitlement() {
+      DemoTenantEntitlementSnapshot current =
+          inTransaction(() -> demoEntitlements.readCurrent(tenantUuid));
+      return inTransaction(
+          () ->
+              demoEntitlements.provision(
+                  entitlementRequest(UUID.randomUUID(), current), tenantEvidence));
+    }
+
+    private DemoTenantEntitlementRequest entitlementRequest(
+        UUID requestId, DemoTenantEntitlementSnapshot current) {
+      return new DemoTenantEntitlementRequest(
+          requestId,
+          tenantUuid,
+          tenantEvidence.creationRequestId(),
+          tenantEvidence.requestDigest(),
+          current == null ? null : current.entitlementVersion(),
+          current == null ? null : current.tenantAuthorityGeneration(),
+          current == null ? null : current.tenantAuthoritySourceVersion(),
+          true,
+          true,
+          true,
+          true,
+          new DemoTenantEntitlementRequest.Quotas(3L, 2L, 4096L));
     }
 
     private AccountAuthorityOutboxRepository.Checkpoint writeAndPublish() {
