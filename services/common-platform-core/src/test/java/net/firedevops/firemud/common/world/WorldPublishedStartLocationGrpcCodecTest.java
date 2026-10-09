@@ -4,21 +4,14 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.google.protobuf.ByteString;
-import java.nio.charset.StandardCharsets;
-import java.util.Base64;
 import java.util.List;
 import java.util.UUID;
-import net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding.OwnerReadback;
-import net.firedevops.firemud.common.authoring.DraftCommitBinding;
-import net.firedevops.firemud.common.authoring.WorldDraftTerminalReadEvidence;
-import net.firedevops.firemud.common.authoring.WorldDraftTerminalReadGrpcCodecTest;
+import net.firedevops.firemud.common.testing.AuthoringFixtures;
 import net.firedevops.firemud.worldmanagement.v1.ReadWorldPublishedStartLocationResponse;
 import org.junit.jupiter.api.Test;
 
 class WorldPublishedStartLocationGrpcCodecTest {
   private static final String LARGE_EPOCH = "900719925474099312345678901234567890";
-  private static final tools.jackson.databind.ObjectMapper JSON =
-      new tools.jackson.databind.ObjectMapper();
 
   @Test
   void exactSelectionAndRetainedEvidenceRoundTripAcrossReadRetries() throws Exception {
@@ -164,54 +157,7 @@ class WorldPublishedStartLocationGrpcCodecTest {
   }
 
   static WorldPublishedStartLocationEvidence evidence() throws Exception {
-    WorldDraftTerminalReadEvidence.Request terminalRequest = freshGraphRequest();
-    OwnerReadback committed = freshGraphReadback(terminalRequest);
-    var account = terminalRequest.accountBinding();
-    var draft =
-        DraftCommitBinding.fromStored(
-            new String(account.gameDesignBinding(), StandardCharsets.UTF_8), account.inputDigest());
-    List<WorldPublishedStartLocationEvidence.OwnedAffectedTuple> tuples =
-        draft.affectedUnits(DraftCommitBinding.Owner.WORLD_MANAGEMENT).stream()
-            .map(
-                unit ->
-                    new WorldPublishedStartLocationEvidence.OwnedAffectedTuple(
-                        unit.owner().name(),
-                        unit.aggregateType(),
-                        unit.aggregateId(),
-                        unit.scopeType(),
-                        unit.scopeId(),
-                        unit.expectedEpoch()))
-            .toList();
-    var request =
-        new WorldPublishedStartLocationEvidence.Request(
-            "test",
-            account.tenantId(),
-            account.versionId(),
-            uuid("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"),
-            uuid("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"),
-            "publication-request",
-            "a".repeat(64),
-            5L,
-            "publish-workflow",
-            account.commitId().toString(),
-            "b".repeat(64),
-            3,
-            tuples);
-    var applied = JSON.readTree(committed.result());
-    byte[] receipt =
-        Base64.getDecoder().decode(applied.get("startLocationReceiptBase64").textValue());
-    return new WorldPublishedStartLocationEvidence(
-        request, receipt, committed.fullBinding(), committed.result());
-  }
-
-  private static WorldDraftTerminalReadEvidence.Request freshGraphRequest() throws Exception {
-    return WorldDraftTerminalReadGrpcCodecTest.freshGraphRequestForStartLocationEvidenceTest();
-  }
-
-  private static OwnerReadback freshGraphReadback(WorldDraftTerminalReadEvidence.Request request)
-      throws Exception {
-    return WorldDraftTerminalReadGrpcCodecTest
-        .committedFreshGraphReadbackForStartLocationEvidenceTest(request);
+    return AuthoringFixtures.startLocationEvidence();
   }
 
   private static UUID uuid(String value) {
