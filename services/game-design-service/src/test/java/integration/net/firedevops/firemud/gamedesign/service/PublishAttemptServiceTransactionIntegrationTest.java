@@ -56,6 +56,7 @@ import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
 import org.springframework.test.util.AopTestUtils;
 import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.support.TransactionTemplate;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
@@ -537,53 +538,50 @@ class PublishAttemptServiceTransactionIntegrationTest {
   /** Fixture-only Account/World inputs; this exercises GD's actual selected owner transaction. */
   private SelectedPublicationFixture selectedPublicationFixture(
       String tenantId, String gameName, boolean includePublishedSource) {
-    return new TransactionTemplate(transactionManager)
-        .execute(
-            status -> {
-              Game game = new Game();
-              game.setTenantId(tenantId);
-              game.setName(gameName);
-              gameRepository.save(game);
+    TransactionTemplate sourceTransaction = new TransactionTemplate(transactionManager);
+    sourceTransaction.setIsolationLevel(TransactionDefinition.ISOLATION_READ_COMMITTED);
+    return sourceTransaction.execute(
+        status -> {
+          Game game = new Game();
+          game.setTenantId(tenantId);
+          game.setName(gameName);
+          gameRepository.save(game);
 
-              if (includePublishedSource) {
-                Version source = new Version();
-                source.setTenantId(tenantId);
-                source.setVersionNumber(1);
-                source.setVersionState(VersionLifecycleState.PUBLISHED);
-                source.setVersionStateEpoch(2L);
-                source.setNotes("ISOLATED remap source");
-                versionRepository.save(source);
-              }
+          if (includePublishedSource) {
+            Version source = new Version();
+            source.setTenantId(tenantId);
+            source.setVersionNumber(1);
+            source.setVersionState(VersionLifecycleState.PUBLISHED);
+            source.setVersionStateEpoch(2L);
+            source.setNotes("ISOLATED remap source");
+            versionRepository.save(source);
+          }
 
-              Version draft = new Version();
-              draft.setTenantId(tenantId);
-              draft.setVersionNumber(includePublishedSource ? 2 : 1);
-              draft.setVersionState(VersionLifecycleState.DRAFT);
-              draft.setVersionStateEpoch(1L);
-              draft.setNotes("ISOLATED selected publication");
-              Version persisted = versionRepository.save(draft);
-              TargetProof target =
-                  new TargetProof(
-                      persisted.getCanonicalTenantId(),
-                      persisted.getCanonicalVersionId(),
-                      persisted.getId(),
-                      persisted.getTenantId(),
-                      persisted.getIdentitySourceGameRowId(),
-                      persisted.getIdentitySourceGameTenantKey(),
-                      persisted.getIdentitySourceProvenanceKind());
-              try {
-                GameDesignPublicationOperation operation =
-                    IsolatedPublicationOwnerSetup.retainFrozenSourceBacked(
-                        dsl,
-                        target,
-                        persisted.getVersionStateEpoch(),
-                        "ISOLATED publication proof");
-                return new SelectedPublicationFixture(persisted, operation);
-              } catch (Exception failure) {
-                throw new IllegalStateException(
-                    "Selected publication fixture setup failed", failure);
-              }
-            });
+          Version draft = new Version();
+          draft.setTenantId(tenantId);
+          draft.setVersionNumber(includePublishedSource ? 2 : 1);
+          draft.setVersionState(VersionLifecycleState.DRAFT);
+          draft.setVersionStateEpoch(1L);
+          draft.setNotes("ISOLATED selected publication");
+          Version persisted = versionRepository.save(draft);
+          TargetProof target =
+              new TargetProof(
+                  persisted.getCanonicalTenantId(),
+                  persisted.getCanonicalVersionId(),
+                  persisted.getId(),
+                  persisted.getTenantId(),
+                  persisted.getIdentitySourceGameRowId(),
+                  persisted.getIdentitySourceGameTenantKey(),
+                  persisted.getIdentitySourceProvenanceKind());
+          try {
+            GameDesignPublicationOperation operation =
+                IsolatedPublicationOwnerSetup.retainFrozenSourceBacked(
+                    dsl, target, persisted.getVersionStateEpoch(), "ISOLATED publication proof");
+            return new SelectedPublicationFixture(persisted, operation);
+          } catch (Exception failure) {
+            throw new IllegalStateException("Selected publication fixture setup failed", failure);
+          }
+        });
   }
 
   private Object reconcileSelectedPublicationMechanics(SelectedPublicationFixture fixture) {

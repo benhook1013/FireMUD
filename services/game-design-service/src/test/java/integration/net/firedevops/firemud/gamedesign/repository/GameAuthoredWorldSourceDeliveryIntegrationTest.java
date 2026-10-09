@@ -40,7 +40,7 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 class GameAuthoredWorldSourceDeliveryIntegrationTest {
   private static final String FLYWAY_TABLE = "flyway_schema_history_game_design_service";
   private static final String NAMESPACE = "authored-world-delivery-test";
-  private static final MigrationVersion PRE_DELIVERY_VERSION = MigrationVersion.fromVersion("40");
+  private static final MigrationVersion PRE_DELIVERY_VERSION = MigrationVersion.fromVersion("39");
   private static final Table<?> GAME = DSL.table(DSL.name("game"));
   private static final Table<?> SOURCE_OPERATIONS =
       DSL.table(DSL.name("game_design_authored_world_source_operations"));
