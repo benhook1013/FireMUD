@@ -5813,6 +5813,8 @@ class AccountServiceImplTest {
                       "invalid-reset-token", "candidate-password")));
     }
 
+    org.mockito.Mockito.verify(transactionManager, org.mockito.Mockito.atLeastOnce())
+        .getTransaction(org.mockito.ArgumentMatchers.any(TransactionDefinition.class));
     assertTrue(candidateVerifierPrepared.get());
   }
 

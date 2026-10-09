@@ -115,7 +115,9 @@ BEGIN
         RAISE EXCEPTION 'Exact original author must have committed settlement before source scope' USING ERRCODE = '23514'; END IF;
 
     vector := convert_from(NEW.source_payload, 'UTF8')::JSONB->'sources';
-    IF jsonb_array_length(vector) < 1 OR jsonb_array_length(vector) <>
+    IF jsonb_typeof(vector) IS DISTINCT FROM 'array' THEN
+        RAISE EXCEPTION 'Incomplete preliminary source participation' USING ERRCODE = '23514'; END IF;
+    IF jsonb_array_length(vector) < 1 OR jsonb_array_length(vector) IS DISTINCT FROM
         (SELECT count(*) FROM account_game_logic_intake_source_read_sources WHERE operation_id = NEW.operation_id) THEN
         RAISE EXCEPTION 'Incomplete preliminary source participation' USING ERRCODE = '23514'; END IF;
     FOR source_bytes IN SELECT decode(value, 'base64') FROM jsonb_array_elements_text(vector) LOOP
