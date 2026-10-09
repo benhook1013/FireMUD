@@ -5,6 +5,7 @@ import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.regex.Pattern;
 import net.firedevops.firemud.gamesession.client.CanonicalGameplayRosterClient;
 import net.firedevops.firemud.gamesession.command.text.CanonicalGameplayActorSelection;
 import net.firedevops.firemud.gamesession.dto.CanonicalPlayableTarget;
@@ -19,6 +20,7 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
  */
 public final class CanonicalGameplayRosterSelectionService {
   private static final UUID NIL_UUID = new UUID(0L, 0L);
+  private static final Pattern SNAPSHOT_DIGEST = Pattern.compile("[0-9a-f]{64}");
 
   private final CanonicalPlayerRouteReadService routeReader;
   private final CanonicalPublishedPlayerRouteReadService publishedRouteReader;
@@ -36,10 +38,14 @@ public final class CanonicalGameplayRosterSelectionService {
 
   /**
    * Reads a route-bound roster, accepts only an optional one-based ordinal, and obtains Entity's
-   * original selected-assignment reference. No result from this method authorizes or activates
-   * gameplay.
+   * original selected-assignment reference. An explicit ordinal must carry the identity returned
+   * with its menu so a refreshed roster cannot silently rebind that choice. No result from this
+   * method authorizes or activates gameplay.
    */
-  public Result select(PlayerExecutionContext authenticatedContext, String selector) {
+  public Result select(
+      PlayerExecutionContext authenticatedContext,
+      String selector,
+      SelectionMenuIdentity expectedMenuIdentity) {
     if (hasAmbientTransaction()) {
       return new Denied(Denial.AMBIENT_TRANSACTION);
     }
@@ -89,10 +95,21 @@ public final class CanonicalGameplayRosterSelectionService {
     CanonicalGameplayActorSelection.SelectionResult selection =
         CanonicalGameplayActorSelection.select(validated.orElseThrow(), selector);
     if (selection instanceof CanonicalGameplayActorSelection.SelectionRequired required) {
-      return new SelectionRequired(required.choices());
+      return new SelectionRequired(
+          required.choices(),
+          new SelectionMenuIdentity(snapshot.snapshotUuid(), snapshot.snapshotDigest()));
     }
     if (selection instanceof CanonicalGameplayActorSelection.Denied denied) {
       return new Denied(mapSelectionDenial(denied.reason()));
+    }
+
+    if (selector != null && !selector.isBlank()) {
+      if (expectedMenuIdentity == null) {
+        return new Denied(Denial.MISSING_MENU_IDENTITY);
+      }
+      if (!expectedMenuIdentity.matches(snapshot)) {
+        return new Denied(Denial.STALE_MENU_IDENTITY);
+      }
     }
 
     CanonicalGameplayActorSelection.Selected selected =
@@ -232,10 +249,27 @@ public final class CanonicalGameplayRosterSelectionService {
     }
   }
 
-  public record SelectionRequired(List<CanonicalGameplayActorSelection.Choice> choices)
+  public record SelectionMenuIdentity(UUID snapshotUuid, String snapshotDigest) {
+    public SelectionMenuIdentity {
+      Objects.requireNonNull(snapshotUuid, "snapshotUuid");
+      Objects.requireNonNull(snapshotDigest, "snapshotDigest");
+      if (NIL_UUID.equals(snapshotUuid) || !SNAPSHOT_DIGEST.matcher(snapshotDigest).matches()) {
+        throw new IllegalArgumentException("Selection menu identity is malformed");
+      }
+    }
+
+    private boolean matches(CanonicalGameplayRosterClient.PreseededRosterSnapshot snapshot) {
+      return snapshotUuid.equals(snapshot.snapshotUuid())
+          && snapshotDigest.equals(snapshot.snapshotDigest());
+    }
+  }
+
+  public record SelectionRequired(
+      List<CanonicalGameplayActorSelection.Choice> choices, SelectionMenuIdentity menuIdentity)
       implements Result {
     public SelectionRequired {
       choices = List.copyOf(Objects.requireNonNull(choices, "choices"));
+      Objects.requireNonNull(menuIdentity, "menuIdentity");
     }
   }
 
@@ -257,6 +291,8 @@ public final class CanonicalGameplayRosterSelectionService {
     NO_PRESEEDED_ACTOR,
     INVALID_SELECTOR,
     SELECTOR_OUT_OF_RANGE,
+    MISSING_MENU_IDENTITY,
+    STALE_MENU_IDENTITY,
     ASSIGNMENT_UNAVAILABLE,
     INVALID_ASSIGNMENT_PROOF
   }

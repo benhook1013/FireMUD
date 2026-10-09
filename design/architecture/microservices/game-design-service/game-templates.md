@@ -218,12 +218,14 @@ Required deterministic failure vocabulary for the first implementation slice:
 
 These are application-level launch-preflight outcomes, not transport failures. Retries for the same `controlPlaneRequestId` must return the same deterministic business result until callers intentionally start a new launch attempt with a new `controlPlaneRequestId`.
 
-Illustrative control-plane schema:
+The current authored-world launch-binding wire contract is defined in the [Game Design API contract](./api-contracts.md#authored-world-launch-binding) and [Game Design proto](../../../../protos/game-design/v1/game_design_service.proto). `ResolveLaunchDescriptorRequest` is source-qualified by `canonical_tenant_id`, `world_slug`, `authored_world_source_operation_id`, and `expected_authored_world_source_evidence_digest`; its response carries the complete authored-world binding evidence. Plugin-selection and named rollback-target fields are not part of this current wire contract.
 
-- Request: `ResolveLaunchDescriptorRequest { tenantId, gameTemplateId, controlPlaneRequestId, requestedRuntimeFlags?, requestedScriptPatchVersion?, requestedPluginSelection?: { mode: EMPTY | EXPLICIT | REUSE_ROLLBACK_TARGET, enabledPluginVersions[]? { pluginId, pluginVersionId } }, sourceVersionId?, targetVersionId?, rollbackTargetLaunchDescriptorId? }`
-- Response: `ResolveLaunchDescriptorResponse { launchDescriptorId, tenantId, gameTemplateId, versionId, scriptPatchVersion (nullable; explicit null when no patch is pinned), pluginSelectionMode, enabledPluginVersions[] { pluginId, pluginVersionId }, runtimeFlags, generationConfigRevision, versionStateEpoch, remapSetId?, publishedReleaseBundleRef }`
+Target-only plugin-selection and rollback illustration (not the current wire contract):
 
-The exact transport schema may evolve, but every implementation must preserve the same contract shape:
+- Request extension: `requestedPluginSelection?: { mode: EMPTY | EXPLICIT | REUSE_ROLLBACK_TARGET, enabledPluginVersions[]? { pluginId, pluginVersionId } }`, `rollbackTargetLaunchDescriptorId?`.
+- Response extension: `pluginSelectionMode`, `enabledPluginVersions[] { pluginId, pluginVersionId }`.
+
+These target-only fields do not replace or relax the current authored-world source binding. If implemented, their transport must preserve the following plugin-selection semantics:
 
 - request fields identify the template, the launch attempt identity, and any caller-supplied runtime overrides that are allowed to participate in deterministic resolution;
 - response fields are the immutable resolved values consumed by launch-time workflows;
