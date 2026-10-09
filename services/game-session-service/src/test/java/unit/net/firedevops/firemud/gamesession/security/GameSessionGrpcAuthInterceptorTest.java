@@ -26,7 +26,10 @@ class GameSessionGrpcAuthInterceptorTest {
     jwtUtil = new JwtUtil("testsecretkeytestsecretkeytest1234", 3600000L);
     interceptor =
         new AuthTokenInterceptor(
-            jwtUtil, Set.of(GameSessionServiceGrpc.getPingMethod().getFullMethodName()));
+            jwtUtil,
+            Set.of(
+                GameSessionServiceGrpc.getPingMethod().getFullMethodName(),
+                GameSessionServiceGrpc.getAuthorizeStartSessionMethod().getFullMethodName()));
   }
 
   @Test
@@ -44,6 +47,20 @@ class GameSessionGrpcAuthInterceptorTest {
   void allowsPingWithoutToken() {
     TestServerCall call =
         new TestServerCall(GameSessionServiceGrpc.getPingMethod().getFullMethodName());
+    Metadata headers = new Metadata();
+
+    ServerCall.Listener<?> listener =
+        interceptor.interceptCall(call, headers, (c, h) -> new ServerCall.Listener<>() {});
+
+    assertNotNull(listener);
+    assertEquals(null, call.status);
+  }
+
+  @Test
+  void allowsOnlyTheTypedStartSessionHandoffWithoutJwt() {
+    TestServerCall call =
+        new TestServerCall(
+            GameSessionServiceGrpc.getAuthorizeStartSessionMethod().getFullMethodName());
     Metadata headers = new Metadata();
 
     ServerCall.Listener<?> listener =

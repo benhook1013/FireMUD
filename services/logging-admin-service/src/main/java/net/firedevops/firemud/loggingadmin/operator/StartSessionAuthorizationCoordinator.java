@@ -4,6 +4,7 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
 import net.firedevops.firemud.common.operator.StartSessionPostAuthorizationExecutionTuple;
+import net.firedevops.firemud.loggingadmin.client.GameSessionClient;
 import net.firedevops.firemud.loggingadmin.client.StartSessionOperatorAuthorizationClient;
 import net.firedevops.firemud.loggingadmin.client.StartSessionOperatorAuthorizationClient.AuthorizationReference;
 import net.firedevops.firemud.loggingadmin.operator.StartSessionPreAuthorizationReservationService.Acquisition;
@@ -17,7 +18,7 @@ import net.firedevops.firemud.loggingadmin.operator.StartSessionPreAuthorization
 
 /**
  * Coordinates Account authorization and durably records the owner handoff without activating an
- * ingress or making the owner network call.
+ * ingress. Explicit dispatch methods forward only a newly committed owner-pending handoff.
  *
  * <p>The Account issue call occurs only after the original claim wins the durable pending
  * transition. The Account recovery call is read-only and uses a fresh recovery claim. A transient
@@ -63,6 +64,15 @@ public final class StartSessionAuthorizationCoordinator {
     return persistExactAccountResponse(tuple, claim, accountResponse);
   }
 
+  /** Issues the human reference and forwards only this invocation's durable owner-pending win. */
+  public OwnerDispatchResult issueHumanAndDispatch(
+      StartSessionPreAuthorizationReservationTuple tuple,
+      String controlUiJwt,
+      GameSessionClient ownerClient) {
+    Objects.requireNonNull(ownerClient, "Game Session owner client is required");
+    return dispatchOwnerPending(issueHuman(tuple, controlUiJwt), ownerClient);
+  }
+
   /** Recovers only the original issuance response under a fresh read-only recovery claim. */
   public Result recover(StartSessionPreAuthorizationReservationTuple tuple) {
     Objects.requireNonNull(tuple, "pre-authorization tuple is required");
@@ -81,6 +91,27 @@ public final class StartSessionAuthorizationCoordinator {
             claimEvidence.currentClaimOwnerId(),
             claimEvidence.currentClaimFence());
     return persistExactAccountResponse(tuple, claim, accountResponse);
+  }
+
+  /** Recovers the original reference and forwards only a newly persisted owner-pending handoff. */
+  public OwnerDispatchResult recoverAndDispatch(
+      StartSessionPreAuthorizationReservationTuple tuple, GameSessionClient ownerClient) {
+    Objects.requireNonNull(ownerClient, "Game Session owner client is required");
+    return dispatchOwnerPending(recover(tuple), ownerClient);
+  }
+
+  private static OwnerDispatchResult dispatchOwnerPending(
+      Result authorization, GameSessionClient ownerClient) {
+    Objects.requireNonNull(authorization, "authorization result is required");
+    Objects.requireNonNull(ownerClient, "Game Session owner client is required");
+    if (authorization.progress() != Progress.OWNER_EXECUTION_PENDING) {
+      return new OwnerDispatchResult(authorization.progress(), Optional.empty());
+    }
+    GameSessionClient.StartSessionOwnerHandoffResult ownerEcho =
+        Objects.requireNonNull(
+            ownerClient.authorizeStartSession(authorization.handoff()),
+            "Game Session owner echo is required");
+    return new OwnerDispatchResult(authorization.progress(), Optional.of(ownerEcho));
   }
 
   private Result persistExactAccountResponse(
@@ -153,6 +184,30 @@ public final class StartSessionAuthorizationCoordinator {
           + progress
           + ", handoff="
           + (handoff == null ? "null" : "<redacted>")
+          + "]";
+    }
+  }
+
+  /**
+   * Safe composition result: original progress and, only after dispatch, a secret-free owner echo.
+   */
+  public record OwnerDispatchResult(
+      Progress progress, Optional<GameSessionClient.StartSessionOwnerHandoffResult> ownerEcho) {
+    public OwnerDispatchResult {
+      Objects.requireNonNull(progress, "progress is required");
+      Objects.requireNonNull(ownerEcho, "owner echo optional is required");
+      if ((progress == Progress.OWNER_EXECUTION_PENDING) != ownerEcho.isPresent()) {
+        throw new IllegalArgumentException(
+            "only a newly committed owner-pending handoff has an owner echo");
+      }
+    }
+
+    @Override
+    public String toString() {
+      return "OwnerDispatchResult[progress="
+          + progress
+          + ", ownerEcho="
+          + (ownerEcho.isPresent() ? "<secret-free>" : "empty")
           + "]";
     }
   }

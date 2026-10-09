@@ -2,6 +2,7 @@ package net.firedevops.firemud.loggingadmin.client;
 
 import com.google.protobuf.ByteString;
 import com.google.protobuf.Timestamp;
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.time.Clock;
@@ -46,6 +47,10 @@ public class StartSessionOperatorAuthorizationClient
 
   private final Clock clock;
 
+  @SuppressFBWarnings(
+      value = "CT_CONSTRUCTOR_THROW",
+      justification =
+          "Construction validates and copies inputs only; managed channels and watchers are acquired by initialize().")
   public StartSessionOperatorAuthorizationClient(
       ServiceEndpointsProperties endpoints,
       CommonGrpcClientProperties tlsProps,
@@ -54,6 +59,10 @@ public class StartSessionOperatorAuthorizationClient
     this(endpoints, tlsProps, channelFactory, stubCustomizer, Clock.systemUTC());
   }
 
+  @SuppressFBWarnings(
+      value = "CT_CONSTRUCTOR_THROW",
+      justification =
+          "Construction validates and copies inputs only; managed channels and watchers are acquired by initialize().")
   public StartSessionOperatorAuthorizationClient(
       ServiceEndpointsProperties endpoints,
       CommonGrpcClientProperties tlsProps,

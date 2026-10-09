@@ -251,6 +251,14 @@ class DesignCapabilityAllocationRegressionTests(unittest.TestCase):
                 "unexpected primary capability",
             )
 
+    def test_start_session_action_schema_appendix_allocation(self) -> None:
+        self.assertEqual(
+            self.validator.expected_microservice_allocation(
+                "design/architecture/microservices/game-session-service/start-session-action-schema.md"
+            ),
+            ("AR-3", "Operator action schema"),
+        )
+
     def test_adr_primary_allocation_drift_with_adjusted_counts(self) -> None:
         with fixture_root() as directory:
             root = Path(directory)

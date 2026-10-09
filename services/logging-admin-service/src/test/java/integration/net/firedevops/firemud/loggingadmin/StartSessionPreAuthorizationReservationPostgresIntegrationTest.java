@@ -440,6 +440,7 @@ class StartSessionPreAuthorizationReservationPostgresIntegrationTest {
             StartSessionPreAuthorizationReservationService.StaleReservationClaimException.class);
     assertThat(repository.findExact(tuple).orElseThrow().state())
         .isEqualTo(State.AUTHORIZATION_PENDING);
+    assertThat(repository.findAuthorizedExact(tuple)).isEmpty();
   }
 
   @Test

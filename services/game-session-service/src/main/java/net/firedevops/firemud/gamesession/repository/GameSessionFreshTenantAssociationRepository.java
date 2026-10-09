@@ -24,9 +24,6 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
  * a runtime instance, admission pointer, grant, or external authority.
  */
 @Repository
-@SuppressFBWarnings(
-    value = "EI_EXPOSE_REP2",
-    justification = "Injected DSLContext is an internal Spring collaborator.")
 public class GameSessionFreshTenantAssociationRepository {
   private static final UUID NIL_UUID = new UUID(0L, 0L);
   private static final String FRESH_KIND = "FRESH_SOURCE_BOUND";

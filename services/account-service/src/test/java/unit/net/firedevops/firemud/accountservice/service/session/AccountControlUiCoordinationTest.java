@@ -14,9 +14,11 @@ import io.lettuce.core.ClientOptions;
 import io.lettuce.core.ScriptOutputType;
 import io.lettuce.core.api.StatefulRedisConnection;
 import io.lettuce.core.api.sync.RedisCommands;
+import java.security.MessageDigest;
 import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
+import java.util.HexFormat;
 import java.util.List;
 import java.util.Map;
 import net.firedevops.firemud.accountservice.authordraft.AccountControlUiAuthority;
@@ -47,6 +49,23 @@ class AccountControlUiCoordinationTest {
                 "EXACT_REASSERTED",
                 RedisScriptDescriptor.OutcomeCategory.SUCCESS,
                 RedisScriptDescriptor.MutationEffect.MUTATING));
+  }
+
+  @Test
+  void registryDescriptorDigestMatchesClasspathLuaSource() throws Exception {
+    var descriptor = AccountControlUiRegistryContract.descriptor();
+    var resource =
+        AccountControlUiCoordination.class
+            .getClassLoader()
+            .getResourceAsStream(descriptor.resourcePath());
+    assertThat(resource).isNotNull();
+
+    try (resource) {
+      var sourceDigest =
+          HexFormat.of()
+              .formatHex(MessageDigest.getInstance("SHA-256").digest(resource.readAllBytes()));
+      assertThat(sourceDigest).isEqualTo(descriptor.sha256());
+    }
   }
 
   @Test

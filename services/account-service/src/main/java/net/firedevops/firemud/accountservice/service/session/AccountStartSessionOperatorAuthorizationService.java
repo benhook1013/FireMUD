@@ -695,7 +695,7 @@ public final class AccountStartSessionOperatorAuthorizationService {
       String fingerprint = requireFingerprint(root.get("authorizationReferenceFingerprint"));
       Instant expiresAt = canonicalInstant(root.get("expiresAt"));
       byte[] bundleBytes = AccountControlUiAuthority.canonical(root.get("authorityEvidenceBundle"));
-      var bundle = AccountStartSessionOperatorAuthorityBundle.decode(bundleBytes);
+      AccountStartSessionOperatorAuthorityBundle.decode(bundleBytes);
       var sourceReference =
           AccountStartSessionOperatorAuthorityBundle.BundleReference.fromJsonValue(
               root.get("bundleReference"));

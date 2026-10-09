@@ -129,6 +129,7 @@ firemud:
       force-internal-service-outbound: true
       public-methods:
         - game_session.v1.GameSessionService/Ping
+        - game_session.v1.GameSessionService/AuthorizeStartSession
   grpc:
     cert-chain: ${FIREMUD_GRPC_CERT_CHAIN_PATH:certs/client.crt}
     private-key: ${FIREMUD_GRPC_PRIVATE_KEY_PATH:certs/client.key}

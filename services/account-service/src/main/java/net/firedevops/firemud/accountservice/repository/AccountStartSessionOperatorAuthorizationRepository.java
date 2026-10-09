@@ -33,9 +33,6 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
  * keys.
  */
 @Repository
-@SuppressFBWarnings(
-    value = "EI_EXPOSE_REP2",
-    justification = "Injected DSLContext is an internal transaction-aware Spring collaborator.")
 public class AccountStartSessionOperatorAuthorizationRepository {
   private static final String TABLE = "account_start_session_operator_authorizations";
   private static final String SELECT_COLUMNS =
@@ -64,6 +61,10 @@ public class AccountStartSessionOperatorAuthorizationRepository {
 
   private final DSLContext dsl;
 
+  @SuppressFBWarnings(
+      value = "CT_CONSTRUCTOR_THROW",
+      justification =
+          "Constructor validates the injected DSL collaborator without acquiring resources or exposing a partially initialized repository.")
   public AccountStartSessionOperatorAuthorizationRepository(DSLContext dsl) {
     this.dsl = Objects.requireNonNull(dsl, "DSLContext is required");
   }

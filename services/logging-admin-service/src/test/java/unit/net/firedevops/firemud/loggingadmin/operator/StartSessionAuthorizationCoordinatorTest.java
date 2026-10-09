@@ -10,6 +10,7 @@ import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import io.grpc.Status;
@@ -26,8 +27,12 @@ import net.firedevops.firemud.common.operator.StartSessionAuthorityEvidenceBundl
 import net.firedevops.firemud.common.operator.StartSessionOperatorAction;
 import net.firedevops.firemud.common.operator.StartSessionPostAuthorizationExecutionTuple;
 import net.firedevops.firemud.common.security.SessionContext;
+import net.firedevops.firemud.gamesession.v1.StartSessionOwnerAuthorizationProgress;
+import net.firedevops.firemud.loggingadmin.client.GameSessionClient;
+import net.firedevops.firemud.loggingadmin.client.GameSessionClient.StartSessionOwnerHandoffResult;
 import net.firedevops.firemud.loggingadmin.client.StartSessionOperatorAuthorizationClient;
 import net.firedevops.firemud.loggingadmin.client.StartSessionOperatorAuthorizationClient.AuthorizationReference;
+import net.firedevops.firemud.loggingadmin.operator.StartSessionAuthorizationCoordinator.OwnerDispatchResult;
 import net.firedevops.firemud.loggingadmin.operator.StartSessionAuthorizationCoordinator.Progress;
 import net.firedevops.firemud.loggingadmin.operator.StartSessionAuthorizationCoordinator.Result;
 import net.firedevops.firemud.loggingadmin.operator.StartSessionPreAuthorizationReservationService.AuthorizedSnapshot;
@@ -52,6 +57,10 @@ class StartSessionAuthorizationCoordinatorTest {
       UUID.fromString("a137588f-4ac6-45ae-984d-5792bdf934b4");
   private static final UUID ISSUANCE_ID = UUID.fromString("f5d044bd-7e5f-4e2d-9859-9025cbdcc60f");
   private static final UUID TOKEN_JTI = UUID.fromString("a681bba7-c215-4cf1-a35b-14348912cbdc");
+  private static final UUID OWNER_ATTEMPT_ID =
+      UUID.fromString("69116466-a576-4fa6-9e11-4c0c6b2a92f0");
+  private static final UUID OWNER_MUTATION_ID =
+      UUID.fromString("89da7d84-12f5-4cf8-b69b-30ba8eb115a4");
   private static final Instant NOW = Instant.parse("2026-10-09T00:00:00Z");
   private static final long NOW_MILLIS = NOW.toEpochMilli();
   private static final String CONTROL_UI_TOKEN = "operator-control-ui-secret";
@@ -195,6 +204,215 @@ class StartSessionAuthorizationCoordinatorTest {
     assertThat(currentOwner.getValue()).isNotEqualTo(ORIGINAL_OWNER);
     verify(accountClient, never())
         .issueHuman(any(), anyString(), any(), anyLong(), any(), anyLong());
+  }
+
+  @Test
+  void issueHumanAndDispatchForwardsOnlyAfterDurableOwnerPendingAndOnlyOnce() throws Exception {
+    StartSessionPreAuthorizationReservationTuple tuple = tuple("coordinator-issue-dispatch");
+    Snapshot reserved = snapshot(tuple, State.RESERVED, 1L, 1L);
+    Snapshot alreadyPending = snapshot(tuple, State.AUTHORIZATION_PENDING, 1L, 1L);
+    when(repository.acquire(eq(tuple), any(UUID.class), eq(NOW_MILLIS), eq(NOW_MILLIS + 30_000L)))
+        .thenReturn(
+            new StartSessionPreAuthorizationReservationRepository.AcquireResult(reserved, true),
+            new StartSessionPreAuthorizationReservationRepository.AcquireResult(
+                alreadyPending, false));
+    when(repository.markAuthorizationPending(
+            eq(tuple), eq(tuple.mutationDigest()), any(UUID.class), eq(1L), eq(NOW_MILLIS)))
+        .thenReturn(
+            new StartSessionPreAuthorizationReservationRepository.TransitionResult(
+                alreadyPending, true));
+    AuthorizationReference response = authorizationReference(tuple);
+    when(accountClient.issueHuman(
+            eq(shared(tuple)),
+            eq(CONTROL_UI_TOKEN),
+            any(UUID.class),
+            eq(1L),
+            any(UUID.class),
+            eq(1L)))
+        .thenReturn(response);
+    stubAuthorizationEnrichment(tuple, true, true);
+    GameSessionClient ownerClient = mock(GameSessionClient.class);
+    StartSessionOwnerHandoffResult ownerEcho = ownerEcho(tuple);
+    when(ownerClient.authorizeStartSession(any())).thenReturn(ownerEcho);
+
+    OwnerDispatchResult first =
+        coordinator.issueHumanAndDispatch(tuple, CONTROL_UI_TOKEN, ownerClient);
+    OwnerDispatchResult duplicate =
+        coordinator.issueHumanAndDispatch(tuple, CONTROL_UI_TOKEN, ownerClient);
+
+    assertThat(first.progress()).isEqualTo(Progress.OWNER_EXECUTION_PENDING);
+    assertThat(first.ownerEcho()).contains(ownerEcho);
+    assertThat(first.toString())
+        .doesNotContain(CONTROL_UI_TOKEN)
+        .doesNotContain(OPAQUE_REFERENCE)
+        .doesNotContain(FINGERPRINT);
+    assertThat(duplicate.progress()).isEqualTo(Progress.ALREADY_IN_PROGRESS);
+    assertThat(duplicate.ownerEcho()).isEmpty();
+
+    ArgumentCaptor<String> persistedTuple = ArgumentCaptor.forClass(String.class);
+    ArgumentCaptor<StartSessionAuthorizationCoordinator.TransientOwnerExecutionHandoff>
+        ownerHandoff =
+            ArgumentCaptor.forClass(
+                StartSessionAuthorizationCoordinator.TransientOwnerExecutionHandoff.class);
+    InOrder dispatchOrder = inOrder(accountClient, repository, ownerClient);
+    dispatchOrder
+        .verify(accountClient)
+        .issueHuman(
+            eq(shared(tuple)),
+            eq(CONTROL_UI_TOKEN),
+            any(UUID.class),
+            eq(1L),
+            any(UUID.class),
+            eq(1L));
+    dispatchOrder
+        .verify(repository)
+        .completeAuthorization(
+            eq(tuple),
+            eq(tuple.mutationDigest()),
+            any(UUID.class),
+            eq(1L),
+            any(UUID.class),
+            eq(1L),
+            persistedTuple.capture(),
+            eq(NOW_MILLIS));
+    dispatchOrder
+        .verify(repository)
+        .beginOwnerExecution(
+            eq(tuple),
+            eq(tuple.mutationDigest()),
+            any(UUID.class),
+            eq(1L),
+            any(UUID.class),
+            eq(1L),
+            eq(persistedTuple.getValue()),
+            any(UUID.class),
+            eq(NOW_MILLIS));
+    dispatchOrder.verify(ownerClient).authorizeStartSession(ownerHandoff.capture());
+    assertThat(ownerHandoff.getValue().postAuthorizationTuple().canonicalJson())
+        .isEqualTo(persistedTuple.getValue());
+    verify(ownerClient, org.mockito.Mockito.times(1)).authorizeStartSession(any());
+  }
+
+  @Test
+  void recoverAndDispatchForwardsTheOriginalRecoveredOperationOnce() throws Exception {
+    StartSessionPreAuthorizationReservationTuple tuple = tuple("coordinator-recover-dispatch");
+    Snapshot pending = snapshot(tuple, State.AUTHORIZATION_PENDING, 1L, 3L);
+    when(repository.acquireRecoveryClaim(
+            eq(tuple), any(UUID.class), eq(NOW_MILLIS), eq(NOW_MILLIS + 30_000L)))
+        .thenReturn(
+            Optional.of(
+                new StartSessionPreAuthorizationReservationRepository.RecoveryClaimResult(
+                    pending, ORIGINAL_OWNER)));
+    AuthorizationReference response = authorizationReference(tuple);
+    when(accountClient.recover(
+            eq(shared(tuple)), eq(ORIGINAL_OWNER), eq(1L), any(UUID.class), eq(3L)))
+        .thenReturn(response);
+    stubAuthorizationEnrichment(tuple, true, true);
+    GameSessionClient ownerClient = mock(GameSessionClient.class);
+    StartSessionOwnerHandoffResult ownerEcho = ownerEcho(tuple);
+    when(ownerClient.authorizeStartSession(any())).thenReturn(ownerEcho);
+
+    OwnerDispatchResult result = coordinator.recoverAndDispatch(tuple, ownerClient);
+
+    assertThat(result.progress()).isEqualTo(Progress.OWNER_EXECUTION_PENDING);
+    assertThat(result.ownerEcho()).contains(ownerEcho);
+    InOrder dispatchOrder = inOrder(accountClient, repository, ownerClient);
+    dispatchOrder
+        .verify(accountClient)
+        .recover(eq(shared(tuple)), eq(ORIGINAL_OWNER), eq(1L), any(UUID.class), eq(3L));
+    dispatchOrder
+        .verify(repository)
+        .completeAuthorization(
+            eq(tuple),
+            eq(tuple.mutationDigest()),
+            any(UUID.class),
+            eq(1L),
+            any(UUID.class),
+            eq(3L),
+            anyString(),
+            eq(NOW_MILLIS));
+    dispatchOrder
+        .verify(repository)
+        .beginOwnerExecution(
+            eq(tuple),
+            eq(tuple.mutationDigest()),
+            any(UUID.class),
+            eq(1L),
+            any(UUID.class),
+            eq(3L),
+            anyString(),
+            any(UUID.class),
+            eq(NOW_MILLIS));
+    dispatchOrder.verify(ownerClient).authorizeStartSession(any());
+    verify(ownerClient, org.mockito.Mockito.times(1)).authorizeStartSession(any());
+  }
+
+  @Test
+  void nonWinningAndUnavailableAuthorizationPathsNeverDispatchOwner() {
+    StartSessionPreAuthorizationReservationTuple duplicateTuple =
+        tuple("coordinator-dispatch-duplicate");
+    Snapshot pending = snapshot(duplicateTuple, State.AUTHORIZATION_PENDING, 1L, 1L);
+    when(repository.acquire(
+            eq(duplicateTuple), any(UUID.class), eq(NOW_MILLIS), eq(NOW_MILLIS + 30_000L)))
+        .thenReturn(
+            new StartSessionPreAuthorizationReservationRepository.AcquireResult(pending, false));
+    StartSessionPreAuthorizationReservationTuple unavailableTuple =
+        tuple("coordinator-dispatch-unavailable");
+    when(repository.acquireRecoveryClaim(
+            eq(unavailableTuple), any(UUID.class), eq(NOW_MILLIS), eq(NOW_MILLIS + 30_000L)))
+        .thenReturn(Optional.empty());
+    GameSessionClient ownerClient = mock(GameSessionClient.class);
+
+    OwnerDispatchResult duplicate =
+        coordinator.issueHumanAndDispatch(duplicateTuple, CONTROL_UI_TOKEN, ownerClient);
+    OwnerDispatchResult unavailable = coordinator.recoverAndDispatch(unavailableTuple, ownerClient);
+
+    assertThat(duplicate.progress()).isEqualTo(Progress.ALREADY_IN_PROGRESS);
+    assertThat(duplicate.ownerEcho()).isEmpty();
+    assertThat(unavailable.progress()).isEqualTo(Progress.RECOVERY_UNAVAILABLE);
+    assertThat(unavailable.ownerEcho()).isEmpty();
+    verifyNoInteractions(ownerClient);
+    verify(accountClient, never())
+        .issueHuman(any(), anyString(), any(), anyLong(), any(), anyLong());
+    verify(accountClient, never()).recover(any(), any(), anyLong(), any(), anyLong());
+  }
+
+  @Test
+  void ambiguousOwnerDispatchPropagatesAndExactDuplicateDoesNotRedeliver() throws Exception {
+    StartSessionPreAuthorizationReservationTuple tuple = tuple("coordinator-dispatch-timeout");
+    Snapshot reserved = snapshot(tuple, State.RESERVED, 1L, 1L);
+    Snapshot alreadyPending = snapshot(tuple, State.AUTHORIZATION_PENDING, 1L, 1L);
+    when(repository.acquire(eq(tuple), any(UUID.class), eq(NOW_MILLIS), eq(NOW_MILLIS + 30_000L)))
+        .thenReturn(
+            new StartSessionPreAuthorizationReservationRepository.AcquireResult(reserved, true),
+            new StartSessionPreAuthorizationReservationRepository.AcquireResult(
+                alreadyPending, false));
+    when(repository.markAuthorizationPending(
+            eq(tuple), eq(tuple.mutationDigest()), any(UUID.class), eq(1L), eq(NOW_MILLIS)))
+        .thenReturn(
+            new StartSessionPreAuthorizationReservationRepository.TransitionResult(
+                alreadyPending, true));
+    AuthorizationReference response = authorizationReference(tuple);
+    when(accountClient.issueHuman(
+            eq(shared(tuple)), anyString(), any(UUID.class), eq(1L), any(UUID.class), eq(1L)))
+        .thenReturn(response);
+    stubAuthorizationEnrichment(tuple, true, true);
+    GameSessionClient ownerClient = mock(GameSessionClient.class);
+    io.grpc.StatusRuntimeException ambiguous = Status.UNAVAILABLE.asRuntimeException();
+    when(ownerClient.authorizeStartSession(any())).thenThrow(ambiguous);
+
+    assertThatThrownBy(
+            () -> coordinator.issueHumanAndDispatch(tuple, CONTROL_UI_TOKEN, ownerClient))
+        .isSameAs(ambiguous);
+    OwnerDispatchResult duplicate =
+        coordinator.issueHumanAndDispatch(tuple, CONTROL_UI_TOKEN, ownerClient);
+
+    assertThat(duplicate.progress()).isEqualTo(Progress.ALREADY_IN_PROGRESS);
+    assertThat(duplicate.ownerEcho()).isEmpty();
+    verify(ownerClient, org.mockito.Mockito.times(1)).authorizeStartSession(any());
+    verify(accountClient, org.mockito.Mockito.times(1))
+        .issueHuman(
+            eq(shared(tuple)), anyString(), any(UUID.class), eq(1L), any(UUID.class), eq(1L));
   }
 
   @Test
@@ -460,6 +678,20 @@ class StartSessionAuthorizationCoordinatorTest {
     when(response.bundleReference()).thenReturn(bundleReference());
     when(response.authenticatedLoggingWorkloadIdentity()).thenReturn(LOGGING_IDENTITY);
     return response;
+  }
+
+  private static StartSessionOwnerHandoffResult ownerEcho(
+      StartSessionPreAuthorizationReservationTuple tuple) {
+    return new StartSessionOwnerHandoffResult(
+        tuple.action().scope().targetNamespace(),
+        tuple.controlPlaneRequestId(),
+        tuple.mutationDigest(),
+        OWNER_ATTEMPT_ID,
+        OWNER_MUTATION_ID,
+        7L,
+        "OWNER_EXECUTION_PENDING",
+        StartSessionOwnerAuthorizationProgress
+            .START_SESSION_OWNER_AUTHORIZATION_PROGRESS_ACCOUNT_PROJECTION_ATTACHED);
   }
 
   private static byte[] bundleBytes(

@@ -342,13 +342,21 @@ public class StartSessionPreAuthorizationReservationRepository {
               currentClaimOwnerId,
               currentClaimFence,
               nowEpochMillis);
+          boolean mayBeginOwnerExecution =
+              snapshot.phase() == Phase.ACCOUNT_AUTHORIZATION
+                  && snapshot.state() == State.AUTHORIZED;
+          boolean mayReplayOwnerExecution =
+              snapshot.phase() == Phase.OWNER_EXECUTION
+                  && snapshot.state() == State.OWNER_EXECUTION_PENDING;
+          if (!mayBeginOwnerExecution && !mayReplayOwnerExecution) {
+            throw stale(tuple);
+          }
           String persistedTuple = row.get(POST_AUTHORIZATION_TUPLE_JSON);
           if (!postAuthorizationTupleJson.equals(persistedTuple)) {
             throw conflict(tuple);
           }
 
-          if (snapshot.phase() == Phase.ACCOUNT_AUTHORIZATION
-              && snapshot.state() == State.AUTHORIZED) {
+          if (mayBeginOwnerExecution) {
             int updated =
                 tx.update(TABLE)
                     .set(TABLE.PHASE, Phase.OWNER_EXECUTION.name())
@@ -377,8 +385,7 @@ public class StartSessionPreAuthorizationReservationRepository {
                 true);
           }
 
-          if (snapshot.phase() == Phase.OWNER_EXECUTION
-              && snapshot.state() == State.OWNER_EXECUTION_PENDING) {
+          if (mayReplayOwnerExecution) {
             if (!handoffId.equals(row.get(OWNER_EXECUTION_HANDOFF_ID))) {
               throw conflict(tuple);
             }

@@ -43,6 +43,7 @@ dependencies {
     testFixturesImplementation("io.grpc:grpc-stub:${libs.versions.grpc.get()}")
 
     testImplementation(libs.grpc.inprocess)
+    testImplementation(project(":logging-admin-service"))
     testImplementation(testFixtures(project(":account-service")))
     integrationTestImplementation(testFixtures(project(":account-service")))
 }

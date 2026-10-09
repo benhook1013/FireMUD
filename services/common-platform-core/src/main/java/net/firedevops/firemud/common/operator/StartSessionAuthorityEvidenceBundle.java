@@ -1,5 +1,6 @@
 package net.firedevops.firemud.common.operator;
 
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.io.IOException;
 import java.math.BigInteger;
 import java.nio.ByteBuffer;
@@ -324,6 +325,11 @@ public final class StartSessionAuthorityEvidenceBundle {
   }
 
   /** Returns the deeply immutable decoded JSON value for Account's exact current-source checks. */
+  @SuppressFBWarnings(
+      value = "EI_EXPOSE_REP",
+      justification =
+          "The constructor recursively freezes nested maps and lists; "
+              + "JSON scalar leaves are immutable.")
   public Map<String, Object> jsonValue() {
     return value;
   }

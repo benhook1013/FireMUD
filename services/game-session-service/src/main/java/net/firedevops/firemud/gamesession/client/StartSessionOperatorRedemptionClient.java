@@ -1,6 +1,7 @@
 package net.firedevops.firemud.gamesession.client;
 
 import com.google.protobuf.ByteString;
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import io.grpc.ManagedChannel;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
@@ -47,6 +48,10 @@ public class StartSessionOperatorRedemptionClient
 
   private final Clock clock;
 
+  @SuppressFBWarnings(
+      value = "CT_CONSTRUCTOR_THROW",
+      justification =
+          "This constructor validates input only; managed channels are acquired later by initialize().")
   public StartSessionOperatorRedemptionClient(
       ServiceEndpointsProperties endpoints,
       CommonGrpcClientProperties tlsProps,
@@ -55,6 +60,10 @@ public class StartSessionOperatorRedemptionClient
     this(endpoints, tlsProps, channelFactory, stubCustomizer, Clock.systemUTC());
   }
 
+  @SuppressFBWarnings(
+      value = "CT_CONSTRUCTOR_THROW",
+      justification =
+          "This constructor validates input only; managed channels are acquired later by initialize().")
   public StartSessionOperatorRedemptionClient(
       ServiceEndpointsProperties endpoints,
       CommonGrpcClientProperties tlsProps,

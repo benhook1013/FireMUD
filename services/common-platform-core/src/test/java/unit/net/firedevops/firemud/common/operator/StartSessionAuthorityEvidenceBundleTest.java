@@ -56,6 +56,22 @@ class StartSessionAuthorityEvidenceBundleTest {
   }
 
   @Test
+  void exposesOnlyDeeplyImmutableJsonValue() throws Exception {
+    byte[] bytes = canonical(validValue(tuple("bundle-immutable-json")));
+    StartSessionAuthorityEvidenceBundle decoded = StartSessionAuthorityEvidenceBundle.decode(bytes);
+    Map<String, Object> jsonValue = decoded.jsonValue();
+    Map<String, Object> authorityTuple = object(jsonValue.get("authorityTuple"));
+    List<?> grantVersions = (List<?>) authorityTuple.get("privateRealmGrantVersions");
+
+    assertThatThrownBy(() -> jsonValue.put("unexpected", true))
+        .isInstanceOf(UnsupportedOperationException.class);
+    assertThatThrownBy(() -> authorityTuple.put("unexpected", true))
+        .isInstanceOf(UnsupportedOperationException.class);
+    assertThatThrownBy(grantVersions::clear).isInstanceOf(UnsupportedOperationException.class);
+    assertThat(decoded.canonicalBytes()).containsExactly(bytes);
+  }
+
+  @Test
   void rejectsChangedTupleActorScopeRequestOrRawMutationDigest() throws Exception {
     StartSessionPreAuthorizationReservationTuple tuple = tuple("bundle-binding");
     byte[] bytes = canonical(validValue(tuple));

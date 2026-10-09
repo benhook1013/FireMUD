@@ -4,8 +4,12 @@ import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import io.grpc.stub.StreamObserver;
 import io.micrometer.core.annotation.Timed;
 import io.micrometer.core.instrument.MeterRegistry;
+import java.util.Arrays;
 import java.util.List;
+import java.util.regex.Pattern;
 import net.firedevops.firemud.common.grpc.GrpcAppErrors;
+import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
+import net.firedevops.firemud.common.operator.StartSessionPostAuthorizationExecutionTuple;
 import net.firedevops.firemud.common.security.SessionContext;
 import net.firedevops.firemud.gamesession.command.text.GameplayWorldCatalog;
 import net.firedevops.firemud.gamesession.command.text.GameplayWorldCatalog.RealmView;
@@ -16,9 +20,12 @@ import net.firedevops.firemud.gamesession.dto.GameInstanceDto;
 import net.firedevops.firemud.gamesession.dto.StartSessionRequest;
 import net.firedevops.firemud.gamesession.entity.GameInstance;
 import net.firedevops.firemud.gamesession.repository.GameInstanceRepository;
+import net.firedevops.firemud.gamesession.repository.GameSessionStartSessionOperatorAttemptRepository;
+import net.firedevops.firemud.gamesession.repository.GameSessionStartSessionOperatorAttemptRepository.AttemptSnapshot;
 import net.firedevops.firemud.gamesession.service.AccountPresenceQueryService;
 import net.firedevops.firemud.gamesession.service.FeatureFlagService;
 import net.firedevops.firemud.gamesession.service.GameInstanceService;
+import net.firedevops.firemud.gamesession.service.GameSessionStartSessionOperatorAuthorizationCoordinator;
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerAuthorityService;
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerSnapshot;
 import net.firedevops.firemud.gamesession.service.IpConnectionLimiter;
@@ -28,6 +35,8 @@ import net.firedevops.firemud.gamesession.service.TickService;
 import net.firedevops.firemud.gamesession.v1.AccountPresenceActivityState;
 import net.firedevops.firemud.gamesession.v1.AccountPresenceEntry;
 import net.firedevops.firemud.gamesession.v1.AccountRecentPresenceDisposition;
+import net.firedevops.firemud.gamesession.v1.AuthorizeStartSessionRequest;
+import net.firedevops.firemud.gamesession.v1.AuthorizeStartSessionResponse;
 import net.firedevops.firemud.gamesession.v1.EnqueueCommandRequest;
 import net.firedevops.firemud.gamesession.v1.EnqueueCommandResponse;
 import net.firedevops.firemud.gamesession.v1.GameSessionServiceGrpc;
@@ -51,6 +60,7 @@ import net.firedevops.firemud.gamesession.v1.RestartSessionRequest;
 import net.firedevops.firemud.gamesession.v1.RestartSessionResponse;
 import net.firedevops.firemud.gamesession.v1.ResumeTicksRequest;
 import net.firedevops.firemud.gamesession.v1.ResumeTicksResponse;
+import net.firedevops.firemud.gamesession.v1.StartSessionOwnerAuthorizationProgress;
 import net.firedevops.firemud.gamesession.v1.StartSessionResponse;
 import net.firedevops.firemud.gamesession.v1.StopSessionRequest;
 import net.firedevops.firemud.gamesession.v1.StopSessionResponse;
@@ -62,6 +72,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.grpc.server.service.GrpcService;
+import org.springframework.lang.Nullable;
 
 /** gRPC endpoints for the Game Session Service. */
 @GrpcService
@@ -70,6 +81,8 @@ import org.springframework.grpc.server.service.GrpcService;
     justification = "Injected service collaborators are framework-managed and retained internally")
 public final class GameSessionGrpcService
     extends GameSessionServiceGrpc.GameSessionServiceImplBase {
+  private static final String LOGGING_ADMIN_SERVICE = "logging-admin-service";
+  private static final Pattern OPAQUE_OPERATOR_REFERENCE = Pattern.compile("[A-Za-z0-9_-]{43}");
   private static final Logger LOG = LoggerFactory.getLogger(GameSessionGrpcService.class);
   private final PingService pingService;
   private final GameInstanceService gameInstanceService;
@@ -91,6 +104,8 @@ public final class GameSessionGrpcService
   private final MeterRegistry meterRegistry;
 
   private final IpConnectionLimiter ipConnectionLimiter;
+
+  @Nullable private GameSessionStartSessionOperatorAuthorizationCoordinator operatorCoordinator;
 
   @Autowired
   public GameSessionGrpcService(
@@ -116,6 +131,13 @@ public final class GameSessionGrpcService
     this.tickService = tickService;
     this.meterRegistry = meterRegistry;
     this.ipConnectionLimiter = ipConnectionLimiter;
+  }
+
+  /** Optional owner-workflow injection; no coordinator bean is registered by this transport. */
+  @Autowired(required = false)
+  void setOperatorCoordinator(
+      GameSessionStartSessionOperatorAuthorizationCoordinator operatorCoordinator) {
+    this.operatorCoordinator = operatorCoordinator;
   }
 
   @Override
@@ -226,6 +248,123 @@ public final class GameSessionGrpcService
           StartSessionResponse.newBuilder().setError(internalFailure("startSession", ex)).build());
       responseObserver.onCompleted();
     }
+  }
+
+  /**
+   * Receives one typed Logging &amp; Admin handoff and records only durable Account-redemption
+   * progress. This path does not invoke the legacy instance launcher or return a session ID.
+   */
+  @Override
+  @Timed(value = "gamesessionGrpc.authorizeStartSession")
+  public void authorizeStartSession(
+      AuthorizeStartSessionRequest request,
+      StreamObserver<AuthorizeStartSessionResponse> responseObserver) {
+    GrpcPeerIdentity peer = GrpcPeerIdentity.current();
+    if (peer == null
+        || !LOGGING_ADMIN_SERVICE.equals(peer.service())
+        || !GrpcPeerIdentity.isValidNamespace(peer.namespace())) {
+      respondOperatorAuthorizationError(
+          responseObserver, "PERMISSION_DENIED", "Authenticated Logging workload required");
+      return;
+    }
+    GameSessionStartSessionOperatorAuthorizationCoordinator coordinator = operatorCoordinator;
+    if (coordinator == null) {
+      respondOperatorAuthorizationError(
+          responseObserver,
+          "FAILED_PRECONDITION",
+          "StartSession operator authorization is unavailable");
+      return;
+    }
+    if (request.getUnknownFields().asMap().size() > 0) {
+      respondOperatorAuthorizationError(
+          responseObserver, "INVALID_ARGUMENT", "StartSession handoff is malformed");
+      return;
+    }
+
+    byte[] exactTupleBytes =
+        request.getCanonicalPostAuthorizationExecutionTupleBytes().toByteArray();
+    String authorizationReference = request.getOperatorAuthorizationReference();
+    if (exactTupleBytes.length == 0
+        || exactTupleBytes.length
+            > StartSessionPostAuthorizationExecutionTuple.MAX_CANONICAL_TUPLE_BYTES
+        || !OPAQUE_OPERATOR_REFERENCE.matcher(authorizationReference).matches()) {
+      respondOperatorAuthorizationError(
+          responseObserver, "INVALID_ARGUMENT", "StartSession handoff is malformed");
+      return;
+    }
+
+    try {
+      StartSessionPostAuthorizationExecutionTuple tuple =
+          StartSessionPostAuthorizationExecutionTuple.decode(exactTupleBytes);
+      GameSessionStartSessionOperatorAuthorizationCoordinator.AuthorizationResult result =
+          coordinator.authorize(tuple, authorizationReference);
+      AttemptSnapshot snapshot = result.snapshot();
+      if (!"OWNER_EXECUTION_PENDING".equals(snapshot.phaseState())
+          || snapshot.ownerFence() <= 0L
+          || !tuple.controlPlaneRequestId().equals(snapshot.controlPlaneRequestId())
+          || !Arrays.equals(tuple.canonicalBytes(), snapshot.postAuthorizationExecutionTuple())) {
+        respondOperatorAuthorizationError(
+            responseObserver,
+            "FAILED_PRECONDITION",
+            "StartSession owner attempt could not be verified");
+        return;
+      }
+      StartSessionOwnerAuthorizationProgress progress =
+          switch (result.progress()) {
+            case EXACT_REPLAY ->
+                StartSessionOwnerAuthorizationProgress
+                    .START_SESSION_OWNER_AUTHORIZATION_PROGRESS_EXACT_REPLAY;
+            case ACCOUNT_OUTCOME_AMBIGUOUS ->
+                StartSessionOwnerAuthorizationProgress
+                    .START_SESSION_OWNER_AUTHORIZATION_PROGRESS_ACCOUNT_OUTCOME_AMBIGUOUS;
+            case ACCOUNT_PROJECTION_ATTACHED ->
+                StartSessionOwnerAuthorizationProgress
+                    .START_SESSION_OWNER_AUTHORIZATION_PROGRESS_ACCOUNT_PROJECTION_ATTACHED;
+          };
+      AuthorizeStartSessionResponse response =
+          AuthorizeStartSessionResponse.newBuilder()
+              .setTargetNamespace(snapshot.targetNamespace())
+              .setControlPlaneRequestId(snapshot.controlPlaneRequestId())
+              .setMutationDigest(tuple.mutationDigest())
+              .setOwnerAttemptId(snapshot.ownerAttemptId().toString())
+              .setOwnerMutationId(snapshot.ownerMutationId().toString())
+              .setOwnerFence(snapshot.ownerFence())
+              .setOwnerPhaseState(snapshot.phaseState())
+              .setProgress(progress)
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    } catch (SecurityException ex) {
+      respondOperatorAuthorizationError(
+          responseObserver, "PERMISSION_DENIED", "Authenticated Logging workload required");
+    } catch (
+        GameSessionStartSessionOperatorAttemptRepository
+                .StartSessionOperatorAttemptConflictException
+            ex) {
+      respondOperatorAuthorizationError(
+          responseObserver, "IDEMPOTENCY_CONFLICT", "StartSession request identity conflicts");
+    } catch (
+        GameSessionStartSessionOperatorAttemptRepository
+                .StaleStartSessionOperatorAttemptClaimException
+            ex) {
+      respondOperatorAuthorizationError(
+          responseObserver, "FAILED_PRECONDITION", "StartSession owner claim is no longer current");
+    } catch (IllegalArgumentException ex) {
+      respondOperatorAuthorizationError(
+          responseObserver, "INVALID_ARGUMENT", "StartSession handoff is malformed");
+    } catch (RuntimeException ex) {
+      respondOperatorAuthorizationError(
+          responseObserver, "INTERNAL", "StartSession owner handoff failed");
+    }
+  }
+
+  private void respondOperatorAuthorizationError(
+      StreamObserver<AuthorizeStartSessionResponse> responseObserver, String code, String message) {
+    responseObserver.onNext(
+        AuthorizeStartSessionResponse.newBuilder()
+            .setError(GrpcAppErrors.error(meterRegistry, code, message))
+            .build());
+    responseObserver.onCompleted();
   }
 
   private long parseOwnerAccountId(String ownerAccountIdText) {

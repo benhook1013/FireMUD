@@ -116,7 +116,8 @@ public class GameSessionCanonicalLaunchPreparationService {
     Objects.requireNonNull(request, "request");
     requireNoAmbientTransaction();
     requireWorkloadNamespace(request);
-    if (attemptRepository == null) {
+    final GameSessionStartSessionOperatorAttemptRepository attempts = attemptRepository;
+    if (attempts == null) {
       throw new InvalidLaunchPreparationEvidenceException(
           "Authorized launch preparation is unavailable without the owner-attempt repository");
     }
@@ -128,7 +129,7 @@ public class GameSessionCanonicalLaunchPreparationService {
     }
 
     AttemptSnapshot captured =
-        ownerTransaction.execute(status -> attemptRepository.validateCurrentClaim(claim));
+        ownerTransaction.execute(status -> attempts.validateCurrentClaim(claim));
     if (captured == null) {
       throw new InvalidLaunchPreparationEvidenceException(
           "Current StartSession owner attempt was not read back");
