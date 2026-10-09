@@ -6,8 +6,8 @@ import io.grpc.StatusRuntimeException;
 import io.grpc.stub.StreamObserver;
 import io.micrometer.core.annotation.Timed;
 import io.micrometer.core.instrument.MeterRegistry;
+import net.firedevops.firemud.common.gamelogic.GameLogicPublicationSourceReadGrpcCodec;
 import net.firedevops.firemud.common.grpc.GrpcAppErrors;
-import net.firedevops.firemud.common.publication.PublicationDigestRequestBinding;
 import net.firedevops.firemud.common.security.AdminAuthorizationException;
 import net.firedevops.firemud.common.security.GameplaySessionAttestationException;
 import net.firedevops.firemud.common.security.GameplaySessionAttestationService;
@@ -169,41 +169,10 @@ public class GameLogicGrpcService extends GameLogicServiceGrpc.GameLogicServiceI
       StreamObserver<GetDraftDesignDigestResponse> responseObserver) {
     try {
       requirePublicationRead();
-      if (request.getScopeCase() != GetDraftDesignDigestRequest.ScopeCase.VERSION_ID) {
-        responseObserver.onNext(
-            GetDraftDesignDigestResponse.newBuilder()
-                .setError(
-                    GrpcAppErrors.error(
-                        meterRegistry,
-                        logger,
-                        "GetDraftDesignDigest",
-                        "UNSUPPORTED_SCOPE",
-                        "game logic supports version_id scope only"))
-                .build());
-        responseObserver.onCompleted();
-        return;
-      }
-      PublicationDigestRequestBinding binding =
-          PublicationDigestRequestBinding.forScope(
-              PublicationDigestRequestBinding.ScopeKind.FULL_VERSION,
-              request.getTenantId(),
-              request.getVersionId(),
-              request.getBaseVersionId(),
-              request.getScriptPatchVersion(),
-              request.getPublishRequestId());
-      binding.validateSupplied(request.getDerivedWorkflowIdentity(), request.getRequestDigest());
-      var digest =
-          gameLogicDraftDesignDigestService.getDraftDesignDigest(
-              request.getTenantId(), request.getVersionId());
-      binding.requireOwnerScope(digest.tenantId(), digest.scopeValue());
+      var binding = GameLogicPublicationSourceReadGrpcCodec.fromRequest(request);
+      var retainedRead = gameLogicDraftDesignDigestService.getDraftDesignDigest(binding);
       responseObserver.onNext(
-          GetDraftDesignDigestResponse.newBuilder()
-              .setTenantId(binding.tenantId())
-              .setVersionId(binding.versionId())
-              .setAppliedCommitId(digest.appliedCommitId())
-              .setContentDigest(digest.contentDigest())
-              .setDigestSchemaVersion(digest.digestSchemaVersion())
-              .build());
+          GameLogicPublicationSourceReadGrpcCodec.toResponse(binding, retainedRead.terminal()));
       responseObserver.onCompleted();
     } catch (AdminAuthorizationException ex) {
       responseObserver.onNext(
@@ -239,6 +208,23 @@ public class GameLogicGrpcService extends GameLogicServiceGrpc.GameLogicServiceI
                       "GetDraftDesignDigest",
                       "INVALID_ARGUMENT",
                       ex.getMessage()))
+              .build());
+      responseObserver.onCompleted();
+    } catch (StatusRuntimeException ex) {
+      Status status = ex.getStatus();
+      String description =
+          status.getDescription() == null
+              ? "Exact retained publication source read was denied"
+              : status.getDescription();
+      responseObserver.onNext(
+          GetDraftDesignDigestResponse.newBuilder()
+              .setError(
+                  GrpcAppErrors.error(
+                      meterRegistry,
+                      logger,
+                      "GetDraftDesignDigest",
+                      status.getCode().name(),
+                      description))
               .build());
       responseObserver.onCompleted();
     } catch (Exception ex) {

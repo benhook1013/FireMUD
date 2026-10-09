@@ -4,7 +4,9 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.Set;
+import java.util.UUID;
 import net.firedevops.firemud.common.publication.PublicationDigestRequestBinding;
 import net.firedevops.firemud.gamedesign.client.AutomationScriptingClient;
 import net.firedevops.firemud.gamedesign.client.EntityManagementClient;
@@ -15,13 +17,17 @@ import net.firedevops.firemud.gamedesign.dto.PublishParticipantDigestDto;
 import net.firedevops.firemud.gamedesign.dto.VersionDto;
 import net.firedevops.firemud.gamedesign.model.PublishGateFailureCode;
 import net.firedevops.firemud.gamedesign.model.PublishParticipantKey;
+import net.firedevops.firemud.gamedesign.publication.SelectedDraftGameLogicReceipt;
+import net.firedevops.firemud.gamedesign.publication.SelectedDraftGameLogicReceiptRepository;
 import net.firedevops.firemud.gamedesign.service.ControlPlaneDigestService;
 import net.firedevops.firemud.gamedesign.service.PublishGateFailureException;
 import net.firedevops.firemud.gamedesign.service.PublishGateService;
+import org.jooq.DSLContext;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 @Service
-public class PublishGateServiceImpl implements PublishGateService {
+public final class PublishGateServiceImpl implements PublishGateService {
   private static final Map<String, Integer> SUPPORTED_DIGEST_SCHEMA_VERSIONS =
       Map.of(
           PublishParticipantKey.WORLD_MANAGEMENT.name(), 3,
@@ -47,18 +53,39 @@ public class PublishGateServiceImpl implements PublishGateService {
   private final EntityManagementClient entityManagementClient;
   private final GameLogicClient gameLogicClient;
   private final AutomationScriptingClient automationScriptingClient;
+  private final SelectedDraftGameLogicReceiptRepository selectedGameLogicReceiptRepository;
 
+  @Autowired
   public PublishGateServiceImpl(
       ControlPlaneDigestService controlPlaneDigestService,
       WorldManagementClient worldManagementClient,
       EntityManagementClient entityManagementClient,
       GameLogicClient gameLogicClient,
-      AutomationScriptingClient automationScriptingClient) {
+      AutomationScriptingClient automationScriptingClient,
+      DSLContext dsl) {
+    this(
+        controlPlaneDigestService,
+        worldManagementClient,
+        entityManagementClient,
+        gameLogicClient,
+        automationScriptingClient,
+        new SelectedDraftGameLogicReceiptRepository(dsl));
+  }
+
+  PublishGateServiceImpl(
+      ControlPlaneDigestService controlPlaneDigestService,
+      WorldManagementClient worldManagementClient,
+      EntityManagementClient entityManagementClient,
+      GameLogicClient gameLogicClient,
+      AutomationScriptingClient automationScriptingClient,
+      SelectedDraftGameLogicReceiptRepository selectedGameLogicReceiptRepository) {
     this.controlPlaneDigestService = controlPlaneDigestService;
     this.worldManagementClient = worldManagementClient;
     this.entityManagementClient = entityManagementClient;
     this.gameLogicClient = gameLogicClient;
     this.automationScriptingClient = automationScriptingClient;
+    this.selectedGameLogicReceiptRepository =
+        Objects.requireNonNull(selectedGameLogicReceiptRepository);
   }
 
   @Override
@@ -69,8 +96,43 @@ public class PublishGateServiceImpl implements PublishGateService {
         PublicationDigestRequestBinding.full(
             version.tenantId(), String.valueOf(version.id()), publishRequestId);
     requireWorkflowIdentity(binding, publishWorkflowId);
+    return collectFullVersionParticipantDigests(version, binding, false);
+  }
+
+  @Override
+  public List<PublishParticipantDigestDto> collectSelectedFullVersionParticipantDigests(
+      VersionDto version,
+      PublicationDigestRequestBinding canonicalBinding,
+      String publishWorkflowId) {
+    Objects.requireNonNull(version, "version must not be null");
+    Objects.requireNonNull(canonicalBinding, "canonicalBinding must not be null");
+    if (version.scriptOnly()
+        || version.id() == null
+        || canonicalBinding.scopeKind() != PublicationDigestRequestBinding.ScopeKind.FULL_VERSION
+        || !String.valueOf(version.id()).equals(canonicalBinding.versionId())) {
+      throw new IllegalArgumentException(
+          "selected publication requires the exact full-version Game Design row binding");
+    }
+    UUID canonicalTenant;
+    try {
+      canonicalTenant = UUID.fromString(canonicalBinding.tenantId());
+    } catch (IllegalArgumentException malformed) {
+      throw new IllegalArgumentException(
+          "selected publication tenant must be its canonical UUID", malformed);
+    }
+    if (!canonicalTenant.toString().equals(canonicalBinding.tenantId())) {
+      throw new IllegalArgumentException("selected publication tenant must be its canonical UUID");
+    }
+    requireWorkflowIdentity(canonicalBinding, publishWorkflowId);
+    return collectFullVersionParticipantDigests(version, canonicalBinding, true);
+  }
+
+  private List<PublishParticipantDigestDto> collectFullVersionParticipantDigests(
+      VersionDto version, PublicationDigestRequestBinding binding, boolean selectedPublication) {
     return FULL_VERSION_PARTICIPANTS.stream()
-        .map(participant -> observeFullVersionParticipant(version, binding, participant))
+        .map(
+            participant ->
+                observeFullVersionParticipant(version, binding, participant, selectedPublication))
         .toList();
   }
 
@@ -178,17 +240,45 @@ public class PublishGateServiceImpl implements PublishGateService {
   private PublishParticipantDigestDto observeFullVersionParticipant(
       VersionDto version,
       PublicationDigestRequestBinding binding,
-      PublishParticipantKey participantKey) {
+      PublishParticipantKey participantKey,
+      boolean selectedPublication) {
     return switch (participantKey) {
       case WORLD_MANAGEMENT -> worldManagementClient.getDraftDesignDigestForVersion(binding);
       case ENTITY_MANAGEMENT -> entityManagementClient.getDraftDesignDigestForVersion(binding);
-      case GAME_LOGIC -> gameLogicClient.getDraftDesignDigestForVersion(binding);
+      case GAME_LOGIC ->
+          selectedPublication
+              ? observeSelectedGameLogicParticipant(binding)
+              : gameLogicClient.getDraftDesignDigestForVersion(binding);
       case AUTOMATION_SCRIPTING ->
           automationScriptingClient.getDraftDesignDigestForVersion(binding);
       case GAME_DESIGN_CONTROL_PLANE ->
           toParticipantDigest(
               participantKey, version, controlPlaneDigestService.getDigestForVersion(version));
     };
+  }
+
+  private PublishParticipantDigestDto observeSelectedGameLogicParticipant(
+      PublicationDigestRequestBinding binding) {
+    Optional<SelectedDraftGameLogicReceipt> receipt;
+    try {
+      receipt = selectedGameLogicReceiptRepository.readForPublication(binding);
+    } catch (org.jooq.exception.DataAccessException unavailable) {
+      return failedObservation(
+          PublishParticipantKey.GAME_LOGIC,
+          binding.versionId(),
+          null,
+          "UNAVAILABLE",
+          "immutable selected Game Logic receipt readback is temporarily unavailable");
+    }
+    if (receipt.isEmpty()) {
+      return failedObservation(
+          PublishParticipantKey.GAME_LOGIC,
+          binding.versionId(),
+          null,
+          "PARTICIPANT_UNAVAILABLE",
+          "immutable selected Game Logic receipt is not available yet");
+    }
+    return gameLogicClient.getDraftDesignDigestForVersion(binding, receipt.orElseThrow());
   }
 
   private void requireWorkflowIdentity(

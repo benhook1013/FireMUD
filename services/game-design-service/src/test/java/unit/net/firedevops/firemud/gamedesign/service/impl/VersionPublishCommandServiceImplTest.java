@@ -5,6 +5,7 @@ import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.same;
 import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.never;
@@ -53,6 +54,7 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.EnumSource;
 import org.junit.jupiter.params.provider.ValueSource;
 import org.mapstruct.factory.Mappers;
+import org.mockito.ArgumentCaptor;
 import org.mockito.InOrder;
 import org.mockito.Mock;
 import org.mockito.MockitoAnnotations;
@@ -168,6 +170,97 @@ class VersionPublishCommandServiceImplTest {
         thrown.getCause().getMessage().contains("SELECTED_PUBLICATION_REQUEST_IDENTITY_CHANGED"));
     verify(publishAttemptRepository).requireSelectedPublicationReadback(attempt, "PENDING");
     verify(versionRepository, never()).findByTenantIdAndId(any(String.class), any(Long.class));
+  }
+
+  @Test
+  void selectedPublicationPassesCanonicalOperationBindingAndKeepsMissingReceiptPending()
+      throws Exception {
+    String tenantId = "9002";
+    long versionId = 10L;
+    int versionNumber = 8;
+    String publishRequestId = "selected-request-8";
+    String notes = "selected draft notes";
+    UUID canonicalTenantId = UUID.fromString("11111111-1111-4111-8111-111111111111");
+    PublicationDigestRequestBinding expectedBinding =
+        PublicationDigestRequestBinding.full(
+            canonicalTenantId.toString(), Long.toString(versionId), publishRequestId);
+    String workflowId = expectedBinding.derivedWorkflowIdentity();
+    String selectionDigest = "sha256:" + "b".repeat(64);
+    PublishAttempt attempt =
+        fullAttempt(PublishAttemptStatus.PENDING, versionId, versionNumber, workflowId);
+    attempt.setTenantId(tenantId);
+    attempt.setRequestDigest(selectionDigest);
+    when(publishAttemptRepository.findByPublishWorkflowId(workflowId))
+        .thenReturn(Optional.of(attempt));
+
+    GameDesignPublicationOperation operation =
+        org.mockito.Mockito.mock(GameDesignPublicationOperation.class);
+    AccountPublicationAuthorizationBinding account =
+        org.mockito.Mockito.mock(AccountPublicationAuthorizationBinding.class);
+    AccountPublicationAuthorizationBinding.PreallocationInput input =
+        org.mockito.Mockito.mock(AccountPublicationAuthorizationBinding.PreallocationInput.class);
+    AuthoredDraftPublishSelectionBinding selection =
+        org.mockito.Mockito.mock(AuthoredDraftPublishSelectionBinding.class);
+    AuthoredDraftPublishSelectionBinding.PublishIntent intent =
+        org.mockito.Mockito.mock(AuthoredDraftPublishSelectionBinding.PublishIntent.class);
+    when(operation.account()).thenReturn(account);
+    when(account.input()).thenReturn(input);
+    when(input.selection()).thenReturn(selection);
+    when(selection.intent()).thenReturn(intent);
+    when(intent.canonicalTenantId()).thenReturn(canonicalTenantId);
+    when(intent.publishRequestId()).thenReturn(publishRequestId);
+    when(intent.notes()).thenReturn(notes);
+    when(operation.tenantKey()).thenReturn(tenantId);
+    when(operation.versionId()).thenReturn(versionId);
+    when(operation.selectionDigest()).thenReturn(selectionDigest);
+    when(operation.workflowId()).thenReturn(workflowId);
+    when(publishAttemptRepository.requireSelectedPublicationReadback(attempt, "PENDING"))
+        .thenReturn(operation);
+
+    Version draft = fullVersion(versionId, versionNumber, VersionLifecycleState.DRAFT);
+    draft.setTenantId(tenantId);
+    when(versionRepository.findByTenantIdAndId(tenantId, versionId)).thenReturn(Optional.of(draft));
+    when(publishGateService.collectSelectedFullVersionParticipantDigests(
+            any(VersionDto.class), any(PublicationDigestRequestBinding.class), eq(workflowId)))
+        .thenReturn(
+            List.of(
+                new PublishParticipantDigestDto(
+                    "GAME_LOGIC",
+                    String.valueOf(versionId),
+                    null,
+                    null,
+                    null,
+                    null,
+                    "PARTICIPANT_UNAVAILABLE",
+                    "immutable selected Game Logic receipt is not available yet")));
+    org.mockito.Mockito.doThrow(
+            new PublishGateFailureException(
+                PublishGateFailureCode.PARTICIPANT_UNAVAILABLE,
+                "selected Game Logic receipt is missing",
+                "PARTICIPANT_UNAVAILABLE"))
+        .when(publishGateService)
+        .assertGatePassed(any(VersionDto.class), any(List.class));
+
+    assertThrows(
+        VersionPublishCommandServiceImpl.PendingReconciliationException.class,
+        () ->
+            service.reconcileSelectedDraftFullVersionPublish(
+                tenantId, versionId, notes, publishRequestId, workflowId));
+
+    ArgumentCaptor<PublicationDigestRequestBinding> bindingCaptor =
+        ArgumentCaptor.forClass(PublicationDigestRequestBinding.class);
+    verify(publishGateService)
+        .collectSelectedFullVersionParticipantDigests(
+            any(VersionDto.class), bindingCaptor.capture(), eq(workflowId));
+    assertEquals(expectedBinding.tenantId(), bindingCaptor.getValue().tenantId());
+    assertEquals(expectedBinding.versionId(), bindingCaptor.getValue().versionId());
+    assertEquals(expectedBinding.requestDigest(), bindingCaptor.getValue().requestDigest());
+    assertEquals(
+        expectedBinding.derivedWorkflowIdentity(),
+        bindingCaptor.getValue().derivedWorkflowIdentity());
+    verify(publishAttemptService, never())
+        .markFullVersionFailed(any(String.class), any(String.class), any(String.class));
+    verify(publishAttemptRepository, never()).sealPublication(attempt, false);
   }
 
   @Test

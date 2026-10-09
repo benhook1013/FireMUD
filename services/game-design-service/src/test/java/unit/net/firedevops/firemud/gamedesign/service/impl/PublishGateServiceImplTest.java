@@ -5,11 +5,13 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.same;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Optional;
 import net.firedevops.firemud.common.gamedesign.AuthoredWorldReleaseAttestationEvidence;
 import net.firedevops.firemud.common.publication.PublicationDigestRequestBinding;
 import net.firedevops.firemud.gamedesign.client.AutomationScriptingClient;
@@ -21,7 +23,10 @@ import net.firedevops.firemud.gamedesign.dto.PublishParticipantDigestDto;
 import net.firedevops.firemud.gamedesign.dto.VersionDto;
 import net.firedevops.firemud.gamedesign.model.PublishGateFailureCode;
 import net.firedevops.firemud.gamedesign.model.VersionLifecycleState;
+import net.firedevops.firemud.gamedesign.publication.SelectedDraftGameLogicReceipt;
+import net.firedevops.firemud.gamedesign.publication.SelectedDraftGameLogicReceiptRepository;
 import net.firedevops.firemud.gamedesign.service.ControlPlaneDigestService;
+import net.firedevops.firemud.gamedesign.service.PublicationFailureClassifier;
 import net.firedevops.firemud.gamedesign.service.PublishGateFailureException;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -37,6 +42,7 @@ class PublishGateServiceImplTest {
   @Mock private EntityManagementClient entityManagementClient;
   @Mock private GameLogicClient gameLogicClient;
   @Mock private AutomationScriptingClient automationScriptingClient;
+  @Mock private SelectedDraftGameLogicReceiptRepository selectedGameLogicReceiptRepository;
 
   private PublishGateServiceImpl service;
 
@@ -49,7 +55,8 @@ class PublishGateServiceImplTest {
             worldManagementClient,
             entityManagementClient,
             gameLogicClient,
-            automationScriptingClient);
+            automationScriptingClient,
+            selectedGameLogicReceiptRepository);
   }
 
   @Test
@@ -107,6 +114,99 @@ class PublishGateServiceImplTest {
     assertBinding(captureVersionBinding(entityManagementClient), expectedBinding);
     assertBinding(captureVersionBinding(gameLogicClient), expectedBinding);
     assertBinding(captureVersionBinding(automationScriptingClient), expectedBinding);
+  }
+
+  @Test
+  void selectedFullVersionGateUsesCanonicalBindingAndExactReceiptForOwnerReads() {
+    VersionDto version = selectedVersion();
+    PublicationDigestRequestBinding binding = selectedBinding(version);
+    SelectedDraftGameLogicReceipt receipt =
+        org.mockito.Mockito.mock(SelectedDraftGameLogicReceipt.class);
+    stubSelectedParticipantDigests(version, binding, receipt);
+
+    List<PublishParticipantDigestDto> digests =
+        service.collectSelectedFullVersionParticipantDigests(
+            version, binding, binding.derivedWorkflowIdentity());
+
+    assertEquals(5, digests.size());
+    assertDoesNotThrow(() -> service.assertGatePassed(version, digests));
+    assertBinding(captureVersionBinding(worldManagementClient), binding);
+    assertBinding(captureVersionBinding(entityManagementClient), binding);
+    ArgumentCaptor<PublicationDigestRequestBinding> gameLogicBinding =
+        ArgumentCaptor.forClass(PublicationDigestRequestBinding.class);
+    verify(gameLogicClient)
+        .getDraftDesignDigestForVersion(gameLogicBinding.capture(), same(receipt));
+    assertBinding(gameLogicBinding.getValue(), binding);
+    assertBinding(captureVersionBinding(automationScriptingClient), binding);
+
+    var publicationOrder =
+        org.mockito.Mockito.inOrder(selectedGameLogicReceiptRepository, gameLogicClient);
+    publicationOrder.verify(selectedGameLogicReceiptRepository).readForPublication(binding);
+    publicationOrder.verify(gameLogicClient).getDraftDesignDigestForVersion(binding, receipt);
+    verify(gameLogicClient, org.mockito.Mockito.never())
+        .getDraftDesignDigestForVersion(any(PublicationDigestRequestBinding.class));
+  }
+
+  @Test
+  void selectedFullVersionGateKeepsMissingReceiptPendingAndNeverUsesLegacyRead() {
+    VersionDto version = selectedVersion();
+    PublicationDigestRequestBinding binding = selectedBinding(version);
+    when(selectedGameLogicReceiptRepository.readForPublication(binding))
+        .thenReturn(Optional.empty());
+    stubNonGameLogicParticipants(version, binding);
+
+    List<PublishParticipantDigestDto> digests =
+        service.collectSelectedFullVersionParticipantDigests(
+            version, binding, binding.derivedWorkflowIdentity());
+
+    assertEquals("PARTICIPANT_UNAVAILABLE", digests.get(2).errorCode());
+    PublishGateFailureException thrown =
+        assertThrows(
+            PublishGateFailureException.class, () -> service.assertGatePassed(version, digests));
+    assertTrue(PublicationFailureClassifier.isRetryableParticipantDependencyFailure(thrown));
+    verify(gameLogicClient, org.mockito.Mockito.never())
+        .getDraftDesignDigestForVersion(any(PublicationDigestRequestBinding.class));
+    verify(gameLogicClient, org.mockito.Mockito.never())
+        .getDraftDesignDigestForVersion(
+            any(PublicationDigestRequestBinding.class), any(SelectedDraftGameLogicReceipt.class));
+  }
+
+  @Test
+  void selectedReceiptStorageInterruptionRemainsRetryable() {
+    VersionDto version = selectedVersion();
+    PublicationDigestRequestBinding binding = selectedBinding(version);
+    when(selectedGameLogicReceiptRepository.readForPublication(binding))
+        .thenThrow(new org.jooq.exception.DataAccessException("database unavailable"));
+    stubNonGameLogicParticipants(version, binding);
+
+    List<PublishParticipantDigestDto> digests =
+        service.collectSelectedFullVersionParticipantDigests(
+            version, binding, binding.derivedWorkflowIdentity());
+
+    assertEquals("UNAVAILABLE", digests.get(2).errorCode());
+    PublishGateFailureException thrown =
+        assertThrows(
+            PublishGateFailureException.class, () -> service.assertGatePassed(version, digests));
+    assertTrue(PublicationFailureClassifier.isRetryableParticipantDependencyFailure(thrown));
+  }
+
+  @Test
+  void selectedFullVersionGateRejectsPrivateTenantKeyAsPublicationIdentity() {
+    VersionDto version = selectedVersion();
+    PublicationDigestRequestBinding privateTenantBinding =
+        PublicationDigestRequestBinding.full("private-tenant-key", "7", "selected-request-1");
+
+    assertThrows(
+        IllegalArgumentException.class,
+        () ->
+            service.collectSelectedFullVersionParticipantDigests(
+                version, privateTenantBinding, privateTenantBinding.derivedWorkflowIdentity()));
+    org.mockito.Mockito.verifyNoInteractions(
+        worldManagementClient,
+        entityManagementClient,
+        gameLogicClient,
+        automationScriptingClient,
+        selectedGameLogicReceiptRepository);
   }
 
   @Test
@@ -462,6 +562,65 @@ class PublishGateServiceImplTest {
     assertBinding(
         bindingCaptor.getValue(),
         PublicationDigestRequestBinding.patch("tenant-1", "7", "patch-1", "publish-request-1"));
+  }
+
+  private void stubSelectedParticipantDigests(
+      VersionDto version,
+      PublicationDigestRequestBinding binding,
+      SelectedDraftGameLogicReceipt receipt) {
+    stubNonGameLogicParticipants(version, binding);
+    when(selectedGameLogicReceiptRepository.readForPublication(binding))
+        .thenReturn(Optional.of(receipt));
+    when(gameLogicClient.getDraftDesignDigestForVersion(binding, receipt))
+        .thenReturn(
+            new PublishParticipantDigestDto(
+                "GAME_LOGIC", "7", "selected-commit", "logic-digest", 1, null, null));
+  }
+
+  private void stubNonGameLogicParticipants(
+      VersionDto version, PublicationDigestRequestBinding binding) {
+    when(worldManagementClient.getDraftDesignDigestForVersion(binding))
+        .thenReturn(
+            new PublishParticipantDigestDto(
+                "WORLD_MANAGEMENT", "7", "selected-commit", "world-digest", 3, null, null));
+    when(entityManagementClient.getDraftDesignDigestForVersion(binding))
+        .thenReturn(
+            new PublishParticipantDigestDto(
+                "ENTITY_MANAGEMENT", "7", "selected-commit", "entity-digest", 1, null, null));
+    when(automationScriptingClient.getDraftDesignDigestForVersion(binding))
+        .thenReturn(
+            new PublishParticipantDigestDto(
+                "AUTOMATION_SCRIPTING",
+                "7",
+                "selected-commit",
+                "automation-digest",
+                5,
+                null,
+                null));
+    when(controlPlaneDigestService.getDigestForVersion(version))
+        .thenReturn(
+            new DesignControlPlaneDigestDto(
+                "private-tenant-key", "7", "selected-commit", "control-plane-digest", 1));
+  }
+
+  private static VersionDto selectedVersion() {
+    return new VersionDto(
+        7L,
+        "private-tenant-key",
+        8,
+        VersionLifecycleState.DRAFT,
+        2L,
+        null,
+        null,
+        false,
+        "selected notes",
+        LocalDateTime.now(),
+        LocalDateTime.now());
+  }
+
+  private static PublicationDigestRequestBinding selectedBinding(VersionDto version) {
+    return PublicationDigestRequestBinding.full(
+        "11111111-1111-4111-8111-111111111111", String.valueOf(version.id()), "selected-request-1");
   }
 
   private static PublicationDigestRequestBinding captureVersionBinding(

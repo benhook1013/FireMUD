@@ -5,8 +5,11 @@ import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.UUID;
 import net.firedevops.firemud.common.gamelogic.AccountGameLogicIntakeSettlementEvidence;
 import net.firedevops.firemud.common.gamelogic.GameLogicIntakeAuthorizationBinding;
+import net.firedevops.firemud.common.gamelogic.GameLogicPublicationSourceReadBinding;
+import net.firedevops.firemud.common.publication.PublicationDigestRequestBinding;
 import net.firedevops.firemud.gamedesign.draft.AuthoredDraftPublishSelection;
 import net.firedevops.firemud.gamedesign.draft.AuthoredDraftPublishSelectionRepository;
 import net.firedevops.firemud.gamedesign.draft.DraftCommitCoordinatorRepository;
@@ -38,6 +41,76 @@ public class SelectedDraftGameLogicReceiptRepository {
     if (row == null) return Optional.empty();
     var retained = decode(row);
     retained.requireExactRequest(selection, authorization);
+    return Optional.of(retained);
+  }
+
+  /** Reads the immutable receipt selected by the exact full-version publication request. */
+  public Optional<SelectedDraftGameLogicReceipt> readForPublication(
+      PublicationDigestRequestBinding publicationRequest) {
+    Objects.requireNonNull(publicationRequest, "publicationRequest");
+    if (publicationRequest.scopeKind() != PublicationDigestRequestBinding.ScopeKind.FULL_VERSION) {
+      throw new IllegalArgumentException(
+          "Game Logic receipt publication read requires FULL_VERSION");
+    }
+    UUID canonicalTenantId;
+    try {
+      canonicalTenantId = UUID.fromString(publicationRequest.tenantId());
+    } catch (IllegalArgumentException malformed) {
+      throw new IllegalArgumentException("Publication tenant must be a canonical UUID", malformed);
+    }
+    if (!canonicalTenantId.toString().equals(publicationRequest.tenantId())) {
+      throw new IllegalArgumentException("Publication tenant must be a canonical UUID");
+    }
+
+    // The immutable receipt's primary key is exactly the tenant and stable request identity.
+    // Version and workflow are verified against the decoded selection below; they are not fallback
+    // lookup dimensions and no latest or numeric-to-UUID inference is permitted.
+    Record row =
+        dsl.fetchOne(
+            "SELECT * FROM game_design_selected_game_logic_receipt WHERE canonical_tenant_id = ? AND publish_request_id = ?",
+            canonicalTenantId,
+            publicationRequest.publishRequestId());
+    if (row == null) return Optional.empty();
+
+    var retained = decode(row);
+    var selection = retained.selection();
+    var target = selection.target();
+    if (!Long.toString(target.gameDesignVersionRowId()).equals(publicationRequest.versionId())
+        || !retained.workflowIdentity().equals(publicationRequest.derivedWorkflowIdentity())) {
+      throw new IllegalStateException(
+          "Selected Game Logic receipt does not match publication request");
+    }
+
+    // Reconstruct the distinct publication-source binding from the complete original finalized
+    // Account authorization retained in this immutable receipt. This validates tenant, numeric
+    // Version row, selected commit and source correlation without creating read authority.
+    new GameLogicPublicationSourceReadBinding(publicationRequest, retained.authorization());
+
+    if (dsl.fetchOne(
+            "SELECT v.id FROM version v JOIN game g "
+                + "ON g.id = v.identity_source_game_row_id "
+                + "AND g.tenant_id = v.identity_source_game_tenant_key "
+                + "AND g.canonical_tenant_id = v.canonical_tenant_id "
+                + "AND g.tenant_identity_provenance_kind = v.identity_source_provenance_kind "
+                + "AND g.tenant_identity_source_game_id = g.id "
+                + "AND g.tenant_identity_source_legacy_tenant_id = g.tenant_id "
+                + "WHERE v.id = ? AND v.tenant_id = ? AND v.canonical_tenant_id = ? "
+                + "AND v.canonical_version_id = ? AND v.identity_source_game_row_id = ? "
+                + "AND v.identity_source_game_tenant_key = ? AND v.identity_source_provenance_kind = ? "
+                + "AND v.identity_source_game_row_id > 0 "
+                + "AND v.identity_source_game_tenant_key = v.tenant_id "
+                + "AND v.identity_source_provenance_kind IN ('NEW_GAME_ROW', 'RETAINED_GAME_V29') "
+                + "AND v.version_state_epoch > 0",
+            Long.parseLong(publicationRequest.versionId()),
+            target.gameDesignVersionTenantKey(),
+            canonicalTenantId,
+            selection.intent().canonicalVersionId(),
+            target.sourceGameRowId(),
+            target.sourceGameTenantKey(),
+            target.sourceProvenanceKind())
+        == null) {
+      throw new IllegalStateException("Selected Game Design Version row proof unavailable");
+    }
     return Optional.of(retained);
   }
 

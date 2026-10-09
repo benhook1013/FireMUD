@@ -4,9 +4,13 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import io.grpc.Context;
+import io.grpc.Status;
+import io.grpc.StatusRuntimeException;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.Map;
@@ -21,11 +25,14 @@ import net.firedevops.firemud.common.gamelogic.GameLogicGameplayRuleIntakeTermin
 import net.firedevops.firemud.common.gamelogic.GameLogicIntakeAuthorizationBinding;
 import net.firedevops.firemud.common.gamelogic.GameLogicIntakeAuthorizationReadClient;
 import net.firedevops.firemud.common.gamelogic.GameLogicIntakeAuthorizationReadEvidence;
+import net.firedevops.firemud.common.gamelogic.GameLogicPublicationSourceReadBinding;
+import net.firedevops.firemud.common.gamelogic.GameplayAbilitySchemaProjection;
 import net.firedevops.firemud.common.gamelogic.GameplayRuleManifest;
 import net.firedevops.firemud.common.gamelogic.GameplayRuleSelectedSource;
 import net.firedevops.firemud.common.gamelogic.GameplayRuleSourceReadClient;
 import net.firedevops.firemud.common.gamelogic.GameplayRuleSourceReadEvidence;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
+import net.firedevops.firemud.common.publication.PublicationDigestRequestBinding;
 import net.firedevops.firemud.test.TestContainerImages;
 import org.jooq.DSLContext;
 import org.jooq.SQLDialect;
@@ -175,6 +182,127 @@ class GameLogicGameplayRuleIntakePostgresIntegrationTest {
         .isEqualTo(GameLogicGameplayRuleIntakeTerminal.Outcome.ABORTED);
   }
 
+  @Test
+  void publicationReadUsesCommittedTerminalAfterUpstreamReadersAreUnavailableAndNeverAttestsAbort()
+      throws Exception {
+    var fixture = fixture();
+    var authorization = authorization();
+    // These upstream collaborators are fixture stubs; this definition proves GL's committed local
+    // readback, not genuine cross-owner Account or Game Design producer issuance.
+    var accountReader = mock(GameLogicIntakeAuthorizationReadClient.class);
+    var gameDesignReader = mock(GameplayRuleSourceReadClient.class);
+    when(accountReader.read(any(GameLogicIntakeAuthorizationReadEvidence.Request.class)))
+        .thenAnswer(
+            invocation -> new GameLogicIntakeAuthorizationReadEvidence(invocation.getArgument(0)));
+    when(gameDesignReader.read(any(GameplayRuleSourceReadEvidence.Request.class)))
+        .thenAnswer(
+            invocation ->
+                new GameplayRuleSourceReadEvidence(
+                    invocation.getArgument(0), authorization.source()));
+
+    var retained =
+        asGameDesign(() -> fixture.service(accountReader, gameDesignReader).retain(authorization));
+    var unavailableAccount = mock(GameLogicIntakeAuthorizationReadClient.class);
+    var unavailableDesign = mock(GameplayRuleSourceReadClient.class);
+    when(unavailableAccount.read(any(GameLogicIntakeAuthorizationReadEvidence.Request.class)))
+        .thenThrow(new AssertionError("Exact retained retry must not reread Account"));
+    when(unavailableDesign.read(any(GameplayRuleSourceReadEvidence.Request.class)))
+        .thenThrow(new AssertionError("Exact retained retry must not reread Game Design"));
+
+    var exactRetry =
+        asGameDesign(
+            () -> fixture.service(unavailableAccount, unavailableDesign).retain(authorization));
+    assertThat(exactRetry.canonicalBytes()).containsExactly(retained.canonicalBytes());
+    verify(unavailableAccount, never())
+        .read(any(GameLogicIntakeAuthorizationReadEvidence.Request.class));
+    verify(unavailableDesign, never()).read(any(GameplayRuleSourceReadEvidence.Request.class));
+
+    var publicationReader =
+        new GameLogicPublicationSourceReadService(fixture.repository, NAMESPACE);
+    var publicationBinding = publicationBinding(authorization);
+    var publicationResult = asGameDesign(() -> publicationReader.read(publicationBinding));
+    var publicationRetry = asGameDesign(() -> publicationReader.read(publicationBinding));
+    assertThat(publicationResult.binding().canonicalBytes())
+        .containsExactly(publicationBinding.canonicalBytes());
+    assertThat(publicationResult.terminalBytes()).containsExactly(retained.canonicalBytes());
+    assertThat(publicationRetry.terminalBytes()).containsExactly(publicationResult.terminalBytes());
+    assertThat(publicationResult.manifestDigest())
+        .isEqualTo(authorization.source().manifest().digest());
+    assertThat(publicationResult.abilitySchemaDigest())
+        .isEqualTo(GameplayAbilitySchemaProjection.digest(authorization.source().manifest()));
+    assertThat(
+            fixture
+                .repository
+                .findTerminal(authorization.operationId())
+                .orElseThrow()
+                .canonicalBytes())
+        .containsExactly(retained.canonicalBytes());
+
+    var changedOperationId =
+        copyAuthorization(
+            authorization,
+            UUID.randomUUID(),
+            authorization.fenceId(),
+            authorization.intakeRequestId(),
+            authorization.source());
+    assertReadDenied(
+        Status.Code.FAILED_PRECONDITION,
+        () -> asGameDesign(() -> publicationReader.read(publicationBinding(changedOperationId))));
+
+    var changedOperation =
+        copyAuthorization(
+            authorization,
+            authorization.operationId(),
+            authorization.fenceId(),
+            UUID.randomUUID(),
+            authorization.source());
+    assertReadDenied(
+        Status.Code.ALREADY_EXISTS,
+        () -> asGameDesign(() -> publicationReader.read(publicationBinding(changedOperation))));
+
+    var changedFence =
+        copyAuthorization(
+            authorization,
+            authorization.operationId(),
+            UUID.randomUUID(),
+            authorization.intakeRequestId(),
+            authorization.source());
+    assertReadDenied(
+        Status.Code.ALREADY_EXISTS,
+        () -> asGameDesign(() -> publicationReader.read(publicationBinding(changedFence))));
+
+    var originalCommit = authorization.source().binding();
+    var changedCommit =
+        DraftCommitBinding.create(
+            originalCommit.target(),
+            originalCommit.requestId(),
+            UUID.randomUUID(),
+            originalCommit.baseCommitId(),
+            originalCommit.revisions(),
+            originalCommit.affectedUnits());
+    var changedCommitAuthorization =
+        copyAuthorization(
+            authorization,
+            authorization.operationId(),
+            authorization.fenceId(),
+            authorization.intakeRequestId(),
+            source(changedCommit));
+    assertReadDenied(
+        Status.Code.ALREADY_EXISTS,
+        () ->
+            asGameDesign(
+                () -> publicationReader.read(publicationBinding(changedCommitAuthorization))));
+
+    var abortedAuthorization = authorization();
+    var aborted =
+        asGameDesign(
+            () -> fixture.service(accountReader, gameDesignReader).abort(abortedAuthorization));
+    assertThat(aborted.outcome()).isEqualTo(GameLogicGameplayRuleIntakeTerminal.Outcome.ABORTED);
+    assertReadDenied(
+        Status.Code.FAILED_PRECONDITION,
+        () -> asGameDesign(() -> publicationReader.read(publicationBinding(abortedAuthorization))));
+  }
+
   private static Fixture fixture() {
     String schema = "gl_intake_" + UUID.randomUUID().toString().replace("-", "");
     var dataSource = new DriverManagerDataSource();
@@ -261,6 +389,54 @@ class GameLogicGameplayRuleIntakePostgresIntegrationTest {
         actor,
         source,
         List.of(accountSource));
+  }
+
+  private static GameLogicIntakeAuthorizationBinding copyAuthorization(
+      GameLogicIntakeAuthorizationBinding original,
+      UUID operationId,
+      UUID fenceId,
+      UUID intakeRequestId,
+      GameplayRuleSelectedSource source) {
+    return new GameLogicIntakeAuthorizationBinding(
+        operationId,
+        fenceId,
+        intakeRequestId,
+        original.actorAccountId(),
+        source,
+        original.sources());
+  }
+
+  private static GameplayRuleSelectedSource source(DraftCommitBinding binding) {
+    return new GameplayRuleSelectedSource(
+        GameplayRuleManifest.canonical(
+            Map.of(
+                "schema", "game-design-gameplay-rule-source-snapshot/v1",
+                "bindingJson", binding.canonicalJson(),
+                "bindingDigest", binding.digest(),
+                "sourceEpoch", "1",
+                "inheritedCommitId", "",
+                "genesisReceiptId", UUID.randomUUID().toString(),
+                "manifestJson", GameplayRuleManifest.explicitEmpty().canonicalJson(),
+                "entries", List.of())));
+  }
+
+  private static GameLogicPublicationSourceReadBinding publicationBinding(
+      GameLogicIntakeAuthorizationBinding authorization) {
+    var target = authorization.source().binding().target();
+    return new GameLogicPublicationSourceReadBinding(
+        PublicationDigestRequestBinding.full(
+            authorization.tenantId().toString(),
+            Long.toString(target.gameDesignVersionRowId()),
+            "publication-read"),
+        authorization);
+  }
+
+  private static void assertReadDenied(
+      Status.Code expected, org.assertj.core.api.ThrowableAssert.ThrowingCallable action) {
+    assertThatThrownBy(action)
+        .isInstanceOf(StatusRuntimeException.class)
+        .satisfies(
+            failure -> assertThat(Status.fromThrowable(failure).getCode()).isEqualTo(expected));
   }
 
   private record Fixture(

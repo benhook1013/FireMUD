@@ -17,6 +17,7 @@ import net.firedevops.firemud.common.gamelogic.GameLogicIntakeAuthorizationBindi
 import net.firedevops.firemud.common.gamelogic.GameplayRuleManifest;
 import net.firedevops.firemud.common.gamelogic.GameplayRuleSelectedSource;
 import net.firedevops.firemud.common.publication.AuthoredDraftPublishSelectionBinding;
+import net.firedevops.firemud.common.publication.PublicationDigestRequestBinding;
 import net.firedevops.firemud.gamedesign.draft.AuthoredDraftPublishSelection;
 import net.firedevops.firemud.test.TestContainerImages;
 import org.flywaydb.core.Flyway;
@@ -61,6 +62,19 @@ class SelectedDraftGameLogicReceiptPostgresIntegrationTest {
         .containsExactly(value.receipt().canonicalBytes());
     assertThat(recovered.authorization().canonicalBytes())
         .containsExactly(value.authorization().canonicalBytes());
+    // Publication may advance the mutable lifecycle epoch. Exact retained content recovery uses
+    // the original authenticated epoch, not a new mutation authorization against current state.
+    dsl.execute(
+        "UPDATE version SET version_state_epoch = version_state_epoch + 1 WHERE id = ?",
+        value.selection().target().gameDesignVersionRowId());
+    var publicationRead = repository.readForPublication(publicationBinding(value));
+    assertThat(publicationRead).isPresent();
+    assertThat(publicationRead.orElseThrow().receipt().canonicalBytes())
+        .containsExactly(value.receipt().canonicalBytes());
+    assertThat(
+            dsl.fetchSingle("SELECT count(*) FROM game_design_selected_game_logic_receipt")
+                .get(0, Long.class))
+        .isEqualTo(1L);
     assertThat(
             dsl.fetchSingle(
                     "SELECT selection_json FROM game_design_authored_draft_publish_selection")
@@ -92,6 +106,90 @@ class SelectedDraftGameLogicReceiptPostgresIntegrationTest {
                     value.selection().canonicalBytes(),
                     value.receipt().canonicalBytes()))
         .isInstanceOf(org.jooq.exception.DataAccessException.class);
+  }
+
+  @Test
+  void publicationReadUsesExactTenantAndRequestAndRejectsChangedVersionOrPatchScope() {
+    var value = receiptFixture();
+    var fixture = fixture(value);
+    var dsl = fixture.dsl();
+    var repository = new SelectedDraftGameLogicReceiptRepository(dsl);
+    fixture.tx().executeWithoutResult(ignored -> repository.retain(value));
+
+    assertThat(
+            repository.readForPublication(
+                PublicationDigestRequestBinding.full(
+                    value.selection().intent().canonicalTenantId().toString(),
+                    Long.toString(value.selection().target().gameDesignVersionRowId()),
+                    "different-request")))
+        .isEmpty();
+    assertThat(
+            repository.readForPublication(
+                PublicationDigestRequestBinding.full(
+                    UUID.randomUUID().toString(),
+                    Long.toString(value.selection().target().gameDesignVersionRowId()),
+                    value.selection().intent().publishRequestId())))
+        .isEmpty();
+    assertThatThrownBy(
+            () ->
+                repository.readForPublication(
+                    PublicationDigestRequestBinding.full(
+                        value.selection().intent().canonicalTenantId().toString(),
+                        Long.toString(value.selection().target().gameDesignVersionRowId() + 1),
+                        value.selection().intent().publishRequestId())))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("does not match publication request");
+    assertThatThrownBy(
+            () ->
+                repository.readForPublication(
+                    PublicationDigestRequestBinding.patch(
+                        value.selection().intent().canonicalTenantId().toString(),
+                        "1",
+                        "patch-1",
+                        value.selection().intent().publishRequestId())))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("FULL_VERSION");
+    assertThat(
+            dsl.fetchSingle("SELECT count(*) FROM game_design_selected_game_logic_receipt")
+                .get(0, Long.class))
+        .isEqualTo(1L);
+  }
+
+  @Test
+  void publicationReadFailsClosedWhenNumericVersionRowNoLongerMatchesSelection() {
+    var value = receiptFixture();
+    var fixture = fixture(value);
+    var repository = new SelectedDraftGameLogicReceiptRepository(fixture.dsl());
+    fixture.tx().executeWithoutResult(ignored -> repository.retain(value));
+    fixture
+        .dsl()
+        .execute(
+            "UPDATE version SET canonical_version_id = ? WHERE id = ?",
+            UUID.randomUUID(),
+            value.selection().target().gameDesignVersionRowId());
+
+    assertThatThrownBy(() -> repository.readForPublication(publicationBinding(value)))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("Version row proof unavailable");
+  }
+
+  @Test
+  void publicationReadFailsClosedOnConflictingRetainedWorkflowField() {
+    var value = receiptFixture();
+    var fixture = fixture(value);
+    var dsl = fixture.dsl();
+    var repository = new SelectedDraftGameLogicReceiptRepository(dsl);
+    fixture.tx().executeWithoutResult(ignored -> repository.retain(value));
+    // Fault injection bypasses the immutable-row trigger to model conflicting retained bytes.
+    dsl.execute(
+        "ALTER TABLE game_design_selected_game_logic_receipt DISABLE TRIGGER trg_gd_selected_game_logic_receipt");
+    dsl.execute(
+        "UPDATE game_design_selected_game_logic_receipt SET workflow_identity = ?",
+        "publish:wrong-tenant:publish-request:publish-1");
+
+    assertThatThrownBy(() -> repository.readForPublication(publicationBinding(value)))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("integrity conflict");
   }
 
   @Test
@@ -320,6 +418,14 @@ class SelectedDraftGameLogicReceiptPostgresIntegrationTest {
         AuthoredDraftPublishSelection.fromStored(selected.canonicalJson(), selected.digest()),
         auth,
         new AccountGameLogicIntakeSettlementEvidence(terminal));
+  }
+
+  private static PublicationDigestRequestBinding publicationBinding(
+      SelectedDraftGameLogicReceipt value) {
+    return PublicationDigestRequestBinding.full(
+        value.selection().intent().canonicalTenantId().toString(),
+        Long.toString(value.selection().target().gameDesignVersionRowId()),
+        value.selection().intent().publishRequestId());
   }
 
   private record Fixture(DSLContext dsl, TransactionTemplate tx) {}

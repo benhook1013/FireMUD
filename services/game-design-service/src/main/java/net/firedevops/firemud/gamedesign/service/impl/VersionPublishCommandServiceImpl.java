@@ -127,7 +127,7 @@ public class VersionPublishCommandServiceImpl {
           emptyIfNull(attempt.getFailureMessage()));
     }
     attempt = backfillLegacyFullVersionRequestDigest(request, attempt);
-    validateFullVersionAttempt(attempt, request);
+    PublicationDigestRequestBinding selectedBinding = validateFullVersionAttempt(attempt, request);
 
     Version version = requireAttemptVersion(attempt, request);
     PublicationReadback existingPublication = readPublication(request, attempt);
@@ -148,8 +148,11 @@ public class VersionPublishCommandServiceImpl {
     try {
       dto = versionMapper.toDto(version);
       participantDigests =
-          publishGateService.collectFullVersionParticipantDigests(
-              dto, request.publishRequestId(), request.publishWorkflowId());
+          selectedBinding == null
+              ? publishGateService.collectFullVersionParticipantDigests(
+                  dto, request.publishRequestId(), request.publishWorkflowId())
+              : publishGateService.collectSelectedFullVersionParticipantDigests(
+                  dto, selectedBinding, request.publishWorkflowId());
     } catch (RuntimeException ex) {
       if (PublicationFailureClassifier.isRetryableParticipantDependencyFailure(ex)) {
         throw pendingReconciliation(
@@ -643,11 +646,11 @@ public class VersionPublishCommandServiceImpl {
         .orElse(attempt);
   }
 
-  private void validateFullVersionAttempt(PublishAttempt attempt, PublishWorkflowRequest request) {
+  private PublicationDigestRequestBinding validateFullVersionAttempt(
+      PublishAttempt attempt, PublishWorkflowRequest request) {
     validateFullVersionAttemptIdentity(attempt, request);
     if (isSelectionDigest(attempt.getRequestDigest())) {
-      requireExactSelectedPublication(attempt, request);
-      return;
+      return requireExactSelectedPublication(attempt, request);
     }
     PublicationDigestRequestBinding binding =
         PublicationDigestRequestBinding.full(
@@ -656,6 +659,7 @@ public class VersionPublishCommandServiceImpl {
       throw new IllegalStateException(
           "PUBLISH_ATTEMPT_IDENTITY_CONFLICT: full-version request digest does not match request");
     }
+    return null;
   }
 
   /**
@@ -684,7 +688,7 @@ public class VersionPublishCommandServiceImpl {
     }
   }
 
-  private void requireExactSelectedPublication(
+  private PublicationDigestRequestBinding requireExactSelectedPublication(
       PublishAttempt attempt, PublishWorkflowRequest request) {
     try {
       String expectedOutcome =
@@ -697,21 +701,21 @@ public class VersionPublishCommandServiceImpl {
           publishAttemptRepository.requireSelectedPublicationReadback(attempt, expectedOutcome);
       var selection = operation.account().input().selection();
       var intent = selection.intent();
-      String expectedWorkflowId =
+      PublicationDigestRequestBinding canonicalBinding =
           PublicationDigestRequestBinding.full(
-                  intent.canonicalTenantId().toString(),
-                  Long.toString(operation.versionId()),
-                  intent.publishRequestId())
-              .derivedWorkflowIdentity();
+              intent.canonicalTenantId().toString(),
+              Long.toString(operation.versionId()),
+              intent.publishRequestId());
       if (!Objects.equals(operation.tenantKey(), request.tenantId())
           || operation.versionId() != attempt.getVersionId()
           || !Objects.equals(operation.selectionDigest(), attempt.getRequestDigest())
-          || !Objects.equals(operation.workflowId(), expectedWorkflowId)
+          || !Objects.equals(operation.workflowId(), canonicalBinding.derivedWorkflowIdentity())
           || !Objects.equals(operation.workflowId(), request.publishWorkflowId())
           || !Objects.equals(intent.publishRequestId(), request.publishRequestId())
           || !Objects.equals(intent.notes(), request.notes())) {
         throw new IllegalStateException("SELECTED_PUBLICATION_REQUEST_IDENTITY_CHANGED");
       }
+      return canonicalBinding;
     } catch (PendingReconciliationException unresolved) {
       throw unresolved;
     } catch (RuntimeException unresolved) {
