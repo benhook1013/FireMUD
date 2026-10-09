@@ -2952,6 +2952,16 @@ class WorldCanonicalInstanceAssociationPostgresIntegrationTest {
       String commit,
       WorldPublishedStartLocationEvidence selector,
       char manifestHashDigit) {
+    int attestationSchemaVersion =
+        selector == null
+            ? AuthoredWorldReleaseAttestationEvidence.SCHEMA_VERSION
+            : switch (selector.request().digestSchemaVersion()) {
+              case 3 -> AuthoredWorldReleaseAttestationEvidence.SELECTOR_SCHEMA_VERSION;
+              case 4 -> AuthoredWorldReleaseAttestationEvidence.CLOSURE_SELECTOR_SCHEMA_VERSION;
+              default ->
+                  throw new IllegalArgumentException(
+                      "World selector has no paired release-attestation profile");
+            };
     AuthoredWorldReleaseAttestationEvidence.Participant worldParticipant =
         selector == null
             ? participant("WORLD_MANAGEMENT", 3, "a", false, descriptor.versionId(), commit)
@@ -2973,7 +2983,8 @@ class WorldCanonicalInstanceAssociationPostgresIntegrationTest {
             participant("AUTOMATION_SCRIPTING", 5, "d", false, descriptor.versionId(), commit),
             participant(
                 "GAME_DESIGN_CONTROL_PLANE",
-                selector == null ? 1 : 2,
+                AuthoredWorldReleaseAttestationEvidence.supportedParticipantDigestSchema(
+                    "GAME_DESIGN_CONTROL_PLANE", attestationSchemaVersion),
                 "e",
                 false,
                 descriptor.versionId(),
@@ -2999,6 +3010,30 @@ class WorldCanonicalInstanceAssociationPostgresIntegrationTest {
           List.of(),
           List.of("look"),
           descriptor.generationConfigRevision());
+    }
+    if (attestationSchemaVersion
+        == AuthoredWorldReleaseAttestationEvidence.CLOSURE_SELECTOR_SCHEMA_VERSION) {
+      return AuthoredWorldReleaseAttestationEvidence.createClosureSelector(
+          NAMESPACE,
+          descriptor.resultDigest(),
+          source.canonicalTenantId(),
+          canonicalVersionId,
+          source.worldSlug(),
+          source.operationId(),
+          source.evidenceDigest(),
+          descriptor.launchDescriptorId(),
+          descriptor.publishedReleaseBundleRef(),
+          descriptor.versionStateEpoch(),
+          selector.request().publishWorkflowId(),
+          selector.request().appliedCommitId(),
+          participants,
+          digest(manifestHashDigit),
+          1,
+          List.of(),
+          List.of(),
+          List.of("look"),
+          descriptor.generationConfigRevision(),
+          selector);
     }
     return AuthoredWorldReleaseAttestationEvidence.create(
         NAMESPACE,
@@ -3065,6 +3100,30 @@ class WorldCanonicalInstanceAssociationPostgresIntegrationTest {
           release.artifactDigests(),
           release.commandDefinitions(),
           release.generationConfigRevision());
+    }
+    if (release.schemaVersion()
+        == AuthoredWorldReleaseAttestationEvidence.CLOSURE_SELECTOR_SCHEMA_VERSION) {
+      return AuthoredWorldReleaseAttestationEvidence.createClosureSelector(
+          release.targetNamespace(),
+          release.descriptorResultDigest(),
+          release.canonicalTenantId(),
+          release.canonicalVersionId(),
+          release.worldSlug(),
+          release.authoredWorldSourceOperationId(),
+          release.authoredWorldSourceEvidenceDigest(),
+          release.launchDescriptorId(),
+          release.publishedReleaseBundleRef(),
+          release.versionStateEpoch(),
+          checkpoint.publishWorkflowId(),
+          checkpoint.appliedCommitId(),
+          participants,
+          release.manifestHash(),
+          release.manifestSchemaVersion(),
+          release.requiredManifestAssetKeys(),
+          release.artifactDigests(),
+          release.commandDefinitions(),
+          release.generationConfigRevision(),
+          release.worldStartLocationEvidence());
     }
     return AuthoredWorldReleaseAttestationEvidence.create(
         release.targetNamespace(),

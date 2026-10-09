@@ -90,6 +90,9 @@ import net.firedevops.firemud.worldmanagement.v1.WorldDesignMutationOperation;
 import net.firedevops.firemud.worldmanagement.v1.WorldDesignScopeType;
 import net.firedevops.firemud.worldmanagement.v1.WorldFreshGraphDeclaration;
 import net.firedevops.firemud.worldmanagement.v1.WorldFreshGraphFamilyCount;
+import net.firedevops.firemud.worldmanagement.v1.WorldInboundSourceClosureDeclaration;
+import net.firedevops.firemud.worldmanagement.v1.WorldInboundSourceFamily;
+import net.firedevops.firemud.worldmanagement.v1.WorldInboundSourceFamilyCount;
 import net.firedevops.firemud.worldmanagement.v1.ZoneDesignMutation;
 import org.flywaydb.core.Flyway;
 import org.jooq.DSLContext;
@@ -356,6 +359,21 @@ class GenuineGameDesignWorldSourceCommitPostgresIntegrationTest {
         assertThat(identity.versionStateEvidence())
             .isEqualTo(publicAssociation.versionStateEvidence());
         var binding = binding(gd.target());
+        var originalDeclaration =
+            binding.revisions().stream()
+                .filter(revision -> revision.owner() == DraftCommitBinding.Owner.WORLD_MANAGEMENT)
+                .map(GenuineGameDesignWorldSourceCommitPostgresIntegrationTest::worldMutation)
+                .filter(WorldDesignMutationRevision::hasFreshGraphDeclaration)
+                .map(WorldDesignMutationRevision::getFreshGraphDeclaration)
+                .toList();
+        assertThat(originalDeclaration)
+            .singleElement()
+            .satisfies(
+                declaration -> {
+                  assertThat(declaration.hasInboundSourceClosure()).isTrue();
+                  assertThat(declaration.getInboundSourceClosure())
+                      .isEqualTo(authoredEmptyInboundSourceClosure());
+                });
         var request = account.prepareOriginalDraftOrder(binding, NAMESPACE);
         var original = request.original();
         register(
@@ -447,6 +465,8 @@ class GenuineGameDesignWorldSourceCommitPostgresIntegrationTest {
         assertThat(actualWorld.startLocationReceipt()).isPresent();
         assertThat(actualWorld.application().operation().accountBindingBytes())
             .isEqualTo(original.canonicalBytes());
+        assertThat(actualWorld.application().operation().binding().canonicalBytes())
+            .isEqualTo(binding.canonicalBytes());
         assertThat(
                 coordinator
                     .read(gd.target(), binding.requestId())
@@ -643,6 +663,7 @@ class GenuineGameDesignWorldSourceCommitPostgresIntegrationTest {
             .setTenantId(target.canonicalTenantId().toString())
             .setVersionId(target.canonicalVersionId().toString())
             .addAllFamilyCounts(familyCounts)
+            .setInboundSourceClosure(authoredEmptyInboundSourceClosure())
             .setStartLocation(
                 net.firedevops.firemud.worldmanagement.v1.RoomTemplateRef.newBuilder()
                     .setTenantId(target.canonicalTenantId().toString())
@@ -734,6 +755,34 @@ class GenuineGameDesignWorldSourceCommitPostgresIntegrationTest {
         .setOperation(WorldDesignMutationOperation.WORLD_DESIGN_MUTATION_OPERATION_UPSERT)
         .setScopeType(WorldDesignScopeType.WORLD_DESIGN_SCOPE_TYPE_REGION_SUBTREE)
         .setScopeId(region.toString());
+  }
+
+  private static WorldInboundSourceClosureDeclaration authoredEmptyInboundSourceClosure() {
+    var declaration = WorldInboundSourceClosureDeclaration.newBuilder().setSchemaVersion(1);
+    for (var family :
+        List.of(
+            WorldInboundSourceFamily.WORLD_INBOUND_SOURCE_FAMILY_LOOT_REFERENCE_ROOT,
+            WorldInboundSourceFamily.WORLD_INBOUND_SOURCE_FAMILY_LOOT_REFERENCE_ATTACHMENT,
+            WorldInboundSourceFamily.WORLD_INBOUND_SOURCE_FAMILY_BEHAVIOR_SELECTION,
+            WorldInboundSourceFamily.WORLD_INBOUND_SOURCE_FAMILY_BEHAVIOR_BINDING,
+            WorldInboundSourceFamily.WORLD_INBOUND_SOURCE_FAMILY_AUTOMATION_HOOK,
+            WorldInboundSourceFamily.WORLD_INBOUND_SOURCE_FAMILY_AUTOMATION_SCRIPT_REFERENCE,
+            WorldInboundSourceFamily.WORLD_INBOUND_SOURCE_FAMILY_AUTOMATION_TARGET_BINDING)) {
+      declaration.addFamilyCounts(
+          WorldInboundSourceFamilyCount.newBuilder().setFamily(family).setCount(0));
+    }
+    return declaration.build();
+  }
+
+  private static WorldDesignMutationRevision worldMutation(
+      DraftCommitBinding.RevisionPayload revision) {
+    try {
+      var mutation = WorldDesignMutationRevision.newBuilder();
+      JsonFormat.parser().merge(revision.payload(), mutation);
+      return mutation.build();
+    } catch (com.google.protobuf.InvalidProtocolBufferException invalid) {
+      throw new AssertionError("Original World revision must be typed", invalid);
+    }
   }
 
   private enum Failure {

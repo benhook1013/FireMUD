@@ -1178,6 +1178,19 @@ class GenuineSelectedPublicationExportPostgresIntegrationTest {
                 new GameAssetRepository(gd.dsl()),
                 new RevisionRepository(gd.dsl()),
                 new ObjectMapper());
+        // Exercise the actual finalizer dependency before it records a message-only failure.
+        // Keep its original exception chain visible if an authored input cannot be digested.
+        var finalizerDesignDigest =
+            gd.transaction(
+                () ->
+                    controlPlaneDigests.getDigestForVersion(
+                        mapper.toDto(
+                            new VersionRepository(gd.dsl())
+                                .findByTenantIdAndId(
+                                    gd.target().gameDesignVersionTenantKey(),
+                                    gd.target().gameDesignVersionRowId())
+                                .orElseThrow())));
+        assertThat(finalizerDesignDigest.contentDigest()).matches("[0-9a-f]{64}");
         var realAttemptPersistence =
             new PublishAttemptServiceImpl(
                 publishAttemptRepository, new PublishAttemptParticipantDigestRepository(gd.dsl()));

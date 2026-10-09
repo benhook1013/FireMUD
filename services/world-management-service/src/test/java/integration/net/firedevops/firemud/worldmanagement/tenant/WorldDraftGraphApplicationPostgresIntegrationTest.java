@@ -3460,7 +3460,7 @@ class WorldDraftGraphApplicationPostgresIntegrationTest {
             selector.originalAccountBindingBytes(),
             selector.appliedResultBytes());
     assertThatThrownBy(() -> preparationInput(f, frozen, changed))
-        .hasMessageContaining("exact frozen request");
+        .hasMessageContaining("World selector differs from the exact attested release checkpoint");
     var input = preparationInput(f, frozen, selector);
     var encoded =
         (tools.jackson.databind.node.ObjectNode)
@@ -3542,7 +3542,7 @@ class WorldDraftGraphApplicationPostgresIntegrationTest {
     Fixture f = historical.fixture();
     var application = historical.application(historical.generationFreePlan(f));
     historical.appliedComponent().apply(application);
-    var frozen = historical.capture(application.plan());
+    var frozen = historical.captureHistoricalUnqualified(application.plan());
     var input = historical.preparationInput(f, frozen, null);
     var first = historical.prepareV1ThroughOwnerFunction(input);
     assertThat(first.startLocation()).isNull();
@@ -3658,6 +3658,15 @@ class WorldDraftGraphApplicationPostgresIntegrationTest {
   }
 
   private WorldDraftTopologyCommitPlan generationFreePlan(Fixture f) {
+    return inventorySupportedPlan(f, false);
+  }
+
+  private WorldDraftTopologyCommitPlan supportedInventoryPlan(Fixture f) {
+    return inventorySupportedPlan(f, true);
+  }
+
+  private WorldDraftTopologyCommitPlan inventorySupportedPlan(
+      Fixture f, boolean preserveSpawnBindings) {
     var original = plan(f);
     var binding = original.binding();
     List<DraftCommitBinding.RevisionPayload> revisions = new ArrayList<>();
@@ -3674,7 +3683,8 @@ class WorldDraftGraphApplicationPostgresIntegrationTest {
       try {
         var value = WorldDesignMutationRevision.newBuilder();
         JsonFormat.parser().merge(revision.payload(), value);
-        if (value.hasGenerationRule() || value.hasWorldEntitySpawnBinding()) continue;
+        if (value.hasGenerationRule()
+            || (!preserveSpawnBindings && value.hasWorldEntitySpawnBinding())) continue;
         if (value.hasRegion())
           value.setRegion(
               value.getRegion().toBuilder()
@@ -3686,9 +3696,10 @@ class WorldDraftGraphApplicationPostgresIntegrationTest {
           for (int index = 0; index < declaration.getFamilyCountsCount(); index++) {
             var family = declaration.getFamilyCounts(index).getFamily();
             if (family == WorldDesignAggregateType.WORLD_DESIGN_AGGREGATE_TYPE_GENERATION_RULE
-                || family
-                    == WorldDesignAggregateType
-                        .WORLD_DESIGN_AGGREGATE_TYPE_WORLD_ENTITY_SPAWN_BINDING) {
+                || (!preserveSpawnBindings
+                    && family
+                        == WorldDesignAggregateType
+                            .WORLD_DESIGN_AGGREGATE_TYPE_WORLD_ENTITY_SPAWN_BINDING)) {
               declaration.setFamilyCounts(
                   index, declaration.getFamilyCounts(index).toBuilder().setCount(0));
             }
@@ -3716,7 +3727,8 @@ class WorldDraftGraphApplicationPostgresIntegrationTest {
                 .filter(
                     unit ->
                         !unit.aggregateType().equals("GENERATION_RULE")
-                            && !unit.aggregateType().equals("WORLD_ENTITY_SPAWN_BINDING"))
+                            && (preserveSpawnBindings
+                                || !unit.aggregateType().equals("WORLD_ENTITY_SPAWN_BINDING")))
                 .toList()),
         original.ownerBinding());
   }
@@ -3728,7 +3740,7 @@ class WorldDraftGraphApplicationPostgresIntegrationTest {
     Fixture f = historical.fixture();
     var application = historical.application(historical.generationFreePlan(f));
     var applied = historical.appliedComponent().apply(application);
-    var frozen = historical.capture(application.plan());
+    var frozen = historical.captureHistoricalUnqualified(application.plan());
     var input = historical.preparationInput(f, frozen, null);
     var first = historical.prepareV1ThroughOwnerFunction(input);
     Map<String, String> before = historical.preparationHistoryRows();
@@ -4087,6 +4099,16 @@ class WorldDraftGraphApplicationPostgresIntegrationTest {
             false,
             null);
     var freeze = frozen.request().freeze();
+    int attestationSchemaVersion =
+        selector == null
+            ? AuthoredWorldReleaseAttestationEvidence.SCHEMA_VERSION
+            : switch (selector.request().digestSchemaVersion()) {
+              case 3 -> AuthoredWorldReleaseAttestationEvidence.SELECTOR_SCHEMA_VERSION;
+              case 4 -> AuthoredWorldReleaseAttestationEvidence.CLOSURE_SELECTOR_SCHEMA_VERSION;
+              default ->
+                  throw new IllegalArgumentException(
+                      "World selector has no paired release-attestation profile");
+            };
     var participants =
         AuthoredWorldReleaseAttestationEvidence.requiredParticipantOrder().stream()
             .map(
@@ -4099,56 +4121,81 @@ class WorldDraftGraphApplicationPostgresIntegrationTest {
                         freeze.appliedCommitId(),
                         "WORLD_MANAGEMENT".equals(owner) ? freeze.contentDigest() : "a".repeat(64),
                         AuthoredWorldReleaseAttestationEvidence.supportedParticipantDigestSchema(
-                            owner,
-                            selector == null
-                                ? AuthoredWorldReleaseAttestationEvidence.SCHEMA_VERSION
-                                : AuthoredWorldReleaseAttestationEvidence.SELECTOR_SCHEMA_VERSION),
+                            owner, attestationSchemaVersion),
                         "GAME_LOGIC".equals(owner),
                         "GAME_LOGIC".equals(owner) ? "sha256:" + "b".repeat(64) : null))
             .toList();
-    AuthoredWorldReleaseAttestationEvidence release =
-        selector == null
-            ? AuthoredWorldReleaseAttestationEvidence.create(
-                NAMESPACE,
-                descriptor.resultDigest(),
-                source.canonicalTenantId(),
-                f.version().canonicalVersionId(),
-                source.worldSlug(),
-                source.operationId(),
-                source.evidenceDigest(),
-                descriptor.launchDescriptorId(),
-                descriptor.publishedReleaseBundleRef(),
-                descriptor.versionStateEpoch(),
-                freeze.publishWorkflowId(),
-                freeze.appliedCommitId(),
-                participants,
-                "sha256:" + "c".repeat(64),
-                1,
-                List.of(),
-                List.of(),
-                commandDefinitions,
-                descriptor.generationConfigRevision())
-            : AuthoredWorldReleaseAttestationEvidence.create(
-                NAMESPACE,
-                descriptor.resultDigest(),
-                source.canonicalTenantId(),
-                f.version().canonicalVersionId(),
-                source.worldSlug(),
-                source.operationId(),
-                source.evidenceDigest(),
-                descriptor.launchDescriptorId(),
-                descriptor.publishedReleaseBundleRef(),
-                descriptor.versionStateEpoch(),
-                freeze.publishWorkflowId(),
-                freeze.appliedCommitId(),
-                participants,
-                "sha256:" + "c".repeat(64),
-                1,
-                List.of(),
-                List.of(),
-                commandDefinitions,
-                descriptor.generationConfigRevision(),
-                selector);
+    AuthoredWorldReleaseAttestationEvidence release;
+    if (selector == null) {
+      release =
+          AuthoredWorldReleaseAttestationEvidence.create(
+              NAMESPACE,
+              descriptor.resultDigest(),
+              source.canonicalTenantId(),
+              f.version().canonicalVersionId(),
+              source.worldSlug(),
+              source.operationId(),
+              source.evidenceDigest(),
+              descriptor.launchDescriptorId(),
+              descriptor.publishedReleaseBundleRef(),
+              descriptor.versionStateEpoch(),
+              freeze.publishWorkflowId(),
+              freeze.appliedCommitId(),
+              participants,
+              "sha256:" + "c".repeat(64),
+              1,
+              List.of(),
+              List.of(),
+              commandDefinitions,
+              descriptor.generationConfigRevision());
+    } else if (attestationSchemaVersion
+        == AuthoredWorldReleaseAttestationEvidence.CLOSURE_SELECTOR_SCHEMA_VERSION) {
+      release =
+          AuthoredWorldReleaseAttestationEvidence.createClosureSelector(
+              NAMESPACE,
+              descriptor.resultDigest(),
+              source.canonicalTenantId(),
+              f.version().canonicalVersionId(),
+              source.worldSlug(),
+              source.operationId(),
+              source.evidenceDigest(),
+              descriptor.launchDescriptorId(),
+              descriptor.publishedReleaseBundleRef(),
+              descriptor.versionStateEpoch(),
+              freeze.publishWorkflowId(),
+              freeze.appliedCommitId(),
+              participants,
+              "sha256:" + "c".repeat(64),
+              1,
+              List.of(),
+              List.of(),
+              commandDefinitions,
+              descriptor.generationConfigRevision(),
+              selector);
+    } else {
+      release =
+          AuthoredWorldReleaseAttestationEvidence.create(
+              NAMESPACE,
+              descriptor.resultDigest(),
+              source.canonicalTenantId(),
+              f.version().canonicalVersionId(),
+              source.worldSlug(),
+              source.operationId(),
+              source.evidenceDigest(),
+              descriptor.launchDescriptorId(),
+              descriptor.publishedReleaseBundleRef(),
+              descriptor.versionStateEpoch(),
+              freeze.publishWorkflowId(),
+              freeze.appliedCommitId(),
+              participants,
+              "sha256:" + "c".repeat(64),
+              1,
+              List.of(),
+              List.of(),
+              commandDefinitions,
+              descriptor.generationConfigRevision(),
+              selector);
+    }
     var evidence = new CompleteLaunchBindingEvidence(descriptor, release);
     UUID instance = UUID.randomUUID();
     UUID read = UUID.randomUUID();
@@ -5518,7 +5565,7 @@ class WorldDraftGraphApplicationPostgresIntegrationTest {
   @Test
   void publishedSelectorJoinsExactFrozenCheckpointToOriginalAppliedWithoutWrites() {
     Fixture f = fixture();
-    var application = application(f);
+    var application = application(generationFreePlan(f));
     var applied = appliedComponent().apply(application);
     var capture = capture(application.plan());
     var request = capture.request().freeze();
@@ -5593,7 +5640,7 @@ class WorldDraftGraphApplicationPostgresIntegrationTest {
   @Test
   void publishedSelectorOwnedReadUsesOneActualReadOnlyRepeatableReadSnapshot() {
     Fixture f = fixture();
-    var application = application(f);
+    var application = application(generationFreePlan(f));
     var applied = appliedComponent().apply(application);
     var capture = capture(application.plan());
     var request = capture.request().freeze();
@@ -5664,7 +5711,7 @@ class WorldDraftGraphApplicationPostgresIntegrationTest {
   @Test
   void publishedSpawnRequirementsOwnerProjectsOnlyRealFrozenAndAppliedSource() {
     Fixture f = fixture();
-    var application = application(f);
+    var application = application(supportedInventoryPlan(f));
     appliedComponent().apply(application);
     var capture = capture(application.plan());
     var frozen = capture.request().freeze();
@@ -5724,12 +5771,23 @@ class WorldDraftGraphApplicationPostgresIntegrationTest {
     assertThat(evidence.spawnRequirements().getFirst().respawnDelaySeconds()).isEqualTo(17);
     assertThat(evidence.spawnRequirements().getFirst().entityTemplate().kind())
         .isEqualTo(EntityTemplateReferenceType.ENTITY_TEMPLATE_REFERENCE_TYPE_NPC);
-    assertThat(evidence.generationRequirements()).hasSize(1);
-    assertThat(evidence.generationRequirements().getFirst().name()).isEqualTo("rule");
-    assertThat(evidence.generationRequirements().getFirst().value()).isEqualTo("seeded");
+    assertThat(evidence.generationRequirements()).isEmpty();
     assertThat(preparationHistoryRows()).isEqualTo(before);
     Mockito.verify(gameDesign).getComplete(launchRequest);
     assertOrigin();
+  }
+
+  @Test
+  void selectedInventoryRejectsGenerationRulesWithoutRequirednessRegistry() {
+    Fixture f = fixture();
+    var application = application(plan(f, true, true));
+    appliedComponent().apply(application);
+
+    assertThatThrownBy(() -> capture(application.plan()))
+        .isInstanceOf(
+            WorldSelectedPublicationArtifactInventory.UnrepresentableRequirednessException.class)
+        .hasMessageContaining(
+            "GENERATION_RULE name/scope/value inputs without a closed requiredness registry");
   }
 
   @Test
@@ -5805,7 +5863,7 @@ class WorldDraftGraphApplicationPostgresIntegrationTest {
 
   @Test
   void retainedFrozenHistoryCannotSupplyPublishedSelectorAfterAppliedSourceIsMissing() {
-    var plan = plan(fixture());
+    var plan = generationFreePlan(fixture());
     var application = application(plan);
     appliedComponent().apply(application);
     var capture = capture(application.plan());
@@ -5907,6 +5965,13 @@ class WorldDraftGraphApplicationPostgresIntegrationTest {
         isolatedPublicationAccountBinding(
             applied.get("account_binding_bytes", byte[].class), selection, publicationRequest);
     return capture(plan, publicationRequest, selection, accountBinding);
+  }
+
+  private WorldCanonicalFrozenTopology captureHistoricalUnqualified(
+      WorldDraftTopologyCommitPlan plan) {
+    String publicationRequest = "historical-selector-" + UUID.randomUUID();
+    var selection = publicationSelection(plan, publicationRequest, 1L);
+    return capture(plan, publicationRequest, selection, null);
   }
 
   private WorldCanonicalFrozenTopology captureForTerminal(

@@ -149,13 +149,14 @@ class WorldOperationalRegionAssignmentPostgresIntegrationTest {
                             + "WHERE version IN ('44', '45') AND success"))
                 .get(0, Long.class))
         .isEqualTo(2);
-    String prepareDefinition =
-        Objects.requireNonNull(
-                dsl.fetchOne(
-                    "SELECT pg_get_functiondef('world_management_service."
-                        + "world_prepare_canonical_instance(text,text)'::regprocedure)"))
-            .get(0, String.class);
-    assertThat(prepareDefinition).contains("'operational_region_id', operational_runtime_uuid");
+    String prepareDefinition = preparationFunction(dsl, "world_management_service").body();
+    assertThat(prepareDefinition).contains("world_prepare_canonical_instance_v61_impl");
+    String prepareImplementationDefinition =
+        preparationFunction(
+                dsl, "world_management_service", "world_prepare_canonical_instance_v61_impl")
+            .body();
+    assertThat(prepareImplementationDefinition)
+        .contains("'operational_region_id', operational_runtime_uuid");
     assertThat(
             Objects.requireNonNull(
                     dsl.fetchOne(
@@ -163,7 +164,8 @@ class WorldOperationalRegionAssignmentPostgresIntegrationTest {
                             + "JOIN pg_namespace n ON n.oid = p.pronamespace "
                             + "CROSS JOIN LATERAL aclexplode(coalesce(p.proacl, acldefault('f', p.proowner))) acl "
                             + "WHERE n.nspname = 'world_management_service' "
-                            + "AND p.proname = 'world_prepare_canonical_instance' "
+                            + "AND p.proname IN ('world_prepare_canonical_instance',"
+                            + "'world_prepare_canonical_instance_v61_impl') "
                             + "AND acl.grantee = 0 AND acl.privilege_type = 'EXECUTE')"))
                 .get(0, Boolean.class))
         .isFalse();
@@ -260,23 +262,29 @@ class WorldOperationalRegionAssignmentPostgresIntegrationTest {
             .load()
             .migrate();
 
-        var functionAfter = preparationFunction(retained, schema);
-        assertThat(functionAfter.oid()).isEqualTo(functionBefore.oid());
-        assertThat(functionAfter.acl()).isEqualTo(functionBefore.acl());
-        assertThat(functionAfter.body())
+        var wrapperAfter = preparationFunction(retained, schema);
+        var implementationAfter =
+            preparationFunction(retained, schema, "world_prepare_canonical_instance_v61_impl");
+        assertThat(implementationAfter.oid()).isEqualTo(functionBefore.oid());
+        assertThat(implementationAfter.acl()).isEqualTo(functionBefore.acl());
+        assertThat(wrapperAfter.body()).contains("world_prepare_canonical_instance_v61_impl");
+        assertThat(implementationAfter.body())
             .contains(
                 "Canonical preparation release differs from the exact selected frozen World graph",
                 "world_require_preparation_start_location",
                 "Canonical preparation requires the exact published V44 terminal",
                 "'operational_region_id', operational_runtime_uuid");
-        assertThat(functionAfter.body()).isNotEqualTo(functionBefore.body());
+        assertThat(implementationAfter.body()).isNotEqualTo(functionBefore.body());
         assertThat(
                 Objects.requireNonNull(
                         retained.fetchOne(
                             "SELECT EXISTS (SELECT 1 FROM pg_proc p "
                                 + "CROSS JOIN LATERAL aclexplode(coalesce(p.proacl, acldefault('f', p.proowner))) acl "
-                                + "WHERE p.oid = to_regprocedure(? || '.world_prepare_canonical_instance(text,text)') "
+                                + "WHERE p.oid IN ("
+                                + "to_regprocedure(? || '.world_prepare_canonical_instance(text,text)'),"
+                                + "to_regprocedure(? || '.world_prepare_canonical_instance_v61_impl(text,text)')) "
                                 + "AND acl.grantee = 0 AND acl.privilege_type = 'EXECUTE')",
+                            schema,
                             schema))
                     .get(0, Boolean.class))
             .isFalse();
@@ -319,13 +327,19 @@ class WorldOperationalRegionAssignmentPostgresIntegrationTest {
   }
 
   private PreparationFunction preparationFunction(DSLContext dsl, String schema) {
+    return preparationFunction(dsl, schema, "world_prepare_canonical_instance");
+  }
+
+  private PreparationFunction preparationFunction(
+      DSLContext dsl, String schema, String functionName) {
     var function =
         Objects.requireNonNull(
             dsl.fetchOne(
                 "SELECT p.oid::bigint AS function_oid, p.proacl::text AS function_acl, "
                     + "pg_get_functiondef(p.oid) AS function_body FROM pg_proc p "
-                    + "WHERE p.oid = to_regprocedure(? || '.world_prepare_canonical_instance(text,text)')",
-                schema));
+                    + "WHERE p.oid = to_regprocedure(? || '.' || ? || '(text,text)')",
+                schema,
+                functionName));
     return new PreparationFunction(
         function.get("function_oid", Long.class),
         function.get("function_acl", String.class),
