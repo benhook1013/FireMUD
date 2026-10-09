@@ -64,7 +64,7 @@ final class WorldCanonicalInstanceExecutionTestFixtures {
         WorldCanonicalInstancePreparationRepository.inputJson(input));
   }
 
-  private static byte[] authorityBundle(
+  static byte[] authorityBundle(
       StartSessionPreAuthorizationReservationTuple tuple, UUID actor, Instant expiresAt) {
     String tenantId = tuple.action().scope().tenantId().toString();
     Instant now = Instant.now();
@@ -79,9 +79,9 @@ final class WorldCanonicalInstanceExecutionTestFixtures {
             "projectionStatus",
             "CURRENT",
             "evaluatedAt",
-            now.minusSeconds(30).toString(),
+            canonicalTimestamp(now.minusSeconds(30)),
             "expiresAt",
-            expiresAt.toString());
+            canonicalTimestamp(expiresAt));
     Map<String, Object> operation =
         Map.of(
             "issuanceOperationId", UUID.randomUUID().toString(),
@@ -152,5 +152,9 @@ final class WorldCanonicalInstanceExecutionTestFixtures {
       throw new IllegalStateException(
           "Could not encode synthetic World authority fixture", exception);
     }
+  }
+
+  private static String canonicalTimestamp(Instant instant) {
+    return Instant.ofEpochMilli(instant.toEpochMilli()).toString();
   }
 }

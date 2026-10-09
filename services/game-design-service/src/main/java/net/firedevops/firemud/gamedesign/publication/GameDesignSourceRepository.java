@@ -6,6 +6,7 @@ import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
+import net.firedevops.firemud.common.account.sourceintake.SelectedOwnerIntakeSourceReadScope;
 import net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding.AffectedUnit;
@@ -356,6 +357,22 @@ public final class GameDesignSourceRepository {
             gameplay.orElseThrow(),
             brand,
             template));
+  }
+
+  /**
+   * Reads complete synchronized source for the exact distinct owner intake scope. This read and
+   * export do not authenticate a caller, establish an Account reservation or finalization, or prove
+   * owner emptiness, owner receipt, or retention authority.
+   */
+  public SelectedOwnerIntakeSourceExport requireSelectedOwnerIntakeSource(
+      SelectedOwnerIntakeSourceReadScope scope) {
+    Objects.requireNonNull(scope, "scope");
+    var selected = scope.selected();
+    var sources =
+        readSynchronized(selected.target(), selected.commitId())
+            .orElseThrow(
+                () -> new IllegalStateException("Selected Game Design source is unavailable"));
+    return SelectedOwnerIntakeSourceExport.create(scope, sources);
   }
 
   private void requireGenesis(TargetProof target) {

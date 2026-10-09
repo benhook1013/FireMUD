@@ -37,7 +37,7 @@ import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 import tools.jackson.databind.ObjectMapper;
 
-/** Physical V69-to-V70 upgrade proof using isolated, explicitly synthetic upstream evidence. */
+/** Physical V69-to-V71 upgrade proof using isolated, explicitly synthetic upstream evidence. */
 @Testcontainers(disabledWithoutDocker = true)
 @SuppressWarnings("resource")
 class SelectedInventoryProfileUpgradeIntegrationTest {
@@ -61,6 +61,7 @@ class SelectedInventoryProfileUpgradeIntegrationTest {
     var transactions = new DataSourceTransactionManager(dataSource);
     var transaction = new TransactionTemplate(transactions);
     transaction.setIsolationLevel(TransactionDefinition.ISOLATION_READ_COMMITTED);
+    Map<String, Integer> originalMigrationChecksums = migrationChecksums(dsl);
 
     Version version =
         transaction.execute(
@@ -108,6 +109,9 @@ class SelectedInventoryProfileUpgradeIntegrationTest {
 
     flyway(dataSource, schema, null).migrate();
 
+    Map<String, Integer> upgradedMigrationChecksums = migrationChecksums(dsl);
+    assertThat(upgradedMigrationChecksums).containsAllEntriesOf(originalMigrationChecksums);
+    assertThat(upgradedMigrationChecksums).containsKeys("70", "71");
     assertThat(readOperationBytes(dsl, historicalV1.workflowId()))
         .containsExactly(originalOperationBytes);
     var repository = new GameDesignPublicationOperationRepository(dsl);
@@ -207,6 +211,16 @@ class SelectedInventoryProfileUpgradeIntegrationTest {
             workflowId);
     if (row == null) throw new AssertionError("Retained publication operation is absent");
     return row.get("request_bytes", byte[].class);
+  }
+
+  private static Map<String, Integer> migrationChecksums(DSLContext dsl) {
+    Map<String, Integer> checksums = new java.util.HashMap<>();
+    dsl.fetch("SELECT version, checksum FROM flyway_schema_history WHERE version IS NOT NULL")
+        .forEach(
+            row ->
+                checksums.put(
+                    row.get("version", String.class), row.get("checksum", Integer.class)));
+    return checksums;
   }
 
   private static byte[] rebindInventory(

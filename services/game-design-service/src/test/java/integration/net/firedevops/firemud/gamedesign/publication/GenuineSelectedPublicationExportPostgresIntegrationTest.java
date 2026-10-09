@@ -51,6 +51,7 @@ import net.firedevops.firemud.accountservice.authordraft.DraftAuthorizationFence
 import net.firedevops.firemud.common.account.StartSessionRedeemedOperationProjectionClient;
 import net.firedevops.firemud.common.authoring.AccountOriginalDraftOrderClient;
 import net.firedevops.firemud.common.authoring.AccountOriginalDraftOrderGrpcCodec;
+import net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding.AffectedUnit;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding.Owner;
@@ -562,6 +563,7 @@ class GenuineSelectedPublicationExportPostgresIntegrationTest {
                 });
         var originalOrder = account.prepareOriginalDraftOrder(selectedCommit, NAMESPACE);
         var original = originalOrder.original();
+        assertThat(original.schemaVersion()).isEqualTo(DraftAuthorizationFenceBinding.SCHEMA_V2);
         var accountAccess = account.preparedOriginalCreator();
         var accountRepository =
             new AccountGameLogicIntakeAuthorizationRepository(accountAccess.sources().dsl);
