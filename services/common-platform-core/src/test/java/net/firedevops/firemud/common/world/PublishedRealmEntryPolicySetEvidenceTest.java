@@ -32,6 +32,7 @@ import net.firedevops.firemud.common.publication.PublicationDigestRequestBinding
 import net.firedevops.firemud.common.publication.PublishedRealmEntryPolicyEvidence;
 import net.firedevops.firemud.common.publication.PublishedRealmEntryPolicySetEvidence;
 import net.firedevops.firemud.common.publication.RealmEntryPolicy;
+import net.firedevops.firemud.common.testing.AuthoringFixtures;
 import org.junit.jupiter.api.Test;
 import tools.jackson.databind.ObjectMapper;
 import tools.jackson.databind.node.ObjectNode;
@@ -639,7 +640,7 @@ class PublishedRealmEntryPolicySetEvidenceTest {
   }
 
   static GameDesignPublicationOperationBinding operation(long epoch) throws Exception {
-    var seed = WorldPublishedStartLocationGrpcCodecTest.evidence();
+    var seed = AuthoringFixtures.startLocationEvidence();
     var original = DraftAuthorizationFenceBinding.fromStored(seed.originalAccountBindingBytes());
     var draft =
         DraftCommitBinding.fromStored(
