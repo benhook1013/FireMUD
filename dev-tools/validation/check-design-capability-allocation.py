@@ -750,7 +750,7 @@ MICROSERVICE_APPENDIX_ALLOCATIONS = {
         "Gameplay protocol contract",
     ),
     "design/architecture/microservices/game-session-service/start-session-action-schema.md": (
-        "PO-1",
+        "AR-3",
         "Operator action schema",
     ),
     "design/architecture/microservices/logging-admin-service/admin-ui.md": ("EA-3", "First-party operator UX"),

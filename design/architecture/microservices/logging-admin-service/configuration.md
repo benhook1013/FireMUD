@@ -23,8 +23,11 @@ The Logging & Admin Service does **not** connect to Redis at runtime. It consume
 | `FIREMUD_AUTH_JWT_SECRET` | Legacy HMAC JWT validation secret (transitional only; not for player-facing environments) | *(none)* |
 | `FIREMUD_AUTH_JWT_SECRET_PATH` | Legacy file path for HMAC JWT validation secret (transitional only; not for player-facing environments) | *(none)* |
 | `FIREMUD_AUTH_JWT_EXPIRATION_MS` | Lifetime of issued JWTs in milliseconds | `3600000` |
+| `FIREMUD_GRPC_WORKLOAD_NAMESPACE` | Namespace required for the exact Account workload identity on the StartSession reservation evidence RPC; blank configuration denies that method | *(none)* |
 | `FIREMUD_SERVICES_ACCOUNT_SERVICE` | gRPC endpoint (host:port) for the Account Service | *(none)* |
 | `FIREMUD_SERVICES_GAME_SESSION_SERVICE` | gRPC endpoint (host:port) for the Game Session Service | *(none)* |
+
+`logging_admin.v1.StartSessionReservationEvidenceService/ReadCurrentClaimEvidence` is the only method exempted from the shared Bearer-JWT interceptor. The server's required client-certificate handshake and verified TLS peer interceptor remain enabled; the receiver checks the exact Account SPIFFE identity in `FIREMUD_GRPC_WORKLOAD_NAMESPACE`. The JWT header is not an identity source for this method.
 
 ## Proto Files
 
