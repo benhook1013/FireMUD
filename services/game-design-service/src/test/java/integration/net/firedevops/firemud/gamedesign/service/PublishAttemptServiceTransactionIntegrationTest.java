@@ -6,6 +6,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import java.lang.reflect.Constructor;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
+import java.nio.charset.StandardCharsets;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -15,6 +16,7 @@ import net.firedevops.firemud.gamedesign.GameDesignServiceApplication;
 import net.firedevops.firemud.gamedesign.dto.PublishParticipantDigestDto;
 import net.firedevops.firemud.gamedesign.dto.VersionDto;
 import net.firedevops.firemud.gamedesign.entity.Game;
+import net.firedevops.firemud.gamedesign.entity.GameAsset;
 import net.firedevops.firemud.gamedesign.entity.PublishAttempt;
 import net.firedevops.firemud.gamedesign.entity.PublishedReleaseBundle;
 import net.firedevops.firemud.gamedesign.entity.Version;
@@ -25,12 +27,15 @@ import net.firedevops.firemud.gamedesign.model.PublishType;
 import net.firedevops.firemud.gamedesign.model.TemplateRemapSetStatus;
 import net.firedevops.firemud.gamedesign.model.VersionAssetArtifactState;
 import net.firedevops.firemud.gamedesign.model.VersionLifecycleState;
+import net.firedevops.firemud.gamedesign.repository.GameAssetRepository;
 import net.firedevops.firemud.gamedesign.repository.GameRepository;
 import net.firedevops.firemud.gamedesign.repository.PublishAttemptRepository;
 import net.firedevops.firemud.gamedesign.repository.PublishedReleaseBundleRepository;
 import net.firedevops.firemud.gamedesign.repository.VersionAssetArtifactRepository;
 import net.firedevops.firemud.gamedesign.repository.VersionRepository;
 import net.firedevops.firemud.gamedesign.repository.VersionTemplateRemapSetRepository;
+import net.firedevops.firemud.gamedesign.service.VersionAssetExportCandidateService;
+import net.firedevops.firemud.gamedesign.service.VersionAssetPublicationService;
 import net.firedevops.firemud.gamedesign.service.impl.PublishAttemptServiceImpl;
 import net.firedevops.firemud.gamedesign.service.impl.TemporalVersionPublishWorkflow;
 import net.firedevops.firemud.gamedesign.service.impl.VersionPublishCommandServiceImpl;
@@ -71,7 +76,10 @@ class PublishAttemptServiceTransactionIntegrationTest {
   private static final String TENANT_ID = "9001";
   private static final String WORKFLOW_ID = "full-version-transaction-integration-test";
   private static final String MANIFEST_HASH = "sha256:" + "a".repeat(64);
-  private static final String ARTIFACT_DIGEST = "sha256:" + "b".repeat(64);
+  private static final String ARTIFACT_DIGEST =
+      "sha256:6eb74f970ab34ad786c5089af8780d7a218f91f9d6a7ed03675185e39b317e94";
+  private static final byte[] FIXTURE_ASSET_BYTES =
+      "publication fixture asset".getBytes(StandardCharsets.UTF_8);
 
   @Container
   static PostgreSQLContainer<?> postgres =
@@ -84,6 +92,7 @@ class PublishAttemptServiceTransactionIntegrationTest {
   }
 
   @Autowired private GameRepository gameRepository;
+  @Autowired private GameAssetRepository gameAssetRepository;
   @Autowired private PublishAttemptServiceImpl publishAttemptService;
   @Autowired private VersionPublishCommandServiceImpl versionPublishCommandService;
   @Autowired private PublishAttemptRepository publishAttemptRepository;
@@ -91,6 +100,8 @@ class PublishAttemptServiceTransactionIntegrationTest {
   @Autowired private VersionAssetArtifactRepository versionAssetArtifactRepository;
   @Autowired private VersionRepository versionRepository;
   @Autowired private VersionTemplateRemapSetRepository templateRemapSetRepository;
+  @Autowired private VersionAssetPublicationService versionAssetPublicationService;
+  @Autowired private VersionAssetExportCandidateService exportCandidateService;
   @MockitoBean private AssetExportService assetExportService;
   @MockitoBean private PublishGateService publishGateService;
   @MockitoSpyBean private RecordedParticipantDigestService recordedParticipantDigestService;
@@ -252,7 +263,8 @@ class PublishAttemptServiceTransactionIntegrationTest {
                       null,
                       null));
             });
-    Mockito.when(assetExportService.exportAssets(tenantId, 1)).thenReturn(exportedManifest());
+    Mockito.when(assetExportService.exportAssets(tenantId, 1))
+        .thenAnswer(invocation -> recordFixtureCandidate(tenantId, invocation.getArgument(1)));
 
     Object snapshot =
         reconcileFullVersionPublishMechanics(
@@ -364,7 +376,8 @@ class PublishAttemptServiceTransactionIntegrationTest {
                 templateRemapSetRepository.save(approvedRemapSet);
                 remapSetId.set(approvedRemapSet.getRemapSetId());
                 exportCompleted.set(true);
-                return exportedManifest;
+                return recordFixtureCandidate(
+                    tenantId, invocation.getArgument(1), exportedManifest);
               } catch (Throwable failure) {
                 exportCallbackFailure.set(failure);
                 throw failure;
@@ -584,14 +597,36 @@ class PublishAttemptServiceTransactionIntegrationTest {
     return new ExportedAssetManifest(
         MANIFEST_HASH,
         1,
-        List.of("manifest.json"),
+        List.of("fixture.bin"),
         List.of(
             new PublishedArtifactDigest(
-                "manifest.json",
-                "manifest",
+                "fixture.bin",
+                "BINARY",
                 "artifacts/sha256/" + ARTIFACT_DIGEST.substring("sha256:".length()),
                 ARTIFACT_DIGEST,
-                "application/json",
+                "application/octet-stream",
                 1)));
+  }
+
+  private ExportedAssetManifest recordFixtureCandidate(String tenantId, int versionNumber) {
+    return recordFixtureCandidate(tenantId, versionNumber, exportedManifest());
+  }
+
+  private ExportedAssetManifest recordFixtureCandidate(
+      String tenantId, int versionNumber, ExportedAssetManifest candidate) {
+    Version version =
+        versionRepository
+            .findByTenantIdAndVersionNumber(tenantId, versionNumber)
+            .orElseThrow(() -> new IllegalStateException("Fixture Version was not persisted"));
+    GameAsset asset = new GameAsset();
+    asset.setTenantId(tenantId);
+    asset.setFileName("fixture.bin");
+    asset.setContentType("application/octet-stream");
+    asset.setData(FIXTURE_ASSET_BYTES);
+    GameAsset persistedAsset = gameAssetRepository.save(asset);
+    versionAssetPublicationService.associateDraftAsset(
+        tenantId, version.getId(), persistedAsset.getId(), "fixture.bin");
+    versionAssetPublicationService.freezeOrReadSnapshot(tenantId, versionNumber);
+    return exportCandidateService.recordExportCandidate(tenantId, versionNumber, candidate);
   }
 }
