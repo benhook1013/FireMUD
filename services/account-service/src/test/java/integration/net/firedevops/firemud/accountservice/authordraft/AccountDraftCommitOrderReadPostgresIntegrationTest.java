@@ -49,7 +49,7 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 
 /**
  * Real Flyway/PostgreSQL owner-read proof over explicitly stipulated test-only original bindings.
- * The database rows, separate Account owner transaction, immutable order/readback state, and V99
+ * The database rows, separate Account owner transaction, immutable order/readback state, and V87
  * source guards are real. The creator/source capture and workload Context are test fixtures only;
  * this proves neither authenticated creator issuance nor physical mTLS or a production caller.
  */
@@ -87,7 +87,7 @@ class AccountDraftCommitOrderReadPostgresIntegrationTest {
     assertThat(fixture.tx(() -> fixture.repository.readSettlement(binding)))
         .isEqualTo(Settlement.PENDING);
 
-    // V99's real source guard remains effective while this original owner result is unresolved.
+    // V87's real source guard remains effective while this original owner result is unresolved.
     String passwordBefore = accountPassword(fixture, binding.actorAccountId());
     assertThatThrownBy(
             () ->

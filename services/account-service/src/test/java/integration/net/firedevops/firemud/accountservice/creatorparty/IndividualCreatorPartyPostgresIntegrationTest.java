@@ -40,7 +40,7 @@ import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
 /**
- * Real owner-row and PostgreSQL guard definitions. Verification/policy and receiving V94 creation
+ * Real owner-row and PostgreSQL guard definitions. Verification/policy and receiving V83 creation
  * qualification are explicit SQL fixtures, not authentication, legal provisioning or launch proof.
  */
 @Testcontainers(disabledWithoutDocker = true)
@@ -53,8 +53,8 @@ class IndividualCreatorPartyPostgresIntegrationTest {
 
   @Test
   void migrationPreservesExistingAccountAndMembershipAndEnrollsNoParty() throws Exception {
-    // V94 is the receiving tree's last existing migration before the V95 creator-party schema.
-    Database db = database("94");
+    // V83 is the receiving tree's last existing migration before the V84 creator-party schema.
+    Database db = database("83");
     UUID account = insertAccount(db);
     long accountKey =
         Objects.requireNonNull(
@@ -82,7 +82,7 @@ class IndividualCreatorPartyPostgresIntegrationTest {
                         "SELECT * FROM account_tenant_membership WHERE account_id = ?", accountKey),
                 "Baseline membership row is missing")
             .intoMap();
-    migrate(db, "95");
+    migrate(db, "84");
     assertThat(
             Objects.requireNonNull(
                     db.dsl().fetchOne("SELECT * FROM accounts WHERE account_uuid = ?", account),
@@ -494,7 +494,7 @@ class IndividualCreatorPartyPostgresIntegrationTest {
   }
 
   private static Fixture fixture() throws Exception {
-    Database db = database("95");
+    Database db = database("84");
     UUID account = insertAccount(db);
     UUID request = UUID.randomUUID();
     UUID operation = UUID.randomUUID();
@@ -584,7 +584,7 @@ class IndividualCreatorPartyPostgresIntegrationTest {
   }
 
   private static void insertBootstrapFixture(Database db, FreshTenantCreatorEvidence creator) {
-    // Stipulated original qualification, using the real guarded V94 lifecycle; no guard is
+    // Stipulated original qualification, using the real guarded V83 lifecycle; no guard is
     // disabled.
     var creation = creator.creationEvidence();
     UUID authorization = creator.accountAuthorizationOperationId();

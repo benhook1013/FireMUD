@@ -148,4 +148,10 @@ CREATE TRIGGER account_hosted_terms_disclosure_sources_immutable
 CREATE TRIGGER account_hosted_terms_disclosure_sources_insert_phase
     BEFORE INSERT ON account_hosted_terms_disclosure_sources
     FOR EACH ROW EXECUTE FUNCTION account_hosted_terms_disclosure_source_insert_guard();
+CREATE TRIGGER account_hosted_terms_disclosure_handoffs_no_truncate
+    BEFORE TRUNCATE ON account_hosted_terms_disclosure_handoffs
+    FOR EACH STATEMENT EXECUTE FUNCTION account_hosted_terms_disclosure_immutable_guard();
+CREATE TRIGGER account_hosted_terms_disclosure_sources_no_truncate
+    BEFORE TRUNCATE ON account_hosted_terms_disclosure_sources
+    FOR EACH STATEMENT EXECUTE FUNCTION account_hosted_terms_disclosure_immutable_guard();
 -- [jooq ignore stop]

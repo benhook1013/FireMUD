@@ -4,20 +4,24 @@ import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.sql.Connection;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashSet;
 import java.util.HexFormat;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
+import net.firedevops.firemud.common.gamedesign.AuthoredWorldReleaseAttestationEvidence;
 import net.firedevops.firemud.common.tenant.AuthoredWorldSourceEvidence;
 import net.firedevops.firemud.common.world.RoomTemplateRef;
 import net.firedevops.firemud.common.world.WorldCanonicalInstanceLifecycleEvidence;
 import net.firedevops.firemud.common.world.WorldDraftStartLocationEvidence;
 import net.firedevops.firemud.common.world.WorldPublishedStartLocationEvidence;
+import net.firedevops.firemud.worldmanagement.v1.WorldInboundSourceFamily;
 import org.jooq.DSLContext;
 import org.jooq.Record;
 import org.jooq.exception.DataAccessException;
@@ -172,12 +176,17 @@ public final class WorldCanonicalInstanceLifecycleReadRepository {
       JsonNode input = parseInput(inputJson);
       requireInputIdentity(input, request, association, captureId);
       requirePreparationCounts(input, preparation);
+      var release = association.completeLaunchBinding().evidence().releaseAttestation();
       Set<UUID> expectedRegionTemplates =
-          requireFrozenGraphIdentity(input, preparation, graphBytes, graphSha256);
+          requireFrozenGraphIdentity(
+              input,
+              preparation,
+              graphBytes,
+              graphSha256,
+              expectedFrozenGraphSchemaVersion(release));
       Map<UUID, UUID> operationalRegionAssignments =
           readOperationalRegionAssignments(association, preparation, expectedRegionTemplates);
 
-      var release = association.completeLaunchBinding().evidence().releaseAttestation();
       if (!net.firedevops.firemud.common.gamedesign.AuthoredWorldReleaseAttestationEvidence
               .requiresWorldStartLocationEvidence(release.schemaVersion())
           || release.worldStartLocationEvidence() == null) {
@@ -358,7 +367,11 @@ public final class WorldCanonicalInstanceLifecycleReadRepository {
 
   /** Proves the preparation graph is the immutable graph retained by the exact frozen capture. */
   private Set<UUID> requireFrozenGraphIdentity(
-      JsonNode input, Record preparation, byte[] graphBytes, String graphSha256) {
+      JsonNode input,
+      Record preparation,
+      byte[] graphBytes,
+      String graphSha256,
+      int expectedGraphSchemaVersion) {
     JsonNode topology = requiredObject(input, "topology");
     UUID captureId = required(preparation, "capture_id", UUID.class);
     Record frozen =
@@ -386,11 +399,7 @@ public final class WorldCanonicalInstanceLifecycleReadRepository {
 
     try {
       JsonNode graph = CLOSED_JSON.readTree(graphBytes);
-      requireFields(
-          graph,
-          Set.of("schemaVersion", "canonicalTenantId", "canonicalVersionId", "rows"),
-          "Frozen canonical graph");
-      requireText(graph, "schemaVersion", "2");
+      requireFrozenGraphProfile(graph, expectedGraphSchemaVersion);
       requireText(
           graph, "canonicalTenantId", text(requiredObject(input, "identity"), "canonicalTenantId"));
       requireText(graph, "canonicalVersionId", text(topology, "canonicalVersionId"));
@@ -436,6 +445,89 @@ public final class WorldCanonicalInstanceLifecycleReadRepository {
       return Set.copyOf(expectedRegionTemplates);
     } catch (tools.jackson.core.JacksonException malformed) {
       throw new InvalidLifecycleEvidenceException("Frozen canonical graph is invalid", malformed);
+    }
+  }
+
+  private static int expectedFrozenGraphSchemaVersion(
+      AuthoredWorldReleaseAttestationEvidence release) {
+    int expectedWorldDigestSchema =
+        switch (release.schemaVersion()) {
+          case AuthoredWorldReleaseAttestationEvidence.SELECTOR_SCHEMA_VERSION -> 3;
+          case AuthoredWorldReleaseAttestationEvidence.CLOSURE_SELECTOR_SCHEMA_VERSION -> 4;
+          default ->
+              throw invalid("Retained release has no supported selected World graph profile");
+        };
+    var worldParticipants =
+        release.participantDigests().stream()
+            .filter(participant -> "WORLD_MANAGEMENT".equals(participant.participantKey()))
+            .toList();
+    if (worldParticipants.size() != 1
+        || worldParticipants.getFirst().digestSchemaVersion() != expectedWorldDigestSchema) {
+      throw invalid("Retained release World participant differs from its selected graph profile");
+    }
+    return switch (expectedWorldDigestSchema) {
+      case 3 -> 2;
+      case 4 -> 3;
+      default -> throw invalid("Retained release has an unsupported selected World digest schema");
+    };
+  }
+
+  private static void requireFrozenGraphProfile(JsonNode graph, int expectedSchemaVersion) {
+    Set<String> expectedFields =
+        switch (expectedSchemaVersion) {
+          case 2 -> Set.of("schemaVersion", "canonicalTenantId", "canonicalVersionId", "rows");
+          case 3 ->
+              Set.of(
+                  "schemaVersion",
+                  "canonicalTenantId",
+                  "canonicalVersionId",
+                  "inboundSourceClosure",
+                  "rows");
+          default -> throw invalid("Frozen canonical graph has an unsupported schema profile");
+        };
+    requireFields(graph, expectedFields, "Frozen canonical graph");
+    requireText(graph, "schemaVersion", Integer.toString(expectedSchemaVersion));
+    if (expectedSchemaVersion == 3) {
+      requireFrozenGraphInboundClosure(graph);
+    }
+  }
+
+  private static void requireFrozenGraphInboundClosure(JsonNode graph) {
+    JsonNode closure = requiredObject(graph, "inboundSourceClosure");
+    requireFields(
+        closure,
+        Set.of("schemaVersion", "familyCounts"),
+        "Frozen canonical graph inbound-source closure");
+    requireInteger(closure, "schemaVersion", 1);
+    JsonNode familyCounts = closure.get("familyCounts");
+    List<WorldDraftTopologyInputGraph.InboundSourceFamilyCount> decodedCounts = new ArrayList<>();
+    List<WorldInboundSourceFamily> familyOrder =
+        WorldDraftTopologyInputGraph.INBOUND_SOURCE_FAMILY_ORDER;
+    if (familyCounts == null
+        || !familyCounts.isArray()
+        || familyCounts.size() != familyOrder.size()) {
+      throw invalid("Frozen canonical graph inbound-source family vector is incomplete");
+    }
+    for (int index = 0; index < familyOrder.size(); index++) {
+      JsonNode familyCount = familyCounts.get(index);
+      requireFields(
+          familyCount,
+          Set.of("family", "count"),
+          "Frozen canonical graph inbound-source family count");
+      var expectedFamily = familyOrder.get(index);
+      requireText(familyCount, "family", expectedFamily.name());
+      decodedCounts.add(
+          new WorldDraftTopologyInputGraph.InboundSourceFamilyCount(
+              expectedFamily, intValue(familyCount, "count")));
+    }
+    try {
+      WorldDraftTopologyInputGraph.requireEmptyInboundSourceClosure(
+          new WorldDraftTopologyInputGraph.InboundSourceClosureDeclaration(
+              intValue(closure, "schemaVersion"), decodedCounts));
+    } catch (IllegalArgumentException unsupportedClosure) {
+      throw new InvalidLifecycleEvidenceException(
+          "Frozen canonical graph inbound-source closure is outside the supported profile",
+          unsupportedClosure);
     }
   }
 

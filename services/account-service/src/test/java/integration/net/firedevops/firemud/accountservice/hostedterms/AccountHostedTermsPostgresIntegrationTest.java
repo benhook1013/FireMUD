@@ -70,7 +70,7 @@ class AccountHostedTermsPostgresIntegrationTest {
 
   @Test
   void migrationRetainsExistingPartyAndBackfillsNoCatalogOrAcceptance() throws Exception {
-    Database db = database("95");
+    Database db = database("84");
     UUID accountId = insertAccount(db);
     IndividualCreatorPartySource party =
         party(UUID.randomUUID(), accountId, 1, "test-id-evidence-v1");
@@ -89,7 +89,7 @@ class AccountHostedTermsPostgresIntegrationTest {
                 .intoMap());
     byte[] partySourceBefore = (byte[]) partyBefore.remove("source_payload");
 
-    migrate(db, "96");
+    migrate(db, "85");
 
     assertThat(
             Objects.requireNonNull(

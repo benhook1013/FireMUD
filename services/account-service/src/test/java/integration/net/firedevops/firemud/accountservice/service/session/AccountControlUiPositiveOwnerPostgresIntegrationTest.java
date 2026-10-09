@@ -16,9 +16,12 @@ import java.util.ArrayList;
 import java.util.Base64;
 import java.util.Collection;
 import java.util.List;
+import java.util.Objects;
 import java.util.UUID;
 import net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding;
+import net.firedevops.firemud.common.operator.StartSessionOperatorAction;
+import net.firedevops.firemud.common.operator.StartSessionPreAuthorizationReservationTuple;
 import net.firedevops.firemud.common.redis.contracts.RedisScriptCatalog;
 import net.firedevops.firemud.common.redis.contracts.RedisScriptContribution;
 import net.firedevops.firemud.common.redis.contracts.RedisScriptDescriptor;
@@ -231,6 +234,183 @@ class AccountControlUiPositiveOwnerPostgresIntegrationTest {
       assertThat(f.dsl.fetchCount(DSL.table("account_control_ui_response_envelopes"))).isEqualTo(1);
       var actor = actors.authenticate(compact, f.tenant, environment);
       assertThat(actor.accountId()).isEqualTo(f.account.getAccountUuid());
+      String tokenHash =
+          AccountControlUiIssuanceRepository.hash(compact.getBytes(StandardCharsets.US_ASCII));
+      var retained = f.tx(() -> operations.findToken(tokenHash));
+      assertThat(retained.status).isEqualTo("COMMITTED");
+
+      // This is Account capture/readback proof only. The original Logging reservation owner and
+      // claim fence are stipulated upstream inputs here; this fixture does not prove a genuine
+      // Logging claim, StartSession authorization, or issuer activation.
+      UUID reservationOwnerId = UUID.randomUUID();
+      long reservationClaimFence = 1L;
+      String controlPlaneRequestId = "start-session-capture-" + UUID.randomUUID();
+      var action =
+          new StartSessionOperatorAction(
+              StartSessionOperatorAction.ACTION_FAMILY_SCHEMA_ID,
+              StartSessionOperatorAction.ACTION_FAMILY_SCHEMA_VERSION,
+              new StartSessionOperatorAction.Scope(f.tenant, "control-ui-owner-proof"),
+              new StartSessionOperatorAction.Target(42L, f.account.getAccountUuid()),
+              StartSessionOperatorAction.ExpectedVersion.ABSENT,
+              new StartSessionOperatorAction.Mutation(StartSessionOperatorAction.ClientIp.absent()),
+              "test-only StartSession Account capture");
+      var tuple =
+          StartSessionPreAuthorizationReservationTuple.createHuman(
+              controlPlaneRequestId, actor.accountId(), action);
+      var captureRepository = new AccountStartSessionAuthorityCaptureRepository(f.dsl);
+      AccountStartSessionAuthorityCapture firstCapture;
+      AccountStartSessionAuthorityCapture exactRetry;
+      AccountStartSessionAuthorityCapture finalReadback;
+      try (var peer =
+          AccountControlUiOwnerWorkflowPostgresIntegrationTest.withPeer(
+              AccountControlUiOwnerWorkflowPostgresIntegrationTest.CALLER)) {
+        firstCapture =
+            actors.withCurrentCommitted(
+                actor.accountId(),
+                f.tenant,
+                retained.jti,
+                environment,
+                current ->
+                    captureRepository.prepareOrReadExact(
+                        current,
+                        tuple,
+                        AccountControlUiOwnerWorkflowPostgresIntegrationTest.CALLER,
+                        reservationOwnerId,
+                        reservationClaimFence));
+        assertThat(f.dsl.fetchCount(DSL.table("account_start_session_authority_captures")))
+            .isEqualTo(1);
+        assertThat(firstCapture.snapshotSha256()).hasSize(64);
+        assertThat(firstCapture.canonicalSha256()).hasSize(64);
+        assertThat(firstCapture.capturedAt())
+            .matches("\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z");
+
+        exactRetry =
+            actors.withCurrentCommitted(
+                actor.accountId(),
+                f.tenant,
+                retained.jti,
+                environment,
+                current ->
+                    captureRepository.prepareOrReadExact(
+                        current,
+                        tuple,
+                        AccountControlUiOwnerWorkflowPostgresIntegrationTest.CALLER,
+                        reservationOwnerId,
+                        reservationClaimFence));
+        assertThat(exactRetry.sameStoredValue(firstCapture)).isTrue();
+        assertThat(exactRetry.canonicalBytes()).isEqualTo(firstCapture.canonicalBytes());
+        assertThat(exactRetry.bundleReference()).isEqualTo(firstCapture.bundleReference());
+
+        finalReadback =
+            actors.withCurrentCommitted(
+                actor.accountId(),
+                f.tenant,
+                retained.jti,
+                environment,
+                current ->
+                    captureRepository.lockExactCurrent(
+                        firstCapture,
+                        current,
+                        tuple,
+                        AccountControlUiOwnerWorkflowPostgresIntegrationTest.CALLER,
+                        reservationOwnerId,
+                        reservationClaimFence));
+        assertThat(finalReadback.sameStoredValue(firstCapture)).isTrue();
+
+        var changedAction =
+            new StartSessionOperatorAction(
+                action.actionFamilySchemaId(),
+                action.actionFamilySchemaVersion(),
+                action.scope(),
+                action.target(),
+                action.expectedVersion(),
+                action.mutation(),
+                "changed typed action under original request ID");
+        var changedTuple =
+            StartSessionPreAuthorizationReservationTuple.createHuman(
+                controlPlaneRequestId, actor.accountId(), changedAction);
+        assertThatThrownBy(
+                () ->
+                    actors.withCurrentCommitted(
+                        actor.accountId(),
+                        f.tenant,
+                        retained.jti,
+                        environment,
+                        current ->
+                            captureRepository.prepareOrReadExact(
+                                current,
+                                changedTuple,
+                                AccountControlUiOwnerWorkflowPostgresIntegrationTest.CALLER,
+                                reservationOwnerId,
+                                reservationClaimFence)))
+            .isInstanceOf(IllegalStateException.class)
+            .hasMessage("Account StartSession source capture is unavailable");
+        assertThatThrownBy(
+                () ->
+                    actors.withCurrentCommitted(
+                        actor.accountId(),
+                        f.tenant,
+                        retained.jti,
+                        environment,
+                        current ->
+                            captureRepository.prepareOrReadExact(
+                                current,
+                                tuple,
+                                AccountControlUiOwnerWorkflowPostgresIntegrationTest.CALLER,
+                                UUID.randomUUID(),
+                                reservationClaimFence)))
+            .isInstanceOf(IllegalStateException.class)
+            .hasMessage("Account StartSession source capture is unavailable");
+        assertThatThrownBy(
+                () ->
+                    actors.withCurrentCommitted(
+                        actor.accountId(),
+                        f.tenant,
+                        retained.jti,
+                        environment,
+                        current ->
+                            captureRepository.prepareOrReadExact(
+                                current,
+                                tuple,
+                                AccountControlUiOwnerWorkflowPostgresIntegrationTest.CALLER,
+                                reservationOwnerId,
+                                reservationClaimFence + 1L)))
+            .isInstanceOf(IllegalStateException.class)
+            .hasMessage("Account StartSession source capture is unavailable");
+
+        var unchanged =
+            actors.withCurrentCommitted(
+                actor.accountId(),
+                f.tenant,
+                retained.jti,
+                environment,
+                current ->
+                    captureRepository.lockExactCurrent(
+                        firstCapture,
+                        current,
+                        tuple,
+                        AccountControlUiOwnerWorkflowPostgresIntegrationTest.CALLER,
+                        reservationOwnerId,
+                        reservationClaimFence));
+        assertThat(unchanged.canonicalBytes()).isEqualTo(firstCapture.canonicalBytes());
+        assertThat(f.dsl.fetchCount(DSL.table("account_start_session_authority_captures")))
+            .isEqualTo(1);
+        assertThat(
+                Objects.requireNonNull(
+                        f.dsl.fetchOne(
+                            "SELECT last_source_version FROM account_start_session_capture_source_version_allocator"),
+                        "capture sourceVersion allocator row must exist")
+                    .get(0, Long.class))
+            .isEqualTo(firstCapture.sourceVersion());
+        assertThat(
+                Objects.requireNonNull(
+                        f.dsl.fetchOne(
+                            "SELECT last_source_fence FROM account_start_session_capture_source_fence_allocator"),
+                        "capture sourceFence allocator row must exist")
+                    .get(0, Long.class))
+            .isEqualTo(firstCapture.sourceFence());
+      }
+
       var snapshot = f.tx(() -> f.authority.captureInitial(f.tenant, environment));
       var binding = originalBinding(f, snapshot.sources());
       var claimed = actors.claimOriginalDraft(compact, binding, environment);
@@ -240,9 +420,6 @@ class AccountControlUiPositiveOwnerPostgresIntegrationTest {
       assertThat(f.dsl.fetchCount(DSL.table("account_control_ui_issuance_operations")))
           .isEqualTo(1);
       assertThat(f.dsl.fetchCount(DSL.table("account_control_ui_response_envelopes"))).isEqualTo(1);
-      String tokenHash =
-          AccountControlUiIssuanceRepository.hash(compact.getBytes(StandardCharsets.US_ASCII));
-      var retained = f.tx(() -> operations.findToken(tokenHash));
       assertThat(retained.status).isEqualTo("COMMITTED");
       assertThat(retained.signerReceipt).isEqualTo(originalSigner.receipt());
       var active = registry.readActive(tokenHash);

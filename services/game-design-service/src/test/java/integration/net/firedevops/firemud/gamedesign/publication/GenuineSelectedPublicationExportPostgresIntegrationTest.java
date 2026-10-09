@@ -49,6 +49,7 @@ import net.firedevops.firemud.account.v1.StartSessionOperatorAuthorizationServic
 import net.firedevops.firemud.accountservice.authordraft.AccountDraftCommitOrderReadGrpcService;
 import net.firedevops.firemud.accountservice.authordraft.DraftAuthorizationFenceRepository;
 import net.firedevops.firemud.common.account.StartSessionRedeemedOperationProjectionClient;
+import net.firedevops.firemud.common.account.sourceintake.SelectedOwnerIntakeSourceReadScope;
 import net.firedevops.firemud.common.authoring.AccountOriginalDraftOrderClient;
 import net.firedevops.firemud.common.authoring.AccountOriginalDraftOrderGrpcCodec;
 import net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding;
@@ -138,6 +139,7 @@ import net.firedevops.firemud.gamedesign.publication.SelectedDraftGameLogicRecei
 import net.firedevops.firemud.gamedesign.publication.SelectedDraftPublicationAdmissionService;
 import net.firedevops.firemud.gamedesign.publication.SelectedDraftPublicationDigestReadService;
 import net.firedevops.firemud.gamedesign.publication.SelectedDraftTemplateWorldSourceAssociationRepository;
+import net.firedevops.firemud.gamedesign.publication.SelectedOwnerIntakeSourceExport;
 import net.firedevops.firemud.gamedesign.publication.StartSessionLaunchDescriptorProducer;
 import net.firedevops.firemud.gamedesign.publication.StartSessionTemplateAssociationReadService;
 import net.firedevops.firemud.gamedesign.publication.TemplateConfigSource;
@@ -761,6 +763,78 @@ class GenuineSelectedPublicationExportPostgresIntegrationTest {
         assertThat(selectedSources.policy().binding()).isEqualTo(selectedCommit);
         assertThat(RealmPolicySource.ordered(selectedSources.policy().policies()))
             .containsExactly(expectedPolicy);
+
+        var ownerIntakeSourceRepository = new GameDesignSourceRepository(gd.dsl());
+        var sourceRowsBeforeExport = selectedOwnerSourceRowCounts(gd.dsl());
+        for (Owner owner : List.of(Owner.ENTITY_MANAGEMENT, Owner.AUTOMATION_SCRIPTING)) {
+          // This scope is only the export's integrity input. No Account authorization or owner
+          // retention receipt exists for these domains in this composed fixture.
+          var scope = selectedOwnerSourceScope(owner, selectedCommit);
+          SelectedOwnerIntakeSourceExport exportedSource =
+              ownerIntakeSourceRepository.requireSelectedOwnerIntakeSource(scope);
+          SelectedOwnerIntakeSourceExport exactRetry =
+              ownerIntakeSourceRepository.requireSelectedOwnerIntakeSource(scope);
+
+          assertThat(exportedSource.scope().selected().canonicalBytes())
+              .containsExactly(selectedCommit.canonicalBytes());
+          assertThat(exportedSource.sources().command().binding()).isEqualTo(selectedCommit);
+          assertThat(exportedSource.sources().policy().binding()).isEqualTo(selectedCommit);
+          assertThat(exportedSource.sources().asset().binding()).isEqualTo(selectedCommit);
+          assertThat(exportedSource.sources().gameplay().binding()).isEqualTo(selectedCommit);
+          assertThat(exportedSource.sources().branding().orElseThrow().binding())
+              .isEqualTo(selectedCommit);
+          assertThat(exportedSource.sources().templateConfig().orElseThrow().binding())
+              .isEqualTo(selectedCommit);
+          assertThat(exactRetry.canonicalBytes()).containsExactly(exportedSource.canonicalBytes());
+          assertThat(exactRetry.digest()).isEqualTo(exportedSource.digest());
+        }
+        var wrongTarget =
+            new TargetProof(
+                gd.target().canonicalTenantId(),
+                gd.target().canonicalVersionId(),
+                gd.target().gameDesignVersionRowId() + 1,
+                gd.target().gameDesignVersionTenantKey(),
+                gd.target().sourceGameRowId() + 1,
+                gd.target().sourceGameTenantKey(),
+                gd.target().sourceProvenanceKind());
+        var wrongSelectedBinding =
+            DraftCommitBinding.create(
+                wrongTarget,
+                selectedCommit.requestId(),
+                selectedCommit.commitId(),
+                selectedCommit.baseCommitId(),
+                selectedCommit.revisions(),
+                selectedCommit.affectedUnits());
+        assertThatThrownBy(
+                () ->
+                    ownerIntakeSourceRepository.requireSelectedOwnerIntakeSource(
+                        selectedOwnerSourceScope(Owner.ENTITY_MANAGEMENT, wrongSelectedBinding)))
+            .isInstanceOf(IllegalStateException.class);
+        var missingTarget =
+            new TargetProof(
+                UUID.randomUUID(),
+                gd.target().canonicalVersionId(),
+                gd.target().gameDesignVersionRowId(),
+                gd.target().gameDesignVersionTenantKey(),
+                gd.target().sourceGameRowId(),
+                gd.target().sourceGameTenantKey(),
+                gd.target().sourceProvenanceKind());
+        var missingSelectedBinding =
+            DraftCommitBinding.create(
+                missingTarget,
+                selectedCommit.requestId(),
+                selectedCommit.commitId(),
+                selectedCommit.baseCommitId(),
+                selectedCommit.revisions(),
+                selectedCommit.affectedUnits());
+        assertThatThrownBy(
+                () ->
+                    ownerIntakeSourceRepository.requireSelectedOwnerIntakeSource(
+                        selectedOwnerSourceScope(
+                            Owner.AUTOMATION_SCRIPTING, missingSelectedBinding)))
+            .isInstanceOf(IllegalStateException.class)
+            .hasMessage("Selected Game Design source is unavailable");
+        assertThat(selectedOwnerSourceRowCounts(gd.dsl())).isEqualTo(sourceRowsBeforeExport);
 
         var templateSource =
             new TemplateConfigSourceRepository(gd.dsl())
@@ -2037,6 +2111,34 @@ class GenuineSelectedPublicationExportPostgresIntegrationTest {
             savedVersion.getIdentitySourceProvenanceKind());
     assertThat(new GameDesignSourceRepository(store.dsl()).readGenesis(target)).isPresent();
     return store.withIdentity(target, savedVersion);
+  }
+
+  private static SelectedOwnerIntakeSourceReadScope selectedOwnerSourceScope(
+      Owner owner, DraftCommitBinding selected) {
+    return new SelectedOwnerIntakeSourceReadScope(
+        owner,
+        NAMESPACE,
+        UUID.randomUUID(),
+        UUID.randomUUID(),
+        UUID.randomUUID(),
+        UUID.randomUUID(),
+        selected);
+  }
+
+  private static Map<String, Integer> selectedOwnerSourceRowCounts(DSLContext dsl) {
+    return Map.of(
+        "command",
+        dsl.fetchCount(DSL.table("game_design_command_source_snapshot")),
+        "realm-policy",
+        dsl.fetchCount(DSL.table("game_design_realm_policy_snapshot")),
+        "asset",
+        dsl.fetchCount(DSL.table("game_design_asset_source_snapshot")),
+        "gameplay-rule",
+        dsl.fetchCount(DSL.table("game_design_gameplay_rule_snapshot")),
+        "branding",
+        dsl.fetchCount(DSL.table("game_design_branding_source_snapshot")),
+        "template-config",
+        dsl.fetchCount(DSL.table("game_design_template_config_source_snapshot")));
   }
 
   private static Store serviceStore(PostgreSQLContainer<?> postgres, String service) {

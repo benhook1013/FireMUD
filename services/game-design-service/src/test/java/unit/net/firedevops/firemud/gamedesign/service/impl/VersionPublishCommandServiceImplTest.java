@@ -14,6 +14,7 @@ import static org.mockito.Mockito.when;
 
 import io.grpc.Status;
 import io.grpc.StatusRuntimeException;
+import java.sql.SQLException;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
@@ -78,6 +79,22 @@ class VersionPublishCommandServiceImplTest {
   @Mock private WorldPublishedStartLocationEvidence originalWorldEvidence;
 
   private VersionPublishCommandServiceImpl service;
+
+  @Test
+  void failureDiagnosticsNameStageAndJdbcStateWithoutExceptionMessages() {
+    SQLException sqlFailure = new SQLException("secret-auth-bytes", "23505", 7);
+    IllegalStateException failure = new IllegalStateException("credential payload", sqlFailure);
+
+    String diagnostic =
+        VersionPublishCommandServiceImpl.safeFailureDiagnostic("RELEASE_FINALIZATION", failure);
+
+    assertEquals(
+        "stage=RELEASE_FINALIZATION causeTypes=java.lang.IllegalStateException"
+            + " <- java.sql.SQLException[sqlState=23505,vendorCode=7]",
+        diagnostic);
+    assertTrue(!diagnostic.contains("secret-auth-bytes"));
+    assertTrue(!diagnostic.contains("credential payload"));
+  }
 
   @BeforeEach
   void setup() {

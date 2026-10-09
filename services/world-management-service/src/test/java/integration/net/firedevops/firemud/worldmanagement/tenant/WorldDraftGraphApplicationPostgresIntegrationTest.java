@@ -3615,27 +3615,67 @@ class WorldDraftGraphApplicationPostgresIntegrationTest {
     var input = preparationInput(f, frozen, selector);
     completeIsolatedPublicationTerminal(input);
     var executionIdentity = WorldCanonicalInstanceExecutionTestFixtures.identity(input);
+    var initialPreallocationAccepted = new AtomicBoolean();
     var component =
         new WorldCanonicalInstancePreparationService(
             preparationRepository(),
             ignored ->
                 new WorldCanonicalInstancePreparationService.HeldCommitAuthority() {
-                  private int calls;
-
                   public void requireHeld() {
-                    calls++;
-                    if (calls == 3) {
-                      assertThat(TransactionSynchronizationManager.isActualTransactionActive())
-                          .isTrue();
-                      assertThat(
-                              Objects.requireNonNull(
-                                      dsl.fetchOne(
-                                          "SELECT count(*) FROM world_canonical_preparation_start_location WHERE canonical_game_instance_id=?",
-                                          input.canonicalGameInstanceId()))
-                                  .get(0, Long.class))
-                          .isEqualTo(1L);
+                    if (!TransactionSynchronizationManager.isActualTransactionActive()) {
+                      var intent =
+                          dsl.fetchOne(
+                              "SELECT operation_state FROM world_canonical_instance_execution WHERE canonical_game_instance_id=?",
+                              input.canonicalGameInstanceId());
+                      if (intent != null) {
+                        assertThat(intent.get("operation_state", String.class))
+                            .isEqualTo("PENDING");
+                        for (String table :
+                            List.of(
+                                "world_canonical_instance_association",
+                                "world_canonical_instance_preparation",
+                                "world_canonical_preparation_start_location")) {
+                          assertThat(
+                                  Objects.requireNonNull(
+                                          dsl.fetchOne(
+                                              "SELECT count(*) FROM "
+                                                  + table
+                                                  + " WHERE canonical_game_instance_id=?",
+                                              input.canonicalGameInstanceId()))
+                                      .get(0, Long.class))
+                              .isZero();
+                        }
+                        initialPreallocationAccepted.set(true);
+                      }
+                      return;
+                    }
+                    long selectorRows =
+                        Objects.requireNonNull(
+                                dsl.fetchOne(
+                                    "SELECT count(*) FROM world_canonical_preparation_start_location WHERE canonical_game_instance_id=?",
+                                    input.canonicalGameInstanceId()))
+                            .get(0, Long.class);
+                    long associationRows =
+                        Objects.requireNonNull(
+                                dsl.fetchOne(
+                                    "SELECT count(*) FROM world_canonical_instance_association WHERE canonical_game_instance_id=?",
+                                    input.canonicalGameInstanceId()))
+                            .get(0, Long.class);
+                    long preparationRows =
+                        Objects.requireNonNull(
+                                dsl.fetchOne(
+                                    "SELECT count(*) FROM world_canonical_instance_preparation WHERE canonical_game_instance_id=?",
+                                    input.canonicalGameInstanceId()))
+                            .get(0, Long.class);
+                    if (selectorRows == 1L) {
+                      assertThat(initialPreallocationAccepted.get()).isTrue();
+                      assertThat(associationRows).isEqualTo(1L);
+                      assertThat(preparationRows).isEqualTo(1L);
                       throw new IllegalStateException("stipulated late Account fence loss");
                     }
+                    assertThat(selectorRows).isZero();
+                    assertThat(associationRows).isZero();
+                    assertThat(preparationRows).isZero();
                   }
 
                   @Override
@@ -3647,6 +3687,7 @@ class WorldDraftGraphApplicationPostgresIntegrationTest {
                 });
     assertThatThrownBy(() -> component.prepare(input))
         .hasMessageContaining("late Account fence loss");
+    assertThat(initialPreallocationAccepted.get()).isTrue();
     for (String table :
         List.of(
             "world_instance",
@@ -3661,6 +3702,13 @@ class WorldDraftGraphApplicationPostgresIntegrationTest {
                   .get(0, Long.class))
           .isZero();
     }
+    assertThat(
+            Objects.requireNonNull(
+                    dsl.fetchOne(
+                        "SELECT operation_state FROM world_canonical_instance_execution WHERE canonical_game_instance_id=?",
+                        input.canonicalGameInstanceId()))
+                .get("operation_state", String.class))
+        .isEqualTo("PENDING");
     assertThat(appliedRepository().readCommitted(application).orElseThrow().canonicalBytes())
         .containsExactly(selector.appliedResultBytes());
     assertOrigin();

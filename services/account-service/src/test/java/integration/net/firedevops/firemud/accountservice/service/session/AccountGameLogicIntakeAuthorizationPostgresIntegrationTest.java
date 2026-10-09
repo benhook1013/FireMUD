@@ -39,8 +39,8 @@ import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
 /**
- * Real creator issuance/currentness, Account transactions, V109/V112 and source guards. GD source
- * transport and the original author's terminal are explicit upstream fixtures, not composed
+ * Real creator issuance/currentness, Account transactions, intake/reservation and source guards. GD
+ * source transport and the original author's terminal are explicit upstream fixtures, not composed
  * production or mTLS proof. No GL terminal, settlement, digest or activation is claimed.
  */
 @Testcontainers(disabledWithoutDocker = true)

@@ -1413,9 +1413,10 @@ class DraftAuthorizationFencePostgresIntegrationTest {
 
   @Test
   void forwardMigrationRetainsV1BindingReadbackAndFlywayChecksumsExactly() {
-    // Seed the retained V92 row with an ACCOUNT-only source vector, then advance through V93
+    // Seed the retained pre-owner-fence row with an ACCOUNT-only source vector at V75, then
+    // advance through the required-owner fence at V76
     // explicitly before using the current runtime repository against this historical fixture.
-    Context context = context("92");
+    Context context = context("75");
     DraftAuthorizationFenceBinding base = binding(context);
     SourceEvidence legacy512 =
         new SourceEvidence(
@@ -1438,19 +1439,19 @@ class DraftAuthorizationFencePostgresIntegrationTest {
         .defaultSchema(schema)
         .placeholders(Map.of("serviceSchema", schema))
         .locations("classpath:db/migration")
-        .target("93")
+        .target("76")
         .load()
         .migrate();
     assertThat(
             context
                 .dsl()
-                .fetch("SELECT version, checksum FROM flyway_schema_history WHERE version = '93'"))
+                .fetch("SELECT version, checksum FROM flyway_schema_history WHERE version = '76'"))
         .hasSize(1);
     assertThat(
             context
                 .dsl()
                 .fetch(
-                    "SELECT version, checksum FROM flyway_schema_history WHERE version IS DISTINCT FROM '93' ORDER BY installed_rank"))
+                    "SELECT version, checksum FROM flyway_schema_history WHERE version IS DISTINCT FROM '76' ORDER BY installed_rank"))
         .isEqualTo(checksums);
     Flyway.configure()
         .dataSource(postgres.getJdbcUrl(), postgres.getUsername(), postgres.getPassword())

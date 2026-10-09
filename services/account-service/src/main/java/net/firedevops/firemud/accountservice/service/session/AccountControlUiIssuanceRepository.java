@@ -48,6 +48,74 @@ public final class AccountControlUiIssuanceRepository {
     return row == null ? null : new Stored(row);
   }
 
+  /** Finds the one committed original control-ui issuance for an exact actor and token identity. */
+  Stored findCommittedByTokenJti(UUID accountId, UUID tenantId, UUID tokenJti) {
+    requireTransaction();
+    Record row =
+        dsl.fetchOne(
+            "SELECT * FROM "
+                + TABLE
+                + " WHERE account_uuid = ? AND tenant_uuid = ? AND token_jti = ?"
+                + " AND status = 'COMMITTED'",
+            accountId,
+            tenantId,
+            tokenJti);
+    if (row == null) {
+      return null;
+    }
+    Stored stored = new Stored(row);
+    if (!accountId.equals(stored.accountId)
+        || !tenantId.equals(stored.tenantId)
+        || !tokenJti.equals(stored.jti)
+        || !"COMMITTED".equals(stored.status)) {
+      throw denied();
+    }
+    return stored;
+  }
+
+  /** Locks and exact-compares the original committed operation after external evidence reads. */
+  Stored lockCommittedByTokenJti(Stored original) {
+    requireTransaction();
+    Objects.requireNonNull(original, "original committed control-ui issuance is required");
+    Record row =
+        dsl.fetchOne(
+            "SELECT * FROM " + TABLE + " WHERE operation_id = ? AND request_id = ? FOR UPDATE",
+            original.operationId,
+            original.requestId);
+    if (row == null) {
+      throw denied();
+    }
+    Stored current = new Stored(row);
+    if (!sameCommittedOperation(original, current)) {
+      throw denied();
+    }
+    return current;
+  }
+
+  private static boolean sameCommittedOperation(Stored original, Stored current) {
+    return "COMMITTED".equals(original.status)
+        && "COMMITTED".equals(current.status)
+        && Objects.equals(original.requestId, current.requestId)
+        && Objects.equals(original.operationId, current.operationId)
+        && Objects.equals(original.jti, current.jti)
+        && Objects.equals(original.accountId, current.accountId)
+        && Objects.equals(original.tenantId, current.tenantId)
+        && Objects.equals(original.caller, current.caller)
+        && Objects.equals(original.callerContextId, current.callerContextId)
+        && Objects.equals(original.requestMacKeyId, current.requestMacKeyId)
+        && Objects.equals(original.requestDigest, current.requestDigest)
+        && Objects.equals(original.tokenHash, current.tokenHash)
+        && Arrays.equals(original.claims, current.claims)
+        && Arrays.equals(original.sources, current.sources)
+        && Arrays.equals(original.bundle, current.bundle)
+        && Arrays.equals(original.signerReceipt, current.signerReceipt)
+        && Arrays.equals(original.pendingRegistry, current.pendingRegistry)
+        && Arrays.equals(original.activeRegistry, current.activeRegistry)
+        && Objects.equals(original.issuedAt, current.issuedAt)
+        && Objects.equals(original.expiresAt, current.expiresAt)
+        && Objects.equals(original.recoveryExpiry, current.recoveryExpiry);
+  }
+
   Stored prepare(
       UUID requestId,
       String caller,

@@ -2393,6 +2393,14 @@ class WorldCanonicalInstanceAssociationPostgresIntegrationTest {
   private ReleaseContent isolatedReleaseContent(WorldCanonicalInstancePreparation.Input input) {
     var release = input.completeLaunchBinding().evidence().releaseAttestation();
     var world = Objects.requireNonNull(release.worldStartLocationEvidence());
+    String attestationSchemaVersion =
+        switch (release.schemaVersion()) {
+          case AuthoredWorldReleaseAttestationEvidence.SELECTOR_SCHEMA_VERSION -> "v2";
+          case AuthoredWorldReleaseAttestationEvidence.CLOSURE_SELECTOR_SCHEMA_VERSION -> "v3";
+          default ->
+              throw new IllegalStateException(
+                  "Selected World fixture has no matching release-content schema");
+        };
     var participants =
         release.participantDigests().stream()
             .map(
@@ -2415,7 +2423,7 @@ class WorldCanonicalInstanceAssociationPostgresIntegrationTest {
         release.canonicalVersionId(),
         release.publishedReleaseBundleRef(),
         1,
-        "v2",
+        attestationSchemaVersion,
         release.publishWorkflowId(),
         release.manifestHash(),
         release.manifestSchemaVersion(),

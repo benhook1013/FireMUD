@@ -14,10 +14,10 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 /**
- * Seeds the canonical pre-V88 repository-created Account image in historical migration fixtures.
+ * Seeds the canonical pre-V81 repository-created Account image in historical migration fixtures.
  *
- * <p>This reproduces the V40 sequence-zero Account source setup, including the immutable V74.1
- * empty-role source inserted by its Account trigger. It deliberately does not create V88
+ * <p>This reproduces the V40 sequence-zero Account source setup, including the immutable V74
+ * empty-role source inserted by its Account trigger. It deliberately does not create V81
  * restriction-birth evidence, enroll a retained Account, or establish admission authority.
  */
 public final class PreRestrictionBirthAccountFixture {
@@ -27,10 +27,10 @@ public final class PreRestrictionBirthAccountFixture {
   private PreRestrictionBirthAccountFixture() {}
 
   /**
-   * Inserts an Account and its pre-V88 fresh-source rows in one test transaction.
+   * Inserts an Account and its pre-V81 fresh-source rows in one test transaction.
    *
-   * <p>The target schema must already include V40 and V74.1. Use only when a test intentionally
-   * starts from a historical schema before V88 and then verifies forward migration preservation.
+   * <p>The target schema must already include V40 and V74. Use only when a test intentionally
+   * starts from a historical schema before V81 and then verifies forward migration preservation.
    */
   public static Account create(
       DSLContext dsl, String username, String email, String passwordHash, String loginAuthModes) {
@@ -53,7 +53,7 @@ public final class PreRestrictionBirthAccountFixture {
             "Restriction-birth schema guard readback is required");
     if (Boolean.TRUE.equals(restrictionBirthSchemaInstalled)) {
       throw new IllegalStateException(
-          "Pre-V88 Account fixture cannot run after restriction-birth schema installation");
+          "Pre-V81 Account fixture cannot run after restriction-birth schema installation");
     }
     Objects.requireNonNull(username, "username is required");
     Objects.requireNonNull(passwordHash, "password hash is required");
@@ -69,16 +69,16 @@ public final class PreRestrictionBirthAccountFixture {
         new AccountAuthorityGenerationRepository(dsl);
     AccountAuthorityOutboxRepository outbox = new AccountAuthorityOutboxRepository(dsl);
     AccountAuthoritySourceEvidenceRepository sources =
-        new PreV88SourceEvidence(dsl, generations, outbox);
+        new PreV81SourceEvidence(dsl, generations, outbox);
     sources.initializeIssuerIfAbsent(ACCOUNT_ISSUER);
     return new AccountRepository(dsl, sources).save(account);
   }
 
-  private static final class PreV88SourceEvidence extends AccountAuthoritySourceEvidenceRepository {
+  private static final class PreV81SourceEvidence extends AccountAuthoritySourceEvidenceRepository {
     private final DSLContext dsl;
     private final AccountAuthorityGenerationRepository generations;
 
-    private PreV88SourceEvidence(
+    private PreV81SourceEvidence(
         DSLContext dsl,
         AccountAuthorityGenerationRepository generations,
         AccountAuthorityOutboxRepository outbox) {

@@ -148,7 +148,7 @@ RETURNS BOOLEAN LANGUAGE SQL STABLE STRICT AS $$
         WHERE s.operation_id = operation_value AND s.account_binding = a.binding AND s.fence_id = a.fence_id);
 $$;
 
--- Keep every V103 Draft/order/source/terms guard and change only publication pending detection.
+-- Keep every V107 Draft/order/source/terms guard and change only publication pending detection.
 DO $migration$
 DECLARE
     original TEXT;
@@ -157,7 +157,7 @@ BEGIN
     SELECT pg_get_functiondef('account_control_ui_hold_required_sources(TEXT[])'::REGPROCEDURE)
         INTO STRICT original;
     IF (length(original) - length(replace(original, anchor, ''))) / length(anchor) <> 1 THEN
-        RAISE EXCEPTION 'Expected exactly one V103 pending publication guard';
+        RAISE EXCEPTION 'Expected exactly one V107 pending publication guard';
     END IF;
     EXECUTE replace(original, anchor,
         '        IF NOT account_selected_publication_is_settled(operation_value) THEN' || chr(10)

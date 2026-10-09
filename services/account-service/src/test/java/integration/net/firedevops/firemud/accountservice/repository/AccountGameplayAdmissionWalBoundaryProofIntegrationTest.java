@@ -45,13 +45,14 @@ import org.testcontainers.junit.jupiter.Testcontainers;
  *
  * <p>Actual unchanged original/receipt transactions retain test-only lower search locators.
  * Synthetic classifier cases explicitly do not prove physical wraparound, promotion, recycle,
- * unrelated unflushed tails or insufficient-flush behavior. Production V92 remains unchanged.
+ * unrelated unflushed tails or insufficient-flush behavior. Production original-acknowledgement
+ * receipt guards remain unchanged.
  */
 @Testcontainers(disabledWithoutDocker = true)
 @Execution(ExecutionMode.SAME_THREAD)
 class AccountGameplayAdmissionWalBoundaryProofIntegrationTest {
   // Deliberately owns its container: never honors the shared fixture's external database override.
-  // PG18 is rejected by the unchanged production executors and V92.
+  // PG18 is rejected by the unchanged production executors and original-acknowledgement guards.
   @Container
   static final PostgreSQLContainer<?> POSTGRES =
       new PostgreSQLContainer<>("postgres:16-alpine")
@@ -157,7 +158,7 @@ class AccountGameplayAdmissionWalBoundaryProofIntegrationTest {
     assertThat(locator(context, evidence, "receipt").get("target_xid", String.class))
         .isEqualTo(receiptBefore.get("receipt_xid"))
         .isNotEqualTo(acknowledgement.finalizationXid());
-    // The probe uses its restricted independent connection, not V92 or a fresh confirming write.
+    // The probe uses its restricted connection, not the receipt guard or a fresh confirming write.
     var receiptProof = read(context, evidence, decision, "receipt");
     var originalProof = read(context, evidence, decision, "original");
     assertCovered(context, receiptProof);

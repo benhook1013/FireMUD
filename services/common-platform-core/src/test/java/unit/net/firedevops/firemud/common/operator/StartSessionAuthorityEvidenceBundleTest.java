@@ -1,6 +1,7 @@
 package net.firedevops.firemud.common.operator;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.io.IOException;
@@ -199,20 +200,33 @@ class StartSessionAuthorityEvidenceBundleTest {
             () ->
                 decoded.requireReferenceBinding(
                     new StartSessionAuthorityEvidenceBundle.BundleReference(
-                        StartSessionAuthorityEvidenceBundle.BUNDLE_VERSION, "18", "23", "17")))
+                        StartSessionAuthorityEvidenceBundle.BUNDLE_VERSION, "18", "17", "17")))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
+    assertThatCode(
             () ->
                 decoded.requireReferenceBinding(
                     new StartSessionAuthorityEvidenceBundle.BundleReference(
                         StartSessionAuthorityEvidenceBundle.BUNDLE_VERSION, "17", "24", "17")))
+        .doesNotThrowAnyException();
+    assertThatThrownBy(
+            () ->
+                new StartSessionAuthorityEvidenceBundle.BundleReference(
+                    "authorityEvidenceBundle/v2", "17", "17", "17"))
         .isInstanceOf(IllegalArgumentException.class);
     assertThatThrownBy(
             () ->
                 new StartSessionAuthorityEvidenceBundle.BundleReference(
                     StartSessionAuthorityEvidenceBundle.BUNDLE_VERSION,
                     "9223372036854775808",
-                    "23",
+                    "17",
+                    "17"))
+        .isInstanceOf(IllegalArgumentException.class);
+    assertThatThrownBy(
+            () ->
+                new StartSessionAuthorityEvidenceBundle.BundleReference(
+                    StartSessionAuthorityEvidenceBundle.BUNDLE_VERSION,
+                    "17",
+                    "9223372036854775808",
                     "17"))
         .isInstanceOf(IllegalArgumentException.class);
     assertThatThrownBy(
@@ -341,7 +355,7 @@ class StartSessionAuthorityEvidenceBundleTest {
 
   private static StartSessionAuthorityEvidenceBundle.BundleReference reference() {
     return new StartSessionAuthorityEvidenceBundle.BundleReference(
-        StartSessionAuthorityEvidenceBundle.BUNDLE_VERSION, "17", "23", "18446744073709551615");
+        StartSessionAuthorityEvidenceBundle.BUNDLE_VERSION, "17", "17", "18446744073709551615");
   }
 
   private static byte[] canonical(Object value) throws IOException {

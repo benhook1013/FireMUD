@@ -157,12 +157,256 @@ public final class AccountControlUiActorService {
           if (!Arrays.equals(current.evidence(), stored.sources)) {
             throw denied();
           }
+          requireCurrentSnapshot(stored, current);
           var committed = operations.requireCommitted(stored);
           if (!committed.tokenHash().equals(tokenHash)) {
             throw denied();
           }
+          requireControlUiClaims(
+              AccountControlUiIssuanceRepository.object(stored.claims),
+              stored,
+              stored.accountId,
+              stored.tenantId,
+              stored.jti,
+              clock.instant());
           return action.apply(new Current(stored, current));
         });
+  }
+
+  /**
+   * Revalidates the actor from Account's original committed token row when the caller has only its
+   * token identity. A supplied UUID is only a lookup key; the retained signed issuance, active
+   * registry, original signer receipt, and current Account source must all agree before use.
+   */
+  <T> T withCurrentCommitted(
+      UUID accountId,
+      UUID selectedTenant,
+      UUID tokenJti,
+      CapturedEnvironmentBoundary environment,
+      Function<Current, T> action) {
+    outsideSql();
+    requireNonnil(accountId, "accountId");
+    requireNonnil(selectedTenant, "tenantId");
+    requireNonnil(tokenJti, "control-ui token jti");
+    Objects.requireNonNull(environment, "current Account environment is required");
+    Objects.requireNonNull(action, "current Account action is required");
+
+    AccountControlUiIssuanceRepository.Stored original =
+        transaction.execute(
+            ignored -> operations.findCommittedByTokenJti(accountId, selectedTenant, tokenJti));
+    if (original == null) {
+      throw denied();
+    }
+    requireCommittedIdentity(original, accountId, selectedTenant, tokenJti);
+
+    // Both external observations must complete outside the SQL owner transaction. The final
+    // transaction compares their exact values to the immutable Account issuance row.
+    byte[] exactRegistry = registry.readActive(original.tokenHash);
+    AccountPublicJwksCache.SourceIdentity currentPublicSource = publicSource.sourceIdentity();
+
+    return transaction.execute(
+        ignored -> {
+          var stored = operations.lockCommittedByTokenJti(original);
+          requireCommittedIdentity(stored, accountId, selectedTenant, tokenJti);
+          if (!sameCommittedIssuance(original, stored)
+              || !Arrays.equals(stored.activeRegistry, exactRegistry)) {
+            throw denied();
+          }
+          var active = AccountControlUiIssuanceRepository.object(exactRegistry);
+          if (!stored.tokenHash.equals(active.get("tokenHash"))
+              || !stored.jti.toString().equals(active.get("jti"))
+              || !stored.operationId.toString().equals(active.get("operationId"))
+              || !stored.accountId.toString().equals(active.get("accountId"))
+              || !Long.toString(stored.expiryMillis() / 1000L)
+                  .equals(numberText(active.get("exp")))) {
+            throw denied();
+          }
+
+          Map<String, Object> originalClaims =
+              AccountControlUiIssuanceRepository.object(stored.claims);
+          requireControlUiClaims(
+              originalClaims, stored, accountId, selectedTenant, tokenJti, clock.instant());
+          requireSignerReceiptIdentity(
+              stored, currentPublicSource, String.valueOf(active.get("kid")));
+          var originalSigner = signers.requireOriginal(stored.signerReceipt);
+          if (!originalSigner.kid().equals(active.get("kid"))
+              || !originalSigner.generation().equals(active.get("signerGeneration"))) {
+            throw denied();
+          }
+
+          var current = authority.capture(accountId, selectedTenant, environment);
+          requireCurrentSnapshot(stored, current);
+          var committed = operations.requireCommitted(stored);
+          if (!stored.tokenHash.equals(committed.tokenHash())) {
+            throw denied();
+          }
+          // Recovery and source locks may wait. Recheck expiry after those waits, at the final
+          // owner-currentness boundary immediately before exposing the actor to its caller.
+          requireControlUiClaims(
+              AccountControlUiIssuanceRepository.object(stored.claims),
+              stored,
+              accountId,
+              selectedTenant,
+              tokenJti,
+              clock.instant());
+          return action.apply(new Current(stored, current));
+        });
+  }
+
+  private void requireCurrentSnapshot(
+      AccountControlUiIssuanceRepository.Stored stored,
+      AccountControlUiAuthority.Snapshot current) {
+    if (!stored.accountId.equals(current.actor())
+        || !stored.tenantId.equals(current.tenant())
+        || !Arrays.equals(current.evidence(), stored.sources)) {
+      throw denied();
+    }
+    Map<String, Object> claims = AccountControlUiIssuanceRepository.object(stored.claims);
+    try {
+      ControlUiJwtProfileValidator.validateClaims(claims, 1);
+    } catch (RuntimeException malformed) {
+      throw denied();
+    }
+    if (!Arrays.equals(stored.claims, AccountControlUiAuthority.canonical(claims))
+        || !canonicalEquals(claims.get("authorityTuple"), current.authorityTuple())
+        || !canonicalEquals(claims.get("membershipVersion"), current.membershipVersion())
+        || !Long.toString(current.issuanceFence())
+            .equals(numberText(claims.get("issuanceFence")))) {
+      throw denied();
+    }
+  }
+
+  private void requireCommittedIdentity(
+      AccountControlUiIssuanceRepository.Stored stored,
+      UUID accountId,
+      UUID tenantId,
+      UUID tokenJti) {
+    if (!"COMMITTED".equals(stored.status)
+        || !accountId.equals(stored.accountId)
+        || !tenantId.equals(stored.tenantId)
+        || !tokenJti.equals(stored.jti)
+        || stored.tokenHash == null
+        || stored.tokenHash.isBlank()
+        || stored.claims == null
+        || stored.sources == null
+        || stored.signerReceipt == null
+        || stored.activeRegistry == null) {
+      throw denied();
+    }
+  }
+
+  private static boolean sameCommittedIssuance(
+      AccountControlUiIssuanceRepository.Stored original,
+      AccountControlUiIssuanceRepository.Stored current) {
+    return Objects.equals(original.requestId, current.requestId)
+        && Objects.equals(original.operationId, current.operationId)
+        && Objects.equals(original.jti, current.jti)
+        && Objects.equals(original.accountId, current.accountId)
+        && Objects.equals(original.tenantId, current.tenantId)
+        && Objects.equals(original.status, current.status)
+        && Objects.equals(original.tokenHash, current.tokenHash)
+        && Arrays.equals(original.claims, current.claims)
+        && Arrays.equals(original.sources, current.sources)
+        && Arrays.equals(original.bundle, current.bundle)
+        && Arrays.equals(original.signerReceipt, current.signerReceipt)
+        && Arrays.equals(original.pendingRegistry, current.pendingRegistry)
+        && Arrays.equals(original.activeRegistry, current.activeRegistry)
+        && Objects.equals(original.issuedAt, current.issuedAt)
+        && Objects.equals(original.expiresAt, current.expiresAt)
+        && Objects.equals(original.recoveryExpiry, current.recoveryExpiry);
+  }
+
+  private void requireControlUiClaims(
+      Map<String, Object> claims,
+      AccountControlUiIssuanceRepository.Stored stored,
+      UUID accountId,
+      UUID tenantId,
+      UUID tokenJti,
+      java.time.Instant now) {
+    try {
+      ControlUiJwtProfileValidator.validateClaims(claims, 1);
+    } catch (RuntimeException malformed) {
+      throw denied();
+    }
+    long issuedAt = epochSecond(claims.get("iat"));
+    long notBefore = epochSecond(claims.get("nbf"));
+    long expiresAt = epochSecond(claims.get("exp"));
+    java.time.Instant storedIssuedAt = stored.issuedAt;
+    java.time.Instant storedExpiresAt = stored.expiresAt;
+    java.time.Instant notBeforeInstant;
+    java.time.Instant expiresAtInstant;
+    try {
+      notBeforeInstant = java.time.Instant.ofEpochSecond(notBefore);
+      expiresAtInstant = java.time.Instant.ofEpochSecond(expiresAt);
+    } catch (RuntimeException outOfRange) {
+      throw denied();
+    }
+    if (!Arrays.equals(stored.claims, AccountControlUiAuthority.canonical(claims))
+        || !accountId.toString().equals(claims.get("accountId"))
+        || !accountId.toString().equals(claims.get("sub"))
+        || !tokenJti.toString().equals(claims.get("jti"))
+        || claims.containsKey("globalRoles")
+        || !Map.of(tenantId.toString(), List.of("tenantAdmin")).equals(claims.get("scopedRoles"))
+        || !"1".equals(numberText(claims.get("tokenGeneration")))
+        || issuedAt != notBefore
+        || issuedAt != storedIssuedAt.getEpochSecond()
+        || expiresAt != storedExpiresAt.getEpochSecond()
+        || expiresAt <= issuedAt
+        || expiresAt - issuedAt > 300
+        || now.isBefore(notBeforeInstant)
+        || !now.isBefore(expiresAtInstant)) {
+      throw denied();
+    }
+  }
+
+  private void requireSignerReceiptIdentity(
+      AccountControlUiIssuanceRepository.Stored stored,
+      AccountPublicJwksCache.SourceIdentity pin,
+      String keyId) {
+    var receipt = AccountControlUiIssuanceRepository.object(stored.signerReceipt);
+    if (!keyId.equals(receipt.get("kid"))
+        || !pin.environmentId().equals(receipt.get("environmentId"))
+        || !pin.clusterId().equals(receipt.get("clusterId"))
+        || !pin.clusterIncarnationUid().equals(receipt.get("clusterIncarnationUid"))
+        || !pin.namespace().equals(receipt.get("namespace"))
+        || !pin.namespaceUid().equals(receipt.get("namespaceUid"))
+        || !pin.configMapUid().equals(receipt.get("publicConfigMapUid"))
+        || !pin.bindingRevision().equals(receipt.get("apiConfigRevision"))) {
+      throw denied();
+    }
+  }
+
+  private static boolean canonicalEquals(Object first, Object second) {
+    if (first == null || second == null) {
+      return first == second;
+    }
+    return Arrays.equals(
+        AccountControlUiAuthority.canonical(first), AccountControlUiAuthority.canonical(second));
+  }
+
+  private static String numberText(Object value) {
+    if (!(value instanceof Number number)) {
+      throw denied();
+    }
+    String text = number.toString();
+    if (!text.matches("0|[1-9][0-9]{0,18}")) {
+      throw denied();
+    }
+    return text;
+  }
+
+  private static long epochSecond(Object value) {
+    try {
+      return Long.parseLong(numberText(value));
+    } catch (NumberFormatException malformed) {
+      throw denied();
+    }
+  }
+
+  private static void requireNonnil(UUID value, String name) {
+    if (value == null || new UUID(0L, 0L).equals(value)) {
+      throw new IllegalStateException("Exact committed control-ui " + name + " required");
+    }
   }
 
   /** Production asymmetric/profile verification, also used before any candidate is persisted. */

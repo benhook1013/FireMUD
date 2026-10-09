@@ -285,4 +285,65 @@ CREATE CONSTRAINT TRIGGER account_hosted_terms_environment_binding_complete
     AFTER UPDATE ON account_hosted_terms_environment_binding_heads
     DEFERRABLE INITIALLY DEFERRED
     FOR EACH ROW EXECUTE FUNCTION account_hosted_terms_environment_binding_complete_guard();
+
+CREATE FUNCTION account_hosted_terms_environment_binding_fence_complete_guard()
+RETURNS TRIGGER LANGUAGE plpgsql AS $$
+DECLARE predecessor UUID;
+DECLARE predecessor_scope UUID;
+DECLARE candidate_scope UUID;
+BEGIN
+    IF NEW.status = 'COMMITTED' THEN
+        SELECT candidate.predecessor_binding_id, prior.hosted_scope_id, candidate.hosted_scope_id
+            INTO predecessor, predecessor_scope, candidate_scope
+            FROM account_hosted_terms_environment_bindings candidate
+            LEFT JOIN account_hosted_terms_environment_bindings prior
+                ON prior.environment_boundary = candidate.environment_boundary
+                AND prior.binding_id = candidate.predecessor_binding_id
+            WHERE candidate.environment_boundary = NEW.environment_boundary
+              AND candidate.binding_id = NEW.candidate_binding_id;
+        IF predecessor IS NOT NULL AND (
+            NEW.source_change_binding IS NULL
+            OR NOT EXISTS (
+                SELECT 1 FROM account_draft_authorization_source_changes change
+                JOIN account_draft_authorization_changed_scopes changed USING (change_id)
+                WHERE change.change_id = NEW.request_id
+                  AND change.binding = NEW.source_change_binding
+                  AND change.status = 'SOURCE_COMMITTED'
+                  AND changed.source_key =
+                      'HOSTED_TERMS:environment-boundary/' || NEW.environment_boundary)
+            OR predecessor_scope IS NULL OR candidate_scope IS NULL
+            OR EXISTS (
+                SELECT 1 FROM account_hosted_terms_scopes scope
+                WHERE scope.hosted_scope_id IN (predecessor_scope, candidate_scope)
+                  AND scope.current_version_id IS NOT NULL
+                  AND NOT EXISTS (
+                      SELECT 1 FROM account_draft_authorization_changed_scopes changed
+                      WHERE changed.change_id = NEW.request_id
+                        AND changed.source_key = 'HOSTED_TERMS:' || scope.hosted_scope_id::TEXT))
+            OR (SELECT count(*) FROM account_draft_authorization_changed_scopes
+                WHERE change_id = NEW.request_id) <> 1 + (
+                    SELECT count(DISTINCT scope.hosted_scope_id)
+                    FROM account_hosted_terms_scopes scope
+                    WHERE scope.hosted_scope_id IN (predecessor_scope, candidate_scope)
+                      AND scope.current_version_id IS NOT NULL)
+            OR EXISTS (
+                SELECT 1 FROM account_draft_authorization_changed_scopes changed
+                WHERE changed.change_id = NEW.request_id
+                  AND changed.source_key <>
+                      'HOSTED_TERMS:environment-boundary/' || NEW.environment_boundary
+                  AND changed.source_key NOT IN (
+                      SELECT 'HOSTED_TERMS:' || scope.hosted_scope_id::TEXT
+                      FROM account_hosted_terms_scopes scope
+                      WHERE scope.hosted_scope_id IN (predecessor_scope, candidate_scope)
+                        AND scope.current_version_id IS NOT NULL))) THEN
+            RAISE EXCEPTION 'Updated environment binding requires fully settled exact Draft source change';
+        END IF;
+    END IF;
+    RETURN NULL;
+END;
+$$;
+CREATE CONSTRAINT TRIGGER account_hosted_terms_environment_binding_fence_complete
+    AFTER INSERT OR UPDATE ON account_hosted_terms_environment_binding_publications
+    DEFERRABLE INITIALLY DEFERRED
+    FOR EACH ROW EXECUTE FUNCTION account_hosted_terms_environment_binding_fence_complete_guard();
 -- [jooq ignore stop]

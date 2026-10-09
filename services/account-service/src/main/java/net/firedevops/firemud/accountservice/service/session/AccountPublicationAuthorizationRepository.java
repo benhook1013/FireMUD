@@ -308,7 +308,9 @@ public final class AccountPublicationAuthorizationRepository {
     }
   }
 
-  /** Historical V103 World evidence remains immutable and is checked when a row contains it. */
+  /**
+   * Historical pre-freeze World evidence remains immutable and is checked when a row contains it.
+   */
   private static void validateRetainedWorldIfPresent(
       Record row, AccountPublicationAuthorizationBinding binding) {
     byte[] worldEvidence = row == null ? null : row.get("world_evidence", byte[].class);

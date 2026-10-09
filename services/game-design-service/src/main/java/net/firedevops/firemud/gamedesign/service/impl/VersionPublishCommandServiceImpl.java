@@ -1,6 +1,7 @@
 package net.firedevops.firemud.gamedesign.service.impl;
 
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
+import java.sql.SQLException;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Objects;
@@ -159,7 +160,7 @@ public class VersionPublishCommandServiceImpl {
             "participant digest dependency is temporarily unavailable; retry exact publish request",
             ex);
       }
-      return failDefinitively(request, attempt, version, null, ex);
+      return failDefinitively(request, attempt, version, null, "PARTICIPANT_DIGEST_COLLECTION", ex);
     }
     try {
       if (selectedBinding == null) {
@@ -173,13 +174,13 @@ public class VersionPublishCommandServiceImpl {
             "participant digest dependency is temporarily unavailable; retry exact publish request",
             ex);
       }
-      return failDefinitively(request, attempt, version, null, ex);
+      return failDefinitively(request, attempt, version, null, "PUBLICATION_GATE", ex);
     }
     try {
       recordedParticipantDigestService.assertMatchesRecordedDigests(
           dto.tenantId(), PublishType.FULL_VERSION, participantDigests);
     } catch (RuntimeException ex) {
-      return failDefinitively(request, attempt, version, null, ex);
+      return failDefinitively(request, attempt, version, null, "RECORDED_DIGEST_CHECK", ex);
     }
     ExportedAssetManifest exportedManifest;
     AssetExportService.SelectedExportResult selectedExportResult;
@@ -199,7 +200,7 @@ public class VersionPublishCommandServiceImpl {
           "selected asset candidate or object readback is unresolved; retry exact publish request",
           unresolved);
     } catch (RuntimeException ex) {
-      return failDefinitively(request, attempt, version, null, ex);
+      return failDefinitively(request, attempt, version, null, "ASSET_EXPORT", ex);
     }
 
     PublishWorkflowRequest effectiveRequest = request;
@@ -229,7 +230,8 @@ public class VersionPublishCommandServiceImpl {
             "full-version finalization left incomplete evidence; readback/reconciliation is required",
             operationFailure);
       }
-      return failDefinitively(request, attempt, version, exportedManifest, operationFailure);
+      return failDefinitively(
+          request, attempt, version, exportedManifest, "RELEASE_FINALIZATION", operationFailure);
     } catch (RuntimeException ambiguousCommit) {
       PublicationReadback readback;
       try {
@@ -562,9 +564,14 @@ public class VersionPublishCommandServiceImpl {
       PublishAttempt attempt,
       Version version,
       ExportedAssetManifest exportedManifest,
+      String failureStage,
       RuntimeException failure) {
     String failureCode = publishFailureCode(failure);
     String failureMessage = publishFailureMessage(failure);
+    logger.warn(
+        "Definitive full-version publication failure workflowId={} {}",
+        request.publishWorkflowId(),
+        safeFailureDiagnostic(failureStage, failure));
     try {
       publishAttemptService.executeFullVersionTransaction(
           () -> {
@@ -605,10 +612,18 @@ public class VersionPublishCommandServiceImpl {
             return Boolean.TRUE;
           });
     } catch (PublishAttemptService.FullVersionTransactionException ex) {
+      logger.warn(
+          "Full-version publication failure settlement unresolved workflowId={} {}",
+          request.publishWorkflowId(),
+          safeFailureDiagnostic("FAILURE_SETTLEMENT", ex.causeException()));
       throw pendingReconciliation(
           "full-version failure marking commit outcome is unknown; readback/reconciliation is required",
           ex.causeException());
     } catch (RuntimeException ambiguousFailure) {
+      logger.warn(
+          "Full-version publication failure settlement unresolved workflowId={} {}",
+          request.publishWorkflowId(),
+          safeFailureDiagnostic("FAILURE_SETTLEMENT", ambiguousFailure));
       throw pendingReconciliation(
           "full-version failure marking commit outcome is unknown; readback/reconciliation is required",
           ambiguousFailure);
@@ -1025,6 +1040,39 @@ public class VersionPublishCommandServiceImpl {
   }
 
   private String emptyIfNull(String value) {
+    return value == null ? "" : value;
+  }
+
+  /**
+   * Returns bounded exception type and JDBC status diagnostics without including exception text.
+   */
+  static String safeFailureDiagnostic(String stage, Throwable failure) {
+    StringBuilder diagnostic = new StringBuilder("stage=").append(stage).append(" causeTypes=");
+    Throwable current = failure;
+    int depth = 0;
+    while (current != null && depth < 5) {
+      if (depth > 0) {
+        diagnostic.append(" <- ");
+      }
+      diagnostic.append(current.getClass().getName());
+      if (current instanceof SQLException sqlException) {
+        diagnostic
+            .append("[sqlState=")
+            .append(emptyIfNullStatic(sqlException.getSQLState()))
+            .append(",vendorCode=")
+            .append(sqlException.getErrorCode())
+            .append(']');
+      }
+      current = current.getCause();
+      depth++;
+    }
+    if (current != null) {
+      diagnostic.append(" <- ...");
+    }
+    return diagnostic.toString();
+  }
+
+  private static String emptyIfNullStatic(String value) {
     return value == null ? "" : value;
   }
 }

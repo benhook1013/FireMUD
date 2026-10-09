@@ -108,8 +108,8 @@ class AccountGameplayAdmissionLeasePersistenceIntegrationTest {
 
   private static final String TENANT = "22222222-2222-4222-8222-222222222222";
   private static final String OTHER = "33333333-3333-4333-8333-333333333333";
-  private static final long V90_WAL_COORDINATOR_TIMEOUT_SECONDS = 3;
-  private static final String V90_WAL_MARKER_TABLE = "account_v90_wal_coverage_markers";
+  private static final long V120_WAL_COORDINATOR_TIMEOUT_SECONDS = 3;
+  private static final String V120_WAL_MARKER_TABLE = "account_v120_wal_coverage_markers";
 
   @BeforeAll
   static void start() {
@@ -791,7 +791,7 @@ class AccountGameplayAdmissionLeasePersistenceIntegrationTest {
 
   @Test
   void retainedAccountMigrationPreservesAccountAndAddsIndependentFenceDomain() {
-    var context = context("84.4");
+    var context = context("116");
     UUID account =
         tx(
             context,
@@ -876,7 +876,7 @@ class AccountGameplayAdmissionLeasePersistenceIntegrationTest {
 
   @Test
   void forwardMigrationPreservesRetainedReceiptsAndAllowsUnknownDecisionAbort() {
-    var context = context("88");
+    var context = context("118");
     UUID account = account(context);
     var repository = new AccountGameplayAdmissionLeaseRepository(context.dsl());
     var retainedPending = pending(context, account);
@@ -913,7 +913,7 @@ class AccountGameplayAdmissionLeasePersistenceIntegrationTest {
                     context,
                     () -> repository.recordAborted(retainedPending, null, UUID.randomUUID())))
         .hasMessageContaining("identity conflict");
-    // The unchanged V87 trigger prevents a direct rewrite of the unknown terminal observation.
+    // The unchanged V118 trigger prevents a direct rewrite of the unknown terminal observation.
     assertThatThrownBy(
             () ->
                 tx(
@@ -1136,14 +1136,14 @@ class AccountGameplayAdmissionLeasePersistenceIntegrationTest {
   }
 
   @Test
-  void receiptPhysicalCommitPrecedesIndependentV90ReadOnAnotherConnection() throws Exception {
+  void receiptPhysicalCommitPrecedesIndependentV120ReadOnAnotherConnection() throws Exception {
     var context = context(null);
     var original = pending(context, account(context));
     UUID decision = UUID.randomUUID();
     new AccountGameplayAdmissionOriginalCommitExecutor(context.dataSource())
         .execute(original, decision);
-    createV90WalCoverageMarkerTable(context);
-    String applicationName = v90ApplicationName();
+    createV120WalCoverageMarkerTable(context);
+    String applicationName = v120ApplicationName();
     var trace = new ReceiptCommitTrace();
     var owner =
         new AccountGameplayAdmissionCommitConfirmationOwner(
@@ -1154,7 +1154,7 @@ class AccountGameplayAdmissionLeasePersistenceIntegrationTest {
             "test");
 
     var receipt =
-        withV90WalCoverageCoordinator(
+        withV120WalCoverageCoordinator(
             context,
             applicationName,
             () ->
@@ -1163,9 +1163,9 @@ class AccountGameplayAdmissionLeasePersistenceIntegrationTest {
             AccountGameplayAdmissionCommitConfirmation::walInsertLsn);
 
     assertThat(trace.count("physical-commit")).isEqualTo(2);
-    assertThat(trace.count("v90-read")).isEqualTo(1);
+    assertThat(trace.count("v120-read")).isEqualTo(1);
     var receiptCommit = firstEvent(trace, "physical-commit");
-    var independentRead = firstEvent(trace, "v90-read");
+    var independentRead = firstEvent(trace, "v120-read");
     assertThat(trace.events().indexOf(receiptCommit))
         .isLessThan(trace.events().indexOf(independentRead));
     assertThat(independentRead.connectionId()).isNotEqualTo(receiptCommit.connectionId());
@@ -1183,7 +1183,7 @@ class AccountGameplayAdmissionLeasePersistenceIntegrationTest {
   }
 
   @Test
-  void lostReceiptCommitAcknowledgementDeniesThenRecoversOnlyThroughIndependentV90Read()
+  void lostReceiptCommitAcknowledgementDeniesThenRecoversOnlyThroughIndependentV120Read()
       throws Exception {
     var context = context(null);
     var original = pending(context, account(context));
@@ -1205,7 +1205,7 @@ class AccountGameplayAdmissionLeasePersistenceIntegrationTest {
                 assertThat(Status.fromThrowable(failure).getCode())
                     .isEqualTo(Status.Code.UNAVAILABLE));
     assertThat(trace.count("physical-commit")).isEqualTo(1);
-    assertThat(trace.count("v90-read")).isZero();
+    assertThat(trace.count("v120-read")).isZero();
 
     var retainedRow = confirmationRow(context, original);
     assertThat(retainedRow.get("request_id", UUID.class)).isEqualTo(requestId(original));
@@ -1220,12 +1220,12 @@ class AccountGameplayAdmissionLeasePersistenceIntegrationTest {
     assertThat(retainedRow.get("confirmation_xid", String.class))
         .isNotEqualTo(retainedRow.get("finalization_xid", String.class));
 
-    // Recovery is an explicit fresh owner read, which invokes the existing V90 independent WAL
+    // Recovery is an explicit fresh owner read, which invokes the existing V120 independent WAL
     // coverage observer. No confirm retry can mint or acknowledge the lost receipt COMMIT.
     var recovered = syntheticReadPeer().call(() -> owner.read(request));
-    assertThat(trace.count("v90-read")).isEqualTo(1);
+    assertThat(trace.count("v120-read")).isEqualTo(1);
     var lostAckCommit = firstEvent(trace, "physical-commit");
-    var independentRead = firstEvent(trace, "v90-read");
+    var independentRead = firstEvent(trace, "v120-read");
     assertThat(trace.events().indexOf(lostAckCommit))
         .isLessThan(trace.events().indexOf(independentRead));
     assertThat(independentRead.connectionId()).isNotEqualTo(lostAckCommit.connectionId());
@@ -1277,7 +1277,7 @@ class AccountGameplayAdmissionLeasePersistenceIntegrationTest {
                     failure, "Test failed before physical receipt COMMIT");
             });
     assertThat(trace.count("physical-commit")).isZero();
-    assertThat(trace.count("v90-read")).isZero();
+    assertThat(trace.count("v120-read")).isZero();
     assertThat(
             context.dsl().fetchCount(DSL.table("account_gameplay_admission_commit_confirmations")))
         .isZero();
@@ -1404,7 +1404,7 @@ class AccountGameplayAdmissionLeasePersistenceIntegrationTest {
                 assertThat(((java.sql.SQLException) cause).getSQLState()).isEqualTo("40001");
               });
       assertThat(tx(context, () -> confirm(context, original, decision))).isEqualTo(retained);
-      // This case proves serialization and exact retained storage, not the distinct V90 WAL
+      // This case proves serialization and exact retained storage, not the distinct V120 WAL
       // durability observation. Dedicated independent-read/receipt-COMMIT cases cover that gate;
       // a global insert-frontier denial remains an open durability limitation, never a bypass.
       assertThat(tx(context, () -> confirmationRow(context, original)).intoMap())
@@ -1488,7 +1488,7 @@ class AccountGameplayAdmissionLeasePersistenceIntegrationTest {
 
   @Test
   void missingPendingRolledBackAbortedAndRetainedUnstampedCommitsStayUnproved() {
-    var context = context("89");
+    var context = context("119");
     UUID account = account(context);
     var repository = new AccountGameplayAdmissionLeaseRepository(context.dsl());
     var retained = pending(context, account);
@@ -1677,7 +1677,7 @@ class AccountGameplayAdmissionLeasePersistenceIntegrationTest {
     var repository = new AccountGameplayAdmissionLeaseRepository(context.dsl());
     UUID decision = UUID.randomUUID();
     tx(context, () -> repository.recordCommitted(original, decision));
-    createV90WalCoverageMarkerTable(context);
+    createV120WalCoverageMarkerTable(context);
     for (boolean subtransaction : List.of(false, true)) {
       assertThatThrownBy(
               () ->
@@ -1685,9 +1685,9 @@ class AccountGameplayAdmissionLeasePersistenceIntegrationTest {
                       context,
                       () -> {
                         if (subtransaction) context.dsl().execute("SAVEPOINT receipt_creation");
-                        String applicationName = v90ApplicationName();
+                        String applicationName = v120ApplicationName();
                         var receipt =
-                            withV90WalCoverageCoordinator(
+                            withV120WalCoverageCoordinator(
                                 context,
                                 applicationName,
                                 () -> {
@@ -1719,8 +1719,8 @@ class AccountGameplayAdmissionLeasePersistenceIntegrationTest {
         tx(
             context,
             () -> {
-              String applicationName = v90ApplicationName();
-              return withV90WalCoverageCoordinator(
+              String applicationName = v120ApplicationName();
+              return withV120WalCoverageCoordinator(
                   context,
                   applicationName,
                   () -> {
@@ -1783,8 +1783,8 @@ class AccountGameplayAdmissionLeasePersistenceIntegrationTest {
   }
 
   @Test
-  void originalAckReceiptMigrationPreservesV91HistoryWithoutInventingAcknowledgement() {
-    var context = context("91");
+  void originalAckReceiptMigrationPreservesV121HistoryWithoutInventingAcknowledgement() {
+    var context = context("121");
     UUID committedAccount = account(context);
     var retainedCommittedEvidence = pending(context, committedAccount);
     UUID retainedDecision = UUID.randomUUID();
@@ -1799,15 +1799,15 @@ class AccountGameplayAdmissionLeasePersistenceIntegrationTest {
     UUID pendingAccount = account(context);
     var retainedPendingEvidence = pending(context, pendingAccount);
     var pendingBefore = operation(context, retainedPendingEvidence).intoMap();
-    var v91Checksums = flywayChecksums(context);
-    assertThat(v91Checksums).containsKey("91").doesNotContainKey("92");
+    var v121Checksums = flywayChecksums(context);
+    assertThat(v121Checksums).containsKey("121").doesNotContainKey("122");
 
     migrate(context, null);
 
     var latestChecksums = flywayChecksums(context);
-    for (var entry : v91Checksums.entrySet())
+    for (var entry : v121Checksums.entrySet())
       assertThat(latestChecksums).containsEntry(entry.getKey(), entry.getValue());
-    assertThat(latestChecksums.get("92")).isNotNull();
+    assertThat(latestChecksums.get("122")).isNotNull();
     assertThat(operation(context, retainedCommittedEvidence).intoMap()).isEqualTo(committedBefore);
     assertThat(operation(context, retainedPendingEvidence).intoMap()).isEqualTo(pendingBefore);
     assertThat(
@@ -2319,7 +2319,7 @@ class AccountGameplayAdmissionLeasePersistenceIntegrationTest {
     assertThat(operation(context, original).intoMap()).isEqualTo(operationBeforeRecovery);
     assertThat(storageSnapshot(context)).isEqualTo(sourcesBeforeRecovery);
 
-    // The V92 receipt is immutable historical proof; expiry does not restamp or renew it.
+    // The V122 receipt is immutable historical proof; expiry does not restamp or renew it.
     waitPastDeadline(context, original);
     var recoveredAfterExpiry = receiptExecutor.read(original, decision);
     assertThat(recoveredAfterExpiry).isEqualTo(leftReceipt);
@@ -2356,7 +2356,7 @@ class AccountGameplayAdmissionLeasePersistenceIntegrationTest {
                 decision));
   }
 
-  private static <T> T withV90WalCoverageCoordinator(
+  private static <T> T withV120WalCoverageCoordinator(
       Context context,
       String applicationName,
       Supplier<T> confirmation,
@@ -2368,14 +2368,14 @@ class AccountGameplayAdmissionLeasePersistenceIntegrationTest {
     ExecutorService executor =
         Executors.newSingleThreadExecutor(
             task -> {
-              Thread thread = new Thread(task, "account-v90-wal-coordinator-" + applicationName);
+              Thread thread = new Thread(task, "account-v120-wal-coordinator-" + applicationName);
               thread.setDaemon(true);
               return thread;
             });
-    Future<V90WalCoverageObservation> future =
+    Future<V120WalCoverageObservation> future =
         executor.submit(
             () ->
-                observeV90WalCoverage(
+                observeV120WalCoverage(
                     context,
                     applicationName,
                     actionFinished,
@@ -2389,7 +2389,7 @@ class AccountGameplayAdmissionLeasePersistenceIntegrationTest {
       if (!monitorReady.await(2, TimeUnit.SECONDS)) {
         actionFailure =
             new IllegalStateException(
-                "Account V90 WAL coverage coordinator could not open its observation connection");
+                "Account V120 WAL coverage coordinator could not open its observation connection");
       } else {
         result = confirmation.get();
       }
@@ -2405,7 +2405,7 @@ class AccountGameplayAdmissionLeasePersistenceIntegrationTest {
     }
 
     executor.shutdown();
-    V90WalCoverageObservation observation = null;
+    V120WalCoverageObservation observation = null;
     Throwable coordinatorFailure = null;
     try {
       observation = future.get(2, TimeUnit.SECONDS);
@@ -2428,7 +2428,7 @@ class AccountGameplayAdmissionLeasePersistenceIntegrationTest {
       if (!executor.awaitTermination(2, TimeUnit.SECONDS)) {
         executor.shutdownNow();
         var cleanupFailure =
-            new IllegalStateException("Account V90 WAL coverage coordinator did not terminate");
+            new IllegalStateException("Account V120 WAL coverage coordinator did not terminate");
         closeCoordinatorConnection(coordinatorConnection, cleanupFailure);
         if (!executor.awaitTermination(2, TimeUnit.SECONDS)) {
           if (coordinatorFailure == null) coordinatorFailure = cleanupFailure;
@@ -2447,14 +2447,14 @@ class AccountGameplayAdmissionLeasePersistenceIntegrationTest {
       if (coordinatorFailure != null) actionFailure.addSuppressed(coordinatorFailure);
       actionFailure.addSuppressed(
           new IllegalStateException(
-              describeV90WalCoordinatorOutcome(applicationName, observation)));
+              describeV120WalCoordinatorOutcome(applicationName, observation)));
       if (actionFailure instanceof RuntimeException runtimeFailure) throw runtimeFailure;
       throw (Error) actionFailure;
     }
 
     if (coordinatorFailure != null) {
       throw new IllegalStateException(
-          "Account V90 confirmation succeeded, but its bounded WAL coordinator failed",
+          "Account V120 confirmation succeeded, but its bounded WAL coordinator failed",
           coordinatorFailure);
     }
     if (observation != null && observation.marker() != null) {
@@ -2470,14 +2470,14 @@ class AccountGameplayAdmissionLeasePersistenceIntegrationTest {
               .get("covered", Boolean.class);
       assertThat(covered)
           .as(
-              "independent marker COMMIT flush covers V90 fence %s from backend %s",
+              "independent marker COMMIT flush covers V120 fence %s from backend %s",
               fence, observation.backendPid())
           .isTrue();
     }
     return result;
   }
 
-  private static V90WalCoverageObservation observeV90WalCoverage(
+  private static V120WalCoverageObservation observeV120WalCoverage(
       Context context,
       String applicationName,
       AtomicBoolean actionFinished,
@@ -2489,7 +2489,7 @@ class AccountGameplayAdmissionLeasePersistenceIntegrationTest {
     String lastWaitEventType = null;
     String lastWaitEvent = null;
     long deadline =
-        System.nanoTime() + TimeUnit.SECONDS.toNanos(V90_WAL_COORDINATOR_TIMEOUT_SECONDS);
+        System.nanoTime() + TimeUnit.SECONDS.toNanos(V120_WAL_COORDINATOR_TIMEOUT_SECONDS);
     try (Connection connection = context.dataSource().getConnection();
         PreparedStatement activity =
             connection.prepareStatement(
@@ -2514,26 +2514,26 @@ class AccountGameplayAdmissionLeasePersistenceIntegrationTest {
             int currentPid = rows.getInt("pid");
             if (backendPid != null && backendPid != currentPid) {
               throw new SQLException(
-                  "Account V90 confirmation backend changed during WAL coordination");
+                  "Account V120 confirmation backend changed during WAL coordination");
             }
             backendPid = currentPid;
             lastWaitEventType = rows.getString("wait_event_type");
             lastWaitEvent = rows.getString("wait_event");
             if (rows.next()) {
               throw new SQLException(
-                  "Multiple Account V90 confirmation backends matched unique application name");
+                  "Multiple Account V120 confirmation backends matched unique application name");
             }
             if ("Timeout".equals(lastWaitEventType) && "PgSleep".equals(lastWaitEvent)) {
               synchronized (coordinatorLock) {
                 if (actionFinished.get()) {
-                  return new V90WalCoverageObservation(
+                  return new V120WalCoverageObservation(
                       backendPid, lastWaitEventType, lastWaitEvent, null, false);
                 }
                 connection.close();
                 coordinatorConnection.compareAndSet(connection, null);
-                V90WalCoverageMarker marker =
-                    commitV90WalCoverageMarker(context, coordinatorConnection);
-                return new V90WalCoverageObservation(
+                V120WalCoverageMarker marker =
+                    commitV120WalCoverageMarker(context, coordinatorConnection);
+                return new V120WalCoverageObservation(
                     backendPid, lastWaitEventType, lastWaitEvent, marker, false);
               }
             }
@@ -2541,20 +2541,20 @@ class AccountGameplayAdmissionLeasePersistenceIntegrationTest {
         }
         synchronized (coordinatorLock) {
           if (actionFinished.get()) {
-            return new V90WalCoverageObservation(
+            return new V120WalCoverageObservation(
                 backendPid, lastWaitEventType, lastWaitEvent, null, false);
           }
         }
         Thread.yield();
       }
-      return new V90WalCoverageObservation(
+      return new V120WalCoverageObservation(
           backendPid, lastWaitEventType, lastWaitEvent, null, true);
     } finally {
       monitorReady.countDown();
     }
   }
 
-  private static V90WalCoverageMarker commitV90WalCoverageMarker(
+  private static V120WalCoverageMarker commitV120WalCoverageMarker(
       Context context, AtomicReference<Connection> coordinatorConnection) throws SQLException {
     UUID markerId = UUID.randomUUID();
     String markerValue = UUID.randomUUID().toString();
@@ -2570,25 +2570,26 @@ class AccountGameplayAdmissionLeasePersistenceIntegrationTest {
               statement.executeQuery(
                   "SELECT pg_backend_pid(), current_setting('synchronous_commit')")) {
             if (!settings.next() || !"on".equals(settings.getString(2))) {
-              throw new SQLException("Account V90 marker writer did not retain synchronous COMMIT");
+              throw new SQLException(
+                  "Account V120 marker writer did not retain synchronous COMMIT");
             }
             writerBackendPid = settings.getInt(1);
             if (settings.next()) {
               throw new SQLException(
-                  "Account V90 marker writer settings query returned multiple rows");
+                  "Account V120 marker writer settings query returned multiple rows");
             }
           }
         }
         try (PreparedStatement insert =
             writer.prepareStatement(
                 "INSERT INTO "
-                    + V90_WAL_MARKER_TABLE
+                    + V120_WAL_MARKER_TABLE
                     + " (marker_id, marker_value) VALUES (?, ?)")) {
           insert.setQueryTimeout(1);
           insert.setObject(1, markerId);
           insert.setString(2, markerValue);
           if (insert.executeUpdate() != 1) {
-            throw new SQLException("Account V90 marker INSERT did not write exactly one row");
+            throw new SQLException("Account V120 marker INSERT did not write exactly one row");
           }
         }
         writer.commit();
@@ -2609,18 +2610,19 @@ class AccountGameplayAdmissionLeasePersistenceIntegrationTest {
         PreparedStatement readback =
             reader.prepareStatement(
                 "SELECT marker_value, pg_backend_pid() FROM "
-                    + V90_WAL_MARKER_TABLE
+                    + V120_WAL_MARKER_TABLE
                     + " WHERE marker_id = ?")) {
       coordinatorConnection.set(reader);
       readback.setQueryTimeout(1);
       readback.setObject(1, markerId);
       try (ResultSet row = readback.executeQuery()) {
         if (!row.next() || !markerValue.equals(row.getString(1))) {
-          throw new SQLException("Committed Account V90 WAL marker was not independently readable");
+          throw new SQLException(
+              "Committed Account V120 WAL marker was not independently readable");
         }
         readerBackendPid = row.getInt(2);
         if (readerBackendPid == writerBackendPid || row.next()) {
-          throw new SQLException("Account V90 WAL marker readback was not exact and independent");
+          throw new SQLException("Account V120 WAL marker readback was not exact and independent");
         }
       }
       String flushLsn;
@@ -2628,22 +2630,22 @@ class AccountGameplayAdmissionLeasePersistenceIntegrationTest {
         statement.setQueryTimeout(1);
         try (ResultSet result = statement.executeQuery("SELECT pg_current_wal_flush_lsn()::text")) {
           if (!result.next())
-            throw new SQLException("Account V90 marker flush location unavailable");
+            throw new SQLException("Account V120 marker flush location unavailable");
           flushLsn = result.getString(1);
         }
       }
-      return new V90WalCoverageMarker(flushLsn);
+      return new V120WalCoverageMarker(flushLsn);
     } finally {
       coordinatorConnection.set(null);
     }
   }
 
-  private static void createV90WalCoverageMarkerTable(Context context) {
+  private static void createV120WalCoverageMarkerTable(Context context) {
     context
         .dsl()
         .execute(
             "CREATE TABLE "
-                + V90_WAL_MARKER_TABLE
+                + V120_WAL_MARKER_TABLE
                 + " (marker_id UUID PRIMARY KEY, marker_value TEXT NOT NULL)");
   }
 
@@ -2668,7 +2670,7 @@ class AccountGameplayAdmissionLeasePersistenceIntegrationTest {
       statement.setString(1, applicationName);
       try (ResultSet result = statement.executeQuery()) {
         if (!result.next() || !applicationName.equals(result.getString(1)) || result.next()) {
-          throw new SQLException("Account V90 application name could not be verified");
+          throw new SQLException("Account V120 application name could not be verified");
         }
         return connection;
       }
@@ -2692,8 +2694,8 @@ class AccountGameplayAdmissionLeasePersistenceIntegrationTest {
     assertThat(configured).isEqualTo(applicationName);
   }
 
-  private static String v90ApplicationName() {
-    return "account-v90-" + UUID.randomUUID().toString().replace("-", "");
+  private static String v120ApplicationName() {
+    return "account-v120-" + UUID.randomUUID().toString().replace("-", "");
   }
 
   private static <T> T callWithSyntheticReadPeer(Callable<T> action) {
@@ -2706,13 +2708,13 @@ class AccountGameplayAdmissionLeasePersistenceIntegrationTest {
     }
   }
 
-  private static String describeV90WalCoordinatorOutcome(
-      String applicationName, V90WalCoverageObservation observation) {
+  private static String describeV120WalCoordinatorOutcome(
+      String applicationName, V120WalCoverageObservation observation) {
     if (observation == null) {
-      return "Account V90 coordinator produced no observation for application_name="
+      return "Account V120 coordinator produced no observation for application_name="
           + applicationName;
     }
-    return "Account V90 coordinator outcome"
+    return "Account V120 coordinator outcome"
         + ": application_name="
         + applicationName
         + " backend_pid="
@@ -2738,13 +2740,13 @@ class AccountGameplayAdmissionLeasePersistenceIntegrationTest {
     }
   }
 
-  private record V90WalCoverageMarker(String flushLsn) {}
+  private record V120WalCoverageMarker(String flushLsn) {}
 
-  private record V90WalCoverageObservation(
+  private record V120WalCoverageObservation(
       Integer backendPid,
       String waitEventType,
       String waitEvent,
-      V90WalCoverageMarker marker,
+      V120WalCoverageMarker marker,
       boolean timedOut) {}
 
   private static FinalizeGameplayAdmissionLeaseRequest confirmationRequest(
@@ -2976,8 +2978,8 @@ class AccountGameplayAdmissionLeasePersistenceIntegrationTest {
             PreparedStatement.class.getClassLoader(),
             new Class<?>[] {PreparedStatement.class},
             (proxy, method, arguments) -> {
-              if (method.getName().startsWith("execute") && isV90IndependentRead(sql))
-                trace.record("v90-read", connectionId);
+              if (method.getName().startsWith("execute") && isV120IndependentRead(sql))
+                trace.record("v120-read", connectionId);
               try {
                 return method.invoke(physical, arguments);
               } catch (InvocationTargetException failure) {
@@ -2986,7 +2988,7 @@ class AccountGameplayAdmissionLeasePersistenceIntegrationTest {
             });
   }
 
-  private static boolean isV90IndependentRead(String sql) {
+  private static boolean isV120IndependentRead(String sql) {
     return sql.toLowerCase(java.util.Locale.ROOT)
         .contains("account_gameplay_admission_read_commit_confirmation");
   }

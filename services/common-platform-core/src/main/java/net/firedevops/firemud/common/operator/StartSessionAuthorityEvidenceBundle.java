@@ -204,14 +204,20 @@ public final class StartSessionAuthorityEvidenceBundle {
     }
   }
 
-  /** Binds the separate Account source reference; this does not prove source freshness. */
+  /**
+   * Checks the bundle schema and capture source version against the separate Account reference.
+   *
+   * <p>The caller must independently match every field of this reference to the exact complete
+   * owner-stored reference/readback. This integrity-only check cannot derive the capture source
+   * fence from the bundle's independent issuance fence, and grants neither permission nor
+   * freshness.
+   */
   public void requireReferenceBinding(BundleReference reference) {
     Objects.requireNonNull(reference, "Account bundle reference is required");
     Map<String, Object> projection =
         object(value.get("accountProjectionEvidence"), "accountProjectionEvidence");
     if (!BUNDLE_VERSION.equals(reference.bundleVersion())
-        || !reference.sourceVersion().equals(projection.get("sourceEvidenceVersion"))
-        || !reference.sourceFence().equals(value.get("issuanceFence"))) {
+        || !reference.sourceVersion().equals(projection.get("sourceEvidenceVersion"))) {
       throw denied("Account bundle reference differs from immutable authority evidence");
     }
   }

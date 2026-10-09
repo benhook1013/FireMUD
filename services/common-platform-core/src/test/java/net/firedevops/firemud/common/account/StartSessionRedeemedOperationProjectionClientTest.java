@@ -178,6 +178,22 @@ class StartSessionRedeemedOperationProjectionClientTest {
   }
 
   @Test
+  void rejectsChangedCompleteReferenceWhileSourceFenceIsIndependentOfIssuanceFence()
+      throws Exception {
+    Fixture fixture = fixture(CLOCK_NOW.plusSeconds(3_600L));
+    startServer(fixture, ResponseMode.CHANGED_SOURCE_FENCE);
+    client = newClient(server);
+    client.init();
+
+    assertThat(fixture.postTuple().bundleReference().sourceFence())
+        .isNotEqualTo(Long.toString(ISSUANCE_FENCE));
+    assertThatThrownBy(() -> client.read(fixture.postTuple(), OWNER_ATTEMPT_ID, OWNER_FENCE))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("invalid redeemed StartSession operation projection");
+    assertThat(applicationCalls).hasValue(1);
+  }
+
+  @Test
   void rejectsExpiredAccountReferenceEvenWhenResponseEchoesOriginalBundle() throws Exception {
     Fixture fixture = fixture(CLOCK_NOW.minusSeconds(60L));
     startServer(fixture, ResponseMode.EXACT);
@@ -258,6 +274,12 @@ class StartSessionRedeemedOperationProjectionClientTest {
             ReadRedeemedOperationProjectionResponse response = response(fixture);
             if (mode == ResponseMode.CHANGED_DIGEST) {
               response = response.toBuilder().setMutationDigest("0".repeat(64)).build();
+            } else if (mode == ResponseMode.CHANGED_SOURCE_FENCE) {
+              response =
+                  response.toBuilder()
+                      .setBundleReference(
+                          response.getBundleReference().toBuilder().setSourceFence("18").build())
+                      .build();
             } else if (mode == ResponseMode.UNKNOWN_FIELD) {
               response =
                   response.toBuilder()
@@ -359,10 +381,7 @@ class StartSessionRedeemedOperationProjectionClientTest {
             "redeemed-projection-request-β", ACTOR_ID, action);
     StartSessionAuthorityEvidenceBundle.BundleReference reference =
         new StartSessionAuthorityEvidenceBundle.BundleReference(
-            StartSessionAuthorityEvidenceBundle.BUNDLE_VERSION,
-            "17",
-            Long.toString(ISSUANCE_FENCE),
-            "18446744073709551615");
+            StartSessionAuthorityEvidenceBundle.BUNDLE_VERSION, "17", "17", "18446744073709551615");
     byte[] bundle = authorityEvidenceBundle(preTuple, expiresAt, targetNamespace);
     StartSessionPostAuthorizationExecutionTuple postTuple =
         StartSessionPostAuthorizationExecutionTuple.createHuman(
@@ -458,6 +477,7 @@ class StartSessionRedeemedOperationProjectionClientTest {
   private enum ResponseMode {
     EXACT,
     CHANGED_DIGEST,
+    CHANGED_SOURCE_FENCE,
     UNKNOWN_FIELD,
     BLOCK_UNTIL_RELEASED
   }
