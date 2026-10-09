@@ -61,6 +61,7 @@ import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
 import org.springframework.test.util.AopTestUtils;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.TransactionDefinition;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.transaction.support.TransactionTemplate;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
@@ -120,6 +121,21 @@ class PublishAttemptServiceTransactionIntegrationTest {
   @MockitoSpyBean private ControlPlaneDigestService controlPlaneDigestService;
   @MockitoSpyBean private RecordedParticipantDigestService recordedParticipantDigestService;
   @MockitoSpyBean private VersionAssetArtifactService versionAssetArtifactService;
+
+  @Test
+  void fullVersionSealTransactionUsesExplicitReadCommittedIsolation() {
+    AtomicReference<Integer> isolation = new AtomicReference<>();
+
+    publishAttemptService.executeFullVersionTransaction(
+        () -> {
+          assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isTrue();
+          assertThat(TransactionSynchronizationManager.isCurrentTransactionReadOnly()).isFalse();
+          isolation.set(TransactionSynchronizationManager.getCurrentTransactionIsolationLevel());
+          return null;
+        });
+
+    assertThat(isolation.get()).isEqualTo(TransactionDefinition.ISOLATION_READ_COMMITTED);
+  }
 
   @Test
   void fullVersionTransactionRollsBackVersionBundleArtifactAndAttemptTogether() {
@@ -203,7 +219,7 @@ class PublishAttemptServiceTransactionIntegrationTest {
     Game game = new Game();
     game.setTenantId(tenantId);
     game.setName("script-patch-failure-replay-game");
-    gameRepository.save(game);
+    Game savedGame = gameRepository.save(game);
 
     Mockito.doThrow(new IllegalStateException("script patch participant unavailable"))
         .when(publishGateService)
@@ -232,7 +248,7 @@ class PublishAttemptServiceTransactionIntegrationTest {
     assertThat(retainedVersion.getVersionState()).isEqualTo(VersionLifecycleState.FAILED);
     assertThat(retainedVersion.getVersionStateEpoch()).isEqualTo(2L);
     assertThat(retainedVersion.getCanonicalVersionId()).isNotNull();
-    assertThat(retainedVersion.getCanonicalTenantId()).isEqualTo(game.getCanonicalTenantId());
+    assertThat(retainedVersion.getCanonicalTenantId()).isEqualTo(savedGame.getCanonicalTenantId());
 
     assertThatThrownBy(
             () ->
