@@ -733,9 +733,9 @@ class GameSessionCanonicalLaunchPreparationServiceTest {
     return AuthoredWorldLaunchDescriptorEvidence.create(
         request.descriptorRequest(catalog, source),
         "launch-descriptor-1",
-        72,
-        false,
-        null,
+        request.targetVersionIdPresent() ? request.targetVersionId() : 72,
+        request.requestedScriptPatchVersionPresent(),
+        request.requestedScriptPatchVersion(),
         "{}",
         "generation-1",
         3,
