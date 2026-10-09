@@ -1,6 +1,8 @@
 version: v1
 plugins:
-  - plugin: buf.build/protocolbuffers/java
+  - plugin: buf.build/protocolbuffers/java:v36.2
+    revision: 1
     out: gen/java
-  - plugin: buf.build/grpc/java
+  - plugin: buf.build/grpc/java:v1.84.1
+    revision: 1
     out: gen/java
