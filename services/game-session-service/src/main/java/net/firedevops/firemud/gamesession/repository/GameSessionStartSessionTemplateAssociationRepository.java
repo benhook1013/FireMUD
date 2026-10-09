@@ -24,6 +24,7 @@ import org.jooq.Record;
 import org.springframework.transaction.annotation.Isolation;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 /**
  * Unregistered immutable pin for the first normalized Game Design association selected by a
@@ -84,6 +85,32 @@ public final class GameSessionStartSessionTemplateAssociationRepository {
                 continuation.targetNamespace(),
                 continuation.controlPlaneRequestId(),
                 attempt));
+  }
+
+  /**
+   * Reads only the immutable first selection for historical owner reconciliation. It does not
+   * require a live owner lease, select again, or grant mutation or admission authority.
+   */
+  @Transactional(propagation = Propagation.NOT_SUPPORTED, readOnly = true)
+  public Optional<PinnedAssociationSnapshot> readHistoricalPinnedAssociation(
+      StartSessionPostAuthorizationExecutionTuple tuple,
+      UUID expectedOwnerAttemptId,
+      long expectedOwnerFence) {
+    requireOutsideOwnerTransaction();
+    Objects.requireNonNull(tuple, "complete post-authorization tuple is required");
+    String namespace = tuple.preAuthorizationTuple().action().scope().targetNamespace();
+    String requestId = tuple.controlPlaneRequestId();
+    Optional<GameSessionStartSessionOperatorAttemptRepository.AttemptSnapshot> historicalAttempt =
+        attemptRepository.readHistoricalOwnerAttempt(
+            tuple, expectedOwnerAttemptId, expectedOwnerFence);
+    if (historicalAttempt.isEmpty()) {
+      return Optional.empty();
+    }
+
+    Record row = selectPin(namespace, requestId, false);
+    return row == null
+        ? Optional.empty()
+        : Optional.of(decodeStored(row, namespace, requestId, historicalAttempt.orElseThrow()));
   }
 
   /**
@@ -360,6 +387,14 @@ public final class GameSessionStartSessionTemplateAssociationRepository {
             + (forUpdate ? " FOR UPDATE" : ""),
         namespace,
         requestId);
+  }
+
+  private static void requireOutsideOwnerTransaction() {
+    if (TransactionSynchronizationManager.isActualTransactionActive()) {
+      throw new IllegalStateException(
+          "Historical StartSession association evidence requires a read outside the owner "
+              + "transaction");
+    }
   }
 
   private static void requireWireBound(byte[] requestWire, byte[] responseWire) {

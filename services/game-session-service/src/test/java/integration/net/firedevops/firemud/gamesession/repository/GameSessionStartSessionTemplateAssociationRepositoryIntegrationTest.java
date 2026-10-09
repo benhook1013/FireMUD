@@ -19,6 +19,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
@@ -59,6 +60,7 @@ import net.firedevops.firemud.gamedesign.v1.PublishedReleaseBundle;
 import net.firedevops.firemud.gamesession.repository.GameSessionStartSessionOperatorAttemptRepository;
 import net.firedevops.firemud.gamesession.repository.GameSessionStartSessionOperatorAttemptRepository.AccountRedemptionProjection;
 import net.firedevops.firemud.gamesession.repository.GameSessionStartSessionOperatorAttemptRepository.AttemptClaim;
+import net.firedevops.firemud.gamesession.repository.GameSessionStartSessionOperatorAttemptRepository.AttemptSnapshot;
 import net.firedevops.firemud.gamesession.repository.GameSessionStartSessionOperatorAttemptRepository.ReservationResult;
 import net.firedevops.firemud.gamesession.repository.GameSessionStartSessionTemplateAssociationRepository;
 import net.firedevops.firemud.gamesession.repository.GameSessionStartSessionTemplateAssociationRepository.PinnedAssociationSnapshot;
@@ -193,6 +195,125 @@ class GameSessionStartSessionTemplateAssociationRepositoryIntegrationTest {
                     claim.controlPlaneRequestId()))
         .isInstanceOf(RuntimeException.class);
     assertThat(fixture.pinCount()).isEqualTo(1);
+  }
+
+  @Test
+  void historicalPinReadReturnsExpiredOwnerSelectionWithoutChangingOwnerState() throws Exception {
+    Fixture fixture = fixture(Duration.ofSeconds(2));
+    StartSessionPostAuthorizationExecutionTuple tuple = tuple("association-pin-historical-expired");
+    AttemptClaim claim = fixture.reserveAndAttach(tuple);
+    AttemptSnapshot ownerBeforePin =
+        fixture.historicalAttempt(tuple, claim.ownerAttemptId(), claim.ownerFence()).orElseThrow();
+    PinnedAssociationSnapshot original =
+        fixture.pin(claim, result(tuple, claim, new InitialConfigured(), UUID.randomUUID()));
+    Thread.sleep(2500L);
+
+    var before = fixture.ownerClaimRow(claim.controlPlaneRequestId());
+    assertThat(fixture.leaseExpired(claim.controlPlaneRequestId())).isTrue();
+    int attemptsBefore = fixture.attemptCount();
+    int pinsBefore = fixture.pinCount();
+    int instancesBefore = fixture.dsl.fetchCount(DSL.table(DSL.name("game_instances")));
+    int pointersBefore = fixture.dsl.fetchCount(DSL.table(DSL.name("gameplay_admission_pointer")));
+    int pointerEventsBefore =
+        fixture.dsl.fetchCount(DSL.table(DSL.name("gameplay_admission_pointer_event")));
+
+    PinnedAssociationSnapshot historical =
+        fixture.historical(tuple, claim.ownerAttemptId(), claim.ownerFence()).orElseThrow();
+
+    assertThat(historical.result()).isEqualTo(original.result());
+    assertThat(historical.requestDigest()).isEqualTo(original.requestDigest());
+    assertThat(historical.responseDigest()).isEqualTo(original.responseDigest());
+    assertThat(historical.createdAt()).isEqualTo(original.createdAt());
+    var after = fixture.ownerClaimRow(claim.controlPlaneRequestId());
+    assertThat(after.get("owner_attempt_id", UUID.class))
+        .isEqualTo(before.get("owner_attempt_id", UUID.class));
+    assertThat(after.get("owner_mutation_id", UUID.class))
+        .isEqualTo(before.get("owner_mutation_id", UUID.class));
+    assertThat(after.get("claim_owner_id", UUID.class))
+        .isEqualTo(before.get("claim_owner_id", UUID.class));
+    assertThat(after.get("owner_fence", Long.class))
+        .isEqualTo(before.get("owner_fence", Long.class));
+    assertThat(after.get("phase_state", String.class))
+        .isEqualTo(before.get("phase_state", String.class));
+    assertThat(after.get("lease_expires_at", java.time.OffsetDateTime.class))
+        .isEqualTo(before.get("lease_expires_at", java.time.OffsetDateTime.class));
+    assertThat(fixture.attemptCount()).isEqualTo(attemptsBefore);
+    assertThat(fixture.pinCount()).isEqualTo(pinsBefore);
+    assertThat(fixture.dsl.fetchCount(DSL.table(DSL.name("game_instances"))))
+        .isEqualTo(instancesBefore);
+    assertThat(fixture.dsl.fetchCount(DSL.table(DSL.name("gameplay_admission_pointer"))))
+        .isEqualTo(pointersBefore);
+    assertThat(fixture.dsl.fetchCount(DSL.table(DSL.name("gameplay_admission_pointer_event"))))
+        .isEqualTo(pointerEventsBefore);
+    assertThat(ownerBeforePin.ownerAttemptId()).isEqualTo(claim.ownerAttemptId());
+    assertThat(ownerBeforePin.ownerFence()).isEqualTo(claim.ownerFence());
+
+    assertThatThrownBy(() -> fixture.find(claim))
+        .isInstanceOf(
+            GameSessionStartSessionOperatorAttemptRepository
+                .StaleStartSessionOperatorAttemptClaimException.class)
+        .hasMessageContaining("expired");
+    assertThatThrownBy(
+            () ->
+                fixture.transactions.execute(
+                    status ->
+                        fixture.historical(tuple, claim.ownerAttemptId(), claim.ownerFence())))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("outside the owner transaction");
+    assertThat(fixture.attemptCount()).isEqualTo(attemptsBefore);
+    assertThat(fixture.pinCount()).isEqualTo(pinsBefore);
+  }
+
+  @Test
+  void historicalPinReadReturnsNoEvidenceForAnAbsentPinAfterClaimExpiry() throws Exception {
+    Fixture fixture = fixture(Duration.ofMillis(500));
+    StartSessionPostAuthorizationExecutionTuple tuple = tuple("association-pin-historical-absent");
+    AttemptClaim claim = fixture.reserveAndAttach(tuple);
+    Thread.sleep(750L);
+
+    assertThat(fixture.historical(tuple, claim.ownerAttemptId(), claim.ownerFence())).isEmpty();
+    assertThat(fixture.attemptCount()).isEqualTo(1);
+    assertThat(fixture.pinCount()).isZero();
+    assertThatThrownBy(() -> fixture.find(claim))
+        .isInstanceOf(
+            GameSessionStartSessionOperatorAttemptRepository
+                .StaleStartSessionOperatorAttemptClaimException.class)
+        .hasMessageContaining("expired");
+  }
+
+  @Test
+  void historicalPinReadRejectsCorruptedStoredSelection() {
+    Fixture fixture = fixture();
+    StartSessionPostAuthorizationExecutionTuple tuple = tuple("association-pin-historical-corrupt");
+    AttemptClaim claim = fixture.reserveAndAttach(tuple);
+    fixture.pin(claim, result(tuple, claim, new InitialConfigured(), UUID.randomUUID()));
+
+    fixture.dsl.execute(
+        "ALTER TABLE game_session_start_session_template_association_pin "
+            + "DISABLE TRIGGER gs_start_session_template_association_pin_immutable");
+    try {
+      fixture.dsl.execute(
+          "UPDATE game_session_start_session_template_association_pin "
+              + "SET selected_commit_id = ? WHERE target_namespace = ? "
+              + "AND control_plane_request_id = ?",
+          UUID.fromString("66666666-6666-4666-8666-666666666666"),
+          tuple.preAuthorizationTuple().action().scope().targetNamespace(),
+          tuple.controlPlaneRequestId());
+    } finally {
+      fixture.dsl.execute(
+          "ALTER TABLE game_session_start_session_template_association_pin "
+              + "ENABLE TRIGGER gs_start_session_template_association_pin_immutable");
+    }
+
+    assertThatThrownBy(() -> fixture.historical(tuple, claim.ownerAttemptId(), claim.ownerFence()))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("columns differ");
+    assertThat(fixture.attemptCount()).isEqualTo(1);
+    assertThat(fixture.pinCount()).isEqualTo(1);
+    assertThat(fixture.dsl.fetchCount(DSL.table(DSL.name("game_instances")))).isZero();
+    assertThat(fixture.dsl.fetchCount(DSL.table(DSL.name("gameplay_admission_pointer")))).isZero();
+    assertThat(fixture.dsl.fetchCount(DSL.table(DSL.name("gameplay_admission_pointer_event"))))
+        .isZero();
   }
 
   @Test
@@ -895,6 +1016,10 @@ class GameSessionStartSessionTemplateAssociationRepositoryIntegrationTest {
   }
 
   private static Fixture fixture() {
+    return fixture(Duration.ofSeconds(30));
+  }
+
+  private static Fixture fixture(Duration ownerClaimLease) {
     String schema = "gs_template_association_" + UUID.randomUUID().toString().replace("-", "");
     DriverManagerDataSource dataSource = new DriverManagerDataSource();
     dataSource.setDriverClassName("org.postgresql.Driver");
@@ -913,8 +1038,7 @@ class GameSessionStartSessionTemplateAssociationRepositoryIntegrationTest {
     var transactions = new TransactionTemplate(new DataSourceTransactionManager(dataSource));
     DSLContext dsl =
         DSL.using(new TransactionAwareDataSourceProxy(dataSource), SQLDialect.POSTGRES);
-    var attempts =
-        new GameSessionStartSessionOperatorAttemptRepository(dsl, Duration.ofSeconds(30));
+    var attempts = new GameSessionStartSessionOperatorAttemptRepository(dsl, ownerClaimLease);
     return new Fixture(
         dsl,
         transactions,
@@ -949,6 +1073,47 @@ class GameSessionStartSessionTemplateAssociationRepositoryIntegrationTest {
     java.util.Optional<PinnedAssociationSnapshot> find(AttemptClaim claim) {
       return Objects.requireNonNull(
           transactions.execute(status -> pins.findPinned(claim)), "template association read");
+    }
+
+    Optional<GameSessionStartSessionOperatorAttemptRepository.AttemptSnapshot> historicalAttempt(
+        StartSessionPostAuthorizationExecutionTuple tuple, UUID ownerAttemptId, long ownerFence) {
+      return attempts.readHistoricalOwnerAttempt(tuple, ownerAttemptId, ownerFence);
+    }
+
+    Optional<PinnedAssociationSnapshot> historical(
+        StartSessionPostAuthorizationExecutionTuple tuple, UUID ownerAttemptId, long ownerFence) {
+      return pins.readHistoricalPinnedAssociation(tuple, ownerAttemptId, ownerFence);
+    }
+
+    org.jooq.Record ownerClaimRow(String requestId) {
+      return Objects.requireNonNull(
+          dsl.fetchOne(
+              "SELECT owner_attempt_id, owner_mutation_id, claim_owner_id, owner_fence, "
+                  + "phase_state, lease_expires_at "
+                  + "FROM game_session_start_session_operator_attempt "
+                  + "WHERE target_namespace = ? AND control_plane_request_id = ?",
+              NAMESPACE,
+              requestId),
+          "persisted owner attempt row");
+    }
+
+    boolean leaseExpired(String requestId) {
+      var row =
+          dsl.fetchOne(
+              "SELECT lease_expires_at <= clock_timestamp() AS expired "
+                  + "FROM game_session_start_session_operator_attempt "
+                  + "WHERE target_namespace = ? AND control_plane_request_id = ?",
+              NAMESPACE,
+              requestId);
+      if (row == null) {
+        throw new IllegalStateException("persisted owner attempt row missing while checking lease");
+      }
+      Boolean expired = row.get("expired", Boolean.class);
+      return Boolean.TRUE.equals(expired);
+    }
+
+    int attemptCount() {
+      return dsl.fetchCount(DSL.table(DSL.name("game_session_start_session_operator_attempt")));
     }
 
     int pinCount() {

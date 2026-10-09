@@ -134,6 +134,69 @@ public final class GameSessionStartSessionOperatorAttemptRepository {
   }
 
   /**
+   * Reads the immutable identity and attached Account projection for historical reconciliation. It
+   * does not require a live lease or reference and grants no permission to continue the mutation.
+   */
+  @Transactional(propagation = Propagation.NOT_SUPPORTED, readOnly = true)
+  public Optional<AttemptSnapshot> readHistoricalOwnerAttempt(
+      StartSessionPostAuthorizationExecutionTuple tuple,
+      UUID expectedOwnerAttemptId,
+      long expectedOwnerFence) {
+    requireOutsideOwnerTransaction();
+    Objects.requireNonNull(tuple, "complete post-authorization tuple is required");
+    requireNonNil(expectedOwnerAttemptId, "expectedOwnerAttemptId");
+    if (expectedOwnerFence <= 0L) {
+      throw new IllegalArgumentException("expectedOwnerFence must be positive");
+    }
+
+    String namespace = tuple.preAuthorizationTuple().action().scope().targetNamespace();
+    String requestId = tuple.controlPlaneRequestId();
+    Record row = selectAttempt(namespace, requestId, false);
+    if (row == null) {
+      return Optional.empty();
+    }
+
+    byte[] expectedTuple = tuple.canonicalBytes();
+    byte[] storedTuple = requiredBytes(row, "post_authorization_execution_tuple");
+    if (!Arrays.equals(storedTuple, expectedTuple)) {
+      throw new StartSessionOperatorAttemptConflictException(
+          "Historical owner read differs from the complete original StartSession tuple");
+    }
+    StartSessionPostAuthorizationExecutionTuple decodedTuple;
+    try {
+      decodedTuple = StartSessionPostAuthorizationExecutionTuple.decode(storedTuple);
+    } catch (IllegalArgumentException malformed) {
+      throw new IllegalStateException(
+          "Persisted historical StartSession owner tuple is malformed", malformed);
+    }
+    if (!Arrays.equals(decodedTuple.canonicalBytes(), storedTuple)
+        || !requiredText(row, "target_namespace").equals(namespace)
+        || !requiredText(row, "control_plane_request_id").equals(requestId)) {
+      throw new IllegalStateException(
+          "Persisted historical StartSession owner identity is not canonical");
+    }
+    requireStoredProjectionColumnsMatch(row, decodedTuple);
+    if (!expectedOwnerAttemptId.equals(requiredUuid(row, "owner_attempt_id"))
+        || expectedOwnerFence != requiredLong(row, "owner_fence")) {
+      throw new StaleStartSessionOperatorAttemptClaimException(
+          "Historical owner read does not match the original owner attempt and fence");
+    }
+
+    byte[] storedProjection = optionalBytes(row, "account_redemption_projection");
+    if (storedProjection == null) {
+      throw new StaleStartSessionOperatorAttemptClaimException(
+          "Historical StartSession owner attempt has no attached Account projection");
+    }
+    AccountRedemptionProjection expectedProjection = projectionFromTuple(decodedTuple);
+    if (!Arrays.equals(storedProjection, expectedProjection.canonicalBytes())) {
+      throw new IllegalStateException(
+          "Persisted historical Account projection differs from its complete canonical tuple");
+    }
+    requireProjectionMatches(decodedTuple, expectedProjection);
+    return Optional.of(snapshot(row));
+  }
+
+  /**
    * Creates a narrow continuation capability for the exact existing pending attempt. This does not
    * reconstruct or expose an {@link AttemptClaim}; every use revalidates the stored claim identity.
    */
@@ -380,6 +443,13 @@ public final class GameSessionStartSessionOperatorAttemptRepository {
     if (validity == null || !Boolean.TRUE.equals(validity.get("unexpired", Boolean.class))) {
       throw new StaleStartSessionOperatorAttemptClaimException(
           "Game Session owner attempt claim lease is expired and remains non-replayable");
+    }
+  }
+
+  private static void requireOutsideOwnerTransaction() {
+    if (TransactionSynchronizationManager.isActualTransactionActive()) {
+      throw new IllegalStateException(
+          "Historical StartSession owner evidence requires a read outside the owner transaction");
     }
   }
 
