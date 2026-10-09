@@ -4,6 +4,8 @@ import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.sql.SQLException;
+import java.time.Duration;
+import java.time.OffsetDateTime;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Base64;
@@ -51,17 +53,24 @@ public final class WorldCanonicalInstancePreparationRepository {
 
   private final DSLContext dsl;
   private final TransactionTemplate transaction;
+  private final TransactionTemplate intentTransaction;
+  private final TransactionTemplate readTransaction;
+  private final TransactionTemplate abortTransaction;
+  private final int transactionTimeoutSeconds;
   private final WorldCanonicalInstanceAssociationRepository associationRepository;
   private final WorldCanonicalFrozenTopologyRepository frozenTopologyRepository;
   private final WorldAuthoredSourceIntakeRepository sourceIntakeRepository;
   private final WorldCompleteLaunchBindingRepository launchBindingRepository;
   private final WorldAuthoredVersionIdentityRepository versionIdentityRepository;
+  private final PlatformTransactionManager transactionManager;
+  private final long transactionTimeoutMillis;
 
   public WorldCanonicalInstancePreparationRepository(
       DSLContext dsl,
       PlatformTransactionManager transactionManager,
       WorldCanonicalInstanceAssociationRepository associationRepository,
-      WorldCanonicalFrozenTopologyRepository frozenTopologyRepository) {
+      WorldCanonicalFrozenTopologyRepository frozenTopologyRepository,
+      Duration transactionTimeout) {
     this.dsl = Objects.requireNonNull(dsl, "dsl");
     this.associationRepository =
         Objects.requireNonNull(associationRepository, "associationRepository");
@@ -70,10 +79,32 @@ public final class WorldCanonicalInstancePreparationRepository {
     sourceIntakeRepository = new WorldAuthoredSourceIntakeRepository(dsl);
     launchBindingRepository = new WorldCompleteLaunchBindingRepository(dsl);
     versionIdentityRepository = new WorldAuthoredVersionIdentityRepository(dsl);
-    transaction =
-        new TransactionTemplate(Objects.requireNonNull(transactionManager, "transactionManager"));
+    Objects.requireNonNull(transactionTimeout, "transactionTimeout");
+    if (transactionTimeout.compareTo(Duration.ofSeconds(1)) < 0
+        || transactionTimeout.compareTo(Duration.ofMinutes(5)) > 0) {
+      throw new IllegalArgumentException(
+          "World execution transaction timeout must be selected from 1 second through 5 minutes");
+    }
+    transactionTimeoutSeconds = Math.toIntExact(transactionTimeout.toSeconds());
+    transactionTimeoutMillis = transactionTimeout.toMillis();
+    this.transactionManager = Objects.requireNonNull(transactionManager, "transactionManager");
+    transaction = new TransactionTemplate(this.transactionManager);
     transaction.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
     transaction.setIsolationLevel(TransactionDefinition.ISOLATION_READ_COMMITTED);
+    transaction.setTimeout(transactionTimeoutSeconds);
+    intentTransaction = new TransactionTemplate(this.transactionManager);
+    intentTransaction.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
+    intentTransaction.setIsolationLevel(TransactionDefinition.ISOLATION_READ_COMMITTED);
+    intentTransaction.setTimeout(transactionTimeoutSeconds);
+    abortTransaction = new TransactionTemplate(this.transactionManager);
+    abortTransaction.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
+    abortTransaction.setIsolationLevel(TransactionDefinition.ISOLATION_READ_COMMITTED);
+    abortTransaction.setTimeout(transactionTimeoutSeconds);
+    readTransaction = new TransactionTemplate(this.transactionManager);
+    readTransaction.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
+    readTransaction.setIsolationLevel(TransactionDefinition.ISOLATION_REPEATABLE_READ);
+    readTransaction.setReadOnly(true);
+    readTransaction.setTimeout(transactionTimeoutSeconds);
   }
 
   /**
@@ -86,40 +117,113 @@ public final class WorldCanonicalInstancePreparationRepository {
     Objects.requireNonNull(input, "input");
     Objects.requireNonNull(authority, "authority");
     requireNoActiveTransaction("Canonical World preparation");
-    requireExactOriginalBindings(input);
-    requireExactFrozenSource(input);
+    WorldCanonicalInstanceExecutionIdentity executionIdentity =
+        Objects.requireNonNull(
+            authority.executionIdentity(),
+            "Canonical preparation authority returned no typed World execution identity");
     String inputJson = inputJson(input);
     String inputDigest = digest(inputJson.getBytes(StandardCharsets.UTF_8));
+    executionIdentity.requireMatches(input, inputJson);
 
-    MaterializedInstance committed =
-        Objects.requireNonNull(
-            transaction.execute(
-                status -> {
-                  requireWritableReadCommittedTransaction();
-                  authority.requireHeld();
-                  Record row =
-                      Objects.requireNonNull(
-                          fetchCanonicalPreparation(inputJson, inputDigest),
-                          "V35 canonical preparation function returned no row");
-                  MaterializedInstance materialized =
-                      new MaterializedInstance(
-                          required(row, "world_instance_id", Long.class),
-                          required(row, "private_game_instance_key", Long.class));
-                  WorldCanonicalInstanceAssociation.Claim claim =
-                      new WorldCanonicalInstanceAssociation.Claim(
-                          input.gameSessionReadRequest(),
-                          input.gameSessionReadEvidence(),
-                          materialized.worldInstanceId(),
-                          input.completeLaunchBinding(),
-                          input.versionIdentity());
-                  associationRepository.retainClaimInOwnerTransaction(claim);
-                  authority.requireHeld();
-                  return materialized;
-                }),
-            "Canonical World preparation transaction did not commit");
+    ExecutionLookup lookup = readExactExecution(executionIdentity);
+    Optional<ExecutionOperation> retained = lookup.operation();
+    if (retained.isPresent()) {
+      ExecutionOperation operation = retained.orElseThrow();
+      if (operation.state() == ExecutionState.COMMITTED) {
+        return readCommittedResult(input, operation);
+      }
+      if (operation.state() == ExecutionState.ABORTED) {
+        throw new ConflictingPreparationException(
+            "Exact original World execution is durably ABORTED and cannot be restarted");
+      }
+      throw new ConflictingPreparationException(
+          "Exact original World execution has a retained PENDING intent; only serialized ABORTED recovery may resolve it");
+    }
 
-    // The authority handle is still open here: TransactionTemplate returned only after commit.
+    if (!lookup.originalAuthorizationValidAtRead()) {
+      throw new WorldCanonicalInstancePreparationService.PreparationDeniedException(
+          "Original StartSession authorization expired; World may only read the exact operation or serialize ABORTED");
+    }
+
+    requireExactOriginalBindings(input);
+    requireExactFrozenSource(input);
     authority.requireHeld();
+    MaterializedInstance committed;
+    try {
+      long intentFence =
+          persistExecutionIntent(inputJson, inputDigest, executionIdentity, authority);
+      if (intentFence <= 0L) {
+        return recoverSerializedExecution(input, executionIdentity);
+      }
+
+      Long claimedFence = claimExecutionIntent(executionIdentity, authority);
+      if (claimedFence == null || claimedFence <= 0L || claimedFence != intentFence) {
+        return recoverSerializedExecution(input, executionIdentity);
+      }
+
+      committed =
+          transaction.execute(
+              status -> {
+                requireWritableReadCommittedTransaction();
+                applyDatabaseTimeouts();
+                authority.requireHeld();
+                Record beginRow =
+                    dsl.fetchOne(
+                        "SELECT world_begin_canonical_instance_execution(?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                        inputJson,
+                        inputDigest,
+                        executionIdentity.originalPostAuthorizationTuple(),
+                        executionIdentity.accountWorldParticipationId(),
+                        executionIdentity.accountWorldParticipationFence(),
+                        executionIdentity.gameSessionOwnerAttemptId(),
+                        executionIdentity.gameSessionOwnerFence(),
+                        executionIdentity.canonicalGameInstanceId(),
+                        intentFence);
+                Long worldExecutionFence = beginRow == null ? null : beginRow.get(0, Long.class);
+                if (worldExecutionFence == null || worldExecutionFence <= 0L) {
+                  return null;
+                }
+                Record row =
+                    Objects.requireNonNull(
+                        fetchCanonicalPreparation(inputJson, inputDigest),
+                        "V35 canonical preparation function returned no row");
+                MaterializedInstance materialized =
+                    new MaterializedInstance(
+                        required(row, "world_instance_id", Long.class),
+                        required(row, "private_game_instance_key", Long.class));
+                WorldCanonicalInstanceAssociation.Claim claim =
+                    new WorldCanonicalInstanceAssociation.Claim(
+                        input.gameSessionReadRequest(),
+                        input.gameSessionReadEvidence(),
+                        materialized.worldInstanceId(),
+                        input.completeLaunchBinding(),
+                        input.versionIdentity());
+                associationRepository.retainClaimInOwnerTransaction(claim);
+                authority.requireHeld();
+                dsl.fetch(
+                    "SELECT world_commit_canonical_instance_execution(?)",
+                    materialized.worldInstanceId());
+                return materialized;
+              });
+    } catch (RuntimeException outcomeUncertain) {
+      return recoverAfterUncertainWrite(input, executionIdentity, outcomeUncertain);
+    }
+
+    if (committed == null) {
+      ExecutionOperation terminal =
+          readExactExecution(executionIdentity)
+              .operation()
+              .orElseThrow(
+                  () ->
+                      new InvalidPreparationEvidenceException(
+                          "A serialized World execution disappeared before terminal readback"));
+      if (terminal.state() == ExecutionState.COMMITTED) {
+        return readCommittedResult(input, terminal);
+      }
+      throw new ConflictingPreparationException(
+          "World execution reached a non-committed terminal state before materialization");
+    }
+
     Result result =
         readOwnerPreparation(input)
             .orElseThrow(
@@ -131,6 +235,264 @@ public final class WorldCanonicalInstancePreparationRepository {
           "Canonical World preparation readback differs from its committed owner row");
     }
     return result;
+  }
+
+  /**
+   * Retains the full immutable operation identity in a short transaction before materialization.
+   * The record is not permission: every new writer still needs a fresh held verifier and must pass
+   * the DB-clock check after all V35 locks have been acquired.
+   */
+  private long persistExecutionIntent(
+      String inputJson,
+      String inputDigest,
+      WorldCanonicalInstanceExecutionIdentity identity,
+      WorldCanonicalInstancePreparationService.HeldCommitAuthority authority) {
+    Long fence =
+        intentTransaction.execute(
+            status -> {
+              requireWritableReadCommittedTransaction();
+              applyDatabaseTimeouts();
+              authority.requireHeld();
+              Record intentRow =
+                  dsl.fetchOne(
+                      "SELECT world_persist_canonical_instance_execution_intent(?, ?, ?, ?, ?, ?, ?, ?)",
+                      inputJson,
+                      inputDigest,
+                      identity.originalPostAuthorizationTuple(),
+                      identity.accountWorldParticipationId(),
+                      identity.accountWorldParticipationFence(),
+                      identity.gameSessionOwnerAttemptId(),
+                      identity.gameSessionOwnerFence(),
+                      identity.canonicalGameInstanceId());
+              return intentRow == null ? null : intentRow.get(0, Long.class);
+            });
+    if (fence == null) {
+      throw new InvalidPreparationEvidenceException(
+          "World execution intent transaction returned no fence result");
+    }
+    authority.requireHeld();
+    return fence;
+  }
+
+  private Long claimExecutionIntent(
+      WorldCanonicalInstanceExecutionIdentity identity,
+      WorldCanonicalInstancePreparationService.HeldCommitAuthority authority) {
+    Long fence =
+        intentTransaction.execute(
+            status -> {
+              requireWritableReadCommittedTransaction();
+              applyDatabaseTimeouts();
+              authority.requireHeld();
+              Record claimRow =
+                  dsl.fetchOne(
+                      "SELECT world_claim_canonical_instance_execution(?, ?, ?, ?, ?, ?, ?, ?)",
+                      identity.preparationInputJson(),
+                      identity.preparationInputDigest(),
+                      identity.originalPostAuthorizationTuple(),
+                      identity.accountWorldParticipationId(),
+                      identity.accountWorldParticipationFence(),
+                      identity.gameSessionOwnerAttemptId(),
+                      identity.gameSessionOwnerFence(),
+                      identity.canonicalGameInstanceId());
+              return claimRow == null ? null : claimRow.get(0, Long.class);
+            });
+    authority.requireHeld();
+    return fence;
+  }
+
+  /** Exact read-only recovery lookup; it never invokes V35 or reassembles external source data. */
+  public ExecutionLookup readExactExecution(WorldCanonicalInstanceExecutionIdentity identity) {
+    Objects.requireNonNull(identity, "identity");
+    requireNoActiveTransaction("World execution terminal read");
+    Record row =
+        readTransaction.execute(
+            status -> {
+              applyDatabaseTimeouts();
+              return dsl.fetchOne(
+                  "SELECT clock.database_now, e.canonical_game_instance_id, original_post_authorization_tuple, "
+                      + "original_post_authorization_tuple_sha256, account_world_participation_id, "
+                      + "account_world_participation_fence, game_session_owner_attempt_id, "
+                      + "game_session_owner_fence, preparation_input_digest, preparation_input_json, "
+                      + "world_execution_fence, operation_state, world_instance_id "
+                      + "FROM (SELECT clock_timestamp() AS database_now) clock "
+                      + "LEFT JOIN world_canonical_instance_execution e ON e.target_namespace=? "
+                      + "AND e.canonical_tenant_id=? AND e.control_plane_request_id=?",
+                  identity.targetNamespace(),
+                  identity.canonicalTenantId(),
+                  identity.controlPlaneRequestId());
+            });
+    if (row == null) {
+      throw new InvalidPreparationEvidenceException(
+          "World exact-operation read returned no database-clock result");
+    }
+    boolean originalAuthorizationValidAtRead =
+        identity
+            .originalAuthorizationExpiry()
+            .isAfter(required(row, "database_now", OffsetDateTime.class).toInstant());
+    if (row.get("canonical_game_instance_id", UUID.class) == null) {
+      return new ExecutionLookup(Optional.empty(), originalAuthorizationValidAtRead);
+    }
+
+    byte[] tupleBytes = required(row, "original_post_authorization_tuple", byte[].class);
+    String tupleDigest = required(row, "original_post_authorization_tuple_sha256", String.class);
+    if (!identity
+            .canonicalGameInstanceId()
+            .equals(required(row, "canonical_game_instance_id", UUID.class))
+        || !MessageDigest.isEqual(tupleBytes, identity.originalPostAuthorizationTuple())
+        || !HexFormat.of().formatHex(sha256(tupleBytes)).equals(tupleDigest)
+        || !identity
+            .accountWorldParticipationId()
+            .equals(required(row, "account_world_participation_id", UUID.class))
+        || identity.accountWorldParticipationFence()
+            != required(row, "account_world_participation_fence", Long.class)
+        || !identity
+            .gameSessionOwnerAttemptId()
+            .equals(required(row, "game_session_owner_attempt_id", UUID.class))
+        || identity.gameSessionOwnerFence() != required(row, "game_session_owner_fence", Long.class)
+        || !identity
+            .preparationInputDigest()
+            .equals(required(row, "preparation_input_digest", String.class))
+        || !identity
+            .preparationInputJson()
+            .equals(required(row, "preparation_input_json", String.class))) {
+      throw new ConflictingPreparationException(
+          "World execution lookup differs from the exact original full identity");
+    }
+    long fence = required(row, "world_execution_fence", Long.class);
+    String state = required(row, "operation_state", String.class);
+    Long worldInstanceId = row.get("world_instance_id", Long.class);
+    ExecutionState executionState;
+    try {
+      executionState = ExecutionState.valueOf(state);
+    } catch (IllegalArgumentException unsupported) {
+      throw new InvalidPreparationEvidenceException(
+          "World execution row has an unsupported durable state", unsupported);
+    }
+    if ((executionState == ExecutionState.COMMITTED) != (worldInstanceId != null) || fence <= 0L) {
+      throw new InvalidPreparationEvidenceException(
+          "World execution terminal row has an incomplete result or fence");
+    }
+    return new ExecutionLookup(
+        Optional.of(new ExecutionOperation(executionState, fence, worldInstanceId)),
+        originalAuthorizationValidAtRead);
+  }
+
+  private Result recoverSerializedExecution(
+      Input input, WorldCanonicalInstanceExecutionIdentity identity) {
+    ExecutionOperation terminal =
+        readExactExecution(identity)
+            .operation()
+            .orElseThrow(
+                () ->
+                    new InvalidPreparationEvidenceException(
+                        "Serialized World execution disappeared before terminal readback"));
+    if (terminal.state() == ExecutionState.ABORTED) {
+      throw new ConflictingPreparationException(
+          "Exact original World execution is durably ABORTED and cannot be restarted");
+    }
+    if (terminal.state() != ExecutionState.COMMITTED) {
+      throw new ConflictingPreparationException(
+          "Exact original World execution remains PENDING and requires durable serialized ABORTED recovery");
+    }
+    return readCommittedResult(input, terminal);
+  }
+
+  private Result recoverAfterUncertainWrite(
+      Input input,
+      WorldCanonicalInstanceExecutionIdentity identity,
+      RuntimeException outcomeUncertain) {
+    ExecutionOperation operation;
+    try {
+      operation = readExactExecution(identity).operation().orElse(null);
+    } catch (RuntimeException readFailure) {
+      outcomeUncertain.addSuppressed(readFailure);
+      throw outcomeUncertain;
+    }
+    if (operation == null || operation.state() == ExecutionState.PENDING) {
+      // Exact readback is not permission to restart. The caller may only resolve this row through
+      // the same-lock durable-abort operation.
+      throw outcomeUncertain;
+    }
+    if (operation.state() == ExecutionState.ABORTED) {
+      throw new ConflictingPreparationException(
+          "Exact original World execution is durably ABORTED after the uncertain write",
+          outcomeUncertain);
+    }
+    return readCommittedResult(input, operation);
+  }
+
+  private Result readCommittedResult(Input input, ExecutionOperation terminal) {
+    Result result =
+        readOwnerPreparation(input)
+            .orElseThrow(
+                () ->
+                    new InvalidPreparationEvidenceException(
+                        "Exact COMMITTED World execution has no immutable preparation readback"));
+    if (result.association().worldInstanceId() != terminal.worldInstanceId()) {
+      throw new InvalidPreparationEvidenceException(
+          "Exact COMMITTED World execution differs from its retained terminal result");
+    }
+    return result;
+  }
+
+  /**
+   * Serializes an ABORTED terminal against the same request/target execution locks. Lock timeout
+   * and transaction uncertainty propagate unchanged and are never converted to ABORTED.
+   */
+  public ExecutionOperation recordDurableAbort(WorldCanonicalInstanceExecutionIdentity identity) {
+    Objects.requireNonNull(identity, "identity");
+    requireNoActiveTransaction("World execution abort");
+    Record row =
+        Objects.requireNonNull(
+            abortTransaction.execute(
+                status -> {
+                  requireWritableReadCommittedTransaction();
+                  applyDatabaseTimeouts();
+                  return dsl.fetchOne(
+                      "SELECT operation_state, world_execution_fence, world_instance_id "
+                          + "FROM world_abort_canonical_instance_execution(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                      identity.targetNamespace(),
+                      identity.canonicalTenantId(),
+                      identity.controlPlaneRequestId(),
+                      identity.canonicalGameInstanceId(),
+                      identity.preparationInputJson(),
+                      identity.preparationInputDigest(),
+                      identity.originalPostAuthorizationTuple(),
+                      identity.accountWorldParticipationId(),
+                      identity.accountWorldParticipationFence(),
+                      identity.gameSessionOwnerAttemptId(),
+                      identity.gameSessionOwnerFence());
+                }),
+            "World abort transaction did not complete");
+    String state = required(row, "operation_state", String.class);
+    ExecutionState executionState = ExecutionState.valueOf(state);
+    Long worldInstanceId = row.get("world_instance_id", Long.class);
+    return new ExecutionOperation(
+        executionState, required(row, "world_execution_fence", Long.class), worldInstanceId);
+  }
+
+  public enum ExecutionState {
+    PENDING,
+    COMMITTED,
+    ABORTED
+  }
+
+  public record ExecutionOperation(
+      ExecutionState state, long worldExecutionFence, Long worldInstanceId) {
+    public ExecutionOperation {
+      Objects.requireNonNull(state, "state");
+      if (worldExecutionFence <= 0L
+          || (state == ExecutionState.COMMITTED) != (worldInstanceId != null)) {
+        throw new IllegalArgumentException("World execution operation state is incomplete");
+      }
+    }
+  }
+
+  public record ExecutionLookup(
+      Optional<ExecutionOperation> operation, boolean originalAuthorizationValidAtRead) {
+    public ExecutionLookup {
+      Objects.requireNonNull(operation, "operation");
+    }
   }
 
   /**
@@ -788,6 +1150,12 @@ public final class WorldCanonicalInstancePreparationRepository {
       throw new IllegalStateException(
           "Canonical World preparation requires writable READ COMMITTED isolation");
     }
+  }
+
+  private void applyDatabaseTimeouts() {
+    String timeout = transactionTimeoutMillis + "ms";
+    dsl.fetchValue("SELECT set_config('statement_timeout', ?, TRUE)", timeout);
+    dsl.fetchValue("SELECT set_config('lock_timeout', ?, TRUE)", timeout);
   }
 
   private static void requireNoActiveTransaction(String label) {

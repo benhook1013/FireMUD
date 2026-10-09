@@ -1377,7 +1377,7 @@ class PublishAttemptServiceTransactionIntegrationTest {
     // Real owner SQL rejects partial/unknown profiles even when the forged payload has a fresh
     // matching digest. Upstream inventory authority is still expressly stipulated in this fixture.
     var mapper = tools.jackson.databind.json.JsonMapper.builder().build();
-    for (int mutation = 0; mutation < 5; mutation++) {
+    for (int mutation = 0; mutation < 10; mutation++) {
       var publicJson =
           (tools.jackson.databind.node.ObjectNode)
               mapper.readTree(operation.inventory().canonicalBytes());
@@ -1406,6 +1406,34 @@ class PublishAttemptServiceTransactionIntegrationTest {
           ((tools.jackson.databind.node.ObjectNode) model.get("familyCounts").get(2))
               .put("rowCount", 0);
           expectedRejectionMessage = "Source inventory counts differ from explicit inputs";
+        }
+        case 5 -> {
+          model.remove("inboundSourceClosure");
+          expectedRejectionMessage = "Incomplete or unknown public inventory members";
+        }
+        case 6 -> {
+          ((tools.jackson.databind.node.ObjectNode) model.get("inboundSourceClosure"))
+              .put("unknownClosureMember", true);
+          expectedRejectionMessage =
+              "Inventory differs from exact original selected Account, APPLIED graph or freeze";
+        }
+        case 7 -> {
+          ((tools.jackson.databind.node.ObjectNode)
+                  model.get("inboundSourceClosure").get("familyCounts").get(0))
+              .put("count", 1);
+          expectedRejectionMessage =
+              "Inventory differs from exact original selected Account, APPLIED graph or freeze";
+        }
+        case 8 -> {
+          publicJson.put("schema", "world-selected-publication-artifact-inventory/v1");
+          publicJson.put("schemaVersion", 1);
+          expectedRejectionMessage = "Incomplete or unknown public inventory members";
+        }
+        case 9 -> {
+          ((tools.jackson.databind.node.ObjectNode) publicJson.get("checkpoint"))
+              .put("digestSchemaVersion", 3);
+          expectedRejectionMessage =
+              "Inventory differs from exact original selected Account, APPLIED graph or freeze";
         }
         default -> throw new AssertionError();
       }

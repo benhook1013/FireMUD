@@ -706,7 +706,7 @@ class PublishedReleaseCanonicalIdentityIntegrationTest {
                     original,
                     json.writeValueAsString(selectedV1ControlPlaneParticipants)))
         .isInstanceOf(DataAccessException.class)
-        .hasMessageContaining("release v2 participant differs from selected commit/digest/schema");
+        .hasMessageContaining("selected participant differs from commit/digest/schema");
     assertThat(bundleCount(fixture.dsl())).isZero();
     assertThatThrownBy(() -> insertRawSelector(fixture, version, "v2", null, participants))
         .isInstanceOf(DataAccessException.class);

@@ -68,13 +68,28 @@ public final class WorldCanonicalInstancePreparationService {
   /**
    * A verifier-owned, continuously held producer-evidence handle. It stays open throughout the
    * World transaction and its commit; implementations must fail closed from {@link #requireHeld()}
-   * if the evidence they verified is no longer effective. Remote/current-state checks happen before
-   * the World transaction; {@code requireHeld()} is a local fence/effective-state assertion and
-   * must never perform RPC while World holds database locks. It is not a new Account creator
-   * permission.
+   * if the source participation/fence they verified is no longer continuously held.
+   * Remote/current-state checks happen before the World transaction; {@code requireHeld()} is a
+   * local fence/effective-state assertion and must never perform RPC while World holds database
+   * locks. It must not reapply the original ingress-authority expiry after the V35 SQL admission
+   * check: an uninterrupted admitted transaction may finish after that bound while the source
+   * participation remains protected through exact World COMMITTED or durable ABORTED settlement.
+   * {@link #close()} may release only local resources; it must never release durable Account
+   * participation merely because this call returned, timed out, or has an uncertain outcome. That
+   * participation remains protected until an authenticated exact World COMMITTED result or fenced
+   * durable ABORTED settlement is known. It is not a new Account creator permission.
    */
   public interface HeldCommitAuthority extends AutoCloseable {
     void requireHeld();
+
+    /**
+     * Returns the exact typed identity this continuously held verifier authenticated. There is no
+     * default identity: old generic no-op handles cannot authorize the new World SQL path.
+     */
+    default WorldCanonicalInstanceExecutionIdentity executionIdentity() {
+      throw new PreparationDeniedException(
+          "Canonical World preparation requires a complete typed StartSession execution identity");
+    }
 
     @Override
     void close();

@@ -3469,16 +3469,19 @@ class WorldDraftGraphApplicationPostgresIntegrationTest {
         "worldStartLocationEvidenceBase64",
         java.util.Base64.getEncoder().encodeToString(changed.canonicalBytes()));
     String substituted = mapper.writeValueAsString(encoded);
+    var substitutedExecution = syntheticExecutionWithInput(input, substituted);
     assertThatThrownBy(
             () ->
                 ownerTransaction()
                     .execute(
-                        status ->
-                            dsl.fetchOne(
-                                "SELECT * FROM world_prepare_canonical_instance(?,?)",
-                                substituted,
-                                WorldDraftGraphAppliedResult.digest(
-                                    substituted.getBytes(StandardCharsets.UTF_8)))))
+                        status -> {
+                          beginSyntheticExecution(substitutedExecution);
+                          return dsl.fetchOne(
+                              "SELECT * FROM world_prepare_canonical_instance(?,?)",
+                              substituted,
+                              WorldDraftGraphAppliedResult.digest(
+                                  substituted.getBytes(StandardCharsets.UTF_8)));
+                        }))
         .hasMessageContaining("complete frozen request");
 
     var changedEpoch =
@@ -3507,16 +3510,19 @@ class WorldDraftGraphApplicationPostgresIntegrationTest {
         "worldStartLocationEvidenceBase64",
         java.util.Base64.getEncoder().encodeToString(changedEpoch.canonicalBytes()));
     String substitutedEpoch = mapper.writeValueAsString(changedEpochInput);
+    var substitutedEpochExecution = syntheticExecutionWithInput(input, substitutedEpoch);
     assertThatThrownBy(
             () ->
                 ownerTransaction()
                     .execute(
-                        status ->
-                            dsl.fetchOne(
-                                "SELECT * FROM world_prepare_canonical_instance(?,?)",
-                                substitutedEpoch,
-                                WorldDraftGraphAppliedResult.digest(
-                                    substitutedEpoch.getBytes(StandardCharsets.UTF_8)))))
+                        status -> {
+                          beginSyntheticExecution(substitutedEpochExecution);
+                          return dsl.fetchOne(
+                              "SELECT * FROM world_prepare_canonical_instance(?,?)",
+                              substitutedEpoch,
+                              WorldDraftGraphAppliedResult.digest(
+                                  substitutedEpoch.getBytes(StandardCharsets.UTF_8)));
+                        }))
         .hasMessageContaining("complete frozen request");
     assertThat(
             Objects.requireNonNull(
@@ -3599,6 +3605,7 @@ class WorldDraftGraphApplicationPostgresIntegrationTest {
             publishedSelectors().readCommitted(frozen.request().freeze()).orElseThrow());
     var input = preparationInput(f, frozen, selector);
     completeIsolatedPublicationTerminal(input);
+    var executionIdentity = WorldCanonicalInstanceExecutionTestFixtures.identity(input);
     var component =
         new WorldCanonicalInstancePreparationService(
             preparationRepository(),
@@ -3620,6 +3627,11 @@ class WorldDraftGraphApplicationPostgresIntegrationTest {
                           .isEqualTo(1L);
                       throw new IllegalStateException("stipulated late Account fence loss");
                     }
+                  }
+
+                  @Override
+                  public WorldCanonicalInstanceExecutionIdentity executionIdentity() {
+                    return executionIdentity;
                   }
 
                   public void close() {}
@@ -3789,6 +3801,74 @@ class WorldDraftGraphApplicationPostgresIntegrationTest {
         .target(MigrationVersion.fromVersion(version))
         .load()
         .migrate();
+  }
+
+  private WorldCanonicalInstanceExecutionIdentity syntheticExecutionWithInput(
+      WorldCanonicalInstancePreparation.Input input, String exactInputJson) {
+    var fixture = WorldCanonicalInstanceExecutionTestFixtures.identity(input);
+    return new WorldCanonicalInstanceExecutionIdentity(
+        fixture.originalPostAuthorizationTuple(),
+        fixture.accountWorldParticipationId(),
+        fixture.accountWorldParticipationFence(),
+        fixture.gameSessionOwnerAttemptId(),
+        fixture.gameSessionOwnerFence(),
+        fixture.canonicalGameInstanceId(),
+        exactInputJson);
+  }
+
+  private long beginSyntheticExecution(WorldCanonicalInstanceExecutionIdentity identity) {
+    assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isTrue();
+    Record persisted =
+        Objects.requireNonNull(
+            dsl.fetchOne(
+                "SELECT world_persist_canonical_instance_execution_intent(?,?,?,?,?,?,?,?) "
+                    + "AS world_execution_fence",
+                identity.preparationInputJson(),
+                identity.preparationInputDigest(),
+                identity.originalPostAuthorizationTuple(),
+                identity.accountWorldParticipationId(),
+                identity.accountWorldParticipationFence(),
+                identity.gameSessionOwnerAttemptId(),
+                identity.gameSessionOwnerFence(),
+                identity.canonicalGameInstanceId()),
+            "Synthetic World execution intent returned no fence");
+    Long retainedFence =
+        Objects.requireNonNull(
+            persisted.get("world_execution_fence", Long.class),
+            "Synthetic World execution intent omitted its fence");
+    Record claimed =
+        Objects.requireNonNull(
+            dsl.fetchOne(
+                "SELECT world_claim_canonical_instance_execution(?,?,?,?,?,?,?,?) "
+                    + "AS world_execution_fence",
+                identity.preparationInputJson(),
+                identity.preparationInputDigest(),
+                identity.originalPostAuthorizationTuple(),
+                identity.accountWorldParticipationId(),
+                identity.accountWorldParticipationFence(),
+                identity.gameSessionOwnerAttemptId(),
+                identity.gameSessionOwnerFence(),
+                identity.canonicalGameInstanceId()),
+            "Synthetic World execution claim returned no fence");
+    assertThat(claimed.get("world_execution_fence", Long.class)).isEqualTo(retainedFence);
+    Record begun =
+        Objects.requireNonNull(
+            dsl.fetchOne(
+                "SELECT world_begin_canonical_instance_execution(?,?,?,?,?,?,?,?,?) "
+                    + "AS world_execution_fence",
+                identity.preparationInputJson(),
+                identity.preparationInputDigest(),
+                identity.originalPostAuthorizationTuple(),
+                identity.accountWorldParticipationId(),
+                identity.accountWorldParticipationFence(),
+                identity.gameSessionOwnerAttemptId(),
+                identity.gameSessionOwnerFence(),
+                identity.canonicalGameInstanceId(),
+                retainedFence),
+            "Synthetic World execution begin returned no fence");
+    return Objects.requireNonNull(
+        begun.get("world_execution_fence", Long.class),
+        "Synthetic World execution begin omitted its fence");
   }
 
   /** Executes the real V35/V42 owner SQL path for selector-null V1 migration history. */
@@ -4198,7 +4278,8 @@ class WorldDraftGraphApplicationPostgresIntegrationTest {
             new WorldCompleteLaunchBindingRepository(dsl),
             new WorldAuthoredSourceIntakeRepository(dsl),
             new WorldAuthoredVersionIdentityRepository(dsl)),
-        frozenRepository());
+        frozenRepository(),
+        java.time.Duration.ofSeconds(30));
   }
 
   private WorldCanonicalInstanceAssociationRepository associationRepository() {
@@ -4422,15 +4503,28 @@ class WorldDraftGraphApplicationPostgresIntegrationTest {
       WorldCanonicalInstancePreparationRepository repository) {
     // Isolated GD-terminal fixture proves the actual World V44 transaction and released gate only.
     // It does not prove authenticated GD production or cross-service transport/currentness.
+    // Reuse the synthetic identity for exact retries; it is not an authorization producer.
+    Map<String, WorldCanonicalInstanceExecutionIdentity> executionIdentities =
+        new LinkedHashMap<>();
     return new WorldCanonicalInstancePreparationService(
         repository,
         input -> {
           completeIsolatedPublicationTerminal(input);
+          String inputJson = WorldCanonicalInstancePreparationRepository.inputJson(input);
+          var executionIdentity =
+              executionIdentities.computeIfAbsent(
+                  inputJson,
+                  ignored -> WorldCanonicalInstanceExecutionTestFixtures.identity(input));
           return new WorldCanonicalInstancePreparationService.HeldCommitAuthority() {
             private boolean open = true;
 
             public void requireHeld() {
               if (!open) throw new IllegalStateException("closed fixture authority");
+            }
+
+            @Override
+            public WorldCanonicalInstanceExecutionIdentity executionIdentity() {
+              return executionIdentity;
             }
 
             public void close() {
@@ -4455,6 +4549,9 @@ class WorldDraftGraphApplicationPostgresIntegrationTest {
       GameDesignPublicationTerminalEvidence originalTerminal,
       AtomicInteger verifierInvocations) {
     byte[] expectedTerminal = originalTerminal.canonicalBytes();
+    // Reuse the synthetic identity for exact retries; it is not an authorization producer.
+    Map<String, WorldCanonicalInstanceExecutionIdentity> executionIdentities =
+        new LinkedHashMap<>();
     return new WorldCanonicalInstancePreparationService(
         repository,
         input -> {
@@ -4472,11 +4569,21 @@ class WorldDraftGraphApplicationPostgresIntegrationTest {
             throw new IllegalStateException(
                 "isolated fixture World terminal differs from original publication result");
           }
+          String inputJson = WorldCanonicalInstancePreparationRepository.inputJson(input);
+          var executionIdentity =
+              executionIdentities.computeIfAbsent(
+                  inputJson,
+                  ignored -> WorldCanonicalInstanceExecutionTestFixtures.identity(input));
           return new WorldCanonicalInstancePreparationService.HeldCommitAuthority() {
             private boolean open = true;
 
             public void requireHeld() {
               if (!open) throw new IllegalStateException("closed fixture authority");
+            }
+
+            @Override
+            public WorldCanonicalInstanceExecutionIdentity executionIdentity() {
+              return executionIdentity;
             }
 
             public void close() {

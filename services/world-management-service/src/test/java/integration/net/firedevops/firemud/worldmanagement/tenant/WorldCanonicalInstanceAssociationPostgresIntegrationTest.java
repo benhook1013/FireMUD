@@ -14,6 +14,8 @@ import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
+import java.time.Duration;
+import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -29,6 +31,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.Function;
 import net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding.AffectedUnit;
@@ -154,6 +157,8 @@ class WorldCanonicalInstanceAssociationPostgresIntegrationTest {
   private WorldAuthoredVersionIdentityRepository versionIdentityRepository;
   private WorldCanonicalInstanceAssociationRepository associationRepository;
   private final Map<UUID, WorldCanonicalInstanceTopologyPlan> frozenPlans =
+      new java.util.HashMap<>();
+  private final Map<String, WorldCanonicalInstanceExecutionIdentity> executionIdentities =
       new java.util.HashMap<>();
 
   @BeforeEach
@@ -504,9 +509,11 @@ class WorldCanonicalInstanceAssociationPostgresIntegrationTest {
     Fixture fixture = fixture();
     UUID canonicalGameInstanceId = UUID.randomUUID();
     UUID playableStateNamespaceId = UUID.randomUUID();
-    WorldCanonicalInstancePreparation.Result originalPreparation =
-        prepareCanonicalWorldRow(
+    WorldCanonicalInstancePreparation.Input originalInput =
+        preparationInput(
             fixture, canonicalGameInstanceId, playableStateNamespaceId, "GS_FIXTURE", 1L);
+    WorldCanonicalInstancePreparation.Result originalPreparation =
+        preparationService(() -> {}).prepare(originalInput);
     long worldInstanceId = originalPreparation.association().worldInstanceId();
     WorldCanonicalInstanceAssociation.Claim originalClaim =
         claim(
@@ -522,9 +529,8 @@ class WorldCanonicalInstanceAssociationPostgresIntegrationTest {
     WorldCanonicalInstanceAssociation original =
         associationRepository.readOwnerAssociation(canonicalGameInstanceId).orElseThrow();
 
-    // This is only a fresh, synthetic Game Session observation/read correlation. No World
-    // lifecycle owner operation is forged; the current guarded lifecycle transition remains a
-    // separate unimplemented execution path.
+    // These request/status/version fields are observation-only and intentionally omitted from the
+    // canonical immutable preparation input. Re-reading them cannot mutate the retained World row.
     WorldCanonicalInstancePreparation.Result changedObservation =
         prepareCanonicalWorldRow(
             fixture, canonicalGameInstanceId, playableStateNamespaceId, "GS_RETRIED_FIXTURE", 2L);
@@ -1008,12 +1014,20 @@ class WorldCanonicalInstanceAssociationPostgresIntegrationTest {
         preparationInput(
             fixture, canonicalGameInstanceId, playableStateNamespaceId, "GS_FIXTURE", 1L);
     AtomicInteger heldChecks = new AtomicInteger();
+    AtomicReference<WorldCanonicalInstanceExecutionIdentity> executionIdentity =
+        new AtomicReference<>();
     WorldCanonicalInstancePreparationService service =
         preparationService(
             () -> {
-              if (heldChecks.incrementAndGet() == 3) {
+              if (heldChecks.incrementAndGet() == 8) {
                 throw new IllegalStateException("synthetic held authority lost before commit");
               }
+            },
+            exactInput -> {
+              WorldCanonicalInstanceExecutionIdentity created =
+                  WorldCanonicalInstanceExecutionTestFixtures.identity(exactInput);
+              executionIdentity.set(created);
+              return created;
             });
 
     assertThatThrownBy(() -> service.prepare(input))
@@ -1028,6 +1042,572 @@ class WorldCanonicalInstanceAssociationPostgresIntegrationTest {
                 "SELECT id FROM world_instance WHERE canonical_game_instance_id = ?",
                 canonicalGameInstanceId))
         .isNull();
+    assertThat(
+            Objects.requireNonNull(
+                    dsl.fetchOne(
+                        "SELECT operation_state FROM world_canonical_instance_execution "
+                            + "WHERE canonical_game_instance_id=?",
+                        canonicalGameInstanceId))
+                .get("operation_state", String.class))
+        .isEqualTo("PENDING");
+
+    WorldCanonicalInstanceExecutionIdentity retainedIdentity = executionIdentity.get();
+    assertThatThrownBy(
+            () -> preparationService(() -> {}, ignored -> retainedIdentity).prepare(input))
+        .isInstanceOf(
+            WorldCanonicalInstancePreparationRepository.ConflictingPreparationException.class)
+        .hasMessageContaining("PENDING");
+    assertThat(preparationCount(canonicalGameInstanceId)).isZero();
+    assertThat(associationCount(canonicalGameInstanceId)).isZero();
+    assertThat(preparationRepository().recordDurableAbort(retainedIdentity).state())
+        .isEqualTo(WorldCanonicalInstancePreparationRepository.ExecutionState.ABORTED);
+    assertThat(preparationRepository().readExactExecution(retainedIdentity).operation())
+        .hasValueSatisfying(
+            operation ->
+                assertThat(operation.state())
+                    .isEqualTo(WorldCanonicalInstancePreparationRepository.ExecutionState.ABORTED));
+    assertThatThrownBy(
+            () -> preparationService(() -> {}, ignored -> retainedIdentity).prepare(input))
+        .isInstanceOf(
+            WorldCanonicalInstancePreparationRepository.ConflictingPreparationException.class)
+        .hasMessageContaining("ABORTED");
+  }
+
+  @Test
+  void exactIdentitySubstitutionIsRejectedBeforeAnyNewSourceOrWriterWork() {
+    Fixture fixture = fixture();
+    UUID canonicalGameInstanceId = UUID.randomUUID();
+    WorldCanonicalInstancePreparation.Input input =
+        preparationInput(fixture, canonicalGameInstanceId, UUID.randomUUID(), "GS_FIXTURE", 1L);
+    WorldCanonicalInstanceExecutionIdentity exactIdentity =
+        WorldCanonicalInstanceExecutionTestFixtures.identity(input);
+    WorldCanonicalInstancePreparation.Result committed =
+        preparationService(() -> {}, ignored -> exactIdentity).prepare(input);
+
+    WorldCanonicalInstanceExecutionIdentity substitutedIdentity =
+        new WorldCanonicalInstanceExecutionIdentity(
+            exactIdentity.originalPostAuthorizationTuple(),
+            UUID.randomUUID(),
+            exactIdentity.accountWorldParticipationFence(),
+            exactIdentity.gameSessionOwnerAttemptId(),
+            exactIdentity.gameSessionOwnerFence(),
+            exactIdentity.canonicalGameInstanceId(),
+            exactIdentity.preparationInputJson());
+    WorldCanonicalInstanceExecutionIdentity changedTupleIdentity =
+        new WorldCanonicalInstanceExecutionIdentity(
+            WorldCanonicalInstanceExecutionTestFixtures.identity(input)
+                .originalPostAuthorizationTuple(),
+            exactIdentity.accountWorldParticipationId(),
+            exactIdentity.accountWorldParticipationFence(),
+            exactIdentity.gameSessionOwnerAttemptId(),
+            exactIdentity.gameSessionOwnerFence(),
+            exactIdentity.canonicalGameInstanceId(),
+            exactIdentity.preparationInputJson());
+    WorldCanonicalInstanceExecutionIdentity changedAccountFence =
+        new WorldCanonicalInstanceExecutionIdentity(
+            exactIdentity.originalPostAuthorizationTuple(),
+            exactIdentity.accountWorldParticipationId(),
+            exactIdentity.accountWorldParticipationFence() + 1L,
+            exactIdentity.gameSessionOwnerAttemptId(),
+            exactIdentity.gameSessionOwnerFence(),
+            exactIdentity.canonicalGameInstanceId(),
+            exactIdentity.preparationInputJson());
+    WorldCanonicalInstanceExecutionIdentity changedGameSessionAttempt =
+        new WorldCanonicalInstanceExecutionIdentity(
+            exactIdentity.originalPostAuthorizationTuple(),
+            exactIdentity.accountWorldParticipationId(),
+            exactIdentity.accountWorldParticipationFence(),
+            UUID.randomUUID(),
+            exactIdentity.gameSessionOwnerFence(),
+            exactIdentity.canonicalGameInstanceId(),
+            exactIdentity.preparationInputJson());
+    WorldCanonicalInstanceExecutionIdentity changedGameSessionFence =
+        new WorldCanonicalInstanceExecutionIdentity(
+            exactIdentity.originalPostAuthorizationTuple(),
+            exactIdentity.accountWorldParticipationId(),
+            exactIdentity.accountWorldParticipationFence(),
+            exactIdentity.gameSessionOwnerAttemptId(),
+            exactIdentity.gameSessionOwnerFence() + 1L,
+            exactIdentity.canonicalGameInstanceId(),
+            exactIdentity.preparationInputJson());
+    for (WorldCanonicalInstanceExecutionIdentity substituted :
+        List.of(
+            substitutedIdentity,
+            changedTupleIdentity,
+            changedAccountFence,
+            changedGameSessionAttempt,
+            changedGameSessionFence)) {
+      assertThatThrownBy(() -> preparationService(() -> {}, ignored -> substituted).prepare(input))
+          .isInstanceOf(
+              WorldCanonicalInstancePreparationRepository.ConflictingPreparationException.class)
+          .hasMessageContaining("full identity");
+    }
+
+    WorldCanonicalInstancePreparation.Input substitutedInput =
+        preparationInput(fixture, canonicalGameInstanceId, UUID.randomUUID(), "GS_FIXTURE", 1L);
+    WorldCanonicalInstanceExecutionIdentity substitutedInputIdentity =
+        new WorldCanonicalInstanceExecutionIdentity(
+            exactIdentity.originalPostAuthorizationTuple(),
+            exactIdentity.accountWorldParticipationId(),
+            exactIdentity.accountWorldParticipationFence(),
+            exactIdentity.gameSessionOwnerAttemptId(),
+            exactIdentity.gameSessionOwnerFence(),
+            exactIdentity.canonicalGameInstanceId(),
+            WorldCanonicalInstancePreparationRepository.inputJson(substitutedInput));
+    assertThatThrownBy(
+            () ->
+                preparationService(() -> {}, ignored -> substitutedInputIdentity)
+                    .prepare(substitutedInput))
+        .isInstanceOf(
+            WorldCanonicalInstancePreparationRepository.ConflictingPreparationException.class)
+        .hasMessageContaining("full identity");
+
+    assertThat(committed.association().identity().canonicalGameInstanceId())
+        .isEqualTo(canonicalGameInstanceId);
+  }
+
+  @Test
+  void worldExecutionFenceIsMonotonicAndDistinctFromSyntheticSourceFences() {
+    Fixture fixture = fixture();
+    WorldCanonicalInstancePreparation.Input firstInput =
+        preparationInput(fixture, UUID.randomUUID(), UUID.randomUUID(), "GS_FENCE_ONE", 1L);
+    WorldCanonicalInstancePreparation.Input secondInput =
+        preparationInput(fixture, UUID.randomUUID(), UUID.randomUUID(), "GS_FENCE_TWO", 1L);
+    WorldCanonicalInstanceExecutionIdentity firstIdentity =
+        withLargeSyntheticSourceFences(
+            WorldCanonicalInstanceExecutionTestFixtures.identity(firstInput));
+    WorldCanonicalInstanceExecutionIdentity secondIdentity =
+        withLargeSyntheticSourceFences(
+            WorldCanonicalInstanceExecutionTestFixtures.identity(secondInput));
+
+    preparationService(() -> {}, ignored -> firstIdentity).prepare(firstInput);
+    preparationService(() -> {}, ignored -> secondIdentity).prepare(secondInput);
+    long firstWorldFence =
+        preparationRepository()
+            .readExactExecution(firstIdentity)
+            .operation()
+            .orElseThrow()
+            .worldExecutionFence();
+    long secondWorldFence =
+        preparationRepository()
+            .readExactExecution(secondIdentity)
+            .operation()
+            .orElseThrow()
+            .worldExecutionFence();
+
+    assertThat(secondWorldFence).isGreaterThan(firstWorldFence);
+    assertThat(firstWorldFence)
+        .isNotEqualTo(firstIdentity.accountWorldParticipationFence())
+        .isNotEqualTo(firstIdentity.gameSessionOwnerFence());
+    assertThat(secondWorldFence)
+        .isNotEqualTo(secondIdentity.accountWorldParticipationFence())
+        .isNotEqualTo(secondIdentity.gameSessionOwnerFence());
+  }
+
+  @Test
+  void durableAbortBlocksFreshServiceV35AndV34Writers() {
+    Fixture fixture = fixture();
+    UUID canonicalGameInstanceId = UUID.randomUUID();
+    WorldCanonicalInstancePreparation.Input input =
+        preparationInput(
+            fixture, canonicalGameInstanceId, UUID.randomUUID(), "GS_ABORT_FIXTURE", 1L);
+    WorldCanonicalInstanceExecutionIdentity identity =
+        WorldCanonicalInstanceExecutionTestFixtures.identity(input);
+
+    assertThat(preparationRepository().recordDurableAbort(identity).state())
+        .isEqualTo(WorldCanonicalInstancePreparationRepository.ExecutionState.ABORTED);
+    assertThatThrownBy(() -> preparationService(() -> {}, ignored -> identity).prepare(input))
+        .isInstanceOf(
+            WorldCanonicalInstancePreparationRepository.ConflictingPreparationException.class)
+        .hasMessageContaining("ABORTED");
+
+    String inputJson = WorldCanonicalInstancePreparationRepository.inputJson(input);
+    String inputDigest =
+        Objects.requireNonNull(
+                dsl.fetchOne(
+                    "SELECT 'sha256:' || encode(sha256(convert_to(?, 'UTF8')), 'hex')", inputJson))
+            .get(0, String.class);
+    assertThatThrownBy(
+            () ->
+                dsl.fetchOne(
+                    "SELECT * FROM world_prepare_canonical_instance(?, ?)", inputJson, inputDigest))
+        .isInstanceOf(DataAccessException.class)
+        .rootCause()
+        .hasMessageContaining("exact current World execution identity and fence");
+    assertThatThrownBy(
+            () -> dsl.execute("INSERT INTO world_canonical_instance_association DEFAULT VALUES"))
+        .isInstanceOf(DataAccessException.class)
+        .rootCause()
+        .hasMessageContaining("exact active World execution identity and fence");
+    assertThat(preparationCount(canonicalGameInstanceId)).isZero();
+    assertThat(associationCount(canonicalGameInstanceId)).isZero();
+    assertThat(
+            dsl.fetchOne(
+                "SELECT id FROM world_instance WHERE canonical_game_instance_id = ?",
+                canonicalGameInstanceId))
+        .isNull();
+  }
+
+  @Test
+  void directV35WriterRequiresTheExactCurrentWorldExecutionFence() {
+    Fixture fixture = fixture();
+    WorldCanonicalInstancePreparation.Input input =
+        preparationInput(fixture, UUID.randomUUID(), UUID.randomUUID(), "GS_DIRECT_FIXTURE", 1L);
+    WorldCanonicalInstanceExecutionIdentity identity =
+        WorldCanonicalInstanceExecutionTestFixtures.identity(input);
+    String inputJson = WorldCanonicalInstancePreparationRepository.inputJson(input);
+    String inputDigest =
+        Objects.requireNonNull(
+                dsl.fetchOne(
+                    "SELECT 'sha256:' || encode(sha256(convert_to(?, 'UTF8')), 'hex')", inputJson))
+            .get(0, String.class);
+
+    assertThatThrownBy(
+            () ->
+                dsl.fetchOne(
+                    "SELECT * FROM world_prepare_canonical_instance(?, ?)", inputJson, inputDigest))
+        .isInstanceOf(DataAccessException.class)
+        .rootCause()
+        .hasMessageContaining("exact current World execution identity and fence");
+
+    assertThatThrownBy(
+            () ->
+                ownerTransaction()
+                    .execute(
+                        status -> {
+                          Record intentRow =
+                              dsl.fetchOne(
+                                  "SELECT world_persist_canonical_instance_execution_intent(?, ?, ?, ?, ?, ?, ?, ?)",
+                                  inputJson,
+                                  inputDigest,
+                                  identity.originalPostAuthorizationTuple(),
+                                  identity.accountWorldParticipationId(),
+                                  identity.accountWorldParticipationFence(),
+                                  identity.gameSessionOwnerAttemptId(),
+                                  identity.gameSessionOwnerFence(),
+                                  identity.canonicalGameInstanceId());
+                          Long intentFence =
+                              intentRow == null ? null : intentRow.get(0, Long.class);
+                          Record claimRow =
+                              dsl.fetchOne(
+                                  "SELECT world_claim_canonical_instance_execution(?, ?, ?, ?, ?, ?, ?, ?)",
+                                  inputJson,
+                                  inputDigest,
+                                  identity.originalPostAuthorizationTuple(),
+                                  identity.accountWorldParticipationId(),
+                                  identity.accountWorldParticipationFence(),
+                                  identity.gameSessionOwnerAttemptId(),
+                                  identity.gameSessionOwnerFence(),
+                                  identity.canonicalGameInstanceId());
+                          Long claimFence = claimRow == null ? null : claimRow.get(0, Long.class);
+                          Record executionRow =
+                              dsl.fetchOne(
+                                  "SELECT world_begin_canonical_instance_execution(?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                                  inputJson,
+                                  inputDigest,
+                                  identity.originalPostAuthorizationTuple(),
+                                  identity.accountWorldParticipationId(),
+                                  identity.accountWorldParticipationFence(),
+                                  identity.gameSessionOwnerAttemptId(),
+                                  identity.gameSessionOwnerFence(),
+                                  identity.canonicalGameInstanceId(),
+                                  intentFence);
+                          Long executionFence =
+                              executionRow == null ? null : executionRow.get(0, Long.class);
+                          assertThat(claimFence).isEqualTo(intentFence);
+                          assertThat(executionFence).isEqualTo(intentFence);
+                          dsl.fetchValue(
+                              "SELECT set_config('world.canonical_execution_fence', ?, TRUE)",
+                              Long.toString(intentFence + 1L));
+                          return dsl.fetchOne(
+                              "SELECT * FROM world_prepare_canonical_instance(?, ?)",
+                              inputJson,
+                              inputDigest);
+                        }))
+        .isInstanceOf(DataAccessException.class)
+        .rootCause()
+        .hasMessageContaining("exact current World execution identity and fence");
+    assertThat(preparationCount(identity.canonicalGameInstanceId())).isZero();
+    assertThat(associationCount(identity.canonicalGameInstanceId())).isZero();
+  }
+
+  @Test
+  void executingCannotCommitInflightOrBeForgedCommittedWithoutExactV35AndV34Rows() {
+    Fixture fixture = fixture();
+    WorldCanonicalInstancePreparation.Input input =
+        preparationInput(fixture, UUID.randomUUID(), UUID.randomUUID(), "GS_TERMINAL_FIXTURE", 1L);
+    WorldCanonicalInstanceExecutionIdentity identity =
+        WorldCanonicalInstanceExecutionTestFixtures.identity(input);
+    String inputJson = WorldCanonicalInstancePreparationRepository.inputJson(input);
+    String inputDigest = executionInputDigest(inputJson);
+    long executionFence = retainAndClaimExecutionIntent(inputJson, inputDigest, identity);
+    long unrelatedWorldRow = insertLegacyWorldRow(fixture, positiveLong());
+
+    assertThatThrownBy(
+            () ->
+                ownerTransaction()
+                    .execute(
+                        status -> {
+                          beginExecution(inputJson, inputDigest, identity, executionFence);
+                          return null;
+                        }))
+        .rootCause()
+        .hasMessageContaining("EXECUTING state cannot commit without exact terminal settlement");
+
+    assertThatThrownBy(
+            () ->
+                ownerTransaction()
+                    .execute(
+                        status -> {
+                          beginExecution(inputJson, inputDigest, identity, executionFence);
+                          dsl.execute(
+                              "UPDATE world_canonical_instance_execution "
+                                  + "SET operation_state='COMMITTED', active_transaction_id=NULL, "
+                                  + "world_instance_id=?, terminal_at=clock_timestamp() "
+                                  + "WHERE target_namespace=? AND canonical_tenant_id=? "
+                                  + "AND control_plane_request_id=?",
+                              unrelatedWorldRow,
+                              identity.targetNamespace(),
+                              identity.canonicalTenantId(),
+                              identity.controlPlaneRequestId());
+                          return null;
+                        }))
+        .rootCause()
+        .hasMessageContaining("exact V35 preparation and V34 association");
+
+    assertThat(preparationRepository().recordDurableAbort(identity).state())
+        .isEqualTo(WorldCanonicalInstancePreparationRepository.ExecutionState.ABORTED);
+  }
+
+  @Test
+  void admittedExecutionMayFinishAfterIngressExpiryAndThenUsesReadOnlyTerminalRecovery() {
+    Fixture fixture = fixture();
+    UUID canonicalGameInstanceId = UUID.randomUUID();
+    WorldCanonicalInstancePreparation.Input input =
+        preparationInput(
+            fixture, canonicalGameInstanceId, UUID.randomUUID(), "GS_EXPIRY_FIXTURE", 1L);
+    Instant originalExpiry = Instant.now().plusSeconds(15);
+    WorldCanonicalInstanceExecutionIdentity identity =
+        WorldCanonicalInstanceExecutionTestFixtures.identity(input, originalExpiry);
+    AtomicInteger heldChecks = new AtomicInteger();
+    WorldCanonicalInstancePreparationService service =
+        preparationService(
+            () -> {
+              if (heldChecks.incrementAndGet() == 8) {
+                // V35 has passed its post-lock DB-clock admission check and V34 has been inserted.
+                // Keep the one admitted SQL transaction uninterrupted across ingress expiry.
+                awaitInstant(originalExpiry.plusMillis(100));
+              }
+            },
+            ignored -> identity);
+
+    WorldCanonicalInstancePreparation.Result committed = service.prepare(input);
+
+    assertThat(Instant.now()).isAfter(originalExpiry);
+    assertThat(committed.association().identity().canonicalGameInstanceId())
+        .isEqualTo(canonicalGameInstanceId);
+    long retainedFence =
+        Objects.requireNonNull(
+                dsl.fetchOne(
+                    "SELECT world_execution_fence FROM world_canonical_instance_execution "
+                        + "WHERE canonical_game_instance_id=?",
+                    canonicalGameInstanceId))
+            .get("world_execution_fence", Long.class);
+    WorldCanonicalInstancePreparationRepository repository = preparationRepository();
+    WorldCanonicalInstancePreparationRepository.ExecutionLookup exactTerminal =
+        repository.readExactExecution(identity);
+    assertThat(exactTerminal.originalAuthorizationValidAtRead()).isFalse();
+    assertThat(exactTerminal.operation())
+        .hasValueSatisfying(
+            operation ->
+                assertThat(operation.state())
+                    .isEqualTo(
+                        WorldCanonicalInstancePreparationRepository.ExecutionState.COMMITTED));
+    WorldCanonicalInstancePreparation.Result recovered =
+        repository.readOwnerPreparation(input).orElseThrow();
+    assertThat(recovered).isEqualTo(committed);
+    assertThat(
+            Objects.requireNonNull(
+                    dsl.fetchOne(
+                        "SELECT world_execution_fence, operation_state "
+                            + "FROM world_canonical_instance_execution WHERE canonical_game_instance_id=?",
+                        canonicalGameInstanceId))
+                .get("world_execution_fence", Long.class))
+        .isEqualTo(retainedFence);
+  }
+
+  @Test
+  void expiryIsRecheckedByDatabaseClockAfterWaitingOnV35PublicationOwnerLock() throws Exception {
+    Fixture fixture = fixture();
+    UUID canonicalGameInstanceId = UUID.randomUUID();
+    WorldCanonicalInstancePreparation.Input input =
+        preparationInput(
+            fixture, canonicalGameInstanceId, UUID.randomUUID(), "GS_WAIT_FIXTURE", 1L);
+    Instant originalExpiry = Instant.now().plusSeconds(10);
+    WorldCanonicalInstanceExecutionIdentity identity =
+        WorldCanonicalInstanceExecutionTestFixtures.identity(input, originalExpiry);
+    CountDownLatch ownerRowLocked = new CountDownLatch(1);
+    CountDownLatch releaseOwnerRow = new CountDownLatch(1);
+
+    try (ExecutorService executor = Executors.newFixedThreadPool(2)) {
+      Future<?> blocker =
+          executor.submit(
+              () ->
+                  ownerTransaction()
+                      .execute(
+                          status -> {
+                            dsl.fetch(
+                                "SELECT 1 FROM world_design_publication_fence_owner "
+                                    + "WHERE local_tenant_key=? AND version_id=? FOR UPDATE",
+                                fixture.source().receipt().localTenantKey(),
+                                fixture.versionIdentity().localVersionKey());
+                            ownerRowLocked.countDown();
+                            await(releaseOwnerRow);
+                            return null;
+                          }));
+      assertThat(ownerRowLocked.await(10, TimeUnit.SECONDS)).isTrue();
+      Future<WorldCanonicalInstancePreparation.Result> attempt =
+          executor.submit(
+              () ->
+                  preparationService(Duration.ofSeconds(30), () -> {}, ignored -> identity)
+                      .prepare(input));
+      awaitWorldPreparationLockWait();
+      awaitInstant(originalExpiry.plusMillis(100));
+      releaseOwnerRow.countDown();
+
+      assertThatThrownBy(attempt::get)
+          .rootCause()
+          .hasMessageContaining("expired before World execution admission");
+      blocker.get(10, TimeUnit.SECONDS);
+    } finally {
+      releaseOwnerRow.countDown();
+    }
+
+    assertThat(preparationCount(canonicalGameInstanceId)).isZero();
+    assertThat(associationCount(canonicalGameInstanceId)).isZero();
+    assertThat(
+            Objects.requireNonNull(
+                    dsl.fetchOne(
+                        "SELECT operation_state FROM world_canonical_instance_execution "
+                            + "WHERE canonical_game_instance_id=?",
+                        canonicalGameInstanceId))
+                .get("operation_state", String.class))
+        .isEqualTo("PENDING");
+    assertThat(preparationRepository().recordDurableAbort(identity).state())
+        .isEqualTo(WorldCanonicalInstancePreparationRepository.ExecutionState.ABORTED);
+  }
+
+  @Test
+  void databaseLockTimeoutCancelsExecutionWithoutInventingAbortOrRetry() throws Exception {
+    Fixture fixture = fixture();
+    UUID canonicalGameInstanceId = UUID.randomUUID();
+    WorldCanonicalInstancePreparation.Input input =
+        preparationInput(
+            fixture, canonicalGameInstanceId, UUID.randomUUID(), "GS_TIMEOUT_FIXTURE", 1L);
+    WorldCanonicalInstanceExecutionIdentity identity =
+        WorldCanonicalInstanceExecutionTestFixtures.identity(input, Instant.now().plusSeconds(60));
+    CountDownLatch ownerRowLocked = new CountDownLatch(1);
+    CountDownLatch releaseOwnerRow = new CountDownLatch(1);
+
+    try (ExecutorService executor = Executors.newFixedThreadPool(2)) {
+      Future<?> blocker =
+          executor.submit(
+              () ->
+                  ownerTransaction()
+                      .execute(
+                          status -> {
+                            dsl.fetch(
+                                "SELECT 1 FROM world_design_publication_fence_owner "
+                                    + "WHERE local_tenant_key=? AND version_id=? FOR UPDATE",
+                                fixture.source().receipt().localTenantKey(),
+                                fixture.versionIdentity().localVersionKey());
+                            ownerRowLocked.countDown();
+                            await(releaseOwnerRow);
+                            return null;
+                          }));
+      assertThat(ownerRowLocked.await(10, TimeUnit.SECONDS)).isTrue();
+      Future<WorldCanonicalInstancePreparation.Result> attempt =
+          executor.submit(
+              () ->
+                  preparationService(Duration.ofSeconds(2), () -> {}, ignored -> identity)
+                      .prepare(input));
+      awaitWorldPreparationLockWait();
+      assertThatThrownBy(attempt::get)
+          .satisfies(
+              failure ->
+                  assertThat(sqlState(failure))
+                      .as("database-local lock/statement timeout must cancel the blocked writer")
+                      .isIn("55P03", "57014"));
+      releaseOwnerRow.countDown();
+      blocker.get(10, TimeUnit.SECONDS);
+    } finally {
+      releaseOwnerRow.countDown();
+    }
+
+    assertThat(preparationCount(canonicalGameInstanceId)).isZero();
+    assertThat(associationCount(canonicalGameInstanceId)).isZero();
+    assertThat(
+            Objects.requireNonNull(
+                    dsl.fetchOne(
+                        "SELECT operation_state FROM world_canonical_instance_execution "
+                            + "WHERE canonical_game_instance_id=?",
+                        canonicalGameInstanceId))
+                .get("operation_state", String.class))
+        .isEqualTo("PENDING");
+    assertThat(preparationRepository().recordDurableAbort(identity).state())
+        .isEqualTo(WorldCanonicalInstancePreparationRepository.ExecutionState.ABORTED);
+  }
+
+  @Test
+  void concurrentExecutionAndDurableAbortSerializeToCommittedResult() throws Exception {
+    Fixture fixture = fixture();
+    UUID canonicalGameInstanceId = UUID.randomUUID();
+    WorldCanonicalInstancePreparation.Input input =
+        preparationInput(
+            fixture, canonicalGameInstanceId, UUID.randomUUID(), "GS_RACE_FIXTURE", 1L);
+    WorldCanonicalInstanceExecutionIdentity identity =
+        WorldCanonicalInstanceExecutionTestFixtures.identity(input);
+    AtomicInteger heldChecks = new AtomicInteger();
+    CountDownLatch associated = new CountDownLatch(1);
+    CountDownLatch releaseExecution = new CountDownLatch(1);
+    WorldCanonicalInstancePreparationService service =
+        preparationService(
+            () -> {
+              if (heldChecks.incrementAndGet() == 8) {
+                associated.countDown();
+                await(releaseExecution);
+              }
+            },
+            ignored -> identity);
+
+    try (ExecutorService executor = Executors.newFixedThreadPool(2)) {
+      Future<WorldCanonicalInstancePreparation.Result> execution =
+          executor.submit(() -> service.prepare(input));
+      assertThat(associated.await(10, TimeUnit.SECONDS)).isTrue();
+      CountDownLatch abortStarted = new CountDownLatch(1);
+      Future<WorldCanonicalInstancePreparationRepository.ExecutionOperation> abort =
+          executor.submit(
+              () -> {
+                abortStarted.countDown();
+                return preparationRepository().recordDurableAbort(identity);
+              });
+      assertThat(abortStarted.await(10, TimeUnit.SECONDS)).isTrue();
+      Thread.sleep(150);
+      assertThat(abort).isNotDone();
+      releaseExecution.countDown();
+
+      assertThat(
+              execution
+                  .get(20, TimeUnit.SECONDS)
+                  .association()
+                  .identity()
+                  .canonicalGameInstanceId())
+          .isEqualTo(canonicalGameInstanceId);
+      assertThat(abort.get(20, TimeUnit.SECONDS).state())
+          .isEqualTo(WorldCanonicalInstancePreparationRepository.ExecutionState.COMMITTED);
+    } finally {
+      releaseExecution.countDown();
+    }
   }
 
   @Test
@@ -1039,8 +1619,12 @@ class WorldCanonicalInstanceAssociationPostgresIntegrationTest {
     WorldCanonicalInstancePreparation.Input exactInput =
         preparationInput(
             fixture, canonicalGameInstanceId, playableStateNamespaceId, "GS_FIXTURE", 1L);
-    WorldCanonicalInstancePreparationService firstService = preparationService(() -> {});
-    WorldCanonicalInstancePreparationService secondService = preparationService(() -> {});
+    WorldCanonicalInstanceExecutionIdentity exactIdentity =
+        WorldCanonicalInstanceExecutionTestFixtures.identity(exactInput);
+    WorldCanonicalInstancePreparationService firstService =
+        preparationService(() -> {}, ignored -> exactIdentity);
+    WorldCanonicalInstancePreparationService secondService =
+        preparationService(() -> {}, ignored -> exactIdentity);
     CountDownLatch ready = new CountDownLatch(2);
     CountDownLatch start = new CountDownLatch(1);
 
@@ -1353,21 +1937,53 @@ class WorldCanonicalInstanceAssociationPostgresIntegrationTest {
   }
 
   private WorldCanonicalInstancePreparationService preparationService(Runnable heldCheck) {
-    WorldCanonicalFrozenTopologyRepository frozenRepository =
-        new WorldCanonicalFrozenTopologyRepository(
-            dsl,
-            graphSnapshots,
-            new WorldDraftTopologyCommitRepository(dsl, publicationFence, objectMapper),
-            digestService);
+    return preparationService(heldCheck, this::executionIdentity);
+  }
+
+  private WorldCanonicalInstancePreparationService preparationService(
+      Runnable heldCheck,
+      Function<WorldCanonicalInstancePreparation.Input, WorldCanonicalInstanceExecutionIdentity>
+          identityFactory) {
+    return preparationService(Duration.ofSeconds(30), heldCheck, identityFactory);
+  }
+
+  private WorldCanonicalInstanceExecutionIdentity executionIdentity(
+      WorldCanonicalInstancePreparation.Input input) {
+    return executionIdentities.computeIfAbsent(
+        WorldCanonicalInstancePreparationRepository.inputJson(input),
+        ignored -> WorldCanonicalInstanceExecutionTestFixtures.identity(input));
+  }
+
+  private WorldCanonicalInstanceExecutionIdentity withLargeSyntheticSourceFences(
+      WorldCanonicalInstanceExecutionIdentity identity) {
+    return new WorldCanonicalInstanceExecutionIdentity(
+        identity.originalPostAuthorizationTuple(),
+        identity.accountWorldParticipationId(),
+        Long.MAX_VALUE - 2,
+        identity.gameSessionOwnerAttemptId(),
+        Long.MAX_VALUE - 1,
+        identity.canonicalGameInstanceId(),
+        identity.preparationInputJson());
+  }
+
+  private WorldCanonicalInstancePreparationService preparationService(
+      Duration transactionTimeout,
+      Runnable heldCheck,
+      Function<WorldCanonicalInstancePreparation.Input, WorldCanonicalInstanceExecutionIdentity>
+          identityFactory) {
     WorldCanonicalInstancePreparationRepository preparationRepository =
-        new WorldCanonicalInstancePreparationRepository(
-            dsl, transactionManager, associationRepository, frozenRepository);
+        preparationRepository(transactionTimeout);
     // Synthetic fixture handle only. This does not authenticate GS/GD source or delivery, prove
     // APPLIED/IN_SYNC, or supply Account authority.
     return new WorldCanonicalInstancePreparationService(
         preparationRepository,
         input ->
             new WorldCanonicalInstancePreparationService.HeldCommitAuthority() {
+              @Override
+              public WorldCanonicalInstanceExecutionIdentity executionIdentity() {
+                return identityFactory.apply(input);
+              }
+
               @Override
               public void requireHeld() {
                 heldCheck.run();
@@ -1376,6 +1992,88 @@ class WorldCanonicalInstanceAssociationPostgresIntegrationTest {
               @Override
               public void close() {}
             });
+  }
+
+  private WorldCanonicalInstancePreparationRepository preparationRepository() {
+    return preparationRepository(Duration.ofSeconds(30));
+  }
+
+  private long retainAndClaimExecutionIntent(
+      String inputJson, String inputDigest, WorldCanonicalInstanceExecutionIdentity identity) {
+    Long fence =
+        ownerTransaction()
+            .execute(
+                status -> {
+                  Record intentRow =
+                      dsl.fetchOne(
+                          "SELECT world_persist_canonical_instance_execution_intent(?, ?, ?, ?, ?, ?, ?, ?)",
+                          inputJson,
+                          inputDigest,
+                          identity.originalPostAuthorizationTuple(),
+                          identity.accountWorldParticipationId(),
+                          identity.accountWorldParticipationFence(),
+                          identity.gameSessionOwnerAttemptId(),
+                          identity.gameSessionOwnerFence(),
+                          identity.canonicalGameInstanceId());
+                  Long retainedFence = intentRow == null ? null : intentRow.get(0, Long.class);
+                  Record claimRow =
+                      dsl.fetchOne(
+                          "SELECT world_claim_canonical_instance_execution(?, ?, ?, ?, ?, ?, ?, ?)",
+                          inputJson,
+                          inputDigest,
+                          identity.originalPostAuthorizationTuple(),
+                          identity.accountWorldParticipationId(),
+                          identity.accountWorldParticipationFence(),
+                          identity.gameSessionOwnerAttemptId(),
+                          identity.gameSessionOwnerFence(),
+                          identity.canonicalGameInstanceId());
+                  Long claimedFence = claimRow == null ? null : claimRow.get(0, Long.class);
+                  assertThat(claimedFence).isEqualTo(retainedFence);
+                  return retainedFence;
+                });
+    return Objects.requireNonNull(fence, "Synthetic execution intent returned no World fence");
+  }
+
+  private void beginExecution(
+      String inputJson,
+      String inputDigest,
+      WorldCanonicalInstanceExecutionIdentity identity,
+      long executionFence) {
+    Record begunRow =
+        dsl.fetchOne(
+            "SELECT world_begin_canonical_instance_execution(?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            inputJson,
+            inputDigest,
+            identity.originalPostAuthorizationTuple(),
+            identity.accountWorldParticipationId(),
+            identity.accountWorldParticipationFence(),
+            identity.gameSessionOwnerAttemptId(),
+            identity.gameSessionOwnerFence(),
+            identity.canonicalGameInstanceId(),
+            executionFence);
+    Long begunFence = begunRow == null ? null : begunRow.get(0, Long.class);
+    assertThat(begunFence).isEqualTo(executionFence);
+  }
+
+  private String executionInputDigest(String inputJson) {
+    return Objects.requireNonNull(
+            dsl.fetchOne(
+                "SELECT 'sha256:' || encode(sha256(convert_to(?, 'UTF8')), 'hex')", inputJson))
+        .get(0, String.class);
+  }
+
+  private WorldCanonicalInstancePreparationRepository preparationRepository(
+      Duration transactionTimeout) {
+    WorldCanonicalFrozenTopologyRepository frozenRepository =
+        new WorldCanonicalFrozenTopologyRepository(
+            dsl,
+            graphSnapshots,
+            new WorldDraftTopologyCommitRepository(dsl, publicationFence, objectMapper),
+            digestService);
+    WorldCanonicalInstancePreparationRepository preparationRepository =
+        new WorldCanonicalInstancePreparationRepository(
+            dsl, transactionManager, associationRepository, frozenRepository, transactionTimeout);
+    return preparationRepository;
   }
 
   private WorldCanonicalInstanceTopologyPlan frozenPlan(Fixture fixture) {
@@ -2474,6 +3172,47 @@ class WorldCanonicalInstanceAssociationPostgresIntegrationTest {
       Thread.currentThread().interrupt();
       throw new IllegalStateException(
           "Concurrent canonical association was interrupted", exception);
+    }
+  }
+
+  private void awaitWorldPreparationLockWait() {
+    Instant deadline = Instant.now().plusSeconds(10);
+    do {
+      Record waitingRow =
+          dsl.fetchOne(
+              "SELECT EXISTS (SELECT 1 FROM pg_stat_activity "
+                  + "WHERE datname=current_database() AND wait_event_type='Lock' "
+                  + "AND query ILIKE '%world_prepare_canonical_instance%')");
+      Boolean waiting = waitingRow == null ? null : waitingRow.get(0, Boolean.class);
+      if (Boolean.TRUE.equals(waiting)) return;
+      try {
+        Thread.sleep(25);
+      } catch (InterruptedException exception) {
+        Thread.currentThread().interrupt();
+        throw new IllegalStateException(
+            "Interrupted while waiting for the World SQL lock", exception);
+      }
+    } while (Instant.now().isBefore(deadline));
+    throw new IllegalStateException("World V35 function never reached the expected owner-row lock");
+  }
+
+  private static String sqlState(Throwable failure) {
+    for (Throwable cause = failure; cause != null; cause = cause.getCause()) {
+      if (cause instanceof SQLException sqlException) return sqlException.getSQLState();
+    }
+    return null;
+  }
+
+  private static void awaitInstant(Instant target) {
+    while (Instant.now().isBefore(target)) {
+      long remainingMillis = Duration.between(Instant.now(), target).toMillis();
+      try {
+        Thread.sleep(Math.max(1L, Math.min(100L, remainingMillis)));
+      } catch (InterruptedException exception) {
+        Thread.currentThread().interrupt();
+        throw new IllegalStateException(
+            "Interrupted while holding the World execution fixture", exception);
+      }
     }
   }
 

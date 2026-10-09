@@ -157,8 +157,10 @@ DECLARE
         OR binding->>'schemaVersion' NOT IN ('2', '3')
         OR input->>'worldStartLocationEvidenceBase64' IS NULL$replacement$;
     digest_anchor TEXT := $anchor$        OR selected->>'digestSchemaVersion' IS DISTINCT FROM '3'$anchor$;
-    digest_replacement TEXT := $replacement$        OR selected->>'digestSchemaVersion' IS DISTINCT FROM CASE binding->>'schemaVersion'
-            WHEN '2' THEN '3' WHEN '3' THEN '4' ELSE NULL END$replacement$;
+    -- Parentheses keep the CASE's THEN tokens inside the SQL expression rather than terminating
+    -- PL/pgSQL's outer IF condition while the rewritten function is compiled.
+    digest_replacement TEXT := $replacement$        OR selected->>'digestSchemaVersion' IS DISTINCT FROM (CASE binding->>'schemaVersion'
+            WHEN '2' THEN '3' WHEN '3' THEN '4' ELSE NULL END)$replacement$;
 BEGIN
     SELECT pg_get_functiondef(selector_function) INTO STRICT original_definition;
     IF (length(original_definition) - length(replace(original_definition, schema_anchor, '')))

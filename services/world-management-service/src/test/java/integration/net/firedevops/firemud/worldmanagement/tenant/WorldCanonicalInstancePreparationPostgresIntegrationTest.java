@@ -116,7 +116,7 @@ class WorldCanonicalInstancePreparationPostgresIntegrationTest {
   @MockitoBean private EntityManagementClient entityManagementClient;
 
   @Test
-  void v35PreservesReservedTenantDenialAndDoesNotExposePrepareFunctionToPublic() {
+  void v35PreservesReservedTenantDenialAndExecutionEntrypointsRemainOwnerPrivate() {
     AuthoredWorldSourceEvidence source = source(UUID.randomUUID());
     WorldAuthoredSourceIntakeReceipt receipt =
         Objects.requireNonNull(
@@ -159,7 +159,13 @@ class WorldCanonicalInstancePreparationPostgresIntegrationTest {
                             + "JOIN pg_namespace n ON n.oid = p.pronamespace "
                             + "CROSS JOIN LATERAL aclexplode(coalesce(p.proacl, acldefault('f', p.proowner))) acl "
                             + "WHERE n.nspname = 'world_management_service' "
-                            + "AND p.proname = 'world_prepare_canonical_instance' "
+                            + "AND p.proname IN ('world_prepare_canonical_instance', "
+                            + "'world_prepare_canonical_instance_v61_impl', "
+                            + "'world_persist_canonical_instance_execution_intent', "
+                            + "'world_claim_canonical_instance_execution', "
+                            + "'world_begin_canonical_instance_execution', "
+                            + "'world_commit_canonical_instance_execution', "
+                            + "'world_abort_canonical_instance_execution') "
                             + "AND acl.grantee = 0 AND acl.privilege_type = 'EXECUTE')"),
                     "Prepare-function access query returned no result")
                 .get(0, Boolean.class))
