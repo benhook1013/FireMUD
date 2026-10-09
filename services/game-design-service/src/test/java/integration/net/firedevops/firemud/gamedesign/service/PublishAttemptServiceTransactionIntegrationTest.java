@@ -6,6 +6,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import java.lang.reflect.Constructor;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
+import java.nio.charset.StandardCharsets;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -18,6 +19,7 @@ import net.firedevops.firemud.gamedesign.draft.IsolatedPublicationOwnerSetup;
 import net.firedevops.firemud.gamedesign.dto.PublishParticipantDigestDto;
 import net.firedevops.firemud.gamedesign.dto.VersionDto;
 import net.firedevops.firemud.gamedesign.entity.Game;
+import net.firedevops.firemud.gamedesign.entity.GameAsset;
 import net.firedevops.firemud.gamedesign.entity.PublishAttempt;
 import net.firedevops.firemud.gamedesign.entity.PublishedReleaseBundle;
 import net.firedevops.firemud.gamedesign.entity.Version;
@@ -29,6 +31,7 @@ import net.firedevops.firemud.gamedesign.model.TemplateRemapSetStatus;
 import net.firedevops.firemud.gamedesign.model.VersionAssetArtifactState;
 import net.firedevops.firemud.gamedesign.model.VersionLifecycleState;
 import net.firedevops.firemud.gamedesign.publication.GameDesignPublicationOperation;
+import net.firedevops.firemud.gamedesign.repository.GameAssetRepository;
 import net.firedevops.firemud.gamedesign.repository.GameRepository;
 import net.firedevops.firemud.gamedesign.repository.PublishAttemptRepository;
 import net.firedevops.firemud.gamedesign.repository.PublishedReleaseBundleRepository;
@@ -78,6 +81,10 @@ class PublishAttemptServiceTransactionIntegrationTest {
   private static final String TENANT_ID = "9001";
   private static final String WORKFLOW_ID = "full-version-transaction-integration-test";
   private static final String MANIFEST_HASH = "sha256:" + "a".repeat(64);
+  private static final String ARTIFACT_DIGEST =
+      "sha256:6eb74f970ab34ad786c5089af8780d7a218f91f9d6a7ed03675185e39b317e94";
+  private static final byte[] FIXTURE_ASSET_BYTES =
+      "publication fixture asset".getBytes(StandardCharsets.UTF_8);
 
   @Container
   static PostgreSQLContainer<?> postgres =
@@ -90,6 +97,7 @@ class PublishAttemptServiceTransactionIntegrationTest {
   }
 
   @Autowired private GameRepository gameRepository;
+  @Autowired private GameAssetRepository gameAssetRepository;
   @Autowired private PublishAttemptServiceImpl publishAttemptService;
   @Autowired private VersionPublishCommandServiceImpl versionPublishCommandService;
   @Autowired private PublishAttemptRepository publishAttemptRepository;
@@ -632,10 +640,22 @@ class PublishAttemptServiceTransactionIntegrationTest {
 
   private ExportedAssetManifest recordFixtureCandidate(
       SelectedPublicationFixture fixture, ExportedAssetManifest candidate) {
-    versionAssetPublicationService.freezeOrReadSnapshot(
-        fixture.version().getTenantId(), fixture.version().getVersionNumber());
-    return exportCandidateService.recordExportCandidate(
-        fixture.version().getTenantId(), fixture.version().getVersionNumber(), candidate);
+    String tenantId = fixture.version().getTenantId();
+    int versionNumber = fixture.version().getVersionNumber();
+    Version version =
+        versionRepository
+            .findByTenantIdAndVersionNumber(tenantId, versionNumber)
+            .orElseThrow(() -> new IllegalStateException("Fixture Version was not persisted"));
+    GameAsset asset = new GameAsset();
+    asset.setTenantId(tenantId);
+    asset.setFileName("fixture.bin");
+    asset.setContentType("application/octet-stream");
+    asset.setData(FIXTURE_ASSET_BYTES);
+    GameAsset persistedAsset = gameAssetRepository.save(asset);
+    versionAssetPublicationService.associateDraftAsset(
+        tenantId, version.getId(), persistedAsset.getId(), "fixture.bin");
+    versionAssetPublicationService.freezeOrReadSnapshot(tenantId, versionNumber);
+    return exportCandidateService.recordExportCandidate(tenantId, versionNumber, candidate);
   }
 
   private record SelectedPublicationFixture(
@@ -667,6 +687,17 @@ class PublishAttemptServiceTransactionIntegrationTest {
   }
 
   private static ExportedAssetManifest exportedManifest() {
-    return new ExportedAssetManifest(MANIFEST_HASH, 1, List.of(), List.of());
+    return new ExportedAssetManifest(
+        MANIFEST_HASH,
+        1,
+        List.of("fixture.bin"),
+        List.of(
+            new PublishedArtifactDigest(
+                "fixture.bin",
+                "BINARY",
+                "artifacts/sha256/" + ARTIFACT_DIGEST.substring("sha256:".length()),
+                ARTIFACT_DIGEST,
+                "application/octet-stream",
+                1)));
   }
 }
