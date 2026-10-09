@@ -58,9 +58,14 @@ class GameLogicClientTest {
     assertThat(result.baseVersionId()).isNull();
     assertThat(result.appliedCommitId())
         .isEqualTo(receipt.authorization().source().binding().commitId().toString());
-    assertThat(result.contentDigest()).isEqualTo(response.getContentDigest());
+    assertThat(response.getContentDigest()).matches("sha256:[0-9a-f]{64}");
+    assertThat(result.contentDigest())
+        .isEqualTo(response.getContentDigest().substring("sha256:".length()))
+        .matches("[0-9a-f]{64}")
+        .isNotEqualTo(response.getContentDigest());
     assertThat(result.digestSchemaVersion()).isEqualTo(response.getDigestSchemaVersion());
     assertThat(result.abilitySchemaDigest()).isEqualTo(response.getAbilitySchemaDigest());
+    assertThat(result.abilitySchemaDigest()).matches("sha256:[0-9a-f]{64}");
 
     var request = org.mockito.ArgumentCaptor.forClass(GetDraftDesignDigestRequest.class);
     verify(stub).getDraftDesignDigest(request.capture());
@@ -106,6 +111,61 @@ class GameLogicClientTest {
 
     assertThat(result.succeeded()).isFalse();
     assertThat(result.errorCode()).isEqualTo("RESPONSE_TERMINAL_MISMATCH");
+    assertThat(result.contentDigest()).isNull();
+    assertThat(result.abilitySchemaDigest()).isNull();
+  }
+
+  @Test
+  void rejectsMalformedManifestDigestFromPublicationResponse(@TempDir Path tlsDirectory)
+      throws IOException {
+    var receipt = SelectedDraftGameLogicReceiptTest.fixture();
+    var publication = publicationBinding(receipt);
+    var sourceRead =
+        new GameLogicPublicationSourceReadBinding(publication, receipt.authorization());
+    var validResponse =
+        GameLogicPublicationSourceReadGrpcCodec.toResponse(
+            sourceRead, receipt.receipt().terminal());
+    var response =
+        validResponse.toBuilder()
+            .setContentDigest(validResponse.getContentDigest().substring("sha256:".length()))
+            .build();
+    var clientAndStub = client(tlsDirectory);
+    when(clientAndStub.stub().getDraftDesignDigest(any(GetDraftDesignDigestRequest.class)))
+        .thenReturn(response);
+
+    var result = clientAndStub.client().getDraftDesignDigestForVersion(publication, receipt);
+
+    assertThat(result.succeeded()).isFalse();
+    assertThat(result.errorCode()).isEqualTo("RESPONSE_BINDING_MISMATCH");
+    assertThat(result.contentDigest()).isNull();
+    assertThat(result.abilitySchemaDigest()).isNull();
+  }
+
+  @Test
+  void rejectsSwappedManifestAndAbilityDigestsFromPublicationResponse(@TempDir Path tlsDirectory)
+      throws IOException {
+    var receipt = SelectedDraftGameLogicReceiptTest.fixture();
+    var publication = publicationBinding(receipt);
+    var sourceRead =
+        new GameLogicPublicationSourceReadBinding(publication, receipt.authorization());
+    var validResponse =
+        GameLogicPublicationSourceReadGrpcCodec.toResponse(
+            sourceRead, receipt.receipt().terminal());
+    assertThat(validResponse.getContentDigest())
+        .isNotEqualTo(validResponse.getAbilitySchemaDigest());
+    var response =
+        validResponse.toBuilder()
+            .setContentDigest(validResponse.getAbilitySchemaDigest())
+            .setAbilitySchemaDigest(validResponse.getContentDigest())
+            .build();
+    var clientAndStub = client(tlsDirectory);
+    when(clientAndStub.stub().getDraftDesignDigest(any(GetDraftDesignDigestRequest.class)))
+        .thenReturn(response);
+
+    var result = clientAndStub.client().getDraftDesignDigestForVersion(publication, receipt);
+
+    assertThat(result.succeeded()).isFalse();
+    assertThat(result.errorCode()).isEqualTo("RESPONSE_BINDING_MISMATCH");
     assertThat(result.contentDigest()).isNull();
     assertThat(result.abilitySchemaDigest()).isNull();
   }

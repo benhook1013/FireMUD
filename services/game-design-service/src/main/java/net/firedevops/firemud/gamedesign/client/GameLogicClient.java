@@ -123,12 +123,14 @@ public class GameLogicClient
           "owner terminal differs from the immutable Account-finalized receipt");
     }
 
+    // The authenticated owner response remains sha256:-prefixed. Release participants carry the
+    // same aggregate hash as bare hex; keep the separately scoped ability digest unchanged.
     return new PublishParticipantDigestDto(
         "GAME_LOGIC",
         versionId,
         null,
         receipt.authorization().source().binding().commitId().toString(),
-        evidence.manifestDigest(),
+        evidence.manifestDigest().substring("sha256:".length()),
         evidence.digestSchemaVersion(),
         evidence.abilitySchemaDigest(),
         null,

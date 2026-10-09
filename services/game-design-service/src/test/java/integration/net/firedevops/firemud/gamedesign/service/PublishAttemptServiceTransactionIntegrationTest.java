@@ -1527,6 +1527,7 @@ class PublishAttemptServiceTransactionIntegrationTest {
             candidate.getCanonicalTenantId().toString(),
             Long.toString(candidate.getId()),
             publishRequestId);
+    var selectedExportResult = selectedExport(expectedDigestBinding);
     AtomicReference<Integer> exportedVersionNumber = new AtomicReference<>();
     AtomicReference<String> remapSetId = new AtomicReference<>();
     AtomicReference<Throwable> recordedDigestFailure = new AtomicReference<>();
@@ -1546,10 +1547,6 @@ class PublishAttemptServiceTransactionIntegrationTest {
                 Mockito.argThat(actual -> sameCanonicalPreimage(actual, expectedDigestBinding)),
                 Mockito.eq(publishWorkflowId)))
         .thenReturn(participantDigests);
-    Mockito.when(
-            assetExportService.exportSelectedAssets(
-                Mockito.argThat(actual -> sameCanonicalPreimage(actual, expectedDigestBinding))))
-        .thenReturn(selectedExport(expectedDigestBinding));
     Mockito.doAnswer(
             invocation -> {
               try {
@@ -1563,17 +1560,24 @@ class PublishAttemptServiceTransactionIntegrationTest {
         .when(recordedParticipantDigestService)
         .assertMatchesRecordedDigests(
             Mockito.eq(tenantId), Mockito.eq(PublishType.FULL_VERSION), Mockito.anyList());
-    ExportedAssetManifest exportedManifest = immutableEmptyManifest();
-    Mockito.when(assetExportService.exportAssets(Mockito.eq(tenantId), Mockito.anyInt()))
+    Mockito.when(
+            assetExportService.exportSelectedAssets(
+                Mockito.argThat(actual -> sameCanonicalPreimage(actual, expectedDigestBinding))))
         .thenAnswer(
             invocation -> {
-              exportedVersionNumber.set(invocation.getArgument(1));
+              var request = invocation.<PublicationDigestRequestBinding>getArgument(0);
+              assertThat(sameCanonicalPreimage(request, expectedDigestBinding)).isTrue();
+              Version boundVersion =
+                  versionRepository
+                      .findByTenantIdAndId(tenantId, selectedCandidateVersionId)
+                      .orElseThrow();
+              exportedVersionNumber.set(boundVersion.getVersionNumber());
               try {
                 VersionTemplateRemapSet approvedRemapSet = new VersionTemplateRemapSet();
                 approvedRemapSet.setRemapSetId("failed-candidate-approved-remap");
                 approvedRemapSet.setTenantId(tenantId);
                 approvedRemapSet.setSourceVersionId(sourceVersionId);
-                approvedRemapSet.setTargetVersionId(candidateVersionId.get());
+                approvedRemapSet.setTargetVersionId(selectedCandidateVersionId);
                 approvedRemapSet.setStatus(TemplateRemapSetStatus.APPROVED);
                 approvedRemapSet.setCreatedReason(
                     "approved remap references publication candidate");
@@ -1582,7 +1586,7 @@ class PublishAttemptServiceTransactionIntegrationTest {
                 templateRemapSetRepository.save(approvedRemapSet);
                 remapSetId.set(approvedRemapSet.getRemapSetId());
                 exportCompleted.set(true);
-                return exportedManifest;
+                return selectedExportResult;
               } catch (Throwable failure) {
                 exportCallbackFailure.set(failure);
                 throw failure;
@@ -1599,7 +1603,7 @@ class PublishAttemptServiceTransactionIntegrationTest {
             Mockito.anyLong(),
             Mockito.anyLong(),
             Mockito.eq(publishWorkflowId),
-            Mockito.eq(exportedManifest.manifestHash()));
+            Mockito.eq(selectedExportResult.manifest().manifestHash()));
 
     Throwable publishFailure =
         catchThrowable(
@@ -1646,7 +1650,7 @@ class PublishAttemptServiceTransactionIntegrationTest {
     assertThat(exportCompleted.get()).as(failureContext).isTrue();
     assertThat(finalizationFailureInjected.get()).as(failureContext).isTrue();
     assertThat(exportedVersionNumber.get())
-        .as("asset export uses the candidate's persisted version number")
+        .as("selected export observes the exact bound candidate's persisted version number")
         .isEqualTo(candidateVersionNumber.get());
     assertThat(attempt.getStatus()).isEqualTo(PublishAttemptStatus.FAILED);
     assertThat(attempt.getRevision()).isGreaterThan(1L);
