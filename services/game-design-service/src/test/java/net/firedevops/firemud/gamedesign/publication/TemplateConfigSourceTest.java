@@ -323,6 +323,244 @@ class TemplateConfigSourceTest {
     assertThat(snapshot.canonicalJson()).contains("ITEM_TEMPLATE_ROOTS");
   }
 
+  @Test
+  void sharedAndGdPayloadsMatchIndependentExistingEncodings() throws Exception {
+    var gd = new TemplateConfigSource.Config(config());
+    var shared =
+        new net.firedevops.firemud.common.gamedesign.TemplateConfigSourceValues.Config(config());
+    String expectedConfig = independentCanonical(CommandSource.tree(config()));
+    assertThat(gd.canonicalJson()).isEqualTo(expectedConfig);
+    assertThat(shared.canonicalJson()).isEqualTo(expectedConfig);
+    for (String operation : List.of("CREATE", "UPSERT", "DELETE")) {
+      Map<String, Object> expected = new java.util.LinkedHashMap<>();
+      expected.put("schemaVersion", 1);
+      expected.put("revisionKind", "TEMPLATE_CONFIG");
+      expected.put("operation", operation);
+      expected.put(
+          operation.equals("CREATE") ? "templateName" : "templateId",
+          operation.equals("CREATE") ? "Starter" : "7");
+      if (!operation.equals("DELETE")) expected.put("configJson", expectedConfig);
+      String expectedPayload = independentCanonical(expected);
+      String gdPayload =
+          switch (operation) {
+            case "CREATE" -> TemplateConfigSource.createPayload("Starter", gd);
+            case "UPSERT" -> TemplateConfigSource.upsertPayload("7", gd);
+            default -> TemplateConfigSource.deletePayload("7");
+          };
+      String sharedPayload =
+          switch (operation) {
+            case "CREATE" ->
+                net.firedevops.firemud.common.gamedesign.TemplateConfigSourceValues.createPayload(
+                    "Starter", shared);
+            case "UPSERT" ->
+                net.firedevops.firemud.common.gamedesign.TemplateConfigSourceValues.upsertPayload(
+                    "7", shared);
+            default ->
+                net.firedevops.firemud.common.gamedesign.TemplateConfigSourceValues.deletePayload(
+                    "7");
+          };
+      assertThat(gdPayload).isEqualTo(expectedPayload);
+      assertThat(sharedPayload).isEqualTo(expectedPayload);
+    }
+    var automation = AutomationAuthoredSourceInventoryDeclaration.parse(automationInventory());
+    var entity = EntityAuthoredSourceInventoryDeclaration.parse(entityInventory());
+    for (var owner :
+        List.of(
+            DraftCommitBinding.Owner.AUTOMATION_SCRIPTING,
+            DraftCommitBinding.Owner.ENTITY_MANAGEMENT)) {
+      boolean isAutomation = owner == DraftCommitBinding.Owner.AUTOMATION_SCRIPTING;
+      String json = isAutomation ? automation.canonicalJson() : entity.canonicalJson();
+      String expected =
+          independentCanonical(
+              Map.of(
+                  "schemaVersion",
+                  isAutomation ? 2 : 3,
+                  "revisionKind",
+                  "TEMPLATE_CONFIG",
+                  "operation",
+                  "DECLARE_OWNER_SOURCE_INVENTORY",
+                  "owner",
+                  owner.name(),
+                  "inventory",
+                  CommandSource.tree(json)));
+      String gdPayload =
+          isAutomation
+              ? TemplateConfigSource.ownerInventoryPayload(owner, automation)
+              : TemplateConfigSource.ownerInventoryPayload(owner, entity);
+      String sharedPayload =
+          isAutomation
+              ? net.firedevops.firemud.common.gamedesign.TemplateConfigSourceValues
+                  .ownerInventoryPayload(owner, automation)
+              : net.firedevops.firemud.common.gamedesign.TemplateConfigSourceValues
+                  .ownerInventoryPayload(owner, entity);
+      assertThat(gdPayload).isEqualTo(expected);
+      assertThat(sharedPayload).isEqualTo(expected);
+    }
+  }
+
+  @Test
+  void adaptersPreserveIndependentV1V2BytesDigestsAndOriginalInheritedProvenance()
+      throws Exception {
+    var config = new TemplateConfigSource.Config(config());
+    var automation = AutomationAuthoredSourceInventoryDeclaration.parse(automationInventory());
+    var entity = EntityAuthoredSourceInventoryDeclaration.parse(entityInventory());
+    var original =
+        binding(
+            TemplateConfigSource.createPayload("Starter", config),
+            TemplateConfigSource.ownerInventoryPayload(
+                DraftCommitBinding.Owner.AUTOMATION_SCRIPTING, automation),
+            TemplateConfigSource.ownerInventoryPayload(
+                DraftCommitBinding.Owner.ENTITY_MANAGEMENT, entity));
+    var entries =
+        TemplateConfigSource.replay(
+            List.of(), original, Map.of(original.revisions().getFirst().revisionId(), "7"));
+    var declarations = TemplateConfigSource.replayOwnerInventoryDeclarations(List.of(), original);
+    var selected = binding(CommandSource.deletePayload("unrelated"));
+    for (boolean v2 : List.of(false, true)) {
+      var retainedDeclarations =
+          v2 ? declarations : List.<TemplateConfigOwnerSourceInventoryDeclaration>of();
+      var snapshot =
+          new TemplateConfigSourceSnapshot(
+              selected, "1", original.commitId(), UUID.randomUUID(), entries, retainedDeclarations);
+      var entry = entries.getFirst();
+      Map<String, Object> entryObject =
+          Map.of(
+              "templateId",
+              "7",
+              "configJson",
+              config.canonicalJson(),
+              "sourceBindingJson",
+              original.canonicalJson(),
+              "sourceBindingDigest",
+              original.digest(),
+              "revisionOrder",
+              entry.revisionOrder(),
+              "revisionId",
+              entry.revisionId().toString(),
+              "createdName",
+              "Starter");
+      var declarationObjects = new ArrayList<Map<String, Object>>();
+      for (var declaration : retainedDeclarations) {
+        var object =
+            Map.<String, Object>of(
+                "owner",
+                declaration.owner().name(),
+                "inventoryJson",
+                declaration.inventoryJson(),
+                "sourceBindingJson",
+                original.canonicalJson(),
+                "sourceBindingDigest",
+                original.digest(),
+                "revisionOrder",
+                declaration.revisionOrder(),
+                "revisionId",
+                declaration.revisionId().toString());
+        declarationObjects.add(object);
+        assertThat(declaration.object()).isEqualTo(object);
+        assertThat(declaration.shared().object()).isEqualTo(object);
+      }
+      var expected = new java.util.LinkedHashMap<String, Object>();
+      expected.put(
+          "schema",
+          v2
+              ? "game-design-template-config-source-snapshot/v2"
+              : "game-design-template-config-source-snapshot/v1");
+      expected.put("bindingJson", selected.canonicalJson());
+      expected.put("bindingDigest", selected.digest());
+      expected.put("sourceEpoch", "1");
+      expected.put("inheritedCommitId", original.commitId().toString());
+      expected.put("genesisReceiptId", snapshot.genesisReceiptId().toString());
+      expected.put("entries", List.of(entryObject));
+      if (v2) expected.put("ownerSourceInventoryDeclarations", declarationObjects);
+      String json = independentCanonical(expected);
+      byte[] bytes = json.getBytes(java.nio.charset.StandardCharsets.UTF_8);
+      String digest = independentDigest(bytes);
+      var common =
+          net.firedevops.firemud.common.gamedesign.TemplateConfigSourceSnapshot.fromStored(json);
+      assertThat(entry.object()).isEqualTo(entryObject);
+      assertThat(snapshot.canonicalJson()).isEqualTo(json);
+      assertThat(snapshot.canonicalBytes()).isEqualTo(bytes);
+      assertThat(snapshot.digest()).isEqualTo(digest);
+      assertThat(common.canonicalBytes()).isEqualTo(bytes);
+      assertThat(common.digest()).isEqualTo(digest);
+      assertThat(TemplateConfigSourceSnapshot.fromStored(json)).isEqualTo(snapshot);
+      assertThat(TemplateConfigSourceSnapshot.fromShared(common)).isEqualTo(snapshot);
+      assertThat(common.binding()).isEqualTo(selected);
+      assertThat(common.entries().getFirst().sourceBinding()).isEqualTo(original);
+      if (v2)
+        assertThat(common.ownerSourceInventoryDeclarations())
+            .extracting(
+                net.firedevops.firemud.common.gamedesign
+                        .TemplateConfigOwnerSourceInventoryDeclaration
+                    ::sourceBinding)
+            .containsExactly(original, original);
+    }
+  }
+
+  @Test
+  void applicationAndCaptureFramesRemainExactIndependentLengthPrefixedBytes() throws Exception {
+    var authored =
+        binding(
+            TemplateConfigSource.createPayload(
+                "Starter", new TemplateConfigSource.Config(config())));
+    var entries =
+        TemplateConfigSource.replay(
+            List.of(), authored, Map.of(authored.revisions().getFirst().revisionId(), "7"));
+    var snapshot =
+        new TemplateConfigSourceSnapshot(authored, "1", null, UUID.randomUUID(), entries);
+    byte[] applicationBytes =
+        independentFrames(
+            "game-design-template-config-source-application/v1"
+                .getBytes(java.nio.charset.StandardCharsets.UTF_8),
+            "0".getBytes(java.nio.charset.StandardCharsets.UTF_8),
+            snapshot.shared().canonicalBytes());
+    assertThat(
+            new TemplateConfigSourceSnapshot.Application(authored, "0", snapshot).canonicalBytes())
+        .isEqualTo(applicationBytes);
+
+    // Stipulated upstream fixture tests encoding only, not owner participation or publication
+    // proof.
+    var operation = IsolatedPublicationOperationFixtures.fresh(authored.target());
+    var selected = operation.account().input().selection().selectedCommit();
+    var inherited =
+        new TemplateConfigSourceSnapshot(
+            selected, "1", authored.commitId(), snapshot.genesisReceiptId(), entries);
+    var capture = new TemplateConfigSourceSnapshot.Capture(operation, inherited);
+    byte[] captureBytes =
+        independentFrames(
+            "game-design-template-config-source-capture/v1"
+                .getBytes(java.nio.charset.StandardCharsets.UTF_8),
+            operation.canonicalBytes(),
+            inherited.shared().canonicalBytes());
+    assertThat(capture.canonicalBytes()).isEqualTo(captureBytes);
+    assertThat(capture.digest()).isEqualTo(independentDigest(captureBytes));
+    assertThat(inherited.entries().getFirst().sourceBinding()).isEqualTo(authored);
+    assertThat(inherited.binding()).isEqualTo(selected);
+  }
+
+  private static String independentCanonical(Object value) throws Exception {
+    return new String(
+        net.firedevops.firemud.common.json.Rfc8785CanonicalJson.canonicalizeUtf8(
+            new tools.jackson.databind.ObjectMapper().writeValueAsString(value)),
+        java.nio.charset.StandardCharsets.UTF_8);
+  }
+
+  private static String independentDigest(byte[] bytes) throws Exception {
+    return "sha256:"
+        + java.util.HexFormat.of()
+            .formatHex(java.security.MessageDigest.getInstance("SHA-256").digest(bytes));
+  }
+
+  private static byte[] independentFrames(byte[]... fields) throws Exception {
+    var bytes = new java.io.ByteArrayOutputStream();
+    var output = new java.io.DataOutputStream(bytes);
+    for (byte[] field : fields) {
+      output.writeInt(field.length);
+      output.write(field);
+    }
+    return bytes.toByteArray();
+  }
+
   private static String config() {
     return "{\"schemaVersion\":1,\"baseVersionId\":\""
         + VERSION
