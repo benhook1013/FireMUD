@@ -137,6 +137,22 @@ def record_hosted_terminal_result(
             runs = [item for item in records.history(source_pr)["runs"] if item["run_id"] == attempt_id]
             if len(runs) != 1:
                 raise HostedCaptureError("completed Hosted attempt has no unique stored source run")
+            if result.publication_review_ids:
+                supplemented = records.supplement_hosted_publication(
+                    attempt_id,
+                    repository=repo,
+                    trigger_record=record,
+                    payload=payload,
+                )
+                return {
+                    "attempt_id": attempt_id,
+                    "state": "completed",
+                    "terminal": True,
+                    "attributable": True,
+                    "response_id": result.response_id,
+                    "run_id": attempt_id,
+                    **supplemented,
+                }
             return {
                 "attempt_id": attempt_id,
                 "state": result.state,
@@ -178,6 +194,7 @@ def record_hosted_terminal_result(
         response_id=result.response_id,
         checkpoint_id=checkpoint_id,
         preserve_unresolved_rate_limits=(result.state == "rate_limited" and result.cooldown_basis == "unknown"),
+        publication_review_ids=result.publication_review_ids,
     )
     capture_metadata = {
         "state": result.state,
@@ -689,6 +706,33 @@ def sync_hosted_pending(
                         continue
                     if attempt["trigger_id"] != trigger_id:
                         raise HostedCaptureError("completed Hosted attempt has a different trigger ID")
+                    archived = records.attempt_artifacts(attempt_id)
+                    retained_reviews = json.loads(archived.get("hosted_review", "[]"))
+                    primary = [
+                        review
+                        for review in retained_reviews
+                        if str(github.immutable_database_id(review)) == attempt["provider_review_id"]
+                    ]
+                    if len(primary) > 1:
+                        raise HostedCaptureError("completed Hosted attempt has duplicated archived response")
+                    marker = hosted.review_publication_marker(primary[0].get("body")) if primary else None
+                    if marker is not None:
+                        publications = hosted.review_publications(
+                            retained_reviews,
+                            record["head_sha"],
+                            hosted.parse_timestamp(record["trigger"]["created_at"]),
+                            None,
+                        )
+                        selected = [
+                            publication
+                            for publication in publications
+                            if publication["publication"] == marker[0] and publication["attempt"] == marker[1]
+                        ]
+                        if len(selected) != 1:
+                            raise HostedCaptureError("completed Hosted attempt lacks its exact retained publication")
+                        if not selected[0]["complete"] and not metadata.get("hosted_publication_supplement"):
+                            ready.append((path, record, attempt_id))
+                            continue
                     add(
                         "synced",
                         pr,
@@ -1129,6 +1173,7 @@ def archive_window(
     response_id: int | None = None,
     checkpoint_id: str | None = None,
     preserve_unresolved_rate_limits: bool = False,
+    publication_review_ids: tuple[int, ...] = (),
 ) -> dict[str, list[dict[str, Any]]]:
     """Retain complete review evidence in this request window, not old PR history."""
 
@@ -1172,6 +1217,7 @@ def archive_window(
         item
         for item in pull_request["reviews"]["nodes"]
         if github.immutable_database_id(item) == response_id
+        or github.immutable_database_id(item) in publication_review_ids
         or (
             in_window(item.get("submittedAt"))
             and github.is_coderabbit_login(
@@ -1188,6 +1234,8 @@ def archive_window(
         author = first.get("author")
         login = author.get("login") if isinstance(author, dict) else None
         if in_window(first.get("createdAt")) and github.is_coderabbit_login(login):
+            if publication_review_ids and not _publication_comment(first, publication_review_ids, record["head_sha"]):
+                continue
             review_threads.append(
                 {
                     **thread,
@@ -1222,7 +1270,7 @@ def _terminal_event(
     response_comment = matching_comments[0] if matching_comments else None
     event_at: str | None = None
     if response_review is not None:
-        event_at = response_review.get("submittedAt")
+        event_at = result.publication_finished_at or response_review.get("submittedAt")
     elif response_comment is not None:
         created = response_comment.get("createdAt")
         updated = response_comment.get("updatedAt")
@@ -1239,6 +1287,18 @@ def _terminal_event(
     if hosted.parse_timestamp(event_at) is None:
         raise HostedCaptureError("Hosted terminal event has no valid timestamp")
     return event_at, response_review, response_comment
+
+
+def _publication_comment(comment: dict[str, Any], review_ids: tuple[int, ...], head: str) -> bool:
+    parent = comment.get("pullRequestReview")
+    if not isinstance(parent, dict) or github.immutable_database_id(parent) is None:
+        raise HostedCaptureError("Hosted publication finding has no immutable parent review")
+    if github.immutable_database_id(parent) not in review_ids:
+        return False
+    commit = (comment.get("originalCommit") or {}).get("oid")
+    if not isinstance(commit, str) or commit.casefold() != head.casefold():
+        raise HostedCaptureError("Hosted publication finding has a different or missing immutable commit")
+    return True
 
 
 def _findings_for_completed_result(
@@ -1267,6 +1327,10 @@ def _findings_for_completed_result(
             continue
         created = hosted.parse_timestamp(comment.get("createdAt"))
         if created is None or not started < created <= finished:
+            continue
+        if result.publication_review_ids and not _publication_comment(
+            comment, result.publication_review_ids, record["head_sha"]
+        ):
             continue
         comment_id = github.immutable_database_id(comment)
         body = comment.get("body")
