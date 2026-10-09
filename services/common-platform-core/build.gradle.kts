@@ -18,6 +18,7 @@ dependencies {
     implementation(libs.spring.boot.starter)
     implementation(libs.spring.boot.starter.actuator)
     implementation(libs.spring.boot.starter.validation)
+    implementation("org.springframework:spring-tx")
     compileOnly(libs.spring.boot.starter.web)
     compileOnly(libs.spring.boot.starter.webflux)
     compileOnly("com.fasterxml.jackson.core:jackson-annotations")

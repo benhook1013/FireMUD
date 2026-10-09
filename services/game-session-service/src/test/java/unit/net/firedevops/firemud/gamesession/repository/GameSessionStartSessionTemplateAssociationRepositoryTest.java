@@ -1,0 +1,74 @@
+package unit.net.firedevops.firemud.gamesession.repository;
+
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verifyNoInteractions;
+
+import net.firedevops.firemud.gamesession.repository.GameSessionStartSessionOperatorAttemptRepository;
+import net.firedevops.firemud.gamesession.repository.GameSessionStartSessionTemplateAssociationRepository;
+import org.jooq.DSLContext;
+import org.junit.jupiter.api.Test;
+
+class GameSessionStartSessionTemplateAssociationRepositoryTest {
+  @Test
+  void requiresTheExactOwnerClaimBeforeReading() {
+    DSLContext dsl = mock(DSLContext.class);
+    GameSessionStartSessionOperatorAttemptRepository attempts =
+        mock(GameSessionStartSessionOperatorAttemptRepository.class);
+    var repository = new GameSessionStartSessionTemplateAssociationRepository(dsl, attempts);
+
+    assertThatThrownBy(
+            () ->
+                repository.findPinned(
+                    (GameSessionStartSessionOperatorAttemptRepository.AttemptClaim) null))
+        .isInstanceOf(NullPointerException.class)
+        .hasMessageContaining("claim");
+
+    verifyNoInteractions(dsl);
+    verifyNoInteractions(attempts);
+  }
+
+  @Test
+  void requiresOpaqueContinuationBeforeAssociationRead() {
+    DSLContext dsl = mock(DSLContext.class);
+    GameSessionStartSessionOperatorAttemptRepository attempts =
+        mock(GameSessionStartSessionOperatorAttemptRepository.class);
+    var repository = new GameSessionStartSessionTemplateAssociationRepository(dsl, attempts);
+    var continuation = (GameSessionStartSessionOperatorAttemptRepository.EvidenceContinuation) null;
+
+    assertThatThrownBy(() -> repository.findPinned(continuation))
+        .isInstanceOf(NullPointerException.class)
+        .hasMessageContaining("continuation");
+
+    verifyNoInteractions(dsl);
+    verifyNoInteractions(attempts);
+  }
+
+  @Test
+  void requiresTypedAssociationEvidenceBeforeOwnerReads() {
+    DSLContext dsl = mock(DSLContext.class);
+    GameSessionStartSessionOperatorAttemptRepository attempts =
+        mock(GameSessionStartSessionOperatorAttemptRepository.class);
+    var repository = new GameSessionStartSessionTemplateAssociationRepository(dsl, attempts);
+
+    assertThatThrownBy(() -> repository.pinInitialOrValidateExactReplay(null, null))
+        .isInstanceOf(NullPointerException.class)
+        .hasMessageContaining("claim");
+    assertThatThrownBy(
+            () ->
+                repository.pinInitialOrValidateExactReplay(
+                    new GameSessionStartSessionOperatorAttemptRepository.AttemptClaim(
+                        "world-runtime",
+                        "operator-request",
+                        java.util.UUID.fromString("02222222-2222-4222-8222-222222222222"),
+                        java.util.UUID.fromString("03333333-3333-4333-8333-333333333333"),
+                        java.util.UUID.fromString("04444444-4444-4444-8444-444444444444"),
+                        7L),
+                    null))
+        .isInstanceOf(NullPointerException.class)
+        .hasMessageContaining("candidate");
+
+    verifyNoInteractions(dsl);
+    verifyNoInteractions(attempts);
+  }
+}
