@@ -20,9 +20,7 @@ def _expected_chart_label(chart_metadata_path: Path) -> str:
     try:
         chart_metadata = yaml.safe_load(chart_metadata_path.read_text(encoding="utf-8"))
     except (OSError, yaml.YAMLError) as exc:
-        raise ValueError(
-            f"could not load trusted chart metadata: {chart_metadata_path}"
-        ) from exc
+        raise ValueError(f"could not load trusted chart metadata: {chart_metadata_path}") from exc
     if not isinstance(chart_metadata, dict):
         raise TypeError("trusted chart metadata must be a mapping")
     name = chart_metadata.get("name")
@@ -34,9 +32,7 @@ def _expected_chart_label(chart_metadata_path: Path) -> str:
     return f"{name}-{version.replace('+', '_')}"
 
 
-TRUSTED_CHART_METADATA = (
-    Path(__file__).resolve().parents[3] / "k8s/helm/firemud/Chart.yaml"
-)
+TRUSTED_CHART_METADATA = Path(__file__).resolve().parents[3] / "k8s/helm/firemud/Chart.yaml"
 EXPECTED_KINDS = {
     ("apps/v1", "Deployment"),
     ("v1", "ConfigMap"),
@@ -70,15 +66,11 @@ ACCOUNT_GRPC_WORKLOADS = {"account-service"}
 GAME_SESSION_GRPC_WORKLOADS = {"game-session-service"}
 SOCIAL_GROUPS_GRPC_WORKLOADS = {"social-groups-service"}
 DISTINCT_GRPC_WORKLOADS = (
-    PUBLICATION_GRPC_WORKLOADS
-    | ACCOUNT_GRPC_WORKLOADS
-    | GAME_SESSION_GRPC_WORKLOADS
-    | SOCIAL_GROUPS_GRPC_WORKLOADS
+    PUBLICATION_GRPC_WORKLOADS | ACCOUNT_GRPC_WORKLOADS | GAME_SESSION_GRPC_WORKLOADS | SOCIAL_GROUPS_GRPC_WORKLOADS
 )
 EXPECTED_NAMES = {
     "Deployment": SERVICE_IMAGES | {"postgres", "redis-coord", "redis-cache", "minio"},
-    "Service": SERVICE_IMAGES
-    | {"spring-cloud-gateway-mtls", "postgres", "redis-coord", "redis-cache", "minio"},
+    "Service": SERVICE_IMAGES | {"spring-cloud-gateway-mtls", "postgres", "redis-coord", "redis-cache", "minio"},
     "ConfigMap": {"firemud-config", "firemud-seed-sql"},
     "PersistentVolumeClaim": {"postgres-data", "redis-coord-data", "redis-cache-data", "minio-data"},
     "Job": {"firemud-seed"},
@@ -128,15 +120,8 @@ def walk(value: object, path: str = "object"):
             yield from walk(child, f"{path}[{index}]")
 
 
-EXPECTED_OBJECTS = {
-    (kind, name)
-    for kind, names in EXPECTED_NAMES.items()
-    for name in names
-}
-TRUSTED_HOSTED_VALUES = (
-    Path(__file__).resolve().parents[3]
-    / "k8s/helm/firemud/values-hosted-shared.example.yaml"
-)
+EXPECTED_OBJECTS = {(kind, name) for kind, names in EXPECTED_NAMES.items() for name in names}
+TRUSTED_HOSTED_VALUES = Path(__file__).resolve().parents[3] / "k8s/helm/firemud/values-hosted-shared.example.yaml"
 
 
 def _trusted_database_images(values_path: Path) -> dict[str, str]:
@@ -149,7 +134,9 @@ def _trusted_database_images(values_path: Path) -> dict[str, str]:
     for name, image in images.items():
         repository = "redis" if name == "redis" else "postgres"
         if not isinstance(image, str) or not re.fullmatch(
-            rf"{repository}:[0-9]+(?:\.[0-9]+)*(?:-[A-Za-z0-9._-]+)?(?:@sha256:[0-9a-f]{{64}})?", image
+            rf"(?:public\.ecr\.aws/docker/library/)?{repository}:"
+            r"[0-9]+(?:\.[0-9]+)*(?:-[A-Za-z0-9._-]+)?(?:@sha256:[0-9a-f]{64})?",
+            image,
         ):
             raise ValueError(f"invalid trusted database image for {name}: {values_path}")
     return images
@@ -169,18 +156,14 @@ EXPECTED_SECRET_REFS = {
     "minio-credentials",
     "firemud-grpc-tls",
 }
-DISTINCT_GRPC_SECRET_OWNERS = {
-    f"firemud-grpc-{service}": service for service in DISTINCT_GRPC_WORKLOADS
-}
+DISTINCT_GRPC_SECRET_OWNERS = {f"firemud-grpc-{service}": service for service in DISTINCT_GRPC_WORKLOADS}
 CANONICAL_INGRESS_ISSUER = "letsencrypt-prod"
 ALLOCATED_TELNET_PORT_ANNOTATION = "firemud.dev/allocated-telnet-port"
 CERTIFICATE_IDENTITY_MODES = {"standalone", "hosted-controller"}
 EXPOSURE_MODES = {"private", "public"}
 CERTIFICATE_IDENTITY_LABEL = "firemud.dev/certificate-identity-mode"
 TCP_PROXY_IDENTITY_MODE_LABEL = CERTIFICATE_IDENTITY_LABEL
-HOSTED_REDACTED_CONFIG_KEYS = frozenset(
-    {"ASSET_STORE_ACCESS_KEY", "ASSET_STORE_SECRET_KEY"}
-)
+HOSTED_REDACTED_CONFIG_KEYS = frozenset({"ASSET_STORE_ACCESS_KEY", "ASSET_STORE_SECRET_KEY"})
 GATEWAY_HTTP_ROUTE_APPS = (
     "game-session-service",
     "logging-admin-service",
@@ -252,9 +235,7 @@ def _exposure_mode_for_service_type(service_type: object) -> str:
 
 def _expected_names_for_mode(certificate_identity_mode: str) -> dict[str, set[str]]:
     _validate_certificate_identity_mode(certificate_identity_mode)
-    expected_names = {
-        kind: set(names) for kind, names in EXPECTED_NAMES.items()
-    }
+    expected_names = {kind: set(names) for kind, names in EXPECTED_NAMES.items()}
     if certificate_identity_mode == "standalone":
         expected_names["NetworkPolicy"].difference_update(
             {
@@ -268,8 +249,7 @@ def _expected_names_for_mode(certificate_identity_mode: str) -> dict[str, set[st
 
 def _is_tcp_proxy_identity_object(document: dict) -> bool:
     return document.get("kind") in {"Deployment", "Service"} and (
-        isinstance(document.get("metadata"), dict)
-        and document["metadata"].get("name") == "tcp-proxy-service"
+        isinstance(document.get("metadata"), dict) and document["metadata"].get("name") == "tcp-proxy-service"
     )
 
 
@@ -578,11 +558,7 @@ INTERNAL_SERVICES_EGRESS = [
     {
         "to": [
             {
-                "namespaceSelector": {
-                    "matchLabels": {
-                        "kubernetes.io/metadata.name": "kube-system"
-                    }
-                },
+                "namespaceSelector": {"matchLabels": {"kubernetes.io/metadata.name": "kube-system"}},
                 "podSelector": {"matchLabels": {"k8s-app": "kube-dns"}},
             }
         ],
@@ -641,9 +617,7 @@ GATEWAY_EGRESS = [
     {
         "to": [
             {
-                "namespaceSelector": {
-                    "matchLabels": {"kubernetes.io/metadata.name": "kube-system"}
-                },
+                "namespaceSelector": {"matchLabels": {"kubernetes.io/metadata.name": "kube-system"}},
                 "podSelector": {"matchLabels": {"k8s-app": "kube-dns"}},
             }
         ],
@@ -685,12 +659,8 @@ EXPECTED_GATEWAY_NETWORK_POLICY_SPEC = {
 NAME_RE = re.compile(r"^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$")
 PROJECTED_SECRET_SOURCE_PATH = re.compile(r"\.projected\.sources\[\d+\]$")
 CSI_VOLUME_PATH = re.compile(r"\.csi$")
-PROJECTED_SECRET_NAME_LOCATION = re.compile(
-    r"\.projected\.sources\[\d+\]\.secret\.name$"
-)
-CSI_NODE_PUBLISH_SECRET_NAME_LOCATION = re.compile(
-    r"\.csi\.nodePublishSecretRef\.name$"
-)
+PROJECTED_SECRET_NAME_LOCATION = re.compile(r"\.projected\.sources\[\d+\]\.secret\.name$")
+CSI_NODE_PUBLISH_SECRET_NAME_LOCATION = re.compile(r"\.csi\.nodePublishSecretRef\.name$")
 SANITIZER_FORBIDDEN_KINDS = {
     "Certificate",
     "CertificateRequest",
@@ -707,9 +677,7 @@ SANITIZER_FORBIDDEN_KINDS = {
 SANITIZER_SECRET_REFERENCE = re.compile(
     r"^pr-[1-9][0-9]{0,50}-(?:tls|telnet-tls|gateway-internal-ws|tcp-proxy-bridge)$"
 )
-SANITIZER_SENSITIVE_KEY = re.compile(
-    r"(?:PASSWORD|TOKEN|PRIVATE|ACCESS_KEY|SECRET_KEY|CREDENTIAL)", re.IGNORECASE
-)
+SANITIZER_SENSITIVE_KEY = re.compile(r"(?:PASSWORD|TOKEN|PRIVATE|ACCESS_KEY|SECRET_KEY|CREDENTIAL)", re.IGNORECASE)
 FIREMUD_CONFIG_FIELDS = frozenset({"apiVersion", "kind", "metadata", "data"})
 MIN_PREVIEW_TELNET_PORT = 32000
 MAX_PREVIEW_TELNET_PORT = 32015
@@ -743,9 +711,7 @@ def _require_mapping(value: object, path: str) -> dict:
 
 
 def _require_mapping_list(value: object, path: str) -> list[dict]:
-    if not isinstance(value, list) or not all(
-        isinstance(item, dict) for item in value
-    ):
+    if not isinstance(value, list) or not all(isinstance(item, dict) for item in value):
         fail(f"{path} is not a list of objects")
     return value
 
@@ -767,10 +733,7 @@ def _validate_object_metadata(
         allowed_fields.add("annotations")
     unexpected_fields = set(metadata) - allowed_fields
     if unexpected_fields:
-        fail(
-            f"{kind}/{name} metadata contains unsupported fields: "
-            f"{sorted(unexpected_fields)}"
-        )
+        fail(f"{kind}/{name} metadata contains unsupported fields: {sorted(unexpected_fields)}")
     expected_labels = _expected_object_labels(expected_namespace)
     if certificate_identity_mode is not None:
         _validate_certificate_identity_mode(certificate_identity_mode)
@@ -783,10 +746,7 @@ def _validate_object_metadata(
         for label, expected_value in expected_labels.items():
             actual_value = actual_labels.get(label)
             if actual_value != expected_value:
-                fail(
-                    f"{kind}/{name} label {label!r} mismatch: "
-                    f"expected {expected_value!r}, actual {actual_value!r}"
-                )
+                fail(f"{kind}/{name} label {label!r} mismatch: expected {expected_value!r}, actual {actual_value!r}")
     if actual_labels != expected_labels:
         fail(f"{kind}/{name} has unsafe Helm metadata labels")
     namespace = metadata.get("namespace")
@@ -802,15 +762,11 @@ def _validate_workload_selector_metadata(document: dict) -> None:
     name = document["metadata"]["name"]
     spec = _require_mapping(document.get("spec"), f"{kind}/{name}.spec")
     template = _require_mapping(spec.get("template"), f"{kind}/{name}.spec.template")
-    template_metadata = _require_mapping(
-        template.get("metadata"), f"{kind}/{name}.spec.template.metadata"
-    )
+    template_metadata = _require_mapping(template.get("metadata"), f"{kind}/{name}.spec.template.metadata")
     expected_app = "firemud-seed" if kind == "Job" else name
     if template_metadata != {"labels": {"app": expected_app}}:
         fail(f"{kind}/{name} has unsafe pod-template metadata")
-    if kind == "Deployment" and spec.get("selector") != {
-        "matchLabels": {"app": expected_app}
-    }:
+    if kind == "Deployment" and spec.get("selector") != {"matchLabels": {"app": expected_app}}:
         fail(f"Deployment/{name} has an unsafe selector")
 
 
@@ -827,14 +783,11 @@ def _is_expected_secret_reference(value: object) -> bool:
 
 def _is_sanitized_secret_reference(value: object) -> bool:
     return isinstance(value, str) and (
-        _is_expected_secret_reference(value)
-        or SANITIZER_SECRET_REFERENCE.fullmatch(value) is not None
+        _is_expected_secret_reference(value) or SANITIZER_SECRET_REFERENCE.fullmatch(value) is not None
     )
 
 
-def _is_distinct_grpc_secret_volume_source(
-    document: object, path: str, value: object
-) -> bool:
+def _is_distinct_grpc_secret_volume_source(document: object, path: str, value: object) -> bool:
     """Allow each distinct workload TLS Secret only in its owning Deployment."""
 
     if not isinstance(value, str) or not isinstance(document, dict):
@@ -843,11 +796,7 @@ def _is_distinct_grpc_secret_volume_source(
     if owner is None:
         return False
     metadata = document.get("metadata")
-    if (
-        document.get("kind") != "Deployment"
-        or not isinstance(metadata, dict)
-        or metadata.get("name") != owner
-    ):
+    if document.get("kind") != "Deployment" or not isinstance(metadata, dict) or metadata.get("name") != owner:
         return False
     match = re.fullmatch(
         r"object\.spec\.template\.spec\.volumes\[(\d+)\]\.secret\.secretName",
@@ -866,17 +815,14 @@ def _is_distinct_grpc_secret_volume_source(
     if not isinstance(volume, dict):
         return False
     source = volume.get("secret")
-    return (
-        volume.get("name") == "grpc-tls"
-        and isinstance(source, dict)
-        and source.get("secretName") == value
-    )
+    return volume.get("name") == "grpc-tls" and isinstance(source, dict) and source.get("secretName") == value
 
 
 def _is_manifest_secret_reference(value: object, expected_namespace: str) -> bool:
     return isinstance(value, str) and (
         _is_expected_secret_reference(value)
-        or value in {
+        or value
+        in {
             f"{expected_namespace}-tls",
             f"{expected_namespace}-telnet-tls",
             f"{expected_namespace}-gateway-internal-ws",
@@ -948,9 +894,7 @@ EXPECTED_GATEWAY_ENV_FROM = [
 ]
 
 
-def _validate_gateway_container_environment(
-    container: dict, expected_namespace: str
-) -> None:
+def _validate_gateway_container_environment(container: dict, expected_namespace: str) -> None:
     if container.get("env") != _expected_gateway_container_env(expected_namespace):
         fail("Deployment/spring-cloud-gateway has an unsafe container env")
     if container.get("envFrom") != EXPECTED_GATEWAY_ENV_FROM:
@@ -962,9 +906,7 @@ def _trusted_hosted_shared_config() -> dict[str, str]:
     try:
         values = yaml.safe_load(TRUSTED_HOSTED_VALUES.read_text(encoding="utf-8"))
     except (OSError, yaml.YAMLError) as exc:
-        raise ValueError(
-            f"could not load trusted hosted values: {TRUSTED_HOSTED_VALUES}"
-        ) from exc
+        raise ValueError(f"could not load trusted hosted values: {TRUSTED_HOSTED_VALUES}") from exc
     if not isinstance(values, dict):
         raise TypeError("trusted hosted values must be a mapping")
     preview_stack = values.get("previewStack")
@@ -978,22 +920,16 @@ def _trusted_hosted_shared_config() -> dict[str, str]:
     if any(not isinstance(value, str) for value in shared_config.values()):
         raise ValueError("trusted hosted values sharedConfig values must be strings")
     if not HOSTED_REDACTED_CONFIG_KEYS <= set(shared_config):
-        raise ValueError(
-            "trusted hosted values sharedConfig is missing its canonical redacted keys"
-        )
+        raise ValueError("trusted hosted values sharedConfig is missing its canonical redacted keys")
     return dict(shared_config)
 
 
-def _validate_firemud_config_data(
-    data: dict, *, allow_redacted: bool = False
-) -> None:
+def _validate_firemud_config_data(data: dict, *, allow_redacted: bool = False) -> None:
     trusted = _trusted_hosted_shared_config()
     trusted_keys = set(trusted)
     actual_keys = set(data)
     unexpected_keys = actual_keys - trusted_keys
-    required_keys = (
-        trusted_keys if allow_redacted else trusted_keys - HOSTED_REDACTED_CONFIG_KEYS
-    )
+    required_keys = trusted_keys if allow_redacted else trusted_keys - HOSTED_REDACTED_CONFIG_KEYS
     missing_keys = required_keys - actual_keys
     if unexpected_keys or missing_keys:
         fail(
@@ -1011,13 +947,9 @@ def _validate_firemud_config_data(
     for key in actual_keys:
         value = data[key]
         if not isinstance(key, str) or not isinstance(value, str):
-            fail(
-                "ConfigMap/firemud-config.data must contain only string key/value pairs"
-            )
+            fail("ConfigMap/firemud-config.data must contain only string key/value pairs")
         if value != trusted[key]:
-            fail(
-                f"ConfigMap/firemud-config.data.{key} differs from the trusted hosted value"
-            )
+            fail(f"ConfigMap/firemud-config.data.{key} differs from the trusted hosted value")
 
 
 def _clean_config_map(document: dict) -> dict:
@@ -1027,17 +959,11 @@ def _clean_config_map(document: dict) -> dict:
     _validate_firemud_config_shape(document, allow_redacted=True)
     _require_mapping(document.get("data"), "ConfigMap/firemud-config.data")
     trusted = _trusted_hosted_shared_config()
-    document["data"] = {
-        key: trusted[key]
-        for key in trusted
-        if key not in HOSTED_REDACTED_CONFIG_KEYS
-    }
+    document["data"] = {key: trusted[key] for key in trusted if key not in HOSTED_REDACTED_CONFIG_KEYS}
     return document
 
 
-def _validate_firemud_config_shape(
-    document: dict, *, allow_redacted: bool = False
-) -> None:
+def _validate_firemud_config_shape(document: dict, *, allow_redacted: bool = False) -> None:
     if document.get("kind") != "ConfigMap":
         return
     metadata = document.get("metadata")
@@ -1065,9 +991,7 @@ def _validate_sanitized_secret_refs(
         for key, child in value.items():
             if key == "secretName" and not (
                 _is_sanitized_secret_reference(child)
-                or _is_distinct_grpc_secret_volume_source(
-                    root_document, f"{path}.{key}", child
-                )
+                or _is_distinct_grpc_secret_volume_source(root_document, f"{path}.{key}", child)
             ):
                 fail(f"{path}.{key} contains an unapproved Secret reference")
             if key in {"secretRef", "secretKeyRef"} and isinstance(child, dict):
@@ -1083,22 +1007,14 @@ def _validate_sanitized_secret_refs(
                 name = child["name"]
                 if not _is_sanitized_secret_reference(name):
                     fail(f"{path}.{key}.name contains an unapproved Secret reference")
-            if (
-                key == "nodePublishSecretRef"
-                and isinstance(child, dict)
-                and CSI_VOLUME_PATH.search(path)
-            ):
+            if key == "nodePublishSecretRef" and isinstance(child, dict) and CSI_VOLUME_PATH.search(path):
                 name = child.get("name")
                 if not _is_sanitized_secret_reference(name):
                     fail(f"{path}.{key}.name contains an unapproved Secret reference")
-            _validate_sanitized_secret_refs(
-                child, f"{path}.{key}", root_document
-            )
+            _validate_sanitized_secret_refs(child, f"{path}.{key}", root_document)
     elif isinstance(value, list):
         for index, child in enumerate(value):
-            _validate_sanitized_secret_refs(
-                child, f"{path}[{index}]", root_document
-            )
+            _validate_sanitized_secret_refs(child, f"{path}[{index}]", root_document)
 
 
 def _validate_restricted_pod_security(pod: object, path: str) -> None:
@@ -1127,8 +1043,7 @@ def _validate_restricted_pod_security(pod: object, path: str) -> None:
     def validate_extra_security_fields(security: dict, security_path: str) -> None:
         apparmor = security.get("appArmorProfile")
         if apparmor is not None and (
-            not isinstance(apparmor, dict)
-            or apparmor.get("type") not in {"RuntimeDefault", "Localhost"}
+            not isinstance(apparmor, dict) or apparmor.get("type") not in {"RuntimeDefault", "Localhost"}
         ):
             fail(f"{security_path}.appArmorProfile is not restricted")
         selinux = security.get("seLinuxOptions")
@@ -1152,10 +1067,7 @@ def _validate_restricted_pod_security(pod: object, path: str) -> None:
             fail(f"{path}.volumes[{index}].hostPath is forbidden")
         unsupported = set(volume) - {"name"} - RESTRICTED_VOLUME_KEYS
         if unsupported:
-            fail(
-                f"{path}.volumes[{index}] contains unsupported restricted volume fields: "
-                f"{sorted(unsupported)}"
-            )
+            fail(f"{path}.volumes[{index}] contains unsupported restricted volume fields: {sorted(unsupported)}")
 
     containers = []
     for field in ("initContainers", "containers", "ephemeralContainers"):
@@ -1185,13 +1097,9 @@ def _validate_restricted_pod_security(pod: object, path: str) -> None:
         ):
             value = security.get(security_field, inherited)
             if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
-                fail(
-                    f"{container_path}.securityContext.{security_field} must be a positive numeric identity"
-                )
+                fail(f"{container_path}.securityContext.{security_field} must be a positive numeric identity")
         capabilities = security.get("capabilities")
-        dropped_capabilities = (
-            capabilities.get("drop") if isinstance(capabilities, dict) else None
-        )
+        dropped_capabilities = capabilities.get("drop") if isinstance(capabilities, dict) else None
         if (
             not isinstance(dropped_capabilities, list)
             or not all(isinstance(value, str) for value in dropped_capabilities)
@@ -1206,17 +1114,11 @@ def _validate_restricted_pod_security(pod: object, path: str) -> None:
             )
         if "procMount" in security and security["procMount"] != "Default":
             fail(f"{container_path}.securityContext.procMount must be Default")
-        volume_mounts = _require_mapping_list(
-            container.get("volumeMounts", []), f"{container_path}.volumeMounts"
-        )
+        volume_mounts = _require_mapping_list(container.get("volumeMounts", []), f"{container_path}.volumeMounts")
         for mount_index, mount in enumerate(volume_mounts):
             if mount.get("mountPropagation") not in (None, "None"):
-                fail(
-                    f"{container_path}.volumeMounts[{mount_index}].mountPropagation is forbidden"
-                )
-        ports = _require_mapping_list(
-            container.get("ports", []), f"{container_path}.ports"
-        )
+                fail(f"{container_path}.volumeMounts[{mount_index}].mountPropagation is forbidden")
+        ports = _require_mapping_list(container.get("ports", []), f"{container_path}.ports")
         for port_index, port in enumerate(ports):
             if "hostPort" in port:
                 fail(f"{container_path}.ports[{port_index}].hostPort is forbidden")
@@ -1284,9 +1186,7 @@ def sanitize(source: Path, destination: Path) -> None:
             fail(f"{kind}/{metadata['name']} targets a control namespace")
         if kind in {"Deployment", "Job"}:
             spec = _require_mapping(raw.get("spec"), f"{kind}/{metadata['name']}.spec")
-            template = _require_mapping(
-                spec.get("template"), f"{kind}/{metadata['name']}.spec.template"
-            )
+            template = _require_mapping(spec.get("template"), f"{kind}/{metadata['name']}.spec.template")
             pod = _require_mapping(
                 template.get("spec"),
                 f"{kind}/{metadata['name']}.spec.template.spec",
@@ -1299,9 +1199,7 @@ def sanitize(source: Path, destination: Path) -> None:
         if sanitized.get("kind") == "Service":
             name = sanitized["metadata"]["name"]
             spec = _require_mapping(sanitized.get("spec"), f"Service/{name}.spec")
-            ports = _require_mapping_list(
-                spec.get("ports"), f"Service/{name}.spec.ports"
-            )
+            ports = _require_mapping_list(spec.get("ports"), f"Service/{name}.spec.ports")
             for port in ports:
                 port.pop("nodePort", None)
         _strip_annotations(sanitized)
@@ -1351,26 +1249,20 @@ def inject_telnet_port(
         )
         namespace = metadata.get("namespace")
         if namespace not in (None, expected_namespace):
-            fail(
-                f"{document.get('kind')}/{metadata.get('name')} targets namespace {namespace!r}"
-            )
+            fail(f"{document.get('kind')}/{metadata.get('name')} targets namespace {namespace!r}")
         if "annotations" in metadata:
             fail("validated preview render retains untrusted annotations")
         metadata["namespace"] = expected_namespace
         if document.get("kind") == "Ingress" and metadata.get("name") == "firemud-preview":
             ingress_matches += 1
             if certificate_identity_mode == "standalone":
-                metadata["annotations"] = {
-                    "cert-manager.io/cluster-issuer": CANONICAL_INGRESS_ISSUER
-                }
+                metadata["annotations"] = {"cert-manager.io/cluster-issuer": CANONICAL_INGRESS_ISSUER}
         if document.get("kind") != "Service":
             continue
         if metadata.get("name") != "tcp-proxy-service":
             continue
         spec = _require_mapping(document.get("spec"), "Service/tcp-proxy-service.spec")
-        for service_port in _require_mapping_list(
-            spec.get("ports"), "Service/tcp-proxy-service.spec.ports"
-        ):
+        for service_port in _require_mapping_list(spec.get("ports"), "Service/tcp-proxy-service.spec.ports"):
             if service_port.get("port") == 2323:
                 matches.append(service_port)
     if len(matches) != 1:
@@ -1380,15 +1272,12 @@ def inject_telnet_port(
     services = [
         document
         for document in documents
-        if document.get("kind") == "Service"
-        and document.get("metadata", {}).get("name") == "tcp-proxy-service"
+        if document.get("kind") == "Service" and document.get("metadata", {}).get("name") == "tcp-proxy-service"
     ]
     if len(services) != 1:
         fail("validated preview render must contain exactly one TCP Proxy Service")
     service = services[0]
-    service_spec = _require_mapping(
-        service.get("spec"), "Service/tcp-proxy-service.spec"
-    )
+    service_spec = _require_mapping(service.get("spec"), "Service/tcp-proxy-service.spec")
     service_type = service_spec.get("type", "ClusterIP")
     exposure_mode = _resolve_exposure_mode(
         certificate_identity_mode,
@@ -1397,13 +1286,8 @@ def inject_telnet_port(
     )
     if exposure_mode == "private" and port != 0:
         fail("private preview runtime target requires sentinel Telnet port 0")
-    if exposure_mode == "public" and not (
-        MIN_PREVIEW_TELNET_PORT <= port <= MAX_PREVIEW_TELNET_PORT
-    ):
-        fail(
-            "preview telnet port must be between "
-            f"{MIN_PREVIEW_TELNET_PORT} and {MAX_PREVIEW_TELNET_PORT}"
-        )
+    if exposure_mode == "public" and not (MIN_PREVIEW_TELNET_PORT <= port <= MAX_PREVIEW_TELNET_PORT):
+        fail(f"preview telnet port must be between {MIN_PREVIEW_TELNET_PORT} and {MAX_PREVIEW_TELNET_PORT}")
     if exposure_mode == "private":
         if "nodePort" in matches[0]:
             fail("private preview render must not contain a NodePort")
@@ -1411,9 +1295,7 @@ def inject_telnet_port(
         if "nodePort" in matches[0]:
             fail("validated preview render already contains a NodePort")
         matches[0]["nodePort"] = port
-        service["metadata"]["annotations"] = {
-            ALLOCATED_TELNET_PORT_ANNOTATION: str(port)
-        }
+        service["metadata"]["annotations"] = {ALLOCATED_TELNET_PORT_ANNOTATION: str(port)}
     destination.write_text(
         "---\n".join(yaml.safe_dump(document, sort_keys=False) for document in documents),
         encoding="utf-8",
@@ -1461,10 +1343,7 @@ def validate_runtime_target(
         )
         name = metadata.get("name")
         if metadata.get("namespace") != expected_namespace:
-            fail(
-                f"{document.get('kind')}/{name} must explicitly target namespace "
-                f"{expected_namespace!r}"
-            )
+            fail(f"{document.get('kind')}/{name} must explicitly target namespace {expected_namespace!r}")
         annotations = metadata.get("annotations")
         if document.get("kind") == "Ingress" and name == "firemud-preview":
             ingress_matches += 1
@@ -1475,10 +1354,7 @@ def validate_runtime_target(
             )
             if annotations != expected_annotations:
                 fail("prepared preview Ingress has an unsafe certificate issuer")
-        elif (
-            document.get("kind") == "Service"
-            and name == "tcp-proxy-service"
-        ):
+        elif document.get("kind") == "Service" and name == "tcp-proxy-service":
             # The allocator annotation is trusted only after the runtime
             # injector adds it, and only for the public TCP Proxy Service.
             pass
@@ -1492,13 +1368,10 @@ def validate_runtime_target(
     tcp_proxy_services = [
         document
         for document in documents
-        if document.get("kind") == "Service"
-        and document.get("metadata", {}).get("name") == "tcp-proxy-service"
+        if document.get("kind") == "Service" and document.get("metadata", {}).get("name") == "tcp-proxy-service"
     ]
     if len(tcp_proxy_services) != 1:
-        fail(
-            "prepared preview render must contain exactly one Service/tcp-proxy-service"
-        )
+        fail("prepared preview render must contain exactly one Service/tcp-proxy-service")
     if certificate_identity_mode == "standalone" and ingress_matches != 1:
         fail("prepared preview render must contain exactly one preview Ingress")
     service_spec = _require_mapping(
@@ -1509,15 +1382,9 @@ def validate_runtime_target(
         service_spec.get("ports"),
         "Service/tcp-proxy-service.spec.ports",
     )
-    declared_ports = [
-        (index, port)
-        for index, port in enumerate(service_ports)
-        if port.get("port") == 2323
-    ]
+    declared_ports = [(index, port) for index, port in enumerate(service_ports) if port.get("port") == 2323]
     if len(declared_ports) != 1:
-        fail(
-            "Service/tcp-proxy-service must contain exactly one declared TCP port 2323"
-        )
+        fail("Service/tcp-proxy-service must contain exactly one declared TCP port 2323")
     service_type = service_spec.get("type", "ClusterIP")
     exposure_mode = _resolve_exposure_mode(
         certificate_identity_mode,
@@ -1526,13 +1393,8 @@ def validate_runtime_target(
     )
     if exposure_mode == "private" and expected_port != 0:
         fail("private preview runtime target requires sentinel Telnet port 0")
-    if exposure_mode == "public" and not (
-        MIN_PREVIEW_TELNET_PORT <= expected_port <= MAX_PREVIEW_TELNET_PORT
-    ):
-        fail(
-            "preview telnet port must be between "
-            f"{MIN_PREVIEW_TELNET_PORT} and {MAX_PREVIEW_TELNET_PORT}"
-        )
+    if exposure_mode == "public" and not (MIN_PREVIEW_TELNET_PORT <= expected_port <= MAX_PREVIEW_TELNET_PORT):
+        fail(f"preview telnet port must be between {MIN_PREVIEW_TELNET_PORT} and {MAX_PREVIEW_TELNET_PORT}")
     port_index, _declared_port = declared_ports[0]
     if exposure_mode == "private":
         if service_type != "ClusterIP":
@@ -1540,17 +1402,10 @@ def validate_runtime_target(
         if tcp_proxy_services[0].get("metadata", {}).get("annotations") is not None:
             fail("private preview TCP Proxy Service must not contain annotations")
         if node_ports:
-            fail(
-                "private preview render must not contain a NodePort; "
-                f"observed {node_ports!r}"
-            )
+            fail(f"private preview render must not contain a NodePort; observed {node_ports!r}")
     else:
-        expected_annotations = {
-            ALLOCATED_TELNET_PORT_ANNOTATION: str(expected_port)
-        }
-        actual_annotations = tcp_proxy_services[0].get("metadata", {}).get(
-            "annotations"
-        )
+        expected_annotations = {ALLOCATED_TELNET_PORT_ANNOTATION: str(expected_port)}
+        actual_annotations = tcp_proxy_services[0].get("metadata", {}).get("annotations")
         if actual_annotations != expected_annotations:
             fail(
                 "public preview TCP Proxy Service must contain only the allocator "
@@ -1568,9 +1423,7 @@ def validate_runtime_target(
             )
 
 
-def determine_exposure_mode(
-    path: Path, certificate_identity_mode: str
-) -> str:
+def determine_exposure_mode(path: Path, certificate_identity_mode: str) -> str:
     """Derive the trusted public/private proof mode from the validated Service shape."""
 
     _validate_certificate_identity_mode(certificate_identity_mode)
@@ -1581,14 +1434,11 @@ def determine_exposure_mode(
     services = [
         document
         for document in documents
-        if document.get("kind") == "Service"
-        and document.get("metadata", {}).get("name") == "tcp-proxy-service"
+        if document.get("kind") == "Service" and document.get("metadata", {}).get("name") == "tcp-proxy-service"
     ]
     if len(services) != 1:
         fail("validated preview render must contain exactly one TCP Proxy Service")
-    service_spec = _require_mapping(
-        services[0].get("spec"), "Service/tcp-proxy-service.spec"
-    )
+    service_spec = _require_mapping(services[0].get("spec"), "Service/tcp-proxy-service.spec")
     return _exposure_mode_for_service_type(service_spec.get("type", "ClusterIP"))
 
 
@@ -1628,19 +1478,13 @@ def validate_service_consumers(
             workload_namespace_entries = [
                 entry
                 for entry in container.get("env", [])
-                if isinstance(entry, dict)
-                and entry.get("name") == "FIREMUD_GRPC_WORKLOAD_NAMESPACE"
+                if isinstance(entry, dict) and entry.get("name") == "FIREMUD_GRPC_WORKLOAD_NAMESPACE"
             ]
             if len(workload_namespace_entries) != 1 or workload_namespace_entries[0] != {
                 "name": "FIREMUD_GRPC_WORKLOAD_NAMESPACE",
-                "valueFrom": {
-                    "fieldRef": {"fieldPath": "metadata.namespace"}
-                },
+                "valueFrom": {"fieldRef": {"fieldPath": "metadata.namespace"}},
             }:
-                fail(
-                    f"Deployment/{service} must bind FIREMUD_GRPC_WORKLOAD_NAMESPACE "
-                    "to metadata.namespace"
-                )
+                fail(f"Deployment/{service} must bind FIREMUD_GRPC_WORKLOAD_NAMESPACE to metadata.namespace")
         expected_grpc_paths = (
             {
                 "FIREMUD_GRPC_CERT_CHAIN_PATH": "/tls/tls.crt",
@@ -1655,21 +1499,13 @@ def validate_service_consumers(
             }
         )
         declared_grpc_paths = {
-            entry.get("name"): entry.get("value")
-            for entry in container.get("env", [])
-            if isinstance(entry, dict)
+            entry.get("name"): entry.get("value") for entry in container.get("env", []) if isinstance(entry, dict)
         }
         for env_name, expected_path in expected_grpc_paths.items():
             if declared_grpc_paths.get(env_name) != expected_path:
-                fail(
-                    f"Deployment/{service} must configure {env_name} as {expected_path}"
-                )
+                fail(f"Deployment/{service} must configure {env_name} as {expected_path}")
 
-        grpc_secret_name = (
-            f"firemud-grpc-{service}"
-            if service in DISTINCT_GRPC_WORKLOADS
-            else "firemud-grpc-tls"
-        )
+        grpc_secret_name = f"firemud-grpc-{service}" if service in DISTINCT_GRPC_WORKLOADS else "firemud-grpc-tls"
         expected_mounts = {
             "grpc-tls": ("/tls", grpc_secret_name),
             "jwt-signing-keys": ("/var/run/secrets/firemud/jwt", "jwt-signing-keys"),
@@ -1699,19 +1535,11 @@ def validate_service_consumers(
             container.get("volumeMounts", []),
             f"Deployment/{service}.spec.template.spec.containers[0].volumeMounts",
         )
-        raw_volumes = _require_mapping_list(
-            pod.get("volumes", []), f"Deployment/{service}.spec.template.spec.volumes"
-        )
+        raw_volumes = _require_mapping_list(pod.get("volumes", []), f"Deployment/{service}.spec.template.spec.volumes")
         if len(raw_mounts) != len(expected_mounts) or len(raw_volumes) != len(expected_mounts):
             fail(f"Deployment/{service} has duplicate or unexpected identity consumers")
-        mounts = {
-            mount.get("name"): mount
-            for mount in raw_mounts
-        }
-        volumes = {
-            volume.get("name"): volume
-            for volume in raw_volumes
-        }
+        mounts = {mount.get("name"): mount for mount in raw_mounts}
+        volumes = {volume.get("name"): volume for volume in raw_volumes}
         if set(mounts) != set(expected_mounts) or set(volumes) != set(expected_mounts):
             fail(f"Deployment/{service} has an unexpected identity consumer set")
 
@@ -1744,10 +1572,7 @@ def validate_service_consumers(
                         and volume_name == "grpc-tls"
                         and source.get("secretName") == "firemud-grpc-tls"
                     ):
-                        fail(
-                            f"Deployment/{service} distinct workload falls back to "
-                            "shared firemud-grpc-tls"
-                        )
+                        fail(f"Deployment/{service} distinct workload falls back to shared firemud-grpc-tls")
                     fail(f"Deployment/{service} has an unexpected {volume_name} source")
                 if volume_name == "grpc-trust":
                     expected_source = {
@@ -1779,9 +1604,7 @@ def validate_service_consumers(
                         fail(f"Deployment/{service} has an unsafe {volume_name} projection")
 
 
-def validate_services(
-    documents: list[dict], certificate_identity_mode: str = "standalone"
-) -> None:
+def validate_services(documents: list[dict], certificate_identity_mode: str = "standalone") -> None:
     """Require the exact trusted preview Service specs."""
 
     _validate_certificate_identity_mode(certificate_identity_mode)
@@ -1804,9 +1627,7 @@ def validate_services(
                 fail(f"Service/{name} has an unsafe service type")
         if spec.get("selector") != expected_spec["selector"]:
             fail(f"Service/{name} has an unsafe selector")
-        service_ports = _require_mapping_list(
-            spec.get("ports"), f"Service/{name}.spec.ports"
-        )
+        service_ports = _require_mapping_list(spec.get("ports"), f"Service/{name}.spec.ports")
         ports = [
             (
                 item.get("name"),
@@ -1847,28 +1668,19 @@ def validate_network_policies(
     """Keep the runtime policy set and every allowed traffic exception exact."""
 
     _validate_certificate_identity_mode(certificate_identity_mode)
-    raw_policies = [
-        document for document in documents if document.get("kind") == "NetworkPolicy"
-    ]
-    policies = {
-        document.get("metadata", {}).get("name"): document
-        for document in raw_policies
-    }
-    expected_names = _expected_names_for_mode(certificate_identity_mode)[
-        "NetworkPolicy"
-    ]
+    raw_policies = [document for document in documents if document.get("kind") == "NetworkPolicy"]
+    policies = {document.get("metadata", {}).get("name"): document for document in raw_policies}
+    expected_names = _expected_names_for_mode(certificate_identity_mode)["NetworkPolicy"]
     if len(raw_policies) != len(policies) or set(policies) != expected_names:
         fail(
             "runtime NetworkPolicy set is not closed "
             f"(missing={sorted(expected_names - set(policies))}, "
             f"extra={sorted(set(policies) - expected_names)})"
-    )
+        )
     _validate_internal_network_policies(policies)
 
     expected_from = {
-        "namespaceSelector": {
-            "matchLabels": {"kubernetes.io/metadata.name": "firemud-system"}
-        },
+        "namespaceSelector": {"matchLabels": {"kubernetes.io/metadata.name": "firemud-system"}},
         "podSelector": {
             "matchLabels": {
                 "app.kubernetes.io/name": "hosted-environment-identity-controller",
@@ -1912,12 +1724,8 @@ def validate_network_policies(
         {
             "from": [
                 {
-                    "namespaceSelector": {
-                        "matchLabels": {"kubernetes.io/metadata.name": "kube-system"}
-                    },
-                    "podSelector": {
-                        "matchLabels": {"app.kubernetes.io/name": "traefik"}
-                    },
+                    "namespaceSelector": {"matchLabels": {"kubernetes.io/metadata.name": "kube-system"}},
+                    "podSelector": {"matchLabels": {"app.kubernetes.io/name": "traefik"}},
                 }
             ],
             "ports": [{"protocol": "TCP", "port": 8080}],
@@ -1955,9 +1763,7 @@ def validate_network_policies(
             {
                 "to": [
                     {
-                        "namespaceSelector": {
-                            "matchLabels": {"kubernetes.io/metadata.name": "kube-system"}
-                        },
+                        "namespaceSelector": {"matchLabels": {"kubernetes.io/metadata.name": "kube-system"}},
                         "podSelector": {"matchLabels": {"k8s-app": "kube-dns"}},
                     }
                 ],
@@ -1967,15 +1773,11 @@ def validate_network_policies(
                 ],
             },
             {
-                "to": [
-                    {"podSelector": {"matchLabels": {"app": "spring-cloud-gateway"}}}
-                ],
+                "to": [{"podSelector": {"matchLabels": {"app": "spring-cloud-gateway"}}}],
                 "ports": [{"protocol": "TCP", "port": 8443}],
             },
             {
-                "to": [
-                    {"podSelector": {"matchLabels": {"app": "game-session-service"}}}
-                ],
+                "to": [{"podSelector": {"matchLabels": {"app": "game-session-service"}}}],
                 "ports": [{"protocol": "TCP", "port": 6565}],
             },
             {
@@ -1999,8 +1801,7 @@ def validate_infrastructure_deployments(documents: list[dict]) -> None:
         document.get("metadata", {}).get("name"): document
         for document in documents
         if document.get("kind") == "Deployment"
-        and document.get("metadata", {}).get("name")
-        in EXPECTED_INFRASTRUCTURE_DEPLOYMENT_SPECS
+        and document.get("metadata", {}).get("name") in EXPECTED_INFRASTRUCTURE_DEPLOYMENT_SPECS
     }
     if set(deployments) != set(EXPECTED_INFRASTRUCTURE_DEPLOYMENT_SPECS):
         fail("preview infrastructure Deployment set is incomplete")
@@ -2029,9 +1830,7 @@ def validate_ingress(
     if len(rules) != 1 or rules[0].get("host") != expected_hostname:
         fail("Ingress/firemud-preview has an unsafe host")
     http = _require_mapping(rules[0].get("http"), f"{ingress_path}.rules[0].http")
-    paths = _require_mapping_list(
-        http.get("paths"), f"{ingress_path}.rules[0].http.paths"
-    )
+    paths = _require_mapping_list(http.get("paths"), f"{ingress_path}.rules[0].http.paths")
     if len(paths) != 1:
         fail("Ingress/firemud-preview has an unexpected route set")
     route = paths[0]
@@ -2096,11 +1895,7 @@ def validate_manifest(
 ) -> None:
     _validate_certificate_identity_mode(certificate_identity_mode)
     expected_names = _expected_names_for_mode(certificate_identity_mode)
-    expected_objects = {
-        (kind, name)
-        for kind, names in expected_names.items()
-        for name in names
-    }
+    expected_objects = {(kind, name) for kind, names in expected_names.items() for name in names}
     documents = list(yaml.safe_load_all(path.read_text(encoding="utf-8")))
     if not documents:
         fail("manifest is empty")
@@ -2124,9 +1919,7 @@ def validate_manifest(
         _validate_firemud_config_shape(document)
         if document["kind"] in {"Deployment", "Job"}:
             spec = _require_mapping(document.get("spec"), f"{document['kind']}/{name}.spec")
-            template = _require_mapping(
-                spec.get("template"), f"{document['kind']}/{name}.spec.template"
-            )
+            template = _require_mapping(spec.get("template"), f"{document['kind']}/{name}.spec.template")
             pod = _require_mapping(
                 template.get("spec"),
                 f"{document['kind']}/{name}.spec.template.spec",
@@ -2147,14 +1940,12 @@ def validate_manifest(
                 fail(f"{location} retains a PR-selected nodePort")
             if location.endswith(".secretName") and not (
                 _is_manifest_secret_reference(value, expected_namespace)
-                or _is_distinct_grpc_secret_volume_source(
-                    document, location, value
-                )
+                or _is_distinct_grpc_secret_volume_source(document, location, value)
             ):
                 fail(f"{location} contains an unapproved Secret reference")
-            if location.endswith(
-                (".secretRef.name", ".secretKeyRef.name")
-            ) and not _is_expected_secret_reference(value):
+            if location.endswith((".secretRef.name", ".secretKeyRef.name")) and not _is_expected_secret_reference(
+                value
+            ):
                 fail(f"{location} contains an unapproved Secret reference")
             if (
                 PROJECTED_SECRET_NAME_LOCATION.search(location)
@@ -2179,15 +1970,10 @@ def validate_manifest(
         tcp_proxy_service = next(
             document
             for document in documents
-            if document["kind"] == "Service"
-            and document["metadata"]["name"] == "tcp-proxy-service"
+            if document["kind"] == "Service" and document["metadata"]["name"] == "tcp-proxy-service"
         )
-        exposure_mode = _exposure_mode_for_service_type(
-            tcp_proxy_service["spec"].get("type", "ClusterIP")
-        )
-        validate_service_consumers(
-            documents, expected_namespace, certificate_identity_mode, exposure_mode
-        )
+        exposure_mode = _exposure_mode_for_service_type(tcp_proxy_service["spec"].get("type", "ClusterIP"))
+        validate_service_consumers(documents, expected_namespace, certificate_identity_mode, exposure_mode)
 
 
 def validate_metadata(
@@ -2204,9 +1990,7 @@ def validate_metadata(
     certificate_identity_mode: str = "hosted-controller",
 ) -> None:
     _validate_certificate_identity_mode(certificate_identity_mode)
-    metadata = _require_mapping(
-        json.loads(path.read_text(encoding="utf-8")), "metadata"
-    )
+    metadata = _require_mapping(json.loads(path.read_text(encoding="utf-8")), "metadata")
     if not isinstance(pr_number, str) or re.fullmatch(r"[1-9][0-9]*", pr_number) is None:
         fail("PR number must be a positive canonical decimal string")
     normalized_pr_number = int(pr_number)
@@ -2233,10 +2017,7 @@ def validate_metadata(
     allowed_fields = set(expected) | {"manifestSha256"}
     unexpected_fields = set(metadata) - allowed_fields
     if unexpected_fields:
-        fail(
-            "metadata contains unsupported fields: "
-            f"{sorted(unexpected_fields)}"
-        )
+        fail(f"metadata contains unsupported fields: {sorted(unexpected_fields)}")
     for key, expected_value in expected.items():
         if metadata.get(key) != expected_value:
             fail(f"metadata {key} does not match trusted event data")

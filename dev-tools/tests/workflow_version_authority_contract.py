@@ -1593,7 +1593,9 @@ def main() -> int:
     custom_managers = renovate.get("customManagers", [])
     if len(custom_managers) != 21:
         fail("Renovate must define workflow authorities, bounded runtime images, and BSR Java generator managers")
-    bsr_managers = [manager for manager in custom_managers if manager.get("datasourceTemplate", "").startswith("custom.bsr-")]
+    bsr_managers = [
+        manager for manager in custom_managers if manager.get("datasourceTemplate", "").startswith("custom.bsr-")
+    ]
     if Counter(manager.get("depNameTemplate") for manager in bsr_managers) != Counter(
         ("buf.build/protocolbuffers/java", "buf.build/grpc/java")
     ):
@@ -1928,9 +1930,8 @@ def main() -> int:
         "container-images.properties"
     )
     selected_images = list(testcontainer_pattern.finditer(resource_path.read_text()))
-    if (
-        Counter(m.group("depName") for m in selected_images) != Counter(("postgres", "redis"))
-        or any(m.group("packageName") != ecr_prefix + m.group("depName") for m in selected_images)
+    if Counter(m.group("depName") for m in selected_images) != Counter(("postgres", "redis")) or any(
+        m.group("packageName") != ecr_prefix + m.group("depName") for m in selected_images
     ):
         fail("Renovate must discover both canonical ECR fixture references exactly once")
     for invalid in (
@@ -1955,17 +1956,21 @@ def main() -> int:
         ):
             rendered = re.sub(
                 r"{{#if newValue}}(.*?){{else}}(.*?){{/if}}",
-                lambda value_match: value_match.group(1) if new_value else value_match.group(2),
+                lambda value_match, new_value=new_value: value_match.group(1) if new_value else value_match.group(2),
                 replacement_template,
             )
             rendered = re.sub(
                 r"{{#if currentDigest}}(.*?){{/if}}",
-                lambda digest_match: digest_match.group(1) if context["currentDigest"] else "",
+                lambda digest_match, current_digest=context["currentDigest"]: (
+                    digest_match.group(1) if current_digest else ""
+                ),
                 rendered,
             )
             rendered = re.sub(
                 r"{{#if newDigest}}(.*?){{else}}(.*?){{/if}}",
-                lambda digest_match: digest_match.group(1) if new_digest else digest_match.group(2),
+                lambda digest_match, new_digest=new_digest: (
+                    digest_match.group(1) if new_digest else digest_match.group(2)
+                ),
                 rendered,
             )
             for key, value in context.items():
