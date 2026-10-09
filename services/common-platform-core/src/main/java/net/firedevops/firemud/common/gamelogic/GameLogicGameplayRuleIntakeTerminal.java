@@ -1,15 +1,22 @@
-package net.firedevops.firemud.gamelogic.sourceintake;
+package net.firedevops.firemud.common.gamelogic;
 
 import java.io.ByteArrayOutputStream;
 import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
 import java.util.Objects;
 import net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding;
-import net.firedevops.firemud.common.gamelogic.GameplayRuleManifest;
-import net.firedevops.firemud.common.gamelogic.GameplayRuleSelectedSource;
 
 /** Durable owner terminal. Empty/absent storage is represented separately from ABORTED. */
 public final class GameLogicGameplayRuleIntakeTerminal {
+  public static final int MAX_CANONICAL_BYTES = 16 * 1024 * 1024;
+
+  /**
+   * A response carries at most 16 MiB terminal plus 4 MiB original order and bounded namespace,
+   * UUID, digests, and protobuf framing. 24 MiB includes that closed maximum's envelope overhead.
+   * Standalone servers must use the same limit; this is not a runtime-registration assertion.
+   */
+  public static final int MAX_WIRE_BYTES = 24 * 1024 * 1024;
+
   public static final String SCHEMA = "game-logic-gameplay-rule-intake-terminal/v1";
 
   public enum Outcome {
@@ -110,6 +117,8 @@ public final class GameLogicGameplayRuleIntakeTerminal {
     DraftAuthorizationFenceBinding.frame(output, authorizationBytes);
     frameOptional(output, selectedSourceBytes);
     frameOptional(output, manifestBytes);
+    if (output.size() > MAX_CANONICAL_BYTES)
+      throw new IllegalArgumentException("Terminal exceeds 16 MiB");
     return output.toByteArray();
   }
 
@@ -118,6 +127,8 @@ public final class GameLogicGameplayRuleIntakeTerminal {
   }
 
   public static GameLogicGameplayRuleIntakeTerminal fromStored(byte[] original) {
+    if (original == null || original.length == 0 || original.length > MAX_CANONICAL_BYTES)
+      throw new IllegalArgumentException("Invalid terminal size");
     var reader = new DraftAuthorizationFenceBinding.FrameReader(original);
     reader.expect(SCHEMA);
     Outcome outcome = Outcome.valueOf(reader.text());

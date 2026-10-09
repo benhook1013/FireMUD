@@ -3,8 +3,8 @@ package net.firedevops.firemud.accountservice.service.session;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.when;
 
 import io.grpc.Context;
 import java.nio.file.Path;
@@ -116,8 +116,9 @@ class AccountGameLogicIntakeAuthorizationPostgresIntegrationTest {
       issued.actors().claimOriginalDraft(issued.compact(), original, issued.environment());
       var source = source(selected);
       var gd = mock(GameplayRuleSourceReadClient.class);
-      when(gd.read(any()))
-          .thenAnswer(call -> new GameplayRuleSourceReadEvidence(call.getArgument(0), source));
+      doAnswer(call -> new GameplayRuleSourceReadEvidence(call.getArgument(0), source))
+          .when(gd)
+          .read(any());
       var repository = new AccountGameLogicIntakeAuthorizationRepository(f.dsl);
       var service =
           new AccountGameLogicIntakeAuthorizationService(
@@ -166,8 +167,9 @@ class AccountGameLogicIntakeAuthorizationPostgresIntegrationTest {
       var substituted =
           new GameplayRuleSelectedSource(
               source.snapshotJson().replace(genesis, UUID.randomUUID().toString()));
-      when(gd.read(any()))
-          .thenAnswer(call -> new GameplayRuleSourceReadEvidence(call.getArgument(0), substituted));
+      doAnswer(call -> new GameplayRuleSourceReadEvidence(call.getArgument(0), substituted))
+          .when(gd)
+          .read(any());
       assertThatThrownBy(
               () ->
                   asGameDesign(
@@ -176,8 +178,9 @@ class AccountGameLogicIntakeAuthorizationPostgresIntegrationTest {
                               issued.compact(), requestId, selected, issued.environment())))
           .isInstanceOf(IllegalArgumentException.class)
           .hasMessageContaining("conflicts");
-      when(gd.read(any()))
-          .thenAnswer(call -> new GameplayRuleSourceReadEvidence(call.getArgument(0), source));
+      doAnswer(call -> new GameplayRuleSourceReadEvidence(call.getArgument(0), source))
+          .when(gd)
+          .read(any());
 
       UUID rolledBackRequest = UUID.randomUUID();
       assertThatThrownBy(

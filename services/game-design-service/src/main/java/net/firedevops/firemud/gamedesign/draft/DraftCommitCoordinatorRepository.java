@@ -1,6 +1,7 @@
 package net.firedevops.firemud.gamedesign.draft;
 
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.math.BigInteger;
 import java.nio.charset.StandardCharsets;
@@ -216,6 +217,60 @@ public class DraftCommitCoordinatorRepository {
       throw new IllegalStateException("Draft commit application slot lacks durable claim time");
     }
     return slot;
+  }
+
+  /**
+   * Produces a definitive local no-application terminal for the bounded Game Design-only source
+   * entry. The same Version lock serializes this proof with source application. Account absence or
+   * failure is not evidence: the retained terminal itself excludes every later local writer.
+   */
+  GameDesignDraftTerminalOutcome abortUnattemptedLocalSource(
+      GameDesignDraftTerminalOperation operation) {
+    requireWritableReadCommittedTransaction();
+    DraftCommitBinding binding = operation.gameDesignBinding();
+    if (!binding.requiredOwners().equals(List.of(Owner.GAME_DESIGN_CONTROL_PLANE))
+        || !operation
+            .accountBinding()
+            .requiredOwners()
+            .equals(List.of(DraftAuthorizationFenceBinding.Owner.GAME_DESIGN))) {
+      throw new IllegalArgumentException("Complete Game Design-only owner vector required");
+    }
+    lockVersionTarget(binding.target());
+    Optional<GameDesignDraftTerminalOutcome> terminal = terminalOutcomes.read(operation);
+    if (terminal.isPresent()) return terminal.orElseThrow();
+    GameDesignDraftTerminalOperation retained =
+        terminalOutcomes.readOperation(operation.accountBinding().operationId()).orElseThrow();
+    if (!operation.exactlyMatches(retained)) {
+      throw new DraftCommitIdentityConflictException("Exact original local operation required");
+    }
+    requireExactCommitInTransaction(binding);
+    requireActiveSlot(binding);
+    OwnerState owner = requireOwnerState(binding, Owner.GAME_DESIGN_CONTROL_PLANE, true);
+    if (owner.status() != OwnerStatus.NOT_ATTEMPTED) {
+      throw new DraftCommitStateConflictException(
+          "Local no-application proof requires an unattempted owner");
+    }
+    var result = new ByteArrayOutputStream();
+    DraftAuthorizationFenceBinding.frame(result, "game-design-local-source-no-application/v1");
+    DraftAuthorizationFenceBinding.frame(result, operation.accountBindingBytes());
+    DraftAuthorizationFenceBinding.frame(result, binding.canonicalBytes());
+    byte[] evidence = result.toByteArray();
+    // These transitions and the tombstone commit together. No IN_PROGRESS state escapes this
+    // transaction, and no source mutation is called on this branch.
+    markOwnerInProgress(binding, Owner.GAME_DESIGN_CONTROL_PLANE);
+    recordOwnerOutcome(
+        binding,
+        new OwnerOutcome(
+            Owner.GAME_DESIGN_CONTROL_PLANE,
+            OwnerStatus.REJECTED,
+            binding.commitId(),
+            binding.digest(),
+            "local-no-application:" + binding.commitId(),
+            evidence,
+            List.of()));
+    recordDefinitiveFinalAbort(binding, evidence);
+    releaseApplicationSlot(binding);
+    return terminalOutcomes.read(operation).orElseThrow();
   }
 
   /** Marks an owner dispatch in progress before the caller makes any remote owner call. */
@@ -605,7 +660,9 @@ public class DraftCommitCoordinatorRepository {
   /**
    * Stores exact, already-authenticated producer no-commit evidence for a definitive owner vector
    * and atomically makes this commit terminally non-publishable. This storage method does not
-   * authenticate arbitrary bytes; only a future authenticated recovery producer may call it.
+   * authenticate arbitrary bytes. The bounded local source producer establishes its own
+   * no-application proof under the same Version lock; other recovery producers must authenticate
+   * their complete owner evidence independently.
    */
   @Transactional(propagation = Propagation.MANDATORY, isolation = Isolation.READ_COMMITTED)
   public FinalAbortReceipt recordDefinitiveFinalAbort(
@@ -1239,7 +1296,7 @@ public class DraftCommitCoordinatorRepository {
         row.get("base_version_id", Long.class));
   }
 
-  private LockedVersion lockVersionTarget(TargetProof expected) {
+  LockedVersion lockVersionTarget(TargetProof expected) {
     Objects.requireNonNull(expected, "expected");
     LockedVersion locked =
         lockVersionTarget(expected.canonicalTenantId(), expected.canonicalVersionId());

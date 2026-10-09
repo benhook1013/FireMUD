@@ -998,28 +998,26 @@ class WorldDraftGraphApplicationPostgresIntegrationTest {
         publishedEvidence(
             publishedSelectors().readCommitted(frozen.request().freeze()).orElseThrow());
     var input = preparationInput(f, frozen, selector);
-    var original = isolatedTerminalEvidence(input);
-    var request = WorldPublicationTerminal.Request.fromStored(original.canonicalBytes());
     UUID fence = selector.request().publicationFence();
     var ownerBefore = ownerSnapshot(f, graphApplication.plan());
+    var artifactInventoryRowsBefore =
+        rowJson(
+            "SELECT to_jsonb(i)::text FROM world_selected_publication_artifact_inventory i "
+                + "WHERE publication_fence=? ORDER BY publication_fence",
+            fence);
 
     assertThat(publicationAccountQualificationCount(fence)).isZero();
-    assertThatThrownBy(
-            () ->
-                ownerTransaction()
-                    .execute(
-                        status -> {
-                          insertPublicationTerminal(request);
-                          return null;
-                        }))
-        .isInstanceOf(RuntimeException.class);
-    assertThatThrownBy(
-            () ->
-                publicationTerminalComponent(original)
-                    .complete(request.operationBytes(), request.terminalBytes()))
-        .isInstanceOf(
-            WorldPublicationTerminalRepository.PublicationTerminalConflictException.class);
+    assertThat(artifactInventoryRowsBefore).isEmpty();
+    assertThatThrownBy(() -> isolatedTerminalEvidence(input))
+        .isInstanceOf(WorldDesignPublicationFenceRepository.ConflictException.class)
+        .hasMessage("Exact frozen World publication has no complete artifact inventory");
     assertThat(ownerSnapshot(f, graphApplication.plan())).isEqualTo(ownerBefore);
+    assertThat(
+            rowJson(
+                "SELECT to_jsonb(i)::text FROM world_selected_publication_artifact_inventory i "
+                    + "WHERE publication_fence=? ORDER BY publication_fence",
+                fence))
+        .isEqualTo(artifactInventoryRowsBefore);
     assertThat(publicationOwnerPhase(fence)).isEqualTo("FROZEN");
     assertThat(publicationTerminalCount(fence)).isZero();
     assertThat(publicationAccountQualificationCount(fence)).isZero();

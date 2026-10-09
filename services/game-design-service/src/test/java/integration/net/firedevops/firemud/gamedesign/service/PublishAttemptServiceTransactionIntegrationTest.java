@@ -1067,8 +1067,13 @@ class PublishAttemptServiceTransactionIntegrationTest {
     net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding.frame(
         historicalV1, operation.world().canonicalBytes());
     var policySetsBefore =
-        dsl.fetch("SELECT * FROM game_design_published_realm_policy_set").intoMaps();
-    var policiesBefore = dsl.fetch("SELECT * FROM game_design_published_realm_policy").intoMaps();
+        dsl.fetch(
+                "SELECT * FROM game_design_published_realm_policy_set ORDER BY canonical_tenant_id, canonical_version_id")
+            .intoMaps();
+    var policiesBefore =
+        dsl.fetch(
+                "SELECT * FROM game_design_published_realm_policy ORDER BY canonical_tenant_id, canonical_version_id, ordinal")
+            .intoMaps();
     assertThatThrownBy(
             () ->
                 inOwnerTransaction(
@@ -1082,9 +1087,18 @@ class PublishAttemptServiceTransactionIntegrationTest {
         .satisfies(
             failure ->
                 assertThat(((java.sql.SQLException) failure).getSQLState()).isEqualTo("23514"));
-    assertThat(dsl.fetch("SELECT * FROM game_design_published_realm_policy_set").intoMaps())
+    // JDBC creates new byte[] values on readback; compare every retained value by content.
+    assertThat(
+            dsl.fetch(
+                    "SELECT * FROM game_design_published_realm_policy_set ORDER BY canonical_tenant_id, canonical_version_id")
+                .intoMaps())
+        .usingRecursiveComparison()
         .isEqualTo(policySetsBefore);
-    assertThat(dsl.fetch("SELECT * FROM game_design_published_realm_policy").intoMaps())
+    assertThat(
+            dsl.fetch(
+                    "SELECT * FROM game_design_published_realm_policy ORDER BY canonical_tenant_id, canonical_version_id, ordinal")
+                .intoMaps())
+        .usingRecursiveComparison()
         .isEqualTo(policiesBefore);
     assertThat(
             new GameDesignPublicationOperationRepository(dsl)

@@ -1,10 +1,9 @@
-package net.firedevops.firemud.gamelogic.sourceintake;
+package net.firedevops.firemud.common.gamelogic;
 
 import java.io.ByteArrayOutputStream;
 import java.util.Arrays;
 import java.util.Objects;
 import net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding;
-import net.firedevops.firemud.common.gamelogic.GameLogicIntakeAuthorizationBinding;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
 
 /** Exact namespace and Account authorization identity for one independent GL source intake. */

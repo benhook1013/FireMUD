@@ -10,7 +10,7 @@ import org.jooq.DSLContext;
 import org.jooq.Record;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 
-/** Immutable pending intake and full source participation; no terminal-write/settlement surface. */
+/** Immutable intake orders, exact terminal settlements, and full original source participation. */
 @edu.umd.cs.findbugs.annotations.SuppressFBWarnings(
     value = "EI_EXPOSE_REP2",
     justification = "Internal Account owner persistence collaborator.")
@@ -106,8 +106,104 @@ public final class AccountGameLogicIntakeAuthorizationRepository {
             "SELECT * FROM account_game_logic_intake_authorizations WHERE operation_id = ? FOR UPDATE",
             original.operationId()),
         original);
-    // Every immutable order remains pending until a later authenticated terminal integration
-    // exists.
+    if (dsl.fetchOne(
+            "SELECT operation_id FROM account_game_logic_intake_settlements WHERE operation_id = ?",
+            original.operationId())
+        != null) throw new IllegalArgumentException("Original intake order already settled");
+  }
+
+  /** Only called after the producer's authenticated GL read, with no remote read under locks. */
+  java.util.Optional<AccountGameLogicIntakeSettlement> findSettlement(
+      GameLogicIntakeAuthorizationBinding requested, String namespace) {
+    requireTransaction();
+    var order =
+        dsl.fetchOne(
+            "SELECT binding FROM account_game_logic_intake_authorizations WHERE operation_id = ?",
+            requested.operationId());
+    if (order == null
+        || !Arrays.equals(requested.canonicalBytes(), order.get("binding", byte[].class)))
+      throw new IllegalArgumentException("Original intake order absent or changed");
+    var row =
+        dsl.fetchOne(
+            "SELECT * FROM account_game_logic_intake_settlements WHERE operation_id = ?",
+            requested.operationId());
+    if (row == null) return java.util.Optional.empty();
+    var receipt =
+        AccountGameLogicIntakeSettlement.fromStored(row.get("receipt_bytes", byte[].class));
+    if (!namespace.equals(receipt.terminal().operation().targetNamespace())
+        || !Arrays.equals(requested.canonicalBytes(), receipt.terminal().authorizationBytes()))
+      throw new IllegalArgumentException("Changed exact intake settlement");
+    return java.util.Optional.of(exactSettlement(row, receipt));
+  }
+
+  /** Only called after the producer's authenticated GL read, with no remote read under locks. */
+  AccountGameLogicIntakeSettlement settle(AccountGameLogicIntakeSettlement requested) {
+    requireTransaction();
+    var binding = requested.terminal().operation().authorization();
+    var lookup =
+        dsl.fetchOne(
+            "SELECT binding FROM account_game_logic_intake_authorizations WHERE operation_id = ?",
+            binding.operationId());
+    if (lookup == null
+        || !Arrays.equals(binding.canonicalBytes(), lookup.get("binding", byte[].class)))
+      throw new IllegalArgumentException("Original intake order absent or changed");
+    // The retained original determines the sorted locks, never an unchecked caller source vector.
+    var original =
+        GameLogicIntakeAuthorizationBinding.fromStored(lookup.get("binding", byte[].class));
+    for (var source : original.sources())
+      if (dsl.fetchOne(
+              "SELECT source_key FROM account_draft_authorization_source_locks WHERE source_key = ? FOR UPDATE",
+              source.key())
+          == null) throw new IllegalArgumentException("Original intake source lock absent");
+    var order =
+        dsl.fetchOne(
+            "SELECT * FROM account_game_logic_intake_authorizations WHERE operation_id = ? FOR UPDATE",
+            original.operationId());
+    if (order == null
+        || !Arrays.equals(original.canonicalBytes(), order.get("binding", byte[].class)))
+      throw new IllegalArgumentException("Changed original intake order");
+    var prior =
+        dsl.fetchOne(
+            "SELECT * FROM account_game_logic_intake_settlements WHERE operation_id = ? FOR UPDATE",
+            original.operationId());
+    if (prior != null) return exactSettlement(prior, requested);
+    requireExact(order, original);
+    var terminal = requested.terminal();
+    dsl.execute(
+        "INSERT INTO account_game_logic_intake_settlements (operation_id, target_namespace, outcome, terminal_bytes, terminal_digest, receipt_bytes, receipt_digest) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        original.operationId(),
+        terminal.operation().targetNamespace(),
+        terminal.outcome().name(),
+        terminal.canonicalBytes(),
+        terminal.digest(),
+        requested.canonicalBytes(),
+        requested.digest());
+    return exactSettlement(
+        dsl.fetchOne(
+            "SELECT * FROM account_game_logic_intake_settlements WHERE operation_id = ? FOR UPDATE",
+            original.operationId()),
+        requested);
+  }
+
+  private static AccountGameLogicIntakeSettlement exactSettlement(
+      Record row, AccountGameLogicIntakeSettlement requested) {
+    if (row == null) throw new IllegalStateException("Settlement commit readback absent");
+    var original =
+        AccountGameLogicIntakeSettlement.fromStored(row.get("receipt_bytes", byte[].class));
+    var terminal = original.terminal();
+    if (!Arrays.equals(original.canonicalBytes(), requested.canonicalBytes())
+        || !original.digest().equals(row.get("receipt_digest", String.class))
+        || !terminal.digest().equals(row.get("terminal_digest", String.class))
+        || !Arrays.equals(terminal.canonicalBytes(), row.get("terminal_bytes", byte[].class))
+        || !terminal
+            .operation()
+            .authorization()
+            .operationId()
+            .equals(row.get("operation_id", UUID.class))
+        || !terminal.operation().targetNamespace().equals(row.get("target_namespace", String.class))
+        || !terminal.outcome().name().equals(row.get("outcome", String.class)))
+      throw new IllegalArgumentException("Changed exact intake settlement");
+    return original;
   }
 
   private void requireExact(Record row, GameLogicIntakeAuthorizationBinding binding) {

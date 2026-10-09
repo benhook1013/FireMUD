@@ -3,6 +3,7 @@ package net.firedevops.firemud.gamelogic.sourceintake;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
+import net.firedevops.firemud.common.gamelogic.GameLogicGameplayRuleIntakeTerminal;
 import org.jooq.DSLContext;
 import org.jooq.Record;
 import org.springframework.transaction.support.TransactionSynchronizationManager;

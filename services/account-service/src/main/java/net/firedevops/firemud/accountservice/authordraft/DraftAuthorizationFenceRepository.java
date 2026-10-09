@@ -337,7 +337,8 @@ public final class DraftAuthorizationFenceRepository {
   private boolean hasPendingGameLogicIntake(List<SourceEvidence> sources) {
     for (SourceEvidence source : sources) {
       if (!dsl.fetch(
-              "SELECT operation_id FROM account_game_logic_intake_sources WHERE source_key = ?",
+              "SELECT operation_id FROM account_game_logic_intake_sources WHERE source_key = ?"
+                  + " AND NOT account_game_logic_intake_is_settled(operation_id)",
               source.key())
           .isEmpty()) return true;
     }

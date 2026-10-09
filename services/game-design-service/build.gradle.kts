@@ -24,9 +24,11 @@ testing {
 }
 
 dependencies {
+    integrationTestImplementation(project(mapOf("path" to ":account-service", "configuration" to "accountOriginalOrderProof")))
     compileOnly(libs.spotbugs.annotations)
     testCompileOnly(libs.spotbugs.annotations)
     add("integrationTestCompileOnly", libs.spotbugs.annotations)
     testImplementation(libs.bouncycastle.pkix)
+    integrationTestImplementation(libs.bouncycastle.pkix)
     implementation(libs.aws.sdk.s3)
 }

@@ -1,0 +1,31 @@
+syntax = "proto3";
+
+package account.v1;
+option java_package = "net.firedevops.firemud.account.v1";
+option java_multiple_files = true;
+
+// Unregistered original creator producer. Environment authority is Account-owned.
+service AccountOriginalDraftOrderService {
+  rpc ClaimOriginalDraft(ClaimOriginalDraftRequest) returns (ClaimOriginalDraftResponse);
+}
+
+message ClaimOriginalDraftRequest {
+  int32 schema_version = 1;
+  string target_namespace = 2;
+  // Correlation only, separate from every durable identity in original_account_binding.
+  string request_id = 3;
+  bytes original_account_binding = 4;
+}
+
+message ClaimOriginalDraftResponse {
+  int32 schema_version = 1;
+  string target_namespace = 2;
+  string request_id = 3;
+  bytes original_account_binding = 4;
+  OriginalDraftOrderStatus status = 5;
+}
+
+enum OriginalDraftOrderStatus {
+  ORIGINAL_DRAFT_ORDER_STATUS_UNSPECIFIED = 0;
+  ORIGINAL_DRAFT_ORDER_STATUS_COMMIT_ORDER = 1;
+}

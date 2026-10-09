@@ -20,6 +20,8 @@ import java.util.UUID;
 import java.util.concurrent.atomic.AtomicReference;
 import net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding;
+import net.firedevops.firemud.common.gamelogic.GameLogicGameplayRuleIntakeOperation;
+import net.firedevops.firemud.common.gamelogic.GameLogicGameplayRuleIntakeTerminal;
 import net.firedevops.firemud.common.gamelogic.GameLogicIntakeAuthorizationBinding;
 import net.firedevops.firemud.common.gamelogic.GameLogicIntakeAuthorizationReadClient;
 import net.firedevops.firemud.common.gamelogic.GameLogicIntakeAuthorizationReadEvidence;
@@ -98,7 +100,7 @@ class GameLogicGameplayRuleIntakeServiceTest {
 
     assertThat(aborted.outcome()).isEqualTo(GameLogicGameplayRuleIntakeTerminal.Outcome.ABORTED);
     assertThat(retry.canonicalBytes()).containsExactly(aborted.canonicalBytes());
-    assertThat(asGameDesign(() -> fixture.service.readTerminal(authorization))).contains(aborted);
+    assertThat(asAccount(() -> fixture.service.readTerminal(authorization))).contains(aborted);
     verify(fixture.accountReader).read(any(GameLogicIntakeAuthorizationReadEvidence.Request.class));
     verify(fixture.gameDesignReader, never())
         .read(any(GameplayRuleSourceReadEvidence.Request.class));
@@ -176,7 +178,7 @@ class GameLogicGameplayRuleIntakeServiceTest {
                 assertThat(Status.fromThrowable(error).getCode())
                     .isEqualTo(Status.Code.FAILED_PRECONDITION));
     assertThat(fixture.stored.get()).isNull();
-    assertThat(asGameDesign(() -> fixture.service.readTerminal(authorization))).isEmpty();
+    assertThat(asAccount(() -> fixture.service.readTerminal(authorization))).isEmpty();
     verify(fixture.repository, never())
         .insertTerminal(any(GameLogicGameplayRuleIntakeTerminal.class));
   }
@@ -195,7 +197,7 @@ class GameLogicGameplayRuleIntakeServiceTest {
                 assertThat(Status.fromThrowable(error).getCode())
                     .isEqualTo(Status.Code.UNAVAILABLE));
     assertThat(fixture.stored.get()).isNull();
-    assertThat(asGameDesign(() -> fixture.service.readTerminal(authorization))).isEmpty();
+    assertThat(asAccount(() -> fixture.service.readTerminal(authorization))).isEmpty();
     verify(fixture.gameDesignReader, never())
         .read(any(GameplayRuleSourceReadEvidence.Request.class));
     verify(fixture.repository, never())
@@ -287,6 +289,21 @@ class GameLogicGameplayRuleIntakeServiceTest {
         .read(any(GameLogicIntakeAuthorizationReadEvidence.Request.class));
     verify(fixture.gameDesignReader, never())
         .read(any(GameplayRuleSourceReadEvidence.Request.class));
+  }
+
+  private static <T> T asAccount(java.util.function.Supplier<T> action) {
+    var context =
+        Context.current()
+            .withValue(
+                GrpcPeerIdentity.CONTEXT_KEY,
+                GrpcPeerIdentity.parseUri("spiffe://firemud/ns/test/sa/account-service")
+                    .orElseThrow());
+    var previous = context.attach();
+    try {
+      return action.get();
+    } finally {
+      context.detach(previous);
+    }
   }
 
   private static <T> T asGameDesign(java.util.function.Supplier<T> action) {

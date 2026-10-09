@@ -46,8 +46,44 @@ public final class AccountControlUiOriginalOrderFixture implements AutoCloseable
       int redisPort,
       Path temporary)
       throws Exception {
+    this(jdbcUrl, username, password, redisHost, redisPort, temporary, UUID.randomUUID());
+  }
+
+  public AccountControlUiOriginalOrderFixture(
+      String jdbcUrl,
+      String username,
+      String password,
+      String redisHost,
+      int redisPort,
+      Path temporary,
+      UUID gameDesignTenant)
+      throws Exception {
+    this(
+        jdbcUrl,
+        username,
+        password,
+        redisHost,
+        redisPort,
+        temporary,
+        gameDesignTenant,
+        Clock.systemUTC());
+  }
+
+  /** Actor clock is injectable for genuine signed-credential expiry recovery proof. */
+  public AccountControlUiOriginalOrderFixture(
+      String jdbcUrl,
+      String username,
+      String password,
+      String redisHost,
+      int redisPort,
+      Path temporary,
+      UUID gameDesignTenant,
+      Clock actorClock)
+      throws Exception {
     this.temporary = temporary;
-    f = new AccountControlUiOwnerSourcesFixture(jdbcUrl, username, password, temporary, false);
+    f =
+        new AccountControlUiOwnerSourcesFixture(
+            jdbcUrl, username, password, temporary, false, gameDesignTenant);
     var lifecycle = new AccountControlUiSignerFixture(f, temporary);
     lifecycle.commit();
     var originalSigner = f.tx(lifecycle.signer::captureCurrent);
@@ -121,7 +157,7 @@ public final class AccountControlUiOriginalOrderFixture implements AutoCloseable
             publicSource,
             f.fences,
             f.manager,
-            Clock.systemUTC());
+            actorClock);
     issuance =
         new AccountControlUiIssuanceService(
             f.primary,
@@ -140,6 +176,75 @@ public final class AccountControlUiOriginalOrderFixture implements AutoCloseable
 
   public UUID tenantId() {
     return f.tenant;
+  }
+
+  /** Genuine issuance and source capture only; first reservation/order occurs over the producer. */
+  public net.firedevops.firemud.common.authoring.AccountOriginalDraftOrderGrpcCodec.Request
+      prepareOriginalDraftOrder(DraftCommitBinding complete, String namespace) {
+    if (!f.tenant.equals(complete.target().canonicalTenantId()))
+      throw new IllegalArgumentException("Original Draft must target the retained Account tenant");
+    if (originalCreator == null) originalCreator = issueCreator();
+    var sources =
+        f.tx(() -> f.authority.captureInitial(f.tenant, originalCreator.environment())).sources();
+    var original =
+        new DraftAuthorizationFenceBinding(
+                UUID.randomUUID(),
+                complete.requestId(),
+                complete.commitId(),
+                UUID.randomUUID(),
+                f.account.getAccountUuid(),
+                f.tenant,
+                complete.target().canonicalVersionId(),
+                complete.baseCommitId(),
+                "0",
+                complete.canonicalBytes(),
+                complete.canonicalBytes(),
+                complete.digest(),
+                sources)
+            .withRequiredOwners();
+    return net.firedevops.firemud.common.authoring.AccountOriginalDraftOrderGrpcCodec.Request
+        .create(namespace, original, originalCreator.compact());
+  }
+
+  /** Real unregistered Account producer, with Account-internal environment capture. */
+  public io.grpc.BindableService originalDraftOrderProducer(String namespace) {
+    return new AccountOriginalDraftOrderGrpcService(
+        new AccountOriginalDraftOrderService(actors, namespace), f.terms, namespace);
+  }
+
+  /** Exact source participation remains pending; local Game Design success cannot settle it. */
+  public void assertOriginalDraftOrderPending(DraftAuthorizationFenceBinding original) {
+    var retained = f.tx(() -> f.fences.read(original));
+    assertThat(retained.ordering().name()).isEqualTo("COMMIT_ORDER");
+    assertThat(retained.binding()).isEqualTo(original.canonicalBytes());
+    assertThat(retained.orderedAt()).isNotNull();
+    assertThat(f.tx(() -> f.fences.readSettlement(original)).name()).isEqualTo("PENDING");
+  }
+
+  /** Uses only actual authenticated terminal clients; it never installs constructed readbacks. */
+  public void reconcileOriginalDraft(
+      DraftAuthorizationFenceBinding original,
+      net.firedevops.firemud.common.authoring.GameDesignDraftTerminalReadClient gameDesign,
+      net.firedevops.firemud.common.authoring.WorldDraftTerminalReadClient world,
+      String namespace) {
+    reconcileOriginalDraft(original, gameDesign, world, namespace, "COMMITTED");
+  }
+
+  public void reconcileOriginalDraft(
+      DraftAuthorizationFenceBinding original,
+      net.firedevops.firemud.common.authoring.GameDesignDraftTerminalReadClient gameDesign,
+      net.firedevops.firemud.common.authoring.WorldDraftTerminalReadClient world,
+      String namespace,
+      String expectedSettlementOutcome) {
+    var recovery =
+        new net.firedevops.firemud.accountservice.authordraft
+            .AccountDraftTerminalReconciliationService(
+            f.fences, f.manager, gameDesign, world, namespace);
+    assertThat(recovery.reconcile(original.operationId()).orElseThrow().name())
+        .isEqualTo(expectedSettlementOutcome);
+    assertThat(f.tx(() -> f.fences.readSettlement(original)).name())
+        .isEqualTo(expectedSettlementOutcome);
+    assertThat(f.tx(() -> f.fences.read(original)).binding()).isEqualTo(original.canonicalBytes());
   }
 
   /** Caller supplies the real World plan before Account authenticates and captures its sources. */

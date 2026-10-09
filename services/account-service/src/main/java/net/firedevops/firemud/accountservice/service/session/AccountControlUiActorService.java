@@ -83,6 +83,28 @@ public final class AccountControlUiActorService {
                 current.stored.tokenHash));
   }
 
+  /** Exact retained producer recovery; absence alone permits a fresh authenticated claim. */
+  boolean readHeldOriginalDraft(DraftAuthorizationFenceBinding original) {
+    outsideSql();
+    return Objects.requireNonNull(
+        transaction.execute(
+            ignored -> {
+              var retained = fences.readOriginalBinding(original.operationId());
+              if (retained.isEmpty()) return false;
+              if (!Arrays.equals(retained.get().canonicalBytes(), original.canonicalBytes()))
+                throw io.grpc.Status.FAILED_PRECONDITION.asRuntimeException();
+              var order = fences.read(original);
+              if (order.ordering() != DraftAuthorizationFenceRepository.Ordering.COMMIT_ORDER
+                  || order.reservedAt() == null
+                  || order.orderedAt() == null
+                  || !Arrays.equals(order.binding(), original.canonicalBytes())
+                  || fences.readSettlement(original)
+                      != DraftAuthorizationFenceRepository.Settlement.PENDING)
+                throw io.grpc.Status.FAILED_PRECONDITION.asRuntimeException();
+              return true;
+            }));
+  }
+
   /** No transport or World mutation: original Account reservation/order is the only effect. */
   public DraftAuthorizationFenceRepository.FenceSnapshot claimOriginalDraft(
       String compactJwt,
@@ -101,7 +123,10 @@ public final class AccountControlUiActorService {
           // Never wait for a source-first writer while retaining captured owner rows.
           fences.lockProducerSourcesNowait(current.source.sources());
           fences.reserve(original);
-          return fences.claimCommitOrder(original);
+          var order = fences.claimCommitOrder(original);
+          if (fences.readSettlement(original)
+              != DraftAuthorizationFenceRepository.Settlement.PENDING) throw denied();
+          return order;
         });
   }
 

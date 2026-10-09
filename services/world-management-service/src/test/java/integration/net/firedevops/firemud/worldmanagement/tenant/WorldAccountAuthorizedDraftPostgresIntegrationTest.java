@@ -724,6 +724,8 @@ class WorldAccountAuthorizedDraftPostgresIntegrationTest {
                         "canonicalBindingBytes",
                         "sourceGameRowId");
                 var ownerBeforeInventoryOperation = ownerSnapshot(world, plan);
+                // This canonical five-frame operation exercises the SQL projection using the
+                // exact original Account order and World-retained inventory.
                 assertThat(
                         Objects.requireNonNull(
                                 dsl.fetchOne(
@@ -741,6 +743,12 @@ class WorldAccountAuthorizedDraftPostgresIntegrationTest {
                             "\"graphDigest\":\"" + sourceGraphDigest + "\"",
                             "\"graphDigest\":\"sha256:" + "0".repeat(64) + "\"")
                         .getBytes(java.nio.charset.StandardCharsets.UTF_8);
+                String substitutedOwnerScopeJson =
+                    publicInventoryJson.replace(
+                        "\"ownerScope\":{", "\"ownerScope\":{\"substitutedField\":\"unexpected\",");
+                assertThat(substitutedOwnerScopeJson).contains("\"substitutedField\"");
+                byte[] substitutedOwnerScope =
+                    substitutedOwnerScopeJson.getBytes(java.nio.charset.StandardCharsets.UTF_8);
                 byte[] validOperation = publicationOperation.canonicalBytes();
                 byte[] missingInventory =
                     operationBytes(
@@ -763,6 +771,13 @@ class WorldAccountAuthorizedDraftPostgresIntegrationTest {
                         evidence.canonicalBytes(),
                         substitutedInventory,
                         DraftAuthorizationFenceBinding.digest(substitutedInventory));
+                byte[] changedOwnerScope =
+                    operationBytes(
+                        GameDesignPublicationOperationBinding.SCHEMA,
+                        publicationOrder.canonicalBytes(),
+                        evidence.canonicalBytes(),
+                        substitutedOwnerScope,
+                        DraftAuthorizationFenceBinding.digest(substitutedOwnerScope));
                 byte[] retainedV1 =
                     operationBytes(
                         "game-design-publication-operation/v1",
@@ -776,6 +791,7 @@ class WorldAccountAuthorizedDraftPostgresIntegrationTest {
                         missingInventory,
                         mismatchedDigest,
                         changedInventory,
+                        changedOwnerScope,
                         retainedV1,
                         trailingOperation)) {
                   assertThatThrownBy(

@@ -5,6 +5,8 @@ import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
 import java.util.Objects;
 import java.util.Optional;
+import net.firedevops.firemud.common.gamelogic.GameLogicGameplayRuleIntakeOperation;
+import net.firedevops.firemud.common.gamelogic.GameLogicGameplayRuleIntakeTerminal;
 import net.firedevops.firemud.common.gamelogic.GameLogicIntakeAuthorizationReadClient;
 import net.firedevops.firemud.common.gamelogic.GameLogicIntakeAuthorizationReadEvidence;
 import net.firedevops.firemud.common.gamelogic.GameplayRuleSourceReadClient;
@@ -105,7 +107,8 @@ public final class GameLogicGameplayRuleIntakeService {
   /** No value means there is no actual owner terminal; ABORTED is an explicit durable terminal. */
   public Optional<GameLogicGameplayRuleIntakeTerminal> readTerminal(
       net.firedevops.firemud.common.gamelogic.GameLogicIntakeAuthorizationBinding authorization) {
-    var operation = requestOperation(authorization);
+    GameLogicGameplayRuleIntakeTerminalReadService.requirePeer(workloadNamespace);
+    var operation = new GameLogicGameplayRuleIntakeOperation(workloadNamespace, authorization);
     requireNoActiveTransaction();
     return repository
         .findTerminal(authorization.operationId())

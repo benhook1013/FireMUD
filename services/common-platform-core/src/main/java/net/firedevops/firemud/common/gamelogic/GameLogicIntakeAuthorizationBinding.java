@@ -78,6 +78,8 @@ public record GameLogicIntakeAuthorizationBinding(
   }
 
   public static GameLogicIntakeAuthorizationBinding fromStored(byte[] bytes) {
+    if (bytes == null || bytes.length == 0 || bytes.length > 4194304)
+      throw new IllegalArgumentException("Invalid original intake order size");
     var reader = new DraftAuthorizationFenceBinding.FrameReader(bytes);
     reader.expect(SCHEMA);
     UUID operation = uuid(reader.text()),

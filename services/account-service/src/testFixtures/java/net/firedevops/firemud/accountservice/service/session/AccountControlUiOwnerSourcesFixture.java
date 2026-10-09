@@ -89,9 +89,8 @@ final class AccountControlUiOwnerSourcesFixture {
   final TransactionTemplate transactions;
   final Account account;
   final AccountRepository accounts;
-  final UUID tenant = UUID.randomUUID(),
-      request = UUID.randomUUID(),
-      callerContext = UUID.randomUUID();
+  final UUID tenant;
+  final UUID request = UUID.randomUUID(), callerContext = UUID.randomUUID();
   final AtomicReference<HostedTermsEnvironmentBinding.CurrentEnvironmentBoundary> boundary =
       new AtomicReference<>(testBoundary("test-production"));
   final AtomicInteger coordinationCalls = new AtomicInteger();
@@ -108,6 +107,17 @@ final class AccountControlUiOwnerSourcesFixture {
    */
   AccountControlUiOwnerSourcesFixture(
       String jdbcUrl, String username, String password, Path root, boolean installNegativeIssuer) {
+    this(jdbcUrl, username, password, root, installNegativeIssuer, UUID.randomUUID());
+  }
+
+  AccountControlUiOwnerSourcesFixture(
+      String jdbcUrl,
+      String username,
+      String password,
+      Path root,
+      boolean installNegativeIssuer,
+      UUID tenant) {
+    this.tenant = Objects.requireNonNull(tenant);
     String schema = "control_ui_owner_" + UUID.randomUUID().toString().replace("-", "");
     var dataSource = new DriverManagerDataSource(jdbcUrl, username, password);
     dataSource.setSchema(schema);

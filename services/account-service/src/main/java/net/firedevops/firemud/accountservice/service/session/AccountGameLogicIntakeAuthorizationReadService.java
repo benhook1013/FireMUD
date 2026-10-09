@@ -1,5 +1,6 @@
 package net.firedevops.firemud.accountservice.service.session;
 
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import io.grpc.Status;
 import io.grpc.StatusRuntimeException;
 import java.util.Objects;
@@ -10,12 +11,15 @@ import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.transaction.support.TransactionTemplate;
 
-/** Unregistered exact held-source read; all current orders remain pending, never settled. */
+/** Unregistered exact held-source read; settled orders cannot mint fresh HELD evidence. */
 public final class AccountGameLogicIntakeAuthorizationReadService {
   private final AccountGameLogicIntakeAuthorizationRepository repository;
   private final TransactionTemplate transaction;
   private final String namespace;
 
+  @SuppressFBWarnings(
+      value = "EI_EXPOSE_REP2",
+      justification = "The injected repository is an intentionally shared service collaborator.")
   public AccountGameLogicIntakeAuthorizationReadService(
       AccountGameLogicIntakeAuthorizationRepository repository,
       PlatformTransactionManager transactions,

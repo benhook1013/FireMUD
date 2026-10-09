@@ -17,6 +17,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding;
+import net.firedevops.firemud.common.gamelogic.GameLogicGameplayRuleIntakeTerminal;
 import net.firedevops.firemud.common.gamelogic.GameLogicIntakeAuthorizationBinding;
 import net.firedevops.firemud.common.gamelogic.GameLogicIntakeAuthorizationReadClient;
 import net.firedevops.firemud.common.gamelogic.GameLogicIntakeAuthorizationReadEvidence;
@@ -180,6 +181,7 @@ class GameLogicGameplayRuleIntakePostgresIntegrationTest {
         .dataSource(dataSource)
         .schemas(schema)
         .defaultSchema(schema)
+        .placeholders(Map.of("serviceSchema", schema))
         .table("flyway_schema_history")
         .locations("classpath:db/migration")
         .load()
