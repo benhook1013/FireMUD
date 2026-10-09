@@ -14,11 +14,11 @@ import java.util.List;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding.TargetProof;
+import net.firedevops.firemud.common.publication.PublicationDigestRequestBinding;
 import net.firedevops.firemud.common.temporal.FiremudWorkflowIds;
 import net.firedevops.firemud.gamedesign.GameDesignServiceApplication;
 import net.firedevops.firemud.gamedesign.draft.AuthoredDraftPublishSelection.PublishIntent;
 import net.firedevops.firemud.gamedesign.draft.IsolatedPublicationOwnerSetup;
-import net.firedevops.firemud.gamedesign.dto.PublishParticipantDigestDto;
 import net.firedevops.firemud.gamedesign.dto.VersionDto;
 import net.firedevops.firemud.gamedesign.entity.Game;
 import net.firedevops.firemud.gamedesign.entity.GameAsset;
@@ -41,8 +41,10 @@ import net.firedevops.firemud.gamedesign.repository.VersionAssetArtifactReposito
 import net.firedevops.firemud.gamedesign.repository.VersionRepository;
 import net.firedevops.firemud.gamedesign.repository.VersionTemplateRemapSetRepository;
 import net.firedevops.firemud.gamedesign.service.impl.PublishAttemptServiceImpl;
+import net.firedevops.firemud.gamedesign.service.impl.PublishedWorldSelectorFixtures;
 import net.firedevops.firemud.gamedesign.service.impl.TemporalVersionPublishWorkflow;
 import net.firedevops.firemud.gamedesign.service.impl.VersionPublishCommandServiceImpl;
+import net.firedevops.firemud.gamedesign.service.impl.VersionServiceImpl;
 import net.firedevops.firemud.test.NoGrpcServerTestConfiguration;
 import net.firedevops.firemud.test.PostgresBackedServiceTestSupport;
 import net.firedevops.firemud.test.TestContainerImages;
@@ -59,6 +61,7 @@ import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
 import org.springframework.test.util.AopTestUtils;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.TransactionDefinition;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.transaction.support.TransactionTemplate;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
@@ -102,6 +105,7 @@ class PublishAttemptServiceTransactionIntegrationTest {
   @Autowired private GameRepository gameRepository;
   @Autowired private GameAssetRepository gameAssetRepository;
   @Autowired private PublishAttemptServiceImpl publishAttemptService;
+  @Autowired private VersionServiceImpl versionService;
   @Autowired private VersionPublishCommandServiceImpl versionPublishCommandService;
   @Autowired private PublishAttemptRepository publishAttemptRepository;
   @Autowired private PublishedReleaseBundleRepository publishedReleaseBundleRepository;
@@ -117,6 +121,21 @@ class PublishAttemptServiceTransactionIntegrationTest {
   @MockitoSpyBean private ControlPlaneDigestService controlPlaneDigestService;
   @MockitoSpyBean private RecordedParticipantDigestService recordedParticipantDigestService;
   @MockitoSpyBean private VersionAssetArtifactService versionAssetArtifactService;
+
+  @Test
+  void fullVersionSealTransactionUsesExplicitReadCommittedIsolation() {
+    AtomicReference<Integer> isolation = new AtomicReference<>();
+
+    publishAttemptService.executeFullVersionTransaction(
+        () -> {
+          assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isTrue();
+          assertThat(TransactionSynchronizationManager.isCurrentTransactionReadOnly()).isFalse();
+          isolation.set(TransactionSynchronizationManager.getCurrentTransactionIsolationLevel());
+          return null;
+        });
+
+    assertThat(isolation.get()).isEqualTo(TransactionDefinition.ISOLATION_READ_COMMITTED);
+  }
 
   @Test
   void fullVersionTransactionRollsBackVersionBundleArtifactAndAttemptTogether() {
@@ -185,6 +204,85 @@ class PublishAttemptServiceTransactionIntegrationTest {
     assertThat(versionAssetArtifactRepository.findByTenantIdAndVersionId(TENANT_ID, versionId))
         .isEmpty();
     assertThat(gameRepository.findByTenantId(TENANT_ID)).isNotNull();
+  }
+
+  @Test
+  void failedScriptPatchRetainsCanonicalVersionAndReplaysDurableFailure() {
+    String tenantId = "9012";
+    Long baseVersionId = 3L;
+    String scriptPatchVersion = "patch-failed-replay";
+    String publishRequestId = "script-patch-failure-replay";
+    String workflowId =
+        PublicationDigestRequestBinding.patch(
+                tenantId, String.valueOf(baseVersionId), scriptPatchVersion, publishRequestId)
+            .derivedWorkflowIdentity();
+    Game game = new Game();
+    game.setTenantId(tenantId);
+    game.setName("script-patch-failure-replay-game");
+    Game savedGame = gameRepository.save(game);
+
+    Mockito.doThrow(new IllegalStateException("script patch participant unavailable"))
+        .when(publishGateService)
+        .collectScriptPatchParticipantDigests(
+            Mockito.any(VersionDto.class), Mockito.eq(publishRequestId), Mockito.eq(workflowId));
+
+    assertThatThrownBy(
+            () ->
+                versionService.publishScriptPatchVersion(
+                    tenantId, baseVersionId, scriptPatchVersion, "first notes", publishRequestId))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessage("script patch participant unavailable");
+
+    PublishAttempt failedAttempt =
+        publishAttemptRepository.findByPublishWorkflowId(workflowId).orElseThrow();
+    assertThat(failedAttempt.getStatus()).isEqualTo(PublishAttemptStatus.FAILED);
+    assertThat(failedAttempt.getFailureCode()).isEqualTo("PUBLISH_FAILED");
+    assertThat(failedAttempt.getFailureMessage()).isEqualTo("script patch participant unavailable");
+    Version retainedVersion =
+        versionRepository
+            .findByTenantIdAndBaseVersionIdAndScriptPatchVersionAndScriptOnly(
+                tenantId, baseVersionId, scriptPatchVersion)
+            .stream()
+            .findFirst()
+            .orElseThrow();
+    assertThat(retainedVersion.getVersionState()).isEqualTo(VersionLifecycleState.FAILED);
+    assertThat(retainedVersion.getVersionStateEpoch()).isEqualTo(2L);
+    assertThat(retainedVersion.getCanonicalVersionId()).isNotNull();
+    assertThat(retainedVersion.getCanonicalTenantId()).isEqualTo(savedGame.getCanonicalTenantId());
+
+    assertThatThrownBy(
+            () ->
+                versionService.publishScriptPatchVersion(
+                    tenantId, baseVersionId, scriptPatchVersion, "changed notes", publishRequestId))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessage("script patch participant unavailable");
+
+    Version replayedVersion =
+        versionRepository
+            .findByTenantIdAndBaseVersionIdAndScriptPatchVersionAndScriptOnly(
+                tenantId, baseVersionId, scriptPatchVersion)
+            .stream()
+            .findFirst()
+            .orElseThrow();
+    PublishAttempt replayedAttempt =
+        publishAttemptRepository.findByPublishWorkflowId(workflowId).orElseThrow();
+    assertThat(replayedVersion.getId()).isEqualTo(retainedVersion.getId());
+    assertThat(replayedVersion.getCanonicalVersionId())
+        .isEqualTo(retainedVersion.getCanonicalVersionId());
+    assertThat(replayedVersion.getVersionState()).isEqualTo(VersionLifecycleState.FAILED);
+    assertThat(replayedAttempt.getVersionId()).isEqualTo(retainedVersion.getId());
+    assertThat(replayedAttempt.getStatus()).isEqualTo(PublishAttemptStatus.FAILED);
+
+    assertThatThrownBy(
+            () ->
+                versionService.publishScriptPatchVersion(
+                    tenantId, baseVersionId, scriptPatchVersion, "new identity", "new-request-id"))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("PUBLISH_SCRIPT_PATCH_IDENTITY_CONFLICT");
+    assertThat(
+            versionRepository.findByTenantIdAndBaseVersionIdAndScriptPatchVersionAndScriptOnly(
+                tenantId, baseVersionId, scriptPatchVersion))
+        .hasSize(1);
   }
 
   @Test
@@ -259,22 +357,8 @@ class PublishAttemptServiceTransactionIntegrationTest {
         .thenAnswer(
             invocation -> {
               VersionDto version = invocation.getArgument(0);
-              return List.of(
-                  new PublishParticipantDigestDto(
-                      "GAME_DESIGN_CONTROL_PLANE",
-                      String.valueOf(version.id()),
-                      fixture
-                          .operation()
-                          .account()
-                          .input()
-                          .selection()
-                          .selectedCommit()
-                          .commitId()
-                          .toString(),
-                      "transaction-proof-design-digest",
-                      1,
-                      null,
-                      null));
+              return PublishedWorldSelectorFixtures.participants(
+                  version.id(), fixture.operation().world());
             });
     Mockito.when(assetExportService.exportAssets(tenantId, fixture.version().getVersionNumber()))
         .thenAnswer(invocation -> recordFixtureCandidate(fixture));
@@ -335,22 +419,8 @@ class PublishAttemptServiceTransactionIntegrationTest {
               VersionDto candidate = invocation.getArgument(0);
               candidateVersionId.set(candidate.id());
               candidateVersionNumber.set(candidate.versionNumber());
-              return List.of(
-                  new PublishParticipantDigestDto(
-                      "GAME_DESIGN_CONTROL_PLANE",
-                      String.valueOf(candidate.id()),
-                      fixture
-                          .operation()
-                          .account()
-                          .input()
-                          .selection()
-                          .selectedCommit()
-                          .commitId()
-                          .toString(),
-                      "failed-remap-design-digest",
-                      1,
-                      null,
-                      null));
+              return PublishedWorldSelectorFixtures.participants(
+                  candidate.id(), fixture.operation().world());
             });
     Mockito.doAnswer(
             invocation -> {
@@ -668,8 +738,18 @@ class PublishAttemptServiceTransactionIntegrationTest {
 
   private static void assertMechanicsSnapshot(
       Object snapshot, String expectedStatus, String expectedFailureMessage) {
-    assertThat(snapshotValue(snapshot, "status")).isEqualTo(expectedStatus);
-    assertThat(snapshotValue(snapshot, "failureMessage")).isEqualTo(expectedFailureMessage);
+    String actualStatus = snapshotValue(snapshot, "status");
+    String actualFailureCode = snapshotValue(snapshot, "failureCode");
+    String actualFailureMessage = snapshotValue(snapshot, "failureMessage");
+    String failureContext =
+        "publication mechanics snapshot: status="
+            + actualStatus
+            + ", failureCode="
+            + actualFailureCode
+            + ", failureMessage="
+            + actualFailureMessage;
+    assertThat(actualStatus).as(failureContext).isEqualTo(expectedStatus);
+    assertThat(actualFailureMessage).as(failureContext).isEqualTo(expectedFailureMessage);
   }
 
   private AtomicReference<Throwable> captureControlPlaneDigestFailure() {

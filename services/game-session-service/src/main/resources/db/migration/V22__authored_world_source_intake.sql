@@ -38,7 +38,7 @@ CREATE TABLE game_session_authored_world_tenant_source_binding (
             AND source_game_tenant_key !~ '^[[:space:]]*$'
         ),
     CONSTRAINT chk_gs_authored_world_tenant_source_provenance
-        CHECK (provenance_kind IN ('NEW_GAME_ROW', 'RETAINED_GAME_V30'))
+        CHECK (provenance_kind IN ('NEW_GAME_ROW', 'RETAINED_GAME_V29'))
 );
 
 CREATE TABLE game_session_authored_world_source_intake (
@@ -129,7 +129,7 @@ CREATE TABLE game_session_authored_world_source_intake (
             AND source_game_tenant_key !~ '^[[:space:]]*$'
         ),
     CONSTRAINT chk_gs_authored_world_source_intake_provenance
-        CHECK (source_provenance_kind IN ('NEW_GAME_ROW', 'RETAINED_GAME_V30'))
+        CHECK (source_provenance_kind IN ('NEW_GAME_ROW', 'RETAINED_GAME_V29'))
 );
 
 -- [jooq ignore start]

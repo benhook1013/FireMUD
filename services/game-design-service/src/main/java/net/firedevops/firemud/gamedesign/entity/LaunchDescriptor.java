@@ -25,8 +25,12 @@ public class LaunchDescriptor {
   private Integer descriptorSchemaVersion;
   private String targetNamespace;
   private String canonicalTenantId;
+  private String authoredWorldSourceTenantSlug;
   private String worldSlug;
   private String authoredWorldSourceOperationId;
+  private Long authoredWorldSourceGameRowId;
+  private String authoredWorldSourceGameTenantKey;
+  private String authoredWorldSourceProvenanceKind;
   private String authoredWorldSourceEvidenceDigest;
   private String requestDigest;
   private String resultDigest;

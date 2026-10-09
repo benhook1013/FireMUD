@@ -69,13 +69,12 @@ public class LaunchDescriptorServiceImpl implements LaunchDescriptorService {
       AuthoredWorldSourceEvidence source = readExactSource(request);
       String sourceJson = writeJson(source);
       if (LaunchDescriptor.OUTCOME_FAILED.equals(descriptor.getOutcomeStatus())) {
-        throwStoredFailure(
-            descriptor, request, requestJson, sourceJson, source.sourceGameTenantKey());
+        throwStoredFailure(descriptor, request, source, requestJson, sourceJson);
       }
       if (!LaunchDescriptor.OUTCOME_SUCCESS.equals(descriptor.getOutcomeStatus())) {
         throw new IllegalArgumentException("LAUNCH_DESCRIPTOR_CONFLICT: stored outcome is unknown");
       }
-      return readStored(descriptor, request, requestJson, sourceJson);
+      return readStored(descriptor, request, source, requestJson, sourceJson);
     }
     AuthoredWorldSourceEvidence source = readExactSource(request);
     String sourceJson = writeJson(source);
@@ -91,7 +90,7 @@ public class LaunchDescriptorServiceImpl implements LaunchDescriptorService {
     } catch (FrozenLaunchDescriptorDenialException denial) {
       LaunchDescriptor failure = frozenFailure(request, source, requestJson, sourceJson, denial);
       LaunchDescriptor persisted = launchDescriptorRepository.insertImmutable(failure);
-      throwStoredFailure(persisted, request, requestJson, sourceJson, source.sourceGameTenantKey());
+      throwStoredFailure(persisted, request, source, requestJson, sourceJson);
       throw new IllegalStateException("Persisted deterministic launch denial was not returned");
     }
   }
@@ -229,18 +228,25 @@ public class LaunchDescriptorServiceImpl implements LaunchDescriptorService {
     descriptor.setPublishedReleaseBundleRef(evidence.publishedReleaseBundleRef());
     descriptor.setRemapSetId(remapSetId);
     descriptor.setDescriptorSchemaVersion(evidence.schemaVersion());
-    descriptor.setTargetNamespace(workloadNamespace);
-    descriptor.setCanonicalTenantId(request.canonicalTenantId().toString());
-    descriptor.setWorldSlug(request.worldSlug());
-    descriptor.setAuthoredWorldSourceOperationId(
-        request.authoredWorldSourceOperationId().toString());
-    descriptor.setAuthoredWorldSourceEvidenceDigest(request.authoredWorldSourceEvidenceDigest());
+    descriptor.setTargetNamespace(source.targetNamespace());
+    descriptor.setCanonicalTenantId(source.canonicalTenantId().toString());
+    descriptor.setAuthoredWorldSourceTenantSlug(source.tenantSlug());
+    descriptor.setWorldSlug(source.worldSlug());
+    descriptor.setAuthoredWorldSourceOperationId(source.operationId().toString());
+    descriptor.setAuthoredWorldSourceGameRowId(source.sourceGameRowId());
+    descriptor.setAuthoredWorldSourceGameTenantKey(source.sourceGameTenantKey());
+    descriptor.setAuthoredWorldSourceProvenanceKind(source.provenanceKind());
+    descriptor.setAuthoredWorldSourceEvidenceDigest(source.evidenceDigest());
     descriptor.setRequestDigest(evidence.requestDigest());
     descriptor.setResultDigest(evidence.resultDigest());
     descriptor.setOriginalRequestJson(requestJson);
     descriptor.setSourceEvidenceJson(sourceJson);
     return readStored(
-        launchDescriptorRepository.insertImmutable(descriptor), request, requestJson, sourceJson);
+        launchDescriptorRepository.insertImmutable(descriptor),
+        request,
+        source,
+        requestJson,
+        sourceJson);
   }
 
   @Override
@@ -272,6 +278,7 @@ public class LaunchDescriptorServiceImpl implements LaunchDescriptorService {
     return readStored(
         descriptor,
         storedRequest,
+        source,
         descriptor.getOriginalRequestJson(),
         descriptor.getSourceEvidenceJson());
   }
@@ -322,6 +329,7 @@ public class LaunchDescriptorServiceImpl implements LaunchDescriptorService {
     return readStored(
         descriptor,
         storedRequest,
+        source,
         descriptor.getOriginalRequestJson(),
         descriptor.getSourceEvidenceJson());
   }
@@ -416,9 +424,11 @@ public class LaunchDescriptorServiceImpl implements LaunchDescriptorService {
   private ResolvedLaunchDescriptorDto readStored(
       LaunchDescriptor descriptor,
       AuthoredWorldLaunchDescriptorEvidence.Request request,
+      AuthoredWorldSourceEvidence source,
       String requestJson,
       String sourceJson) {
-    if (!LaunchDescriptor.OUTCOME_SUCCESS.equals(descriptor.getOutcomeStatus())
+    if (!matchesStoredSource(descriptor, source)
+        || !LaunchDescriptor.OUTCOME_SUCCESS.equals(descriptor.getOutcomeStatus())
         || descriptor.getFailureCode() != null
         || descriptor.getFailureMessage() != null
         || descriptor.getDescriptorSchemaVersion() == null
@@ -490,12 +500,15 @@ public class LaunchDescriptorServiceImpl implements LaunchDescriptorService {
     descriptor.setControlPlaneRequestId(request.controlPlaneRequestId());
     descriptor.setRequestHash(request.requestDigest());
     descriptor.setDescriptorSchemaVersion(AuthoredWorldLaunchDescriptorEvidence.SCHEMA_VERSION);
-    descriptor.setTargetNamespace(workloadNamespace);
-    descriptor.setCanonicalTenantId(request.canonicalTenantId().toString());
-    descriptor.setWorldSlug(request.worldSlug());
-    descriptor.setAuthoredWorldSourceOperationId(
-        request.authoredWorldSourceOperationId().toString());
-    descriptor.setAuthoredWorldSourceEvidenceDigest(request.authoredWorldSourceEvidenceDigest());
+    descriptor.setTargetNamespace(source.targetNamespace());
+    descriptor.setCanonicalTenantId(source.canonicalTenantId().toString());
+    descriptor.setAuthoredWorldSourceTenantSlug(source.tenantSlug());
+    descriptor.setWorldSlug(source.worldSlug());
+    descriptor.setAuthoredWorldSourceOperationId(source.operationId().toString());
+    descriptor.setAuthoredWorldSourceGameRowId(source.sourceGameRowId());
+    descriptor.setAuthoredWorldSourceGameTenantKey(source.sourceGameTenantKey());
+    descriptor.setAuthoredWorldSourceProvenanceKind(source.provenanceKind());
+    descriptor.setAuthoredWorldSourceEvidenceDigest(source.evidenceDigest());
     descriptor.setRequestDigest(request.requestDigest());
     descriptor.setOriginalRequestJson(requestJson);
     descriptor.setSourceEvidenceJson(sourceJson);
@@ -523,10 +536,11 @@ public class LaunchDescriptorServiceImpl implements LaunchDescriptorService {
   private void throwStoredFailure(
       LaunchDescriptor descriptor,
       AuthoredWorldLaunchDescriptorEvidence.Request request,
+      AuthoredWorldSourceEvidence source,
       String requestJson,
-      String sourceJson,
-      String sourceGameTenantKey) {
-    if (!LaunchDescriptor.OUTCOME_FAILED.equals(descriptor.getOutcomeStatus())
+      String sourceJson) {
+    if (!matchesStoredSource(descriptor, source)
+        || !LaunchDescriptor.OUTCOME_FAILED.equals(descriptor.getOutcomeStatus())
         || !Objects.equals(
             descriptor.getDescriptorSchemaVersion(),
             AuthoredWorldLaunchDescriptorEvidence.SCHEMA_VERSION)
@@ -545,7 +559,7 @@ public class LaunchDescriptorServiceImpl implements LaunchDescriptorService {
         || !request.requestDigest().equals(descriptor.getRequestHash())
         || !requestJson.equals(descriptor.getOriginalRequestJson())
         || !sourceJson.equals(descriptor.getSourceEvidenceJson())
-        || !sourceGameTenantKey.equals(descriptor.getTenantId())
+        || !source.sourceGameTenantKey().equals(descriptor.getTenantId())
         || descriptor.getLaunchDescriptorId() != null
         || descriptor.getGameTemplateId() != null
         || descriptor.getVersionId() != null
@@ -565,6 +579,23 @@ public class LaunchDescriptorServiceImpl implements LaunchDescriptorService {
     }
     throw FrozenLaunchDescriptorDenialException.fromStored(
         descriptor.getFailureCode(), descriptor.getFailureMessage());
+  }
+
+  private boolean matchesStoredSource(
+      LaunchDescriptor descriptor, AuthoredWorldSourceEvidence source) {
+    return Objects.equals(descriptor.getTargetNamespace(), source.targetNamespace())
+        && Objects.equals(descriptor.getCanonicalTenantId(), source.canonicalTenantId().toString())
+        && Objects.equals(descriptor.getAuthoredWorldSourceTenantSlug(), source.tenantSlug())
+        && Objects.equals(descriptor.getWorldSlug(), source.worldSlug())
+        && Objects.equals(
+            descriptor.getAuthoredWorldSourceOperationId(), source.operationId().toString())
+        && Objects.equals(descriptor.getAuthoredWorldSourceGameRowId(), source.sourceGameRowId())
+        && Objects.equals(
+            descriptor.getAuthoredWorldSourceGameTenantKey(), source.sourceGameTenantKey())
+        && Objects.equals(
+            descriptor.getAuthoredWorldSourceProvenanceKind(), source.provenanceKind())
+        && Objects.equals(
+            descriptor.getAuthoredWorldSourceEvidenceDigest(), source.evidenceDigest());
   }
 
   private boolean isPersistableFailureCode(String failureCode) {
