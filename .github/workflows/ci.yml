@@ -988,6 +988,7 @@ jobs:
           build-scan-terms-of-use-agree: 'yes'
           cache-read-only: false
 
+      # Cached negative Spring Boot 4.1.1 resolution requires metadata revalidation (CI 37847761035).
       - name: 🧪 Run Gradle Checks
         id: checks
         run: |

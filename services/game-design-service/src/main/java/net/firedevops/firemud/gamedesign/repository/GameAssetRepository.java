@@ -1,6 +1,7 @@
 package net.firedevops.firemud.gamedesign.repository;
 
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
+import java.sql.Timestamp;
 import java.time.LocalDateTime;
 import java.util.List;
 import net.firedevops.firemud.gamedesign.entity.GameAsset;
@@ -23,8 +24,8 @@ public class GameAssetRepository {
   private static final Field<String> CONTENT_TYPE =
       DSL.field(DSL.name("content_type"), String.class);
   private static final Field<byte[]> DATA = DSL.field(DSL.name("data"), byte[].class);
-  private static final Field<LocalDateTime> CREATED_AT =
-      DSL.field(DSL.name("created_at"), LocalDateTime.class);
+  private static final Field<Timestamp> CREATED_AT =
+      DSL.field(DSL.name("created_at"), Timestamp.class);
 
   private final DSLContext dsl;
 
@@ -49,7 +50,7 @@ public class GameAssetRepository {
               .set(FILE_NAME, asset.getFileName())
               .set(CONTENT_TYPE, asset.getContentType())
               .set(DATA, asset.getData())
-              .set(CREATED_AT, createdAt)
+              .set(CREATED_AT, Timestamp.valueOf(createdAt))
               .returning(ID, TENANT_ID, FILE_NAME, CONTENT_TYPE, DATA, CREATED_AT)
               .fetchOne();
       if (record == null) {
@@ -62,7 +63,7 @@ public class GameAssetRepository {
         .set(FILE_NAME, asset.getFileName())
         .set(CONTENT_TYPE, asset.getContentType())
         .set(DATA, asset.getData())
-        .set(CREATED_AT, createdAt)
+        .set(CREATED_AT, Timestamp.valueOf(createdAt))
         .where(ID.eq(asset.getId()))
         .execute();
     return dsl.selectFrom(TABLE_REF).where(ID.eq(asset.getId())).fetchOne(this::toEntity);
@@ -78,7 +79,8 @@ public class GameAssetRepository {
     asset.setFileName(record.get(FILE_NAME));
     asset.setContentType(record.get(CONTENT_TYPE));
     asset.setData(record.get(DATA));
-    asset.setCreatedAt(record.get(CREATED_AT));
+    Timestamp createdAt = record.get(CREATED_AT);
+    asset.setCreatedAt(createdAt == null ? null : createdAt.toLocalDateTime());
     return asset;
   }
 }
