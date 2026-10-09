@@ -447,7 +447,10 @@ class SelectedAssetExportCandidatePostgresIntegrationTest {
     DSL.using(admin, SQLDialect.POSTGRES).execute("CREATE SCHEMA " + schema);
     DriverManagerDataSource dataSource =
         new DriverManagerDataSource(
-            POSTGRES.getJdbcUrl() + "?currentSchema=" + schema,
+            POSTGRES.getJdbcUrl()
+                + (POSTGRES.getJdbcUrl().contains("?") ? "&" : "?")
+                + "currentSchema="
+                + schema,
             POSTGRES.getUsername(),
             POSTGRES.getPassword());
     Flyway.configure()

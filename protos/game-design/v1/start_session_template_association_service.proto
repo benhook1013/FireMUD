@@ -17,6 +17,14 @@ service GameDesignStartSessionTemplateAssociationReadService {
       returns (ReadStartSessionTemplateAssociationResponse);
 }
 
+// Standalone exact-replay descriptor projection for the existing authorized StartSession flow.
+// The server authenticates the same-namespace Game Session workload before decoding or invoking
+// the producer. This service is deliberately separate from the read-only association service.
+service GameDesignStartSessionLaunchDescriptorService {
+  rpc ResolveStartSessionLaunchDescriptor(ReadStartSessionTemplateAssociationRequest)
+      returns (ResolveStartSessionLaunchDescriptorResponse);
+}
+
 message ReadStartSessionTemplateAssociationRequest {
   int32 schema_version = 1;
   string target_namespace = 2;
@@ -55,6 +63,21 @@ message ReadStartSessionTemplateAssociationResponse {
   // Positive, same-owner-snapshot phase evidence; neither a runtime lifecycle
   // epoch nor independent admission permission.
   int64 reference_phase_epoch = 5;
+}
+
+// Closed versioned result for one exact Game Session-pinned association replay. The association
+// read is included unchanged as the source binding for either outcome. Exactly one of
+// launch_descriptor and application_failure must be present.
+message ResolveStartSessionLaunchDescriptorResponse {
+  int32 schema_version = 1;
+  ReadStartSessionTemplateAssociationResponse association_read = 2;
+  gamedesign.v1.LaunchDescriptor launch_descriptor = 3;
+  StartSessionLaunchDescriptorApplicationFailure application_failure = 4;
+}
+
+message StartSessionLaunchDescriptorApplicationFailure {
+  string code = 1;
+  string message = 2;
 }
 
 // Closed public projection of the immutable Game Design association. Private operation,

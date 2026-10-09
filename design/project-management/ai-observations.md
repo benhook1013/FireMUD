@@ -156,3 +156,9 @@ Entry format:
   - Observation: A workflow-level failure or diagnostic annotation does not establish which owner failed. Misattribution would route unnecessary shared-workflow or World repairs while leaving the real fixture and admission-WAL failures unresolved.
   - Expected pattern: Verify terminal job/step conclusions and originating owner artifacts before routing a failure; retain actual checkout provenance and distinguish missing artifacts from passed tests.
   - Current status: The parent corrected the report using the completed job evidence and XML: World 206 passing PostgreSQL cases, Game Design four fixture failures and Account one admission-WAL failure. The fixture corrections were validated locally; no physical rerun or WAL completion credit follows.
+
+- `2026-10-10`: Newer metadata CI can obscure an active same-head substantive run
+  - Context: A six-result branch query after PR #3105's body update showed only metadata-preservation runs. Their dependency-deferred failures were initially mistaken for the complete current-head CI state.
+  - Observation: The separate substantive Validation run 37928625721 was still executing on the same head; metadata and required runs use distinct concurrency groups. The body edit had not cancelled it. A pending-proof metadata failure is neither a runtime failure nor evidence that no physical validation was dispatched.
+  - Expected pattern: Before requesting replacement CI or routing a dispatch failure, inspect enough same-head runs to distinguish substantive execution from newer metadata preservation, then assign one observer to the actual execution transition.
+  - Current status: Wider read-only inspection established the active run, and the parent corrected the Overseer request. A sole sentinel owns its outcome; no replacement run or workflow/topology change was made.

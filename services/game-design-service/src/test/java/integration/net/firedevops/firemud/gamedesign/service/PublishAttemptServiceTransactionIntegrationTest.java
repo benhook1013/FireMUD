@@ -22,6 +22,7 @@ import java.nio.file.Path;
 import java.security.KeyStore;
 import java.time.Instant;
 import java.time.LocalDateTime;
+import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.Base64;
 import java.util.List;
@@ -103,9 +104,11 @@ import net.firedevops.firemud.gamedesign.publication.GameDesignPublicationTermin
 import net.firedevops.firemud.gamedesign.publication.GameDesignPublicationTerminalReadService;
 import net.firedevops.firemud.gamedesign.publication.GameDesignSourceRepository;
 import net.firedevops.firemud.gamedesign.publication.IsolatedPublicationOperationFixtures;
+import net.firedevops.firemud.gamedesign.publication.SelectedDraftGameLogicReceiptRepository;
 import net.firedevops.firemud.gamedesign.publication.SelectedDraftPublicationCommandService;
 import net.firedevops.firemud.gamedesign.publication.SelectedDraftPublicationOwner;
 import net.firedevops.firemud.gamedesign.publication.SelectedDraftTemplateWorldSourceAssociation;
+import net.firedevops.firemud.gamedesign.publication.StartSessionLaunchDescriptorProducer;
 import net.firedevops.firemud.gamedesign.publication.StartSessionTemplateAssociationReadService;
 import net.firedevops.firemud.gamedesign.publication.TemplateConfigSource;
 import net.firedevops.firemud.gamedesign.publication.TemplateReferenceRepository;
@@ -525,6 +528,7 @@ class PublishAttemptServiceTransactionIntegrationTest {
             candidate.getCanonicalTenantId().toString(),
             Long.toString(candidate.getId()),
             publishRequestId);
+    var selectedExport = selectedExport(expectedDigestBinding);
 
     Mockito.when(
             publishGateService.collectFullVersionParticipantDigests(
@@ -538,6 +542,10 @@ class PublishAttemptServiceTransactionIntegrationTest {
                 Mockito.argThat(actual -> sameCanonicalPreimage(actual, expectedDigestBinding)),
                 Mockito.eq(publishWorkflowId)))
         .thenReturn(participantDigests);
+    Mockito.when(
+            assetExportService.exportSelectedAssets(
+                Mockito.argThat(actual -> sameCanonicalPreimage(actual, expectedDigestBinding))))
+        .thenReturn(selectedExport);
     Mockito.when(assetExportService.exportAssets(tenantId, 1)).thenReturn(immutableEmptyManifest());
 
     VersionDto publishedVersion =
@@ -712,6 +720,7 @@ class PublishAttemptServiceTransactionIntegrationTest {
             candidate.getCanonicalTenantId().toString(),
             Long.toString(candidate.getId()),
             publishRequestId);
+    var selectedExport = selectedExport(expectedDigestBinding);
     Mockito.when(
             publishGateService.collectFullVersionParticipantDigests(
                 Mockito.any(VersionDto.class),
@@ -724,20 +733,6 @@ class PublishAttemptServiceTransactionIntegrationTest {
                 Mockito.argThat(actual -> sameCanonicalPreimage(actual, expectedDigestBinding)),
                 Mockito.eq(workflowId)))
         .thenReturn(participantDigests);
-    var selectedManifest = immutableEmptyManifest();
-    var selectedCandidate =
-        new VersionAssetExportCandidateService.CandidateBinding(
-            expectedDigestBinding.requestDigest(),
-            "sha256:" + "b".repeat(64),
-            "sha256:" + "c".repeat(64),
-            net.firedevops.firemud.gamedesign.publication.SelectedDraftAssetInventory.SCHEMA,
-            "sha256:" + "d".repeat(64),
-            selectedManifest,
-            expectedDigestBinding.canonicalPreimage(),
-            "stipulated selected inventory".getBytes(StandardCharsets.UTF_8),
-            "stipulated empty manifest".getBytes(StandardCharsets.UTF_8));
-    var selectedExport =
-        new AssetExportService.SelectedExportResult(selectedManifest, selectedCandidate);
     Mockito.when(
             assetExportService.exportSelectedAssets(
                 Mockito.argThat(actual -> sameCanonicalPreimage(actual, expectedDigestBinding))))
@@ -1062,6 +1057,78 @@ class PublishAttemptServiceTransactionIntegrationTest {
         assertThat(startSessionAssociationStorageCounts(target.canonicalTenantId()))
             .isEqualTo(receiverStorageBefore);
         Mockito.verify(accountProjectionClient, Mockito.times(3))
+            .read(
+                Mockito.any(StartSessionPostAuthorizationExecutionTuple.class),
+                Mockito.eq(gameSessionAttemptId),
+                Mockito.eq(gameSessionFence));
+
+        // This legacy selected-publication fixture has a real GD/World association and release,
+        // but intentionally no retained Game Logic source receipt. The producer must not turn
+        // its synthetic aggregate participant digest into that missing owner evidence.
+        var operationSelection = operation.account().input().selection();
+        var gameLogicPublicationRequest =
+            PublicationDigestRequestBinding.full(
+                operationSelection.intent().canonicalTenantId().toString(),
+                Long.toString(operationSelection.target().gameDesignVersionRowId()),
+                operationSelection.intent().publishRequestId());
+        assertThat(
+                new SelectedDraftGameLogicReceiptRepository(dsl)
+                    .readForPublication(gameLogicPublicationRequest))
+            .isEmpty();
+        var descriptorProducer =
+            new StartSessionLaunchDescriptorProducer(
+                dsl,
+                transactionManager,
+                NAMESPACE,
+                associationReadService,
+                publishedReleaseBundleService,
+                START_SESSION_JSON);
+        long descriptorRowsBeforeRead =
+            dsl.fetchSingle(
+                    "SELECT COUNT(*) FROM launch_descriptor WHERE canonical_tenant_id = ? AND control_plane_request_id = ?",
+                    target.canonicalTenantId(),
+                    startSessionTuple.controlPlaneRequestId())
+                .get(0, Long.class);
+        long descriptorBindingRowsBeforeRead =
+            dsl.fetchSingle(
+                    "SELECT COUNT(*) FROM game_design_start_session_launch_descriptor_binding WHERE canonical_tenant_id = ? AND control_plane_request_id = ?",
+                    target.canonicalTenantId(),
+                    startSessionTuple.controlPlaneRequestId())
+                .get(0, Long.class);
+        assertThatThrownBy(
+                () -> withGameSessionPeer(() -> descriptorProducer.resolve(exactReplayRequest)))
+            .isInstanceOf(StatusRuntimeException.class)
+            .extracting(failure -> ((StatusRuntimeException) failure).getStatus().getCode())
+            .isEqualTo(Status.Code.FAILED_PRECONDITION);
+        var descriptorRetryRequest =
+            new StartSessionTemplateAssociationReadEvidence.Request(
+                1,
+                NAMESPACE,
+                UUID.randomUUID(),
+                startSessionTuple.canonicalBytes(),
+                gameSessionAttemptId,
+                gameSessionFence,
+                exactReplayRequest.selection());
+        assertThatThrownBy(
+                () -> withGameSessionPeer(() -> descriptorProducer.resolve(descriptorRetryRequest)))
+            .isInstanceOf(StatusRuntimeException.class)
+            .extracting(failure -> ((StatusRuntimeException) failure).getStatus().getCode())
+            .isEqualTo(Status.Code.FAILED_PRECONDITION);
+        assertThat(
+                dsl.fetchSingle(
+                        "SELECT COUNT(*) FROM launch_descriptor WHERE canonical_tenant_id = ? AND control_plane_request_id = ?",
+                        target.canonicalTenantId(),
+                        startSessionTuple.controlPlaneRequestId())
+                    .get(0, Long.class))
+            .isEqualTo(descriptorRowsBeforeRead);
+        assertThat(
+                dsl.fetchSingle(
+                        "SELECT COUNT(*) FROM game_design_start_session_launch_descriptor_binding WHERE canonical_tenant_id = ? AND control_plane_request_id = ?",
+                        target.canonicalTenantId(),
+                        startSessionTuple.controlPlaneRequestId())
+                    .get(0, Long.class))
+            .isEqualTo(descriptorBindingRowsBeforeRead);
+        Mockito.verify(accountProjectionClient, Mockito.times(5))
             .read(
                 Mockito.any(StartSessionPostAuthorizationExecutionTuple.class),
                 Mockito.eq(gameSessionAttemptId),
@@ -1479,6 +1546,10 @@ class PublishAttemptServiceTransactionIntegrationTest {
                 Mockito.argThat(actual -> sameCanonicalPreimage(actual, expectedDigestBinding)),
                 Mockito.eq(publishWorkflowId)))
         .thenReturn(participantDigests);
+    Mockito.when(
+            assetExportService.exportSelectedAssets(
+                Mockito.argThat(actual -> sameCanonicalPreimage(actual, expectedDigestBinding))))
+        .thenReturn(selectedExport(expectedDigestBinding));
     Mockito.doAnswer(
             invocation -> {
               try {
@@ -2697,8 +2768,9 @@ class PublishAttemptServiceTransactionIntegrationTest {
       StartSessionPreAuthorizationReservationTuple tuple) {
     String tenant = tuple.action().scope().tenantId().toString();
     String actor = tuple.actor().accountId().toString();
-    String now = Instant.now().toString();
-    String expires = Instant.now().plusSeconds(300).toString();
+    Instant issuedAt = Instant.now().truncatedTo(ChronoUnit.MILLIS);
+    String now = issuedAt.toString();
+    String expires = issuedAt.plusSeconds(300).toString();
     Map<String, Object> value =
         Map.of(
             "bundleVersion",
@@ -2889,5 +2961,22 @@ class PublishAttemptServiceTransactionIntegrationTest {
 
   private static ExportedAssetManifest immutableEmptyManifest() {
     return new ExportedAssetManifest("sha256:" + "a".repeat(64), 1, List.of(), List.of());
+  }
+
+  private static AssetExportService.SelectedExportResult selectedExport(
+      PublicationDigestRequestBinding request) {
+    var manifest = immutableEmptyManifest();
+    var candidate =
+        new VersionAssetExportCandidateService.CandidateBinding(
+            request.requestDigest(),
+            "sha256:" + "b".repeat(64),
+            "sha256:" + "c".repeat(64),
+            net.firedevops.firemud.gamedesign.publication.SelectedDraftAssetInventory.SCHEMA,
+            "sha256:" + "d".repeat(64),
+            manifest,
+            request.canonicalPreimage(),
+            "stipulated selected inventory".getBytes(StandardCharsets.UTF_8),
+            "stipulated empty manifest".getBytes(StandardCharsets.UTF_8));
+    return new AssetExportService.SelectedExportResult(manifest, candidate);
   }
 }

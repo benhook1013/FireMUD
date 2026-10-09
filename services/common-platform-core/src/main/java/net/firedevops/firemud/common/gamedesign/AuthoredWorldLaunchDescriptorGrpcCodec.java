@@ -254,6 +254,20 @@ public final class AuthoredWorldLaunchDescriptorGrpcCodec {
         .build();
   }
 
+  /** Public closed wrapper for contracts that carry the canonical launch descriptor message. */
+  public static LaunchDescriptor toLaunchDescriptorMessage(
+      AuthoredWorldLaunchDescriptorEvidence evidence) {
+    return toLaunchDescriptor(Objects.requireNonNull(evidence, "evidence"));
+  }
+
+  /** Decodes the existing closed descriptor grammar and binds it to an exact resolve request. */
+  public static AuthoredWorldLaunchDescriptorEvidence fromLaunchDescriptorMessage(
+      AuthoredWorldLaunchDescriptorEvidence.Request expectedRequest, LaunchDescriptor descriptor) {
+    return decodeDescriptor(
+        Objects.requireNonNull(expectedRequest, "expectedRequest"),
+        Objects.requireNonNull(descriptor, "descriptor"));
+  }
+
   /** Encodes the separate closed release attestation without changing descriptor/v1. */
   public static net.firedevops.firemud.gamedesign.v1.AuthoredWorldReleaseAttestationEvidence
       toReleaseAttestation(AuthoredWorldReleaseAttestationEvidence evidence) {
