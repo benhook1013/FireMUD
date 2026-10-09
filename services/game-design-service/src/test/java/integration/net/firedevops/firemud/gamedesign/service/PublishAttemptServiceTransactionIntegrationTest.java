@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.assertj.core.api.Assertions.catchThrowable;
 
 import io.grpc.BindableService;
+import io.grpc.Context;
 import io.grpc.Server;
 import io.grpc.ServerInterceptors;
 import io.grpc.Status;
@@ -13,15 +14,19 @@ import io.grpc.netty.shaded.io.grpc.netty.GrpcSslContexts;
 import io.grpc.netty.shaded.io.grpc.netty.NettyServerBuilder;
 import io.grpc.netty.shaded.io.netty.handler.ssl.ClientAuth;
 import io.grpc.stub.StreamObserver;
+import java.io.IOException;
 import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.security.KeyStore;
+import java.time.Instant;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.Base64;
 import java.util.List;
+import java.util.Map;
+import java.util.Objects;
 import java.util.UUID;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -30,14 +35,24 @@ import java.util.concurrent.atomic.AtomicReference;
 import net.firedevops.firemud.account.v1.AccountPublicationAuthorizationReadServiceGrpc;
 import net.firedevops.firemud.account.v1.ReadHeldPublicationAuthorizationRequest;
 import net.firedevops.firemud.account.v1.ReadHeldPublicationAuthorizationResponse;
+import net.firedevops.firemud.account.v1.ReadRedeemedOperationProjectionResponse;
+import net.firedevops.firemud.common.account.StartSessionRedeemedOperationProjectionClient;
+import net.firedevops.firemud.common.authoring.DraftCommitBinding;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding.TargetProof;
 import net.firedevops.firemud.common.config.ServiceEndpointsProperties;
 import net.firedevops.firemud.common.gamedesign.GameDesignPublicationTerminalEvidence.Outcome;
+import net.firedevops.firemud.common.gamedesign.StartSessionTemplateAssociationReadEvidence;
+import net.firedevops.firemud.common.gamedesign.StartSessionTemplateAssociationReadGrpcCodec;
 import net.firedevops.firemud.common.grpc.CommonGrpcClientProperties;
 import net.firedevops.firemud.common.grpc.GrpcChannelFactory;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentityInterceptor;
 import net.firedevops.firemud.common.grpc.GrpcServerPeerIdentityCallCredentials;
+import net.firedevops.firemud.common.json.Rfc8785CanonicalJson;
+import net.firedevops.firemud.common.operator.StartSessionAuthorityEvidenceBundle;
+import net.firedevops.firemud.common.operator.StartSessionOperatorAction;
+import net.firedevops.firemud.common.operator.StartSessionPostAuthorizationExecutionTuple;
+import net.firedevops.firemud.common.operator.StartSessionPreAuthorizationReservationTuple;
 import net.firedevops.firemud.common.publication.AccountPublicationAuthorizationBinding;
 import net.firedevops.firemud.common.publication.AccountPublicationAuthorizationReadClient;
 import net.firedevops.firemud.common.publication.AccountPublicationAuthorizationReadEvidence;
@@ -54,6 +69,7 @@ import net.firedevops.firemud.common.publication.WorldSelectedDraftPublicationFr
 import net.firedevops.firemud.common.publication.WorldSelectedDraftPublicationFreezeEvidence;
 import net.firedevops.firemud.common.publication.WorldSelectedDraftPublicationFreezeGrpcCodec;
 import net.firedevops.firemud.common.temporal.FiremudWorkflowIds;
+import net.firedevops.firemud.common.tenant.FreshTenantCreationEvidence;
 import net.firedevops.firemud.common.tenant.WorldAuthoredSourceIntakeGrpcCodec;
 import net.firedevops.firemud.common.tenant.WorldAuthoredSourceIntakeGrpcCodec.ByIdReadRequest;
 import net.firedevops.firemud.common.tenant.WorldAuthoredSourceIntakeGrpcCodec.CommittedReceipt;
@@ -85,13 +101,18 @@ import net.firedevops.firemud.gamedesign.publication.GameDesignPublicationOperat
 import net.firedevops.firemud.gamedesign.publication.GameDesignPublicationOperationRepository;
 import net.firedevops.firemud.gamedesign.publication.GameDesignPublicationTerminalReadGrpcService;
 import net.firedevops.firemud.gamedesign.publication.GameDesignPublicationTerminalReadService;
+import net.firedevops.firemud.gamedesign.publication.GameDesignSourceRepository;
 import net.firedevops.firemud.gamedesign.publication.IsolatedPublicationOperationFixtures;
 import net.firedevops.firemud.gamedesign.publication.SelectedDraftPublicationCommandService;
 import net.firedevops.firemud.gamedesign.publication.SelectedDraftPublicationOwner;
 import net.firedevops.firemud.gamedesign.publication.SelectedDraftTemplateWorldSourceAssociation;
+import net.firedevops.firemud.gamedesign.publication.StartSessionTemplateAssociationReadService;
+import net.firedevops.firemud.gamedesign.publication.TemplateConfigSource;
+import net.firedevops.firemud.gamedesign.publication.TemplateReferenceRepository;
 import net.firedevops.firemud.gamedesign.repository.GameAuthoredWorldSourceDeliveryRepository;
 import net.firedevops.firemud.gamedesign.repository.GameAuthoredWorldSourceRepository;
 import net.firedevops.firemud.gamedesign.repository.GameRepository;
+import net.firedevops.firemud.gamedesign.repository.GameTenantCreationRepository;
 import net.firedevops.firemud.gamedesign.repository.PublishAttemptRepository;
 import net.firedevops.firemud.gamedesign.repository.PublishedReleaseBundleRepository;
 import net.firedevops.firemud.gamedesign.repository.VersionAssetArtifactRepository;
@@ -131,6 +152,7 @@ import org.springframework.transaction.support.TransactionTemplate;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
+import tools.jackson.databind.json.JsonMapper;
 
 /** PostgreSQL proof for full-version publication transactions and failure retention. */
 @Testcontainers(disabledWithoutDocker = true)
@@ -152,6 +174,7 @@ class PublishAttemptServiceTransactionIntegrationTest {
   private static final String NAMESPACE = "test";
   private static final String TENANT_ID = "9001";
   private static final String WORKFLOW_ID = "full-version-transaction-integration-test";
+  private static final JsonMapper START_SESSION_JSON = JsonMapper.builder().build();
 
   @Container
   static PostgreSQLContainer<?> postgres =
@@ -170,6 +193,7 @@ class PublishAttemptServiceTransactionIntegrationTest {
   @Autowired private PublishedReleaseBundleRepository publishedReleaseBundleRepository;
   @Autowired private VersionAssetArtifactRepository versionAssetArtifactRepository;
   @Autowired private VersionRepository versionRepository;
+  @Autowired private PublishedReleaseBundleService publishedReleaseBundleService;
   @Autowired private VersionTemplateRemapSetRepository templateRemapSetRepository;
   @Autowired private DSLContext dsl;
   @Autowired private PlatformTransactionManager transactionManager;
@@ -573,18 +597,25 @@ class PublishAttemptServiceTransactionIntegrationTest {
   }
 
   /**
-   * Exercises the real GD admission, owner reservation, and finalizer. The Account HELD response,
-   * World freeze/selector/source read, original Draft outcomes, participant digests, and empty
-   * export are stipulated test fixtures; this is not genuine upstream producer proof.
+   * Exercises the real GD tenant creation, source/coordinator, selected publication, capture,
+   * immutable association, release, and receiver storage joins. Account authorization/projection,
+   * World freeze/selector/source intake, Draft owner outcomes, participant digests, and selected
+   * export candidate remain stipulated test fixtures; this is not whole-chain transport proof.
    */
   @Test
   void selectedDraftCompositionUsesAuthenticatedOwnerReadsAndReconcilesExactV2Release(
       @TempDir Path temporary) throws Exception {
     String tenantId = "9010";
-    Game game = new Game();
-    game.setTenantId(tenantId);
-    game.setName("selected-command-composition-proof-game");
-    gameRepository.save(game);
+    FreshTenantCreationEvidence creation =
+        inOwnerTransaction(
+            () ->
+                new GameTenantCreationRepository(dsl, gameRepository)
+                    .createCandidate(
+                        NAMESPACE,
+                        UUID.randomUUID(),
+                        tenantId,
+                        "selected-command-composition-proof-game",
+                        null));
 
     Version candidate = new Version();
     candidate.setTenantId(tenantId);
@@ -592,8 +623,28 @@ class PublishAttemptServiceTransactionIntegrationTest {
     candidate.setVersionState(VersionLifecycleState.DRAFT);
     candidate.setVersionStateEpoch(1L);
     candidate.setNotes("selected command composition proof");
-    candidate = versionRepository.save(candidate);
+    Version draftCandidate = candidate;
+    candidate = inOwnerTransaction(() -> versionRepository.save(draftCandidate));
     TargetProof target = targetProof(candidate);
+    DraftCommitBinding templateCreate = applyTemplateCreate(target);
+    var phaseAfterCreate =
+        new TemplateReferenceRepository(dsl).readPhase(target.canonicalTenantId()).orElseThrow();
+    assertThat(phaseAfterCreate.phase()).isEqualTo(TemplateReferenceRepository.Phase.ENFORCED);
+    assertThat(phaseAfterCreate.inventoryTemplateCount()).isEqualTo(1L);
+    assertThat(phaseAfterCreate.creationOperationId()).isEqualTo(creation.operationId());
+    var configuredTemplateRow =
+        Objects.requireNonNull(
+            dsl.fetchOne("SELECT id FROM game_templates WHERE tenant_id = ?", tenantId),
+            "Configured template row is missing");
+    Long configuredTemplateId =
+        Objects.requireNonNull(
+            configuredTemplateRow.get("id", Long.class), "Configured template row has no id");
+    assertThat(
+            new TemplateReferenceRepository(dsl)
+                .readExactBaseReference(target.canonicalTenantId(), configuredTemplateId)
+                .orElseThrow()
+                .sourceCommitId())
+        .isEqualTo(templateCreate.commitId());
     long candidateEpoch = candidate.getVersionStateEpoch();
     var prepared =
         inOwnerTransaction(
@@ -673,7 +724,24 @@ class PublishAttemptServiceTransactionIntegrationTest {
                 Mockito.argThat(actual -> sameCanonicalPreimage(actual, expectedDigestBinding)),
                 Mockito.eq(workflowId)))
         .thenReturn(participantDigests);
-    Mockito.when(assetExportService.exportAssets(tenantId, 1)).thenReturn(immutableEmptyManifest());
+    var selectedManifest = immutableEmptyManifest();
+    var selectedCandidate =
+        new VersionAssetExportCandidateService.CandidateBinding(
+            expectedDigestBinding.requestDigest(),
+            "sha256:" + "b".repeat(64),
+            "sha256:" + "c".repeat(64),
+            net.firedevops.firemud.gamedesign.publication.SelectedDraftAssetInventory.SCHEMA,
+            "sha256:" + "d".repeat(64),
+            selectedManifest,
+            expectedDigestBinding.canonicalPreimage(),
+            "stipulated selected inventory".getBytes(StandardCharsets.UTF_8),
+            "stipulated empty manifest".getBytes(StandardCharsets.UTF_8));
+    var selectedExport =
+        new AssetExportService.SelectedExportResult(selectedManifest, selectedCandidate);
+    Mockito.when(
+            assetExportService.exportSelectedAssets(
+                Mockito.argThat(actual -> sameCanonicalPreimage(actual, expectedDigestBinding))))
+        .thenReturn(selectedExport);
 
     var pki = new SelectionReadTestPki(Files.createDirectories(temporary.resolve("pki")));
     var publicationReadIdentities = pki.publicationReadIdentities();
@@ -802,6 +870,13 @@ class PublishAttemptServiceTransactionIntegrationTest {
                 Mockito.any(VersionDto.class),
                 Mockito.argThat(actual -> sameCanonicalPreimage(actual, expectedDigestBinding)),
                 Mockito.eq(workflowId));
+        Mockito.verify(assetExportService)
+            .exportSelectedAssets(
+                Mockito.argThat(actual -> sameCanonicalPreimage(actual, expectedDigestBinding)));
+        Mockito.verify(assetExportService)
+            .requireSelectedCandidateForFinalization(
+                Mockito.argThat(actual -> sameCanonicalPreimage(actual, expectedDigestBinding)),
+                Mockito.same(selectedExport));
         assertThat(versionCountForTenant(tenantId)).isEqualTo(versionCountBeforePublish);
         assertThat(accountEndpoint.readCount()).isEqualTo(3);
         assertThat(worldEndpoint.readCount()).isEqualTo(2);
@@ -846,6 +921,151 @@ class PublishAttemptServiceTransactionIntegrationTest {
         assertThat(retainedOperation.outcome()).isEqualTo("PUBLISHED");
         assertThat(retainedOperation.terminalEvidenceBytes()).isNotEmpty();
         publishAttemptRepository.requirePublishedOperation(attempt);
+
+        var startSessionTuple = startSessionTuple(target.canonicalTenantId(), configuredTemplateId);
+        UUID gameSessionAttemptId = UUID.randomUUID();
+        long gameSessionFence = 12L;
+        var accountProjectionClient =
+            Mockito.mock(StartSessionRedeemedOperationProjectionClient.class);
+        Mockito.when(
+                accountProjectionClient.read(
+                    Mockito.any(StartSessionPostAuthorizationExecutionTuple.class),
+                    Mockito.eq(gameSessionAttemptId),
+                    Mockito.eq(gameSessionFence)))
+            .thenAnswer(
+                invocation ->
+                    startSessionAccountProjection(
+                        invocation.getArgument(0), gameSessionAttemptId, gameSessionFence));
+        var associationReadService =
+            new StartSessionTemplateAssociationReadService(
+                dsl,
+                transactionManager,
+                NAMESPACE,
+                accountProjectionClient,
+                publishedReleaseBundleService);
+        var initialReadRequest =
+            new StartSessionTemplateAssociationReadEvidence.Request(
+                1,
+                NAMESPACE,
+                UUID.randomUUID(),
+                startSessionTuple.canonicalBytes(),
+                gameSessionAttemptId,
+                gameSessionFence,
+                new StartSessionTemplateAssociationReadEvidence.InitialConfigured());
+        List<Long> receiverStorageBefore =
+            startSessionAssociationStorageCounts(target.canonicalTenantId());
+        var initialAssociationResult =
+            withGameSessionPeer(() -> associationReadService.read(initialReadRequest));
+        assertThat(initialAssociationResult.association().canonicalTenantId())
+            .isEqualTo(target.canonicalTenantId());
+        assertThat(initialAssociationResult.association().templateId())
+            .isEqualTo(configuredTemplateId);
+        assertThat(initialAssociationResult.association().canonicalVersionId())
+            .isEqualTo(target.canonicalVersionId());
+        assertThat(initialAssociationResult.association().selectedCommitId())
+            .isEqualTo(selection.selectedCommit().commitId());
+        assertThat(initialAssociationResult.association().publishWorkflowId())
+            .isEqualTo(workflowId);
+        assertThat(initialAssociationResult.phaseEpoch()).isEqualTo(phaseAfterCreate.phaseEpoch());
+        var initialWireResponse =
+            StartSessionTemplateAssociationReadGrpcCodec.toResponse(initialAssociationResult);
+        assertThat(
+                StartSessionTemplateAssociationReadGrpcCodec.fromResponse(
+                    initialReadRequest, initialWireResponse))
+            .isEqualTo(initialAssociationResult);
+
+        var exactReplayRequest =
+            new StartSessionTemplateAssociationReadEvidence.Request(
+                1,
+                NAMESPACE,
+                UUID.randomUUID(),
+                startSessionTuple.canonicalBytes(),
+                gameSessionAttemptId,
+                gameSessionFence,
+                new StartSessionTemplateAssociationReadEvidence.ExactReplay(
+                    initialAssociationResult.association().canonicalVersionId(),
+                    initialAssociationResult.association().selectedCommitId(),
+                    initialAssociationResult.association().publishWorkflowId(),
+                    initialAssociationResult.association().associationDigest()));
+        var exactReplayResult =
+            withGameSessionPeer(() -> associationReadService.read(exactReplayRequest));
+        assertThat(exactReplayResult.association())
+            .isEqualTo(initialAssociationResult.association());
+        assertThat(exactReplayResult.releaseBundle())
+            .isEqualTo(initialAssociationResult.releaseBundle());
+        assertThat(exactReplayResult.worldPublishedStartLocationEvidence().canonicalBytes())
+            .containsExactly(
+                initialAssociationResult.worldPublishedStartLocationEvidence().canonicalBytes());
+        var replayWireResponse =
+            StartSessionTemplateAssociationReadGrpcCodec.toResponse(exactReplayResult);
+        assertThat(
+                StartSessionTemplateAssociationReadGrpcCodec.fromResponse(
+                    exactReplayRequest, replayWireResponse))
+            .isEqualTo(exactReplayResult);
+        assertThatThrownBy(
+                () ->
+                    StartSessionTemplateAssociationReadGrpcCodec.fromResponse(
+                        exactReplayRequest,
+                        replayWireResponse.toBuilder()
+                            .setAssociation(
+                                replayWireResponse.getAssociation().toBuilder()
+                                    .setAssociationDigest("sha256:" + "f".repeat(64))
+                                    .build())
+                            .build()))
+            .isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(
+                () ->
+                    StartSessionTemplateAssociationReadGrpcCodec.fromResponse(
+                        exactReplayRequest,
+                        replayWireResponse.toBuilder()
+                            .setReleaseBundle(
+                                replayWireResponse.getReleaseBundle().toBuilder()
+                                    .setPublishWorkflowId("changed-workflow")
+                                    .build())
+                            .build()))
+            .isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(
+                () ->
+                    StartSessionTemplateAssociationReadGrpcCodec.fromResponse(
+                        exactReplayRequest,
+                        replayWireResponse.toBuilder()
+                            .setAssociation(
+                                replayWireResponse.getAssociation().toBuilder()
+                                    .setWorldSlug("changed-world")
+                                    .build())
+                            .build()))
+            .isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(
+                () ->
+                    StartSessionTemplateAssociationReadGrpcCodec.fromResponse(
+                        exactReplayRequest,
+                        replayWireResponse.toBuilder().setReferencePhaseEpoch(0L).build()))
+            .isInstanceOf(IllegalArgumentException.class);
+        var changedReplayRequest =
+            new StartSessionTemplateAssociationReadEvidence.Request(
+                1,
+                NAMESPACE,
+                UUID.randomUUID(),
+                startSessionTuple.canonicalBytes(),
+                gameSessionAttemptId,
+                gameSessionFence,
+                new StartSessionTemplateAssociationReadEvidence.ExactReplay(
+                    exactReplayResult.association().canonicalVersionId(),
+                    exactReplayResult.association().selectedCommitId(),
+                    exactReplayResult.association().publishWorkflowId(),
+                    "sha256:" + "f".repeat(64)));
+        assertThatThrownBy(
+                () -> withGameSessionPeer(() -> associationReadService.read(changedReplayRequest)))
+            .isInstanceOf(StatusRuntimeException.class)
+            .extracting(failure -> ((StatusRuntimeException) failure).getStatus().getCode())
+            .isEqualTo(Status.Code.FAILED_PRECONDITION);
+        assertThat(startSessionAssociationStorageCounts(target.canonicalTenantId()))
+            .isEqualTo(receiverStorageBefore);
+        Mockito.verify(accountProjectionClient, Mockito.times(3))
+            .read(
+                Mockito.any(StartSessionPostAuthorizationExecutionTuple.class),
+                Mockito.eq(gameSessionAttemptId),
+                Mockito.eq(gameSessionFence));
 
         assertTerminalOwnerReadOverMtls(operation, Outcome.PUBLISHED, pki);
         byte[] terminalBeforeChangedRetry = retainedOperation.terminalEvidenceBytes();
@@ -2442,6 +2662,223 @@ class PublishAttemptServiceTransactionIntegrationTest {
         version.getIdentitySourceGameRowId(),
         version.getIdentitySourceGameTenantKey(),
         version.getIdentitySourceProvenanceKind());
+  }
+
+  private static StartSessionPostAuthorizationExecutionTuple startSessionTuple(
+      UUID canonicalTenantId, long templateId) {
+    var preTuple =
+        StartSessionPreAuthorizationReservationTuple.createHuman(
+            "start-session-receiver-" + UUID.randomUUID(),
+            UUID.randomUUID(),
+            new StartSessionOperatorAction(
+                StartSessionOperatorAction.ACTION_FAMILY_SCHEMA_ID,
+                StartSessionOperatorAction.ACTION_FAMILY_SCHEMA_VERSION,
+                new StartSessionOperatorAction.Scope(canonicalTenantId, NAMESPACE),
+                new StartSessionOperatorAction.Target(templateId, UUID.randomUUID()),
+                StartSessionOperatorAction.ExpectedVersion.ABSENT,
+                new StartSessionOperatorAction.Mutation(
+                    StartSessionOperatorAction.ClientIp.absent()),
+                "bounded PostgreSQL receiver proof"));
+    return StartSessionPostAuthorizationExecutionTuple.createHuman(
+        preTuple,
+        "spiffe://firemud/ns/" + NAMESPACE + "/sa/logging-admin-service",
+        "arfp/v1/test-key/" + "b".repeat(64),
+        UUID.randomUUID(),
+        19L,
+        startSessionAuthorityBundle(preTuple),
+        new StartSessionAuthorityEvidenceBundle.BundleReference(
+            StartSessionAuthorityEvidenceBundle.BUNDLE_VERSION,
+            "17",
+            "23",
+            "18446744073709551615"));
+  }
+
+  private static byte[] startSessionAuthorityBundle(
+      StartSessionPreAuthorizationReservationTuple tuple) {
+    String tenant = tuple.action().scope().tenantId().toString();
+    String actor = tuple.actor().accountId().toString();
+    String now = Instant.now().toString();
+    String expires = Instant.now().plusSeconds(300).toString();
+    Map<String, Object> value =
+        Map.of(
+            "bundleVersion",
+            StartSessionAuthorityEvidenceBundle.BUNDLE_VERSION,
+            "authorityScope",
+            Map.of(
+                "scope",
+                Map.of("tenantId", tenant, "targetNamespace", NAMESPACE),
+                "actionFamily",
+                tuple.actionFamily(),
+                "applicableAccountId",
+                actor,
+                "applicableTenantId",
+                tenant),
+            "accountProjectionEvidence",
+            Map.of(
+                "sourceType",
+                "ACCOUNT",
+                "sourceEvidenceId",
+                "sha256:" + "a".repeat(64),
+                "sourceEvidenceVersion",
+                "17",
+                "projectionStatus",
+                "CURRENT",
+                "evaluatedAt",
+                now,
+                "expiresAt",
+                expires),
+            "issuanceOperationIdentity",
+            Map.of(
+                "issuanceOperationId", UUID.randomUUID().toString(),
+                "controlPlaneRequestId", tuple.controlPlaneRequestId(),
+                "actionFamilyRequestIdentity",
+                    Map.of(
+                        "requestIdentityKind",
+                        "controlPlaneRequestId",
+                        "requestId",
+                        tuple.controlPlaneRequestId()),
+                "mutationDigest", tuple.mutationDigest()),
+            "issuanceKind",
+            "human_operator",
+            "authorityTuple",
+            Map.of(
+                "issuerAuthGeneration", 1L,
+                "accountAuthorityGeneration", 2L,
+                "tenantAuthorityGeneration", Map.of(tenant, 3L),
+                "membershipAuthorityGeneration", Map.of(tenant, 4L),
+                "privateRealmGrantVersions", List.of()),
+            "membershipVersion",
+            Map.of(tenant, 5L),
+            "issuanceFence",
+            "23",
+            "issuanceEvidence",
+            Map.of(
+                "evidenceType",
+                StartSessionAuthorityEvidenceBundle.HUMAN_EVIDENCE_TYPE,
+                "actorAccountId",
+                actor,
+                "controlUiTokenJti",
+                UUID.randomUUID().toString(),
+                "role",
+                "tenantAdmin",
+                "accountGeneration",
+                "2",
+                "tenantGeneration",
+                "3"));
+    try {
+      return Rfc8785CanonicalJson.canonicalizeUtf8(START_SESSION_JSON.writeValueAsString(value));
+    } catch (IOException invalid) {
+      throw new IllegalStateException(
+          "Unable to create stipulated Account tuple evidence", invalid);
+    }
+  }
+
+  private static ReadRedeemedOperationProjectionResponse startSessionAccountProjection(
+      StartSessionPostAuthorizationExecutionTuple tuple, UUID attemptId, long ownerFence) {
+    return ReadRedeemedOperationProjectionResponse.newBuilder()
+        .setControlPlaneRequestId(tuple.controlPlaneRequestId())
+        .setCanonicalPreAuthorizationTupleBytes(
+            com.google.protobuf.ByteString.copyFrom(
+                tuple.preAuthorizationTuple().canonicalJson().getBytes(StandardCharsets.UTF_8)))
+        .setMutationDigest(tuple.preAuthorizationTuple().mutationDigest())
+        .setOwnerAttemptId(attemptId.toString())
+        .setOwnerFence(ownerFence)
+        .setAuthenticatedRedeemerWorkloadIdentity(
+            "spiffe://firemud/ns/" + NAMESPACE + "/sa/game-session-service")
+        .build();
+  }
+
+  private <T> T withGameSessionPeer(java.util.function.Supplier<T> action) {
+    var peer =
+        new GrpcPeerIdentity(
+            "spiffe://firemud/ns/" + NAMESPACE + "/sa/game-session-service",
+            NAMESPACE,
+            "game-session-service");
+    Context context = Context.current().withValue(GrpcPeerIdentity.CONTEXT_KEY, peer);
+    Context previous = context.attach();
+    try {
+      return action.get();
+    } finally {
+      context.detach(previous);
+    }
+  }
+
+  private List<Long> startSessionAssociationStorageCounts(UUID canonicalTenantId) {
+    return List.of(
+        dsl.fetchSingle(
+                "SELECT COUNT(*) FROM game_template_version_ref WHERE canonical_tenant_id = ?",
+                canonicalTenantId)
+            .get(0, Long.class),
+        dsl.fetchSingle(
+                "SELECT COUNT(*) FROM game_design_template_config_source_capture WHERE canonical_tenant_id = ?",
+                canonicalTenantId)
+            .get(0, Long.class),
+        dsl.fetchSingle(
+                "SELECT COUNT(*) FROM game_design_selected_template_world_source_association WHERE canonical_tenant_id = ?",
+                canonicalTenantId)
+            .get(0, Long.class),
+        dsl.fetchSingle(
+                "SELECT COUNT(*) FROM published_release_bundle WHERE tenant_id = ?",
+                tenantKeyFor(canonicalTenantId))
+            .get(0, Long.class),
+        dsl.fetchSingle(
+                "SELECT COUNT(*) FROM game_template_reference_phase WHERE canonical_tenant_id = ?",
+                canonicalTenantId)
+            .get(0, Long.class));
+  }
+
+  private String tenantKeyFor(UUID canonicalTenantId) {
+    return dsl.fetchSingle(
+            "SELECT tenant_id FROM game WHERE canonical_tenant_id = ?", canonicalTenantId)
+        .get(0, String.class);
+  }
+
+  /**
+   * Applies an owner-authorized fresh TemplateConfig CREATE through the real source coordinator.
+   */
+  private DraftCommitBinding applyTemplateCreate(TargetProof target) {
+    var config =
+        new TemplateConfigSource.Config(
+            "{\"schemaVersion\":1,\"baseVersionId\":\""
+                + target.canonicalVersionId()
+                + "\",\"world\":{\"regions\":[],\"rooms\":[]},"
+                + "\"entity\":{\"items\":[],\"npcs\":[]},\"gameLogic\":{\"inputs\":[]},"
+                + "\"automation\":{\"scripts\":[],\"scriptPatch\":{\"presence\":\"ABSENT\"}},"
+                + "\"supportedSettings\":[]}");
+    UUID revisionId = UUID.randomUUID();
+    DraftCommitBinding binding =
+        DraftCommitBinding.create(
+            target,
+            UUID.randomUUID(),
+            UUID.randomUUID(),
+            "template-genesis",
+            List.of(
+                new DraftCommitBinding.RevisionPayload(
+                    "0",
+                    revisionId,
+                    DraftCommitBinding.Owner.GAME_DESIGN_CONTROL_PLANE,
+                    TemplateConfigSource.createPayload("Starter", config))),
+            List.of(
+                new DraftCommitBinding.AffectedUnit(
+                    DraftCommitBinding.Owner.GAME_DESIGN_CONTROL_PLANE,
+                    TemplateConfigSource.SCOPE,
+                    target.canonicalVersionId().toString(),
+                    TemplateConfigSource.SCOPE,
+                    TemplateConfigSource.SCOPE_ID,
+                    "0")));
+    return inOwnerTransaction(
+        () -> {
+          var coordinator = new DraftCommitCoordinatorRepository(dsl);
+          coordinator.claim(binding);
+          coordinator.claimApplicationSlot(binding);
+          coordinator.markOwnerInProgress(
+              binding, DraftCommitBinding.Owner.GAME_DESIGN_CONTROL_PLANE);
+          var applied = new GameDesignSourceRepository(dsl).apply(binding);
+          IsolatedPublicationOwnerSetup.advanceSourceVisibility(
+              dsl, binding, List.of(applied.ownerOutcome()));
+          coordinator.releaseApplicationSlot(binding);
+          return binding;
+        });
   }
 
   private <T> T inOwnerTransaction(java.util.function.Supplier<T> action) {

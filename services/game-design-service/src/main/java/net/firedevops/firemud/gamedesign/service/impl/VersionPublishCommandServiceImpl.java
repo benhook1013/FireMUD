@@ -182,8 +182,22 @@ public class VersionPublishCommandServiceImpl {
       return failDefinitively(request, attempt, version, null, ex);
     }
     ExportedAssetManifest exportedManifest;
+    AssetExportService.SelectedExportResult selectedExportResult;
     try {
-      exportedManifest = assetExportService.exportAssets(request.tenantId(), dto.versionNumber());
+      if (selectedBinding == null) {
+        selectedExportResult = null;
+        exportedManifest = assetExportService.exportAssets(request.tenantId(), dto.versionNumber());
+      } else {
+        selectedExportResult =
+            Objects.requireNonNull(
+                assetExportService.exportSelectedAssets(selectedBinding),
+                "Exact selected asset candidate and object readback required");
+        exportedManifest = selectedExportResult.manifest();
+      }
+    } catch (AssetExportService.SelectedExportOutcomePendingException unresolved) {
+      throw pendingReconciliation(
+          "selected asset candidate or object readback is unresolved; retry exact publish request",
+          unresolved);
     } catch (RuntimeException ex) {
       return failDefinitively(request, attempt, version, null, ex);
     }
@@ -191,7 +205,9 @@ public class VersionPublishCommandServiceImpl {
     PublishWorkflowRequest effectiveRequest = request;
     try {
       return publishAttemptService.executeFullVersionTransaction(
-          () -> finalizeFullVersion(effectiveRequest, participantDigests, exportedManifest));
+          () ->
+              finalizeFullVersion(
+                  effectiveRequest, participantDigests, exportedManifest, selectedExportResult));
     } catch (PublishAttemptService.FullVersionTransactionException ex) {
       RuntimeException operationFailure = ex.causeException();
       if (operationFailure instanceof PendingReconciliationException) {
@@ -327,7 +343,8 @@ public class VersionPublishCommandServiceImpl {
   private PublishWorkflowSnapshot finalizeFullVersion(
       PublishWorkflowRequest request,
       List<PublishParticipantDigestDto> participantDigests,
-      ExportedAssetManifest exportedManifest) {
+      ExportedAssetManifest exportedManifest,
+      AssetExportService.SelectedExportResult selectedExportResult) {
     if (gameRepository.findByTenantIdForUpdate(request.tenantId()) == null) {
       throw new IllegalArgumentException("game not found");
     }
@@ -381,6 +398,19 @@ public class VersionPublishCommandServiceImpl {
           "original World publication evidence requires exact reconciliation", unresolved);
     }
     VersionDto dto = versionMapper.toDto(version);
+    PublicationDigestRequestBinding selectedBinding = validateFullVersionAttempt(attempt, request);
+    if (selectedBinding != null) {
+      if (selectedExportResult == null
+          || !exportedManifest.equals(selectedExportResult.manifest())) {
+        throw pendingReconciliation("exact selected asset export candidate is unavailable");
+      }
+      // SQL-only exact readback joins the immutable candidate before any final release writes.
+      // Object-store calls and selected inventory export occurred outside this transaction.
+      assetExportService.requireSelectedCandidateForFinalization(
+          selectedBinding, selectedExportResult);
+    } else if (selectedExportResult != null) {
+      throw pendingReconciliation("selected asset candidate cannot finalize a generic publication");
+    }
     publishAttemptService.recordFullVersionParticipantDigests(
         request.publishWorkflowId(), participantDigests);
     VersionAssetArtifactStateDto exportedState =
@@ -583,7 +613,10 @@ public class VersionPublishCommandServiceImpl {
           "full-version failure marking commit outcome is unknown; readback/reconciliation is required",
           ambiguousFailure);
     }
-    cleanupExportedAssets(request.tenantId(), version.getVersionNumber(), exportedManifest);
+    if (!isSelectionDigest(attempt.getRequestDigest())) {
+      // Selected outputs are immutable/shared; only a separate reachability proof may purge them.
+      cleanupExportedAssets(request.tenantId(), version.getVersionNumber(), exportedManifest);
+    }
     return new PublishWorkflowSnapshot(
         attempt.getVersionId(),
         attempt.getVersionNumber(),

@@ -67,6 +67,7 @@ import net.firedevops.firemud.common.grpc.GrpcServerPeerIdentityClientIntercepto
 import net.firedevops.firemud.common.publication.AccountPublicationAuthorizationBinding;
 import net.firedevops.firemud.common.publication.AuthoredDraftPublishSelectionBinding;
 import net.firedevops.firemud.common.publication.GameDesignPublicationOperationBinding;
+import net.firedevops.firemud.common.publication.PublicationDigestRequestBinding;
 import net.firedevops.firemud.common.publication.RealmEntryPolicy;
 import net.firedevops.firemud.common.publication.WorldPublicationTerminalReadClient;
 import net.firedevops.firemud.common.publication.WorldPublicationTerminalReadEvidence;
@@ -5305,6 +5306,13 @@ class WorldDraftGraphApplicationPostgresIntegrationTest {
     Fixture f = fixture();
     WorldAuthoredSourceIntakeRepository intakeReader = new WorldAuthoredSourceIntakeRepository(dsl);
     OwnerBinding owner = f.owner();
+    String publicationRequestId = "transaction-dispatch-" + UUID.randomUUID();
+    String publishWorkflowId =
+        PublicationDigestRequestBinding.full(
+                owner.canonicalTenantId().toString(),
+                Long.toString(owner.gameDesignVersionId()),
+                publicationRequestId)
+            .derivedWorkflowIdentity();
     WorldDesignPublicationFenceEvidence freezeEvidence =
         new WorldDesignPublicationFenceEvidence(
             owner.targetNamespace(),
@@ -5318,10 +5326,10 @@ class WorldDraftGraphApplicationPostgresIntegrationTest {
             owner.sourceOperationId(),
             owner.sourceEvidenceDigest(),
             owner.intakeReceiptDigest(),
-            "transaction-dispatch-" + UUID.randomUUID(),
+            publicationRequestId,
             "a".repeat(64),
             1,
-            "publish:" + owner.canonicalTenantId() + ":transaction-dispatch");
+            publishWorkflowId);
 
     assertThatThrownBy(
             () ->

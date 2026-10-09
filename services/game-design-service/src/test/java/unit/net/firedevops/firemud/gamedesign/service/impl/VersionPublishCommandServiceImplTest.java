@@ -18,6 +18,7 @@ import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicBoolean;
 import net.firedevops.firemud.common.publication.AccountPublicationAuthorizationBinding;
 import net.firedevops.firemud.common.publication.AuthoredDraftPublishSelectionBinding;
 import net.firedevops.firemud.common.publication.PublicationDigestRequestBinding;
@@ -45,9 +46,11 @@ import net.firedevops.firemud.gamedesign.service.ExportedAssetManifest;
 import net.firedevops.firemud.gamedesign.service.PublishAttemptService;
 import net.firedevops.firemud.gamedesign.service.PublishGateFailureException;
 import net.firedevops.firemud.gamedesign.service.PublishGateService;
+import net.firedevops.firemud.gamedesign.service.PublishedArtifactDigest;
 import net.firedevops.firemud.gamedesign.service.PublishedReleaseBundleService;
 import net.firedevops.firemud.gamedesign.service.RecordedParticipantDigestService;
 import net.firedevops.firemud.gamedesign.service.VersionAssetArtifactService;
+import net.firedevops.firemud.gamedesign.service.VersionAssetExportCandidateService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -172,9 +175,10 @@ class VersionPublishCommandServiceImplTest {
     verify(versionRepository, never()).findByTenantIdAndId(any(String.class), any(Long.class));
   }
 
-  @Test
-  void selectedPublicationPassesCanonicalOperationBindingAndKeepsMissingReceiptPending()
-      throws Exception {
+  @ParameterizedTest
+  @ValueSource(booleans = {false, true})
+  void selectedPublicationPassesCanonicalOperationBindingAndKeepsUnresolvedDependenciesPending(
+      boolean assetReadbackPending) throws Exception {
     String tenantId = "9002";
     long versionId = 10L;
     int versionNumber = 8;
@@ -223,23 +227,33 @@ class VersionPublishCommandServiceImplTest {
     when(publishGateService.collectSelectedFullVersionParticipantDigests(
             any(VersionDto.class), any(PublicationDigestRequestBinding.class), eq(workflowId)))
         .thenReturn(
-            List.of(
-                new PublishParticipantDigestDto(
-                    "GAME_LOGIC",
-                    String.valueOf(versionId),
-                    null,
-                    null,
-                    null,
-                    null,
-                    "PARTICIPANT_UNAVAILABLE",
-                    "immutable selected Game Logic receipt is not available yet")));
-    org.mockito.Mockito.doThrow(
-            new PublishGateFailureException(
-                PublishGateFailureCode.PARTICIPANT_UNAVAILABLE,
-                "selected Game Logic receipt is missing",
-                "PARTICIPANT_UNAVAILABLE"))
-        .when(publishGateService)
-        .assertSelectedGatePassed(any(VersionDto.class), any(List.class));
+            assetReadbackPending
+                ? List.of()
+                : List.of(
+                    new PublishParticipantDigestDto(
+                        "GAME_LOGIC",
+                        String.valueOf(versionId),
+                        null,
+                        null,
+                        null,
+                        null,
+                        "PARTICIPANT_UNAVAILABLE",
+                        "immutable selected Game Logic receipt is not available yet")));
+    if (assetReadbackPending) {
+      when(assetExportService.exportSelectedAssets(any(PublicationDigestRequestBinding.class)))
+          .thenThrow(
+              new AssetExportService.SelectedExportOutcomePendingException(
+                  "Exact immutable object readback unavailable",
+                  new IllegalStateException("unavailable")));
+    } else {
+      org.mockito.Mockito.doThrow(
+              new PublishGateFailureException(
+                  PublishGateFailureCode.PARTICIPANT_UNAVAILABLE,
+                  "selected Game Logic receipt is missing",
+                  "PARTICIPANT_UNAVAILABLE"))
+          .when(publishGateService)
+          .assertSelectedGatePassed(any(VersionDto.class), any(List.class));
+    }
 
     assertThrows(
         VersionPublishCommandServiceImpl.PendingReconciliationException.class,
@@ -261,7 +275,319 @@ class VersionPublishCommandServiceImplTest {
     verify(publishAttemptService, never())
         .markFullVersionFailed(any(String.class), any(String.class), any(String.class));
     verify(publishAttemptRepository, never()).sealPublication(attempt, false);
+    verify(assetExportService, never()).exportAssets(any(String.class), any(Integer.class));
+    if (assetReadbackPending) {
+      var exportBindingCaptor = ArgumentCaptor.forClass(PublicationDigestRequestBinding.class);
+      verify(assetExportService).exportSelectedAssets(exportBindingCaptor.capture());
+      org.junit.jupiter.api.Assertions.assertArrayEquals(
+          expectedBinding.canonicalPreimage(), exportBindingCaptor.getValue().canonicalPreimage());
+      verify(assetExportService, never())
+          .deleteExportedAssets(any(String.class), any(Integer.class), any(List.class));
+    }
   }
+
+  @Test
+  void selectedPublicationRechecksExactCandidateUnderGameLockBeforeReleaseWrites() {
+    SelectedPublicationFixture fixture = selectedPublicationFixture();
+    AtomicBoolean transactionOpen = new AtomicBoolean();
+    AtomicBoolean gameLockObserved = new AtomicBoolean();
+    org.mockito.Mockito.doAnswer(
+            invocation -> {
+              transactionOpen.set(true);
+              try {
+                return ((java.util.function.Supplier<?>) invocation.getArgument(0)).get();
+              } catch (RuntimeException ex) {
+                throw new PublishAttemptService.FullVersionTransactionException(ex);
+              } finally {
+                transactionOpen.set(false);
+              }
+            })
+        .when(publishAttemptService)
+        .executeFullVersionTransaction(any());
+    when(gameRepository.findByTenantIdForUpdate(fixture.tenantId()))
+        .thenAnswer(
+            invocation -> {
+              assertTrue(
+                  transactionOpen.get(), "Game row lock must be acquired in the transaction");
+              gameLockObserved.set(true);
+              return fixture.game();
+            });
+    org.mockito.Mockito.doAnswer(
+            invocation -> {
+              assertTrue(transactionOpen.get(), "candidate readback must be transaction-local");
+              assertTrue(
+                  gameLockObserved.get(), "candidate readback must follow the Game row lock");
+              PublicationDigestRequestBinding actual = invocation.getArgument(0);
+              org.junit.jupiter.api.Assertions.assertArrayEquals(
+                  fixture.request().canonicalPreimage(), actual.canonicalPreimage());
+              assertEquals(fixture.exportResult(), invocation.getArgument(1));
+              return null;
+            })
+        .when(assetExportService)
+        .requireSelectedCandidateForFinalization(any(PublicationDigestRequestBinding.class), any());
+
+    var snapshot =
+        service.reconcileSelectedDraftFullVersionPublish(
+            fixture.tenantId(),
+            fixture.versionId(),
+            fixture.notes(),
+            fixture.publishRequestId(),
+            fixture.workflowId());
+
+    assertEquals("SUCCEEDED", snapshot.status(), snapshot.failureMessage());
+    ArgumentCaptor<PublicationDigestRequestBinding> exportBindingCaptor =
+        ArgumentCaptor.forClass(PublicationDigestRequestBinding.class);
+    verify(assetExportService).exportSelectedAssets(exportBindingCaptor.capture());
+    org.junit.jupiter.api.Assertions.assertArrayEquals(
+        fixture.request().canonicalPreimage(), exportBindingCaptor.getValue().canonicalPreimage());
+    verify(assetExportService, never()).exportAssets(any(String.class), any(Integer.class));
+    verify(assetExportService, never())
+        .deleteExportedAssets(any(String.class), any(Integer.class), any(List.class));
+
+    InOrder finalizationOrder =
+        inOrder(
+            assetExportService,
+            versionAssetArtifactService,
+            publishedReleaseBundleService,
+            versionRepository);
+    finalizationOrder.verify(assetExportService).exportSelectedAssets(any());
+    finalizationOrder
+        .verify(assetExportService)
+        .requireSelectedCandidateForFinalization(any(), same(fixture.exportResult()));
+    finalizationOrder
+        .verify(versionAssetArtifactService)
+        .markExportedUnattested(
+            any(String.class),
+            any(Long.class),
+            any(Integer.class),
+            any(String.class),
+            same(fixture.exportResult().manifest()));
+    finalizationOrder
+        .verify(publishedReleaseBundleService)
+        .createFullVersionBundle(
+            any(VersionDto.class),
+            any(String.class),
+            same(fixture.exportResult().manifest()),
+            any(String.class),
+            any(List.class),
+            same(originalWorldEvidence));
+    finalizationOrder.verify(versionRepository).save(same(fixture.version()));
+  }
+
+  @Test
+  void selectedCandidateMismatchCannotCreateOrPublishReleaseBundle() {
+    SelectedPublicationFixture fixture = selectedPublicationFixture();
+    org.mockito.Mockito.doThrow(new IllegalStateException("SELECTED_EXPORT_CANDIDATE_MISMATCH"))
+        .when(assetExportService)
+        .requireSelectedCandidateForFinalization(any(PublicationDigestRequestBinding.class), any());
+
+    var snapshot =
+        service.reconcileSelectedDraftFullVersionPublish(
+            fixture.tenantId(),
+            fixture.versionId(),
+            fixture.notes(),
+            fixture.publishRequestId(),
+            fixture.workflowId());
+
+    assertEquals("FAILED", snapshot.status());
+    assertEquals(VersionLifecycleState.DRAFT, fixture.version().getVersionState());
+    verify(assetExportService)
+        .requireSelectedCandidateForFinalization(any(PublicationDigestRequestBinding.class), any());
+    verify(versionAssetArtifactService, never())
+        .markExportedUnattested(
+            any(String.class),
+            any(Long.class),
+            any(Integer.class),
+            any(String.class),
+            any(ExportedAssetManifest.class));
+    verify(publishedReleaseBundleService, never())
+        .createFullVersionBundle(
+            any(VersionDto.class),
+            any(String.class),
+            any(ExportedAssetManifest.class),
+            any(String.class),
+            any(List.class),
+            any(WorldPublishedStartLocationEvidence.class));
+    verify(publishAttemptService, never()).markFullVersionSucceeded(any(String.class));
+    verify(publishAttemptService)
+        .markFullVersionFailed(
+            eq(fixture.workflowId()),
+            eq("PUBLISH_FAILED"),
+            eq("SELECTED_EXPORT_CANDIDATE_MISMATCH"));
+    verify(publishAttemptRepository).sealPublication(any(PublishAttempt.class), eq(false));
+    verify(versionAssetArtifactService)
+        .markFailed(
+            eq(fixture.tenantId()),
+            eq(fixture.versionId()),
+            eq(fixture.version().getVersionNumber()),
+            eq(fixture.workflowId()),
+            same(fixture.exportResult().manifest()),
+            eq("PUBLISH_FAILED"),
+            eq("SELECTED_EXPORT_CANDIDATE_MISMATCH"));
+    verify(assetExportService, never())
+        .deleteExportedAssets(any(String.class), any(Integer.class), any(List.class));
+  }
+
+  /**
+   * Isolated orchestration fixture: the retained operation/World owner reads are explicit Mockito
+   * doubles; this unit proof does not claim authenticated Account or cross-service release proof.
+   */
+  private SelectedPublicationFixture selectedPublicationFixture() {
+    String tenantId = "9002";
+    long versionId = 10L;
+    int versionNumber = 8;
+    String publishRequestId = "selected-request-finalize";
+    String notes = "selected draft notes";
+    UUID canonicalTenantId = UUID.fromString("11111111-1111-4111-8111-111111111111");
+    PublicationDigestRequestBinding request =
+        PublicationDigestRequestBinding.full(
+            canonicalTenantId.toString(), Long.toString(versionId), publishRequestId);
+    String workflowId = request.derivedWorkflowIdentity();
+    String selectionDigest = "sha256:" + "c".repeat(64);
+    PublishAttempt attempt =
+        fullAttempt(PublishAttemptStatus.PENDING, versionId, versionNumber, workflowId);
+    attempt.setTenantId(tenantId);
+    attempt.setRequestDigest(selectionDigest);
+    when(publishAttemptRepository.findByPublishWorkflowId(workflowId))
+        .thenReturn(Optional.of(attempt));
+
+    GameDesignPublicationOperation operation =
+        org.mockito.Mockito.mock(GameDesignPublicationOperation.class);
+    AccountPublicationAuthorizationBinding account =
+        org.mockito.Mockito.mock(AccountPublicationAuthorizationBinding.class);
+    AccountPublicationAuthorizationBinding.PreallocationInput input =
+        org.mockito.Mockito.mock(AccountPublicationAuthorizationBinding.PreallocationInput.class);
+    AuthoredDraftPublishSelectionBinding selection =
+        org.mockito.Mockito.mock(AuthoredDraftPublishSelectionBinding.class);
+    AuthoredDraftPublishSelectionBinding.PublishIntent intent =
+        org.mockito.Mockito.mock(AuthoredDraftPublishSelectionBinding.PublishIntent.class);
+    when(operation.account()).thenReturn(account);
+    when(account.input()).thenReturn(input);
+    when(input.selection()).thenReturn(selection);
+    when(selection.intent()).thenReturn(intent);
+    when(intent.canonicalTenantId()).thenReturn(canonicalTenantId);
+    when(intent.publishRequestId()).thenReturn(publishRequestId);
+    when(intent.notes()).thenReturn(notes);
+    when(operation.tenantKey()).thenReturn(tenantId);
+    when(operation.versionId()).thenReturn(versionId);
+    when(operation.selectionDigest()).thenReturn(selectionDigest);
+    when(operation.workflowId()).thenReturn(workflowId);
+    when(publishAttemptRepository.requireSelectedPublicationReadback(attempt, "PENDING"))
+        .thenReturn(operation);
+
+    Version version = fullVersion(versionId, versionNumber, VersionLifecycleState.DRAFT);
+    version.setTenantId(tenantId);
+    version.setNotes(notes);
+    when(versionRepository.findByTenantIdAndId(tenantId, versionId))
+        .thenReturn(Optional.of(version));
+    Game game = new Game();
+    game.setTenantId(tenantId);
+    when(gameRepository.findByTenantIdForUpdate(tenantId)).thenReturn(game);
+
+    List<PublishParticipantDigestDto> participantDigests = participantDigests();
+    when(publishGateService.collectSelectedFullVersionParticipantDigests(
+            any(VersionDto.class), any(PublicationDigestRequestBinding.class), eq(workflowId)))
+        .thenReturn(participantDigests);
+    when(controlPlaneDigestService.getDigestForVersion(any(VersionDto.class)))
+        .thenReturn(
+            new DesignControlPlaneDigestDto(
+                tenantId, Long.toString(versionId), "version:" + versionId, "digest-selected", 1));
+
+    String artifactDigest = "sha256:" + "a".repeat(64);
+    PublishedArtifactDigest artifact =
+        new PublishedArtifactDigest(
+            "logo.png",
+            "ORDINARY",
+            "artifacts/sha256/" + "a".repeat(64),
+            artifactDigest,
+            "image/png",
+            1);
+    ExportedAssetManifest manifest =
+        new ExportedAssetManifest(
+            "sha256:" + "b".repeat(64), 1, List.of("logo.png"), List.of(artifact));
+    VersionAssetExportCandidateService.CandidateBinding candidate =
+        new VersionAssetExportCandidateService.CandidateBinding(
+            request.requestDigest(),
+            "sha256:" + "d".repeat(64),
+            "sha256:" + "e".repeat(64),
+            net.firedevops.firemud.gamedesign.publication.SelectedDraftAssetInventory.SCHEMA,
+            "sha256:" + "f".repeat(64),
+            manifest,
+            request.canonicalPreimage(),
+            "{}".getBytes(java.nio.charset.StandardCharsets.UTF_8),
+            "{}".getBytes(java.nio.charset.StandardCharsets.UTF_8));
+    AssetExportService.SelectedExportResult exportResult =
+        new AssetExportService.SelectedExportResult(manifest, candidate);
+    when(assetExportService.exportSelectedAssets(
+            org.mockito.ArgumentMatchers.argThat(
+                binding ->
+                    binding != null
+                        && java.util.Arrays.equals(
+                            request.canonicalPreimage(), binding.canonicalPreimage()))))
+        .thenReturn(exportResult);
+
+    when(versionAssetArtifactService.markExportedUnattested(
+            eq(tenantId), eq(versionId), eq(versionNumber), eq(workflowId), same(manifest)))
+        .thenReturn(
+            new VersionAssetArtifactStateDto(
+                tenantId,
+                versionId,
+                versionNumber,
+                "EXPORTED_UNATTESTED",
+                1L,
+                manifest.manifestHash(),
+                workflowId,
+                null,
+                null,
+                LocalDateTime.now(),
+                manifest.requiredManifestAssetKeys()));
+    when(publishedReleaseBundleService.createFullVersionBundle(
+            any(VersionDto.class),
+            eq(workflowId),
+            same(manifest),
+            any(String.class),
+            same(participantDigests),
+            same(originalWorldEvidence)))
+        .thenReturn(
+            new PublishedReleaseBundleDto(
+                1L,
+                tenantId,
+                versionId,
+                versionNumber,
+                "v1",
+                workflowId,
+                manifest.manifestHash(),
+                manifest.requiredManifestAssetKeys(),
+                participantDigests,
+                "generation-revision",
+                false,
+                null,
+                LocalDateTime.now()));
+    when(versionRepository.save(any(Version.class)))
+        .thenAnswer(invocation -> invocation.getArgument(0));
+
+    return new SelectedPublicationFixture(
+        tenantId,
+        versionId,
+        notes,
+        publishRequestId,
+        workflowId,
+        request,
+        exportResult,
+        version,
+        game);
+  }
+
+  private record SelectedPublicationFixture(
+      String tenantId,
+      long versionId,
+      String notes,
+      String publishRequestId,
+      String workflowId,
+      PublicationDigestRequestBinding request,
+      AssetExportService.SelectedExportResult exportResult,
+      Version version,
+      Game game) {}
 
   @Test
   void publishFullVersionUsesTenantScopedVersionSequence() {

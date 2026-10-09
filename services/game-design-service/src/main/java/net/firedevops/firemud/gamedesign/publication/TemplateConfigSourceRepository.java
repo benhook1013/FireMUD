@@ -23,10 +23,12 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
 public final class TemplateConfigSourceRepository {
   private final DSLContext dsl;
   private final DraftCommitCoordinatorRepository coordinator;
+  private final TemplateReferenceRepository templateReferences;
 
   public TemplateConfigSourceRepository(DSLContext dsl) {
     this.dsl = Objects.requireNonNull(dsl);
     coordinator = new DraftCommitCoordinatorRepository(dsl);
+    templateReferences = new TemplateReferenceRepository(dsl);
   }
 
   public TemplateConfigSourceSnapshot.Genesis enrollFreshDraft(TargetProof target) {
@@ -225,6 +227,8 @@ public final class TemplateConfigSourceRepository {
             epoch,
             inherited)
         != 1) throw new IllegalStateException("TEMPLATE_CONFIG_EPOCH_CONFLICT");
+    templateReferences.synchronizeCurrentProjection(
+        binding.target(), binding, snapshot, mutations, createdRows);
     return Optional.of(application(binding).orElseThrow());
   }
 

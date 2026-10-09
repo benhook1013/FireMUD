@@ -26,6 +26,7 @@ import net.firedevops.firemud.common.authoring.DraftCommitBinding.Owner;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding.TargetProof;
 import net.firedevops.firemud.common.json.Rfc8785CanonicalJson;
 import net.firedevops.firemud.gamedesign.publication.GameDesignSourceRepository;
+import net.firedevops.firemud.gamedesign.publication.TemplateReferenceRepository;
 import org.jooq.DSLContext;
 import org.jooq.Record;
 import org.springframework.stereotype.Repository;
@@ -384,7 +385,17 @@ public class DraftCommitCoordinatorRepository {
       throw new IllegalStateException("GAME_DESIGN_SOURCE_GENESIS_UNAVAILABLE");
     }
     VisibilityFence fence = advanceVisibilityFence(binding, coordinatorProof);
-    sources.captureSynchronized(binding);
+    var synchronizedSources = sources.captureSynchronized(binding);
+    var references = new TemplateReferenceRepository(dsl);
+    // Only an explicitly enrolled fresh tenant can advance its cutover phase. Empty initial
+    // captures and retained tenants remain non-launchable, never inferred to be ENFORCED.
+    if (references.readPhase(binding.target().canonicalTenantId()).isPresent()
+        && synchronizedSources
+            .templateConfig()
+            .filter(value -> !value.entries().isEmpty())
+            .isPresent()) {
+      references.validateAndEnforce(binding.target().canonicalTenantId());
+    }
     return fence;
   }
 
@@ -1248,6 +1259,23 @@ public class DraftCommitCoordinatorRepository {
     requireWritableReadCommittedTransaction();
     requireNonNil(canonicalTenantId, "canonicalTenantId");
     requireNonNil(canonicalVersionId, "canonicalVersionId");
+    Record game =
+        dsl.fetchOne(
+            "SELECT id, tenant_id, canonical_tenant_id, tenant_identity_provenance_kind, "
+                + "tenant_identity_source_game_id, tenant_identity_source_legacy_tenant_id "
+                + "FROM game WHERE canonical_tenant_id = ? FOR UPDATE",
+            canonicalTenantId);
+    if (game == null
+        || game.get("id", Long.class) == null
+        || game.get("id", Long.class) <= 0
+        || !canonicalTenantId.equals(game.get("canonical_tenant_id", UUID.class))
+        || !game.get("id", Long.class)
+            .equals(game.get("tenant_identity_source_game_id", Long.class))
+        || !game.get("tenant_id", String.class)
+            .equals(game.get("tenant_identity_source_legacy_tenant_id", String.class))) {
+      throw new DraftCommitNotFoundException(
+          "Exact canonical Game tenant and immutable source provenance were not found");
+    }
     Record row =
         dsl.fetchOne(
             "SELECT v.id AS version_row_id, v.tenant_id AS version_tenant_key, "
@@ -1263,12 +1291,14 @@ public class DraftCommitCoordinatorRepository {
                 + "AND g.tenant_identity_source_game_id = g.id "
                 + "AND g.tenant_identity_source_legacy_tenant_id = g.tenant_id "
                 + "WHERE v.canonical_tenant_id = ? AND v.canonical_version_id = ? "
+                + "AND g.id = ? "
                 + "AND v.identity_source_game_row_id > 0 "
                 + "AND v.identity_source_game_tenant_key = v.tenant_id "
                 + "AND v.identity_source_provenance_kind IN ('NEW_GAME_ROW', 'RETAINED_GAME_V29') "
                 + "FOR UPDATE OF v",
             canonicalTenantId,
-            canonicalVersionId);
+            canonicalVersionId,
+            game.get("id", Long.class));
     if (row == null) {
       throw new DraftCommitNotFoundException(
           "Exact canonical Version and immutable Game source provenance were not found");

@@ -1,0 +1,78 @@
+syntax = "proto3";
+
+package game_design.v1;
+
+import "game-design/v1/game_design_service.proto";
+import "world-management/v1/world_management_service.proto";
+
+option java_package = "net.firedevops.firemud.gamedesign.v1";
+option java_multiple_files = true;
+
+// Standalone read-only handoff. Authenticate the exact same-namespace Game Session
+// peer before decoding, then independently verify the original redeemed Account
+// operation before reading content. This does not authorize source mutation,
+// descriptor mutation, World preparation, or admission.
+service GameDesignStartSessionTemplateAssociationReadService {
+  rpc ReadStartSessionTemplateAssociation(ReadStartSessionTemplateAssociationRequest)
+      returns (ReadStartSessionTemplateAssociationResponse);
+}
+
+message ReadStartSessionTemplateAssociationRequest {
+  int32 schema_version = 1;
+  string target_namespace = 2;
+  string read_request_id = 3;
+  // Complete canonical StartSessionPostAuthorizationExecutionTuple bytes.
+  // No JWT or opaque authorization reference is forwarded here.
+  bytes canonical_post_authorization_tuple = 4;
+  string owner_attempt_id = 5;
+  int64 owner_fence = 6;
+  // Initial selection has no caller-supplied version override. A retry checks the
+  // first immutable result already pinned by Game Session; it cannot reselect.
+  oneof selection {
+    StartSessionConfiguredTemplateSelection initial_configured = 7;
+    StartSessionExactTemplateAssociationSelection exact_replay = 8;
+  }
+}
+
+message StartSessionConfiguredTemplateSelection {}
+
+message StartSessionExactTemplateAssociationSelection {
+  string canonical_version_id = 1;
+  string selected_commit_id = 2;
+  string publish_workflow_id = 3;
+  string association_digest = 4;
+}
+
+message ReadStartSessionTemplateAssociationResponse {
+  // Echo the entire exact request. Missing, ambiguous, unavailable or conflicting
+  // owner evidence is a non-OK RPC, never a partial or repaired result.
+  ReadStartSessionTemplateAssociationRequest request = 1;
+  StartSessionTemplateWorldSourceAssociationEvidence association = 2;
+  gamedesign.v1.PublishedReleaseBundle release_bundle = 3;
+  // Canonical typed World selector evidence committed with the original release terminal.
+  // This is not a launch descriptor and is not reconstructed from the source-intake receipt.
+  bytes world_published_start_location_evidence = 4;
+  // Positive, same-owner-snapshot phase evidence; neither a runtime lifecycle
+  // epoch nor independent admission permission.
+  int64 reference_phase_epoch = 5;
+}
+
+// Closed public projection of the immutable Game Design association. Private operation,
+// capture, template snapshot, entry, and canonical-association bytes never cross this API.
+message StartSessionTemplateWorldSourceAssociationEvidence {
+  string canonical_tenant_id = 1;
+  int64 template_id = 2;
+  string canonical_version_id = 3;
+  string selected_commit_id = 4;
+  string publish_workflow_id = 5;
+  string publication_selection_digest = 6;
+  string association_digest = 7;
+  string target_namespace = 8;
+  string intake_request_id = 9;
+  string world_operation_id = 10;
+  string source_operation_id = 11;
+  string world_slug = 12;
+  string source_evidence_digest = 13;
+  world_management.v1.ReadAuthoredWorldSourceIntakeByIdRequest world_read_request = 14;
+  world_management.v1.ReadAuthoredWorldSourceIntakeByIdResponse world_read_response = 15;
+}

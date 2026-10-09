@@ -87,6 +87,19 @@ class TemplateConfigSourcePostgresIntegrationTest {
     var first = source(f, binding);
     String templateId = first.entries().getFirst().templateId();
     assertThat(first.entries().getFirst().sourceBinding()).isEqualTo(binding);
+    var initialBaseReference =
+        f.dsl.fetchOne(
+            "SELECT canonical_tenant_id, template_id, canonical_version_id, source_commit_id, source_revision_id "
+                + "FROM game_template_version_ref WHERE canonical_tenant_id = ? AND template_id = ?",
+            f.target.canonicalTenantId(),
+            Long.parseLong(templateId));
+    assertThat(initialBaseReference).isNotNull();
+    assertThat(initialBaseReference.get("canonical_version_id", UUID.class))
+        .isEqualTo(f.target.canonicalVersionId());
+    assertThat(initialBaseReference.get("source_commit_id", UUID.class))
+        .isEqualTo(binding.commitId());
+    assertThat(initialBaseReference.get("source_revision_id", UUID.class))
+        .isEqualTo(create.revisionId());
     assertThat(
             f.dsl
                 .fetchSingle(
@@ -127,11 +140,36 @@ class TemplateConfigSourcePostgresIntegrationTest {
             "1");
     apply(f, update);
     assertThat(source(f, update).entries().getFirst().sourceBinding()).isEqualTo(update);
+    var updatedBaseReference =
+        f.dsl.fetchOne(
+            "SELECT canonical_version_id, source_commit_id, source_revision_id "
+                + "FROM game_template_version_ref WHERE canonical_tenant_id = ? AND template_id = ?",
+            f.target.canonicalTenantId(),
+            Long.parseLong(templateId));
+    assertThat(updatedBaseReference).isNotNull();
+    assertThat(updatedBaseReference.get("canonical_version_id", UUID.class))
+        .isEqualTo(f.target.canonicalVersionId());
+    assertThat(updatedBaseReference.get("source_commit_id", UUID.class))
+        .isEqualTo(update.commitId());
+    assertThat(updatedBaseReference.get("source_revision_id", UUID.class))
+        .isEqualTo(TemplateConfigSource.mutations(update).getFirst().revisionId());
     assertThat(source(f, binding)).isEqualTo(first);
     var delete =
         binding(f, TemplateConfigSource.deletePayload(templateId), TemplateConfigSource.SCOPE, "2");
     apply(f, delete);
     assertThat(source(f, delete).entries()).isEmpty();
+    assertThat(
+            f.dsl.fetchOne(
+                "SELECT 1 FROM game_template_version_ref WHERE canonical_tenant_id = ? AND template_id = ?",
+                f.target.canonicalTenantId(),
+                Long.parseLong(templateId)))
+        .isNull();
+    assertThat(
+            f.dsl
+                .fetchSingle(
+                    "SELECT count(*) FROM game_templates WHERE id = ?", Long.parseLong(templateId))
+                .get(0, Long.class))
+        .isEqualTo(1L);
     assertThat(source(f, binding)).isEqualTo(first);
     assertThatThrownBy(
             () ->
