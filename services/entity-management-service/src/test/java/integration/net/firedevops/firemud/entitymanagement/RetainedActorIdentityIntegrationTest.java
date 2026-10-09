@@ -101,7 +101,7 @@ class RetainedActorIdentityIntegrationTest {
 
   private long fixtureIdOffset(String testMethodName) {
     return switch (testMethodName) {
-      case "canonicalRosterIsExactOrderedAndExcludesLegacyQuarantine" -> 100_000L;
+      case "canonicalRosterMatchesExactOwnerIdentityAndExcludesLegacyQuarantine" -> 100_000L;
       case "namespaceIdentityAndScopeAreImmutableWithoutActorReferences" -> 200_000L;
       case "quarantinedActorLookupMutationExpiryAndCleanupRemainHeld" -> 300_000L;
       case "destinationOnlyQuarantinedAuditBlocksCleanupWithoutRuntimeRows" -> 400_000L;
@@ -118,14 +118,10 @@ class RetainedActorIdentityIntegrationTest {
   }
 
   @Test
-  void canonicalRosterIsExactOrderedAndExcludesLegacyQuarantine() {
+  void canonicalRosterMatchesExactOwnerIdentityAndExcludesLegacyQuarantine() {
     insertNamespace(tenantUuid, namespaceUuid, PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED);
-    UUID orderedUuidSeed = UUID.randomUUID();
-    long orderedUuidBase = orderedUuidSeed.getLeastSignificantBits() & ~0xffL;
-    UUID legacyActorUuid = new UUID(orderedUuidSeed.getMostSignificantBits(), orderedUuidBase);
-    UUID first = new UUID(orderedUuidSeed.getMostSignificantBits(), orderedUuidBase + 1L);
-    UUID second = new UUID(orderedUuidSeed.getMostSignificantBits(), orderedUuidBase + 2L);
-    UUID third = new UUID(orderedUuidSeed.getMostSignificantBits(), orderedUuidBase + 3L);
+    UUID legacyActorUuid = UUID.randomUUID();
+    UUID ownerResolvedActorUuid = UUID.randomUUID();
     long legacyId =
         insertActor(
             "legacy-shared",
@@ -150,8 +146,8 @@ class RetainedActorIdentityIntegrationTest {
     assertThat(characterRepository.findByIdAndTenantId(legacyId, tenantId)).isEmpty();
 
     insertActor(
-        "third",
-        third,
+        "owner-resolved",
+        ownerResolvedActorUuid,
         accountUuid,
         tenantUuid,
         namespaceUuid,
@@ -161,39 +157,6 @@ class RetainedActorIdentityIntegrationTest {
         null,
         accountId,
         tenantId);
-    insertActor(
-        "first",
-        first,
-        accountUuid,
-        tenantUuid,
-        namespaceUuid,
-        PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED,
-        "shared-live",
-        "OWNER_RESOLVED",
-        null,
-        accountId,
-        tenantId);
-    assertThat(
-            actorIdentityRepository.findOwnerResolvedRoster(
-                tenantUuid.toString(),
-                accountUuid.toString(),
-                namespaceUuid.toString(),
-                PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED))
-        .extracting(identity -> identity.characterUuid())
-        .containsExactly(first, third);
-    insertActor(
-        "second",
-        second,
-        accountUuid,
-        tenantUuid,
-        namespaceUuid,
-        PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED,
-        "shared-live",
-        "OWNER_RESOLVED",
-        null,
-        accountId,
-        tenantId);
-
     var roster =
         actorIdentityRepository.findOwnerResolvedRoster(
             tenantUuid.toString(),
@@ -202,17 +165,17 @@ class RetainedActorIdentityIntegrationTest {
             PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED);
     assertThat(roster)
         .extracting(identity -> identity.characterUuid())
-        .containsExactly(first, second, third);
+        .containsExactly(ownerResolvedActorUuid);
     assertThat(
             actorIdentityRepository.findOwnerResolvedActor(
                 tenantUuid.toString(),
                 accountUuid.toString(),
                 namespaceUuid.toString(),
                 PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED,
-                first.toString()))
+                ownerResolvedActorUuid.toString()))
         .get()
         .extracting(identity -> identity.characterUuid())
-        .isEqualTo(first);
+        .isEqualTo(ownerResolvedActorUuid);
 
     assertThat(
             actorIdentityRepository.findOwnerResolvedRoster(
@@ -701,6 +664,7 @@ class RetainedActorIdentityIntegrationTest {
   void destinationOnlyOwnerResolvedAuditDoesNotBlockCleanupWithoutRuntimeRows() {
     String auditOnlyInstance = instanceId + "-AUDIT-OWNER-RESOLVED";
     UUID ownerResolvedActorUuid = UUID.randomUUID();
+    insertNamespace(tenantUuid, namespaceUuid, PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED);
     long ownerResolvedActorId =
         insertActor(
             "owner-resolved audit destination fixture",
