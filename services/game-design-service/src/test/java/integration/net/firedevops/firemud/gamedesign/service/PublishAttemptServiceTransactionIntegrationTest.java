@@ -3,6 +3,8 @@ package net.firedevops.firemud.gamedesign.service;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import java.io.PrintWriter;
+import java.io.StringWriter;
 import java.lang.reflect.Constructor;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
@@ -102,6 +104,7 @@ class PublishAttemptServiceTransactionIntegrationTest {
   @Autowired private VersionAssetExportCandidateService exportCandidateService;
   @MockitoBean private AssetExportService assetExportService;
   @MockitoBean private PublishGateService publishGateService;
+  @MockitoSpyBean private ControlPlaneDigestService controlPlaneDigestService;
   @MockitoSpyBean private RecordedParticipantDigestService recordedParticipantDigestService;
   @MockitoSpyBean private VersionAssetArtifactService versionAssetArtifactService;
 
@@ -242,6 +245,7 @@ class PublishAttemptServiceTransactionIntegrationTest {
     game.setTenantId(tenantId);
     game.setName("successful-transaction-proof-game");
     gameRepository.save(game);
+    AtomicReference<Throwable> controlPlaneDigestFailure = captureControlPlaneDigestFailure();
 
     Mockito.when(
             publishGateService.collectFullVersionParticipantDigests(
@@ -267,6 +271,7 @@ class PublishAttemptServiceTransactionIntegrationTest {
     Object snapshot =
         reconcileFullVersionPublishMechanics(
             tenantId, "successful transaction proof", publishRequestId, publishWorkflowId);
+    assertNoControlPlaneDigestFailure(controlPlaneDigestFailure.get());
     assertMechanicsSnapshot(snapshot, "SUCCEEDED", "");
 
     PublishAttempt attempt =
@@ -319,6 +324,7 @@ class PublishAttemptServiceTransactionIntegrationTest {
     AtomicReference<String> remapSetId = new AtomicReference<>();
     AtomicReference<Throwable> recordedDigestFailure = new AtomicReference<>();
     AtomicReference<Throwable> exportCallbackFailure = new AtomicReference<>();
+    AtomicReference<Throwable> controlPlaneDigestFailure = captureControlPlaneDigestFailure();
     AtomicBoolean exportCompleted = new AtomicBoolean();
     AtomicBoolean finalizationFailureInjected = new AtomicBoolean();
 
@@ -397,6 +403,7 @@ class PublishAttemptServiceTransactionIntegrationTest {
     Object snapshot =
         reconcileFullVersionPublishMechanics(
             tenantId, "failed remap proof", publishRequestId, publishWorkflowId);
+    assertNoControlPlaneDigestFailure(controlPlaneDigestFailure.get());
     assertMechanicsSnapshot(snapshot, "FAILED", "forced finalization failure");
     PublishAttempt attempt =
         publishAttemptRepository.findByPublishWorkflowId(publishWorkflowId).orElseThrow();
@@ -570,6 +577,31 @@ class PublishAttemptServiceTransactionIntegrationTest {
       Object snapshot, String expectedStatus, String expectedFailureMessage) {
     assertThat(snapshotValue(snapshot, "status")).isEqualTo(expectedStatus);
     assertThat(snapshotValue(snapshot, "failureMessage")).isEqualTo(expectedFailureMessage);
+  }
+
+  private AtomicReference<Throwable> captureControlPlaneDigestFailure() {
+    AtomicReference<Throwable> failure = new AtomicReference<>();
+    Mockito.doAnswer(
+            invocation -> {
+              try {
+                return invocation.callRealMethod();
+              } catch (Throwable exception) {
+                failure.set(exception);
+                throw exception;
+              }
+            })
+        .when(controlPlaneDigestService)
+        .getDigestForVersion(Mockito.any(VersionDto.class));
+    return failure;
+  }
+
+  private static void assertNoControlPlaneDigestFailure(Throwable failure) {
+    if (failure == null) {
+      return;
+    }
+    StringWriter stackTrace = new StringWriter();
+    failure.printStackTrace(new PrintWriter(stackTrace));
+    assertThat(failure).as("real control-plane digest computation failed:\n" + stackTrace).isNull();
   }
 
   private static String snapshotValue(Object snapshot, String accessorName) {
