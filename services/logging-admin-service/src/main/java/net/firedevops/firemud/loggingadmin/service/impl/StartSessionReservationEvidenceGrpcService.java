@@ -6,6 +6,8 @@ import java.nio.ByteBuffer;
 import java.nio.charset.CharacterCodingException;
 import java.nio.charset.CodingErrorAction;
 import java.nio.charset.StandardCharsets;
+import java.sql.SQLException;
+import java.sql.SQLTransientException;
 import java.util.Arrays;
 import java.util.Optional;
 import java.util.UUID;
@@ -94,10 +96,13 @@ public class StartSessionReservationEvidenceGrpcService
           "StartSession reservation evidence is temporarily unavailable");
       return;
     } catch (DataAccessException exception) {
+      boolean unavailable = isTransientDatabaseFailure(exception);
       fail(
           responseObserver,
-          Status.UNAVAILABLE,
-          "StartSession reservation evidence is temporarily unavailable");
+          unavailable ? Status.UNAVAILABLE : Status.INTERNAL,
+          unavailable
+              ? "StartSession reservation evidence is temporarily unavailable"
+              : "StartSession reservation evidence could not be read");
       return;
     } catch (RuntimeException exception) {
       fail(
@@ -132,6 +137,21 @@ public class StartSessionReservationEvidenceGrpcService
             .build();
     responseObserver.onNext(response);
     responseObserver.onCompleted();
+  }
+
+  private static boolean isTransientDatabaseFailure(Throwable failure) {
+    for (Throwable cause = failure; cause != null; cause = cause.getCause()) {
+      if (cause instanceof SQLTransientException) {
+        return true;
+      }
+      if (cause instanceof SQLException sqlException) {
+        String sqlState = sqlException.getSQLState();
+        if (sqlState != null && sqlState.startsWith("08")) {
+          return true;
+        }
+      }
+    }
+    return false;
   }
 
   private ParsedRequest parseRequest(ReadCurrentClaimEvidenceRequest request) {

@@ -22,6 +22,8 @@ import io.grpc.inprocess.InProcessServerBuilder;
 import io.grpc.stub.MetadataUtils;
 import io.grpc.stub.StreamObserver;
 import java.nio.charset.StandardCharsets;
+import java.sql.SQLException;
+import java.sql.SQLTransientException;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -51,9 +53,11 @@ import net.firedevops.firemud.loggingadmin.v1.ReadCurrentClaimEvidenceRequest;
 import net.firedevops.firemud.loggingadmin.v1.ReadCurrentClaimEvidenceResponse;
 import net.firedevops.firemud.loggingadmin.v1.StartSessionReservationEvidencePurpose;
 import net.firedevops.firemud.loggingadmin.v1.StartSessionReservationEvidenceServiceGrpc;
+import org.jooq.exception.DataAccessException;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.dao.DataAccessResourceFailureException;
+import org.springframework.dao.TransientDataAccessResourceException;
 
 class StartSessionReservationEvidenceGrpcServiceTest {
   private static final String ACCOUNT_URI = "spiffe://firemud/ns/test/sa/account-service";
@@ -263,11 +267,45 @@ class StartSessionReservationEvidenceGrpcServiceTest {
         .thenThrow(
             new StartSessionPreAuthorizationReservationService.IdempotencyConflictException(
                 REQUEST_ID))
-        .thenThrow(new DataAccessResourceFailureException("offline"));
+        .thenThrow(new DataAccessResourceFailureException("offline"))
+        .thenThrow(new TransientDataAccessResourceException("retry the read"));
 
     assertThat(status(call(request, ACCOUNT_URI))).isEqualTo(Status.Code.NOT_FOUND);
     assertThat(status(call(request, ACCOUNT_URI))).isEqualTo(Status.Code.FAILED_PRECONDITION);
     assertThat(status(call(request, ACCOUNT_URI))).isEqualTo(Status.Code.FAILED_PRECONDITION);
+    assertThat(status(call(request, ACCOUNT_URI))).isEqualTo(Status.Code.UNAVAILABLE);
+    assertThat(status(call(request, ACCOUNT_URI))).isEqualTo(Status.Code.UNAVAILABLE);
+  }
+
+  @Test
+  void mapsOnlyConnectionAndTransientSqlFailuresToUnavailable() {
+    StartSessionPreAuthorizationReservationTuple tuple = tuple(REQUEST_ID);
+    ReadCurrentClaimEvidenceRequest request = request(tuple);
+    when(reservationService.readCurrentClaimEvidence(
+            any(), any(), any(), anyLong(), any(), anyLong(), any()))
+        .thenThrow(
+            new DataAccessException("connection failure", new SQLException("offline", "08006")))
+        .thenThrow(
+            new DataAccessException(
+                "transient failure", new SQLTransientException("retry the transaction")))
+        .thenThrow(
+            new DataAccessException("syntax failure", new SQLException("syntax error", "42601")))
+        .thenThrow(
+            new DataAccessException(
+                "constraint failure", new SQLException("unique constraint", "23505")))
+        .thenThrow(
+            new DataAccessException("type failure", new SQLException("type mismatch", "42804")))
+        .thenThrow(
+            new DataAccessException(
+                "nested connection failure",
+                new IllegalStateException(
+                    "driver wrapper", new SQLException("connection reset", "08001"))));
+
+    assertThat(status(call(request, ACCOUNT_URI))).isEqualTo(Status.Code.UNAVAILABLE);
+    assertThat(status(call(request, ACCOUNT_URI))).isEqualTo(Status.Code.UNAVAILABLE);
+    assertThat(status(call(request, ACCOUNT_URI))).isEqualTo(Status.Code.INTERNAL);
+    assertThat(status(call(request, ACCOUNT_URI))).isEqualTo(Status.Code.INTERNAL);
+    assertThat(status(call(request, ACCOUNT_URI))).isEqualTo(Status.Code.INTERNAL);
     assertThat(status(call(request, ACCOUNT_URI))).isEqualTo(Status.Code.UNAVAILABLE);
   }
 

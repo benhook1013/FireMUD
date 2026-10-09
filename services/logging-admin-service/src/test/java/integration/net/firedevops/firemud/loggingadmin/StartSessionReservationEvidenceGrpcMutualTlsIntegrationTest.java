@@ -62,14 +62,15 @@ import net.firedevops.firemud.loggingadmin.v1.StartSessionReservationEvidenceSer
 import net.firedevops.firemud.test.TestContainerImages;
 import net.firedevops.firemud.test.TlsTestSupport;
 import org.flywaydb.core.Flyway;
+import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.mockito.Mockito;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
-@Testcontainers(disabledWithoutDocker = true)
 @SuppressWarnings("resource")
 class StartSessionReservationEvidenceGrpcMutualTlsIntegrationTest {
   private static final String PUBLIC_METHOD =
@@ -81,81 +82,109 @@ class StartSessionReservationEvidenceGrpcMutualTlsIntegrationTest {
       "spiffe://firemud/ns/test/sa/game-session-service";
   private static final String WRONG_NAMESPACE_URI = "spiffe://firemud/ns/other/sa/account-service";
 
-  @Container
-  static PostgreSQLContainer<?> postgres =
-      new PostgreSQLContainer<>(TestContainerImages.postgres());
-
-  @TempDir Path temporaryDirectory;
-
   @Test
-  void socketMtlsUsesTheVerifiedAccountPeerAndExactJwtExemption() throws Exception {
-    DriverManagerDataSource dataSource =
-        new DriverManagerDataSource(
-            postgres.getJdbcUrl(), postgres.getUsername(), postgres.getPassword());
-    Flyway.configure()
-        .dataSource(dataSource)
-        .locations("classpath:db/migration")
-        .placeholders(Map.of("serviceSchema", "public"))
-        .load()
-        .migrate();
-    StartSessionPreAuthorizationReservationService reservationService =
-        StartSessionReservationMutationTestFixtures.forRunOwnedPostgres(postgres).service();
+  void socketMtlsCertificateChecksDoNotRequirePersistence(@TempDir Path temporaryDirectory)
+      throws Exception {
     TestWorkloadPki pki = TestWorkloadPki.create(temporaryDirectory);
     assertThat(GrpcPeerIdentity.fromCertificate(readCertificate(pki.serverCertificate())))
         .get()
         .extracting(GrpcPeerIdentity::uri)
         .isEqualTo("spiffe://firemud/ns/test/sa/logging-admin-service");
-    StartSessionPreAuthorizationReservationTuple tuple = tuple("grpc-mtls-reservation-evidence-01");
-    var acquisition = reservationService.acquire(tuple);
-    assertThat(acquisition.newlyAcquired()).isTrue();
-    assertThat(
-            reservationService
-                .markAuthorizationPending(acquisition.claim())
-                .mayDispatchAccountAuthorization())
-        .isTrue();
-    var claim = acquisition.claim().claimEvidence();
-    ReadCurrentClaimEvidenceRequest request =
-        ReadCurrentClaimEvidenceRequest.newBuilder()
-            .setControlPlaneRequestId(tuple.controlPlaneRequestId())
-            .setPreAuthorizationTupleJson(
-                ByteString.copyFrom(tuple.canonicalJson().getBytes(StandardCharsets.UTF_8)))
-            .setReservationOwnerId(claim.reservationOwnerId().toString())
-            .setReservationClaimFence(claim.reservationClaimFence())
-            .setClaimOwnerId(claim.currentClaimOwnerId().toString())
-            .setClaimFence(claim.currentClaimFence())
-            .setPurpose(
-                StartSessionReservationEvidencePurpose
-                    .START_SESSION_RESERVATION_EVIDENCE_PURPOSE_ISSUE)
-            .build();
 
-    Server server = startTransport(pki, reservationService);
+    Server server =
+        startTransport(pki, Mockito.mock(StartSessionPreAuthorizationReservationService.class));
     try {
-      ReadCurrentClaimEvidenceResponse response = read(server, pki, pki.accountClient(), request);
-      assertThat(response.getControlPlaneRequestId()).isEqualTo(tuple.controlPlaneRequestId());
-      assertThat(response.getPreAuthorizationTupleJson().toByteArray())
-          .containsExactly(tuple.canonicalJson().getBytes(StandardCharsets.UTF_8));
-      assertThat(response.getMutationDigest()).isEqualTo(tuple.mutationDigest());
-      assertThat(response.getReservationOwnerId()).isEqualTo(claim.reservationOwnerId().toString());
-      assertThat(response.getReservationClaimFence()).isEqualTo(claim.reservationClaimFence());
-      assertThat(response.getClaimOwnerId()).isEqualTo(claim.currentClaimOwnerId().toString());
-      assertThat(response.getClaimFence()).isEqualTo(claim.currentClaimFence());
-      assertThat(response.getPurpose())
-          .isEqualTo(
-              StartSessionReservationEvidencePurpose
-                  .START_SESSION_RESERVATION_EVIDENCE_PURPOSE_ISSUE);
-      assertThat(reservationService.findExact(tuple)).isPresent();
-
       assertTlsHandshakeAccepted(server, pki, pki.accountClient());
       assertHandshakeRejected(
           server, pki, pki.clientWithoutCertificate(), "missing client certificate");
       assertHandshakeRejected(
           server, pki, pki.untrustedAccountClient(), "untrusted client certificate chain");
-      assertThat(readStatus(server, pki, pki.wrongServiceClient(), request))
-          .isEqualTo(Status.Code.PERMISSION_DENIED);
-      assertThat(readStatus(server, pki, pki.wrongNamespaceClient(), request))
-          .isEqualTo(Status.Code.PERMISSION_DENIED);
     } finally {
       server.shutdownNow();
+    }
+  }
+
+  @Nested
+  @Testcontainers(disabledWithoutDocker = true)
+  @SuppressWarnings("resource")
+  class DatabaseBackedReservationEvidenceTest {
+    @Container
+    static final PostgreSQLContainer<?> postgres =
+        new PostgreSQLContainer<>(TestContainerImages.postgres());
+
+    @Test
+    void socketMtlsUsesTheVerifiedAccountPeerAndExactJwtExemption(@TempDir Path temporaryDirectory)
+        throws Exception {
+      DriverManagerDataSource dataSource =
+          new DriverManagerDataSource(
+              postgres.getJdbcUrl(), postgres.getUsername(), postgres.getPassword());
+      Flyway.configure()
+          .dataSource(dataSource)
+          .locations("classpath:db/migration")
+          .placeholders(Map.of("serviceSchema", "public"))
+          .load()
+          .migrate();
+      StartSessionPreAuthorizationReservationService reservationService =
+          StartSessionReservationMutationTestFixtures.forRunOwnedPostgres(postgres).service();
+      TestWorkloadPki pki = TestWorkloadPki.create(temporaryDirectory);
+      assertThat(GrpcPeerIdentity.fromCertificate(readCertificate(pki.serverCertificate())))
+          .get()
+          .extracting(GrpcPeerIdentity::uri)
+          .isEqualTo("spiffe://firemud/ns/test/sa/logging-admin-service");
+      StartSessionPreAuthorizationReservationTuple tuple =
+          tuple("grpc-mtls-reservation-evidence-01");
+      var acquisition = reservationService.acquire(tuple);
+      assertThat(acquisition.newlyAcquired()).isTrue();
+      assertThat(
+              reservationService
+                  .markAuthorizationPending(acquisition.claim())
+                  .mayDispatchAccountAuthorization())
+          .isTrue();
+      var claim = acquisition.claim().claimEvidence();
+      ReadCurrentClaimEvidenceRequest request =
+          ReadCurrentClaimEvidenceRequest.newBuilder()
+              .setControlPlaneRequestId(tuple.controlPlaneRequestId())
+              .setPreAuthorizationTupleJson(
+                  ByteString.copyFrom(tuple.canonicalJson().getBytes(StandardCharsets.UTF_8)))
+              .setReservationOwnerId(claim.reservationOwnerId().toString())
+              .setReservationClaimFence(claim.reservationClaimFence())
+              .setClaimOwnerId(claim.currentClaimOwnerId().toString())
+              .setClaimFence(claim.currentClaimFence())
+              .setPurpose(
+                  StartSessionReservationEvidencePurpose
+                      .START_SESSION_RESERVATION_EVIDENCE_PURPOSE_ISSUE)
+              .build();
+
+      Server server = startTransport(pki, reservationService);
+      try {
+        ReadCurrentClaimEvidenceResponse response = read(server, pki, pki.accountClient(), request);
+        assertThat(response.getControlPlaneRequestId()).isEqualTo(tuple.controlPlaneRequestId());
+        assertThat(response.getPreAuthorizationTupleJson().toByteArray())
+            .containsExactly(tuple.canonicalJson().getBytes(StandardCharsets.UTF_8));
+        assertThat(response.getMutationDigest()).isEqualTo(tuple.mutationDigest());
+        assertThat(response.getReservationOwnerId())
+            .isEqualTo(claim.reservationOwnerId().toString());
+        assertThat(response.getReservationClaimFence()).isEqualTo(claim.reservationClaimFence());
+        assertThat(response.getClaimOwnerId()).isEqualTo(claim.currentClaimOwnerId().toString());
+        assertThat(response.getClaimFence()).isEqualTo(claim.currentClaimFence());
+        assertThat(response.getPurpose())
+            .isEqualTo(
+                StartSessionReservationEvidencePurpose
+                    .START_SESSION_RESERVATION_EVIDENCE_PURPOSE_ISSUE);
+        assertThat(reservationService.findExact(tuple)).isPresent();
+
+        assertTlsHandshakeAccepted(server, pki, pki.accountClient());
+        assertHandshakeRejected(
+            server, pki, pki.clientWithoutCertificate(), "missing client certificate");
+        assertHandshakeRejected(
+            server, pki, pki.untrustedAccountClient(), "untrusted client certificate chain");
+        assertThat(readStatus(server, pki, pki.wrongServiceClient(), request))
+            .isEqualTo(Status.Code.PERMISSION_DENIED);
+        assertThat(readStatus(server, pki, pki.wrongNamespaceClient(), request))
+            .isEqualTo(Status.Code.PERMISSION_DENIED);
+      } finally {
+        server.shutdownNow();
+      }
     }
   }
 
@@ -169,7 +198,7 @@ class StartSessionReservationEvidenceGrpcMutualTlsIntegrationTest {
                 SslProvider.JDK)
             .trustManager(pki.trustedCaCertificate().toFile())
             .clientAuth(ClientAuth.REQUIRE)
-            .protocols("TLSv1.2")
+            .protocols("TLSv1.3")
             .build();
     StartSessionReservationEvidenceGrpcService receiver =
         new StartSessionReservationEvidenceGrpcService(reservationService, "test");
@@ -227,6 +256,7 @@ class StartSessionReservationEvidenceGrpcMutualTlsIntegrationTest {
             () -> {
               try (SSLSocket socket = clientSocket(server, clientTls.context())) {
                 socket.startHandshake();
+                socket.getInputStream().read();
               }
             });
     assertThat(failure).as(description).isNotNull();
@@ -234,7 +264,9 @@ class StartSessionReservationEvidenceGrpcMutualTlsIntegrationTest {
         .as("%s must surface a TLS handshake exception", description)
         .isInstanceOf(SSLHandshakeException.class);
     assertThat(TlsTestSupport.isTlsHandshakeRejection(failure))
-        .as("%s must fail during the TLS certificate handshake", description)
+        .as(
+            "%s must fail during the TLS certificate handshake; failure chain: %s",
+            description, throwableChain(failure))
         .isTrue();
     if (clientIdentity.certificate() != null) {
       clientTls.assertIdentitySelected(clientIdentity, ACCOUNT_URI);
@@ -245,13 +277,21 @@ class StartSessionReservationEvidenceGrpcMutualTlsIntegrationTest {
     }
   }
 
+  private static String throwableChain(Throwable failure) {
+    List<String> causes = new ArrayList<>();
+    for (Throwable cause = failure; cause != null; cause = cause.getCause()) {
+      causes.add(cause.getClass().getName() + ": " + cause.getMessage());
+    }
+    return String.join(" -> ", causes);
+  }
+
   private static void assertTlsHandshakeAccepted(
       Server server, TestWorkloadPki pki, TestWorkloadPki.ClientIdentity clientIdentity)
       throws Exception {
     RawClientTls clientTls = rawClientTls(pki, clientIdentity);
     try (SSLSocket socket = clientSocket(server, clientTls.context())) {
       socket.startHandshake();
-      assertThat(socket.getSession().getProtocol()).isEqualTo("TLSv1.2");
+      assertThat(socket.getSession().getProtocol()).isEqualTo("TLSv1.3");
       assertThat(socket.getApplicationProtocol()).isEqualTo("h2");
     }
     clientTls.assertIdentitySelected(clientIdentity, ACCOUNT_URI);
@@ -263,7 +303,7 @@ class StartSessionReservationEvidenceGrpcMutualTlsIntegrationTest {
     socket.setSoTimeout(10_000);
     SSLParameters parameters = socket.getSSLParameters();
     parameters.setEndpointIdentificationAlgorithm("HTTPS");
-    parameters.setProtocols(new String[] {"TLSv1.2"});
+    parameters.setProtocols(new String[] {"TLSv1.3"});
     parameters.setApplicationProtocols(new String[] {"h2"});
     socket.setSSLParameters(parameters);
     return socket;
@@ -434,7 +474,7 @@ class StartSessionReservationEvidenceGrpcMutualTlsIntegrationTest {
     var clientTls =
         GrpcSslContexts.configure(GrpcSslContexts.forClient(), SslProvider.JDK)
             .trustManager(pki.trustedCaCertificate().toFile())
-            .protocols("TLSv1.2");
+            .protocols("TLSv1.3");
     if (clientIdentity.certificate() != null) {
       clientTls.keyManager(
           clientIdentity.certificate().toFile(), clientIdentity.privateKey().toFile());
@@ -610,7 +650,7 @@ class StartSessionReservationEvidenceGrpcMutualTlsIntegrationTest {
           "-keysize",
           "2048",
           "-dname",
-          "CN=FireMUD Logging reservation test CA",
+          "CN=FireMUD Logging reservation " + alias + " test CA",
           "-validity",
           "30",
           "-ext",
