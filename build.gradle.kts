@@ -5,6 +5,12 @@ import org.gradle.api.plugins.quality.Checkstyle
 import org.gradle.api.plugins.jvm.JvmTestSuite
 import org.gradle.api.tasks.compile.JavaCompile
 import java.io.File
+import java.net.URI
+import groovy.json.JsonSlurper
+import org.gradle.buildconfiguration.tasks.UpdateDaemonJvm
+import org.gradle.platform.Architecture
+import org.gradle.platform.BuildPlatformFactory
+import org.gradle.platform.OperatingSystem
 import org.flywaydb.gradle.FlywayExtension
 import org.springframework.boot.gradle.tasks.run.BootRun
 import org.gradle.testing.jacoco.tasks.JacocoReport
@@ -45,6 +51,42 @@ java {
     toolchain {
         languageVersion.set(JavaLanguageVersion.of(21))
     }
+}
+
+// The maintenance helper validates official Adoptium metadata; Gradle owns serialization.
+providers.gradleProperty("daemonJvmDownloadUrlsFile").orNull?.let { metadataPath ->
+    val metadata = JsonSlurper().parse(file(metadataPath)) as Map<*, *>
+    val urls = metadata.entries.associate { (platform, url) ->
+        val parts = (platform as String).split(".")
+        require(parts.size == 2) { "Invalid daemon JVM platform" }
+        BuildPlatformFactory.of(Architecture.valueOf(parts[1]), OperatingSystem.valueOf(parts[0])) to URI(url as String)
+    }
+    tasks.named<UpdateDaemonJvm>("updateDaemonJvm") {
+        toolchainDownloadUrls.set(urls)
+    }
+}
+
+// Compile the actual remote Buf output against the same catalog-managed Java runtimes.
+// Service builds retain their canonical Gradle protoc generation path.
+val bufGeneratedJavaClasspath = configurations.create("bufGeneratedJavaClasspath")
+
+dependencies {
+    bufGeneratedJavaClasspath(libs.protobuf.java)
+    bufGeneratedJavaClasspath(libs.grpc.protobuf)
+    bufGeneratedJavaClasspath(libs.grpc.stub)
+    bufGeneratedJavaClasspath("javax.annotation:javax.annotation-api:1.3.2")
+}
+
+tasks.register<JavaCompile>("compileBufGeneratedJava") {
+    description = "Verify remote Buf Java output against the catalog runtimes on Java 21"
+    group = "verification"
+    source(fileTree(providers.gradleProperty("bufGeneratedJavaDir").getOrElse("protos/gen/java")) { include("**/*.java") })
+    classpath = bufGeneratedJavaClasspath
+    destinationDirectory.set(layout.buildDirectory.dir("buf-generated-classes"))
+    options.release.set(21)
+    javaCompiler.set(javaToolchains.compilerFor {
+        languageVersion.set(JavaLanguageVersion.of(21))
+    })
 }
 
 val fullCheck = project.hasProperty("fullCheck") || System.getenv("CI") != null

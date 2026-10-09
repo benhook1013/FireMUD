@@ -225,6 +225,20 @@ jobs:
           BUF_WORKSPACE_CONFIG: ../config/protobuf/buf.work.yaml
         run: buf generate --template ../config/protobuf/buf.gen.yaml
 
+      - name: Set up Java for remote generator compatibility proof
+        uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Set up Gradle for remote generator compatibility proof
+        uses: gradle/actions/setup-gradle@3f5f9adaf7d9fecd50b5935e54106014257a94e6 # v6
+
+      - name: Compile the actual Buf-generated Java sources
+        run: |
+          test -n "$(find protos/gen/java -name '*.java' -print -quit)"
+          ./gradlew compileBufGeneratedJava
+
   docker-lint:
     name: Dockerfile Lint
     needs: [changes]

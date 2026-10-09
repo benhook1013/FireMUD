@@ -1591,8 +1591,18 @@ def main() -> int:
     ):
         fail("Renovate hashed Python requirements must refresh behind-base branches")
     custom_managers = renovate.get("customManagers", [])
-    if len(custom_managers) != 19:
-        fail("Renovate must define workflow authority managers plus bounded runtime image managers")
+    if len(custom_managers) != 21:
+        fail("Renovate must define workflow authorities, bounded runtime images, and BSR Java generator managers")
+    bsr_managers = [manager for manager in custom_managers if manager.get("datasourceTemplate", "").startswith("custom.bsr-")]
+    if Counter(manager.get("depNameTemplate") for manager in bsr_managers) != Counter(
+        ("buf.build/protocolbuffers/java", "buf.build/grpc/java")
+    ):
+        fail("Renovate must discover both active BSR Java generators exactly once")
+    for manager in bsr_managers:
+        if manager.get("managerFilePatterns") != ["/^config/protobuf/buf\\.gen\\.yaml$/"]:
+            fail("BSR Java managers must be scoped to the active generation template")
+        if "currentRevision" not in manager.get("currentValueTemplate", ""):
+            fail("BSR Java managers must include the immutable rebuild revision in their current value")
 
     def translate_renovate_pattern(pattern_source):
         return re.sub(r"\(\?<([A-Za-z_])", r"(?P<\1", pattern_source)
