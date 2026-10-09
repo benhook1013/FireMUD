@@ -219,6 +219,16 @@ class AccountSourceCurrentnessForwardMigrationsPostgresIntegrationTest {
             null,
             null,
             persistedCatalogEvidence[0]);
+    assertThat(
+            context
+                .dsl()
+                .resultQuery(
+                    "SELECT count(*) FROM account_draft_authorization_source_locks "
+                        + "WHERE source_key = ?",
+                    exactSource.key())
+                .fetchOne(0, Long.class))
+        .as("the hosted-terms scope insert creates exactly one source lock")
+        .isEqualTo(1L);
     byte[] exactSourceEvidence = exactSource.canonicalBytes();
     UUID handoffId = UUID.randomUUID();
     UUID requestId = UUID.randomUUID();
@@ -231,15 +241,11 @@ class AccountSourceCurrentnessForwardMigrationsPostgresIntegrationTest {
     context
         .dsl()
         .execute(
-            "INSERT INTO account_draft_authorization_source_locks (source_key) VALUES (?)",
-            exactSource.key());
-    context
-        .dsl()
-        .execute(
             "INSERT INTO account_hosted_terms_disclosure_handoffs "
                 + "(handoff_id, request_id, kind, source_key, predecessor_digest, "
                 + "candidate_digest, effective_at, binding, binding_digest, status, "
-                + "dispatch_attempts) VALUES (?, ?, 'CATALOG', ?, ?, ?, ?, ?, ?, 'PREPARED', 0)",
+                + "dispatch_attempts) VALUES (?, ?, 'CATALOG', ?, ?, ?, ?::timestamptz, ?, ?, "
+                + "'PREPARED', 0)",
             handoffId,
             requestId,
             exactSource.key(),
@@ -743,7 +749,7 @@ class AccountSourceCurrentnessForwardMigrationsPostgresIntegrationTest {
                 + "publication_evidence_version, notice_evidence_reference, notice_evidence_version, "
                 + "effective_at, version_payload, version_digest) "
                 + "VALUES (?, ?, NULL, 'TEST FIXTURE ONLY', 1, ?, ?, 1, 1, 'INITIAL', "
-                + "'no-publication-fixture', 1, 'no-notice-fixture', 1, ?, ?, ?)",
+                + "'no-publication-fixture', 1, 'no-notice-fixture', 1, ?::timestamptz, ?, ?)",
             termsVersionId,
             hostedScopeId,
             nonoperativeDocument,
