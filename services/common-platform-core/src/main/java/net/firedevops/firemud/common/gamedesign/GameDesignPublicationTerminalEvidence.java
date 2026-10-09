@@ -273,8 +273,12 @@ public final class GameDesignPublicationTerminalEvidence {
     this.release = release == null ? null : ReleaseContent.fromStored(release.canonicalBytes());
     this.epoch = publicationVersionStateEpoch;
     if (release != null) {
+      long frozenEpoch = operation.world().request().versionStateEpoch();
+      if (frozenEpoch == Long.MAX_VALUE) {
+        throw new IllegalArgumentException("Published version-state epoch exceeds owner range");
+      }
       if (epoch <= 0
-          || epoch != Math.addExact(operation.world().request().versionStateEpoch(), 1L)
+          || epoch != frozenEpoch + 1L
           || !Arrays.equals(
               release.worldStartLocationEvidence().canonicalBytes(),
               operation.world().canonicalBytes())) {

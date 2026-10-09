@@ -241,7 +241,7 @@ public final class WorldDraftTerminalReadGrpcCodec {
   /**
    * Checks this World carrier only; mutation/source semantics remain at the authenticated owner.
    */
-  static void requireCommittedResult(
+  static UUID requireCommittedResult(
       WorldDraftTerminalReadEvidence.Request request,
       DraftAuthorizationFenceBinding.OwnerReadback readback) {
     try {
@@ -296,7 +296,7 @@ public final class WorldDraftTerminalReadGrpcCodec {
       operation.expect(account.versionId().toString());
       UUID versionIdentityOperationId = operation.canonicalUuid();
       operation.expect(Long.toString(draft.target().gameDesignVersionRowId()));
-      operation.canonicalUuid(); // Intake request
+      UUID intakeRequestId = operation.canonicalUuid();
       operation.canonicalUuid(); // Intake operation
       operation.digest(); // Intake request digest
       operation.canonicalUuid(); // Source operation
@@ -358,6 +358,7 @@ public final class WorldDraftTerminalReadGrpcCodec {
             "resultingEpoch",
             new BigInteger(unit.expectedEpoch()).add(BigInteger.ONE).toString());
       }
+      return intakeRequestId;
     } catch (java.io.IOException | NoSuchAlgorithmException | RuntimeException invalid) {
       throw new IllegalArgumentException(
           "World committed readback has an invalid or substituted canonical APPLIED result",

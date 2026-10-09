@@ -1,7 +1,6 @@
 package net.firedevops.firemud.common.world;
 
 import java.io.IOException;
-import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
@@ -42,8 +41,6 @@ public record WorldPublishedStartLocationEvidence(
     byte[] originalAccountBindingBytes,
     byte[] appliedResultBytes) {
   public static final String SCHEMA = "world-published-start-location-evidence/v1";
-  private static final int APPLIED_INTAKE_REQUEST_ID_FRAME = 13;
-
   private static final Set<String> EVIDENCE_FIELDS =
       Set.of(
           "schema",
@@ -218,17 +215,14 @@ public record WorldPublishedStartLocationEvidence(
             account.inputDigest(),
             accountBytes,
             appliedBytes);
-    new WorldDraftTerminalReadEvidence(terminalRequest, java.util.Optional.of(terminalReadback));
-
-    JsonNode applied = readApplied(appliedBytes);
-    if (!"APPLIED".equals(text(applied, "status"))) {
-      throw new IllegalArgumentException(
-          "Published World selector requires the original APPLIED result");
-    }
-    if (!request.intakeRequestId().equals(appliedIntakeRequestId(applied))) {
+    WorldDraftTerminalReadEvidence terminalEvidence =
+        new WorldDraftTerminalReadEvidence(
+            terminalRequest, java.util.Optional.of(terminalReadback));
+    if (!request.intakeRequestId().equals(terminalEvidence.appliedIntakeRequestId())) {
       throw new IllegalArgumentException(
           "Published World selection differs from the original APPLIED intake request");
     }
+    JsonNode applied = readApplied(appliedBytes);
     byte[] resultReceipt = base64(applied, "startLocationReceiptBase64");
     if (!Arrays.equals(receiptBytes, resultReceipt)) {
       throw new IllegalArgumentException(
@@ -264,43 +258,6 @@ public record WorldPublishedStartLocationEvidence(
     } catch (IOException | tools.jackson.core.JacksonException invalid) {
       throw new IllegalArgumentException("World APPLIED result is invalid", invalid);
     }
-  }
-
-  /** Reads the immutable intake identity from the exact operation frame already codec-validated. */
-  private static UUID appliedIntakeRequestId(JsonNode applied) {
-    ByteBuffer operation = ByteBuffer.wrap(base64(applied, "operationBytesBase64"));
-    String intakeRequestId = null;
-    for (int frameIndex = 0; frameIndex <= APPLIED_INTAKE_REQUEST_ID_FRAME; frameIndex++) {
-      if (operation.remaining() < Integer.BYTES) {
-        throw new IllegalArgumentException("World APPLIED operation frame is truncated");
-      }
-      int frameLength = operation.getInt();
-      if (frameLength < 0 || frameLength > operation.remaining()) {
-        throw new IllegalArgumentException("World APPLIED operation frame has an invalid length");
-      }
-      byte[] frame = new byte[frameLength];
-      operation.get(frame);
-      if (frameIndex == 0
-          && !"world-draft-terminal-operation/v1"
-              .equals(new String(frame, StandardCharsets.UTF_8))) {
-        throw new IllegalArgumentException("Unsupported World APPLIED operation frame schema");
-      }
-      if (frameIndex == APPLIED_INTAKE_REQUEST_ID_FRAME) {
-        try {
-          intakeRequestId =
-              StandardCharsets.UTF_8
-                  .newDecoder()
-                  .onMalformedInput(java.nio.charset.CodingErrorAction.REPORT)
-                  .onUnmappableCharacter(java.nio.charset.CodingErrorAction.REPORT)
-                  .decode(java.nio.ByteBuffer.wrap(frame))
-                  .toString();
-        } catch (java.nio.charset.CharacterCodingException invalid) {
-          throw new IllegalArgumentException(
-              "World APPLIED intake request frame is invalid", invalid);
-        }
-      }
-    }
-    return parseUuid(intakeRequestId, "APPLIED intakeRequestId");
   }
 
   private static String prefixedSha256(byte[] bytes) {
