@@ -18,7 +18,6 @@ import net.firedevops.firemud.common.temporal.FiremudWorkflowIds;
 import net.firedevops.firemud.gamedesign.GameDesignServiceApplication;
 import net.firedevops.firemud.gamedesign.draft.AuthoredDraftPublishSelection.PublishIntent;
 import net.firedevops.firemud.gamedesign.draft.IsolatedPublicationOwnerSetup;
-import net.firedevops.firemud.gamedesign.dto.PublishParticipantDigestDto;
 import net.firedevops.firemud.gamedesign.dto.VersionDto;
 import net.firedevops.firemud.gamedesign.entity.Game;
 import net.firedevops.firemud.gamedesign.entity.GameAsset;
@@ -41,6 +40,7 @@ import net.firedevops.firemud.gamedesign.repository.VersionAssetArtifactReposito
 import net.firedevops.firemud.gamedesign.repository.VersionRepository;
 import net.firedevops.firemud.gamedesign.repository.VersionTemplateRemapSetRepository;
 import net.firedevops.firemud.gamedesign.service.impl.PublishAttemptServiceImpl;
+import net.firedevops.firemud.gamedesign.service.impl.PublishedWorldSelectorFixtures;
 import net.firedevops.firemud.gamedesign.service.impl.TemporalVersionPublishWorkflow;
 import net.firedevops.firemud.gamedesign.service.impl.VersionPublishCommandServiceImpl;
 import net.firedevops.firemud.test.NoGrpcServerTestConfiguration;
@@ -259,22 +259,8 @@ class PublishAttemptServiceTransactionIntegrationTest {
         .thenAnswer(
             invocation -> {
               VersionDto version = invocation.getArgument(0);
-              return List.of(
-                  new PublishParticipantDigestDto(
-                      "GAME_DESIGN_CONTROL_PLANE",
-                      String.valueOf(version.id()),
-                      fixture
-                          .operation()
-                          .account()
-                          .input()
-                          .selection()
-                          .selectedCommit()
-                          .commitId()
-                          .toString(),
-                      "transaction-proof-design-digest",
-                      1,
-                      null,
-                      null));
+              return PublishedWorldSelectorFixtures.participants(
+                  version.id(), fixture.operation().world());
             });
     Mockito.when(assetExportService.exportAssets(tenantId, fixture.version().getVersionNumber()))
         .thenAnswer(invocation -> recordFixtureCandidate(fixture));
@@ -335,22 +321,8 @@ class PublishAttemptServiceTransactionIntegrationTest {
               VersionDto candidate = invocation.getArgument(0);
               candidateVersionId.set(candidate.id());
               candidateVersionNumber.set(candidate.versionNumber());
-              return List.of(
-                  new PublishParticipantDigestDto(
-                      "GAME_DESIGN_CONTROL_PLANE",
-                      String.valueOf(candidate.id()),
-                      fixture
-                          .operation()
-                          .account()
-                          .input()
-                          .selection()
-                          .selectedCommit()
-                          .commitId()
-                          .toString(),
-                      "failed-remap-design-digest",
-                      1,
-                      null,
-                      null));
+              return PublishedWorldSelectorFixtures.participants(
+                  candidate.id(), fixture.operation().world());
             });
     Mockito.doAnswer(
             invocation -> {
