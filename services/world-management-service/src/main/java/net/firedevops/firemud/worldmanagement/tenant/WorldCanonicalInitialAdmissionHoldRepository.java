@@ -8,6 +8,7 @@ import java.util.UUID;
 import net.firedevops.firemud.common.world.WorldCanonicalInitialAdmissionHold.HoldIdentity;
 import net.firedevops.firemud.common.world.WorldCanonicalInitialAdmissionHold.InitialAdmissionOrigin;
 import net.firedevops.firemud.common.world.WorldCanonicalInitialAdmissionHold.Request;
+import net.firedevops.firemud.common.world.WorldCanonicalInitialAdmissionHoldState;
 import net.firedevops.firemud.common.world.WorldCanonicalInstanceLifecycleEvidence;
 import org.jooq.DSLContext;
 import org.jooq.Record;
@@ -31,6 +32,8 @@ public final class WorldCanonicalInitialAdmissionHoldRepository {
           + "canonical_world_slug, canonical_game_instance_id, canonical_version_id, "
           + "initial_admission_origin, expected_prior_pointer_version, canonical_request_bytes, "
           + "hold_binding_digest FROM initial_admission_bind_hold ";
+  private static final String HOLD_STATE_SELECT =
+      HOLD_SELECT.replace("SELECT hold_id,", "SELECT status, hold_id,");
   private static final String TRANSACTION_STATE_SQL =
       "SELECT current_setting('transaction_isolation') AS isolation, "
           + "current_setting('transaction_read_only') AS read_only";
@@ -146,6 +149,107 @@ public final class WorldCanonicalInitialAdmissionHoldRepository {
               Record row =
                   readByOwnerRequest(association.worldPrepareFields().privateTenantKey(), request);
               return row == null ? null : verifyStoredIdentity(row, request, association);
+            }));
+  }
+
+  /**
+   * Reads the exact immutable hold, its actual status, and current lifecycle in one read-only owner
+   * snapshot. This is a sampled observation only; it cannot acquire or settle the hold.
+   */
+  public Optional<WorldCanonicalInitialAdmissionHoldState> readState(
+      HoldIdentity expectedIdentity,
+      WorldCanonicalInstanceLifecycleEvidence.Request lifecycleSelector) {
+    Objects.requireNonNull(expectedIdentity, "expectedIdentity");
+    Objects.requireNonNull(lifecycleSelector, "lifecycleSelector");
+    requireNoAmbientTransaction("World canonical initial-admission hold state read");
+    Request expectedRequest = expectedIdentity.request();
+    requireSelectorMatchesRequest(expectedRequest, lifecycleSelector);
+
+    return Optional.ofNullable(
+        readTransaction.execute(
+            status -> {
+              requireReadOnlyRepeatableReadTransaction();
+              Optional<WorldCanonicalInstanceAssociation> maybeAssociation;
+              try {
+                maybeAssociation =
+                    associationRepository.readOwnerAssociationInOwnerTransaction(
+                        expectedRequest.canonicalGameInstanceId());
+              } catch (
+                  WorldCanonicalInstanceAssociationRepository.InvalidAssociationEvidenceException
+                      inconsistent) {
+                throw new InvalidHoldIdentityException(
+                    "Canonical World hold association is incomplete or inconsistent", inconsistent);
+              }
+              if (maybeAssociation.isEmpty()) {
+                Record detachedTypedHold =
+                    dsl.fetchOne(
+                        "SELECT hold_id FROM initial_admission_bind_hold "
+                            + "WHERE canonical_game_instance_id = ?",
+                        expectedRequest.canonicalGameInstanceId());
+                if (detachedTypedHold != null) {
+                  throw new InvalidHoldIdentityException(
+                      "Canonical World hold exists without its required persisted association");
+                }
+                return null;
+              }
+              WorldCanonicalInstanceAssociation association = maybeAssociation.orElseThrow();
+              requireAssociationMatchesRequest(expectedRequest, association);
+              requireSelectorMatchesAssociation(lifecycleSelector, association);
+
+              Record row =
+                  dsl.fetchOne(
+                      HOLD_STATE_SELECT
+                          + "WHERE tenant_id = ? AND initial_admission_request_id = ?",
+                      association.worldPrepareFields().privateTenantKey(),
+                      expectedRequest.initialAdmissionRequestId());
+              if (row == null) return null;
+
+              HoldIdentity storedIdentity = verifyStoredIdentity(row, expectedRequest, association);
+              if (!Arrays.equals(
+                  expectedIdentity.canonicalBytes(), storedIdentity.canonicalBytes())) {
+                throw new HoldConflictException(
+                    "Canonical World initial-admission hold ID or fence differs from the exact "
+                        + "expected identity");
+              }
+              WorldCanonicalInitialAdmissionHoldState.HoldStatus holdStatus;
+              try {
+                holdStatus =
+                    WorldCanonicalInitialAdmissionHoldState.HoldStatus.valueOf(
+                        required(row, "status", String.class));
+              } catch (RuntimeException invalid) {
+                throw new InvalidHoldIdentityException(
+                    "Persisted canonical World initial-admission hold status is missing or invalid",
+                    invalid);
+              }
+
+              WorldCanonicalInstanceLifecycleEvidence lifecycle;
+              try {
+                lifecycle =
+                    lifecycleReadRepository
+                        .readForCurrentLocationInOwnerTransaction(lifecycleSelector)
+                        .orElseThrow(
+                            () ->
+                                new InvalidHoldIdentityException(
+                                    "Canonical World lifecycle evidence is missing for an existing "
+                                        + "hold"));
+              } catch (
+                  WorldCanonicalInstanceLifecycleReadRepository.InvalidLifecycleEvidenceException
+                      inconsistent) {
+                throw new InvalidHoldIdentityException(
+                    "Current canonical World lifecycle evidence is inconsistent", inconsistent);
+              }
+              if (!lifecycleSelector.equals(lifecycle.request())) {
+                throw new InvalidHoldIdentityException(
+                    "Current canonical World lifecycle evidence substituted its exact read request");
+              }
+              try {
+                return new WorldCanonicalInitialAdmissionHoldState(
+                    storedIdentity, holdStatus, lifecycle);
+              } catch (IllegalArgumentException invalid) {
+                throw new InvalidHoldIdentityException(
+                    "Canonical World hold state is inconsistent with current lifecycle evidence",
+                    invalid);
+              }
             }));
   }
 

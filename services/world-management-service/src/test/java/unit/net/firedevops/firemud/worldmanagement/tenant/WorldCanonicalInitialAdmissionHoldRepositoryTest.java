@@ -7,11 +7,13 @@ import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.contains;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
@@ -19,6 +21,7 @@ import java.util.concurrent.atomic.AtomicReference;
 import net.firedevops.firemud.common.world.WorldCanonicalInitialAdmissionHold.HoldIdentity;
 import net.firedevops.firemud.common.world.WorldCanonicalInitialAdmissionHold.InitialAdmissionOrigin;
 import net.firedevops.firemud.common.world.WorldCanonicalInitialAdmissionHold.Request;
+import net.firedevops.firemud.common.world.WorldCanonicalInitialAdmissionHoldState;
 import net.firedevops.firemud.common.world.WorldCanonicalInstanceLifecycleEvidence;
 import net.firedevops.firemud.worldmanagement.tenant.WorldCanonicalInstanceAssociation.CanonicalIdentity;
 import net.firedevops.firemud.worldmanagement.tenant.WorldCanonicalInstanceAssociation.WorldPrepareFields;
@@ -232,6 +235,150 @@ class WorldCanonicalInitialAdmissionHoldRepositoryTest {
     verify(fixture.associations).readOwnerAssociationInOwnerTransaction(CANONICAL_INSTANCE);
   }
 
+  @Test
+  void stateReadUsesOneReadOnlyRepeatableReadSnapshotAndReturnsExactIdentityStatusAndLifecycle() {
+    Request request = noPriorRequest();
+    Fixture fixture =
+        fixture(
+            request,
+            activeLifecycle("ACTIVE", request.activeLifecycleEpoch()),
+            storedRow(request, HOLD_ID, HOLD_FENCE, "PENDING"));
+
+    Optional<WorldCanonicalInitialAdmissionHoldState> result =
+        fixture.repository.readState(
+            new HoldIdentity(request, HOLD_ID, HOLD_FENCE), selector(request));
+
+    assertThat(result).isPresent();
+    WorldCanonicalInitialAdmissionHoldState state = result.orElseThrow();
+    assertThat(state.holdIdentity()).isEqualTo(new HoldIdentity(request, HOLD_ID, HOLD_FENCE));
+    assertThat(state.holdStatus())
+        .isEqualTo(WorldCanonicalInitialAdmissionHoldState.HoldStatus.PENDING);
+    assertThat(state.lifecycleEvidence().request()).isEqualTo(selector(request));
+    assertThat(state.lifecycleEvidence().lifecycleStatus()).isEqualTo("ACTIVE");
+    assertThat(state.isPendingAtExpectedActiveEpoch()).isTrue();
+    assertThat(fixture.manager.startedWith.getIsolationLevel())
+        .isEqualTo(TransactionDefinition.ISOLATION_REPEATABLE_READ);
+    assertThat(fixture.manager.startedWith.isReadOnly()).isTrue();
+    assertThat(fixture.manager.startedCount).isEqualTo(1);
+    verify(fixture.lifecycle).readForCurrentLocationInOwnerTransaction(selector(request));
+    verify(fixture.associations).readOwnerAssociationInOwnerTransaction(CANONICAL_INSTANCE);
+    verify(fixture.dsl, never()).execute(anyString(), any(Object[].class));
+    ArgumentCaptor<String> sql = ArgumentCaptor.forClass(String.class);
+    verify(fixture.dsl, times(1)).fetchOne(sql.capture(), any(Object[].class));
+    assertThat(sql.getAllValues())
+        .anySatisfy(
+            statement ->
+                assertThat(statement)
+                    .contains("SELECT status, hold_id")
+                    .contains("initial_admission_request_id"));
+  }
+
+  @Test
+  void stateReadReportsTerminalReconciliationAndAdvancedLifecycleWithoutQualifyingThem() {
+    Request request = noPriorRequest();
+    for (String status : List.of("COMMITTED", "ABORTED", "RECONCILIATION_REQUIRED")) {
+      Fixture fixture =
+          fixture(
+              request,
+              activeLifecycle("ACTIVE", request.activeLifecycleEpoch()),
+              storedRow(request, HOLD_ID, HOLD_FENCE, status));
+      var state =
+          fixture
+              .repository
+              .readState(new HoldIdentity(request, HOLD_ID, HOLD_FENCE), selector(request))
+              .orElseThrow();
+      assertThat(state.holdStatus().name()).isEqualTo(status);
+      assertThat(state.isPendingAtExpectedActiveEpoch()).isFalse();
+    }
+
+    Fixture advanced =
+        fixture(
+            request,
+            activeLifecycle("TERMINATING", request.activeLifecycleEpoch() + 1),
+            storedRow(request, HOLD_ID, HOLD_FENCE, "PENDING"));
+    var advancedState =
+        advanced
+            .repository
+            .readState(new HoldIdentity(request, HOLD_ID, HOLD_FENCE), selector(request))
+            .orElseThrow();
+    assertThat(advancedState.lifecycleEvidence().lifecycleStatus()).isEqualTo("TERMINATING");
+    assertThat(advancedState.lifecycleEvidence().lifecycleEpoch())
+        .isEqualTo(request.activeLifecycleEpoch() + 1);
+    assertThat(advancedState.isPendingAtExpectedActiveEpoch()).isFalse();
+  }
+
+  @Test
+  void missingLookupReturnsEmptyButIncompleteCurrentEvidenceAndSubstitutedFenceDeny() {
+    Request request = noPriorRequest();
+    Fixture missing = fixture(request, activeLifecycle("ACTIVE", 7L), null);
+    assertThat(
+            missing.repository.readState(
+                new HoldIdentity(request, HOLD_ID, HOLD_FENCE), selector(request)))
+        .isEmpty();
+    verify(missing.lifecycle, never())
+        .readForCurrentLocationInOwnerTransaction(
+            any(WorldCanonicalInstanceLifecycleEvidence.Request.class));
+
+    Fixture incomplete =
+        fixture(
+            request,
+            activeLifecycle("ACTIVE", 7L),
+            storedRow(request, HOLD_ID, HOLD_FENCE, "PENDING"));
+    when(incomplete.lifecycle.readForCurrentLocationInOwnerTransaction(selector(request)))
+        .thenReturn(Optional.empty());
+    assertThatThrownBy(
+            () ->
+                incomplete.repository.readState(
+                    new HoldIdentity(request, HOLD_ID, HOLD_FENCE), selector(request)))
+        .isInstanceOf(
+            WorldCanonicalInitialAdmissionHoldRepository.InvalidHoldIdentityException.class);
+
+    Fixture substituted =
+        fixture(
+            request,
+            activeLifecycle("ACTIVE", 7L),
+            storedRow(request, HOLD_ID, HOLD_FENCE, "PENDING"));
+    assertThatThrownBy(
+            () ->
+                substituted.repository.readState(
+                    new HoldIdentity(
+                        request, HOLD_ID, uuid("cccccccc-cccc-4ccc-8ccc-cccccccccccc")),
+                    selector(request)))
+        .isInstanceOf(WorldCanonicalInitialAdmissionHoldRepository.HoldConflictException.class)
+        .hasMessageContaining("ID or fence");
+
+    Map<String, Object> incompleteStatus = storedValues(request, HOLD_ID, HOLD_FENCE);
+    incompleteStatus.remove("status");
+    Fixture badStatus = fixture(request, activeLifecycle("ACTIVE", 7L), row(incompleteStatus));
+    assertThatThrownBy(
+            () ->
+                badStatus.repository.readState(
+                    new HoldIdentity(request, HOLD_ID, HOLD_FENCE), selector(request)))
+        .isInstanceOf(
+            WorldCanonicalInitialAdmissionHoldRepository.InvalidHoldIdentityException.class);
+    verify(badStatus.lifecycle, never())
+        .readForCurrentLocationInOwnerTransaction(
+            any(WorldCanonicalInstanceLifecycleEvidence.Request.class));
+  }
+
+  @Test
+  void stateReadRejectsAmbientTransactionBeforeAnyOwnerLookup() {
+    Request request = noPriorRequest();
+    Fixture fixture = fixture(request, activeLifecycle("ACTIVE", 7L), null);
+    TransactionSynchronizationManager.setActualTransactionActive(true);
+
+    assertThatThrownBy(
+            () ->
+                fixture.repository.readState(
+                    new HoldIdentity(request, HOLD_ID, HOLD_FENCE), selector(request)))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("must not join an ambient transaction");
+
+    TransactionSynchronizationManager.setActualTransactionActive(false);
+    verifyNoInteractions(fixture.dsl, fixture.associations, fixture.lifecycle);
+    assertThat(fixture.manager.startedWith).isNull();
+  }
+
   private static void assertStoredRowDenied(Request request, Record storedRow) {
     Fixture fixture = fixture(request, activeLifecycle("ACTIVE", 7L), storedRow);
     assertThatThrownBy(() -> fixture.repository.acquire(request, selector(request)))
@@ -253,6 +400,8 @@ class WorldCanonicalInitialAdmissionHoldRepositoryTest {
     AtomicReference<Record> holdRow = new AtomicReference<>(existingHold);
 
     when(lifecycle.readForActivationInOwnerTransaction(selector(request)))
+        .thenReturn(Optional.of(lifecycleEvidence));
+    when(lifecycle.readForCurrentLocationInOwnerTransaction(selector(request)))
         .thenReturn(Optional.of(lifecycleEvidence));
     when(associations.readOwnerAssociationInActivationTransaction(CANONICAL_INSTANCE))
         .thenReturn(Optional.of(association));
@@ -321,6 +470,7 @@ class WorldCanonicalInitialAdmissionHoldRepositoryTest {
     when(evidence.request()).thenReturn(selector(request));
     when(evidence.lifecycleStatus()).thenReturn(status);
     when(evidence.lifecycleEpoch()).thenReturn(epoch);
+    when(evidence.canonicalBytes()).thenReturn(new byte[] {1});
     return evidence;
   }
 
@@ -373,10 +523,17 @@ class WorldCanonicalInitialAdmissionHoldRepositoryTest {
     return row(storedValues(request, holdId, holdFence));
   }
 
+  private static Record storedRow(Request request, UUID holdId, UUID holdFence, String status) {
+    Map<String, Object> values = storedValues(request, holdId, holdFence);
+    values.put("status", status);
+    return row(values);
+  }
+
   private static Map<String, Object> storedValues(Request request, UUID holdId, UUID holdFence) {
     Map<String, Object> values = new HashMap<>();
     values.put("hold_id", holdId);
     values.put("hold_fence", holdFence);
+    values.put("status", "PENDING");
     values.put("tenant_id", 41L);
     values.put("realm_uuid", request.realmId());
     values.put("playable_state_namespace_uuid", request.playableStateNamespaceId());
@@ -455,12 +612,14 @@ class WorldCanonicalInitialAdmissionHoldRepositoryTest {
   private static final class RecordingTransactionManager
       implements org.springframework.transaction.PlatformTransactionManager {
     private TransactionDefinition startedWith;
+    private int startedCount;
 
     @Override
     public TransactionStatus getTransaction(TransactionDefinition definition) {
       TransactionDefinition effectiveDefinition =
           definition == null ? TransactionDefinition.withDefaults() : definition;
       startedWith = effectiveDefinition;
+      startedCount++;
       TransactionSynchronizationManager.setActualTransactionActive(true);
       TransactionSynchronizationManager.setCurrentTransactionReadOnly(
           effectiveDefinition.isReadOnly());

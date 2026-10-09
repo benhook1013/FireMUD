@@ -12,6 +12,8 @@ service WorldCanonicalInitialAdmissionHoldService {
       returns (AcquireCanonicalInitialAdmissionHoldResponse);
   rpc ReadCanonicalInitialAdmissionHoldIdentity(ReadCanonicalInitialAdmissionHoldIdentityRequest)
       returns (ReadCanonicalInitialAdmissionHoldIdentityResponse);
+  rpc ReadCanonicalInitialAdmissionHoldState(ReadCanonicalInitialAdmissionHoldStateRequest)
+      returns (ReadCanonicalInitialAdmissionHoldStateResponse);
 }
 
 message AcquireCanonicalInitialAdmissionHoldRequest {
@@ -42,4 +44,23 @@ message ReadCanonicalInitialAdmissionHoldIdentityResponse {
   // Historical immutable acquisition identity only; this is not terminal state, current
   // admission, or an absence checkpoint.
   bytes hold_identity_bytes = 2;
+}
+
+message ReadCanonicalInitialAdmissionHoldStateRequest {
+  // Fresh non-nil UUID correlation for this read, in canonical lowercase form.
+  string read_request_id = 1;
+
+  // Complete immutable World-issued hold identity bytes, not merely the acquisition request.
+  bytes hold_identity_bytes = 2;
+
+  // Complete closed canonical World lifecycle read request for the same target and read UUID.
+  bytes canonical_lifecycle_read_request_bytes = 3;
+}
+
+message ReadCanonicalInitialAdmissionHoldStateResponse {
+  // Exact correlation echoed from this read request.
+  string read_request_id = 1;
+
+  // Closed canonical same-snapshot hold status and complete lifecycle evidence.
+  bytes hold_state_bytes = 2;
 }

@@ -23,6 +23,7 @@ import net.firedevops.firemud.common.security.SessionContext;
 import net.firedevops.firemud.common.world.WorldCanonicalInitialAdmissionHold.HoldIdentity;
 import net.firedevops.firemud.common.world.WorldCanonicalInitialAdmissionHold.InitialAdmissionOrigin;
 import net.firedevops.firemud.common.world.WorldCanonicalInitialAdmissionHold.Request;
+import net.firedevops.firemud.common.world.WorldCanonicalInitialAdmissionHoldState;
 import net.firedevops.firemud.common.world.WorldCanonicalInstanceLifecycleEvidence;
 import net.firedevops.firemud.worldmanagement.tenant.WorldCanonicalInitialAdmissionHoldGrpcService;
 import net.firedevops.firemud.worldmanagement.tenant.WorldCanonicalInitialAdmissionHoldRepository;
@@ -30,6 +31,8 @@ import net.firedevops.firemud.worldmanagement.v1.AcquireCanonicalInitialAdmissio
 import net.firedevops.firemud.worldmanagement.v1.AcquireCanonicalInitialAdmissionHoldResponse;
 import net.firedevops.firemud.worldmanagement.v1.ReadCanonicalInitialAdmissionHoldIdentityRequest;
 import net.firedevops.firemud.worldmanagement.v1.ReadCanonicalInitialAdmissionHoldIdentityResponse;
+import net.firedevops.firemud.worldmanagement.v1.ReadCanonicalInitialAdmissionHoldStateRequest;
+import net.firedevops.firemud.worldmanagement.v1.ReadCanonicalInitialAdmissionHoldStateResponse;
 import org.jooq.exception.DataAccessException;
 import org.junit.jupiter.api.Test;
 import org.springframework.dao.TransientDataAccessException;
@@ -246,6 +249,164 @@ class WorldCanonicalInitialAdmissionHoldGrpcServiceTest {
   }
 
   @Test
+  void stateReadRequiresLifecycleCorrelationAndCompleteTargetBeforeOwnerRead() {
+    Fixture fixture = fixture("test", "test", PLAYABLE_NAMESPACE);
+    var repository = mock(WorldCanonicalInitialAdmissionHoldRepository.class);
+    var grpc = service(repository);
+    var wrongCorrelation = stateRead(HOLD_READ_ID.toString(), fixture);
+
+    assertThat(callStateRead(grpc, wrongCorrelation, peer("game-session-service", "test")).error)
+        .isEqualTo(Status.Code.INVALID_ARGUMENT);
+
+    Fixture wrongNamespace = fixture("test", "other", PLAYABLE_NAMESPACE);
+    assertThat(
+            callStateRead(
+                    grpc,
+                    stateRead(
+                        wrongNamespace.lifecycleRequest.readRequestId().toString(), wrongNamespace),
+                    peer("game-session-service", "test"))
+                .error)
+        .isEqualTo(Status.Code.PERMISSION_DENIED);
+    Fixture mismatchedScope = fixture("test", "test", OTHER_PLAYABLE_NAMESPACE);
+    assertThat(
+            callStateRead(
+                    grpc,
+                    stateRead(
+                        mismatchedScope.lifecycleRequest.readRequestId().toString(),
+                        mismatchedScope),
+                    peer("game-session-service", "test"))
+                .error)
+        .isEqualTo(Status.Code.FAILED_PRECONDITION);
+    verifyNoInteractions(repository);
+  }
+
+  @Test
+  void stateReadEchoesExactMockedOwnerStateAndRequestCorrelation() {
+    Fixture fixture = fixture("test", "test", PLAYABLE_NAMESPACE);
+    WorldCanonicalInstanceLifecycleEvidence lifecycleEvidence =
+        mock(WorldCanonicalInstanceLifecycleEvidence.class);
+    when(lifecycleEvidence.request()).thenReturn(fixture.lifecycleRequest);
+    when(lifecycleEvidence.lifecycleStatus()).thenReturn("ACTIVE");
+    when(lifecycleEvidence.lifecycleEpoch()).thenReturn(7L);
+    // The repository is mocked here; this sentinel only exercises response routing, not the
+    // validity or provenance of upstream lifecycle bytes.
+    when(lifecycleEvidence.canonicalBytes()).thenReturn(new byte[] {1});
+    var expectedState =
+        new WorldCanonicalInitialAdmissionHoldState(
+            fixture.identity,
+            WorldCanonicalInitialAdmissionHoldState.HoldStatus.PENDING,
+            lifecycleEvidence);
+    var repository = mock(WorldCanonicalInitialAdmissionHoldRepository.class);
+    when(repository.readState(
+            any(HoldIdentity.class), any(WorldCanonicalInstanceLifecycleEvidence.Request.class)))
+        .thenReturn(Optional.of(expectedState));
+    var grpc = service(repository);
+
+    Collector<ReadCanonicalInitialAdmissionHoldStateResponse> result =
+        callStateRead(
+            grpc,
+            stateRead(fixture.lifecycleRequest.readRequestId().toString(), fixture),
+            peer("game-session-service", "test"));
+
+    assertThat(result.error).isNull();
+    assertThat(result.completed).isTrue();
+    assertThat(result.value.getReadRequestId())
+        .isEqualTo(fixture.lifecycleRequest.readRequestId().toString());
+    assertThat(result.value.getHoldStateBytes().toByteArray())
+        .containsExactly(expectedState.canonicalBytes());
+    verify(repository).readState(fixture.identity, fixture.lifecycleRequest);
+  }
+
+  @Test
+  void stateReadPeerAndAmbientTransactionGatesRunBeforeParsingOrRepositoryAccess() {
+    var repository = mock(WorldCanonicalInitialAdmissionHoldRepository.class);
+    var grpc = service(repository);
+    var malformed =
+        ReadCanonicalInitialAdmissionHoldStateRequest.newBuilder()
+            .setReadRequestId("not-a-uuid")
+            .build();
+
+    assertThat(callStateRead(grpc, malformed, null).error).isEqualTo(Status.Code.PERMISSION_DENIED);
+
+    SessionContext.setContext("11111111-1111-4111-8111-111111111111", List.of(), Map.of());
+    Collector<ReadCanonicalInitialAdmissionHoldStateResponse> endUser;
+    try {
+      endUser = callStateRead(grpc, malformed, peer("game-session-service", "test"));
+    } finally {
+      SessionContext.clear();
+    }
+    assertThat(endUser.error).isEqualTo(Status.Code.PERMISSION_DENIED);
+
+    TransactionSynchronizationManager.setActualTransactionActive(true);
+    Collector<ReadCanonicalInitialAdmissionHoldStateResponse> ambient;
+    try {
+      ambient = callStateRead(grpc, malformed, peer("game-session-service", "test"));
+    } finally {
+      TransactionSynchronizationManager.setActualTransactionActive(false);
+    }
+    assertThat(ambient.error).isEqualTo(Status.Code.FAILED_PRECONDITION);
+    verifyNoInteractions(repository);
+  }
+
+  @Test
+  void stateReadRejectsUnknownWireFieldsAndReturnsNotFoundForAbsentOwnerState() {
+    Fixture fixture = fixture("test", "test", PLAYABLE_NAMESPACE);
+    var repository = mock(WorldCanonicalInitialAdmissionHoldRepository.class);
+    var grpc = service(repository);
+    var unknown =
+        stateRead(fixture.lifecycleRequest.readRequestId().toString(), fixture).toBuilder()
+            .setUnknownFields(unknownFields())
+            .build();
+    assertThat(callStateRead(grpc, unknown, peer("game-session-service", "test")).error)
+        .isEqualTo(Status.Code.INVALID_ARGUMENT);
+
+    var malformedIdentity =
+        stateRead(fixture.lifecycleRequest.readRequestId().toString(), fixture).toBuilder()
+            .setHoldIdentityBytes(ByteString.copyFrom(new byte[] {1}))
+            .build();
+    assertThat(callStateRead(grpc, malformedIdentity, peer("game-session-service", "test")).error)
+        .isEqualTo(Status.Code.INVALID_ARGUMENT);
+
+    when(repository.readState(
+            any(HoldIdentity.class), any(WorldCanonicalInstanceLifecycleEvidence.Request.class)))
+        .thenReturn(Optional.empty());
+    assertThat(
+            callStateRead(
+                    grpc,
+                    stateRead(fixture.lifecycleRequest.readRequestId().toString(), fixture),
+                    peer("game-session-service", "test"))
+                .error)
+        .isEqualTo(Status.Code.NOT_FOUND);
+    verify(repository).readState(fixture.identity, fixture.lifecycleRequest);
+  }
+
+  @Test
+  void stateReadMapsIncompleteOwnerEvidenceAndUnavailableStorageWithoutStatePayload() {
+    Fixture fixture = fixture("test", "test", PLAYABLE_NAMESPACE);
+    var request = stateRead(fixture.lifecycleRequest.readRequestId().toString(), fixture);
+
+    var incomplete = mock(WorldCanonicalInitialAdmissionHoldRepository.class);
+    when(incomplete.readState(
+            any(HoldIdentity.class), any(WorldCanonicalInstanceLifecycleEvidence.Request.class)))
+        .thenThrow(
+            new WorldCanonicalInitialAdmissionHoldRepository.InvalidHoldIdentityException(
+                "incomplete state"));
+    Collector<ReadCanonicalInitialAdmissionHoldStateResponse> invalid =
+        callStateRead(service(incomplete), request, peer("game-session-service", "test"));
+    assertThat(invalid.error).isEqualTo(Status.Code.FAILED_PRECONDITION);
+    assertThat(invalid.value).isNull();
+
+    var unavailable = mock(WorldCanonicalInitialAdmissionHoldRepository.class);
+    when(unavailable.readState(
+            any(HoldIdentity.class), any(WorldCanonicalInstanceLifecycleEvidence.Request.class)))
+        .thenThrow(new TransientDataAccessException("temporary hold-state storage failure") {});
+    Collector<ReadCanonicalInitialAdmissionHoldStateResponse> transientFailure =
+        callStateRead(service(unavailable), request, peer("game-session-service", "test"));
+    assertThat(transientFailure.error).isEqualTo(Status.Code.UNAVAILABLE);
+    assertThat(transientFailure.value).isNull();
+  }
+
+  @Test
   void mapsOwnerConflictsAndInconsistentIdentitiesToTheirExactStatuses() {
     Fixture fixture = fixture("test", "test", PLAYABLE_NAMESPACE);
     var conflictRepository = mock(WorldCanonicalInitialAdmissionHoldRepository.class);
@@ -422,6 +583,15 @@ class WorldCanonicalInitialAdmissionHoldGrpcServiceTest {
         .build();
   }
 
+  private static ReadCanonicalInitialAdmissionHoldStateRequest stateRead(
+      String readId, Fixture fixture) {
+    return ReadCanonicalInitialAdmissionHoldStateRequest.newBuilder()
+        .setReadRequestId(readId)
+        .setHoldIdentityBytes(ByteString.copyFrom(fixture.identity.canonicalBytes()))
+        .setCanonicalLifecycleReadRequestBytes(ByteString.copyFrom(fixture.lifecycleBytes))
+        .build();
+  }
+
   private static UnknownFieldSet unknownFields() {
     return UnknownFieldSet.newBuilder()
         .addField(99, UnknownFieldSet.Field.newBuilder().addVarint(1L).build())
@@ -458,6 +628,24 @@ class WorldCanonicalInitialAdmissionHoldGrpcServiceTest {
     Context previous = context.attach();
     try {
       service.readCanonicalInitialAdmissionHoldIdentity(request, response);
+    } finally {
+      context.detach(previous);
+    }
+    return response;
+  }
+
+  private static Collector<ReadCanonicalInitialAdmissionHoldStateResponse> callStateRead(
+      WorldCanonicalInitialAdmissionHoldGrpcService service,
+      ReadCanonicalInitialAdmissionHoldStateRequest request,
+      GrpcPeerIdentity peer) {
+    Collector<ReadCanonicalInitialAdmissionHoldStateResponse> response = new Collector<>();
+    Context context =
+        peer == null
+            ? Context.current()
+            : Context.current().withValue(GrpcPeerIdentity.CONTEXT_KEY, peer);
+    Context previous = context.attach();
+    try {
+      service.readCanonicalInitialAdmissionHoldState(request, response);
     } finally {
       context.detach(previous);
     }

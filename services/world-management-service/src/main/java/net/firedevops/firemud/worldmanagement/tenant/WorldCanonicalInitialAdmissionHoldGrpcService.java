@@ -12,11 +12,14 @@ import net.firedevops.firemud.common.security.SessionContext;
 import net.firedevops.firemud.common.world.WorldCanonicalInitialAdmissionHold;
 import net.firedevops.firemud.common.world.WorldCanonicalInitialAdmissionHold.HoldIdentity;
 import net.firedevops.firemud.common.world.WorldCanonicalInitialAdmissionHold.Request;
+import net.firedevops.firemud.common.world.WorldCanonicalInitialAdmissionHoldState;
 import net.firedevops.firemud.common.world.WorldCanonicalInstanceLifecycleEvidence;
 import net.firedevops.firemud.worldmanagement.v1.AcquireCanonicalInitialAdmissionHoldRequest;
 import net.firedevops.firemud.worldmanagement.v1.AcquireCanonicalInitialAdmissionHoldResponse;
 import net.firedevops.firemud.worldmanagement.v1.ReadCanonicalInitialAdmissionHoldIdentityRequest;
 import net.firedevops.firemud.worldmanagement.v1.ReadCanonicalInitialAdmissionHoldIdentityResponse;
+import net.firedevops.firemud.worldmanagement.v1.ReadCanonicalInitialAdmissionHoldStateRequest;
+import net.firedevops.firemud.worldmanagement.v1.ReadCanonicalInitialAdmissionHoldStateResponse;
 import net.firedevops.firemud.worldmanagement.v1.WorldCanonicalInitialAdmissionHoldServiceGrpc;
 import org.jooq.exception.DataAccessException;
 import org.springframework.beans.factory.annotation.Value;
@@ -216,6 +219,108 @@ public final class WorldCanonicalInitialAdmissionHoldGrpcService
     responseObserver.onCompleted();
   }
 
+  @Override
+  public void readCanonicalInitialAdmissionHoldState(
+      ReadCanonicalInitialAdmissionHoldStateRequest request,
+      StreamObserver<ReadCanonicalInitialAdmissionHoldStateResponse> responseObserver) {
+    if (!requireAuthenticatedGameSessionPeer(responseObserver)) return;
+    if (!requireIndependentOwnerOperation(responseObserver)) return;
+
+    ParsedStateRead parsed;
+    try {
+      parsed = parseStateReadRequest(request);
+    } catch (IllegalArgumentException invalid) {
+      fail(
+          responseObserver,
+          Status.INVALID_ARGUMENT,
+          "A canonical read UUID, complete hold identity, and lifecycle request are required");
+      return;
+    }
+    if (!trustedNamespace.equals(parsed.holdIdentity().request().targetNamespace())
+        || !trustedNamespace.equals(parsed.lifecycleRequest().targetNamespace())) {
+      fail(
+          responseObserver,
+          Status.PERMISSION_DENIED,
+          "Canonical World hold and lifecycle namespaces must match the authenticated peer");
+      return;
+    }
+    if (!sameStateTarget(parsed.holdIdentity().request(), parsed.lifecycleRequest())) {
+      fail(
+          responseObserver,
+          Status.FAILED_PRECONDITION,
+          "Canonical World lifecycle evidence does not match the complete hold target");
+      return;
+    }
+
+    Optional<WorldCanonicalInitialAdmissionHoldState> maybeState;
+    try {
+      maybeState = repository.readState(parsed.holdIdentity(), parsed.lifecycleRequest());
+    } catch (WorldCanonicalInitialAdmissionHoldRepository.HoldConflictException conflict) {
+      fail(
+          responseObserver,
+          Status.ALREADY_EXISTS,
+          "Canonical World initial-admission hold state conflicts with owner state");
+      return;
+    } catch (
+        WorldCanonicalInitialAdmissionHoldRepository.InvalidHoldIdentityException inconsistent) {
+      fail(
+          responseObserver,
+          Status.FAILED_PRECONDITION,
+          "Canonical World initial-admission hold state is incomplete or inconsistent");
+      return;
+    } catch (TransientDataAccessException unavailable) {
+      fail(
+          responseObserver,
+          Status.UNAVAILABLE,
+          "Canonical World initial-admission hold state storage is temporarily unavailable");
+      return;
+    } catch (DataAccessException storageFailure) {
+      fail(
+          responseObserver,
+          Status.INTERNAL,
+          "Canonical World initial-admission hold state storage failed");
+      return;
+    } catch (RuntimeException failure) {
+      fail(
+          responseObserver,
+          Status.INTERNAL,
+          "Canonical World initial-admission hold state read failed");
+      return;
+    }
+    if (maybeState == null) {
+      fail(
+          responseObserver,
+          Status.FAILED_PRECONDITION,
+          "Canonical World hold owner returned no state lookup result");
+      return;
+    }
+    if (maybeState.isEmpty()) {
+      fail(
+          responseObserver,
+          Status.NOT_FOUND,
+          "No exact canonical World initial-admission hold state was found");
+      return;
+    }
+
+    byte[] stateBytes;
+    try {
+      stateBytes = requireExactState(parsed, maybeState.orElseThrow());
+    } catch (RuntimeException inconsistent) {
+      fail(
+          responseObserver,
+          Status.FAILED_PRECONDITION,
+          "Canonical World hold owner returned substituted or incomplete state evidence");
+      return;
+    }
+
+    responseObserver.onNext(
+        ReadCanonicalInitialAdmissionHoldStateResponse.newBuilder()
+            .setReadRequestId(parsed.readRequestId())
+            .setHoldStateBytes(ByteString.copyFrom(stateBytes))
+            .build());
+    responseObserver.onCompleted();
+  }
+
   private static ParsedAcquire parseAcquireRequest(
       AcquireCanonicalInitialAdmissionHoldRequest request) {
     if (request == null || !request.getUnknownFields().asMap().isEmpty()) {
@@ -235,7 +340,31 @@ public final class WorldCanonicalInitialAdmissionHoldGrpcService
     if (request == null || !request.getUnknownFields().asMap().isEmpty()) {
       throw new IllegalArgumentException("Closed canonical read request is required");
     }
-    String readId = request.getReadRequestId();
+    String readId = canonicalReadId(request.getReadRequestId());
+    Request holdRequest =
+        WorldCanonicalInitialAdmissionHold.Request.fromStored(
+            request.getCanonicalHoldRequestBytes().toByteArray());
+    return new ParsedRead(readId, holdRequest);
+  }
+
+  private static ParsedStateRead parseStateReadRequest(
+      ReadCanonicalInitialAdmissionHoldStateRequest request) {
+    if (request == null || !request.getUnknownFields().asMap().isEmpty()) {
+      throw new IllegalArgumentException("Closed canonical hold-state read request is required");
+    }
+    String readId = canonicalReadId(request.getReadRequestId());
+    HoldIdentity identity = HoldIdentity.fromStored(request.getHoldIdentityBytes().toByteArray());
+    WorldCanonicalInstanceLifecycleEvidence.Request lifecycleRequest =
+        WorldCanonicalInstanceLifecycleEvidence.Request.fromStored(
+            request.getCanonicalLifecycleReadRequestBytes().toByteArray());
+    if (!readId.equals(lifecycleRequest.readRequestId().toString())) {
+      throw new IllegalArgumentException(
+          "Lifecycle read request correlation differs from the hold-state read UUID");
+    }
+    return new ParsedStateRead(readId, identity, lifecycleRequest);
+  }
+
+  private static String canonicalReadId(String readId) {
     UUID parsedReadId;
     try {
       parsedReadId = UUID.fromString(readId);
@@ -245,10 +374,7 @@ public final class WorldCanonicalInitialAdmissionHoldGrpcService
     if (new UUID(0L, 0L).equals(parsedReadId) || !parsedReadId.toString().equals(readId)) {
       throw new IllegalArgumentException("Read request ID must be a canonical non-nil UUID");
     }
-    Request holdRequest =
-        WorldCanonicalInitialAdmissionHold.Request.fromStored(
-            request.getCanonicalHoldRequestBytes().toByteArray());
-    return new ParsedRead(readId, holdRequest);
+    return readId;
   }
 
   private static boolean sameTarget(
@@ -262,6 +388,12 @@ public final class WorldCanonicalInitialAdmissionHoldGrpcService
         && holdRequest.canonicalGameInstanceId().equals(lifecycleRequest.canonicalGameInstanceId())
         && holdRequest.canonicalVersionId().equals(lifecycleRequest.canonicalVersionId())
         && lifecycleRequest.publicProduction();
+  }
+
+  private static boolean sameStateTarget(
+      Request holdRequest, WorldCanonicalInstanceLifecycleEvidence.Request lifecycleRequest) {
+    return holdRequest.targetNamespace().equals(lifecycleRequest.targetNamespace())
+        && sameTarget(holdRequest, lifecycleRequest);
   }
 
   private static byte[] requireExactIdentity(Request expected, HoldIdentity actual) {
@@ -280,6 +412,25 @@ public final class WorldCanonicalInitialAdmissionHoldGrpcService
         || decoded.holdId() == null
         || decoded.holdFence() == null) {
       throw new IllegalStateException("Canonical World hold identity failed exact readback");
+    }
+    return bytes;
+  }
+
+  private static byte[] requireExactState(
+      ParsedStateRead expected, WorldCanonicalInitialAdmissionHoldState actual) {
+    if (actual == null
+        || actual.holdIdentity() == null
+        || !Arrays.equals(
+            expected.holdIdentity().canonicalBytes(), actual.holdIdentity().canonicalBytes())
+        || actual.lifecycleEvidence() == null
+        || !expected.lifecycleRequest().equals(actual.lifecycleEvidence().request())
+        || actual.holdStatus() == null) {
+      throw new IllegalStateException("Canonical World hold state differs from the exact request");
+    }
+    byte[] bytes = actual.canonicalBytes();
+    if (bytes.length == 0
+        || bytes.length > WorldCanonicalInitialAdmissionHoldState.MAX_CANONICAL_BYTES) {
+      throw new IllegalStateException("Canonical World hold state response exceeds its limit");
     }
     return bytes;
   }
@@ -319,4 +470,9 @@ public final class WorldCanonicalInitialAdmissionHoldGrpcService
       Request holdRequest, WorldCanonicalInstanceLifecycleEvidence.Request lifecycleRequest) {}
 
   private record ParsedRead(String readRequestId, Request holdRequest) {}
+
+  private record ParsedStateRead(
+      String readRequestId,
+      HoldIdentity holdIdentity,
+      WorldCanonicalInstanceLifecycleEvidence.Request lifecycleRequest) {}
 }

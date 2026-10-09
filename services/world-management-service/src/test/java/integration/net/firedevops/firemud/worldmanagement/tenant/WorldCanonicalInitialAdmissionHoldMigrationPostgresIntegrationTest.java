@@ -251,6 +251,82 @@ class WorldCanonicalInitialAdmissionHoldMigrationPostgresIntegrationTest {
     }
   }
 
+  @Test
+  void migrationBackedReadOnlySnapshotObservesStoredStatusWithoutChangingSyntheticRows()
+      throws Exception {
+    // These are migration-fixture rows only: they do not supply canonical hold identity,
+    // authenticated Game Session authority, or lifecycle-owner evidence for the new RPC.
+    String schema = newSchema("initial_hold_state_snapshot_");
+    try {
+      migrate(schema, "47");
+      WorldFixture world = worldFixture();
+      Map<String, LegacySnapshot> rows = new java.util.LinkedHashMap<>();
+      try (Connection connection = connection()) {
+        DSLContext dsl = schemaContext(connection, schema);
+        insertLegacyWorld(dsl, world);
+        for (String status : List.of("PENDING", "COMMITTED", "ABORTED")) {
+          rows.put(status, insertLegacyHold(dsl, world, status));
+        }
+        InitialAdmissionBindHoldRepository repository = new InitialAdmissionBindHoldRepository(dsl);
+        var pending =
+            repository
+                .findByTenantIdAndRequestId(world.tenantId(), rows.get("PENDING").requestId())
+                .orElseThrow();
+        var reconciling =
+            repository
+                .markReconciliationRequired(
+                    pending, "SYNTHETIC_READBACK_FIXTURE", Instant.parse("2026-01-01T00:00:00Z"))
+                .orElseThrow();
+        assertThat(reconciling.status()).isEqualTo("RECONCILIATION_REQUIRED");
+        LegacySnapshot pendingSnapshot = rows.remove("PENDING");
+        rows.put("RECONCILIATION_REQUIRED", pendingSnapshot);
+      }
+
+      Map<String, Long> observedVersions = new java.util.LinkedHashMap<>();
+      try (Connection connection = connection()) {
+        DSLContext dsl = schemaContext(connection, schema);
+        connection.setAutoCommit(false);
+        connection.setReadOnly(true);
+        connection.setTransactionIsolation(Connection.TRANSACTION_REPEATABLE_READ);
+        for (Map.Entry<String, LegacySnapshot> entry : rows.entrySet()) {
+          var row =
+              Objects.requireNonNull(
+                  dsl.fetchOne(
+                      "SELECT status, row_version FROM initial_admission_bind_hold "
+                          + "WHERE initial_admission_request_id = ?",
+                      entry.getValue().requestId()));
+          assertThat(row.get("status", String.class)).isEqualTo(entry.getKey());
+          observedVersions.put(entry.getKey(), row.get("row_version", Long.class));
+        }
+        var transaction =
+            Objects.requireNonNull(
+                dsl.fetchOne(
+                    "SELECT current_setting('transaction_isolation') AS isolation, "
+                        + "current_setting('transaction_read_only') AS read_only"));
+        assertThat(transaction.get("isolation", String.class)).isEqualTo("repeatable read");
+        assertThat(transaction.get("read_only", String.class)).isEqualTo("on");
+        connection.rollback();
+      }
+
+      try (Connection connection = connection()) {
+        DSLContext dsl = schemaContext(connection, schema);
+        for (Map.Entry<String, LegacySnapshot> entry : rows.entrySet()) {
+          var row =
+              Objects.requireNonNull(
+                  dsl.fetchOne(
+                      "SELECT status, row_version FROM initial_admission_bind_hold "
+                          + "WHERE initial_admission_request_id = ?",
+                      entry.getValue().requestId()));
+          assertThat(row.get("status", String.class)).isEqualTo(entry.getKey());
+          assertThat(row.get("row_version", Long.class))
+              .isEqualTo(observedVersions.get(entry.getKey()));
+        }
+      }
+    } finally {
+      dropSchema(schema);
+    }
+  }
+
   private LegacySnapshot insertLegacyHold(DSLContext dsl, WorldFixture world, String status) {
     String requestId = "legacy-" + status.toLowerCase() + "-" + UUID.randomUUID();
     UUID holdId = UUID.randomUUID();
