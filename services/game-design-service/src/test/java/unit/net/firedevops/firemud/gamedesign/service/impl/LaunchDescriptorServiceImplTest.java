@@ -178,6 +178,7 @@ class LaunchDescriptorServiceImplTest {
     assertEquals("genrev-1", resolved.generationConfigRevision());
     assertEquals(17L, resolved.versionStateEpoch());
     assertEquals(11L, resolved.releaseBundleId());
+    assertEquals("{}", resolved.runtimeFlagsJson());
     assertEquals(PUBLISHED_RELEASE_BUNDLE_REF, resolved.publishedReleaseBundleRef());
     assertNotNull(resolved.authoredWorldBinding());
     assertEquals(request.requestDigest(), resolved.authoredWorldBinding().requestDigest());
@@ -191,6 +192,78 @@ class LaunchDescriptorServiceImplTest {
     verify(gameTemplateRepository).findLaunchConfigByTenantIdAndId(PRIVATE_SOURCE_TENANT_KEY, 9L);
     verify(gameTemplateRepository, never())
         .findLaunchConfigByTenantIdAndId(CANONICAL_TENANT_ID.toString(), 9L);
+  }
+
+  @Test
+  void malformedRequestedRuntimeFlagsFreezeConfigurationDenialWithoutSuccessfulDescriptor() {
+    String requestedFlags = "{\"pvpEnabled\":false} trailing";
+    AuthoredWorldLaunchDescriptorEvidence.Request request =
+        request("cp-invalid-requested-runtime-flags", 9L, requestedFlags);
+    stubSuccessfulLaunch(request, 7L, 11L);
+
+    assertFrozenRuntimeFlagsDenial(request);
+
+    verify(publishedReleaseBundleService, never())
+        .getPublishedReleaseBundle(PRIVATE_SOURCE_TENANT_KEY, 7L);
+  }
+
+  @Test
+  void malformedTemplateRuntimeFlagsFreezeConfigurationDenialWithoutSuccessfulDescriptor() {
+    AuthoredWorldLaunchDescriptorEvidence.Request request =
+        request("cp-invalid-template-flags", 9L);
+    GameTemplateLaunchConfigView template = stubTemplate(request, 7L, null);
+    when(template.getDefaultRuntimeFlagsJson()).thenReturn("not-json");
+    stubSource(request, sourceEvidence(WORLD_SLUG));
+    stubVersion(7L, VersionLifecycleState.PUBLISHED, 17L, null);
+
+    assertFrozenRuntimeFlagsDenial(request);
+
+    verify(publishedReleaseBundleService, never())
+        .getPublishedReleaseBundle(PRIVATE_SOURCE_TENANT_KEY, 7L);
+  }
+
+  @Test
+  void nonObjectRuntimeFlagsCannotBeBoundAsLaunchConfiguration() {
+    AuthoredWorldLaunchDescriptorEvidence.Request request =
+        request("cp-non-object-runtime-flags", 9L, "[]");
+    stubSuccessfulLaunch(request, 7L, 11L);
+
+    assertFrozenRuntimeFlagsDenial(request);
+  }
+
+  @Test
+  void validRequestedRuntimeFlagsPreserveOriginalJsonAndRequestDigest() {
+    String requestedFlags = "{ \"pvpEnabled\" : false }";
+    AuthoredWorldLaunchDescriptorEvidence.Request request =
+        request("cp-valid-requested-runtime-flags", 9L, requestedFlags);
+    stubSuccessfulLaunch(request, 7L, 11L);
+    AtomicReference<LaunchDescriptor> inserted = new AtomicReference<>();
+    when(launchDescriptorRepository.insertImmutable(any(LaunchDescriptor.class)))
+        .thenAnswer(
+            invocation -> {
+              LaunchDescriptor descriptor = invocation.getArgument(0);
+              inserted.set(descriptor);
+              return descriptor;
+            });
+
+    var resolved = service.resolveLaunchDescriptor(request);
+
+    assertEquals(requestedFlags, resolved.runtimeFlagsJson());
+    assertEquals(request.requestDigest(), resolved.authoredWorldBinding().requestDigest());
+    assertEquals(requestedFlags, inserted.get().getRuntimeFlagsJson());
+    assertEquals(resolved.authoredWorldBinding().resultDigest(), inserted.get().getResultDigest());
+  }
+
+  @Test
+  void requestedRuntimeFlagsStillCannotOverrideTemplateOwnedValues() {
+    AuthoredWorldLaunchDescriptorEvidence.Request request =
+        request("cp-template-owned-runtime-flags", 9L, "{\"pvpEnabled\":false}");
+    GameTemplateLaunchConfigView template = stubTemplate(request, 7L, null);
+    when(template.getDefaultRuntimeFlagsJson()).thenReturn("{\"pvpEnabled\":true}");
+    stubSource(request, sourceEvidence(WORLD_SLUG));
+    stubVersion(7L, VersionLifecycleState.PUBLISHED, 17L, null);
+
+    assertFrozenRuntimeFlagsDenial(request);
   }
 
   @Test
@@ -884,6 +957,26 @@ class LaunchDescriptorServiceImplTest {
   }
 
   private AuthoredWorldLaunchDescriptorEvidence.Request request(
+      String controlPlaneRequestId, long gameTemplateId, String requestedRuntimeFlagsJson) {
+    return new AuthoredWorldLaunchDescriptorEvidence.Request(
+        NAMESPACE,
+        controlPlaneRequestId,
+        CANONICAL_TENANT_ID,
+        WORLD_SLUG,
+        SOURCE_OPERATION_ID,
+        sourceEvidence(WORLD_SLUG).evidenceDigest(),
+        gameTemplateId,
+        false,
+        null,
+        false,
+        null,
+        false,
+        null,
+        true,
+        requestedRuntimeFlagsJson);
+  }
+
+  private AuthoredWorldLaunchDescriptorEvidence.Request request(
       String controlPlaneRequestId,
       long gameTemplateId,
       long sourceVersionId,
@@ -904,6 +997,25 @@ class LaunchDescriptorServiceImplTest {
         targetVersionId,
         false,
         null);
+  }
+
+  private void assertFrozenRuntimeFlagsDenial(
+      AuthoredWorldLaunchDescriptorEvidence.Request request) {
+    FrozenLaunchDescriptorDenialException thrown =
+        assertThrows(
+            FrozenLaunchDescriptorDenialException.class,
+            () -> service.resolveLaunchDescriptor(request));
+    assertEquals("INVALID_TEMPLATE_CONFIGURATION", thrown.failureCode());
+
+    org.mockito.ArgumentCaptor<LaunchDescriptor> failure =
+        org.mockito.ArgumentCaptor.forClass(LaunchDescriptor.class);
+    verify(launchDescriptorRepository).insertImmutable(failure.capture());
+    assertEquals(LaunchDescriptor.OUTCOME_FAILED, failure.getValue().getOutcomeStatus());
+    assertEquals("INVALID_TEMPLATE_CONFIGURATION", failure.getValue().getFailureCode());
+    assertNull(failure.getValue().getLaunchDescriptorId());
+    assertNull(failure.getValue().getVersionId());
+    assertNull(failure.getValue().getRuntimeFlagsJson());
+    assertNull(failure.getValue().getResultDigest());
   }
 
   private AuthoredWorldLaunchDescriptorEvidence.Request request(
