@@ -246,6 +246,12 @@ class StartSessionReservationEvidenceGrpcServiceTest {
     ReadCurrentClaimEvidenceRequest tupleKeyMismatch =
         request(tuple).toBuilder().setControlPlaneRequestId("start-session/evidence/other").build();
     malformed.add(tupleKeyMismatch);
+    for (String nonObjectRoot : List.of("[]", "\"tuple\"", "1", "true", "null")) {
+      malformed.add(
+          request(tuple).toBuilder()
+              .setPreAuthorizationTupleJson(ByteString.copyFromUtf8(nonObjectRoot))
+              .build());
+    }
 
     for (ReadCurrentClaimEvidenceRequest request : malformed) {
       assertThat(status(call(request, ACCOUNT_URI))).isEqualTo(Status.Code.INVALID_ARGUMENT);

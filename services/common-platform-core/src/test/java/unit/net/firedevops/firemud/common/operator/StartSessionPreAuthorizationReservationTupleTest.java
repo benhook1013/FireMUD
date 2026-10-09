@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.nio.charset.StandardCharsets;
+import java.util.List;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
 
@@ -119,6 +120,14 @@ class StartSessionPreAuthorizationReservationTupleTest {
             () -> StartSessionPreAuthorizationReservationTuple.fromCanonicalJson(invalidActorKind))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("actor must be human");
+  }
+
+  @Test
+  void strictDecoderRejectsNonObjectJsonRootsAsIllegalArgument() {
+    for (String json : List.of("[]", "\"tuple\"", "1", "true", "null")) {
+      assertThatThrownBy(() -> StartSessionPreAuthorizationReservationTuple.fromCanonicalJson(json))
+          .isInstanceOf(IllegalArgumentException.class);
+    }
   }
 
   private static StartSessionOperatorAction action(StartSessionOperatorAction.ClientIp clientIp) {

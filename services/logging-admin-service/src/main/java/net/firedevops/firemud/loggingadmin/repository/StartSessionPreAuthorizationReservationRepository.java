@@ -36,6 +36,24 @@ public class StartSessionPreAuthorizationReservationRepository {
       DSL.field(DSL.name("owner_execution_handoff_id"), UUID.class);
   private static final Field<String> CLAIM_PURPOSE =
       DSL.field(DSL.name("claim_purpose"), String.class);
+  private static final Field<?>[] FULL_ROW_FIELDS = {
+    TABLE.CONTROL_PLANE_REQUEST_ID,
+    TABLE.PRE_AUTHORIZATION_TUPLE_JSON,
+    TABLE.MUTATION_DIGEST,
+    TABLE.PHASE,
+    TABLE.STATE,
+    TABLE.RESERVATION_OWNER_ID,
+    TABLE.RESERVATION_CLAIM_FENCE,
+    TABLE.CLAIM_OWNER_ID,
+    TABLE.CLAIM_FENCE,
+    TABLE.CLAIM_EXPIRES_AT_EPOCH_MS,
+    TABLE.CLAIM_STATE,
+    TABLE.CREATED_AT_EPOCH_MS,
+    TABLE.UPDATED_AT_EPOCH_MS,
+    POST_AUTHORIZATION_TUPLE_JSON,
+    OWNER_EXECUTION_HANDOFF_ID,
+    CLAIM_PURPOSE
+  };
 
   private final DSLContext dsl;
   private final MutationCapability mutationCapability;
@@ -86,7 +104,7 @@ public class StartSessionPreAuthorizationReservationRepository {
                   .onConflict(TABLE.CONTROL_PLANE_REQUEST_ID)
                   .doNothing()
                   .execute();
-          Record row = lockByRequestId(tx, tuple.controlPlaneRequestId());
+          Record row = selectFullRowByRequestId(tx, tuple.controlPlaneRequestId(), true);
           if (row == null) {
             throw new IllegalStateException("reservation row was not visible after acquire");
           }
@@ -99,7 +117,7 @@ public class StartSessionPreAuthorizationReservationRepository {
   public Optional<Snapshot> find(String controlPlaneRequestId) {
     StartSessionPreAuthorizationReservationTuple.requireCanonicalControlPlaneRequestId(
         controlPlaneRequestId);
-    Record row = selectFullRowByRequestId(dsl, controlPlaneRequestId);
+    Record row = selectFullRowByRequestId(dsl, controlPlaneRequestId, false);
     return Optional.ofNullable(row).map(this::toSnapshot);
   }
 
@@ -134,7 +152,7 @@ public class StartSessionPreAuthorizationReservationRepository {
       throw new IllegalArgumentException("original reservation claim identity must be positive");
     }
 
-    Record row = selectFullRowByRequestId(dsl, tuple.controlPlaneRequestId());
+    Record row = selectFullRowByRequestId(dsl, tuple.controlPlaneRequestId(), false);
     if (row == null) {
       return Optional.empty();
     }
@@ -151,7 +169,8 @@ public class StartSessionPreAuthorizationReservationRepository {
             && snapshot.phase() == Phase.ACCOUNT_AUTHORIZATION
             && snapshot.claimState() == ClaimState.ACTIVE
             && snapshot.claimExpiresAtEpochMillis() > observedAtEpochMillis
-            && claimPurposeAllowsRead(snapshot, purpose, reservationOwnerId, currentClaimOwnerId);
+            && StartSessionPreAuthorizationReservationService.claimPurposeAllowsRead(
+                snapshot, purpose, reservationOwnerId, currentClaimOwnerId);
     if (!exactCurrentClaim) {
       throw new StartSessionPreAuthorizationReservationService.StaleReservationClaimException(
           tuple.controlPlaneRequestId());
@@ -202,7 +221,7 @@ public class StartSessionPreAuthorizationReservationRepository {
                           ClaimPurpose.RESERVED_RECOVERY_ISSUE.name()))
                   .and(TABLE.CLAIM_EXPIRES_AT_EPOCH_MS.gt(nowEpochMillis))
                   .execute();
-          Record row = lockByRequestId(tx, tuple.controlPlaneRequestId());
+          Record row = selectFullRowByRequestId(tx, tuple.controlPlaneRequestId(), true);
           if (row == null) {
             throw new StartSessionPreAuthorizationReservationService.StaleReservationClaimException(
                 tuple.controlPlaneRequestId());
@@ -271,7 +290,7 @@ public class StartSessionPreAuthorizationReservationRepository {
     return dsl.transactionResult(
         configuration -> {
           DSLContext tx = DSL.using(configuration);
-          Record row = lockFullRowByRequestId(tx, tuple.controlPlaneRequestId());
+          Record row = selectFullRowByRequestId(tx, tuple.controlPlaneRequestId(), true);
           if (row == null) {
             throw stale(tuple);
           }
@@ -314,7 +333,8 @@ public class StartSessionPreAuthorizationReservationRepository {
               throw stale(tuple);
             }
             return new AuthorizationTransitionResult(
-                toAuthorizedSnapshot(lockFullRowByRequestId(tx, tuple.controlPlaneRequestId())),
+                toAuthorizedSnapshot(
+                    selectFullRowByRequestId(tx, tuple.controlPlaneRequestId(), true)),
                 true);
           }
 
@@ -374,7 +394,7 @@ public class StartSessionPreAuthorizationReservationRepository {
     return dsl.transactionResult(
         configuration -> {
           DSLContext tx = DSL.using(configuration);
-          Record row = lockFullRowByRequestId(tx, tuple.controlPlaneRequestId());
+          Record row = selectFullRowByRequestId(tx, tuple.controlPlaneRequestId(), true);
           if (row == null) {
             throw stale(tuple);
           }
@@ -430,7 +450,8 @@ public class StartSessionPreAuthorizationReservationRepository {
               throw stale(tuple);
             }
             return new OwnerExecutionTransitionResult(
-                toAuthorizedSnapshot(lockFullRowByRequestId(tx, tuple.controlPlaneRequestId())),
+                toAuthorizedSnapshot(
+                    selectFullRowByRequestId(tx, tuple.controlPlaneRequestId(), true)),
                 true);
           }
 
@@ -448,7 +469,7 @@ public class StartSessionPreAuthorizationReservationRepository {
   public Optional<AuthorizedSnapshot> findAuthorizedExact(
       StartSessionPreAuthorizationReservationTuple tuple) {
     Objects.requireNonNull(tuple, "tuple is required");
-    Record row = selectFullRowByRequestId(dsl, tuple.controlPlaneRequestId());
+    Record row = selectFullRowByRequestId(dsl, tuple.controlPlaneRequestId(), false);
     if (row == null) {
       return Optional.empty();
     }
@@ -491,7 +512,7 @@ public class StartSessionPreAuthorizationReservationRepository {
                   .and(TABLE.CLAIM_STATE.eq(ClaimState.ACTIVE.name()))
                   .and(TABLE.CLAIM_EXPIRES_AT_EPOCH_MS.gt(nowEpochMillis))
                   .execute();
-          Record row = lockByRequestId(tx, tuple.controlPlaneRequestId());
+          Record row = selectFullRowByRequestId(tx, tuple.controlPlaneRequestId(), true);
           if (row == null) {
             throw new StartSessionPreAuthorizationReservationService.StaleReservationClaimException(
                 tuple.controlPlaneRequestId());
@@ -538,7 +559,7 @@ public class StartSessionPreAuthorizationReservationRepository {
                   .and(TABLE.CLAIM_STATE.eq(ClaimState.ACTIVE.name()))
                   .and(TABLE.CLAIM_EXPIRES_AT_EPOCH_MS.le(nowEpochMillis))
                   .execute();
-          Record row = lockByRequestId(tx, tuple.controlPlaneRequestId());
+          Record row = selectFullRowByRequestId(tx, tuple.controlPlaneRequestId(), true);
           if (row == null) {
             throw new StartSessionPreAuthorizationReservationService.StaleReservationClaimException(
                 tuple.controlPlaneRequestId());
@@ -568,7 +589,7 @@ public class StartSessionPreAuthorizationReservationRepository {
     return dsl.transactionResult(
         configuration -> {
           DSLContext tx = DSL.using(configuration);
-          Record row = lockByRequestId(tx, tuple.controlPlaneRequestId());
+          Record row = selectFullRowByRequestId(tx, tuple.controlPlaneRequestId(), true);
           if (row == null) {
             return Optional.empty();
           }
@@ -627,7 +648,7 @@ public class StartSessionPreAuthorizationReservationRepository {
           if (updated != 1) {
             return Optional.empty();
           }
-          Record updatedRow = lockByRequestId(tx, tuple.controlPlaneRequestId());
+          Record updatedRow = selectFullRowByRequestId(tx, tuple.controlPlaneRequestId(), true);
           if (updatedRow == null) {
             throw new IllegalStateException("recovery claim row disappeared after update");
           }
@@ -661,35 +682,6 @@ public class StartSessionPreAuthorizationReservationRepository {
         || reservationClaimFence != postTuple.reservationClaimFence()) {
       throw conflict(tuple);
     }
-  }
-
-  private boolean claimPurposeAllowsRead(
-      Snapshot snapshot,
-      StartSessionPreAuthorizationReservationService.ReadPurpose purpose,
-      UUID reservationOwnerId,
-      UUID currentClaimOwnerId) {
-    Objects.requireNonNull(purpose, "purpose is required");
-    ClaimPurpose claimPurpose = snapshot.claimPurpose();
-    boolean originalClaim =
-        claimPurpose == ClaimPurpose.ORIGINAL
-            && reservationOwnerId.equals(currentClaimOwnerId)
-            && snapshot.claimFence() == snapshot.reservationClaimFence();
-    boolean freshClaim =
-        claimPurpose != null
-            && claimPurpose != ClaimPurpose.ORIGINAL
-            && !reservationOwnerId.equals(currentClaimOwnerId)
-            && snapshot.claimFence() > snapshot.reservationClaimFence();
-    if (purpose == StartSessionPreAuthorizationReservationService.ReadPurpose.ISSUE) {
-      return snapshot.state() == State.AUTHORIZATION_PENDING
-          && (originalClaim
-              || (freshClaim && claimPurpose == ClaimPurpose.RESERVED_RECOVERY_ISSUE));
-    }
-    return freshClaim
-        && (snapshot.state() == State.AUTHORIZATION_PENDING
-                && claimPurpose == ClaimPurpose.AUTHORIZATION_RECOVERY
-            || snapshot.state() == State.AUTHORIZED
-                && (claimPurpose == ClaimPurpose.AUTHORIZATION_RECOVERY
-                    || claimPurpose == ClaimPurpose.AUTHORIZED_RESPONSE_RECOVERY));
   }
 
   private static ClaimPurpose recoveryPurpose(Phase phase, State state) {
@@ -808,53 +800,14 @@ public class StartSessionPreAuthorizationReservationRepository {
         handoff);
   }
 
-  private Record selectFullRowByRequestId(DSLContext context, String controlPlaneRequestId) {
-    return context
-        .select(
-            TABLE.CONTROL_PLANE_REQUEST_ID,
-            TABLE.PRE_AUTHORIZATION_TUPLE_JSON,
-            TABLE.MUTATION_DIGEST,
-            TABLE.PHASE,
-            TABLE.STATE,
-            TABLE.RESERVATION_OWNER_ID,
-            TABLE.RESERVATION_CLAIM_FENCE,
-            TABLE.CLAIM_OWNER_ID,
-            TABLE.CLAIM_FENCE,
-            TABLE.CLAIM_EXPIRES_AT_EPOCH_MS,
-            TABLE.CLAIM_STATE,
-            TABLE.CREATED_AT_EPOCH_MS,
-            TABLE.UPDATED_AT_EPOCH_MS,
-            POST_AUTHORIZATION_TUPLE_JSON,
-            OWNER_EXECUTION_HANDOFF_ID,
-            CLAIM_PURPOSE)
-        .from(TABLE)
-        .where(TABLE.CONTROL_PLANE_REQUEST_ID.eq(controlPlaneRequestId))
-        .fetchOne();
-  }
-
-  private Record lockFullRowByRequestId(DSLContext context, String controlPlaneRequestId) {
-    return context
-        .select(
-            TABLE.CONTROL_PLANE_REQUEST_ID,
-            TABLE.PRE_AUTHORIZATION_TUPLE_JSON,
-            TABLE.MUTATION_DIGEST,
-            TABLE.PHASE,
-            TABLE.STATE,
-            TABLE.RESERVATION_OWNER_ID,
-            TABLE.RESERVATION_CLAIM_FENCE,
-            TABLE.CLAIM_OWNER_ID,
-            TABLE.CLAIM_FENCE,
-            TABLE.CLAIM_EXPIRES_AT_EPOCH_MS,
-            TABLE.CLAIM_STATE,
-            TABLE.CREATED_AT_EPOCH_MS,
-            TABLE.UPDATED_AT_EPOCH_MS,
-            POST_AUTHORIZATION_TUPLE_JSON,
-            OWNER_EXECUTION_HANDOFF_ID,
-            CLAIM_PURPOSE)
-        .from(TABLE)
-        .where(TABLE.CONTROL_PLANE_REQUEST_ID.eq(controlPlaneRequestId))
-        .forUpdate()
-        .fetchOne();
+  private Record selectFullRowByRequestId(
+      DSLContext context, String controlPlaneRequestId, boolean forUpdate) {
+    var query =
+        context
+            .select(FULL_ROW_FIELDS)
+            .from(TABLE)
+            .where(TABLE.CONTROL_PLANE_REQUEST_ID.eq(controlPlaneRequestId));
+    return forUpdate ? query.forUpdate().fetchOne() : query.fetchOne();
   }
 
   private static void requireNonNil(UUID value, String fieldName) {
@@ -873,31 +826,6 @@ public class StartSessionPreAuthorizationReservationRepository {
       conflict(StartSessionPreAuthorizationReservationTuple tuple) {
     return new StartSessionPreAuthorizationReservationService.IdempotencyConflictException(
         tuple.controlPlaneRequestId());
-  }
-
-  private Record lockByRequestId(DSLContext context, String controlPlaneRequestId) {
-    return context
-        .select(
-            TABLE.CONTROL_PLANE_REQUEST_ID,
-            TABLE.PRE_AUTHORIZATION_TUPLE_JSON,
-            TABLE.MUTATION_DIGEST,
-            TABLE.PHASE,
-            TABLE.STATE,
-            TABLE.RESERVATION_OWNER_ID,
-            TABLE.RESERVATION_CLAIM_FENCE,
-            TABLE.CLAIM_OWNER_ID,
-            TABLE.CLAIM_FENCE,
-            TABLE.CLAIM_EXPIRES_AT_EPOCH_MS,
-            TABLE.CLAIM_STATE,
-            TABLE.CREATED_AT_EPOCH_MS,
-            TABLE.UPDATED_AT_EPOCH_MS,
-            POST_AUTHORIZATION_TUPLE_JSON,
-            OWNER_EXECUTION_HANDOFF_ID,
-            CLAIM_PURPOSE)
-        .from(TABLE)
-        .where(TABLE.CONTROL_PLANE_REQUEST_ID.eq(controlPlaneRequestId))
-        .forUpdate()
-        .fetchOne();
   }
 
   private void requireMutationCapability() {
