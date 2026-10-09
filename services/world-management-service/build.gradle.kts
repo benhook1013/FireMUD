@@ -19,3 +19,17 @@ dependencies {
     testCompileOnly(libs.spotbugs.annotations)
     add("integrationTestCompileOnly", libs.spotbugs.annotations)
 }
+
+// Opt-in owner proof: expose compiled World classes without its application or Flyway resources.
+val worldClassesProofJar by tasks.registering(Jar::class) {
+    archiveClassifier.set("classes-proof")
+    dependsOn(tasks.named("classes"))
+    from(sourceSets.main.get().output.classesDirs)
+}
+
+val worldClassesProof by configurations.creating {
+    isCanBeConsumed = true
+    isCanBeResolved = false
+    extendsFrom(configurations.implementation.get())
+    outgoing.artifact(worldClassesProofJar)
+}

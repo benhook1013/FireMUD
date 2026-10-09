@@ -484,6 +484,11 @@ class PublishAttemptServiceTransactionIntegrationTest {
     String publishWorkflowId = operation.workflowId();
     var participantDigests =
         PublishedWorldSelectorFixtures.participants(candidate.getId(), operation.world());
+    var expectedDigestBinding =
+        PublicationDigestRequestBinding.full(
+            candidate.getCanonicalTenantId().toString(),
+            Long.toString(candidate.getId()),
+            publishRequestId);
 
     Mockito.when(
             publishGateService.collectFullVersionParticipantDigests(
@@ -494,11 +499,7 @@ class PublishAttemptServiceTransactionIntegrationTest {
     Mockito.when(
             publishGateService.collectSelectedFullVersionParticipantDigests(
                 Mockito.any(VersionDto.class),
-                Mockito.eq(
-                    PublicationDigestRequestBinding.full(
-                        candidate.getCanonicalTenantId().toString(),
-                        Long.toString(candidate.getId()),
-                        publishRequestId)),
+                Mockito.argThat(actual -> sameCanonicalPreimage(actual, expectedDigestBinding)),
                 Mockito.eq(publishWorkflowId)))
         .thenReturn(participantDigests);
     Mockito.when(assetExportService.exportAssets(tenantId, 1)).thenReturn(immutableEmptyManifest());
@@ -510,6 +511,11 @@ class PublishAttemptServiceTransactionIntegrationTest {
             "successful transaction proof",
             publishRequestId,
             publishWorkflowId);
+    Mockito.verify(publishGateService, Mockito.atLeastOnce())
+        .collectSelectedFullVersionParticipantDigests(
+            Mockito.any(VersionDto.class),
+            Mockito.argThat(actual -> sameCanonicalPreimage(actual, expectedDigestBinding)),
+            Mockito.eq(publishWorkflowId));
     VersionDto terminalReplay =
         versionPublishCommandService.publishSelectedDraftFullVersion(
             tenantId,
@@ -629,6 +635,11 @@ class PublishAttemptServiceTransactionIntegrationTest {
         new String(operation.world().canonicalBytes(), StandardCharsets.UTF_8);
     var participantDigests =
         PublishedWorldSelectorFixtures.participants(candidate.getId(), operation.world());
+    var expectedDigestBinding =
+        PublicationDigestRequestBinding.full(
+            candidate.getCanonicalTenantId().toString(),
+            Long.toString(candidate.getId()),
+            publishRequestId);
     Mockito.when(
             publishGateService.collectFullVersionParticipantDigests(
                 Mockito.any(VersionDto.class),
@@ -638,11 +649,7 @@ class PublishAttemptServiceTransactionIntegrationTest {
     Mockito.when(
             publishGateService.collectSelectedFullVersionParticipantDigests(
                 Mockito.any(VersionDto.class),
-                Mockito.eq(
-                    PublicationDigestRequestBinding.full(
-                        candidate.getCanonicalTenantId().toString(),
-                        Long.toString(candidate.getId()),
-                        publishRequestId)),
+                Mockito.argThat(actual -> sameCanonicalPreimage(actual, expectedDigestBinding)),
                 Mockito.eq(workflowId)))
         .thenReturn(participantDigests);
     Mockito.when(assetExportService.exportAssets(tenantId, 1)).thenReturn(immutableEmptyManifest());
@@ -753,6 +760,11 @@ class PublishAttemptServiceTransactionIntegrationTest {
         VersionDto published =
             command.publishSelectedDraftFullVersion(selection.intent(), operation.account());
         assertThat(published.id()).isEqualTo(candidate.getId());
+        Mockito.verify(publishGateService, Mockito.atLeastOnce())
+            .collectSelectedFullVersionParticipantDigests(
+                Mockito.any(VersionDto.class),
+                Mockito.argThat(actual -> sameCanonicalPreimage(actual, expectedDigestBinding)),
+                Mockito.eq(workflowId));
         assertThat(versionCountForTenant(tenantId)).isEqualTo(versionCountBeforePublish);
         assertThat(accountEndpoint.readCount()).isEqualTo(3);
         assertThat(worldEndpoint.readCount()).isEqualTo(2);
@@ -1171,6 +1183,11 @@ class PublishAttemptServiceTransactionIntegrationTest {
     candidateVersionNumber.set(candidate.getVersionNumber());
     var participantDigests =
         PublishedWorldSelectorFixtures.participants(candidate.getId(), operation.world());
+    var expectedDigestBinding =
+        PublicationDigestRequestBinding.full(
+            candidate.getCanonicalTenantId().toString(),
+            Long.toString(candidate.getId()),
+            publishRequestId);
     AtomicReference<Integer> exportedVersionNumber = new AtomicReference<>();
     AtomicReference<String> remapSetId = new AtomicReference<>();
     AtomicReference<Throwable> recordedDigestFailure = new AtomicReference<>();
@@ -1187,11 +1204,7 @@ class PublishAttemptServiceTransactionIntegrationTest {
     Mockito.when(
             publishGateService.collectSelectedFullVersionParticipantDigests(
                 Mockito.any(VersionDto.class),
-                Mockito.eq(
-                    PublicationDigestRequestBinding.full(
-                        candidate.getCanonicalTenantId().toString(),
-                        Long.toString(candidate.getId()),
-                        publishRequestId)),
+                Mockito.argThat(actual -> sameCanonicalPreimage(actual, expectedDigestBinding)),
                 Mockito.eq(publishWorkflowId)))
         .thenReturn(participantDigests);
     Mockito.doAnswer(
@@ -1256,6 +1269,11 @@ class PublishAttemptServiceTransactionIntegrationTest {
                     publishWorkflowId));
 
     assertThat(publishFailure).isInstanceOf(RuntimeException.class);
+    Mockito.verify(publishGateService, Mockito.atLeastOnce())
+        .collectSelectedFullVersionParticipantDigests(
+            Mockito.any(VersionDto.class),
+            Mockito.argThat(actual -> sameCanonicalPreimage(actual, expectedDigestBinding)),
+            Mockito.eq(publishWorkflowId));
     PublishAttempt attempt =
         publishAttemptRepository.findByPublishWorkflowId(publishWorkflowId).orElseThrow();
     String failureContext =
@@ -2151,6 +2169,13 @@ class PublishAttemptServiceTransactionIntegrationTest {
       return "none";
     }
     return failure.getStackTrace()[0].toString();
+  }
+
+  private static boolean sameCanonicalPreimage(
+      PublicationDigestRequestBinding actual, PublicationDigestRequestBinding expected) {
+    return actual != null
+        && expected != null
+        && java.util.Arrays.equals(actual.canonicalPreimage(), expected.canonicalPreimage());
   }
 
   private net.firedevops.firemud.gamedesign.publication.GameDesignPublicationOperation

@@ -6,6 +6,7 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
 import net.firedevops.firemud.common.gamedesign.AuthoredWorldVersionStateEvidence;
+import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
 import net.firedevops.firemud.common.tenant.AuthoredWorldSourceDigest;
 import net.firedevops.firemud.gamedesign.v1.VersionLifecycleState;
 import org.jooq.DSLContext;
@@ -122,6 +123,44 @@ public class WorldAuthoredVersionIdentityRepository {
     Record row =
         findByGameDesignVersion(namespace, canonicalTenantId, worldSlug, gameDesignVersionId);
     return row == null ? Optional.empty() : Optional.of(toReceipt(row));
+  }
+
+  /**
+   * Reads the unique immutable identity for an exact canonical target and Game Design row.
+   *
+   * <p>This selector deliberately does not infer or accept a World slug. Multiple rows for the same
+   * canonical target are conflicting source associations, not a choice to resolve.
+   */
+  public Optional<WorldAuthoredVersionIdentityReceipt> readByCanonicalTarget(
+      String namespace,
+      UUID canonicalTenantId,
+      UUID canonicalVersionId,
+      long gameDesignVersionRowId) {
+    requireNoActiveTransaction("World authored-Version identity read");
+    if (namespace == null || !GrpcPeerIdentity.isValidNamespace(namespace)) {
+      throw new IllegalArgumentException("Target namespace must be one canonical DNS label");
+    }
+    requireNonNil(canonicalTenantId, "canonicalTenantId");
+    requireNonNil(canonicalVersionId, "canonicalVersionId");
+    requirePositive(gameDesignVersionRowId, "gameDesignVersionRowId");
+
+    var rows =
+        dsl.selectFrom(VERSION_IDENTITY)
+            .where(
+                TARGET_NAMESPACE
+                    .eq(namespace)
+                    .and(CANONICAL_TENANT_ID.eq(canonicalTenantId))
+                    .and(CANONICAL_VERSION_ID.eq(canonicalVersionId))
+                    .and(GAME_DESIGN_VERSION_ID.eq(gameDesignVersionRowId)))
+            .fetch();
+    if (rows.isEmpty()) {
+      return Optional.empty();
+    }
+    if (rows.size() != 1) {
+      throw new InvalidIdentityEvidenceException(
+          "World authored-Version identity target has ambiguous World associations");
+    }
+    return Optional.of(toReceipt(rows.getFirst()));
   }
 
   /**

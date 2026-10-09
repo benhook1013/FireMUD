@@ -1,0 +1,21 @@
+syntax = "proto3";
+package world_management.v1;
+option java_package = "net.firedevops.firemud.worldmanagement.v1";
+option java_multiple_files = true;
+
+// Unregistered Game Design-only original operation apply/recovery construction.
+service WorldOriginalDraftGraphApplyService {
+  rpc ApplyOriginalDraftGraph(ApplyOriginalDraftGraphRequest) returns (ApplyOriginalDraftGraphResponse);
+}
+message ApplyOriginalDraftGraphRequest {
+  int32 schema_version = 1;
+  string target_namespace = 2;
+  bytes original_account_binding = 3;
+}
+message ApplyOriginalDraftGraphResponse {
+  int32 schema_version = 1;
+  string target_namespace = 2;
+  bytes original_account_binding = 3;
+  // Canonical World COMMITTED owner readback with validated APPLIED result only.
+  bytes owner_readback_bytes = 4;
+}

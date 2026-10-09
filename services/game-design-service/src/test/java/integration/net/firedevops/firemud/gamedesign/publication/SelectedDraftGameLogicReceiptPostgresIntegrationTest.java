@@ -197,8 +197,8 @@ class SelectedDraftGameLogicReceiptPostgresIntegrationTest {
         conflictingAuthorization.canonicalBytes());
 
     assertThatThrownBy(() -> repository.readForPublication(publicationBinding(value)))
-        .isInstanceOf(IllegalStateException.class)
-        .hasMessageContaining("integrity conflict");
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessage("Exact RETAINED Account settlement required");
     assertThat(
             dsl.fetchSingle("SELECT receipt_bytes FROM game_design_selected_game_logic_receipt")
                 .get(0, byte[].class))
