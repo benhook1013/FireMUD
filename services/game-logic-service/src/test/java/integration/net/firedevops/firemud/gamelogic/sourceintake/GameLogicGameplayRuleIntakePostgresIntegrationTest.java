@@ -71,6 +71,11 @@ class GameLogicGameplayRuleIntakePostgresIntegrationTest {
             invocation -> {
               assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
               gameDesignReads.incrementAndGet();
+              var sourceRequest = invocation.<GameplayRuleSourceReadEvidence.Request>getArgument(0);
+              assertThat(sourceRequest.proof())
+                  .isInstanceOf(GameplayRuleSourceReadEvidence.Finalized.class);
+              assertThat(sourceRequest.proof().canonicalBytes())
+                  .containsExactly(authorization.canonicalBytes());
               bothSourceReads.countDown();
               if (!bothSourceReads.await(10, TimeUnit.SECONDS)) {
                 throw new IllegalStateException("Concurrent source-read barrier timed out");

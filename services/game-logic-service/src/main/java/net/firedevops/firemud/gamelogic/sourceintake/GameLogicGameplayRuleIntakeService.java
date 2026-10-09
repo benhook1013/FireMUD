@@ -70,9 +70,8 @@ public final class GameLogicGameplayRuleIntakeService {
           .asRuntimeException();
     }
 
-    var selectedBinding = authorization.source().binding();
     var sourceRequest =
-        GameplayRuleSourceReadEvidence.Request.create(workloadNamespace, selectedBinding);
+        GameplayRuleSourceReadEvidence.Request.forFinalizedIntake(workloadNamespace, authorization);
     var sourceEvidence = gameDesignSourceReader.read(sourceRequest);
     if (sourceEvidence == null
         || !sourceRequest.equals(sourceEvidence.request())

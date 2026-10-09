@@ -750,13 +750,15 @@ class WorldAccountAuthorizedDraftPostgresIntegrationTest {
                 byte[] substitutedOwnerScope =
                     substitutedOwnerScopeJson.getBytes(java.nio.charset.StandardCharsets.UTF_8);
                 byte[] validOperation = publicationOperation.canonicalBytes();
+                byte[] missingInventoryPayload =
+                    "{}".getBytes(java.nio.charset.StandardCharsets.UTF_8);
                 byte[] missingInventory =
                     operationBytes(
                         GameDesignPublicationOperationBinding.SCHEMA,
                         publicationOrder.canonicalBytes(),
                         evidence.canonicalBytes(),
-                        new byte[0],
-                        DraftAuthorizationFenceBinding.digest(new byte[0]));
+                        missingInventoryPayload,
+                        DraftAuthorizationFenceBinding.digest(missingInventoryPayload));
                 byte[] mismatchedDigest =
                     operationBytes(
                         GameDesignPublicationOperationBinding.SCHEMA,

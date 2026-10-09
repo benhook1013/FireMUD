@@ -64,6 +64,13 @@ class GameLogicGameplayRuleIntakeServiceTest {
         .verify(fixture.accountReader)
         .read(any(GameLogicIntakeAuthorizationReadEvidence.Request.class));
     calls.verify(fixture.gameDesignReader).read(any(GameplayRuleSourceReadEvidence.Request.class));
+    var sourceRequest =
+        org.mockito.ArgumentCaptor.forClass(GameplayRuleSourceReadEvidence.Request.class);
+    verify(fixture.gameDesignReader).read(sourceRequest.capture());
+    assertThat(sourceRequest.getValue().proof())
+        .isInstanceOf(GameplayRuleSourceReadEvidence.Finalized.class);
+    assertThat(sourceRequest.getValue().proof().canonicalBytes())
+        .containsExactly(authorization.canonicalBytes());
   }
 
   @Test

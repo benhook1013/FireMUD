@@ -10,6 +10,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding;
+import net.firedevops.firemud.common.gamelogic.GameplayRuleManifest;
 import net.firedevops.firemud.gamedesign.entity.Game;
 import net.firedevops.firemud.gamedesign.entity.GameAsset;
 import net.firedevops.firemud.gamedesign.entity.Version;
@@ -77,23 +78,28 @@ class BrandingSourcePostgresIntegrationTest {
                 BrandingSource.Requiredness.REQUIRED),
             AssetSource.upsertPayload(
                 ordinary.getId().toString(), "ordinary.png", AssetSource.Requiredness.REQUIRED),
-            GameplayRuleSource.deletePayload(
-                net.firedevops.firemud.common.gamelogic.GameplayRuleManifest.Family.ADMISSION_TAGS,
-                "absent"),
+            GameplayRuleSource.upsertPayload(
+                new GameplayRuleManifest.AdmissionTag("branding-proof")),
             CommandSource.deletePayload("absent"),
             policy);
     apply(f, first);
-    var selected =
+    var synchronizedSources =
         new GameDesignSourceRepository(f.dsl)
             .readSynchronized(f.target, first.commitId())
-            .orElseThrow()
-            .branding()
             .orElseThrow();
+    var selected = synchronizedSources.branding().orElseThrow();
     assertThat(selected.items()).hasSize(1);
     assertThat(selected.items().getFirst().reference().sourceBinding()).isEqualTo(first);
     assertThat(selected.roleDeclarations())
         .containsEntry("LOGO", "PRESENT")
         .containsEntry("THEME", "EMPTY");
+    assertThat(
+            synchronizedSources
+                .gameplay()
+                .manifest()
+                .families()
+                .get(GameplayRuleManifest.Family.ADMISSION_TAGS))
+        .containsExactly(new GameplayRuleManifest.AdmissionTag("branding-proof"));
     assertThat(new BrandingSourceRepository(f.dsl).readSnapshot(f.target, UUID.randomUUID()))
         .isEmpty();
     assertThatThrownBy(

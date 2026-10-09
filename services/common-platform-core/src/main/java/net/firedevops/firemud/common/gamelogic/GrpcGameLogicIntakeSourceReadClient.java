@@ -7,6 +7,7 @@ import java.nio.file.Path;
 import java.util.Objects;
 import java.util.concurrent.TimeUnit;
 import javax.net.ssl.SSLException;
+import net.firedevops.firemud.account.v1.AccountGameLogicIntakeSourceReadServiceGrpc;
 import net.firedevops.firemud.common.config.ServiceEndpointsProperties;
 import net.firedevops.firemud.common.grpc.AbstractReloadingBlockingGrpcClient;
 import net.firedevops.firemud.common.grpc.CommonGrpcClientProperties;
@@ -14,20 +15,20 @@ import net.firedevops.firemud.common.grpc.GrpcChannelFactory;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
 import net.firedevops.firemud.common.grpc.GrpcServerPeerIdentityCallCredentials;
 import net.firedevops.firemud.common.grpc.GrpcServerPeerIdentityClientInterceptor;
-import net.firedevops.firemud.gamedesign.v1.GameDesignGameplayRuleSourceReadServiceGrpc;
 
-/** Explicit file-backed mTLS client for the exact same-namespace GD source read. */
-public final class GameplayRuleSourceReadClient
+/** Explicit file-backed mTLS client for same-namespace Account source permission confirmation. */
+public final class GrpcGameLogicIntakeSourceReadClient
     extends AbstractReloadingBlockingGrpcClient<
-        GameDesignGameplayRuleSourceReadServiceGrpc
-            .GameDesignGameplayRuleSourceReadServiceBlockingStub> {
+        AccountGameLogicIntakeSourceReadServiceGrpc
+            .AccountGameLogicIntakeSourceReadServiceBlockingStub>
+    implements GameLogicIntakeSourceReadClient {
   private static final long CALL_DEADLINE_SECONDS = 5L;
 
   private final String workloadNamespace;
   private volatile boolean initialized;
   private volatile boolean closed;
 
-  public GameplayRuleSourceReadClient(
+  public GrpcGameLogicIntakeSourceReadClient(
       ServiceEndpointsProperties endpoints,
       CommonGrpcClientProperties tlsProperties,
       GrpcChannelFactory channelFactory,
@@ -36,7 +37,7 @@ public final class GameplayRuleSourceReadClient
         endpoints,
         requireFileBackedMtls(tlsProperties),
         channelFactory,
-        GameplayRuleSourceReadClient.class);
+        GrpcGameLogicIntakeSourceReadClient.class);
     if (!GrpcPeerIdentity.isValidNamespace(workloadNamespace)) {
       throw new IllegalArgumentException("Workload namespace must be one canonical DNS label");
     }
@@ -45,55 +46,59 @@ public final class GameplayRuleSourceReadClient
 
   public synchronized void init() throws SSLException, IOException {
     if (closed)
-      throw new IllegalStateException("Game Design complete gameplay source read client is closed");
+      throw new IllegalStateException("Account GL intake authorization read client is closed");
     if (initialized) return;
     initReloadingClient();
     if (stub() == null)
-      throw new IllegalStateException("Game Design complete gameplay source read stub unavailable");
+      throw new IllegalStateException("Account GL intake authorization read stub unavailable");
     initialized = true;
   }
 
-  /** Returns exact source evidence only after Game Design server mTLS identity verification. */
-  public GameplayRuleSourceReadEvidence read(GameplayRuleSourceReadEvidence.Request request) {
+  /**
+   * Returns exact source permission confirmation after Account server mTLS identity verification.
+   */
+  public GameLogicIntakeSourceReadEvidence read(GameLogicIntakeSourceReadEvidence.Request request) {
     if (org.springframework.transaction.support.TransactionSynchronizationManager
             .isActualTransactionActive()
         || org.springframework.transaction.support.TransactionSynchronizationManager
             .isSynchronizationActive())
-      throw new IllegalStateException("GD source transport must run outside SQL");
+      throw new IllegalStateException("Account intake transport must run outside SQL");
     Objects.requireNonNull(request, "request");
     if (!workloadNamespace.equals(request.targetNamespace())) {
       throw new IllegalArgumentException(
-          "Game Design complete gameplay source read must use the configured workload namespace");
+          "Account GL intake authorization read must use the configured workload namespace");
     }
+    var stub = requireStub().withDeadlineAfter(CALL_DEADLINE_SECONDS, TimeUnit.SECONDS);
+    var wire = GameLogicIntakeSourceReadProtoCodec.toRequest(request);
     var response =
-        requireStub()
-            .withDeadlineAfter(CALL_DEADLINE_SECONDS, TimeUnit.SECONDS)
-            .readSelectedGameplayRuleSource(GameplayRuleSourceReadGrpcCodec.toRequest(request));
+        request.proof() instanceof GameplayRuleSourceReadEvidence.Preliminary
+            ? stub.readSourceScope(wire)
+            : stub.readFinalizedIntake(wire);
     try {
-      return GameplayRuleSourceReadGrpcCodec.fromResponse(request, response);
+      return GameLogicIntakeSourceReadProtoCodec.fromResponse(request, response);
     } catch (IllegalArgumentException invalid) {
       throw new IllegalStateException(
-          "Game Design returned invalid complete source evidence", invalid);
+          "Account returned invalid source permission evidence", invalid);
     }
   }
 
   @Override
   protected String configuredTarget(ServiceEndpointsProperties endpoints) {
-    return endpoints.getGameDesignService();
+    return endpoints.getAccountService();
   }
 
   @Override
   protected String defaultTarget() {
-    return "game-design-service:6565";
+    return "account-service:6565";
   }
 
   @Override
-  protected GameDesignGameplayRuleSourceReadServiceGrpc
-          .GameDesignGameplayRuleSourceReadServiceBlockingStub
+  protected AccountGameLogicIntakeSourceReadServiceGrpc
+          .AccountGameLogicIntakeSourceReadServiceBlockingStub
       buildStub(ManagedChannel channel) {
-    String expectedPeerUri = "spiffe://firemud/ns/" + workloadNamespace + "/sa/game-design-service";
-    return GameDesignGameplayRuleSourceReadServiceGrpc.newBlockingStub(channel)
-        .withMaxInboundMessageSize(GameplayRuleSourceReadGrpcCodec.MAX_WIRE_BYTES)
+    String expectedPeerUri = "spiffe://firemud/ns/" + workloadNamespace + "/sa/account-service";
+    return AccountGameLogicIntakeSourceReadServiceGrpc.newBlockingStub(channel)
+        .withMaxInboundMessageSize(GameLogicIntakeSourceReadProtoCodec.MAX_WIRE_BYTES)
         .withCallCredentials(new GrpcServerPeerIdentityCallCredentials(expectedPeerUri))
         .withInterceptors(new GrpcServerPeerIdentityClientInterceptor(expectedPeerUri))
         .withCompression("gzip");
@@ -106,13 +111,13 @@ public final class GameplayRuleSourceReadClient
     super.close();
   }
 
-  private GameDesignGameplayRuleSourceReadServiceGrpc
-          .GameDesignGameplayRuleSourceReadServiceBlockingStub
+  private AccountGameLogicIntakeSourceReadServiceGrpc
+          .AccountGameLogicIntakeSourceReadServiceBlockingStub
       requireStub() {
     var currentStub = stub();
     if (closed || !initialized || currentStub == null) {
       throw new IllegalStateException(
-          "Game Design complete gameplay source read client is not initialized and available");
+          "Account GL intake authorization read client is not initialized and available");
     }
     return currentStub;
   }
@@ -121,7 +126,7 @@ public final class GameplayRuleSourceReadClient
       CommonGrpcClientProperties tlsProperties) {
     if (tlsProperties == null || tlsProperties.isPlaintext()) {
       throw new IllegalArgumentException(
-          "Game Design complete gameplay source read requires workload mTLS");
+          "Account GL intake authorization read requires workload mTLS");
     }
     requireReadableFile(tlsProperties.getCertChain(), "certificate chain");
     requireReadableFile(tlsProperties.getPrivateKey(), "private key");
@@ -132,26 +137,23 @@ public final class GameplayRuleSourceReadClient
   private static void requireReadableFile(String configuredPath, String label) {
     if (configuredPath == null || configuredPath.isBlank()) {
       throw new IllegalArgumentException(
-          "Game Design complete gameplay source read requires file-backed certificate, key, and CA material");
+          "Account GL intake authorization read requires file-backed certificate, key, and CA material");
     }
     String pathText = configuredPath.trim();
     if (pathText.startsWith("classpath:")) {
       throw new IllegalArgumentException(
-          "Game Design complete gameplay source read requires file-backed certificate, key, and CA material");
+          "Account GL intake authorization read requires file-backed certificate, key, and CA material");
     }
     Path path;
     try {
       path = Path.of(pathText);
     } catch (RuntimeException invalid) {
       throw new IllegalArgumentException(
-          "Game Design complete gameplay source read " + label + " must be a file-backed path",
-          invalid);
+          "Account GL intake authorization read " + label + " must be a file-backed path", invalid);
     }
     if (!Files.isRegularFile(path) || !Files.isReadable(path)) {
       throw new IllegalArgumentException(
-          "Game Design complete gameplay source read "
-              + label
-              + " must be an existing readable file");
+          "Account GL intake authorization read " + label + " must be an existing readable file");
     }
   }
 }

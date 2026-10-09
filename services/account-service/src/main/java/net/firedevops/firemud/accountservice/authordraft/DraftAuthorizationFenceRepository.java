@@ -338,7 +338,10 @@ public final class DraftAuthorizationFenceRepository {
     for (SourceEvidence source : sources) {
       if (!dsl.fetch(
               "SELECT operation_id FROM account_game_logic_intake_sources WHERE source_key = ?"
-                  + " AND NOT account_game_logic_intake_is_settled(operation_id)",
+                  + " AND NOT account_game_logic_intake_is_settled(operation_id)"
+                  + " UNION ALL SELECT operation_id FROM account_game_logic_intake_source_read_sources s"
+                  + " WHERE source_key = ? AND account_game_logic_intake_source_read_is_pending(s.operation_id)",
+              source.key(),
               source.key())
           .isEmpty()) return true;
     }

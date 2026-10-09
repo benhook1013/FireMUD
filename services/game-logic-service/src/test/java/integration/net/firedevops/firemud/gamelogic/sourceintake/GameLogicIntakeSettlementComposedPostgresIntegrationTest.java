@@ -157,7 +157,7 @@ class GameLogicIntakeSettlementComposedPostgresIntegrationTest {
       var accountRepository = new AccountGameLogicIntakeAuthorizationRepository(f.dsl);
       var producer =
           new AccountGameLogicIntakeAuthorizationService(
-              issued.actors(), f.fences, accountRepository, gd, NAMESPACE);
+              issued.actors(), f.fences, accountRepository, gd, f.manager, NAMESPACE);
       var retainedOrder =
           asGameDesign(
               () ->

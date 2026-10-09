@@ -88,12 +88,69 @@ class GameplayRuleSelectedSourceTest {
   void sourceReadRequiresExactCorrelationAndDigest() {
     var binding = binding("{}");
     var source = source(binding, List.of(), GameplayRuleManifest.explicitEmpty());
-    var request = GameplayRuleSourceReadEvidence.Request.create("test", binding);
+    var request =
+        GameplayRuleSourceReadEvidence.Request.forAccountSourceScope(
+            "test",
+            new GameLogicIntakeSourceReadScope(
+                "test",
+                UUID.randomUUID(),
+                UUID.randomUUID(),
+                UUID.randomUUID(),
+                UUID.randomUUID(),
+                binding,
+                "spiffe://firemud/ns/test/sa/account-service",
+                GameLogicIntakeSourceReadScope.PURPOSE));
     var response =
         GameplayRuleSourceReadGrpcCodec.toResponse(
             new GameplayRuleSourceReadEvidence(request, source));
     assertThat(GameplayRuleSourceReadGrpcCodec.fromResponse(request, response).source())
         .isEqualTo(source);
+    var wire = GameplayRuleSourceReadGrpcCodec.toRequest(request);
+    assertThatThrownBy(
+            () ->
+                new GameplayRuleSourceReadEvidence.Request(
+                    1,
+                    "test",
+                    request.proof().fenceId(),
+                    binding,
+                    request.proof(),
+                    request.purpose()))
+        .isInstanceOf(IllegalArgumentException.class);
+    assertThat(GameplayRuleSourceReadGrpcCodec.fromRequest(wire)).isEqualTo(request);
+    assertThatThrownBy(
+            () ->
+                GameplayRuleSourceReadGrpcCodec.fromRequest(
+                    wire.toBuilder().clearAuthorizationProof().build()))
+        .isInstanceOf(IllegalArgumentException.class);
+    assertThatThrownBy(
+            () ->
+                GameplayRuleSourceReadGrpcCodec.fromRequest(
+                    wire.toBuilder().setPurpose("PUBLICATION").build()))
+        .isInstanceOf(IllegalArgumentException.class);
+    assertThatThrownBy(
+            () ->
+                GameplayRuleSourceReadGrpcCodec.fromRequest(
+                    wire.toBuilder()
+                        .setAuthorizationProofDigest("sha256:" + "0".repeat(64))
+                        .build()))
+        .isInstanceOf(IllegalArgumentException.class);
+    var substituted = binding("{}");
+    assertThatThrownBy(
+            () ->
+                GameplayRuleSourceReadGrpcCodec.fromRequest(
+                    wire.toBuilder()
+                        .setGameDesignBindingJson(substituted.canonicalJson())
+                        .setGameDesignBindingDigest(substituted.digest())
+                        .build()))
+        .isInstanceOf(IllegalArgumentException.class);
+    assertThatThrownBy(
+            () ->
+                GameplayRuleSourceReadGrpcCodec.fromResponse(
+                    request,
+                    response.toBuilder()
+                        .setRequest(wire.toBuilder().setReadRequestId(UUID.randomUUID().toString()))
+                        .build()))
+        .isInstanceOf(IllegalArgumentException.class);
     assertThatThrownBy(
             () ->
                 GameplayRuleSourceReadGrpcCodec.fromResponse(
