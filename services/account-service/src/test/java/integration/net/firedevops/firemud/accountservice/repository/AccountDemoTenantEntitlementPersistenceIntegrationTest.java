@@ -28,10 +28,12 @@ import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
+import org.postgresql.util.PSQLException;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.datasource.DataSourceTransactionManager;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
 import org.springframework.jdbc.datasource.TransactionAwareDataSourceProxy;
+import org.springframework.transaction.TransactionSystemException;
 import org.springframework.transaction.support.TransactionTemplate;
 
 /** Physical PostgreSQL proof for exact-source demo entitlement commit and revalidation fencing. */
@@ -374,7 +376,12 @@ class AccountDemoTenantEntitlementPersistenceIntegrationTest {
                               tenantId);
                       return null;
                     }))
-        .isInstanceOf(RuntimeException.class);
+        .isInstanceOf(TransactionSystemException.class)
+        .hasMessageContaining("JDBC commit failed")
+        .rootCause()
+        .isInstanceOf(PSQLException.class)
+        .hasMessageContaining(
+            "Tenant authority generation advance lacks its canonical source event");
     assertThat(inTransaction(context.transaction(), () -> entitlements.readCurrent(tenantId)))
         .isEqualTo(updated);
     assertThatThrownBy(

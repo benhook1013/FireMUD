@@ -1,5 +1,6 @@
 package net.firedevops.firemud.common.world;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.google.protobuf.ByteString;
@@ -8,13 +9,71 @@ import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.util.Optional;
 import net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding;
+import net.firedevops.firemud.common.gamedesign.GameDesignPublicationTerminalEvidence;
 import net.firedevops.firemud.common.gamedesign.GameDesignPublicationTerminalReadEvidence.ReadRequest;
 import net.firedevops.firemud.common.gamedesign.GameDesignPublicationTerminalReadEvidence.ReadResult;
 import net.firedevops.firemud.common.gamedesign.GameDesignPublicationTerminalReadEvidence.Status;
 import net.firedevops.firemud.common.gamedesign.GameDesignPublicationTerminalReadGrpcCodec;
+import net.firedevops.firemud.common.publication.GameDesignPublicationOperationBinding;
 import org.junit.jupiter.api.Test;
 
 class GameDesignPublicationTerminalEvidenceCodecTest {
+  @Test
+  void maximumFrozenEpochIsRejectedAsInvalidEvidenceAndOrdinaryEpochRoundTrips() throws Exception {
+    var ordinary = PublishedRealmEntryPolicySetEvidenceTest.fixture(false);
+    var ordinaryRequest =
+        new ReadRequest(
+            ReadRequest.SCHEMA_VERSION,
+            ordinary.operation().world().request().targetNamespace(),
+            java.util.UUID.fromString("10101010-1010-4010-8010-101010101010"),
+            ordinary.operation().canonicalBytes());
+    var ordinaryResult =
+        new ReadResult(ordinaryRequest, Status.PUBLISHED, Optional.of(ordinary.terminal()));
+    var ordinaryResponse =
+        GameDesignPublicationTerminalReadGrpcCodec.toResponse(ordinaryRequest, ordinaryResult);
+
+    assertThat(
+            GameDesignPublicationTerminalReadGrpcCodec.fromResponse(
+                ordinaryRequest, ordinaryResponse))
+        .isEqualTo(ordinaryResult);
+
+    GameDesignPublicationOperationBinding maxEpochOperation =
+        PublishedRealmEntryPolicySetEvidenceTest.operation(Long.MAX_VALUE);
+    var maxEpochRelease =
+        PublishedRealmEntryPolicySetEvidenceTest.release(maxEpochOperation, "generation-max");
+    var malformedTerminal = new ByteArrayOutputStream();
+    DraftAuthorizationFenceBinding.frame(
+        malformedTerminal, GameDesignPublicationTerminalEvidence.SCHEMA);
+    DraftAuthorizationFenceBinding.frame(malformedTerminal, maxEpochOperation.canonicalBytes());
+    DraftAuthorizationFenceBinding.frame(malformedTerminal, "PUBLISHED");
+    DraftAuthorizationFenceBinding.frame(malformedTerminal, maxEpochRelease.canonicalBytes());
+    DraftAuthorizationFenceBinding.frame(malformedTerminal, "1");
+
+    var malformedResponseBytes = new ByteArrayOutputStream();
+    DraftAuthorizationFenceBinding.frame(malformedResponseBytes, ReadResult.SCHEMA);
+    var maxEpochRequest =
+        new ReadRequest(
+            ReadRequest.SCHEMA_VERSION,
+            maxEpochOperation.world().request().targetNamespace(),
+            java.util.UUID.fromString("20202020-2020-4020-8020-202020202020"),
+            maxEpochOperation.canonicalBytes());
+    DraftAuthorizationFenceBinding.frame(malformedResponseBytes, maxEpochRequest.canonicalBytes());
+    DraftAuthorizationFenceBinding.frame(malformedResponseBytes, "PUBLISHED");
+    DraftAuthorizationFenceBinding.frame(malformedResponseBytes, malformedTerminal.toByteArray());
+
+    var malformedWireResponse =
+        net.firedevops.firemud.gamedesign.v1.ReadGameDesignPublicationTerminalResponse.newBuilder()
+            .setCanonicalResponseBytes(ByteString.copyFrom(malformedResponseBytes.toByteArray()))
+            .build();
+
+    assertThatThrownBy(
+            () ->
+                GameDesignPublicationTerminalReadGrpcCodec.fromResponse(
+                    maxEpochRequest, malformedWireResponse))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("Published version-state epoch exceeds owner range");
+  }
+
   @Test
   void publicationCounterAboveIntRangeIsRejectedAsInvalidTerminalReadEvidence() throws Exception {
     var fixture = PublishedRealmEntryPolicySetEvidenceTest.fixture(false);
