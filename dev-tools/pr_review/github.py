@@ -43,6 +43,12 @@ class HostedPreflightDeadlineExceeded(TimeoutError):
         completed: int,
         total: int | None,
         preflight_name: str = "Hosted",
+        *,
+        phase_elapsed_seconds: float | None = None,
+        prior_phase_seconds: dict[str, float] | None = None,
+        prior_phase_total_seconds: float | None = None,
+        prior_phase_count: int | None = None,
+        batch_chunk: tuple[int, int, str] | None = None,
     ):
         self.phase = phase
         self.elapsed_seconds = elapsed_seconds
@@ -50,11 +56,40 @@ class HostedPreflightDeadlineExceeded(TimeoutError):
         self.completed = completed
         self.total = total
         self.preflight_name = preflight_name
+        self.phase_elapsed_seconds = phase_elapsed_seconds
+        self.prior_phase_seconds = dict(prior_phase_seconds or {})
+        self.prior_phase_total_seconds = prior_phase_total_seconds
+        self.prior_phase_count = prior_phase_count
+        self.batch_chunk = batch_chunk
         progress = f"{completed}/{total}" if total is not None else str(completed)
         operation = preflight_name if preflight_name == "PR status" else f"{preflight_name} preflight"
+        diagnostic_details: list[str] = []
+        if phase_elapsed_seconds is not None:
+            diagnostic_details.append(f"phase_elapsed={phase_elapsed_seconds:.1f}s")
+        if prior_phase_seconds:
+            prior_total = (
+                sum(prior_phase_seconds.values()) if prior_phase_total_seconds is None else prior_phase_total_seconds
+            )
+            phase_count = len(prior_phase_seconds) if prior_phase_count is None else prior_phase_count
+            # Keep the exception readable and bounded even when selection has
+            # visited many queue entries. The aggregate retains total context;
+            # these labels are the largest prior phases, not recency claims.
+            top_phases = list(prior_phase_seconds.items())[:4]
+            rendered = ";".join(f"{name[:48]}:{seconds:.1f}s" for name, seconds in top_phases)
+            diagnostic_details.extend(
+                (
+                    f"prior_phase_total={prior_total:.1f}s",
+                    f"prior_phase_count={phase_count}",
+                    f"top_prior_phases={rendered}",
+                )
+            )
+        if batch_chunk is not None:
+            index, count, stage = batch_chunk
+            diagnostic_details.append(f"batch_chunk={index}/{count}:{stage}")
+        diagnostic_suffix = f" diagnostics({'; '.join(diagnostic_details)})" if diagnostic_details else ""
         super().__init__(
             f"{operation} deadline exceeded (phase={phase}, elapsed={elapsed_seconds:.1f}s, "
-            f"completed={progress}, budget={budget_seconds:.0f}s)"
+            f"completed={progress}, budget={budget_seconds:.0f}s){diagnostic_suffix}"
         )
 
 
@@ -77,6 +112,7 @@ class HostedPreflightBudget:
         self._phase_started_at = self.started_at
         self.phase_seconds: dict[str, float] = {}
         self.phase_progress: dict[str, dict[str, int | None]] = {}
+        self._active_batch_chunk: tuple[int, int, str] | None = None
         self.completed = 0
         self.total: int | None = None
         self.active = True
@@ -96,11 +132,29 @@ class HostedPreflightBudget:
         self._phase_started_at = now
         self.completed = completed
         self.total = total
+        self._active_batch_chunk = None
         self.remaining_seconds()
 
     def set_completed(self, completed: int) -> None:
         self.completed = completed
         self.remaining_seconds()
+
+    def begin_batch_chunk(self, index: int, total: int) -> None:
+        """Track only bounded identity-batch progress, never request contents."""
+
+        self._active_batch_chunk = (index, total, "graphql_call")
+
+    def set_batch_chunk_stage(self, index: int, stage: str) -> None:
+        if stage not in {"graphql_call", "identity_shape_validation"}:
+            raise ValueError("unsupported preflight diagnostic stage")
+        current = self._active_batch_chunk
+        if current is not None and current[0] == index:
+            self._active_batch_chunk = (current[0], current[1], stage)
+
+    def finish_batch_chunk(self, index: int) -> None:
+        current = self._active_batch_chunk
+        if current is not None and current[0] == index:
+            self._active_batch_chunk = None
 
     def remaining_seconds(self) -> float:
         remaining = self.deadline - time.monotonic()
@@ -118,7 +172,14 @@ class HostedPreflightBudget:
         return min(cap_seconds, remaining)
 
     def exceeded(self) -> HostedPreflightDeadlineExceeded:
-        elapsed = max(0.0, time.monotonic() - self.started_at)
+        now = time.monotonic()
+        elapsed = max(0.0, now - self.started_at)
+        phase_elapsed = max(0.0, now - self._phase_started_at)
+        measured_prior_phases = {name: seconds for name, seconds in self.phase_seconds.items() if round(seconds, 1) > 0}
+        prior_total = sum(measured_prior_phases.values())
+        prior_phase_count = len(measured_prior_phases)
+        prior_phases = dict(sorted(measured_prior_phases.items(), key=lambda item: item[1], reverse=True)[:8])
+        batch_chunk = self._active_batch_chunk
         return HostedPreflightDeadlineExceeded(
             self.current_phase,
             elapsed,
@@ -126,6 +187,11 @@ class HostedPreflightBudget:
             self.completed,
             self.total,
             self.preflight_name,
+            phase_elapsed_seconds=phase_elapsed,
+            prior_phase_seconds=prior_phases,
+            prior_phase_total_seconds=prior_total,
+            prior_phase_count=prior_phase_count,
+            batch_chunk=batch_chunk,
         )
 
     def complete(self) -> None:
@@ -923,9 +989,14 @@ def fetch_pr_identity_batch(
     # while ensuring every configured number is covered without list truncation.
     chunks = tuple(numbers[offset : offset + 25] for offset in range(0, len(numbers), 25))
 
-    def fetch_chunk(chunk: tuple[int, ...]) -> dict[int, dict[str, Any] | None]:
+    def fetch_chunk(chunk_index: int, chunk: tuple[int, ...]) -> dict[int, dict[str, Any] | None]:
+        track_identity_chunk = (
+            budget is not None and budget.current_phase == "target_identity_batch" and not concurrent_chunks
+        )
         if budget is not None:
             budget.remaining_seconds()
+            if track_identity_chunk:
+                budget.begin_batch_chunk(chunk_index, len(chunks))
         selections = "\n".join(
             f"pr_{number}: pullRequest(number:{number}) {{ "
             "number state isDraft mergedAt baseRefName baseRefOid headRefName headRefOid mergeable "
@@ -943,6 +1014,8 @@ query($owner:String!, $repo:String!) {{
 }}
 """.strip()
         payload = run_gh_query(query, {"owner": owner, "repo": name})
+        if track_identity_chunk:
+            budget.set_batch_chunk_stage(chunk_index, "identity_shape_validation")
         errors = payload.get("errors")
         if errors is not None and (not isinstance(errors, list) or errors):
             raise RuntimeError("GitHub GraphQL response contains errors")
@@ -979,25 +1052,32 @@ query($owner:String!, $repo:String!) {{
                 chunk_result[number] = item
         return chunk_result
 
-    def fetch_bound_chunk(chunk: tuple[int, ...]) -> dict[int, dict[str, Any] | None]:
-        if budget is None:
-            return fetch_chunk(chunk)
-        with bind_hosted_preflight_budget(budget):
-            return fetch_chunk(chunk)
+    indexed_chunks = tuple(enumerate(chunks, start=1))
 
-    def collect(results: Iterator[dict[int, dict[str, Any] | None]]) -> None:
+    def fetch_bound_chunk(
+        indexed_chunk: tuple[int, tuple[int, ...]],
+    ) -> tuple[int, dict[int, dict[str, Any] | None]]:
+        chunk_index, chunk = indexed_chunk
+        if budget is None:
+            return chunk_index, fetch_chunk(chunk_index, chunk)
+        with bind_hosted_preflight_budget(budget):
+            return chunk_index, fetch_chunk(chunk_index, chunk)
+
+    def collect(results: Iterator[tuple[int, dict[int, dict[str, Any] | None]]]) -> None:
         # Consume in configured order even when independent reads finish out of
         # order. Only this caller mutates the assembled result and progress.
-        for completed, chunk_result in enumerate(results, 1):
+        for completed, (chunk_index, chunk_result) in enumerate(results, 1):
             result.update(chunk_result)
             if budget is not None and budget.current_phase == "target_identity_batch":
                 budget.set_completed(completed)
+            if not concurrent_chunks and budget is not None and budget.current_phase == "target_identity_batch":
+                budget.finish_batch_chunk(chunk_index)
 
     if concurrent_chunks and len(chunks) > 1:
         with ThreadPoolExecutor(max_workers=min(4, len(chunks))) as pool:
-            collect(pool.map(fetch_bound_chunk, chunks))
+            collect(pool.map(fetch_bound_chunk, indexed_chunks))
     else:
-        collect(map(fetch_chunk, chunks))
+        collect(map(fetch_bound_chunk, indexed_chunks))
     return result
 
 
