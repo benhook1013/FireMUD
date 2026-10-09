@@ -66,6 +66,7 @@ class CanonicalGameplayRosterSelectionServiceTest {
   private static final UUID FIRST_ACTOR = uuid("77777777-7777-4777-8777-777777777777");
   private static final UUID SECOND_ACTOR = uuid("99999999-9999-4999-8999-999999999999");
   private static final UUID SNAPSHOT = uuid("88888888-8888-4888-8888-888888888888");
+  private static final UUID CHANGED_SNAPSHOT = uuid("cccccccc-cccc-4ccc-8ccc-cccccccccccc");
   private static final UUID ASSIGNMENT = uuid("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb");
 
   @Test
@@ -76,18 +77,21 @@ class CanonicalGameplayRosterSelectionServiceTest {
     var menu =
         harness
             .service()
-            .select(context(harness.route(), "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee"), null);
+            .select(context(harness.route(), "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee"), null, null);
 
-    assertThat(menu)
+    assertThat(menu).isInstanceOf(CanonicalGameplayRosterSelectionService.SelectionRequired.class);
+    var requiredMenu = (CanonicalGameplayRosterSelectionService.SelectionRequired) menu;
+    assertThat(requiredMenu.choices())
         .isEqualTo(
-            new CanonicalGameplayRosterSelectionService.SelectionRequired(
-                List.of(
-                    new CanonicalGameplayActorSelection.Choice(1, "Pilot One"),
-                    new CanonicalGameplayActorSelection.Choice(2, "Pilot Two"))));
+            List.of(
+                new CanonicalGameplayActorSelection.Choice(1, "Pilot One"),
+                new CanonicalGameplayActorSelection.Choice(2, "Pilot Two")));
+    assertThat(requiredMenu.menuIdentity().snapshotUuid()).isEqualTo(SNAPSHOT);
+    assertThat(requiredMenu.menuIdentity().snapshotDigest()).matches("[0-9a-f]{64}");
     verify(harness.stub(), never()).readSelectedPreseededAssignment(any());
 
     PlayerExecutionContext input = context(harness.route(), "ffffffff-ffff-4fff-8fff-ffffffffffff");
-    var selected = harness.service().select(input, "2");
+    var selected = harness.service().select(input, "2", requiredMenu.menuIdentity());
 
     assertThat(selected)
         .isInstanceOfSatisfying(
@@ -117,6 +121,8 @@ class CanonicalGameplayRosterSelectionServiceTest {
     assertThat(selectedContext.getCharacterId()).isEqualTo(SECOND_ACTOR.toString());
     assertThat(requestCaptor.getValue().getSelectedCharacterUuid())
         .isEqualTo(SECOND_ACTOR.toString());
+    assertThat(requestCaptor.getValue().getExpectedSnapshot().getSnapshotDigest())
+        .isEqualTo(requiredMenu.menuIdentity().snapshotDigest());
 
     verify(harness.catalogRepository(), atLeastOnce())
         .readUniqueVisiblePublicProduction("test", harness.route().canonicalTenantId());
@@ -155,6 +161,7 @@ class CanonicalGameplayRosterSelectionServiceTest {
                     .setPlayableStateNamespaceId(
                         uuid("12121212-1212-4212-8212-121212121212").toString())
                     .build(),
+                null,
                 null),
         CanonicalGameplayRosterSelectionService.Denial.ROUTE_MISMATCH);
     assertDenied(
@@ -164,6 +171,7 @@ class CanonicalGameplayRosterSelectionServiceTest {
                 valid.toBuilder()
                     .setGameInstanceId(uuid("12121212-1212-4212-8212-121212121212").toString())
                     .build(),
+                null,
                 null),
         CanonicalGameplayRosterSelectionService.Denial.ROUTE_MISMATCH);
     assertDenied(
@@ -173,6 +181,7 @@ class CanonicalGameplayRosterSelectionServiceTest {
                 valid.toBuilder()
                     .setRealmId(uuid("12121212-1212-4212-8212-121212121212").toString())
                     .build(),
+                null,
                 null),
         CanonicalGameplayRosterSelectionService.Denial.ROUTE_MISMATCH);
 
@@ -195,7 +204,10 @@ class CanonicalGameplayRosterSelectionServiceTest {
     assertDenied(
         accountMismatch
             .service()
-            .select(context(accountMismatch.route(), "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee"), null),
+            .select(
+                context(accountMismatch.route(), "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee"),
+                null,
+                null),
         CanonicalGameplayRosterSelectionService.Denial.INVALID_ROSTER_PROOF);
     verify(accountMismatch.stub(), never()).readSelectedPreseededAssignment(any());
 
@@ -215,7 +227,10 @@ class CanonicalGameplayRosterSelectionServiceTest {
     assertDenied(
         targetMismatch
             .service()
-            .select(context(targetMismatch.route(), "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee"), null),
+            .select(
+                context(targetMismatch.route(), "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee"),
+                null,
+                null),
         CanonicalGameplayRosterSelectionService.Denial.INVALID_ROSTER_PROOF);
     verify(targetMismatch.stub(), never()).readSelectedPreseededAssignment(any());
   }
@@ -226,22 +241,126 @@ class CanonicalGameplayRosterSelectionServiceTest {
     assertThat(
             multiple
                 .service()
-                .select(context(multiple.route(), "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee"), null))
+                .select(
+                    context(multiple.route(), "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee"), null, null))
         .isInstanceOf(CanonicalGameplayRosterSelectionService.SelectionRequired.class);
     assertDenied(
         multiple
             .service()
-            .select(context(multiple.route(), "ffffffff-ffff-4fff-8fff-ffffffffffff"), "Pilot Two"),
+            .select(
+                context(multiple.route(), "ffffffff-ffff-4fff-8fff-ffffffffffff"),
+                "Pilot Two",
+                null),
         CanonicalGameplayRosterSelectionService.Denial.INVALID_SELECTOR);
+    assertDenied(
+        multiple
+            .service()
+            .select(context(multiple.route(), "abababab-abab-4bab-8bab-abababababab"), "3", null),
+        CanonicalGameplayRosterSelectionService.Denial.SELECTOR_OUT_OF_RANGE);
     verify(multiple.stub(), never()).readSelectedPreseededAssignment(any());
 
     var empty = harness(List.of());
     assertDenied(
         empty
             .service()
-            .select(context(empty.route(), "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee"), null),
+            .select(context(empty.route(), "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee"), null, null),
         CanonicalGameplayRosterSelectionService.Denial.NO_PRESEEDED_ACTOR);
     verify(empty.stub(), never()).readSelectedPreseededAssignment(any());
+  }
+
+  @Test
+  void requiresASelectionMenuIdentityForValidExplicitOrdinals() throws Exception {
+    var harness = harness(twoActors());
+    var menu =
+        (CanonicalGameplayRosterSelectionService.SelectionRequired)
+            harness
+                .service()
+                .select(
+                    context(harness.route(), "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee"), null, null);
+
+    assertDenied(
+        harness
+            .service()
+            .select(context(harness.route(), "ffffffff-ffff-4fff-8fff-ffffffffffff"), "2", null),
+        CanonicalGameplayRosterSelectionService.Denial.MISSING_MENU_IDENTITY);
+    assertDenied(
+        harness
+            .service()
+            .select(
+                context(harness.route(), "abababab-abab-4bab-8bab-abababababab"),
+                "2",
+                new CanonicalGameplayRosterSelectionService.SelectionMenuIdentity(
+                    menu.menuIdentity().snapshotUuid(), "0".repeat(64))),
+        CanonicalGameplayRosterSelectionService.Denial.STALE_MENU_IDENTITY);
+
+    verify(harness.stub(), never()).readSelectedPreseededAssignment(any());
+  }
+
+  @Test
+  void rejectsChangedMenuSnapshotUuidAndReorderedRosterBeforeAssignmentRead() throws Exception {
+    var changedUuid = harness(twoActors());
+    AtomicInteger changedUuidReads = new AtomicInteger();
+    doAnswer(
+            invocation -> {
+              CanonicalGameplayRosterRequest request = invocation.getArgument(0);
+              UUID snapshotUuid =
+                  changedUuidReads.getAndIncrement() == 0 ? SNAPSHOT : CHANGED_SNAPSHOT;
+              return rosterResponse(
+                  request, ACCOUNT, request.getExpectedTarget(), twoActors(), snapshotUuid);
+            })
+        .when(changedUuid.stub())
+        .listPreseededRoster(any());
+    var uuidMenu =
+        (CanonicalGameplayRosterSelectionService.SelectionRequired)
+            changedUuid
+                .service()
+                .select(
+                    context(changedUuid.route(), "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee"),
+                    null,
+                    null);
+    assertDenied(
+        changedUuid
+            .service()
+            .select(
+                context(changedUuid.route(), "ffffffff-ffff-4fff-8fff-ffffffffffff"),
+                "1",
+                uuidMenu.menuIdentity()),
+        CanonicalGameplayRosterSelectionService.Denial.STALE_MENU_IDENTITY);
+    verify(changedUuid.stub(), never()).readSelectedPreseededAssignment(any());
+
+    var reorderedRoster = harness(twoActors());
+    AtomicInteger reorderedReads = new AtomicInteger();
+    List<CanonicalGameplayRosterClient.RosterActor> reorderedActors =
+        List.of(
+            new CanonicalGameplayRosterClient.RosterActor(SECOND_ACTOR, "Pilot Two"),
+            new CanonicalGameplayRosterClient.RosterActor(FIRST_ACTOR, "Pilot One"));
+    doAnswer(
+            invocation -> {
+              CanonicalGameplayRosterRequest request = invocation.getArgument(0);
+              List<CanonicalGameplayRosterClient.RosterActor> actors =
+                  reorderedReads.getAndIncrement() == 0 ? twoActors() : reorderedActors;
+              return rosterResponse(
+                  request, ACCOUNT, request.getExpectedTarget(), actors, SNAPSHOT);
+            })
+        .when(reorderedRoster.stub())
+        .listPreseededRoster(any());
+    var reorderedMenu =
+        (CanonicalGameplayRosterSelectionService.SelectionRequired)
+            reorderedRoster
+                .service()
+                .select(
+                    context(reorderedRoster.route(), "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee"),
+                    null,
+                    null);
+    assertDenied(
+        reorderedRoster
+            .service()
+            .select(
+                context(reorderedRoster.route(), "ffffffff-ffff-4fff-8fff-ffffffffffff"),
+                "1",
+                reorderedMenu.menuIdentity()),
+        CanonicalGameplayRosterSelectionService.Denial.STALE_MENU_IDENTITY);
+    verify(reorderedRoster.stub(), never()).readSelectedPreseededAssignment(any());
   }
 
   @Test
@@ -252,7 +371,9 @@ class CanonicalGameplayRosterSelectionServiceTest {
         changedAfterList
             .service()
             .select(
-                context(changedAfterList.route(), "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee"), null),
+                context(changedAfterList.route(), "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee"),
+                null,
+                null),
         CanonicalGameplayRosterSelectionService.Denial.ROUTE_CHANGED);
     verify(changedAfterList.stub(), never()).readSelectedPreseededAssignment(any());
 
@@ -263,6 +384,7 @@ class CanonicalGameplayRosterSelectionServiceTest {
             .service()
             .select(
                 context(changedAfterAssignment.route(), "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee"),
+                null,
                 null),
         CanonicalGameplayRosterSelectionService.Denial.ROUTE_CHANGED);
     verify(changedAfterAssignment.stub()).readSelectedPreseededAssignment(any());
@@ -281,7 +403,10 @@ class CanonicalGameplayRosterSelectionServiceTest {
     assertDenied(
         changedSnapshot
             .service()
-            .select(context(changedSnapshot.route(), "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee"), null),
+            .select(
+                context(changedSnapshot.route(), "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee"),
+                null,
+                null),
         CanonicalGameplayRosterSelectionService.Denial.INVALID_ASSIGNMENT_PROOF);
 
     var unavailable = harness(oneActor());
@@ -291,7 +416,8 @@ class CanonicalGameplayRosterSelectionServiceTest {
     assertDenied(
         unavailable
             .service()
-            .select(context(unavailable.route(), "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee"), null),
+            .select(
+                context(unavailable.route(), "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee"), null, null),
         CanonicalGameplayRosterSelectionService.Denial.ROSTER_UNAVAILABLE);
     verify(unavailable.stub(), never()).readSelectedPreseededAssignment(any());
   }
@@ -304,7 +430,7 @@ class CanonicalGameplayRosterSelectionServiceTest {
       assertDenied(
           harness
               .service()
-              .select(context(harness.route(), "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee"), null),
+              .select(context(harness.route(), "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee"), null, null),
           CanonicalGameplayRosterSelectionService.Denial.AMBIENT_TRANSACTION);
     } finally {
       TransactionSynchronizationManager.setActualTransactionActive(false);
@@ -549,7 +675,7 @@ class CanonicalGameplayRosterSelectionServiceTest {
       UUID account,
       List<CanonicalGameplayRosterClient.RosterActor> actors)
       throws Exception {
-    return rosterResponse(request, account, request.getExpectedTarget(), actors);
+    return rosterResponse(request, account, request.getExpectedTarget(), actors, SNAPSHOT);
   }
 
   private static CanonicalGameplayRosterResponse rosterResponse(
@@ -557,6 +683,16 @@ class CanonicalGameplayRosterSelectionServiceTest {
       UUID account,
       CanonicalGameplayRosterTarget target,
       List<CanonicalGameplayRosterClient.RosterActor> actors)
+      throws Exception {
+    return rosterResponse(request, account, target, actors, SNAPSHOT);
+  }
+
+  private static CanonicalGameplayRosterResponse rosterResponse(
+      CanonicalGameplayRosterRequest request,
+      UUID account,
+      CanonicalGameplayRosterTarget target,
+      List<CanonicalGameplayRosterClient.RosterActor> actors,
+      UUID snapshotUuid)
       throws Exception {
     Method calculateDigest =
         CanonicalGameplayRosterClient.class.getDeclaredMethod(
@@ -567,7 +703,7 @@ class CanonicalGameplayRosterSelectionServiceTest {
         CanonicalGameplayRosterResponse.newBuilder()
             .setCanonicalAccountUuid(account.toString())
             .setTarget(target)
-            .setSnapshotUuid(SNAPSHOT.toString())
+            .setSnapshotUuid(snapshotUuid.toString())
             .setSnapshotDigest(digest);
     for (CanonicalGameplayRosterClient.RosterActor actor : actors) {
       builder.addActors(
