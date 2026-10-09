@@ -9478,13 +9478,86 @@ class ControllerTests(unittest.TestCase):
                                 with self.assertRaisesRegex(
                                     github.HostedPreflightDeadlineExceeded,
                                     f"{channel} preflight deadline exceeded.*completed=1/2",
-                                ):
+                                ) as raised:
                                     github.fetch_pr_identity_batch("owner/repo", tuple(values))
+                                self.assertIn("batch_chunk=2/2:graphql_call", str(raised.exception))
                             else:
                                 self.assertEqual(set(github.fetch_pr_identity_batch("owner/repo", tuple(values))), set(values))
                                 self.assertEqual(budget.completed, 2)
                     self.assertEqual(len(calls), 2)
                     self.assertLessEqual(calls[1], calls[0])
+
+    def test_identity_timeout_reports_prior_and_current_phase_time_and_active_chunk(self):
+        values, _heads = _stacked_prs(51)
+        clock = {"now": 0.0}
+        timeouts = []
+
+        with (
+            patch.object(github.time, "monotonic", side_effect=lambda: clock["now"]),
+            github.activate_hosted_preflight_budget(120) as budget,
+        ):
+            budget.set_phase("target_selection", total=1)
+            clock["now"] = 1.0
+            budget.set_phase("target_history")
+            clock["now"] = 49.0
+            budget.set_phase("target_selection")
+            clock["now"] = 100.0
+            budget.set_phase("target_identity_batch", total=3)
+
+            def request(_args, *, timeout, **_kwargs):
+                timeouts.append(timeout)
+                clock["now"] = 120.0
+                raise subprocess.TimeoutExpired("gh api graphql", timeout)
+
+            with (
+                patch.object(github.subprocess, "run", side_effect=request),
+                self.assertRaises(github.HostedPreflightDeadlineExceeded) as raised,
+            ):
+                github.fetch_pr_identity_batch("owner/repo", tuple(values))
+
+        error = raised.exception
+        self.assertEqual(timeouts, [20.0])
+        self.assertEqual(error.elapsed_seconds, 120.0)
+        self.assertEqual(error.phase_elapsed_seconds, 20.0)
+        self.assertEqual(error.prior_phase_seconds, {"target_selection": 52.0, "target_history": 48.0})
+        self.assertEqual(error.prior_phase_count, 2)
+        self.assertEqual(error.batch_chunk, (1, 3, "graphql_call"))
+        self.assertIn("completed=0/3", str(error))
+        self.assertIn("phase_elapsed=20.0s", str(error))
+        self.assertIn("prior_phase_total=100.0s", str(error))
+        self.assertIn("target_selection:52.0s", str(error))
+        self.assertIn("target_history:48.0s", str(error))
+        self.assertIn("batch_chunk=1/3:graphql_call", str(error))
+        self.assertNotIn("pullRequest", str(error))
+
+    def test_deadline_after_failed_identity_chunk_preserves_safe_diagnostics(self):
+        clock = {"now": 0.0}
+        with (
+            patch.object(github.time, "monotonic", side_effect=lambda: clock["now"]),
+            github.activate_hosted_preflight_budget(30) as budget,
+        ):
+            budget.set_phase("target_identity_batch", total=1)
+
+            def failed_request(*_args, **_kwargs):
+                clock["now"] = 30.0
+                raise RuntimeError("sensitive response detail must not reach deadline output")
+
+            with (
+                patch.object(github, "run_gh_query", side_effect=failed_request),
+                self.assertRaisesRegex(RuntimeError, "sensitive response detail"),
+            ):
+                github.fetch_pr_identity_batch("owner/repo", (1,))
+            with self.assertRaises(github.HostedPreflightDeadlineExceeded) as raised:
+                budget.remaining_seconds()
+
+        self.assertEqual(raised.exception.batch_chunk, (1, 1, "graphql_call"))
+        self.assertNotIn("sensitive response detail", str(raised.exception))
+
+    def test_preflight_batch_diagnostic_stage_is_allowlisted(self):
+        budget = github.HostedPreflightBudget(30)
+        budget.begin_batch_chunk(1, 1)
+        with self.assertRaisesRegex(ValueError, "unsupported preflight diagnostic stage"):
+            budget.set_batch_chunk_stage(1, "query=private response")
 
     def test_cli_selection_change_reselects_with_the_same_active_budget(self):
         controller = self.make({1: pr(1, HEAD_1)}, heads={"develop": BASE, "feature-1": HEAD_1})
