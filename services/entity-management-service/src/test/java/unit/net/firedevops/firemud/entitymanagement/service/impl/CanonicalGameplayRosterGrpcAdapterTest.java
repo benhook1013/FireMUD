@@ -369,9 +369,8 @@ class CanonicalGameplayRosterGrpcAdapterTest {
     assertThat(observer.values).isEmpty();
     assertThat(observer.errorCount).isEqualTo(1);
     assertThat(observer.completed).isFalse();
-    assertThat(observer.failure).isInstanceOf(StatusRuntimeException.class);
-    assertThat(((StatusRuntimeException) observer.failure).getStatus().getCode())
-        .isEqualTo(expectedCode);
+    assertThat(observer.statusRuntimeFailure).isTrue();
+    assertThat(observer.failureCode).isEqualTo(expectedCode);
   }
 
   private static void withTrustedPeer(String methodName, Runnable action) {
@@ -412,7 +411,8 @@ class CanonicalGameplayRosterGrpcAdapterTest {
 
   private static final class RecordingObserver<T> implements StreamObserver<T> {
     private final java.util.List<T> values = new java.util.ArrayList<>();
-    private Throwable failure;
+    private Status.Code failureCode;
+    private boolean statusRuntimeFailure;
     private int errorCount;
     private boolean completed;
 
@@ -424,7 +424,8 @@ class CanonicalGameplayRosterGrpcAdapterTest {
     @Override
     public void onError(Throwable throwable) {
       errorCount++;
-      failure = throwable;
+      statusRuntimeFailure = throwable instanceof StatusRuntimeException;
+      failureCode = Status.fromThrowable(throwable).getCode();
     }
 
     @Override
