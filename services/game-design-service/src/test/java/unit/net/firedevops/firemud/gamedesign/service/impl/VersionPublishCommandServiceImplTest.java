@@ -1072,7 +1072,6 @@ class VersionPublishCommandServiceImplTest {
   @Test
   void selectedStagedArtifactWithMismatchedWorkflowRemainsPartial() {
     SelectedPublishFixture fixture = selectedPublishFixture(1);
-    PublishWorkflowRequest request = fixture.request();
     VersionAssetArtifactStateDto artifact =
         new VersionAssetArtifactStateDto(
             "tenant-1",
@@ -1202,8 +1201,6 @@ class VersionPublishCommandServiceImplTest {
                 1,
                 List.of("manifest.json"),
                 artifactDigests(List.of("manifest.json"))));
-    Game game = new Game();
-    game.setTenantId("tenant-1");
     when(publishedReleaseBundleService.findPublishedReleaseBundle("tenant-1", 10L))
         .thenReturn(Optional.of(bundle));
     when(versionAssetArtifactService.findState("tenant-1", 10L)).thenReturn(Optional.of(artifact));
