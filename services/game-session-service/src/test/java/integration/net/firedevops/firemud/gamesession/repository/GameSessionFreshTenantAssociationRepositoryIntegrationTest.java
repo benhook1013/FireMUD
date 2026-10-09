@@ -179,12 +179,10 @@ class GameSessionFreshTenantAssociationRepositoryIntegrationTest {
   @Test
   void retainedSourceProvenanceCannotCreateAFreshTenantMapping() {
     Fixture fixture = fixture();
-    UUID intakeOperationId = uuid(618);
-    fixture.seedRetainedSourceFixture(intakeOperationId);
-    IntakeReceipt expectedFreshReceipt =
-        receiptFor(intakeOperationId, freshSource(uuid(619), uuid(620), uuid(621), 963L));
+    IntakeReceipt retainedSource = fixture.registerRetainedSource(uuid(618));
+    assertThat(retainedSource.source().provenanceKind()).isEqualTo("RETAINED_GAME_V30");
 
-    assertThatThrownBy(() -> fixture.associate(uuid(622), NAMESPACE, expectedFreshReceipt))
+    assertThatThrownBy(() -> fixture.associate(uuid(622), NAMESPACE, retainedSource))
         .isInstanceOf(InvalidFreshTenantSourceException.class)
         .hasMessageContaining("NEW_GAME_ROW");
 
@@ -294,6 +292,22 @@ class GameSessionFreshTenantAssociationRepositoryIntegrationTest {
       UUID canonicalTenantId,
       long sourceRowId,
       String worldSlug) {
+    return sourceWithProvenance(
+        registrationRequestId,
+        sourceOperationId,
+        canonicalTenantId,
+        sourceRowId,
+        worldSlug,
+        "NEW_GAME_ROW");
+  }
+
+  private static AuthoredWorldSourceEvidence sourceWithProvenance(
+      UUID registrationRequestId,
+      UUID sourceOperationId,
+      UUID canonicalTenantId,
+      long sourceRowId,
+      String worldSlug,
+      String provenanceKind) {
     String tenantSlug = "fresh-tenant-" + canonicalTenantId.toString().substring(0, 8);
     String displayName = "Fresh World";
     String sourceKey = "game-design-source-" + sourceRowId;
@@ -317,7 +331,7 @@ class GameSessionFreshTenantAssociationRepositoryIntegrationTest {
             displayName,
             sourceRowId,
             sourceKey,
-            "NEW_GAME_ROW");
+            provenanceKind);
     return new AuthoredWorldSourceEvidence(
         1,
         NAMESPACE,
@@ -330,7 +344,7 @@ class GameSessionFreshTenantAssociationRepositoryIntegrationTest {
         displayName,
         sourceRowId,
         sourceKey,
-        "NEW_GAME_ROW",
+        provenanceKind,
         evidenceDigest);
   }
 
@@ -357,9 +371,43 @@ class GameSessionFreshTenantAssociationRepositoryIntegrationTest {
         UUID canonicalTenantId,
         long sourceRowId,
         String worldSlug) {
+      return registerSource(
+          intakeRequestId,
+          registrationRequestId,
+          sourceOperationId,
+          canonicalTenantId,
+          sourceRowId,
+          worldSlug,
+          "NEW_GAME_ROW");
+    }
+
+    IntakeReceipt registerRetainedSource(UUID intakeRequestId) {
+      return registerSource(
+          intakeRequestId,
+          uuid(625),
+          uuid(626),
+          uuid(624),
+          964L,
+          "retained-world",
+          "RETAINED_GAME_V30");
+    }
+
+    IntakeReceipt registerSource(
+        UUID intakeRequestId,
+        UUID registrationRequestId,
+        UUID sourceOperationId,
+        UUID canonicalTenantId,
+        long sourceRowId,
+        String worldSlug,
+        String provenanceKind) {
       AuthoredWorldSourceEvidence source =
-          freshSource(
-              registrationRequestId, sourceOperationId, canonicalTenantId, sourceRowId, worldSlug);
+          sourceWithProvenance(
+              registrationRequestId,
+              sourceOperationId,
+              canonicalTenantId,
+              sourceRowId,
+              worldSlug,
+              provenanceKind);
       return transactions.execute(status -> sourceRepository.register(intakeRequestId, source));
     }
 
@@ -375,51 +423,6 @@ class GameSessionFreshTenantAssociationRepositoryIntegrationTest {
       return Objects.requireNonNull(
           associateFresh(associationOperationId, namespace, source),
           "fresh tenant association result");
-    }
-
-    void seedRetainedSourceFixture(UUID intakeOperationId) {
-      UUID canonicalTenantId = uuid(624);
-      UUID registrationRequestId = uuid(625);
-      UUID sourceOperationId = uuid(626);
-      UUID intakeRequestId = uuid(627);
-      String tenantSlug = "retained-tenant";
-      String worldSlug = "retained-world";
-      String sourceTenantKey = "retained-source-tenant";
-      String digest = "sha256:" + "a".repeat(64);
-      dsl.execute(
-          "INSERT INTO game_session_authored_world_tenant_source_binding "
-              + "(target_namespace, canonical_tenant_id, tenant_slug, source_game_row_id, "
-              + "source_game_tenant_key, provenance_kind) "
-              + "VALUES (?, ?, ?, ?, ?, 'RETAINED_GAME_V30')",
-          NAMESPACE,
-          canonicalTenantId,
-          tenantSlug,
-          964L,
-          sourceTenantKey);
-      dsl.execute(
-          "INSERT INTO game_session_authored_world_source_intake "
-              + "(operation_id, schema_version, target_namespace, intake_request_id, "
-              + "request_digest, source_schema_version, source_registration_request_id, "
-              + "source_operation_id, source_request_digest, canonical_tenant_id, tenant_slug, "
-              + "world_slug, world_display_name, source_game_row_id, source_game_tenant_key, "
-              + "source_provenance_kind, source_evidence_digest, receipt_digest) "
-              + "VALUES (?, 1, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, "
-              + "'RETAINED_GAME_V30', ?, ?)",
-          intakeOperationId,
-          NAMESPACE,
-          intakeRequestId,
-          digest,
-          registrationRequestId,
-          sourceOperationId,
-          digest,
-          canonicalTenantId,
-          tenantSlug,
-          worldSlug,
-          "Retained World",
-          964L,
-          sourceTenantKey,
-          digest,
-          digest);
     }
   }
 

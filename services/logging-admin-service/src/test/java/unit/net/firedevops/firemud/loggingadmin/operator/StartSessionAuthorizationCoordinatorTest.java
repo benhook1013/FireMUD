@@ -774,11 +774,6 @@ class StartSessionAuthorizationCoordinatorTest {
   }
 
   private static Snapshot snapshot(
-      StartSessionPreAuthorizationReservationTuple tuple, State state, long claimFence) {
-    return snapshot(tuple, state, 1L, claimFence);
-  }
-
-  private static Snapshot snapshot(
       StartSessionPreAuthorizationReservationTuple tuple,
       State state,
       long reservationFence,

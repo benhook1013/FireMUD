@@ -47,6 +47,45 @@ class AccountControlUiSourceGuardPostgresIntegrationTest {
   static PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>("postgres:16-alpine");
 
   @Test
+  void ownerSourceGuardPrerequisiteSchemaIsInstalledBeforeGuardBackfill() {
+    Context c = context();
+    for (String relation :
+        List.of(
+            "account_draft_authorization_source_locks",
+            "account_draft_authorization_fences",
+            "account_draft_authorization_sources",
+            "account_draft_authorization_owner_readbacks",
+            "account_draft_authorization_source_changes",
+            "account_draft_authorization_changed_scopes",
+            "account_tenant_creation_bootstrap_operations",
+            "account_individual_creator_party_sources",
+            "account_tenant_creator_party_history",
+            "account_fresh_creator_party_association_operations",
+            "account_hosted_terms_scopes",
+            "account_hosted_terms_catalog_versions",
+            "account_hosted_terms_publication_operations",
+            "account_individual_hosted_terms_acceptances",
+            "account_hosted_terms_environment_binding_heads",
+            "account_hosted_terms_environment_bindings",
+            "account_hosted_terms_environment_binding_publications")) {
+      assertThat(c.dsl.fetchValue("SELECT to_regclass(?)::TEXT", String.class, relation))
+          .as("migrated relation %s", relation)
+          .isNotNull();
+    }
+    for (String function :
+        List.of(
+            "account_draft_authorization_immutable_guard()",
+            "account_draft_authorization_is_settled(uuid)",
+            "account_publication_authorization_source_sort_key(text)",
+            "account_control_ui_source_keys(text,jsonb)",
+            "account_control_ui_required_source_guard()")) {
+      assertThat(c.dsl.fetchValue("SELECT to_regprocedure(?)::TEXT", String.class, function))
+          .as("migrated function %s", function)
+          .isNotNull();
+    }
+  }
+
+  @Test
   void rawProtectedMutationCannotBypassOriginalFenceButNoOpAndUnrelatedAccountRemainWritable() {
     Context c = context();
     var binding = binding(c);

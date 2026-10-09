@@ -18,6 +18,7 @@ import net.firedevops.firemud.common.gamedesign.CompleteLaunchBindingEvidence;
 import net.firedevops.firemud.common.tenant.AuthoredWorldSourceDigest;
 import net.firedevops.firemud.common.tenant.AuthoredWorldSourceEvidence;
 import net.firedevops.firemud.gamesession.dto.CreateCanonicalRealmCatalogRequest;
+import net.firedevops.firemud.gamesession.repository.CanonicalGameInstanceLaunchAssociationRepository.CanonicalGameInstanceLaunchAssociationConflictException;
 import net.firedevops.firemud.gamesession.repository.GameSessionAuthoredWorldSourceRepository;
 import net.firedevops.firemud.gamesession.repository.GameSessionAuthoredWorldSourceRepository.IntakeReceipt;
 import net.firedevops.firemud.gamesession.repository.GameSessionCanonicalRealmCatalogRepository;
@@ -206,7 +207,7 @@ class GameSessionCanonicalStartingInstanceRepositoryIntegrationTest {
             () ->
                 fixture.start(
                     OWNER_ACCOUNT_UUID, CONTROL_PLANE_REQUEST_ID, REQUEST_DIGEST, changedBinding))
-        .isInstanceOf(IllegalStateException.class)
+        .isInstanceOf(CanonicalGameInstanceLaunchAssociationConflictException.class)
         .hasMessageContaining("changed tenant, instance, or source binding");
 
     assertThat(

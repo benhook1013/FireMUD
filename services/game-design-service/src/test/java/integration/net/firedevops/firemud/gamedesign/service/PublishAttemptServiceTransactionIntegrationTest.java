@@ -58,7 +58,9 @@ import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
-/** PostgreSQL proof for private publication mechanics, retention, and public-ingress denial. */
+/**
+ * PostgreSQL proof for private denial mechanics, candidate retention, and public-ingress denial.
+ */
 @Testcontainers(disabledWithoutDocker = true)
 @SpringBootTest(
     classes = GameDesignServiceApplication.class,
@@ -313,8 +315,10 @@ class PublishAttemptServiceTransactionIntegrationTest {
     assertThat(storedAttempt.getRequestDigest()).isEqualTo("exact-identity-digest");
   }
 
+  // Selection refusal occurs before bundle commit or artifact finalization; this is not a success
+  // or finalization proof.
   @Test
-  void privateMechanicsHarnessCommitsAttemptVersionAndReleaseBundleTogether() {
+  void privateMechanicsFailsClosedWhenPublicationSelectionIsUnavailable() {
     String tenantId = "9002";
     String publishRequestId = "successful-reconcile-request";
     String publishWorkflowId =
@@ -354,31 +358,44 @@ class PublishAttemptServiceTransactionIntegrationTest {
         reconcileFullVersionPublishMechanics(
             tenantId, "successful transaction proof", publishRequestId, publishWorkflowId);
     assertNoControlPlaneDigestFailure(controlPlaneDigestFailure.get());
-    assertMechanicsSnapshot(snapshot, "SUCCEEDED", "");
+    assertMechanicsSnapshot(
+        snapshot,
+        "FAILED",
+        "PUBLISH_SELECTION_REQUIRED: full-version bundles require the captured publication operation");
 
     PublishAttempt attempt =
         publishAttemptRepository.findByPublishWorkflowId(publishWorkflowId).orElseThrow();
     Version storedVersion =
         versionRepository.findByTenantIdAndId(tenantId, attempt.getVersionId()).orElseThrow();
-    PublishedReleaseBundle bundle =
-        publishedReleaseBundleRepository
-            .findByTenantIdAndVersionId(tenantId, attempt.getVersionId())
-            .orElseThrow();
+    assertThat(attempt.getStatus()).isEqualTo(PublishAttemptStatus.FAILED);
+    assertThat(attempt.getFailureMessage())
+        .isEqualTo(
+            "PUBLISH_SELECTION_REQUIRED: full-version bundles require the captured publication operation");
+    assertThat(attempt.getVersionId()).isEqualTo(storedVersion.getId());
+    assertThat(storedVersion.getVersionState()).isEqualTo(VersionLifecycleState.DRAFT);
+    assertThat(
+            publishedReleaseBundleRepository.findByTenantIdAndVersionId(
+                tenantId, attempt.getVersionId()))
+        .isEmpty();
     VersionAssetArtifact artifact =
         versionAssetArtifactRepository
             .findByTenantIdAndVersionId(tenantId, attempt.getVersionId())
             .orElseThrow();
-
-    assertThat(attempt.getStatus()).isEqualTo(PublishAttemptStatus.SUCCEEDED);
-    assertThat(attempt.getVersionId()).isEqualTo(storedVersion.getId());
-    assertThat(storedVersion.getVersionState()).isEqualTo(VersionLifecycleState.PUBLISHED);
-    assertThat(bundle.getPublishWorkflowId()).isEqualTo(publishWorkflowId);
-    assertThat(bundle.getManifestHash()).isEqualTo(MANIFEST_HASH);
-    assertThat(artifact.getArtifactState()).isEqualTo(VersionAssetArtifactState.PUBLISHED);
+    assertThat(artifact.getArtifactState()).isEqualTo(VersionAssetArtifactState.FAILED);
+    assertThat(
+            exportCandidateService.readExportCandidate(tenantId, storedVersion.getVersionNumber()))
+        .isEqualTo(exportedManifest());
+    Mockito.verify(versionAssetArtifactService, Mockito.never())
+        .markPublished(
+            Mockito.eq(tenantId),
+            Mockito.anyLong(),
+            Mockito.anyLong(),
+            Mockito.eq(publishWorkflowId),
+            Mockito.anyString());
   }
 
   @Test
-  void privateMechanicsHarnessRetainsCandidateAndRemapAfterFinalizationFailure() {
+  void privateMechanicsRetainsCandidateAndRemapWhenPublicationSelectionIsUnavailable() {
     String tenantId = "9003";
     String publishRequestId = "failed-remap-request";
     String publishWorkflowId =
@@ -408,7 +425,6 @@ class PublishAttemptServiceTransactionIntegrationTest {
     AtomicReference<Throwable> exportCallbackFailure = new AtomicReference<>();
     AtomicReference<Throwable> controlPlaneDigestFailure = captureControlPlaneDigestFailure();
     AtomicBoolean exportCompleted = new AtomicBoolean();
-    AtomicBoolean finalizationFailureInjected = new AtomicBoolean();
 
     Mockito.when(
             publishGateService.collectFullVersionParticipantDigests(
@@ -469,24 +485,14 @@ class PublishAttemptServiceTransactionIntegrationTest {
                 throw failure;
               }
             });
-    Mockito.doAnswer(
-            invocation -> {
-              finalizationFailureInjected.set(true);
-              throw new IllegalStateException("forced finalization failure");
-            })
-        .when(versionAssetArtifactService)
-        .markPublished(
-            Mockito.eq(tenantId),
-            Mockito.anyLong(),
-            Mockito.anyLong(),
-            Mockito.eq(publishWorkflowId),
-            Mockito.eq(exportedManifest.manifestHash()));
-
     Object snapshot =
         reconcileFullVersionPublishMechanics(
             tenantId, "failed remap proof", publishRequestId, publishWorkflowId);
     assertNoControlPlaneDigestFailure(controlPlaneDigestFailure.get());
-    assertMechanicsSnapshot(snapshot, "FAILED", "forced finalization failure");
+    assertMechanicsSnapshot(
+        snapshot,
+        "FAILED",
+        "PUBLISH_SELECTION_REQUIRED: full-version bundles require the captured publication operation");
     PublishAttempt attempt =
         publishAttemptRepository.findByPublishWorkflowId(publishWorkflowId).orElseThrow();
     String failureContext =
@@ -508,18 +514,19 @@ class PublishAttemptServiceTransactionIntegrationTest {
             + exportCallbackFailure.get()
             + ", exportCallbackFailureFrame="
             + firstStackFrame(exportCallbackFailure.get())
+            + ", selectedFailureMessage="
+            + snapshotValue(snapshot, "failureMessage")
             + ", snapshotStatus="
             + snapshotValue(snapshot, "status")
-            + ", snapshotFailureMessage="
-            + snapshotValue(snapshot, "failureMessage")
             + ")";
     assertThat(exportCompleted.get()).as(failureContext).isTrue();
-    assertThat(finalizationFailureInjected.get()).as(failureContext).isTrue();
     assertThat(exportedVersionNumber.get())
         .as("asset export uses the candidate's persisted version number")
         .isEqualTo(candidateVersionNumber.get());
     assertThat(attempt.getStatus()).isEqualTo(PublishAttemptStatus.FAILED);
-    assertThat(attempt.getFailureMessage()).isEqualTo("forced finalization failure");
+    assertThat(attempt.getFailureMessage())
+        .isEqualTo(
+            "PUBLISH_SELECTION_REQUIRED: full-version bundles require the captured publication operation");
     Version retainedCandidate =
         versionRepository.findByTenantIdAndId(tenantId, candidateVersionId.get()).orElseThrow();
     assertThat(retainedCandidate.getVersionState()).isEqualTo(VersionLifecycleState.DRAFT);
@@ -532,6 +539,17 @@ class PublishAttemptServiceTransactionIntegrationTest {
             .findByTenantIdAndVersionId(tenantId, candidateVersionId.get())
             .orElseThrow();
     assertThat(failedArtifact.getArtifactState()).isEqualTo(VersionAssetArtifactState.FAILED);
+    assertThat(
+            exportCandidateService.readExportCandidate(
+                tenantId, retainedCandidate.getVersionNumber()))
+        .isEqualTo(exportedManifest);
+    Mockito.verify(versionAssetArtifactService, Mockito.never())
+        .markPublished(
+            Mockito.eq(tenantId),
+            Mockito.anyLong(),
+            Mockito.anyLong(),
+            Mockito.eq(publishWorkflowId),
+            Mockito.anyString());
     VersionTemplateRemapSet retainedRemapSet =
         templateRemapSetRepository
             .findByTenantIdAndRemapSetId(tenantId, remapSetId.get())

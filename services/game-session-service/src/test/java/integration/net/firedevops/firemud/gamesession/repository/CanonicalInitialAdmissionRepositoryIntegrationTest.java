@@ -67,7 +67,6 @@ class CanonicalInitialAdmissionRepositoryIntegrationTest {
   private static final UUID INTAKE_REQUEST = uuid(103);
   private static final UUID CATALOG_REQUEST = uuid(104);
   private static final UUID ACTOR = uuid(105);
-  private static final UUID REALM = uuid(106);
   private static final UUID GAME_INSTANCE_UUID = uuid(108);
   private static final UUID CANONICAL_VERSION = uuid(109);
   private static final UUID ASSOCIATION_OPERATION = uuid(110);
@@ -188,11 +187,11 @@ class CanonicalInitialAdmissionRepositoryIntegrationTest {
                     + "WHERE target_namespace = ? AND canonical_tenant_id = ? AND realm_id = ?",
                 NAMESPACE,
                 TENANT,
-                REALM));
+                request.realmId()));
     assertThat(pointer.get("tenant_id", Long.class))
         .isEqualTo(tenantAssociation.legacyGameSessionTenantId());
     assertThat(pointer.get("canonical_tenant_id", UUID.class)).isEqualTo(TENANT);
-    assertThat(pointer.get("realm_id", UUID.class)).isEqualTo(REALM);
+    assertThat(pointer.get("realm_id", UUID.class)).isEqualTo(request.realmId());
     assertThat(pointer.get("canonical_game_instance_id", UUID.class)).isEqualTo(GAME_INSTANCE_UUID);
     assertThat(pointer.get("canonical_version_id", UUID.class)).isEqualTo(CANONICAL_VERSION);
     assertThat(pointer.get("initial_admission_request_id", String.class))
@@ -208,7 +207,7 @@ class CanonicalInitialAdmissionRepositoryIntegrationTest {
                     + "FROM gameplay_admission_pointer_event WHERE id = ?",
                 committed.auditEventId()));
     assertThat(audit.get("canonical_tenant_id", UUID.class)).isEqualTo(TENANT);
-    assertThat(audit.get("realm_id", UUID.class)).isEqualTo(REALM);
+    assertThat(audit.get("realm_id", UUID.class)).isEqualTo(request.realmId());
     assertThat(audit.get("canonical_game_instance_id", UUID.class)).isEqualTo(GAME_INSTANCE_UUID);
     assertThat(audit.get("canonical_version_id", UUID.class)).isEqualTo(CANONICAL_VERSION);
     assertThat(audit.get("initial_admission_request_id", String.class))
@@ -309,7 +308,7 @@ class CanonicalInitialAdmissionRepositoryIntegrationTest {
         ACTOR,
         NAMESPACE,
         TENANT,
-        REALM,
+        catalog.realmId(),
         CATALOG_REQUEST,
         catalog.catalogRevision(),
         source.operationId(),
@@ -396,7 +395,7 @@ class CanonicalInitialAdmissionRepositoryIntegrationTest {
 
   private static CanonicalInitialAdmissionRequest initialAdmissionRequest(
       CanonicalRealmCatalogSnapshot catalog, CompleteLaunchBindingEvidence binding) {
-    String requestId = "canonical-first-open-" + REALM;
+    String requestId = "canonical-first-open-" + catalog.realmId();
     long activeEpoch = 2L;
     UUID canonicalVersionId = binding.releaseAttestation().canonicalVersionId();
     CanonicalInitialAdmissionRequest.OriginKind origin =
@@ -406,7 +405,7 @@ class CanonicalInitialAdmissionRepositoryIntegrationTest {
             NAMESPACE,
             TENANT,
             catalog.worldSlug(),
-            REALM,
+            catalog.realmId(),
             catalog.playableStateNamespaceId(),
             "SHARED",
             GAME_INSTANCE_UUID,
@@ -420,7 +419,7 @@ class CanonicalInitialAdmissionRepositoryIntegrationTest {
         NAMESPACE,
         TENANT,
         catalog.worldSlug(),
-        REALM,
+        catalog.realmId(),
         catalog.playableStateNamespaceId(),
         "SHARED",
         GAME_INSTANCE_UUID,

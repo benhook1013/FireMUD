@@ -12,4 +12,5 @@ firemudJooq {
 }
 
 dependencies {
+    testCompileOnly(libs.spotbugs.annotations)
 }

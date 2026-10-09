@@ -339,7 +339,7 @@ class GameSessionCanonicalRealmCatalogRepositoryIntegrationTest {
         .isEqualTo(1);
 
     IntakeReceipt retained =
-        fixture.register(tenant(3), "retained-world", "Retained World", "RETAINED_GAME_V29");
+        fixture.register(tenant(3), "retained-world", "Retained World", "RETAINED_GAME_V30");
     assertThatThrownBy(
             () ->
                 fixture.create(

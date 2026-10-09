@@ -9,6 +9,7 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.UUID;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
@@ -145,10 +146,12 @@ class StartSessionPreAuthorizationReservationPostgresIntegrationTest {
             StartSessionPreAuthorizationReservationService.IdempotencyConflictException.class);
 
     String storedTuple =
-        dsl.fetchOne(
-                "SELECT pre_authorization_tuple_json FROM start_session_pre_authorization_reservations "
-                    + "WHERE control_plane_request_id = ?",
-                original.controlPlaneRequestId())
+        Objects.requireNonNull(
+                dsl.fetchOne(
+                    "SELECT pre_authorization_tuple_json FROM start_session_pre_authorization_reservations "
+                        + "WHERE control_plane_request_id = ?",
+                    original.controlPlaneRequestId()),
+                "The original committed reservation must remain readable")
             .get(0, String.class);
     assertThat(storedTuple)
         .contains(ACTOR_ID.toString())
