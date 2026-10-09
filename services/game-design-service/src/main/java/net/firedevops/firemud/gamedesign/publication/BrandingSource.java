@@ -20,15 +20,21 @@ import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.json.JsonMapper;
 
 /**
- * Closed ordinary asset-reference source operations for the existing Draft coordinator. This codec
+ * Closed branding asset-reference source operations for the existing Draft coordinator. This codec
  * does not qualify asset rows, authenticate an operation, establish genesis or attest completeness.
  */
-public final class AssetSource {
-  public static final String SCOPE = "ASSET_REFERENCE_SET";
+public final class BrandingSource {
+  public static final String SCOPE = "BRANDING_ASSET_REFERENCE_SET";
   public static final String SCOPE_ID = "effective";
-  public static final String REVISION_KIND = "ASSET_REFERENCE";
-  public static final String FAMILY = "ORDINARY";
-  public static final String ROLE = "RESOURCE";
+  public static final String REVISION_KIND = "BRANDING_ASSET_REFERENCE";
+  public static final String FAMILY = "BRANDING";
+
+  public enum Role {
+    RESOURCE,
+    LOGO,
+    FAVICON,
+    THEME
+  }
 
   private static final JsonMapper JSON =
       JsonMapper.builder()
@@ -36,7 +42,11 @@ public final class AssetSource {
           .enable(DeserializationFeature.FAIL_ON_TRAILING_TOKENS)
           .build();
 
-  private AssetSource() {}
+  private BrandingSource() {}
+
+  public static Map<String, String> emptyRoleDeclarations() {
+    return Map.of("RESOURCE", "EMPTY", "LOGO", "EMPTY", "FAVICON", "EMPTY", "THEME", "EMPTY");
+  }
 
   public enum OperationKind {
     UPSERT,
@@ -56,11 +66,13 @@ public final class AssetSource {
       OperationKind operation,
       String usageKey,
       String assetRowId,
+      Role role,
       Requiredness requiredness) {
     public Mutation {
       Objects.requireNonNull(binding, "binding");
       Objects.requireNonNull(operation, "operation");
       requireUsageKey(usageKey);
+      Objects.requireNonNull(role, "role");
       var revision =
           binding.revisions().stream()
               .filter(value -> value.revisionId().equals(revisionId))
@@ -71,12 +83,12 @@ public final class AssetSource {
                   () -> new IllegalArgumentException("Asset revision is not in its exact binding"));
       String expectedPayload;
       if (operation == OperationKind.UPSERT) {
-        expectedPayload = upsertPayload(assetRowId, usageKey, requiredness);
+        expectedPayload = upsertPayload(assetRowId, usageKey, role, requiredness);
       } else {
         if (assetRowId != null || requiredness != null) {
           throw new IllegalArgumentException("Asset DELETE cannot carry UPSERT fields");
         }
-        expectedPayload = deletePayload(usageKey);
+        expectedPayload = deletePayload(usageKey, role);
       }
       // Parse before canonicalization so duplicate fields or trailing JSON can never collapse.
       JsonNode actual = tree(revision.payload());
@@ -106,6 +118,7 @@ public final class AssetSource {
   public record Reference(
       String usageKey,
       String assetRowId,
+      Role role,
       Requiredness requiredness,
       DraftCommitBinding sourceBinding,
       String revisionOrder,
@@ -119,15 +132,12 @@ public final class AssetSource {
           OperationKind.UPSERT,
           usageKey,
           assetRowId,
+          role,
           requiredness);
     }
 
     public String family() {
       return FAMILY;
-    }
-
-    public String role() {
-      return ROLE;
     }
   }
 
@@ -156,7 +166,7 @@ public final class AssetSource {
           || "REALM_ENTRY_POLICY".equals(kind)
           || TemplateConfigSource.REVISION_KIND.equals(kind)
           || GameplayRuleSource.REVISION_KIND.equals(kind)
-          || BrandingSource.REVISION_KIND.equals(kind)) continue;
+          || AssetSource.REVISION_KIND.equals(kind)) continue;
       if (!REVISION_KIND.equals(kind)) {
         throw new IllegalArgumentException("Unsupported Game Design asset source revision kind");
       }
@@ -172,6 +182,7 @@ public final class AssetSource {
               operation,
               text(payload, "usageKey"),
               operation == OperationKind.UPSERT ? text(payload, "assetRowId") : null,
+              Role.valueOf(text(payload, "role")),
               operation == OperationKind.UPSERT
                   ? Requiredness.valueOf(text(payload, "requiredness"))
                   : null));
@@ -180,11 +191,12 @@ public final class AssetSource {
   }
 
   public static String upsertPayload(
-      String assetRowId, String usageKey, Requiredness requiredness) {
+      String assetRowId, String usageKey, Role role, Requiredness requiredness) {
     requireAssetRowId(assetRowId);
+    Objects.requireNonNull(role, "role");
     requireUsageKey(usageKey);
     if (requiredness != Requiredness.REQUIRED) {
-      throw new IllegalArgumentException("Ordinary RESOURCE requires REQUIRED owner policy");
+      throw new IllegalArgumentException("Branding RESOURCE requires REQUIRED owner policy");
     }
     return canonical(
         Map.of(
@@ -195,7 +207,7 @@ public final class AssetSource {
             "family",
             FAMILY,
             "role",
-            ROLE,
+            role.name(),
             "operation",
             "UPSERT",
             "assetRowId",
@@ -206,7 +218,8 @@ public final class AssetSource {
             requiredness.name()));
   }
 
-  public static String deletePayload(String usageKey) {
+  public static String deletePayload(String usageKey, Role role) {
+    Objects.requireNonNull(role, "role");
     requireUsageKey(usageKey);
     return canonical(
         Map.of(
@@ -217,7 +230,7 @@ public final class AssetSource {
             "family",
             FAMILY,
             "role",
-            ROLE,
+            role.name(),
             "operation",
             "DELETE",
             "usageKey",
@@ -238,6 +251,7 @@ public final class AssetSource {
             new Reference(
                 mutation.usageKey(),
                 mutation.assetRowId(),
+                mutation.role(),
                 mutation.requiredness(),
                 binding,
                 mutation.revisionOrder(),
@@ -255,7 +269,7 @@ public final class AssetSource {
     return new Snapshot(
         binding,
         effective.values().stream()
-            .sorted(Comparator.comparing(Reference::usageKey, AssetSource::compareUtf8))
+            .sorted(Comparator.comparing(Reference::usageKey, BrandingSource::compareUtf8))
             .toList());
   }
 

@@ -110,8 +110,13 @@ public final class GameplayRuleSource {
       if (revision.owner() != Owner.GAME_DESIGN_CONTROL_PLANE) continue;
       var node = GameplayRuleManifest.tree(revision.payload());
       String kind = text(node, "revisionKind");
-      if (Set.of("COMMAND_DEFINITION", "REALM_ENTRY_POLICY", "ASSET_REFERENCE").contains(kind))
-        continue;
+      if (Set.of(
+              "COMMAND_DEFINITION",
+              "REALM_ENTRY_POLICY",
+              "ASSET_REFERENCE",
+              BrandingSource.REVISION_KIND,
+              TemplateConfigSource.REVISION_KIND)
+          .contains(kind)) continue;
       if (!REVISION_KIND.equals(kind))
         throw new IllegalArgumentException("Unknown Game Design revision kind");
       OperationKind operation = OperationKind.valueOf(text(node, "operation"));

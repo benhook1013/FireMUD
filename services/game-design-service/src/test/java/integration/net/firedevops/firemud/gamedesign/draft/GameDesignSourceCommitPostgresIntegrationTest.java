@@ -1130,7 +1130,51 @@ class GameDesignSourceCommitPostgresIntegrationTest {
     version.setVersionState(VersionLifecycleState.DRAFT);
     version.setVersionStateEpoch(1L);
     var saved =
-        Objects.requireNonNull(tx.execute(ignored -> new VersionRepository(dsl).save(version)));
+        Objects.requireNonNull(
+            tx.execute(
+                ignored -> {
+                  if (maximumMigration == null) return new VersionRepository(dsl).save(version);
+                  if (!"57".equals(maximumMigration))
+                    throw new IllegalArgumentException(
+                        "Historical fixture supports migration 57 only");
+                  // Actual pre-branding producer setup for retained-history migration proof.
+                  // This is not current creator admission or authority for later empty families.
+                  long id =
+                      dsl.fetchSingle(
+                              "INSERT INTO version (tenant_id, version_number, version_state, version_state_epoch, is_script_only, "
+                                  + "canonical_tenant_id, canonical_version_id, identity_source_game_row_id, identity_source_game_tenant_key, identity_source_provenance_kind, created_at, updated_at) "
+                                  + "SELECT tenant_id, 1, 'DRAFT', 1, FALSE, canonical_tenant_id, ?, id, tenant_id, tenant_identity_provenance_kind, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP FROM game WHERE id = ? RETURNING id",
+                              UUID.randomUUID(),
+                              savedGame.getId())
+                          .get(0, Long.class);
+                  var retained = new VersionRepository(dsl).findById(id).orElseThrow();
+                  var historicalTarget =
+                      new DraftCommitBinding.TargetProof(
+                          retained.getCanonicalTenantId(),
+                          retained.getCanonicalVersionId(),
+                          id,
+                          retained.getTenantId(),
+                          retained.getIdentitySourceGameRowId(),
+                          retained.getIdentitySourceGameTenantKey(),
+                          retained.getIdentitySourceProvenanceKind());
+                  var policy =
+                      new net.firedevops.firemud.gamedesign.publication.RealmPolicySourceRepository(
+                              dsl)
+                          .recordFreshGenesis(historicalTarget);
+                  new net.firedevops.firemud.gamedesign.publication.CommandSourceRepository(dsl)
+                      .enrollNewDraftGenesis(
+                          new net.firedevops.firemud.gamedesign.publication.CommandSource
+                              .NewDraftGenesisReceipt(
+                              historicalTarget,
+                              policy.receiptId(),
+                              policy.creationTransactionId()));
+                  new net.firedevops.firemud.gamedesign.publication.AssetSourceRepository(dsl)
+                      .enrollFreshDraft(historicalTarget);
+                  new net.firedevops.firemud.gamedesign.publication.GameplayRuleSourceRepository(
+                          dsl)
+                      .enrollFreshDraft(historicalTarget);
+                  return retained;
+                }));
     var target =
         new DraftCommitBinding.TargetProof(
             saved.getCanonicalTenantId(),

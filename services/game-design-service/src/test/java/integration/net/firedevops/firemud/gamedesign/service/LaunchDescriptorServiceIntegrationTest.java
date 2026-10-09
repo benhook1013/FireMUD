@@ -137,14 +137,24 @@ class LaunchDescriptorServiceIntegrationTest {
         .isEqualTo(fixture.source().evidenceDigest());
     assertThat(original.canonicalTenantId()).isNotEqualTo(fixture.privateSourceTenantKey());
 
-    Version newDraft = new Version();
-    newDraft.setTenantId(fixture.privateSourceTenantKey());
-    newDraft.setVersionNumber(2);
-    newDraft.setVersionState(VersionLifecycleState.DRAFT);
-    newDraft.setVersionStateEpoch(1L);
-    newDraft.setNotes("new mutable template default");
-    newDraft.setUpdatedAt(LocalDateTime.now());
-    newDraft = versionRepository.save(newDraft);
+    // Explicit retained-history Draft fixture: exercise stored descriptor replay after default
+    // drift without claiming authenticated new authoring or inventing later source-family genesis.
+    Long changedDefaultId =
+        dsl.fetchSingle(
+                "INSERT INTO version (tenant_id, canonical_tenant_id, canonical_version_id, "
+                    + "identity_source_game_row_id, identity_source_game_tenant_key, identity_source_provenance_kind, "
+                    + "version_number, version_state, version_state_epoch, is_script_only, notes, created_at, updated_at) "
+                    + "SELECT tenant_id, canonical_tenant_id, ?, identity_source_game_row_id, identity_source_game_tenant_key, identity_source_provenance_kind, "
+                    + "2, 'DRAFT', 1, FALSE, 'retained mutable template default for storage replay', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP "
+                    + "FROM version WHERE id = ? AND tenant_id = ? RETURNING id",
+                UUID.randomUUID(),
+                fixture.version().getId(),
+                fixture.privateSourceTenantKey())
+            .get(0, Long.class);
+    Version newDraft =
+        versionRepository
+            .findByTenantIdAndId(fixture.privateSourceTenantKey(), changedDefaultId)
+            .orElseThrow();
     fixture.template().setDefaultVersionId(newDraft.getId());
     gameTemplateRepository.save(fixture.template());
     fixture.version().setVersionState(VersionLifecycleState.RETIRED);
