@@ -101,25 +101,35 @@ class AccountAuthoritySourceEvidencePersistenceIntegrationTest {
     var service =
         new net.firedevops.firemud.accountservice.service.impl.AccountServiceImpl(
             accounts,
+            new AccountAuthorityGenerationRepository(dsl),
+            new AccountAuthorityOutboxRepository(dsl),
+            new net.firedevops.firemud.accountservice.repository
+                .AccountPasswordResetOperationRepository(dsl),
+            new net.firedevops.firemud.accountservice.repository
+                .AccountLogoutAllOperationRepository(dsl),
+            new net.firedevops.firemud.accountservice.repository
+                .AccountSecurityStateOperationRepository(dsl),
+            new net.firedevops.firemud.accountservice.service
+                .AccountPasswordResetDraftSourceChangeRepository(dsl),
+            null, // audit outbox
             null,
             null,
             null,
             null,
             null,
-            null, // audit/scope/JOIN/challenge/grant/membership
+            null, // account mapper, profiles, payments, subscriptions, external identities
             null,
             null,
             null,
             null,
             null,
-            null, // mapper/profile/payment/subscription/external
             resetTokens,
+            null, // verification token repository
             null,
             null,
             null,
             null,
             null,
-            null, // verification/notification/mail/config
             null,
             null,
             null,

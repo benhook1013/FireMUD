@@ -16,7 +16,9 @@ import net.firedevops.firemud.common.EmailCanonicalization;
 import net.firedevops.firemud.common.account.authority.AccountAuthoritySourceEventV1Codec.AccountState;
 import org.jooq.DSLContext;
 import org.springframework.stereotype.Repository;
+import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 @Repository
 public class AccountRepository {
@@ -52,11 +54,74 @@ public class AccountRepository {
         dsl.selectFrom(ACCOUNTS).where(ACCOUNTS.ID.eq(id)).fetchOne(this::toEntity));
   }
 
+  /** Locks one exact persisted Account row before an owner-local authority mutation. */
+  @Transactional
+  public Optional<Account> findByIdForUpdate(Long id) {
+    if (id == null || id <= 0L) {
+      throw new IllegalArgumentException("A positive persisted Account ID is required");
+    }
+    return Optional.ofNullable(
+        dsl.selectFrom(ACCOUNTS).where(ACCOUNTS.ID.eq(id)).forUpdate().fetchOne(this::toEntity));
+  }
+
+  /**
+   * Replaces the verifier for one exact locked owner; the caller appends the closed reset event.
+   */
+  @Transactional(propagation = Propagation.MANDATORY)
+  public Account updatePasswordHashForLockedAccount(Account expected, String passwordHash) {
+    requireWritableOwnerTransaction();
+    if (expected == null
+        || expected.getId() == null
+        || expected.getAccountUuid() == null
+        || expected.getAccountUuidProvenance() == null
+        || expected.getAccountUuidSourceNumericId() == null
+        || passwordHash == null
+        || passwordHash.isBlank()) {
+      throw new IllegalArgumentException(
+          "A locked Account identity and password verifier are required");
+    }
+    AccountsRecord updated =
+        dsl.update(ACCOUNTS)
+            .set(ACCOUNTS.PASSWORD_HASH, passwordHash)
+            .where(ACCOUNTS.ID.eq(expected.getId()))
+            .and(ACCOUNTS.ACCOUNT_UUID.eq(expected.getAccountUuid()))
+            .and(ACCOUNTS.ACCOUNT_UUID_PROVENANCE.eq(expected.getAccountUuidProvenance().name()))
+            .and(
+                ACCOUNTS.ACCOUNT_UUID_SOURCE_NUMERIC_ID.eq(
+                    expected.getAccountUuidSourceNumericId()))
+            .and(ACCOUNTS.PASSWORD_HASH.isNotDistinctFrom(expected.getPasswordHash()))
+            .returning()
+            .fetchOne();
+    if (updated == null) {
+      throw JooqAccountRepositorySupport.staleWrite("accounts", expected.getId());
+    }
+    requireExactIdentityReadback(
+        updated, expected.getAccountUuid(), expected.getAccountUuidProvenance());
+    if (!Objects.equals(updated.getPasswordHash(), passwordHash)) {
+      throw new IllegalStateException("Account password verifier readback did not match its write");
+    }
+    return toEntity(updated);
+  }
+
   public Optional<Account> findByAccountUuid(UUID accountUuid) {
     Objects.requireNonNull(accountUuid, "accountUuid must not be null");
     return Optional.ofNullable(
         dsl.selectFrom(ACCOUNTS)
             .where(ACCOUNTS.ACCOUNT_UUID.eq(accountUuid))
+            .fetchOne(this::toEntity));
+  }
+
+  /** Locks one exact Account UUID inside a writable owner transaction. */
+  @Transactional(propagation = Propagation.MANDATORY)
+  public Optional<Account> findByAccountUuidForUpdate(UUID accountUuid) {
+    if (accountUuid == null || accountUuid.equals(new UUID(0L, 0L))) {
+      throw new IllegalArgumentException("A non-nil Account UUID is required");
+    }
+    requireWritableOwnerTransaction();
+    return Optional.ofNullable(
+        dsl.selectFrom(ACCOUNTS)
+            .where(ACCOUNTS.ACCOUNT_UUID.eq(accountUuid))
+            .forUpdate()
             .fetchOne(this::toEntity));
   }
 
@@ -217,6 +282,14 @@ public class AccountRepository {
 
   private String normalizedLoginAuthModes(Account entity) {
     return AccountLoginAuthModes.normalize(entity.getLoginAuthModes());
+  }
+
+  private void requireWritableOwnerTransaction() {
+    if (!TransactionSynchronizationManager.isActualTransactionActive()
+        || TransactionSynchronizationManager.isCurrentTransactionReadOnly()) {
+      throw new IllegalStateException(
+          "Account authority mutation requires an active writable owner transaction");
+    }
   }
 
   private static AccountAuthorityState authorityState(AccountsRecord record) {

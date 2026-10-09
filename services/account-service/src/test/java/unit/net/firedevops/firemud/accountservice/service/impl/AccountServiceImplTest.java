@@ -52,17 +52,23 @@ import net.firedevops.firemud.accountservice.entity.Subscription;
 import net.firedevops.firemud.accountservice.mapper.AccountMapper;
 import net.firedevops.firemud.accountservice.mapper.ProfileMapper;
 import net.firedevops.firemud.accountservice.repository.AccountAuditOutboxRepository;
+import net.firedevops.firemud.accountservice.repository.AccountAuthorityGenerationRepository;
+import net.firedevops.firemud.accountservice.repository.AccountAuthorityOutboxRepository;
 import net.firedevops.firemud.accountservice.repository.AccountConnectScopeRepository;
 import net.firedevops.firemud.accountservice.repository.AccountEmailLoginChallengeRepository;
 import net.firedevops.firemud.accountservice.repository.AccountJoinOperationRepository;
+import net.firedevops.firemud.accountservice.repository.AccountLogoutAllOperationRepository;
+import net.firedevops.firemud.accountservice.repository.AccountPasswordResetOperationRepository;
 import net.firedevops.firemud.accountservice.repository.AccountRealmAccessGrantRepository;
 import net.firedevops.firemud.accountservice.repository.AccountRepository;
+import net.firedevops.firemud.accountservice.repository.AccountSecurityStateOperationRepository;
 import net.firedevops.firemud.accountservice.repository.AccountTenantMembershipRepository;
 import net.firedevops.firemud.accountservice.repository.EmailVerificationTokenRepository;
 import net.firedevops.firemud.accountservice.repository.ExternalAccountRepository;
 import net.firedevops.firemud.accountservice.repository.PaymentTransactionRepository;
 import net.firedevops.firemud.accountservice.repository.ProfileRepository;
 import net.firedevops.firemud.accountservice.repository.SubscriptionRepository;
+import net.firedevops.firemud.accountservice.service.AccountPasswordResetDraftSourceChangeRepository;
 import net.firedevops.firemud.accountservice.service.EmailService;
 import net.firedevops.firemud.accountservice.service.NotificationService;
 import net.firedevops.firemud.accountservice.service.exception.AccountAlreadyExistsException;
@@ -97,6 +103,16 @@ class AccountServiceImplTest {
   private static final String PLAYABLE_STATE_NAMESPACE_ID_TENANT_8 =
       "a741a4b8-a2cb-405e-a330-8fbf3dfb841f";
   @Mock private AccountRepository accountRepository;
+  @Mock private AccountAuthorityGenerationRepository accountAuthorityGenerationRepository;
+  @Mock private AccountAuthorityOutboxRepository accountAuthorityOutboxRepository;
+  @Mock private AccountPasswordResetOperationRepository accountPasswordResetOperationRepository;
+  @Mock private AccountLogoutAllOperationRepository accountLogoutAllOperationRepository;
+  @Mock private AccountSecurityStateOperationRepository accountSecurityStateOperationRepository;
+
+  @Mock
+  private AccountPasswordResetDraftSourceChangeRepository
+      accountPasswordResetDraftSourceChangeRepository;
+
   @Mock private AccountAuditOutboxRepository accountAuditOutboxRepository;
   @Mock private AccountConnectScopeRepository accountConnectScopeRepository;
   @Mock private AccountJoinOperationRepository accountJoinOperationRepository;
@@ -207,6 +223,12 @@ class AccountServiceImplTest {
     service =
         new AccountServiceImpl(
             accountRepository,
+            accountAuthorityGenerationRepository,
+            accountAuthorityOutboxRepository,
+            accountPasswordResetOperationRepository,
+            accountLogoutAllOperationRepository,
+            accountSecurityStateOperationRepository,
+            accountPasswordResetDraftSourceChangeRepository,
             accountAuditOutboxRepository,
             accountConnectScopeRepository,
             accountJoinOperationRepository,
@@ -2196,6 +2218,12 @@ class AccountServiceImplTest {
     service =
         new AccountServiceImpl(
             accountRepository,
+            accountAuthorityGenerationRepository,
+            accountAuthorityOutboxRepository,
+            accountPasswordResetOperationRepository,
+            accountLogoutAllOperationRepository,
+            accountSecurityStateOperationRepository,
+            accountPasswordResetDraftSourceChangeRepository,
             accountAuditOutboxRepository,
             accountConnectScopeRepository,
             accountJoinOperationRepository,
@@ -5697,17 +5725,30 @@ class AccountServiceImplTest {
   void missingRetainedSourceDeniesPasswordResetBeforeTokenConsumption() {
     var account = new Account();
     account.setId(2L);
+    account.setAccountUuid(UUID.randomUUID());
+    account.setAccountUuidProvenance(AccountIdentityProvenance.ACCOUNT_REPOSITORY_INSERT);
+    account.setAccountUuidSourceNumericId(2L);
     account.setPasswordHash("original-password-hash");
     var token = new net.firedevops.firemud.accountservice.entity.PasswordResetToken();
+    token.setId(7L);
     token.setAccount(account);
     token.setToken("retained-reset-token");
     token.setExpiresAt(java.time.LocalDateTime.now().plusMinutes(10));
     when(passwordResetTokenRepository.findByToken(token.getToken())).thenReturn(Optional.of(token));
+    when(accountRepository.findByIdForUpdate(account.getId())).thenReturn(Optional.of(account));
+    when(accountPasswordResetOperationRepository.findByTokenHash(
+            org.mockito.ArgumentMatchers.anyString()))
+        .thenReturn(Optional.empty());
+    when(accountPasswordResetDraftSourceChangeRepository.findAccountIdByTokenHash(
+            org.mockito.ArgumentMatchers.anyString()))
+        .thenReturn(Optional.empty());
     org.mockito.Mockito.doThrow(
             new net.firedevops.firemud.accountservice.repository
                 .AccountAuthoritySourceEvidenceRepository.SourceEvidenceUnavailableException())
-        .when(accountRepository)
-        .save(account);
+        .when(accountAuthorityGenerationRepository)
+        .read(
+            net.firedevops.firemud.accountservice.repository.AccountAuthorityGenerationRepository
+                .AuthorityScope.account(account.getAccountUuid()));
     assertThrows(
         net.firedevops.firemud.accountservice.repository.AccountAuthoritySourceEvidenceRepository
             .SourceEvidenceUnavailableException.class,
@@ -5716,8 +5757,11 @@ class AccountServiceImplTest {
                 new net.firedevops.firemud.accountservice.dto.CompletePasswordResetRequest(
                     token.getToken(), "new-password")));
     org.mockito.Mockito.verify(passwordResetTokenRepository, org.mockito.Mockito.never())
-        .delete(token);
-    org.mockito.Mockito.verify(accountRepository).save(account);
+        .consumeIfUnexpired(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any());
+    org.mockito.Mockito.verify(accountRepository, org.mockito.Mockito.never()).save(account);
+    org.mockito.Mockito.verify(accountRepository, org.mockito.Mockito.never())
+        .updatePasswordHashForLockedAccount(
+            org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.anyString());
   }
 
   @Test

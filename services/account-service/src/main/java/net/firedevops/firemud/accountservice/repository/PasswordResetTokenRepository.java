@@ -10,6 +10,8 @@ import net.firedevops.firemud.accountservice.entity.PasswordResetToken;
 import org.jooq.DSLContext;
 import org.jooq.Record;
 import org.springframework.stereotype.Repository;
+import org.springframework.transaction.annotation.Propagation;
+import org.springframework.transaction.annotation.Transactional;
 
 @Repository
 @SuppressFBWarnings(
@@ -59,6 +61,27 @@ public class PasswordResetTokenRepository {
           .where(PASSWORD_RESET_TOKEN.ID.eq(entity.getId()))
           .execute();
     }
+  }
+
+  /** Atomically consumes the exact still-valid token row under the caller's owner transaction. */
+  @Transactional(propagation = Propagation.MANDATORY)
+  public boolean consumeIfUnexpired(PasswordResetToken token, LocalDateTime capturedNow) {
+    if (token == null || token.getId() == null || capturedNow == null) {
+      return false;
+    }
+    return dsl.deleteFrom(PASSWORD_RESET_TOKEN)
+            .where(
+                PASSWORD_RESET_TOKEN
+                    .ID
+                    .eq(token.getId())
+                    .and(PASSWORD_RESET_TOKEN.TOKEN.eq(token.getToken()))
+                    .and(
+                        PASSWORD_RESET_TOKEN.ACCOUNT_ID.eq(
+                            token.getAccount() == null ? null : token.getAccount().getId()))
+                    .and(PASSWORD_RESET_TOKEN.EXPIRES_AT.eq(token.getExpiresAt()))
+                    .and(PASSWORD_RESET_TOKEN.EXPIRES_AT.gt(capturedNow)))
+            .execute()
+        == 1;
   }
 
   public void deleteByAccountId(Long accountId) {

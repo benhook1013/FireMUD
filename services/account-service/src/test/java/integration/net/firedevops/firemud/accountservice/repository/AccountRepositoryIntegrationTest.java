@@ -608,6 +608,18 @@ class AccountRepositoryIntegrationTest {
     AccountServiceImpl accountService =
         new AccountServiceImpl(
             new AccountRepository(transactionAwareDsl),
+            new net.firedevops.firemud.accountservice.repository
+                .AccountAuthorityGenerationRepository(transactionAwareDsl),
+            new net.firedevops.firemud.accountservice.repository.AccountAuthorityOutboxRepository(
+                transactionAwareDsl),
+            new net.firedevops.firemud.accountservice.repository
+                .AccountPasswordResetOperationRepository(transactionAwareDsl),
+            new net.firedevops.firemud.accountservice.repository
+                .AccountLogoutAllOperationRepository(transactionAwareDsl),
+            new net.firedevops.firemud.accountservice.repository
+                .AccountSecurityStateOperationRepository(transactionAwareDsl),
+            new net.firedevops.firemud.accountservice.service
+                .AccountPasswordResetDraftSourceChangeRepository(transactionAwareDsl),
             null,
             null,
             null,
