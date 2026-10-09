@@ -18,18 +18,34 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
 public final class WorldCanonicalInstancePreparationService {
   private final WorldCanonicalInstancePreparationRepository repository;
   private final CommitAuthorityVerifier verifier;
+  private final OriginalOperationRecoveryVerifier recoveryVerifier;
 
   /** Constructs the production-safe default: all attempts fail closed. */
   public WorldCanonicalInstancePreparationService(
       WorldCanonicalInstancePreparationRepository repository) {
-    this(repository, WorldCanonicalInstancePreparationService::denyByDefault);
+    this(
+        repository,
+        WorldCanonicalInstancePreparationService::denyByDefault,
+        WorldCanonicalInstancePreparationService::denyRecoveryByDefault);
   }
 
   /** Constructor for an explicitly supplied owner verifier, including labeled synthetic tests. */
   public WorldCanonicalInstancePreparationService(
       WorldCanonicalInstancePreparationRepository repository, CommitAuthorityVerifier verifier) {
+    this(repository, verifier, WorldCanonicalInstancePreparationService::denyRecoveryByDefault);
+  }
+
+  /**
+   * Constructor for explicit fresh-execution and original-operation recovery verifiers. No
+   * production verifier is supplied in this slice.
+   */
+  public WorldCanonicalInstancePreparationService(
+      WorldCanonicalInstancePreparationRepository repository,
+      CommitAuthorityVerifier verifier,
+      OriginalOperationRecoveryVerifier recoveryVerifier) {
     this.repository = Objects.requireNonNull(repository, "repository");
     this.verifier = Objects.requireNonNull(verifier, "verifier");
+    this.recoveryVerifier = Objects.requireNonNull(recoveryVerifier, "recoveryVerifier");
   }
 
   /**
@@ -54,15 +70,52 @@ public final class WorldCanonicalInstancePreparationService {
     }
   }
 
+  /**
+   * Authenticates and reads only the exact retained World operation. This path deliberately does
+   * not obtain a held commit authority, reassemble external sources, materialize, or abort. It is
+   * available after original authorization expiry without granting a mutation retry. An absent or
+   * PENDING lookup is unresolved evidence, not an abort, settlement, or admission. The separate
+   * serialized durable-abort boundary remains distinct from this read-only lookup.
+   */
+  public WorldCanonicalInstancePreparationRepository.ExecutionLookup recoverExact(
+      WorldCanonicalInstanceExecutionIdentity originalIdentity) {
+    Objects.requireNonNull(originalIdentity, "original World execution identity is required");
+    if (TransactionSynchronizationManager.isActualTransactionActive()) {
+      throw new IllegalStateException(
+          "Exact World execution recovery must authenticate outside an ambient transaction");
+    }
+
+    recoveryVerifier.verifyOriginalOperation(originalIdentity);
+    return repository.readExactExecution(originalIdentity);
+  }
+
   private static HeldCommitAuthority denyByDefault(Input input) {
     throw new PreparationDeniedException(
         "Canonical World preparation has no authenticated source/release terminal verifier");
+  }
+
+  private static void denyRecoveryByDefault(WorldCanonicalInstanceExecutionIdentity identity) {
+    throw new PreparationDeniedException(
+        "Canonical World execution recovery has no authenticated original-operation verifier");
   }
 
   /** Performs authenticated producer checks before returning a continuously held local fence. */
   @FunctionalInterface
   public interface CommitAuthorityVerifier {
     HeldCommitAuthority verifyAndHold(Input input);
+  }
+
+  /**
+   * Authenticates the exact configured same-namespace Game Session producer and verifies the
+   * retained original Account participation, actual Game Session attempt/fence, and immutable
+   * descriptor, release, source association, and canonical World target in {@code
+   * originalIdentity}. The typed identity is integrity input, not permission. Implementations must
+   * not reacquire, refresh, or renew participation or authorization, and must perform all remote
+   * checks before the exact read-only repository lookup.
+   */
+  @FunctionalInterface
+  public interface OriginalOperationRecoveryVerifier {
+    void verifyOriginalOperation(WorldCanonicalInstanceExecutionIdentity originalIdentity);
   }
 
   /**

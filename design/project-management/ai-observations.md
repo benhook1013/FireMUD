@@ -168,3 +168,9 @@ Entry format:
   - Observation: The revision guard prevented concurrent replacement but did not prevent a semantically incomplete payload; the standing brief was briefly replaced by the addendum alone.
   - Expected pattern: Require a string-valued `brief`, preserve it without a missing-field fallback, and read back both the original mandate and the appended instruction after revision. A revision guard is not content validation.
   - Current status: Restored the complete revision-302 brief from controller history and appended the disposition in revision 304; readback confirmed 66,031 characters and the original mandate. Overseer was informed and preserved the correction in revision 305. No repository behavior or controller policy changed.
+
+- `2026-10-10`: Service timeouts can erase complete PostgreSQL execution evidence
+  - Context: PR #3105 run 37992891243 hit all three service job limits after container-fetch errors. Its logs showed an Account historical-fixture SQL failure, but no originating service JUnit/HTML artifacts were available.
+  - Observation: Cancellation text did not establish concurrency cancellation; configured job limits caused termination. Missing reports prevent complete executed/failed/skipped counts and positive corrected-head proof even when individual failure names appear in logs.
+  - Expected pattern: Distinguish job timeout, container initialization and assertion failures; retain exact checkout provenance and never turn absent artifacts into passing or skipped totals. Diagnose reproducible fixture causes independently without weakening production guards or inferring provisioning authority.
+  - Current status: The source and synthetic merge are recorded in the owning tracker/controller. The historical V75 fixture incorrectly called the current initializer requiring V81 tables; its test-only seed is corrected, with physical execution still required. No workflow timeout or infrastructure change was made.

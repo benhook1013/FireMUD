@@ -119,6 +119,15 @@ class StartSessionPreAuthorizationReservationTupleTest {
             () -> StartSessionPreAuthorizationReservationTuple.fromCanonicalJson(invalidActorKind))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("actor must be human");
+    assertThatThrownBy(() -> StartSessionPreAuthorizationReservationTuple.fromCanonicalJson("[]"))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("tuple must be an object");
+    assertThatThrownBy(() -> StartSessionPreAuthorizationReservationTuple.fromCanonicalJson("null"))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("tuple JSON is invalid");
+    assertThatThrownBy(() -> StartSessionPreAuthorizationReservationTuple.fromCanonicalJson("{}"))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("missing or unsupported fields");
   }
 
   private static StartSessionOperatorAction action(StartSessionOperatorAction.ClientIp clientIp) {

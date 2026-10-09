@@ -73,6 +73,15 @@ CREATE TRIGGER account_creator_party_history_immutable
 CREATE TRIGGER account_creator_party_operation_immutable
     BEFORE UPDATE OR DELETE ON account_fresh_creator_party_association_operations
     FOR EACH ROW EXECUTE FUNCTION account_creator_party_immutable_guard();
+CREATE TRIGGER account_individual_creator_party_no_truncate
+    BEFORE TRUNCATE ON account_individual_creator_party_sources
+    FOR EACH STATEMENT EXECUTE FUNCTION account_creator_party_immutable_guard();
+CREATE TRIGGER account_creator_party_history_no_truncate
+    BEFORE TRUNCATE ON account_tenant_creator_party_history
+    FOR EACH STATEMENT EXECUTE FUNCTION account_creator_party_immutable_guard();
+CREATE TRIGGER account_creator_party_operation_no_truncate
+    BEFORE TRUNCATE ON account_fresh_creator_party_association_operations
+    FOR EACH STATEMENT EXECUTE FUNCTION account_creator_party_immutable_guard();
 
 CREATE FUNCTION account_creator_party_history_insert_guard() RETURNS TRIGGER LANGUAGE plpgsql AS $$
 BEGIN

@@ -71,7 +71,7 @@ public final class StartSessionPreAuthorizationReservationTuple {
       if (!canonical.equals(json)) {
         throw new IllegalArgumentException("pre-authorization tuple is not canonical JSON");
       }
-      Object decoded = JSON.readValue(json, Map.class);
+      Object decoded = JSON.readValue(json, Object.class);
       Map<String, Object> root = requireObject(decoded, "tuple");
       requireExactFields(root, ROOT_FIELDS, "tuple");
       if (!TUPLE_SCHEMA_ID.equals(requireString(root.get("tupleSchemaId"), "tupleSchemaId"))

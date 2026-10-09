@@ -1413,11 +1413,11 @@ class DraftAuthorizationFencePostgresIntegrationTest {
 
   @Test
   void forwardMigrationRetainsV1BindingReadbackAndFlywayChecksumsExactly() {
-    // Seed the retained pre-owner-fence row with an ACCOUNT-only source vector at V75, then
-    // advance through the required-owner fence at V76
-    // explicitly before using the current runtime repository against this historical fixture.
+    // Seed the retained pre-owner-fence row at V75 with an ACCOUNT-only source vector. This
+    // historical account uses the V75 schema-level UUID insert path; current AccountRepository
+    // initialization depends on restriction-birth tables introduced later at V81.
     Context context = context("75");
-    DraftAuthorizationFenceBinding base = binding(context);
+    DraftAuthorizationFenceBinding base = binding(context, seedHistoricalV75Account(context));
     SourceEvidence legacy512 =
         new SourceEvidence(
             SourceKind.ISSUER, "x".repeat(505), "3", "5", "stream/legacy512", "2", new byte[] {9});
@@ -1706,6 +1706,41 @@ class DraftAuthorizationFencePostgresIntegrationTest {
     return new SourceEvidence(SourceKind.ISSUER, scopeId, null, "5", null, null, new byte[] {7});
   }
 
+  private UUID seedHistoricalV75Account(Context context) {
+    String suffix = UUID.randomUUID().toString();
+    UUID expectedUuid = UUID.randomUUID();
+    return tx(
+        context,
+        () -> {
+          var inserted =
+              Objects.requireNonNull(
+                  context
+                      .dsl()
+                      .fetchOne(
+                          "INSERT INTO accounts (username, email, password_hash, role, "
+                              + "email_verified, login_auth_modes, lifecycle_state, account_uuid, "
+                              + "account_uuid_provenance) "
+                              + "VALUES (?, ?, ?, 'player', FALSE, 'PASSWORD,EMAIL_OTP', 'active', "
+                              + "?, 'ACCOUNT_DATABASE_INSERT') "
+                              + "RETURNING id, account_uuid, account_uuid_provenance, "
+                              + "account_uuid_source_numeric_id, "
+                              + "account_repository_insert_transaction_id",
+                          "draft-" + suffix,
+                          suffix + "@example.test",
+                          "synthetic-verifier",
+                          expectedUuid),
+                  "Expected V75 historical Account insert readback");
+          Long sourceNumericId = inserted.get("account_uuid_source_numeric_id", Long.class);
+          assertThat(inserted.get("id", Long.class)).isPositive();
+          assertThat(inserted.get("account_uuid", UUID.class)).isEqualTo(expectedUuid);
+          assertThat(inserted.get("account_uuid_provenance", String.class))
+              .isEqualTo("ACCOUNT_DATABASE_INSERT");
+          assertThat(sourceNumericId).isEqualTo(inserted.get("id", Long.class));
+          assertThat(inserted.get("account_repository_insert_transaction_id", Long.class)).isNull();
+          return expectedUuid;
+        });
+  }
+
   private DraftAuthorizationFenceBinding binding(Context context) {
     UUID account =
         tx(
@@ -1718,6 +1753,10 @@ class DraftAuthorizationFencePostgresIntegrationTest {
               row.setPasswordHash("synthetic-verifier");
               return new AccountRepository(context.dsl()).save(row).getAccountUuid();
             });
+    return binding(context, account);
+  }
+
+  private DraftAuthorizationFenceBinding binding(Context context, UUID account) {
     SourceEvidence source =
         new SourceEvidence(
             SourceKind.ACCOUNT,

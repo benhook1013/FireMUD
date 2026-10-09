@@ -301,6 +301,22 @@ class AccountControlUiPositiveOwnerPostgresIntegrationTest {
         assertThat(exactRetry.canonicalBytes()).isEqualTo(firstCapture.canonicalBytes());
         assertThat(exactRetry.bundleReference()).isEqualTo(firstCapture.bundleReference());
 
+        var lookupOnlyRetry =
+            actors.withCurrentCommitted(
+                actor.accountId(),
+                f.tenant,
+                retained.jti,
+                environment,
+                current ->
+                    captureRepository.lockReadExactCurrent(
+                        current,
+                        tuple,
+                        AccountControlUiOwnerWorkflowPostgresIntegrationTest.CALLER,
+                        reservationOwnerId,
+                        reservationClaimFence));
+        assertThat(lookupOnlyRetry.sameStoredValue(firstCapture)).isTrue();
+        assertThat(lookupOnlyRetry.bundleReference()).isEqualTo(firstCapture.bundleReference());
+
         finalReadback =
             actors.withCurrentCommitted(
                 actor.accountId(),
@@ -375,6 +391,27 @@ class AccountControlUiPositiveOwnerPostgresIntegrationTest {
                                 AccountControlUiOwnerWorkflowPostgresIntegrationTest.CALLER,
                                 reservationOwnerId,
                                 reservationClaimFence + 1L)))
+            .isInstanceOf(IllegalStateException.class)
+            .hasMessage("Account StartSession source capture is unavailable");
+
+        String missingRequestId = "start-session-capture-missing-" + UUID.randomUUID();
+        var missingTuple =
+            StartSessionPreAuthorizationReservationTuple.createHuman(
+                missingRequestId, actor.accountId(), action);
+        assertThatThrownBy(
+                () ->
+                    actors.withCurrentCommitted(
+                        actor.accountId(),
+                        f.tenant,
+                        retained.jti,
+                        environment,
+                        current ->
+                            captureRepository.lockReadExactCurrent(
+                                current,
+                                missingTuple,
+                                AccountControlUiOwnerWorkflowPostgresIntegrationTest.CALLER,
+                                reservationOwnerId,
+                                reservationClaimFence)))
             .isInstanceOf(IllegalStateException.class)
             .hasMessage("Account StartSession source capture is unavailable");
 

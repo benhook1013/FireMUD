@@ -43,6 +43,7 @@ dependencies {
     implementation(libs.spring.boot.starter.mail)
     implementation(libs.argon2)
     implementation(libs.stripe.java)
+    testImplementation(libs.grpc.inprocess)
     testImplementation(testFixtures(project(":account-service")))
     integrationTestImplementation(testFixtures(project(":account-service")))
 }

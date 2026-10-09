@@ -28,7 +28,8 @@ BEGIN
     SELECT * INTO STRICT original FROM account_game_logic_intake_authorizations WHERE operation_id = NEW.operation_id;
     PERFORM l.source_key FROM account_draft_authorization_source_locks l
         JOIN account_game_logic_intake_sources s ON s.source_key = l.source_key
-        WHERE s.operation_id = NEW.operation_id ORDER BY l.source_key FOR UPDATE OF l;
+        WHERE s.operation_id = NEW.operation_id
+        ORDER BY account_publication_authorization_source_sort_key(l.source_key) FOR UPDATE OF l;
     PERFORM operation_id FROM account_game_logic_intake_authorizations WHERE operation_id = NEW.operation_id FOR UPDATE;
     IF NEW.terminal_digest IS DISTINCT FROM 'sha256:' || encode(sha256(NEW.terminal_bytes), 'hex')
         OR NEW.receipt_digest IS DISTINCT FROM 'sha256:' || encode(sha256(NEW.receipt_bytes), 'hex') THEN

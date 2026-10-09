@@ -132,7 +132,7 @@ class AccountJwtReadinessProbeOwnerGrpcServiceTest {
 
       assertThat(context.getBean(GlobalPeerIdentityMarker.class).invocations()).hasValue(0);
       assertThat(observedPeer.get()).isEqualTo(GrpcPeerIdentity.parseUri(peerUri).orElseThrow());
-      verify(sslSession, times(1)).getPeerCertificates();
+      verify(sslSession, times(2)).getPeerCertificates();
 
       var metadataMethodDefinition =
           serviceDefinition.getMethods().stream()

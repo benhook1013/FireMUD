@@ -88,6 +88,25 @@ public final class AccountStartSessionAuthorityCaptureRepository {
     return stored;
   }
 
+  /** Locks and reads an existing exact capture without allocating or inserting one. */
+  public AccountStartSessionAuthorityCapture lockReadExactCurrent(
+      AccountControlUiActorService.Current current,
+      StartSessionPreAuthorizationReservationTuple tuple,
+      String loggingWorkloadUri,
+      UUID reservationOwnerId,
+      long reservationClaimFence) {
+    requireOwnerTransaction();
+    Objects.requireNonNull(current, "current committed ControlUI actor is required");
+    RequestSnapshot observed =
+        requestSnapshot(
+            current, tuple, loggingWorkloadUri, reservationOwnerId, reservationClaimFence);
+    Record row = lockByRequestId(observed.requestId());
+    if (row == null) throw unavailable();
+    AccountStartSessionAuthorityCapture stored = decode(row);
+    requireSameRequestAndSnapshot(observed, stored, row);
+    return stored;
+  }
+
   /** Locks the immutable original capture and requires the exact current source and tuple again. */
   public AccountStartSessionAuthorityCapture lockExactCurrent(
       AccountStartSessionAuthorityCapture expected,

@@ -4,7 +4,7 @@ CREATE TABLE account_hosted_terms_disclosure_handoffs (
     handoff_id UUID PRIMARY KEY,
     request_id UUID NOT NULL UNIQUE,
     kind VARCHAR(32) NOT NULL CHECK (kind IN ('CATALOG', 'ENVIRONMENT_BINDING')),
-    source_key VARCHAR(512) NOT NULL CHECK (length(source_key) > 0 AND octet_length(source_key) <= 512),
+    source_key VARCHAR(2048) NOT NULL CHECK (length(source_key) > 0 AND octet_length(source_key) <= 2048),
     predecessor_digest VARCHAR(71) NOT NULL CHECK (predecessor_digest ~ '^sha256:[0-9a-f]{64}$'),
     candidate_digest VARCHAR(71) NOT NULL CHECK (candidate_digest ~ '^sha256:[0-9a-f]{64}$'),
     effective_at TIMESTAMPTZ NOT NULL,
@@ -34,12 +34,14 @@ CREATE TABLE account_hosted_terms_disclosure_handoffs (
             AND result_payload IS NOT NULL AND octet_length(result_payload) > 0
             AND result_digest IS NOT NULL
             AND result_recorded_at IS NOT NULL)
-    )
+    ),
+    CHECK (result_digest IS NULL OR result_digest = 'sha256:' || encode(sha256(result_payload), 'hex'))
 );
 
 CREATE TABLE account_hosted_terms_disclosure_sources (
     handoff_id UUID NOT NULL REFERENCES account_hosted_terms_disclosure_handoffs(handoff_id),
-    source_key VARCHAR(512) NOT NULL
+    source_key VARCHAR(2048) NOT NULL
+        CHECK (length(source_key) > 0 AND octet_length(source_key) <= 2048)
         REFERENCES account_draft_authorization_source_locks(source_key),
     source_evidence BYTEA NOT NULL CHECK (octet_length(source_evidence) > 0),
     source_evidence_digest VARCHAR(71) NOT NULL
@@ -56,6 +58,18 @@ BEGIN
     IF TG_OP = 'DELETE' THEN
         RAISE EXCEPTION 'Hosted terms disclosure handoff cannot be deleted'
             USING ERRCODE = '23514';
+    END IF;
+    IF TG_OP = 'INSERT' THEN
+        IF NEW.status IS DISTINCT FROM 'PREPARED'
+            OR NEW.dispatch_attempts IS DISTINCT FROM 0
+            OR NEW.result_outcome IS NOT NULL
+            OR NEW.result_payload IS NOT NULL
+            OR NEW.result_digest IS NOT NULL
+            OR NEW.result_recorded_at IS NOT NULL THEN
+            RAISE EXCEPTION 'Hosted terms disclosure handoff must begin in its empty prepared state'
+                USING ERRCODE = '23514';
+        END IF;
+        RETURN NEW;
     END IF;
     IF NEW.handoff_id IS DISTINCT FROM OLD.handoff_id
         OR NEW.request_id IS DISTINCT FROM OLD.request_id
@@ -140,7 +154,7 @@ END;
 $$;
 
 CREATE TRIGGER account_hosted_terms_disclosure_handoff_immutable
-    BEFORE UPDATE OR DELETE ON account_hosted_terms_disclosure_handoffs
+    BEFORE INSERT OR UPDATE OR DELETE ON account_hosted_terms_disclosure_handoffs
     FOR EACH ROW EXECUTE FUNCTION account_hosted_terms_disclosure_handoff_guard();
 CREATE TRIGGER account_hosted_terms_disclosure_sources_immutable
     BEFORE UPDATE OR DELETE ON account_hosted_terms_disclosure_sources
