@@ -200,14 +200,28 @@ class AccountSourceCurrentnessForwardMigrationsPostgresIntegrationTest {
           {
             "account_hosted_terms_disclosure_sources_no_truncate",
             "account_hosted_terms_disclosure_sources"
+          },
+          {
+            "account_game_logic_intake_source_read_no_truncate",
+            "account_game_logic_intake_source_read_reservations"
+          },
+          {
+            "account_game_logic_intake_source_read_sources_no_truncate",
+            "account_game_logic_intake_source_read_sources"
+          },
+          {
+            "account_game_logic_intake_source_read_aborts_no_truncate",
+            "account_game_logic_intake_source_read_aborts"
           }
         }) {
       assertThat(
               context
                   .dsl()
                   .resultQuery(
-                      "SELECT count(*) FROM pg_trigger WHERE tgname = ? "
-                          + "AND tgrelid = ?::regclass AND NOT tgisinternal",
+                      "SELECT count(*) FROM pg_trigger WHERE tgname = ?::name "
+                          + "AND tgrelid = ?::regclass AND NOT tgisinternal "
+                          + "AND (tgtype::INTEGER & 32) <> 0 "
+                          + "AND (tgtype::INTEGER & 1) = 0 AND tgenabled <> 'D'",
                       trigger[0],
                       trigger[1])
                   .fetchOne(0, Long.class))
@@ -409,6 +423,14 @@ class AccountSourceCurrentnessForwardMigrationsPostgresIntegrationTest {
         publicationIntent(identity, mismatchedCountRequest, true, true),
         2,
         false);
+  }
+
+  @Test
+  void v2PublicationSettlementAcceptsEmptyOptionalInputsButRequiresRoomInventory() {
+    TestContext context = context(null);
+    exerciseSelectedPublicationV2Settlement(context, testIdentity(context), 0, 1, true);
+    exerciseSelectedPublicationV2Settlement(context, testIdentity(context), 0, 0, false);
+    exerciseSelectedPublicationV2Settlement(context, testIdentity(context), 1, 1, false);
   }
 
   @Test
@@ -689,6 +711,485 @@ class AccountSourceCurrentnessForwardMigrationsPostgresIntegrationTest {
                     operationId)
                 .fetchOne(0, String.class))
         .isEqualTo("RETAINED");
+
+    for (String invalidSourcePayload :
+        List.of(
+            publicationSourcePayload(identity, true, true, null),
+            publicationSourcePayload(identity, true, true, "null"),
+            publicationSourcePayload(identity, true, true, "{}"),
+            publicationSourcePayload(identity, true, true, "[]"),
+            publicationSourcePayload(
+                identity,
+                true,
+                true,
+                sourceJsonArray(List.of(sourceEvidence("ISSUER", "mismatch")))))) {
+      assertGameLogicSourceParticipationRejected(
+          context, identity, versionUuid, selectedCommit, namespace, invalidSourcePayload);
+    }
+  }
+
+  private static void exerciseSelectedPublicationV2Settlement(
+      TestContext context,
+      TestIdentity identity,
+      int regionRowCount,
+      int roomRowCount,
+      boolean accepted) {
+    UUID versionUuid = UUID.randomUUID();
+    UUID operationId = UUID.randomUUID();
+    UUID fenceId = UUID.randomUUID();
+    UUID publishRequestId = UUID.randomUUID();
+    UUID intakeRequestId = UUID.randomUUID();
+    UUID applicationOperationId = operationId;
+    UUID workflowId = UUID.randomUUID();
+    DraftCommitBinding selectedCommit =
+        DraftCommitBinding.create(
+            new DraftCommitBinding.TargetProof(
+                identity.tenantUuid(),
+                versionUuid,
+                1,
+                "test-tenant",
+                2,
+                "test-tenant",
+                "NEW_GAME_ROW"),
+            UUID.randomUUID(),
+            UUID.randomUUID(),
+            "test-only/base",
+            List.of(
+                new DraftCommitBinding.RevisionPayload(
+                    "0",
+                    UUID.randomUUID(),
+                    DraftCommitBinding.Owner.WORLD_MANAGEMENT,
+                    "test-only world revision")),
+            List.of(
+                new DraftCommitBinding.AffectedUnit(
+                    DraftCommitBinding.Owner.WORLD_MANAGEMENT,
+                    "region",
+                    "test-region",
+                    "aggregate",
+                    "test-region",
+                    "0")));
+    String expectedTuples =
+        "[{\"owner\":\"WORLD_MANAGEMENT\",\"aggregateType\":\"region\","
+            + "\"aggregateId\":\"test-region\",\"scopeType\":\"aggregate\","
+            + "\"scopeId\":\"test-region\",\"expectedEpoch\":\"0\"}]";
+    String expectedEpochs =
+        "[{\"aggregateType\":\"region\",\"aggregateId\":\"test-region\","
+            + "\"scopeType\":\"aggregate\",\"scopeId\":\"test-region\","
+            + "\"expectedEpoch\":\"0\",\"resultingEpoch\":\"1\"}]";
+    String selectedIntent =
+        jsonObject(
+            "canonicalTenantId", jsonString(identity.tenantUuid().toString()),
+            "canonicalVersionId", jsonString(versionUuid.toString()),
+            "publishRequestId", jsonString(publishRequestId.toString()),
+            "expectedVersionStateEpoch", jsonString("1"),
+            "notes", jsonString(""),
+            "selectedCommitRequestId", jsonString(selectedCommit.requestId().toString()),
+            "selectedCommitId", jsonString(selectedCommit.commitId().toString()),
+            "selectedCommitDigest", jsonString(selectedCommit.digest()));
+    String selectedTarget =
+        jsonObject(
+            "canonicalTenantId", jsonString(identity.tenantUuid().toString()),
+            "canonicalVersionId", jsonString(versionUuid.toString()),
+            "gameDesignVersionRowId", jsonString("1"),
+            "gameDesignVersionTenantKey", jsonString("test-tenant"),
+            "sourceGameRowId", jsonString("2"),
+            "sourceGameTenantKey", jsonString("test-tenant"),
+            "sourceProvenanceKind", jsonString("NEW_GAME_ROW"));
+    String synchronizedFence =
+        jsonObject(
+            "requestId", jsonString(selectedCommit.requestId().toString()),
+            "commitId", jsonString(selectedCommit.commitId().toString()),
+            "inputDigest", jsonString(selectedCommit.digest()),
+            "resultVectorJson", jsonString("[]"),
+            "createdAt", jsonString("test-only"));
+    String selectedJson =
+        jsonObject(
+            "schemaVersion",
+            jsonString("1"),
+            "intent",
+            selectedIntent,
+            "target",
+            selectedTarget,
+            "selectedCommitBindingJson",
+            jsonString(selectedCommit.canonicalJson()),
+            "selectedCommitDigest",
+            jsonString(selectedCommit.digest()),
+            "synchronizedFence",
+            synchronizedFence);
+    byte[] selectedBytes = utf8(selectedJson);
+    byte[] inputBytes =
+        encodeFrames(
+            List.of(
+                utf8("account-publication-input/v1"),
+                utf8(identity.accountUuid().toString()),
+                selectedBytes,
+                utf8(sha256(selectedBytes))));
+    byte[] source = sourceEvidence("HOSTED_TERMS", "test-v2-publication/" + operationId);
+    String sourceKey = "HOSTED_TERMS:test-v2-publication/" + operationId;
+    String sourcePayload =
+        publicationSourcePayload(identity, true, true, sourceJsonArray(List.of(source)));
+    byte[] sourcePayloadBytes = utf8(sourcePayload);
+    byte[] bundlePayloadBytes = utf8(publicationBundle(true));
+    byte[] outboxCheckpoints = utf8("[]");
+    byte[] accountBinding =
+        encodeFrames(
+            List.of(
+                utf8("account-publication-authorization/v1"),
+                utf8(operationId.toString()),
+                utf8(fenceId.toString()),
+                inputBytes,
+                utf8("1"),
+                source));
+    ControlUiIssuance issuance =
+        insertCommittedControlUiIssuance(context, identity, sourcePayloadBytes, bundlePayloadBytes);
+    context
+        .dsl()
+        .execute(
+            "INSERT INTO account_draft_authorization_source_locks (source_key) VALUES (?) "
+                + "ON CONFLICT DO NOTHING",
+            sourceKey);
+    context
+        .transaction()
+        .executeWithoutResult(
+            status -> {
+              context
+                  .dsl()
+                  .execute(
+                      "INSERT INTO account_selected_publication_authorizations "
+                          + "(operation_id, fence_id, actor_account_uuid, tenant_uuid, "
+                          + "publish_request_id, input_digest, binding, world_evidence, "
+                          + "issuance_operation_id, issuance_fence, "
+                          + "source_payload, issuance_bundle, "
+                          + "outbox_checkpoints) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                      operationId,
+                      fenceId,
+                      identity.accountUuid(),
+                      identity.tenantUuid(),
+                      publishRequestId.toString(),
+                      sha256(inputBytes),
+                      accountBinding,
+                      null,
+                      issuance.operationId(),
+                      issuance.fence(),
+                      sourcePayloadBytes,
+                      bundlePayloadBytes,
+                      outboxCheckpoints);
+              context
+                  .dsl()
+                  .execute(
+                      "INSERT INTO account_selected_publication_sources "
+                          + "(operation_id, source_key, source_evidence) VALUES (?, ?, ?)",
+                      operationId,
+                      sourceKey,
+                      source);
+            });
+
+    String requestDigest = sha256(selectedBytes).substring("sha256:".length());
+    String contentDigest = sha256(utf8("test-only content digest")).substring("sha256:".length());
+    String graphDigest = sha256(utf8("test-only applied graph digest"));
+    byte[] appliedOperation =
+        encodeFrames(
+            List.of(
+                utf8("test-world-applied-operation/v1"), utf8(applicationOperationId.toString())));
+    byte[] appliedBytes =
+        utf8(
+            jsonObject(
+                "status",
+                jsonString("APPLIED"),
+                "operationBytesBase64",
+                jsonString(Base64.getEncoder().encodeToString(appliedOperation)),
+                "graphDigest",
+                jsonString(graphDigest)));
+    String selectorRequest =
+        jsonObject(
+            "targetNamespace", jsonString("test"),
+            "canonicalTenantId", jsonString(identity.tenantUuid().toString()),
+            "canonicalVersionId", jsonString(versionUuid.toString()),
+            "intakeRequestId", jsonString(intakeRequestId.toString()),
+            "publicationFence", jsonString(fenceId.toString()),
+            "publicationRequestId", jsonString(publishRequestId.toString()),
+            "requestDigest", jsonString(requestDigest),
+            "versionStateEpoch", jsonString("1"),
+            "publishWorkflowId", jsonString(workflowId.toString()),
+            "appliedCommitId", jsonString(selectedCommit.commitId().toString()),
+            "contentDigest", jsonString(contentDigest),
+            "digestSchemaVersion", "1",
+            "worldAffectedTuples", expectedTuples);
+    String selectorJson =
+        jsonObject(
+            "schema", jsonString("world-published-start-location-evidence/v1"),
+            "request", selectorRequest,
+            "selectorReceiptBytesBase64",
+                jsonString(Base64.getEncoder().encodeToString(utf8("test-only selector receipt"))),
+            "originalAccountBindingBytesBase64",
+                jsonString(Base64.getEncoder().encodeToString(accountBinding)),
+            "appliedResultBytesBase64",
+                jsonString(Base64.getEncoder().encodeToString(appliedBytes)));
+    byte[] selectorBytes = utf8(selectorJson);
+    String regionFamilyCount = familyCount("REGION", regionRowCount);
+    String modelJson =
+        jsonObject(
+            "modelId",
+            jsonString("WORLD_LOGICAL_ROOM_EXIT_ADJACENCY_V1"),
+            "graphSchemaVersion",
+            "2",
+            "graphDigest",
+            jsonString(graphDigest),
+            "topologyResultDigest",
+            jsonString(sha256(utf8("test-only topology digest"))),
+            "familyCounts",
+            "["
+                + String.join(
+                    ",",
+                    List.of(
+                        regionFamilyCount,
+                        familyCount("ZONE", 0),
+                        familyCount("ROOM", roomRowCount),
+                        familyCount("ROOM_EXIT", 0),
+                        familyCount("GENERATION_RULE", 0),
+                        familyCount("WORLD_ENTITY_SPAWN_BINDING", 0)))
+                + "]",
+            "regionGeneratorInputs",
+            "[]",
+            "generationRuleFields",
+            "[\"id\",\"name\",\"scopeType\",\"scopeId\",\"value\"]",
+            "regionFields",
+            "[\"id\",\"shardId\",\"name\",\"weather\",\"generationSeed\","
+                + "\"generatorType\",\"generatorParams\",\"spacingMultiplier\"]",
+            "zoneFields",
+            "[\"id\",\"regionId\",\"name\"]",
+            "roomFields",
+            "[\"id\",\"zoneId\",\"name\",\"description\","
+                + "\"nameLocalizedVariantsJson\",\"descriptionLocalizedVariantsJson\"]",
+            "roomExitFields",
+            "[\"id\",\"fromRoomId\",\"toRoomId\",\"direction\",\"cost\"]",
+            "spawnBindingFields",
+            "[\"id\",\"roomId\",\"entityTemplateType\",\"entityReference.kind\","
+                + "\"entityReference.tenantId\",\"entityReference.versionId\","
+                + "\"entityReference.templateId\",\"spawnCount\",\"respawnDelaySeconds\"]",
+            "spawnBindingInputs",
+            "[]",
+            "generationRuleInputCount",
+            "0",
+            "spawnBindingCount",
+            "0",
+            "appliedEpochs",
+            expectedEpochs);
+    String inventoryJson =
+        jsonObject(
+            "schema", jsonString("world-selected-publication-artifact-inventory/v1"),
+            "schemaVersion", "1",
+            "completeness", jsonString("COMPLETE"),
+            "ownerScope",
+                jsonObject(
+                    "targetNamespace", jsonString("test"),
+                    "canonicalTenantId", jsonString(identity.tenantUuid().toString()),
+                    "canonicalVersionId", jsonString(versionUuid.toString()),
+                    "versionIdentityOperationId", jsonString(UUID.randomUUID().toString()),
+                    "intakeRequestId", jsonString(intakeRequestId.toString()),
+                    "intakeOperationId", jsonString(UUID.randomUUID().toString()),
+                    "intakeRequestDigest", jsonString(sha256(utf8("intake request"))),
+                    "sourceOperationId", jsonString(UUID.randomUUID().toString()),
+                    "sourceEvidenceDigest", jsonString(sha256(utf8("source evidence"))),
+                    "intakeReceiptDigest", jsonString(sha256(utf8("intake receipt")))),
+            "selectedApplication",
+                jsonObject(
+                    "applicationOperationId", jsonString(applicationOperationId.toString()),
+                    "applicationRequestId", jsonString(selectedCommit.requestId().toString()),
+                    "appliedCommitId", jsonString(selectedCommit.commitId().toString()),
+                    "bindingDigest", jsonString(selectedCommit.digest()),
+                    "appliedResultDigest", jsonString(sha256(appliedBytes))),
+            "accountOrder",
+                jsonObject(
+                    "operationId", jsonString(operationId.toString()),
+                    "fenceId", jsonString(fenceId.toString()),
+                    "actorAccountId", jsonString(identity.accountUuid().toString()),
+                    "publicationRequestId", jsonString(publishRequestId.toString()),
+                    "selectionDigest", jsonString(sha256(selectedBytes)),
+                    "selectedCommitId", jsonString(selectedCommit.commitId().toString()),
+                    "bindingDigest", jsonString(sha256(accountBinding))),
+            "freeze",
+                jsonObject(
+                    "publicationFence", jsonString(fenceId.toString()),
+                    "publicationRequestId", jsonString(publishRequestId.toString()),
+                    "requestDigest", jsonString(requestDigest),
+                    "versionStateEpoch", jsonString("1"),
+                    "publishWorkflowId", jsonString(workflowId.toString())),
+            "checkpoint",
+                jsonObject(
+                    "appliedCommitId", jsonString(selectedCommit.commitId().toString()),
+                    "contentDigest", jsonString(contentDigest),
+                    "digestSchemaVersion", "1"),
+            "sourceModel", modelJson,
+            "artifactDecisions",
+                "[{\"artifactKind\":\"NAVMESH\",\"state\":\"NOT_REQUIRED\","
+                    + "\"rule\":\"ROOM_LOGICAL_TOPOLOGY_HAS_NO_SPATIAL_NAVMESH_INPUT\"},"
+                    + "{\"artifactKind\":\"PATH_GRAPH\",\"state\":\"NOT_REQUIRED\","
+                    + "\"rule\":\"AUTHORED_ROOM_EXIT_EDGES_ARE_THE_SUPPORTED_TRAVERSAL_GRAPH\"}]");
+    byte[] inventoryBytes = utf8(inventoryJson);
+    byte[] publicationOperation =
+        encodeFrames(
+            List.of(
+                utf8("game-design-publication-operation/v2"),
+                accountBinding,
+                selectorBytes,
+                inventoryBytes,
+                utf8(sha256(inventoryBytes))));
+    byte[] terminal =
+        encodeFrames(
+            List.of(
+                utf8("game-design-publication-terminal/v1"),
+                publicationOperation,
+                utf8("PUBLISHED"),
+                utf8("test-only complete release content"),
+                utf8("2")));
+    byte[] receipt =
+        encodeFrames(
+            List.of(
+                utf8("account-selected-publication-settlement/v1"),
+                accountBinding,
+                publicationOperation,
+                terminal,
+                utf8("PUBLISHED"),
+                terminal));
+
+    RuntimeException settlementFailure = null;
+    try {
+      context
+          .dsl()
+          .execute(
+              "INSERT INTO account_selected_publication_settlements "
+                  + "(operation_id, fence_id, account_binding, publication_operation, "
+                  + "game_design_outcome, game_design_terminal, world_outcome, "
+                  + "world_terminal, receipt) "
+                  + "VALUES (?, ?, ?, ?, 'PUBLISHED', ?, 'PUBLISHED', ?, ?)",
+              operationId,
+              fenceId,
+              accountBinding,
+              publicationOperation,
+              terminal,
+              terminal,
+              receipt);
+    } catch (RuntimeException failure) {
+      settlementFailure = failure;
+    }
+    if (accepted) {
+      if (settlementFailure != null) {
+        throw settlementFailure;
+      }
+      assertThat(
+              context
+                  .dsl()
+                  .resultQuery(
+                      "SELECT count(*) FROM account_selected_publication_settlements "
+                          + "WHERE operation_id = ?",
+                      operationId)
+                  .fetchOne(0, Long.class))
+          .isEqualTo(1L);
+    } else {
+      assertPostgresCheckViolation(
+          settlementFailure, "invalid required family count must fail selected settlement");
+    }
+  }
+
+  private static String familyCount(String family, int count) {
+    return jsonObject("family", jsonString(family), "rowCount", Integer.toString(count));
+  }
+
+  private static void assertGameLogicSourceParticipationRejected(
+      TestContext context,
+      TestIdentity identity,
+      UUID versionUuid,
+      DraftCommitBinding selectedCommit,
+      String namespace,
+      String sourcePayload) {
+    UUID operationId = UUID.randomUUID();
+    UUID fenceId = UUID.randomUUID();
+    UUID requestId = UUID.randomUUID();
+    byte[] sourcePayloadBytes = utf8(sourcePayload);
+    byte[] bundlePayloadBytes = utf8(publicationBundle(true));
+    ControlUiIssuance issuance =
+        insertCommittedControlUiIssuance(context, identity, sourcePayloadBytes, bundlePayloadBytes);
+    byte[] scopeBytes =
+        encodeFrames(
+            List.of(
+                utf8("account-game-logic-intake-source-read/v1"),
+                utf8(namespace),
+                utf8(operationId.toString()),
+                utf8(fenceId.toString()),
+                utf8(requestId.toString()),
+                utf8(identity.accountUuid().toString()),
+                selectedCommit.canonicalBytes(),
+                utf8(sha256(selectedCommit.canonicalBytes())),
+                utf8("spiffe://firemud/ns/" + namespace + "/sa/account-service"),
+                utf8("GAME_LOGIC_INTAKE_SOURCE")));
+    RuntimeException reservationFailure = null;
+    try {
+      context
+          .transaction()
+          .executeWithoutResult(
+              status ->
+                  context
+                      .dsl()
+                      .execute(
+                          "INSERT INTO account_game_logic_intake_source_read_reservations "
+                              + "(operation_id, fence_id, intake_request_id, actor_account_uuid, "
+                              + "tenant_uuid, version_uuid, scope_bytes, scope_digest, "
+                              + "issuance_operation_id, issuance_fence, source_payload, "
+                              + "issuance_bundle, outbox_checkpoints) "
+                              + "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                          operationId,
+                          fenceId,
+                          requestId,
+                          identity.accountUuid(),
+                          identity.tenantUuid(),
+                          versionUuid,
+                          scopeBytes,
+                          sha256(scopeBytes),
+                          issuance.operationId(),
+                          issuance.fence(),
+                          sourcePayloadBytes,
+                          bundlePayloadBytes,
+                          utf8("[]")));
+    } catch (RuntimeException failure) {
+      reservationFailure = failure;
+    }
+    assertPostgresCheckViolation(
+        reservationFailure, "invalid preliminary source vector must fail at PostgreSQL commit");
+  }
+
+  private static void assertPostgresCheckViolation(RuntimeException failure, String reason) {
+    assertThat(failure).as(reason).isNotNull();
+    Throwable rootCause = failure;
+    while (rootCause.getCause() != null) {
+      rootCause = rootCause.getCause();
+    }
+    assertThat(rootCause).as(reason).isInstanceOf(SQLException.class);
+    assertThat(((SQLException) rootCause).getSQLState()).as(reason).isEqualTo("23514");
+  }
+
+  private static String jsonObject(String... fields) {
+    if (fields.length % 2 != 0) {
+      throw new IllegalArgumentException("JSON object fields must be key/value pairs");
+    }
+    List<String> members = new ArrayList<>();
+    for (int index = 0; index < fields.length; index += 2) {
+      members.add(jsonString(fields[index]) + ":" + fields[index + 1]);
+    }
+    return "{" + String.join(",", members) + "}";
+  }
+
+  private static String jsonString(String value) {
+    return "\""
+        + value
+            .replace("\\", "\\\\")
+            .replace("\"", "\\\"")
+            .replace("\b", "\\b")
+            .replace("\f", "\\f")
+            .replace("\n", "\\n")
+            .replace("\r", "\\r")
+            .replace("\t", "\\t")
+        + "\"";
   }
 
   private static TestIdentity testIdentity(TestContext context) {
@@ -845,7 +1346,8 @@ class AccountSourceCurrentnessForwardMigrationsPostgresIntegrationTest {
                         "INSERT INTO account_selected_publication_authorizations "
                             + "(operation_id, fence_id, actor_account_uuid, tenant_uuid, "
                             + "publish_request_id, input_digest, binding, world_evidence, "
-                            + "issuance_operation_id, issuance_fence, source_payload, issuance_bundle, "
+                            + "issuance_operation_id, issuance_fence, "
+                            + "source_payload, issuance_bundle, "
                             + "outbox_checkpoints) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                         operationId,
                         fenceId,
