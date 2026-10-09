@@ -193,7 +193,7 @@ class PublishAttemptServiceTransactionIntegrationTest {
     Game game = new Game();
     game.setTenantId(tenantId);
     game.setName("script-patch-failure-replay-game");
-    gameRepository.save(game);
+    Game savedGame = gameRepository.save(game);
 
     Mockito.doThrow(new IllegalStateException("script patch participant unavailable"))
         .when(publishGateService)
@@ -222,7 +222,7 @@ class PublishAttemptServiceTransactionIntegrationTest {
     assertThat(retainedVersion.getVersionState()).isEqualTo(VersionLifecycleState.FAILED);
     assertThat(retainedVersion.getVersionStateEpoch()).isEqualTo(2L);
     assertThat(retainedVersion.getCanonicalVersionId()).isNotNull();
-    assertThat(retainedVersion.getCanonicalTenantId()).isEqualTo(game.getCanonicalTenantId());
+    assertThat(retainedVersion.getCanonicalTenantId()).isEqualTo(savedGame.getCanonicalTenantId());
 
     assertThatThrownBy(
             () ->
