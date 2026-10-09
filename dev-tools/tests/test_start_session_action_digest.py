@@ -9,7 +9,6 @@ import unittest
 from dataclasses import dataclass
 from pathlib import Path
 
-
 ROOT = Path(__file__).resolve().parents[2]
 FIXTURE = (
     ROOT
@@ -62,7 +61,7 @@ def parse_json(raw):
 
 def scalar_string(value, byte_limit=4_096):
     if not isinstance(value, str):
-        raise ValueError("string value required")
+        raise TypeError("string value required")
     if any(0xD800 <= ord(character) <= 0xDFFF for character in value):
         raise ValueError("malformed Unicode")
     normalized = unicodedata.normalize("NFC", value)
@@ -147,7 +146,7 @@ ABSENT = object()
 
 def ordered_members(value, declared_order, optional=()):
     if not isinstance(value, RawObject):
-        raise ValueError("object value required")
+        raise TypeError("object value required")
     if len(value.members) > 16:
         raise ValueError("object exceeds its member limit")
     members = {}
@@ -262,7 +261,7 @@ class StartSessionMutationDigestVectorTest(unittest.TestCase):
             with self.subTest(vector=vector["name"]):
                 raw = raw_vector_bytes(vector)
                 if not vector["accepted"]:
-                    with self.assertRaises((ValueError, UnicodeError, json.JSONDecodeError)):
+                    with self.assertRaises((TypeError, ValueError, UnicodeError, json.JSONDecodeError)):
                         action_preimage(raw)
                     continue
                 preimage = action_preimage(raw)

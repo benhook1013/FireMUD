@@ -440,7 +440,7 @@ class AccountControlUiCommittedIssuanceRepositoryIntegrationTest {
               () -> {
                 String suffix = UUID.randomUUID().toString();
                 Account account = new Account();
-                account.setUsername("control-ui-committed-" + suffix);
+                account.setUsername("cui-" + suffix.replace("-", ""));
                 account.setEmail("control-ui-committed-" + suffix + "@example.test");
                 account.setPasswordHash("test-only-account-password-hash");
                 Account saved = new AccountRepository(transactionDsl).save(account);

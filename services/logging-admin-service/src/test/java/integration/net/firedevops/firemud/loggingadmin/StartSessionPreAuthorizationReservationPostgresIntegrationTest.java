@@ -38,6 +38,7 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 @SuppressWarnings("resource")
 class StartSessionPreAuthorizationReservationPostgresIntegrationTest {
   private static final long NOW_EPOCH_MILLIS = 1_800_000_000_000L;
+  private static final Map<String, String> FLYWAY_PLACEHOLDERS = Map.of("serviceSchema", "public");
   private static final UUID TENANT_ID = UUID.fromString("ffbe29e3-a8d2-4b7d-a046-cf1af57ae904");
   private static final UUID ACTOR_ID = UUID.fromString("4c5b3e92-f60d-4e3d-8b8f-6d89b28495d8");
 
@@ -57,10 +58,16 @@ class StartSessionPreAuthorizationReservationPostgresIntegrationTest {
     Flyway.configure()
         .dataSource(dataSource)
         .locations("classpath:db/migration")
+        .placeholders(FLYWAY_PLACEHOLDERS)
         .cleanDisabled(false)
         .load()
         .clean();
-    Flyway.configure().dataSource(dataSource).locations("classpath:db/migration").load().migrate();
+    Flyway.configure()
+        .dataSource(dataSource)
+        .locations("classpath:db/migration")
+        .placeholders(FLYWAY_PLACEHOLDERS)
+        .load()
+        .migrate();
     dsl = DSL.using(dataSource, SQLDialect.POSTGRES);
     repository = new StartSessionPreAuthorizationReservationRepository(dsl);
   }
