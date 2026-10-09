@@ -16,7 +16,8 @@ class GameAssetRepositoryTest {
   @Test
   void findByTenantIdConvertsJdbcTimestampAndPreservesAssetBytesAndTenantScope() throws Exception {
     try (var connection =
-        DriverManager.getConnection("jdbc:h2:mem:game-asset-timestamp-read;DATABASE_TO_LOWER=TRUE")) {
+        DriverManager.getConnection(
+            "jdbc:h2:mem:game-asset-timestamp-read;DATABASE_TO_LOWER=TRUE")) {
       DSLContext dsl = DSL.using(connection, SQLDialect.H2);
       createTable(dsl);
       LocalDateTime createdAt = LocalDateTime.of(2026, 10, 8, 21, 34, 56, 123_456_000);
@@ -50,7 +51,8 @@ class GameAssetRepositoryTest {
   @Test
   void saveReadsBackTimestampAndFindByTenantIdPreservesNullTimestamp() throws Exception {
     try (var connection =
-        DriverManager.getConnection("jdbc:h2:mem:game-asset-save-timestamp;DATABASE_TO_LOWER=TRUE")) {
+        DriverManager.getConnection(
+            "jdbc:h2:mem:game-asset-save-timestamp;DATABASE_TO_LOWER=TRUE")) {
       DSLContext dsl = DSL.using(connection, SQLDialect.H2);
       createTable(dsl);
       GameAssetRepository repository = new GameAssetRepository(dsl);
