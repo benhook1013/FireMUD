@@ -1,5 +1,6 @@
 -- Extend the V40 source-head and Account security guards for the immutable V77/V78 operation
--- receipts without changing historical migrations or treating scalar Account role as authority.
+-- receipts and V79 security-state operations without changing historical migrations or treating
+-- scalar Account role as authority.
 -- [jooq ignore start]
 CREATE OR REPLACE FUNCTION account_authority_source_record_update_guard()
 RETURNS TRIGGER
@@ -114,7 +115,7 @@ BEGIN
                     USING ERRCODE = '23514', CONSTRAINT = 'account_authority_source_account_state';
             END IF;
         ELSIF event_payload->>'eventType' = 'ACCOUNT_SECURITY_STATE_CHANGED' THEN
-            -- V78 deliberately omits issuance-fence fields from its canonical event. Bind that
+            -- V79 deliberately omits issuance-fence fields from its canonical event. Bind that
             -- state to the actual Account authority/fence and global-role source owners instead.
             SELECT generation, source_version INTO authority_row
                 FROM account_authority_generations
@@ -420,7 +421,7 @@ BEGIN
             FROM unnest(string_to_array(OLD.login_auth_modes, ',')) AS modes(login_mode);
         IF OLD.password_hash IS DISTINCT FROM NEW.password_hash
             OR OLD.role IS DISTINCT FROM NEW.role THEN
-            RAISE EXCEPTION 'V78 security-state events cannot authorize password or scalar-role changes'
+            RAISE EXCEPTION 'V79 security-state events cannot authorize password or scalar-role changes'
                 USING ERRCODE = '23514', CONSTRAINT = 'account_authority_account_security_event_mismatch';
         END IF;
         IF event_payload->>'schemaVersion' IS DISTINCT FROM 'account-auth-account-security-state-event/v1'
@@ -445,13 +446,13 @@ BEGIN
             OR role_source_row.global_roles IS DISTINCT FROM
                 (SELECT COALESCE(array_agg(DISTINCT role_name ORDER BY role_name), ARRAY[]::TEXT[])
                     FROM unnest(role_source_row.global_roles) AS roles(role_name)) THEN
-            RAISE EXCEPTION 'V78 security-state event does not match current Account source owners'
+            RAISE EXCEPTION 'V79 security-state event does not match current Account source owners'
                 USING ERRCODE = '23514', CONSTRAINT = 'account_authority_account_security_event_mismatch';
         END IF;
 
         IF event_payload->>'requestId' IS NULL
             OR event_payload->>'requestId' !~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' THEN
-            RAISE EXCEPTION 'V78 security-state event request identity is malformed'
+            RAISE EXCEPTION 'V79 security-state event request identity is malformed'
                 USING ERRCODE = '23514', CONSTRAINT = 'account_authority_account_security_event_mismatch';
         END IF;
         security_request_id := (event_payload->>'requestId')::UUID;
@@ -477,7 +478,7 @@ BEGIN
             OR operation_row.result_fence_source_version IS DISTINCT FROM source_row.current_issuance_fence_source_version
             OR operation_row.result_global_role_source_version IS DISTINCT FROM role_source_row.global_role_source_version
             OR event_payload->>'eventId' IS DISTINCT FROM 'account-security-state-event-v1:' || security_request_id::TEXT THEN
-            RAISE EXCEPTION 'V78 security-state event has no exact committed Account operation receipt'
+            RAISE EXCEPTION 'V79 security-state event has no exact committed Account operation receipt'
                 USING ERRCODE = '23514', CONSTRAINT = 'account_authority_account_security_event_mismatch';
         END IF;
 
@@ -496,7 +497,7 @@ BEGIN
         IF before_state IS DISTINCT FROM expected_before_state
             OR after_state IS DISTINCT FROM expected_after_state
             OR event_payload->'accountState' IS DISTINCT FROM after_state THEN
-            RAISE EXCEPTION 'V78 security-state receipt does not bind the exact original and current Account states'
+            RAISE EXCEPTION 'V79 security-state receipt does not bind the exact original and current Account states'
                 USING ERRCODE = '23514', CONSTRAINT = 'account_authority_account_security_event_mismatch';
         END IF;
 
@@ -516,7 +517,7 @@ BEGIN
             OR changed_kinds IS DISTINCT FROM operation_row.mutation_kinds
             OR changed_kinds IS DISTINCT FROM ARRAY(
                 SELECT jsonb_array_elements_text(event_payload->'mutationKinds')) THEN
-            RAISE EXCEPTION 'V78 security-state receipt mutation families differ from the original states'
+            RAISE EXCEPTION 'V79 security-state receipt mutation families differ from the original states'
                 USING ERRCODE = '23514', CONSTRAINT = 'account_authority_account_security_event_mismatch';
         END IF;
         RETURN NULL;

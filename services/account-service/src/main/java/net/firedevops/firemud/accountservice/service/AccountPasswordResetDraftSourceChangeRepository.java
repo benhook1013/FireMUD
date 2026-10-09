@@ -14,11 +14,13 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
 import net.firedevops.firemud.accountservice.authordraft.DraftAuthorizationFenceRepository;
+import net.firedevops.firemud.accountservice.authordraft.DraftAuthorizationFenceRepository.PendingSourceChangeException;
 import net.firedevops.firemud.accountservice.authordraft.DraftAuthorizationFenceRepository.SourceChange;
 import net.firedevops.firemud.accountservice.authordraft.DraftAuthorizationFenceRepository.SourceChangeAbortReason;
 import net.firedevops.firemud.accountservice.entity.Account;
 import net.firedevops.firemud.accountservice.repository.AccountAuthorityGenerationRepository.ScopeState;
 import net.firedevops.firemud.accountservice.repository.AccountAuthorityOutboxRepository.Event;
+import net.firedevops.firemud.accountservice.repository.AccountAuthoritySourceEvidenceRepository.SourceEvidenceUnavailableException;
 import net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding.SourceEvidence;
 import net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding.SourceKind;
 import org.jooq.DSLContext;
@@ -105,7 +107,11 @@ public class AccountPasswordResetDraftSourceChangeRepository {
       if (!"WAITING".equals(intent.status())) {
         throw new IllegalStateException("Terminal password-reset source intent has no receipt");
       }
-      fences.requestSourceChange(intent.sourceChange());
+      try {
+        fences.requestSourceChange(intent.sourceChange());
+      } catch (PendingSourceChangeException pending) {
+        throw new SourceEvidenceUnavailableException();
+      }
       return requireIntent(findRow(tokenHash));
     }
 
@@ -134,7 +140,11 @@ public class AccountPasswordResetDraftSourceChangeRepository {
             requestId,
             eventId);
     SourceChange change = new SourceChange(UUID.randomUUID(), List.of(source), mutation);
-    fences.requestSourceChange(change);
+    try {
+      fences.requestSourceChange(change);
+    } catch (PendingSourceChangeException pending) {
+      throw new SourceEvidenceUnavailableException();
+    }
 
     dsl.execute(
         "INSERT INTO "

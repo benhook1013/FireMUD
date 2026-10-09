@@ -9,7 +9,6 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
-import java.util.regex.Pattern;
 import net.firedevops.firemud.common.account.authority.MembershipAuthorityEventV1Codec.AccountSecurityCutoff;
 import net.firedevops.firemud.common.account.authority.MembershipAuthorityEventV1Codec.AuthorityTuple;
 import net.firedevops.firemud.common.account.authority.MembershipAuthorityEventV1Codec.MembershipEvent;
@@ -27,11 +26,6 @@ import net.firedevops.firemud.common.account.authority.MembershipAuthorityEventV
 public final class RuntimeMembershipAuthorityEvidenceValidator {
   private static final String EVENT_STREAM_PREFIX =
       MembershipAuthorityEventV1Codec.EVENT_STREAM_PREFIX;
-  private static final Pattern UUID_PATTERN =
-      Pattern.compile("[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}");
-  private static final String NIL_UUID = "00000000-0000-0000-0000-000000000000";
-  private static final Pattern POSITIVE_DECIMAL = Pattern.compile("[1-9][0-9]*");
-  private static final Pattern NON_NEGATIVE_DECIMAL = Pattern.compile("(?:0|[1-9][0-9]*)");
   private static final Set<String> MEMBERSHIP_LIFECYCLES = Set.of("ACTIVE", "INACTIVE");
 
   private RuntimeMembershipAuthorityEvidenceValidator() {}
@@ -559,7 +553,7 @@ public final class RuntimeMembershipAuthorityEvidenceValidator {
   }
 
   private static void requireCanonicalUuid(String value, String path) {
-    if (!UUID_PATTERN.matcher(value).matches() || NIL_UUID.equals(value)) {
+    if (!StrictAuthorityEventSupport.isCanonicalUuid(value)) {
       throw invalid(path, "must be a canonical lowercase non-nil UUID");
     }
   }
@@ -571,13 +565,13 @@ public final class RuntimeMembershipAuthorityEvidenceValidator {
   }
 
   private static void requirePositiveDecimal(String value, String path) {
-    if (!POSITIVE_DECIMAL.matcher(value).matches()) {
+    if (!StrictAuthorityEventSupport.isPositiveCanonicalDecimal(value)) {
       throw invalid(path, "must be a positive canonical decimal string");
     }
   }
 
   private static void requireNonNegativeDecimal(String value, String path) {
-    if (!NON_NEGATIVE_DECIMAL.matcher(value).matches()) {
+    if (!StrictAuthorityEventSupport.isNonNegativeCanonicalDecimal(value)) {
       throw invalid(path, "must be a non-negative canonical decimal string");
     }
   }

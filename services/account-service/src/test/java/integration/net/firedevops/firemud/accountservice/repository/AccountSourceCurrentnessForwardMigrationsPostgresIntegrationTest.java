@@ -1156,6 +1156,30 @@ class AccountSourceCurrentnessForwardMigrationsPostgresIntegrationTest {
             handoffId);
     byte[] disclosedPayload =
         "test-only terminal disclosure result".getBytes(StandardCharsets.UTF_8);
+    byte[] mismatchedDigestPayload =
+        "different test-only terminal disclosure result".getBytes(StandardCharsets.UTF_8);
+    assertThatThrownBy(
+            () ->
+                context
+                    .dsl()
+                    .execute(
+                        "UPDATE account_hosted_terms_disclosure_handoffs SET status = 'DISCLOSED', "
+                            + "result_outcome = 'DISCLOSED', result_payload = ?, result_digest = ?, "
+                            + "result_recorded_at = CURRENT_TIMESTAMP WHERE handoff_id = ?",
+                        disclosedPayload,
+                        sha256(mismatchedDigestPayload),
+                        handoffId))
+        .isInstanceOf(DataAccessException.class);
+    assertThat(
+            context
+                .dsl()
+                .resultQuery(
+                    "SELECT status FROM account_hosted_terms_disclosure_handoffs "
+                        + "WHERE handoff_id = ?",
+                    handoffId)
+                .fetchOne(0, String.class))
+        .isEqualTo("DISPATCH_AUTHORIZED");
+
     context
         .dsl()
         .execute(
@@ -1405,10 +1429,7 @@ class AccountSourceCurrentnessForwardMigrationsPostgresIntegrationTest {
   @Test
   void nonoperativeTermsAndUnverifiedCreatorSourcesStayImmutableAndRejectContradictoryEvidence() {
     TestContext context = context(null);
-    Account account = account("player");
-    context
-        .transaction()
-        .executeWithoutResult(status -> new AccountRepository(context.dsl()).save(account));
+    TestIdentity identity = testIdentity(context);
 
     UUID creatorPartyId = UUID.randomUUID();
     byte[] creatorPayload = "test-only unverified creator source".getBytes(StandardCharsets.UTF_8);
@@ -1420,7 +1441,7 @@ class AccountSourceCurrentnessForwardMigrationsPostgresIntegrationTest {
                 + "source_version, source_payload, source_digest) "
                 + "VALUES (?, ?, 'UNVERIFIED', 1, 1, ?, ?)",
             creatorPartyId,
-            account.getAccountUuid(),
+            identity.accountUuid(),
             creatorPayload,
             sha256(creatorPayload));
 
@@ -1467,6 +1488,61 @@ class AccountSourceCurrentnessForwardMigrationsPostgresIntegrationTest {
                     "SELECT count(*) FROM account_tenant_creator_party_history "
                         + "WHERE tenant_uuid = ?",
                     missingTenantSource)
+                .fetchOne(0, Long.class))
+        .isZero();
+
+    UUID retainedHistoryId = UUID.randomUUID();
+    byte[] retainedHistoryPayload =
+        "test-only retained creator-party history".getBytes(StandardCharsets.UTF_8);
+    context
+        .dsl()
+        .execute(
+            "INSERT INTO account_tenant_creator_party_history "
+                + "(history_id, tenant_uuid, origin, creator_party_id, source_version, "
+                + "evidence_payload, evidence_digest) "
+                + "VALUES (?, ?, 'RETAINED', ?, 1, ?, ?)",
+            retainedHistoryId,
+            identity.tenantUuid(),
+            creatorPartyId,
+            retainedHistoryPayload,
+            sha256(retainedHistoryPayload));
+
+    assertThatThrownBy(
+            () ->
+                context.dsl().execute("TRUNCATE account_individual_creator_party_sources CASCADE"))
+        .isInstanceOf(DataAccessException.class);
+    assertThatThrownBy(
+            () -> context.dsl().execute("TRUNCATE account_tenant_creator_party_history CASCADE"))
+        .isInstanceOf(DataAccessException.class);
+    assertThatThrownBy(
+            () ->
+                context
+                    .dsl()
+                    .execute("TRUNCATE account_fresh_creator_party_association_operations"))
+        .isInstanceOf(DataAccessException.class);
+    assertThat(
+            context
+                .dsl()
+                .resultQuery(
+                    "SELECT count(*) FROM account_individual_creator_party_sources "
+                        + "WHERE creator_party_id = ?",
+                    creatorPartyId)
+                .fetchOne(0, Long.class))
+        .isEqualTo(1L);
+    assertThat(
+            context
+                .dsl()
+                .resultQuery(
+                    "SELECT count(*) FROM account_tenant_creator_party_history "
+                        + "WHERE history_id = ?",
+                    retainedHistoryId)
+                .fetchOne(0, Long.class))
+        .isEqualTo(1L);
+    assertThat(
+            context
+                .dsl()
+                .resultQuery(
+                    "SELECT count(*) FROM account_fresh_creator_party_association_operations")
                 .fetchOne(0, Long.class))
         .isZero();
 
@@ -1550,7 +1626,7 @@ class AccountSourceCurrentnessForwardMigrationsPostgresIntegrationTest {
                         UUID.randomUUID(),
                         UUID.randomUUID(),
                         creatorPartyId,
-                        account.getAccountUuid(),
+                        identity.accountUuid(),
                         hostedScopeId,
                         termsVersionId,
                         sha256(nonoperativeDocument),

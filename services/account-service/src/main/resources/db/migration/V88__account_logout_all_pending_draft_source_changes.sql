@@ -149,7 +149,7 @@ BEGIN
                 WHERE change_id = NEW.source_change_id) <> 1
             OR NOT EXISTS (SELECT 1 FROM account_draft_authorization_changed_scopes
                 WHERE change_id = NEW.source_change_id AND source_key = expected_key) THEN
-            RAISE EXCEPTION 'Logout-all request must bind its exact V57 Account source intent'
+            RAISE EXCEPTION 'Logout-all request must bind its exact V75/V76 Account source intent'
                 USING ERRCODE = '23514';
         END IF;
 
@@ -221,7 +221,7 @@ BEGIN
         FROM account_draft_authorization_source_changes WHERE change_id = selected_change;
     IF source_status IS DISTINCT FROM journal.status
         OR source_binding IS DISTINCT FROM journal.source_change_binding THEN
-        RAISE EXCEPTION 'Logout-all journal and V57 Account source transition must commit together'
+        RAISE EXCEPTION 'Logout-all journal and V75/V76 Account source transition must commit together'
             USING ERRCODE = '23514';
     END IF;
     IF journal.status = 'WAITING' AND EXISTS (SELECT 1 FROM account_authority_outbox_events
