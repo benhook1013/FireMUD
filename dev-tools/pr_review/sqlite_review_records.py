@@ -341,6 +341,31 @@ def _redact_archive_text(value: str) -> tuple[str, int]:
     return value, redactions
 
 
+def _display_provider_prose(value: str) -> str:
+    """Normalize display controls and remove prose-headline sentinels outside samples."""
+
+    from .sqlite_hosted_capture import _markdown_fenced_ranges
+
+    value = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f]", " ", value)
+    fences = _markdown_fenced_ranges(value)
+    pattern = re.compile(r"(?m)^([ \t]*(?:>[ \t]*)*)<\|im_start\|>(?=\*\*|__|#{1,6}[ \t])")
+    return pattern.sub(
+        lambda match: match.group() if any(start <= match.start() < end for start, end in fences) else match.group(1),
+        value,
+    )
+
+
+def _display_hosted_body_identity(value: str) -> str:
+    """Treat only the terminal generated comment/reply footer as equivalent."""
+
+    from .sqlite_hosted_capture import _markdown_fenced_ranges
+
+    match = re.search(r"<!-- This is an auto-generated (?:comment|reply) by CodeRabbit -->[ \t\r\n]*\Z", value)
+    if match and not any(start <= match.start() < end for start, end in _markdown_fenced_ranges(value)):
+        return value[: match.start()] + "<!-- This is an auto-generated comment by CodeRabbit -->"
+    return value
+
+
 def _archive_artifact(kind: str, content: str) -> tuple[str, str, int]:
     limits = {
         "cli_events": 8 * 1024 * 1024,
@@ -4309,9 +4334,7 @@ class SqliteReviewRecords:
             cache_key = (run_id, record["source_pr"])
             if cache_key not in cache:
                 reader = (
-                    self._hosted_display_titles
-                    if record["source_channel"] == "hosted"
-                    else self._cli_display_severities
+                    self._hosted_display_titles if record["source_channel"] == "hosted" else self._cli_display_findings
                 )
                 cache[cache_key] = reader(connection, run_id, record["source_pr"])
             presentation = cache[cache_key].get(record["source_finding_key"])
@@ -4319,7 +4342,10 @@ class SqliteReviewRecords:
                 if "display_severity" not in record:
                     record["display_severity"] = presentation["display_severity"]
                 if (
-                    _unusable_hosted_title(title) or title in presentation.get("classification_titles", ())
+                    record["source_channel"] == "cli"
+                    or _display_provider_prose(title) != title
+                    or _unusable_hosted_title(title)
+                    or title in presentation.get("classification_titles", ())
                 ) and presentation.get("display_title"):
                     record["display_title"] = presentation["display_title"]
                 if presentation.get("display_title_is_excerpt") and title == presentation.get("display_title"):
@@ -4327,10 +4353,10 @@ class SqliteReviewRecords:
                 if presentation.get("display_detail"):
                     record["display_detail"] = presentation["display_detail"]
 
-    def _cli_display_severities(
+    def _cli_display_findings(
         self, connection: sqlite3.Connection, run_id: str, source_pr: int
     ) -> dict[str, dict[str, Any]]:
-        """Associate retained provider severity with exact validated CLI finding ordinals."""
+        """Project retained provider prose at exact validated CLI finding ordinals."""
 
         from . import evidence
 
@@ -4395,6 +4421,7 @@ class SqliteReviewRecords:
             }
             return {
                 f"cli-run:{capture_id}:finding:{index}": {
+                    **self._cli_display_prose(finding),
                     "display_severity": labels.get(finding["severity"].strip().casefold())
                     if isinstance(finding.get("severity"), str)
                     else None,
@@ -4403,6 +4430,43 @@ class SqliteReviewRecords:
             }
         except (evidence.EvidenceError, ReviewRecordsError, KeyError, TypeError, ValueError, AttributeError):
             return {}
+
+    @staticmethod
+    def _cli_display_prose(finding: dict[str, Any]) -> dict[str, str]:
+        """Prefer reviewer title/comment; keep legacy stored projections immutable."""
+
+        from .sqlite_finding_text import _hosted_display_detail
+        from .sqlite_provider_imports import _cli_detail, _cli_finding_title, _normalize_cli_title_text
+
+        raw_title = finding.get("title")
+        title = _display_provider_prose(raw_title).strip() if isinstance(raw_title, str) else ""
+        title = re.sub(r"^(?:\*\*(.*?)\*\*|__(.*?)__)$", lambda match: match.group(1) or match.group(2), title)
+        comment = finding.get("comment")
+        detail = _display_provider_prose(comment).strip() if isinstance(comment, str) else ""
+        headline = re.match(r"^(?:\*\*([^\n]+?)\*\*|__([^\n]+?)__)(?:[ \t]*\n|[ \t]+|$)", detail)
+        if headline:
+            authored_title = headline.group(1) or headline.group(2)
+            if not title or title == authored_title or title.startswith(authored_title + " "):
+                title = authored_title
+                detail = detail[headline.end() :].lstrip()
+        if not title:
+            title = _cli_finding_title(finding.get("codegenInstructions"), "")
+        if detail:
+            detail = _hosted_display_detail(detail, title)
+        if not detail:
+            detail = _cli_detail(finding.get("codegenInstructions"))
+        title = " ".join(_normalize_cli_title_text(title).split())
+        title, _ = _redact_archive_text(title)
+        detail = _display_provider_prose(detail)
+        detail, _ = _redact_archive_text(detail)
+        return {
+            key: value
+            for key, value in {
+                "display_title": title[:300].rstrip(),
+                "display_detail": detail[:8000].rstrip(),
+            }.items()
+            if value
+        }
 
     def _hosted_display_titles(
         self, connection: sqlite3.Connection, run_id: str, source_pr: int
@@ -4462,6 +4526,7 @@ class SqliteReviewRecords:
                     body = comment.get("body")
                     if comment_id is None or not isinstance(body, str) or comment_id in ambiguous_ids:
                         continue
+                    body = _display_hosted_body_identity(body)
                     if comment_id in bodies and bodies[comment_id] != body:
                         # Conflicting exact identity never picks a variant, including later repeats.
                         ambiguous_ids.add(comment_id)
@@ -4471,7 +4536,7 @@ class SqliteReviewRecords:
             titles = {}
             for comment_id, body in bodies.items():
                 try:
-                    findings = _hosted_comment_finding_segments(comment_id, body)
+                    findings = _hosted_comment_finding_segments(comment_id, _display_provider_prose(body))
                 except HostedCaptureError:
                     # Invalid individual comments cannot invalidate independent exact-key siblings.
                     continue

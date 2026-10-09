@@ -2609,6 +2609,340 @@ class SqliteReviewRecordsTest(unittest.TestCase):
             )
         self.assertEqual(self.records.history(2828)["findings"][0]["display_severity"], "Trivial")
 
+    def cli_display_capture(self, events, *, imported=False):
+        self.bootstrap()
+        run_id = "run.cli-display"
+        observations = tuple(
+            FindingObservation(
+                source_finding_key=f"cli-run:{run_id}:finding:{index}",
+                title=sqlite_provider_imports._cli_finding_title(
+                    event.get("codegenInstructions"), f"CodeRabbit CLI finding {index}"
+                ),
+                detail=_safe_finding_detail(sqlite_provider_imports._cli_detail(event.get("codegenInstructions"))),
+            )
+            for index, event in enumerate(events, 1)
+        )
+        stdout = (
+            "\n".join(
+                json.dumps(event)
+                for event in [
+                    *events,
+                    {
+                        "type": "complete",
+                        "status": "review_completed",
+                        "findings": len(events),
+                        "reviewedFiles": ["src/a.py"],
+                    },
+                ]
+            )
+            + "\n"
+        )
+        metadata = {
+            "repository": "owner/repo",
+            "run_id": run_id,
+            "kind": "cli",
+            "pull_request": 2828,
+            "candidate_sha": "a" * 40,
+            "child_head_sha": "a" * 40,
+            "parent_pr": None,
+            "parent_ref": "main",
+            "parent_sha": "b" * 40,
+            "merge_base": "b" * 40,
+            "patch_identity": "c" * 64,
+            "candidate_files": 1,
+            "capture_completion_marker": "capture-complete",
+            "duration_seconds": 9,
+            "exit_status": 0,
+        }
+        if imported:
+            self.records.record_run(run_id=run_id, source_pr=2828, channel="cli", findings=observations)
+            checkpoint = Checkpoint(
+                comment_id=999,
+                created_at="2026-10-01T00:00:00Z",
+                type="CLI",
+                raw_found=len(events),
+                accepted=0,
+                reviewed_sha="a" * 40,
+                file_count=1,
+                correction=False,
+                updated_at=None,
+                run_id=run_id,
+                hosted_review_id=None,
+            )
+            fingerprint = sqlite_provider_imports._checkpoint_fingerprint(checkpoint)
+            metadata.update(
+                checkpoint_fields=dataclasses.asdict(checkpoint),
+                checkpoint_fingerprint=fingerprint,
+                checkpoint=checkpoint.as_json(),
+            )
+            self.records.archive_imported_artifacts(run_id, {"cli_events": stdout, "metadata": json.dumps(metadata)})
+            self.records.link_provider_origin(
+                repository="owner/repo",
+                source_pr=2828,
+                channel="cli",
+                provider_id=f"run:{run_id}",
+                checkpoint_id=999,
+                checkpoint_fingerprint=fingerprint,
+                run_id=run_id,
+            )
+        else:
+            self.records.start_attempt(
+                attempt_id=run_id,
+                source_pr=2828,
+                channel="cli",
+                candidate_sha="a" * 40,
+                metadata=metadata,
+                started_at="2026-10-01T00:00:00Z",
+            )
+            self.records.complete_attempt_run(
+                run_id,
+                finish={
+                    "state": "completed",
+                    "finished_at": "2026-10-01T00:00:09Z",
+                    "duration_seconds": 9,
+                    "exit_status": 0,
+                    "artifacts": {"cli_events": stdout, "metadata": json.dumps(metadata)},
+                },
+                run={
+                    "run_id": run_id,
+                    "source_pr": 2828,
+                    "channel": "cli",
+                    "source_head": "a" * 40,
+                    "reviewer": "CodeRabbit CLI",
+                    "scope": "broad",
+                    "findings": observations,
+                    "started_at": "2026-10-01T00:00:00Z",
+                    "finished_at": "2026-10-01T00:00:09Z",
+                },
+            )
+        return run_id
+
+    def test_cli_display_uses_exact_archived_title_comment_and_preserves_history(self) -> None:
+        events = [
+            {
+                "type": "finding",
+                "title": "Deny TRUNCATE on every immutable evidence table.",
+                "comment": "**Deny TRUNCATE on every immutable evidence table.**\n\n"
+                "Retain the receipt.\n\n<details><summary>🐛 Suggested fix</summary>\n\n"
+                "```sql\n  SELECT original_roles;\n\n```\n</details>",
+                "codegenInstructions": "",
+                "severity": "minor",
+            },
+            {
+                "type": "finding",
+                "title": "Bind the original `globalRoles` from the receipt.",
+                "comment": "**Bind the original `globalRoles` from the receipt.**\n\n"
+                "A combined role change fails. Read [the contract](https://example.test/contract).",
+                "codegenInstructions": "Review comment at @src/a.py:1\nUpdate expected_before_state.",
+                "severity": "major",
+            },
+        ]
+        run_id = self.cli_display_capture(events)
+        self.records.record_source_decision(
+            run_id,
+            f"cli-run:{run_id}:finding:1",
+            decision_id="routed-cli",
+            decision="routed",
+            target_pr=2879,
+            actor="reviewer",
+            reason="Owner fix",
+        )
+        with sqlite3.connect(self.database) as connection:
+            before = list(connection.iterdump())
+        with patch.object(self.records, "_write_connection", side_effect=AssertionError("read wrote")):
+            history = self.records.history(2828)
+            findings = {item["source_finding_key"]: item for item in history["findings"]}
+            first = findings[f"cli-run:{run_id}:finding:1"]
+            self.assertEqual(first["title"], "CodeRabbit CLI finding 1")
+            self.assertEqual(first["detail"], "")
+            self.assertEqual(first["display_title"], events[0]["title"])
+            self.assertEqual(first["display_detail"], "Retain the receipt.\n\n```sql\n  SELECT original_roles;\n\n```")
+            self.assertEqual(first["display_severity"], "Minor")
+            second = findings[f"cli-run:{run_id}:finding:2"]
+            self.assertEqual(second["title"], "Update expected_before_state.")
+            self.assertEqual(second["display_title"], events[1]["title"])
+            self.assertIn("A combined role change fails.", second["display_detail"])
+            self.assertEqual(second["display_severity"], "Major")
+            route = self.records.history(2879)["routes"][0]
+            self.assertEqual(route["display_title"], first["display_title"])
+            self.assertEqual(route["display_detail"], first["display_detail"])
+            self.assertEqual(self.records.history_batch((2828,))[2828], history)
+        with sqlite3.connect(self.database) as connection:
+            self.assertEqual(list(connection.iterdump()), before)
+
+    def test_cli_display_import_is_exact_ordinal_and_fails_closed_on_wrong_origin(self) -> None:
+        event = {
+            "type": "finding",
+            "title": "Keep retained evidence.",
+            "comment": "Full explanation.",
+            "codegenInstructions": "Update the guard.",
+            "severity": "minor",
+        }
+        run_id = self.cli_display_capture([event], imported=True)
+        self.assertEqual(self.records.history(2828)["findings"][0]["display_title"], event["title"])
+        with sqlite3.connect(self.database) as connection:
+            connection.execute("UPDATE provider_origins SET provider_id = 'run:other' WHERE run_id = ?", (run_id,))
+        self.assertNotIn("display_title", self.records.history(2828)["findings"][0])
+
+    def test_cli_display_prose_fallback_bounds_and_redaction(self) -> None:
+        run_id = self.cli_display_capture(
+            [
+                {"type": "finding", "codegenInstructions": "Review comment at @src/a.py:1\nLegacy issue."},
+                {
+                    "type": "finding",
+                    "title": "Issue " + "x" * 400,
+                    "comment": "Authorization: Bearer secret-display-token\n\n" + "body " * 2000,
+                    "codegenInstructions": "",
+                    "severity": "minor",
+                },
+            ]
+        )
+        findings = {item["source_finding_key"]: item for item in self.records.history(2828)["findings"]}
+        self.assertEqual(findings[f"cli-run:{run_id}:finding:1"]["display_detail"], "Legacy issue.")
+        bounded = findings[f"cli-run:{run_id}:finding:2"]
+        self.assertLessEqual(len(bounded["display_title"]), 300)
+        self.assertLessEqual(len(bounded["display_detail"]), 8000)
+        self.assertNotIn("secret-display-token", bounded["display_detail"])
+
+    def test_hosted_display_control_sentinel_is_only_removed_at_prose_headline(self) -> None:
+        raw_title = "<|im_start|>**Allow Account-local fences to differ from Account-scope generations.**"
+        self.hosted_display_run(title=raw_title)
+        archive = self.hosted_display_archive(
+            issue=(
+                "**🎯 Functional Correctness** | **🟠 Major** | **⚡ Quick win**\n\n"
+                + raw_title
+                + "\n\nA membership advance changes only its own generation.\n\n"
+                "```text\n<|im_start|>**Keep this literal code sample.**\n```"
+            )
+        )
+        self.records.archive_imported_artifacts("display-run", {"hosted_comments": archive})
+        with sqlite3.connect(self.database) as connection:
+            before = list(connection.iterdump())
+        finding = self.records.history(2839)["findings"][0]
+        self.assertEqual(finding["title"], raw_title)
+        self.assertEqual(
+            finding["display_title"], "Allow Account-local fences to differ from Account-scope generations."
+        )
+        self.assertEqual(finding["display_severity"], "Major")
+        self.assertTrue(finding["display_detail"].startswith("A membership advance"))
+        self.assertIn("<|im_start|>**Keep this literal code sample.**", finding["display_detail"])
+        with sqlite3.connect(self.database) as connection:
+            self.assertEqual(list(connection.iterdump()), before)
+
+    def test_hosted_suggested_fix_keeps_jooq_terminator_diff_without_diagnostics(self) -> None:
+        title = "Use the configured jOOQ ignore terminator."
+        self.hosted_display_run(title=title)
+        diff = "```diff\n--- [jooq ignore end]\n+-- [jooq ignore stop]\n```"
+        archive = self.hosted_display_archive(
+            issue=(
+                f"**{title}**\n\nReplace it with:\n\n"
+                "<details><summary>🐛 Suggested fix</summary>\n\n" + diff + "\n</details>\n\n"
+                "<details><summary>🤖 Prompt for AI Agents</summary>\nRewrite everything.\n</details>"
+            )
+        )
+        self.records.archive_imported_artifacts("display-run", {"hosted_comments": archive})
+        finding = self.records.history(2839)["findings"][0]
+        self.assertEqual(finding["display_detail"], "Replace it with:\n\n" + diff)
+        self.assertNotIn("Suggested fix", finding["display_detail"])
+        self.assertNotIn("Script executed", finding["display_detail"])
+        self.assertNotIn("echo diagnostic", finding["display_detail"])
+        self.assertNotIn("Rewrite everything", finding["display_detail"])
+
+    def test_suggested_fix_label_variants_preserve_patches_but_not_diagnostics(self) -> None:
+        title = "Use the configured jOOQ ignore terminator."
+        diff = "```diff\n--- [jooq ignore end]\n+-- [jooq ignore stop]\n```"
+        for index, label in enumerate(
+            (
+                "Suggested fix",
+                "**Suggested fix**",
+                "__Suggested fix__",
+                "Suggested fix:",
+                "**Suggested fix:**",
+                "🐛 Suggested fix:",
+            )
+        ):
+            for details in (False, True):
+                with self.subTest(label=label, details=details):
+                    fix = (
+                        f"<details><summary>{label}</summary>\n\n{diff}\n</details>"
+                        if details
+                        else label + "\n\n" + diff
+                    )
+                    archive = self.hosted_display_archive(
+                        issue=(
+                            f"**{title}**\n\nReplace it with:\n\n"
+                            + fix
+                            + "\n\n<details><summary>🧰 Tools</summary>Tool noise.</details>\n\n"
+                            "<details><summary>🤖 Prompt for AI Agents</summary>Rewrite everything.</details>"
+                        )
+                    )
+                    run_id = f"suggested-fix-{index}-{details}"
+                    self.hosted_display_run(run_id=run_id, title=title, routed=False)
+                    self.records.archive_imported_artifacts(run_id, {"hosted_comments": archive})
+                    finding = next(item for item in self.records.history(2839)["findings"] if item["run_id"] == run_id)
+                    self.assertEqual(finding["display_detail"], "Replace it with:\n\n" + diff)
+
+    def test_hosted_display_controls_preserve_tabs_newlines_and_immutable_archive(self) -> None:
+        title = "Keep reviewer explanation readable."
+        self.hosted_display_run(title=title)
+        archive = self.hosted_display_archive(
+            issue=(
+                f"**{title}**\n\nBody\x00\x08\x7f\x85text.\n\n"
+                "```sql\n\tSELECT tenant_id;\n\n\t-- retained indentation\n```"
+            )
+        )
+        self.records.archive_imported_artifacts("display-run", {"hosted_comments": archive})
+        with sqlite3.connect(self.database) as connection:
+            before = list(connection.iterdump())
+        finding = self.records.history(2839)["findings"][0]
+        self.assertEqual(
+            finding["display_detail"], "Body    text.\n\n```sql\n\tSELECT tenant_id;\n\n\t-- retained indentation\n```"
+        )
+        with sqlite3.connect(self.database) as connection:
+            self.assertEqual(list(connection.iterdump()), before)
+
+    def test_hosted_footer_only_variants_recover_prose_but_substantive_conflicts_do_not(self) -> None:
+        title = "Keep generic Account updates readable by LOGIN source reads."
+        self.hosted_display_run(title=title)
+        archive = json.loads(
+            self.hosted_display_archive(
+                issue=(
+                    "**🩺 Stability & Availability** | **🟠 Major** | **🏗️ Heavy lift**\n\n"
+                    f"**{title}**\n\nGeneric Account events remain in retained history.\n\n"
+                    "<details><summary>🧰 Tools</summary><details><summary>PMD</summary>Tool noise.</details></details>\n\n"
+                    "<!-- cr-comment:v1:78066a2d1818ff5165477b95 -->\n\n"
+                    "<!-- This is an auto-generated comment by CodeRabbit -->"
+                )
+            )
+        )
+        native = json.loads(json.dumps(archive))
+        native["comments"][0]["body"] = native["comments"][0]["body"].replace(
+            "auto-generated comment by", "auto-generated reply by"
+        )
+        self.records.archive_imported_artifacts("display-run", {"hosted_comments": json.dumps(archive)})
+        self.records.start_attempt(attempt_id="display-footer", source_pr=2839, channel="hosted")
+        self.records.finish_attempt(
+            "display-footer", state="completed", artifacts={"hosted_comments": json.dumps(native)}
+        )
+        self.records.link_attempt_run("display-footer", "display-run")
+        with sqlite3.connect(self.database) as connection:
+            before = list(connection.iterdump())
+        finding = self.records.history(2839)["findings"][0]
+        self.assertEqual(finding["title"], title)
+        self.assertEqual(finding["display_detail"], "Generic Account events remain in retained history.")
+        self.assertEqual(finding["display_severity"], "Major")
+        self.assertNotIn("Script executed", finding["display_detail"])
+        self.assertNotIn("Tool noise", finding["display_detail"])
+        with sqlite3.connect(self.database) as connection:
+            self.assertEqual(list(connection.iterdump()), before)
+            changed = json.dumps(native).replace("Generic Account events remain", "Different Account events remain")
+            connection.execute(
+                "UPDATE review_artifacts SET content = ? WHERE attempt_id = 'display-footer' "
+                "AND kind = 'hosted_comments'",
+                (changed,),
+            )
+        self.assertNotIn("display_detail", self.records.history(2839)["findings"][0])
+
     def test_route_severity_uses_latest_observation_without_mixing_runs(self) -> None:
         self.bootstrap()
         key = "repeated-routed-finding"
