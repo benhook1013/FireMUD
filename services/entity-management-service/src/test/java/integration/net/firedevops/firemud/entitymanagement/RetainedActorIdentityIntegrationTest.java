@@ -10,6 +10,7 @@ import java.time.Instant;
 import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
+import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.TimeUnit;
 import net.firedevops.firemud.entitymanagement.entity.ActorActiveCondition;
 import net.firedevops.firemud.entitymanagement.entity.ActorResourceState;
@@ -30,6 +31,7 @@ import org.flywaydb.core.api.configuration.FluentConfiguration;
 import org.flywaydb.database.postgresql.PostgreSQLConfigurationExtension;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.TestInfo;
 import org.junit.jupiter.api.Timeout;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -51,13 +53,13 @@ import org.testcontainers.junit.jupiter.Testcontainers;
     classes = EntityManagementServiceApplication.class,
     properties = "spring.grpc.server.port=0")
 class RetainedActorIdentityIntegrationTest {
-  private static final long TENANT_ID = 72L;
-  private static final long ACCOUNT_ID = 88L;
-  private static final String INSTANCE_ID = "GI-RETAINED";
-  private static final UUID TENANT_UUID = UUID.fromString("10000000-0000-4000-8000-000000000001");
-  private static final UUID ACCOUNT_UUID = UUID.fromString("20000000-0000-4000-8000-000000000002");
-  private static final UUID NAMESPACE_UUID =
-      UUID.fromString("30000000-0000-4000-8000-000000000003");
+  private long tenantId;
+  private long accountId;
+  private String instanceId;
+  private UUID tenantUuid;
+  private UUID accountUuid;
+  private UUID namespaceUuid;
+  private long fixtureIdOffset;
   private String migrationSchema;
 
   @Container
@@ -87,24 +89,47 @@ class RetainedActorIdentityIntegrationTest {
   @MockitoBean private GrpcServerLifecycle grpcServerLifecycle;
 
   @BeforeEach
-  void clearServiceSchema() {
-    jdbcTemplate.execute(
-        "TRUNCATE TABLE entity_mutation_effects, item_transfer_audits, actor_active_conditions, "
-            + "actor_resource_states, character_friend, character_equipment, inventory, item_stacks, "
-            + "item_instances, container_instances, room_ground_inventory, items, characters, "
-            + "entity_playable_state_namespace_scopes RESTART IDENTITY CASCADE");
+  void allocateIsolatedFixtureIdentities(TestInfo testInfo) {
+    fixtureIdOffset = fixtureIdOffset(testInfo.getTestMethod().orElseThrow().getName());
+    tenantId = ThreadLocalRandom.current().nextLong(1L, Long.MAX_VALUE);
+    accountId = ThreadLocalRandom.current().nextLong(1L, Long.MAX_VALUE);
+    instanceId = "GI-RETAINED-" + UUID.randomUUID();
+    tenantUuid = UUID.randomUUID();
+    accountUuid = UUID.randomUUID();
+    namespaceUuid = UUID.randomUUID();
+  }
+
+  private long fixtureIdOffset(String testMethodName) {
+    return switch (testMethodName) {
+      case "canonicalRosterIsExactOrderedAndExcludesLegacyQuarantine" -> 100_000L;
+      case "namespaceIdentityAndScopeAreImmutableWithoutActorReferences" -> 200_000L;
+      case "quarantinedActorLookupMutationExpiryAndCleanupRemainHeld" -> 300_000L;
+      case "destinationOnlyQuarantinedAuditBlocksCleanupWithoutRuntimeRows" -> 400_000L;
+      case "destinationOnlyOwnerResolvedAuditDoesNotBlockCleanupWithoutRuntimeRows" -> 500_000L;
+      case "unresolvedRoomGroundIsHeldWithoutInferringActorOrS3Mapping" -> 600_000L;
+      case "flywayV1ToLatestRetainsLegacyRowsAndValidatesConstraints" -> 700_000L;
+      case "characterUpdateRequiresExactTenantAndPreservesOwnerResolvedRowOnMismatch" -> 800_000L;
+      default -> throw new IllegalArgumentException("No fixture ID range for " + testMethodName);
+    };
+  }
+
+  private long fixtureId(long localId) {
+    return fixtureIdOffset + localId;
   }
 
   @Test
   void canonicalRosterIsExactOrderedAndExcludesLegacyQuarantine() {
-    insertNamespace(TENANT_UUID, NAMESPACE_UUID, PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED);
-    UUID first = UUID.fromString("40000000-0000-4000-8000-000000000001");
-    UUID second = UUID.fromString("40000000-0000-4000-8000-000000000002");
-    UUID third = UUID.fromString("40000000-0000-4000-8000-000000000003");
+    insertNamespace(tenantUuid, namespaceUuid, PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED);
+    UUID orderedUuidSeed = UUID.randomUUID();
+    long orderedUuidBase = orderedUuidSeed.getLeastSignificantBits() & ~0xffL;
+    UUID legacyActorUuid = new UUID(orderedUuidSeed.getMostSignificantBits(), orderedUuidBase);
+    UUID first = new UUID(orderedUuidSeed.getMostSignificantBits(), orderedUuidBase + 1L);
+    UUID second = new UUID(orderedUuidSeed.getMostSignificantBits(), orderedUuidBase + 2L);
+    UUID third = new UUID(orderedUuidSeed.getMostSignificantBits(), orderedUuidBase + 3L);
     long legacyId =
         insertActor(
             "legacy-shared",
-            UUID.fromString("40000000-0000-4000-8000-000000000000"),
+            legacyActorUuid,
             null,
             null,
             null,
@@ -112,77 +137,77 @@ class RetainedActorIdentityIntegrationTest {
             "shared-live",
             "QUARANTINED",
             "OWNER_PROVENANCE_MISSING",
-            ACCOUNT_ID,
-            TENANT_ID);
+            accountId,
+            tenantId);
 
     assertThat(
             actorIdentityRepository.findOwnerResolvedRoster(
-                TENANT_UUID.toString(),
-                ACCOUNT_UUID.toString(),
-                NAMESPACE_UUID.toString(),
+                tenantUuid.toString(),
+                accountUuid.toString(),
+                namespaceUuid.toString(),
                 PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED))
         .isEmpty();
-    assertThat(characterRepository.findByIdAndTenantId(legacyId, TENANT_ID)).isEmpty();
+    assertThat(characterRepository.findByIdAndTenantId(legacyId, tenantId)).isEmpty();
 
     insertActor(
         "third",
         third,
-        ACCOUNT_UUID,
-        TENANT_UUID,
-        NAMESPACE_UUID,
+        accountUuid,
+        tenantUuid,
+        namespaceUuid,
         PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED,
         "shared-live",
         "OWNER_RESOLVED",
         null,
-        ACCOUNT_ID,
-        TENANT_ID);
+        accountId,
+        tenantId);
     insertActor(
         "first",
         first,
-        ACCOUNT_UUID,
-        TENANT_UUID,
-        NAMESPACE_UUID,
+        accountUuid,
+        tenantUuid,
+        namespaceUuid,
         PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED,
         "shared-live",
         "OWNER_RESOLVED",
         null,
-        ACCOUNT_ID,
-        TENANT_ID);
+        accountId,
+        tenantId);
     assertThat(
             actorIdentityRepository.findOwnerResolvedRoster(
-                TENANT_UUID.toString(),
-                ACCOUNT_UUID.toString(),
-                NAMESPACE_UUID.toString(),
+                tenantUuid.toString(),
+                accountUuid.toString(),
+                namespaceUuid.toString(),
                 PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED))
         .extracting(identity -> identity.characterUuid())
         .containsExactly(first, third);
     insertActor(
         "second",
         second,
-        ACCOUNT_UUID,
-        TENANT_UUID,
-        NAMESPACE_UUID,
+        accountUuid,
+        tenantUuid,
+        namespaceUuid,
         PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED,
         "shared-live",
         "OWNER_RESOLVED",
         null,
-        ACCOUNT_ID,
-        TENANT_ID);
+        accountId,
+        tenantId);
 
     var roster =
         actorIdentityRepository.findOwnerResolvedRoster(
-            TENANT_UUID.toString(),
-            ACCOUNT_UUID.toString(),
-            NAMESPACE_UUID.toString(),
+            tenantUuid.toString(),
+            accountUuid.toString(),
+            namespaceUuid.toString(),
             PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED);
     assertThat(roster)
         .extracting(identity -> identity.characterUuid())
         .containsExactly(first, second, third);
     assertThat(
             actorIdentityRepository.findOwnerResolvedActor(
-                TENANT_UUID.toString(),
-                ACCOUNT_UUID.toString(),
-                NAMESPACE_UUID.toString(),
+                tenantUuid.toString(),
+                accountUuid.toString(),
+                namespaceUuid.toString(),
                 PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED,
                 first.toString()))
         .get()
@@ -191,70 +216,70 @@ class RetainedActorIdentityIntegrationTest {
 
     assertThat(
             actorIdentityRepository.findOwnerResolvedRoster(
-                "50000000-0000-4000-8000-000000000005",
-                ACCOUNT_UUID.toString(),
-                NAMESPACE_UUID.toString(),
+                UUID.randomUUID().toString(),
+                accountUuid.toString(),
+                namespaceUuid.toString(),
                 PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED))
         .isEmpty();
     assertThat(
             actorIdentityRepository.findOwnerResolvedRoster(
-                TENANT_UUID.toString(),
-                "60000000-0000-4000-8000-000000000006",
-                NAMESPACE_UUID.toString(),
+                tenantUuid.toString(),
+                UUID.randomUUID().toString(),
+                namespaceUuid.toString(),
                 PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED))
         .isEmpty();
     assertThat(
             actorIdentityRepository.findOwnerResolvedRoster(
-                TENANT_UUID.toString(),
-                ACCOUNT_UUID.toString(),
-                "70000000-0000-4000-8000-000000000007",
+                tenantUuid.toString(),
+                accountUuid.toString(),
+                UUID.randomUUID().toString(),
                 PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED))
         .isEmpty();
     assertThat(
             actorIdentityRepository.findOwnerResolvedRoster(
-                TENANT_UUID.toString(),
-                ACCOUNT_UUID.toString(),
-                NAMESPACE_UUID.toString(),
+                tenantUuid.toString(),
+                accountUuid.toString(),
+                namespaceUuid.toString(),
                 PlayableStateScope.PLAYABLE_STATE_SCOPE_ISOLATED))
         .isEmpty();
     assertThat(
             actorIdentityRepository.findOwnerResolvedActor(
-                TENANT_UUID.toString(),
-                ACCOUNT_UUID.toString(),
-                NAMESPACE_UUID.toString(),
+                tenantUuid.toString(),
+                accountUuid.toString(),
+                namespaceUuid.toString(),
                 PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED,
-                "40000000-0000-4000-8000-000000000000"))
+                legacyActorUuid.toString()))
         .isEmpty();
 
     assertThatThrownBy(
             () ->
                 actorIdentityRepository.findOwnerResolvedRoster(
                     null,
-                    ACCOUNT_UUID.toString(),
-                    NAMESPACE_UUID.toString(),
+                    accountUuid.toString(),
+                    namespaceUuid.toString(),
                     PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED))
         .isInstanceOf(IllegalArgumentException.class);
     assertThatThrownBy(
             () ->
                 actorIdentityRepository.findOwnerResolvedRoster(
-                    TENANT_UUID.toString(),
-                    ACCOUNT_UUID.toString(),
+                    tenantUuid.toString(),
+                    accountUuid.toString(),
                     "not-a-uuid",
                     PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED))
         .isInstanceOf(IllegalArgumentException.class);
     assertThatThrownBy(
             () ->
                 actorIdentityRepository.findOwnerResolvedRoster(
-                    TENANT_UUID.toString(),
+                    tenantUuid.toString(),
                     "00000000-0000-0000-0000-000000000000",
-                    NAMESPACE_UUID.toString(),
+                    namespaceUuid.toString(),
                     PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED))
         .isInstanceOf(IllegalArgumentException.class);
 
     assertThatThrownBy(
             () ->
                 insertNamespace(
-                    TENANT_UUID, NAMESPACE_UUID, PlayableStateScope.PLAYABLE_STATE_SCOPE_ISOLATED))
+                    tenantUuid, namespaceUuid, PlayableStateScope.PLAYABLE_STATE_SCOPE_ISOLATED))
         .isInstanceOf(RuntimeException.class);
     assertThatThrownBy(
             () ->
@@ -262,8 +287,8 @@ class RetainedActorIdentityIntegrationTest {
                     "UPDATE entity_playable_state_namespace_scopes SET playable_state_scope = ? "
                         + "WHERE tenant_uuid = ? AND playable_state_namespace_id = ?",
                     PlayableStateScope.PLAYABLE_STATE_SCOPE_ISOLATED.name(),
-                    TENANT_UUID,
-                    NAMESPACE_UUID))
+                    tenantUuid,
+                    namespaceUuid))
         .isInstanceOf(RuntimeException.class);
   }
 
@@ -336,9 +361,9 @@ class RetainedActorIdentityIntegrationTest {
   @Test
   void quarantinedActorLookupMutationExpiryAndCleanupRemainHeld() {
     Character actor = new Character();
-    actor.setTenantId(TENANT_ID);
-    actor.setAccountId(ACCOUNT_ID);
-    actor.setPlayableStateKey("instance:" + INSTANCE_ID);
+    actor.setTenantId(tenantId);
+    actor.setAccountId(accountId);
+    actor.setPlayableStateKey("instance:" + instanceId);
     actor.setName("Retained actor");
     actor.setExperience(17);
     actor = characterRepository.save(actor);
@@ -348,9 +373,9 @@ class RetainedActorIdentityIntegrationTest {
     assertThat(characterRepository.findById(actorId)).isEmpty();
 
     ActorResourceState resourceWrite = new ActorResourceState();
-    resourceWrite.setTenantId(TENANT_ID);
+    resourceWrite.setTenantId(tenantId);
     resourceWrite.setCharacterId(actorId);
-    resourceWrite.setPlayableStateKey("instance:" + INSTANCE_ID);
+    resourceWrite.setPlayableStateKey("instance:" + instanceId);
     resourceWrite.setStatKey("health");
     resourceWrite.setCurrentValue(31L);
     assertThatThrownBy(() -> actorResourceStateRepository.save(resourceWrite))
@@ -358,9 +383,9 @@ class RetainedActorIdentityIntegrationTest {
         .hasMessageContaining("ACTOR_IDENTITY_NOT_OWNER_RESOLVED");
 
     ActorActiveCondition conditionWrite = new ActorActiveCondition();
-    conditionWrite.setTenantId(TENANT_ID);
+    conditionWrite.setTenantId(tenantId);
     conditionWrite.setCharacterId(actorId);
-    conditionWrite.setPlayableStateKey("instance:" + INSTANCE_ID);
+    conditionWrite.setPlayableStateKey("instance:" + instanceId);
     conditionWrite.setConditionKey("stunned");
     conditionWrite.setSourceType("TEST");
     assertThatThrownBy(() -> actorActiveConditionRepository.save(conditionWrite))
@@ -369,123 +394,169 @@ class RetainedActorIdentityIntegrationTest {
 
     jdbcTemplate.update(
         "INSERT INTO items (id, name, tenant_id, is_container) VALUES "
-            + "(3001, 'Backpack', ?, true), (3002, 'Pouch', ?, true), (3003, 'Gem', ?, false)",
-        TENANT_ID,
-        TENANT_ID,
-        TENANT_ID);
+            + "("
+            + fixtureId(3001)
+            + ", 'Backpack', ?, true), ("
+            + fixtureId(3002)
+            + ", 'Pouch', ?, true), ("
+            + fixtureId(3003)
+            + ", 'Gem', ?, false)",
+        tenantId,
+        tenantId,
+        tenantId);
     jdbcTemplate.update(
-        "INSERT INTO inventory (character_id, item_id, quantity, version) VALUES (?, 3003, 5, 2)",
+        "INSERT INTO inventory (character_id, item_id, quantity, version) VALUES (?, "
+            + fixtureId(3003)
+            + ", 5, 2)",
         actorId);
     jdbcTemplate.update(
         "INSERT INTO character_equipment (character_id, slot, item_id, version) "
-            + "VALUES (?, 'hand', 3003, 3)",
+            + "VALUES (?, 'hand', "
+            + fixtureId(3003)
+            + ", 3)",
         actorId);
     jdbcTemplate.update(
         "INSERT INTO character_friend (character_id, friend_id, tenant_id, status) "
             + "VALUES (?, ?, ?, 'pending')",
         actorId,
         actorId,
-        TENANT_ID);
+        tenantId);
     jdbcTemplate.update(
         "INSERT INTO actor_resource_states "
             + "(tenant_id, character_id, stat_key, current_value, max_value, base_value, source_type, source_id, playable_state_key, version) "
             + "VALUES (?, ?, 'health', 31, 90, 40, 'LEGACY_SOURCE', 'source-17', ?, 4)",
-        TENANT_ID,
+        tenantId,
         actorId,
-        "instance:" + INSTANCE_ID);
+        "instance:" + instanceId);
     jdbcTemplate.update(
         "INSERT INTO actor_active_conditions "
             + "(tenant_id, character_id, condition_key, stack_count, source_type, source_id, started_at, expires_at, effect_payload_json, playable_state_key, version) "
             + "VALUES (?, ?, 'stunned', 3, 'LEGACY_SOURCE', 'condition-19', '2020-01-01T00:00:00Z', '2020-01-02T00:00:00Z', '{\"modifier\":2}', ?, 5)",
-        TENANT_ID,
+        tenantId,
         actorId,
-        "instance:" + INSTANCE_ID);
+        "instance:" + instanceId);
 
     jdbcTemplate.update(
         "INSERT INTO container_instances (id, tenant_id, character_id, game_instance_id, item_id, version) "
-            + "VALUES (3101, ?, ?, ?, 3001, 6)",
-        TENANT_ID,
+            + "VALUES ("
+            + fixtureId(3101)
+            + ", ?, ?, ?, "
+            + fixtureId(3001)
+            + ", 6)",
+        tenantId,
         actorId,
-        INSTANCE_ID);
-    insertItemInstance(3201, actorId, INSTANCE_ID, null, 3001, "retained-backpack");
-    jdbcTemplate.update("UPDATE container_instances SET item_instance_id = 3201 WHERE id = 3101");
-    insertItemInstance(3202, null, INSTANCE_ID, 3101L, 3002, "retained-pouch");
+        instanceId);
+    insertItemInstance(
+        fixtureId(3201), actorId, instanceId, null, fixtureId(3001), "retained-backpack");
+    jdbcTemplate.update(
+        "UPDATE container_instances SET item_instance_id = ? WHERE id = ?",
+        fixtureId(3201),
+        fixtureId(3101));
+    insertItemInstance(
+        fixtureId(3202), null, instanceId, fixtureId(3101), fixtureId(3002), "retained-pouch");
     jdbcTemplate.update(
         "INSERT INTO container_instances (id, tenant_id, game_instance_id, item_id, version, item_instance_id) "
-            + "VALUES (3102, ?, ?, 3002, 7, 3202)",
-        TENANT_ID,
-        INSTANCE_ID);
-    insertItemInstance(3203, null, INSTANCE_ID, 3102L, 3003, "retained-gem");
+            + "VALUES ("
+            + fixtureId(3102)
+            + ", ?, ?, "
+            + fixtureId(3002)
+            + ", 7, "
+            + fixtureId(3202)
+            + ")",
+        tenantId,
+        instanceId);
+    insertItemInstance(
+        fixtureId(3203), null, instanceId, fixtureId(3102), fixtureId(3003), "retained-gem");
     jdbcTemplate.update(
         "INSERT INTO item_stacks (id, tenant_id, character_id, game_instance_id, item_id, compatibility_fingerprint, quantity, version, stack_family_key) "
-            + "VALUES (3301, ?, ?, ?, 3003, 'actor-stack', 8, 2, 'actor-family')",
-        TENANT_ID,
+            + "VALUES ("
+            + fixtureId(3301)
+            + ", ?, ?, ?, "
+            + fixtureId(3003)
+            + ", 'actor-stack', 8, 2, 'actor-family')",
+        tenantId,
         actorId,
-        INSTANCE_ID);
+        instanceId);
     jdbcTemplate.update(
         "INSERT INTO item_stacks (id, tenant_id, game_instance_id, container_instance_id, item_id, compatibility_fingerprint, quantity, version, stack_family_key) "
-            + "VALUES (3302, ?, ?, 3102, 3003, 'nested-stack', 9, 3, 'nested-family')",
-        TENANT_ID,
-        INSTANCE_ID);
+            + "VALUES ("
+            + fixtureId(3302)
+            + ", ?, ?, "
+            + fixtureId(3102)
+            + ", "
+            + fixtureId(3003)
+            + ", 'nested-stack', 9, 3, 'nested-family')",
+        tenantId,
+        instanceId);
     jdbcTemplate.update(
         "INSERT INTO room_ground_inventory (tenant_id, game_instance_id, room_instance_id, item_id, quantity, version) "
-            + "VALUES (?, ?, 'room-retained', 3003, 11, 8)",
-        TENANT_ID,
-        INSTANCE_ID);
+            + "VALUES (?, ?, 'room-retained', "
+            + fixtureId(3003)
+            + ", 11, 8)",
+        tenantId,
+        instanceId);
     jdbcTemplate.update(
         "INSERT INTO item_transfer_audits "
             + "(id, tenant_id, item_id, item_instance_id, quantity, verb, actor_character_id, effect_id, correlation_key, source_holder_kind, source_character_id, source_game_instance_id, destination_holder_kind, destination_game_instance_id, destination_room_instance_id) "
-            + "VALUES (3401, ?, 3001, 3201, 1, 'DROP', ?, 'effect-retained', 'corr-retained', 'CHARACTER', ?, ?, 'ROOM', ?, 'room-retained')",
-        TENANT_ID,
+            + "VALUES ("
+            + fixtureId(3401)
+            + ", ?, "
+            + fixtureId(3001)
+            + ", "
+            + fixtureId(3201)
+            + ", 1, 'DROP', ?, 'effect-retained', 'corr-retained', 'CHARACTER', ?, ?, 'ROOM', ?, 'room-retained')",
+        tenantId,
         actorId,
         actorId,
-        INSTANCE_ID,
-        INSTANCE_ID);
+        instanceId,
+        instanceId);
     jdbcTemplate.update(
         "INSERT INTO entity_mutation_effects (id, tenant_id, effect_id, operation_name, response_type, response_payload, status) "
-            + "VALUES (3501, ?, 'effect-retained', 'DROP', 'DropResponse', decode('aabb', 'hex'), 'APPLIED')",
-        TENANT_ID);
+            + "VALUES ("
+            + fixtureId(3501)
+            + ", ?, 'effect-retained', 'DROP', 'DropResponse', decode('aabb', 'hex'), 'APPLIED')",
+        tenantId);
 
     assertThatThrownBy(
             () ->
                 scopedCharacterResolver.requireScopedCharacter(
-                    TENANT_ID,
+                    tenantId,
                     actorId,
-                    INSTANCE_ID,
+                    instanceId,
                     PlayableStateScope.PLAYABLE_STATE_SCOPE_ISOLATED))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("OWNER_RESOLVED_ACTOR_IDENTITY_REQUIRED");
     assertThatThrownBy(
             () ->
                 characterService.gainExperience(
-                    TENANT_ID,
+                    tenantId,
                     actorId,
-                    INSTANCE_ID,
+                    instanceId,
                     PlayableStateScope.PLAYABLE_STATE_SCOPE_ISOLATED,
                     100))
         .isInstanceOf(IllegalArgumentException.class);
     assertThatThrownBy(
             () ->
                 runtimeInstanceCleanupService.cleanupRuntimeInstance(
-                    TENANT_ID, INSTANCE_ID, "termination-retained"))
+                    tenantId, instanceId, "termination-retained"))
         .isInstanceOf(IllegalStateException.class)
         .hasMessageContaining("ENTITY_UNCLASSIFIED_OR_QUARANTINED_EVIDENCE_BLOCKS_CLEANUP");
 
     assertThat(
             quarantinedActorRetentionRepository.hasUnclassifiedOrQuarantinedRuntimeEvidence(
-                TENANT_ID, INSTANCE_ID))
+                tenantId, instanceId))
         .isTrue();
     assertThat(
             jdbcTemplate.queryForObject(
                 "SELECT count(*) FROM entity_quarantined_actor_item_instances WHERE tenant_id = ?",
                 Integer.class,
-                TENANT_ID))
+                tenantId))
         .isEqualTo(3);
     assertThat(
             jdbcTemplate.queryForObject(
                 "SELECT count(*) FROM entity_quarantined_actor_container_instances WHERE tenant_id = ?",
                 Integer.class,
-                TENANT_ID))
+                tenantId))
         .isEqualTo(2);
     assertThat(actorActiveConditionRepository.deleteExpired(Instant.parse("2030-01-01T00:00:00Z")))
         .isZero();
@@ -495,9 +566,10 @@ class RetainedActorIdentityIntegrationTest {
         .isEqualTo(17);
     assertThat(
             jdbcTemplate.queryForObject(
-                "SELECT quantity FROM inventory WHERE character_id = ? AND item_id = 3003",
+                "SELECT quantity FROM inventory WHERE character_id = ? AND item_id = ?",
                 Integer.class,
-                actorId))
+                actorId,
+                fixtureId(3003)))
         .isEqualTo(5);
     assertThat(
             jdbcTemplate.queryForObject(
@@ -528,48 +600,51 @@ class RetainedActorIdentityIntegrationTest {
             jdbcTemplate.queryForObject(
                 "SELECT count(*) FROM item_instances WHERE tenant_id = ? AND game_instance_id = ?",
                 Integer.class,
-                TENANT_ID,
-                INSTANCE_ID))
+                tenantId,
+                instanceId))
         .isEqualTo(3);
     assertThat(
             jdbcTemplate.queryForObject(
                 "SELECT count(*) FROM container_instances WHERE tenant_id = ? AND game_instance_id = ?",
                 Integer.class,
-                TENANT_ID,
-                INSTANCE_ID))
+                tenantId,
+                instanceId))
         .isEqualTo(2);
     assertThat(
             jdbcTemplate.queryForObject(
                 "SELECT sum(quantity) FROM item_stacks WHERE tenant_id = ? AND game_instance_id = ?",
                 Integer.class,
-                TENANT_ID,
-                INSTANCE_ID))
+                tenantId,
+                instanceId))
         .isEqualTo(17);
     assertThat(
             jdbcTemplate.queryForObject(
                 "SELECT quantity FROM room_ground_inventory WHERE tenant_id = ? AND game_instance_id = ?",
                 Integer.class,
-                TENANT_ID,
-                INSTANCE_ID))
+                tenantId,
+                instanceId))
         .isEqualTo(11);
     assertThat(
             jdbcTemplate.queryForObject(
-                "SELECT correlation_key FROM item_transfer_audits WHERE id = 3401", String.class))
+                "SELECT correlation_key FROM item_transfer_audits WHERE id = ?",
+                String.class,
+                fixtureId(3401)))
         .isEqualTo("corr-retained");
     assertThat(
             jdbcTemplate.queryForObject(
-                "SELECT encode(response_payload, 'hex') FROM entity_mutation_effects WHERE id = 3501",
-                String.class))
+                "SELECT encode(response_payload, 'hex') FROM entity_mutation_effects WHERE id = ?",
+                String.class,
+                fixtureId(3501)))
         .isEqualTo("aabb");
   }
 
   @Test
   void destinationOnlyQuarantinedAuditBlocksCleanupWithoutRuntimeRows() {
-    String auditOnlyInstance = "GI-RETAINED-AUDIT-ONLY";
+    String auditOnlyInstance = instanceId + "-AUDIT-ONLY";
     long quarantinedActorId =
         insertActor(
             "legacy audit destination",
-            UUID.fromString("42000000-0000-4000-8000-000000000001"),
+            UUID.randomUUID(),
             null,
             null,
             null,
@@ -577,13 +652,17 @@ class RetainedActorIdentityIntegrationTest {
             "shared-live",
             "QUARANTINED",
             "OWNER_PROVENANCE_MISSING",
-            ACCOUNT_ID,
-            TENANT_ID);
+            accountId,
+            tenantId);
     jdbcTemplate.update(
         "INSERT INTO item_transfer_audits "
             + "(id, tenant_id, item_id, quantity, verb, effect_id, correlation_key, source_holder_kind, source_game_instance_id, destination_holder_kind, destination_character_id, destination_game_instance_id) "
-            + "VALUES (3601, ?, 3001, 1, 'TAKE', 'effect-audit-only-quarantined', 'corr-audit-only-quarantined', 'ROOM', ?, 'CHARACTER', ?, ?)",
-        TENANT_ID,
+            + "VALUES ("
+            + fixtureId(3601)
+            + ", ?, "
+            + fixtureId(3001)
+            + ", 1, 'TAKE', 'effect-audit-only-quarantined', 'corr-audit-only-quarantined', 'ROOM', ?, 'CHARACTER', ?, ?)",
+        tenantId,
         auditOnlyInstance,
         quarantinedActorId,
         auditOnlyInstance);
@@ -591,26 +670,28 @@ class RetainedActorIdentityIntegrationTest {
     assertNoRuntimeRowsForInstance(auditOnlyInstance);
     assertThat(
             jdbcTemplate.queryForObject(
-                "SELECT count(*) FROM item_transfer_audits WHERE id = 3601 AND actor_character_id IS NULL AND source_character_id IS NULL AND destination_character_id = ?",
+                "SELECT count(*) FROM item_transfer_audits WHERE id = ? AND actor_character_id IS NULL AND source_character_id IS NULL AND destination_character_id = ?",
                 Integer.class,
+                fixtureId(3601),
                 quarantinedActorId))
         .isEqualTo(1);
     assertThat(
             quarantinedActorRetentionRepository.hasUnclassifiedOrQuarantinedRuntimeEvidence(
-                TENANT_ID, auditOnlyInstance))
+                tenantId, auditOnlyInstance))
         .isTrue();
     assertThatThrownBy(
             () ->
                 runtimeInstanceCleanupService.cleanupRuntimeInstance(
-                    TENANT_ID, auditOnlyInstance, "termination-audit-only-quarantined"))
+                    tenantId, auditOnlyInstance, "termination-audit-only-quarantined"))
         .isInstanceOf(IllegalStateException.class)
         .hasMessageContaining("ENTITY_UNCLASSIFIED_OR_QUARANTINED_EVIDENCE_BLOCKS_CLEANUP");
 
     assertThat(
             jdbcTemplate.queryForObject(
-                "SELECT count(*) FROM item_transfer_audits WHERE id = 3601 AND tenant_id = ? AND correlation_key = 'corr-audit-only-quarantined' AND destination_character_id = ?",
+                "SELECT count(*) FROM item_transfer_audits WHERE id = ? AND tenant_id = ? AND correlation_key = 'corr-audit-only-quarantined' AND destination_character_id = ?",
                 Integer.class,
-                TENANT_ID,
+                fixtureId(3601),
+                tenantId,
                 quarantinedActorId))
         .isEqualTo(1);
     assertNoRuntimeRowsForInstance(auditOnlyInstance);
@@ -618,29 +699,30 @@ class RetainedActorIdentityIntegrationTest {
 
   @Test
   void destinationOnlyOwnerResolvedAuditDoesNotBlockCleanupWithoutRuntimeRows() {
-    String auditOnlyInstance = "GI-RETAINED-AUDIT-OWNER-RESOLVED";
-    insertNamespace(
-        UUID.fromString("43000000-0000-4000-8000-000000000003"),
-        UUID.fromString("43000000-0000-4000-8000-000000000004"),
-        PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED);
+    String auditOnlyInstance = instanceId + "-AUDIT-OWNER-RESOLVED";
+    UUID ownerResolvedActorUuid = UUID.randomUUID();
     long ownerResolvedActorId =
         insertActor(
             "owner-resolved audit destination fixture",
-            UUID.fromString("43000000-0000-4000-8000-000000000001"),
-            UUID.fromString("43000000-0000-4000-8000-000000000002"),
-            UUID.fromString("43000000-0000-4000-8000-000000000003"),
-            UUID.fromString("43000000-0000-4000-8000-000000000004"),
+            ownerResolvedActorUuid,
+            accountUuid,
+            tenantUuid,
+            namespaceUuid,
             PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED,
             "shared-live",
             "OWNER_RESOLVED",
             null,
-            ACCOUNT_ID,
-            TENANT_ID);
+            accountId,
+            tenantId);
     jdbcTemplate.update(
         "INSERT INTO item_transfer_audits "
             + "(id, tenant_id, item_id, quantity, verb, effect_id, correlation_key, source_holder_kind, source_game_instance_id, destination_holder_kind, destination_character_id, destination_game_instance_id) "
-            + "VALUES (3602, ?, 3001, 1, 'TAKE', 'effect-audit-only-owner-resolved', 'corr-audit-only-owner-resolved', 'ROOM', ?, 'CHARACTER', ?, ?)",
-        TENANT_ID,
+            + "VALUES ("
+            + fixtureId(3602)
+            + ", ?, "
+            + fixtureId(3001)
+            + ", 1, 'TAKE', 'effect-audit-only-owner-resolved', 'corr-audit-only-owner-resolved', 'ROOM', ?, 'CHARACTER', ?, ?)",
+        tenantId,
         auditOnlyInstance,
         ownerResolvedActorId,
         auditOnlyInstance);
@@ -648,17 +730,18 @@ class RetainedActorIdentityIntegrationTest {
     assertNoRuntimeRowsForInstance(auditOnlyInstance);
     assertThat(
             jdbcTemplate.queryForObject(
-                "SELECT count(*) FROM item_transfer_audits WHERE id = 3602 AND actor_character_id IS NULL AND source_character_id IS NULL AND destination_character_id = ?",
+                "SELECT count(*) FROM item_transfer_audits WHERE id = ? AND actor_character_id IS NULL AND source_character_id IS NULL AND destination_character_id = ?",
                 Integer.class,
+                fixtureId(3602),
                 ownerResolvedActorId))
         .isEqualTo(1);
     assertThat(
             quarantinedActorRetentionRepository.hasUnclassifiedOrQuarantinedRuntimeEvidence(
-                TENANT_ID, auditOnlyInstance))
+                tenantId, auditOnlyInstance))
         .isFalse();
     var result =
         runtimeInstanceCleanupService.cleanupRuntimeInstance(
-            TENANT_ID, auditOnlyInstance, "termination-audit-only-owner-resolved");
+            tenantId, auditOnlyInstance, "termination-audit-only-owner-resolved");
     assertThat(result).isNotNull();
     assertThat(result.deletedItemInstances()).isZero();
     assertThat(result.deletedContainerInstances()).isZero();
@@ -666,9 +749,10 @@ class RetainedActorIdentityIntegrationTest {
     assertThat(result.deletedRoomGroundEntries()).isZero();
     assertThat(
             jdbcTemplate.queryForObject(
-                "SELECT count(*) FROM item_transfer_audits WHERE id = 3602 AND tenant_id = ? AND correlation_key = 'corr-audit-only-owner-resolved' AND destination_character_id = ?",
+                "SELECT count(*) FROM item_transfer_audits WHERE id = ? AND tenant_id = ? AND correlation_key = 'corr-audit-only-owner-resolved' AND destination_character_id = ?",
                 Integer.class,
-                TENANT_ID,
+                fixtureId(3602),
+                tenantId,
                 ownerResolvedActorId))
         .isEqualTo(1);
     assertNoRuntimeRowsForInstance(auditOnlyInstance);
@@ -679,28 +763,28 @@ class RetainedActorIdentityIntegrationTest {
             jdbcTemplate.queryForObject(
                 "SELECT count(*) FROM item_instances WHERE tenant_id = ? AND game_instance_id = ?",
                 Integer.class,
-                TENANT_ID,
+                tenantId,
                 gameInstanceId))
         .isZero();
     assertThat(
             jdbcTemplate.queryForObject(
                 "SELECT count(*) FROM container_instances WHERE tenant_id = ? AND game_instance_id = ?",
                 Integer.class,
-                TENANT_ID,
+                tenantId,
                 gameInstanceId))
         .isZero();
     assertThat(
             jdbcTemplate.queryForObject(
                 "SELECT count(*) FROM item_stacks WHERE tenant_id = ? AND game_instance_id = ?",
                 Integer.class,
-                TENANT_ID,
+                tenantId,
                 gameInstanceId))
         .isZero();
     assertThat(
             jdbcTemplate.queryForObject(
                 "SELECT count(*) FROM room_ground_inventory WHERE tenant_id = ? AND game_instance_id = ?",
                 Integer.class,
-                TENANT_ID,
+                tenantId,
                 gameInstanceId))
         .isZero();
   }
@@ -709,7 +793,7 @@ class RetainedActorIdentityIntegrationTest {
   void unresolvedRoomGroundIsHeldWithoutInferringActorOrS3Mapping() {
     insertActor(
         "legacy shared actor",
-        UUID.fromString("41000000-0000-4000-8000-000000000001"),
+        UUID.randomUUID(),
         null,
         null,
         null,
@@ -717,33 +801,37 @@ class RetainedActorIdentityIntegrationTest {
         "shared-live",
         "QUARANTINED",
         "OWNER_PROVENANCE_MISSING",
-        ACCOUNT_ID,
-        TENANT_ID);
+        accountId,
+        tenantId);
     jdbcTemplate.update(
-        "INSERT INTO items (id, name, tenant_id, is_container) VALUES (3901, 'Unresolved ground item', ?, false)",
-        TENANT_ID);
+        "INSERT INTO items (id, name, tenant_id, is_container) VALUES ("
+            + fixtureId(3901)
+            + ", 'Unresolved ground item', ?, false)",
+        tenantId);
     jdbcTemplate.update(
         "INSERT INTO room_ground_inventory (tenant_id, game_instance_id, room_instance_id, item_id, quantity, version) "
-            + "VALUES (?, ?, 'room-unresolved', 3901, 2, 1)",
-        TENANT_ID,
-        INSTANCE_ID);
+            + "VALUES (?, ?, 'room-unresolved', "
+            + fixtureId(3901)
+            + ", 2, 1)",
+        tenantId,
+        instanceId);
 
     assertThat(
             quarantinedActorRetentionRepository.hasUnclassifiedOrQuarantinedRuntimeEvidence(
-                TENANT_ID, INSTANCE_ID))
+                tenantId, instanceId))
         .isTrue();
     assertThatThrownBy(
             () ->
                 runtimeInstanceCleanupService.cleanupRuntimeInstance(
-                    TENANT_ID, INSTANCE_ID, "termination-unresolved-ground"))
+                    tenantId, instanceId, "termination-unresolved-ground"))
         .isInstanceOf(IllegalStateException.class)
         .hasMessageContaining("ENTITY_UNCLASSIFIED_OR_QUARANTINED_EVIDENCE_BLOCKS_CLEANUP");
     assertThat(
             jdbcTemplate.queryForObject(
                 "SELECT quantity FROM room_ground_inventory WHERE tenant_id = ? AND game_instance_id = ?",
                 Integer.class,
-                TENANT_ID,
-                INSTANCE_ID))
+                tenantId,
+                instanceId))
         .isEqualTo(2);
   }
 
@@ -1000,27 +1088,27 @@ class RetainedActorIdentityIntegrationTest {
 
   @Test
   void characterUpdateRequiresExactTenantAndPreservesOwnerResolvedRowOnMismatch() {
-    UUID characterUuid = UUID.fromString("40000000-0000-4000-8000-000000000010");
-    insertNamespace(TENANT_UUID, NAMESPACE_UUID, PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED);
+    UUID characterUuid = UUID.randomUUID();
+    insertNamespace(tenantUuid, namespaceUuid, PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED);
     long actorId =
         insertActor(
             "Tenant-owned actor",
             characterUuid,
-            ACCOUNT_UUID,
-            TENANT_UUID,
-            NAMESPACE_UUID,
+            accountUuid,
+            tenantUuid,
+            namespaceUuid,
             PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED,
             "shared-live",
             "OWNER_RESOLVED",
             null,
-            ACCOUNT_ID,
-            TENANT_ID);
+            accountId,
+            tenantId);
 
     Character crossTenantUpdate =
-        characterRepository.findByIdAndTenantId(actorId, TENANT_ID).orElseThrow();
+        characterRepository.findByIdAndTenantId(actorId, tenantId).orElseThrow();
     int originalVersion = crossTenantUpdate.getVersion();
     int originalExperience = crossTenantUpdate.getExperience();
-    crossTenantUpdate.setTenantId(TENANT_ID + 1);
+    crossTenantUpdate.setTenantId(tenantId + 1);
     crossTenantUpdate.setName("Cross-tenant overwrite");
     crossTenantUpdate.setExperience(originalExperience + 99);
 
@@ -1028,17 +1116,17 @@ class RetainedActorIdentityIntegrationTest {
         .isInstanceOf(IllegalStateException.class)
         .hasMessage("CHARACTER_IDENTITY_NOT_OWNER_RESOLVED");
 
-    Character unchanged = characterRepository.findByIdAndTenantId(actorId, TENANT_ID).orElseThrow();
-    assertThat(unchanged.getTenantId()).isEqualTo(TENANT_ID);
+    Character unchanged = characterRepository.findByIdAndTenantId(actorId, tenantId).orElseThrow();
+    assertThat(unchanged.getTenantId()).isEqualTo(tenantId);
     assertThat(unchanged.getName()).isEqualTo("Tenant-owned actor");
     assertThat(unchanged.getExperience()).isEqualTo(originalExperience);
     assertThat(unchanged.getVersion()).isEqualTo(originalVersion);
 
     Character validUpdate =
-        characterRepository.findByIdAndTenantId(actorId, TENANT_ID).orElseThrow();
+        characterRepository.findByIdAndTenantId(actorId, tenantId).orElseThrow();
     validUpdate.setName("Tenant-owned actor updated");
     Character saved = characterRepository.save(validUpdate);
-    assertThat(saved.getTenantId()).isEqualTo(TENANT_ID);
+    assertThat(saved.getTenantId()).isEqualTo(tenantId);
     assertThat(saved.getName()).isEqualTo("Tenant-owned actor updated");
     assertThat(saved.getVersion()).isEqualTo(originalVersion + 1);
   }
@@ -1086,7 +1174,7 @@ class RetainedActorIdentityIntegrationTest {
         "INSERT INTO item_instances (id, tenant_id, character_id, game_instance_id, container_instance_id, item_id, visible_ref_token, visible_ref_sequence, visible_ref, version) "
             + "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1)",
         id,
-        TENANT_ID,
+        tenantId,
         characterId,
         gameInstanceId,
         containerId,

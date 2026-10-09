@@ -11,6 +11,7 @@ import java.sql.SQLException;
 import java.sql.Statement;
 import java.time.Instant;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
@@ -998,7 +999,7 @@ class PreseededActorAssignmentIntegrationTest {
             target.canonicalVersionUuid(),
             target.frozenPolicyDigest(),
             target.playableStateNamespaceId(),
-            "release-bundle/test",
+            target.publishedReleaseBundleRef(),
             target.playableStateScope()));
   }
 
@@ -1078,7 +1079,8 @@ class PreseededActorAssignmentIntegrationTest {
             .dataSource(postgres.getJdbcUrl(), postgres.getUsername(), postgres.getPassword())
             .schemas(schema)
             .defaultSchema(schema)
-            .locations("classpath:db/migration");
+            .locations("classpath:db/migration")
+            .placeholders(Map.of("serviceSchema", schema));
     configuration
         .getConfigurationExtension(PostgreSQLConfigurationExtension.class)
         .setTransactionalLock(false);
