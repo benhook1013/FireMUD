@@ -835,7 +835,12 @@ public class VersionPublishCommandServiceImpl {
       PublishAttempt attempt,
       Version version,
       VersionAssetArtifactStateDto artifact) {
-    if (!Objects.equals(version.getTenantId(), request.tenantId())
+    if (attempt.getPublishType() != PublishType.FULL_VERSION
+        || attempt.getStatus() != PublishAttemptStatus.PENDING
+        || !Objects.equals(attempt.getTenantId(), request.tenantId())
+        || !Objects.equals(attempt.getPublishWorkflowId(), request.publishWorkflowId())
+        || attempt.getVersionId() == null
+        || !Objects.equals(version.getTenantId(), request.tenantId())
         || !Objects.equals(version.getId(), attempt.getVersionId())
         || version.getVersionNumber() != attempt.getVersionNumber()
         || version.getVersionState() != VersionLifecycleState.DRAFT
@@ -847,7 +852,10 @@ public class VersionPublishCommandServiceImpl {
         || artifact.exportedVersionNumber() != attempt.getVersionNumber()
         || !"STAGED".equals(artifact.artifactState())
         || artifact.stateEpoch() <= 0
-        || !Objects.equals(artifact.lastWorkflowId(), request.publishWorkflowId())) {
+        || !Objects.equals(artifact.lastWorkflowId(), request.publishWorkflowId())
+        || artifact.lastErrorCode() != null
+        || artifact.lastErrorMessage() != null
+        || artifact.exportedManifestAssetKeys() == null) {
       throw new IllegalStateException("PUBLISH_ATTEMPT_STAGED_ARTIFACT_SCOPE_MISMATCH");
     }
 
