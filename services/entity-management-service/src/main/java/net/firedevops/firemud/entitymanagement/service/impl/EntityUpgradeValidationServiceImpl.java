@@ -65,7 +65,7 @@ public class EntityUpgradeValidationServiceImpl implements EntityUpgradeValidati
   public EntityUpgradeValidationResultDto validateEntityUpgradeMappings(
       long tenantId, long sourceGameInstanceId, long targetVersionId, String remapSetId) {
     String gameInstanceId = Long.toString(sourceGameInstanceId);
-    characterRepository.countByTenantId(tenantId);
+    long quarantinedActors = characterRepository.countQuarantinedByTenantId(tenantId);
     long inventoryRows = inventoryEntryRepository.countByCharacterTenantId(tenantId);
     long equipmentRows = characterEquipmentRepository.countByCharacterTenantId(tenantId);
     characterFriendRepository.countByTenantId(tenantId);
@@ -75,6 +75,17 @@ public class EntityUpgradeValidationServiceImpl implements EntityUpgradeValidati
     roomGroundInventoryRepository.countByIdTenantIdAndIdGameInstanceId(tenantId, gameInstanceId);
     String normalizedRemapSetId = normalizeBlank(remapSetId);
     boolean hasTemplateBoundRows = inventoryRows > 0 || equipmentRows > 0;
+    if (quarantinedActors > 0) {
+      return new EntityUpgradeValidationResultDto(
+          STATE_CLASSES,
+          CHECKED_FAMILIES,
+          hasTemplateBoundRows,
+          "INCOMPATIBLE",
+          false,
+          List.of(
+              "ENTITY_ACTOR_IDENTITY_QUARANTINED: legacy actor identity lacks exact Account UUID and owner-resolved namespace/scope provenance"),
+          null);
+    }
     if (hasTemplateBoundRows && normalizedRemapSetId == null) {
       return new EntityUpgradeValidationResultDto(
           STATE_CLASSES,
