@@ -34,9 +34,8 @@ public final class GameDesignPublicationTerminalReadEvidence {
         throw new IllegalArgumentException(
             "Closed schema-1 namespace and non-nil read UUID required");
       }
-      operationBytes =
-          GameDesignPublicationOperationBinding.fromStored(operationBytes).canonicalBytes();
       var operation = GameDesignPublicationOperationBinding.fromStored(operationBytes);
+      operationBytes = operation.canonicalBytes();
       if (!targetNamespace.equals(operation.world().request().targetNamespace())) {
         throw new IllegalArgumentException("Read namespace differs from original World operation");
       }
