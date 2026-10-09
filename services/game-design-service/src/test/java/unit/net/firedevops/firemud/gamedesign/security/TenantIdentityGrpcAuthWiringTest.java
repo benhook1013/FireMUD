@@ -51,12 +51,25 @@ import org.springframework.core.io.FileSystemResource;
 class TenantIdentityGrpcAuthWiringTest {
   private static final String FRESH_CREATION_METHOD =
       "gamedesign.v1.TenantIdentityService/ResolveFreshTenantCreation";
-  private static final List<String> CONFIGURED_PUBLIC_METHODS =
+  private static final String POLICY_RESOLVE_METHOD =
+      "game_design.v1.PublishedRealmEntryPolicyService/ResolvePublishedRealmEntryPolicy";
+  private static final String POLICY_LIST_METHOD =
+      "game_design.v1.PublishedRealmEntryPolicyService/ListPublishedRealmEntryPolicies";
+  private static final String RESOLVE_LAUNCH_DESCRIPTOR_METHOD =
+      "gamedesign.v1.GameDesignService/ResolveLaunchDescriptor";
+  private static final String GET_LAUNCH_DESCRIPTOR_METHOD =
+      "gamedesign.v1.GameDesignService/GetLaunchDescriptor";
+  private static final String GET_COMPLETE_LAUNCH_BINDING_METHOD =
+      "gamedesign.v1.GameDesignService/GetCompleteLaunchBinding";
+  private static final String OTHER_METHOD = "gamedesign.v1.TenantIdentityService/UnlistedMethod";
+  private static final List<String> ALLOWLISTED_METHODS =
       List.of(
           FRESH_CREATION_METHOD,
-          "game_design.v1.PublishedRealmEntryPolicyService/ResolvePublishedRealmEntryPolicy",
-          "game_design.v1.PublishedRealmEntryPolicyService/ListPublishedRealmEntryPolicies");
-  private static final String OTHER_METHOD = "gamedesign.v1.TenantIdentityService/UnlistedMethod";
+          POLICY_RESOLVE_METHOD,
+          POLICY_LIST_METHOD,
+          RESOLVE_LAUNCH_DESCRIPTOR_METHOD,
+          GET_LAUNCH_DESCRIPTOR_METHOD,
+          GET_COMPLETE_LAUNCH_BINDING_METHOD);
   private static final String ACCOUNT_URI = "spiffe://firemud/ns/test/sa/account-service";
   private static final String GAME_SESSION_URI = "spiffe://firemud/ns/test/sa/game-session-service";
   private static final String SOURCE_KEY = "fresh-owner-key-91";
@@ -67,10 +80,10 @@ class TenantIdentityGrpcAuthWiringTest {
       GameTenantCreationDigest.requestDigest("test", REQUEST_ID, SOURCE_KEY, "Fresh Realm", null);
 
   @Test
-  void defaultAndProductionProfilesAllowOnlyFreshReadAndRequireClientTls() throws IOException {
+  void defaultAndProductionProfilesKeepExactReadAllowlistAndRequireClientTls() throws IOException {
     for (String file : List.of("application.yml", "application-prod.yml")) {
       GrpcConfiguration config = load(file);
-      assertThat(config.publicMethods()).containsExactlyElementsOf(CONFIGURED_PUBLIC_METHODS);
+      assertThat(config.publicMethods()).containsExactlyElementsOf(ALLOWLISTED_METHODS);
       assertThat(config.clientAuth()).isEqualTo("REQUIRE");
     }
   }
@@ -185,7 +198,7 @@ class TenantIdentityGrpcAuthWiringTest {
             context -> {
               assertThat(context).hasSingleBean(AuthTokenInterceptor.class);
               assertThat(context.getBean(GrpcAuthProperties.class).getPublicMethods())
-                  .containsExactlyElementsOf(CONFIGURED_PUBLIC_METHODS);
+                  .containsExactlyElementsOf(ALLOWLISTED_METHODS);
               action.accept(context.getBean(AuthTokenInterceptor.class));
             });
   }

@@ -89,6 +89,9 @@ class RealmPolicyPublicationReadConfigurationTest {
                     .containsExactly(
                         "gamedesign.v1.TenantIdentityService/ResolveFreshTenantCreation",
                         "game_design.v1.PublishedRealmEntryPolicyService/ResolvePublishedRealmEntryPolicy",
-                        "game_design.v1.PublishedRealmEntryPolicyService/ListPublishedRealmEntryPolicies"));
+                        "game_design.v1.PublishedRealmEntryPolicyService/ListPublishedRealmEntryPolicies",
+                        "gamedesign.v1.GameDesignService/ResolveLaunchDescriptor",
+                        "gamedesign.v1.GameDesignService/GetLaunchDescriptor",
+                        "gamedesign.v1.GameDesignService/GetCompleteLaunchBinding"));
   }
 }

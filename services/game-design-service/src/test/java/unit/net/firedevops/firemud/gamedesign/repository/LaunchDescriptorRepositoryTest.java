@@ -30,8 +30,12 @@ class LaunchDescriptorRepositoryTest {
               + "version_state_epoch BIGINT, release_bundle_id BIGINT, "
               + "published_release_bundle_ref VARCHAR(128), remap_set_id VARCHAR(64), "
               + "descriptor_schema_version SMALLINT, target_namespace VARCHAR(63), "
-              + "canonical_tenant_id UUID, world_slug VARCHAR(120), "
+              + "canonical_tenant_id UUID, authored_world_source_tenant_slug VARCHAR(120), "
+              + "world_slug VARCHAR(120), "
               + "authored_world_source_operation_id UUID, "
+              + "authored_world_source_game_row_id BIGINT, "
+              + "authored_world_source_game_tenant_key VARCHAR(36), "
+              + "authored_world_source_provenance_kind VARCHAR(32), "
               + "authored_world_source_evidence_digest VARCHAR(72), request_digest VARCHAR(72), "
               + "result_digest VARCHAR(72), original_request_json VARCHAR(4000), "
               + "source_evidence_json VARCHAR(4000), outcome_status VARCHAR(16), "
@@ -41,8 +45,11 @@ class LaunchDescriptorRepositoryTest {
               + "control_plane_request_id, request_hash, version_id, script_patch_version, "
               + "runtime_flags_json, generation_config_revision, version_state_epoch, "
               + "release_bundle_id, published_release_bundle_ref, remap_set_id, "
-              + "descriptor_schema_version, target_namespace, canonical_tenant_id, world_slug, "
-              + "authored_world_source_operation_id, authored_world_source_evidence_digest, "
+              + "descriptor_schema_version, target_namespace, canonical_tenant_id, "
+              + "authored_world_source_tenant_slug, world_slug, "
+              + "authored_world_source_operation_id, authored_world_source_game_row_id, "
+              + "authored_world_source_game_tenant_key, authored_world_source_provenance_kind, "
+              + "authored_world_source_evidence_digest, "
               + "request_digest, result_digest, original_request_json, source_evidence_json, "
               + "outcome_status, failure_code, failure_message, created_at) VALUES "
               + "(17, 'launch-17', 'private-tenant', 23, 'request-17', 'sha256:request', 29, "
@@ -51,9 +58,10 @@ class LaunchDescriptorRepositoryTest {
               + "g".repeat(180)
               + "', 8, 31, 'release-31', NULL, 1, 'preview', '"
               + canonicalTenantId
-              + "', 'verdant-harbor', '"
+              + "', 'verdant-company', 'verdant-harbor', '"
               + sourceOperationId
-              + "', 'sha256:source', 'sha256:request', 'sha256:result', '{}', '{}', 'SUCCESS', "
+              + "', 93, 'private-game-key-9', 'NEW_GAME_ROW', 'sha256:source', "
+              + "'sha256:request', 'sha256:result', '{}', '{}', 'SUCCESS', "
               + "NULL, NULL, TIMESTAMP '2026-10-03 10:15:30.123')");
 
       var descriptor =
@@ -63,8 +71,13 @@ class LaunchDescriptorRepositoryTest {
 
       assertThat(descriptor.getDescriptorSchemaVersion()).isEqualTo(1);
       assertThat(descriptor.getCanonicalTenantId()).isEqualTo(canonicalTenantId.toString());
+      assertThat(descriptor.getAuthoredWorldSourceTenantSlug()).isEqualTo("verdant-company");
+      assertThat(descriptor.getWorldSlug()).isEqualTo("verdant-harbor");
       assertThat(descriptor.getAuthoredWorldSourceOperationId())
           .isEqualTo(sourceOperationId.toString());
+      assertThat(descriptor.getAuthoredWorldSourceGameRowId()).isEqualTo(93L);
+      assertThat(descriptor.getAuthoredWorldSourceGameTenantKey()).isEqualTo("private-game-key-9");
+      assertThat(descriptor.getAuthoredWorldSourceProvenanceKind()).isEqualTo("NEW_GAME_ROW");
       assertThat(descriptor.getGenerationConfigRevision())
           .isEqualTo("generation-6:" + "g".repeat(180));
       assertThat(descriptor.getCreatedAt()).isEqualTo(createdAt);
