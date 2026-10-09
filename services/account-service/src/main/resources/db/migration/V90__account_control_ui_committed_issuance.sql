@@ -62,6 +62,20 @@ BEGIN
     IF TG_OP = 'DELETE' THEN
         RAISE EXCEPTION 'Control-ui issuance evidence cannot be deleted' USING ERRCODE = '23514';
     END IF;
+    IF TG_OP = 'INSERT' THEN
+        IF NEW.status IS DISTINCT FROM 'PREPARED'
+            OR NEW.token_hash IS NOT NULL
+            OR NEW.pending_registry IS NOT NULL
+            OR NEW.active_registry IS NOT NULL
+            OR NEW.pending_receipt IS NOT NULL
+            OR NEW.committed_at IS NOT NULL
+            OR NEW.recovery_failed_at IS NOT NULL
+            OR NEW.revocation_receipt IS NOT NULL THEN
+            RAISE EXCEPTION 'Control-ui issuance must begin in its empty prepared state'
+                USING ERRCODE = '23514';
+        END IF;
+        RETURN NEW;
+    END IF;
     IF (to_jsonb(NEW) - ARRAY['status','token_hash','pending_registry','active_registry',
             'pending_receipt','committed_at','recovery_failed_at','revocation_receipt']) IS DISTINCT FROM
        (to_jsonb(OLD) - ARRAY['status','token_hash','pending_registry','active_registry',
@@ -105,7 +119,7 @@ END;
 $$;
 
 CREATE TRIGGER account_control_ui_issuance_immutable
-    BEFORE UPDATE OR DELETE ON account_control_ui_issuance_operations
+    BEFORE INSERT OR UPDATE OR DELETE ON account_control_ui_issuance_operations
     FOR EACH ROW EXECUTE FUNCTION account_control_ui_issuance_guard();
 CREATE TRIGGER account_control_ui_issuance_no_truncate
     BEFORE TRUNCATE ON account_control_ui_issuance_operations

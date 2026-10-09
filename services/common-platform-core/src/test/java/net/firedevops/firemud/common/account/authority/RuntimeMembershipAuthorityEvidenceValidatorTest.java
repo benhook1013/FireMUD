@@ -145,6 +145,40 @@ class RuntimeMembershipAuthorityEvidenceValidatorTest {
   }
 
   @Test
+  void preservesMalformedResetDigestDiagnosticWhenSecurityStateVerificationFails() {
+    var valid = currentSnapshot();
+    var accountSource = valid.sourceEvidence().get(0);
+    String malformedResetDigest =
+        accountSource
+            .canonicalEventJson()
+            .replaceFirst("sha256:[0-9a-f]{64}", "sha256:" + "0".repeat(64));
+    var malformedSource =
+        new RuntimeMembershipAuthorityEvidenceValidator.SourceEvidence(
+            accountSource.outboxStreamKey(),
+            accountSource.outboxSequence(),
+            accountSource.eventId(),
+            accountSource.eventDigest(),
+            malformedResetDigest);
+
+    assertThatThrownBy(
+            () ->
+                RuntimeMembershipAuthorityEvidenceValidator.validate(
+                    copyWith(
+                        valid,
+                        valid.checkpoints(),
+                        List.of(malformedSource, valid.sourceEvidence().get(1)))))
+        .isInstanceOf(IllegalArgumentException.class)
+        .satisfies(
+            failure ->
+                assertThat(failure.getSuppressed())
+                    .anySatisfy(
+                        diagnostic ->
+                            assertThat(diagnostic.getMessage())
+                                .contains("eventDigest")
+                                .contains("canonical event preimage")));
+  }
+
+  @Test
   void requiresSortedExactCheckpointAndSourceInventories() {
     var valid = currentSnapshot();
     List<RuntimeMembershipAuthorityEvidenceValidator.Checkpoint> reversed =

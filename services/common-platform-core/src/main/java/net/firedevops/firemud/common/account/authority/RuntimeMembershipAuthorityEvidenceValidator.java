@@ -269,20 +269,27 @@ public final class RuntimeMembershipAuthorityEvidenceValidator {
                   logout.accountSecurityCutoff().outboxStreamKey(),
                   logout.accountSecurityCutoff().outboxSequence());
         } catch (IllegalArgumentException logoutFailure) {
-          var security =
-              AccountSecurityStateAuthorityEventV1Codec.verify(supplied.canonicalEventJson());
-          event =
-              new AccountSource(
-                  security.eventId(),
-                  security.eventDigest(),
-                  security.canonicalJson(),
-                  security.outboxStreamKey(),
-                  security.outboxSequence(),
-                  security.accountId(),
-                  security.accountAuthorityGeneration(),
-                  security.accountSecurityCutoff().accountAuthorityGeneration(),
-                  security.accountSecurityCutoff().outboxStreamKey(),
-                  security.accountSecurityCutoff().outboxSequence());
+          try {
+            var security =
+                AccountSecurityStateAuthorityEventV1Codec.verify(supplied.canonicalEventJson());
+            event =
+                new AccountSource(
+                    security.eventId(),
+                    security.eventDigest(),
+                    security.canonicalJson(),
+                    security.outboxStreamKey(),
+                    security.outboxSequence(),
+                    security.accountId(),
+                    security.accountAuthorityGeneration(),
+                    security.accountSecurityCutoff().accountAuthorityGeneration(),
+                    security.accountSecurityCutoff().outboxStreamKey(),
+                    security.accountSecurityCutoff().outboxSequence());
+          } catch (IllegalArgumentException securityFailure) {
+            securityFailure.addSuppressed(currentSchemaMismatch);
+            securityFailure.addSuppressed(resetFailure);
+            securityFailure.addSuppressed(logoutFailure);
+            throw securityFailure;
+          }
         }
       }
     }
