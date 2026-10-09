@@ -550,13 +550,25 @@ public final class CommandSourceRepository {
         units.stream().filter(this::isPolicyScope).toList();
     var assets = units.stream().filter(AssetSourceRepository::isScope).toList();
     var gameplay = units.stream().filter(GameplayRuleSource::isScope).toList();
+    var branding = units.stream().filter(BrandingSourceRepository::isScope).toList();
+    var templateConfigs = units.stream().filter(TemplateConfigSource::isScope).toList();
     boolean assetMutation = !AssetSource.mutations(binding).isEmpty();
     boolean gameplayMutation = !GameplayRuleSource.mutations(binding).isEmpty();
+    boolean brandingMutation = !BrandingSource.mutations(binding).isEmpty();
+    boolean templateConfigMutation = !TemplateConfigSource.mutations(binding).isEmpty();
     if (commands.size() != (commandMutations.isEmpty() ? 0 : 1)
         || policies.size() != (policyMutation ? 1 : 0)
         || assets.size() != (assetMutation ? 1 : 0)
         || gameplay.size() != (gameplayMutation ? 1 : 0)
-        || commands.size() + policies.size() + assets.size() + gameplay.size() != units.size()) {
+        || branding.size() != (brandingMutation ? 1 : 0)
+        || templateConfigs.size() != (templateConfigMutation ? 1 : 0)
+        || commands.size()
+                + policies.size()
+                + assets.size()
+                + gameplay.size()
+                + branding.size()
+                + templateConfigs.size()
+            != units.size()) {
       throw new IllegalArgumentException(
           "Complete supported Game Design control-plane scopes are required");
     }
@@ -564,6 +576,9 @@ public final class CommandSourceRepository {
     if (!policies.isEmpty()) requireScopeTarget(policies.getFirst(), binding.target());
     if (!assets.isEmpty()) requireScopeTarget(assets.getFirst(), binding.target());
     if (!gameplay.isEmpty()) requireScopeTarget(gameplay.getFirst(), binding.target());
+    if (!branding.isEmpty()) requireScopeTarget(branding.getFirst(), binding.target());
+    if (!templateConfigs.isEmpty())
+      requireScopeTarget(templateConfigs.getFirst(), binding.target());
   }
 
   private boolean isCommandScope(DraftCommitBinding.AffectedUnit unit) {

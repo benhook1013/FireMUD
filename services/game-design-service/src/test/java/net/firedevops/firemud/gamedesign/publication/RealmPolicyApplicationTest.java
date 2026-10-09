@@ -75,6 +75,17 @@ class RealmPolicyApplicationTest {
         .isInstanceOf(IllegalArgumentException.class);
   }
 
+  @Test
+  void knownSiblingSourceKindsAreNonPolicyAndUnknownKindsStillDeny() {
+    assertThat(RealmPolicySource.isPolicyRevision(revision(BrandingSource.REVISION_KIND)))
+        .isFalse();
+    assertThat(RealmPolicySource.isPolicyRevision(revision(TemplateConfigSource.REVISION_KIND)))
+        .isFalse();
+    assertThatThrownBy(() -> RealmPolicySource.isPolicyRevision(revision("UNKNOWN_SOURCE")))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessage("Unsupported Game Design owner revision kind");
+  }
+
   private static RealmPolicyApplication freshApplication() {
     return new RealmPolicyApplication(freshGenesis(), null, "0", snapshot());
   }
@@ -105,6 +116,11 @@ class RealmPolicyApplicationTest {
   private static TargetProof target() {
     return new TargetProof(
         TENANT_ID, VERSION_ID, 23L, "tenant-key", 42L, "tenant-key", "NEW_GAME_ROW");
+  }
+
+  private static RevisionPayload revision(String kind) {
+    return new RevisionPayload(
+        "0", REVISION_ID, Owner.GAME_DESIGN_CONTROL_PLANE, "{\"revisionKind\":\"" + kind + "\"}");
   }
 
   private static byte[] frames(byte[]... values) {

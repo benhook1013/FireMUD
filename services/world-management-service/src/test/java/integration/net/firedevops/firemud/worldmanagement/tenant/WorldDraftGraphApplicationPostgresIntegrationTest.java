@@ -760,6 +760,21 @@ class WorldDraftGraphApplicationPostgresIntegrationTest {
       assertThat(publicationAccountQualificationCount(fence)).isEqualTo(1L);
     }
 
+    var substitutedOperation = isolatedTerminalEvidence(original, changedOperation);
+    assertThatThrownBy(
+            () ->
+                ownerTransaction()
+                    .execute(
+                        status -> {
+                          insertPublicationTerminal(request, substitutedOperation.operationBytes());
+                          return null;
+                        }))
+        .satisfies(failure -> assertPublicationGuardSqlState(failure, "23514"));
+    assertThat(ownerSnapshot(f, graphApplication.plan())).isEqualTo(ownerBefore);
+    assertThat(publicationOwnerPhase(fence)).isEqualTo("FROZEN");
+    assertThat(publicationTerminalCount(fence)).isZero();
+    assertThat(publicationAccountQualificationCount(fence)).isEqualTo(1L);
+
     var first =
         publicationTerminalComponent(original)
             .complete(request.operationBytes(), request.terminalBytes());

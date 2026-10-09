@@ -126,3 +126,9 @@ Entry format:
   - Observation: Calling an unproxied repository directly did not reproduce the failure; a clean caller alone did not establish a clean invocation inside the proxy.
   - Expected pattern: Exercise the real transaction proxy when proving an outside-SQL owner read. Preserve rejection of both ambient transactions and empty synchronization scopes rather than weakening the guard to accommodate its own annotation.
   - Current status: The annotation was removed and a three-case proxy regression passed locally. Corrected-head PostgreSQL/transport execution remains required.
+
+- `2026-10-09`: Check whether a schema-generation index failure exposes redundant DDL
+  - Context: The unpublished V61 receipt table's composite unique index included a PostgreSQL `TEXT` workflow identity; jOOQ's H2-backed schema simulator mapped it to an unindexable CLOB and failed generation.
+  - Observation: The table's existing primary key was a strict subset of that composite key, so the extra unique index enforced no additional uniqueness invariant. This was not evidence that PostgreSQL rejected the migration.
+  - Expected pattern: Compare the intended invariant with existing keys before adding simulator-specific scaffolding or weakening payload bounds. Remove a genuinely redundant index when the stronger key already enforces the contract; retain separate physical PostgreSQL migration proof.
+  - Current status: Removing the redundant index restored V61 schema generation. The subsequent integration-fixture and static-check corrections passed the complete Game Design gate R193; all three V61 PostgreSQL definitions compiled but skipped without Docker. Physical V61 proof remains unexecuted locally.
