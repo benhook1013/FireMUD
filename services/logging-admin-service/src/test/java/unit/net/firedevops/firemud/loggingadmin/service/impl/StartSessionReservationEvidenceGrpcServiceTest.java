@@ -35,6 +35,7 @@ import net.firedevops.firemud.common.security.AuthTokenInterceptor;
 import net.firedevops.firemud.common.security.JwtUtil;
 import net.firedevops.firemud.common.security.SessionContext;
 import net.firedevops.firemud.loggingadmin.operator.StartSessionPreAuthorizationReservationService;
+import net.firedevops.firemud.loggingadmin.operator.StartSessionPreAuthorizationReservationService.ClaimPurpose;
 import net.firedevops.firemud.loggingadmin.operator.StartSessionPreAuthorizationReservationService.ClaimState;
 import net.firedevops.firemud.loggingadmin.operator.StartSessionPreAuthorizationReservationService.CurrentClaimEvidence;
 import net.firedevops.firemud.loggingadmin.operator.StartSessionPreAuthorizationReservationService.Phase;
@@ -422,7 +423,8 @@ class StartSessionReservationEvidenceGrpcServiceTest {
             1L,
             currentFence,
             OBSERVED_AT + 30_000L,
-            ClaimState.ACTIVE);
+            ClaimState.ACTIVE,
+            currentFence == 1L ? ClaimPurpose.ORIGINAL : ClaimPurpose.AUTHORIZATION_RECOVERY);
     return new CurrentClaimEvidence(
         snapshot, RESERVATION_OWNER_ID, currentOwner, purpose, OBSERVED_AT);
   }

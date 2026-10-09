@@ -19,10 +19,16 @@ import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.security.KeyFactory;
 import java.security.KeyStore;
+import java.security.Principal;
+import java.security.PrivateKey;
+import java.security.cert.Certificate;
 import java.security.cert.CertificateFactory;
 import java.security.cert.X509Certificate;
+import java.security.spec.PKCS8EncodedKeySpec;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Base64;
 import java.util.List;
 import java.util.Map;
@@ -30,6 +36,15 @@ import java.util.Objects;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.TimeUnit;
+import javax.net.ssl.KeyManager;
+import javax.net.ssl.KeyManagerFactory;
+import javax.net.ssl.SSLContext;
+import javax.net.ssl.SSLEngine;
+import javax.net.ssl.SSLHandshakeException;
+import javax.net.ssl.SSLParameters;
+import javax.net.ssl.SSLSocket;
+import javax.net.ssl.TrustManagerFactory;
+import javax.net.ssl.X509ExtendedKeyManager;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentityInterceptor;
 import net.firedevops.firemud.common.operator.StartSessionOperatorAction;
@@ -38,7 +53,6 @@ import net.firedevops.firemud.common.security.JwtUtil;
 import net.firedevops.firemud.common.security.SessionContext;
 import net.firedevops.firemud.loggingadmin.operator.StartSessionPreAuthorizationReservationService;
 import net.firedevops.firemud.loggingadmin.operator.StartSessionPreAuthorizationReservationTuple;
-import net.firedevops.firemud.loggingadmin.repository.StartSessionPreAuthorizationReservationRepository;
 import net.firedevops.firemud.loggingadmin.service.impl.StartSessionReservationEvidenceGrpcService;
 import net.firedevops.firemud.loggingadmin.v1.ReadCurrentClaimEvidenceRequest;
 import net.firedevops.firemud.loggingadmin.v1.ReadCurrentClaimEvidenceResponse;
@@ -47,9 +61,6 @@ import net.firedevops.firemud.loggingadmin.v1.StartSessionReservationEvidenceSer
 import net.firedevops.firemud.test.TestContainerImages;
 import net.firedevops.firemud.test.TlsTestSupport;
 import org.flywaydb.core.Flyway;
-import org.jooq.DSLContext;
-import org.jooq.SQLDialect;
-import org.jooq.impl.DSL;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
@@ -86,10 +97,8 @@ class StartSessionReservationEvidenceGrpcMutualTlsIntegrationTest {
         .placeholders(Map.of("serviceSchema", "public"))
         .load()
         .migrate();
-    DSLContext dsl = DSL.using(dataSource, SQLDialect.POSTGRES);
     StartSessionPreAuthorizationReservationService reservationService =
-        new StartSessionPreAuthorizationReservationService(
-            new StartSessionPreAuthorizationReservationRepository(dsl));
+        StartSessionReservationMutationTestFixtures.forRunOwnedPostgres(postgres).service();
     TestWorkloadPki pki = TestWorkloadPki.create(temporaryDirectory);
     assertThat(GrpcPeerIdentity.fromCertificate(readCertificate(pki.serverCertificate())))
         .get()
@@ -135,10 +144,11 @@ class StartSessionReservationEvidenceGrpcMutualTlsIntegrationTest {
                   .START_SESSION_RESERVATION_EVIDENCE_PURPOSE_ISSUE);
       assertThat(reservationService.findExact(tuple)).isPresent();
 
+      assertTlsHandshakeAccepted(server, pki, pki.accountClient());
       assertHandshakeRejected(
-          server, pki, pki.clientWithoutCertificate(), request, "missing client certificate");
+          server, pki, pki.clientWithoutCertificate(), "missing client certificate");
       assertHandshakeRejected(
-          server, pki, pki.untrustedAccountClient(), request, "untrusted client certificate chain");
+          server, pki, pki.untrustedAccountClient(), "untrusted client certificate chain");
       assertThat(readStatus(server, pki, pki.wrongServiceClient(), request))
           .isEqualTo(Status.Code.PERMISSION_DENIED);
       assertThat(readStatus(server, pki, pki.wrongNamespaceClient(), request))
@@ -206,14 +216,213 @@ class StartSessionReservationEvidenceGrpcMutualTlsIntegrationTest {
       Server server,
       TestWorkloadPki pki,
       TestWorkloadPki.ClientIdentity clientIdentity,
-      ReadCurrentClaimEvidenceRequest request,
       String description)
       throws Exception {
-    Throwable failure = catchThrowable(() -> read(server, pki, clientIdentity, request));
+    RawClientTls clientTls = rawClientTls(pki, clientIdentity);
+    Throwable failure =
+        catchThrowable(
+            () -> {
+              try (SSLSocket socket = clientSocket(server, clientTls.context())) {
+                socket.startHandshake();
+              }
+            });
     assertThat(failure).as(description).isNotNull();
+    assertThat(failure)
+        .as("%s must surface a TLS handshake exception", description)
+        .isInstanceOf(SSLHandshakeException.class);
     assertThat(TlsTestSupport.isTlsHandshakeRejection(failure))
         .as("%s must fail during the TLS certificate handshake", description)
         .isTrue();
+    if (clientIdentity.certificate() != null) {
+      clientTls.assertIdentitySelected(clientIdentity, ACCOUNT_URI);
+      assertThat(clientTls.keyManager().requestedIssuers())
+          .as("%s server issuer hints must exclude the selected account chain issuer", description)
+          .isNotEmpty()
+          .doesNotContain(clientTls.keyManager().selectedChain()[0].getIssuerX500Principal());
+    }
+  }
+
+  private static void assertTlsHandshakeAccepted(
+      Server server, TestWorkloadPki pki, TestWorkloadPki.ClientIdentity clientIdentity)
+      throws Exception {
+    RawClientTls clientTls = rawClientTls(pki, clientIdentity);
+    try (SSLSocket socket = clientSocket(server, clientTls.context())) {
+      socket.startHandshake();
+      assertThat(socket.getSession().getProtocol()).isEqualTo("TLSv1.2");
+      assertThat(socket.getApplicationProtocol()).isEqualTo("h2");
+    }
+    clientTls.assertIdentitySelected(clientIdentity, ACCOUNT_URI);
+  }
+
+  private static SSLSocket clientSocket(Server server, SSLContext context) throws Exception {
+    SSLSocket socket =
+        (SSLSocket) context.getSocketFactory().createSocket("127.0.0.1", server.getPort());
+    socket.setSoTimeout(10_000);
+    SSLParameters parameters = socket.getSSLParameters();
+    parameters.setEndpointIdentificationAlgorithm("HTTPS");
+    parameters.setProtocols(new String[] {"TLSv1.2"});
+    parameters.setApplicationProtocols(new String[] {"h2"});
+    socket.setSSLParameters(parameters);
+    return socket;
+  }
+
+  private static RawClientTls rawClientTls(
+      TestWorkloadPki pki, TestWorkloadPki.ClientIdentity clientIdentity) throws Exception {
+    KeyStore trustStore = KeyStore.getInstance(KeyStore.getDefaultType());
+    trustStore.load(null, null);
+    trustStore.setCertificateEntry(
+        "logging-admin-test-ca", readCertificate(pki.trustedCaCertificate()));
+    TrustManagerFactory trustManagers =
+        TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm());
+    trustManagers.init(trustStore);
+
+    ExplicitClientIdentityKeyManager explicitClientIdentity = null;
+    KeyManager[] keyManagers = null;
+    if (clientIdentity.certificate() != null) {
+      KeyStore clientKeyStore = KeyStore.getInstance(KeyStore.getDefaultType());
+      char[] password = TestWorkloadPki.STORE_PASSWORD.toCharArray();
+      clientKeyStore.load(null, password);
+      clientKeyStore.setKeyEntry(
+          "logging-admin-test-client",
+          readPrivateKey(clientIdentity.privateKey()),
+          password,
+          new Certificate[] {readCertificate(clientIdentity.certificate())});
+      KeyManagerFactory clientKeyManagers =
+          KeyManagerFactory.getInstance(KeyManagerFactory.getDefaultAlgorithm());
+      clientKeyManagers.init(clientKeyStore, password);
+      explicitClientIdentity =
+          new ExplicitClientIdentityKeyManager(
+              (X509ExtendedKeyManager) clientKeyManagers.getKeyManagers()[0],
+              "logging-admin-test-client");
+      keyManagers = new KeyManager[] {explicitClientIdentity};
+    }
+
+    SSLContext context = SSLContext.getInstance("TLS");
+    context.init(keyManagers, trustManagers.getTrustManagers(), null);
+    return new RawClientTls(context, explicitClientIdentity);
+  }
+
+  private record RawClientTls(SSLContext context, ExplicitClientIdentityKeyManager keyManager) {
+    void assertIdentitySelected(TestWorkloadPki.ClientIdentity clientIdentity, String expectedUri)
+        throws Exception {
+      assertThat(keyManager)
+          .as("raw TLS probe must have a client identity key manager")
+          .isNotNull();
+      X509Certificate expectedCertificate = readCertificate(clientIdentity.certificate());
+      assertThat(keyManager.selectedAlias()).isEqualTo("logging-admin-test-client");
+      assertThat(keyManager.selectedChain()).containsExactly(expectedCertificate);
+      assertThat(GrpcPeerIdentity.fromCertificate(keyManager.selectedChain()[0]))
+          .get()
+          .extracting(GrpcPeerIdentity::uri)
+          .isEqualTo(expectedUri);
+    }
+  }
+
+  /**
+   * Test-only key manager that selects its one explicit identity even when the server's issuer hint
+   * excludes that identity's issuer; this makes the untrusted-chain probe exercise rejection of the
+   * presented certificate rather than omission of a client certificate.
+   */
+  private static final class ExplicitClientIdentityKeyManager extends X509ExtendedKeyManager {
+    private final X509ExtendedKeyManager delegate;
+    private final String explicitAlias;
+    private String selectedAlias;
+    private X509Certificate[] selectedChain;
+    private List<Principal> requestedIssuers = List.of();
+
+    private ExplicitClientIdentityKeyManager(
+        X509ExtendedKeyManager delegate, String explicitAlias) {
+      this.delegate = delegate;
+      this.explicitAlias = explicitAlias;
+    }
+
+    @Override
+    public String[] getClientAliases(String keyType, Principal[] issuers) {
+      return supports(keyType) ? new String[] {explicitAlias} : null;
+    }
+
+    @Override
+    public String chooseClientAlias(
+        String[] keyTypes, Principal[] issuers, java.net.Socket socket) {
+      captureIssuers(issuers);
+      return supports(keyTypes) ? selectExplicitAlias() : null;
+    }
+
+    @Override
+    public String[] getServerAliases(String keyType, Principal[] issuers) {
+      return delegate.getServerAliases(keyType, issuers);
+    }
+
+    @Override
+    public String chooseServerAlias(String keyType, Principal[] issuers, java.net.Socket socket) {
+      return delegate.chooseServerAlias(keyType, issuers, socket);
+    }
+
+    @Override
+    public X509Certificate[] getCertificateChain(String alias) {
+      X509Certificate[] chain = delegate.getCertificateChain(alias);
+      if (explicitAlias.equals(alias)) {
+        selectedChain = chain == null ? null : chain.clone();
+      }
+      return chain;
+    }
+
+    @Override
+    public PrivateKey getPrivateKey(String alias) {
+      return delegate.getPrivateKey(alias);
+    }
+
+    @Override
+    public String chooseEngineClientAlias(
+        String[] keyTypes, Principal[] issuers, SSLEngine engine) {
+      captureIssuers(issuers);
+      return supports(keyTypes) ? selectExplicitAlias() : null;
+    }
+
+    @Override
+    public String chooseEngineServerAlias(String keyType, Principal[] issuers, SSLEngine engine) {
+      return delegate.chooseEngineServerAlias(keyType, issuers, engine);
+    }
+
+    private boolean supports(String keyType) {
+      PrivateKey key = delegate.getPrivateKey(explicitAlias);
+      return key != null && key.getAlgorithm().equalsIgnoreCase(keyType);
+    }
+
+    private boolean supports(String[] keyTypes) {
+      return keyTypes != null && Arrays.stream(keyTypes).anyMatch(this::supports);
+    }
+
+    private String selectExplicitAlias() {
+      selectedAlias = explicitAlias;
+      return explicitAlias;
+    }
+
+    private void captureIssuers(Principal[] issuers) {
+      requestedIssuers = issuers == null ? List.of() : List.copyOf(Arrays.asList(issuers.clone()));
+    }
+
+    private String selectedAlias() {
+      return selectedAlias;
+    }
+
+    private X509Certificate[] selectedChain() {
+      return selectedChain == null ? new X509Certificate[0] : selectedChain.clone();
+    }
+
+    private List<Principal> requestedIssuers() {
+      return requestedIssuers;
+    }
+  }
+
+  private static PrivateKey readPrivateKey(Path privateKey) throws Exception {
+    String encoded =
+        Files.readString(privateKey)
+            .replace("-----BEGIN PRIVATE KEY-----", "")
+            .replace("-----END PRIVATE KEY-----", "")
+            .replaceAll("\\s", "");
+    return KeyFactory.getInstance("RSA")
+        .generatePrivate(new PKCS8EncodedKeySpec(Base64.getDecoder().decode(encoded)));
   }
 
   private static ManagedChannel clientChannel(

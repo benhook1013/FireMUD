@@ -10,6 +10,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
@@ -22,8 +23,10 @@ import net.firedevops.firemud.common.operator.StartSessionOperatorAction;
 import net.firedevops.firemud.common.operator.StartSessionPostAuthorizationExecutionTuple;
 import net.firedevops.firemud.common.security.SessionContext;
 import net.firedevops.firemud.loggingadmin.operator.StartSessionPreAuthorizationReservationService;
+import net.firedevops.firemud.loggingadmin.operator.StartSessionPreAuthorizationReservationService.ClaimPurpose;
 import net.firedevops.firemud.loggingadmin.operator.StartSessionPreAuthorizationReservationService.ClaimState;
 import net.firedevops.firemud.loggingadmin.operator.StartSessionPreAuthorizationReservationService.Phase;
+import net.firedevops.firemud.loggingadmin.operator.StartSessionPreAuthorizationReservationService.ReadPurpose;
 import net.firedevops.firemud.loggingadmin.operator.StartSessionPreAuthorizationReservationService.State;
 import net.firedevops.firemud.loggingadmin.operator.StartSessionPreAuthorizationReservationTuple;
 import net.firedevops.firemud.loggingadmin.repository.StartSessionPreAuthorizationReservationRepository;
@@ -80,10 +83,12 @@ class StartSessionPreAuthorizationReservationPostgresIntegrationTest {
         .dataSource(dataSource)
         .locations("classpath:db/migration")
         .placeholders(FLYWAY_PLACEHOLDERS)
+        .target(MigrationVersion.fromVersion("4"))
         .load()
         .migrate();
     dsl = DSL.using(dataSource, SQLDialect.POSTGRES);
-    repository = new StartSessionPreAuthorizationReservationRepository(dsl);
+    repository =
+        StartSessionReservationMutationTestFixtures.forRunOwnedPostgres(postgres).repository();
   }
 
   @AfterEach
@@ -135,7 +140,7 @@ class StartSessionPreAuthorizationReservationPostgresIntegrationTest {
   }
 
   @Test
-  void upgradeFromV1RetainsExistingLogEventsThroughV2AndV3() {
+  void upgradeFromV1RetainsExistingLogEventsThroughV4() {
     Flyway.configure()
         .dataSource(dataSource)
         .locations("classpath:db/migration")
@@ -170,6 +175,48 @@ class StartSessionPreAuthorizationReservationPostgresIntegrationTest {
         .dataSource(dataSource)
         .locations("classpath:db/migration")
         .placeholders(FLYWAY_PLACEHOLDERS)
+        .target(MigrationVersion.fromVersion("3"))
+        .load()
+        .migrate();
+
+    StartSessionPreAuthorizationReservationTuple pendingTuple =
+        tuple("postgres-v3-recovery-backfill", "V3 recovery backfill fixture");
+    UUID originalOwner = UUID.fromString("39a96323-f6e0-4a64-a3c3-7a3a346f2696");
+    UUID recoveryOwner = UUID.fromString("05bd6075-3e08-4a83-97c2-9af3481a9492");
+    dsl.execute(
+        "INSERT INTO start_session_pre_authorization_reservations ("
+            + "control_plane_request_id, pre_authorization_tuple_json, mutation_digest, phase, state, "
+            + "reservation_owner_id, reservation_claim_fence, claim_owner_id, claim_fence, "
+            + "claim_expires_at_epoch_ms, claim_state, created_at_epoch_ms, updated_at_epoch_ms, "
+            + "post_authorization_execution_tuple_json, owner_execution_handoff_id) "
+            + "VALUES (?, ?, ?, 'ACCOUNT_AUTHORIZATION', 'RESERVED', ?, 1, ?, 1, ?, 'ACTIVE', ?, ?, NULL, NULL)",
+        pendingTuple.controlPlaneRequestId(),
+        pendingTuple.canonicalJson(),
+        pendingTuple.mutationDigest(),
+        originalOwner,
+        originalOwner,
+        NOW_EPOCH_MILLIS + 30_000L,
+        NOW_EPOCH_MILLIS,
+        NOW_EPOCH_MILLIS);
+    dsl.execute(
+        "UPDATE start_session_pre_authorization_reservations SET state = 'AUTHORIZATION_PENDING', "
+            + "updated_at_epoch_ms = ? WHERE control_plane_request_id = ?",
+        NOW_EPOCH_MILLIS + 1_000L,
+        pendingTuple.controlPlaneRequestId());
+    dsl.execute(
+        "UPDATE start_session_pre_authorization_reservations SET claim_owner_id = ?, "
+            + "claim_fence = 3, claim_expires_at_epoch_ms = ?, updated_at_epoch_ms = ? "
+            + "WHERE control_plane_request_id = ?",
+        recoveryOwner,
+        NOW_EPOCH_MILLIS + 60_001L,
+        NOW_EPOCH_MILLIS + 30_001L,
+        pendingTuple.controlPlaneRequestId());
+
+    Flyway.configure()
+        .dataSource(dataSource)
+        .locations("classpath:db/migration")
+        .placeholders(FLYWAY_PLACEHOLDERS)
+        .target(MigrationVersion.fromVersion("4"))
         .load()
         .migrate();
 
@@ -179,18 +226,77 @@ class StartSessionPreAuthorizationReservationPostgresIntegrationTest {
                     "The V1 log row must remain after the reservation migrations")
                 .get(0, String.class))
         .isEqualTo("existing row before reservation migrations");
-    assertThat(
-            Objects.requireNonNull(
-                    dsl.fetchOne(
-                        "SELECT COUNT(*) FROM start_session_pre_authorization_reservations"),
-                    "The V2 reservation table must exist after migration")
-                .get(0, Long.class))
-        .isZero();
+    assertThat(repository.findExact(pendingTuple).orElseThrow().claimPurpose())
+        .isEqualTo(ClaimPurpose.AUTHORIZATION_RECOVERY);
+    assertThat(repository.findExact(pendingTuple).orElseThrow().reservationClaimFence())
+        .isEqualTo(1L);
+    assertThat(repository.findExact(pendingTuple).orElseThrow().claimFence()).isEqualTo(3L);
     assertThat(
             dsl.fetch(
                     "SELECT version FROM flyway_schema_history WHERE success ORDER BY installed_rank")
                 .getValues("version", String.class))
-        .containsExactly("1", "2", "3");
+        .containsExactly("1", "2", "3", "4");
+  }
+
+  @Test
+  void activeClaimsRequirePurposeWhileExpiredClaimsKeepNullPurpose() {
+    StartSessionPreAuthorizationReservationTuple rejectedInsertTuple =
+        tuple("postgres-null-purpose-insert", "active claim purpose insert guard");
+    UUID rejectedOwner = UUID.fromString("cd2900f9-2a8b-4dd3-a495-15180eb78f67");
+
+    assertThatThrownBy(
+        () ->
+            dsl.execute(
+                "INSERT INTO start_session_pre_authorization_reservations ("
+                    + "control_plane_request_id, pre_authorization_tuple_json, mutation_digest, phase, state, "
+                    + "reservation_owner_id, reservation_claim_fence, claim_owner_id, claim_fence, "
+                    + "claim_expires_at_epoch_ms, claim_state, claim_purpose, created_at_epoch_ms, "
+                    + "updated_at_epoch_ms, post_authorization_execution_tuple_json, owner_execution_handoff_id) "
+                    + "VALUES (?, ?, ?, 'ACCOUNT_AUTHORIZATION', 'RESERVED', ?, 1, ?, 1, ?, 'ACTIVE', NULL, ?, ?, NULL, NULL)",
+                rejectedInsertTuple.controlPlaneRequestId(),
+                rejectedInsertTuple.canonicalJson(),
+                rejectedInsertTuple.mutationDigest(),
+                rejectedOwner,
+                rejectedOwner,
+                NOW_EPOCH_MILLIS + 30_000L,
+                NOW_EPOCH_MILLIS,
+                NOW_EPOCH_MILLIS));
+    assertThat(dsl.fetchCount(START_SESSION_PRE_AUTHORIZATION_RESERVATIONS)).isZero();
+
+    StartSessionPreAuthorizationReservationTuple tuple =
+        tuple("postgres-null-purpose-update", "active claim purpose update guard");
+    UUID owner = UUID.fromString("dd58a5f2-c3b9-4b95-b9f8-396dece825b8");
+    repository.acquire(tuple, owner, NOW_EPOCH_MILLIS, NOW_EPOCH_MILLIS + 30_000L);
+    assertThatThrownBy(
+            () ->
+                dsl.execute(
+                    "UPDATE start_session_pre_authorization_reservations SET claim_purpose = NULL "
+                        + "WHERE control_plane_request_id = ?",
+                    tuple.controlPlaneRequestId()))
+        .isInstanceOf(RuntimeException.class);
+    assertThat(repository.findExact(tuple).orElseThrow().claimPurpose())
+        .isEqualTo(ClaimPurpose.ORIGINAL);
+
+    var expired =
+        repository.expireClaim(
+            tuple,
+            tuple.mutationDigest(),
+            owner,
+            1L,
+            Phase.ACCOUNT_AUTHORIZATION,
+            State.RESERVED,
+            NOW_EPOCH_MILLIS + 30_000L);
+    assertThat(expired.claimState()).isEqualTo(ClaimState.EXPIRED);
+    assertThat(expired.claimPurpose()).isNull();
+    assertThat(
+            Objects.requireNonNull(
+                    dsl.fetchOne(
+                        "SELECT claim_purpose FROM start_session_pre_authorization_reservations "
+                            + "WHERE control_plane_request_id = ?",
+                        tuple.controlPlaneRequestId()),
+                    "The expired reservation row must remain readable")
+                .get(0, String.class))
+        .isNull();
   }
 
   @Test
@@ -276,6 +382,7 @@ class StartSessionPreAuthorizationReservationPostgresIntegrationTest {
     assertThat(recovery.snapshot().reservationClaimFence()).isEqualTo(1L);
     assertThat(recovery.snapshot().claimState()).isEqualTo(ClaimState.ACTIVE);
     assertThat(recovery.snapshot().state()).isEqualTo(State.AUTHORIZATION_PENDING);
+    assertThat(recovery.snapshot().claimPurpose()).isEqualTo(ClaimPurpose.AUTHORIZATION_RECOVERY);
     assertThat(
             repository.acquireRecoveryClaim(
                 tuple, UUID.randomUUID(), NOW_EPOCH_MILLIS + 30_002L, NOW_EPOCH_MILLIS + 60_002L))
@@ -292,6 +399,269 @@ class StartSessionPreAuthorizationReservationPostgresIntegrationTest {
             State.AUTHORIZATION_PENDING,
             State.AUTHORIZED,
             State.OWNER_EXECUTION_PENDING);
+  }
+
+  @Test
+  void expiredReservedRecoveryMayIssueOnlyAfterSameReservationBecomesPending() {
+    StartSessionPreAuthorizationReservationTuple tuple =
+        tuple("postgres-reserved-recovery-03a", "reserved recovery fixture");
+    UUID reservationOwner = UUID.fromString("bbf0aa73-6aeb-48d5-b4b6-2c454a6732ad");
+    UUID recoveryOwner = UUID.fromString("109b9916-f068-4d49-944b-ae4b0ae95ee2");
+    repository.acquire(tuple, reservationOwner, NOW_EPOCH_MILLIS, NOW_EPOCH_MILLIS + 30_000L);
+    var expired =
+        repository.expireClaim(
+            tuple,
+            tuple.mutationDigest(),
+            reservationOwner,
+            1L,
+            Phase.ACCOUNT_AUTHORIZATION,
+            State.RESERVED,
+            NOW_EPOCH_MILLIS + 30_000L);
+    assertThat(expired.claimPurpose()).isNull();
+    var recovery =
+        repository
+            .acquireRecoveryClaim(
+                tuple, recoveryOwner, NOW_EPOCH_MILLIS + 30_001L, NOW_EPOCH_MILLIS + 60_001L)
+            .orElseThrow();
+    assertThat(recovery.snapshot().claimPurpose()).isEqualTo(ClaimPurpose.RESERVED_RECOVERY_ISSUE);
+    assertThat(recovery.snapshot().state()).isEqualTo(State.RESERVED);
+    assertThat(recovery.reservationOwnerId()).isEqualTo(reservationOwner);
+    assertThat(recovery.snapshot().reservationClaimFence()).isEqualTo(1L);
+    assertThat(recovery.snapshot().claimFence()).isEqualTo(3L);
+
+    var pending =
+        repository.markAuthorizationPending(
+            tuple,
+            tuple.mutationDigest(),
+            reservationOwner,
+            1L,
+            recoveryOwner,
+            3L,
+            NOW_EPOCH_MILLIS + 30_002L);
+    assertThat(pending.transitioned()).isTrue();
+    assertThat(pending.snapshot().claimPurpose()).isEqualTo(ClaimPurpose.RESERVED_RECOVERY_ISSUE);
+    var issueEvidence =
+        repository
+            .readCurrentClaim(
+                tuple,
+                reservationOwner,
+                1L,
+                recoveryOwner,
+                3L,
+                ReadPurpose.ISSUE,
+                NOW_EPOCH_MILLIS + 30_003L)
+            .orElseThrow();
+    assertThat(issueEvidence.snapshot().state()).isEqualTo(State.AUTHORIZATION_PENDING);
+    assertThat(issueEvidence.snapshot().claimPurpose())
+        .isEqualTo(ClaimPurpose.RESERVED_RECOVERY_ISSUE);
+    assertThatThrownBy(
+            () ->
+                repository.readCurrentClaim(
+                    tuple,
+                    reservationOwner,
+                    1L,
+                    recoveryOwner,
+                    3L,
+                    ReadPurpose.RECOVER,
+                    NOW_EPOCH_MILLIS + 30_003L))
+        .isInstanceOf(
+            StartSessionPreAuthorizationReservationService.StaleReservationClaimException.class);
+    assertThat(
+            repository
+                .markAuthorizationPending(
+                    tuple,
+                    tuple.mutationDigest(),
+                    reservationOwner,
+                    1L,
+                    recoveryOwner,
+                    3L,
+                    NOW_EPOCH_MILLIS + 30_004L)
+                .transitioned())
+        .isFalse();
+  }
+
+  @Test
+  void concurrentExpiredPendingRecoveryClaimsHaveOneFenceWinner() throws Exception {
+    StartSessionPreAuthorizationReservationTuple tuple =
+        tuple("postgres-concurrent-recovery-03aa", "concurrent recovery fixture");
+    UUID reservationOwner = UUID.fromString("444a3c54-4c0d-4157-9d57-e0dfc7746552");
+    repository.acquire(tuple, reservationOwner, NOW_EPOCH_MILLIS, NOW_EPOCH_MILLIS + 30_000L);
+    repository.markAuthorizationPending(
+        tuple, tuple.mutationDigest(), reservationOwner, 1L, NOW_EPOCH_MILLIS + 1_000L);
+    repository.expireClaim(
+        tuple,
+        tuple.mutationDigest(),
+        reservationOwner,
+        1L,
+        Phase.ACCOUNT_AUTHORIZATION,
+        State.AUTHORIZATION_PENDING,
+        NOW_EPOCH_MILLIS + 30_000L);
+
+    int contenders = 2;
+    ExecutorService executor = Executors.newFixedThreadPool(contenders);
+    CountDownLatch ready = new CountDownLatch(contenders);
+    CountDownLatch start = new CountDownLatch(1);
+    List<Future<Optional<StartSessionPreAuthorizationReservationRepository.RecoveryClaimResult>>>
+        futures = new ArrayList<>();
+    try {
+      for (int index = 0; index < contenders; index++) {
+        UUID recoveryOwner = UUID.randomUUID();
+        futures.add(
+            executor.submit(
+                () -> {
+                  ready.countDown();
+                  if (!start.await(5, TimeUnit.SECONDS)) {
+                    throw new IllegalStateException("concurrent recovery gate timed out");
+                  }
+                  return repository.acquireRecoveryClaim(
+                      tuple, recoveryOwner, NOW_EPOCH_MILLIS + 30_001L, NOW_EPOCH_MILLIS + 60_001L);
+                }));
+      }
+      assertThat(ready.await(5, TimeUnit.SECONDS)).isTrue();
+      start.countDown();
+      List<Optional<StartSessionPreAuthorizationReservationRepository.RecoveryClaimResult>>
+          results = new ArrayList<>();
+      for (Future<Optional<StartSessionPreAuthorizationReservationRepository.RecoveryClaimResult>>
+          future : futures) {
+        results.add(future.get(10, TimeUnit.SECONDS));
+      }
+      assertThat(results).filteredOn(Optional::isPresent).hasSize(1);
+      assertThat(results).filteredOn(Optional::isEmpty).hasSize(1);
+      assertThat(repository.findExact(tuple).orElseThrow().claimPurpose())
+          .isEqualTo(ClaimPurpose.AUTHORIZATION_RECOVERY);
+    } finally {
+      executor.shutdownNow();
+    }
+  }
+
+  @Test
+  void expiredAuthorizedRecoveryReadsOnlyOriginalResponseAndHandsOffOnce() {
+    StartSessionPreAuthorizationReservationTuple tuple =
+        tuple("postgres-authorized-recovery-03b", "authorized recovery fixture");
+    UUID reservationOwner = UUID.fromString("55ca8360-6f05-4f3a-8a9a-5cd78899b311");
+    UUID recoveryOwner = UUID.fromString("8d57aaea-2ceb-4c87-a673-30d5cc83c86e");
+    StartSessionPostAuthorizationExecutionTuple postTuple =
+        postTuple(tuple, reservationOwner, 1L, FINGERPRINT);
+    repository.acquire(tuple, reservationOwner, NOW_EPOCH_MILLIS, NOW_EPOCH_MILLIS + 30_000L);
+    repository.markAuthorizationPending(
+        tuple, tuple.mutationDigest(), reservationOwner, 1L, NOW_EPOCH_MILLIS + 1_000L);
+    repository.completeAuthorization(
+        tuple,
+        tuple.mutationDigest(),
+        reservationOwner,
+        1L,
+        reservationOwner,
+        1L,
+        postTuple.canonicalJson(),
+        NOW_EPOCH_MILLIS + 2_000L);
+    repository.expireClaim(
+        tuple,
+        tuple.mutationDigest(),
+        reservationOwner,
+        1L,
+        Phase.ACCOUNT_AUTHORIZATION,
+        State.AUTHORIZED,
+        NOW_EPOCH_MILLIS + 30_000L);
+
+    var recovery =
+        repository
+            .acquireRecoveryClaim(
+                tuple, recoveryOwner, NOW_EPOCH_MILLIS + 30_001L, NOW_EPOCH_MILLIS + 60_001L)
+            .orElseThrow();
+    assertThat(recovery.snapshot().state()).isEqualTo(State.AUTHORIZED);
+    assertThat(recovery.snapshot().claimPurpose())
+        .isEqualTo(ClaimPurpose.AUTHORIZED_RESPONSE_RECOVERY);
+    var originalResponseLookup =
+        repository
+            .readCurrentClaim(
+                tuple,
+                reservationOwner,
+                1L,
+                recoveryOwner,
+                recovery.snapshot().claimFence(),
+                ReadPurpose.RECOVER,
+                NOW_EPOCH_MILLIS + 30_002L)
+            .orElseThrow();
+    assertThat(originalResponseLookup.snapshot().state()).isEqualTo(State.AUTHORIZED);
+    assertThat(originalResponseLookup.snapshot().claimPurpose())
+        .isEqualTo(ClaimPurpose.AUTHORIZED_RESPONSE_RECOVERY);
+    assertThatThrownBy(
+            () ->
+                repository.readCurrentClaim(
+                    tuple,
+                    reservationOwner,
+                    1L,
+                    recoveryOwner,
+                    recovery.snapshot().claimFence(),
+                    ReadPurpose.ISSUE,
+                    NOW_EPOCH_MILLIS + 30_002L))
+        .isInstanceOf(
+            StartSessionPreAuthorizationReservationService.StaleReservationClaimException.class);
+    assertThatThrownBy(
+            () ->
+                repository.completeAuthorization(
+                    tuple,
+                    tuple.mutationDigest(),
+                    reservationOwner,
+                    1L,
+                    recoveryOwner,
+                    recovery.snapshot().claimFence(),
+                    postTuple(tuple, reservationOwner, 1L, "arfp/v1/other-key/" + "c".repeat(64))
+                        .canonicalJson(),
+                    NOW_EPOCH_MILLIS + 30_003L))
+        .isInstanceOf(
+            StartSessionPreAuthorizationReservationService.IdempotencyConflictException.class);
+
+    UUID handoffId = UUID.fromString("5d751e16-5637-4ea9-a8a2-4dc61b9f1325");
+    var handoff =
+        repository.beginOwnerExecution(
+            tuple,
+            tuple.mutationDigest(),
+            reservationOwner,
+            1L,
+            recoveryOwner,
+            recovery.snapshot().claimFence(),
+            postTuple.canonicalJson(),
+            handoffId,
+            NOW_EPOCH_MILLIS + 30_004L);
+    assertThat(handoff.mayDispatch()).isTrue();
+    assertThat(handoff.snapshot().reservationOwnerId()).isEqualTo(reservationOwner);
+    assertThat(handoff.snapshot().currentClaimOwnerId()).isEqualTo(recoveryOwner);
+    assertThat(handoff.snapshot().postAuthorizationTuple().canonicalJson())
+        .isEqualTo(postTuple.canonicalJson());
+    assertThat(
+            repository
+                .beginOwnerExecution(
+                    tuple,
+                    tuple.mutationDigest(),
+                    reservationOwner,
+                    1L,
+                    recoveryOwner,
+                    recovery.snapshot().claimFence(),
+                    postTuple.canonicalJson(),
+                    handoffId,
+                    NOW_EPOCH_MILLIS + 30_005L)
+                .mayDispatch())
+        .isFalse();
+
+    repository.expireClaim(
+        tuple,
+        tuple.mutationDigest(),
+        recoveryOwner,
+        recovery.snapshot().claimFence(),
+        Phase.OWNER_EXECUTION,
+        State.OWNER_EXECUTION_PENDING,
+        NOW_EPOCH_MILLIS + 60_001L);
+    assertThat(
+            repository.acquireRecoveryClaim(
+                tuple,
+                UUID.fromString("a2b6aafd-5598-4c99-8f36-b51b1ea47c6e"),
+                NOW_EPOCH_MILLIS + 60_002L,
+                NOW_EPOCH_MILLIS + 90_002L))
+        .isEmpty();
+    assertThat(repository.findAuthorizedExact(tuple).orElseThrow().handoff().handoffId())
+        .isEqualTo(handoffId);
+    assertThat(dsl.fetchCount(START_SESSION_PRE_AUTHORIZATION_RESERVATIONS)).isEqualTo(1);
   }
 
   @Test
@@ -695,7 +1065,13 @@ class StartSessionPreAuthorizationReservationPostgresIntegrationTest {
     var issueRead =
         repository
             .readCurrentClaim(
-                tuple, originalOwner, 1L, originalOwner, 1L, NOW_EPOCH_MILLIS + 2_000L)
+                tuple,
+                originalOwner,
+                1L,
+                originalOwner,
+                1L,
+                ReadPurpose.ISSUE,
+                NOW_EPOCH_MILLIS + 2_000L)
             .orElseThrow();
     assertThat(issueRead.snapshot().state()).isEqualTo(State.AUTHORIZATION_PENDING);
     assertThat(issueRead.snapshot().tuple().canonicalJson()).isEqualTo(tuple.canonicalJson());
@@ -722,24 +1098,57 @@ class StartSessionPreAuthorizationReservationPostgresIntegrationTest {
     var recoveryRead =
         repository
             .readCurrentClaim(
-                tuple, originalOwner, 1L, recoveryOwner, 3L, NOW_EPOCH_MILLIS + 30_002L)
+                tuple,
+                originalOwner,
+                1L,
+                recoveryOwner,
+                3L,
+                ReadPurpose.RECOVER,
+                NOW_EPOCH_MILLIS + 30_002L)
             .orElseThrow();
     assertThat(recoveryRead.snapshot().tuple().canonicalJson()).isEqualTo(tuple.canonicalJson());
     assertThat(recoveryRead.snapshot().mutationDigest()).isEqualTo(tuple.mutationDigest());
     assertThat(recoveryRead.reservationOwnerId()).isEqualTo(originalOwner);
     assertThat(recoveryRead.currentClaimOwnerId()).isEqualTo(recoveryOwner);
     assertThat(recoveryRead.snapshot().claimFence()).isEqualTo(3L);
+    assertThat(recoveryRead.snapshot().claimPurpose())
+        .isEqualTo(ClaimPurpose.AUTHORIZATION_RECOVERY);
 
     assertThatThrownBy(
             () ->
                 repository.readCurrentClaim(
-                    tuple, originalOwner, 1L, originalOwner, 1L, NOW_EPOCH_MILLIS + 30_002L))
+                    tuple,
+                    originalOwner,
+                    1L,
+                    recoveryOwner,
+                    3L,
+                    ReadPurpose.ISSUE,
+                    NOW_EPOCH_MILLIS + 30_003L))
+        .isInstanceOf(
+            StartSessionPreAuthorizationReservationService.StaleReservationClaimException.class);
+
+    assertThatThrownBy(
+            () ->
+                repository.readCurrentClaim(
+                    tuple,
+                    originalOwner,
+                    1L,
+                    originalOwner,
+                    1L,
+                    ReadPurpose.ISSUE,
+                    NOW_EPOCH_MILLIS + 30_002L))
         .isInstanceOf(
             StartSessionPreAuthorizationReservationService.StaleReservationClaimException.class);
     assertThatThrownBy(
             () ->
                 repository.readCurrentClaim(
-                    tuple, originalOwner, 1L, recoveryOwner, 3L, NOW_EPOCH_MILLIS + 60_001L))
+                    tuple,
+                    originalOwner,
+                    1L,
+                    recoveryOwner,
+                    3L,
+                    ReadPurpose.RECOVER,
+                    NOW_EPOCH_MILLIS + 60_001L))
         .isInstanceOf(
             StartSessionPreAuthorizationReservationService.StaleReservationClaimException.class);
 
@@ -753,6 +1162,7 @@ class StartSessionPreAuthorizationReservationPostgresIntegrationTest {
                     1L,
                     recoveryOwner,
                     3L,
+                    ReadPurpose.RECOVER,
                     NOW_EPOCH_MILLIS + 30_002L))
         .isInstanceOf(
             StartSessionPreAuthorizationReservationService.IdempotencyConflictException.class);

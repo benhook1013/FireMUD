@@ -2,7 +2,7 @@
 
 ## Implementation status
 
-The shared typed action, digest codec, and pre-authorization reservation tuple are implemented. Source-level StartSession slices now include Logging & Admin durable reservation and authorization handoff, Account ISSUE/RECOVER/REDEEM plus the current-original-operation projection, and Game Session claim/redemption transport and prepared-action binding. They are not yet an executable runtime: the Account receiving adapter remains disabled by default, its production hosted-terms environment producer and pinned trusted-provider/key-custody composition are absent, and Game Design's prepared selector/current-Account-projection consumer remains unwired. No full physical cross-service smoke has established boot or execution; source-level and component tests do not claim that proof. No external route or runtime activation is enabled by this boundary.
+The shared typed action, digest codec, pre-/post-authorization tuples and Account authority-evidence bundle are implemented with focused Java tests and shared Java/Python vectors. Source-level StartSession slices now include Logging & Admin durable reservation and authorization handoff, Account ISSUE/RECOVER/REDEEM plus the current-original-operation projection, and Game Session claim/redemption transport and prepared-action binding. Logging production service/repository mutation is mechanically denied pending its approved lifecycle and exact-family retention policy; authenticated evidence reads remain available, and isolated run-owned fixtures do not enable production writing. These slices are not yet an executable runtime: the Account receiving adapter remains disabled by default, its production hosted-terms environment producer and pinned trusted-provider/key-custody composition are absent, and Game Design's prepared selector/current-Account-projection consumer remains unwired. No full physical cross-service smoke has established boot or execution; source-level and component tests do not claim that proof. No external route or runtime activation is enabled by this boundary.
 
 ## Normative contract
 
@@ -24,6 +24,8 @@ The request is a JSON object whose declared member order is `actionFamilySchemaI
 | `mutation` | Object with the optional member `clientIp`. |
 | `mutation.clientIp` | Absent or a string whose NFC-normalized UTF-8 encoding is at most 128 bytes. Empty string is distinct from absence. `null` and all other types are rejected. No address parsing or ownership claim is implied. |
 | `auditReason` | Required string, nonblank after NFC normalization, at most 1,000 normalized UTF-8 bytes. |
+
+For the `auditReason` nonblank constraint, the shared blank codepoint set is exactly U+0009–U+000D, U+0020, U+0085, U+00A0, U+1680, U+2000–U+200A, U+2028, U+2029, U+202F, U+205F, and U+3000. Implementations must use this explicit set rather than a language-provided whitespace predicate. Other codepoints, including U+200B ZERO WIDTH SPACE, do not make an audit reason blank.
 
 JSON object members must appear in the declared order. Duplicate raw keys, keys colliding after NFC normalization, unknown or missing members, wrong JSON types, malformed Unicode, invalid UTF-8, and trailing tokens are rejected before a digest is returned. Object and array values use the recursive typed grammar from [ADR 0047, Bounded Owner Delegation](../../decisions/adr-0047-logging-admin-as-external-operator-write-ingress.md#bounded-owner-delegation); no generic JSON canonicalization is a substitute.
 

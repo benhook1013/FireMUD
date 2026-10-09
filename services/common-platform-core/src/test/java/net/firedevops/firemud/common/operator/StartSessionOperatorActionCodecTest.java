@@ -170,6 +170,43 @@ class StartSessionOperatorActionCodecTest {
   }
 
   @Test
+  void auditReasonUsesExplicitSharedWhitespaceSet() throws IOException {
+    int[] sharedWhitespaceCodepoints = {
+      0x0009, 0x000A, 0x000B, 0x000C, 0x000D, 0x0020, 0x0085, 0x00A0, 0x1680,
+      0x2000, 0x2001, 0x2002, 0x2003, 0x2004, 0x2005, 0x2006, 0x2007, 0x2008,
+      0x2009, 0x200A, 0x2028, 0x2029, 0x202F, 0x205F, 0x3000
+    };
+    String base = findVector("base").path("input").asText();
+    for (int codePoint : sharedWhitespaceCodepoints) {
+      String blankReason = new String(Character.toChars(codePoint));
+      String blankInput = replaceAuditReason(base, blankReason);
+      assertThatThrownBy(
+              () ->
+                  StartSessionOperatorActionCodec.decode(
+                      blankInput.getBytes(StandardCharsets.UTF_8)))
+          .as("blank audit reason U+%04X", codePoint)
+          .isInstanceOf(IllegalArgumentException.class);
+
+      String nonblankInput = replaceAuditReason(base, blankReason + "x");
+      assertThat(
+              StartSessionOperatorActionCodec.decode(
+                  nonblankInput.getBytes(StandardCharsets.UTF_8)))
+          .as("nonblank audit reason containing U+%04X", codePoint)
+          .isNotNull();
+    }
+
+    for (int codePoint : new int[] {0x001C, 0x200B}) {
+      String outsideWhitespaceSetInput =
+          replaceAuditReason(base, new String(Character.toChars(codePoint)));
+      assertThat(
+              StartSessionOperatorActionCodec.decode(
+                  outsideWhitespaceSetInput.getBytes(StandardCharsets.UTF_8)))
+          .as("nonblank audit reason U+%04X outside the shared set", codePoint)
+          .isNotNull();
+    }
+  }
+
+  @Test
   void rejectsObjectMemberAndArrayElementLimitViolations() {
     String tooManyMembers = "{" + String.join(",", Collections.nCopies(17, "\"k\":0")) + "}";
     assertThatThrownBy(
@@ -210,6 +247,10 @@ class StartSessionOperatorActionCodecTest {
       }
     }
     throw new IOException("missing vector: " + name);
+  }
+
+  private static String replaceAuditReason(String input, String auditReason) {
+    return input.replace("\"scheduled launch\"", JSON.valueToTree(auditReason).toString());
   }
 
   private static byte[] rawVectorBytes(JsonNode vector) {
