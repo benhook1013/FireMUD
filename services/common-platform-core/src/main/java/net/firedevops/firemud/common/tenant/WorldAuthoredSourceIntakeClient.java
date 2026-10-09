@@ -93,6 +93,24 @@ public final class WorldAuthoredSourceIntakeClient
     }
   }
 
+  /** Reads a complete immutable source receipt by its retained intake identity. */
+  public WorldAuthoredSourceIntakeGrpcCodec.PublicReceipt readById(
+      WorldAuthoredSourceIntakeGrpcCodec.ByIdReadRequest request) {
+    Objects.requireNonNull(request, "request");
+    requireNamespace(request.targetNamespace());
+    var response =
+        requireStub()
+            .withDeadlineAfter(CALL_DEADLINE_SECONDS, TimeUnit.SECONDS)
+            .readAuthoredWorldSourceIntakeById(
+                WorldAuthoredSourceIntakeGrpcCodec.toReadByIdRequest(request));
+    try {
+      return WorldAuthoredSourceIntakeGrpcCodec.fromReadByIdResponse(request, response);
+    } catch (IllegalArgumentException exception) {
+      throw new IllegalStateException(
+          "World returned an invalid authored-source intake by-ID readback", exception);
+    }
+  }
+
   @Override
   protected String configuredTarget(ServiceEndpointsProperties endpoints) {
     return endpoints.getWorldManagementService();

@@ -35,6 +35,8 @@ import net.firedevops.firemud.common.authoring.DraftCommitBinding;
 import net.firedevops.firemud.common.authoring.DraftCommitOrderReadClient;
 import net.firedevops.firemud.common.authoring.DraftCommitOrderReadEvidence;
 import net.firedevops.firemud.common.authoring.GameDesignDraftTerminalReadClient;
+import net.firedevops.firemud.common.authoring.WorldAuthoredVersionIdentityClient;
+import net.firedevops.firemud.common.authoring.WorldAuthoredVersionIdentityEvidence;
 import net.firedevops.firemud.common.authoring.WorldDraftTerminalReadClient;
 import net.firedevops.firemud.common.authoring.WorldOriginalDraftGraphApplyClient;
 import net.firedevops.firemud.common.authoring.WorldOriginalDraftGraphApplyGrpcCodec;
@@ -42,7 +44,6 @@ import net.firedevops.firemud.common.config.ServiceEndpointsProperties;
 import net.firedevops.firemud.common.gamedesign.AuthoredWorldVersionStateClient;
 import net.firedevops.firemud.common.gamelogic.GameplayRuleManifest;
 import net.firedevops.firemud.common.grpc.GrpcChannelFactory;
-import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentityInterceptor;
 import net.firedevops.firemud.common.tenant.AuthoredWorldSourceClient;
 import net.firedevops.firemud.common.tenant.WorldAuthoredSourceIntakeClient;
@@ -70,6 +71,7 @@ import net.firedevops.firemud.test.TestContainerImages;
 import net.firedevops.firemud.worldmanagement.tenant.WorldAuthoredSourceIntakeGrpcService;
 import net.firedevops.firemud.worldmanagement.tenant.WorldAuthoredSourceIntakeRepository;
 import net.firedevops.firemud.worldmanagement.tenant.WorldAuthoredSourceIntakeService;
+import net.firedevops.firemud.worldmanagement.tenant.WorldAuthoredVersionIdentityGrpcService;
 import net.firedevops.firemud.worldmanagement.tenant.WorldAuthoredVersionIdentityRepository;
 import net.firedevops.firemud.worldmanagement.tenant.WorldAuthoredVersionIdentityService;
 import net.firedevops.firemud.worldmanagement.tenant.WorldDesignPublicationFenceRepository;
@@ -239,6 +241,9 @@ class GenuineGameDesignWorldSourceCommitPostgresIntegrationTest {
           var intakeClient =
               new WorldAuthoredSourceIntakeClient(
                   endpoints, pki.client("game-design-service"), factory, NAMESPACE);
+          var associationClient =
+              new WorldAuthoredVersionIdentityClient(
+                  endpoints, pki.client("game-design-service"), factory, NAMESPACE);
           var accountClient =
               new AccountOriginalDraftOrderClient(
                   endpoints, pki.client("game-design-service"), factory, NAMESPACE);
@@ -262,50 +267,12 @@ class GenuineGameDesignWorldSourceCommitPostgresIntegrationTest {
         var identityService =
             new WorldAuthoredVersionIdentityService(
                 versionClient, identities, intakes, world.transactions(), NAMESPACE);
-        // There is no production Version-association RPC. This test-only hook invokes the actual
-        // association service after real intake under that socket's certificate-derived GD peer.
-        // It neither injects a peer Context nor constructs source, Version or intake evidence.
-        var associationComplete = new AtomicBoolean();
-        var associationHook =
-            new ServerInterceptor() {
-              @Override
-              public <ReqT, RespT> ServerCall.Listener<ReqT> interceptCall(
-                  ServerCall<ReqT, RespT> call,
-                  Metadata headers,
-                  ServerCallHandler<ReqT, RespT> next) {
-                return next.startCall(
-                    new ForwardingServerCall.SimpleForwardingServerCall<>(call) {
-                      @Override
-                      public void sendMessage(RespT message) {
-                        if (associationComplete.compareAndSet(false, true)) {
-                          var peer = GrpcPeerIdentity.current();
-                          if (peer == null
-                              || !peer.isService("game-design-service")
-                              || !peer.isInNamespace(NAMESPACE))
-                            throw new SecurityException(
-                                "Actual authenticated GD socket peer required");
-                          identityService.associate(
-                              NAMESPACE,
-                              source.canonicalTenantId(),
-                              source.worldSlug(),
-                              source.operationId(),
-                              source.evidenceDigest(),
-                              gd.target().canonicalVersionId(),
-                              gd.target().gameDesignVersionRowId(),
-                              UUID.randomUUID());
-                        }
-                        super.sendMessage(message);
-                      }
-                    },
-                    headers);
-              }
-            };
-        worldHandlers.addService(
-            ServerInterceptors.intercept(
-                new WorldAuthoredSourceIntakeGrpcService(intakeService, NAMESPACE),
-                new GrpcPeerIdentityInterceptor(),
-                associationHook));
+        register(
+            worldHandlers,
+            new WorldAuthoredSourceIntakeGrpcService(intakeService, NAMESPACE),
+            new WorldAuthoredVersionIdentityGrpcService(identityService, NAMESPACE));
         intakeClient.init();
+        associationClient.init();
         var intakeRequest =
             new WorldAuthoredSourceIntakeGrpcCodec.IntakeRequest(
                 1,
@@ -318,6 +285,62 @@ class GenuineGameDesignWorldSourceCommitPostgresIntegrationTest {
         var publicIntake = intakeClient.intake(intakeRequest);
         var intake = intakes.read(NAMESPACE, intakeRequest.intakeRequestId()).orElseThrow();
         assertThat(publicIntake.receiptDigest()).isEqualTo(intake.receiptDigest());
+        UUID intakeReadRequestId = UUID.randomUUID();
+        while (intakeReadRequestId.equals(intake.intakeRequestId())) {
+          intakeReadRequestId = UUID.randomUUID();
+        }
+        var publicIntakeReadback =
+            intakeClient.readById(
+                new WorldAuthoredSourceIntakeGrpcCodec.ByIdReadRequest(
+                    1,
+                    NAMESPACE,
+                    intakeReadRequestId,
+                    intake.intakeRequestId(),
+                    intake.canonicalTenantId()));
+        var gameDesignSourceReadback =
+            sourceRepository
+                .read(
+                    source.operationId(), source.canonicalTenantId(), source.worldSlug(), NAMESPACE)
+                .orElseThrow();
+        assertThat(gameDesignSourceReadback).isEqualTo(source);
+        assertThat(publicIntakeReadback.source()).isEqualTo(gameDesignSourceReadback);
+        assertThat(publicIntakeReadback)
+            .isEqualTo(
+                new WorldAuthoredSourceIntakeGrpcCodec.PublicReceipt(
+                    intake.schemaVersion(),
+                    intake.targetNamespace(),
+                    intake.intakeRequestId(),
+                    intake.operationId(),
+                    intake.canonicalTenantId(),
+                    intake.worldSlug(),
+                    intake.sourceOperationId(),
+                    intake.sourceEvidenceDigest(),
+                    intake.requestDigest(),
+                    intake.receiptDigest(),
+                    gameDesignSourceReadback));
+        var associationRequest =
+            new WorldAuthoredVersionIdentityEvidence.Request(
+                1,
+                NAMESPACE,
+                source.canonicalTenantId(),
+                source.worldSlug(),
+                source.operationId(),
+                source.evidenceDigest(),
+                gd.target().canonicalVersionId(),
+                gd.target().gameDesignVersionRowId(),
+                UUID.randomUUID());
+        var publicAssociation = associationClient.associate(associationRequest);
+        assertThat(publicAssociation.request()).isEqualTo(associationRequest);
+        assertThat(publicAssociation.sourceIntakeReceipt()).isEqualTo(publicIntake);
+        assertThat(publicAssociation.versionStateEvidence().request())
+            .isEqualTo(associationRequest.versionReadRequest());
+        assertThat(publicAssociation.versionStateEvidence().sourceEvidence()).isEqualTo(source);
+        assertThat(publicAssociation.versionStateEvidence().canonicalVersionId())
+            .isEqualTo(gd.target().canonicalVersionId());
+        assertThat(publicAssociation.versionStateEvidence().versionState())
+            .isEqualTo(
+                net.firedevops.firemud.gamedesign.v1.VersionLifecycleState
+                    .VERSION_LIFECYCLE_STATE_DRAFT);
         var identity =
             identities
                 .readByCanonicalTarget(
@@ -326,7 +349,12 @@ class GenuineGameDesignWorldSourceCommitPostgresIntegrationTest {
                     gd.target().canonicalVersionId(),
                     gd.target().gameDesignVersionRowId())
                 .orElseThrow();
+        assertThat(identity.operationId()).isEqualTo(publicAssociation.operationId());
+        assertThat(identity.canonicalVersionId()).isEqualTo(gd.target().canonicalVersionId());
+        assertThat(identity.gameDesignVersionId()).isEqualTo(gd.target().gameDesignVersionRowId());
         assertThat(identity.sourceIntakeReceipt()).isEqualTo(intake);
+        assertThat(identity.versionStateEvidence())
+            .isEqualTo(publicAssociation.versionStateEvidence());
         var binding = binding(gd.target());
         var request = account.prepareOriginalDraftOrder(binding, NAMESPACE);
         var original = request.original();

@@ -1,5 +1,7 @@
 package net.firedevops.firemud.gamedesign.service.impl;
 
+import io.grpc.StatusRuntimeException;
+import java.util.Arrays;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
@@ -7,6 +9,8 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
+import net.firedevops.firemud.common.gamedesign.AuthoredWorldReleaseAttestationEvidence;
+import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
 import net.firedevops.firemud.common.publication.PublicationDigestRequestBinding;
 import net.firedevops.firemud.gamedesign.client.AutomationScriptingClient;
 import net.firedevops.firemud.gamedesign.client.EntityManagementClient;
@@ -19,12 +23,15 @@ import net.firedevops.firemud.gamedesign.model.PublishGateFailureCode;
 import net.firedevops.firemud.gamedesign.model.PublishParticipantKey;
 import net.firedevops.firemud.gamedesign.publication.SelectedDraftGameLogicReceipt;
 import net.firedevops.firemud.gamedesign.publication.SelectedDraftGameLogicReceiptRepository;
+import net.firedevops.firemud.gamedesign.publication.SelectedDraftPublicationDigestReadService;
 import net.firedevops.firemud.gamedesign.service.ControlPlaneDigestService;
 import net.firedevops.firemud.gamedesign.service.PublishGateFailureException;
 import net.firedevops.firemud.gamedesign.service.PublishGateService;
 import org.jooq.DSLContext;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.PlatformTransactionManager;
 
 @Service
 public final class PublishGateServiceImpl implements PublishGateService {
@@ -54,6 +61,8 @@ public final class PublishGateServiceImpl implements PublishGateService {
   private final GameLogicClient gameLogicClient;
   private final AutomationScriptingClient automationScriptingClient;
   private final SelectedDraftGameLogicReceiptRepository selectedGameLogicReceiptRepository;
+  private final SelectedDraftPublicationDigestReadService selectedPublicationDigestReader;
+  private final String workloadNamespace;
 
   @Autowired
   public PublishGateServiceImpl(
@@ -62,14 +71,20 @@ public final class PublishGateServiceImpl implements PublishGateService {
       EntityManagementClient entityManagementClient,
       GameLogicClient gameLogicClient,
       AutomationScriptingClient automationScriptingClient,
-      DSLContext dsl) {
+      DSLContext dsl,
+      PlatformTransactionManager transactions,
+      @Value("${firemud.grpc.workload-namespace:}") String workloadNamespace) {
     this(
         controlPlaneDigestService,
         worldManagementClient,
         entityManagementClient,
         gameLogicClient,
         automationScriptingClient,
-        new SelectedDraftGameLogicReceiptRepository(dsl));
+        new SelectedDraftGameLogicReceiptRepository(dsl),
+        GrpcPeerIdentity.isValidNamespace(workloadNamespace)
+            ? new SelectedDraftPublicationDigestReadService(dsl, transactions, workloadNamespace)
+            : null,
+        workloadNamespace);
   }
 
   PublishGateServiceImpl(
@@ -79,6 +94,26 @@ public final class PublishGateServiceImpl implements PublishGateService {
       GameLogicClient gameLogicClient,
       AutomationScriptingClient automationScriptingClient,
       SelectedDraftGameLogicReceiptRepository selectedGameLogicReceiptRepository) {
+    this(
+        controlPlaneDigestService,
+        worldManagementClient,
+        entityManagementClient,
+        gameLogicClient,
+        automationScriptingClient,
+        selectedGameLogicReceiptRepository,
+        null,
+        null);
+  }
+
+  PublishGateServiceImpl(
+      ControlPlaneDigestService controlPlaneDigestService,
+      WorldManagementClient worldManagementClient,
+      EntityManagementClient entityManagementClient,
+      GameLogicClient gameLogicClient,
+      AutomationScriptingClient automationScriptingClient,
+      SelectedDraftGameLogicReceiptRepository selectedGameLogicReceiptRepository,
+      SelectedDraftPublicationDigestReadService selectedPublicationDigestReader,
+      String workloadNamespace) {
     this.controlPlaneDigestService = controlPlaneDigestService;
     this.worldManagementClient = worldManagementClient;
     this.entityManagementClient = entityManagementClient;
@@ -86,6 +121,8 @@ public final class PublishGateServiceImpl implements PublishGateService {
     this.automationScriptingClient = automationScriptingClient;
     this.selectedGameLogicReceiptRepository =
         Objects.requireNonNull(selectedGameLogicReceiptRepository);
+    this.selectedPublicationDigestReader = selectedPublicationDigestReader;
+    this.workloadNamespace = workloadNamespace;
   }
 
   @Override
@@ -124,7 +161,56 @@ public final class PublishGateServiceImpl implements PublishGateService {
       throw new IllegalArgumentException("selected publication tenant must be its canonical UUID");
     }
     requireWorkflowIdentity(canonicalBinding, publishWorkflowId);
-    return collectFullVersionParticipantDigests(version, canonicalBinding, true);
+    SelectedDraftPublicationDigestReadService.ReadResult selected = null;
+    String failureCode = "PARTICIPANT_UNAVAILABLE";
+    try {
+      if (selectedPublicationDigestReader == null
+          || !GrpcPeerIdentity.isValidNamespace(workloadNamespace)) {
+        throw new IllegalStateException("Selected publication digest reader unavailable");
+      }
+      selected = selectedPublicationDigestReader.read(workloadNamespace, canonicalBinding);
+      if (selected == null
+          || !Arrays.equals(
+              canonicalBinding.canonicalPreimage(), selected.requestBinding().canonicalPreimage())
+          || !canonicalBinding.requestDigest().equals(selected.requestDigest())
+          || !canonicalBinding
+              .derivedWorkflowIdentity()
+              .equals(selected.requestBinding().derivedWorkflowIdentity())) {
+        throw new IllegalStateException("Selected publication digest request echo differs");
+      }
+    } catch (RuntimeException unavailable) {
+      selected = null;
+      failureCode =
+          unavailable instanceof StatusRuntimeException grpcFailure
+              ? grpcFailure.getStatus().getCode().name()
+              : "FAILED_PRECONDITION";
+      if (selectedPublicationDigestReader == null
+          || !GrpcPeerIdentity.isValidNamespace(workloadNamespace)) {
+        failureCode = "PARTICIPANT_UNAVAILABLE";
+      }
+    }
+    var snapshot = selected;
+    String snapshotFailureCode = failureCode;
+    return FULL_VERSION_PARTICIPANTS.stream()
+        .map(
+            participant -> {
+              if (participant == PublishParticipantKey.WORLD_MANAGEMENT
+                  || participant == PublishParticipantKey.GAME_DESIGN_CONTROL_PLANE) {
+                if (snapshot == null) {
+                  return failedObservation(
+                      participant,
+                      canonicalBinding.versionId(),
+                      null,
+                      snapshotFailureCode,
+                      "Exact selected publication source evidence unavailable");
+                }
+                return participant == PublishParticipantKey.WORLD_MANAGEMENT
+                    ? snapshot.worldManagementDigest()
+                    : toParticipantDigest(participant, version, snapshot.gameDesignDigest());
+              }
+              return observeFullVersionParticipant(version, canonicalBinding, participant, true);
+            })
+        .toList();
   }
 
   private List<PublishParticipantDigestDto> collectFullVersionParticipantDigests(
@@ -158,6 +244,22 @@ public final class PublishGateServiceImpl implements PublishGateService {
   @Override
   public void assertGatePassed(
       VersionDto version, List<PublishParticipantDigestDto> participantDigests) {
+    assertGatePassed(version, participantDigests, false);
+  }
+
+  @Override
+  public void assertSelectedGatePassed(
+      VersionDto version, List<PublishParticipantDigestDto> participantDigests) {
+    if (version.scriptOnly()) {
+      throw new IllegalArgumentException("Selected publication requires a full version");
+    }
+    assertGatePassed(version, participantDigests, true);
+  }
+
+  private void assertGatePassed(
+      VersionDto version,
+      List<PublishParticipantDigestDto> participantDigests,
+      boolean selectedPublication) {
     List<PublishParticipantKey> expectedParticipants =
         version.scriptOnly() ? SCRIPT_PATCH_PARTICIPANTS : FULL_VERSION_PARTICIPANTS;
     List<String> expectedParticipantKeyList =
@@ -206,8 +308,18 @@ public final class PublishGateServiceImpl implements PublishGateService {
                 "publish gate failed: wrong scope from " + digest.participantKey());
           }
           String participantKey = digest.participantKey();
-          Integer supportedSchemaVersion =
-              participantKey == null ? null : SUPPORTED_DIGEST_SCHEMA_VERSIONS.get(participantKey);
+          Integer supportedSchemaVersion;
+          if (selectedPublication) {
+            supportedSchemaVersion =
+                AuthoredWorldReleaseAttestationEvidence.supportedParticipantDigestSchema(
+                    participantKey,
+                    AuthoredWorldReleaseAttestationEvidence.SELECTOR_SCHEMA_VERSION);
+          } else {
+            supportedSchemaVersion =
+                participantKey == null
+                    ? null
+                    : SUPPORTED_DIGEST_SCHEMA_VERSIONS.get(participantKey);
+          }
           if (digest.digestSchemaVersion() == null
               || !digest.digestSchemaVersion().equals(supportedSchemaVersion)) {
             throw new PublishGateFailureException(

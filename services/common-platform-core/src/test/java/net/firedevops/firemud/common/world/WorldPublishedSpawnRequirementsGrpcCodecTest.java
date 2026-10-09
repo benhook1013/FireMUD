@@ -408,7 +408,7 @@ class WorldPublishedSpawnRequirementsGrpcCodecTest {
                         selection.appliedCommitId(),
                         "b".repeat(64),
                         AuthoredWorldReleaseAttestationEvidence.supportedParticipantDigestSchema(
-                            owner),
+                            owner, AuthoredWorldReleaseAttestationEvidence.SELECTOR_SCHEMA_VERSION),
                         "GAME_LOGIC".equals(owner),
                         "GAME_LOGIC".equals(owner) ? "sha256:" + "c".repeat(64) : null))
             .toList();

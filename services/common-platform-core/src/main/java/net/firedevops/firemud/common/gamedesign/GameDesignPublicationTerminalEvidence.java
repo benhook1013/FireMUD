@@ -108,7 +108,8 @@ public final class GameDesignPublicationTerminalEvidence {
         if (!owners.get(i).equals(p.participantKey())
             || p.digestSchemaVersion()
                 != AuthoredWorldReleaseAttestationEvidence.supportedParticipantDigestSchema(
-                    p.participantKey())
+                    p.participantKey(),
+                    AuthoredWorldReleaseAttestationEvidence.SELECTOR_SCHEMA_VERSION)
             || p.baseVersionId() != null
             || !selected.appliedCommitId().equals(p.appliedCommitId())
             || !p.scopeValue().matches("[1-9][0-9]*")

@@ -17,6 +17,7 @@ import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
+import net.firedevops.firemud.common.security.SessionContext;
 import net.firedevops.firemud.common.tenant.AuthoredWorldSourceDigest;
 import net.firedevops.firemud.common.tenant.AuthoredWorldSourceEvidence;
 import net.firedevops.firemud.common.tenant.WorldAuthoredSourceIntakeGrpcCodec;
@@ -24,6 +25,8 @@ import net.firedevops.firemud.common.tenant.WorldAuthoredSourceIntakeGrpcCodec.C
 import net.firedevops.firemud.common.tenant.WorldAuthoredSourceIntakeGrpcCodec.IntakeRequest;
 import net.firedevops.firemud.worldmanagement.v1.IntakeAuthoredWorldSourceRequest;
 import net.firedevops.firemud.worldmanagement.v1.IntakeAuthoredWorldSourceResponse;
+import net.firedevops.firemud.worldmanagement.v1.ReadAuthoredWorldSourceIntakeByIdRequest;
+import net.firedevops.firemud.worldmanagement.v1.ReadAuthoredWorldSourceIntakeByIdResponse;
 import net.firedevops.firemud.worldmanagement.v1.ReadAuthoredWorldSourceIntakeRequest;
 import net.firedevops.firemud.worldmanagement.v1.ReadAuthoredWorldSourceIntakeResponse;
 import org.junit.jupiter.api.Test;
@@ -129,6 +132,127 @@ class WorldAuthoredSourceIntakeGrpcServiceTest {
             WORLD_SLUG,
             SOURCE_OPERATION_ID,
             SOURCE_DIGEST);
+  }
+
+  @Test
+  void readByIdReturnsFullPublicReceiptAndExactRequestEcho() {
+    AuthoredWorldSourceEvidence source =
+        source(NAMESPACE, TENANT_ID, SOURCE_OPERATION_ID, WORLD_SLUG);
+    WorldAuthoredSourceIntakeReceipt receipt = receipt(binding(), 9001L);
+    var request = readByIdRequest();
+    when(intakeService.readCommittedReceiptById(
+            1, NAMESPACE, READ_REQUEST_ID, INTAKE_REQUEST_ID, TENANT_ID))
+        .thenReturn(Optional.of(receipt));
+    RecordingObserver<ReadAuthoredWorldSourceIntakeByIdResponse> observer =
+        new RecordingObserver<>();
+
+    withGameDesign(() -> grpcService.readAuthoredWorldSourceIntakeById(request, observer));
+
+    assertThat(observer.error).isNull();
+    assertThat(observer.completed).isTrue();
+    assertThat(observer.values).hasSize(1);
+    var response = observer.values.get(0);
+    assertThat(response.getReadRequestId()).isEqualTo(READ_REQUEST_ID.toString());
+    assertThat(response.getIntakeRequestId()).isEqualTo(INTAKE_REQUEST_ID.toString());
+    var decoded = WorldAuthoredSourceIntakeGrpcCodec.fromReadByIdResponse(readById(), response);
+    assertThat(decoded.source()).isEqualTo(source);
+    assertThat(decoded.operationId()).isEqualTo(OPERATION_ID);
+    assertThat(decoded.receiptDigest()).isEqualTo(receipt.receiptDigest());
+    assertThat(response.getReceipt().getAllFields().keySet())
+        .extracting(field -> field.getName())
+        .doesNotContain("local_tenant_key", "localTenantKey", "local_version_key");
+    assertThat(response.getReceipt().getSource().getAllFields().keySet())
+        .extracting(field -> field.getName())
+        .contains("registration_request_id", "source_game_row_id", "source_game_tenant_key");
+    verify(intakeService)
+        .readCommittedReceiptById(1, NAMESPACE, READ_REQUEST_ID, INTAKE_REQUEST_ID, TENANT_ID);
+  }
+
+  @Test
+  void readByIdRejectsWrongPeerEndUserContextAndUnknownFieldsBeforeOwnerAccess() {
+    var request = readByIdRequest();
+    RecordingObserver<ReadAuthoredWorldSourceIntakeByIdResponse> wrongPeer =
+        new RecordingObserver<>();
+    withPeer(
+        NAMESPACE,
+        "game-session-service",
+        () -> grpcService.readAuthoredWorldSourceIntakeById(request, wrongPeer));
+    assertThat(Status.fromThrowable(wrongPeer.error).getCode())
+        .isEqualTo(Status.Code.PERMISSION_DENIED);
+
+    RecordingObserver<ReadAuthoredWorldSourceIntakeByIdResponse> userContext =
+        new RecordingObserver<>();
+    SessionContext.setContext("account", List.of(), java.util.Map.of());
+    try {
+      withGameDesign(() -> grpcService.readAuthoredWorldSourceIntakeById(request, userContext));
+    } finally {
+      SessionContext.clear();
+    }
+    assertThat(Status.fromThrowable(userContext.error).getCode())
+        .isEqualTo(Status.Code.PERMISSION_DENIED);
+
+    RecordingObserver<ReadAuthoredWorldSourceIntakeByIdResponse> unknown =
+        new RecordingObserver<>();
+    ReadAuthoredWorldSourceIntakeByIdRequest withUnknown =
+        request.toBuilder().setUnknownFields(unknownField()).build();
+    withGameDesign(() -> grpcService.readAuthoredWorldSourceIntakeById(withUnknown, unknown));
+    assertThat(Status.fromThrowable(unknown.error).getCode())
+        .isEqualTo(Status.Code.INVALID_ARGUMENT);
+
+    RecordingObserver<ReadAuthoredWorldSourceIntakeByIdResponse> wrongNamespace =
+        new RecordingObserver<>();
+    withGameDesign(
+        () ->
+            grpcService.readAuthoredWorldSourceIntakeById(
+                request.toBuilder().setTargetNamespace("other").build(), wrongNamespace));
+    assertThat(Status.fromThrowable(wrongNamespace.error).getCode())
+        .isEqualTo(Status.Code.PERMISSION_DENIED);
+
+    for (ReadAuthoredWorldSourceIntakeByIdRequest invalidRequest :
+        List.of(
+            request.toBuilder().setSchemaVersion(2).build(),
+            request.toBuilder().setReadRequestId(INTAKE_REQUEST_ID.toString()).build(),
+            request.toBuilder().setCanonicalTenantId("not-a-canonical-uuid").build())) {
+      RecordingObserver<ReadAuthoredWorldSourceIntakeByIdResponse> invalid =
+          new RecordingObserver<>();
+      withGameDesign(() -> grpcService.readAuthoredWorldSourceIntakeById(invalidRequest, invalid));
+      assertThat(Status.fromThrowable(invalid.error).getCode())
+          .isEqualTo(Status.Code.INVALID_ARGUMENT);
+    }
+    verifyNoInteractions(intakeService);
+  }
+
+  @Test
+  void readByIdReportsMissingAndRejectsSubstitutedTenantReceipt() {
+    var request = readByIdRequest();
+    when(intakeService.readCommittedReceiptById(
+            1, NAMESPACE, READ_REQUEST_ID, INTAKE_REQUEST_ID, TENANT_ID))
+        .thenReturn(Optional.empty());
+    RecordingObserver<ReadAuthoredWorldSourceIntakeByIdResponse> missing =
+        new RecordingObserver<>();
+    withGameDesign(() -> grpcService.readAuthoredWorldSourceIntakeById(request, missing));
+    assertThat(Status.fromThrowable(missing.error).getCode()).isEqualTo(Status.Code.NOT_FOUND);
+    assertThat(missing.values).isEmpty();
+
+    UUID otherTenant = UUID.fromString("77777777-7777-4777-8777-777777777777");
+    IntakeRequest otherBinding =
+        new IntakeRequest(
+            1,
+            NAMESPACE,
+            INTAKE_REQUEST_ID,
+            otherTenant,
+            WORLD_SLUG,
+            SOURCE_OPERATION_ID,
+            source(NAMESPACE, otherTenant, SOURCE_OPERATION_ID, WORLD_SLUG).evidenceDigest());
+    when(intakeService.readCommittedReceiptById(
+            1, NAMESPACE, READ_REQUEST_ID, INTAKE_REQUEST_ID, TENANT_ID))
+        .thenReturn(Optional.of(receipt(otherBinding, 9001L)));
+    RecordingObserver<ReadAuthoredWorldSourceIntakeByIdResponse> changed =
+        new RecordingObserver<>();
+    withGameDesign(() -> grpcService.readAuthoredWorldSourceIntakeById(request, changed));
+    assertThat(Status.fromThrowable(changed.error).getCode())
+        .isEqualTo(Status.Code.FAILED_PRECONDITION);
+    assertThat(changed.values).isEmpty();
   }
 
   @Test
@@ -329,6 +453,15 @@ class WorldAuthoredSourceIntakeGrpcServiceTest {
         new WorldAuthoredSourceIntakeGrpcCodec.ReadRequest(binding(), READ_REQUEST_ID));
   }
 
+  private static WorldAuthoredSourceIntakeGrpcCodec.ByIdReadRequest readById() {
+    return new WorldAuthoredSourceIntakeGrpcCodec.ByIdReadRequest(
+        1, NAMESPACE, READ_REQUEST_ID, INTAKE_REQUEST_ID, TENANT_ID);
+  }
+
+  private static ReadAuthoredWorldSourceIntakeByIdRequest readByIdRequest() {
+    return WorldAuthoredSourceIntakeGrpcCodec.toReadByIdRequest(readById());
+  }
+
   private static WorldAuthoredSourceIntakeReceipt receipt(
       IntakeRequest binding, long localTenantKey) {
     AuthoredWorldSourceEvidence source =
@@ -392,6 +525,12 @@ class WorldAuthoredSourceIntakeGrpcServiceTest {
         "legacy-game-tenant-42",
         "NEW_GAME_ROW",
         evidenceDigest);
+  }
+
+  private static UnknownFieldSet unknownField() {
+    return UnknownFieldSet.newBuilder()
+        .addField(99, UnknownFieldSet.Field.newBuilder().addVarint(1L).build())
+        .build();
   }
 
   private static void withGameDesign(Runnable action) {

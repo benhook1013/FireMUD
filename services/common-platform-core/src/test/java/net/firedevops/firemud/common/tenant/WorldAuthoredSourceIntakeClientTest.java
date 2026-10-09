@@ -25,6 +25,8 @@ import net.firedevops.firemud.common.grpc.CommonGrpcClientProperties;
 import net.firedevops.firemud.common.grpc.GrpcChannelFactory;
 import net.firedevops.firemud.worldmanagement.v1.IntakeAuthoredWorldSourceRequest;
 import net.firedevops.firemud.worldmanagement.v1.IntakeAuthoredWorldSourceResponse;
+import net.firedevops.firemud.worldmanagement.v1.ReadAuthoredWorldSourceIntakeByIdRequest;
+import net.firedevops.firemud.worldmanagement.v1.ReadAuthoredWorldSourceIntakeByIdResponse;
 import net.firedevops.firemud.worldmanagement.v1.ReadAuthoredWorldSourceIntakeRequest;
 import net.firedevops.firemud.worldmanagement.v1.ReadAuthoredWorldSourceIntakeResponse;
 import net.firedevops.firemud.worldmanagement.v1.WorldAuthoredSourceIntakeServiceGrpc;
@@ -47,6 +49,13 @@ class WorldAuthoredSourceIntakeClientTest {
   private static final WorldAuthoredSourceIntakeGrpcCodec.ReadRequest READ_REQUEST =
       new WorldAuthoredSourceIntakeGrpcCodec.ReadRequest(
           INTAKE_REQUEST, UUID.fromString("42345678-1234-4234-8234-123456789abc"));
+  private static final WorldAuthoredSourceIntakeGrpcCodec.ByIdReadRequest BY_ID_READ_REQUEST =
+      new WorldAuthoredSourceIntakeGrpcCodec.ByIdReadRequest(
+          1,
+          NAMESPACE,
+          UUID.fromString("52345678-1234-4234-8234-123456789abc"),
+          INTAKE_REQUEST.intakeRequestId(),
+          INTAKE_REQUEST.canonicalTenantId());
 
   @Test
   void rejectsPlaintextClasspathAndUnreadableTlsMaterialBeforeChannelCreation(@TempDir Path dir)
@@ -104,6 +113,20 @@ class WorldAuthoredSourceIntakeClientTest {
       assertThatThrownBy(() -> client.read(READ_REQUEST))
           .isInstanceOf(IllegalStateException.class)
           .hasMessageContaining("not initialized and available");
+      assertThatThrownBy(() -> client.readById(BY_ID_READ_REQUEST))
+          .isInstanceOf(IllegalStateException.class)
+          .hasMessageContaining("not initialized and available");
+      assertThatThrownBy(
+              () ->
+                  client.readById(
+                      new WorldAuthoredSourceIntakeGrpcCodec.ByIdReadRequest(
+                          1,
+                          "other",
+                          BY_ID_READ_REQUEST.readRequestId(),
+                          BY_ID_READ_REQUEST.intakeRequestId(),
+                          BY_ID_READ_REQUEST.canonicalTenantId())))
+          .isInstanceOf(IllegalArgumentException.class)
+          .hasMessageContaining("configured workload namespace");
       verifyNoInteractions(channelFactory);
     } finally {
       client.close();
@@ -230,6 +253,121 @@ class WorldAuthoredSourceIntakeClientTest {
             WorldAuthoredSourceIntakeGrpcCodec.toReadRequest(READ_REQUEST));
   }
 
+  @Test
+  void byIdReadReturnsTheFullValidatedPublicReceiptWithBoundedDeadline(@TempDir Path dir)
+      throws Exception {
+    WorldAuthoredSourceIntakeServiceGrpc.WorldAuthoredSourceIntakeServiceBlockingStub stub =
+        mock(
+            WorldAuthoredSourceIntakeServiceGrpc.WorldAuthoredSourceIntakeServiceBlockingStub
+                .class);
+    WorldAuthoredSourceIntakeClient client = clientWithStub(dir, stub);
+    when(stub.withDeadlineAfter(anyLong(), eq(TimeUnit.SECONDS))).thenReturn(stub);
+    when(stub.readAuthoredWorldSourceIntakeById(
+            any(ReadAuthoredWorldSourceIntakeByIdRequest.class)))
+        .thenReturn(byIdReadResponse(BY_ID_READ_REQUEST));
+
+    var receipt = client.readById(BY_ID_READ_REQUEST);
+
+    assertThat(receipt.intakeRequestId()).isEqualTo(BY_ID_READ_REQUEST.intakeRequestId());
+    assertThat(receipt.canonicalTenantId()).isEqualTo(BY_ID_READ_REQUEST.canonicalTenantId());
+    assertThat(receipt.worldSlug()).isEqualTo(INTAKE_REQUEST.worldSlug());
+    assertThat(receipt.source()).isEqualTo(sourceEvidence());
+    assertThat(receipt.receiptDigest()).isEqualTo(RECEIPT_DIGEST);
+    assertThat(byIdReadResponse(BY_ID_READ_REQUEST).getReceipt().getAllFields().keySet())
+        .extracting(field -> field.getName())
+        .doesNotContain("local_tenant_key", "local_version_key", "world_tenant_key");
+    assertThat(
+            byIdReadResponse(BY_ID_READ_REQUEST).getReceipt().getSource().getAllFields().keySet())
+        .extracting(field -> field.getName())
+        .containsExactlyInAnyOrder(
+            "schema_version",
+            "target_namespace",
+            "registration_request_id",
+            "operation_id",
+            "request_digest",
+            "canonical_tenant_id",
+            "tenant_slug",
+            "world_slug",
+            "world_display_name",
+            "source_game_row_id",
+            "source_game_tenant_key",
+            "provenance_kind",
+            "evidence_digest")
+        .doesNotContain("world_tenant_key", "local_tenant_key", "local_version_key");
+    verify(stub).withDeadlineAfter(5L, TimeUnit.SECONDS);
+    verify(stub)
+        .readAuthoredWorldSourceIntakeById(
+            WorldAuthoredSourceIntakeGrpcCodec.toReadByIdRequest(BY_ID_READ_REQUEST));
+    assertThat(
+            WorldAuthoredSourceIntakeGrpcCodec.toReadByIdRequest(BY_ID_READ_REQUEST)
+                .getDescriptorForType()
+                .getFields())
+        .extracting(field -> field.getName())
+        .containsExactly(
+            "schema_version",
+            "target_namespace",
+            "read_request_id",
+            "intake_request_id",
+            "canonical_tenant_id")
+        .doesNotContain("world_slug", "source_operation_id", "expected_source_evidence_digest");
+  }
+
+  @Test
+  void byIdReadRejectsChangedEchoUnknownFieldsAndCorruptFullSource(@TempDir Path dir)
+      throws Exception {
+    WorldAuthoredSourceIntakeServiceGrpc.WorldAuthoredSourceIntakeServiceBlockingStub stub =
+        mock(
+            WorldAuthoredSourceIntakeServiceGrpc.WorldAuthoredSourceIntakeServiceBlockingStub
+                .class);
+    WorldAuthoredSourceIntakeClient client = clientWithStub(dir, stub);
+    when(stub.withDeadlineAfter(anyLong(), eq(TimeUnit.SECONDS))).thenReturn(stub);
+
+    when(stub.readAuthoredWorldSourceIntakeById(
+            any(ReadAuthoredWorldSourceIntakeByIdRequest.class)))
+        .thenReturn(
+            byIdReadResponse(BY_ID_READ_REQUEST).toBuilder()
+                .setReadRequestId(BY_ID_READ_REQUEST.intakeRequestId().toString())
+                .build());
+    assertThatThrownBy(() -> client.readById(BY_ID_READ_REQUEST))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("invalid authored-source intake by-ID readback");
+
+    when(stub.readAuthoredWorldSourceIntakeById(
+            any(ReadAuthoredWorldSourceIntakeByIdRequest.class)))
+        .thenReturn(
+            byIdReadResponse(BY_ID_READ_REQUEST).toBuilder()
+                .setUnknownFields(unknownField())
+                .build());
+    assertThatThrownBy(() -> client.readById(BY_ID_READ_REQUEST))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("invalid authored-source intake by-ID readback");
+
+    var valid = byIdReadResponse(BY_ID_READ_REQUEST);
+    var corruptReceipt =
+        valid.getReceipt().toBuilder()
+            .setSource(
+                valid.getReceipt().getSource().toBuilder().setWorldDisplayName("substituted"))
+            .build();
+    when(stub.readAuthoredWorldSourceIntakeById(
+            any(ReadAuthoredWorldSourceIntakeByIdRequest.class)))
+        .thenReturn(valid.toBuilder().setReceipt(corruptReceipt).build());
+    assertThatThrownBy(() -> client.readById(BY_ID_READ_REQUEST))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("invalid authored-source intake by-ID readback");
+
+    var unknownSource =
+        valid.getReceipt().getSource().toBuilder().setUnknownFields(unknownField()).build();
+    when(stub.readAuthoredWorldSourceIntakeById(
+            any(ReadAuthoredWorldSourceIntakeByIdRequest.class)))
+        .thenReturn(
+            valid.toBuilder()
+                .setReceipt(valid.getReceipt().toBuilder().setSource(unknownSource))
+                .build());
+    assertThatThrownBy(() -> client.readById(BY_ID_READ_REQUEST))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("invalid authored-source intake by-ID readback");
+  }
+
   private static WorldAuthoredSourceIntakeClient clientWithStub(
       Path directory,
       WorldAuthoredSourceIntakeServiceGrpc.WorldAuthoredSourceIntakeServiceBlockingStub stub)
@@ -249,6 +387,77 @@ class WorldAuthoredSourceIntakeClientTest {
   private static ReadAuthoredWorldSourceIntakeResponse readResponse(
       WorldAuthoredSourceIntakeGrpcCodec.ReadRequest request) {
     return WorldAuthoredSourceIntakeGrpcCodec.toReadResponse(request, receipt(request.binding()));
+  }
+
+  private static ReadAuthoredWorldSourceIntakeByIdResponse byIdReadResponse(
+      WorldAuthoredSourceIntakeGrpcCodec.ByIdReadRequest request) {
+    return WorldAuthoredSourceIntakeGrpcCodec.toReadByIdResponse(request, publicReceipt());
+  }
+
+  private static WorldAuthoredSourceIntakeGrpcCodec.PublicReceipt publicReceipt() {
+    var source = sourceEvidence();
+    var binding =
+        new WorldAuthoredSourceIntakeGrpcCodec.IntakeRequest(
+            1,
+            NAMESPACE,
+            INTAKE_REQUEST.intakeRequestId(),
+            INTAKE_REQUEST.canonicalTenantId(),
+            INTAKE_REQUEST.worldSlug(),
+            INTAKE_REQUEST.sourceOperationId(),
+            source.evidenceDigest());
+    return new WorldAuthoredSourceIntakeGrpcCodec.PublicReceipt(
+        1,
+        NAMESPACE,
+        INTAKE_REQUEST.intakeRequestId(),
+        UUID.fromString("62345678-1234-4234-8234-123456789abc"),
+        INTAKE_REQUEST.canonicalTenantId(),
+        INTAKE_REQUEST.worldSlug(),
+        INTAKE_REQUEST.sourceOperationId(),
+        source.evidenceDigest(),
+        WorldAuthoredSourceIntakeGrpcCodec.requestDigest(binding),
+        RECEIPT_DIGEST,
+        source);
+  }
+
+  private static AuthoredWorldSourceEvidence sourceEvidence() {
+    UUID registrationRequestId = UUID.fromString("72345678-1234-4234-8234-123456789abc");
+    String tenantSlug = "north-star";
+    String worldDisplayName = "World One";
+    String sourceRequestDigest =
+        AuthoredWorldSourceDigest.requestDigest(
+            NAMESPACE,
+            registrationRequestId,
+            INTAKE_REQUEST.canonicalTenantId(),
+            tenantSlug,
+            INTAKE_REQUEST.worldSlug(),
+            worldDisplayName);
+    String evidenceDigest =
+        AuthoredWorldSourceDigest.evidenceDigest(
+            NAMESPACE,
+            registrationRequestId,
+            INTAKE_REQUEST.sourceOperationId(),
+            sourceRequestDigest,
+            INTAKE_REQUEST.canonicalTenantId(),
+            tenantSlug,
+            INTAKE_REQUEST.worldSlug(),
+            worldDisplayName,
+            42L,
+            "legacy-game-tenant-42",
+            "NEW_GAME_ROW");
+    return new AuthoredWorldSourceEvidence(
+        1,
+        NAMESPACE,
+        registrationRequestId,
+        INTAKE_REQUEST.sourceOperationId(),
+        sourceRequestDigest,
+        INTAKE_REQUEST.canonicalTenantId(),
+        tenantSlug,
+        INTAKE_REQUEST.worldSlug(),
+        worldDisplayName,
+        42L,
+        "legacy-game-tenant-42",
+        "NEW_GAME_ROW",
+        evidenceDigest);
   }
 
   private static WorldAuthoredSourceIntakeGrpcCodec.CommittedReceipt receipt(

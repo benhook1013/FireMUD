@@ -7,12 +7,17 @@ import java.sql.SQLException;
 import java.util.Objects;
 import java.util.Optional;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
+import net.firedevops.firemud.common.security.SessionContext;
 import net.firedevops.firemud.common.tenant.WorldAuthoredSourceIntakeGrpcCodec;
+import net.firedevops.firemud.common.tenant.WorldAuthoredSourceIntakeGrpcCodec.ByIdReadRequest;
 import net.firedevops.firemud.common.tenant.WorldAuthoredSourceIntakeGrpcCodec.CommittedReceipt;
 import net.firedevops.firemud.common.tenant.WorldAuthoredSourceIntakeGrpcCodec.IntakeRequest;
+import net.firedevops.firemud.common.tenant.WorldAuthoredSourceIntakeGrpcCodec.PublicReceipt;
 import net.firedevops.firemud.common.tenant.WorldAuthoredSourceIntakeGrpcCodec.ReadRequest;
 import net.firedevops.firemud.worldmanagement.v1.IntakeAuthoredWorldSourceRequest;
 import net.firedevops.firemud.worldmanagement.v1.IntakeAuthoredWorldSourceResponse;
+import net.firedevops.firemud.worldmanagement.v1.ReadAuthoredWorldSourceIntakeByIdRequest;
+import net.firedevops.firemud.worldmanagement.v1.ReadAuthoredWorldSourceIntakeByIdResponse;
 import net.firedevops.firemud.worldmanagement.v1.ReadAuthoredWorldSourceIntakeRequest;
 import net.firedevops.firemud.worldmanagement.v1.ReadAuthoredWorldSourceIntakeResponse;
 import net.firedevops.firemud.worldmanagement.v1.WorldAuthoredSourceIntakeServiceGrpc;
@@ -165,6 +170,69 @@ public final class WorldAuthoredSourceIntakeGrpcService
     responseObserver.onCompleted();
   }
 
+  @Override
+  public void readAuthoredWorldSourceIntakeById(
+      ReadAuthoredWorldSourceIntakeByIdRequest request,
+      StreamObserver<ReadAuthoredWorldSourceIntakeByIdResponse> responseObserver) {
+    if (!requireAuthenticatedGameDesignPeerWithoutCallerContext(responseObserver)) {
+      return;
+    }
+    ByIdReadRequest readRequest;
+    try {
+      readRequest = WorldAuthoredSourceIntakeGrpcCodec.fromReadByIdRequest(request);
+    } catch (IllegalArgumentException exception) {
+      responseObserver.onError(
+          Status.INVALID_ARGUMENT
+              .withDescription("Canonical World intake by-ID read request is required")
+              .asRuntimeException());
+      return;
+    }
+    if (!trustedNamespace.equals(readRequest.targetNamespace())) {
+      responseObserver.onError(
+          Status.PERMISSION_DENIED
+              .withDescription(
+                  "World intake target namespace must match the authenticated workload")
+              .asRuntimeException());
+      return;
+    }
+
+    Optional<WorldAuthoredSourceIntakeReceipt> stored;
+    try {
+      stored =
+          intakeService.readCommittedReceiptById(
+              readRequest.schemaVersion(),
+              readRequest.targetNamespace(),
+              readRequest.readRequestId(),
+              readRequest.intakeRequestId(),
+              readRequest.canonicalTenantId());
+    } catch (RuntimeException exception) {
+      respondWithOwnerFailure(responseObserver, exception);
+      return;
+    }
+    if (stored.isEmpty()) {
+      responseObserver.onError(
+          Status.NOT_FOUND
+              .withDescription("No committed World intake matches the exact request")
+              .asRuntimeException());
+      return;
+    }
+
+    ReadAuthoredWorldSourceIntakeByIdResponse response;
+    try {
+      response =
+          WorldAuthoredSourceIntakeGrpcCodec.toReadByIdResponse(
+              readRequest, toPublicReceipt(stored.orElseThrow()));
+    } catch (IllegalArgumentException exception) {
+      responseObserver.onError(
+          Status.FAILED_PRECONDITION
+              .withDescription("Committed World intake receipt is inconsistent")
+              .asRuntimeException());
+      return;
+    }
+    responseObserver.onNext(response);
+    responseObserver.onCompleted();
+  }
+
   private static CommittedReceipt toCommittedReceipt(WorldAuthoredSourceIntakeReceipt receipt) {
     if (receipt == null) {
       throw new IllegalArgumentException("World owner returned no committed intake receipt");
@@ -182,6 +250,24 @@ public final class WorldAuthoredSourceIntakeGrpcService
         receipt.receiptDigest());
   }
 
+  private static PublicReceipt toPublicReceipt(WorldAuthoredSourceIntakeReceipt receipt) {
+    if (receipt == null) {
+      throw new IllegalArgumentException("World owner returned no committed intake receipt");
+    }
+    return new PublicReceipt(
+        receipt.schemaVersion(),
+        receipt.targetNamespace(),
+        receipt.intakeRequestId(),
+        receipt.operationId(),
+        receipt.canonicalTenantId(),
+        receipt.worldSlug(),
+        receipt.sourceOperationId(),
+        receipt.sourceEvidenceDigest(),
+        receipt.requestDigest(),
+        receipt.receiptDigest(),
+        receipt.source());
+  }
+
   private boolean requireAuthenticatedGameDesignPeer(StreamObserver<?> responseObserver) {
     GrpcPeerIdentity peer = GrpcPeerIdentity.current();
     if (peer != null
@@ -192,6 +278,22 @@ public final class WorldAuthoredSourceIntakeGrpcService
     responseObserver.onError(
         Status.PERMISSION_DENIED
             .withDescription("Verified same-namespace Game Design workload is required")
+            .asRuntimeException());
+    return false;
+  }
+
+  private boolean requireAuthenticatedGameDesignPeerWithoutCallerContext(
+      StreamObserver<?> responseObserver) {
+    if (!SessionContext.hasAuthenticatedCallerContext()
+        && GrpcPeerIdentity.current() != null
+        && GrpcPeerIdentity.current().isService("game-design-service")
+        && GrpcPeerIdentity.current().isInNamespace(trustedNamespace)) {
+      return true;
+    }
+    responseObserver.onError(
+        Status.PERMISSION_DENIED
+            .withDescription(
+                "Verified same-namespace Game Design workload without caller context is required")
             .asRuntimeException());
     return false;
   }

@@ -61,7 +61,7 @@ class AuthoredWorldReleaseAttestationSelectorTest {
             current.versionStateEpoch(),
             current.publishWorkflowId(),
             current.commitId(),
-            current.participantDigests(),
+            retainedV1Participants(current.participantDigests()),
             current.manifestHash(),
             current.manifestSchemaVersion(),
             current.requiredManifestAssetKeys(),
@@ -136,6 +136,64 @@ class AuthoredWorldReleaseAttestationSelectorTest {
             selector.appliedResultBytes());
     assertThatThrownBy(() -> copy(release, 2, wrongCheckpoint))
         .isInstanceOf(IllegalArgumentException.class);
+  }
+
+  @Test
+  void selectedAttestationRejectsRetainedSchemaOneControlPlaneEvidence() throws Exception {
+    var selector = selectorEvidence();
+    var selected = release(descriptor(selector), selector);
+    var retained = retainedV1Participants(selected.participantDigests());
+    assertThat(retained.getLast().digestSchemaVersion()).isEqualTo(1);
+    assertThat(selected.participantDigests().getLast().digestSchemaVersion()).isEqualTo(2);
+    assertThatThrownBy(
+            () ->
+                new AuthoredWorldReleaseAttestationEvidence(
+                    selected.schemaVersion(),
+                    selected.targetNamespace(),
+                    selected.descriptorResultDigest(),
+                    selected.canonicalTenantId(),
+                    selected.canonicalVersionId(),
+                    selected.worldSlug(),
+                    selected.authoredWorldSourceOperationId(),
+                    selected.authoredWorldSourceEvidenceDigest(),
+                    selected.launchDescriptorId(),
+                    selected.publishedReleaseBundleRef(),
+                    selected.versionStateEpoch(),
+                    selected.publishWorkflowId(),
+                    selected.commitId(),
+                    retained,
+                    selected.manifestHash(),
+                    selected.manifestSchemaVersion(),
+                    selected.requiredManifestAssetKeys(),
+                    selected.artifactDigests(),
+                    selected.commandDefinitions(),
+                    selected.generationConfigRevision(),
+                    selected.evidenceDigest(),
+                    selector))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("Participant digest schema is unsupported");
+  }
+
+  private static List<AuthoredWorldReleaseAttestationEvidence.Participant> retainedV1Participants(
+      List<AuthoredWorldReleaseAttestationEvidence.Participant> selected) {
+    // Stipulated historical evidence, independently scoped to the retained-v1 contract.
+    return selected.stream()
+        .map(
+            p ->
+                new AuthoredWorldReleaseAttestationEvidence.Participant(
+                    p.participantKey(),
+                    p.scopeValue(),
+                    p.baseVersionIdPresent(),
+                    p.baseVersionId(),
+                    p.appliedCommitId(),
+                    "GAME_DESIGN_CONTROL_PLANE".equals(p.participantKey())
+                        ? "e".repeat(64)
+                        : p.contentDigest(),
+                    AuthoredWorldReleaseAttestationEvidence.supportedParticipantDigestSchema(
+                        p.participantKey(), AuthoredWorldReleaseAttestationEvidence.SCHEMA_VERSION),
+                    p.abilitySchemaDigestPresent(),
+                    p.abilitySchemaDigest()))
+        .toList();
   }
 
   static WorldPublishedStartLocationEvidence selectorEvidence() throws Exception {
@@ -232,7 +290,7 @@ class AuthoredWorldReleaseAttestationSelectorTest {
                         selector.request().appliedCommitId(),
                         "b".repeat(64),
                         AuthoredWorldReleaseAttestationEvidence.supportedParticipantDigestSchema(
-                            owner),
+                            owner, AuthoredWorldReleaseAttestationEvidence.SELECTOR_SCHEMA_VERSION),
                         "GAME_LOGIC".equals(owner),
                         "GAME_LOGIC".equals(owner) ? "sha256:" + "c".repeat(64) : null))
             .toList();

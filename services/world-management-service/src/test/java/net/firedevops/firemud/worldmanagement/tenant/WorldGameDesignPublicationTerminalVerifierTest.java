@@ -328,7 +328,7 @@ class WorldGameDesignPublicationTerminalVerifierTest {
                         world.appliedCommitId(),
                         "WORLD_MANAGEMENT".equals(owner) ? world.contentDigest() : "c".repeat(64),
                         AuthoredWorldReleaseAttestationEvidence.supportedParticipantDigestSchema(
-                            owner),
+                            owner, AuthoredWorldReleaseAttestationEvidence.SELECTOR_SCHEMA_VERSION),
                         "GAME_LOGIC".equals(owner) ? "sha256:" + "d".repeat(64) : null,
                         null,
                         null))

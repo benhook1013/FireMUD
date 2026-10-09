@@ -352,7 +352,7 @@ class AccountPublicationAuthorizationPostgresIntegrationTest {
                         request.appliedCommitId(),
                         request.contentDigest(),
                         AuthoredWorldReleaseAttestationEvidence.supportedParticipantDigestSchema(
-                            owner),
+                            owner, AuthoredWorldReleaseAttestationEvidence.SELECTOR_SCHEMA_VERSION),
                         "GAME_LOGIC".equals(owner) ? "sha256:" + "a".repeat(64) : null,
                         null,
                         null))

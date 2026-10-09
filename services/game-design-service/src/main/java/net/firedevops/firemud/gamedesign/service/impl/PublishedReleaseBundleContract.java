@@ -54,7 +54,8 @@ final class PublishedReleaseBundleContract {
           || !Objects.equals(
               participant.digestSchemaVersion(),
               AuthoredWorldReleaseAttestationEvidence.supportedParticipantDigestSchema(
-                  participant.participantKey()))) {
+                  participant.participantKey(),
+                  AuthoredWorldReleaseAttestationEvidence.SELECTOR_SCHEMA_VERSION))) {
         throw new IllegalArgumentException(
             "World selector requires all exact successful release participants");
       }

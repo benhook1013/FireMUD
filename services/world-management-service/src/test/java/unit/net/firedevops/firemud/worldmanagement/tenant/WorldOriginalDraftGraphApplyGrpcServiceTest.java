@@ -8,6 +8,10 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
+import ch.qos.logback.classic.Level;
+import ch.qos.logback.classic.Logger;
+import ch.qos.logback.classic.spi.ILoggingEvent;
+import ch.qos.logback.core.read.ListAppender;
 import io.grpc.Context;
 import io.grpc.Status;
 import io.grpc.stub.StreamObserver;
@@ -26,6 +30,7 @@ import net.firedevops.firemud.worldmanagement.tenant.WorldOriginalDraftGraphAppl
 import net.firedevops.firemud.worldmanagement.v1.ApplyOriginalDraftGraphRequest;
 import net.firedevops.firemud.worldmanagement.v1.ApplyOriginalDraftGraphResponse;
 import org.junit.jupiter.api.Test;
+import org.slf4j.LoggerFactory;
 
 /**
  * Guard/dispatch structural proof only; authentic source/persistence is the owner's separate proof.
@@ -151,6 +156,46 @@ class WorldOriginalDraftGraphApplyGrpcServiceTest {
     assertThat(malformed.code()).isEqualTo(Status.Code.INVALID_ARGUMENT);
     assertThat(malformed.value).isNull();
     assertThat(malformed.completed).isFalse();
+  }
+
+  @Test
+  void unexpectedOwnerFailureIsDeniedAndLogsOnlyFailureTypesAndFrameLocations() {
+    var owner = mock(WorldOriginalDraftGraphApplicationService.class);
+    var request = request("test");
+    String outerMessage = "creatorCredential=outer-secret";
+    String nestedMessage = "sqlParameter=nested-secret";
+    var failure =
+        new IllegalStateException(outerMessage, new IllegalArgumentException(nestedMessage));
+    when(owner.apply(eq("test"), any(byte[].class))).thenThrow(failure);
+    var grpc = new WorldOriginalDraftGraphApplyGrpcService(owner, "test");
+    Logger logger = (Logger) LoggerFactory.getLogger(WorldOriginalDraftGraphApplyGrpcService.class);
+    ListAppender<ILoggingEvent> appender = new ListAppender<>();
+    appender.start();
+    logger.addAppender(appender);
+    try {
+      var response =
+          call(
+              grpc,
+              WorldOriginalDraftGraphApplyGrpcCodec.toRequest(request),
+              peer("game-design-service", "test"));
+      assertThat(response.code()).isEqualTo(Status.Code.FAILED_PRECONDITION);
+      assertThat(response.value).isNull();
+      assertThat(response.completed).isFalse();
+
+      assertThat(appender.list).hasSize(1);
+      var event = appender.list.getFirst();
+      assertThat(event.getLevel()).isEqualTo(Level.ERROR);
+      assertThat(event.getFormattedMessage())
+          .contains("failureType=java.lang.IllegalStateException")
+          .contains("WorldOriginalDraftGraphApplyGrpcServiceTest.java:")
+          .contains("cause java.lang.IllegalArgumentException")
+          .doesNotContain(outerMessage, nestedMessage);
+      assertThat(event.getThrowableProxy()).isNull();
+    } finally {
+      logger.detachAppender(appender);
+      appender.stop();
+    }
+    verify(owner).apply("test", request.originalAccountBinding());
   }
 
   private static GrpcPeerIdentity peer(String service, String namespace) {

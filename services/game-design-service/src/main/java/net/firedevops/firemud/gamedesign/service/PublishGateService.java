@@ -19,4 +19,10 @@ public interface PublishGateService {
       VersionDto version, String publishRequestId, String publishWorkflowId);
 
   void assertGatePassed(VersionDto version, List<PublishParticipantDigestDto> participantDigests);
+
+  /**
+   * Requires the selected full-publication digest schemas, including all six GD source families.
+   */
+  void assertSelectedGatePassed(
+      VersionDto version, List<PublishParticipantDigestDto> participantDigests);
 }

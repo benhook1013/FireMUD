@@ -183,7 +183,7 @@ public final class WorldCanonicalInstancePreparation {
         || !world.contentDigest().equals(freeze.contentDigest())
         || world.digestSchemaVersion()
             != AuthoredWorldReleaseAttestationEvidence.supportedParticipantDigestSchema(
-                "WORLD_MANAGEMENT")
+                "WORLD_MANAGEMENT", release.schemaVersion())
         || world.digestSchemaVersion() != freeze.digestSchemaVersion()) {
       throw new IllegalArgumentException(
           "Canonical preparation World participant differs from its exact frozen checkpoint");

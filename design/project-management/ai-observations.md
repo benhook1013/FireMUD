@@ -150,3 +150,9 @@ Entry format:
   - Observation: Successful compilation and skipped database tests did not establish a safe resolved resource classpath. Account already provided a resource-isolated opt-in proof artifact for this same cross-owner testing boundary.
   - Expected pattern: Consume an opt-in classes-only proof artifact when another service's owner classes are needed. Keep each owner migration directory explicit in composed fixtures; do not suppress Flyway checks or change production resource scanning to accommodate tests.
   - Current status: Game Logic's resource-isolated proof artifact and its Game Design consumer are prepared. Resolved artifact inspection and corrected-head physical PostgreSQL execution remain required; no production migration or activation guard changed.
+
+- `2026-10-09`: Verify CI job conclusions before assigning failures from watcher annotations
+  - Context: The initial observer summary for PR #3105 run 37901040926 attributed failure to Workflow Lint and World, but exact job and step conclusions showed both succeeded. The required gate failed because Account and Game Design Build/Test failed.
+  - Observation: A workflow-level failure or diagnostic annotation does not establish which owner failed. Misattribution would route unnecessary shared-workflow or World repairs while leaving the real fixture and admission-WAL failures unresolved.
+  - Expected pattern: Verify terminal job/step conclusions and originating owner artifacts before routing a failure; retain actual checkout provenance and distinguish missing artifacts from passed tests.
+  - Current status: The parent corrected the report using the completed job evidence and XML: World 206 passing PostgreSQL cases, Game Design four fixture failures and Account one admission-WAL failure. The fixture corrections were validated locally; no physical rerun or WAL completion credit follows.

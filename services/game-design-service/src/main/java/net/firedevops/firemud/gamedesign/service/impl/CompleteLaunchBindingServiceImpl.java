@@ -338,6 +338,15 @@ public class CompleteLaunchBindingServiceImpl implements CompleteLaunchBindingSe
 
   private List<AuthoredWorldReleaseAttestationEvidence.Participant> requireParticipantEvidence(
       PublishedReleaseBundleDto bundle, long versionId) {
+    int attestationSchemaVersion =
+        switch (bundle.attestationSchemaVersion()) {
+          case "v1" -> AuthoredWorldReleaseAttestationEvidence.SCHEMA_VERSION;
+          case "v2" -> AuthoredWorldReleaseAttestationEvidence.SELECTOR_SCHEMA_VERSION;
+          case null, default ->
+              throw deny(
+                  "PARTICIPANT_EVIDENCE_INVALID",
+                  "supported release attestation schema is required");
+        };
     List<PublishParticipantDigestDto> observed = bundle.participantDigests();
     List<String> requiredParticipantOrder =
         AuthoredWorldReleaseAttestationEvidence.requiredParticipantOrder();
@@ -353,7 +362,7 @@ public class CompleteLaunchBindingServiceImpl implements CompleteLaunchBindingSe
       String expectedParticipantKey = requiredParticipantOrder.get(index);
       int supportedDigestSchemaVersion =
           AuthoredWorldReleaseAttestationEvidence.supportedParticipantDigestSchema(
-              expectedParticipantKey);
+              expectedParticipantKey, attestationSchemaVersion);
       PublishParticipantDigestDto digest = observed.get(index);
       if (digest == null
           || !expectedParticipantKey.equals(digest.participantKey())

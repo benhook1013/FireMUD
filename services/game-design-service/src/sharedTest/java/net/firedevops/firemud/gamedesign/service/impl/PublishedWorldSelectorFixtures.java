@@ -55,7 +55,10 @@ public final class PublishedWorldSelectorFixtures {
                         ? evidence.request().contentDigest()
                         : "c".repeat(64),
                     net.firedevops.firemud.common.gamedesign.AuthoredWorldReleaseAttestationEvidence
-                        .supportedParticipantDigestSchema(owner),
+                        .supportedParticipantDigestSchema(
+                            owner,
+                            net.firedevops.firemud.common.gamedesign
+                                .AuthoredWorldReleaseAttestationEvidence.SELECTOR_SCHEMA_VERSION),
                     "GAME_LOGIC".equals(owner) ? "sha256:" + "d".repeat(64) : null,
                     null,
                     null))

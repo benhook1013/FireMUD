@@ -15,6 +15,7 @@ import java.util.UUID;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Supplier;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
+import net.firedevops.firemud.common.security.SessionContext;
 import net.firedevops.firemud.common.tenant.AuthoredWorldSourceClient;
 import net.firedevops.firemud.common.tenant.AuthoredWorldSourceDigest;
 import net.firedevops.firemud.common.tenant.AuthoredWorldSourceEvidence;
@@ -202,6 +203,108 @@ class WorldAuthoredSourceIntakeServiceTest {
 
     assertThat(result).containsSame(receipt);
     verify(repository).read(NAMESPACE, INTAKE_REQUEST);
+    verify(repository, never()).acceptFresh(any(), any(), any());
+    verifyNoInteractions(client);
+    assertThat(transactionManager.startedWith).isNull();
+  }
+
+  @Test
+  void committedReadByIdReturnsFullExactReceiptWithoutSourceReadOrMutation() {
+    AuthoredWorldSourceEvidence source = source(NAMESPACE, TENANT, SOURCE_OPERATION, WORLD);
+    WorldAuthoredSourceIntakeReceipt receipt = receipt(source, 9001L);
+    when(repository.read(NAMESPACE, INTAKE_REQUEST)).thenReturn(Optional.of(receipt));
+
+    Optional<WorldAuthoredSourceIntakeReceipt> result =
+        withGameDesign(
+            () ->
+                service.readCommittedReceiptById(
+                    1, NAMESPACE, READ_REQUEST, INTAKE_REQUEST, TENANT));
+
+    assertThat(result).containsSame(receipt);
+    verify(repository).read(NAMESPACE, INTAKE_REQUEST);
+    verify(repository, never()).acceptFresh(any(), any(), any());
+    verifyNoInteractions(client);
+    assertThat(transactionManager.startedWith).isNull();
+  }
+
+  @Test
+  void committedReadByIdRejectsWrongPeerCallerContextAndInvalidScopeBeforeOwnerAccess() {
+    assertThatThrownBy(
+            () ->
+                withoutPeer(
+                    () ->
+                        service.readCommittedReceiptById(
+                            1, NAMESPACE, READ_REQUEST, INTAKE_REQUEST, TENANT)))
+        .isInstanceOf(SecurityException.class);
+    assertThatThrownBy(
+            () ->
+                withPeer(
+                    peer(NAMESPACE, "game-session-service"),
+                    () ->
+                        service.readCommittedReceiptById(
+                            1, NAMESPACE, READ_REQUEST, INTAKE_REQUEST, TENANT)))
+        .isInstanceOf(SecurityException.class);
+    assertThatThrownBy(
+            () ->
+                withGameDesign(
+                    () ->
+                        withCallerContext(
+                            () ->
+                                service.readCommittedReceiptById(
+                                    1, NAMESPACE, READ_REQUEST, INTAKE_REQUEST, TENANT))))
+        .isInstanceOf(SecurityException.class);
+    assertThatThrownBy(
+            () ->
+                withGameDesign(
+                    () ->
+                        service.readCommittedReceiptById(
+                            1, "other", READ_REQUEST, INTAKE_REQUEST, TENANT)))
+        .isInstanceOf(SecurityException.class);
+    assertThatThrownBy(
+            () ->
+                withGameDesign(
+                    () ->
+                        service.readCommittedReceiptById(
+                            2, NAMESPACE, READ_REQUEST, INTAKE_REQUEST, TENANT)))
+        .isInstanceOf(IllegalArgumentException.class);
+    assertThatThrownBy(
+            () ->
+                withGameDesign(
+                    () ->
+                        service.readCommittedReceiptById(
+                            1, NAMESPACE, INTAKE_REQUEST, INTAKE_REQUEST, TENANT)))
+        .isInstanceOf(IllegalArgumentException.class);
+
+    verifyNoInteractions(client, repository);
+    assertThat(transactionManager.startedWith).isNull();
+  }
+
+  @Test
+  void committedReadByIdReturnsAbsentAndRejectsSubstitutedTenantWithoutMutation() {
+    when(repository.read(NAMESPACE, INTAKE_REQUEST)).thenReturn(Optional.empty());
+    Optional<WorldAuthoredSourceIntakeReceipt> missing =
+        withGameDesign(
+            () ->
+                service.readCommittedReceiptById(
+                    1, NAMESPACE, READ_REQUEST, INTAKE_REQUEST, TENANT));
+    assertThat(missing).isEmpty();
+
+    AuthoredWorldSourceEvidence source = source(NAMESPACE, TENANT, SOURCE_OPERATION, WORLD);
+    when(repository.read(NAMESPACE, INTAKE_REQUEST))
+        .thenReturn(Optional.of(receipt(source, 9001L)));
+    assertThatThrownBy(
+            () ->
+                withGameDesign(
+                    () ->
+                        service.readCommittedReceiptById(
+                            1,
+                            NAMESPACE,
+                            READ_REQUEST,
+                            INTAKE_REQUEST,
+                            UUID.fromString("77777777-7777-4777-8777-777777777777"))))
+        .isInstanceOf(WorldAuthoredSourceIntakeRepository.RegistrationConflictException.class);
+
+    verify(repository, org.mockito.Mockito.times(2)).read(NAMESPACE, INTAKE_REQUEST);
     verify(repository, never()).acceptFresh(any(), any(), any());
     verifyNoInteractions(client);
     assertThat(transactionManager.startedWith).isNull();
@@ -609,6 +712,16 @@ class WorldAuthoredSourceIntakeServiceTest {
       return action.get();
     } finally {
       Context.ROOT.detach(previous);
+    }
+  }
+
+  private static <T> T withCallerContext(Supplier<T> action) {
+    SessionContext.setContext(
+        "22222222-2222-4222-8222-222222222222", java.util.List.of(), java.util.Map.of());
+    try {
+      return action.get();
+    } finally {
+      SessionContext.clear();
     }
   }
 

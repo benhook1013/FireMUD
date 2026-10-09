@@ -333,6 +333,26 @@ class WorldCanonicalInstanceLifecycleEvidenceTest {
     var request = evidence.request();
     var descriptor = evidence.launchBinding().descriptor();
     var release = evidence.launchBinding().releaseAttestation();
+    // Independent retained-v1 fixture; its GD digest is not the selected-v2 content hash.
+    var v1Participants =
+        release.participantDigests().stream()
+            .map(
+                participant ->
+                    new AuthoredWorldReleaseAttestationEvidence.Participant(
+                        participant.participantKey(),
+                        participant.scopeValue(),
+                        participant.baseVersionIdPresent(),
+                        participant.baseVersionId(),
+                        participant.appliedCommitId(),
+                        "GAME_DESIGN_CONTROL_PLANE".equals(participant.participantKey())
+                            ? "e".repeat(64)
+                            : participant.contentDigest(),
+                        AuthoredWorldReleaseAttestationEvidence.supportedParticipantDigestSchema(
+                            participant.participantKey(),
+                            AuthoredWorldReleaseAttestationEvidence.SCHEMA_VERSION),
+                        participant.abilitySchemaDigestPresent(),
+                        participant.abilitySchemaDigest()))
+            .toList();
     var v1Release =
         AuthoredWorldReleaseAttestationEvidence.create(
             release.targetNamespace(),
@@ -347,7 +367,7 @@ class WorldCanonicalInstanceLifecycleEvidenceTest {
             release.versionStateEpoch(),
             release.publishWorkflowId(),
             release.commitId(),
-            release.participantDigests(),
+            v1Participants,
             release.manifestHash(),
             release.manifestSchemaVersion(),
             release.requiredManifestAssetKeys(),
@@ -763,7 +783,7 @@ class WorldCanonicalInstanceLifecycleEvidenceTest {
                         selector.request().appliedCommitId(),
                         selector.request().contentDigest(),
                         AuthoredWorldReleaseAttestationEvidence.supportedParticipantDigestSchema(
-                            owner),
+                            owner, AuthoredWorldReleaseAttestationEvidence.SELECTOR_SCHEMA_VERSION),
                         "GAME_LOGIC".equals(owner),
                         "GAME_LOGIC".equals(owner) ? "sha256:" + "c".repeat(64) : null))
             .toList();

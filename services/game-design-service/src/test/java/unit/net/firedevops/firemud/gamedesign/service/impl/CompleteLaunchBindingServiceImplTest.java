@@ -83,6 +83,54 @@ class CompleteLaunchBindingServiceImplTest {
     assertEquals(selector, result.releaseAttestation().worldStartLocationEvidence());
     result.releaseAttestation().requireValid(descriptor);
     verifyReadOnlyCallsOnly();
+    var obsolete = new java.util.ArrayList<>(selected.participantDigests());
+    var gd = obsolete.getLast();
+    obsolete.set(
+        obsolete.size() - 1,
+        new PublishParticipantDigestDto(
+            gd.participantKey(),
+            gd.scopeValue(),
+            gd.baseVersionId(),
+            gd.appliedCommitId(),
+            gd.contentDigest(),
+            1,
+            gd.abilitySchemaDigest(),
+            gd.errorCode(),
+            gd.errorMessage()));
+    givenBundle(
+        new PublishedReleaseBundleDto(
+            selected.id(),
+            selected.tenantId(),
+            selected.versionId(),
+            selected.versionNumber(),
+            selected.attestationSchemaVersion(),
+            selected.publishWorkflowId(),
+            selected.manifestHash(),
+            selected.requiredManifestAssetKeys(),
+            obsolete,
+            selected.commandDefinitions(),
+            selected.generationConfigRevision(),
+            selected.scriptOnly(),
+            selected.scriptPatchVersion(),
+            selected.publishedAt(),
+            selected.canonicalTenantId(),
+            selected.canonicalVersionId(),
+            selected.publishedReleaseBundleRef(),
+            selected.manifestSchemaVersion(),
+            selected.artifactDigests(),
+            selector));
+    var rejected =
+        assertThrows(
+            IllegalArgumentException.class,
+            () ->
+                service.getCompleteLaunchBinding(
+                    READ_REQUEST_ID,
+                    CANONICAL_TENANT_ID,
+                    WORLD_SLUG,
+                    CONTROL_PLANE_REQUEST_ID,
+                    descriptor.requestDigest(),
+                    descriptor.resultDigest()));
+    assertTrue(rejected.getMessage().contains("PARTICIPANT_EVIDENCE_INVALID"));
   }
 
   private static final String NAMESPACE = "test";

@@ -162,7 +162,11 @@ public class VersionPublishCommandServiceImpl {
       return failDefinitively(request, attempt, version, null, ex);
     }
     try {
-      publishGateService.assertGatePassed(dto, participantDigests);
+      if (selectedBinding == null) {
+        publishGateService.assertGatePassed(dto, participantDigests);
+      } else {
+        publishGateService.assertSelectedGatePassed(dto, participantDigests);
+      }
     } catch (RuntimeException ex) {
       if (PublicationFailureClassifier.isRetryableParticipantDependencyFailure(ex)) {
         throw pendingReconciliation(
@@ -511,8 +515,14 @@ public class VersionPublishCommandServiceImpl {
           "published release evidence is incomplete; readback/reconciliation is required");
     }
     VersionDto versionDto = versionMapper.toDto(readback.version());
-    PublishedReleaseBundleContract.requireSupportedSchemaForRead(readback.bundle());
-    publishGateService.assertGatePassed(versionDto, readback.bundle().participantDigests());
+    PublishedReleaseBundleContract.requireSupportedSchemaForPublicationRead(readback.bundle());
+    if (PublishedReleaseBundleContract.SELECTOR_ATTESTATION_SCHEMA_VERSION.equals(
+        readback.bundle().attestationSchemaVersion())) {
+      publishGateService.assertSelectedGatePassed(
+          versionDto, readback.bundle().participantDigests());
+    } else {
+      publishGateService.assertGatePassed(versionDto, readback.bundle().participantDigests());
+    }
     recordedParticipantDigestService.assertMatchesRecordedDigests(
         request.tenantId(), PublishType.FULL_VERSION, readback.bundle().participantDigests());
   }

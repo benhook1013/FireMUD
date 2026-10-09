@@ -82,12 +82,25 @@ public record AuthoredWorldReleaseAttestationEvidence(
 
   /** Returns the one supported digest schema for a required participant owner. */
   public static int supportedParticipantDigestSchema(String participantKey) {
+    return supportedParticipantDigestSchema(participantKey, SCHEMA_VERSION);
+  }
+
+  /** Selects owner schemas from the explicit retained-v1 or selected-publication-v2 contract. */
+  public static int supportedParticipantDigestSchema(
+      String participantKey, int attestationSchemaVersion) {
+    if (attestationSchemaVersion != SCHEMA_VERSION
+        && attestationSchemaVersion != SELECTOR_SCHEMA_VERSION) {
+      throw new IllegalArgumentException("Unsupported authored-world release-attestation schema");
+    }
     Objects.requireNonNull(participantKey, "participantKey");
     Integer version = SUPPORTED_PARTICIPANT_DIGEST_SCHEMAS.get(participantKey);
     if (version == null) {
       throw new IllegalArgumentException("Unsupported full-Version participant owner");
     }
-    return version;
+    return attestationSchemaVersion == SELECTOR_SCHEMA_VERSION
+            && "GAME_DESIGN_CONTROL_PLANE".equals(participantKey)
+        ? 2
+        : version;
   }
 
   /** One successful, immutable owner digest included in the release attestation. */
@@ -165,7 +178,7 @@ public record AuthoredWorldReleaseAttestationEvidence(
     requireText(commitId, "commitId");
     participantDigests =
         List.copyOf(Objects.requireNonNull(participantDigests, "participantDigests"));
-    validateParticipants(participantDigests, commitId);
+    validateParticipants(participantDigests, commitId, schemaVersion);
     requireDigest(manifestHash, "manifestHash");
     requireSupportedSchema(manifestSchemaVersion, "manifestSchemaVersion");
     requiredManifestAssetKeys =
@@ -526,7 +539,8 @@ public record AuthoredWorldReleaseAttestationEvidence(
         fields.toArray(Field[]::new));
   }
 
-  private static void validateParticipants(List<Participant> participants, String commitId) {
+  private static void validateParticipants(
+      List<Participant> participants, String commitId, int attestationSchemaVersion) {
     if (participants.size() != PARTICIPANT_ORDER.size()) {
       throw new IllegalArgumentException(
           "A complete attestation requires exactly five participants");
@@ -538,7 +552,7 @@ public record AuthoredWorldReleaseAttestationEvidence(
       if (!expectedKey.equals(participant.participantKey())) {
         throw new IllegalArgumentException("Participant digests are not in canonical owner order");
       }
-      if (supportedParticipantDigestSchema(participant.participantKey())
+      if (supportedParticipantDigestSchema(participant.participantKey(), attestationSchemaVersion)
           != participant.digestSchemaVersion()) {
         throw new IllegalArgumentException(
             "Participant digest schema is unsupported for its owner");

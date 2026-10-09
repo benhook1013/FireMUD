@@ -239,7 +239,7 @@ class VersionPublishCommandServiceImplTest {
                 "selected Game Logic receipt is missing",
                 "PARTICIPANT_UNAVAILABLE"))
         .when(publishGateService)
-        .assertGatePassed(any(VersionDto.class), any(List.class));
+        .assertSelectedGatePassed(any(VersionDto.class), any(List.class));
 
     assertThrows(
         VersionPublishCommandServiceImpl.PendingReconciliationException.class,

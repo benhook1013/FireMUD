@@ -4015,7 +4015,10 @@ class WorldDraftGraphApplicationPostgresIntegrationTest {
                         freeze.appliedCommitId(),
                         "WORLD_MANAGEMENT".equals(owner) ? freeze.contentDigest() : "a".repeat(64),
                         AuthoredWorldReleaseAttestationEvidence.supportedParticipantDigestSchema(
-                            owner),
+                            owner,
+                            selector == null
+                                ? AuthoredWorldReleaseAttestationEvidence.SCHEMA_VERSION
+                                : AuthoredWorldReleaseAttestationEvidence.SELECTOR_SCHEMA_VERSION),
                         "GAME_LOGIC".equals(owner),
                         "GAME_LOGIC".equals(owner) ? "sha256:" + "b".repeat(64) : null))
             .toList();

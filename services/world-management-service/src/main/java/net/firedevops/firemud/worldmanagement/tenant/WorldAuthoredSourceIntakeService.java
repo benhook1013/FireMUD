@@ -5,6 +5,7 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
+import net.firedevops.firemud.common.security.SessionContext;
 import net.firedevops.firemud.common.tenant.AuthoredWorldSourceClient;
 import net.firedevops.firemud.common.tenant.AuthoredWorldSourceDigest;
 import net.firedevops.firemud.common.tenant.AuthoredWorldSourceEvidence;
@@ -193,6 +194,39 @@ public class WorldAuthoredSourceIntakeService {
             expectedSourceEvidenceDigest));
   }
 
+  /** Reads one committed receipt using only its retained request identity and canonical tenant. */
+  public Optional<WorldAuthoredSourceIntakeReceipt> readCommittedReceiptById(
+      int schemaVersion,
+      String targetNamespace,
+      UUID readRequestId,
+      UUID intakeRequestId,
+      UUID canonicalTenantId) {
+    requireAuthenticatedGameDesignCallerWithoutCallerContext();
+    validateSchemaAndNamespace(schemaVersion, targetNamespace);
+    requireNoAmbientTransaction();
+    requireNonNil(readRequestId, "readRequestId");
+    requireNonNil(intakeRequestId, "intakeRequestId");
+    requireNonNil(canonicalTenantId, "canonicalTenantId");
+    if (readRequestId.equals(intakeRequestId)) {
+      throw new IllegalArgumentException("Read requestId must differ from intakeRequestId");
+    }
+
+    Optional<WorldAuthoredSourceIntakeReceipt> receipt =
+        repository.read(targetNamespace, intakeRequestId);
+    if (receipt.isEmpty()) {
+      return Optional.empty();
+    }
+    WorldAuthoredSourceIntakeReceipt stored = receipt.orElseThrow();
+    return Optional.of(
+        requireReceiptForRequest(
+            stored,
+            intakeRequestId,
+            canonicalTenantId,
+            stored.worldSlug(),
+            stored.sourceOperationId(),
+            stored.sourceEvidenceDigest()));
+  }
+
   private void requireAuthenticatedGameDesignCaller() {
     GrpcPeerIdentity peer = GrpcPeerIdentity.current();
     if (peer == null
@@ -201,6 +235,14 @@ public class WorldAuthoredSourceIntakeService {
       throw new SecurityException(
           "World authored-source intake requires the authenticated Game Design workload");
     }
+  }
+
+  private void requireAuthenticatedGameDesignCallerWithoutCallerContext() {
+    if (SessionContext.hasAuthenticatedCallerContext()) {
+      throw new SecurityException(
+          "World authored-source intake rejects authenticated end-user caller context");
+    }
+    requireAuthenticatedGameDesignCaller();
   }
 
   private static void requireNoAmbientTransaction() {

@@ -102,6 +102,44 @@ class GameDesignPublicationTerminalReadGrpcCodecTest {
         .isInstanceOf(IllegalArgumentException.class);
   }
 
+  @Test
+  void selectedTerminalRejectsLegacyControlPlaneDigestSchema() throws Exception {
+    var selected = terminal(operation(), Outcome.PUBLISHED).releaseContent();
+    var participants = new java.util.ArrayList<>(selected.participantDigests());
+    var gd = participants.getLast();
+    participants.set(
+        participants.size() - 1,
+        new GameDesignPublicationTerminalEvidence.Participant(
+            gd.participantKey(),
+            gd.scopeValue(),
+            gd.baseVersionId(),
+            gd.appliedCommitId(),
+            gd.contentDigest(),
+            1,
+            gd.abilitySchemaDigest(),
+            gd.errorCode(),
+            gd.errorMessage()));
+    assertThatThrownBy(
+            () ->
+                new GameDesignPublicationTerminalEvidence.ReleaseContent(
+                    selected.canonicalTenantId(),
+                    selected.canonicalVersionId(),
+                    selected.publishedReleaseBundleRef(),
+                    selected.versionNumber(),
+                    selected.attestationSchemaVersion(),
+                    selected.publishWorkflowId(),
+                    selected.manifestHash(),
+                    selected.manifestSchemaVersion(),
+                    selected.artifactDigests(),
+                    selected.requiredManifestAssetKeys(),
+                    participants,
+                    selected.commandDefinitions(),
+                    selected.generationConfigRevision(),
+                    selected.worldStartLocationEvidence()))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("required participant proof");
+  }
+
   private static UnknownFieldSet unknown() {
     return UnknownFieldSet.newBuilder()
         .addField(99, UnknownFieldSet.Field.newBuilder().addVarint(1).build())
@@ -240,7 +278,7 @@ class GameDesignPublicationTerminalReadGrpcCodecTest {
                         world.appliedCommitId(),
                         "WORLD_MANAGEMENT".equals(owner) ? world.contentDigest() : "c".repeat(64),
                         AuthoredWorldReleaseAttestationEvidence.supportedParticipantDigestSchema(
-                            owner),
+                            owner, AuthoredWorldReleaseAttestationEvidence.SELECTOR_SCHEMA_VERSION),
                         "GAME_LOGIC".equals(owner) ? "sha256:" + "d".repeat(64) : null,
                         null,
                         null))

@@ -117,6 +117,29 @@ class PublishedReleaseBundleServiceImplTest {
       throws Exception {
     var evidence = selectorEvidence();
     var participants = PublishedWorldSelectorFixtures.participants(7L, evidence);
+    var obsolete = new java.util.ArrayList<>(participants);
+    var gd = obsolete.getLast();
+    obsolete.set(
+        obsolete.size() - 1,
+        new PublishParticipantDigestDto(
+            gd.participantKey(),
+            gd.scopeValue(),
+            gd.appliedCommitId(),
+            gd.contentDigest(),
+            1,
+            null,
+            null));
+    assertThatThrownBy(
+            () ->
+                service.createFullVersionBundle(
+                    selectorVersion(),
+                    "publish-workflow",
+                    emptyManifest(),
+                    "genrev-1",
+                    obsolete,
+                    evidence))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("exact successful release participants");
     assertThatThrownBy(
             () ->
                 service.createFullVersionBundle(
