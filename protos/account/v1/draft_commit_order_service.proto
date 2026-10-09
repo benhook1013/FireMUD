@@ -5,7 +5,9 @@ package account.v1;
 option java_package = "net.firedevops.firemud.account.v1";
 option java_multiple_files = true;
 
-// Standalone exact held-COMMIT_ORDER read. It is intentionally not runtime-registered here.
+// Standalone exact held-COMMIT_ORDER read. Same-namespace World may read any original order;
+// Game Logic may read only when the exact canonical original binding requires GAME_LOGIC.
+// This service is intentionally not runtime-registered here.
 service AccountDraftCommitOrderReadService {
   rpc ReadHeldOriginalCommitOrder(ReadHeldOriginalCommitOrderRequest)
       returns (ReadHeldOriginalCommitOrderResponse);

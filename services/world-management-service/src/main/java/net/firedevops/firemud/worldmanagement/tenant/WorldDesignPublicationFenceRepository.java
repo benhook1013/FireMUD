@@ -241,8 +241,13 @@ public class WorldDesignPublicationFenceRepository {
     return Optional.of(stored);
   }
 
-  /** Reads one retained attempt by its opaque fence without resolving mutable source state. */
-  @Transactional(propagation = Propagation.NOT_SUPPORTED, readOnly = true)
+  /**
+   * Reads one retained attempt by its opaque fence without resolving mutable source state.
+   *
+   * <p>This committed read requires a caller with no owner transaction or synchronization scope. It
+   * deliberately declares no transaction boundary so Spring does not create an empty
+   * synchronization scope around the read.
+   */
   public Optional<FrozenAttempt> readAttemptByFence(UUID publicationFence) {
     if (publicationFence == null || NIL_UUID.equals(publicationFence)) {
       throw new IllegalArgumentException("A non-nil World publication fence is required");

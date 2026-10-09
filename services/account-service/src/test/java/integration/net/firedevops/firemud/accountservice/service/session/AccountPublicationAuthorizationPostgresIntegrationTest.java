@@ -421,6 +421,29 @@ class AccountPublicationAuthorizationPostgresIntegrationTest {
           new AccountPublicationAuthorizationService(issued.actors(), f.fences, repository)
               .authorize(issued.compact(), proof.selection(), issued.environment());
       var operation = operation(order, proof.world());
+      Integer selectedSourceKeyWidth =
+          f.dsl
+              .fetchSingle(
+                  "SELECT character_maximum_length FROM information_schema.columns"
+                      + " WHERE table_schema = current_schema()"
+                      + " AND table_name = 'account_selected_publication_sources'"
+                      + " AND column_name = 'source_key'")
+              .get(0, Integer.class);
+      assertThat(selectedSourceKeyWidth).isEqualTo(2048);
+      String inventoryGuard =
+          f.dsl
+              .fetchSingle(
+                  "SELECT pg_get_functiondef('require_selected_inventory_operation_v2(bytea)'::regprocedure)")
+              .get(0, String.class);
+      assertThat(inventoryGuard)
+          .contains("coalesce(jsonb_agg(entry ORDER BY entry->>'regionTemplateId'), '[]'::JSONB)")
+          .contains("coalesce(jsonb_agg(entry ORDER BY entry->>'bindingTemplateId'), '[]'::JSONB)")
+          .contains(
+              "OR selector->'request'->'worldAffectedTuples' IS DISTINCT FROM expected_tuples")
+          .contains(
+              "OR model->'appliedEpochs' IS DISTINCT FROM expected_epochs OR expected_epochs = '[]'::JSONB")
+          .contains(
+              "Inventory differs from exact original selected Account, APPLIED graph or freeze");
       var terminal =
           terminal(operation, GameDesignPublicationTerminalEvidence.Outcome.NO_PUBLICATION);
       var out = new java.io.ByteArrayOutputStream();
@@ -518,6 +541,110 @@ class AccountPublicationAuthorizationPostgresIntegrationTest {
                   "\"graphDigest\":\"sha256:" + "0".repeat(64) + "\"")
               .getBytes(java.nio.charset.StandardCharsets.UTF_8);
       byte[] validOperation = operation.canonicalBytes();
+      String tenantId = proof.world().request().canonicalTenantId().toString();
+      String versionId = proof.world().request().canonicalVersionId().toString();
+      String originalRegionTemplateId =
+          operation
+              .inventory()
+              .publicEvidence()
+              .sourceModel()
+              .regionGeneratorInputs()
+              .get(0)
+              .regionTemplateId()
+              .toString();
+      String originalRegionInputs =
+          "\"regionGeneratorInputs\":["
+              + inventoryRegionGeneratorInput(originalRegionTemplateId)
+              + "]";
+      String unsortedRegionInputs =
+          "["
+              + inventoryRegionGeneratorInput("00000000-0000-0000-0000-000000000002")
+              + ","
+              + inventoryRegionGeneratorInput("00000000-0000-0000-0000-000000000001")
+              + "]";
+      assertThat(publicInventoryJson)
+          .contains("\"family\":\"REGION\",\"rowCount\":1")
+          .contains(originalRegionInputs);
+      byte[] unsortedRegionInventory =
+          publicInventoryJson
+              .replace(
+                  "\"family\":\"REGION\",\"rowCount\":1", "\"family\":\"REGION\",\"rowCount\":2")
+              .replace(originalRegionInputs, "\"regionGeneratorInputs\":" + unsortedRegionInputs)
+              .getBytes(java.nio.charset.StandardCharsets.UTF_8);
+      byte[] unsortedRegionOperation =
+          rawOperation(
+              GameDesignPublicationOperationBinding.SCHEMA,
+              order.canonicalBytes(),
+              proof.world().canonicalBytes(),
+              unsortedRegionInventory,
+              DraftAuthorizationFenceBinding.digest(unsortedRegionInventory));
+      Object[] unsortedRegionSettlement = {
+        order.operationId(),
+        order.fenceId(),
+        order.canonicalBytes(),
+        unsortedRegionOperation,
+        "NO_PUBLICATION",
+        terminal.canonicalBytes(),
+        "ABORTED",
+        terminal.canonicalBytes(),
+        receipt
+      };
+      assertThatThrownBy(() -> f.tx(() -> f.dsl.execute(insert, unsortedRegionSettlement)))
+          .satisfies(
+              failure ->
+                  assertSqlFailure(
+                      failure, "23514", "Unsupported or unordered region generator input"));
+      String unsortedSpawnInputs =
+          "["
+              + inventorySpawnBindingInput(
+                  "00000000-0000-0000-0000-000000000002",
+                  "00000000-0000-0000-0000-000000000003",
+                  "00000000-0000-0000-0000-000000000004",
+                  tenantId,
+                  versionId)
+              + ","
+              + inventorySpawnBindingInput(
+                  "00000000-0000-0000-0000-000000000001",
+                  "00000000-0000-0000-0000-000000000005",
+                  "00000000-0000-0000-0000-000000000006",
+                  tenantId,
+                  versionId)
+              + "]";
+      assertThat(publicInventoryJson)
+          .contains("\"family\":\"WORLD_ENTITY_SPAWN_BINDING\",\"rowCount\":0")
+          .contains("\"spawnBindingCount\":0")
+          .contains("\"spawnBindingInputs\":[]");
+      byte[] unsortedSpawnInventory =
+          publicInventoryJson
+              .replace(
+                  "\"family\":\"WORLD_ENTITY_SPAWN_BINDING\",\"rowCount\":0",
+                  "\"family\":\"WORLD_ENTITY_SPAWN_BINDING\",\"rowCount\":2")
+              .replace("\"spawnBindingCount\":0", "\"spawnBindingCount\":2")
+              .replace("\"spawnBindingInputs\":[]", "\"spawnBindingInputs\":" + unsortedSpawnInputs)
+              .getBytes(java.nio.charset.StandardCharsets.UTF_8);
+      byte[] unsortedSpawnOperation =
+          rawOperation(
+              GameDesignPublicationOperationBinding.SCHEMA,
+              order.canonicalBytes(),
+              proof.world().canonicalBytes(),
+              unsortedSpawnInventory,
+              DraftAuthorizationFenceBinding.digest(unsortedSpawnInventory));
+      Object[] unsortedSpawnSettlement = {
+        order.operationId(),
+        order.fenceId(),
+        order.canonicalBytes(),
+        unsortedSpawnOperation,
+        "NO_PUBLICATION",
+        terminal.canonicalBytes(),
+        "ABORTED",
+        terminal.canonicalBytes(),
+        receipt
+      };
+      assertThatThrownBy(() -> f.tx(() -> f.dsl.execute(insert, unsortedSpawnSettlement)))
+          .satisfies(
+              failure ->
+                  assertSqlFailure(
+                      failure, "23514", "Unsupported or unordered scoped spawn input"));
       List<byte[]> invalidOperations =
           List.of(
               rawOperation(
@@ -1130,6 +1257,44 @@ class AccountPublicationAuthorizationPostgresIntegrationTest {
 
   private static String b64(byte[] value) {
     return Base64.getEncoder().encodeToString(value);
+  }
+
+  private static String inventorySpawnBindingInput(
+      String bindingTemplateId,
+      String roomTemplateId,
+      String entityTemplateId,
+      String tenantId,
+      String versionId) {
+    return "{\"bindingTemplateId\":\""
+        + bindingTemplateId
+        + "\",\"entityReferenceKind\":\"ENTITY_TEMPLATE_REFERENCE_TYPE_CANONICAL_UUID\",\"entityTemplateId\":\""
+        + entityTemplateId
+        + "\",\"entityTemplateType\":\"ITEM\",\"entityTenantId\":\""
+        + tenantId
+        + "\",\"entityVersionId\":\""
+        + versionId
+        + "\",\"respawnDelaySeconds\":0,\"roomTemplateId\":\""
+        + roomTemplateId
+        + "\",\"spawnCount\":1}";
+  }
+
+  private static String inventoryRegionGeneratorInput(String regionTemplateId) {
+    return "{\"generatorParams\":\"\",\"generatorType\":\"\",\"regionTemplateId\":\""
+        + regionTemplateId
+        + "\"}";
+  }
+
+  private static void assertSqlFailure(
+      Throwable failure, String expectedState, String expectedMessage) {
+    java.sql.SQLException sqlFailure = null;
+    for (Throwable cause = failure; cause != null; cause = cause.getCause()) {
+      if (cause instanceof java.sql.SQLException sqlException) sqlFailure = sqlException;
+    }
+    assertThat((Throwable) sqlFailure).isNotNull();
+    var exactSqlFailure =
+        java.util.Objects.requireNonNull(sqlFailure, "Expected SQL failure from direct insert");
+    assertThat(exactSqlFailure.getSQLState()).isEqualTo(expectedState);
+    assertThat(exactSqlFailure.getMessage()).contains(expectedMessage);
   }
 
   private static AuthoredDraftPublishSelectionBinding selection(

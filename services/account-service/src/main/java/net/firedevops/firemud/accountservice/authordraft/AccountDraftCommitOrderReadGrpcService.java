@@ -30,7 +30,7 @@ public final class AccountDraftCommitOrderReadGrpcService
   public void readHeldOriginalCommitOrder(
       ReadHeldOriginalCommitOrderRequest request,
       StreamObserver<ReadHeldOriginalCommitOrderResponse> observer) {
-    if (!requireAuthenticatedWorldPeer(observer)) return;
+    if (!requireAuthenticatedPeer(observer)) return;
 
     final DraftCommitOrderReadEvidence.Request decoded;
     try {
@@ -68,7 +68,7 @@ public final class AccountDraftCommitOrderReadGrpcService
     observer.onCompleted();
   }
 
-  private boolean requireAuthenticatedWorldPeer(StreamObserver<?> observer) {
+  private boolean requireAuthenticatedPeer(StreamObserver<?> observer) {
     GrpcPeerIdentity peer = GrpcPeerIdentity.current();
     if (peer == null) {
       observer.onError(
@@ -77,11 +77,13 @@ public final class AccountDraftCommitOrderReadGrpcService
               .asRuntimeException());
       return false;
     }
-    String expected = "spiffe://firemud/ns/" + trustedNamespace + "/sa/world-management-service";
-    if (expected.equals(peer.uri())) return true;
+    String prefix = "spiffe://firemud/ns/" + trustedNamespace + "/sa/";
+    if ((prefix + "world-management-service").equals(peer.uri())
+        || (prefix + "game-logic-service").equals(peer.uri())) return true;
     observer.onError(
         Status.PERMISSION_DENIED
-            .withDescription("Exact same-namespace World workload required")
+            .withDescription(
+                "Exact same-namespace World or participating Game Logic workload required")
             .asRuntimeException());
     return false;
   }
@@ -94,7 +96,8 @@ public final class AccountDraftCommitOrderReadGrpcService
               .asRuntimeException();
       case PERMISSION_DENIED ->
           Status.PERMISSION_DENIED
-              .withDescription("Exact same-namespace World workload required")
+              .withDescription(
+                  "Exact same-namespace World or participating Game Logic workload required")
               .asRuntimeException();
       case INVALID_ARGUMENT ->
           Status.INVALID_ARGUMENT

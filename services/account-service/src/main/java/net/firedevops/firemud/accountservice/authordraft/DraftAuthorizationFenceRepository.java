@@ -16,6 +16,7 @@ import net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding.Ow
 import net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding.OwnerReadback;
 import net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding.SourceEvidence;
 import net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding.SourceKind;
+import net.firedevops.firemud.common.authoring.DraftCommitBinding;
 import org.jooq.DSLContext;
 import org.jooq.Record;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
@@ -250,6 +251,7 @@ public final class DraftAuthorizationFenceRepository {
       throw new IllegalStateException("Applicable Account source change is unresolved");
     }
     requireNoPendingPublication(sources);
+    requireNoPendingGameLogicIntake(sources);
     for (UUID operationId : affectedOperations(sources)) {
       Record row = readOperation(operationId);
       if (row == null) {
@@ -309,6 +311,43 @@ public final class DraftAuthorizationFenceRepository {
       throw new IllegalStateException("Applicable authority source change is waiting");
     }
     requireNoAuthorizedDisclosure(sources);
+  }
+
+  /** Distinct rule-intake acquisition uses the same current source/disclosure ordering. */
+  public void requireGameLogicIntakeAdmission(
+      List<SourceEvidence> sources, DraftCommitBinding selected) {
+    requirePublicationAdmission(sources);
+    Record originalRow =
+        dsl.fetchOne(
+            "SELECT * FROM " + FENCES + " WHERE request_id = ? AND commit_id = ? FOR UPDATE",
+            selected.requestId(),
+            selected.commitId());
+    if (originalRow == null) {
+      throw new IllegalStateException("Selected author operation is unavailable");
+    }
+    DraftAuthorizationFenceBinding original = originalBinding(originalRow);
+    if (!Arrays.equals(original.gameDesignBinding(), selected.canonicalBytes())
+        || settlement(original, Ordering.valueOf(originalRow.get("ordering", String.class)))
+            != Settlement.COMMITTED) {
+      throw new IllegalStateException(
+          "Exact selected author operation has not committed and settled");
+    }
+  }
+
+  private boolean hasPendingGameLogicIntake(List<SourceEvidence> sources) {
+    for (SourceEvidence source : sources) {
+      if (!dsl.fetch(
+              "SELECT operation_id FROM account_game_logic_intake_sources WHERE source_key = ?",
+              source.key())
+          .isEmpty()) return true;
+    }
+    return false;
+  }
+
+  private void requireNoPendingGameLogicIntake(List<SourceEvidence> sources) {
+    if (hasPendingGameLogicIntake(sources)) {
+      throw new IllegalStateException("Distinct Game Logic intake remains pending");
+    }
   }
 
   private boolean hasPendingPublication(List<SourceEvidence> sources) {
@@ -760,7 +799,7 @@ public final class DraftAuthorizationFenceRepository {
    * evidence always remains pending.
    */
   private boolean allAffectedSettled(List<SourceEvidence> sources) {
-    if (hasPendingPublication(sources)) {
+    if (hasPendingPublication(sources) || hasPendingGameLogicIntake(sources)) {
       return false;
     }
     for (UUID operation : affectedOperations(sources)) {

@@ -1780,8 +1780,9 @@ class WorldCanonicalInstanceAssociationPostgresIntegrationTest {
                             .setWeather("rain")
                             .setShardId(7)
                             .setGenerationSeed(9001)
-                            .setGeneratorType("synthetic")
-                            .setGeneratorParams("{}"))
+                            // Hand-authored topology has no supported generator input.
+                            .setGeneratorType("")
+                            .setGeneratorParams(""))
                     .build(),
                 mutation(
                         commitId,

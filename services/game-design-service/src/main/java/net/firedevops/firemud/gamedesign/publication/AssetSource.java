@@ -152,7 +152,9 @@ public final class AssetSource {
       if (revision.owner() != Owner.GAME_DESIGN_CONTROL_PLANE) continue;
       JsonNode payload = tree(revision.payload());
       String kind = text(payload, "revisionKind");
-      if ("COMMAND_DEFINITION".equals(kind) || "REALM_ENTRY_POLICY".equals(kind)) continue;
+      if ("COMMAND_DEFINITION".equals(kind)
+          || "REALM_ENTRY_POLICY".equals(kind)
+          || GameplayRuleSource.REVISION_KIND.equals(kind)) continue;
       if (!REVISION_KIND.equals(kind)) {
         throw new IllegalArgumentException("Unsupported Game Design asset source revision kind");
       }

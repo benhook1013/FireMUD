@@ -41,10 +41,12 @@ public final class AccountDraftCommitOrderReadService {
 
   /**
    * Returns only after this owner transaction reads the exact retained operation, COMMIT_ORDER, and
-   * PENDING settlement. Absence, mismatch, reservation/revocation, or any settlement denies.
+   * PENDING settlement. World may read any exact original order; Game Logic may read only when it
+   * is an owner in that exact original binding. Absence, mismatch, reservation/revocation, or any
+   * settlement denies.
    */
   public void requireHeld(DraftCommitOrderReadEvidence.Request request) {
-    requireAuthenticatedWorldPeer();
+    boolean gameLogicPeer = requireAuthenticatedPeer();
     Objects.requireNonNull(request, "request");
     if (!trustedNamespace.equals(request.targetNamespace())) {
       throw denied("COMMIT_ORDER read namespace differs from the Account workload namespace");
@@ -56,8 +58,17 @@ public final class AccountDraftCommitOrderReadService {
           .asRuntimeException();
     }
 
-    DraftAuthorizationFenceBinding requested =
-        DraftAuthorizationFenceBinding.fromStored(request.originalAccountBinding());
+    DraftAuthorizationFenceBinding requested;
+    try {
+      requested = DraftAuthorizationFenceBinding.fromStored(request.originalAccountBinding());
+    } catch (IllegalArgumentException malformed) {
+      throw invalid("Complete canonical original Account binding is required");
+    }
+    if (gameLogicPeer
+        && !requested.requiredOwners().contains(DraftAuthorizationFenceBinding.Owner.GAME_LOGIC)) {
+      throw denied("Game Logic is not a required owner in the original Account binding");
+    }
+
     if (!Arrays.equals(request.originalAccountBinding(), requested.canonicalBytes())) {
       throw invalid("Complete canonical original Account binding is required");
     }
@@ -97,19 +108,19 @@ public final class AccountDraftCommitOrderReadService {
     }
   }
 
-  private void requireAuthenticatedWorldPeer() {
+  private boolean requireAuthenticatedPeer() {
     GrpcPeerIdentity peer = GrpcPeerIdentity.current();
     if (peer == null) {
       throw Status.UNAUTHENTICATED
           .withDescription("Verified workload identity required")
           .asRuntimeException();
     }
-    String expected = "spiffe://firemud/ns/" + trustedNamespace + "/sa/world-management-service";
-    if (!expected.equals(peer.uri())) {
-      throw Status.PERMISSION_DENIED
-          .withDescription("Exact same-namespace World workload required")
-          .asRuntimeException();
-    }
+    String prefix = "spiffe://firemud/ns/" + trustedNamespace + "/sa/";
+    if ((prefix + "world-management-service").equals(peer.uri())) return false;
+    if ((prefix + "game-logic-service").equals(peer.uri())) return true;
+    throw Status.PERMISSION_DENIED
+        .withDescription("Exact same-namespace World or participating Game Logic workload required")
+        .asRuntimeException();
   }
 
   private static StatusRuntimeException unheld() {

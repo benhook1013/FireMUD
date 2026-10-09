@@ -27,7 +27,7 @@ import org.springframework.transaction.TransactionStatus;
 
 class AccountDraftCommitOrderReadGrpcServiceTest {
   @Test
-  void authenticatesExactWorldPeerBeforeDecodingOrOwnerAccess() {
+  void authenticatesExactOwnerPeerBeforeDecodingOrOwnerAccess() {
     var repository = mock(DraftAuthorizationFenceRepository.class);
     var manager = mock(PlatformTransactionManager.class);
     var owner = new AccountDraftCommitOrderReadService(repository, manager, "test");
@@ -47,6 +47,11 @@ class AccountDraftCommitOrderReadGrpcServiceTest {
       asPeer(identity, () -> service.readHeldOriginalCommitOrder(malformed, wrong));
       assertThat(wrong.errorStatus.getCode()).isEqualTo(Status.Code.PERMISSION_DENIED);
     }
+    Collector malformedGameLogic = new Collector();
+    asPeer(
+        "spiffe://firemud/ns/test/sa/game-logic-service",
+        () -> service.readHeldOriginalCommitOrder(malformed, malformedGameLogic));
+    assertThat(malformedGameLogic.errorStatus.getCode()).isEqualTo(Status.Code.INVALID_ARGUMENT);
     verifyNoInteractions(repository, manager);
   }
 
@@ -78,6 +83,61 @@ class AccountDraftCommitOrderReadGrpcServiceTest {
         .isEqualTo(HeldOriginalCommitOrderStatus.HELD_ORIGINAL_COMMIT_ORDER_STATUS_HELD);
     assertThat(result.value.getOriginalAccountBinding().toByteArray())
         .containsExactly(binding.canonicalBytes());
+  }
+
+  @Test
+  void authenticatedGameLogicPeerGetsHeldOnlyForExactRequiredOwnerBinding() {
+    var repository = mock(DraftAuthorizationFenceRepository.class);
+    var manager = mock(PlatformTransactionManager.class);
+    var transactionStatus = mock(TransactionStatus.class);
+    when(manager.getTransaction(any())).thenReturn(transactionStatus);
+    var binding = AccountDraftCommitOrderReadServiceTest.bindingWithGameLogic(1);
+    when(repository.readOriginalBinding(binding.operationId())).thenReturn(Optional.of(binding));
+    when(repository.read(binding))
+        .thenReturn(new FenceSnapshot(Ordering.COMMIT_ORDER, binding.canonicalBytes(), null, null));
+    when(repository.readSettlement(binding)).thenReturn(Settlement.PENDING);
+    var service =
+        new AccountDraftCommitOrderReadGrpcService(
+            new AccountDraftCommitOrderReadService(repository, manager, "test"), "test");
+    var request = AccountDraftCommitOrderReadServiceTest.request(binding);
+    Collector result = new Collector();
+
+    asPeer(
+        "spiffe://firemud/ns/test/sa/game-logic-service",
+        () ->
+            service.readHeldOriginalCommitOrder(
+                DraftCommitOrderReadGrpcCodec.toRequest(request), result));
+
+    assertThat(result.errorStatus).isNull();
+    assertThat(result.completed).isTrue();
+    assertThat(result.value.getStatus())
+        .isEqualTo(HeldOriginalCommitOrderStatus.HELD_ORIGINAL_COMMIT_ORDER_STATUS_HELD);
+    assertThat(result.value.getOriginalAccountBinding().toByteArray())
+        .containsExactly(binding.canonicalBytes());
+  }
+
+  @Test
+  void gameLogicPeerCannotReadWorldOnlyBindingOrOpenOwnerTransaction() {
+    var repository = mock(DraftAuthorizationFenceRepository.class);
+    var manager = mock(PlatformTransactionManager.class);
+    var service =
+        new AccountDraftCommitOrderReadGrpcService(
+            new AccountDraftCommitOrderReadService(repository, manager, "test"), "test");
+    var binding = AccountDraftCommitOrderReadServiceTest.binding(1);
+    Collector result = new Collector();
+
+    asPeer(
+        "spiffe://firemud/ns/test/sa/game-logic-service",
+        () ->
+            service.readHeldOriginalCommitOrder(
+                DraftCommitOrderReadGrpcCodec.toRequest(
+                    AccountDraftCommitOrderReadServiceTest.request(binding)),
+                result));
+
+    assertThat(result.errorStatus.getCode()).isEqualTo(Status.Code.PERMISSION_DENIED);
+    assertThat(result.value).isNull();
+    assertThat(result.completed).isFalse();
+    verifyNoInteractions(repository, manager);
   }
 
   @Test

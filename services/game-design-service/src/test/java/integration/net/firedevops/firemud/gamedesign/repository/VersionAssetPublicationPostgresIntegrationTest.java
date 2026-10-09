@@ -14,6 +14,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding;
+import net.firedevops.firemud.common.gamelogic.GameplayRuleManifest;
 import net.firedevops.firemud.gamedesign.config.AssetStoreProperties;
 import net.firedevops.firemud.gamedesign.draft.AuthoredDraftPublishSelection;
 import net.firedevops.firemud.gamedesign.draft.AuthoredDraftPublishSelectionRepository;
@@ -27,6 +28,8 @@ import net.firedevops.firemud.gamedesign.publication.AssetSource;
 import net.firedevops.firemud.gamedesign.publication.AssetSourceRepository;
 import net.firedevops.firemud.gamedesign.publication.CommandSource;
 import net.firedevops.firemud.gamedesign.publication.GameDesignSourceRepository;
+import net.firedevops.firemud.gamedesign.publication.GameplayRuleSource;
+import net.firedevops.firemud.gamedesign.publication.GameplayRuleSourceRepository;
 import net.firedevops.firemud.gamedesign.publication.IsolatedPublicationOperationFixtures;
 import net.firedevops.firemud.gamedesign.publication.RealmPolicySource;
 import net.firedevops.firemud.gamedesign.repository.GameAssetRepository;
@@ -658,6 +661,395 @@ class VersionAssetPublicationPostgresIntegrationTest {
         new VersionAssetPublicationRepository(dsl));
   }
 
+  @Test
+  void gameplaySourceAuthorsNonemptyReferencedCatalogWithMixedAssetsAndExactDurableRetry() {
+    Fixture fixture = fixture(null);
+    Game owner = saveGame(fixture, "gameplay-source");
+    Version version = saveDraftVersion(fixture, owner, 1);
+    GameAsset asset = saveAsset(fixture, owner, "resource.png", "actual-source-bytes");
+    var payloads = new java.util.ArrayList<>(gameplayPayloads());
+    payloads.add(
+        AssetSource.upsertPayload(
+            asset.getId().toString(), asset.getFileName(), AssetSource.Requiredness.REQUIRED));
+    var binding = sourceBinding(fixture, version, payloads.toArray(String[]::new));
+    var application = inTransaction(fixture, () -> applySources(fixture, binding));
+    var repository = new GameplayRuleSourceRepository(fixture.dsl());
+    var snapshot = repository.requireCompleteForGameLogic(binding.target(), binding.commitId());
+
+    assertThat(snapshot.manifest().families()).hasSize(GameplayRuleManifest.Family.values().length);
+    assertThat(snapshot.manifest().families().get(GameplayRuleManifest.Family.ACTIONS)).hasSize(1);
+    assertThat(snapshot.entries())
+        .allSatisfy(entry -> assertThat(entry.sourceBinding()).isEqualTo(binding));
+    assertThat(application.gameplay().orElseThrow().snapshot().canonicalBytes())
+        .containsExactly(snapshot.canonicalBytes());
+    var restarted = new GameplayRuleSourceRepository(fixture.dsl());
+    assertThat(
+            restarted
+                .requireCompleteForGameLogic(binding.target(), binding.commitId())
+                .canonicalBytes())
+        .containsExactly(snapshot.canonicalBytes());
+    var retry =
+        inTransaction(fixture, () -> new GameDesignSourceRepository(fixture.dsl()).apply(binding));
+    assertThat(retry.ownerOutcome()).isEqualTo(application.ownerOutcome());
+    assertThat(retry.gameplay().orElseThrow().canonicalBytes())
+        .containsExactly(application.gameplay().orElseThrow().canonicalBytes());
+
+    var disjoint = sourceBinding(fixture, version, AssetSource.deletePayload(asset.getFileName()));
+    inTransaction(fixture, () -> applySources(fixture, disjoint));
+    var inherited = restarted.requireCompleteForGameLogic(disjoint.target(), disjoint.commitId());
+    assertThat(inherited.sourceEpoch()).isEqualTo("1");
+    assertThat(inherited.inheritedCommitId()).isEqualTo(binding.commitId());
+    assertThat(inherited.manifest().canonicalBytes())
+        .containsExactly(snapshot.manifest().canonicalBytes());
+    assertThat(inherited.entries())
+        .allSatisfy(entry -> assertThat(entry.sourceBinding()).isEqualTo(binding));
+    assertThat(
+            restarted
+                .readSnapshot(binding.target(), binding.commitId())
+                .orElseThrow()
+                .canonicalBytes())
+        .containsExactly(snapshot.canonicalBytes());
+
+    var deletion =
+        sourceBinding(
+            fixture,
+            version,
+            GameplayRuleSource.deletePayload(GameplayRuleManifest.Family.ABILITIES, "focusAbility"),
+            GameplayRuleSource.deletePayload(GameplayRuleManifest.Family.ACTIONS, "focusAction"));
+    inTransaction(fixture, () -> applySources(fixture, deletion));
+    assertThat(
+            restarted
+                .requireCompleteForGameLogic(deletion.target(), deletion.commitId())
+                .sourceEpoch())
+        .isEqualTo("2");
+    assertThat(
+            restarted
+                .requireCompleteForGameLogic(deletion.target(), deletion.commitId())
+                .manifest()
+                .families()
+                .get(GameplayRuleManifest.Family.ACTIONS))
+        .isEmpty();
+  }
+
+  @Test
+  void gameplaySourceDeniesStaleEpochAndMissingRetainedVersionGenesis() {
+    Fixture fixture = fixture(null);
+    Game owner = saveGame(fixture, "gameplay-conflict");
+    Version version = saveDraftVersion(fixture, owner, 1);
+    var first = sourceBinding(fixture, version, gameplayPayloads().toArray(String[]::new));
+    var stale =
+        sourceBinding(
+            fixture,
+            version,
+            GameplayRuleSource.upsertPayload(new GameplayRuleManifest.AdmissionTag("newTag")));
+    inTransaction(fixture, () -> applySources(fixture, first));
+    assertThatThrownBy(() -> inTransaction(fixture, () -> applySources(fixture, stale)))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessage("GAMEPLAY_RULE_EPOCH_CONFLICT");
+    assertThat(
+            new GameplayRuleSourceRepository(fixture.dsl())
+                .readSnapshot(first.target(), stale.commitId()))
+        .isEmpty();
+
+    var unqualified =
+        new DraftCommitBinding.TargetProof(
+            first.target().canonicalTenantId(),
+            UUID.randomUUID(),
+            first.target().gameDesignVersionRowId(),
+            first.target().gameDesignVersionTenantKey(),
+            first.target().sourceGameRowId(),
+            first.target().sourceGameTenantKey(),
+            first.target().sourceProvenanceKind());
+    assertThat(new GameplayRuleSourceRepository(fixture.dsl()).readGenesis(unqualified)).isEmpty();
+    assertThatThrownBy(
+            () ->
+                new GameplayRuleSourceRepository(fixture.dsl())
+                    .requireCompleteForGameLogic(unqualified, first.commitId()))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessage("GAMEPLAY_RULE_SELECTED_SOURCE_UNAVAILABLE");
+    assertThatThrownBy(
+            () ->
+                fixture
+                    .dsl()
+                    .execute(
+                        "UPDATE game_design_gameplay_rule_snapshot SET snapshot_json = '{}' WHERE canonical_version_id = ?",
+                        version.getCanonicalVersionId()))
+        .isInstanceOf(RuntimeException.class);
+    assertThatThrownBy(
+            () ->
+                fixture
+                    .dsl()
+                    .execute(
+                        "DELETE FROM game_design_gameplay_rule_genesis WHERE canonical_version_id = ?",
+                        version.getCanonicalVersionId()))
+        .isInstanceOf(RuntimeException.class);
+  }
+
+  @Test
+  void preexistingQualifiedDraftCannotReceiveInventedGameplayInventoryAfterMigration() {
+    Fixture fixture = fixture(MigrationVersion.fromVersion("56"));
+    Game owner = saveGame(fixture, "retained-gameplay");
+    UUID versionId = UUID.randomUUID();
+    Long rowId =
+        fixture
+            .dsl()
+            .fetchSingle(
+                "INSERT INTO version (tenant_id, version_number, version_state, version_state_epoch, is_script_only, "
+                    + "canonical_tenant_id, canonical_version_id, identity_source_game_row_id, identity_source_game_tenant_key, identity_source_provenance_kind) "
+                    + "SELECT tenant_id, 1, 'DRAFT', 1, FALSE, canonical_tenant_id, ?, id, tenant_id, tenant_identity_provenance_kind FROM game WHERE id = ? RETURNING id",
+                versionId,
+                owner.getId())
+            .get(0, Long.class);
+    migrate(fixture.dataSource(), fixture.schema(), null);
+    Version retained =
+        fixture.versions().findByTenantIdAndId(owner.getTenantId(), rowId).orElseThrow();
+    var target =
+        new DraftCommitBinding.TargetProof(
+            retained.getCanonicalTenantId(),
+            retained.getCanonicalVersionId(),
+            rowId,
+            retained.getTenantId(),
+            retained.getIdentitySourceGameRowId(),
+            retained.getIdentitySourceGameTenantKey(),
+            retained.getIdentitySourceProvenanceKind());
+    var repository = new GameplayRuleSourceRepository(fixture.dsl());
+    assertThat(repository.readGenesis(target)).isEmpty();
+    assertThatThrownBy(() -> inTransaction(fixture, () -> repository.enrollFreshDraft(target)))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessage("GAMEPLAY_RULE_FRESH_INSERT_UNAVAILABLE");
+    assertThat(repository.readGenesis(target)).isEmpty();
+    assertThatThrownBy(() -> repository.requireCompleteForGameLogic(target, UUID.randomUUID()))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessage("GAMEPLAY_RULE_SELECTED_SOURCE_UNAVAILABLE");
+  }
+
+  @Test
+  void gameplayHandoffDeniesUnqualifiedLegacyEffectiveCommands() {
+    Fixture fixture = fixture(null);
+    Game owner = saveGame(fixture, "legacy-command-source");
+    Version version = saveDraftVersion(fixture, owner, 1);
+    var command =
+        "{\"schemaVersion\":1,\"commandId\":\"legacy\",\"semanticOwner\":\"GAME_LOGIC\","
+            + "\"executionDiscipline\":\"DURABLE_GAMEPLAY\",\"stageRequirement\":\"GAMEPLAY\","
+            + "\"promptPolicy\":\"WHEN_GAMEPLAY\",\"actionCategory\":\"GAMEPLAY\",\"historyRecordable\":true,"
+            + "\"aliases\":[],\"actionTags\":[],\"effects\":[]}";
+    var binding = sourceBinding(fixture, version, CommandSource.upsertPayload(command));
+    inTransaction(fixture, () -> applySources(fixture, binding));
+    assertThat(
+            new GameplayRuleSourceRepository(fixture.dsl())
+                .readSnapshot(binding.target(), binding.commitId()))
+        .isPresent();
+    assertThatThrownBy(
+            () ->
+                new GameplayRuleSourceRepository(fixture.dsl())
+                    .requireCompleteForGameLogic(binding.target(), binding.commitId()))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessage("GAMEPLAY_RULE_LEGACY_COMMAND_SOURCE_NOT_CONVERGED");
+  }
+
+  @ParameterizedTest
+  @ValueSource(booleans = {false, true})
+  void gameplayHandoffDeniesGenericRuleEvenWhenTypedRevisionMatches(boolean legacyBeforeSnapshot) {
+    Fixture fixture = fixture(null);
+    Game owner = saveGame(fixture, "legacy-gameplay-source");
+    Version version = saveDraftVersion(fixture, owner, 1);
+    var binding = sourceBinding(fixture, version, gameplayPayloads().toArray(String[]::new));
+    var revision = binding.revisions().getFirst();
+    if (!legacyBeforeSnapshot) {
+      inTransaction(fixture, () -> applySources(fixture, binding));
+    }
+    fixture
+        .dsl()
+        .execute(
+            "INSERT INTO revision (tenant_id, version_id, author_account_id, revision_kind, logical_revision_id, data) "
+                + "VALUES (?, ?, 1, 'GAMEPLAY_RULE', ?, CAST(? AS JSONB))",
+            version.getTenantId(),
+            version.getId(),
+            revision.revisionId().toString(),
+            revision.payload());
+    var retainedRows = fixture.dsl().fetch("SELECT * FROM revision ORDER BY id");
+    if (legacyBeforeSnapshot) {
+      inTransaction(fixture, () -> applySources(fixture, binding));
+    }
+    var repository = new GameplayRuleSourceRepository(fixture.dsl());
+    var snapshot = repository.readSnapshot(binding.target(), binding.commitId()).orElseThrow();
+    assertThat(snapshot.entries()).isNotEmpty();
+
+    assertThatThrownBy(
+            () -> repository.requireCompleteForGameLogic(binding.target(), binding.commitId()))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessage("GAMEPLAY_RULE_GENERIC_SOURCE_NOT_CONVERGED");
+    assertThatThrownBy(
+            () ->
+                new GameplayRuleSourceRepository(fixture.dsl())
+                    .requireCompleteForGameLogic(binding.target(), binding.commitId()))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessage("GAMEPLAY_RULE_GENERIC_SOURCE_NOT_CONVERGED");
+    assertThat(repository.readSnapshot(binding.target(), binding.commitId()).orElseThrow())
+        .isEqualTo(snapshot);
+    assertThat(fixture.dsl().fetch("SELECT * FROM revision ORDER BY id")).isEqualTo(retainedRows);
+  }
+
+  @ParameterizedTest
+  @ValueSource(booleans = {false, true})
+  void gameplayHandoffGenericRuleGuardUsesExactPrivateTenantAndVersion(boolean differentTenant) {
+    Fixture fixture = fixture(null);
+    Game owner = saveGame(fixture, "scoped-legacy-gameplay-source");
+    Version version = saveDraftVersion(fixture, owner, 1);
+    Version otherVersion = saveDraftVersion(fixture, owner, 2);
+    Game otherOwner = saveGame(fixture, "other-legacy-gameplay-source");
+    var binding = sourceBinding(fixture, version, gameplayPayloads().toArray(String[]::new));
+    inTransaction(fixture, () -> applySources(fixture, binding));
+    var repository = new GameplayRuleSourceRepository(fixture.dsl());
+    var snapshot = repository.requireCompleteForGameLogic(binding.target(), binding.commitId());
+    // Generic history has no composite owner FK; scope both private keys even for retained rows.
+    fixture
+        .dsl()
+        .execute(
+            "INSERT INTO revision (tenant_id, version_id, author_account_id, revision_kind, data) "
+                + "VALUES (?, ?, 1, 'GAMEPLAY_RULE', '{}'::JSONB)",
+            differentTenant ? otherOwner.getTenantId() : owner.getTenantId(),
+            differentTenant ? version.getId() : otherVersion.getId());
+    var retainedRows = fixture.dsl().fetch("SELECT * FROM revision ORDER BY id");
+
+    assertThat(repository.requireCompleteForGameLogic(binding.target(), binding.commitId()))
+        .isEqualTo(snapshot);
+    assertThat(fixture.dsl().fetch("SELECT * FROM revision ORDER BY id")).isEqualTo(retainedRows);
+  }
+
+  @Test
+  void gameplayHandoffCannotClaimEmptyWhileGenericRuleHistoryExists() {
+    Fixture fixture = fixture(null);
+    Game owner = saveGame(fixture, "empty-with-legacy-gameplay-source");
+    Version version = saveDraftVersion(fixture, owner, 1);
+    var binding = sourceBinding(fixture, version, CommandSource.deletePayload("not-present"));
+    inTransaction(fixture, () -> applySources(fixture, binding));
+    var repository = new GameplayRuleSourceRepository(fixture.dsl());
+    assertThat(
+            repository.requireCompleteForGameLogic(binding.target(), binding.commitId()).entries())
+        .isEmpty();
+    fixture
+        .dsl()
+        .execute(
+            "INSERT INTO revision (tenant_id, version_id, author_account_id, revision_kind, data) "
+                + "VALUES (?, ?, 1, 'GAMEPLAY_RULE', '{}'::JSONB)",
+            version.getTenantId(),
+            version.getId());
+    var retainedRows = fixture.dsl().fetch("SELECT * FROM revision ORDER BY id");
+
+    assertThatThrownBy(
+            () -> repository.requireCompleteForGameLogic(binding.target(), binding.commitId()))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessage("GAMEPLAY_RULE_GENERIC_SOURCE_NOT_CONVERGED");
+    assertThat(fixture.dsl().fetch("SELECT * FROM revision ORDER BY id")).isEqualTo(retainedRows);
+  }
+
+  @Test
+  void mixedAssetGameplayOwnerResultRejectsSubstitutedRuleComponent() {
+    Fixture fixture = fixture(null);
+    Game owner = saveGame(fixture, "gameplay-component-substitution");
+    Version version = saveDraftVersion(fixture, owner, 1);
+    GameAsset asset = saveAsset(fixture, owner, "resource.png", "actual-source-bytes");
+    var payloads = new java.util.ArrayList<>(gameplayPayloads());
+    payloads.add(
+        AssetSource.upsertPayload(
+            asset.getId().toString(), asset.getFileName(), AssetSource.Requiredness.REQUIRED));
+    var binding = sourceBinding(fixture, version, payloads.toArray(String[]::new));
+    assertThatThrownBy(
+            () ->
+                inTransaction(
+                    fixture,
+                    () -> {
+                      var coordinator = new DraftCommitCoordinatorRepository(fixture.dsl());
+                      coordinator.claim(binding);
+                      coordinator.claimApplicationSlot(binding);
+                      coordinator.markOwnerInProgress(
+                          binding, DraftCommitBinding.Owner.GAME_DESIGN_CONTROL_PLANE);
+                      var assetResult =
+                          new AssetSourceRepository(fixture.dsl()).apply(binding).orElseThrow();
+                      var gameplayResult =
+                          new GameplayRuleSourceRepository(fixture.dsl())
+                              .apply(binding)
+                              .orElseThrow();
+                      var components = new java.io.ByteArrayOutputStream();
+                      net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding.frame(
+                          components, "game-design-control-plane-sibling-components/v1");
+                      net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding.frame(
+                          components, "ASSET");
+                      net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding.frame(
+                          components, assetResult.canonicalBytes());
+                      net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding.frame(
+                          components, "GAMEPLAY");
+                      net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding.frame(
+                          components, assetResult.canonicalBytes());
+                      var result = new java.io.ByteArrayOutputStream();
+                      net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding.frame(
+                          result, "game-design-control-plane-ordinary-source-application/v1");
+                      net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding.frame(
+                          result, binding.canonicalBytes());
+                      net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding.frame(
+                          result, components.toByteArray());
+                      coordinator.recordOwnerOutcome(
+                          binding,
+                          new DraftCommitCoordinatorRepository.OwnerOutcome(
+                              DraftCommitBinding.Owner.GAME_DESIGN_CONTROL_PLANE,
+                              DraftCommitCoordinatorRepository.OwnerStatus.APPLIED,
+                              binding.commitId(),
+                              binding.digest(),
+                              "substituted-rule-component",
+                              result.toByteArray(),
+                              List.of(assetResult.appliedEpoch(), gameplayResult.appliedEpoch())));
+                      return true;
+                    }))
+        .isInstanceOf(RuntimeException.class);
+    assertThat(
+            new GameplayRuleSourceRepository(fixture.dsl())
+                .readSnapshot(binding.target(), binding.commitId()))
+        .isEmpty();
+  }
+
+  private List<String> gameplayPayloads() {
+    var action =
+        new GameplayRuleManifest.Action(
+            "focusAction",
+            "Focus",
+            List.of("canFocus"),
+            List.of(),
+            List.of(
+                new GameplayRuleManifest.Cost(
+                    "energy",
+                    java.math.BigDecimal.ONE,
+                    GameplayRuleManifest.CommitPolicy.ON_EXECUTION)),
+            List.of(
+                new GameplayRuleManifest.Cooldown(
+                    "focusCooldown", 3L, GameplayRuleManifest.CommitPolicy.ON_EFFECT_SUCCESS)),
+            List.of(new GameplayRuleManifest.EffectBinding("restore", "SOURCE")),
+            List.of());
+    List<GameplayRuleManifest.Definition> definitions =
+        List.of(
+            new GameplayRuleManifest.AdmissionTag("canFocus"),
+            new GameplayRuleManifest.Resource(
+                "energy",
+                java.math.BigDecimal.TEN,
+                java.math.BigDecimal.ZERO,
+                java.math.BigDecimal.TEN,
+                java.math.BigDecimal.valueOf(100),
+                GameplayRuleManifest.Visibility.PUBLIC,
+                List.of()),
+            new GameplayRuleManifest.Effect(
+                "restore",
+                GameplayRuleManifest.Lifecycle.INSTANT,
+                GameplayRuleManifest.EffectOperation.ADJUST_RESOURCE,
+                "energy",
+                null,
+                java.math.BigDecimal.ONE,
+                null,
+                null),
+            action,
+            new GameplayRuleManifest.Ability("focusAbility", "Focus ability", "focusAction"));
+    return definitions.stream().map(GameplayRuleSource::upsertPayload).toList();
+  }
+
   private DriverManagerDataSource dataSource(String schema) {
     DriverManagerDataSource dataSource = new DriverManagerDataSource();
     dataSource.setUrl(POSTGRES.getJdbcUrl());
@@ -779,18 +1171,27 @@ class VersionAssetPublicationPostgresIntegrationTest {
               DraftCommitBinding.Owner.GAME_DESIGN_CONTROL_PLANE,
               payloads[index]));
     }
-    for (String scope : List.of(CommandSource.SCOPE, AssetSource.SCOPE, RealmPolicySource.SCOPE)) {
+    for (String scope :
+        List.of(
+            CommandSource.SCOPE,
+            AssetSource.SCOPE,
+            RealmPolicySource.SCOPE,
+            GameplayRuleSource.SCOPE)) {
       String kind =
           scope.equals(AssetSource.SCOPE)
               ? "ASSET_REFERENCE"
-              : scope.equals(RealmPolicySource.SCOPE) ? "REALM_ENTRY_POLICY" : "COMMAND_DEFINITION";
+              : scope.equals(RealmPolicySource.SCOPE)
+                  ? "REALM_ENTRY_POLICY"
+                  : scope.equals(GameplayRuleSource.SCOPE) ? "GAMEPLAY_RULE" : "COMMAND_DEFINITION";
       if (List.of(payloads).stream().noneMatch(payload -> payload.contains(kind))) continue;
       String table =
           scope.equals(AssetSource.SCOPE)
               ? "game_design_asset_source_head"
               : scope.equals(RealmPolicySource.SCOPE)
                   ? "game_design_realm_policy_source"
-                  : "game_design_command_source_head";
+                  : scope.equals(GameplayRuleSource.SCOPE)
+                      ? "game_design_gameplay_rule_head"
+                      : "game_design_command_source_head";
       String epoch =
           fixture
               .dsl()

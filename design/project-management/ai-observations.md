@@ -120,3 +120,9 @@ Entry format:
   - Observation: The target had advanced 21 commits beyond the recorded base, accounting for 33 extra paths in the merge tree, with no Account, Game Design or World owner paths. This explains the observed tree difference without proving each job's checkout from metadata alone.
   - Expected pattern: Distinguish recorded-base metadata, current target ref, merge-object ancestry and actual job checkout. Parent movement does not authorize topology changes or confer exact-integrated-base proof.
   - Current status: The completed observer verified Account, World, Game Design, Game Session and TCP job logs actually checked out synthetic merge `e2bdaf5`, with parents `fe15a31` and published `2560d12a`; intended-parent alignment remains a separate gate.
+
+- `2026-10-09`: Test strict committed reads through the actual Spring proxy
+  - Context: PR #3105's physical World inventory read failed because a `NOT_SUPPORTED` transaction annotation created an empty synchronization scope that the method's strict no-synchronization guard correctly rejected.
+  - Observation: Calling an unproxied repository directly did not reproduce the failure; a clean caller alone did not establish a clean invocation inside the proxy.
+  - Expected pattern: Exercise the real transaction proxy when proving an outside-SQL owner read. Preserve rejection of both ambient transactions and empty synchronization scopes rather than weakening the guard to accommodate its own annotation.
+  - Current status: The annotation was removed and a three-case proxy regression passed locally. Corrected-head PostgreSQL/transport execution remains required.

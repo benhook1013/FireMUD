@@ -13,6 +13,7 @@ import io.grpc.Context;
 import io.grpc.Status;
 import io.grpc.StatusRuntimeException;
 import java.time.OffsetDateTime;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -74,6 +75,38 @@ class AccountDraftCommitOrderReadServiceTest {
     verify(repository).readOriginalBinding(binding.operationId());
     verify(repository).read(binding);
     verify(repository).readSettlement(binding);
+  }
+
+  @Test
+  void acceptsGameLogicOnlyWhenExactV2BindingRequiresGameLogic() {
+    var binding = bindingWithGameLogic(1);
+    assertThat(binding.schemaVersion()).isEqualTo(DraftAuthorizationFenceBinding.SCHEMA_V2);
+    assertThat(binding.requiredOwners()).contains(DraftAuthorizationFenceBinding.Owner.GAME_LOGIC);
+    var request = request(binding);
+    when(manager.getTransaction(any())).thenReturn(transactionStatus);
+    when(repository.readOriginalBinding(binding.operationId())).thenReturn(Optional.of(binding));
+    when(repository.read(binding))
+        .thenReturn(new FenceSnapshot(Ordering.COMMIT_ORDER, binding.canonicalBytes(), null, null));
+    when(repository.readSettlement(binding)).thenReturn(Settlement.PENDING);
+
+    asGameLogic(() -> service.requireHeld(request));
+
+    verify(manager).getTransaction(any());
+    verify(manager).commit(transactionStatus);
+    verify(repository).readOriginalBinding(binding.operationId());
+    verify(repository).read(binding);
+    verify(repository).readSettlement(binding);
+  }
+
+  @Test
+  void deniesGameLogicForWorldOnlyBindingBeforeOwnerTransactionOrStorage() {
+    var binding = binding(1);
+
+    assertStatus(
+        Status.Code.PERMISSION_DENIED,
+        () -> asGameLogic(() -> service.requireHeld(request(binding))));
+
+    verifyNoInteractions(repository, manager);
   }
 
   @Test
@@ -149,10 +182,26 @@ class AccountDraftCommitOrderReadServiceTest {
             asPeer(
                 "spiffe://firemud/ns/other/sa/world-management-service",
                 () -> service.requireHeld(request)));
+    assertStatus(
+        Status.Code.PERMISSION_DENIED,
+        () ->
+            asPeer(
+                "spiffe://firemud/ns/other/sa/game-logic-service",
+                () -> service.requireHeld(request)));
+    assertStatus(
+        Status.Code.PERMISSION_DENIED,
+        () ->
+            asPeer(
+                "spiffe://firemud/ns/test/sa/game-session-service",
+                () -> service.requireHeld(request)));
 
     TransactionSynchronizationManager.setActualTransactionActive(true);
     assertStatus(
         Status.Code.FAILED_PRECONDITION, () -> asWorld(() -> service.requireHeld(request)));
+    var gameLogicBinding = bindingWithGameLogic(1);
+    assertStatus(
+        Status.Code.FAILED_PRECONDITION,
+        () -> asGameLogic(() -> service.requireHeld(request(gameLogicBinding))));
     verifyNoInteractions(repository, manager);
   }
 
@@ -193,6 +242,10 @@ class AccountDraftCommitOrderReadServiceTest {
     asPeer("spiffe://firemud/ns/test/sa/world-management-service", call);
   }
 
+  private static void asGameLogic(Runnable call) {
+    asPeer("spiffe://firemud/ns/test/sa/game-logic-service", call);
+  }
+
   private static void asPeer(String uri, Runnable call) {
     var peer = GrpcPeerIdentity.parseUri(uri).orElseThrow();
     var context = Context.current().withValue(GrpcPeerIdentity.CONTEXT_KEY, peer);
@@ -213,22 +266,29 @@ class AccountDraftCommitOrderReadServiceTest {
   }
 
   static DraftAuthorizationFenceBinding binding(long sourceGeneration) {
+    return binding(sourceGeneration, false);
+  }
+
+  static DraftAuthorizationFenceBinding bindingWithGameLogic(long sourceGeneration) {
+    return binding(sourceGeneration, true);
+  }
+
+  private static DraftAuthorizationFenceBinding binding(
+      long sourceGeneration, boolean gameLogicRequired) {
     UUID tenant = uuid("11111111-1111-4111-8111-111111111111");
     UUID version = uuid("22222222-2222-4222-8222-222222222222");
     UUID request = uuid("44444444-4444-4444-8444-444444444444");
     UUID commit = uuid("55555555-5555-4555-8555-555555555555");
-    DraftCommitBinding draft =
-        DraftCommitBinding.create(
-            new TargetProof(tenant, version, 19L, "tenant-key", 42L, "tenant-key", "NEW_GAME_ROW"),
-            request,
-            commit,
-            "base-1",
+    List<RevisionPayload> revisions =
+        new ArrayList<>(
             List.of(
                 new RevisionPayload(
                     "0",
                     uuid("66666666-6666-4666-8666-666666666666"),
                     DraftCommitBinding.Owner.WORLD_MANAGEMENT,
-                    "{}")),
+                    "{}")));
+    List<AffectedUnit> affectedUnits =
+        new ArrayList<>(
             List.of(
                 new AffectedUnit(
                     DraftCommitBinding.Owner.WORLD_MANAGEMENT,
@@ -237,29 +297,58 @@ class AccountDraftCommitOrderReadServiceTest {
                     "ROOM_SCOPE",
                     "room-1",
                     "0")));
+    if (gameLogicRequired) {
+      revisions.add(
+          new RevisionPayload(
+              "1",
+              uuid("77777777-7777-4777-8777-777777777777"),
+              DraftCommitBinding.Owner.GAME_LOGIC,
+              "{}"));
+      affectedUnits.add(
+          new AffectedUnit(
+              DraftCommitBinding.Owner.GAME_LOGIC,
+              "RULE_SET",
+              "rules-1",
+              "AGGREGATE",
+              "rules-1",
+              "0"));
+    }
+    DraftCommitBinding draft =
+        DraftCommitBinding.create(
+            new TargetProof(tenant, version, 19L, "tenant-key", 42L, "tenant-key", "NEW_GAME_ROW"),
+            request,
+            commit,
+            "base-1",
+            revisions,
+            affectedUnits);
     byte[] draftBytes = draft.canonicalBytes();
-    return new DraftAuthorizationFenceBinding(
-        uuid("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"),
-        request,
-        commit,
-        uuid("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"),
-        uuid("cccccccc-cccc-4ccc-8ccc-cccccccccccc"),
-        tenant,
-        version,
-        "base-1",
-        "0",
-        draftBytes,
-        draftBytes,
-        draft.digest(),
-        List.of(
-            new SourceEvidence(
-                SourceKind.GLOBAL_ROLES,
-                "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
-                null,
-                Long.toString(sourceGeneration),
-                null,
-                null,
-                new byte[] {1})));
+    DraftAuthorizationFenceBinding binding =
+        new DraftAuthorizationFenceBinding(
+            uuid(
+                gameLogicRequired
+                    ? "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaab"
+                    : "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"),
+            request,
+            commit,
+            uuid("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"),
+            uuid("cccccccc-cccc-4ccc-8ccc-cccccccccccc"),
+            tenant,
+            version,
+            "base-1",
+            "0",
+            draftBytes,
+            draftBytes,
+            draft.digest(),
+            List.of(
+                new SourceEvidence(
+                    SourceKind.GLOBAL_ROLES,
+                    "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+                    null,
+                    Long.toString(sourceGeneration),
+                    null,
+                    null,
+                    new byte[] {1})));
+    return gameLogicRequired ? binding.withRequiredOwners() : binding;
   }
 
   private static UUID uuid(String value) {

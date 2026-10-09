@@ -7,6 +7,7 @@ import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
+import static org.mockito.Mockito.when;
 
 import com.google.protobuf.ByteString;
 import io.grpc.ManagedChannel;
@@ -34,6 +35,7 @@ import java.security.cert.X509Certificate;
 import java.util.ArrayList;
 import java.util.Base64;
 import java.util.List;
+import java.util.Optional;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
@@ -43,6 +45,10 @@ import net.firedevops.firemud.account.v1.ReadHeldOriginalCommitOrderRequest;
 import net.firedevops.firemud.account.v1.ReadHeldOriginalCommitOrderResponse;
 import net.firedevops.firemud.accountservice.authordraft.AccountDraftCommitOrderReadGrpcService;
 import net.firedevops.firemud.accountservice.authordraft.AccountDraftCommitOrderReadService;
+import net.firedevops.firemud.accountservice.authordraft.DraftAuthorizationFenceRepository;
+import net.firedevops.firemud.accountservice.authordraft.DraftAuthorizationFenceRepository.FenceSnapshot;
+import net.firedevops.firemud.accountservice.authordraft.DraftAuthorizationFenceRepository.Ordering;
+import net.firedevops.firemud.accountservice.authordraft.DraftAuthorizationFenceRepository.Settlement;
 import net.firedevops.firemud.common.authoring.DraftCommitOrderReadEvidence;
 import net.firedevops.firemud.common.authoring.DraftCommitOrderReadGrpcCodec;
 import net.firedevops.firemud.common.grpc.CommonGrpcClientProperties;
@@ -53,12 +59,15 @@ import net.firedevops.firemud.test.TlsTestSupport;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.TransactionStatus;
 
 /** Physical loopback mTLS proof for the Account held-COMMIT_ORDER gRPC handler boundary. */
 class AccountDraftCommitOrderReadGrpcMtlsTest {
   private static final String NAMESPACE = "test";
   private static final String ACCOUNT_URI = "spiffe://firemud/ns/test/sa/account-service";
   private static final String WORLD_URI = "spiffe://firemud/ns/test/sa/world-management-service";
+  private static final String GAME_LOGIC_URI = "spiffe://firemud/ns/test/sa/game-logic-service";
   private static final String WRONG_WORKLOAD_URI =
       "spiffe://firemud/ns/test/sa/game-design-service";
   private static final String OTHER_NAMESPACE_WORLD_URI =
@@ -108,6 +117,48 @@ class AccountDraftCommitOrderReadGrpcMtlsTest {
         assertThat(owner.reads()).as(identity.alias()).hasValue(0);
         verifyNoInteractions(owner.service());
       }
+    }
+  }
+
+  @Test
+  void gameLogicMtlsReadsOnlyItsExactRequiredOwnerBinding() throws Exception {
+    var repository = mock(DraftAuthorizationFenceRepository.class);
+    var manager = mock(PlatformTransactionManager.class);
+    var transactionStatus = mock(TransactionStatus.class);
+    when(manager.getTransaction(any())).thenReturn(transactionStatus);
+    var participatingBinding = AccountDraftCommitOrderReadServiceTest.bindingWithGameLogic(1);
+    when(repository.readOriginalBinding(participatingBinding.operationId()))
+        .thenReturn(Optional.of(participatingBinding));
+    when(repository.read(participatingBinding))
+        .thenReturn(
+            new FenceSnapshot(
+                Ordering.COMMIT_ORDER, participatingBinding.canonicalBytes(), null, null));
+    when(repository.readSettlement(participatingBinding)).thenReturn(Settlement.PENDING);
+    var owner = new AccountDraftCommitOrderReadService(repository, manager, NAMESPACE);
+    try (TransportServer server = startServer(owner);
+        ClientTransport client = newClient(server.port(), pki.gameLogicClient())) {
+      ReadHeldOriginalCommitOrderResponse response =
+          client.read(
+              DraftCommitOrderReadGrpcCodec.toRequest(
+                  AccountDraftCommitOrderReadServiceTest.request(participatingBinding)));
+
+      assertThat(response.getStatus())
+          .isEqualTo(HeldOriginalCommitOrderStatus.HELD_ORIGINAL_COMMIT_ORDER_STATUS_HELD);
+      assertThat(response.getOriginalAccountBinding().toByteArray())
+          .containsExactly(participatingBinding.canonicalBytes());
+
+      var worldOnlyBinding = AccountDraftCommitOrderReadServiceTest.binding(1);
+      assertStatus(
+          Status.Code.PERMISSION_DENIED,
+          () ->
+              client.read(
+                  DraftCommitOrderReadGrpcCodec.toRequest(
+                      AccountDraftCommitOrderReadServiceTest.request(worldOnlyBinding))));
+      assertThat(server.handlerCalls()).hasValue(2);
+      verify(manager).getTransaction(any());
+      verify(repository).readOriginalBinding(participatingBinding.operationId());
+      verify(repository, org.mockito.Mockito.never())
+          .readOriginalBinding(worldOnlyBinding.operationId());
     }
   }
 
@@ -172,9 +223,14 @@ class AccountDraftCommitOrderReadGrpcMtlsTest {
   }
 
   private static TransportServer startServer(TestOnlyHeldOwner owner) throws Exception {
+    return startServer(owner.service());
+  }
+
+  private static TransportServer startServer(AccountDraftCommitOrderReadService owner)
+      throws Exception {
     AtomicInteger handlerCalls = new AtomicInteger();
     AccountDraftCommitOrderReadGrpcService service =
-        new AccountDraftCommitOrderReadGrpcService(owner.service(), NAMESPACE);
+        new AccountDraftCommitOrderReadGrpcService(owner, NAMESPACE);
     ServerInterceptor countHandlerCalls =
         new ServerInterceptor() {
           @Override
@@ -295,6 +351,7 @@ class AccountDraftCommitOrderReadGrpcMtlsTest {
       Path caCertificatePem,
       TestIdentity accountServer,
       TestIdentity worldClient,
+      TestIdentity gameLogicClient,
       TestIdentity wrongWorkloadClient,
       TestIdentity otherNamespaceClient) {
     private static TestPki create(Path directory) throws Exception {
@@ -343,6 +400,7 @@ class AccountDraftCommitOrderReadGrpcMtlsTest {
           caFile,
           issueIdentity(directory, caStore, caFile, "account-server", ACCOUNT_URI, true),
           issueIdentity(directory, caStore, caFile, "world-client", WORLD_URI, false),
+          issueIdentity(directory, caStore, caFile, "game-logic-client", GAME_LOGIC_URI, false),
           issueIdentity(
               directory, caStore, caFile, "wrong-workload-client", WRONG_WORKLOAD_URI, false),
           issueIdentity(

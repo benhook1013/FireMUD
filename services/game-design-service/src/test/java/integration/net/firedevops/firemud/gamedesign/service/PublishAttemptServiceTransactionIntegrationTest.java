@@ -1000,18 +1000,31 @@ class PublishAttemptServiceTransactionIntegrationTest {
           (tools.jackson.databind.node.ObjectNode)
               mapper.readTree(operation.inventory().canonicalBytes());
       var model = (tools.jackson.databind.node.ObjectNode) publicJson.get("sourceModel");
+      String expectedRejectionMessage;
       switch (mutation) {
-        case 0 ->
-            ((tools.jackson.databind.node.ObjectNode) publicJson.get("ownerScope"))
-                .remove("intakeReceiptDigest");
-        case 1 -> model.put("unknownSourceFamily", true);
-        case 2 -> model.putArray("familyCounts");
-        case 3 ->
-            ((tools.jackson.databind.node.ObjectNode) model.get("regionGeneratorInputs").get(0))
-                .put("generatorType", "opaque");
-        case 4 ->
-            ((tools.jackson.databind.node.ObjectNode) model.get("familyCounts").get(2))
-                .put("rowCount", 0);
+        case 0 -> {
+          ((tools.jackson.databind.node.ObjectNode) publicJson.get("ownerScope"))
+              .remove("intakeReceiptDigest");
+          expectedRejectionMessage = "Incomplete or unknown public inventory members";
+        }
+        case 1 -> {
+          model.put("unknownSourceFamily", true);
+          expectedRejectionMessage = "Incomplete or unknown public inventory members";
+        }
+        case 2 -> {
+          model.putArray("familyCounts");
+          expectedRejectionMessage = "Unsupported public inventory source profile";
+        }
+        case 3 -> {
+          ((tools.jackson.databind.node.ObjectNode) model.get("regionGeneratorInputs").get(0))
+              .put("generatorType", "opaque");
+          expectedRejectionMessage = "Unsupported or unordered region generator input";
+        }
+        case 4 -> {
+          ((tools.jackson.databind.node.ObjectNode) model.get("familyCounts").get(2))
+              .put("rowCount", 0);
+          expectedRejectionMessage = "Source inventory counts differ from explicit inputs";
+        }
         default -> throw new AssertionError();
       }
       byte[] changedInventory =
@@ -1036,7 +1049,12 @@ class PublishAttemptServiceTransactionIntegrationTest {
               () ->
                   dsl.fetch(
                       "SELECT require_selected_inventory_operation_v2(?)", bytes.toByteArray()))
-          .isInstanceOf(org.jooq.exception.DataAccessException.class);
+          .rootCause()
+          .isInstanceOf(java.sql.SQLException.class)
+          .hasMessageContaining(expectedRejectionMessage)
+          .satisfies(
+              failure ->
+                  assertThat(((java.sql.SQLException) failure).getSQLState()).isEqualTo("23514"));
     }
     dsl.fetch("SELECT require_selected_inventory_operation_v2(?)", operation.canonicalBytes());
     // Supply the historical three-frame schema without retrofitting any retained owner rows.

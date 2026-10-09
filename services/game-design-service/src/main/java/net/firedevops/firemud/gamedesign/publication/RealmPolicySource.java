@@ -43,7 +43,9 @@ public final class RealmPolicySource {
   public static boolean isPolicyRevision(DraftCommitBinding.RevisionPayload input) {
     var kind = text(tree(input.payload()), "revisionKind");
     if (RealmEntryPolicy.REVISION_KIND.equals(kind)) return true;
-    if ("COMMAND_DEFINITION".equals(kind) || AssetSource.REVISION_KIND.equals(kind)) return false;
+    if ("COMMAND_DEFINITION".equals(kind)
+        || AssetSource.REVISION_KIND.equals(kind)
+        || GameplayRuleSource.REVISION_KIND.equals(kind)) return false;
     throw new IllegalArgumentException("Unsupported Game Design owner revision kind");
   }
 

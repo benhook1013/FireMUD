@@ -6,6 +6,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import io.grpc.Context;
 import io.grpc.Status;
 import io.grpc.StatusRuntimeException;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -105,10 +106,63 @@ class AccountDraftCommitOrderReadPostgresIntegrationTest {
   }
 
   @Test
+  void acceptsExactGameLogicParticipantAndPreservesOriginalBindingBytes() throws Exception {
+    Fixture fixture = fixture();
+    DraftAuthorizationFenceBinding binding = binding(fixture, true);
+    assertThat(binding.schemaVersion()).isEqualTo(DraftAuthorizationFenceBinding.SCHEMA_V2);
+    assertThat(binding.requiredOwners()).contains(Owner.GAME_LOGIC);
+    reserveAndCommitOrder(fixture, binding);
+    var before = snapshot(fixture);
+    fixture.transactions.reset();
+
+    asGameLogic(() -> fixture.reader.requireHeld(request(binding)));
+
+    assertThat(fixture.transactions.beginCount()).isOne();
+    assertThat(fixture.transactions.lastDefinition().getPropagationBehavior())
+        .isEqualTo(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
+    assertThat(fixture.transactions.lastDefinition().getIsolationLevel())
+        .isEqualTo(TransactionDefinition.ISOLATION_READ_COMMITTED);
+    assertThat(fixture.transactions.lastDefinition().isReadOnly()).isFalse();
+    assertThat(snapshot(fixture)).isEqualTo(before);
+    assertThat(fixture.tx(() -> fixture.repository.readSettlement(binding)))
+        .isEqualTo(Settlement.PENDING);
+    assertThat(
+            Objects.requireNonNull(
+                    fixture.dsl.fetchOne(
+                        "SELECT binding FROM account_draft_authorization_fences WHERE operation_id = ?",
+                        binding.operationId()))
+                .get("binding", byte[].class))
+        .containsExactly(binding.canonicalBytes());
+  }
+
+  @Test
+  void deniesNonparticipatingGameLogicBeforeDatabaseAccessOrMutation() throws Exception {
+    Fixture fixture = fixture();
+    DraftAuthorizationFenceBinding binding = binding(fixture);
+    reserveAndCommitOrder(fixture, binding);
+    var before = snapshot(fixture);
+    fixture.transactions.reset();
+
+    assertStatus(
+        Status.Code.PERMISSION_DENIED,
+        () -> asGameLogic(() -> fixture.reader.requireHeld(request(binding))));
+
+    assertThat(fixture.transactions.beginCount()).isZero();
+    assertThat(snapshot(fixture)).isEqualTo(before);
+    assertThat(
+            Objects.requireNonNull(
+                    fixture.dsl.fetchOne(
+                        "SELECT binding FROM account_draft_authorization_fences WHERE operation_id = ?",
+                        binding.operationId()))
+                .get("binding", byte[].class))
+        .containsExactly(binding.canonicalBytes());
+  }
+
+  @Test
   void deniesReservedRevokedSettledChangedAndMissingBindings() {
     for (ReadCase readCase : ReadCase.values()) {
       Fixture fixture = fixture();
-      DraftAuthorizationFenceBinding original = binding(fixture);
+      DraftAuthorizationFenceBinding original = binding(fixture, true);
       DraftAuthorizationFenceBinding requested = original;
       switch (readCase) {
         case RESERVED -> fixture.tx(() -> fixture.repository.reserve(original));
@@ -124,6 +178,7 @@ class AccountDraftCommitOrderReadPostgresIntegrationTest {
           reserveAndCommitOrder(fixture, original);
           recordReadback(fixture, original, Owner.GAME_DESIGN, Outcome.COMMITTED, new byte[] {1});
           recordReadback(fixture, original, Owner.WORLD, Outcome.COMMITTED, new byte[] {2});
+          recordReadback(fixture, original, Owner.GAME_LOGIC, Outcome.COMMITTED, new byte[] {3});
           assertThat(fixture.tx(() -> fixture.repository.readSettlement(original)))
               .isEqualTo(Settlement.COMMITTED);
         }
@@ -131,15 +186,17 @@ class AccountDraftCommitOrderReadPostgresIntegrationTest {
           reserveAndCommitOrder(fixture, original);
           requested = changedBinding(original);
         }
-        case MISSING -> requested = binding(fixture);
+        case MISSING -> requested = binding(fixture, true);
       }
 
+      var before = snapshot(fixture);
       fixture.transactions.reset();
       DraftAuthorizationFenceBinding submitted = requested;
       assertStatus(
           Status.Code.FAILED_PRECONDITION,
-          () -> asWorld(() -> fixture.reader.requireHeld(request(submitted))));
+          () -> asGameLogic(() -> fixture.reader.requireHeld(request(submitted))));
       assertThat(fixture.transactions.beginCount()).isOne();
+      assertThat(snapshot(fixture)).isEqualTo(before);
       if (readCase != ReadCase.MISSING) {
         assertThat(
                 Objects.requireNonNull(
@@ -201,6 +258,11 @@ class AccountDraftCommitOrderReadPostgresIntegrationTest {
   }
 
   private static DraftAuthorizationFenceBinding binding(Fixture fixture) {
+    return binding(fixture, false);
+  }
+
+  private static DraftAuthorizationFenceBinding binding(
+      Fixture fixture, boolean gameLogicRequired) {
     UUID account =
         fixture.tx(
             () -> {
@@ -215,19 +277,16 @@ class AccountDraftCommitOrderReadPostgresIntegrationTest {
     UUID version = UUID.randomUUID();
     UUID request = UUID.randomUUID();
     UUID commit = UUID.randomUUID();
-    DraftCommitBinding complete =
-        DraftCommitBinding.create(
-            new TargetProof(
-                tenant, version, 17L, "test-tenant", 23L, "test-tenant", "NEW_GAME_ROW"),
-            request,
-            commit,
-            "test-base",
+    List<RevisionPayload> revisions =
+        new ArrayList<>(
             List.of(
                 new RevisionPayload(
                     "0",
                     UUID.randomUUID(),
                     DraftCommitBinding.Owner.WORLD_MANAGEMENT,
-                    "test-change")),
+                    "test-change")));
+    List<AffectedUnit> affectedUnits =
+        new ArrayList<>(
             List.of(
                 new AffectedUnit(
                     DraftCommitBinding.Owner.WORLD_MANAGEMENT,
@@ -236,29 +295,53 @@ class AccountDraftCommitOrderReadPostgresIntegrationTest {
                     "AGGREGATE",
                     "test-region",
                     "0")));
+    if (gameLogicRequired) {
+      revisions.add(
+          new RevisionPayload(
+              "1", UUID.randomUUID(), DraftCommitBinding.Owner.GAME_LOGIC, "test-rule-change"));
+      affectedUnits.add(
+          new AffectedUnit(
+              DraftCommitBinding.Owner.GAME_LOGIC,
+              "RULE_SET",
+              "test-rules",
+              "AGGREGATE",
+              "test-rules",
+              "0"));
+    }
+    DraftCommitBinding complete =
+        DraftCommitBinding.create(
+            new TargetProof(
+                tenant, version, 17L, "test-tenant", 23L, "test-tenant", "NEW_GAME_ROW"),
+            request,
+            commit,
+            "test-base",
+            revisions,
+            affectedUnits);
     byte[] draftBytes = complete.canonicalBytes();
-    return new DraftAuthorizationFenceBinding(
-        UUID.randomUUID(),
-        request,
-        commit,
-        UUID.randomUUID(),
-        account,
-        tenant,
-        version,
-        complete.baseCommitId(),
-        "0",
-        draftBytes,
-        draftBytes,
-        complete.digest(),
-        List.of(
-            new SourceEvidence(
-                SourceKind.ACCOUNT,
-                account.toString(),
-                "1",
-                "1",
-                "test-account-stream/" + account,
-                "0",
-                new byte[] {7})));
+    DraftAuthorizationFenceBinding binding =
+        new DraftAuthorizationFenceBinding(
+            UUID.randomUUID(),
+            request,
+            commit,
+            UUID.randomUUID(),
+            account,
+            tenant,
+            version,
+            complete.baseCommitId(),
+            "0",
+            draftBytes,
+            draftBytes,
+            complete.digest(),
+            List.of(
+                new SourceEvidence(
+                    SourceKind.ACCOUNT,
+                    account.toString(),
+                    "1",
+                    "1",
+                    "test-account-stream/" + account,
+                    "0",
+                    new byte[] {7})));
+    return gameLogicRequired ? binding.withRequiredOwners() : binding;
   }
 
   private static DraftAuthorizationFenceBinding changedBinding(
@@ -363,6 +446,10 @@ class AccountDraftCommitOrderReadPostgresIntegrationTest {
 
   private static void asWorld(Runnable operation) {
     asPeer("spiffe://firemud/ns/" + NAMESPACE + "/sa/world-management-service", operation);
+  }
+
+  private static void asGameLogic(Runnable operation) {
+    asPeer("spiffe://firemud/ns/" + NAMESPACE + "/sa/game-logic-service", operation);
   }
 
   private static void asPeer(String uri, Runnable operation) {
