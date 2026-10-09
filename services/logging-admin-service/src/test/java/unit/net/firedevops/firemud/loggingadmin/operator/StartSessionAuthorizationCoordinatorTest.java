@@ -28,6 +28,7 @@ import net.firedevops.firemud.common.operator.StartSessionOperatorAction;
 import net.firedevops.firemud.common.operator.StartSessionPostAuthorizationExecutionTuple;
 import net.firedevops.firemud.common.security.SessionContext;
 import net.firedevops.firemud.gamesession.v1.StartSessionOwnerAuthorizationProgress;
+import net.firedevops.firemud.loggingadmin.StartSessionReservationMutationTestFixtures;
 import net.firedevops.firemud.loggingadmin.client.GameSessionClient;
 import net.firedevops.firemud.loggingadmin.client.GameSessionClient.StartSessionOwnerHandoffResult;
 import net.firedevops.firemud.loggingadmin.client.StartSessionOperatorAuthorizationClient;
@@ -36,6 +37,7 @@ import net.firedevops.firemud.loggingadmin.operator.StartSessionAuthorizationCoo
 import net.firedevops.firemud.loggingadmin.operator.StartSessionAuthorizationCoordinator.Progress;
 import net.firedevops.firemud.loggingadmin.operator.StartSessionAuthorizationCoordinator.Result;
 import net.firedevops.firemud.loggingadmin.operator.StartSessionPreAuthorizationReservationService.AuthorizedSnapshot;
+import net.firedevops.firemud.loggingadmin.operator.StartSessionPreAuthorizationReservationService.ClaimPurpose;
 import net.firedevops.firemud.loggingadmin.operator.StartSessionPreAuthorizationReservationService.ClaimState;
 import net.firedevops.firemud.loggingadmin.operator.StartSessionPreAuthorizationReservationService.OwnerExecutionHandoff;
 import net.firedevops.firemud.loggingadmin.operator.StartSessionPreAuthorizationReservationService.Phase;
@@ -73,7 +75,7 @@ class StartSessionAuthorizationCoordinatorTest {
   private final StartSessionPreAuthorizationReservationRepository repository =
       mock(StartSessionPreAuthorizationReservationRepository.class);
   private final StartSessionPreAuthorizationReservationService reservations =
-      new StartSessionPreAuthorizationReservationService(
+      StartSessionReservationMutationTestFixtures.forMockBackedUnitTest(
           repository, Clock.fixed(NOW, ZoneOffset.UTC));
   private final StartSessionOperatorAuthorizationClient accountClient =
       mock(StartSessionOperatorAuthorizationClient.class);
@@ -96,7 +98,13 @@ class StartSessionAuthorizationCoordinatorTest {
             new StartSessionPreAuthorizationReservationRepository.AcquireResult(reserved, true),
             new StartSessionPreAuthorizationReservationRepository.AcquireResult(pending, false));
     when(repository.markAuthorizationPending(
-            eq(tuple), eq(tuple.mutationDigest()), any(UUID.class), eq(1L), eq(NOW_MILLIS)))
+            eq(tuple),
+            eq(tuple.mutationDigest()),
+            any(UUID.class),
+            eq(1L),
+            any(UUID.class),
+            eq(1L),
+            eq(NOW_MILLIS)))
         .thenReturn(
             new StartSessionPreAuthorizationReservationRepository.TransitionResult(pending, true));
     AuthorizationReference response = authorizationReference(tuple);
@@ -217,7 +225,13 @@ class StartSessionAuthorizationCoordinatorTest {
             new StartSessionPreAuthorizationReservationRepository.AcquireResult(
                 alreadyPending, false));
     when(repository.markAuthorizationPending(
-            eq(tuple), eq(tuple.mutationDigest()), any(UUID.class), eq(1L), eq(NOW_MILLIS)))
+            eq(tuple),
+            eq(tuple.mutationDigest()),
+            any(UUID.class),
+            eq(1L),
+            any(UUID.class),
+            eq(1L),
+            eq(NOW_MILLIS)))
         .thenReturn(
             new StartSessionPreAuthorizationReservationRepository.TransitionResult(
                 alreadyPending, true));
@@ -388,7 +402,13 @@ class StartSessionAuthorizationCoordinatorTest {
             new StartSessionPreAuthorizationReservationRepository.AcquireResult(
                 alreadyPending, false));
     when(repository.markAuthorizationPending(
-            eq(tuple), eq(tuple.mutationDigest()), any(UUID.class), eq(1L), eq(NOW_MILLIS)))
+            eq(tuple),
+            eq(tuple.mutationDigest()),
+            any(UUID.class),
+            eq(1L),
+            any(UUID.class),
+            eq(1L),
+            eq(NOW_MILLIS)))
         .thenReturn(
             new StartSessionPreAuthorizationReservationRepository.TransitionResult(
                 alreadyPending, true));
@@ -504,7 +524,13 @@ class StartSessionAuthorizationCoordinatorTest {
         .thenReturn(
             new StartSessionPreAuthorizationReservationRepository.AcquireResult(reserved, true));
     when(repository.markAuthorizationPending(
-            eq(tuple), eq(tuple.mutationDigest()), any(UUID.class), eq(1L), eq(NOW_MILLIS)))
+            eq(tuple),
+            eq(tuple.mutationDigest()),
+            any(UUID.class),
+            eq(1L),
+            any(UUID.class),
+            eq(1L),
+            eq(NOW_MILLIS)))
         .thenReturn(
             new StartSessionPreAuthorizationReservationRepository.TransitionResult(pending, true));
     when(accountClient.issueHuman(
@@ -581,7 +607,13 @@ class StartSessionAuthorizationCoordinatorTest {
         .thenReturn(
             new StartSessionPreAuthorizationReservationRepository.AcquireResult(reserved, true));
     when(repository.markAuthorizationPending(
-            eq(tuple), eq(tuple.mutationDigest()), any(UUID.class), eq(1L), eq(NOW_MILLIS)))
+            eq(tuple),
+            eq(tuple.mutationDigest()),
+            any(UUID.class),
+            eq(1L),
+            any(UUID.class),
+            eq(1L),
+            eq(NOW_MILLIS)))
         .thenReturn(
             new StartSessionPreAuthorizationReservationRepository.TransitionResult(pending, true));
   }
@@ -618,7 +650,10 @@ class StartSessionAuthorizationCoordinatorTest {
                       reservationFence,
                       currentFence,
                       NOW_MILLIS + 30_000L,
-                      ClaimState.ACTIVE);
+                      ClaimState.ACTIVE,
+                      currentOwner.equals(reservationOwner) && currentFence == reservationFence
+                          ? ClaimPurpose.ORIGINAL
+                          : ClaimPurpose.AUTHORIZATION_RECOVERY);
               return new StartSessionPreAuthorizationReservationRepository
                   .AuthorizationTransitionResult(
                   new AuthorizedSnapshot(
@@ -655,7 +690,10 @@ class StartSessionAuthorizationCoordinatorTest {
                       reservationFence,
                       currentFence,
                       NOW_MILLIS + 30_000L,
-                      ClaimState.ACTIVE);
+                      ClaimState.ACTIVE,
+                      currentOwner.equals(reservationOwner) && currentFence == reservationFence
+                          ? ClaimPurpose.ORIGINAL
+                          : ClaimPurpose.AUTHORIZATION_RECOVERY);
               return new StartSessionPreAuthorizationReservationRepository
                   .OwnerExecutionTransitionResult(
                   new AuthorizedSnapshot(
@@ -786,7 +824,10 @@ class StartSessionAuthorizationCoordinatorTest {
         reservationFence,
         claimFence,
         NOW_MILLIS + 30_000L,
-        ClaimState.ACTIVE);
+        ClaimState.ACTIVE,
+        claimFence == reservationFence
+            ? ClaimPurpose.ORIGINAL
+            : ClaimPurpose.AUTHORIZATION_RECOVERY);
   }
 
   private static StartSessionPreAuthorizationReservationTuple tuple(String requestId) {
