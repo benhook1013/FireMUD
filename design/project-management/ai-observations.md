@@ -95,3 +95,9 @@ Entry format:
   - Expected pattern: inspect the resolver's actual distribution and package metadata before attributing configuration-cache failures to transport. A bounded official Adoptium metadata input to Gradle's native generator preserves generator ownership without inventing Foojay IDs or unsupported platform aliases.
   - Current status: the maintenance helper now validates one official Java 21 release across six supported platforms; successful generation and hosted exact-head proof must be recorded separately.
   - Reconsideration trigger: revisit resolver-only maintenance after official Foojay metadata again provides the required Temurin platforms; retain the metadata validation and generated-artifact proof.
+
+- `2026-10-10`: Completed Hosted replay can conceal a late publication batch
+  - Context: PR #3134's CodeRabbit publication reported 14 findings across two explicitly linked batches, but the controller imported 13 from the first batch and repeated sync reported success without reading the continuation.
+  - Observation: a substantive primary review and an idempotent terminal record do not prove the provider publication is complete; freezing the first batch's timestamp also excludes later finding evidence.
+  - Expected pattern: require complete immutable publication membership before completion, and recover verified older partial unfinalized runs additively without replacing dispositions or inventing another round. Retain original and supplemental evidence together.
+  - Current status: the bounded controller repair passes focused local regression proof; trusted promotion and canonical live recovery remain separate steps, so the live missing finding is not yet confirmed recovered.
