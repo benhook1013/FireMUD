@@ -12,6 +12,7 @@ import java.util.UUID;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding.Owner;
 import net.firedevops.firemud.common.automation.AutomationAuthoredSourceInventoryDeclaration;
+import net.firedevops.firemud.common.entity.EntityAuthoredSourceInventoryDeclaration;
 import net.firedevops.firemud.common.gamelogic.GameplayRuleManifest;
 import net.firedevops.firemud.common.gamelogic.GameplayRuleManifest.Family;
 import tools.jackson.databind.JsonNode;
@@ -148,7 +149,8 @@ public final class TemplateConfigSource {
       String templateName,
       Config config,
       Owner declaredOwner,
-      AutomationAuthoredSourceInventoryDeclaration inventory) {
+      AutomationAuthoredSourceInventoryDeclaration inventory,
+      EntityAuthoredSourceInventoryDeclaration entityInventory) {
     public Mutation(
         DraftCommitBinding binding,
         String revisionOrder,
@@ -166,6 +168,7 @@ public final class TemplateConfigSource {
           templateName,
           config,
           null,
+          null,
           null);
     }
 
@@ -176,13 +179,16 @@ public final class TemplateConfigSource {
         if (templateId != null
             || templateName != null
             || config != null
-            || declaredOwner != Owner.AUTOMATION_SCRIPTING
-            || inventory == null)
+            || declaredOwner == null
+            || !Set.of(Owner.AUTOMATION_SCRIPTING, Owner.ENTITY_MANAGEMENT).contains(declaredOwner)
+            || (declaredOwner == Owner.AUTOMATION_SCRIPTING
+                ? inventory == null || entityInventory != null
+                : entityInventory == null || inventory != null))
           throw new IllegalArgumentException(
-              "Owner inventory declaration carries only Automation authored content");
+              "Owner inventory declaration carries only its supported owner's authored content");
         new TemplateConfigOwnerSourceInventoryDeclaration(
-            declaredOwner, inventory, binding, revisionOrder, revisionId);
-      } else if (declaredOwner != null || inventory != null) {
+            declaredOwner, inventory, entityInventory, binding, revisionOrder, revisionId);
+      } else if (declaredOwner != null || inventory != null || entityInventory != null) {
         throw new IllegalArgumentException("Template row mutations carry no owner inventory");
       } else if (operation == OperationKind.CREATE) {
         if (templateId != null
@@ -212,14 +218,22 @@ public final class TemplateConfigSource {
               .findFirst()
               .orElseThrow();
       String expected =
-          payloadFor(operation, templateId, templateName, config, declaredOwner, inventory);
+          payloadFor(
+              operation,
+              templateId,
+              templateName,
+              config,
+              declaredOwner,
+              inventory,
+              entityInventory);
       if (!expected.equals(CommandSource.canonical(CommandSource.tree(revision.payload()))))
         throw new IllegalArgumentException(
             "Template config differs from its exact original revision");
     }
 
     public String payload() {
-      return payloadFor(operation, templateId, templateName, config, declaredOwner, inventory);
+      return payloadFor(
+          operation, templateId, templateName, config, declaredOwner, inventory, entityInventory);
     }
 
     public boolean changesTemplateRow() {
@@ -229,8 +243,14 @@ public final class TemplateConfigSource {
     public TemplateConfigOwnerSourceInventoryDeclaration ownerInventoryDeclaration() {
       return operation == OperationKind.DECLARE_OWNER_SOURCE_INVENTORY
           ? new TemplateConfigOwnerSourceInventoryDeclaration(
-              declaredOwner, inventory, binding, revisionOrder, revisionId)
+              declaredOwner, inventory, entityInventory, binding, revisionOrder, revisionId)
           : null;
+    }
+
+    public String inventoryJson() {
+      if (inventory != null) return inventory.canonicalJson();
+      if (entityInventory != null) return entityInventory.canonicalJson();
+      throw new IllegalStateException("Mutation has no owner inventory content");
     }
   }
 
@@ -292,24 +312,46 @@ public final class TemplateConfigSource {
       int schemaVersion =
           root.path("schemaVersion").isInt() ? root.path("schemaVersion").intValue() : -1;
       if (operation == OperationKind.DECLARE_OWNER_SOURCE_INVENTORY) {
-        if (schemaVersion != 2)
-          throw new IllegalArgumentException("Unsupported owner inventory source schemaVersion");
         fields(root, "schemaVersion", "revisionKind", "operation", "owner", "inventory");
         Owner owner = Owner.valueOf(text(root, "owner"));
-        if (owner != Owner.AUTOMATION_SCRIPTING || !declaredOwners.add(owner))
-          throw new IllegalArgumentException("Only one Automation owner inventory is supported");
-        result.add(
-            new Mutation(
-                binding,
-                revision.revisionOrder(),
-                revision.revisionId(),
-                operation,
-                null,
-                null,
-                null,
-                owner,
-                AutomationAuthoredSourceInventoryDeclaration.parse(
-                    CommandSource.canonical(root.path("inventory")))));
+        if (!Set.of(Owner.AUTOMATION_SCRIPTING, Owner.ENTITY_MANAGEMENT).contains(owner)
+            || !declaredOwners.add(owner))
+          throw new IllegalArgumentException("Only one declaration per supported owner is allowed");
+        if (owner == Owner.AUTOMATION_SCRIPTING) {
+          if (schemaVersion != 2)
+            throw new IllegalArgumentException(
+                "Unsupported Automation owner inventory source schemaVersion");
+          result.add(
+              new Mutation(
+                  binding,
+                  revision.revisionOrder(),
+                  revision.revisionId(),
+                  operation,
+                  null,
+                  null,
+                  null,
+                  owner,
+                  AutomationAuthoredSourceInventoryDeclaration.parse(
+                      CommandSource.canonical(root.path("inventory"))),
+                  null));
+        } else {
+          if (schemaVersion != 3)
+            throw new IllegalArgumentException(
+                "Unsupported Entity owner inventory source schemaVersion");
+          result.add(
+              new Mutation(
+                  binding,
+                  revision.revisionOrder(),
+                  revision.revisionId(),
+                  operation,
+                  null,
+                  null,
+                  null,
+                  owner,
+                  null,
+                  EntityAuthoredSourceInventoryDeclaration.parse(
+                      CommandSource.canonical(root.path("inventory")))));
+        }
         continue;
       }
       if (schemaVersion != 1)
@@ -399,6 +441,20 @@ public final class TemplateConfigSource {
             "inventory", CommandSource.tree(inventory.canonicalJson())));
   }
 
+  public static String ownerInventoryPayload(
+      Owner owner, EntityAuthoredSourceInventoryDeclaration inventory) {
+    if (owner != Owner.ENTITY_MANAGEMENT)
+      throw new IllegalArgumentException("Only Entity source inventory is supported");
+    Objects.requireNonNull(inventory);
+    return CommandSource.canonical(
+        Map.of(
+            "schemaVersion", 3,
+            "revisionKind", REVISION_KIND,
+            "operation", OperationKind.DECLARE_OWNER_SOURCE_INVENTORY.name(),
+            "owner", owner.name(),
+            "inventory", CommandSource.tree(inventory.canonicalJson())));
+  }
+
   public static List<TemplateConfigOwnerSourceInventoryDeclaration>
       replayOwnerInventoryDeclarations(
           List<TemplateConfigOwnerSourceInventoryDeclaration> inherited,
@@ -426,12 +482,16 @@ public final class TemplateConfigSource {
       String templateName,
       Config config,
       Owner declaredOwner,
-      AutomationAuthoredSourceInventoryDeclaration inventory) {
+      AutomationAuthoredSourceInventoryDeclaration inventory,
+      EntityAuthoredSourceInventoryDeclaration entityInventory) {
     return switch (operation) {
       case CREATE -> createPayload(templateName, config);
       case UPSERT -> upsertPayload(templateId, config);
       case DELETE -> deletePayload(templateId);
-      case DECLARE_OWNER_SOURCE_INVENTORY -> ownerInventoryPayload(declaredOwner, inventory);
+      case DECLARE_OWNER_SOURCE_INVENTORY ->
+          inventory != null
+              ? ownerInventoryPayload(declaredOwner, inventory)
+              : ownerInventoryPayload(declaredOwner, entityInventory);
     };
   }
 

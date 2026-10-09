@@ -136,7 +136,6 @@ public final class TemplateConfigSourceRepository {
     for (var mutation : mutations) {
       if (mutation.operation()
           == TemplateConfigSource.OperationKind.DECLARE_OWNER_SOURCE_INVENTORY) {
-        var declaration = mutation.ownerInventoryDeclaration();
         dsl.execute(
             "INSERT INTO game_design_template_config_owner_source_inventory_declaration "
                 + "(canonical_tenant_id, canonical_version_id, request_id, commit_id, revision_id, revision_order, owner, inventory_json, payload_json) "
@@ -148,7 +147,7 @@ public final class TemplateConfigSourceRepository {
             mutation.revisionId(),
             Integer.parseInt(mutation.revisionOrder()),
             mutation.declaredOwner().name(),
-            mutation.inventory().canonicalJson(),
+            mutation.inventoryJson(),
             mutation.payload());
         continue;
       }
@@ -541,7 +540,7 @@ public final class TemplateConfigSourceRepository {
       if (!mutation.revisionId().equals(row.get("revision_id", UUID.class))
           || Integer.parseInt(mutation.revisionOrder()) != row.get("revision_order", Integer.class)
           || !mutation.declaredOwner().name().equals(row.get("owner", String.class))
-          || !mutation.inventory().canonicalJson().equals(row.get("inventory_json", String.class))
+          || !mutation.inventoryJson().equals(row.get("inventory_json", String.class))
           || !mutation.payload().equals(row.get("payload_json", String.class)))
         throw new IllegalStateException("TEMPLATE_CONFIG_OWNER_INVENTORY_READBACK_CONFLICT");
     }
@@ -589,7 +588,7 @@ public final class TemplateConfigSourceRepository {
       if (!sourceBinding.requestId().equals(row.get("request_id", UUID.class))
           || !sourceBinding.commitId().equals(row.get("commit_id", UUID.class))
           || !mutation.declaredOwner().name().equals(row.get("owner", String.class))
-          || !mutation.inventory().canonicalJson().equals(row.get("inventory_json", String.class))
+          || !mutation.inventoryJson().equals(row.get("inventory_json", String.class))
           || !mutation.payload().equals(row.get("payload_json", String.class)))
         throw new IllegalStateException("TEMPLATE_CONFIG_OWNER_INVENTORY_SOURCE_CHANGED");
       effectiveDeclarations.add(mutation.ownerInventoryDeclaration());
@@ -629,10 +628,7 @@ public final class TemplateConfigSourceRepository {
           || !declaration.sourceBinding().requestId().equals(row.get("request_id", UUID.class))
           || !declaration.sourceBinding().commitId().equals(row.get("commit_id", UUID.class))
           || !declaration.owner().name().equals(row.get("owner", String.class))
-          || !declaration
-              .inventory()
-              .canonicalJson()
-              .equals(row.get("inventory_json", String.class))
+          || !declaration.inventoryJson().equals(row.get("inventory_json", String.class))
           || !mutation.payload().equals(row.get("payload_json", String.class)))
         throw new IllegalStateException("TEMPLATE_CONFIG_OWNER_INVENTORY_SOURCE_CHANGED");
     }

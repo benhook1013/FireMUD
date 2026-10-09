@@ -13,6 +13,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding;
 import net.firedevops.firemud.common.automation.AutomationAuthoredSourceInventoryDeclaration;
+import net.firedevops.firemud.common.entity.EntityAuthoredSourceInventoryDeclaration;
 import net.firedevops.firemud.common.gamelogic.GameplayRuleManifest;
 import net.firedevops.firemud.common.publication.AuthoredDraftPublishSelectionBinding;
 import net.firedevops.firemud.common.tenant.WorldAuthoredSourceIntakeGrpcCodec;
@@ -34,6 +35,7 @@ import net.firedevops.firemud.gamedesign.repository.GameRepository;
 import net.firedevops.firemud.gamedesign.repository.VersionRepository;
 import net.firedevops.firemud.test.TestContainerImages;
 import org.flywaydb.core.Flyway;
+import org.flywaydb.core.api.MigrationVersion;
 import org.jooq.DSLContext;
 import org.jooq.SQLDialect;
 import org.jooq.impl.DSL;
@@ -198,6 +200,234 @@ class TemplateConfigSourcePostgresIntegrationTest {
         .isEqualTo(2L);
     assertThat(f.dsl.fetchSingle("SELECT count(*) FROM game_templates").get(0, Long.class))
         .isZero();
+  }
+
+  @Test
+  void v68AddsEntityWithoutRewritingV67AutomationOrSnapshotHistory() {
+    var f = fixture("67");
+    var initialTemplate =
+        binding(
+            f,
+            TemplateConfigSource.createPayload("Starter", config(f, "[]")),
+            TemplateConfigSource.SCOPE,
+            "0");
+    apply(f, initialTemplate);
+    String v1SnapshotJson =
+        f.dsl
+            .fetchSingle(
+                "SELECT snapshot_json FROM game_design_template_config_source_snapshot "
+                    + "WHERE canonical_tenant_id = ? AND canonical_version_id = ? AND commit_id = ?",
+                f.target.canonicalTenantId(),
+                f.target.canonicalVersionId(),
+                initialTemplate.commitId())
+            .get("snapshot_json", String.class);
+    String v1SnapshotDigest =
+        f.dsl
+            .fetchSingle(
+                "SELECT snapshot_digest FROM game_design_template_config_source_snapshot "
+                    + "WHERE canonical_tenant_id = ? AND canonical_version_id = ? AND commit_id = ?",
+                f.target.canonicalTenantId(),
+                f.target.canonicalVersionId(),
+                initialTemplate.commitId())
+            .get("snapshot_digest", String.class);
+
+    var automationInventory =
+        AutomationAuthoredSourceInventoryDeclaration.parse(automationInventory());
+    String automationPayload =
+        TemplateConfigSource.ownerInventoryPayload(
+            DraftCommitBinding.Owner.AUTOMATION_SCRIPTING, automationInventory);
+    var automation = binding(f, automationPayload, TemplateConfigSource.SCOPE, "1");
+    apply(f, automation);
+    var automationSource = source(f, automation);
+    assertThat(automationSource.ownerSourceInventoryDeclarations()).hasSize(1);
+    assertThat(automationSource.ownerSourceInventoryDeclarations().getFirst().sourceBinding())
+        .isEqualTo(automation);
+
+    var retainedDeclaration =
+        f.dsl.fetchSingle(
+            "SELECT request_id, commit_id, revision_order, owner, inventory_json, payload_json FROM "
+                + "game_design_template_config_owner_source_inventory_declaration "
+                + "WHERE canonical_tenant_id = ? AND canonical_version_id = ? AND revision_id = ?",
+            f.target.canonicalTenantId(),
+            f.target.canonicalVersionId(),
+            automation.revisions().getFirst().revisionId());
+    String originalInventoryJson = retainedDeclaration.get("inventory_json", String.class);
+    String originalPayloadJson = retainedDeclaration.get("payload_json", String.class);
+    assertThat(retainedDeclaration.get("request_id", UUID.class)).isEqualTo(automation.requestId());
+    assertThat(retainedDeclaration.get("commit_id", UUID.class)).isEqualTo(automation.commitId());
+    assertThat(retainedDeclaration.get("revision_order", Integer.class)).isZero();
+    assertThat(retainedDeclaration.get("owner", String.class)).isEqualTo("AUTOMATION_SCRIPTING");
+    var originalCommit =
+        f.dsl.fetchSingle(
+            "SELECT binding_json, input_digest FROM game_design_draft_commit "
+                + "WHERE canonical_tenant_id = ? AND canonical_version_id = ? "
+                + "AND request_id = ? AND commit_id = ?",
+            f.target.canonicalTenantId(),
+            f.target.canonicalVersionId(),
+            automation.requestId(),
+            automation.commitId());
+    String originalBindingJson = originalCommit.get("binding_json", String.class);
+    String originalBindingDigest = originalCommit.get("input_digest", String.class);
+    var originalAutomationApplication =
+        f.dsl.fetchSingle(
+            "SELECT snapshot_json, result_bytes FROM game_design_template_config_source_application "
+                + "WHERE canonical_tenant_id = ? AND canonical_version_id = ? AND commit_id = ?",
+            f.target.canonicalTenantId(),
+            f.target.canonicalVersionId(),
+            automation.commitId());
+    String v2SnapshotJson = originalAutomationApplication.get("snapshot_json", String.class);
+    byte[] originalApplicationBytes =
+        originalAutomationApplication.get("result_bytes", byte[].class);
+    String v2SnapshotDigest =
+        f.dsl
+            .fetchSingle(
+                "SELECT snapshot_digest FROM game_design_template_config_source_snapshot "
+                    + "WHERE canonical_tenant_id = ? AND canonical_version_id = ? AND commit_id = ?",
+                f.target.canonicalTenantId(),
+                f.target.canonicalVersionId(),
+                automation.commitId())
+            .get("snapshot_digest", String.class);
+    assertThat(v2SnapshotJson)
+        .contains("AUTOMATION_SCRIPTING")
+        .contains(automation.requestId().toString())
+        .contains(automation.commitId().toString());
+
+    f.tx.executeWithoutResult(
+        ignored ->
+            assertThat(new TemplateConfigSourceRepository(f.dsl).apply(automation).orElseThrow())
+                .isEqualTo(
+                    new TemplateConfigSourceSnapshot.Application(
+                        automation, "1", automationSource)));
+    migrateToLatest(f);
+
+    var migratedDeclaration =
+        f.dsl.fetchSingle(
+            "SELECT request_id, commit_id, revision_order, owner, inventory_json, payload_json FROM "
+                + "game_design_template_config_owner_source_inventory_declaration "
+                + "WHERE canonical_tenant_id = ? AND canonical_version_id = ? AND revision_id = ?",
+            f.target.canonicalTenantId(),
+            f.target.canonicalVersionId(),
+            automation.revisions().getFirst().revisionId());
+    assertThat(migratedDeclaration.get("request_id", UUID.class))
+        .isEqualTo(retainedDeclaration.get("request_id", UUID.class));
+    assertThat(migratedDeclaration.get("commit_id", UUID.class))
+        .isEqualTo(retainedDeclaration.get("commit_id", UUID.class));
+    assertThat(migratedDeclaration.get("revision_order", Integer.class))
+        .isEqualTo(retainedDeclaration.get("revision_order", Integer.class));
+    assertThat(migratedDeclaration.get("owner", String.class))
+        .isEqualTo(retainedDeclaration.get("owner", String.class));
+    assertThat(migratedDeclaration.get("inventory_json", String.class))
+        .isEqualTo(originalInventoryJson);
+    assertThat(migratedDeclaration.get("payload_json", String.class))
+        .isEqualTo(originalPayloadJson);
+    var migratedCommit =
+        f.dsl.fetchSingle(
+            "SELECT binding_json, input_digest FROM game_design_draft_commit "
+                + "WHERE canonical_tenant_id = ? AND canonical_version_id = ? "
+                + "AND request_id = ? AND commit_id = ?",
+            f.target.canonicalTenantId(),
+            f.target.canonicalVersionId(),
+            automation.requestId(),
+            automation.commitId());
+    assertThat(migratedCommit.get("binding_json", String.class)).isEqualTo(originalBindingJson);
+    assertThat(migratedCommit.get("input_digest", String.class)).isEqualTo(originalBindingDigest);
+    var migratedApplication =
+        f.dsl.fetchSingle(
+            "SELECT snapshot_json, result_bytes FROM game_design_template_config_source_application "
+                + "WHERE canonical_tenant_id = ? AND canonical_version_id = ? AND commit_id = ?",
+            f.target.canonicalTenantId(),
+            f.target.canonicalVersionId(),
+            automation.commitId());
+    assertThat(migratedApplication.get("snapshot_json", String.class)).isEqualTo(v2SnapshotJson);
+    assertThat(migratedApplication.get("result_bytes", byte[].class))
+        .isEqualTo(originalApplicationBytes);
+    assertThat(
+            f.dsl
+                .fetchSingle(
+                    "SELECT snapshot_digest FROM game_design_template_config_source_snapshot "
+                        + "WHERE canonical_tenant_id = ? AND canonical_version_id = ? AND commit_id = ?",
+                    f.target.canonicalTenantId(),
+                    f.target.canonicalVersionId(),
+                    automation.commitId())
+                .get("snapshot_digest", String.class))
+        .isEqualTo(v2SnapshotDigest);
+    assertThat(
+            f.dsl
+                .fetchSingle(
+                    "SELECT snapshot_json FROM game_design_template_config_source_snapshot "
+                        + "WHERE canonical_tenant_id = ? AND canonical_version_id = ? AND commit_id = ?",
+                    f.target.canonicalTenantId(),
+                    f.target.canonicalVersionId(),
+                    initialTemplate.commitId())
+                .get("snapshot_json", String.class))
+        .isEqualTo(v1SnapshotJson);
+    assertThat(
+            f.dsl
+                .fetchSingle(
+                    "SELECT snapshot_digest FROM game_design_template_config_source_snapshot "
+                        + "WHERE canonical_tenant_id = ? AND canonical_version_id = ? AND commit_id = ?",
+                    f.target.canonicalTenantId(),
+                    f.target.canonicalVersionId(),
+                    initialTemplate.commitId())
+                .get("snapshot_digest", String.class))
+        .isEqualTo(v1SnapshotDigest);
+    var upgradedTemplateSources = new TemplateConfigSourceRepository(f.dsl);
+    assertThat(
+            upgradedTemplateSources
+                .readSnapshot(f.target, initialTemplate.commitId())
+                .orElseThrow()
+                .canonicalJson())
+        .isEqualTo(v1SnapshotJson);
+    assertThat(
+            upgradedTemplateSources
+                .readSnapshot(f.target, automation.commitId())
+                .orElseThrow()
+                .canonicalJson())
+        .isEqualTo(v2SnapshotJson);
+
+    var entityInventory = EntityAuthoredSourceInventoryDeclaration.parse(entityInventory());
+    var entity =
+        binding(
+            f,
+            TemplateConfigSource.ownerInventoryPayload(
+                DraftCommitBinding.Owner.ENTITY_MANAGEMENT, entityInventory),
+            TemplateConfigSource.SCOPE,
+            "2");
+    apply(f, entity);
+    var entitySource = source(f, entity);
+    assertThat(entitySource.sourceEpoch()).isEqualTo("3");
+    assertThat(entitySource.ownerSourceInventoryDeclarations()).hasSize(2);
+    assertThat(entitySource.ownerSourceInventoryDeclarations().get(0).owner())
+        .isEqualTo(DraftCommitBinding.Owner.AUTOMATION_SCRIPTING);
+    assertThat(entitySource.ownerSourceInventoryDeclarations().get(0).sourceBinding())
+        .isEqualTo(automation);
+    assertThat(entitySource.ownerSourceInventoryDeclarations().get(1).owner())
+        .isEqualTo(DraftCommitBinding.Owner.ENTITY_MANAGEMENT);
+    assertThat(entitySource.ownerSourceInventoryDeclarations().get(1).sourceBinding())
+        .isEqualTo(entity);
+    assertThat(entitySource.entries()).hasSize(1);
+    assertThat(f.dsl.fetchSingle("SELECT count(*) FROM game_templates").get(0, Long.class))
+        .isEqualTo(1L);
+    f.tx.executeWithoutResult(
+        ignored ->
+            assertThat(new TemplateConfigSourceRepository(f.dsl).apply(entity).orElseThrow())
+                .isEqualTo(
+                    new TemplateConfigSourceSnapshot.Application(entity, "2", entitySource)));
+
+    var unrelated =
+        binding(
+            f,
+            GameplayRuleSource.upsertPayload(new GameplayRuleManifest.AdmissionTag("after-entity")),
+            GameplayRuleSource.SCOPE,
+            "0");
+    apply(f, unrelated);
+    var inherited = source(f, unrelated);
+    assertThat(inherited.ownerSourceInventoryDeclarations())
+        .containsExactlyElementsOf(entitySource.ownerSourceInventoryDeclarations());
+    assertThat(inherited.ownerSourceInventoryDeclarations().getFirst().sourceBinding())
+        .isEqualTo(automation);
+    assertThat(inherited.ownerSourceInventoryDeclarations().get(1).sourceBinding())
+        .isEqualTo(entity);
   }
 
   @Test
@@ -793,6 +1023,23 @@ class TemplateConfigSourcePostgresIntegrationTest {
         + "\"SCRIPT_PATCH_SOURCES\":[]}}";
   }
 
+  private static String entityInventory() {
+    return "{\"schema\":\"entity-authored-source-inventory/v1\","
+        + "\"equipmentApplicability\":\"NOT_APPLICABLE\",\"families\":{"
+        + "\"ACTOR_BODY_LAYOUT_ASSIGNMENTS\":[],\"ARCHETYPE_ASSIGNMENTS\":[],"
+        + "\"ARCHETYPE_CONSTRAINTS\":[],\"ARCHETYPE_ROOTS\":[],"
+        + "\"BALANCE_CURVE_ATTACHMENTS\":[],\"BALANCE_CURVE_ROOTS\":[],"
+        + "\"BODY_LAYOUT_MEMBERSHIPS\":[],\"BODY_LAYOUT_ROOTS\":[],"
+        + "\"CRAFTING_INGREDIENT_BINDINGS\":[],\"CRAFTING_RECIPE_RESULT_BINDINGS\":[],"
+        + "\"CRAFTING_RECIPE_ROOTS\":[],\"EQUIPMENT_ATTACHMENT_RULES\":[],"
+        + "\"EQUIPMENT_CAPABILITIES\":[],\"EQUIPMENT_COMPATIBILITY_RULES\":[],"
+        + "\"EQUIPMENT_OCCUPANCY_RULES\":[],\"EQUIPMENT_SLOT_GROUPS\":[],"
+        + "\"EQUIPMENT_SLOT_ROOTS\":[],\"INBOUND_LOOT_BINDINGS\":[],"
+        + "\"ITEM_TEMPLATE_ROOTS\":[],\"LOOT_ITEM_MAPPINGS\":[],"
+        + "\"LOOT_TABLE_ROOTS\":[],\"NPC_TEMPLATE_ROOTS\":[],"
+        + "\"OTHER_ACTOR_TEMPLATE_ROOTS\":[]}}";
+  }
+
   private DraftCommitBinding binding(Fixture f, String payload, String scope, String epoch) {
     return binding(
         f,
@@ -824,20 +1071,25 @@ class TemplateConfigSourcePostgresIntegrationTest {
   }
 
   private Fixture fixture() {
+    return fixture(null);
+  }
+
+  private Fixture fixture(String migrationTarget) {
     String schema = "template_config_" + UUID.randomUUID().toString().replace("-", "");
     var data =
         new DriverManagerDataSource(
             POSTGRES.getJdbcUrl(), POSTGRES.getUsername(), POSTGRES.getPassword());
     data.setSchema(schema);
-    Flyway.configure()
-        .dataSource(data)
-        .schemas(schema)
-        .defaultSchema(schema)
-        .table("flyway_schema_history_game_design_service")
-        .placeholders(Map.of("serviceSchema", schema))
-        .locations("classpath:db/migration")
-        .load()
-        .migrate();
+    var flyway =
+        Flyway.configure()
+            .dataSource(data)
+            .schemas(schema)
+            .defaultSchema(schema)
+            .table("flyway_schema_history_game_design_service")
+            .placeholders(Map.of("serviceSchema", schema))
+            .locations("classpath:db/migration");
+    if (migrationTarget != null) flyway.target(MigrationVersion.fromVersion(migrationTarget));
+    flyway.load().migrate();
     var dsl = DSL.using(new TransactionAwareDataSourceProxy(data), SQLDialect.POSTGRES);
     var tx = new TransactionTemplate(new DataSourceTransactionManager(data));
     tx.setIsolationLevel(TransactionDefinition.ISOLATION_READ_COMMITTED);
@@ -862,9 +1114,25 @@ class TemplateConfigSourcePostgresIntegrationTest {
             saved.getIdentitySourceGameRowId(),
             saved.getIdentitySourceGameTenantKey(),
             saved.getIdentitySourceProvenanceKind());
-    return new Fixture(dsl, tx, target);
+    return new Fixture(dsl, tx, target, data, schema);
+  }
+
+  private static void migrateToLatest(Fixture f) {
+    Flyway.configure()
+        .dataSource(f.dataSource())
+        .schemas(f.schema())
+        .defaultSchema(f.schema())
+        .table("flyway_schema_history_game_design_service")
+        .placeholders(Map.of("serviceSchema", f.schema()))
+        .locations("classpath:db/migration")
+        .load()
+        .migrate();
   }
 
   private record Fixture(
-      DSLContext dsl, TransactionTemplate tx, DraftCommitBinding.TargetProof target) {}
+      DSLContext dsl,
+      TransactionTemplate tx,
+      DraftCommitBinding.TargetProof target,
+      DriverManagerDataSource dataSource,
+      String schema) {}
 }

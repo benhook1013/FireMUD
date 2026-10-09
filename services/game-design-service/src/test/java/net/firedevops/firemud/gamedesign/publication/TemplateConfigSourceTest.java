@@ -9,6 +9,7 @@ import java.util.Map;
 import java.util.UUID;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding;
 import net.firedevops.firemud.common.automation.AutomationAuthoredSourceInventoryDeclaration;
+import net.firedevops.firemud.common.entity.EntityAuthoredSourceInventoryDeclaration;
 import org.junit.jupiter.api.Test;
 
 class TemplateConfigSourceTest {
@@ -145,6 +146,7 @@ class TemplateConfigSourceTest {
     String payload =
         TemplateConfigSource.ownerInventoryPayload(
             DraftCommitBinding.Owner.AUTOMATION_SCRIPTING, inventory);
+    assertThat(CommandSource.tree(payload).path("schemaVersion").intValue()).isEqualTo(2);
     assertThat(CommandSource.tree(payload).path("inventory").isObject()).isTrue();
     assertThat(payload).doesNotContain("inventoryJson");
     var authored = binding(payload);
@@ -250,6 +252,77 @@ class TemplateConfigSourceTest {
         .isEmpty();
   }
 
+  @Test
+  void entityInventoryUsesClosedTypedOperationAndRejectsOwnerContentSubstitution() {
+    var entity = EntityAuthoredSourceInventoryDeclaration.parse(entityInventory());
+    String payload =
+        TemplateConfigSource.ownerInventoryPayload(
+            DraftCommitBinding.Owner.ENTITY_MANAGEMENT, entity);
+    assertThat(CommandSource.tree(payload).path("schemaVersion").intValue()).isEqualTo(3);
+    assertThat(CommandSource.tree(payload).path("inventory").isObject()).isTrue();
+    var authored = binding(payload);
+    var mutation = TemplateConfigSource.mutations(authored).getFirst();
+    assertThat(mutation.declaredOwner()).isEqualTo(DraftCommitBinding.Owner.ENTITY_MANAGEMENT);
+    assertThat(mutation.inventory()).isNull();
+    assertThat(mutation.entityInventory()).isEqualTo(entity);
+    assertThat(mutation.templateId()).isNull();
+    assertThat(mutation.config()).isNull();
+
+    var automation = AutomationAuthoredSourceInventoryDeclaration.parse(automationInventory());
+    String autoContentUnderEntity =
+        typedInventoryPayload(3, "ENTITY_MANAGEMENT", automation.canonicalJson());
+    String entityContentUnderAutomation =
+        typedInventoryPayload(2, "AUTOMATION_SCRIPTING", entity.canonicalJson());
+    for (String substituted : List.of(autoContentUnderEntity, entityContentUnderAutomation))
+      assertThatThrownBy(() -> TemplateConfigSource.mutations(binding(substituted)))
+          .isInstanceOf(IllegalArgumentException.class);
+    String missingEntityInventory =
+        CommandSource.canonical(
+            Map.of(
+                "schemaVersion",
+                3,
+                "revisionKind",
+                TemplateConfigSource.REVISION_KIND,
+                "operation",
+                "DECLARE_OWNER_SOURCE_INVENTORY",
+                "owner",
+                "ENTITY_MANAGEMENT"));
+    assertThatThrownBy(() -> TemplateConfigSource.mutations(binding(missingEntityInventory)))
+        .isInstanceOf(IllegalArgumentException.class);
+    assertThatThrownBy(
+            () ->
+                EntityAuthoredSourceInventoryDeclaration.parse(
+                    entityInventory()
+                        .replace("\"ITEM_TEMPLATE_ROOTS\":[]", "\"ITEM_TEMPLATE_ROOTS\":[{}]")))
+        .isInstanceOf(IllegalArgumentException.class);
+    assertThatThrownBy(
+            () ->
+                EntityAuthoredSourceInventoryDeclaration.parse(
+                    entityInventory().replace("\"families\":{", "\"families\":{\"UNKNOWN\":[],")))
+        .isInstanceOf(IllegalArgumentException.class);
+
+    var declarations = TemplateConfigSource.replayOwnerInventoryDeclarations(List.of(), authored);
+    var bothOwners =
+        TemplateConfigSource.replayOwnerInventoryDeclarations(
+            declarations,
+            binding(
+                TemplateConfigSource.ownerInventoryPayload(
+                    DraftCommitBinding.Owner.AUTOMATION_SCRIPTING, automation)));
+    assertThat(bothOwners)
+        .extracting(TemplateConfigOwnerSourceInventoryDeclaration::owner)
+        .containsExactly(
+            DraftCommitBinding.Owner.AUTOMATION_SCRIPTING,
+            DraftCommitBinding.Owner.ENTITY_MANAGEMENT);
+    assertThat(bothOwners.get(1).entityInventory()).isEqualTo(entity);
+    assertThat(bothOwners.get(1).sourceBinding()).isEqualTo(authored);
+    var snapshot =
+        new TemplateConfigSourceSnapshot(
+            authored, "1", null, UUID.randomUUID(), List.of(), declarations);
+    assertThat(TemplateConfigSourceSnapshot.fromStored(snapshot.canonicalJson()))
+        .isEqualTo(snapshot);
+    assertThat(snapshot.canonicalJson()).contains("ITEM_TEMPLATE_ROOTS");
+  }
+
   private static String config() {
     return "{\"schemaVersion\":1,\"baseVersionId\":\""
         + VERSION
@@ -260,6 +333,38 @@ class TemplateConfigSourceTest {
     return "{\"schema\":\"automation-authored-source-inventory/v1\","
         + "\"families\":{\"SCRIPT_DEFINITIONS\":[],\"EVENT_BINDINGS\":[],"
         + "\"SCRIPT_PATCH_SOURCES\":[]}}";
+  }
+
+  private static String entityInventory() {
+    return "{\"schema\":\"entity-authored-source-inventory/v1\","
+        + "\"equipmentApplicability\":\"NOT_APPLICABLE\",\"families\":{"
+        + "\"ACTOR_BODY_LAYOUT_ASSIGNMENTS\":[],\"ARCHETYPE_ASSIGNMENTS\":[],"
+        + "\"ARCHETYPE_CONSTRAINTS\":[],\"ARCHETYPE_ROOTS\":[],"
+        + "\"BALANCE_CURVE_ATTACHMENTS\":[],\"BALANCE_CURVE_ROOTS\":[],"
+        + "\"BODY_LAYOUT_MEMBERSHIPS\":[],\"BODY_LAYOUT_ROOTS\":[],"
+        + "\"CRAFTING_INGREDIENT_BINDINGS\":[],\"CRAFTING_RECIPE_RESULT_BINDINGS\":[],"
+        + "\"CRAFTING_RECIPE_ROOTS\":[],\"EQUIPMENT_ATTACHMENT_RULES\":[],"
+        + "\"EQUIPMENT_CAPABILITIES\":[],\"EQUIPMENT_COMPATIBILITY_RULES\":[],"
+        + "\"EQUIPMENT_OCCUPANCY_RULES\":[],\"EQUIPMENT_SLOT_GROUPS\":[],"
+        + "\"EQUIPMENT_SLOT_ROOTS\":[],\"INBOUND_LOOT_BINDINGS\":[],"
+        + "\"ITEM_TEMPLATE_ROOTS\":[],\"LOOT_ITEM_MAPPINGS\":[],"
+        + "\"LOOT_TABLE_ROOTS\":[],\"NPC_TEMPLATE_ROOTS\":[],"
+        + "\"OTHER_ACTOR_TEMPLATE_ROOTS\":[]}}";
+  }
+
+  private static String typedInventoryPayload(int schemaVersion, String owner, String inventory) {
+    return CommandSource.canonical(
+        Map.of(
+            "schemaVersion",
+            schemaVersion,
+            "revisionKind",
+            TemplateConfigSource.REVISION_KIND,
+            "operation",
+            "DECLARE_OWNER_SOURCE_INVENTORY",
+            "owner",
+            owner,
+            "inventory",
+            CommandSource.tree(inventory)));
   }
 
   private static DraftCommitBinding binding(String... payloads) {

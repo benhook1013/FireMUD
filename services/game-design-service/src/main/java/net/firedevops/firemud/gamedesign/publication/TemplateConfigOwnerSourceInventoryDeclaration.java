@@ -6,19 +6,45 @@ import java.util.UUID;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding.Owner;
 import net.firedevops.firemud.common.automation.AutomationAuthoredSourceInventoryDeclaration;
+import net.firedevops.firemud.common.entity.EntityAuthoredSourceInventoryDeclaration;
 import tools.jackson.databind.JsonNode;
 
-/** Automation's actual authored inventory content and its immutable original Draft provenance. */
+/** Typed owner-authored inventory content and its immutable original Draft provenance. */
 public record TemplateConfigOwnerSourceInventoryDeclaration(
     Owner owner,
     AutomationAuthoredSourceInventoryDeclaration inventory,
+    EntityAuthoredSourceInventoryDeclaration entityInventory,
     DraftCommitBinding sourceBinding,
     String revisionOrder,
     UUID revisionId) {
+  public TemplateConfigOwnerSourceInventoryDeclaration(
+      Owner owner,
+      AutomationAuthoredSourceInventoryDeclaration inventory,
+      DraftCommitBinding sourceBinding,
+      String revisionOrder,
+      UUID revisionId) {
+    this(owner, inventory, null, sourceBinding, revisionOrder, revisionId);
+  }
+
+  public TemplateConfigOwnerSourceInventoryDeclaration(
+      Owner owner,
+      EntityAuthoredSourceInventoryDeclaration inventory,
+      DraftCommitBinding sourceBinding,
+      String revisionOrder,
+      UUID revisionId) {
+    this(owner, null, inventory, sourceBinding, revisionOrder, revisionId);
+  }
+
   public TemplateConfigOwnerSourceInventoryDeclaration {
-    if (owner != Owner.AUTOMATION_SCRIPTING)
-      throw new IllegalArgumentException("Only Automation source inventory is supported");
-    Objects.requireNonNull(inventory);
+    if (owner == Owner.AUTOMATION_SCRIPTING) {
+      if (inventory == null || entityInventory != null)
+        throw new IllegalArgumentException("Automation owner requires its typed inventory");
+    } else if (owner == Owner.ENTITY_MANAGEMENT) {
+      if (entityInventory == null || inventory != null)
+        throw new IllegalArgumentException("Entity owner requires its typed inventory");
+    } else {
+      throw new IllegalArgumentException("Unsupported owner source inventory content");
+    }
     Objects.requireNonNull(sourceBinding);
     if (revisionOrder == null || !revisionOrder.matches("0|[1-9][0-9]*"))
       throw new IllegalArgumentException("Exact owner source inventory revision order required");
@@ -30,8 +56,11 @@ public record TemplateConfigOwnerSourceInventoryDeclaration(
                 r -> r.revisionId().equals(revisionId) && r.revisionOrder().equals(revisionOrder))
             .findFirst()
             .orElseThrow();
-    if (!TemplateConfigSource.ownerInventoryPayload(owner, inventory)
-        .equals(CommandSource.canonical(CommandSource.tree(revision.payload()))))
+    String expectedPayload =
+        owner == Owner.AUTOMATION_SCRIPTING
+            ? TemplateConfigSource.ownerInventoryPayload(owner, inventory)
+            : TemplateConfigSource.ownerInventoryPayload(owner, entityInventory);
+    if (!expectedPayload.equals(CommandSource.canonical(CommandSource.tree(revision.payload()))))
       throw new IllegalArgumentException(
           "Owner inventory differs from its exact original source revision");
   }
@@ -39,7 +68,7 @@ public record TemplateConfigOwnerSourceInventoryDeclaration(
   Map<String, Object> object() {
     return Map.of(
         "owner", owner.name(),
-        "inventoryJson", inventory.canonicalJson(),
+        "inventoryJson", inventoryJson(),
         "sourceBindingJson", sourceBinding.canonicalJson(),
         "sourceBindingDigest", sourceBinding.digest(),
         "revisionOrder", revisionOrder,
@@ -56,14 +85,36 @@ public record TemplateConfigOwnerSourceInventoryDeclaration(
         "revisionOrder",
         "revisionId");
     Owner owner = Owner.valueOf(CommandSource.requiredStoredText(node, "owner"));
-    return new TemplateConfigOwnerSourceInventoryDeclaration(
-        owner,
-        AutomationAuthoredSourceInventoryDeclaration.parse(
-            CommandSource.requiredStoredText(node, "inventoryJson")),
+    String inventoryJson = CommandSource.requiredStoredText(node, "inventoryJson");
+    var binding =
         DraftCommitBinding.fromStored(
             CommandSource.requiredStoredText(node, "sourceBindingJson"),
-            CommandSource.requiredStoredText(node, "sourceBindingDigest")),
-        CommandSource.requiredStoredText(node, "revisionOrder"),
-        TemplateConfigSource.uuid(CommandSource.requiredStoredText(node, "revisionId")));
+            CommandSource.requiredStoredText(node, "sourceBindingDigest"));
+    String revisionOrder = CommandSource.requiredStoredText(node, "revisionOrder");
+    UUID revisionId =
+        TemplateConfigSource.uuid(CommandSource.requiredStoredText(node, "revisionId"));
+    return switch (owner) {
+      case AUTOMATION_SCRIPTING ->
+          new TemplateConfigOwnerSourceInventoryDeclaration(
+              owner,
+              AutomationAuthoredSourceInventoryDeclaration.parse(inventoryJson),
+              binding,
+              revisionOrder,
+              revisionId);
+      case ENTITY_MANAGEMENT ->
+          new TemplateConfigOwnerSourceInventoryDeclaration(
+              owner,
+              EntityAuthoredSourceInventoryDeclaration.parse(inventoryJson),
+              binding,
+              revisionOrder,
+              revisionId);
+      default -> throw new IllegalArgumentException("Unsupported owner source inventory content");
+    };
+  }
+
+  String inventoryJson() {
+    return owner == Owner.AUTOMATION_SCRIPTING
+        ? inventory.canonicalJson()
+        : entityInventory.canonicalJson();
   }
 }

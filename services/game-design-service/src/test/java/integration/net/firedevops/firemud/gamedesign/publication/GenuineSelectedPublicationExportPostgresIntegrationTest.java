@@ -63,7 +63,9 @@ import net.firedevops.firemud.common.authoring.WorldAuthoredVersionIdentityEvide
 import net.firedevops.firemud.common.authoring.WorldDraftTerminalReadClient;
 import net.firedevops.firemud.common.authoring.WorldOriginalDraftGraphApplyClient;
 import net.firedevops.firemud.common.config.ServiceEndpointsProperties;
+import net.firedevops.firemud.common.gamedesign.AuthoredWorldLaunchDescriptorClient;
 import net.firedevops.firemud.common.gamedesign.AuthoredWorldReleaseAttestationEvidence;
+import net.firedevops.firemud.common.gamedesign.CompleteLaunchBindingEvidence;
 import net.firedevops.firemud.common.gamedesign.StartSessionTemplateAssociationReadEvidence;
 import net.firedevops.firemud.common.gamelogic.GameLogicGameplayRuleIntakeTerminal;
 import net.firedevops.firemud.common.gamelogic.GameLogicIntakeAuthorizationEvidence;
@@ -155,23 +157,33 @@ import net.firedevops.firemud.gamedesign.repository.VersionTemplateRemapSetRepos
 import net.firedevops.firemud.gamedesign.service.AssetExportService.SelectedExportResult;
 import net.firedevops.firemud.gamedesign.service.CompleteLaunchBindingService;
 import net.firedevops.firemud.gamedesign.service.ExportedAssetManifest;
+import net.firedevops.firemud.gamedesign.service.GameAuthoredHelpTopicService;
+import net.firedevops.firemud.gamedesign.service.LaunchDescriptorService;
+import net.firedevops.firemud.gamedesign.service.PingService;
 import net.firedevops.firemud.gamedesign.service.PublishAttemptService;
 import net.firedevops.firemud.gamedesign.service.PublishGateService;
 import net.firedevops.firemud.gamedesign.service.RecordedParticipantDigestService;
+import net.firedevops.firemud.gamedesign.service.RevisionService;
+import net.firedevops.firemud.gamedesign.service.SettingsAuthorityService;
 import net.firedevops.firemud.gamedesign.service.TemplateRemapSetService;
+import net.firedevops.firemud.gamedesign.service.VersionAssetArtifactService;
 import net.firedevops.firemud.gamedesign.service.VersionAssetExportCandidateService;
+import net.firedevops.firemud.gamedesign.service.VersionService;
 import net.firedevops.firemud.gamedesign.service.impl.AssetExportServiceImpl;
 import net.firedevops.firemud.gamedesign.service.impl.AuthoredWorldVersionStateGrpcService;
 import net.firedevops.firemud.gamedesign.service.impl.AuthoredWorldVersionStateService;
 import net.firedevops.firemud.gamedesign.service.impl.CompleteLaunchBindingServiceImpl;
+import net.firedevops.firemud.gamedesign.service.impl.GameDesignGrpcService;
 import net.firedevops.firemud.gamedesign.service.impl.LaunchDescriptorServiceImpl;
 import net.firedevops.firemud.gamedesign.service.impl.PublishAttemptServiceImpl;
 import net.firedevops.firemud.gamedesign.service.impl.PublishedReleaseBundleServiceImpl;
 import net.firedevops.firemud.gamedesign.service.impl.TemplateRemapSetServiceImpl;
+import net.firedevops.firemud.gamedesign.service.impl.TemporalVersionPublishWorkflowMetadataResolver;
 import net.firedevops.firemud.gamedesign.service.impl.TenantIdentityGrpcService;
 import net.firedevops.firemud.gamedesign.service.impl.VersionAssetArtifactServiceImpl;
 import net.firedevops.firemud.gamedesign.service.impl.VersionAssetExportCandidateServiceImpl;
 import net.firedevops.firemud.gamedesign.service.impl.VersionPublishCommandServiceImpl;
+import net.firedevops.firemud.gamedesign.v1.GetLaunchDescriptorRequest;
 import net.firedevops.firemud.gamedesign.v1.WorldDesignMutationRevision;
 import net.firedevops.firemud.gamelogic.service.GameLogicDraftDesignDigestService;
 import net.firedevops.firemud.gamelogic.service.impl.GameLogicGrpcService;
@@ -242,10 +254,13 @@ import tools.jackson.databind.ObjectMapper;
  * loopback mTLS. World freeze, immutable inventory and published selector use their actual owner
  * services over loopback mTLS, with the canonical frozen selector captured owner-locally from the
  * committed freeze and retained APPLIED graph. Entity/Automation participant digests, in-memory S3
- * and the StartSession Account projection remain test doubles. The complete launch-binding read
- * uses the actual owner implementation in an explicitly established read-only repeatable-read
- * snapshot, but does not exercise the authenticated GetCompleteLaunchBinding transport. This is not
- * a complete four-owner authenticated release, runtime launch, activation or registration proof.
+ * and the StartSession Account projection remain test doubles. The complete launch-binding case
+ * wires the actual Game Design handler and World Management mTLS client on this fixture's loopback
+ * server to the actual owner implementation in an explicitly established read-only repeatable-read
+ * snapshot; unrelated handler dependencies are isolated. This fixture does not provide
+ * production-mounted certificates or full application server wiring, Account-projection-backed
+ * StartSession admission, a complete four-owner authenticated release, runtime launch, activation
+ * or registration.
  */
 @Testcontainers(disabledWithoutDocker = true)
 @SuppressWarnings("resource")
@@ -1226,6 +1241,12 @@ class GenuineSelectedPublicationExportPostgresIntegrationTest {
                   launchDescriptorService, sourceRepository, releaseService, versionRepository);
           ReflectionTestUtils.setField(
               completeLaunchBindingService, "workloadNamespace", NAMESPACE);
+          AtomicInteger completeBindingOwnerReadCalls = new AtomicInteger();
+          CompleteLaunchBindingService transportCompleteLaunchBindingService =
+              readCompleteLaunchBindingInOwnerSnapshot(
+                  gd, completeLaunchBindingService, completeBindingOwnerReadCalls);
+          register(
+              gdHandlers, completeLaunchBindingGrpcService(transportCompleteLaunchBindingService));
           UUID completeBindingReadRequestId = UUID.randomUUID();
           var persistedLaunchDescriptor =
               launchDescriptorRepository
@@ -1296,6 +1317,79 @@ class GenuineSelectedPublicationExportPostgresIntegrationTest {
               .isEqualTo(actualGameLogicDigest.digestSchemaVersion());
           assertThat(completeGameLogicParticipant.abilitySchemaDigest())
               .isEqualTo(actualGameLogicDigest.abilitySchemaDigest());
+
+          var completeBindingRpcRequest =
+              GetLaunchDescriptorRequest.newBuilder()
+                  .setRequestId(completeBindingReadRequestId.toString())
+                  .setCanonicalTenantId(gd.target().canonicalTenantId().toString())
+                  .setWorldSlug(worldSource.worldSlug())
+                  .setControlPlaneRequestId(controlPlaneRequestId)
+                  .setExpectedRequestDigest(expectedAuthoredWorldBinding.requestDigest())
+                  .setExpectedResultDigest(expectedAuthoredWorldBinding.resultDigest())
+                  .build();
+          try (var worldToGameDesignCompleteBindingClient =
+              new AuthoredWorldLaunchDescriptorClient(
+                  endpoints, pki.client("world-management-service"), channels, NAMESPACE)) {
+            worldToGameDesignCompleteBindingClient.init();
+            CompleteLaunchBindingEvidence transportedCompleteBinding =
+                worldToGameDesignCompleteBindingClient.getComplete(completeBindingRpcRequest);
+            assertThat(transportedCompleteBinding.descriptor())
+                .isEqualTo(completeBinding.descriptor());
+            assertThat(transportedCompleteBinding.releaseAttestation())
+                .isEqualTo(completeBinding.releaseAttestation());
+            assertThat(
+                    worldToGameDesignCompleteBindingClient.getComplete(completeBindingRpcRequest))
+                .isEqualTo(transportedCompleteBinding);
+          }
+
+          try (var unauthorizedAccountToGameDesignClient =
+              new AuthoredWorldLaunchDescriptorClient(
+                  endpoints, pki.client("account-service"), channels, NAMESPACE)) {
+            unauthorizedAccountToGameDesignClient.init();
+            int ownerReadsBeforeDeniedPeer = completeBindingOwnerReadCalls.get();
+            assertThatThrownBy(
+                    () ->
+                        unauthorizedAccountToGameDesignClient.getComplete(
+                            GetLaunchDescriptorRequest.getDefaultInstance()))
+                .isInstanceOf(IllegalStateException.class);
+            assertThat(completeBindingOwnerReadCalls.get()).isEqualTo(ownerReadsBeforeDeniedPeer);
+          }
+
+          try (var worldToGameDesignCompleteBindingClient =
+              new AuthoredWorldLaunchDescriptorClient(
+                  endpoints, pki.client("world-management-service"), channels, NAMESPACE)) {
+            worldToGameDesignCompleteBindingClient.init();
+            assertThatThrownBy(
+                    () ->
+                        worldToGameDesignCompleteBindingClient.getComplete(
+                            completeBindingRpcRequest.toBuilder()
+                                .setExpectedRequestDigest(
+                                    changedDigest(expectedAuthoredWorldBinding.requestDigest()))
+                                .build()))
+                .isInstanceOf(IllegalStateException.class);
+            assertThatThrownBy(
+                    () ->
+                        worldToGameDesignCompleteBindingClient.getComplete(
+                            completeBindingRpcRequest.toBuilder()
+                                .setExpectedResultDigest(
+                                    changedDigest(expectedAuthoredWorldBinding.resultDigest()))
+                                .build()))
+                .isInstanceOf(IllegalStateException.class);
+            assertThatThrownBy(
+                    () ->
+                        worldToGameDesignCompleteBindingClient.getComplete(
+                            completeBindingRpcRequest.toBuilder()
+                                .setCanonicalTenantId(UUID.randomUUID().toString())
+                                .build()))
+                .isInstanceOf(IllegalStateException.class);
+            assertThatThrownBy(
+                    () ->
+                        worldToGameDesignCompleteBindingClient.getComplete(
+                            completeBindingRpcRequest.toBuilder()
+                                .setWorldSlug("genuine-selected-export-world-substitute")
+                                .build()))
+                .isInstanceOf(IllegalStateException.class);
+          }
 
           var completeBindingRetry =
               readCompleteLaunchBindingInOwnerSnapshot(
@@ -2140,6 +2234,50 @@ class GenuineSelectedPublicationExportPostgresIntegrationTest {
                     controlPlaneRequestId,
                     expectedRequestDigest,
                     expectedResultDigest)));
+  }
+
+  /**
+   * Applies the owner's declared transaction boundary to the directly composed handler service; the
+   * fixture does not use Spring AOP on the gRPC worker thread.
+   */
+  private static CompleteLaunchBindingService readCompleteLaunchBindingInOwnerSnapshot(
+      Store owner, CompleteLaunchBindingService service, AtomicInteger readCalls) {
+    return (readRequestId,
+        canonicalTenantId,
+        worldSlug,
+        controlPlaneRequestId,
+        expectedRequestDigest,
+        expectedResultDigest) -> {
+      readCalls.incrementAndGet();
+      return readCompleteLaunchBindingInOwnerSnapshot(
+          owner,
+          service,
+          readRequestId,
+          canonicalTenantId,
+          worldSlug,
+          controlPlaneRequestId,
+          expectedRequestDigest,
+          expectedResultDigest);
+    };
+  }
+
+  private static GameDesignGrpcService completeLaunchBindingGrpcService(
+      CompleteLaunchBindingService completeLaunchBindingService) {
+    GameDesignGrpcService grpcService =
+        new GameDesignGrpcService(
+            mock(PingService.class),
+            mock(RevisionService.class),
+            mock(VersionService.class),
+            mock(LaunchDescriptorService.class),
+            completeLaunchBindingService,
+            mock(TemplateRemapSetService.class),
+            mock(VersionAssetArtifactService.class),
+            mock(SettingsAuthorityService.class),
+            mock(GameAuthoredHelpTopicService.class),
+            mock(TemporalVersionPublishWorkflowMetadataResolver.class),
+            new SimpleMeterRegistry());
+    ReflectionTestUtils.setField(grpcService, "workloadNamespace", NAMESPACE);
+    return grpcService;
   }
 
   private static List<String> completeBindingOwnerRowVersions(
