@@ -543,6 +543,8 @@ class VersionServiceImplTest {
         .thenReturn(Optional.empty(), Optional.of(pendingAttempt));
     when(versionRepository.findByTenantIdAndId("tenant-1", 11L))
         .thenReturn(Optional.of(savedDraft));
+    when(versionRepository.findByTenantIdAndIdForUpdate("tenant-1", 11L))
+        .thenReturn(Optional.of(savedDraft));
     when(publishGateService.collectScriptPatchParticipantDigests(
             any(VersionDto.class), any(String.class), any(String.class)))
         .thenThrow(
@@ -573,7 +575,9 @@ class VersionServiceImplTest {
             org.mockito.ArgumentMatchers.eq(
                 PublishGateFailureCode.PARTICIPANT_SCOPE_MISMATCH.name()),
             org.mockito.ArgumentMatchers.eq("scope mismatch"));
-    verify(versionRepository).delete(savedDraft);
+    verify(versionRepository).save(savedDraft);
+    assertEquals(VersionLifecycleState.FAILED, savedDraft.getVersionState());
+    assertEquals(2L, savedDraft.getVersionStateEpoch());
     verify(publishAttemptService, org.mockito.Mockito.never())
         .markScriptPatchSucceeded(any(String.class));
   }
@@ -728,8 +732,9 @@ class VersionServiceImplTest {
     Version draftAfterRollback =
         scriptPatchVersion(11L, 8, 3L, VersionLifecycleState.DRAFT, "notes");
     when(versionRepository.save(any(Version.class))).thenReturn(draft);
-    when(versionRepository.findByTenantIdAndId("tenant-1", 11L))
-        .thenReturn(Optional.of(draft), Optional.of(draftAfterRollback));
+    when(versionRepository.findByTenantIdAndId("tenant-1", 11L)).thenReturn(Optional.of(draft));
+    when(versionRepository.findByTenantIdAndIdForUpdate("tenant-1", 11L))
+        .thenReturn(Optional.of(draftAfterRollback));
     PublicationDigestRequestBinding binding =
         PublicationDigestRequestBinding.patch("tenant-1", "3", "patch-2", PUBLISH_REQUEST_ID);
     PublishAttempt pendingAttempt =
@@ -752,7 +757,10 @@ class VersionServiceImplTest {
 
     assertEquals("recorded digest write failed", firstFailure.getMessage());
     String workflowId = binding.derivedWorkflowIdentity();
-    verify(versionRepository).delete(draftAfterRollback);
+    verify(versionRepository).save(draftAfterRollback);
+    assertEquals(11L, draftAfterRollback.getId());
+    assertEquals(VersionLifecycleState.FAILED, draftAfterRollback.getVersionState());
+    assertEquals(2L, draftAfterRollback.getVersionStateEpoch());
     verify(scriptingClient, org.mockito.Mockito.never())
         .notifyScriptVersionUpdate(
             any(String.class), any(Long.class), any(String.class), any(List.class));
@@ -775,7 +783,7 @@ class VersionServiceImplTest {
                 service.publishScriptPatchVersion(
                     "tenant-1", 3L, "patch-2", "different notes", PUBLISH_REQUEST_ID));
     assertEquals("recorded digest write failed", retryFailure.getMessage());
-    verify(versionRepository, times(2)).save(any(Version.class));
+    verify(versionRepository, times(3)).save(any(Version.class));
   }
 
   @Test

@@ -1,16 +1,57 @@
 ALTER TABLE launch_descriptor ADD COLUMN descriptor_schema_version SMALLINT;
 ALTER TABLE launch_descriptor ADD COLUMN target_namespace VARCHAR(63);
 ALTER TABLE launch_descriptor ADD COLUMN canonical_tenant_id UUID;
+ALTER TABLE launch_descriptor ADD COLUMN authored_world_source_tenant_slug VARCHAR(120);
 ALTER TABLE launch_descriptor ADD COLUMN world_slug VARCHAR(120);
 ALTER TABLE launch_descriptor ADD COLUMN authored_world_source_operation_id UUID;
-ALTER TABLE launch_descriptor ADD COLUMN authored_world_source_evidence_digest VARCHAR(72);
-ALTER TABLE launch_descriptor ADD COLUMN request_digest VARCHAR(72);
-ALTER TABLE launch_descriptor ADD COLUMN result_digest VARCHAR(72);
+ALTER TABLE launch_descriptor ADD COLUMN authored_world_source_game_row_id BIGINT;
+ALTER TABLE launch_descriptor ADD COLUMN authored_world_source_game_tenant_key VARCHAR(36);
+ALTER TABLE launch_descriptor ADD COLUMN authored_world_source_provenance_kind VARCHAR(32);
+ALTER TABLE launch_descriptor ADD COLUMN authored_world_source_evidence_digest VARCHAR(71);
+ALTER TABLE launch_descriptor ADD COLUMN request_digest VARCHAR(71);
+ALTER TABLE launch_descriptor ADD COLUMN result_digest VARCHAR(71);
 ALTER TABLE launch_descriptor ADD COLUMN original_request_json TEXT;
 ALTER TABLE launch_descriptor ADD COLUMN source_evidence_json TEXT;
 ALTER TABLE launch_descriptor ADD COLUMN outcome_status VARCHAR(16) NOT NULL DEFAULT 'SUCCESS';
 ALTER TABLE launch_descriptor ADD COLUMN failure_code VARCHAR(64);
 ALTER TABLE launch_descriptor ADD COLUMN failure_message TEXT;
+
+ALTER TABLE game_design_authored_world_source_operations
+    ADD CONSTRAINT uq_gd_authored_world_launch_source UNIQUE (
+        operation_id,
+        target_namespace,
+        canonical_tenant_id,
+        tenant_slug,
+        world_slug,
+        source_game_row_id,
+        source_game_tenant_key,
+        provenance_kind,
+        evidence_digest
+    );
+
+ALTER TABLE launch_descriptor
+    ADD CONSTRAINT fk_launch_descriptor_authored_world_source
+    FOREIGN KEY (
+        authored_world_source_operation_id,
+        target_namespace,
+        canonical_tenant_id,
+        authored_world_source_tenant_slug,
+        world_slug,
+        authored_world_source_game_row_id,
+        authored_world_source_game_tenant_key,
+        authored_world_source_provenance_kind,
+        authored_world_source_evidence_digest
+    ) REFERENCES game_design_authored_world_source_operations (
+        operation_id,
+        target_namespace,
+        canonical_tenant_id,
+        tenant_slug,
+        world_slug,
+        source_game_row_id,
+        source_game_tenant_key,
+        provenance_kind,
+        evidence_digest
+    );
 
 -- A deterministic denial is a request outcome, not a descriptor. Keep the successful tuple
 -- nullable at the row level and require its complete shape below for SUCCESS outcomes.
@@ -30,8 +71,12 @@ ALTER TABLE launch_descriptor
             AND descriptor_schema_version IS NULL
             AND target_namespace IS NULL
             AND canonical_tenant_id IS NULL
+            AND authored_world_source_tenant_slug IS NULL
             AND world_slug IS NULL
             AND authored_world_source_operation_id IS NULL
+            AND authored_world_source_game_row_id IS NULL
+            AND authored_world_source_game_tenant_key IS NULL
+            AND authored_world_source_provenance_kind IS NULL
             AND authored_world_source_evidence_digest IS NULL
             AND request_digest IS NULL
             AND result_digest IS NULL
@@ -57,9 +102,17 @@ ALTER TABLE launch_descriptor
             AND target_namespace IS NOT NULL
             AND canonical_tenant_id IS NOT NULL
             AND canonical_tenant_id <> '00000000-0000-0000-0000-000000000000'::UUID
+            AND authored_world_source_tenant_slug IS NOT NULL
             AND world_slug IS NOT NULL
             AND authored_world_source_operation_id IS NOT NULL
             AND authored_world_source_operation_id <> '00000000-0000-0000-0000-000000000000'::UUID
+            AND authored_world_source_game_row_id IS NOT NULL
+            AND authored_world_source_game_row_id > 0
+            AND authored_world_source_game_tenant_key IS NOT NULL
+            AND char_length(authored_world_source_game_tenant_key) BETWEEN 1 AND 36
+            AND authored_world_source_game_tenant_key !~ '^[[:space:]]*$'
+            AND authored_world_source_provenance_kind IS NOT NULL
+            AND authored_world_source_provenance_kind IN ('NEW_GAME_ROW', 'RETAINED_GAME_V29')
             AND authored_world_source_evidence_digest IS NOT NULL
             AND request_digest IS NOT NULL
             AND result_digest IS NOT NULL
@@ -85,9 +138,17 @@ ALTER TABLE launch_descriptor
             AND target_namespace IS NOT NULL
             AND canonical_tenant_id IS NOT NULL
             AND canonical_tenant_id <> '00000000-0000-0000-0000-000000000000'::UUID
+            AND authored_world_source_tenant_slug IS NOT NULL
             AND world_slug IS NOT NULL
             AND authored_world_source_operation_id IS NOT NULL
             AND authored_world_source_operation_id <> '00000000-0000-0000-0000-000000000000'::UUID
+            AND authored_world_source_game_row_id IS NOT NULL
+            AND authored_world_source_game_row_id > 0
+            AND authored_world_source_game_tenant_key IS NOT NULL
+            AND char_length(authored_world_source_game_tenant_key) BETWEEN 1 AND 36
+            AND authored_world_source_game_tenant_key !~ '^[[:space:]]*$'
+            AND authored_world_source_provenance_kind IS NOT NULL
+            AND authored_world_source_provenance_kind IN ('NEW_GAME_ROW', 'RETAINED_GAME_V29')
             AND authored_world_source_evidence_digest IS NOT NULL
             AND request_digest IS NOT NULL
             AND result_digest IS NULL
@@ -125,6 +186,20 @@ ALTER TABLE launch_descriptor
     ADD CONSTRAINT ck_launch_descriptor_outcome_status
     CHECK (outcome_status IN ('SUCCESS', 'FAILED'));
 
+ALTER TABLE launch_descriptor
+    ADD CONSTRAINT ck_launch_descriptor_digest_shape
+    CHECK (
+        (descriptor_schema_version IS NULL
+            AND authored_world_source_evidence_digest IS NULL
+            AND request_digest IS NULL
+            AND result_digest IS NULL)
+        OR
+        (descriptor_schema_version = 1
+            AND authored_world_source_evidence_digest ~ '^sha256:[0-9a-f]{64}$'
+            AND request_digest ~ '^sha256:[0-9a-f]{64}$'
+            AND (result_digest IS NULL OR result_digest ~ '^sha256:[0-9a-f]{64}$'))
+    );
+
 CREATE UNIQUE INDEX uq_launch_descriptor_bound_request
     ON launch_descriptor(target_namespace, canonical_tenant_id, control_plane_request_id)
     WHERE descriptor_schema_version IS NOT NULL;
@@ -144,4 +219,18 @@ CREATE TRIGGER trg_launch_descriptor_immutable
     BEFORE UPDATE OR DELETE ON launch_descriptor
     FOR EACH ROW
     EXECUTE FUNCTION reject_launch_descriptor_history_mutation();
--- [jooq ignore end]
+
+CREATE FUNCTION reject_launch_descriptor_history_truncate()
+RETURNS trigger
+LANGUAGE plpgsql
+AS $$
+BEGIN
+    RAISE EXCEPTION 'launch descriptors are immutable';
+END;
+$$;
+
+CREATE TRIGGER trg_launch_descriptor_no_truncate
+    BEFORE TRUNCATE ON launch_descriptor
+    FOR EACH STATEMENT
+    EXECUTE FUNCTION reject_launch_descriptor_history_truncate();
+-- [jooq ignore stop]
