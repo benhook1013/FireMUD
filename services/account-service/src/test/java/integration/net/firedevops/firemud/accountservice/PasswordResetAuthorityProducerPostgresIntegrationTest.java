@@ -3,6 +3,7 @@ package integration.net.firedevops.firemud.accountservice;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import integration.net.firedevops.firemud.accountservice.repository.AccountPostgresIntegrationFixture;
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
@@ -53,25 +54,32 @@ import org.jooq.DSLContext;
 import org.jooq.SQLDialect;
 import org.jooq.exception.DataAccessException;
 import org.jooq.impl.DSL;
+import org.junit.jupiter.api.AfterAll;
+import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.springframework.jdbc.datasource.DataSourceTransactionManager;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
 import org.springframework.jdbc.datasource.TransactionAwareDataSourceProxy;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
-import org.testcontainers.containers.PostgreSQLContainer;
-import org.testcontainers.junit.jupiter.Container;
-import org.testcontainers.junit.jupiter.Testcontainers;
 
-@Testcontainers(disabledWithoutDocker = true)
 class PasswordResetAuthorityProducerPostgresIntegrationTest {
   private static final String SCHEMA_PREFIX = "password_reset_source_proof";
   private static final String STREAM_PREFIX = "account:auth-authority:v1:account/";
   private static final String REQUEST_PREFIX = "account-password-reset-request-v1:";
   private static final String EVENT_PREFIX = "account-password-reset-event-v1:";
+  private static final AccountPostgresIntegrationFixture POSTGRES =
+      new AccountPostgresIntegrationFixture();
 
-  @Container
-  static PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>("postgres:16-alpine");
+  @BeforeAll
+  static void startPostgres() {
+    POSTGRES.start();
+  }
+
+  @AfterAll
+  static void stopPostgres() {
+    POSTGRES.stop();
+  }
 
   @Test
   void commitsPasswordTokenAuthorityFenceClosedEventAndImmutableReceiptTogether() {
@@ -690,11 +698,7 @@ class PasswordResetAuthorityProducerPostgresIntegrationTest {
 
   private Fixture newFixture() {
     String schema = SCHEMA_PREFIX + "_" + UUID.randomUUID().toString().replace("-", "");
-    DriverManagerDataSource dataSource = new DriverManagerDataSource();
-    String separator = postgres.getJdbcUrl().contains("?") ? "&" : "?";
-    dataSource.setUrl(postgres.getJdbcUrl() + separator + "currentSchema=" + schema);
-    dataSource.setUsername(postgres.getUsername());
-    dataSource.setPassword(postgres.getPassword());
+    DriverManagerDataSource dataSource = POSTGRES.dataSource(schema);
     Flyway.configure()
         .dataSource(dataSource)
         .schemas(schema)

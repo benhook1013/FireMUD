@@ -105,6 +105,9 @@ $$;
 CREATE TRIGGER account_hosted_terms_environment_binding_immutable
     BEFORE UPDATE OR DELETE ON account_hosted_terms_environment_bindings
     FOR EACH ROW EXECUTE FUNCTION account_hosted_terms_environment_binding_immutable_guard();
+CREATE TRIGGER account_hosted_terms_environment_binding_no_truncate
+    BEFORE TRUNCATE ON account_hosted_terms_environment_bindings
+    FOR EACH STATEMENT EXECUTE FUNCTION account_hosted_terms_environment_binding_immutable_guard();
 
 CREATE FUNCTION account_hosted_terms_environment_binding_insert_guard()
 RETURNS TRIGGER LANGUAGE plpgsql AS $$
@@ -267,6 +270,9 @@ $$;
 CREATE TRIGGER account_hosted_terms_environment_binding_publication
     BEFORE INSERT OR UPDATE OR DELETE ON account_hosted_terms_environment_binding_publications
     FOR EACH ROW EXECUTE FUNCTION account_hosted_terms_environment_binding_publication_guard();
+CREATE TRIGGER account_hosted_terms_environment_binding_publication_no_truncate
+    BEFORE TRUNCATE ON account_hosted_terms_environment_binding_publications
+    FOR EACH STATEMENT EXECUTE FUNCTION account_hosted_terms_environment_binding_immutable_guard();
 
 CREATE FUNCTION account_hosted_terms_environment_binding_complete_guard()
 RETURNS TRIGGER LANGUAGE plpgsql AS $$

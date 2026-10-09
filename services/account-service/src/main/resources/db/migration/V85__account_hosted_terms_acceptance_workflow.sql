@@ -127,6 +127,15 @@ CREATE TRIGGER account_hosted_terms_catalog_immutable
 CREATE TRIGGER account_hosted_terms_acceptance_immutable
     BEFORE UPDATE OR DELETE ON account_individual_hosted_terms_acceptances
     FOR EACH ROW EXECUTE FUNCTION account_hosted_terms_immutable_guard();
+CREATE TRIGGER account_hosted_terms_catalog_no_truncate
+    BEFORE TRUNCATE ON account_hosted_terms_catalog_versions
+    FOR EACH STATEMENT EXECUTE FUNCTION account_hosted_terms_immutable_guard();
+CREATE TRIGGER account_hosted_terms_acceptance_no_truncate
+    BEFORE TRUNCATE ON account_individual_hosted_terms_acceptances
+    FOR EACH STATEMENT EXECUTE FUNCTION account_hosted_terms_immutable_guard();
+CREATE TRIGGER account_hosted_terms_scope_no_truncate
+    BEFORE TRUNCATE ON account_hosted_terms_scopes
+    FOR EACH STATEMENT EXECUTE FUNCTION account_hosted_terms_immutable_guard();
 
 CREATE FUNCTION account_hosted_terms_version_insert_guard() RETURNS TRIGGER LANGUAGE plpgsql AS $$
 DECLARE prior account_hosted_terms_catalog_versions%ROWTYPE;
@@ -299,6 +308,9 @@ $$;
 CREATE TRIGGER account_hosted_terms_publication_immutable
     BEFORE INSERT OR UPDATE OR DELETE ON account_hosted_terms_publication_operations
     FOR EACH ROW EXECUTE FUNCTION account_hosted_terms_publication_guard();
+CREATE TRIGGER account_hosted_terms_publication_no_truncate
+    BEFORE TRUNCATE ON account_hosted_terms_publication_operations
+    FOR EACH STATEMENT EXECUTE FUNCTION account_hosted_terms_immutable_guard();
 
 CREATE FUNCTION account_hosted_terms_publication_fence_complete_guard()
 RETURNS TRIGGER LANGUAGE plpgsql AS $$

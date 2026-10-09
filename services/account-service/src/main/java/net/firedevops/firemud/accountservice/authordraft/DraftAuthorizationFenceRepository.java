@@ -568,13 +568,13 @@ public final class DraftAuthorizationFenceRepository {
 
   public FenceSnapshot read(DraftAuthorizationFenceBinding binding) {
     requireTransaction();
-    return snapshot(requireExact(readOperation(binding.operationId()), binding));
+    return snapshot(requireExact(inspectOperation(binding.operationId()), binding));
   }
 
   /** Derived exact settlement only; original ordering and owner readbacks remain immutable. */
   public Settlement readSettlement(DraftAuthorizationFenceBinding binding) {
     requireTransaction();
-    Record row = requireExact(readOperation(binding.operationId()), binding);
+    Record row = requireExact(inspectOperation(binding.operationId()), binding);
     return settlement(originalBinding(row), Ordering.valueOf(row.get("ordering", String.class)));
   }
 
@@ -582,7 +582,7 @@ public final class DraftAuthorizationFenceRepository {
   public Optional<DraftAuthorizationFenceBinding> readOriginalBinding(UUID operationId) {
     requireTransaction();
     DraftAuthorizationFenceBinding.requireUuid(operationId);
-    Record row = readOperation(operationId);
+    Record row = inspectOperation(operationId);
     return row == null ? Optional.empty() : Optional.of(originalBinding(row));
   }
 
@@ -598,10 +598,11 @@ public final class DraftAuthorizationFenceRepository {
       DraftAuthorizationFenceBinding binding, Ordering ordering, RecoveryCursor cursor) {}
 
   /**
-   * Bounded discovery of original unsettled operations. Resume after the last returned cursor; an
-   * empty page ends this pass. Later passes start again to revisit still-pending operations.
-   * Discovery grants no owner permission and never captures new sources or infers expiry.
-   * Participant outcomes can advance concurrently: consumers re-read settlement before acting.
+   * Bounded non-locking discovery of original unsettled operations. Resume after the last returned
+   * cursor; an empty page ends this pass. Later passes start again to revisit still-pending
+   * operations. Discovery grants no owner permission and never captures new sources or infers
+   * expiry. Participant outcomes can advance concurrently: consumers re-read settlement before
+   * acting.
    */
   public List<UnresolvedOperation> readUnresolvedOperations(RecoveryCursor after, int limit) {
     requireTransaction();
@@ -617,7 +618,7 @@ public final class DraftAuthorizationFenceRepository {
       sql += " AND (f.reserved_at, f.operation_id) > (?::timestamptz, ?::uuid)";
       parameters = new Object[] {after.reservedAt(), after.operationId(), limit};
     }
-    sql += " ORDER BY f.reserved_at, f.operation_id LIMIT ? FOR UPDATE OF f";
+    sql += " ORDER BY f.reserved_at, f.operation_id LIMIT ?";
     return dsl.fetch(sql, parameters).stream()
         .map(
             row ->
@@ -641,7 +642,7 @@ public final class DraftAuthorizationFenceRepository {
   public Optional<OwnerResultSnapshot> readOwnerResult(
       DraftAuthorizationFenceBinding binding, Owner owner) {
     requireTransaction();
-    requireExact(readOperation(binding.operationId()), binding);
+    requireExact(inspectOperation(binding.operationId()), binding);
     Record row =
         dsl.fetchOne(
             "SELECT owner, outcome, readback, recorded_at FROM "
@@ -873,6 +874,11 @@ public final class DraftAuthorizationFenceRepository {
   private Record readOperation(UUID operation) {
     return dsl.fetchOne(
         "SELECT * FROM " + FENCES + " WHERE operation_id = ? FOR UPDATE", operation);
+  }
+
+  /** Exact immutable inspection without acquiring the operation row lock. */
+  private Record inspectOperation(UUID operation) {
+    return dsl.fetchOne("SELECT * FROM " + FENCES + " WHERE operation_id = ?", operation);
   }
 
   private Record readChange(UUID change) {

@@ -101,7 +101,9 @@ BEGIN
     IF OLD.status = 'PREPARED' AND NEW.status = 'DISPATCH_AUTHORIZED'
         AND OLD.dispatch_attempts = 0 AND NEW.dispatch_attempts = 1
         AND NEW.result_outcome IS NULL AND NEW.result_payload IS NULL
-        AND NEW.result_digest IS NULL AND NEW.result_recorded_at IS NULL THEN
+        AND NEW.result_digest IS NULL AND NEW.result_recorded_at IS NULL
+        AND EXISTS (SELECT 1 FROM account_hosted_terms_disclosure_sources s
+            WHERE s.handoff_id = NEW.handoff_id AND s.source_key = NEW.source_key) THEN
         RETURN NEW;
     ELSIF OLD.status = 'DISPATCH_AUTHORIZED' AND NEW.status = 'AMBIGUOUS'
         AND NEW.dispatch_attempts = OLD.dispatch_attempts

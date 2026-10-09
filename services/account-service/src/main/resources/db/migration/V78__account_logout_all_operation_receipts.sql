@@ -80,11 +80,14 @@ AS $$
 BEGIN
     RAISE EXCEPTION 'Logout-all operation receipts are immutable'
         USING ERRCODE = '23514', CONSTRAINT = 'account_logout_all_operation_immutable';
-    RETURN OLD;
+    RETURN NULL;
 END;
 $$;
 
 CREATE TRIGGER account_logout_all_operation_immutable
     BEFORE UPDATE OR DELETE ON account_logout_all_operation_receipts
     FOR EACH ROW EXECUTE FUNCTION account_logout_all_operation_immutable_guard();
+CREATE TRIGGER account_logout_all_operation_no_truncate
+    BEFORE TRUNCATE ON account_logout_all_operation_receipts
+    FOR EACH STATEMENT EXECUTE FUNCTION account_logout_all_operation_immutable_guard();
 -- [jooq ignore stop]

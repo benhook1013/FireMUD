@@ -81,11 +81,14 @@ AS $$
 BEGIN
     RAISE EXCEPTION 'Password-reset operation receipts are immutable'
         USING ERRCODE = '23514', CONSTRAINT = 'account_password_reset_operation_immutable';
-    RETURN OLD;
+    RETURN NULL;
 END;
 $$;
 
 CREATE TRIGGER account_password_reset_operation_immutable
     BEFORE UPDATE OR DELETE ON account_password_reset_operation_receipts
     FOR EACH ROW EXECUTE FUNCTION account_password_reset_operation_immutable_guard();
+CREATE TRIGGER account_password_reset_operation_no_truncate
+    BEFORE TRUNCATE ON account_password_reset_operation_receipts
+    FOR EACH STATEMENT EXECUTE FUNCTION account_password_reset_operation_immutable_guard();
 -- [jooq ignore stop]
