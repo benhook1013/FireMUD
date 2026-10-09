@@ -28,6 +28,7 @@ import org.jooq.tools.jdbc.MockDataProvider;
 import org.jooq.tools.jdbc.MockResult;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
+import org.springframework.context.annotation.AnnotationConfigApplicationContext;
 
 class StartSessionReservationMutationBoundaryTest {
   private static final long NOW_EPOCH_MILLIS = 1_800_000_000_000L;
@@ -143,6 +144,38 @@ class StartSessionReservationMutationBoundaryTest {
                 NOW_EPOCH_MILLIS))
         .isEmpty();
     assertThat(executions).hasValue(4);
+  }
+
+  @Test
+  void springConstructsPassiveRepositoryAndKeepsWritesDeniedBeforeSql() {
+    DSLContext resultDsl = DSL.using(SQLDialect.POSTGRES);
+    AtomicInteger executions = new AtomicInteger();
+    MockDataProvider provider =
+        context -> {
+          executions.incrementAndGet();
+          return new MockResult[] {
+            new MockResult(0, resultDsl.newResult(START_SESSION_PRE_AUTHORIZATION_RESERVATIONS))
+          };
+        };
+    DSLContext dsl = DSL.using(new MockConnection(provider), SQLDialect.POSTGRES);
+    AnnotationConfigApplicationContext context = new AnnotationConfigApplicationContext();
+    context.registerBean(DSLContext.class, () -> dsl);
+    context.registerBean(StartSessionPreAuthorizationReservationRepository.class);
+
+    try {
+      context.refresh();
+      StartSessionPreAuthorizationReservationRepository repository =
+          context.getBean(StartSessionPreAuthorizationReservationRepository.class);
+      StartSessionPreAuthorizationReservationTuple tuple = tuple("spring-passive-repository");
+
+      assertThatThrownBy(() -> repository.acquire(null, null, 0L, 0L))
+          .isInstanceOf(UnsupportedOperationException.class);
+      assertThat(executions).hasValue(0);
+      assertThat(repository.find(tuple.controlPlaneRequestId())).isEmpty();
+      assertThat(executions).hasValue(1);
+    } finally {
+      context.close();
+    }
   }
 
   private static StartSessionPreAuthorizationReservationTuple tuple(String requestId) {

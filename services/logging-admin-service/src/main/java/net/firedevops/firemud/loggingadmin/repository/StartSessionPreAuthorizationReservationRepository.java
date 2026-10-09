@@ -22,6 +22,7 @@ import org.jooq.DSLContext;
 import org.jooq.Field;
 import org.jooq.Record;
 import org.jooq.impl.DSL;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Repository;
 
 /** jOOQ persistence for the single-key StartSession ADR 0048 reservation phase. */
@@ -39,6 +40,7 @@ public class StartSessionPreAuthorizationReservationRepository {
   private final DSLContext dsl;
   private final MutationCapability mutationCapability;
 
+  @Autowired
   public StartSessionPreAuthorizationReservationRepository(DSLContext dsl) {
     this(dsl, null);
   }

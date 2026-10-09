@@ -14,6 +14,7 @@ import io.grpc.netty.shaded.io.grpc.netty.NettyChannelBuilder;
 import io.grpc.netty.shaded.io.grpc.netty.NettyServerBuilder;
 import io.grpc.netty.shaded.io.netty.handler.ssl.ClientAuth;
 import io.grpc.netty.shaded.io.netty.handler.ssl.SslContextBuilder;
+import io.grpc.netty.shaded.io.netty.handler.ssl.SslProvider;
 import java.io.IOException;
 import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
@@ -164,9 +165,11 @@ class StartSessionReservationEvidenceGrpcMutualTlsIntegrationTest {
     var serverTls =
         GrpcSslContexts.configure(
                 SslContextBuilder.forServer(
-                    pki.serverCertificate().toFile(), pki.serverPrivateKey().toFile()))
+                    pki.serverCertificate().toFile(), pki.serverPrivateKey().toFile()),
+                SslProvider.JDK)
             .trustManager(pki.trustedCaCertificate().toFile())
             .clientAuth(ClientAuth.REQUIRE)
+            .protocols("TLSv1.2")
             .build();
     StartSessionReservationEvidenceGrpcService receiver =
         new StartSessionReservationEvidenceGrpcService(reservationService, "test");
@@ -428,7 +431,10 @@ class StartSessionReservationEvidenceGrpcMutualTlsIntegrationTest {
   private static ManagedChannel clientChannel(
       Server server, TestWorkloadPki pki, TestWorkloadPki.ClientIdentity clientIdentity)
       throws Exception {
-    var clientTls = GrpcSslContexts.forClient().trustManager(pki.trustedCaCertificate().toFile());
+    var clientTls =
+        GrpcSslContexts.configure(GrpcSslContexts.forClient(), SslProvider.JDK)
+            .trustManager(pki.trustedCaCertificate().toFile())
+            .protocols("TLSv1.2");
     if (clientIdentity.certificate() != null) {
       clientTls.keyManager(
           clientIdentity.certificate().toFile(), clientIdentity.privateKey().toFile());

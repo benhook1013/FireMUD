@@ -92,18 +92,26 @@ class LoggingAdminApplicationIntegrationTest {
   }
 
   @Test
-  void applicationBootAppliesReservationMigrationsThroughV3() {
+  void applicationBootAppliesReservationMigrationsThroughV4() {
     assertThat(
             jdbcTemplate.queryForObject(
                 "SELECT COUNT(*) FROM flyway_schema_history_logging_admin_service "
-                    + "WHERE version = '3' AND success",
+                    + "WHERE version IN ('3', '4') AND success",
                 Integer.class))
-        .isEqualTo(1);
+        .isEqualTo(2);
     assertThat(
             jdbcTemplate.queryForObject(
                 "SELECT COUNT(*) FROM information_schema.tables "
                     + "WHERE table_schema = 'logging_admin_service' "
                     + "AND table_name = 'start_session_pre_authorization_reservations'",
+                Integer.class))
+        .isEqualTo(1);
+    assertThat(
+            jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM information_schema.columns "
+                    + "WHERE table_schema = 'logging_admin_service' "
+                    + "AND table_name = 'start_session_pre_authorization_reservations' "
+                    + "AND column_name = 'claim_purpose'",
                 Integer.class))
         .isEqualTo(1);
   }
