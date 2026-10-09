@@ -505,14 +505,14 @@ class GameLogicIntakeSourceReadTransportTest {
             new GameplayRuleSourceReadEvidence.Finalized(auth)));
   }
 
-  private record TestIdentity(PrivateKey privateKey, X509Certificate certificate) {}
+  record TestIdentity(PrivateKey privateKey, X509Certificate certificate) {}
 
-  private record TestPki(
+  record TestPki(
       X509Certificate caCertificate,
       TestIdentity gameLogicServer,
       TestIdentity wrongServer,
       TestIdentity accountClient) {
-    private static TestPki create(Path directory) throws Exception {
+    static TestPki create(Path directory) throws Exception {
       Path caStore = directory.resolve("terminal-test-ca.p12");
       runKeytool(
           "-genkeypair",
@@ -560,7 +560,7 @@ class GameLogicIntakeSourceReadTransportTest {
           issueIdentity(directory, caStore, caFile, "account-client", GD_URI, false));
     }
 
-    private CommonGrpcClientProperties clientProperties(Path directory, TestIdentity identity)
+    CommonGrpcClientProperties clientProperties(Path directory, TestIdentity identity)
         throws Exception {
       Path certificate =
           writePem(
@@ -584,7 +584,7 @@ class GameLogicIntakeSourceReadTransportTest {
       return properties;
     }
 
-    private static TestIdentity issueIdentity(
+    static TestIdentity issueIdentity(
         Path directory, Path caStore, Path caFile, String alias, String workloadUri, boolean server)
         throws Exception {
       Path store = directory.resolve(alias + ".p12");

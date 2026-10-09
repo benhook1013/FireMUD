@@ -3,6 +3,7 @@ package net.firedevops.firemud.accountservice.service.session;
 import io.grpc.Status;
 import java.util.Objects;
 import java.util.UUID;
+import java.util.function.Supplier;
 import net.firedevops.firemud.accountservice.authordraft.DraftAuthorizationFenceRepository;
 import net.firedevops.firemud.accountservice.hostedterms.AccountHostedTermsService.CapturedEnvironmentBoundary;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding;
@@ -54,10 +55,24 @@ public final class AccountGameLogicIntakeAuthorizationService {
       UUID intakeRequestId,
       DraftCommitBinding selected,
       CapturedEnvironmentBoundary environment) {
+    return authorizeWithEnvironmentCapture(
+        compactJwt, intakeRequestId, selected, () -> environment);
+  }
+
+  /**
+   * Exact finalized recovery precedes mutable environment capture. New work captures authority for
+   * reservation, then captures it again after the remote source read before finalization.
+   */
+  public GameLogicIntakeAuthorizationBinding authorizeWithEnvironmentCapture(
+      String compactJwt,
+      UUID intakeRequestId,
+      DraftCommitBinding selected,
+      Supplier<CapturedEnvironmentBoundary> environmentCapture) {
     requirePeer();
     net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding.requireUuid(
         intakeRequestId);
     Objects.requireNonNull(selected);
+    Objects.requireNonNull(environmentCapture);
     if (TransactionSynchronizationManager.isActualTransactionActive()
         || TransactionSynchronizationManager.isSynchronizationActive())
       throw Status.FAILED_PRECONDITION
@@ -70,6 +85,7 @@ public final class AccountGameLogicIntakeAuthorizationService {
       if (original.state() == AccountGameLogicIntakeSourceReadRecovery.State.ABORTED)
         throw Status.FAILED_PRECONDITION.asRuntimeException();
     }
+    var environment = Objects.requireNonNull(environmentCapture.get());
     var scope = reserveSourceRead(compactJwt, intakeRequestId, selected, environment);
     var recovered = recover(scope);
     if (recovered.authorization().isPresent()) return recovered.authorization().orElseThrow();
@@ -81,10 +97,11 @@ public final class AccountGameLogicIntakeAuthorizationService {
         || !request.equals(evidence.request())
         || !selected.equals(evidence.source().binding()))
       throw new IllegalStateException("Exact authenticated complete GD source required");
+    var finalizationEnvironment = Objects.requireNonNull(environmentCapture.get());
     return actors.withCurrent(
         compactJwt,
         selected.target().canonicalTenantId(),
-        environment,
+        finalizationEnvironment,
         current -> {
           fences.lockProducerSourcesNowait(current.source().sources());
           return repository.finalizeSourceRead(

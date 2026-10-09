@@ -433,7 +433,7 @@ class AccountGameLogicIntakeAuthorizationPostgresIntegrationTest {
           });
       f.tx(
           () -> {
-            f.dsl.execute("UPDATE accounts SET role = 'admin' WHERE id = ?", f.account.getId());
+            f.changeRoleToAdmin();
             return null;
           });
       assertThat(
@@ -765,8 +765,11 @@ class AccountGameLogicIntakeAuthorizationPostgresIntegrationTest {
               () ->
                   asGameDesign(
                       () ->
-                          service.authorize(
-                              issued.compact(), request, selected, issued.environment())))
+                          service.authorizeWithEnvironmentCapture(
+                              issued.compact(),
+                              request,
+                              selected,
+                              f.terms::captureCurrentEnvironmentBoundary)))
           .isInstanceOf(RuntimeException.class);
       assertThat(asGameDesign(() -> service.recover(issued.compact(), request, selected)).state())
           .isEqualTo(AccountGameLogicIntakeSourceReadRecovery.State.RESERVED);

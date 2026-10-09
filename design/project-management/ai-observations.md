@@ -132,3 +132,15 @@ Entry format:
   - Observation: The table's existing primary key was a strict subset of that composite key, so the extra unique index enforced no additional uniqueness invariant. This was not evidence that PostgreSQL rejected the migration.
   - Expected pattern: Compare the intended invariant with existing keys before adding simulator-specific scaffolding or weakening payload bounds. Remove a genuinely redundant index when the stronger key already enforces the contract; retain separate physical PostgreSQL migration proof.
   - Current status: Removing the redundant index restored V61 schema generation. The subsequent integration-fixture and static-check corrections passed the complete Game Design gate R193; all three V61 PostgreSQL definitions compiled but skipped without Docker. Physical V61 proof remains unexecuted locally.
+
+- `2026-10-09`: Distinguish subagent startup builder failures from model capacity
+  - Context: After publishing PR #3105's source-read checkpoint, fresh Sol High/Medium and Luna XHigh implementation helpers failed at startup with `builder error`, including same-scope retries, before edits or validation. An earlier Luna investigation completed normally.
+  - Observation: The tool supplied no capacity, thread-limit or model-service diagnostic, so neither model exhaustion nor successful slot recovery is established. Repeated replacement launches supplied no execution work.
+  - Expected pattern: Preserve the published checkpoint, report the actual error and affected models, and continue dependency-safe lane integration where possible. Do not count failed launches as review evidence or silently treat a model substitution as a successful recovery.
+  - Current status: Reported to Overseer through controller message `8684fed6`; the cause remains unknown. The parent continued the bounded approved projection. A later same-scope Luna XHigh retry began the Account transport assignment; this establishes partial recovery, not a diagnosed cause or recovery of every failed launch.
+
+- `2026-10-09`: A launched validation is not a completed continuation checkpoint
+  - Context: Document ended a heartbeat turn after launching consolidated gate R202 and recording an inbox decision, despite unfinished authorized implementation. The user had to prompt continuation; the gate subsequently exposed seven test failures.
+  - Observation: Saying validation was underway did not consume its terminal result or advance the assigned correction. A process identifier is not a wake-capable handoff.
+  - Expected pattern: Remain with local validation through terminal evidence, integrate failures and continue safe assigned work. If a genuine interruption requires yielding, preserve the exact pending process and next action without describing it as completed work.
+  - Current status: The terminal result was consumed, disjoint Common and Account fixture/transport corrections were delegated, and the parent resumed integration. No proof or completion credit was assigned to the failed gate.

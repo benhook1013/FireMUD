@@ -63,6 +63,31 @@ The authenticated publication read must preserve the exact source-operation and 
 
 The full-version manifest and the dedicated `abilitySchemaDigest` share the selected commit and Game Logic's existing canonicalization and `digestSchemaVersion` contract, but they attest distinct scopes. The aggregate full-manifest `contentDigest` is not an ability-schema digest, and neither the Automation & Scripting digest nor Game Design's control-plane digest substitutes for either Game Logic attestation. Any change to the dedicated ability-schema input set or its canonicalization requires the same explicit schema bump and digest replay or re-record process as other manifest changes. This contract governs publication evidence only; it does not authorize activation of unpublished rules or make Game Logic a participant in Game Design's publication workflow mutations. Game Logic does not read an admin database for runtime rules.
 
+### Dedicated Ability-Schema Projection v1
+
+The dedicated content preimage is RFC 8785 canonical UTF-8 JSON with exactly `{"schema":"gameplay-ability-schema/v1","families":{...}}`. `families` contains all 15 names in the closed `gameplay-rule-manifest/v1` grammar, including explicit empty arrays. Validate the complete selected manifest before projecting: unknown fields or definitions, missing families, unresolved references and unsupported shapes fail even outside the selected closure. Seed every `ABILITIES` and every `ACTIONS` definition, then retain the complete typed-reference closure keyed by `(family, logical key)`. Preserve every field of each retained definition, its original selected-manifest family order, and every nested-array order. A visited set terminates reachable cycles while retaining all reachable definitions; this does not establish execution support for an otherwise unsupported cycle.
+
+The closed grammar's reference edges are exhaustive:
+
+| Definition family | Typed reference edges |
+| --- | --- |
+| `ABILITIES` | `actionSequenceId` → `ACTIONS`. |
+| `ACTIONS` | `admissionTags` → `ADMISSION_TAGS`; target sets → targeting/selection policies and optional unresolved feedback; costs → `RESOURCES`; effect bindings → `EFFECTS`; `feedbackKeys` → `FEEDBACK`. |
+| `CONDITIONS` | `effectKeys` → `EFFECTS`. |
+| `EFFECTS` | `statKey` → declared numeric `STATS` or `RESOURCES`; `ADJUST_RESOURCE` and `MAXIMUM` require `RESOURCES`; `conditionKey` → `CONDITIONS`. |
+| `OBSERVATION_POLICIES` | Predicate references below. |
+| `TARGETING_POLICIES` | `observationPolicyKey` → `OBSERVATION_POLICIES`; eligibility predicate references; `safeFailureFeedbackKey` → `FEEDBACK`. |
+| `SELECTION_POLICIES` | Comparator `statKey` → numeric `STATS` or `RESOURCES`; `MAXIMUM` requires `RESOURCES`. |
+| `DISPOSITIONS` | `deniedAdmissionTags` → `ADMISSION_TAGS`; `safeFeedbackKey` → `FEEDBACK`. |
+| `COMMANDS` | `actionSequenceId` → `ACTIONS`; `admissionTags` → `ADMISSION_TAGS`; commands are not roots or reverse dependencies. |
+| `CONTINUOUS_OVERLAYS` | Eligibility predicate references; `deniedAdmissionTags` → `ADMISSION_TAGS`; `effectKeys` → `EFFECTS`. |
+| `DEFAULT_BINDINGS` | Target sets → targeting/selection policies and optional unresolved feedback. |
+| `STATS`, `RESOURCES`, `ADMISSION_TAGS`, `FEEDBACK` | No external definition references. Their complete fields, tags and feedback arguments remain retained when reached. |
+
+Target-set policy fields are `targetingPolicyKey` → `TARGETING_POLICIES`, `targetSelectionPolicyKey` → `SELECTION_POLICIES`, and non-null `unresolvedFeedbackKey` → `FEEDBACK`. Predicate operands are traversed recursively: `STAT_COMPARE.factKey` selects its declared numeric stat/resource; `CONDITION_PRESENT.factKey` → `CONDITIONS`; `DISPOSITION_EQUALS.factKey` → `DISPOSITIONS`. `SOURCE` and declared target-set keys are action-local, not catalog aliases. Cooldown keys, names, tags, player-selector slots and feedback argument/message identifiers create no guessed external edges. The closed grammar rejects stat/resource key collisions before resolving a numeric reference. Unreferenced catalogs, commands, overlays and default bindings stay outside this dedicated digest, while remaining in the aggregate manifest. An effective implicit runtime dependency not expressible by this grammar must be reported and denied, not silently omitted or guessed from names.
+
+Hash these exact bytes with the existing lowercase `sha256:` encoding. Carry the positive participant `digestSchemaVersion`, canonicalization evidence and exact selected-commit/source-operation provenance separately; source/auth receipts, publication metadata and commit IDs never enter this content-only preimage. A valid explicit-empty manifest has a defined content hash but cannot establish authenticated empty-source provenance: the original complete owner inventory and immutable intake must independently prove it. The executable [projection vectors](../../../../services/common-platform-core/src/test/java/net/firedevops/firemud/common/gamelogic/GameplayAbilitySchemaProjectionTest.java) freeze empty preimage/hash `sha256:0207783645e944996b4f7589d2662d5b8309231769681e162ee05de51d34db2a` and the complete two-action/all-root preimage/hash `sha256:659a321a8fd1a02a4825a81568d67dee5039a1cb538756fb91c212aeaea1c536`, plus transitive-field, ordering, unrelated-input and negative cases. Any include/exclude, edge or canonicalization change requires the existing explicit schema bump and replay/re-record process; do not reinterpret retained evidence. Projection construction alone does not register the digest receiver, authorize publication or activate gameplay.
+
 ## Redis Role and Prefixes
 
 ### Coordination Redis
