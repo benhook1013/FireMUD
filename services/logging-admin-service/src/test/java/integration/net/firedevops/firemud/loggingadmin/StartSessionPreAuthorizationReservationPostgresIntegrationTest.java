@@ -29,6 +29,7 @@ import net.firedevops.firemud.loggingadmin.operator.StartSessionPreAuthorization
 import net.firedevops.firemud.loggingadmin.repository.StartSessionPreAuthorizationReservationRepository;
 import net.firedevops.firemud.test.TestContainerImages;
 import org.flywaydb.core.Flyway;
+import org.flywaydb.core.api.MigrationVersion;
 import org.jooq.DSLContext;
 import org.jooq.SQLDialect;
 import org.jooq.impl.DSL;
@@ -131,6 +132,65 @@ class StartSessionPreAuthorizationReservationPostgresIntegrationTest {
     } finally {
       executor.shutdownNow();
     }
+  }
+
+  @Test
+  void upgradeFromV1RetainsExistingLogEventsThroughV2AndV3() {
+    Flyway.configure()
+        .dataSource(dataSource)
+        .locations("classpath:db/migration")
+        .placeholders(FLYWAY_PLACEHOLDERS)
+        .cleanDisabled(false)
+        .target(MigrationVersion.fromVersion("1"))
+        .load()
+        .clean();
+    Flyway.configure()
+        .dataSource(dataSource)
+        .locations("classpath:db/migration")
+        .placeholders(FLYWAY_PLACEHOLDERS)
+        .target(MigrationVersion.fromVersion("1"))
+        .load()
+        .migrate();
+
+    dsl = DSL.using(dataSource, SQLDialect.POSTGRES);
+    long existingLogEventId =
+        Objects.requireNonNull(
+                dsl.fetchOne(
+                    "INSERT INTO log_events (tenant_id, type, message, timestamp, account_id) "
+                        + "VALUES (?, ?, ?, ?, ?) RETURNING id",
+                    42L,
+                    "audit",
+                    "existing row before reservation migrations",
+                    java.sql.Timestamp.valueOf("2026-10-10 12:00:00"),
+                    7L),
+                "The V1 log row must be inserted before the reservation migrations")
+            .get(0, Long.class);
+
+    Flyway.configure()
+        .dataSource(dataSource)
+        .locations("classpath:db/migration")
+        .placeholders(FLYWAY_PLACEHOLDERS)
+        .load()
+        .migrate();
+
+    assertThat(
+            Objects.requireNonNull(
+                    dsl.fetchOne("SELECT message FROM log_events WHERE id = ?", existingLogEventId),
+                    "The V1 log row must remain after the reservation migrations")
+                .get(0, String.class))
+        .isEqualTo("existing row before reservation migrations");
+    assertThat(
+            Objects.requireNonNull(
+                    dsl.fetchOne(
+                        "SELECT COUNT(*) FROM start_session_pre_authorization_reservations"),
+                    "The V2 reservation table must exist after migration")
+                .get(0, Long.class))
+        .isZero();
+    assertThat(
+            dsl.fetch(
+                    "SELECT version FROM flyway_schema_history WHERE success ORDER BY installed_rank")
+                .getValues("version", String.class))
+        .containsExactly("1", "2", "3");
   }
 
   @Test

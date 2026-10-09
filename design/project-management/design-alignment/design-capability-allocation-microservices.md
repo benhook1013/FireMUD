@@ -183,7 +183,7 @@ This ledger maps every Markdown source under [`design/architecture/microservices
 | Entity Management Service | 5 | 5 | 0 | 0 |
 | Game Design Service | 13 | 13 | 0 | 0 |
 | Game Logic Service | 5 | 5 | 0 | 0 |
-| Game Session Service | 6 | 6 | 0 | 0 |
+| Game Session Service | 7 | 7 | 0 | 0 |
 | Logging and Admin Service | 8 | 8 | 0 | 0 |
 | Social and Groups Service | 5 | 5 | 0 | 0 |
 | Spring Cloud Gateway | 5 | 5 | 0 | 0 |

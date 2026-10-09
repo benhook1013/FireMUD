@@ -12,5 +12,7 @@ firemudJooq {
 }
 
 dependencies {
+    testImplementation(libs.grpc.inprocess)
+    testImplementation(libs.grpc.netty.shaded)
     testCompileOnly(libs.spotbugs.annotations)
 }

@@ -12,16 +12,27 @@ import static org.mockito.Mockito.when;
 import com.google.protobuf.ByteString;
 import com.google.protobuf.UnknownFieldSet;
 import io.grpc.Context;
+import io.grpc.ManagedChannel;
+import io.grpc.Metadata;
+import io.grpc.Server;
 import io.grpc.Status;
+import io.grpc.StatusRuntimeException;
+import io.grpc.inprocess.InProcessChannelBuilder;
+import io.grpc.inprocess.InProcessServerBuilder;
+import io.grpc.stub.MetadataUtils;
 import io.grpc.stub.StreamObserver;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
+import net.firedevops.firemud.common.grpc.GrpcPeerIdentityInterceptor;
 import net.firedevops.firemud.common.operator.StartSessionOperatorAction;
+import net.firedevops.firemud.common.security.AuthTokenInterceptor;
+import net.firedevops.firemud.common.security.JwtUtil;
 import net.firedevops.firemud.common.security.SessionContext;
 import net.firedevops.firemud.loggingadmin.operator.StartSessionPreAuthorizationReservationService;
 import net.firedevops.firemud.loggingadmin.operator.StartSessionPreAuthorizationReservationService.ClaimState;
@@ -32,9 +43,13 @@ import net.firedevops.firemud.loggingadmin.operator.StartSessionPreAuthorization
 import net.firedevops.firemud.loggingadmin.operator.StartSessionPreAuthorizationReservationService.State;
 import net.firedevops.firemud.loggingadmin.operator.StartSessionPreAuthorizationReservationTuple;
 import net.firedevops.firemud.loggingadmin.service.impl.StartSessionReservationEvidenceGrpcService;
+import net.firedevops.firemud.loggingadmin.v1.LoggingAdminServiceGrpc;
+import net.firedevops.firemud.loggingadmin.v1.PingRequest;
+import net.firedevops.firemud.loggingadmin.v1.PingResponse;
 import net.firedevops.firemud.loggingadmin.v1.ReadCurrentClaimEvidenceRequest;
 import net.firedevops.firemud.loggingadmin.v1.ReadCurrentClaimEvidenceResponse;
 import net.firedevops.firemud.loggingadmin.v1.StartSessionReservationEvidencePurpose;
+import net.firedevops.firemud.loggingadmin.v1.StartSessionReservationEvidenceServiceGrpc;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.dao.DataAccessResourceFailureException;
@@ -286,6 +301,66 @@ class StartSessionReservationEvidenceGrpcServiceTest {
             ReadPurpose.ISSUE);
   }
 
+  @Test
+  void exactPublicMethodTraversesJwtAndPeerInterceptorsOverGrpcTransport() throws Exception {
+    String serverName = InProcessServerBuilder.generateName();
+    Server server =
+        InProcessServerBuilder.forName(serverName)
+            .directExecutor()
+            .intercept(
+                new AuthTokenInterceptor(
+                    new JwtUtil("a".repeat(64), 3_600_000L),
+                    Set.of(
+                        "logging_admin.v1.StartSessionReservationEvidenceService/"
+                            + "ReadCurrentClaimEvidence")))
+            .intercept(new GrpcPeerIdentityInterceptor())
+            .addService(service)
+            .addService(
+                new LoggingAdminServiceGrpc.LoggingAdminServiceImplBase() {
+                  @Override
+                  public void ping(PingRequest request, StreamObserver<PingResponse> observer) {
+                    observer.onNext(PingResponse.newBuilder().setMessage("pong").build());
+                    observer.onCompleted();
+                  }
+                })
+            .build()
+            .start();
+    ManagedChannel channel = InProcessChannelBuilder.forName(serverName).directExecutor().build();
+    try {
+      ReadCurrentClaimEvidenceRequest evidenceRequest = request(tuple(REQUEST_ID));
+      assertThat(
+              transportStatus(
+                  () ->
+                      StartSessionReservationEvidenceServiceGrpc.newBlockingStub(channel)
+                          .readCurrentClaimEvidence(evidenceRequest)))
+          .isEqualTo(Status.Code.PERMISSION_DENIED);
+
+      Metadata invalidJwtHeader = new Metadata();
+      invalidJwtHeader.put(
+          Metadata.Key.of("Authorization", Metadata.ASCII_STRING_MARSHALLER),
+          "Bearer deliberately-invalid");
+      assertThat(
+              transportStatus(
+                  () ->
+                      StartSessionReservationEvidenceServiceGrpc.newBlockingStub(channel)
+                          .withInterceptors(
+                              MetadataUtils.newAttachHeadersInterceptor(invalidJwtHeader))
+                          .readCurrentClaimEvidence(evidenceRequest)))
+          .isEqualTo(Status.Code.PERMISSION_DENIED);
+
+      assertThat(
+              transportStatus(
+                  () ->
+                      LoggingAdminServiceGrpc.newBlockingStub(channel)
+                          .ping(PingRequest.getDefaultInstance())))
+          .isEqualTo(Status.Code.UNAUTHENTICATED);
+      verifyNoInteractions(reservationService);
+    } finally {
+      channel.shutdownNow();
+      server.shutdownNow();
+    }
+  }
+
   private Observer call(ReadCurrentClaimEvidenceRequest request, String peerUri) {
     Observer observer = new Observer();
     Runnable invocation = () -> service.readCurrentClaimEvidence(request, observer);
@@ -384,6 +459,15 @@ class StartSessionReservationEvidenceGrpcServiceTest {
 
   private static Status.Code status(Observer observer) {
     return observer.failure;
+  }
+
+  private static Status.Code transportStatus(Runnable call) {
+    try {
+      call.run();
+      return Status.Code.OK;
+    } catch (StatusRuntimeException ex) {
+      return ex.getStatus().getCode();
+    }
   }
 
   private static final class Observer implements StreamObserver<ReadCurrentClaimEvidenceResponse> {

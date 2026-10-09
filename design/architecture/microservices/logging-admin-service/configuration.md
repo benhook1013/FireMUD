@@ -23,6 +23,7 @@ The Logging & Admin Service does **not** connect to Redis at runtime. It consume
 | `FIREMUD_AUTH_JWT_SECRET` | Legacy HMAC JWT validation secret (transitional only; not for player-facing environments) | *(none)* |
 | `FIREMUD_AUTH_JWT_SECRET_PATH` | Legacy file path for HMAC JWT validation secret (transitional only; not for player-facing environments) | *(none)* |
 | `FIREMUD_AUTH_JWT_EXPIRATION_MS` | Lifetime of issued JWTs in milliseconds | `3600000` |
+| `FIREMUD_GRPC_WORKLOAD_NAMESPACE` | Namespace required for the exact Account workload identity on the StartSession reservation evidence RPC; blank configuration denies that method | *(none)* |
 | `FIREMUD_SERVICES_ACCOUNT_SERVICE` | gRPC endpoint (host:port) for the Account Service | *(none)* |
 | `FIREMUD_SERVICES_GAME_SESSION_SERVICE` | gRPC endpoint (host:port) for the Game Session Service | *(none)* |
 | `FIREMUD_GRPC_WORKLOAD_NAMESPACE` | Canonical workload namespace for internal gRPC identity checks | *(none)* |
@@ -35,6 +36,8 @@ The `FIREMUD_LOGGING_ADMIN_START_SESSION_OPERATOR_AUTHORIZATION_ENABLED` opt-in 
 Enabled composition requires a canonical `firemud.grpc.workload-namespace` and readable file-backed gRPC client certificate-chain, private-key, and CA inputs. These use the existing common gRPC TLS resolver and the `FIREMUD_GRPC_CERT_CHAIN_PATH`, `FIREMUD_GRPC_PRIVATE_KEY_PATH`, and `FIREMUD_GRPC_CA_CERT_PATH` inputs above. Missing, plaintext, incomplete, or non-file-backed TLS inputs fail composition rather than selecting defaults. The canonical operator contracts remain in [ADR 0047](../../decisions/adr-0047-logging-admin-as-external-operator-write-ingress.md), [ADR 0048](../../decisions/adr-0048-durable-idempotent-operator-write-execution.md), and the [StartSession reservation evidence contract](./api-contracts.md#startsession-reservation-claim-evidence).
 
 This configuration creates no external operator route, trusted caller context, reservation provider, or gameplay activation. The focused configuration test uses a controlled channel factory and test-only placeholder files; it is wiring proof only, not physical mTLS, production startup, external-ingress, Game Session launch-selection, or World activation proof.
+
+`logging_admin.v1.StartSessionReservationEvidenceService/ReadCurrentClaimEvidence` is the only method exempted from the shared Bearer-JWT interceptor. The server's required client-certificate handshake and verified TLS peer interceptor remain enabled; the receiver checks the exact Account SPIFFE identity in `FIREMUD_GRPC_WORKLOAD_NAMESPACE`. The JWT header is not an identity source for this method.
 
 ## Proto Files
 
