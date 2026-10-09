@@ -33,6 +33,7 @@ public class AuthTokenInterceptor implements ServerInterceptor {
   public <ReqT, RespT> ServerCall.Listener<ReqT> interceptCall(
       ServerCall<ReqT, RespT> call, Metadata headers, ServerCallHandler<ReqT, RespT> next) {
     if (unauthenticatedMethods.contains(call.getMethodDescriptor().getFullMethodName())) {
+      SessionContext.clear();
       return next.startCall(call, headers);
     }
     String authHeader = headers.get(AUTH_HEADER);

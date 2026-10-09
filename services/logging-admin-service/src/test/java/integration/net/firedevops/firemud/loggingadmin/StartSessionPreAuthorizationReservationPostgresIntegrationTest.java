@@ -179,38 +179,35 @@ class StartSessionPreAuthorizationReservationPostgresIntegrationTest {
         .load()
         .migrate();
 
+    StartSessionPreAuthorizationReservationTuple originalTuple =
+        tuple("postgres-v3-original-backfill", "V3 original claim backfill fixture");
+    StartSessionPreAuthorizationReservationTuple expiredTuple =
+        tuple("postgres-v3-expired-backfill", "V3 expired claim backfill fixture");
+    StartSessionPreAuthorizationReservationTuple reservedRecoveryTuple =
+        tuple("postgres-v3-reserved-recovery-backfill", "V3 reserved recovery backfill fixture");
     StartSessionPreAuthorizationReservationTuple pendingTuple =
-        tuple("postgres-v3-recovery-backfill", "V3 recovery backfill fixture");
+        tuple("postgres-v3-authorization-recovery-backfill", "V3 authorization recovery fixture");
     UUID originalOwner = UUID.fromString("39a96323-f6e0-4a64-a3c3-7a3a346f2696");
     UUID recoveryOwner = UUID.fromString("05bd6075-3e08-4a83-97c2-9af3481a9492");
-    dsl.execute(
-        "INSERT INTO start_session_pre_authorization_reservations ("
-            + "control_plane_request_id, pre_authorization_tuple_json, mutation_digest, phase, state, "
-            + "reservation_owner_id, reservation_claim_fence, claim_owner_id, claim_fence, "
-            + "claim_expires_at_epoch_ms, claim_state, created_at_epoch_ms, updated_at_epoch_ms, "
-            + "post_authorization_execution_tuple_json, owner_execution_handoff_id) "
-            + "VALUES (?, ?, ?, 'ACCOUNT_AUTHORIZATION', 'RESERVED', ?, 1, ?, 1, ?, 'ACTIVE', ?, ?, NULL, NULL)",
-        pendingTuple.controlPlaneRequestId(),
-        pendingTuple.canonicalJson(),
-        pendingTuple.mutationDigest(),
-        originalOwner,
-        originalOwner,
-        NOW_EPOCH_MILLIS + 30_000L,
-        NOW_EPOCH_MILLIS,
-        NOW_EPOCH_MILLIS);
+    insertV3OriginalReservation(originalTuple, originalOwner);
+    insertV3OriginalReservation(expiredTuple, originalOwner);
+    expireV3Claim(expiredTuple, NOW_EPOCH_MILLIS + 30_000L);
+    insertV3OriginalReservation(reservedRecoveryTuple, originalOwner);
+    expireV3Claim(reservedRecoveryTuple, NOW_EPOCH_MILLIS + 30_000L);
+    recoverV3Claim(
+        reservedRecoveryTuple,
+        recoveryOwner,
+        NOW_EPOCH_MILLIS + 60_000L,
+        NOW_EPOCH_MILLIS + 30_001L);
+    insertV3OriginalReservation(pendingTuple, originalOwner);
     dsl.execute(
         "UPDATE start_session_pre_authorization_reservations SET state = 'AUTHORIZATION_PENDING', "
             + "updated_at_epoch_ms = ? WHERE control_plane_request_id = ?",
         NOW_EPOCH_MILLIS + 1_000L,
         pendingTuple.controlPlaneRequestId());
-    dsl.execute(
-        "UPDATE start_session_pre_authorization_reservations SET claim_owner_id = ?, "
-            + "claim_fence = 3, claim_expires_at_epoch_ms = ?, updated_at_epoch_ms = ? "
-            + "WHERE control_plane_request_id = ?",
-        recoveryOwner,
-        NOW_EPOCH_MILLIS + 60_001L,
-        NOW_EPOCH_MILLIS + 30_001L,
-        pendingTuple.controlPlaneRequestId());
+    expireV3Claim(pendingTuple, NOW_EPOCH_MILLIS + 30_000L);
+    recoverV3Claim(
+        pendingTuple, recoveryOwner, NOW_EPOCH_MILLIS + 60_000L, NOW_EPOCH_MILLIS + 30_001L);
 
     Flyway.configure()
         .dataSource(dataSource)
@@ -228,6 +225,12 @@ class StartSessionPreAuthorizationReservationPostgresIntegrationTest {
         .isEqualTo("existing row before reservation migrations");
     assertThat(repository.findExact(pendingTuple).orElseThrow().claimPurpose())
         .isEqualTo(ClaimPurpose.AUTHORIZATION_RECOVERY);
+    assertThat(claimPurpose(originalTuple.controlPlaneRequestId())).isEqualTo("ORIGINAL");
+    assertThat(claimPurpose(expiredTuple.controlPlaneRequestId())).isNull();
+    assertThat(claimPurpose(reservedRecoveryTuple.controlPlaneRequestId()))
+        .isEqualTo("RESERVED_RECOVERY_ISSUE");
+    assertThat(claimPurpose(pendingTuple.controlPlaneRequestId()))
+        .isEqualTo("AUTHORIZATION_RECOVERY");
     assertThat(repository.findExact(pendingTuple).orElseThrow().reservationClaimFence())
         .isEqualTo(1L);
     assertThat(repository.findExact(pendingTuple).orElseThrow().claimFence()).isEqualTo(3L);
@@ -1188,6 +1191,59 @@ class StartSessionPreAuthorizationReservationPostgresIntegrationTest {
   private StartSessionPreAuthorizationReservationRepository.AcquireResult acquire(
       StartSessionPreAuthorizationReservationTuple tuple, UUID ownerId) {
     return repository.acquire(tuple, ownerId, NOW_EPOCH_MILLIS, NOW_EPOCH_MILLIS + 30_000L);
+  }
+
+  private void insertV3OriginalReservation(
+      StartSessionPreAuthorizationReservationTuple tuple, UUID reservationOwner) {
+    dsl.execute(
+        "INSERT INTO start_session_pre_authorization_reservations ("
+            + "control_plane_request_id, pre_authorization_tuple_json, mutation_digest, phase, state, "
+            + "reservation_owner_id, reservation_claim_fence, claim_owner_id, claim_fence, "
+            + "claim_expires_at_epoch_ms, claim_state, created_at_epoch_ms, updated_at_epoch_ms, "
+            + "post_authorization_execution_tuple_json, owner_execution_handoff_id) "
+            + "VALUES (?, ?, ?, 'ACCOUNT_AUTHORIZATION', 'RESERVED', ?, 1, ?, 1, ?, 'ACTIVE', ?, ?, NULL, NULL)",
+        tuple.controlPlaneRequestId(),
+        tuple.canonicalJson(),
+        tuple.mutationDigest(),
+        reservationOwner,
+        reservationOwner,
+        NOW_EPOCH_MILLIS + 30_000L,
+        NOW_EPOCH_MILLIS,
+        NOW_EPOCH_MILLIS);
+  }
+
+  private void expireV3Claim(StartSessionPreAuthorizationReservationTuple tuple, long expiredAt) {
+    dsl.execute(
+        "UPDATE start_session_pre_authorization_reservations SET claim_owner_id = NULL, "
+            + "claim_fence = claim_fence + 1, claim_state = 'EXPIRED', updated_at_epoch_ms = ? "
+            + "WHERE control_plane_request_id = ?",
+        expiredAt,
+        tuple.controlPlaneRequestId());
+  }
+
+  private void recoverV3Claim(
+      StartSessionPreAuthorizationReservationTuple tuple,
+      UUID recoveryOwner,
+      long expiresAt,
+      long updatedAt) {
+    dsl.execute(
+        "UPDATE start_session_pre_authorization_reservations SET claim_owner_id = ?, "
+            + "claim_fence = claim_fence + 1, claim_expires_at_epoch_ms = ?, claim_state = 'ACTIVE', "
+            + "updated_at_epoch_ms = ? WHERE control_plane_request_id = ?",
+        recoveryOwner,
+        expiresAt,
+        updatedAt,
+        tuple.controlPlaneRequestId());
+  }
+
+  private String claimPurpose(String controlPlaneRequestId) {
+    return Objects.requireNonNull(
+            dsl.fetchOne(
+                "SELECT claim_purpose FROM start_session_pre_authorization_reservations "
+                    + "WHERE control_plane_request_id = ?",
+                controlPlaneRequestId),
+            "The migrated reservation row must remain readable")
+        .get("claim_purpose", String.class);
   }
 
   private static StartSessionPreAuthorizationReservationTuple tuple(

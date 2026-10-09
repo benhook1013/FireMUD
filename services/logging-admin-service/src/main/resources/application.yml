@@ -70,3 +70,5 @@ firemud:
     private-key: ${FIREMUD_GRPC_PRIVATE_KEY_PATH:certs/client.key}
     ca-cert: ${FIREMUD_GRPC_CA_CERT_PATH:certs/ca.crt}
     workload-namespace: ${FIREMUD_GRPC_WORKLOAD_NAMESPACE:}
+    account-reservation-evidence:
+      approved-leaf-file: ${FIREMUD_GRPC_ACCOUNT_RESERVATION_EVIDENCE_APPROVED_LEAF_FILE:}

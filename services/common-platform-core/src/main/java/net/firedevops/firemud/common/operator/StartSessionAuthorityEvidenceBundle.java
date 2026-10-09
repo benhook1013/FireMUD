@@ -28,8 +28,9 @@ import tools.jackson.databind.json.JsonMapper;
  * authorityEvidenceBundle/v1} contract.
  *
  * <p>This value proves only that supplied bytes are canonical and structurally bound to a typed
- * StartSession tuple and the separate Account source reference. It does not establish current
- * Account authority, source freshness, a live reservation claim, or permission to dispatch.
+ * StartSession tuple and selected fields from the separate Account bundle reference. It does not
+ * perform Account's full source/reference validation or establish current Account authority, source
+ * freshness, a live reservation claim, or permission to dispatch.
  */
 public final class StartSessionAuthorityEvidenceBundle {
   public static final String BUNDLE_VERSION = "authorityEvidenceBundle/v1";
@@ -204,7 +205,11 @@ public final class StartSessionAuthorityEvidenceBundle {
     }
   }
 
-  /** Binds the separate Account source reference; this does not prove source freshness. */
+  /**
+   * Compares the bundle version, source version, and source fence with the corresponding bundle
+   * fields. This structural comparison is not Account's full source/reference validation, snapshot
+   * check, or redemption; it does not prove source freshness.
+   */
   public void requireReferenceBinding(BundleReference reference) {
     Objects.requireNonNull(reference, "Account bundle reference is required");
     Map<String, Object> projection =

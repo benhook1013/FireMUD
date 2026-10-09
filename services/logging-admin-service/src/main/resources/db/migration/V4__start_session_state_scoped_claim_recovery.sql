@@ -6,6 +6,7 @@ SET claim_purpose = CASE
     WHEN claim_state = 'EXPIRED' THEN NULL
     WHEN claim_owner_id = reservation_owner_id
         AND claim_fence = reservation_claim_fence THEN 'ORIGINAL'
+    WHEN state = 'RESERVED' THEN 'RESERVED_RECOVERY_ISSUE'
     ELSE 'AUTHORIZATION_RECOVERY'
 END;
 

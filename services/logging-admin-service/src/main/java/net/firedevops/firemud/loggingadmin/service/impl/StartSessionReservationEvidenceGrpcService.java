@@ -11,6 +11,7 @@ import java.sql.SQLTransientException;
 import java.util.Arrays;
 import java.util.Optional;
 import java.util.UUID;
+import net.firedevops.firemud.common.grpc.GrpcPeerCertificateEvidence;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
 import net.firedevops.firemud.common.security.SessionContext;
 import net.firedevops.firemud.loggingadmin.operator.StartSessionPreAuthorizationReservationService;
@@ -33,12 +34,15 @@ public class StartSessionReservationEvidenceGrpcService
     extends StartSessionReservationEvidenceServiceGrpc
         .StartSessionReservationEvidenceServiceImplBase {
   private final StartSessionPreAuthorizationReservationService reservationService;
+  private final StartSessionReservationEvidenceLeafApproval leafApproval;
   private final String workloadNamespace;
 
   public StartSessionReservationEvidenceGrpcService(
       StartSessionPreAuthorizationReservationService reservationService,
+      StartSessionReservationEvidenceLeafApproval leafApproval,
       @Value("${firemud.grpc.workload-namespace:}") String workloadNamespace) {
     this.reservationService = reservationService;
+    this.leafApproval = leafApproval;
     this.workloadNamespace = workloadNamespace;
   }
 
@@ -46,7 +50,9 @@ public class StartSessionReservationEvidenceGrpcService
   public void readCurrentClaimEvidence(
       ReadCurrentClaimEvidenceRequest request,
       StreamObserver<ReadCurrentClaimEvidenceResponse> responseObserver) {
-    if (SessionContext.hasAuthenticatedCallerContext() || !isAccountPeer()) {
+    if (SessionContext.hasAuthenticatedCallerContext()
+        || !isAccountPeer()
+        || !leafApproval.isApproved(GrpcPeerCertificateEvidence.current())) {
       fail(
           responseObserver,
           Status.PERMISSION_DENIED,
