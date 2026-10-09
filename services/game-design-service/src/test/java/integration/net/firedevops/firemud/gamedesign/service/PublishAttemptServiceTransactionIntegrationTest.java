@@ -640,8 +640,18 @@ class PublishAttemptServiceTransactionIntegrationTest {
 
   private static void assertMechanicsSnapshot(
       Object snapshot, String expectedStatus, String expectedFailureMessage) {
-    assertThat(snapshotValue(snapshot, "status")).isEqualTo(expectedStatus);
-    assertThat(snapshotValue(snapshot, "failureMessage")).isEqualTo(expectedFailureMessage);
+    String actualStatus = snapshotValue(snapshot, "status");
+    String actualFailureCode = snapshotValue(snapshot, "failureCode");
+    String actualFailureMessage = snapshotValue(snapshot, "failureMessage");
+    String failureContext =
+        "publication mechanics snapshot: status="
+            + actualStatus
+            + ", failureCode="
+            + actualFailureCode
+            + ", failureMessage="
+            + actualFailureMessage;
+    assertThat(actualStatus).as(failureContext).isEqualTo(expectedStatus);
+    assertThat(actualFailureMessage).as(failureContext).isEqualTo(expectedFailureMessage);
   }
 
   private AtomicReference<Throwable> captureControlPlaneDigestFailure() {
