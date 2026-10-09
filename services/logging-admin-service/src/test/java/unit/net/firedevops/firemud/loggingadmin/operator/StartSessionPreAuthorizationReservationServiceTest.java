@@ -6,7 +6,6 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
-import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import java.io.IOException;
@@ -22,8 +21,10 @@ import net.firedevops.firemud.common.operator.StartSessionAuthorityEvidenceBundl
 import net.firedevops.firemud.common.operator.StartSessionOperatorAction;
 import net.firedevops.firemud.common.operator.StartSessionPostAuthorizationExecutionTuple;
 import net.firedevops.firemud.common.security.SessionContext;
+import net.firedevops.firemud.loggingadmin.StartSessionReservationMutationTestFixtures;
 import net.firedevops.firemud.loggingadmin.operator.StartSessionPreAuthorizationReservationService.Acquisition;
 import net.firedevops.firemud.loggingadmin.operator.StartSessionPreAuthorizationReservationService.AuthorizedSnapshot;
+import net.firedevops.firemud.loggingadmin.operator.StartSessionPreAuthorizationReservationService.ClaimPurpose;
 import net.firedevops.firemud.loggingadmin.operator.StartSessionPreAuthorizationReservationService.ClaimState;
 import net.firedevops.firemud.loggingadmin.operator.StartSessionPreAuthorizationReservationService.OwnerExecutionHandoff;
 import net.firedevops.firemud.loggingadmin.operator.StartSessionPreAuthorizationReservationService.Phase;
@@ -48,7 +49,7 @@ class StartSessionPreAuthorizationReservationServiceTest {
       mock(StartSessionPreAuthorizationReservationRepository.class);
   private final Clock clock = Clock.fixed(Instant.ofEpochMilli(NOW_EPOCH_MILLIS), ZoneOffset.UTC);
   private final StartSessionPreAuthorizationReservationService service =
-      new StartSessionPreAuthorizationReservationService(repository, clock);
+      StartSessionReservationMutationTestFixtures.forMockBackedUnitTest(repository, clock);
 
   @AfterEach
   void clearAuthenticatedContext() {
@@ -116,6 +117,50 @@ class StartSessionPreAuthorizationReservationServiceTest {
   }
 
   @Test
+  void expiredReservedClaimMayAdvanceOnceButDoesNotBecomeLookupOnly() {
+    StartSessionPreAuthorizationReservationTuple tuple = tuple("service-unit-reserved-recovery");
+    UUID reservationOwnerId = UUID.fromString("c962ffad-5621-47a2-a38a-87d5d2ce96e1");
+    Snapshot recovered = snapshot(tuple, State.RESERVED, 1L, 3L, ClaimState.ACTIVE);
+    Snapshot pending =
+        new Snapshot(
+            tuple,
+            tuple.mutationDigest(),
+            Phase.ACCOUNT_AUTHORIZATION,
+            State.AUTHORIZATION_PENDING,
+            1L,
+            3L,
+            NOW_EPOCH_MILLIS + 30_000L,
+            ClaimState.ACTIVE,
+            ClaimPurpose.RESERVED_RECOVERY_ISSUE);
+    when(repository.acquireRecoveryClaim(
+            eq(tuple), any(), eq(NOW_EPOCH_MILLIS), eq(NOW_EPOCH_MILLIS + 30_000L)))
+        .thenReturn(
+            Optional.of(
+                new StartSessionPreAuthorizationReservationRepository.RecoveryClaimResult(
+                    recovered, reservationOwnerId)));
+    when(repository.markAuthorizationPending(
+            eq(tuple),
+            eq(tuple.mutationDigest()),
+            eq(reservationOwnerId),
+            eq(1L),
+            any(),
+            eq(3L),
+            eq(NOW_EPOCH_MILLIS)))
+        .thenReturn(
+            new StartSessionPreAuthorizationReservationRepository.TransitionResult(pending, true));
+
+    RecoveryAcquisition acquisition =
+        service.acquireAuthorizationRecoveryClaim(tuple).orElseThrow();
+
+    assertThat(acquisition.claim().purpose()).isEqualTo(ClaimPurpose.RESERVED_RECOVERY_ISSUE);
+    assertThat(acquisition.claim().isRecoveryLookupOnly()).isFalse();
+    var transition = service.markAuthorizationPending(acquisition.claim());
+    assertThat(transition.mayDispatchAccountAuthorization()).isTrue();
+    assertThat(transition.snapshot().claimPurpose())
+        .isEqualTo(ClaimPurpose.RESERVED_RECOVERY_ISSUE);
+  }
+
+  @Test
   void currentClaimReadEchoesExactIssueAndRecoveryOwnershipWithoutMutation() {
     String requestId = "start-session/operator/βeta";
     UUID reservationOwnerId = UUID.fromString("3bacbd32-12e5-46d2-9504-51aab74052bd");
@@ -125,18 +170,44 @@ class StartSessionPreAuthorizationReservationServiceTest {
         snapshot(tuple, State.AUTHORIZATION_PENDING, 1L, 1L, ClaimState.ACTIVE);
     Snapshot recoverySnapshot =
         snapshot(tuple, State.AUTHORIZATION_PENDING, 1L, 3L, ClaimState.ACTIVE);
+    Snapshot authorizedRecoverySnapshot =
+        snapshot(tuple, State.AUTHORIZED, 1L, 5L, ClaimState.ACTIVE);
     when(repository.readCurrentClaim(
-            tuple, reservationOwnerId, 1L, reservationOwnerId, 1L, NOW_EPOCH_MILLIS))
+            tuple,
+            reservationOwnerId,
+            1L,
+            reservationOwnerId,
+            1L,
+            StartSessionPreAuthorizationReservationService.ReadPurpose.ISSUE,
+            NOW_EPOCH_MILLIS))
         .thenReturn(
             Optional.of(
                 new StartSessionPreAuthorizationReservationRepository.CurrentClaimResult(
                     issueSnapshot, reservationOwnerId, reservationOwnerId)));
     when(repository.readCurrentClaim(
-            tuple, reservationOwnerId, 1L, recoveryOwnerId, 3L, NOW_EPOCH_MILLIS))
+            tuple,
+            reservationOwnerId,
+            1L,
+            recoveryOwnerId,
+            3L,
+            StartSessionPreAuthorizationReservationService.ReadPurpose.RECOVER,
+            NOW_EPOCH_MILLIS))
         .thenReturn(
             Optional.of(
                 new StartSessionPreAuthorizationReservationRepository.CurrentClaimResult(
                     recoverySnapshot, reservationOwnerId, recoveryOwnerId)));
+    when(repository.readCurrentClaim(
+            tuple,
+            reservationOwnerId,
+            1L,
+            recoveryOwnerId,
+            5L,
+            StartSessionPreAuthorizationReservationService.ReadPurpose.RECOVER,
+            NOW_EPOCH_MILLIS))
+        .thenReturn(
+            Optional.of(
+                new StartSessionPreAuthorizationReservationRepository.CurrentClaimResult(
+                    authorizedRecoverySnapshot, reservationOwnerId, recoveryOwnerId)));
 
     var issue =
         service
@@ -160,6 +231,17 @@ class StartSessionPreAuthorizationReservationServiceTest {
                 3L,
                 StartSessionPreAuthorizationReservationService.ReadPurpose.RECOVER)
             .orElseThrow();
+    var authorizedRecovery =
+        service
+            .readCurrentClaimEvidence(
+                requestId,
+                tuple,
+                reservationOwnerId,
+                1L,
+                recoveryOwnerId,
+                5L,
+                StartSessionPreAuthorizationReservationService.ReadPurpose.RECOVER)
+            .orElseThrow();
 
     assertThat(issue.snapshot().tuple().canonicalJson()).isEqualTo(tuple.canonicalJson());
     assertThat(issue.snapshot().mutationDigest()).isEqualTo(tuple.mutationDigest());
@@ -175,10 +257,27 @@ class StartSessionPreAuthorizationReservationServiceTest {
     assertThat(recovery.snapshot().claimFence()).isEqualTo(3L);
     assertThat(recovery.purpose())
         .isEqualTo(StartSessionPreAuthorizationReservationService.ReadPurpose.RECOVER);
+    assertThat(authorizedRecovery.snapshot().state()).isEqualTo(State.AUTHORIZED);
+    assertThat(authorizedRecovery.snapshot().claimPurpose())
+        .isEqualTo(ClaimPurpose.AUTHORIZED_RESPONSE_RECOVERY);
     verify(repository)
-        .readCurrentClaim(tuple, reservationOwnerId, 1L, reservationOwnerId, 1L, NOW_EPOCH_MILLIS);
+        .readCurrentClaim(
+            tuple,
+            reservationOwnerId,
+            1L,
+            reservationOwnerId,
+            1L,
+            StartSessionPreAuthorizationReservationService.ReadPurpose.ISSUE,
+            NOW_EPOCH_MILLIS);
     verify(repository)
-        .readCurrentClaim(tuple, reservationOwnerId, 1L, recoveryOwnerId, 3L, NOW_EPOCH_MILLIS);
+        .readCurrentClaim(
+            tuple,
+            reservationOwnerId,
+            1L,
+            recoveryOwnerId,
+            3L,
+            StartSessionPreAuthorizationReservationService.ReadPurpose.RECOVER,
+            NOW_EPOCH_MILLIS);
   }
 
   @Test
@@ -187,6 +286,20 @@ class StartSessionPreAuthorizationReservationServiceTest {
     UUID reservationOwnerId = UUID.fromString("871ec253-4fe6-4e9f-9584-c74f9795f78a");
     UUID recoveryOwnerId = UUID.fromString("ec1e7980-e05a-4200-bde8-66cd314b0930");
     StartSessionPreAuthorizationReservationTuple tuple = tuple(requestId);
+    Snapshot lookupOnlyRecovery =
+        snapshot(tuple, State.AUTHORIZATION_PENDING, 1L, 3L, ClaimState.ACTIVE);
+    when(repository.readCurrentClaim(
+            tuple,
+            reservationOwnerId,
+            1L,
+            recoveryOwnerId,
+            3L,
+            StartSessionPreAuthorizationReservationService.ReadPurpose.ISSUE,
+            NOW_EPOCH_MILLIS))
+        .thenReturn(
+            Optional.of(
+                new StartSessionPreAuthorizationReservationRepository.CurrentClaimResult(
+                    lookupOnlyRecovery, reservationOwnerId, recoveryOwnerId)));
 
     assertThatThrownBy(
             () ->
@@ -212,7 +325,15 @@ class StartSessionPreAuthorizationReservationServiceTest {
                     StartSessionPreAuthorizationReservationService.ReadPurpose.RECOVER))
         .isInstanceOf(
             StartSessionPreAuthorizationReservationService.StaleReservationClaimException.class);
-    verifyNoInteractions(repository);
+    verify(repository)
+        .readCurrentClaim(
+            tuple,
+            reservationOwnerId,
+            1L,
+            recoveryOwnerId,
+            3L,
+            StartSessionPreAuthorizationReservationService.ReadPurpose.ISSUE,
+            NOW_EPOCH_MILLIS);
 
     Snapshot expired =
         new Snapshot(
@@ -223,9 +344,16 @@ class StartSessionPreAuthorizationReservationServiceTest {
             1L,
             1L,
             NOW_EPOCH_MILLIS,
-            ClaimState.ACTIVE);
+            ClaimState.ACTIVE,
+            ClaimPurpose.ORIGINAL);
     when(repository.readCurrentClaim(
-            tuple, reservationOwnerId, 1L, reservationOwnerId, 1L, NOW_EPOCH_MILLIS))
+            tuple,
+            reservationOwnerId,
+            1L,
+            reservationOwnerId,
+            1L,
+            StartSessionPreAuthorizationReservationService.ReadPurpose.ISSUE,
+            NOW_EPOCH_MILLIS))
         .thenReturn(
             Optional.of(
                 new StartSessionPreAuthorizationReservationRepository.CurrentClaimResult(
@@ -297,7 +425,8 @@ class StartSessionPreAuthorizationReservationServiceTest {
                 1L,
                 1L,
                 NOW_EPOCH_MILLIS + 30_000L,
-                ClaimState.ACTIVE),
+                ClaimState.ACTIVE,
+                ClaimPurpose.ORIGINAL),
             postTuple,
             owner,
             owner,
@@ -388,7 +517,16 @@ class StartSessionPreAuthorizationReservationServiceTest {
         reservationFence,
         currentFence,
         NOW_EPOCH_MILLIS + 30_000L,
-        claimState);
+        claimState,
+        claimState == ClaimState.EXPIRED
+            ? null
+            : currentFence == reservationFence
+                ? ClaimPurpose.ORIGINAL
+                : state == State.RESERVED
+                    ? ClaimPurpose.RESERVED_RECOVERY_ISSUE
+                    : state == State.AUTHORIZATION_PENDING
+                        ? ClaimPurpose.AUTHORIZATION_RECOVERY
+                        : ClaimPurpose.AUTHORIZED_RESPONSE_RECOVERY);
   }
 
   private static StartSessionPreAuthorizationReservationTuple tuple(String requestId) {

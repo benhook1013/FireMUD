@@ -19,17 +19,26 @@ public final class StartSessionPreAuthorizationReservationService {
 
   private final StartSessionPreAuthorizationReservationRepository repository;
   private final Clock clock;
+  private final MutationCapability mutationCapability;
 
   @Autowired
   public StartSessionPreAuthorizationReservationService(
       StartSessionPreAuthorizationReservationRepository repository) {
-    this(repository, Clock.systemUTC());
+    this(repository, Clock.systemUTC(), null);
   }
 
   StartSessionPreAuthorizationReservationService(
       StartSessionPreAuthorizationReservationRepository repository, Clock clock) {
+    this(repository, clock, null);
+  }
+
+  private StartSessionPreAuthorizationReservationService(
+      StartSessionPreAuthorizationReservationRepository repository,
+      Clock clock,
+      MutationCapability mutationCapability) {
     this.repository = Objects.requireNonNull(repository, "repository is required");
     this.clock = Objects.requireNonNull(clock, "clock is required");
+    this.mutationCapability = mutationCapability;
   }
 
   /**
@@ -37,6 +46,7 @@ public final class StartSessionPreAuthorizationReservationService {
    * Only the first caller receives a claim capability; an exact duplicate cannot dispatch work.
    */
   public Acquisition acquire(StartSessionPreAuthorizationReservationTuple tuple) {
+    requireMutationCapability();
     Objects.requireNonNull(tuple, "tuple is required");
     if (!tuple.isAuthorityDerived()) {
       throw new IllegalArgumentException(
@@ -55,7 +65,7 @@ public final class StartSessionPreAuthorizationReservationService {
                 ownerId,
                 result.snapshot().reservationClaimFence(),
                 result.snapshot().claimFence(),
-                ClaimKind.ORIGINAL)
+                ClaimPurpose.ORIGINAL)
             : null;
     return new Acquisition(result.snapshot(), claim);
   }
@@ -72,8 +82,9 @@ public final class StartSessionPreAuthorizationReservationService {
   }
 
   /**
-   * Reads one exact active AUTHORIZATION_PENDING claim for Account. This is a read snapshot only;
-   * it does not renew, transfer, or otherwise mutate the reservation.
+   * Reads one exact active Account evidence claim. Issue evidence is available only after the
+   * reservation is pending and only for an original or reserved-state recovery claim. Recovery
+   * evidence is read-only and may inspect the pending or already-authorized original response.
    */
   public Optional<CurrentClaimEvidence> readCurrentClaimEvidence(
       String controlPlaneRequestId,
@@ -100,9 +111,7 @@ public final class StartSessionPreAuthorizationReservationService {
         || currentClaimFence <= 0L) {
       throw new IllegalArgumentException("exact reservation claim identity is required");
     }
-    if (purpose == ReadPurpose.ISSUE
-        && (!reservationOwnerId.equals(currentClaimOwnerId)
-            || reservationClaimFence != currentClaimFence)) {
+    if (purpose == ReadPurpose.ISSUE && currentClaimFence < reservationClaimFence) {
       throw new StaleReservationClaimException(tuple.controlPlaneRequestId());
     }
     if (purpose == ReadPurpose.RECOVER
@@ -118,6 +127,7 @@ public final class StartSessionPreAuthorizationReservationService {
             reservationClaimFence,
             currentClaimOwnerId,
             currentClaimFence,
+            purpose,
             epochMillis(clock.instant()));
     if (read.isEmpty()) {
       return Optional.empty();
@@ -126,8 +136,13 @@ public final class StartSessionPreAuthorizationReservationService {
         read.orElseThrow();
     long observedAtEpochMillis = epochMillis(clock.instant());
     Snapshot snapshot = result.snapshot();
+    boolean allowedState =
+        purpose == ReadPurpose.ISSUE
+            ? snapshot.state() == State.AUTHORIZATION_PENDING
+            : snapshot.state() == State.AUTHORIZATION_PENDING
+                || snapshot.state() == State.AUTHORIZED;
     if (snapshot.phase() != Phase.ACCOUNT_AUTHORIZATION
-        || snapshot.state() != State.AUTHORIZATION_PENDING
+        || !allowedState
         || snapshot.claimState() != ClaimState.ACTIVE
         || snapshot.reservationClaimFence() != reservationClaimFence
         || snapshot.claimFence() != currentClaimFence
@@ -135,6 +150,7 @@ public final class StartSessionPreAuthorizationReservationService {
         || !snapshot.mutationDigest().equals(tuple.mutationDigest())
         || !result.reservationOwnerId().equals(reservationOwnerId)
         || !result.currentClaimOwnerId().equals(currentClaimOwnerId)
+        || !claimPurposeAllowsRead(snapshot, purpose, reservationOwnerId, currentClaimOwnerId)
         || snapshot.claimExpiresAtEpochMillis() <= observedAtEpochMillis) {
       throw new StaleReservationClaimException(tuple.controlPlaneRequestId());
     }
@@ -153,14 +169,17 @@ public final class StartSessionPreAuthorizationReservationService {
    * the pending state again never authorizes another issuance call.
    */
   public PendingTransition markAuthorizationPending(ClaimHandle claim) {
+    requireMutationCapability();
     requireClaim(claim);
-    if (claim.isRecoveryLookupOnly()) {
+    if (!isIssueClaimPurpose(claim.purpose)) {
       throw new StaleReservationClaimException(claim.controlPlaneRequestId());
     }
     StartSessionPreAuthorizationReservationRepository.TransitionResult result =
         repository.markAuthorizationPending(
             claim.tuple,
             claim.mutationDigest,
+            claim.reservationOwnerId,
+            claim.reservationFence,
             claim.ownerId,
             claim.fence,
             epochMillis(clock.instant()));
@@ -169,6 +188,7 @@ public final class StartSessionPreAuthorizationReservationService {
 
   /** Renew only the exact current, active claim before its expiry. */
   public Snapshot renew(ClaimHandle claim, Phase expectedPhase, State expectedState) {
+    requireMutationCapability();
     requireClaim(claim);
     Instant now = clock.instant();
     return repository.renew(
@@ -187,6 +207,7 @@ public final class StartSessionPreAuthorizationReservationService {
    * unchanged; it is not evidence that Account authorization did not happen.
    */
   public Snapshot expireClaim(ClaimHandle claim, Phase expectedPhase, State expectedState) {
+    requireMutationCapability();
     requireClaim(claim);
     return repository.expireClaim(
         claim.tuple,
@@ -199,13 +220,14 @@ public final class StartSessionPreAuthorizationReservationService {
   }
 
   /**
-   * Acquire one fresh recovery claim only for an expired AUTHORIZATION_PENDING reservation. It
-   * cannot initiate issuance. If the exact original Account response is recovered, the current
-   * claim may durably enrich this same row and then record its one owner handoff. Original
-   * reservation owner/fence evidence remains distinct from the fresh recovery claim.
+   * Acquire one fresh state-scoped recovery claim after expiry. A RESERVED claim can only finish
+   * the first pending transition and issue once; a pending claim can only recover Account's
+   * original response; an authorized claim can only look up that same response and record the
+   * original bounded owner handoff. Original reservation owner/fence evidence remains immutable.
    */
   public Optional<RecoveryAcquisition> acquireAuthorizationRecoveryClaim(
       StartSessionPreAuthorizationReservationTuple tuple) {
+    requireMutationCapability();
     Objects.requireNonNull(tuple, "tuple is required");
     Instant now = clock.instant();
     UUID recoveryOwnerId = UUID.randomUUID();
@@ -223,7 +245,7 @@ public final class StartSessionPreAuthorizationReservationService {
                     recoveryOwnerId,
                     result.snapshot().reservationClaimFence(),
                     result.snapshot().claimFence(),
-                    ClaimKind.RECOVERY_LOOKUP_ONLY)));
+                    result.snapshot().claimPurpose())));
   }
 
   /**
@@ -235,6 +257,7 @@ public final class StartSessionPreAuthorizationReservationService {
    */
   public AuthorizationCompletion completeAuthorization(
       ClaimHandle claim, StartSessionPostAuthorizationExecutionTuple postAuthorizationTuple) {
+    requireMutationCapability();
     requirePostAuthorizationBinding(claim, postAuthorizationTuple);
     long now = epochMillis(clock.instant());
     if (StartSessionAuthorityEvidenceBundle.decode(
@@ -265,6 +288,7 @@ public final class StartSessionPreAuthorizationReservationService {
       ClaimHandle claim,
       StartSessionPostAuthorizationExecutionTuple postAuthorizationTuple,
       OwnerExecutionHandoff handoff) {
+    requireMutationCapability();
     requirePostAuthorizationBinding(claim, postAuthorizationTuple);
     Objects.requireNonNull(handoff, "owner execution handoff is required");
     long now = epochMillis(clock.instant());
@@ -348,9 +372,11 @@ public final class StartSessionPreAuthorizationReservationService {
     RECOVER
   }
 
-  private enum ClaimKind {
+  public enum ClaimPurpose {
     ORIGINAL,
-    RECOVERY_LOOKUP_ONLY
+    RESERVED_RECOVERY_ISSUE,
+    AUTHORIZATION_RECOVERY,
+    AUTHORIZED_RESPONSE_RECOVERY
   }
 
   public record Snapshot(
@@ -361,7 +387,8 @@ public final class StartSessionPreAuthorizationReservationService {
       long reservationClaimFence,
       long claimFence,
       long claimExpiresAtEpochMillis,
-      ClaimState claimState) {
+      ClaimState claimState,
+      ClaimPurpose claimPurpose) {
     public Snapshot {
       Objects.requireNonNull(tuple, "tuple is required");
       Objects.requireNonNull(mutationDigest, "mutationDigest is required");
@@ -380,6 +407,16 @@ public final class StartSessionPreAuthorizationReservationService {
       if ((phase == Phase.ACCOUNT_AUTHORIZATION && state == State.OWNER_EXECUTION_PENDING)
           || (phase == Phase.OWNER_EXECUTION && state != State.OWNER_EXECUTION_PENDING)) {
         throw new IllegalArgumentException("reservation phase and state are inconsistent");
+      }
+      if (claimState == ClaimState.EXPIRED
+          ? claimPurpose != null
+          : !purposeAllowedForState(state, claimPurpose)) {
+        throw new IllegalArgumentException("reservation claim purpose and state are inconsistent");
+      }
+      if (claimState == ClaimState.ACTIVE
+          && ((claimPurpose == ClaimPurpose.ORIGINAL && claimFence != reservationClaimFence)
+              || (claimPurpose != ClaimPurpose.ORIGINAL && claimFence <= reservationClaimFence))) {
+        throw new IllegalArgumentException("reservation claim purpose and fence are inconsistent");
       }
     }
   }
@@ -453,6 +490,60 @@ public final class StartSessionPreAuthorizationReservationService {
     }
   }
 
+  private void requireMutationCapability() {
+    if (mutationCapability == null) {
+      throw new UnsupportedOperationException(
+          "StartSession reservation mutations are disabled for production construction");
+    }
+  }
+
+  private static final class MutationCapability {
+    private MutationCapability() {}
+  }
+
+  private static boolean purposeAllowedForState(State state, ClaimPurpose purpose) {
+    if (purpose == null) {
+      return false;
+    }
+    return switch (state) {
+      case RESERVED ->
+          purpose == ClaimPurpose.ORIGINAL || purpose == ClaimPurpose.RESERVED_RECOVERY_ISSUE;
+      case AUTHORIZATION_PENDING ->
+          purpose == ClaimPurpose.ORIGINAL
+              || purpose == ClaimPurpose.RESERVED_RECOVERY_ISSUE
+              || purpose == ClaimPurpose.AUTHORIZATION_RECOVERY;
+      case AUTHORIZED, OWNER_EXECUTION_PENDING ->
+          purpose == ClaimPurpose.ORIGINAL
+              || purpose == ClaimPurpose.RESERVED_RECOVERY_ISSUE
+              || purpose == ClaimPurpose.AUTHORIZATION_RECOVERY
+              || purpose == ClaimPurpose.AUTHORIZED_RESPONSE_RECOVERY;
+    };
+  }
+
+  private static boolean isIssueClaimPurpose(ClaimPurpose purpose) {
+    return purpose == ClaimPurpose.ORIGINAL || purpose == ClaimPurpose.RESERVED_RECOVERY_ISSUE;
+  }
+
+  private static boolean claimPurposeAllowsRead(
+      Snapshot snapshot, ReadPurpose purpose, UUID reservationOwnerId, UUID currentClaimOwnerId) {
+    if (purpose == ReadPurpose.ISSUE) {
+      return snapshot.state() == State.AUTHORIZATION_PENDING
+          && ((snapshot.claimPurpose() == ClaimPurpose.ORIGINAL
+                  && reservationOwnerId.equals(currentClaimOwnerId)
+                  && snapshot.claimFence() == snapshot.reservationClaimFence())
+              || (snapshot.claimPurpose() == ClaimPurpose.RESERVED_RECOVERY_ISSUE
+                  && !reservationOwnerId.equals(currentClaimOwnerId)
+                  && snapshot.claimFence() > snapshot.reservationClaimFence()));
+    }
+    return !reservationOwnerId.equals(currentClaimOwnerId)
+        && snapshot.claimFence() > snapshot.reservationClaimFence()
+        && (snapshot.state() == State.AUTHORIZATION_PENDING
+                && snapshot.claimPurpose() == ClaimPurpose.AUTHORIZATION_RECOVERY
+            || snapshot.state() == State.AUTHORIZED
+                && (snapshot.claimPurpose() == ClaimPurpose.AUTHORIZATION_RECOVERY
+                    || snapshot.claimPurpose() == ClaimPurpose.AUTHORIZED_RESPONSE_RECOVERY));
+  }
+
   /** Opaque capability returned only to the caller that acquired a new claim. */
   public static final class ClaimHandle {
     private final StartSessionPreAuthorizationReservationTuple tuple;
@@ -461,7 +552,7 @@ public final class StartSessionPreAuthorizationReservationService {
     private final UUID ownerId;
     private final long reservationFence;
     private final long fence;
-    private final ClaimKind kind;
+    private final ClaimPurpose purpose;
 
     private ClaimHandle(
         StartSessionPreAuthorizationReservationTuple tuple,
@@ -470,7 +561,7 @@ public final class StartSessionPreAuthorizationReservationService {
         UUID ownerId,
         long reservationFence,
         long fence,
-        ClaimKind kind) {
+        ClaimPurpose purpose) {
       this.tuple = Objects.requireNonNull(tuple, "tuple is required");
       this.mutationDigest = Objects.requireNonNull(mutationDigest, "mutationDigest is required");
       this.reservationOwnerId =
@@ -478,11 +569,15 @@ public final class StartSessionPreAuthorizationReservationService {
       this.ownerId = Objects.requireNonNull(ownerId, "ownerId is required");
       this.reservationFence = reservationFence;
       this.fence = fence;
-      this.kind = Objects.requireNonNull(kind, "claim kind is required");
+      this.purpose = Objects.requireNonNull(purpose, "claim purpose is required");
       if (reservationOwnerId.equals(new UUID(0L, 0L))
           || ownerId.equals(new UUID(0L, 0L))
           || reservationFence <= 0
-          || fence < reservationFence) {
+          || fence < reservationFence
+          || (purpose == ClaimPurpose.ORIGINAL
+              && (!reservationOwnerId.equals(ownerId) || fence != reservationFence))
+          || (purpose != ClaimPurpose.ORIGINAL
+              && (reservationOwnerId.equals(ownerId) || fence <= reservationFence))) {
         throw new IllegalArgumentException("reservation claim fences are invalid");
       }
     }
@@ -509,7 +604,12 @@ public final class StartSessionPreAuthorizationReservationService {
     }
 
     public boolean isRecoveryLookupOnly() {
-      return kind == ClaimKind.RECOVERY_LOOKUP_ONLY;
+      return purpose == ClaimPurpose.AUTHORIZATION_RECOVERY
+          || purpose == ClaimPurpose.AUTHORIZED_RESPONSE_RECOVERY;
+    }
+
+    public ClaimPurpose purpose() {
+      return purpose;
     }
   }
 
@@ -517,7 +617,8 @@ public final class StartSessionPreAuthorizationReservationService {
     public Acquisition {
       Objects.requireNonNull(snapshot, "snapshot is required");
       if (claim != null
-          && (claim.kind != ClaimKind.ORIGINAL
+          && (claim.purpose != ClaimPurpose.ORIGINAL
+              || snapshot.claimPurpose() != ClaimPurpose.ORIGINAL
               || snapshot.phase() != Phase.ACCOUNT_AUTHORIZATION
               || snapshot.state() != State.RESERVED
               || snapshot.claimState() != ClaimState.ACTIVE
@@ -559,14 +660,14 @@ public final class StartSessionPreAuthorizationReservationService {
       Objects.requireNonNull(snapshot, "snapshot is required");
       Objects.requireNonNull(claim, "claim is required");
       if (snapshot.phase() != Phase.ACCOUNT_AUTHORIZATION
-          || snapshot.state() != State.AUTHORIZATION_PENDING
+          || snapshot.state() == State.OWNER_EXECUTION_PENDING
           || snapshot.claimState() != ClaimState.ACTIVE
-          || !claim.isRecoveryLookupOnly()
+          || claim.purpose == ClaimPurpose.ORIGINAL
+          || snapshot.claimPurpose() != claim.purpose
           || snapshot.claimFence() != claim.fence
           || !snapshot.tuple().canonicalJson().equals(claim.tuple.canonicalJson())
           || !snapshot.mutationDigest().equals(claim.mutationDigest)) {
-        throw new IllegalArgumentException(
-            "recovery claim is not read-only authorization recovery");
+        throw new IllegalArgumentException("recovery claim is not a valid state-scoped claim");
       }
     }
   }

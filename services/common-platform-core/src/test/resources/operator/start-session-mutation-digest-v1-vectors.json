@@ -132,6 +132,18 @@
       "name": "nil-owner-account-id",
       "accepted": false,
       "input": "{\"actionFamilySchemaId\":\"firemud.game-session.start-session\",\"actionFamilySchemaVersion\":\"1\",\"scope\":{\"tenantId\":\"22222222-2222-4222-8222-222222222222\",\"targetNamespace\":\"firemud\"},\"target\":{\"gameTemplateId\":\"42\",\"ownerAccountId\":\"00000000-0000-0000-0000-000000000000\"},\"mutation\":{},\"auditReason\":\"scheduled launch\"}"
+    },
+    {
+      "name": "audit-reason-nel-blank",
+      "accepted": false,
+      "input": "{\"actionFamilySchemaId\":\"firemud.game-session.start-session\",\"actionFamilySchemaVersion\":\"1\",\"scope\":{\"tenantId\":\"22222222-2222-4222-8222-222222222222\",\"targetNamespace\":\"firemud\"},\"target\":{\"gameTemplateId\":\"42\",\"ownerAccountId\":\"33333333-3333-4333-8333-333333333333\"},\"mutation\":{\"clientIp\":\"192.0.2.1\"},\"auditReason\":\"\\u0085\"}"
+    },
+    {
+      "name": "audit-reason-zero-width-space",
+      "accepted": true,
+      "input": "{\"actionFamilySchemaId\":\"firemud.game-session.start-session\",\"actionFamilySchemaVersion\":\"1\",\"scope\":{\"tenantId\":\"22222222-2222-4222-8222-222222222222\",\"targetNamespace\":\"firemud\"},\"target\":{\"gameTemplateId\":\"42\",\"ownerAccountId\":\"33333333-3333-4333-8333-333333333333\"},\"mutation\":{\"clientIp\":\"192.0.2.1\"},\"auditReason\":\"\\u200b\"}",
+      "preimageHex": "31373a6d75746174696f6e4469676573742f763132303a616374696f6e46616d696c79536368656d614964363a737472696e673133343a666972656d75642e67616d652d73657373696f6e2e73746172742d73657373696f6e32353a616374696f6e46616d696c79536368656d6156657273696f6e363a737472696e6731313a31353a73636f7065363a6f626a6563743139373a313a32383a74656e616e744964363a737472696e673133363a32323232323232322d323232322d343232322d383232322d32323232323232323232323231353a7461726765744e616d657370616365363a737472696e6731373a666972656d7564363a746172676574363a6f626a6563743139383a313a3231343a67616d6554656d706c6174654964363a737472696e6731323a343231343a6f776e65724163636f756e744964363a737472696e673133363a33333333333333332d333333332d343333332d383333332d33333333333333333333333331353a657870656374656456657273696f6e363a616273656e7430303a383a6d75746174696f6e363a6f626a6563743133333a313a31383a636c69656e744970363a737472696e6731393a3139322e302e322e3131313a6175646974526561736f6e363a737472696e6731333ae2808b",
+      "digest": "5c0ceb368d52ff6c9a36b24a2a88883ec7620611a9a6a6a9bbfbaabbadce9f5d"
     }
   ],
   "grammarVectors": [

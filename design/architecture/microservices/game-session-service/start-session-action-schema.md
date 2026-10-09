@@ -2,7 +2,7 @@
 
 ## Implementation status
 
-The shared StartSession action, mutation-digest codec, pre-authorization reservation tuple, post-authorization execution tuple, and Account authority-evidence bundle are present as common-platform-core value and codec contracts with focused Java tests and shared Java/Python digest vectors. This slice establishes structural parsing, canonical encoding, and tuple-binding checks only; it does not establish current Account authority. Account, Logging & Admin, Game Session, and Game Design runtime wiring, reservation persistence, owner execution, external routing, and end-to-end launch proof are outside this slice. No external route or runtime activation is enabled by this boundary.
+The shared StartSession action, mutation-digest codec, pre-authorization reservation tuple, post-authorization execution tuple, and Account authority-evidence bundle are present as common-platform-core value and codec contracts with focused Java tests and shared Java/Python digest vectors. Logging & Admin also implements durable StartSession pre-authorization reservation persistence and the read-only `ReadCurrentClaimEvidence` transport for Account claim-evidence handoff. These implementations do not establish current Account authority. Account issuance and redemption are not wired; Game Session and Game Design runtime registration and owner execution integration are not implemented. External routing and end-to-end launch proof remain unproved. No external route or runtime activation is enabled by this boundary.
 
 ## Normative contract
 
@@ -24,6 +24,8 @@ The request is a JSON object whose declared member order is `actionFamilySchemaI
 | `mutation` | Object with the optional member `clientIp`. |
 | `mutation.clientIp` | Absent or a string whose NFC-normalized UTF-8 encoding is at most 128 bytes. Empty string is distinct from absence. `null` and all other types are rejected. No address parsing or ownership claim is implied. |
 | `auditReason` | Required string, nonblank after NFC normalization, at most 1,000 normalized UTF-8 bytes. |
+
+For the `auditReason` nonblank constraint, the shared blank codepoint set is exactly U+0009–U+000D, U+0020, U+0085, U+00A0, U+1680, U+2000–U+200A, U+2028, U+2029, U+202F, U+205F, and U+3000. Implementations must use this explicit set rather than a language-provided whitespace predicate. Other codepoints, including U+200B ZERO WIDTH SPACE, do not make an audit reason blank.
 
 JSON object members must appear in the declared order. Duplicate raw keys, keys colliding after NFC normalization, unknown or missing members, wrong JSON types, malformed Unicode, invalid UTF-8, and trailing tokens are rejected before a digest is returned. Object and array values use the recursive typed grammar from [ADR 0047, Bounded Owner Delegation](../../decisions/adr-0047-logging-admin-as-external-operator-write-ingress.md#bounded-owner-delegation); no generic JSON canonicalization is a substitute.
 
