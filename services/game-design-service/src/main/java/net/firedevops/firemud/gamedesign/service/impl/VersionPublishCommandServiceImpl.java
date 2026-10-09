@@ -546,7 +546,7 @@ public class VersionPublishCommandServiceImpl {
     }
     VersionDto versionDto = versionMapper.toDto(readback.version());
     PublishedReleaseBundleContract.requireSupportedSchemaForPublicationRead(readback.bundle());
-    if (PublishedReleaseBundleContract.SELECTOR_ATTESTATION_SCHEMA_VERSION.equals(
+    if (PublishedReleaseBundleContract.isSelectorSchema(
         readback.bundle().attestationSchemaVersion())) {
       publishGateService.assertSelectedGatePassed(
           versionDto, readback.bundle().participantDigests());
@@ -818,7 +818,7 @@ public class VersionPublishCommandServiceImpl {
       return PublicationReadback.partial();
     }
     try {
-      PublishedReleaseBundleContract.requireSupportedSchemaForRead(bundle);
+      PublishedReleaseBundleContract.requireSupportedSchemaForPublicationRead(bundle);
       requireExactBundleEvidence(request, attempt, version.get(), bundle);
       requireExactArtifactEvidence(request, attempt, bundle, artifact);
     } catch (RuntimeException ex) {

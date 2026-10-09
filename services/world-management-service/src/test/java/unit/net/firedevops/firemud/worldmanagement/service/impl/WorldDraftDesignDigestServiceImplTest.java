@@ -16,6 +16,10 @@ import net.firedevops.firemud.worldmanagement.repository.RoomExitRepository;
 import net.firedevops.firemud.worldmanagement.repository.RoomRepository;
 import net.firedevops.firemud.worldmanagement.repository.WorldEntitySpawnBindingRepository;
 import net.firedevops.firemud.worldmanagement.repository.ZoneRepository;
+import net.firedevops.firemud.worldmanagement.tenant.WorldDraftTopologyInputGraph;
+import net.firedevops.firemud.worldmanagement.tenant.WorldDraftTopologyInputGraph.InboundSourceClosureDeclaration;
+import net.firedevops.firemud.worldmanagement.tenant.WorldDraftTopologyInputGraph.InboundSourceFamilyCount;
+import net.firedevops.firemud.worldmanagement.v1.WorldInboundSourceFamily;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
 import tools.jackson.databind.ObjectMapper;
@@ -126,6 +130,45 @@ class WorldDraftDesignDigestServiceImplTest {
   }
 
   @Test
+  void selectedDigestSchema4BindsTheExactExplicitInboundClosureWithoutChangingGenericSchema3()
+      throws Exception {
+    var service = emptyDigestService();
+
+    var generic = service.getDraftDesignDigest("1", "7");
+    var selected = service.getSelectedDraftDesignDigest("1", "7", emptyInboundClosure());
+
+    assertEquals(3, generic.digestSchemaVersion());
+    assertEquals(4, selected.digestSchemaVersion());
+    assertEquals(selectedEmptyDigestVector(), selected.contentDigest());
+    org.junit.jupiter.api.Assertions.assertNotEquals(
+        generic.contentDigest(), selected.contentDigest());
+  }
+
+  @Test
+  void selectedDigestRejectsNonemptyUnknownAndUnorderedInboundClosure() {
+    var service = emptyDigestService();
+    var empty = emptyInboundClosure();
+    var families = new java.util.ArrayList<>(empty.familyCounts());
+    var nonempty = new java.util.ArrayList<>(families);
+    nonempty.set(0, new InboundSourceFamilyCount(nonempty.getFirst().family(), 1));
+    var unknown = new java.util.ArrayList<>(families);
+    unknown.set(
+        0,
+        new InboundSourceFamilyCount(
+            WorldInboundSourceFamily.WORLD_INBOUND_SOURCE_FAMILY_UNSPECIFIED, 0));
+    var unordered = new java.util.ArrayList<>(families);
+    java.util.Collections.swap(unordered, 0, 1);
+
+    for (var counts : List.of(nonempty, unknown, unordered)) {
+      assertThrows(
+          IllegalArgumentException.class,
+          () ->
+              service.getSelectedDraftDesignDigest(
+                  "1", "7", new InboundSourceClosureDeclaration(1, counts)));
+    }
+  }
+
+  @Test
   void canonicalEntityReferenceMatchesExactSortedSerializationVector() throws Exception {
     WorldEntitySpawnBinding binding = binding();
     canonicalReference(binding);
@@ -206,6 +249,54 @@ class WorldDraftDesignDigestServiceImplTest {
 
   private String digest(WorldEntitySpawnBinding binding) {
     return digest(binding, new ObjectMapper());
+  }
+
+  private WorldDraftDesignDigestServiceImpl emptyDigestService() {
+    var regions = Mockito.mock(RegionRepository.class);
+    var zones = Mockito.mock(ZoneRepository.class);
+    var rooms = Mockito.mock(RoomRepository.class);
+    var exits = Mockito.mock(RoomExitRepository.class);
+    var rules = Mockito.mock(GenerationRuleRepository.class);
+    var spawns = Mockito.mock(WorldEntitySpawnBindingRepository.class);
+    Mockito.when(regions.findByTenantIdAndVersionIdOrderByIdAsc(1L, 7L)).thenReturn(List.of());
+    Mockito.when(zones.findByTenantIdAndVersionIdOrderByIdAsc(1L, 7L)).thenReturn(List.of());
+    Mockito.when(rooms.findByTenantIdAndVersionIdOrderByIdAsc(1L, 7L)).thenReturn(List.of());
+    Mockito.when(exits.findByTenantIdAndVersionIdOrderByIdAsc(1L, 7L)).thenReturn(List.of());
+    Mockito.when(rules.findByTenantIdAndVersionIdOrderByIdAsc(1L, 7L)).thenReturn(List.of());
+    Mockito.when(spawns.findByTenantIdAndVersionIdOrderByIdAsc(1L, 7L)).thenReturn(List.of());
+    return new WorldDraftDesignDigestServiceImpl(
+        regions, zones, rooms, exits, rules, spawns, new ObjectMapper());
+  }
+
+  private InboundSourceClosureDeclaration emptyInboundClosure() {
+    return new InboundSourceClosureDeclaration(
+        1,
+        WorldDraftTopologyInputGraph.INBOUND_SOURCE_FAMILY_ORDER.stream()
+            .map(family -> new InboundSourceFamilyCount(family, 0))
+            .toList());
+  }
+
+  private String digestJson(String json) throws Exception {
+    return HexFormat.of()
+        .formatHex(
+            MessageDigest.getInstance("SHA-256").digest(json.getBytes(StandardCharsets.UTF_8)));
+  }
+
+  private String selectedEmptyDigestVector() throws Exception {
+    String familyCounts =
+        "{\"family\":\"WORLD_INBOUND_SOURCE_FAMILY_LOOT_REFERENCE_ROOT\",\"count\":0},"
+            + "{\"family\":\"WORLD_INBOUND_SOURCE_FAMILY_LOOT_REFERENCE_ATTACHMENT\",\"count\":0},"
+            + "{\"family\":\"WORLD_INBOUND_SOURCE_FAMILY_BEHAVIOR_SELECTION\",\"count\":0},"
+            + "{\"family\":\"WORLD_INBOUND_SOURCE_FAMILY_BEHAVIOR_BINDING\",\"count\":0},"
+            + "{\"family\":\"WORLD_INBOUND_SOURCE_FAMILY_AUTOMATION_HOOK\",\"count\":0},"
+            + "{\"family\":\"WORLD_INBOUND_SOURCE_FAMILY_AUTOMATION_SCRIPT_REFERENCE\",\"count\":0},"
+            + "{\"family\":\"WORLD_INBOUND_SOURCE_FAMILY_AUTOMATION_TARGET_BINDING\",\"count\":0}";
+    return digestJson(
+        "{\"regions\":[],\"zones\":[],\"rooms\":[],\"roomExits\":[],"
+            + "\"generationRules\":[],\"worldEntitySpawnBindings\":[],"
+            + "\"inboundSourceClosure\":{\"schemaVersion\":1,\"familyCounts\":["
+            + familyCounts
+            + "]}}");
   }
 
   private String digest(WorldEntitySpawnBinding binding, ObjectMapper mapper) {

@@ -193,11 +193,16 @@ public final class WorldCanonicalInstancePreparation {
     requireExactSelector(release, topologyPlan);
   }
 
-  /** V1 remains inert history; v2 must carry the complete original selector and frozen request. */
+  /** V1 remains inert history; selected v2/v3 must carry the exact original World selector. */
   static void requireExactSelector(
       AuthoredWorldReleaseAttestationEvidence release,
       WorldCanonicalInstanceTopologyPlan topologyPlan) {
     if (release.schemaVersion() == AuthoredWorldReleaseAttestationEvidence.SCHEMA_VERSION) return;
+    if (!AuthoredWorldReleaseAttestationEvidence.requiresWorldStartLocationEvidence(
+        release.schemaVersion())) {
+      throw new IllegalArgumentException(
+          "Canonical preparation requires a selected release schema");
+    }
     var selector =
         Objects.requireNonNull(release.worldStartLocationEvidence(), "World selector evidence");
     var freeze = topologyPlan.sourceBinding().freeze();

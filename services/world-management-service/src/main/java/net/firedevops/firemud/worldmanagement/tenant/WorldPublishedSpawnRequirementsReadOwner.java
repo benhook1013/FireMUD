@@ -80,8 +80,8 @@ final class WorldPublishedSpawnRequirementsReadOwner {
     if (!workloadNamespace.equals(launchBinding.descriptor().targetNamespace())
         || !workloadNamespace.equals(release.targetNamespace())
         || !request.expectedReleaseAttestationDigest().equals(release.evidenceDigest())
-        || release.schemaVersion()
-            != AuthoredWorldReleaseAttestationEvidence.SELECTOR_SCHEMA_VERSION
+        || !AuthoredWorldReleaseAttestationEvidence.requiresWorldStartLocationEvidence(
+            release.schemaVersion())
         || release.worldStartLocationEvidence() == null) {
       throw rejected(
           Status.Code.FAILED_PRECONDITION,

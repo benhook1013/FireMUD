@@ -103,7 +103,12 @@ public class WorldDraftGraphApplicationRepository {
         || !selectedCommit.requestId().equals(application.operation().requestId())
         || !selectedCommit.commitId().equals(application.operation().commitId())
         || !selection.target().equals(application.operation().binding().target())
-        || application.plan().graph().freshGraphDeclaration().isEmpty()
+        || application
+            .plan()
+            .graph()
+            .freshGraphDeclaration()
+            .flatMap(WorldDraftTopologyInputGraph.FreshGraphDeclaration::inboundSourceClosure)
+            .isEmpty()
         || !targetNamespace.equals(application.operation().ownerBinding().targetNamespace())
         || !canonicalTenantId.equals(application.operation().canonicalTenantId())
         || !canonicalVersionId.equals(application.operation().canonicalVersionId())
@@ -182,9 +187,16 @@ public class WorldDraftGraphApplicationRepository {
     fence.lockOpenAndResolve(application.operation().ownerBinding());
     prior = find(application.operation());
     if (!prior.isEmpty()) return readUnique(application, prior);
-    if (application.plan().graph().freshGraphDeclaration().isEmpty()) {
+    if (application.plan().graph().freshGraphDeclaration().isEmpty()
+        || application
+            .plan()
+            .graph()
+            .freshGraphDeclaration()
+            .orElseThrow()
+            .inboundSourceClosure()
+            .isEmpty()) {
       throw new ConflictException(
-          "New World graph applications require the complete original fresh-graph declaration");
+          "New World graph applications require the original versioned selected-inbound closure declaration");
     }
     var operation = application.operation();
     if (dsl.fetchOne(

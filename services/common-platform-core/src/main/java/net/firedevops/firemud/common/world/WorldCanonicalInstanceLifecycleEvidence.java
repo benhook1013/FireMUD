@@ -204,10 +204,11 @@ public record WorldCanonicalInstanceLifecycleEvidence(
       throw new IllegalArgumentException(
           "World lifecycle request differs from the complete launch binding");
     }
-    if (release.schemaVersion() != AuthoredWorldReleaseAttestationEvidence.SELECTOR_SCHEMA_VERSION
+    if (!AuthoredWorldReleaseAttestationEvidence.requiresWorldStartLocationEvidence(
+            release.schemaVersion())
         || release.worldStartLocationEvidence() == null) {
       throw new IllegalArgumentException(
-          "World lifecycle evidence requires the complete selector/v2 release attestation");
+          "World lifecycle evidence requires complete selected-release selector evidence");
     }
     WorldDraftStartLocationEvidence selectorReceipt =
         WorldDraftStartLocationEvidence.fromStored(

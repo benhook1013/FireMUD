@@ -1,5 +1,6 @@
 package net.firedevops.firemud.common.publication;
 
+import com.fasterxml.jackson.annotation.JsonInclude;
 import java.io.IOException;
 import java.math.BigInteger;
 import java.security.MessageDigest;
@@ -33,6 +34,12 @@ public final class WorldSelectedPublicationArtifactInventoryEvidence {
   public static final String SCHEMA = "world-selected-publication-artifact-inventory/v1";
   public static final String SOURCE_MODEL = "WORLD_LOGICAL_ROOM_EXIT_ADJACENCY_V1";
   public static final int SCHEMA_VERSION = 1;
+  public static final String INBOUND_CLOSURE_SCHEMA =
+      "world-selected-publication-artifact-inventory/v2";
+  public static final String INBOUND_CLOSURE_SOURCE_MODEL =
+      "WORLD_LOGICAL_ROOM_EXIT_ADJACENCY_INBOUND_EMPTY_V1";
+  public static final int INBOUND_CLOSURE_SCHEMA_VERSION = 2;
+  public static final int INBOUND_CLOSURE_GRAPH_SCHEMA_VERSION = 3;
 
   private static final UUID NIL_UUID = new UUID(0L, 0L);
   private static final Pattern SHA256 = Pattern.compile("sha256:[0-9a-f]{64}");
@@ -41,6 +48,15 @@ public final class WorldSelectedPublicationArtifactInventoryEvidence {
   private static final List<String> FAMILY_ORDER =
       List.of(
           "REGION", "ZONE", "ROOM", "ROOM_EXIT", "GENERATION_RULE", "WORLD_ENTITY_SPAWN_BINDING");
+  private static final List<String> INBOUND_SOURCE_FAMILY_ORDER =
+      List.of(
+          "WORLD_INBOUND_SOURCE_FAMILY_LOOT_REFERENCE_ROOT",
+          "WORLD_INBOUND_SOURCE_FAMILY_LOOT_REFERENCE_ATTACHMENT",
+          "WORLD_INBOUND_SOURCE_FAMILY_BEHAVIOR_SELECTION",
+          "WORLD_INBOUND_SOURCE_FAMILY_BEHAVIOR_BINDING",
+          "WORLD_INBOUND_SOURCE_FAMILY_AUTOMATION_HOOK",
+          "WORLD_INBOUND_SOURCE_FAMILY_AUTOMATION_SCRIPT_REFERENCE",
+          "WORLD_INBOUND_SOURCE_FAMILY_AUTOMATION_TARGET_BINDING");
   private static final List<String> REGION_FIELDS =
       List.of(
           "id",
@@ -411,8 +427,10 @@ public final class WorldSelectedPublicationArtifactInventoryEvidence {
         Checkpoint checkpoint,
         SourceModel model,
         List<ArtifactDecision> artifactDecisions) {
-      if (!SCHEMA.equals(schema)
-          || schemaVersion != SCHEMA_VERSION
+      boolean legacyProfile = SCHEMA.equals(schema) && schemaVersion == SCHEMA_VERSION;
+      boolean inboundClosureProfile =
+          INBOUND_CLOSURE_SCHEMA.equals(schema) && schemaVersion == INBOUND_CLOSURE_SCHEMA_VERSION;
+      if ((!legacyProfile && !inboundClosureProfile)
           || !"COMPLETE".equals(completeness)
           || artifactDecisions.size() != ARTIFACT_DECISIONS.size()
           || !artifactDecisions.equals(ARTIFACT_DECISIONS)) {
@@ -465,9 +483,21 @@ public final class WorldSelectedPublicationArtifactInventoryEvidence {
           || checkpoint.digestSchemaVersion() <= 0) {
         throw new IllegalArgumentException("World checkpoint is incomplete or malformed");
       }
+      int requiredCheckpointSchema = inboundClosureProfile ? 4 : 3;
+      if (checkpoint.digestSchemaVersion() != requiredCheckpointSchema) {
+        throw new IllegalArgumentException(
+            "World inventory profile differs from the exact participant digest schema");
+      }
 
-      if (!SOURCE_MODEL.equals(model.modelId())
-          || model.graphSchemaVersion() != 2
+      boolean sourceModelMatches =
+          legacyProfile
+              ? SOURCE_MODEL.equals(model.modelId())
+                  && model.graphSchemaVersion() == 2
+                  && model.inboundSourceClosure() == null
+              : INBOUND_CLOSURE_SOURCE_MODEL.equals(model.modelId())
+                  && model.graphSchemaVersion() == INBOUND_CLOSURE_GRAPH_SCHEMA_VERSION
+                  && model.inboundSourceClosure() != null;
+      if (!sourceModelMatches
           || !isSha256(model.graphDigest())
           || !isSha256(model.topologyResultDigest())
           || model.generationRuleInputCount() != 0
@@ -479,6 +509,9 @@ public final class WorldSelectedPublicationArtifactInventoryEvidence {
           || !model.spawnBindingFields().equals(SPAWN_BINDING_FIELDS)
           || model.familyCounts().size() != FAMILY_ORDER.size()) {
         throw new IllegalArgumentException("World source model is unsupported or incomplete");
+      }
+      if (inboundClosureProfile) {
+        requireEmptyInboundClosure(model.inboundSourceClosure());
       }
       for (int index = 0; index < FAMILY_ORDER.size(); index++) {
         FamilyCount count = model.familyCounts().get(index);
@@ -594,6 +627,22 @@ public final class WorldSelectedPublicationArtifactInventoryEvidence {
       int spawnCount,
       int respawnDelaySeconds) {}
 
+  public record InboundSourceFamilyCount(String family, int count) {
+    public InboundSourceFamilyCount {
+      Objects.requireNonNull(family, "family");
+      if (count < 0) {
+        throw new IllegalArgumentException("World inbound source count must be nonnegative");
+      }
+    }
+  }
+
+  public record InboundSourceClosureDeclaration(
+      int schemaVersion, List<InboundSourceFamilyCount> familyCounts) {
+    public InboundSourceClosureDeclaration {
+      familyCounts = List.copyOf(Objects.requireNonNull(familyCounts, "familyCounts"));
+    }
+  }
+
   public record SelectedApplication(
       UUID applicationOperationId,
       UUID applicationRequestId,
@@ -656,7 +705,46 @@ public final class WorldSelectedPublicationArtifactInventoryEvidence {
       List<SpawnBindingInput> spawnBindingInputs,
       int generationRuleInputCount,
       int spawnBindingCount,
-      List<AppliedEpoch> appliedEpochs) {
+      List<AppliedEpoch> appliedEpochs,
+      @JsonInclude(JsonInclude.Include.NON_NULL)
+          InboundSourceClosureDeclaration inboundSourceClosure) {
+    public SourceModel(
+        String modelId,
+        int graphSchemaVersion,
+        String graphDigest,
+        String topologyResultDigest,
+        List<FamilyCount> familyCounts,
+        List<RegionGeneratorInput> regionGeneratorInputs,
+        List<String> generationRuleFields,
+        List<String> regionFields,
+        List<String> zoneFields,
+        List<String> roomFields,
+        List<String> roomExitFields,
+        List<String> spawnBindingFields,
+        List<SpawnBindingInput> spawnBindingInputs,
+        int generationRuleInputCount,
+        int spawnBindingCount,
+        List<AppliedEpoch> appliedEpochs) {
+      this(
+          modelId,
+          graphSchemaVersion,
+          graphDigest,
+          topologyResultDigest,
+          familyCounts,
+          regionGeneratorInputs,
+          generationRuleFields,
+          regionFields,
+          zoneFields,
+          roomFields,
+          roomExitFields,
+          spawnBindingFields,
+          spawnBindingInputs,
+          generationRuleInputCount,
+          spawnBindingCount,
+          appliedEpochs,
+          null);
+    }
+
     public SourceModel {
       familyCounts = List.copyOf(Objects.requireNonNull(familyCounts, "familyCounts"));
       regionGeneratorInputs =
@@ -672,6 +760,22 @@ public final class WorldSelectedPublicationArtifactInventoryEvidence {
       spawnBindingInputs =
           List.copyOf(Objects.requireNonNull(spawnBindingInputs, "spawnBindingInputs"));
       appliedEpochs = List.copyOf(Objects.requireNonNull(appliedEpochs, "appliedEpochs"));
+    }
+  }
+
+  private static void requireEmptyInboundClosure(InboundSourceClosureDeclaration declaration) {
+    if (declaration == null
+        || declaration.schemaVersion() != 1
+        || declaration.familyCounts().size() != INBOUND_SOURCE_FAMILY_ORDER.size()) {
+      throw new IllegalArgumentException(
+          "World inbound source closure is not the complete supported version-1 family vector");
+    }
+    for (int index = 0; index < INBOUND_SOURCE_FAMILY_ORDER.size(); index++) {
+      var count = declaration.familyCounts().get(index);
+      if (!INBOUND_SOURCE_FAMILY_ORDER.get(index).equals(count.family()) || count.count() != 0) {
+        throw new IllegalArgumentException(
+            "World inbound source closure is not canonical or contains unsupported nonempty input");
+      }
     }
   }
 }

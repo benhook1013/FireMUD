@@ -124,7 +124,7 @@ final class WorldSelectedPublicationArtifactInventoryRepository {
         || !appliedCommitId.equals(attempt.checkpoint().appliedCommitId())
         || !accountOperationId.equals(accountBinding.operationId())
         || !accountFenceId.equals(accountBinding.fenceId())
-        || schemaVersion != 1
+        || (schemaVersion != 1 && schemaVersion != 2)
         || !Arrays.equals(retainedAccountBytes, accountBinding.canonicalBytes())
         || !DraftAuthorizationFenceBinding.digest(retainedAccountBytes)
             .equals(retainedAccountDigest)) {
@@ -147,6 +147,10 @@ final class WorldSelectedPublicationArtifactInventoryRepository {
             accountBinding,
             localTenantKey,
             localVersionKey);
+    if (schemaVersion != inventory.envelope().schemaVersion()) {
+      throw conflict(
+          "Stored World artifact inventory schema column differs from exact retained bytes");
+    }
     var scope = inventory.envelope().ownerScope();
     if (!scope.targetNamespace().equals(targetNamespace)
         || !scope.canonicalTenantId().equals(tenantId)

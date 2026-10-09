@@ -14,7 +14,7 @@ import net.firedevops.firemud.worldmanagement.tenant.WorldDesignPublicationFence
  * or a public freeze route, and it does not change the generic digest's highest-commit contract.
  */
 final class WorldSelectedDraftPublicationCheckpointRepository {
-  private static final int REQUIRED_DIGEST_SCHEMA_VERSION = 3;
+  private static final int REQUIRED_DIGEST_SCHEMA_VERSION = 4;
 
   private final WorldDesignPublicationFenceRepository fence;
   private final WorldDraftGraphApplicationRepository applications;
@@ -49,7 +49,7 @@ final class WorldSelectedDraftPublicationCheckpointRepository {
     }
 
     // Reacquiring this exact row inside claimFreeze's callback is reentrant and keeps the same
-    // owner lock held while APPLIED history, current rows/epochs, and the schema-3 digest are read.
+    // owner lock held while APPLIED history, current rows/epochs, and the schema-4 digest are read.
     var owner = fence.lockOpenAndResolve(freeze.ownerBinding());
     var applied = applications.readAppliedForPublicationCheckpoint(freeze, selectedPlan);
     var stored = topology.readUnderFrozenLock(selectedPlan);
@@ -62,14 +62,23 @@ final class WorldSelectedDraftPublicationCheckpointRepository {
     var graph =
         topology.verifyImmutableBytes(selectedPlan, stored.graphBytes(), stored.resultBytes());
 
+    var inboundClosure =
+        graph
+            .inboundSourceClosure()
+            .orElseThrow(
+                () ->
+                    new ConflictException(
+                        "World selected digest requires the exact original inbound source closure"));
     var digest =
-        digestService.getDraftDesignDigest(
-            Long.toString(owner.localTenantKey()), Long.toString(owner.localVersionKey()));
+        digestService.getSelectedDraftDesignDigest(
+            Long.toString(owner.localTenantKey()),
+            Long.toString(owner.localVersionKey()),
+            inboundClosure);
     if (!Long.toString(owner.localTenantKey()).equals(digest.tenantId())
         || !Long.toString(owner.localVersionKey()).equals(digest.scopeValue())
         || digest.digestSchemaVersion() != REQUIRED_DIGEST_SCHEMA_VERSION) {
       throw new ConflictException(
-          "World selected graph digest differs from the exact local schema-3 Draft scope");
+          "World selected graph digest differs from the exact local schema-4 Draft scope");
     }
 
     return new CapturedCheckpoint(

@@ -229,6 +229,13 @@ public final class IsolatedPublicationOwnerSetup {
     return retain(dsl, target, draftEpoch, notes, true);
   }
 
+  /** Isolated upstream inputs use the closure-qualified selector profile for selected release. */
+  public static GameDesignPublicationOperation retainSourceBackedClosureQualified(
+      DSLContext dsl, DraftCommitBinding.TargetProof target, long draftEpoch, String notes)
+      throws Exception {
+    return retain(dsl, target, draftEpoch, notes, true, true);
+  }
+
   /** Creates actual synchronized source rows and selection, without any publication operation. */
   public static AuthoredDraftPublishSelectionRepository.SelectionSnapshot selectSourceBackedDraft(
       DSLContext dsl, DraftCommitBinding.TargetProof target, long draftEpoch, String notes)
@@ -244,7 +251,15 @@ public final class IsolatedPublicationOwnerSetup {
   public static SourceBackedSelection selectSourceBackedDraftWithWorld(
       DSLContext dsl, DraftCommitBinding.TargetProof target, long draftEpoch, String notes)
       throws Exception {
-    PreparedSelection prepared = prepareSelection(dsl, target, draftEpoch, notes, true);
+    PreparedSelection prepared = prepareSelection(dsl, target, draftEpoch, notes, true, false);
+    return new SourceBackedSelection(prepared.selection(), prepared.world());
+  }
+
+  /** Isolated closure-qualified World selector seed for the new selected-release profile. */
+  public static SourceBackedSelection selectSourceBackedDraftWithClosureQualifiedWorld(
+      DSLContext dsl, DraftCommitBinding.TargetProof target, long draftEpoch, String notes)
+      throws Exception {
+    PreparedSelection prepared = prepareSelection(dsl, target, draftEpoch, notes, true, true);
     return new SourceBackedSelection(prepared.selection(), prepared.world());
   }
 
@@ -255,7 +270,19 @@ public final class IsolatedPublicationOwnerSetup {
       String notes,
       boolean captureSources)
       throws Exception {
-    PreparedSelection prepared = prepareSelection(dsl, target, draftEpoch, notes, captureSources);
+    return retain(dsl, target, draftEpoch, notes, captureSources, false);
+  }
+
+  private static GameDesignPublicationOperation retain(
+      DSLContext dsl,
+      DraftCommitBinding.TargetProof target,
+      long draftEpoch,
+      String notes,
+      boolean captureSources,
+      boolean closureQualified)
+      throws Exception {
+    PreparedSelection prepared =
+        prepareSelection(dsl, target, draftEpoch, notes, captureSources, closureQualified);
     var selection = prepared.selection().selection();
     var intent = selection.intent();
     var operation =
@@ -299,9 +326,13 @@ public final class IsolatedPublicationOwnerSetup {
       DraftCommitBinding.TargetProof target,
       long draftEpoch,
       String notes,
-      boolean captureSources)
+      boolean captureSources,
+      boolean closureQualified)
       throws Exception {
-    var seed = IsolatedPublicationOperationFixtures.fresh(target);
+    var seed =
+        closureQualified
+            ? IsolatedPublicationOperationFixtures.freshClosureQualifiedSelection(target)
+            : IsolatedPublicationOperationFixtures.fresh(target);
     var draft = seed.account().input().selection().selectedCommit();
     var coordinator = new DraftCommitCoordinatorRepository(dsl);
     // The original Draft Account/World result is stipulated upstream fixture evidence, not a new

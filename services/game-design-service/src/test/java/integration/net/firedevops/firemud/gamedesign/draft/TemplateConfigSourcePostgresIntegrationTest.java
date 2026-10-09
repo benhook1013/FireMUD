@@ -144,7 +144,9 @@ class TemplateConfigSourcePostgresIntegrationTest {
         .containsExactly(first.ownerSourceInventoryDeclarations().getFirst());
     assertThat(capture.ownerSourceInventoryDeclarations().getFirst().sourceBinding())
         .isEqualTo(declaration);
-    assertThat(capture.binding()).isEqualTo(actualTemplate);
+    assertThat(capture.binding())
+        .isEqualTo(operation.account().input().selection().selectedCommit());
+    assertThat(capture.entries().getFirst().sourceBinding()).isEqualTo(actualTemplate);
   }
 
   @Test

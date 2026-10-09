@@ -486,6 +486,11 @@ class PublishAttemptServiceTransactionIntegrationTest {
     candidate.setNotes("successful transaction proof");
     candidate = versionRepository.save(candidate);
     var operation = reserveSelectedDraft(candidate, "successful transaction proof");
+    assertThat(operation.world().request().digestSchemaVersion()).isEqualTo(4);
+    assertThat(operation.inventory().publicEvidence().schema())
+        .isEqualTo("world-selected-publication-artifact-inventory/v2");
+    assertThat(operation.inventory().publicEvidence().sourceModel().graphSchemaVersion())
+        .isEqualTo(3);
     var terminalPki = new SelectionReadTestPki(Files.createDirectories(temporary.resolve("pki")));
     assertTerminalOwnerReadOverMtls(operation, null, terminalPki);
     assertThat(candidate.getTenantId()).isEqualTo(tenantId);
@@ -611,7 +616,7 @@ class PublishAttemptServiceTransactionIntegrationTest {
    * export candidate remain stipulated test fixtures; this is not whole-chain transport proof.
    */
   @Test
-  void selectedDraftCompositionUsesAuthenticatedOwnerReadsAndReconcilesExactV2Release(
+  void selectedDraftCompositionUsesAuthenticatedOwnerReadsAndReconcilesExactV3Release(
       @TempDir Path temporary) throws Exception {
     String tenantId = "9010";
     FreshTenantCreationEvidence creation =
@@ -658,8 +663,9 @@ class PublishAttemptServiceTransactionIntegrationTest {
         inOwnerTransaction(
             () -> {
               try {
-                return IsolatedPublicationOwnerSetup.selectSourceBackedDraftWithWorld(
-                    dsl, target, candidateEpoch, "selected command composition proof");
+                return IsolatedPublicationOwnerSetup
+                    .selectSourceBackedDraftWithClosureQualifiedWorld(
+                        dsl, target, candidateEpoch, "selected command composition proof");
               } catch (Exception failure) {
                 throw new IllegalStateException(failure);
               }
@@ -671,6 +677,9 @@ class PublishAttemptServiceTransactionIntegrationTest {
             AuthoredDraftPublishSelectionBinding.fromStored(
                 selection.canonicalJson(), selection.digest()),
             prepared.world());
+    assertThat(operation.world().request().digestSchemaVersion()).isEqualTo(4);
+    assertThat(operation.inventory().publicEvidence().schema())
+        .isEqualTo("world-selected-publication-artifact-inventory/v2");
     var stipulatedWorldSourceRead =
         IsolatedPublicationOwnerSetup.syntheticWorldSourceRead(operation);
     retainStipulatedWorldSourceAndDelivery(stipulatedWorldSourceRead);
@@ -707,6 +716,7 @@ class PublishAttemptServiceTransactionIntegrationTest {
         .isEqualTo(selection.intent().selectedCommitId().toString());
     assertThat(projectedWorldRequest.contentDigest())
         .isEqualTo(prepared.world().request().contentDigest());
+    assertThat(projectedWorldRequest.digestSchemaVersion()).isEqualTo(4);
     assertThat(projectedWorldRequest.worldAffectedTuples())
         .isEqualTo(prepared.world().request().worldAffectedTuples());
 
@@ -906,7 +916,7 @@ class PublishAttemptServiceTransactionIntegrationTest {
         assertThat(attempt.getStatus()).isEqualTo(PublishAttemptStatus.SUCCEEDED);
         assertThat(attempt.getVersionId()).isEqualTo(candidate.getId());
         assertThat(storedVersion.getVersionState()).isEqualTo(VersionLifecycleState.PUBLISHED);
-        assertThat(bundle.getAttestationSchemaVersion()).isEqualTo("v2");
+        assertThat(bundle.getAttestationSchemaVersion()).isEqualTo("v3");
         assertThat(bundle.getWorldPublishedStartLocationEvidenceJson())
             .isEqualTo(publishedWorldEvidenceJson);
         assertThat(bundle.getPublishWorkflowId()).isEqualTo(workflowId);
@@ -2718,9 +2728,10 @@ class PublishAttemptServiceTransactionIntegrationTest {
     return inOwnerTransaction(
         () -> {
           try {
-            // Account/World values produced by this helper are isolated external fixtures; the GD
-            // selection, command/policy source, attempt and publication reservation are real.
-            return IsolatedPublicationOwnerSetup.retainSourceBacked(
+            // Account, APPLIED, and closure-v2 inventory values remain isolated external
+            // fixtures; only the GD selection, command/policy source, attempt and publication
+            // reservation are real. This is not World owner-production evidence.
+            return IsolatedPublicationOwnerSetup.retainSourceBackedClosureQualified(
                 dsl, target, version.getVersionStateEpoch(), notes);
           } catch (Exception failure) {
             throw new IllegalStateException(failure);

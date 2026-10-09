@@ -124,6 +124,10 @@ public class PublishedReleaseBundleServiceImpl implements PublishedReleaseBundle
       }
       return stored;
     }
+    if (worldEvidence != null && worldEvidence.request().digestSchemaVersion() != 4) {
+      throw new IllegalStateException(
+          "New selected publication requires closure-qualified World digest schema 4");
+    }
     var identitySource =
         versionRepository
             .findByTenantIdAndId(version.tenantId(), version.id())
@@ -148,7 +152,7 @@ public class PublishedReleaseBundleServiceImpl implements PublishedReleaseBundle
     entity.setAttestationSchemaVersion(
         worldEvidence == null
             ? PublishedReleaseBundleContract.SUPPORTED_ATTESTATION_SCHEMA_VERSION
-            : PublishedReleaseBundleContract.SELECTOR_ATTESTATION_SCHEMA_VERSION);
+            : PublishedReleaseBundleContract.CLOSURE_SELECTOR_ATTESTATION_SCHEMA_VERSION);
     entity.setWorldPublishedStartLocationEvidenceJson(
         worldEvidence == null
             ? null
@@ -228,8 +232,7 @@ public class PublishedReleaseBundleServiceImpl implements PublishedReleaseBundle
                     entity
                         .getWorldPublishedStartLocationEvidenceJson()
                         .getBytes(StandardCharsets.UTF_8)));
-    if (PublishedReleaseBundleContract.SELECTOR_ATTESTATION_SCHEMA_VERSION.equals(
-        dto.attestationSchemaVersion())) {
+    if (PublishedReleaseBundleContract.isSelectorSchema(dto.attestationSchemaVersion())) {
       PublishedReleaseBundleContract.requireSelectorBinding(dto);
     }
     return dto;

@@ -187,10 +187,11 @@ public record WorldPublishedSpawnRequirementsEvidence(
       throw new IllegalArgumentException(
           "Release attestation digest differs from the exact source-read selector");
     }
-    if (release.schemaVersion() != AuthoredWorldReleaseAttestationEvidence.SELECTOR_SCHEMA_VERSION
+    if (!AuthoredWorldReleaseAttestationEvidence.requiresWorldStartLocationEvidence(
+            release.schemaVersion())
         || release.worldStartLocationEvidence() == null) {
       throw new IllegalArgumentException(
-          "Published spawn requirements require the schema-2 release World selector");
+          "Published spawn requirements require selected release World selector evidence");
     }
     String boundGraphDigest =
         WorldDraftStartLocationEvidence.fromStored(

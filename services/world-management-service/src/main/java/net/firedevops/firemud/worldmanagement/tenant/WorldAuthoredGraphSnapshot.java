@@ -154,9 +154,9 @@ public record WorldAuthoredGraphSnapshot(
       requireText(publishWorkflowId, "publishWorkflowId");
       requireText(appliedCommitId, "appliedCommitId");
       requireSha256(contentDigest, "contentDigest");
-      if (digestSchemaVersion != 2 && digestSchemaVersion != 3) {
+      if (digestSchemaVersion != 2 && digestSchemaVersion != 3 && digestSchemaVersion != 4) {
         throw new IllegalArgumentException(
-            "World graph snapshot requires retained schema 2 or current schema 3");
+            "World graph capture request requires retained schema 2, schema 3 or selected schema 4");
       }
       Objects.requireNonNull(suppliedOwnedAffectedTuples, "suppliedOwnedAffectedTuples");
       List<OwnedAffectedTuple> ordered = new ArrayList<>(suppliedOwnedAffectedTuples);

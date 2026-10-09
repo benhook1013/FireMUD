@@ -31,7 +31,13 @@ public final class PublishedWorldSelectorFixtures {
   }
 
   public static WorldPublishedStartLocationEvidence evidence(TargetProof target) throws Exception {
-    return new PublishedWorldSelectorFixtures(target).build();
+    return new PublishedWorldSelectorFixtures(target).build(3);
+  }
+
+  /** Test-only closure-qualified evidence; its Account/APPLIED bytes remain stipulated fixtures. */
+  public static WorldPublishedStartLocationEvidence closureEvidence(TargetProof target)
+      throws Exception {
+    return new PublishedWorldSelectorFixtures(target).build(4);
   }
 
   public static List<net.firedevops.firemud.gamedesign.dto.PublishParticipantDigestDto>
@@ -57,15 +63,20 @@ public final class PublishedWorldSelectorFixtures {
                     net.firedevops.firemud.common.gamedesign.AuthoredWorldReleaseAttestationEvidence
                         .supportedParticipantDigestSchema(
                             owner,
-                            net.firedevops.firemud.common.gamedesign
-                                .AuthoredWorldReleaseAttestationEvidence.SELECTOR_SCHEMA_VERSION),
+                            evidence.request().digestSchemaVersion() == 4
+                                ? net.firedevops.firemud.common.gamedesign
+                                    .AuthoredWorldReleaseAttestationEvidence
+                                    .CLOSURE_SELECTOR_SCHEMA_VERSION
+                                : net.firedevops.firemud.common.gamedesign
+                                    .AuthoredWorldReleaseAttestationEvidence
+                                    .SELECTOR_SCHEMA_VERSION),
                     "GAME_LOGIC".equals(owner) ? "sha256:" + "d".repeat(64) : null,
                     null,
                     null))
         .toList();
   }
 
-  private WorldPublishedStartLocationEvidence build() throws Exception {
+  private WorldPublishedStartLocationEvidence build(int digestSchemaVersion) throws Exception {
     var draft = freshGraphBinding();
     var terminal = WorldDraftTerminalReadEvidence.Request.create("test", accountBinding(draft));
     var result = committedReadback(terminal, true);
@@ -95,7 +106,7 @@ public final class PublishedWorldSelectorFixtures {
             "publish-workflow",
             draft.commitId().toString(),
             "b".repeat(64),
-            3,
+            digestSchemaVersion,
             tuples);
     return new WorldPublishedStartLocationEvidence(
         request,

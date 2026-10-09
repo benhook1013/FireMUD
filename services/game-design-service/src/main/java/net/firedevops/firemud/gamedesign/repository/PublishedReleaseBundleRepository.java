@@ -181,7 +181,7 @@ public class PublishedReleaseBundleRepository {
     CanonicalSource source = findExactCanonicalSource(tx, bundle);
     rejectCallerIdentitySubstitution(bundle, source);
     verifySelectorSource(bundle, source);
-    if ("v2".equals(bundle.getAttestationSchemaVersion())) {
+    if (isSelectorSchema(bundle.getAttestationSchemaVersion())) {
       PublishedReleaseBundle existing =
           tx.selectFrom(TABLE_REF)
               .where(TENANT_ID.eq(bundle.getTenantId()).and(VERSION_ID.eq(bundle.getVersionId())))
@@ -357,7 +357,7 @@ public class PublishedReleaseBundleRepository {
 
   private static void verifySelectorSource(PublishedReleaseBundle bundle, CanonicalSource source) {
     String bytes = bundle.getWorldPublishedStartLocationEvidenceJson();
-    if (!"v2".equals(bundle.getAttestationSchemaVersion())) {
+    if (!isSelectorSchema(bundle.getAttestationSchemaVersion())) {
       if (bytes != null) {
         throw new IllegalArgumentException(
             "Selector evidence is forbidden on historical release schemas");
@@ -365,17 +365,25 @@ public class PublishedReleaseBundleRepository {
       return;
     }
     if (bytes == null) {
-      throw new IllegalArgumentException("World selector evidence is mandatory for release v2");
+      throw new IllegalArgumentException(
+          "World selector evidence is mandatory for selected releases");
     }
     var request =
         WorldPublishedStartLocationEvidence.fromStored(bytes.getBytes(StandardCharsets.UTF_8))
             .request();
     if (!request.canonicalTenantId().equals(source.canonicalTenantId())
         || !request.canonicalVersionId().equals(source.canonicalVersionId())
-        || !request.publishWorkflowId().equals(bundle.getPublishWorkflowId())) {
+        || !request.publishWorkflowId().equals(bundle.getPublishWorkflowId())
+        || ("v2".equals(bundle.getAttestationSchemaVersion()) && request.digestSchemaVersion() != 3)
+        || ("v3".equals(bundle.getAttestationSchemaVersion())
+            && request.digestSchemaVersion() != 4)) {
       throw new IllegalArgumentException(
           "World selector differs from exact Version source/workflow");
     }
+  }
+
+  private static boolean isSelectorSchema(String schemaVersion) {
+    return "v2".equals(schemaVersion) || "v3".equals(schemaVersion);
   }
 
   private record CanonicalSource(UUID canonicalTenantId, UUID canonicalVersionId) {}

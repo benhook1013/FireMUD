@@ -403,7 +403,7 @@ class WorldCanonicalInstanceLifecycleEvidenceTest {
                     evidence.graphSha256(),
                     evidence.preparationInputDigest()))
         .isInstanceOf(IllegalArgumentException.class)
-        .hasMessageContaining("selector/v2");
+        .hasMessageContaining("complete selected-release selector evidence");
 
     assertInvalid(evidence, evidence.runtimeRoomInstanceId(), evidence.lifecycleEpoch(), -1);
     assertInvalid(evidence, evidence.runtimeRoomInstanceId(), 0, evidence.rowVersion());

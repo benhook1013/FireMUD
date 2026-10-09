@@ -106,8 +106,8 @@ public class WorldCanonicalFrozenTopologyRepository {
     var provenance = owner.lockAndResolve(request.freeze());
     WorldCanonicalFrozenTopology prior = find(request);
     if (prior != null) return prior;
-    if (request.freeze().digestSchemaVersion() != 3) {
-      throw new ConflictException("New canonical graph capture requires digest schema 3");
+    if (request.freeze().digestSchemaVersion() != 4) {
+      throw new ConflictException("New canonical graph capture requires selected digest schema 4");
     }
     if (!"FROZEN".equals(provenance.ownerFreezePhase())) {
       throw new ConflictException(
@@ -129,16 +129,24 @@ public class WorldCanonicalFrozenTopologyRepository {
     var graph =
         topology.verifyImmutableBytes(request.plan(), stored.graphBytes(), stored.resultBytes());
     requirePrivateKeys(graph, identity);
+    var inboundClosure =
+        graph
+            .inboundSourceClosure()
+            .orElseThrow(
+                () ->
+                    new ConflictException(
+                        "New canonical graph capture requires its exact original inbound closure"));
     var digest =
-        digestService.getDraftDesignDigest(
+        digestService.getSelectedDraftDesignDigest(
             Long.toString(provenance.localTenantKey()),
-            Long.toString(provenance.localVersionKey()));
+            Long.toString(provenance.localVersionKey()),
+            inboundClosure);
     if (!Long.toString(provenance.localTenantKey()).equals(digest.tenantId())
         || !Long.toString(provenance.localVersionKey()).equals(digest.scopeValue())
-        || digest.digestSchemaVersion() != 3
+        || digest.digestSchemaVersion() != 4
         || !request.freeze().contentDigest().equals(digest.contentDigest())) {
       throw new ConflictException(
-          "Canonical graph capture differs from exact schema-3 frozen content checkpoint");
+          "Canonical graph capture differs from exact selected schema-4 frozen content checkpoint");
     }
     UUID captureId = UUID.randomUUID();
     String freezeJson = JSON.writeValueAsString(request.freeze());

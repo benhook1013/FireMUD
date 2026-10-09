@@ -13,6 +13,7 @@ import net.firedevops.firemud.common.authoring.DraftCommitBinding.Owner;
 import net.firedevops.firemud.common.gamedesign.DraftSynchronizedVisibilityEvidence.AppliedEpoch;
 import net.firedevops.firemud.common.json.Rfc8785CanonicalJson;
 import net.firedevops.firemud.common.publication.AccountPublicationAuthorizationBinding;
+import net.firedevops.firemud.common.publication.WorldSelectedPublicationArtifactInventoryEvidence;
 import net.firedevops.firemud.common.publication.WorldSelectedPublicationArtifactInventoryEvidence.ArtifactDecision;
 import net.firedevops.firemud.common.publication.WorldSelectedPublicationArtifactInventoryEvidence.Checkpoint;
 import net.firedevops.firemud.common.publication.WorldSelectedPublicationArtifactInventoryEvidence.FamilyCount;
@@ -35,12 +36,23 @@ import tools.jackson.databind.json.JsonMapper;
  * Immutable, owner-derived complete inventory for the closed logical room/exit source model.
  *
  * <p>This is not an artifact payload or an Asset Storage manifest. It is derived from the exact
- * retained APPLIED graph/2 and the World-owned freeze checkpoint. The supported room/exit profile
- * uses authored edges directly and has no separate NAVMESH or PATH_GRAPH bundle requirement.
+ * retained APPLIED graph/3 and the World-owned freeze checkpoint. Its inbound source declaration is
+ * original authored input and currently supports only seven explicitly declared empty families;
+ * legacy graph/2 bytes remain a separate exact-read path and never imply an empty declaration. The
+ * supported room/exit profile uses authored edges directly and has no separate NAVMESH or
+ * PATH_GRAPH bundle requirement.
  */
 public final class WorldSelectedPublicationArtifactInventory {
   static final String SCHEMA = "world-selected-publication-artifact-inventory/v1";
+  static final String INBOUND_CLOSURE_SCHEMA =
+      WorldSelectedPublicationArtifactInventoryEvidence.INBOUND_CLOSURE_SCHEMA;
+  private static final int SCHEMA_VERSION =
+      WorldSelectedPublicationArtifactInventoryEvidence.SCHEMA_VERSION;
+  private static final int INBOUND_CLOSURE_SCHEMA_VERSION =
+      WorldSelectedPublicationArtifactInventoryEvidence.INBOUND_CLOSURE_SCHEMA_VERSION;
   private static final String SOURCE_MODEL = "WORLD_LOGICAL_ROOM_EXIT_ADJACENCY_V1";
+  private static final String INBOUND_CLOSURE_SOURCE_MODEL =
+      WorldSelectedPublicationArtifactInventoryEvidence.INBOUND_CLOSURE_SOURCE_MODEL;
   private static final Pattern SHA256 = Pattern.compile("sha256:[0-9a-f]{64}");
   private static final Pattern HEX_DIGEST = Pattern.compile("[0-9a-f]{64}");
   private static final ObjectMapper JSON =
@@ -57,6 +69,15 @@ public final class WorldSelectedPublicationArtifactInventory {
           WorldCanonicalAuthoredGraph.Family.ROOM_EXIT,
           WorldCanonicalAuthoredGraph.Family.GENERATION_RULE,
           WorldCanonicalAuthoredGraph.Family.WORLD_ENTITY_SPAWN_BINDING);
+  private static final List<String> INBOUND_SOURCE_FAMILY_ORDER =
+      List.of(
+          "WORLD_INBOUND_SOURCE_FAMILY_LOOT_REFERENCE_ROOT",
+          "WORLD_INBOUND_SOURCE_FAMILY_LOOT_REFERENCE_ATTACHMENT",
+          "WORLD_INBOUND_SOURCE_FAMILY_BEHAVIOR_SELECTION",
+          "WORLD_INBOUND_SOURCE_FAMILY_BEHAVIOR_BINDING",
+          "WORLD_INBOUND_SOURCE_FAMILY_AUTOMATION_HOOK",
+          "WORLD_INBOUND_SOURCE_FAMILY_AUTOMATION_SCRIPT_REFERENCE",
+          "WORLD_INBOUND_SOURCE_FAMILY_AUTOMATION_TARGET_BINDING");
   private static final List<String> REGION_FIELDS =
       List.of(
           "id",
@@ -234,6 +255,13 @@ public final class WorldSelectedPublicationArtifactInventory {
 
     WorldCanonicalAuthoredGraph graph = captured.graph();
     requireSupportedFamilySchema();
+    var inboundClosure =
+        graph
+            .inboundSourceClosure()
+            .orElseThrow(
+                () ->
+                    new ConflictException(
+                        "World selected inventory requires the exact original inbound source closure declaration"));
     List<FamilyCount> counts = new ArrayList<>();
     for (WorldCanonicalAuthoredGraph.Family family : SUPPORTED_FAMILY_ORDER) {
       counts.add(new FamilyCount(family.name(), graph.family(family).size()));
@@ -292,8 +320,8 @@ public final class WorldSelectedPublicationArtifactInventory {
     var owner = request.ownerBinding();
     var sourceModel =
         new SourceModel(
-            SOURCE_MODEL,
-            2,
+            INBOUND_CLOSURE_SOURCE_MODEL,
+            WorldSelectedPublicationArtifactInventoryEvidence.INBOUND_CLOSURE_GRAPH_SCHEMA_VERSION,
             WorldDraftGraphAppliedResult.digest(captured.application().graphBytes()),
             WorldDraftGraphAppliedResult.digest(captured.topology().resultBytes()),
             counts,
@@ -308,12 +336,20 @@ public final class WorldSelectedPublicationArtifactInventory {
             generationRuleCount,
             familyCount(
                 counts, WorldCanonicalAuthoredGraph.Family.WORLD_ENTITY_SPAWN_BINDING.name()),
-            captured.application().appliedEpochs());
+            captured.application().appliedEpochs(),
+            new WorldSelectedPublicationArtifactInventoryEvidence.InboundSourceClosureDeclaration(
+                inboundClosure.schemaVersion(),
+                inboundClosure.familyCounts().stream()
+                    .map(
+                        family ->
+                            new WorldSelectedPublicationArtifactInventoryEvidence
+                                .InboundSourceFamilyCount(family.family().name(), family.count()))
+                    .toList()));
     var bindingBytes = accountBinding.canonicalBytes();
     var envelope =
         new Envelope(
-            SCHEMA,
-            1,
+            INBOUND_CLOSURE_SCHEMA,
+            INBOUND_CLOSURE_SCHEMA_VERSION,
             "COMPLETE",
             new OwnerScope(
                 owner.targetNamespace(),
@@ -467,7 +503,8 @@ public final class WorldSelectedPublicationArtifactInventory {
         spawnBindings,
         model.generationRuleInputCount(),
         model.spawnBindingCount(),
-        model.appliedEpochs());
+        model.appliedEpochs(),
+        model.inboundSourceClosure());
   }
 
   /** Canonical bytes for the safe public projection; private owner keys are never serialized. */
@@ -509,8 +546,12 @@ public final class WorldSelectedPublicationArtifactInventory {
     var application = envelope.selectedApplication();
     var source = envelope.sourceIntake();
     var sourceModel = envelope.sourceModel();
-    if (!SCHEMA.equals(envelope.schema())
-        || envelope.schemaVersion() != 1
+    boolean legacyEnvelope =
+        SCHEMA.equals(envelope.schema()) && envelope.schemaVersion() == SCHEMA_VERSION;
+    boolean inboundClosureEnvelope =
+        INBOUND_CLOSURE_SCHEMA.equals(envelope.schema())
+            && envelope.schemaVersion() == INBOUND_CLOSURE_SCHEMA_VERSION;
+    if ((!legacyEnvelope && !inboundClosureEnvelope)
         || !"COMPLETE".equals(envelope.completeness())
         || !nonNil(identity.canonicalTenantId())
         || !nonNil(identity.canonicalVersionId())
@@ -580,9 +621,30 @@ public final class WorldSelectedPublicationArtifactInventory {
   }
 
   private static void requireCompleteSupportedModel(Envelope envelope) {
+    if (envelope.sourceModel() == null) {
+      throw new ConflictException(
+          "Stored World artifact inventory does not declare the complete supported source model");
+    }
+    SourceModel sourceModel = envelope.sourceModel();
+    boolean legacyEnvelope =
+        SCHEMA.equals(envelope.schema()) && envelope.schemaVersion() == SCHEMA_VERSION;
+    boolean inboundClosureEnvelope =
+        INBOUND_CLOSURE_SCHEMA.equals(envelope.schema())
+            && envelope.schemaVersion() == INBOUND_CLOSURE_SCHEMA_VERSION;
+    boolean legacyModel =
+        legacyEnvelope
+            && SOURCE_MODEL.equals(sourceModel.modelId())
+            && sourceModel.graphSchemaVersion() == 2
+            && sourceModel.inboundSourceClosure() == null;
+    boolean inboundClosureModel =
+        inboundClosureEnvelope
+            && INBOUND_CLOSURE_SOURCE_MODEL.equals(sourceModel.modelId())
+            && sourceModel.graphSchemaVersion()
+                == WorldSelectedPublicationArtifactInventoryEvidence
+                    .INBOUND_CLOSURE_GRAPH_SCHEMA_VERSION
+            && sourceModel.inboundSourceClosure() != null;
     if (envelope.sourceModel() == null
-        || !SOURCE_MODEL.equals(envelope.sourceModel().modelId())
-        || envelope.sourceModel().graphSchemaVersion() != 2
+        || (!legacyModel && !inboundClosureModel)
         || envelope.sourceModel().generationRuleInputCount() != 0
         || envelope.sourceModel().familyCounts().size() != SUPPORTED_FAMILY_ORDER.size()
         || !envelope.sourceModel().regionFields().equals(REGION_FIELDS)
@@ -596,9 +658,12 @@ public final class WorldSelectedPublicationArtifactInventory {
         || !isSha256(envelope.sourceModel().graphDigest())
         || !isSha256(envelope.sourceModel().topologyResultDigest())
         || !isHexDigest(envelope.checkpoint().contentDigest())
-        || envelope.checkpoint().digestSchemaVersion() != 3) {
+        || envelope.checkpoint().digestSchemaVersion() != (inboundClosureModel ? 4 : 3)) {
       throw new ConflictException(
           "Stored World artifact inventory does not declare the complete supported source model");
+    }
+    if (inboundClosureModel) {
+      requireEmptyInboundClosure(sourceModel.inboundSourceClosure());
     }
     for (int index = 0; index < SUPPORTED_FAMILY_ORDER.size(); index++) {
       var familyCount = envelope.sourceModel().familyCounts().get(index);
@@ -645,6 +710,24 @@ public final class WorldSelectedPublicationArtifactInventory {
       throw unrepresentable(
           UnrepresentableReason.UNKNOWN_GRAPH_FAMILY,
           "World authored graph family catalog changed without an artifact-requiredness rule");
+    }
+  }
+
+  private static void requireEmptyInboundClosure(
+      WorldSelectedPublicationArtifactInventoryEvidence.InboundSourceClosureDeclaration
+          declaration) {
+    if (declaration == null
+        || declaration.schemaVersion() != 1
+        || declaration.familyCounts().size() != INBOUND_SOURCE_FAMILY_ORDER.size()) {
+      throw new ConflictException(
+          "Stored World inventory omits the complete version-1 inbound source declaration");
+    }
+    for (int index = 0; index < INBOUND_SOURCE_FAMILY_ORDER.size(); index++) {
+      var count = declaration.familyCounts().get(index);
+      if (!INBOUND_SOURCE_FAMILY_ORDER.get(index).equals(count.family()) || count.count() != 0) {
+        throw new ConflictException(
+            "Stored World inventory has unknown or unsupported nonempty inbound source input");
+      }
     }
   }
 

@@ -156,6 +156,32 @@ class PublishGateServiceImplTest {
   }
 
   @Test
+  void closureQualifiedSelectedGateRequiresWorldDigestSchemaFour() {
+    VersionDto version = selectedVersion();
+    PublicationDigestRequestBinding binding = selectedBinding(version);
+    SelectedDraftGameLogicReceipt receipt =
+        org.mockito.Mockito.mock(SelectedDraftGameLogicReceipt.class);
+    stubSelectedParticipantDigests(version, binding, receipt);
+    when(selectedPublicationDigestReader.read("test", binding))
+        .thenReturn(
+            new SelectedDraftPublicationDigestReadService.ReadResult(
+                binding,
+                binding.requestDigest(),
+                new DesignControlPlaneDigestDto(
+                    binding.tenantId(), "7", "selected-commit", "c".repeat(64), 2),
+                new PublishParticipantDigestDto(
+                    "WORLD_MANAGEMENT", "7", "selected-commit", "b".repeat(64), 4, null, null)));
+
+    List<PublishParticipantDigestDto> digests =
+        service.collectSelectedFullVersionParticipantDigests(
+            version, binding, binding.derivedWorkflowIdentity());
+
+    assertEquals(4, digests.getFirst().digestSchemaVersion());
+    assertEquals(2, digests.getLast().digestSchemaVersion());
+    assertDoesNotThrow(() -> service.assertSelectedGatePassed(version, digests));
+  }
+
+  @Test
   void selectedFullVersionGateKeepsMissingReceiptPendingAndNeverUsesLegacyRead() {
     VersionDto version = selectedVersion();
     PublicationDigestRequestBinding binding = selectedBinding(version);

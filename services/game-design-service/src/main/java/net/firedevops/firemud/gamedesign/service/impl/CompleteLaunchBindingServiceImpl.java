@@ -136,7 +136,32 @@ public class CompleteLaunchBindingServiceImpl implements CompleteLaunchBindingSe
         requireManifestAndArtifactEvidence(bundle);
 
     AuthoredWorldReleaseAttestationEvidence releaseAttestation;
-    if ("v2".equals(bundle.attestationSchemaVersion())) {
+    if (PublishedReleaseBundleContract.CLOSURE_SELECTOR_ATTESTATION_SCHEMA_VERSION.equals(
+        bundle.attestationSchemaVersion())) {
+      releaseAttestation =
+          AuthoredWorldReleaseAttestationEvidence.createClosureSelector(
+              descriptor.targetNamespace(),
+              descriptor.resultDigest(),
+              source.canonicalTenantId(),
+              canonicalVersion.getCanonicalVersionId(),
+              source.worldSlug(),
+              source.operationId(),
+              source.evidenceDigest(),
+              descriptor.launchDescriptorId(),
+              descriptor.publishedReleaseBundleRef(),
+              descriptor.versionStateEpoch(),
+              bundle.publishWorkflowId(),
+              commitId,
+              participants,
+              bundle.manifestHash(),
+              bundle.manifestSchemaVersion(),
+              bundle.requiredManifestAssetKeys(),
+              artifacts,
+              bundle.commandDefinitions(),
+              bundle.generationConfigRevision(),
+              bundle.worldPublishedStartLocationEvidence());
+    } else if (PublishedReleaseBundleContract.SELECTOR_ATTESTATION_SCHEMA_VERSION.equals(
+        bundle.attestationSchemaVersion())) {
       releaseAttestation =
           AuthoredWorldReleaseAttestationEvidence.create(
               descriptor.targetNamespace(),
@@ -275,7 +300,7 @@ public class CompleteLaunchBindingServiceImpl implements CompleteLaunchBindingSe
         || !Objects.equals(snapshotCanonicalVersionId, bundle.canonicalVersionId())
         || !("v1".equals(bundle.attestationSchemaVersion())
                 && bundle.worldPublishedStartLocationEvidence() == null
-            || "v2".equals(bundle.attestationSchemaVersion())
+            || PublishedReleaseBundleContract.isSelectorSchema(bundle.attestationSchemaVersion())
                 && bundle.worldPublishedStartLocationEvidence() != null)
         || !Objects.equals(bundle.id(), descriptor.releaseBundleId())
         || !Objects.equals(bundle.versionId(), descriptor.versionId())
@@ -342,6 +367,7 @@ public class CompleteLaunchBindingServiceImpl implements CompleteLaunchBindingSe
         switch (bundle.attestationSchemaVersion()) {
           case "v1" -> AuthoredWorldReleaseAttestationEvidence.SCHEMA_VERSION;
           case "v2" -> AuthoredWorldReleaseAttestationEvidence.SELECTOR_SCHEMA_VERSION;
+          case "v3" -> AuthoredWorldReleaseAttestationEvidence.CLOSURE_SELECTOR_SCHEMA_VERSION;
           case null, default ->
               throw deny(
                   "PARTICIPANT_EVIDENCE_INVALID",

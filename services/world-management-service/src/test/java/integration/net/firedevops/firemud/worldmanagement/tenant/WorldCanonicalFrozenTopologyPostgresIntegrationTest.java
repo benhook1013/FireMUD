@@ -30,6 +30,8 @@ import net.firedevops.firemud.worldmanagement.client.EntityManagementClient;
 import net.firedevops.firemud.worldmanagement.client.GameDesignClient;
 import net.firedevops.firemud.worldmanagement.client.GameSessionClient;
 import net.firedevops.firemud.worldmanagement.client.GrpcGameSessionInitialAdmissionBindProofClient;
+import net.firedevops.firemud.worldmanagement.service.WorldDraftDesignDigestService;
+import net.firedevops.firemud.worldmanagement.service.WorldDraftDesignDigestService.WorldDraftDesignDigest;
 import net.firedevops.firemud.worldmanagement.tenant.WorldAuthoredGraphSnapshot.CaptureRequest;
 import net.firedevops.firemud.worldmanagement.tenant.WorldAuthoredGraphSnapshot.OwnedAffectedTuple;
 import net.firedevops.firemud.worldmanagement.tenant.WorldCanonicalAuthoredGraph.Family;
@@ -65,13 +67,18 @@ import org.testcontainers.containers.GenericContainer;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
+import tools.jackson.core.StreamReadFeature;
+import tools.jackson.databind.DeserializationFeature;
 import tools.jackson.databind.ObjectMapper;
+import tools.jackson.databind.json.JsonMapper;
 
 /**
- * Actual V30 rows and V31/V32 capture, with synthetic source/permission and computed schema-3 V25
- * content checkpoints. Selected commit identities remain synthetic complete-application evidence.
- * Fixture-only trigger bypasses model terminal/corrupt storage unavailable through the current
- * owner API; origin triggers are restored before every tested capture/read boundary.
+ * Synthetic retained schema-3 frozen-topology history and exact readback against actual V30 rows.
+ * These graph fixtures predate the explicit inbound closure and APPLIED source, so this suite does
+ * not qualify new selected capture. Positive schema-4 qualification belongs to the genuine
+ * graph-application integration fixture. Fixture-only trigger bypasses model terminal/corrupt
+ * storage unavailable through the current owner API; origin triggers are restored before every
+ * tested read boundary.
  */
 @Testcontainers(disabledWithoutDocker = true)
 @SuppressWarnings("resource")
@@ -81,6 +88,12 @@ import tools.jackson.databind.ObjectMapper;
 class WorldCanonicalFrozenTopologyPostgresIntegrationTest {
   private static final String NAMESPACE = "firemud";
   private static final long GAME_DESIGN_VERSION = 9_000_000_000_000_001L;
+  private static final ObjectMapper RETAINED_JSON =
+      JsonMapper.builder()
+          .enable(StreamReadFeature.STRICT_DUPLICATE_DETECTION)
+          .enable(DeserializationFeature.FAIL_ON_TRAILING_TOKENS)
+          .enable(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES)
+          .build();
 
   @Container
   static PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>("postgres:16-alpine");
@@ -121,12 +134,12 @@ class WorldCanonicalFrozenTopologyPostgresIntegrationTest {
   @MockitoBean private EntityManagementClient entityManagementClient;
 
   @Test
-  void capturesActualSixFamilyGraphAndOriginalFullInputWithExactRetry() {
+  void retainedSyntheticSchema3SixFamilyGraphAndOriginalInputReplayWithoutQualification() {
     Fixture f = fixture();
     var p = plan(f);
     var stored = component().store(p);
-    Request request = freeze(p);
-    var capture = frozen().capture(request);
+    Request request = freeze(p, 3);
+    var capture = seedRetainedLegacySchema3(request);
     assertThat(capture.status()).isEqualTo("CAPTURED_UNVERIFIED");
     assertThat(capture.request().freeze().digestSchemaVersion()).isEqualTo(3);
     assertThat(capture.graphBytes()).containsExactly(stored.graphBytes());
@@ -187,21 +200,21 @@ class WorldCanonicalFrozenTopologyPostgresIntegrationTest {
   }
 
   @Test
-  void freshSchema2CaptureIsDeniedByApplicationAndDatabase() {
+  void freshLegacySchemaCaptureIsDeniedByApplicationAndDatabase() {
     Fixture f = fixture();
     var p = plan(f);
     component().store(p);
     Request request = freeze(p, 2);
     assertThat(frozen().readCommitted(request)).isEmpty();
     assertThatThrownBy(() -> frozen().capture(request))
-        .hasMessageContaining("requires digest schema 3");
+        .hasMessageContaining("requires selected digest schema 4");
     assertThat(countCaptures(request)).isZero();
     var templatePlan = plan(fixture());
     component().store(templatePlan);
-    Request template = freeze(templatePlan);
-    // Supply a complete otherwise-valid insertion from an existing schema-3 journal.
-    frozen().capture(template);
-    for (int denied : new int[] {2, 4}) {
+    Request template = freeze(templatePlan, 3);
+    // This is retained-history fixture material, not a fresh selected-capture producer.
+    seedRetainedLegacySchema3(template);
+    for (int denied : new int[] {2, 3, 4}) {
       assertThatThrownBy(
               () ->
                   dsl.execute(
@@ -211,43 +224,24 @@ class WorldCanonicalFrozenTopologyPostgresIntegrationTest {
                               + "FROM world_canonical_frozen_topology t WHERE publication_fence=?",
                           UUID.randomUUID(),
                       "\"digestSchemaVersion\":" + denied, template.freeze().publicationFence()))
-          .hasStackTraceContaining("requires digest schema 3");
+          .hasStackTraceContaining(
+              denied != 4
+                  ? "requires selected closure schema 4"
+                  : "exact FROZEN source and checkpoint");
     }
     assertOrigin();
   }
 
   @Test
-  void newSchema3CaptureRejectsChangedContentDigestAndEveryReturnedScopeField() {
+  void newCaptureCannotPromoteUnqualifiedSyntheticGraphToSelectedClosureSchema4() {
     Fixture f = fixture();
     var p = plan(f);
     component().store(p);
     Request request = freeze(p);
-    for (int changed = 0; changed < 4; changed++) {
-      int field = changed;
-      var bad =
-          frozen(
-              (tenant, version) ->
-                  new net.firedevops.firemud.worldmanagement.service.WorldDraftDesignDigestService
-                      .WorldDraftDesignDigest(
-                      field == 0 ? "999999999" : tenant,
-                      field == 1 ? "999999999" : version,
-                      "version:" + version,
-                      field == 2 ? "c".repeat(64) : request.freeze().contentDigest(),
-                      field == 3 ? 2 : 3));
-      assertThatThrownBy(() -> bad.capture(request))
-          .hasMessageContaining("differs from exact schema-3 frozen content checkpoint");
-      assertThat(countCaptures(request)).isZero();
-    }
-    var captured = frozen().capture(request);
-    assertThat(captured.request().freeze().digestSchemaVersion()).isEqualTo(3);
-    assertThat(
-            frozen(
-                    (tenant, version) -> {
-                      throw new AssertionError("Exact retry must use retained journal");
-                    })
-                .capture(request)
-                .resultBytes())
-        .containsExactly(captured.resultBytes());
+    assertThat(request.freeze().digestSchemaVersion()).isEqualTo(4);
+    assertThatThrownBy(() -> frozen().capture(request))
+        .hasMessageContaining("requires its exact original inbound closure");
+    assertThat(countCaptures(request)).isZero();
   }
 
   @Test
@@ -255,8 +249,8 @@ class WorldCanonicalFrozenTopologyPostgresIntegrationTest {
     Fixture f = fixture();
     var p = plan(f);
     component().store(p);
-    Request original = freeze(p);
-    frozen().capture(original);
+    Request original = freeze(p, 3);
+    seedRetainedLegacySchema3(original);
     var b = p.binding();
     var changed =
         WorldDraftTopologyCommitPlan.create(
@@ -313,8 +307,8 @@ class WorldCanonicalFrozenTopologyPostgresIntegrationTest {
       Fixture f = fixture();
       var p = plan(f);
       component().store(p);
-      Request request = freeze(p);
-      byte[] original = frozen().capture(request).resultBytes();
+      Request request = freeze(p, 3);
+      byte[] original = seedRetainedLegacySchema3(request).resultBytes();
       bypass(
           "UPDATE world_design_publication_fence_owner SET owner_freeze_phase=? WHERE local_tenant_key=?",
           phase,
@@ -593,8 +587,8 @@ class WorldCanonicalFrozenTopologyPostgresIntegrationTest {
       Fixture f = fixture();
       var p = plan(f);
       component().store(p);
-      Request request = freeze(p);
-      frozen().capture(request);
+      Request request = freeze(p, 3);
+      seedRetainedLegacySchema3(request);
       String set = mutation.getValue();
       if (set == null) {
         String originalDigest = request.freeze().contentDigest();
@@ -657,8 +651,8 @@ class WorldCanonicalFrozenTopologyPostgresIntegrationTest {
       Fixture f = fixture();
       var p = plan(f);
       component().store(p);
-      Request request = freeze(p);
-      var captured = frozen().capture(request);
+      Request request = freeze(p, 3);
+      var captured = seedRetainedLegacySchema3(request);
       String graph = new String(captured.graphBytes(), StandardCharsets.UTF_8);
       String bad =
           replacement.startsWith("\"to_room_id\"")
@@ -681,7 +675,8 @@ class WorldCanonicalFrozenTopologyPostgresIntegrationTest {
     Fixture f = fixture();
     var p = plan(f);
     component().store(p);
-    Request request = freeze(p);
+    Request request = freeze(p, 3);
+    seedRetainedLegacySchema3(request);
     CountDownLatch start = new CountDownLatch(1);
     try (var pool = Executors.newFixedThreadPool(2)) {
       var first =
@@ -721,8 +716,8 @@ class WorldCanonicalFrozenTopologyPostgresIntegrationTest {
     Fixture f = fixture();
     var p = plan(f);
     component().store(p);
-    Request current = freeze(p);
-    var captured = frozen().capture(current);
+    Request current = freeze(p, 3);
+    var captured = seedRetainedLegacySchema3(current);
     CaptureRequest r = current.freeze();
     Request historical =
         new Request(
@@ -831,8 +826,19 @@ class WorldCanonicalFrozenTopologyPostgresIntegrationTest {
                   new WorldDesignPublicationFenceRepository(
                       retained, new WorldAuthoredSourceIntakeRepository(retained)),
                   mapper),
-              (tenant, version) -> {
-                throw new AssertionError("Historical retry must never recompute content");
+              new WorldDraftDesignDigestService() {
+                @Override
+                public WorldDraftDesignDigest getDraftDesignDigest(String tenant, String version) {
+                  throw new AssertionError("Historical retry must never recompute content");
+                }
+
+                @Override
+                public WorldDraftDesignDigest getSelectedDraftDesignDigest(
+                    String tenant,
+                    String version,
+                    WorldDraftTopologyInputGraph.InboundSourceClosureDeclaration closure) {
+                  throw new AssertionError("Historical retry must never recompute content");
+                }
               });
       var service = new WorldCanonicalFrozenTopologyService(repo, manager);
       assertThat(service.readCommitted(historical).orElseThrow().resultBytes())
@@ -847,8 +853,89 @@ class WorldCanonicalFrozenTopologyPostgresIntegrationTest {
     }
   }
 
+  /**
+   * Installs a structurally exact schema-3 journal row as retained history for compatibility tests.
+   * The synthetic graph has no inbound declaration or APPLIED application result; it must never be
+   * used to demonstrate a fresh selected capture. Repository readback verifies the exact owner,
+   * fence, checkpoint, commit bytes, and immutable source. The fixture bypasses current insert
+   * guards only because schema 3 is retained data now; current fresh inserts require selected
+   * schema 4.
+   */
+  private WorldCanonicalFrozenTopology seedRetainedLegacySchema3(Request request) {
+    if (request.freeze().digestSchemaVersion() != 3) {
+      throw new IllegalArgumentException("Retained legacy fixture requires exact schema 3");
+    }
+    var original =
+        dsl.resultQuery(
+                "SELECT to_jsonb(v)::text AS identity_json, to_jsonb(i)::text AS intake_json, "
+                    + "c.owner_binding_json, c.graph_bytes, c.graph_sha256, c.result_bytes "
+                    + "FROM world_authored_version_identity v "
+                    + "JOIN world_authored_source_intake i ON i.operation_id=v.intake_operation_id "
+                    + "JOIN world_topology_draft_commit c ON c.version_identity_operation_id=v.operation_id "
+                    + "WHERE v.operation_id=? AND c.request_id=? AND c.commit_id=?",
+                request.plan().ownerBinding().versionIdentityOperationId(),
+                request.plan().binding().requestId(),
+                request.plan().binding().commitId())
+            .fetchOne();
+    if (original == null) {
+      throw new AssertionError("Expected exact original rows for the retained schema-3 fixture");
+    }
+    String identityJson = Objects.requireNonNull(original.get("identity_json", String.class));
+    String intakeJson = Objects.requireNonNull(original.get("intake_json", String.class));
+    String ownerBindingJson =
+        Objects.requireNonNull(original.get("owner_binding_json", String.class));
+    byte[] graphBytes = Objects.requireNonNull(original.get("graph_bytes", byte[].class));
+    String graphSha256 = Objects.requireNonNull(original.get("graph_sha256", String.class));
+    byte[] storageResultBytes = Objects.requireNonNull(original.get("result_bytes", byte[].class));
+    UUID captureId = UUID.randomUUID();
+    Map<String, Object> result = new LinkedHashMap<>();
+    result.put("schemaVersion", "1");
+    result.put("status", WorldCanonicalFrozenTopology.STATUS);
+    result.put(
+        "missingProof",
+        List.of(
+            "ACCOUNT_AUTHORIZATION",
+            "COMPLETE_PARTICIPANT_COMMIT",
+            "PUBLICATION_CHECKPOINT_DIGEST"));
+    result.put("captureId", captureId.toString());
+    result.put("freeze", request.freeze());
+    result.put("ownerBinding", request.plan().ownerBinding());
+    result.put("bindingJson", request.plan().binding().canonicalJson());
+    result.put("bindingDigest", request.plan().binding().digest());
+    result.put("identityJson", identityJson);
+    result.put("intakeJson", intakeJson);
+    result.put("graphBytes", graphBytes);
+    result.put("storageResultBytes", storageResultBytes);
+    byte[] resultBytes = RETAINED_JSON.writeValueAsBytes(result);
+
+    bypass(
+        "INSERT INTO world_canonical_frozen_topology (capture_id,publication_fence,request_id,"
+            + "commit_id,version_identity_operation_id,freeze_request_json,owner_binding_json,"
+            + "binding_json,binding_digest,identity_json,intake_json,graph_bytes,graph_sha256,"
+            + "storage_result_bytes,result_bytes,capture_status) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        captureId,
+        request.freeze().publicationFence(),
+        request.plan().binding().requestId(),
+        request.plan().binding().commitId(),
+        request.plan().ownerBinding().versionIdentityOperationId(),
+        RETAINED_JSON.writeValueAsString(request.freeze()),
+        ownerBindingJson,
+        request.plan().binding().canonicalJson(),
+        request.plan().binding().digest(),
+        identityJson,
+        intakeJson,
+        graphBytes,
+        graphSha256,
+        storageResultBytes,
+        resultBytes,
+        WorldCanonicalFrozenTopology.STATUS);
+    return frozen()
+        .readCommitted(request)
+        .orElseThrow(() -> new AssertionError("Retained schema-3 fixture did not read back"));
+  }
+
   private Request freeze(WorldDraftTopologyCommitPlan p) {
-    return freeze(p, 3);
+    return freeze(p, 4);
   }
 
   private Request freeze(WorldDraftTopologyCommitPlan p, int schema) {

@@ -60,6 +60,17 @@ public final class WorldDraftTerminalReadGrpcCodec {
           "appliedEpochs");
   private static final Set<String> FRESH_GRAPH_DECLARATION_FIELDS =
       Set.of("tenantId", "versionId", "startLocation", "familyCounts");
+  private static final Set<String> CLOSED_FRESH_GRAPH_DECLARATION_FIELDS =
+      Set.of("tenantId", "versionId", "startLocation", "familyCounts", "inboundSourceClosure");
+  private static final List<String> INBOUND_SOURCE_FAMILIES =
+      List.of(
+          "WORLD_INBOUND_SOURCE_FAMILY_LOOT_REFERENCE_ROOT",
+          "WORLD_INBOUND_SOURCE_FAMILY_LOOT_REFERENCE_ATTACHMENT",
+          "WORLD_INBOUND_SOURCE_FAMILY_BEHAVIOR_SELECTION",
+          "WORLD_INBOUND_SOURCE_FAMILY_BEHAVIOR_BINDING",
+          "WORLD_INBOUND_SOURCE_FAMILY_AUTOMATION_HOOK",
+          "WORLD_INBOUND_SOURCE_FAMILY_AUTOMATION_SCRIPT_REFERENCE",
+          "WORLD_INBOUND_SOURCE_FAMILY_AUTOMATION_TARGET_BINDING");
   private static final Set<String> ROOM_TEMPLATE_REF_FIELDS =
       Set.of("tenantId", "versionId", "roomTemplateId");
   private static final Set<String> FAMILY_COUNT_FIELDS = Set.of("family", "count");
@@ -316,9 +327,27 @@ public final class WorldDraftTerminalReadGrpcCodec {
       String graphDigest = sha256(graph);
       exactText(result, "graphDigest", graphDigest);
       JsonNode graphValue = JSON.readTree(graph);
-      fields(
-          graphValue, Set.of("schemaVersion", "canonicalTenantId", "canonicalVersionId", "rows"));
-      exactText(graphValue, "schemaVersion", "2");
+      JsonNode originalClosure =
+          originalGraph == null ? null : originalGraph.inboundSourceClosure();
+      if (originalClosure == null) {
+        fields(
+            graphValue, Set.of("schemaVersion", "canonicalTenantId", "canonicalVersionId", "rows"));
+        exactText(graphValue, "schemaVersion", "2");
+      } else {
+        fields(
+            graphValue,
+            Set.of(
+                "schemaVersion",
+                "canonicalTenantId",
+                "canonicalVersionId",
+                "inboundSourceClosure",
+                "rows"));
+        exactText(graphValue, "schemaVersion", "3");
+        if (!originalClosure.equals(graphValue.get("inboundSourceClosure"))) {
+          throw new IllegalArgumentException(
+              "World applied graph closure differs from its original Account-bound source");
+        }
+      }
       exactText(graphValue, "canonicalTenantId", account.tenantId().toString());
       exactText(graphValue, "canonicalVersionId", account.versionId().toString());
       if (!graphValue.get("rows").isArray() || graphValue.get("rows").isEmpty())
@@ -428,7 +457,13 @@ public final class WorldDraftTerminalReadGrpcCodec {
 
   private static OriginalFreshGraph parseOriginalFreshGraph(
       JsonNode declaration, Map<String, OriginalGraphNode> nodes, DraftCommitBinding draft) {
-    fields(declaration, FRESH_GRAPH_DECLARATION_FIELDS);
+    JsonNode inboundSourceClosure = declaration.get("inboundSourceClosure");
+    fields(
+        declaration,
+        inboundSourceClosure == null
+            ? FRESH_GRAPH_DECLARATION_FIELDS
+            : CLOSED_FRESH_GRAPH_DECLARATION_FIELDS);
+    if (inboundSourceClosure != null) requireEmptyInboundSourceClosure(inboundSourceClosure);
     UUID tenantId = parseCanonicalNonNilUuid(text(declaration, "tenantId"), "declaration tenantId");
     UUID versionId =
         parseCanonicalNonNilUuid(text(declaration, "versionId"), "declaration versionId");
@@ -483,7 +518,37 @@ public final class WorldDraftTerminalReadGrpcCodec {
         roomTemplateId,
         selectedRoom,
         Map.copyOf(nodes),
-        List.copyOf(nodes.values()));
+        List.copyOf(nodes.values()),
+        inboundSourceClosure);
+  }
+
+  private static void requireEmptyInboundSourceClosure(JsonNode closure) {
+    fields(closure, Set.of("schemaVersion", "familyCounts"));
+    JsonNode schemaVersion = closure.get("schemaVersion");
+    JsonNode counts = closure.get("familyCounts");
+    if (schemaVersion == null
+        || !schemaVersion.isIntegralNumber()
+        || !schemaVersion.canConvertToInt()
+        || schemaVersion.intValue() != 1
+        || counts == null
+        || !counts.isArray()
+        || counts.size() != INBOUND_SOURCE_FAMILIES.size()) {
+      throw new IllegalArgumentException(
+          "Original World inbound closure requires the complete version-1 family vector");
+    }
+    for (int index = 0; index < INBOUND_SOURCE_FAMILIES.size(); index++) {
+      JsonNode entry = counts.get(index);
+      fields(entry, FAMILY_COUNT_FIELDS);
+      exactText(entry, "family", INBOUND_SOURCE_FAMILIES.get(index));
+      JsonNode count = entry.get("count");
+      if (count == null
+          || !count.isIntegralNumber()
+          || !count.canConvertToInt()
+          || count.intValue() != 0) {
+        throw new IllegalArgumentException(
+            "Original World inbound closure is outside the supported explicit empty-only subset");
+      }
+    }
   }
 
   private static void validateDeclaredGraphRows(
@@ -626,7 +691,8 @@ public final class WorldDraftTerminalReadGrpcCodec {
       UUID roomTemplateId,
       OriginalGraphNode selectedRoom,
       Map<String, OriginalGraphNode> nodes,
-      List<OriginalGraphNode> orderedNodes) {}
+      List<OriginalGraphNode> orderedNodes,
+      JsonNode inboundSourceClosure) {}
 
   private static void fields(JsonNode value, Set<String> fields) {
     if (value == null

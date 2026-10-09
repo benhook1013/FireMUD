@@ -21,6 +21,7 @@ import net.firedevops.firemud.common.gamedesign.DraftSynchronizedVisibilityEvide
 import net.firedevops.firemud.common.tenant.AuthoredWorldSourceEvidence;
 import net.firedevops.firemud.worldmanagement.tenant.WorldDesignPublicationFenceRepository.ConflictException;
 import net.firedevops.firemud.worldmanagement.tenant.WorldDesignPublicationFenceRepository.OpenOwner;
+import net.firedevops.firemud.worldmanagement.tenant.WorldDraftTopologyInputGraph.InboundSourceClosureDeclaration;
 import net.firedevops.firemud.worldmanagement.tenant.WorldDraftTopologyInputGraph.Node;
 import org.jooq.DSLContext;
 import org.jooq.Record;
@@ -28,7 +29,7 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
 
-/** Actual fresh six-family storage; explicitly unwired, with owner-internal private keys. */
+/** Actual fresh six-family storage and source closure; explicitly unwired, with private keys. */
 public class WorldDraftTopologyCommitRepository {
   private final DSLContext dsl;
   private final WorldDesignPublicationFenceRepository fence;
@@ -460,11 +461,38 @@ public class WorldDraftTopologyCommitRepository {
       }
     }
     Map<String, Object> graph = new LinkedHashMap<>();
-    graph.put("schemaVersion", "2");
+    boolean hasInboundSourceClosure =
+        plan.graph()
+            .freshGraphDeclaration()
+            .flatMap(WorldDraftTopologyInputGraph.FreshGraphDeclaration::inboundSourceClosure)
+            .isPresent();
+    graph.put("schemaVersion", hasInboundSourceClosure ? "3" : "2");
     graph.put("canonicalTenantId", plan.graph().tenantId().toString());
     graph.put("canonicalVersionId", plan.graph().versionId().toString());
+    plan.graph()
+        .freshGraphDeclaration()
+        .flatMap(WorldDraftTopologyInputGraph.FreshGraphDeclaration::inboundSourceClosure)
+        .ifPresent(
+            closure -> graph.put("inboundSourceClosure", inboundSourceClosureContent(closure)));
     graph.put("rows", rows);
     return mapper.writeValueAsBytes(graph);
+  }
+
+  static Map<String, Object> inboundSourceClosureContent(InboundSourceClosureDeclaration closure) {
+    Map<String, Object> content = new LinkedHashMap<>();
+    content.put("schemaVersion", closure.schemaVersion());
+    content.put(
+        "familyCounts",
+        closure.familyCounts().stream()
+            .map(
+                family -> {
+                  Map<String, Object> entry = new LinkedHashMap<>();
+                  entry.put("family", family.family().name());
+                  entry.put("count", family.count());
+                  return entry;
+                })
+            .toList());
+    return content;
   }
 
   static Map<String, Object> expectedContent(

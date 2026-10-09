@@ -45,9 +45,9 @@ class PublishedReleaseBundleServiceImplTest {
   private PublishedReleaseBundleServiceImpl service;
 
   @Test
-  void selectorV2PersistsActualOriginalBytesAndRetryReturnsStoredEvidenceWithoutResolvingDefaults()
+  void closureSelectorV3PersistsOriginalBytesAndRetryReturnsStoredEvidenceWithoutResolvingDefaults()
       throws Exception {
-    var evidence = selectorEvidence();
+    var evidence = closureSelectorEvidence();
     var participants = PublishedWorldSelectorFixtures.participants(7L, evidence);
     // ISOLATED source-repository response; this test covers service assembly only.
     when(repository.requireSelectedCommandDefinitions(any(), any(), any(), any()))
@@ -70,7 +70,7 @@ class PublishedReleaseBundleServiceImplTest {
             "genrev-1",
             participants,
             evidence);
-    assertEquals("v2", first.attestationSchemaVersion());
+    assertEquals("v3", first.attestationSchemaVersion());
     assertThat(first.worldPublishedStartLocationEvidence().canonicalBytes())
         .containsExactly(evidence.canonicalBytes());
     assertThat(first.commandDefinitions()).containsExactly(validCommandDefinition());
@@ -113,9 +113,9 @@ class PublishedReleaseBundleServiceImplTest {
   }
 
   @Test
-  void selectorV2RejectsMissingEvidenceWrongWorkflowIncompleteOwnersAndChangedWorldDigest()
+  void closureSelectorV3RejectsMissingEvidenceWrongWorkflowIncompleteOwnersAndChangedWorldDigest()
       throws Exception {
-    var evidence = selectorEvidence();
+    var evidence = closureSelectorEvidence();
     var participants = PublishedWorldSelectorFixtures.participants(7L, evidence);
     var obsolete = new java.util.ArrayList<>(participants);
     var gd = obsolete.getLast();
@@ -180,7 +180,7 @@ class PublishedReleaseBundleServiceImplTest {
             null,
             world.appliedCommitId(),
             "e".repeat(64),
-            3,
+            world.digestSchemaVersion(),
             null,
             null,
             null));
@@ -198,8 +198,8 @@ class PublishedReleaseBundleServiceImplTest {
   }
 
   @Test
-  void selectorV2RequiresSelectedSourceCaptureBeforeBundleWrite() throws Exception {
-    var evidence = selectorEvidence();
+  void closureSelectorV3RequiresSelectedSourceCaptureBeforeBundleWrite() throws Exception {
+    var evidence = closureSelectorEvidence();
     when(repository.requireSelectedCommandDefinitions(any(), any(), any(), any()))
         .thenThrow(new IllegalStateException("SELECTED_SOURCE_CAPTURE_UNAVAILABLE"));
 
@@ -216,6 +216,24 @@ class PublishedReleaseBundleServiceImplTest {
         .hasMessageContaining("SELECTED_SOURCE_CAPTURE_UNAVAILABLE");
     org.mockito.Mockito.verify(repository, org.mockito.Mockito.never()).save(any());
     org.mockito.Mockito.verifyNoInteractions(revisionRepository);
+  }
+
+  @Test
+  void newSelectedReleaseCannotBeCreatedFromRetainedWorldDigestSchema3() throws Exception {
+    var evidence = selectorEvidence();
+
+    assertThatThrownBy(
+            () ->
+                service.createFullVersionBundle(
+                    selectorVersion(),
+                    "publish-workflow",
+                    emptyManifest(),
+                    "genrev-1",
+                    PublishedWorldSelectorFixtures.participants(7L, evidence),
+                    evidence))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("World digest schema 4");
+    org.mockito.Mockito.verify(repository, org.mockito.Mockito.never()).save(any());
   }
 
   @Test
@@ -252,6 +270,18 @@ class PublishedReleaseBundleServiceImplTest {
 
   private WorldPublishedStartLocationEvidence selectorEvidence() throws Exception {
     return PublishedWorldSelectorFixtures.evidence(
+        new TargetProof(
+            sourceIdentity().getCanonicalTenantId(),
+            sourceIdentity().getCanonicalVersionId(),
+            7L,
+            "tenant-1",
+            42L,
+            "tenant-1",
+            "NEW_GAME_ROW"));
+  }
+
+  private WorldPublishedStartLocationEvidence closureSelectorEvidence() throws Exception {
+    return PublishedWorldSelectorFixtures.closureEvidence(
         new TargetProof(
             sourceIdentity().getCanonicalTenantId(),
             sourceIdentity().getCanonicalVersionId(),

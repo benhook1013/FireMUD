@@ -485,7 +485,7 @@ public record WorldPublishedStartLocationEvidence(
       requireText(publishWorkflowId, "publishWorkflowId");
       requireText(appliedCommitId, "appliedCommitId");
       requireSha256(contentDigest, "contentDigest");
-      if (digestSchemaVersion != 2 && digestSchemaVersion != 3) {
+      if (digestSchemaVersion != 2 && digestSchemaVersion != 3 && digestSchemaVersion != 4) {
         throw new IllegalArgumentException("Unsupported World digest schema version");
       }
       Objects.requireNonNull(worldAffectedTuples, "worldAffectedTuples");

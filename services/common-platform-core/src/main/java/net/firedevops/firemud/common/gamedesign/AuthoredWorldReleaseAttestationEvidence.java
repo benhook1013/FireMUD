@@ -49,9 +49,12 @@ public record AuthoredWorldReleaseAttestationEvidence(
         WorldPublishedStartLocationEvidence worldStartLocationEvidence) {
   public static final int SCHEMA_VERSION = 1;
   public static final int SELECTOR_SCHEMA_VERSION = 2;
+  public static final int CLOSURE_SELECTOR_SCHEMA_VERSION = 3;
   private static final String EVIDENCE_DOMAIN = "game-design-authored-world-release-attestation/v1";
   private static final String SELECTOR_EVIDENCE_DOMAIN =
       "game-design-authored-world-release-attestation/v2";
+  private static final String CLOSURE_SELECTOR_EVIDENCE_DOMAIN =
+      "game-design-authored-world-release-attestation/v3";
   private static final Pattern SHA256 = Pattern.compile("sha256:[0-9a-f]{64}");
   private static final Pattern PARTICIPANT_CONTENT_DIGEST = Pattern.compile("[0-9a-f]{64}");
   private static final Pattern CANONICAL_POSITIVE_DECIMAL = Pattern.compile("[1-9][0-9]*");
@@ -85,11 +88,12 @@ public record AuthoredWorldReleaseAttestationEvidence(
     return supportedParticipantDigestSchema(participantKey, SCHEMA_VERSION);
   }
 
-  /** Selects owner schemas from the explicit retained-v1 or selected-publication-v2 contract. */
+  /** Selects owner schemas from the retained-v1, selected-v2, or closure-selected-v3 contract. */
   public static int supportedParticipantDigestSchema(
       String participantKey, int attestationSchemaVersion) {
     if (attestationSchemaVersion != SCHEMA_VERSION
-        && attestationSchemaVersion != SELECTOR_SCHEMA_VERSION) {
+        && attestationSchemaVersion != SELECTOR_SCHEMA_VERSION
+        && attestationSchemaVersion != CLOSURE_SELECTOR_SCHEMA_VERSION) {
       throw new IllegalArgumentException("Unsupported authored-world release-attestation schema");
     }
     Objects.requireNonNull(participantKey, "participantKey");
@@ -97,10 +101,23 @@ public record AuthoredWorldReleaseAttestationEvidence(
     if (version == null) {
       throw new IllegalArgumentException("Unsupported full-Version participant owner");
     }
-    return attestationSchemaVersion == SELECTOR_SCHEMA_VERSION
+    if (attestationSchemaVersion == CLOSURE_SELECTOR_SCHEMA_VERSION
+        && "WORLD_MANAGEMENT".equals(participantKey)) {
+      return 4;
+    }
+    return isSelectedSchema(attestationSchemaVersion)
             && "GAME_DESIGN_CONTROL_PLANE".equals(participantKey)
         ? 2
         : version;
+  }
+
+  public static boolean requiresWorldStartLocationEvidence(int attestationSchemaVersion) {
+    return isSelectedSchema(attestationSchemaVersion);
+  }
+
+  private static boolean isSelectedSchema(int attestationSchemaVersion) {
+    return attestationSchemaVersion == SELECTOR_SCHEMA_VERSION
+        || attestationSchemaVersion == CLOSURE_SELECTOR_SCHEMA_VERSION;
   }
 
   /** One successful, immutable owner digest included in the release attestation. */
@@ -156,7 +173,9 @@ public record AuthoredWorldReleaseAttestationEvidence(
   }
 
   public AuthoredWorldReleaseAttestationEvidence {
-    if (schemaVersion != SCHEMA_VERSION && schemaVersion != SELECTOR_SCHEMA_VERSION) {
+    if (schemaVersion != SCHEMA_VERSION
+        && schemaVersion != SELECTOR_SCHEMA_VERSION
+        && schemaVersion != CLOSURE_SELECTOR_SCHEMA_VERSION) {
       throw new IllegalArgumentException("Unsupported authored-world release-attestation schema");
     }
     Objects.requireNonNull(targetNamespace, "targetNamespace");
@@ -193,9 +212,9 @@ public record AuthoredWorldReleaseAttestationEvidence(
     }
     requireText(generationConfigRevision, "generationConfigRevision");
     requireDigest(evidenceDigest, "evidenceDigest");
-    if ((schemaVersion == SELECTOR_SCHEMA_VERSION) != (worldStartLocationEvidence != null)) {
+    if (requiresWorldStartLocationEvidence(schemaVersion) != (worldStartLocationEvidence != null)) {
       throw new IllegalArgumentException(
-          "Only release-attestation/v2 requires World selector evidence");
+          "Selected release-attestation schemas require World selector evidence");
     }
     if (worldStartLocationEvidence != null) {
       WorldPublishedStartLocationEvidence.fromStored(worldStartLocationEvidence.canonicalBytes());
@@ -284,10 +303,102 @@ public record AuthoredWorldReleaseAttestationEvidence(
       List<String> commandDefinitions,
       String generationConfigRevision,
       WorldPublishedStartLocationEvidence worldStartLocationEvidence) {
+    return createSelected(
+        SELECTOR_SCHEMA_VERSION,
+        targetNamespace,
+        descriptorResultDigest,
+        canonicalTenantId,
+        canonicalVersionId,
+        worldSlug,
+        authoredWorldSourceOperationId,
+        authoredWorldSourceEvidenceDigest,
+        launchDescriptorId,
+        publishedReleaseBundleRef,
+        versionStateEpoch,
+        publishWorkflowId,
+        commitId,
+        participantDigests,
+        manifestHash,
+        manifestSchemaVersion,
+        requiredManifestAssetKeys,
+        artifactDigests,
+        commandDefinitions,
+        generationConfigRevision,
+        worldStartLocationEvidence);
+  }
+
+  /** Creates v3 for a selected World closure-qualified schema-4 participant digest. */
+  public static AuthoredWorldReleaseAttestationEvidence createClosureSelector(
+      String targetNamespace,
+      String descriptorResultDigest,
+      UUID canonicalTenantId,
+      UUID canonicalVersionId,
+      String worldSlug,
+      UUID authoredWorldSourceOperationId,
+      String authoredWorldSourceEvidenceDigest,
+      String launchDescriptorId,
+      String publishedReleaseBundleRef,
+      long versionStateEpoch,
+      String publishWorkflowId,
+      String commitId,
+      List<Participant> participantDigests,
+      String manifestHash,
+      int manifestSchemaVersion,
+      List<String> requiredManifestAssetKeys,
+      List<Artifact> artifactDigests,
+      List<String> commandDefinitions,
+      String generationConfigRevision,
+      WorldPublishedStartLocationEvidence worldStartLocationEvidence) {
+    return createSelected(
+        CLOSURE_SELECTOR_SCHEMA_VERSION,
+        targetNamespace,
+        descriptorResultDigest,
+        canonicalTenantId,
+        canonicalVersionId,
+        worldSlug,
+        authoredWorldSourceOperationId,
+        authoredWorldSourceEvidenceDigest,
+        launchDescriptorId,
+        publishedReleaseBundleRef,
+        versionStateEpoch,
+        publishWorkflowId,
+        commitId,
+        participantDigests,
+        manifestHash,
+        manifestSchemaVersion,
+        requiredManifestAssetKeys,
+        artifactDigests,
+        commandDefinitions,
+        generationConfigRevision,
+        worldStartLocationEvidence);
+  }
+
+  private static AuthoredWorldReleaseAttestationEvidence createSelected(
+      int schemaVersion,
+      String targetNamespace,
+      String descriptorResultDigest,
+      UUID canonicalTenantId,
+      UUID canonicalVersionId,
+      String worldSlug,
+      UUID authoredWorldSourceOperationId,
+      String authoredWorldSourceEvidenceDigest,
+      String launchDescriptorId,
+      String publishedReleaseBundleRef,
+      long versionStateEpoch,
+      String publishWorkflowId,
+      String commitId,
+      List<Participant> participantDigests,
+      String manifestHash,
+      int manifestSchemaVersion,
+      List<String> requiredManifestAssetKeys,
+      List<Artifact> artifactDigests,
+      List<String> commandDefinitions,
+      String generationConfigRevision,
+      WorldPublishedStartLocationEvidence worldStartLocationEvidence) {
     Objects.requireNonNull(worldStartLocationEvidence, "worldStartLocationEvidence");
     var provisional =
         new AuthoredWorldReleaseAttestationEvidence(
-            SELECTOR_SCHEMA_VERSION,
+            schemaVersion,
             targetNamespace,
             descriptorResultDigest,
             canonicalTenantId,
@@ -310,7 +421,7 @@ public record AuthoredWorldReleaseAttestationEvidence(
             "sha256:" + "0".repeat(64),
             worldStartLocationEvidence);
     return new AuthoredWorldReleaseAttestationEvidence(
-        SELECTOR_SCHEMA_VERSION,
+        schemaVersion,
         targetNamespace,
         descriptorResultDigest,
         canonicalTenantId,
@@ -527,16 +638,21 @@ public record AuthoredWorldReleaseAttestationEvidence(
           field("commandDefinitions[" + index + "]", evidence.commandDefinitions().get(index)));
     }
     fields.add(field("generationConfigRevision", evidence.generationConfigRevision()));
-    if (evidence.schemaVersion() == SELECTOR_SCHEMA_VERSION) {
+    if (requiresWorldStartLocationEvidence(evidence.schemaVersion())) {
       fields.add(
           field(
               "worldStartLocationEvidence.canonicalBytesBase64",
               Base64.getEncoder()
                   .encodeToString(evidence.worldStartLocationEvidence().canonicalBytes())));
     }
-    return preimage(
-        evidence.schemaVersion() == SCHEMA_VERSION ? EVIDENCE_DOMAIN : SELECTOR_EVIDENCE_DOMAIN,
-        fields.toArray(Field[]::new));
+    String domain =
+        switch (evidence.schemaVersion()) {
+          case SCHEMA_VERSION -> EVIDENCE_DOMAIN;
+          case SELECTOR_SCHEMA_VERSION -> SELECTOR_EVIDENCE_DOMAIN;
+          case CLOSURE_SELECTOR_SCHEMA_VERSION -> CLOSURE_SELECTOR_EVIDENCE_DOMAIN;
+          default -> throw new IllegalArgumentException("Unsupported release-attestation schema");
+        };
+    return preimage(domain, fields.toArray(Field[]::new));
   }
 
   private static void validateParticipants(

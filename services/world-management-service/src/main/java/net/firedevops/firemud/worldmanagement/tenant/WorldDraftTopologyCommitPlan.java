@@ -20,12 +20,15 @@ import net.firedevops.firemud.worldmanagement.tenant.WorldDesignPublicationFence
 import net.firedevops.firemud.worldmanagement.tenant.WorldDraftTopologyInputGraph.EntityTemplateReference;
 import net.firedevops.firemud.worldmanagement.tenant.WorldDraftTopologyInputGraph.FamilyCount;
 import net.firedevops.firemud.worldmanagement.tenant.WorldDraftTopologyInputGraph.FreshGraphDeclaration;
+import net.firedevops.firemud.worldmanagement.tenant.WorldDraftTopologyInputGraph.InboundSourceClosureDeclaration;
+import net.firedevops.firemud.worldmanagement.tenant.WorldDraftTopologyInputGraph.InboundSourceFamilyCount;
 import net.firedevops.firemud.worldmanagement.tenant.WorldDraftTopologyInputGraph.Node;
 import net.firedevops.firemud.worldmanagement.v1.EntityTemplateReferenceType;
 import net.firedevops.firemud.worldmanagement.v1.WorldDesignAggregateType;
 import net.firedevops.firemud.worldmanagement.v1.WorldDesignMutationOperation;
 import net.firedevops.firemud.worldmanagement.v1.WorldDesignScopeMutationPolicy;
 import net.firedevops.firemud.worldmanagement.v1.WorldDesignScopeType;
+import net.firedevops.firemud.worldmanagement.v1.WorldInboundSourceFamily;
 import tools.jackson.core.StreamReadFeature;
 import tools.jackson.databind.DeserializationFeature;
 import tools.jackson.databind.ObjectMapper;
@@ -37,9 +40,11 @@ import tools.jackson.databind.json.JsonMapper;
  * <p>This does not authenticate source or Entity evidence, authorize Account commits, allocate or
  * read storage, report APPLIED, expose a public handler, capture released content, or establish
  * lifecycle/runtime readiness. Existing numeric REGION plans and historical graph bytes are
- * separate. Free-text and localized JSON fields are preserved, not semantically validated. Zero
- * spacing, exit cost and spawn count preserve the existing owner-default input convention; a future
- * writer must apply those defaults without changing the original binding.
+ * separate. A present selected-inbound closure must be the exact version-1 seven-family empty-only
+ * vector; absence remains legacy input and does not qualify new APPLIED or selected inventory.
+ * Free-text and localized JSON fields are preserved, not semantically validated. Zero spacing, exit
+ * cost and spawn count preserve the existing owner-default input convention; a future writer must
+ * apply those defaults without changing the original binding.
  */
 public final class WorldDraftTopologyCommitPlan {
   private static final ObjectMapper STRICT_JSON =
@@ -57,6 +62,8 @@ public final class WorldDraftTopologyCommitPlan {
           WorldDesignAggregateType.WORLD_DESIGN_AGGREGATE_TYPE_ROOM_EXIT,
           WorldDesignAggregateType.WORLD_DESIGN_AGGREGATE_TYPE_GENERATION_RULE,
           WorldDesignAggregateType.WORLD_DESIGN_AGGREGATE_TYPE_WORLD_ENTITY_SPAWN_BINDING);
+  static final List<WorldInboundSourceFamily> INBOUND_SOURCE_FAMILY_ORDER =
+      WorldDraftTopologyInputGraph.INBOUND_SOURCE_FAMILY_ORDER;
 
   private record ObjectReference(WorldDesignAggregateType kind, UUID templateId) {}
 
@@ -370,7 +377,36 @@ public final class WorldDraftTopologyCommitPlan {
       }
       counts.add(new FamilyCount(entry.getFamily(), entry.getCount()));
     }
-    return new FreshGraphDeclaration(tenantId, versionId, startLocation, counts);
+    return new FreshGraphDeclaration(
+        tenantId,
+        versionId,
+        startLocation,
+        counts,
+        declaration.hasInboundSourceClosure()
+            ? java.util.Optional.of(
+                parseInboundSourceClosure(declaration.getInboundSourceClosure()))
+            : java.util.Optional.empty());
+  }
+
+  private static InboundSourceClosureDeclaration parseInboundSourceClosure(
+      net.firedevops.firemud.worldmanagement.v1.WorldInboundSourceClosureDeclaration declaration) {
+    if (declaration.getSchemaVersion() != 1
+        || declaration.getFamilyCountsCount() != INBOUND_SOURCE_FAMILY_ORDER.size()) {
+      throw invalid(
+          "Fresh World source closure requires the complete supported version-1 family vector");
+    }
+    List<InboundSourceFamilyCount> counts = new ArrayList<>();
+    for (int index = 0; index < INBOUND_SOURCE_FAMILY_ORDER.size(); index++) {
+      var entry = declaration.getFamilyCounts(index);
+      if (entry.getFamily() != INBOUND_SOURCE_FAMILY_ORDER.get(index)
+          || !entry.hasCount()
+          || entry.getCount() != 0) {
+        throw invalid(
+            "Fresh World source closure must be canonical, explicit and empty-only; nonempty families are unsupported");
+      }
+      counts.add(new InboundSourceFamilyCount(entry.getFamily(), entry.getCount()));
+    }
+    return new InboundSourceClosureDeclaration(declaration.getSchemaVersion(), counts);
   }
 
   private static void validateDeclaredFamilies(

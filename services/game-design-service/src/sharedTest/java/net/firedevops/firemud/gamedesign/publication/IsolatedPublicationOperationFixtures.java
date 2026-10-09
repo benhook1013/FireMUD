@@ -28,7 +28,21 @@ public final class IsolatedPublicationOperationFixtures {
    */
   public static GameDesignPublicationOperation fresh(DraftCommitBinding.TargetProof target)
       throws Exception {
-    var seed = PublishedWorldSelectorFixtures.evidence(target);
+    return fresh(target, false);
+  }
+
+  /** Test-only closure-qualified fixture; upstream Account/APPLIED evidence remains stipulated. */
+  public static GameDesignPublicationOperation freshClosureQualifiedSelection(
+      DraftCommitBinding.TargetProof target) throws Exception {
+    return fresh(target, true);
+  }
+
+  private static GameDesignPublicationOperation fresh(
+      DraftCommitBinding.TargetProof target, boolean closureQualified) throws Exception {
+    var seed =
+        closureQualified
+            ? PublishedWorldSelectorFixtures.closureEvidence(target)
+            : PublishedWorldSelectorFixtures.evidence(target);
     var originalDraftAccount =
         DraftAuthorizationFenceBinding.fromStored(seed.originalAccountBindingBytes());
     var draft =
@@ -152,7 +166,7 @@ public final class IsolatedPublicationOperationFixtures {
                     intent.publishRequestId()),
                 draft.commitId().toString(),
                 seed.request().contentDigest(),
-                3,
+                seed.request().digestSchemaVersion(),
                 seed.request().worldAffectedTuples()),
             seed.selectorReceiptBytes(),
             seed.originalAccountBindingBytes(),

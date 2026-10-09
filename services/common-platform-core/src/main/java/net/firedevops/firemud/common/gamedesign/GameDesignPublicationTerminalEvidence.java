@@ -79,10 +79,16 @@ public final class GameDesignPublicationTerminalEvidence {
       text(publishedReleaseBundleRef);
       text(publishWorkflowId);
       text(generationConfigRevision);
-      if (versionNumber <= 0
-          || !"v2".equals(attestationSchemaVersion)
-          || manifestSchemaVersion != 1) {
-        throw new IllegalArgumentException("Complete full-Version bundle/v2 required");
+      int selectedAttestationSchema =
+          switch (attestationSchemaVersion) {
+            case "v2" -> AuthoredWorldReleaseAttestationEvidence.SELECTOR_SCHEMA_VERSION;
+            case "v3" -> AuthoredWorldReleaseAttestationEvidence.CLOSURE_SELECTOR_SCHEMA_VERSION;
+            default ->
+                throw new IllegalArgumentException(
+                    "Complete full-Version bundle/v2 or bundle/v3 required");
+          };
+      if (versionNumber <= 0 || manifestSchemaVersion != 1) {
+        throw new IllegalArgumentException("Complete full-Version bundle/v2 or bundle/v3 required");
       }
       digest(manifestHash);
       artifactDigests = List.copyOf(artifactDigests);
@@ -108,8 +114,7 @@ public final class GameDesignPublicationTerminalEvidence {
         if (!owners.get(i).equals(p.participantKey())
             || p.digestSchemaVersion()
                 != AuthoredWorldReleaseAttestationEvidence.supportedParticipantDigestSchema(
-                    p.participantKey(),
-                    AuthoredWorldReleaseAttestationEvidence.SELECTOR_SCHEMA_VERSION)
+                    p.participantKey(), selectedAttestationSchema)
             || p.baseVersionId() != null
             || !selected.appliedCommitId().equals(p.appliedCommitId())
             || !p.scopeValue().matches("[1-9][0-9]*")

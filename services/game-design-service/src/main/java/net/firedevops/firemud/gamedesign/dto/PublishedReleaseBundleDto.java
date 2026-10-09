@@ -37,13 +37,15 @@ public record PublishedReleaseBundleDto(
           "Manifest schema and artifact proof must be present together");
     }
     artifactDigests = artifactDigests == null ? null : List.copyOf(artifactDigests);
-    if ("v2".equals(attestationSchemaVersion) != (worldPublishedStartLocationEvidence != null)) {
+    boolean selectorSchema =
+        "v2".equals(attestationSchemaVersion) || "v3".equals(attestationSchemaVersion);
+    if (selectorSchema != (worldPublishedStartLocationEvidence != null)) {
       throw new IllegalArgumentException(
-          "Selector evidence requires bundle v2 and is mandatory for v2");
+          "Selector evidence is mandatory for selected release schemas and forbidden historically");
     }
   }
 
-  /** Original retained bundle construction shape; cannot construct a selector-bearing v2 bundle. */
+  /** Original retained bundle construction shape; cannot construct a selector-bearing release. */
   public PublishedReleaseBundleDto(
       Long id,
       String tenantId,

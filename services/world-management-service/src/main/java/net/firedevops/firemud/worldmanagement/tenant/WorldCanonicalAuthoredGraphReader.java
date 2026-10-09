@@ -5,6 +5,7 @@ import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import net.firedevops.firemud.worldmanagement.tenant.WorldCanonicalAuthoredGraph.Family;
 import net.firedevops.firemud.worldmanagement.tenant.WorldCanonicalAuthoredGraph.Row;
@@ -16,7 +17,7 @@ import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
 import tools.jackson.databind.json.JsonMapper;
 
-/** Closed graph/2 decoder. Retained numeric graph/1 remains a separate explicit reader. */
+/** Closed graph/2 legacy and graph/3 inbound-closure decoder. Numeric graph/1 stays separate. */
 public final class WorldCanonicalAuthoredGraphReader {
   private static final ObjectMapper JSON =
       JsonMapper.builder()
@@ -43,8 +44,32 @@ public final class WorldCanonicalAuthoredGraphReader {
   /** Complete original input supplies typed hierarchy/scope/Entity closure, never authority. */
   public WorldCanonicalAuthoredGraph read(WorldDraftTopologyCommitPlan plan, byte[] bytes) {
     JsonNode root = JSON.readTree(bytes);
-    fields(root, Set.of("schemaVersion", "canonicalTenantId", "canonicalVersionId", "rows"));
-    text(root, "schemaVersion", "2");
+    Optional<WorldDraftTopologyInputGraph.InboundSourceClosureDeclaration> inboundClosure =
+        plan.graph()
+            .freshGraphDeclaration()
+            .flatMap(WorldDraftTopologyInputGraph.FreshGraphDeclaration::inboundSourceClosure);
+    if (inboundClosure.isPresent()) {
+      fields(
+          root,
+          Set.of(
+              "schemaVersion",
+              "canonicalTenantId",
+              "canonicalVersionId",
+              "inboundSourceClosure",
+              "rows"));
+      text(root, "schemaVersion", "3");
+      JsonNode retainedClosure = root.get("inboundSourceClosure");
+      fields(retainedClosure, Set.of("schemaVersion", "familyCounts"));
+      if (!retainedClosure.equals(
+          JSON.valueToTree(
+              WorldDraftTopologyCommitRepository.inboundSourceClosureContent(
+                  inboundClosure.orElseThrow())))) {
+        throw invalid("Canonical graph inbound declaration differs from original source bytes");
+      }
+    } else {
+      fields(root, Set.of("schemaVersion", "canonicalTenantId", "canonicalVersionId", "rows"));
+      text(root, "schemaVersion", "2");
+    }
     text(root, "canonicalTenantId", plan.graph().tenantId().toString());
     text(root, "canonicalVersionId", plan.graph().versionId().toString());
     JsonNode rows = root.get("rows");
@@ -140,7 +165,12 @@ public final class WorldCanonicalAuthoredGraphReader {
               content.build()));
     }
     return new WorldCanonicalAuthoredGraph(
-        plan.graph().tenantId(), plan.graph().versionId(), tenant, version, decoded);
+        plan.graph().tenantId(),
+        plan.graph().versionId(),
+        tenant,
+        version,
+        decoded,
+        inboundClosure);
   }
 
   private static void fields(JsonNode node, Set<String> expected) {

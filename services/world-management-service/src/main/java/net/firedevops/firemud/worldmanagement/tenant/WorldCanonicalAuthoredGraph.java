@@ -3,12 +3,16 @@ package net.firedevops.firemud.worldmanagement.tenant;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.util.List;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.UUID;
 import net.firedevops.firemud.gamedesign.v1.WorldDesignMutationRevision;
 import net.firedevops.firemud.worldmanagement.tenant.WorldDraftTopologyInputGraph.EntityTemplateReference;
+import net.firedevops.firemud.worldmanagement.tenant.WorldDraftTopologyInputGraph.InboundSourceClosureDeclaration;
 import net.firedevops.firemud.worldmanagement.tenant.WorldDraftTopologyInputGraph.Node;
 
-/** Owner-private, validated graph/2 storage view, never synchronized or released content. */
+/**
+ * Owner-private, validated graph/2 or graph/3 storage view, never synchronized or released content.
+ */
 public final class WorldCanonicalAuthoredGraph {
   public enum Family {
     REGION,
@@ -62,14 +66,27 @@ public final class WorldCanonicalAuthoredGraph {
   private final long localTenantKey;
   private final long localVersionKey;
   private final List<Row> rows;
+  private final Optional<InboundSourceClosureDeclaration> inboundSourceClosure;
 
   WorldCanonicalAuthoredGraph(
-      UUID tenantId, UUID versionId, long localTenantKey, long localVersionKey, List<Row> rows) {
+      UUID tenantId,
+      UUID versionId,
+      long localTenantKey,
+      long localVersionKey,
+      List<Row> rows,
+      Optional<InboundSourceClosureDeclaration> inboundSourceClosure) {
     this.tenantId = tenantId;
     this.versionId = versionId;
     this.localTenantKey = localTenantKey;
     this.localVersionKey = localVersionKey;
     this.rows = List.copyOf(rows);
+    this.inboundSourceClosure =
+        Objects.requireNonNull(inboundSourceClosure, "inboundSourceClosure");
+  }
+
+  WorldCanonicalAuthoredGraph(
+      UUID tenantId, UUID versionId, long localTenantKey, long localVersionKey, List<Row> rows) {
+    this(tenantId, versionId, localTenantKey, localVersionKey, rows, Optional.empty());
   }
 
   public UUID tenantId() {
@@ -94,5 +111,10 @@ public final class WorldCanonicalAuthoredGraph {
 
   public List<Row> family(Family family) {
     return rows.stream().filter(row -> row.template().family() == family).toList();
+  }
+
+  /** Exact source declaration; absence remains legacy history and never means empty. */
+  public Optional<InboundSourceClosureDeclaration> inboundSourceClosure() {
+    return inboundSourceClosure;
   }
 }

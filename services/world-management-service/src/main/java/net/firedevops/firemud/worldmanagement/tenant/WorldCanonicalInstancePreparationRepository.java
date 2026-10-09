@@ -523,9 +523,11 @@ public final class WorldCanonicalInstancePreparationRepository {
       GameDesignPublicationTerminalEvidence terminal,
       AuthoredWorldReleaseAttestationEvidence release) {
     var bundle = terminal.releaseContent();
-    if (release.schemaVersion() != AuthoredWorldReleaseAttestationEvidence.SELECTOR_SCHEMA_VERSION
+    if (!AuthoredWorldReleaseAttestationEvidence.requiresWorldStartLocationEvidence(
+            release.schemaVersion())
         || !bundle.canonicalTenantId().equals(release.canonicalTenantId())
         || !bundle.canonicalVersionId().equals(release.canonicalVersionId())
+        || !bundle.attestationSchemaVersion().equals("v" + release.schemaVersion())
         || !bundle.publishedReleaseBundleRef().equals(release.publishedReleaseBundleRef())
         || terminal.publicationVersionStateEpoch() > release.versionStateEpoch()
         || !bundle.publishWorkflowId().equals(release.publishWorkflowId())

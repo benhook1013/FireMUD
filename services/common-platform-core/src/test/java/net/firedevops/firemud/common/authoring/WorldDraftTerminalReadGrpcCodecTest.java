@@ -312,6 +312,120 @@ public class WorldDraftTerminalReadGrpcCodecTest {
   }
 
   @Test
+  void closureQualifiedGraph3RoundTripsWithoutChangingTheAppliedV2Envelope() throws Exception {
+    var request = freshGraphRequest(emptyInboundSourceClosure());
+    var committed = committedReadback(request, true);
+    var result = object(committed.result());
+    var graph = object(Base64.getDecoder().decode(result.get("graphBytesBase64").textValue()));
+    assertThat(result.get("schema").textValue()).isEqualTo("world-draft-graph-applied/v2");
+    assertThat(graph.get("schemaVersion").textValue()).isEqualTo("3");
+    assertThat(graph.get("inboundSourceClosure")).isEqualTo(emptyInboundSourceClosure());
+
+    var response = WorldDraftTerminalReadGrpcCodec.toResponse(request, Optional.of(committed));
+    assertThat(
+            WorldDraftTerminalReadGrpcCodec.fromResponse(request, response)
+                .ownerReadback()
+                .orElseThrow()
+                .canonicalBytes())
+        .containsExactly(committed.canonicalBytes());
+  }
+
+  @Test
+  void graph3RejectsMissingSubstitutedOrDowngradedOriginalClosureDespiteReboundDigests()
+      throws Exception {
+    var request = freshGraphRequest(emptyInboundSourceClosure());
+    var committed = committedReadback(request, true);
+    for (java.util.function.Consumer<tools.jackson.databind.node.ObjectNode> change :
+        List.<java.util.function.Consumer<tools.jackson.databind.node.ObjectNode>>of(
+            graph -> graph.remove("inboundSourceClosure"),
+            graph -> graph.put("schemaVersion", "2"),
+            graph -> {
+              graph.put("schemaVersion", "2");
+              graph.remove("inboundSourceClosure");
+            },
+            graph ->
+                ((tools.jackson.databind.node.ObjectNode) graph.get("inboundSourceClosure"))
+                    .put("schemaVersion", 2),
+            graph ->
+                ((tools.jackson.databind.node.ObjectNode)
+                        graph.get("inboundSourceClosure").get("familyCounts").get(0))
+                    .put("count", 1),
+            graph -> graph.put("inboundSourceClosure", "opaque"))) {
+      assertResultRejected(request, committed, changedGraphResult(request, committed, change));
+    }
+  }
+
+  @Test
+  void closureMustBeExplicitCompleteOrderedAndEmptyInOriginalAccountBoundSource() throws Exception {
+    for (java.util.function.Consumer<tools.jackson.databind.node.ObjectNode> change :
+        List.<java.util.function.Consumer<tools.jackson.databind.node.ObjectNode>>of(
+            closure -> closure.put("schemaVersion", 2),
+            closure -> closure.put("schemaVersion", "1"),
+            closure -> closure.put("unsupported", "opaque"),
+            closure -> closure.put("familyCounts", "opaque"),
+            closure ->
+                ((tools.jackson.databind.node.ArrayNode) closure.get("familyCounts")).remove(0),
+            closure ->
+                ((tools.jackson.databind.node.ObjectNode) closure.get("familyCounts").get(0))
+                    .put("family", "WORLD_INBOUND_SOURCE_FAMILY_UNKNOWN"),
+            closure ->
+                ((tools.jackson.databind.node.ObjectNode) closure.get("familyCounts").get(0))
+                    .put("family", "WORLD_INBOUND_SOURCE_FAMILY_LOOT_REFERENCE_ATTACHMENT"),
+            closure ->
+                ((tools.jackson.databind.node.ObjectNode) closure.get("familyCounts").get(0))
+                    .put("count", 1),
+            closure ->
+                ((tools.jackson.databind.node.ObjectNode) closure.get("familyCounts").get(0))
+                    .put("count", -1),
+            closure ->
+                ((tools.jackson.databind.node.ObjectNode) closure.get("familyCounts").get(0))
+                    .put("count", "0"),
+            closure ->
+                ((tools.jackson.databind.node.ObjectNode) closure.get("familyCounts").get(0))
+                    .remove("count"),
+            closure ->
+                ((tools.jackson.databind.node.ObjectNode) closure.get("familyCounts").get(0))
+                    .put("members", "opaque"))) {
+      var closure = emptyInboundSourceClosure();
+      change.accept(closure);
+      var request = freshGraphRequest(closure);
+      var committed = committedReadback(request, true);
+      assertThatThrownBy(
+              () -> WorldDraftTerminalReadGrpcCodec.toResponse(request, Optional.of(committed)))
+          .isInstanceOf(IllegalArgumentException.class)
+          .hasMessageContaining("substituted canonical APPLIED result");
+    }
+    for (tools.jackson.databind.JsonNode closure :
+        List.of(JSON.getNodeFactory().nullNode(), JSON.getNodeFactory().textNode("opaque"))) {
+      var request = freshGraphRequest(closure);
+      var committed = committedReadback(request, true);
+      assertThatThrownBy(
+              () -> WorldDraftTerminalReadGrpcCodec.toResponse(request, Optional.of(committed)))
+          .isInstanceOf(IllegalArgumentException.class);
+    }
+  }
+
+  @Test
+  void retainedGraph2CannotAcquireResultOnlyClosureInEitherAppliedEnvelope() throws Exception {
+    for (boolean fresh : List.of(false, true)) {
+      var request = fresh ? freshGraphRequest() : request();
+      var committed = committedReadback(request, fresh);
+      for (String graphSchema : List.of("2", "3")) {
+        assertResultRejected(
+            request,
+            committed,
+            changedGraphResult(
+                request,
+                committed,
+                graph -> {
+                  graph.put("schemaVersion", graphSchema);
+                  graph.set("inboundSourceClosure", emptyInboundSourceClosure());
+                }));
+      }
+    }
+  }
+
+  @Test
   void v2RejectsMalformedOrDigestSubstitutedOriginalOwnerGraphBytes() throws Exception {
     var request = freshGraphRequest();
     var committed = committedReadback(request, true);
@@ -584,12 +698,18 @@ public class WorldDraftTerminalReadGrpcCodecTest {
   }
 
   private static WorldDraftTerminalReadEvidence.Request freshGraphRequest() throws Exception {
-    DraftCommitBinding draft = freshGraphBinding();
+    return freshGraphRequest(null);
+  }
+
+  private static WorldDraftTerminalReadEvidence.Request freshGraphRequest(
+      tools.jackson.databind.JsonNode closure) throws Exception {
+    DraftCommitBinding draft = freshGraphBinding(closure);
     return new WorldDraftTerminalReadEvidence.Request(
         1, "test", uuid("33333333-3333-4333-8333-333333333333"), accountBinding(draft));
   }
 
-  private static DraftCommitBinding freshGraphBinding() throws Exception {
+  private static DraftCommitBinding freshGraphBinding(tools.jackson.databind.JsonNode closure)
+      throws Exception {
     String declaration =
         JSON.writeValueAsString(
             Map.of(
@@ -612,6 +732,11 @@ public class WorldDraftTerminalReadGrpcCodecTest {
                             "WORLD_DESIGN_AGGREGATE_TYPE_WORLD_ENTITY_SPAWN_BINDING",
                             "count",
                             0))));
+    if (closure != null) {
+      var declared = object(declaration.getBytes(StandardCharsets.UTF_8));
+      declared.set("inboundSourceClosure", closure);
+      declaration = JSON.writeValueAsString(declared);
+    }
     return DraftCommitBinding.create(
         new TargetProof(
             TENANT_ID, VERSION_ID, 19L, "tenant-key", 42L, "tenant-key", "NEW_GAME_ROW"),
@@ -727,6 +852,11 @@ public class WorldDraftTerminalReadGrpcCodecTest {
     for (RevisionPayload revision : draft.revisions()) {
       if (revision.owner() != DraftCommitBinding.Owner.WORLD_MANAGEMENT) continue;
       var mutation = JSON.readTree(revision.payload());
+      var declaration = mutation.get("freshGraphDeclaration");
+      if (declaration != null && declaration.has("inboundSourceClosure")) {
+        root.put("schemaVersion", "3");
+        root.put("inboundSourceClosure", declaration.get("inboundSourceClosure"));
+      }
       String family =
           mutation.get("aggregateType").textValue().replace("WORLD_DESIGN_AGGREGATE_TYPE_", "");
       var mapping = new java.util.LinkedHashMap<String, Object>();
@@ -826,6 +956,50 @@ public class WorldDraftTerminalReadGrpcCodecTest {
   private static tools.jackson.databind.node.ObjectNode selector(
       tools.jackson.databind.node.ObjectNode receipt) {
     return (tools.jackson.databind.node.ObjectNode) receipt.get("startLocation");
+  }
+
+  private static tools.jackson.databind.node.ObjectNode emptyInboundSourceClosure() {
+    var closure = JSON.createObjectNode();
+    closure.put("schemaVersion", 1);
+    var counts = closure.putArray("familyCounts");
+    for (String family :
+        List.of(
+            "LOOT_REFERENCE_ROOT",
+            "LOOT_REFERENCE_ATTACHMENT",
+            "BEHAVIOR_SELECTION",
+            "BEHAVIOR_BINDING",
+            "AUTOMATION_HOOK",
+            "AUTOMATION_SCRIPT_REFERENCE",
+            "AUTOMATION_TARGET_BINDING")) {
+      counts.addObject().put("family", "WORLD_INBOUND_SOURCE_FAMILY_" + family).put("count", 0);
+    }
+    return closure;
+  }
+
+  private static byte[] changedGraphResult(
+      WorldDraftTerminalReadEvidence.Request request,
+      DraftAuthorizationFenceBinding.OwnerReadback committed,
+      java.util.function.Consumer<tools.jackson.databind.node.ObjectNode> change)
+      throws Exception {
+    var result = object(committed.result());
+    var graph = object(Base64.getDecoder().decode(result.get("graphBytesBase64").textValue()));
+    change.accept(graph);
+    byte[] graphBytes = canonical(graph);
+    String graphDigest = sha256(graphBytes);
+    result.put("graphBytesBase64", Base64.getEncoder().encodeToString(graphBytes));
+    result.put("graphDigest", graphDigest);
+    if (result.has("startLocationReceiptBase64")) {
+      var binding = request.accountBinding();
+      var draft =
+          DraftCommitBinding.fromStored(
+              new String(binding.gameDesignBinding(), StandardCharsets.UTF_8),
+              binding.inputDigest());
+      var receipt = receipt(request, draft, graphDigest);
+      result.put(
+          "startLocationReceiptBase64", Base64.getEncoder().encodeToString(canonical(receipt)));
+      result.put("startLocationReceiptDigest", receipt.get("receiptDigest").textValue());
+    }
+    return canonical(result);
   }
 
   private static void assertReceiptChangeRejected(

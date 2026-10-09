@@ -193,7 +193,7 @@ class WorldCanonicalInstancePreparationAssemblyServiceTest {
     assertThatThrownBy(() -> service.assemble(selector))
         .isInstanceOf(
             WorldCanonicalInstancePreparationAssemblyService.AssemblyRejectedException.class)
-        .hasMessageContaining("stored v2 release selector");
+        .hasMessageContaining("stored selected release selector");
     verifyNoInteractions(versionIdentities, frozenTopologies, gameSession, gameDesign);
   }
 

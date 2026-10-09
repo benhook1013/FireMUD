@@ -62,7 +62,9 @@ import net.firedevops.firemud.common.authoring.WorldAuthoredVersionIdentityClien
 import net.firedevops.firemud.common.authoring.WorldAuthoredVersionIdentityEvidence;
 import net.firedevops.firemud.common.authoring.WorldDraftTerminalReadClient;
 import net.firedevops.firemud.common.authoring.WorldOriginalDraftGraphApplyClient;
+import net.firedevops.firemud.common.automation.AutomationAuthoredSourceInventoryDeclaration;
 import net.firedevops.firemud.common.config.ServiceEndpointsProperties;
+import net.firedevops.firemud.common.entity.EntityAuthoredSourceInventoryDeclaration;
 import net.firedevops.firemud.common.gamedesign.AuthoredWorldLaunchDescriptorClient;
 import net.firedevops.firemud.common.gamedesign.AuthoredWorldReleaseAttestationEvidence;
 import net.firedevops.firemud.common.gamedesign.CompleteLaunchBindingEvidence;
@@ -218,6 +220,9 @@ import net.firedevops.firemud.worldmanagement.v1.WorldDesignMutationOperation;
 import net.firedevops.firemud.worldmanagement.v1.WorldDesignScopeType;
 import net.firedevops.firemud.worldmanagement.v1.WorldFreshGraphDeclaration;
 import net.firedevops.firemud.worldmanagement.v1.WorldFreshGraphFamilyCount;
+import net.firedevops.firemud.worldmanagement.v1.WorldInboundSourceClosureDeclaration;
+import net.firedevops.firemud.worldmanagement.v1.WorldInboundSourceFamily;
+import net.firedevops.firemud.worldmanagement.v1.WorldInboundSourceFamilyCount;
 import net.firedevops.firemud.worldmanagement.v1.ZoneDesignMutation;
 import org.flywaydb.core.Flyway;
 import org.jooq.DSLContext;
@@ -526,6 +531,35 @@ class GenuineSelectedPublicationExportPostgresIntegrationTest {
                 sourceAsset.getFileName(),
                 worldSource.worldSlug(),
                 worldSource.worldDisplayName());
+        var originalWorldDeclarations =
+            selectedCommit.revisions().stream()
+                .filter(revision -> revision.owner() == Owner.WORLD_MANAGEMENT)
+                .map(GenuineSelectedPublicationExportPostgresIntegrationTest::worldMutation)
+                .filter(WorldDesignMutationRevision::hasFreshGraphDeclaration)
+                .map(WorldDesignMutationRevision::getFreshGraphDeclaration)
+                .toList();
+        assertThat(originalWorldDeclarations)
+            .singleElement()
+            .satisfies(
+                declaration -> {
+                  assertThat(declaration.hasInboundSourceClosure()).isTrue();
+                  assertThat(declaration.getInboundSourceClosure())
+                      .isEqualTo(authoredEmptyInboundSourceClosure());
+                });
+        var templateConfigUnits =
+            selectedCommit.affectedUnits(Owner.GAME_DESIGN_CONTROL_PLANE).stream()
+                .filter(unit -> TemplateConfigSource.SCOPE.equals(unit.aggregateType()))
+                .toList();
+        assertThat(templateConfigUnits)
+            .singleElement()
+            .satisfies(
+                unit -> {
+                  assertThat(unit.aggregateId())
+                      .isEqualTo(gd.target().canonicalVersionId().toString());
+                  assertThat(unit.scopeType()).isEqualTo(TemplateConfigSource.SCOPE);
+                  assertThat(unit.scopeId()).isEqualTo(TemplateConfigSource.SCOPE_ID);
+                  assertThat(unit.expectedEpoch()).isEqualTo("0");
+                });
         var originalOrder = account.prepareOriginalDraftOrder(selectedCommit, NAMESPACE);
         var original = originalOrder.original();
         var accountAccess = account.preparedOriginalCreator();
@@ -730,7 +764,29 @@ class GenuineSelectedPublicationExportPostgresIntegrationTest {
             new TemplateConfigSourceRepository(gd.dsl())
                 .readSnapshot(gd.target(), selectedCommit.commitId())
                 .orElseThrow();
+        assertThat(templateSource.binding()).isEqualTo(selectedCommit);
+        assertThat(templateSource.canonicalJson())
+            .contains("\"schema\":\"game-design-template-config-source-snapshot/v2\"");
         assertThat(templateSource.entries()).hasSize(1);
+        var selectedTemplateMutations = TemplateConfigSource.mutations(selectedCommit);
+        var authoredAutomationInventory = automationSourceInventory();
+        var authoredEntityInventory = entitySourceInventory();
+        var automationInventoryMutation =
+            selectedTemplateMutations.stream()
+                .filter(mutation -> mutation.declaredOwner() == Owner.AUTOMATION_SCRIPTING)
+                .findFirst()
+                .orElseThrow();
+        var entityInventoryMutation =
+            selectedTemplateMutations.stream()
+                .filter(mutation -> mutation.declaredOwner() == Owner.ENTITY_MANAGEMENT)
+                .findFirst()
+                .orElseThrow();
+        assertThat(automationInventoryMutation.inventory()).isEqualTo(authoredAutomationInventory);
+        assertThat(entityInventoryMutation.entityInventory()).isEqualTo(authoredEntityInventory);
+        assertThat(templateSource.ownerSourceInventoryDeclarations())
+            .containsExactly(
+                automationInventoryMutation.ownerInventoryDeclaration(),
+                entityInventoryMutation.ownerInventoryDeclaration());
         long templateId = Long.parseLong(templateSource.entries().getFirst().templateId());
         var enforcedPhase =
             new TemplateReferenceRepository(gd.dsl())
@@ -841,7 +897,7 @@ class GenuineSelectedPublicationExportPostgresIntegrationTest {
                 selection.digest().substring("sha256:".length()),
                 accountPublicationOrder);
         var actualFreeze = selectedPublicationFreezeClient.begin(exactFreezeRequest);
-        assertThat(actualFreeze.acknowledgement().publicationFence().toString())
+        assertThat(actualFreeze.acknowledgement().publicationFence())
             .isEqualTo(publicationReservation.operation().world().request().publicationFence());
         assertThat(actualFreeze.acknowledgement().appliedCommitId())
             .isEqualTo(selectedCommit.commitId().toString());
@@ -1155,9 +1211,12 @@ class GenuineSelectedPublicationExportPostgresIntegrationTest {
         var release =
             releaseService.getPublishedReleaseBundle(
                 gd.target().gameDesignVersionTenantKey(), gd.target().gameDesignVersionRowId());
-        assertThat(release.attestationSchemaVersion()).isEqualTo("v2");
+        assertThat(release.attestationSchemaVersion()).isEqualTo("v3");
         assertThat(release.worldPublishedStartLocationEvidence())
             .isEqualTo(publicationReservation.operation().world());
+        assertThat(release.worldPublishedStartLocationEvidence().request().digestSchemaVersion())
+            .isEqualTo(4);
+        assertThat(release.participantDigests().getFirst().digestSchemaVersion()).isEqualTo(4);
         var retainedGameLogicParticipant =
             release.participantDigests().stream()
                 .filter(digest -> "GAME_LOGIC".equals(digest.participantKey()))
@@ -1295,6 +1354,7 @@ class GenuineSelectedPublicationExportPostgresIntegrationTest {
                   expectedAuthoredWorldBinding.resultDigest());
           assertThat(completeBinding.descriptor()).isEqualTo(expectedAuthoredWorldBinding);
           completeBinding.releaseAttestation().requireValid(completeBinding.descriptor());
+          assertThat(completeBinding.releaseAttestation().schemaVersion()).isEqualTo(3);
           assertThat(completeBinding.releaseAttestation().descriptorResultDigest())
               .isEqualTo(expectedAuthoredWorldBinding.resultDigest());
           assertThat(completeBinding.releaseAttestation().worldStartLocationEvidence())
@@ -2033,6 +2093,7 @@ class GenuineSelectedPublicationExportPostgresIntegrationTest {
             .setTenantId(target.canonicalTenantId().toString())
             .setVersionId(target.canonicalVersionId().toString())
             .addAllFamilyCounts(familyCounts)
+            .setInboundSourceClosure(authoredEmptyInboundSourceClosure())
             .setStartLocation(
                 net.firedevops.firemud.worldmanagement.v1.RoomTemplateRef.newBuilder()
                     .setTenantId(target.canonicalTenantId().toString())
@@ -2143,6 +2204,22 @@ class GenuineSelectedPublicationExportPostgresIntegrationTest {
             TemplateConfigSource.SCOPE,
             TemplateConfigSource.SCOPE_ID,
             "0"));
+    // These are authored inventory declarations only, not Entity/Automation owner receipts.
+    var automationInventory = automationSourceInventory();
+    revisions.add(
+        new RevisionPayload(
+            Integer.toString(revisions.size()),
+            UUID.randomUUID(),
+            Owner.GAME_DESIGN_CONTROL_PLANE,
+            TemplateConfigSource.ownerInventoryPayload(
+                Owner.AUTOMATION_SCRIPTING, automationInventory)));
+    var entityInventory = entitySourceInventory();
+    revisions.add(
+        new RevisionPayload(
+            Integer.toString(revisions.size()),
+            UUID.randomUUID(),
+            Owner.GAME_DESIGN_CONTROL_PLANE,
+            TemplateConfigSource.ownerInventoryPayload(Owner.ENTITY_MANAGEMENT, entityInventory)));
     for (var worldMutation : mutations) {
       revisions.add(
           new RevisionPayload(
@@ -2205,6 +2282,74 @@ class GenuineSelectedPublicationExportPostgresIntegrationTest {
     return new String(
         Rfc8785CanonicalJson.canonicalizeUtf8(mapper.writeValueAsString(revision)),
         StandardCharsets.UTF_8);
+  }
+
+  private static AutomationAuthoredSourceInventoryDeclaration automationSourceInventory() {
+    return AutomationAuthoredSourceInventoryDeclaration.parse(
+        "{\"schema\":\"automation-authored-source-inventory/v1\","
+            + "\"families\":{\"SCRIPT_DEFINITIONS\":[],\"EVENT_BINDINGS\":[],"
+            + "\"SCRIPT_PATCH_SOURCES\":[]}}");
+  }
+
+  private static EntityAuthoredSourceInventoryDeclaration entitySourceInventory() {
+    return EntityAuthoredSourceInventoryDeclaration.parse(
+        "{\"schema\":\"entity-authored-source-inventory/v1\","
+            + "\"equipmentApplicability\":\"NOT_APPLICABLE\",\"families\":{"
+            + "\"ACTOR_BODY_LAYOUT_ASSIGNMENTS\":[],\"ARCHETYPE_ASSIGNMENTS\":[],"
+            + "\"ARCHETYPE_CONSTRAINTS\":[],\"ARCHETYPE_ROOTS\":[],"
+            + "\"BALANCE_CURVE_ATTACHMENTS\":[],\"BALANCE_CURVE_ROOTS\":[],"
+            + "\"BODY_LAYOUT_MEMBERSHIPS\":[],\"BODY_LAYOUT_ROOTS\":[],"
+            + "\"CRAFTING_INGREDIENT_BINDINGS\":[],\"CRAFTING_RECIPE_RESULT_BINDINGS\":[],"
+            + "\"CRAFTING_RECIPE_ROOTS\":[],\"EQUIPMENT_ATTACHMENT_RULES\":[],"
+            + "\"EQUIPMENT_CAPABILITIES\":[],\"EQUIPMENT_COMPATIBILITY_RULES\":[],"
+            + "\"EQUIPMENT_OCCUPANCY_RULES\":[],\"EQUIPMENT_SLOT_GROUPS\":[],"
+            + "\"EQUIPMENT_SLOT_ROOTS\":[],\"INBOUND_LOOT_BINDINGS\":[],"
+            + "\"ITEM_TEMPLATE_ROOTS\":[],\"LOOT_ITEM_MAPPINGS\":[],"
+            + "\"LOOT_TABLE_ROOTS\":[],\"NPC_TEMPLATE_ROOTS\":[],"
+            + "\"OTHER_ACTOR_TEMPLATE_ROOTS\":[]}}");
+  }
+
+  private static WorldInboundSourceClosureDeclaration authoredEmptyInboundSourceClosure() {
+    return WorldInboundSourceClosureDeclaration.newBuilder()
+        .setSchemaVersion(1)
+        .addFamilyCounts(
+            inboundSourceFamilyCount(
+                WorldInboundSourceFamily.WORLD_INBOUND_SOURCE_FAMILY_LOOT_REFERENCE_ROOT))
+        .addFamilyCounts(
+            inboundSourceFamilyCount(
+                WorldInboundSourceFamily.WORLD_INBOUND_SOURCE_FAMILY_LOOT_REFERENCE_ATTACHMENT))
+        .addFamilyCounts(
+            inboundSourceFamilyCount(
+                WorldInboundSourceFamily.WORLD_INBOUND_SOURCE_FAMILY_BEHAVIOR_SELECTION))
+        .addFamilyCounts(
+            inboundSourceFamilyCount(
+                WorldInboundSourceFamily.WORLD_INBOUND_SOURCE_FAMILY_BEHAVIOR_BINDING))
+        .addFamilyCounts(
+            inboundSourceFamilyCount(
+                WorldInboundSourceFamily.WORLD_INBOUND_SOURCE_FAMILY_AUTOMATION_HOOK))
+        .addFamilyCounts(
+            inboundSourceFamilyCount(
+                WorldInboundSourceFamily.WORLD_INBOUND_SOURCE_FAMILY_AUTOMATION_SCRIPT_REFERENCE))
+        .addFamilyCounts(
+            inboundSourceFamilyCount(
+                WorldInboundSourceFamily.WORLD_INBOUND_SOURCE_FAMILY_AUTOMATION_TARGET_BINDING))
+        .build();
+  }
+
+  private static WorldInboundSourceFamilyCount inboundSourceFamilyCount(
+      WorldInboundSourceFamily family) {
+    return WorldInboundSourceFamilyCount.newBuilder().setFamily(family).setCount(0).build();
+  }
+
+  private static WorldDesignMutationRevision worldMutation(RevisionPayload revision) {
+    try {
+      var mutation = WorldDesignMutationRevision.newBuilder();
+      JsonFormat.parser().merge(revision.payload(), mutation);
+      return mutation.build();
+    } catch (com.google.protobuf.InvalidProtocolBufferException exception) {
+      throw new AssertionError(
+          "Selected World source revision is not valid protobuf JSON", exception);
+    }
   }
 
   private static WorldDesignMutationRevision.Builder mutation(

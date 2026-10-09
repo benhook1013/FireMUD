@@ -81,10 +81,11 @@ public final class WorldCanonicalInstancePreparationAssemblyService {
 
     var descriptor = launchBinding.descriptor();
     var release = launchBinding.evidence().releaseAttestation();
-    if (release.schemaVersion() != AuthoredWorldReleaseAttestationEvidence.SELECTOR_SCHEMA_VERSION
+    if (!AuthoredWorldReleaseAttestationEvidence.requiresWorldStartLocationEvidence(
+            release.schemaVersion())
         || release.worldStartLocationEvidence() == null) {
       throw new AssemblyRejectedException(
-          "Canonical preparation requires the stored v2 release selector and original frozen request");
+          "Canonical preparation requires the stored selected release selector and original frozen request");
     }
 
     // The UUID is the canonical selector. Never resolve the Game Design numeric Version ID here.

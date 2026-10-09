@@ -13,10 +13,10 @@ class WorldAuthoredGraphSnapshotTest {
   private static final String DIGEST = "a".repeat(64);
 
   @Test
-  void acceptsRetainedSchema2AndCurrentSchema3ButRejectsUnsupportedSchemas() {
-    for (int schema : new int[] {2, 3})
+  void acceptsRetainedSchemas2And3AndSelectedSchema4ButRejectsUnsupportedSchemas() {
+    for (int schema : new int[] {2, 3, 4})
       assertThat(request(schema).digestSchemaVersion()).isEqualTo(schema);
-    for (int schema : new int[] {0, 1, 4}) {
+    for (int schema : new int[] {0, 1, 5}) {
       assertThatThrownBy(() -> request(schema)).isInstanceOf(IllegalArgumentException.class);
     }
   }

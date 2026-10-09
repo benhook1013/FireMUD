@@ -19,6 +19,9 @@ import net.firedevops.firemud.worldmanagement.repository.RoomRepository;
 import net.firedevops.firemud.worldmanagement.repository.WorldEntitySpawnBindingRepository;
 import net.firedevops.firemud.worldmanagement.repository.ZoneRepository;
 import net.firedevops.firemud.worldmanagement.service.WorldDraftDesignDigestService;
+import net.firedevops.firemud.worldmanagement.service.WorldDraftDesignDigestService.WorldDraftDesignDigest;
+import net.firedevops.firemud.worldmanagement.tenant.WorldDraftTopologyInputGraph;
+import net.firedevops.firemud.worldmanagement.tenant.WorldDraftTopologyInputGraph.InboundSourceClosureDeclaration;
 import org.springframework.stereotype.Service;
 import tools.jackson.databind.ObjectMapper;
 
@@ -28,6 +31,7 @@ import tools.jackson.databind.ObjectMapper;
     justification = "Spring-managed repositories and mapper are stored internally for digesting")
 public final class WorldDraftDesignDigestServiceImpl implements WorldDraftDesignDigestService {
   private static final int DIGEST_SCHEMA_VERSION = 3;
+  private static final int SELECTED_DIGEST_SCHEMA_VERSION = 4;
 
   private final RegionRepository regionRepository;
   private final ZoneRepository zoneRepository;
@@ -58,107 +62,135 @@ public final class WorldDraftDesignDigestServiceImpl implements WorldDraftDesign
 
   @Override
   public WorldDraftDesignDigest getDraftDesignDigest(String tenantId, String versionId) {
+    return getDraftDesignDigest(tenantId, versionId, null);
+  }
+
+  @Override
+  public WorldDraftDesignDigest getSelectedDraftDesignDigest(
+      String tenantId, String versionId, InboundSourceClosureDeclaration inboundSourceClosure) {
+    Objects.requireNonNull(inboundSourceClosure, "inboundSourceClosure");
+    WorldDraftTopologyInputGraph.requireEmptyInboundSourceClosure(inboundSourceClosure);
+    return getDraftDesignDigest(tenantId, versionId, inboundSourceClosure);
+  }
+
+  private WorldDraftDesignDigest getDraftDesignDigest(
+      String tenantId, String versionId, InboundSourceClosureDeclaration inboundSourceClosure) {
     if (versionId == null || versionId.isBlank()) {
       throw new IllegalArgumentException("version_id is required");
     }
     long tenantKey = RequestIdValidation.requirePositiveLong(tenantId, "tenantId");
     long versionKey = RequestIdValidation.requirePositiveLong(versionId, "versionId");
     try {
-      String canonicalJson =
-          objectMapper.writeValueAsString(
-              tables(
-                  "regions",
-                  regionRepository
-                      .findByTenantIdAndVersionIdOrderByIdAsc(tenantKey, versionKey)
-                      .stream()
-                      .map(
-                          region ->
-                              Map.<String, Object>of(
-                                  "id", region.getId(),
-                                  "shardId", region.getShardId(),
-                                  "name", region.getName(),
-                                  "weather", value(region.getWeather()),
-                                  "generationSeed", region.getGenerationSeed(),
-                                  "generatorType", value(region.getGeneratorType()),
-                                  "generatorParams", value(region.getGeneratorParams()),
-                                  "spacingMultiplier", region.getSpacingMultiplier()))
-                      .toList(),
-                  "zones",
-                  zoneRepository
-                      .findByTenantIdAndVersionIdOrderByIdAsc(tenantKey, versionKey)
-                      .stream()
-                      .map(
-                          zone ->
-                              Map.<String, Object>of(
-                                  "id", zone.getId(),
-                                  "regionId", zone.getRegion().getId(),
-                                  "name", zone.getName()))
-                      .toList(),
-                  "rooms",
-                  roomRepository
-                      .findByTenantIdAndVersionIdOrderByIdAsc(tenantKey, versionKey)
-                      .stream()
-                      .map(
-                          room ->
-                              Map.<String, Object>of(
-                                  "id", room.getId(),
-                                  "zoneId", room.getZone().getId(),
-                                  "name", room.getName(),
-                                  "description", value(room.getDescription()),
-                                  "nameLocalizedVariantsJson",
-                                      value(room.getNameLocalizedVariantsJson()),
-                                  "descriptionLocalizedVariantsJson",
-                                      value(room.getDescriptionLocalizedVariantsJson())))
-                      .toList(),
-                  "roomExits",
-                  roomExitRepository
-                      .findByTenantIdAndVersionIdOrderByIdAsc(tenantKey, versionKey)
-                      .stream()
-                      .map(
-                          roomExit ->
-                              Map.<String, Object>of(
-                                  "id", roomExit.getId(),
-                                  "fromRoomId", roomExit.getFromRoom().getId(),
-                                  "toRoomId", roomExit.getToRoom().getId(),
-                                  "direction", roomExit.getDirection(),
-                                  "cost", roomExit.getCost()))
-                      .toList(),
-                  "generationRules",
-                  generationRuleRepository
-                      .findByTenantIdAndVersionIdOrderByIdAsc(tenantKey, versionKey)
-                      .stream()
-                      .map(
-                          rule ->
-                              Map.<String, Object>of(
-                                  "id", rule.getId(),
-                                  "name", rule.getName(),
-                                  "scopeType", value(rule.getScopeType()),
-                                  "scopeId", value(rule.getScopeId()),
-                                  "value", value(rule.getValue())))
-                      .toList(),
-                  "worldEntitySpawnBindings",
-                  worldEntitySpawnBindingRepository
-                      .findByTenantIdAndVersionIdOrderByIdAsc(tenantKey, versionKey)
-                      .stream()
-                      .map(
-                          binding ->
-                              Map.<String, Object>of(
-                                  "id", binding.getId(),
-                                  "roomId", binding.getRoom().getId(),
-                                  "entityTemplateType", binding.getEntityTemplateType(),
-                                  "entityReference", entityReference(binding),
-                                  "spawnCount", binding.getSpawnCount(),
-                                  "respawnDelaySeconds", binding.getRespawnDelaySeconds()))
-                      .toList()));
+      Map<String, Object> digestInput =
+          tables(
+              "regions",
+              regionRepository
+                  .findByTenantIdAndVersionIdOrderByIdAsc(tenantKey, versionKey)
+                  .stream()
+                  .map(
+                      region ->
+                          Map.<String, Object>of(
+                              "id", region.getId(),
+                              "shardId", region.getShardId(),
+                              "name", region.getName(),
+                              "weather", value(region.getWeather()),
+                              "generationSeed", region.getGenerationSeed(),
+                              "generatorType", value(region.getGeneratorType()),
+                              "generatorParams", value(region.getGeneratorParams()),
+                              "spacingMultiplier", region.getSpacingMultiplier()))
+                  .toList(),
+              "zones",
+              zoneRepository.findByTenantIdAndVersionIdOrderByIdAsc(tenantKey, versionKey).stream()
+                  .map(
+                      zone ->
+                          Map.<String, Object>of(
+                              "id", zone.getId(),
+                              "regionId", zone.getRegion().getId(),
+                              "name", zone.getName()))
+                  .toList(),
+              "rooms",
+              roomRepository.findByTenantIdAndVersionIdOrderByIdAsc(tenantKey, versionKey).stream()
+                  .map(
+                      room ->
+                          Map.<String, Object>of(
+                              "id", room.getId(),
+                              "zoneId", room.getZone().getId(),
+                              "name", room.getName(),
+                              "description", value(room.getDescription()),
+                              "nameLocalizedVariantsJson",
+                                  value(room.getNameLocalizedVariantsJson()),
+                              "descriptionLocalizedVariantsJson",
+                                  value(room.getDescriptionLocalizedVariantsJson())))
+                  .toList(),
+              "roomExits",
+              roomExitRepository
+                  .findByTenantIdAndVersionIdOrderByIdAsc(tenantKey, versionKey)
+                  .stream()
+                  .map(
+                      roomExit ->
+                          Map.<String, Object>of(
+                              "id", roomExit.getId(),
+                              "fromRoomId", roomExit.getFromRoom().getId(),
+                              "toRoomId", roomExit.getToRoom().getId(),
+                              "direction", roomExit.getDirection(),
+                              "cost", roomExit.getCost()))
+                  .toList(),
+              "generationRules",
+              generationRuleRepository
+                  .findByTenantIdAndVersionIdOrderByIdAsc(tenantKey, versionKey)
+                  .stream()
+                  .map(
+                      rule ->
+                          Map.<String, Object>of(
+                              "id", rule.getId(),
+                              "name", rule.getName(),
+                              "scopeType", value(rule.getScopeType()),
+                              "scopeId", value(rule.getScopeId()),
+                              "value", value(rule.getValue())))
+                  .toList(),
+              "worldEntitySpawnBindings",
+              worldEntitySpawnBindingRepository
+                  .findByTenantIdAndVersionIdOrderByIdAsc(tenantKey, versionKey)
+                  .stream()
+                  .map(
+                      binding ->
+                          Map.<String, Object>of(
+                              "id", binding.getId(),
+                              "roomId", binding.getRoom().getId(),
+                              "entityTemplateType", binding.getEntityTemplateType(),
+                              "entityReference", entityReference(binding),
+                              "spawnCount", binding.getSpawnCount(),
+                              "respawnDelaySeconds", binding.getRespawnDelaySeconds()))
+                  .toList());
+      int schemaVersion = DIGEST_SCHEMA_VERSION;
+      if (inboundSourceClosure != null) {
+        digestInput.put("inboundSourceClosure", inboundSourceClosureContent(inboundSourceClosure));
+        schemaVersion = SELECTED_DIGEST_SCHEMA_VERSION;
+      }
+      String canonicalJson = objectMapper.writeValueAsString(digestInput);
       return new WorldDraftDesignDigest(
-          tenantId,
-          versionId,
-          "version:" + versionId,
-          sha256(canonicalJson),
-          DIGEST_SCHEMA_VERSION);
+          tenantId, versionId, "version:" + versionId, sha256(canonicalJson), schemaVersion);
     } catch (Exception ex) {
       throw new IllegalStateException("failed to compute world draft design digest", ex);
     }
+  }
+
+  private Map<String, Object> inboundSourceClosureContent(
+      InboundSourceClosureDeclaration declaration) {
+    Map<String, Object> content = new LinkedHashMap<>();
+    content.put("schemaVersion", declaration.schemaVersion());
+    content.put(
+        "familyCounts",
+        declaration.familyCounts().stream()
+            .map(
+                family -> {
+                  Map<String, Object> entry = new LinkedHashMap<>();
+                  entry.put("family", family.family().name());
+                  entry.put("count", family.count());
+                  return entry;
+                })
+            .toList());
+    return content;
   }
 
   private String value(String value) {

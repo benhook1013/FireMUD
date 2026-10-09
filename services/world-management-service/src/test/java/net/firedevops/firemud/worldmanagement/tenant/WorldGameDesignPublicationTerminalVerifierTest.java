@@ -389,7 +389,8 @@ class WorldGameDesignPublicationTerminalVerifierTest {
                             "family",
                             "WORLD_DESIGN_AGGREGATE_TYPE_WORLD_ENTITY_SPAWN_BINDING",
                             "count",
-                            0))));
+                            0)),
+                "inboundSourceClosure", inboundSourceClosure()));
     UUID regionRevision = uuid("12345678-1234-4234-8234-123456789001");
     UUID zoneRevision = uuid("12345678-1234-4234-8234-123456789002");
     UUID roomRevision = uuid("12345678-1234-4234-8234-123456789003");
@@ -456,6 +457,25 @@ class WorldGameDesignPublicationTerminalVerifierTest {
     payload.put("aggregateId", templateId.toString());
     if (declaration != null) payload.put("freshGraphDeclaration", json.readTree(declaration));
     return json.writeValueAsString(payload);
+  }
+
+  private static Map<String, Object> inboundSourceClosure() {
+    return Map.of(
+        "schemaVersion",
+        1,
+        "familyCounts",
+        List.of(
+            inboundFamily("WORLD_INBOUND_SOURCE_FAMILY_LOOT_REFERENCE_ROOT"),
+            inboundFamily("WORLD_INBOUND_SOURCE_FAMILY_LOOT_REFERENCE_ATTACHMENT"),
+            inboundFamily("WORLD_INBOUND_SOURCE_FAMILY_BEHAVIOR_SELECTION"),
+            inboundFamily("WORLD_INBOUND_SOURCE_FAMILY_BEHAVIOR_BINDING"),
+            inboundFamily("WORLD_INBOUND_SOURCE_FAMILY_AUTOMATION_HOOK"),
+            inboundFamily("WORLD_INBOUND_SOURCE_FAMILY_AUTOMATION_SCRIPT_REFERENCE"),
+            inboundFamily("WORLD_INBOUND_SOURCE_FAMILY_AUTOMATION_TARGET_BINDING")));
+  }
+
+  private static Map<String, Object> inboundFamily(String family) {
+    return Map.of("family", family, "count", 0);
   }
 
   private static List<AffectedUnit> affected(
@@ -590,13 +610,18 @@ class WorldGameDesignPublicationTerminalVerifierTest {
   private static byte[] graphBytes(
       WorldDraftTerminalReadEvidence.Request request, DraftCommitBinding draft) throws Exception {
     var root = new LinkedHashMap<String, Object>();
-    root.put("schemaVersion", "2");
+    root.put("schemaVersion", "3");
     root.put("canonicalTenantId", draft.target().canonicalTenantId().toString());
     root.put("canonicalVersionId", draft.target().canonicalVersionId().toString());
     var rows = new ArrayList<Map<String, Object>>();
     int mappingId = 1;
     long privateRowKey = 101;
     var json = JsonMapper.builder().build();
+    root.put(
+        "inboundSourceClosure",
+        json.readTree(draft.revisions().getFirst().payload())
+            .get("freshGraphDeclaration")
+            .get("inboundSourceClosure"));
     for (RevisionPayload revision : draft.revisions()) {
       if (revision.owner() != DraftCommitBinding.Owner.WORLD_MANAGEMENT) continue;
       JsonNode mutation = json.readTree(revision.payload());

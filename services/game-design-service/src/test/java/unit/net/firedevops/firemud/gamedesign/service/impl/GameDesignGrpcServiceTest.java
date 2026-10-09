@@ -7,7 +7,9 @@ import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
+import java.util.UUID;
 import java.util.concurrent.atomic.AtomicReference;
+import net.firedevops.firemud.common.authoring.DraftCommitBinding.TargetProof;
 import net.firedevops.firemud.common.security.AdminRoleGuard;
 import net.firedevops.firemud.gamedesign.dto.AppliedWorldDesignMutationDto;
 import net.firedevops.firemud.gamedesign.dto.DesignControlPlaneDigestDto;
@@ -210,6 +212,63 @@ class GameDesignGrpcServiceTest {
     assertEquals(1, ref.get().getBundle().getParticipantDigestsCount());
     assertEquals("publish", ref.get().getBundle().getWorkflowFamily());
     assertEquals("TEMPORAL_DISABLED", ref.get().getBundle().getWorkflowStatus());
+  }
+
+  @Test
+  void getPublishedReleaseBundleTransportsClosureQualifiedWorld4Participant() throws Exception {
+    var target =
+        new TargetProof(
+            UUID.fromString("67d7b75b-42d1-4ac6-9572-684c5e633cda"),
+            UUID.fromString("c472ebd1-56d8-49df-b8fa-85963dd940f8"),
+            7L,
+            "tenant-1",
+            42L,
+            "tenant-1",
+            "NEW_GAME_ROW");
+    var evidence =
+        net.firedevops.firemud.gamedesign.service.impl.PublishedWorldSelectorFixtures
+            .closureEvidence(target);
+    var participants =
+        net.firedevops.firemud.gamedesign.service.impl.PublishedWorldSelectorFixtures.participants(
+            7L, evidence);
+    Mockito.when(versionService.getPublishedReleaseBundle("tenant-1", 7L))
+        .thenReturn(
+            new PublishedReleaseBundleDto(
+                11L,
+                "tenant-1",
+                7L,
+                8,
+                "v3",
+                "publish-workflow",
+                "sha256:" + "a".repeat(64),
+                List.of(),
+                participants,
+                List.of("{\"commandId\":\"block\",\"schemaVersion\":1}"),
+                "genrev-1",
+                false,
+                null,
+                LocalDateTime.parse("2026-04-14T12:00:00"),
+                target.canonicalTenantId(),
+                target.canonicalVersionId(),
+                "bundle-ref-v3",
+                1,
+                List.of(),
+                evidence));
+
+    AtomicReference<GetPublishedReleaseBundleResponse> ref = new AtomicReference<>();
+    try (MockedStatic<AdminRoleGuard> ignored = Mockito.mockStatic(AdminRoleGuard.class)) {
+      service.getPublishedReleaseBundle(
+          GetPublishedReleaseBundleRequest.newBuilder()
+              .setTenantId("tenant-1")
+              .setVersionId(7L)
+              .build(),
+          observerFor(ref));
+    }
+
+    assertEquals("", ref.get().getError().getCode());
+    assertEquals("v3", ref.get().getBundle().getAttestationSchemaVersion());
+    assertEquals(5, ref.get().getBundle().getParticipantDigestsCount());
+    assertEquals(4, ref.get().getBundle().getParticipantDigests(0).getDigestSchemaVersion());
   }
 
   @Test

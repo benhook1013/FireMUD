@@ -244,7 +244,7 @@ public final class PublishGateServiceImpl implements PublishGateService {
   @Override
   public void assertGatePassed(
       VersionDto version, List<PublishParticipantDigestDto> participantDigests) {
-    assertGatePassed(version, participantDigests, false);
+    assertGatePassed(version, participantDigests, null);
   }
 
   @Override
@@ -253,13 +253,33 @@ public final class PublishGateServiceImpl implements PublishGateService {
     if (version.scriptOnly()) {
       throw new IllegalArgumentException("Selected publication requires a full version");
     }
-    assertGatePassed(version, participantDigests, true);
+    List<PublishParticipantDigestDto> worldDigests =
+        participantDigests == null
+            ? List.of()
+            : participantDigests.stream()
+                .filter(digest -> "WORLD_MANAGEMENT".equals(digest.participantKey()))
+                .toList();
+    if (worldDigests.size() != 1 || worldDigests.getFirst().digestSchemaVersion() == null) {
+      throw new PublishGateFailureException(
+          PublishGateFailureCode.UNSUPPORTED_DIGEST_SCHEMA,
+          "publish gate failed: exact selected World digest schema is required");
+    }
+    int selectedAttestationSchema =
+        switch (worldDigests.getFirst().digestSchemaVersion()) {
+          case 3 -> AuthoredWorldReleaseAttestationEvidence.SELECTOR_SCHEMA_VERSION;
+          case 4 -> AuthoredWorldReleaseAttestationEvidence.CLOSURE_SELECTOR_SCHEMA_VERSION;
+          default ->
+              throw new PublishGateFailureException(
+                  PublishGateFailureCode.UNSUPPORTED_DIGEST_SCHEMA,
+                  "publish gate failed: unsupported selected World digest schema");
+        };
+    assertGatePassed(version, participantDigests, selectedAttestationSchema);
   }
 
   private void assertGatePassed(
       VersionDto version,
       List<PublishParticipantDigestDto> participantDigests,
-      boolean selectedPublication) {
+      Integer selectedAttestationSchema) {
     List<PublishParticipantKey> expectedParticipants =
         version.scriptOnly() ? SCRIPT_PATCH_PARTICIPANTS : FULL_VERSION_PARTICIPANTS;
     List<String> expectedParticipantKeyList =
@@ -309,11 +329,10 @@ public final class PublishGateServiceImpl implements PublishGateService {
           }
           String participantKey = digest.participantKey();
           Integer supportedSchemaVersion;
-          if (selectedPublication) {
+          if (selectedAttestationSchema != null) {
             supportedSchemaVersion =
                 AuthoredWorldReleaseAttestationEvidence.supportedParticipantDigestSchema(
-                    participantKey,
-                    AuthoredWorldReleaseAttestationEvidence.SELECTOR_SCHEMA_VERSION);
+                    participantKey, selectedAttestationSchema);
           } else {
             supportedSchemaVersion =
                 participantKey == null

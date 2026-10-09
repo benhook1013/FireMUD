@@ -484,11 +484,11 @@ public final class WorldCompleteLaunchBindingService {
       throw new WorldCompleteLaunchBindingRepository.RegistrationConflictException(
           "Game Design complete launch pair differs from the exact committed association selector");
     }
-    if (evidence.releaseAttestation().schemaVersion()
-            != AuthoredWorldReleaseAttestationEvidence.SELECTOR_SCHEMA_VERSION
+    if (!AuthoredWorldReleaseAttestationEvidence.requiresWorldStartLocationEvidence(
+            evidence.releaseAttestation().schemaVersion())
         || evidence.releaseAttestation().worldStartLocationEvidence() == null) {
       throw new WorldCompleteLaunchBindingRepository.InvalidBindingEvidenceException(
-          "Committed launch binding requires the full selector-bearing release attestation v2");
+          "Committed launch binding requires full selected-release selector evidence");
     }
   }
 

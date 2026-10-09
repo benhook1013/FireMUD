@@ -192,7 +192,7 @@ class WorldCompleteLaunchBindingServiceTest {
     var v1Request = committedAssociationRequest(v1Binding);
     assertThatThrownBy(() -> withGameSession(() -> committedService.bindCommittedLaunch(v1Request)))
         .isInstanceOf(WorldCompleteLaunchBindingRepository.InvalidBindingEvidenceException.class)
-        .hasMessageContaining("release attestation v2");
+        .hasMessageContaining("full selected-release selector evidence");
     verify(gameSessionClient, never()).read(any());
     verifyNoInteractions(repository, sourceRepository);
     verify(repository, never()).acceptFresh(any(), any(), any());

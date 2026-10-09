@@ -178,9 +178,8 @@ public final class WorldCanonicalInstanceLifecycleReadRepository {
           readOperationalRegionAssignments(association, preparation, expectedRegionTemplates);
 
       var release = association.completeLaunchBinding().evidence().releaseAttestation();
-      if (release.schemaVersion()
-              != net.firedevops.firemud.common.gamedesign.AuthoredWorldReleaseAttestationEvidence
-                  .SELECTOR_SCHEMA_VERSION
+      if (!net.firedevops.firemud.common.gamedesign.AuthoredWorldReleaseAttestationEvidence
+              .requiresWorldStartLocationEvidence(release.schemaVersion())
           || release.worldStartLocationEvidence() == null) {
         throw invalid("Receipt-less retained V1 preparation cannot produce lifecycle evidence");
       }

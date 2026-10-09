@@ -30,6 +30,9 @@ import net.firedevops.firemud.worldmanagement.v1.WorldEntitySpawnBindingDesignMu
 import net.firedevops.firemud.worldmanagement.v1.WorldFreshGraphDeclaration;
 import net.firedevops.firemud.worldmanagement.v1.WorldFreshGraphFamilyCount;
 import net.firedevops.firemud.worldmanagement.v1.WorldGenerationSubtreeDesignMutation;
+import net.firedevops.firemud.worldmanagement.v1.WorldInboundSourceClosureDeclaration;
+import net.firedevops.firemud.worldmanagement.v1.WorldInboundSourceFamily;
+import net.firedevops.firemud.worldmanagement.v1.WorldInboundSourceFamilyCount;
 import net.firedevops.firemud.worldmanagement.v1.ZoneDesignMutation;
 import org.junit.jupiter.api.Test;
 
@@ -134,12 +137,61 @@ class WorldDraftTopologyCommitPlanTest {
     assertThat(declaration.familyCounts())
         .extracting(WorldDraftTopologyInputGraph.FamilyCount::count)
         .containsExactly(1, 1, 1, 0, 0, 0);
+    assertThat(declaration.inboundSourceClosure()).isPresent();
+    assertThat(declaration.inboundSourceClosure().orElseThrow().schemaVersion()).isEqualTo(1);
+    assertThat(declaration.inboundSourceClosure().orElseThrow().familyCounts())
+        .extracting(WorldDraftTopologyInputGraph.InboundSourceFamilyCount::count)
+        .containsExactly(0, 0, 0, 0, 0, 0, 0);
     assertThat(plan.graph().nodes())
         .extracting(node -> node.mutation().getAggregateType())
         .containsExactly(
             WorldDesignAggregateType.WORLD_DESIGN_AGGREGATE_TYPE_REGION,
             WorldDesignAggregateType.WORLD_DESIGN_AGGREGATE_TYPE_ZONE,
             WorldDesignAggregateType.WORLD_DESIGN_AGGREGATE_TYPE_ROOM);
+  }
+
+  @Test
+  void missingInboundDeclarationNeverQualifiesEmptyAndNonemptyOrUnknownFamiliesAreRejected() {
+    DraftCommitBinding original = binding(new ArrayList<>(fresh().subList(0, 3)));
+    var legacyWithoutClosure =
+        WorldDraftTopologyCommitPlan.create(
+            changeDeclaration(
+                original, WorldFreshGraphDeclaration.Builder::clearInboundSourceClosure),
+            owner());
+    assertThat(
+            legacyWithoutClosure
+                .graph()
+                .freshGraphDeclaration()
+                .orElseThrow()
+                .inboundSourceClosure())
+        .isEmpty();
+
+    rejected(
+        changeDeclaration(
+            original,
+            declaration ->
+                declaration.setInboundSourceClosure(
+                    declaration.getInboundSourceClosure().toBuilder()
+                        .setFamilyCounts(
+                            0,
+                            declaration.getInboundSourceClosure().getFamilyCounts(0).toBuilder()
+                                .setCount(1)
+                                .build())
+                        .build())));
+    rejected(
+        changeDeclaration(
+            original,
+            declaration ->
+                declaration.setInboundSourceClosure(
+                    declaration.getInboundSourceClosure().toBuilder()
+                        .setFamilyCounts(
+                            0,
+                            declaration.getInboundSourceClosure().getFamilyCounts(0).toBuilder()
+                                .setFamily(
+                                    WorldInboundSourceFamily
+                                        .WORLD_INBOUND_SOURCE_FAMILY_UNSPECIFIED)
+                                .build())
+                        .build())));
   }
 
   @Test
@@ -746,7 +798,35 @@ class WorldDraftTopologyCommitPlanTest {
             count(
                 mutations,
                 WorldDesignAggregateType.WORLD_DESIGN_AGGREGATE_TYPE_WORLD_ENTITY_SPAWN_BINDING))
+        .setInboundSourceClosure(inboundSourceClosure())
         .build();
+  }
+
+  private static WorldInboundSourceClosureDeclaration inboundSourceClosure() {
+    return WorldInboundSourceClosureDeclaration.newBuilder()
+        .setSchemaVersion(1)
+        .addFamilyCounts(
+            inboundCount(WorldInboundSourceFamily.WORLD_INBOUND_SOURCE_FAMILY_LOOT_REFERENCE_ROOT))
+        .addFamilyCounts(
+            inboundCount(
+                WorldInboundSourceFamily.WORLD_INBOUND_SOURCE_FAMILY_LOOT_REFERENCE_ATTACHMENT))
+        .addFamilyCounts(
+            inboundCount(WorldInboundSourceFamily.WORLD_INBOUND_SOURCE_FAMILY_BEHAVIOR_SELECTION))
+        .addFamilyCounts(
+            inboundCount(WorldInboundSourceFamily.WORLD_INBOUND_SOURCE_FAMILY_BEHAVIOR_BINDING))
+        .addFamilyCounts(
+            inboundCount(WorldInboundSourceFamily.WORLD_INBOUND_SOURCE_FAMILY_AUTOMATION_HOOK))
+        .addFamilyCounts(
+            inboundCount(
+                WorldInboundSourceFamily.WORLD_INBOUND_SOURCE_FAMILY_AUTOMATION_SCRIPT_REFERENCE))
+        .addFamilyCounts(
+            inboundCount(
+                WorldInboundSourceFamily.WORLD_INBOUND_SOURCE_FAMILY_AUTOMATION_TARGET_BINDING))
+        .build();
+  }
+
+  private static WorldInboundSourceFamilyCount inboundCount(WorldInboundSourceFamily family) {
+    return WorldInboundSourceFamilyCount.newBuilder().setFamily(family).setCount(0).build();
   }
 
   private static WorldFreshGraphFamilyCount count(

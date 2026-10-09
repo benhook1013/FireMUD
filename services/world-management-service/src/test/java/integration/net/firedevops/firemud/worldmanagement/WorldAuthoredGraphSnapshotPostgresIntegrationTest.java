@@ -55,6 +55,7 @@ import net.firedevops.firemud.worldmanagement.tenant.WorldDesignPublicationFence
 import net.firedevops.firemud.worldmanagement.tenant.WorldDraftRegionCommitPlan;
 import net.firedevops.firemud.worldmanagement.tenant.WorldDraftRegionGraphStager.UnverifiedStagedContent;
 import net.firedevops.firemud.worldmanagement.tenant.WorldDraftRegionStagingService;
+import net.firedevops.firemud.worldmanagement.tenant.WorldDraftTopologyInputGraph.InboundSourceClosureDeclaration;
 import net.firedevops.firemud.worldmanagement.v1.RegionDesignMutation;
 import net.firedevops.firemud.worldmanagement.v1.WorldDesignAggregateType;
 import net.firedevops.firemud.worldmanagement.v1.WorldDesignMutationOperation;
@@ -914,13 +915,24 @@ class WorldAuthoredGraphSnapshotPostgresIntegrationTest {
     var capture =
         new WorldAuthoredGraphSnapshotCapture(
             dsl,
-            (tenant, version) ->
-                new WorldDraftDesignDigest(
+            new WorldDraftDesignDigestService() {
+              @Override
+              public WorldDraftDesignDigest getDraftDesignDigest(String tenant, String version) {
+                return new WorldDraftDesignDigest(
                     tenant,
                     Long.toString(fixture.localVersionKey() + 1),
                     fixture.request().appliedCommitId(),
                     fixture.request().contentDigest(),
-                    3),
+                    3);
+              }
+
+              @Override
+              public WorldDraftDesignDigest getSelectedDraftDesignDigest(
+                  String tenant, String version, InboundSourceClosureDeclaration closure) {
+                throw new AssertionError(
+                    "Graph snapshot mismatch fixture must not request selected digest");
+              }
+            },
             snapshotRepository,
             objectMapper);
     assertThatThrownBy(
@@ -1065,8 +1077,17 @@ class WorldAuthoredGraphSnapshotPostgresIntegrationTest {
       var capture =
           new WorldAuthoredGraphSnapshotCapture(
               retained,
-              (tenant, version) -> {
-                throw new AssertionError("Historical retry must never recompute content digest");
+              new WorldDraftDesignDigestService() {
+                @Override
+                public WorldDraftDesignDigest getDraftDesignDigest(String tenant, String version) {
+                  throw new AssertionError("Historical retry must never recompute content digest");
+                }
+
+                @Override
+                public WorldDraftDesignDigest getSelectedDraftDesignDigest(
+                    String tenant, String version, InboundSourceClosureDeclaration closure) {
+                  throw new AssertionError("Historical retry must never recompute content digest");
+                }
               },
               repo,
               objectMapper);

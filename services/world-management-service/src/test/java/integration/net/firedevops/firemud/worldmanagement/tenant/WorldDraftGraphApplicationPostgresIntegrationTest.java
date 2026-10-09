@@ -122,6 +122,9 @@ import net.firedevops.firemud.worldmanagement.v1.WorldDesignScopeType;
 import net.firedevops.firemud.worldmanagement.v1.WorldEntitySpawnBindingDesignMutation;
 import net.firedevops.firemud.worldmanagement.v1.WorldFreshGraphDeclaration;
 import net.firedevops.firemud.worldmanagement.v1.WorldFreshGraphFamilyCount;
+import net.firedevops.firemud.worldmanagement.v1.WorldInboundSourceClosureDeclaration;
+import net.firedevops.firemud.worldmanagement.v1.WorldInboundSourceFamily;
+import net.firedevops.firemud.worldmanagement.v1.WorldInboundSourceFamilyCount;
 import net.firedevops.firemud.worldmanagement.v1.WorldPublicationTerminalReadServiceGrpc;
 import net.firedevops.firemud.worldmanagement.v1.ZoneDesignMutation;
 import org.flywaydb.core.Flyway;
@@ -5694,12 +5697,28 @@ class WorldDraftGraphApplicationPostgresIntegrationTest {
   }
 
   @Test
-  void permissionUnverifiedGraphAndFrozenHistoryCannotSupplyPublishedSelector() {
+  void retainedFrozenHistoryCannotSupplyPublishedSelectorAfterAppliedSourceIsMissing() {
     var plan = plan(fixture());
-    component().store(plan);
-    var capture = capture(plan);
+    var application = application(plan);
+    appliedComponent().apply(application);
+    var capture = capture(application.plan());
+    var request = capture.request().freeze();
     assertThat(frozenRepository().readCommitted(capture.request().freeze())).isPresent();
-    assertThatThrownBy(() -> publishedSelectors().readCommitted(capture.request().freeze()))
+    ownerTransaction()
+        .execute(
+            status -> {
+              dsl.execute("SET LOCAL session_replication_role='replica'");
+              try {
+                dsl.execute(
+                    "DELETE FROM world_draft_graph_application WHERE request_id=? AND commit_id=?",
+                    application.plan().binding().requestId(),
+                    application.plan().binding().commitId());
+              } finally {
+                dsl.execute("SET LOCAL session_replication_role='origin'");
+              }
+              return null;
+            });
+    assertThatThrownBy(() -> publishedSelectors().readCommitted(request))
         .hasMessageContaining("lacks original APPLIED application");
     TransactionTemplate ownedSnapshot = new TransactionTemplate(manager);
     ownedSnapshot.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
@@ -5707,8 +5726,7 @@ class WorldDraftGraphApplicationPostgresIntegrationTest {
     ownedSnapshot.setReadOnly(true);
     assertThatThrownBy(
             () ->
-                ownedSnapshot.execute(
-                    status -> publishedSelectors().readInOwnedSnapshot(capture.request().freeze())))
+                ownedSnapshot.execute(status -> publishedSelectors().readInOwnedSnapshot(request)))
         .hasMessageContaining("lacks original APPLIED application");
     assertOrigin();
   }
@@ -5768,7 +5786,20 @@ class WorldDraftGraphApplicationPostgresIntegrationTest {
   private WorldCanonicalFrozenTopology capture(WorldDraftTopologyCommitPlan plan) {
     String publicationRequest = "selector-" + UUID.randomUUID();
     var selection = publicationSelection(plan, publicationRequest, 1L);
-    return capture(plan, publicationRequest, selection, null);
+    Record applied =
+        dsl.fetchOne(
+            "SELECT account_binding_bytes FROM world_draft_graph_application "
+                + "WHERE request_id=? AND commit_id=?",
+            plan.binding().requestId(),
+            plan.binding().commitId());
+    if (applied == null) {
+      throw new IllegalStateException(
+          "Selected World capture fixture requires the exact original APPLIED Account binding");
+    }
+    var accountBinding =
+        isolatedPublicationAccountBinding(
+            applied.get("account_binding_bytes", byte[].class), selection, publicationRequest);
+    return capture(plan, publicationRequest, selection, accountBinding);
   }
 
   private WorldCanonicalFrozenTopology captureForTerminal(
@@ -5889,6 +5920,12 @@ class WorldDraftGraphApplicationPostgresIntegrationTest {
     var application = application(f);
     var result = appliedComponent().apply(application);
     assertThat(result.status()).isEqualTo("APPLIED");
+    var retainedGraph =
+        new WorldCanonicalAuthoredGraphReader().read(application.plan(), result.graphBytes());
+    assertThat(retainedGraph.inboundSourceClosure()).isPresent();
+    assertThat(retainedGraph.inboundSourceClosure().orElseThrow().familyCounts())
+        .extracting(WorldDraftTopologyInputGraph.InboundSourceFamilyCount::count)
+        .containsExactly(0, 0, 0, 0, 0, 0, 0);
     assertThat(result.appliedEpochs())
         .hasSize(application.operation().binding().affectedUnits(Owner.WORLD_MANAGEMENT).size());
     assertThat(result.appliedEpochs())
@@ -5999,7 +6036,8 @@ class WorldDraftGraphApplicationPostgresIntegrationTest {
     var application = application(historicalPlan);
 
     assertThatThrownBy(() -> appliedComponent().apply(application))
-        .hasMessageContaining("require the complete original fresh-graph declaration");
+        .hasMessageContaining(
+            "require the original versioned selected-inbound closure declaration");
     for (String table :
         List.of(
             "region",
@@ -6012,6 +6050,29 @@ class WorldDraftGraphApplicationPostgresIntegrationTest {
             "world_topology_draft_commit",
             "world_draft_graph_application",
             "world_draft_start_location_receipt")) {
+      assertThat(count(f, table)).isZero();
+    }
+  }
+
+  @Test
+  void newAccountBoundGraphRequiresExplicitInboundClosureAndDoesNotInferEmptyFromOmission() {
+    Fixture f = fixture();
+    var missingClosure = withoutInboundSourceClosure(plan(f));
+    var application = application(missingClosure);
+
+    assertThat(missingClosure.graph().freshGraphDeclaration().orElseThrow().inboundSourceClosure())
+        .isEmpty();
+    assertThatThrownBy(() -> appliedComponent().apply(application))
+        .hasMessageContaining(
+            "require the original versioned selected-inbound closure declaration");
+    for (String table :
+        List.of(
+            "region",
+            "zone",
+            "room",
+            "world_authored_topology_identity",
+            "world_topology_draft_commit",
+            "world_draft_graph_application")) {
       assertThat(count(f, table)).isZero();
     }
   }
@@ -6289,6 +6350,8 @@ class WorldDraftGraphApplicationPostgresIntegrationTest {
     WorldAuthoredSourceIntakeRepository retainedIntake =
         proxiedIntakeRepository(retainedDsl, retainedManager);
     Fixture f = fixture(retainedIntake, retainedManager, retainedDsl);
+    // Reconstruct the pre-closure graph/2 input explicitly; the shared current plan factory emits
+    // graph/3 only after its original fresh-graph declaration is retained.
     WorldDraftTopologyCommitPlan historicalPlan = withoutFreshGraphDeclaration(plan(f));
     WorldDraftGraphApplication historicalApplication = application(historicalPlan);
     TransactionTemplate retainedTransaction = ownerTransaction(retainedManager);
@@ -6904,6 +6967,61 @@ class WorldDraftGraphApplicationPostgresIntegrationTest {
     return WorldDraftTopologyCommitPlan.create(historicalBinding, original.ownerBinding());
   }
 
+  private WorldDraftTopologyCommitPlan withoutInboundSourceClosure(
+      WorldDraftTopologyCommitPlan original) {
+    List<DraftCommitBinding.RevisionPayload> revisions = new ArrayList<>();
+    boolean clearedOriginalDeclaration = false;
+    for (var revision : original.binding().revisions()) {
+      if (revision.owner() != Owner.WORLD_MANAGEMENT) {
+        revisions.add(revision);
+        continue;
+      }
+      try {
+        var mutation = WorldDesignMutationRevision.newBuilder();
+        JsonFormat.parser().merge(revision.payload(), mutation);
+        if (!mutation.hasFreshGraphDeclaration()) {
+          revisions.add(revision);
+          continue;
+        }
+        if (clearedOriginalDeclaration) {
+          throw new IllegalArgumentException(
+              "Missing-closure fixture requires one original World graph declaration");
+        }
+        revisions.add(
+            new DraftCommitBinding.RevisionPayload(
+                revision.revisionOrder(),
+                revision.revisionId(),
+                revision.owner(),
+                JsonFormat.printer()
+                    .omittingInsignificantWhitespace()
+                    .print(
+                        mutation
+                            .setFreshGraphDeclaration(
+                                mutation.getFreshGraphDeclaration().toBuilder()
+                                    .clearInboundSourceClosure()
+                                    .build())
+                            .build())));
+        clearedOriginalDeclaration = true;
+      } catch (InvalidProtocolBufferException exception) {
+        throw new IllegalStateException(exception);
+      }
+    }
+    if (!clearedOriginalDeclaration) {
+      throw new IllegalArgumentException(
+          "Missing-closure fixture requires one original World graph declaration");
+    }
+    var binding = original.binding();
+    return WorldDraftTopologyCommitPlan.create(
+        DraftCommitBinding.create(
+            binding.target(),
+            binding.requestId(),
+            binding.commitId(),
+            binding.baseCommitId(),
+            revisions,
+            binding.affectedUnits()),
+        original.ownerBinding());
+  }
+
   private Map<String, byte[]> retainedV39ApplicationBytes(
       DSLContext retained, WorldDraftGraphApplication application) {
     var operation = application.operation();
@@ -7286,6 +7404,7 @@ class WorldDraftGraphApplicationPostgresIntegrationTest {
                     values,
                     WorldDesignAggregateType
                         .WORLD_DESIGN_AGGREGATE_TYPE_WORLD_ENTITY_SPAWN_BINDING))
+            .setInboundSourceClosure(emptyInboundClosure())
             .build();
     values.set(0, values.getFirst().toBuilder().setFreshGraphDeclaration(declaration).build());
     List<DraftCommitBinding.RevisionPayload> revisions = new ArrayList<>();
@@ -7365,6 +7484,33 @@ class WorldDraftGraphApplicationPostgresIntegrationTest {
     int count =
         (int) mutations.stream().filter(mutation -> mutation.getAggregateType() == family).count();
     return WorldFreshGraphFamilyCount.newBuilder().setFamily(family).setCount(count).build();
+  }
+
+  private WorldInboundSourceClosureDeclaration emptyInboundClosure() {
+    return WorldInboundSourceClosureDeclaration.newBuilder()
+        .setSchemaVersion(1)
+        .addFamilyCounts(
+            inboundCount(WorldInboundSourceFamily.WORLD_INBOUND_SOURCE_FAMILY_LOOT_REFERENCE_ROOT))
+        .addFamilyCounts(
+            inboundCount(
+                WorldInboundSourceFamily.WORLD_INBOUND_SOURCE_FAMILY_LOOT_REFERENCE_ATTACHMENT))
+        .addFamilyCounts(
+            inboundCount(WorldInboundSourceFamily.WORLD_INBOUND_SOURCE_FAMILY_BEHAVIOR_SELECTION))
+        .addFamilyCounts(
+            inboundCount(WorldInboundSourceFamily.WORLD_INBOUND_SOURCE_FAMILY_BEHAVIOR_BINDING))
+        .addFamilyCounts(
+            inboundCount(WorldInboundSourceFamily.WORLD_INBOUND_SOURCE_FAMILY_AUTOMATION_HOOK))
+        .addFamilyCounts(
+            inboundCount(
+                WorldInboundSourceFamily.WORLD_INBOUND_SOURCE_FAMILY_AUTOMATION_SCRIPT_REFERENCE))
+        .addFamilyCounts(
+            inboundCount(
+                WorldInboundSourceFamily.WORLD_INBOUND_SOURCE_FAMILY_AUTOMATION_TARGET_BINDING))
+        .build();
+  }
+
+  private WorldInboundSourceFamilyCount inboundCount(WorldInboundSourceFamily family) {
+    return WorldInboundSourceFamilyCount.newBuilder().setFamily(family).setCount(0).build();
   }
 
   private WorldDesignMutationRevision.Builder mutation(

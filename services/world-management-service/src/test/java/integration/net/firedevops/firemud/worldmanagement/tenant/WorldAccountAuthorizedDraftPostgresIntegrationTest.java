@@ -90,6 +90,9 @@ import net.firedevops.firemud.worldmanagement.v1.WorldDesignMutationOperation;
 import net.firedevops.firemud.worldmanagement.v1.WorldDesignScopeType;
 import net.firedevops.firemud.worldmanagement.v1.WorldFreshGraphDeclaration;
 import net.firedevops.firemud.worldmanagement.v1.WorldFreshGraphFamilyCount;
+import net.firedevops.firemud.worldmanagement.v1.WorldInboundSourceClosureDeclaration;
+import net.firedevops.firemud.worldmanagement.v1.WorldInboundSourceFamily;
+import net.firedevops.firemud.worldmanagement.v1.WorldInboundSourceFamilyCount;
 import net.firedevops.firemud.worldmanagement.v1.ZoneDesignMutation;
 import org.jooq.DSLContext;
 import org.jooq.exception.DataAccessException;
@@ -1410,6 +1413,7 @@ class WorldAccountAuthorizedDraftPostgresIntegrationTest {
                     values,
                     WorldDesignAggregateType
                         .WORLD_DESIGN_AGGREGATE_TYPE_WORLD_ENTITY_SPAWN_BINDING))
+            .setInboundSourceClosure(emptyInboundClosure())
             .build();
     values.set(0, values.getFirst().toBuilder().setFreshGraphDeclaration(declaration).build());
     List<DraftCommitBinding.RevisionPayload> revisions = new ArrayList<>();
@@ -1475,6 +1479,33 @@ class WorldAccountAuthorizedDraftPostgresIntegrationTest {
     int count =
         (int) mutations.stream().filter(mutation -> mutation.getAggregateType() == family).count();
     return WorldFreshGraphFamilyCount.newBuilder().setFamily(family).setCount(count).build();
+  }
+
+  private WorldInboundSourceClosureDeclaration emptyInboundClosure() {
+    return WorldInboundSourceClosureDeclaration.newBuilder()
+        .setSchemaVersion(1)
+        .addFamilyCounts(
+            inboundCount(WorldInboundSourceFamily.WORLD_INBOUND_SOURCE_FAMILY_LOOT_REFERENCE_ROOT))
+        .addFamilyCounts(
+            inboundCount(
+                WorldInboundSourceFamily.WORLD_INBOUND_SOURCE_FAMILY_LOOT_REFERENCE_ATTACHMENT))
+        .addFamilyCounts(
+            inboundCount(WorldInboundSourceFamily.WORLD_INBOUND_SOURCE_FAMILY_BEHAVIOR_SELECTION))
+        .addFamilyCounts(
+            inboundCount(WorldInboundSourceFamily.WORLD_INBOUND_SOURCE_FAMILY_BEHAVIOR_BINDING))
+        .addFamilyCounts(
+            inboundCount(WorldInboundSourceFamily.WORLD_INBOUND_SOURCE_FAMILY_AUTOMATION_HOOK))
+        .addFamilyCounts(
+            inboundCount(
+                WorldInboundSourceFamily.WORLD_INBOUND_SOURCE_FAMILY_AUTOMATION_SCRIPT_REFERENCE))
+        .addFamilyCounts(
+            inboundCount(
+                WorldInboundSourceFamily.WORLD_INBOUND_SOURCE_FAMILY_AUTOMATION_TARGET_BINDING))
+        .build();
+  }
+
+  private WorldInboundSourceFamilyCount inboundCount(WorldInboundSourceFamily family) {
+    return WorldInboundSourceFamilyCount.newBuilder().setFamily(family).setCount(0).build();
   }
 
   private WorldDesignMutationRevision.Builder mutation(

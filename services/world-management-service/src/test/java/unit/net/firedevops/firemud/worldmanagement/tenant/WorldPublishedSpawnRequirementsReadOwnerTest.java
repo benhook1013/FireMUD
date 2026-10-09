@@ -166,7 +166,7 @@ class WorldPublishedSpawnRequirementsReadOwnerTest {
     when(release.targetNamespace()).thenReturn(NAMESPACE);
     when(release.evidenceDigest()).thenReturn("sha256:" + "f".repeat(64));
     when(release.schemaVersion())
-        .thenReturn(AuthoredWorldReleaseAttestationEvidence.SELECTOR_SCHEMA_VERSION);
+        .thenReturn(AuthoredWorldReleaseAttestationEvidence.CLOSURE_SELECTOR_SCHEMA_VERSION);
     when(release.worldStartLocationEvidence())
         .thenReturn(mock(WorldPublishedStartLocationEvidence.class));
     try (var ignored = attach(peer("entity-management-service", NAMESPACE))) {
@@ -197,7 +197,7 @@ class WorldPublishedSpawnRequirementsReadOwnerTest {
     when(release.targetNamespace()).thenReturn(NAMESPACE);
     when(release.evidenceDigest()).thenReturn(wire.getExpectedReleaseAttestationDigest());
     when(release.schemaVersion())
-        .thenReturn(AuthoredWorldReleaseAttestationEvidence.SELECTOR_SCHEMA_VERSION);
+        .thenReturn(AuthoredWorldReleaseAttestationEvidence.CLOSURE_SELECTOR_SCHEMA_VERSION);
     when(release.worldStartLocationEvidence()).thenReturn(selector);
 
     var source = mock(WorldPublishedStartLocationSource.class);
@@ -429,7 +429,7 @@ class WorldPublishedSpawnRequirementsReadOwnerTest {
         "workflow",
         uuid(6).toString(),
         "e".repeat(64),
-        3,
+        4,
         List.of());
   }
 

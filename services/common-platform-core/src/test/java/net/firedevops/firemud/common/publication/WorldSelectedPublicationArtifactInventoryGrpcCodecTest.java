@@ -18,6 +18,8 @@ import net.firedevops.firemud.common.publication.WorldSelectedPublicationArtifac
 import net.firedevops.firemud.common.publication.WorldSelectedPublicationArtifactInventoryEvidence.Checkpoint;
 import net.firedevops.firemud.common.publication.WorldSelectedPublicationArtifactInventoryEvidence.FamilyCount;
 import net.firedevops.firemud.common.publication.WorldSelectedPublicationArtifactInventoryEvidence.Freeze;
+import net.firedevops.firemud.common.publication.WorldSelectedPublicationArtifactInventoryEvidence.InboundSourceClosureDeclaration;
+import net.firedevops.firemud.common.publication.WorldSelectedPublicationArtifactInventoryEvidence.InboundSourceFamilyCount;
 import net.firedevops.firemud.common.publication.WorldSelectedPublicationArtifactInventoryEvidence.PublicAccountOrder;
 import net.firedevops.firemud.common.publication.WorldSelectedPublicationArtifactInventoryEvidence.PublicEvidence;
 import net.firedevops.firemud.common.publication.WorldSelectedPublicationArtifactInventoryEvidence.PublicOwnerScope;
@@ -52,6 +54,87 @@ class WorldSelectedPublicationArtifactInventoryGrpcCodecTest {
     assertThat(decodedFreeze.request()).isEqualTo(fixture.freezeEvidence().request());
     assertThat(decodedFreeze.acknowledgement())
         .isEqualTo(fixture.freezeEvidence().acknowledgement());
+  }
+
+  @Test
+  void roundTripsVersionedAuthoredEmptyInboundClosureThroughPublicCodec() {
+    var fixture = closureFixture();
+    var publicEvidence = fixture.publicEvidence();
+    var evidence =
+        WorldSelectedPublicationArtifactInventoryEvidence.fromPublicEvidence(
+            fixture.freezeEvidence(), publicEvidence);
+    var response = WorldSelectedPublicationArtifactInventoryGrpcCodec.toResponse(evidence);
+    var decoded =
+        WorldSelectedPublicationArtifactInventoryGrpcCodec.fromResponse(
+            fixture.freezeEvidence(), response);
+
+    assertThat(decoded.publicEvidence()).isEqualTo(publicEvidence);
+    assertThat(decoded.publicEvidence().schema())
+        .isEqualTo(WorldSelectedPublicationArtifactInventoryEvidence.INBOUND_CLOSURE_SCHEMA);
+    assertThat(decoded.publicEvidence().sourceModel().graphSchemaVersion()).isEqualTo(3);
+    assertThat(decoded.publicEvidence().sourceModel().inboundSourceClosure().familyCounts())
+        .extracting(InboundSourceFamilyCount::count)
+        .containsExactly(0, 0, 0, 0, 0, 0, 0);
+    assertThat(new String(decoded.canonicalBytes(), StandardCharsets.UTF_8))
+        .contains("inboundSourceClosure", "WORLD_INBOUND_SOURCE_FAMILY_AUTOMATION_TARGET_BINDING")
+        .doesNotContain("localTenantKey", "localVersionKey", "sourceGameRowId");
+    String opaqueClosure =
+        new String(decoded.canonicalBytes(), StandardCharsets.UTF_8)
+            .replace("\"schemaVersion\":1", "\"schemaVersion\":1,\"members\":[]");
+    assertRejectedPublicJson(fixture, opaqueClosure);
+  }
+
+  @Test
+  void versionedInboundClosureRejectsMissingUnknownAndNonemptyFamilies() {
+    var fixture = closureFixture();
+    var original = fixture.publicEvidence();
+    var inbound = original;
+    var model = inbound.sourceModel();
+
+    var nonempty =
+        new InboundSourceClosureDeclaration(
+            1,
+            List.of(
+                new InboundSourceFamilyCount("WORLD_INBOUND_SOURCE_FAMILY_LOOT_REFERENCE_ROOT", 1),
+                new InboundSourceFamilyCount(
+                    "WORLD_INBOUND_SOURCE_FAMILY_LOOT_REFERENCE_ATTACHMENT", 0),
+                new InboundSourceFamilyCount("WORLD_INBOUND_SOURCE_FAMILY_BEHAVIOR_SELECTION", 0),
+                new InboundSourceFamilyCount("WORLD_INBOUND_SOURCE_FAMILY_BEHAVIOR_BINDING", 0),
+                new InboundSourceFamilyCount("WORLD_INBOUND_SOURCE_FAMILY_AUTOMATION_HOOK", 0),
+                new InboundSourceFamilyCount(
+                    "WORLD_INBOUND_SOURCE_FAMILY_AUTOMATION_SCRIPT_REFERENCE", 0),
+                new InboundSourceFamilyCount(
+                    "WORLD_INBOUND_SOURCE_FAMILY_AUTOMATION_TARGET_BINDING", 0)));
+    var unknown =
+        new InboundSourceClosureDeclaration(
+            1,
+            List.of(
+                new InboundSourceFamilyCount("UNKNOWN_FAMILY", 0),
+                model.inboundSourceClosure().familyCounts().get(1),
+                model.inboundSourceClosure().familyCounts().get(2),
+                model.inboundSourceClosure().familyCounts().get(3),
+                model.inboundSourceClosure().familyCounts().get(4),
+                model.inboundSourceClosure().familyCounts().get(5),
+                model.inboundSourceClosure().familyCounts().get(6)));
+
+    assertThatThrownBy(
+            () ->
+                WorldSelectedPublicationArtifactInventoryEvidence.fromPublicEvidence(
+                    fixture.freezeEvidence(), withInboundClosure(inbound, nonempty)))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("unsupported nonempty");
+    assertThatThrownBy(
+            () ->
+                WorldSelectedPublicationArtifactInventoryEvidence.fromPublicEvidence(
+                    fixture.freezeEvidence(), withInboundClosure(inbound, unknown)))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("not canonical");
+    assertThatThrownBy(
+            () ->
+                WorldSelectedPublicationArtifactInventoryEvidence.fromPublicEvidence(
+                    fixture.freezeEvidence(), withInboundClosure(inbound, null)))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("source model is unsupported or incomplete");
   }
 
   @Test
@@ -354,6 +437,80 @@ class WorldSelectedPublicationArtifactInventoryGrpcCodecTest {
                     "NOT_REQUIRED",
                     "AUTHORED_ROOM_EXIT_EDGES_ARE_THE_SUPPORTED_TRAVERSAL_GRAPH")));
     return new Fixture(freezeEvidence, publicEvidence);
+  }
+
+  private static PublicEvidence inboundClosureEvidence(PublicEvidence original) {
+    return withInboundClosure(
+        original,
+        new InboundSourceClosureDeclaration(
+            1,
+            List.of(
+                new InboundSourceFamilyCount("WORLD_INBOUND_SOURCE_FAMILY_LOOT_REFERENCE_ROOT", 0),
+                new InboundSourceFamilyCount(
+                    "WORLD_INBOUND_SOURCE_FAMILY_LOOT_REFERENCE_ATTACHMENT", 0),
+                new InboundSourceFamilyCount("WORLD_INBOUND_SOURCE_FAMILY_BEHAVIOR_SELECTION", 0),
+                new InboundSourceFamilyCount("WORLD_INBOUND_SOURCE_FAMILY_BEHAVIOR_BINDING", 0),
+                new InboundSourceFamilyCount("WORLD_INBOUND_SOURCE_FAMILY_AUTOMATION_HOOK", 0),
+                new InboundSourceFamilyCount(
+                    "WORLD_INBOUND_SOURCE_FAMILY_AUTOMATION_SCRIPT_REFERENCE", 0),
+                new InboundSourceFamilyCount(
+                    "WORLD_INBOUND_SOURCE_FAMILY_AUTOMATION_TARGET_BINDING", 0))));
+  }
+
+  private static Fixture closureFixture() {
+    var base = fixture();
+    var prior = base.freezeEvidence().acknowledgement();
+    var acknowledgement =
+        new Acknowledgement(
+            prior.request(),
+            prior.intakeRequestId(),
+            prior.versionStateEpoch(),
+            prior.publicationFence(),
+            prior.ownerFreezePhase(),
+            prior.appliedCommitId(),
+            prior.contentDigest(),
+            4);
+    var freezeEvidence =
+        WorldSelectedDraftPublicationFreezeGrpcCodec.fromResponse(
+            prior.request(),
+            WorldSelectedDraftPublicationFreezeGrpcCodec.toResponse(acknowledgement));
+    return new Fixture(freezeEvidence, inboundClosureEvidence(base.publicEvidence()));
+  }
+
+  private static PublicEvidence withInboundClosure(
+      PublicEvidence original, InboundSourceClosureDeclaration inboundClosure) {
+    var prior = original.sourceModel();
+    var source =
+        new SourceModel(
+            WorldSelectedPublicationArtifactInventoryEvidence.INBOUND_CLOSURE_SOURCE_MODEL,
+            WorldSelectedPublicationArtifactInventoryEvidence.INBOUND_CLOSURE_GRAPH_SCHEMA_VERSION,
+            prior.graphDigest(),
+            prior.topologyResultDigest(),
+            prior.familyCounts(),
+            prior.regionGeneratorInputs(),
+            prior.generationRuleFields(),
+            prior.regionFields(),
+            prior.zoneFields(),
+            prior.roomFields(),
+            prior.roomExitFields(),
+            prior.spawnBindingFields(),
+            prior.spawnBindingInputs(),
+            prior.generationRuleInputCount(),
+            prior.spawnBindingCount(),
+            prior.appliedEpochs(),
+            inboundClosure);
+    return new PublicEvidence(
+        WorldSelectedPublicationArtifactInventoryEvidence.INBOUND_CLOSURE_SCHEMA,
+        WorldSelectedPublicationArtifactInventoryEvidence.INBOUND_CLOSURE_SCHEMA_VERSION,
+        original.completeness(),
+        original.ownerScope(),
+        original.selectedApplication(),
+        original.accountOrder(),
+        original.freeze(),
+        new Checkpoint(
+            original.checkpoint().appliedCommitId(), original.checkpoint().contentDigest(), 4),
+        source,
+        original.artifactDecisions());
   }
 
   private static void assertRejectedPublicJson(Fixture fixture, String json) {

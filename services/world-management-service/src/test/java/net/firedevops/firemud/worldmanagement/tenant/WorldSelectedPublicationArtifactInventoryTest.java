@@ -226,6 +226,104 @@ class WorldSelectedPublicationArtifactInventoryTest {
     assertThat(inventory.canonicalBytes()).containsExactly(storedBytes);
   }
 
+  @Test
+  void closureProfileRetainsExplicitSourceAndRequiresSelectedDigestSchema4() {
+    var envelope = envelopeWithInboundClosure();
+    var inventory =
+        new WorldSelectedPublicationArtifactInventory(
+            envelope, WorldSelectedPublicationArtifactInventory.encode(envelope));
+
+    assertThat(inventory.envelope().schema())
+        .isEqualTo(WorldSelectedPublicationArtifactInventory.INBOUND_CLOSURE_SCHEMA);
+    assertThat(inventory.envelope().sourceModel().inboundSourceClosure().familyCounts())
+        .extracting(
+            WorldSelectedPublicationArtifactInventoryEvidence.InboundSourceFamilyCount::count)
+        .containsExactly(0, 0, 0, 0, 0, 0, 0);
+    assertThat(inventory.publicEvidence().checkpoint().digestSchemaVersion()).isEqualTo(4);
+    assertThat(new String(inventory.publicCanonicalBytes(), StandardCharsets.UTF_8))
+        .contains(
+            "world-selected-publication-artifact-inventory/v2",
+            "WORLD_LOGICAL_ROOM_EXIT_ADJACENCY_INBOUND_EMPTY_V1",
+            "inboundSourceClosure");
+
+    var wrongCheckpoint =
+        new WorldSelectedPublicationArtifactInventory.Envelope(
+            envelope.schema(),
+            envelope.schemaVersion(),
+            envelope.completeness(),
+            envelope.ownerScope(),
+            envelope.sourceIntake(),
+            envelope.selectedApplication(),
+            envelope.accountOrder(),
+            envelope.freeze(),
+            new WorldSelectedPublicationArtifactInventoryEvidence.Checkpoint(
+                envelope.checkpoint().appliedCommitId(), envelope.checkpoint().contentDigest(), 3),
+            envelope.sourceModel(),
+            envelope.artifactDecisions());
+    assertThatThrownBy(
+            () ->
+                new WorldSelectedPublicationArtifactInventory(
+                        wrongCheckpoint,
+                        WorldSelectedPublicationArtifactInventory.encode(wrongCheckpoint))
+                    .publicEvidence())
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("participant digest schema");
+  }
+
+  private static WorldSelectedPublicationArtifactInventory.Envelope envelopeWithInboundClosure() {
+    var prior = envelopeWithReversePublicInputOrder();
+    var model = prior.sourceModel();
+    var closure =
+        new WorldSelectedPublicationArtifactInventoryEvidence.InboundSourceClosureDeclaration(
+            1,
+            List.of(
+                inboundFamily("WORLD_INBOUND_SOURCE_FAMILY_LOOT_REFERENCE_ROOT"),
+                inboundFamily("WORLD_INBOUND_SOURCE_FAMILY_LOOT_REFERENCE_ATTACHMENT"),
+                inboundFamily("WORLD_INBOUND_SOURCE_FAMILY_BEHAVIOR_SELECTION"),
+                inboundFamily("WORLD_INBOUND_SOURCE_FAMILY_BEHAVIOR_BINDING"),
+                inboundFamily("WORLD_INBOUND_SOURCE_FAMILY_AUTOMATION_HOOK"),
+                inboundFamily("WORLD_INBOUND_SOURCE_FAMILY_AUTOMATION_SCRIPT_REFERENCE"),
+                inboundFamily("WORLD_INBOUND_SOURCE_FAMILY_AUTOMATION_TARGET_BINDING")));
+    var source =
+        new WorldSelectedPublicationArtifactInventoryEvidence.SourceModel(
+            WorldSelectedPublicationArtifactInventoryEvidence.INBOUND_CLOSURE_SOURCE_MODEL,
+            WorldSelectedPublicationArtifactInventoryEvidence.INBOUND_CLOSURE_GRAPH_SCHEMA_VERSION,
+            model.graphDigest(),
+            model.topologyResultDigest(),
+            model.familyCounts(),
+            model.regionGeneratorInputs(),
+            model.generationRuleFields(),
+            model.regionFields(),
+            model.zoneFields(),
+            model.roomFields(),
+            model.roomExitFields(),
+            model.spawnBindingFields(),
+            model.spawnBindingInputs(),
+            model.generationRuleInputCount(),
+            model.spawnBindingCount(),
+            model.appliedEpochs(),
+            closure);
+    return new WorldSelectedPublicationArtifactInventory.Envelope(
+        WorldSelectedPublicationArtifactInventory.INBOUND_CLOSURE_SCHEMA,
+        WorldSelectedPublicationArtifactInventoryEvidence.INBOUND_CLOSURE_SCHEMA_VERSION,
+        prior.completeness(),
+        prior.ownerScope(),
+        prior.sourceIntake(),
+        prior.selectedApplication(),
+        prior.accountOrder(),
+        prior.freeze(),
+        new WorldSelectedPublicationArtifactInventoryEvidence.Checkpoint(
+            prior.checkpoint().appliedCommitId(), prior.checkpoint().contentDigest(), 4),
+        source,
+        prior.artifactDecisions());
+  }
+
+  private static WorldSelectedPublicationArtifactInventoryEvidence.InboundSourceFamilyCount
+      inboundFamily(String family) {
+    return new WorldSelectedPublicationArtifactInventoryEvidence.InboundSourceFamilyCount(
+        family, 0);
+  }
+
   private static WorldSelectedPublicationArtifactInventory.Envelope
       envelopeWithReversePublicInputOrder() {
     var sourceModel =

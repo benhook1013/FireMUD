@@ -181,6 +181,8 @@ Error precedence is canonical: (1) Account authenticates the exact immediate mTL
 
 These RPCs and schemas are accepted target state but are not present in the current Account proto or implementation. Logging & Admin remains the external operator ingress and durable intent/audit coordinator, Account remains the authorization authority and owner of original-reference retention, and the domain service remains the mutation owner.
 
+For StartSession, Account's existing human authorization-reference issuer remains the sole issuer and the original reference retains `targetOwner=game-session-service`. The distinct Account-owned same-namespace World receiving-participation and source-protection lifecycle is defined by [ADR 0047](../../decisions/adr-0047-logging-admin-as-external-operator-write-ingress.md#startsession-world-receiving-participation); this API contract adds no replacement issuer, reference-renewal, or re-redemption path. The Game Design projection read and publication hold/settlement producers remain separate and grant no StartSession World permission. StartSession participation acquisition, World admission, terminal settlement, and their proof remain unimplemented.
+
 ## REST APIs
 
 | Method | Path | Description |

@@ -504,12 +504,37 @@ message WorldFreshGraphFamilyCount {
   optional int32 count = 2;
 }
 
+enum WorldInboundSourceFamily {
+  WORLD_INBOUND_SOURCE_FAMILY_UNSPECIFIED = 0;
+  WORLD_INBOUND_SOURCE_FAMILY_LOOT_REFERENCE_ROOT = 1;
+  WORLD_INBOUND_SOURCE_FAMILY_LOOT_REFERENCE_ATTACHMENT = 2;
+  WORLD_INBOUND_SOURCE_FAMILY_BEHAVIOR_SELECTION = 3;
+  WORLD_INBOUND_SOURCE_FAMILY_BEHAVIOR_BINDING = 4;
+  WORLD_INBOUND_SOURCE_FAMILY_AUTOMATION_HOOK = 5;
+  WORLD_INBOUND_SOURCE_FAMILY_AUTOMATION_SCRIPT_REFERENCE = 6;
+  WORLD_INBOUND_SOURCE_FAMILY_AUTOMATION_TARGET_BINDING = 7;
+}
+
+message WorldInboundSourceFamilyCount {
+  WorldInboundSourceFamily family = 1;
+  // Presence is carried by this repeated entry; only a source-authored zero is currently supported.
+  optional int32 count = 2;
+}
+
+// Versioned, closed selected-inbound declaration. This schema defines family identities and
+// counts only; nonempty member grammar remains unsupported and must be rejected by consumers.
+message WorldInboundSourceClosureDeclaration {
+  uint32 schema_version = 1;
+  repeated WorldInboundSourceFamilyCount family_counts = 2;
+}
+
 // Complete fresh graph declaration bound into the original Game Design revision payload.
 message WorldFreshGraphDeclaration {
   string tenant_id = 1;
   string version_id = 2;
   RoomTemplateRef start_location = 3;
   repeated WorldFreshGraphFamilyCount family_counts = 4;
+  WorldInboundSourceClosureDeclaration inbound_source_closure = 5;
 }
 
 enum WorldDesignMutationResult {

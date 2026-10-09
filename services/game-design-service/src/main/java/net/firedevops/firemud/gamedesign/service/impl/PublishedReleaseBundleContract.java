@@ -14,6 +14,7 @@ import net.firedevops.firemud.gamedesign.service.ExportedAssetManifest;
 final class PublishedReleaseBundleContract {
   static final String SUPPORTED_ATTESTATION_SCHEMA_VERSION = "v1";
   static final String SELECTOR_ATTESTATION_SCHEMA_VERSION = "v2";
+  static final String CLOSURE_SELECTOR_ATTESTATION_SCHEMA_VERSION = "v3";
   static final String SCHEMA_VERSION_UNSUPPORTED = "SCHEMA_VERSION_UNSUPPORTED";
   static final String REPAIR_ATTESTATION_MISMATCH = "REPAIR_ATTESTATION_MISMATCH";
   static final String REPAIR_ATTESTED_ASSET_KEY_MISMATCH = "REPAIR_ATTESTED_ASSET_KEY_MISMATCH";
@@ -29,14 +30,28 @@ final class PublishedReleaseBundleContract {
     var evidence =
         Objects.requireNonNull(bundle.worldPublishedStartLocationEvidence(), "World evidence");
     var request = evidence.request();
-    if (!SELECTOR_ATTESTATION_SCHEMA_VERSION.equals(bundle.attestationSchemaVersion())
-        || bundle.scriptOnly()
+    int selectorSchemaVersion =
+        switch (bundle.attestationSchemaVersion()) {
+          case SELECTOR_ATTESTATION_SCHEMA_VERSION ->
+              AuthoredWorldReleaseAttestationEvidence.SELECTOR_SCHEMA_VERSION;
+          case CLOSURE_SELECTOR_ATTESTATION_SCHEMA_VERSION ->
+              AuthoredWorldReleaseAttestationEvidence.CLOSURE_SELECTOR_SCHEMA_VERSION;
+          default ->
+              throw new IllegalArgumentException(
+                  "World selector requires a selected publication release schema");
+        };
+    int expectedWorldDigestSchema =
+        selectorSchemaVersion == AuthoredWorldReleaseAttestationEvidence.SELECTOR_SCHEMA_VERSION
+            ? 3
+            : 4;
+    if (bundle.scriptOnly()
         || bundle.scriptPatchVersion() != null
         || !request.canonicalTenantId().equals(bundle.canonicalTenantId())
         || !request.canonicalVersionId().equals(bundle.canonicalVersionId())
         || !request.publishWorkflowId().equals(bundle.publishWorkflowId())
         || bundle.manifestSchemaVersion() == null
-        || bundle.artifactDigests() == null) {
+        || bundle.artifactDigests() == null
+        || request.digestSchemaVersion() != expectedWorldDigestSchema) {
       throw new IllegalArgumentException(
           "World selector differs from complete immutable release binding");
     }
@@ -54,8 +69,7 @@ final class PublishedReleaseBundleContract {
           || !Objects.equals(
               participant.digestSchemaVersion(),
               AuthoredWorldReleaseAttestationEvidence.supportedParticipantDigestSchema(
-                  participant.participantKey(),
-                  AuthoredWorldReleaseAttestationEvidence.SELECTOR_SCHEMA_VERSION))) {
+                  participant.participantKey(), selectorSchemaVersion))) {
         throw new IllegalArgumentException(
             "World selector requires all exact successful release participants");
       }
@@ -85,11 +99,22 @@ final class PublishedReleaseBundleContract {
       String generationRevision,
       List<PublishParticipantDigestDto> participants,
       WorldPublishedStartLocationEvidence evidence) {
-    if (!SELECTOR_ATTESTATION_SCHEMA_VERSION.equals(stored.attestationSchemaVersion())) {
+    if (!isSelectorSchema(stored.attestationSchemaVersion())) {
       throw new IllegalStateException(
           "IDEMPOTENCY_CONFLICT: historical release is selector-ineligible");
     }
     requireSelectorBinding(stored);
+    String requestedSchema =
+        switch (evidence.request().digestSchemaVersion()) {
+          case 3 -> SELECTOR_ATTESTATION_SCHEMA_VERSION;
+          case 4 -> CLOSURE_SELECTOR_ATTESTATION_SCHEMA_VERSION;
+          default ->
+              throw new IllegalStateException(
+                  "IDEMPOTENCY_CONFLICT: unsupported retained World selector schema");
+        };
+    if (!requestedSchema.equals(stored.attestationSchemaVersion())) {
+      throw new IllegalStateException("IDEMPOTENCY_CONFLICT: changed immutable selector schema");
+    }
     if (stored.versionNumber() != version.versionNumber()
         || version.scriptOnly()
         || version.scriptPatchVersion() != null
@@ -121,7 +146,7 @@ final class PublishedReleaseBundleContract {
    * Publication reconciliation only; does not widen launch or repair authorization/schema support.
    */
   static void requireSupportedSchemaForPublicationRead(PublishedReleaseBundleDto bundle) {
-    if (SELECTOR_ATTESTATION_SCHEMA_VERSION.equals(bundle.attestationSchemaVersion())) {
+    if (isSelectorSchema(bundle.attestationSchemaVersion())) {
       requireSelectorBinding(bundle);
       return;
     }
@@ -141,7 +166,7 @@ final class PublishedReleaseBundleContract {
    * Descriptor resolution only; descriptor/v1 remains separate from the complete release carrier.
    */
   static void requireSupportedSchemaForLaunchDescriptor(PublishedReleaseBundleDto bundle) {
-    if (SELECTOR_ATTESTATION_SCHEMA_VERSION.equals(bundle.attestationSchemaVersion())) {
+    if (isSelectorSchema(bundle.attestationSchemaVersion())) {
       requireSelectorBinding(bundle);
       return;
     }
@@ -167,5 +192,10 @@ final class PublishedReleaseBundleContract {
           REPAIR_ATTESTED_ASSET_KEY_MISMATCH
               + ": repair could not reproduce the attested manifest asset key set");
     }
+  }
+
+  static boolean isSelectorSchema(String schemaVersion) {
+    return SELECTOR_ATTESTATION_SCHEMA_VERSION.equals(schemaVersion)
+        || CLOSURE_SELECTOR_ATTESTATION_SCHEMA_VERSION.equals(schemaVersion);
   }
 }

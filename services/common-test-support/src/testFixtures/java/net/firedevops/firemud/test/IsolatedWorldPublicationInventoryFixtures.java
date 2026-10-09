@@ -41,12 +41,49 @@ public final class IsolatedWorldPublicationInventoryFixtures {
     var original = DraftAuthorizationFenceBinding.fromStored(world.originalAccountBindingBytes());
     var graph =
         WorldDraftStartLocationEvidence.fromStored(world.selectorReceiptBytes()).graphDigest();
+    boolean closureQualified = request.digestSchemaVersion() == 4;
+    String inventorySchema =
+        closureQualified
+            ? WorldSelectedPublicationArtifactInventoryEvidence.INBOUND_CLOSURE_SCHEMA
+            : WorldSelectedPublicationArtifactInventoryEvidence.SCHEMA;
+    int inventorySchemaVersion =
+        closureQualified
+            ? WorldSelectedPublicationArtifactInventoryEvidence.INBOUND_CLOSURE_SCHEMA_VERSION
+            : WorldSelectedPublicationArtifactInventoryEvidence.SCHEMA_VERSION;
+    String sourceModel =
+        closureQualified
+            ? WorldSelectedPublicationArtifactInventoryEvidence.INBOUND_CLOSURE_SOURCE_MODEL
+            : WorldSelectedPublicationArtifactInventoryEvidence.SOURCE_MODEL;
+    int graphSchemaVersion =
+        closureQualified
+            ? WorldSelectedPublicationArtifactInventoryEvidence.INBOUND_CLOSURE_GRAPH_SCHEMA_VERSION
+            : 2;
+    var inboundClosure =
+        closureQualified
+            ? new WorldSelectedPublicationArtifactInventoryEvidence.InboundSourceClosureDeclaration(
+                1,
+                List.of(
+                    new WorldSelectedPublicationArtifactInventoryEvidence.InboundSourceFamilyCount(
+                        "WORLD_INBOUND_SOURCE_FAMILY_LOOT_REFERENCE_ROOT", 0),
+                    new WorldSelectedPublicationArtifactInventoryEvidence.InboundSourceFamilyCount(
+                        "WORLD_INBOUND_SOURCE_FAMILY_LOOT_REFERENCE_ATTACHMENT", 0),
+                    new WorldSelectedPublicationArtifactInventoryEvidence.InboundSourceFamilyCount(
+                        "WORLD_INBOUND_SOURCE_FAMILY_BEHAVIOR_SELECTION", 0),
+                    new WorldSelectedPublicationArtifactInventoryEvidence.InboundSourceFamilyCount(
+                        "WORLD_INBOUND_SOURCE_FAMILY_BEHAVIOR_BINDING", 0),
+                    new WorldSelectedPublicationArtifactInventoryEvidence.InboundSourceFamilyCount(
+                        "WORLD_INBOUND_SOURCE_FAMILY_AUTOMATION_HOOK", 0),
+                    new WorldSelectedPublicationArtifactInventoryEvidence.InboundSourceFamilyCount(
+                        "WORLD_INBOUND_SOURCE_FAMILY_AUTOMATION_SCRIPT_REFERENCE", 0),
+                    new WorldSelectedPublicationArtifactInventoryEvidence.InboundSourceFamilyCount(
+                        "WORLD_INBOUND_SOURCE_FAMILY_AUTOMATION_TARGET_BINDING", 0)))
+            : null;
     UUID fixtureId =
         UUID.nameUUIDFromBytes("ISOLATED World inventory input".getBytes(StandardCharsets.UTF_8));
     var evidence =
         new PublicEvidence(
-            WorldSelectedPublicationArtifactInventoryEvidence.SCHEMA,
-            1,
+            inventorySchema,
+            inventorySchemaVersion,
             "COMPLETE",
             new PublicOwnerScope(
                 request.targetNamespace(),
@@ -82,8 +119,8 @@ public final class IsolatedWorldPublicationInventoryFixtures {
             new Checkpoint(
                 request.appliedCommitId(), request.contentDigest(), request.digestSchemaVersion()),
             new SourceModel(
-                WorldSelectedPublicationArtifactInventoryEvidence.SOURCE_MODEL,
-                2,
+                sourceModel,
+                graphSchemaVersion,
                 graph,
                 sha256("ISOLATED topology result".getBytes(StandardCharsets.UTF_8)),
                 List.of(
@@ -138,7 +175,8 @@ public final class IsolatedWorldPublicationInventoryFixtures {
                                 new BigInteger(unit.expectedEpoch())
                                     .add(BigInteger.ONE)
                                     .toString()))
-                    .toList()),
+                    .toList(),
+                inboundClosure),
             List.of(
                 new ArtifactDecision(
                     "NAVMESH",
