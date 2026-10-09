@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.google.protobuf.UnknownFieldSet;
+import java.nio.charset.CharacterCodingException;
 import java.nio.charset.StandardCharsets;
 import java.util.Base64;
 import java.util.HashSet;
@@ -17,6 +18,8 @@ import net.firedevops.firemud.common.authoring.DraftCommitBinding.AffectedUnit;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding.RevisionPayload;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding.TargetProof;
 import net.firedevops.firemud.common.testing.AuthoringFixtures;
+import net.firedevops.firemud.common.world.RoomTemplateRef;
+import net.firedevops.firemud.common.world.WorldDraftStartLocationEvidence;
 import net.firedevops.firemud.worldmanagement.v1.ReadWorldDraftTerminalOutcomeResponse;
 import net.firedevops.firemud.worldmanagement.v1.WorldDraftTerminalReadStatus;
 import org.junit.jupiter.api.Test;
@@ -376,7 +379,8 @@ public class WorldDraftTerminalReadGrpcCodecTest {
     var committed = AuthoringFixtures.committedFreshGraphReadback(request);
     var result = object(committed.result());
     result.put("graphDigest", "sha256:" + "0".repeat(64));
-    assertResultRejected(request, committed, canonical(result));
+    assertResultRejected(
+        request, committed, canonical(result), "World APPLIED carrier differs at graphDigest");
 
     result = object(committed.result());
     byte[] malformedGraph = Base64.getDecoder().decode(result.get("graphBytesBase64").textValue());
@@ -393,7 +397,7 @@ public class WorldDraftTerminalReadGrpcCodecTest {
     result.put(
         "startLocationReceiptBase64", Base64.getEncoder().encodeToString(changedReceiptBytes));
     result.put("startLocationReceiptDigest", changedReceipt.get("receiptDigest").textValue());
-    assertResultRejected(request, committed, canonical(result));
+    assertResultRejected(request, committed, canonical(result), CharacterCodingException.class);
   }
 
   @Test
@@ -421,22 +425,41 @@ public class WorldDraftTerminalReadGrpcCodecTest {
                     uuid("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa").toString()),
             receipt -> receipt.put("accountBindingDigest", "sha256:" + "0".repeat(64)),
             receipt -> receipt.put("bindingDigest", "sha256:" + "0".repeat(64)),
-            receipt -> receipt.put("graphDigest", "sha256:" + "0".repeat(64)),
-            receipt -> receipt.put("receiptDigest", "sha256:" + "0".repeat(64)))) {
-      assertReceiptChangeRejected(request, committed, change);
+            receipt -> receipt.put("graphDigest", "sha256:" + "0".repeat(64)))) {
+      assertReceiptChangeRejected(
+          request,
+          committed,
+          change,
+          "World start-location receipt differs from its original Account-bound graph",
+          true);
     }
     assertReceiptChangeRejected(
-        request, committed, receipt -> receipt.put("unsupported", "new-field"));
+        request,
+        committed,
+        receipt -> receipt.put("receiptDigest", "sha256:" + "0".repeat(64)),
+        "World start-location receipt digest is invalid",
+        false);
+    assertReceiptChangeRejected(
+        request,
+        committed,
+        receipt -> receipt.put("unsupported", "new-field"),
+        "World start-location receipt has missing or unsupported fields",
+        true);
     var changedTopLevel = object(committed.result());
     changedTopLevel.put("unsupported", "new-field");
-    assertResultRejected(request, committed, canonical(changedTopLevel));
+    assertResultRejected(
+        request, committed, canonical(changedTopLevel), "World APPLIED carrier fields differ");
     changedTopLevel = object(committed.result());
     changedTopLevel.put("startLocationReceiptDigest", "sha256:" + "0".repeat(64));
-    assertResultRejected(request, committed, canonical(changedTopLevel));
+    assertResultRejected(
+        request,
+        committed,
+        canonical(changedTopLevel),
+        "World APPLIED carrier differs at startLocationReceiptDigest");
   }
 
   @Test
-  void v2RejectsNoncanonicalReceiptBytesAndGraphWithoutTheSelectedRoomRow() throws Exception {
+  void v2RejectsNoncanonicalReceiptBytesAndGraphRevisionSubstitution() throws Exception {
     var request = AuthoringFixtures.freshGraphRequest();
     var committed = AuthoringFixtures.committedFreshGraphReadback(request);
     var result = object(committed.result());
@@ -446,7 +469,8 @@ public class WorldDraftTerminalReadGrpcCodecTest {
     result.put(
         "startLocationReceiptBase64",
         Base64.getEncoder().encodeToString((" " + receiptJson).getBytes(StandardCharsets.UTF_8)));
-    assertResultRejected(request, committed, canonical(result));
+    assertResultRejected(
+        request, committed, canonical(result), "World start-location receipt is not canonical");
 
     result = object(committed.result());
     byte[] graphBytes = Base64.getDecoder().decode(result.get("graphBytesBase64").textValue());
@@ -471,7 +495,12 @@ public class WorldDraftTerminalReadGrpcCodecTest {
     result.put(
         "startLocationReceiptBase64", Base64.getEncoder().encodeToString(changedReceiptBytes));
     result.put("startLocationReceiptDigest", changedReceipt.get("receiptDigest").textValue());
-    assertResultRejected(request, committed, canonical(result));
+    // The exact ordered original revision check subsumes the later selected-ROOM presence guard.
+    assertResultRejected(
+        request,
+        committed,
+        canonical(result),
+        "World v2 graph row differs from its exact original revision");
   }
 
   @Test
@@ -482,9 +511,13 @@ public class WorldDraftTerminalReadGrpcCodecTest {
     downgraded.put("schema", "world-draft-graph-applied/v1");
     downgraded.remove("startLocationReceiptBase64");
     downgraded.remove("startLocationReceiptDigest");
-    assertResultRejected(declaredRequest, declaredResult, canonical(downgraded));
+    assertResultRejected(
+        declaredRequest,
+        declaredResult,
+        canonical(downgraded),
+        "Historical World APPLIED v1 cannot downgrade a declared fresh graph");
 
-    var historicalRequest = request();
+    var historicalRequest = requestWithUndeclaredWorldGraph();
     var historicalResult = AuthoringFixtures.committedReadback(historicalRequest);
     var upgraded = object(historicalResult.result());
     upgraded.put("schema", "world-draft-graph-applied/v2");
@@ -492,7 +525,45 @@ public class WorldDraftTerminalReadGrpcCodecTest {
         "startLocationReceiptBase64",
         Base64.getEncoder().encodeToString("{}".getBytes(StandardCharsets.UTF_8)));
     upgraded.put("startLocationReceiptDigest", "sha256:" + "0".repeat(64));
-    assertResultRejected(historicalRequest, historicalResult, canonical(upgraded));
+    assertResultRejected(
+        historicalRequest,
+        historicalResult,
+        canonical(upgraded),
+        "World v2 requires an original complete graph declaration");
+  }
+
+  private static WorldDraftTerminalReadEvidence.Request requestWithUndeclaredWorldGraph() {
+    String revisionPayload =
+        "{\"logicalRevisionId\":\""
+            + REVISION_ID
+            + "\",\"commitId\":\""
+            + COMMIT_ID
+            + "\",\"aggregateType\":\"WORLD_DESIGN_AGGREGATE_TYPE_ROOM\",\"aggregateId\":\""
+            + uuid("77777777-7777-4777-8777-777777777777")
+            + "\"}";
+    DraftCommitBinding draft =
+        DraftCommitBinding.create(
+            new TargetProof(
+                TENANT_ID, VERSION_ID, 19L, "tenant-key", 42L, "tenant-key", "NEW_GAME_ROW"),
+            REQUEST_ID,
+            COMMIT_ID,
+            "base-1",
+            List.of(
+                new RevisionPayload(
+                    "0", REVISION_ID, DraftCommitBinding.Owner.WORLD_MANAGEMENT, revisionPayload)),
+            List.of(
+                new AffectedUnit(
+                    DraftCommitBinding.Owner.WORLD_MANAGEMENT,
+                    "WORLD_TEMPLATE",
+                    "world-1",
+                    "ROOM_SCOPE",
+                    "room-1",
+                    "0")));
+    return new WorldDraftTerminalReadEvidence.Request(
+        1,
+        "test",
+        uuid("33333333-3333-4333-8333-333333333333"),
+        AuthoringFixtures.accountBinding(draft));
   }
 
   private static WorldDraftTerminalReadEvidence.Request request() {
@@ -530,21 +601,68 @@ public class WorldDraftTerminalReadGrpcCodecTest {
   private static void assertReceiptChangeRejected(
       WorldDraftTerminalReadEvidence.Request request,
       DraftAuthorizationFenceBinding.OwnerReadback committed,
-      java.util.function.Consumer<tools.jackson.databind.node.ObjectNode> change)
+      java.util.function.Consumer<tools.jackson.databind.node.ObjectNode> change,
+      String expectedRootCause,
+      boolean recalculateReceiptDigest)
       throws Exception {
     var result = object(committed.result());
     byte[] bytes = Base64.getDecoder().decode(result.get("startLocationReceiptBase64").textValue());
     var receipt = object(bytes);
     change.accept(receipt);
+    if (recalculateReceiptDigest) recalculateReceiptDigest(receipt);
     result.put(
         "startLocationReceiptBase64", Base64.getEncoder().encodeToString(canonical(receipt)));
-    assertResultRejected(request, committed, canonical(result));
+    assertResultRejected(request, committed, canonical(result), expectedRootCause);
+  }
+
+  private static void recalculateReceiptDigest(tools.jackson.databind.node.ObjectNode receipt) {
+    var selector = selector(receipt);
+    var evidence =
+        WorldDraftStartLocationEvidence.create(
+            receipt.get("targetNamespace").textValue(),
+            uuid(receipt.get("operationId").textValue()),
+            uuid(receipt.get("requestId").textValue()),
+            uuid(receipt.get("commitId").textValue()),
+            uuid(receipt.get("authorizationFenceId").textValue()),
+            receipt.get("accountBindingDigest").textValue(),
+            receipt.get("bindingDigest").textValue(),
+            new RoomTemplateRef(
+                uuid(selector.get("tenantId").textValue()),
+                uuid(selector.get("versionId").textValue()),
+                uuid(selector.get("roomTemplateId").textValue())),
+            receipt.get("graphDigest").textValue());
+    receipt.put("receiptDigest", evidence.receiptDigest());
   }
 
   private static void assertResultRejected(
       WorldDraftTerminalReadEvidence.Request request,
       DraftAuthorizationFenceBinding.OwnerReadback committed,
-      byte[] resultBytes) {
+      byte[] resultBytes,
+      String expectedRootCauseMessage) {
+    assertResultRejected(
+        request,
+        committed,
+        resultBytes,
+        cause -> assertThat(cause).hasMessageContaining(expectedRootCauseMessage));
+  }
+
+  private static void assertResultRejected(
+      WorldDraftTerminalReadEvidence.Request request,
+      DraftAuthorizationFenceBinding.OwnerReadback committed,
+      byte[] resultBytes,
+      Class<? extends Throwable> expectedRootCauseType) {
+    assertResultRejected(
+        request,
+        committed,
+        resultBytes,
+        cause -> assertThat(cause).isInstanceOf(expectedRootCauseType));
+  }
+
+  private static void assertResultRejected(
+      WorldDraftTerminalReadEvidence.Request request,
+      DraftAuthorizationFenceBinding.OwnerReadback committed,
+      byte[] resultBytes,
+      java.util.function.Consumer<Throwable> assertRootCause) {
     var baseline = WorldDraftTerminalReadGrpcCodec.toResponse(request, Optional.of(committed));
     var substituted = readbackWithResult(committed, resultBytes);
     var response =
@@ -553,7 +671,16 @@ public class WorldDraftTerminalReadGrpcCodecTest {
                 com.google.protobuf.ByteString.copyFrom(substituted.canonicalBytes()))
             .build();
     assertThatThrownBy(() -> WorldDraftTerminalReadGrpcCodec.fromResponse(request, response))
-        .isInstanceOf(IllegalArgumentException.class);
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining(
+            "World committed readback has an invalid or substituted canonical APPLIED result")
+        .satisfies(exception -> assertRootCause.accept(rootCause(exception)));
+  }
+
+  private static Throwable rootCause(Throwable exception) {
+    Throwable cause = exception;
+    while (cause.getCause() != null) cause = cause.getCause();
+    return cause;
   }
 
   private static DraftAuthorizationFenceBinding.OwnerReadback readbackWithResult(

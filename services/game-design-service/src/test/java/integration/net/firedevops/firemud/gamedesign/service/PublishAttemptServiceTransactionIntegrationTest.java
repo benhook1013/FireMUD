@@ -3,6 +3,8 @@ package net.firedevops.firemud.gamedesign.service;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import java.io.PrintWriter;
+import java.io.StringWriter;
 import java.lang.reflect.Constructor;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
@@ -56,6 +58,7 @@ import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
 import org.springframework.test.util.AopTestUtils;
 import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.support.TransactionTemplate;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
@@ -111,6 +114,7 @@ class PublishAttemptServiceTransactionIntegrationTest {
   @Autowired private VersionAssetPublicationService versionAssetPublicationService;
   @MockitoBean private AssetExportService assetExportService;
   @MockitoBean private PublishGateService publishGateService;
+  @MockitoSpyBean private ControlPlaneDigestService controlPlaneDigestService;
   @MockitoSpyBean private RecordedParticipantDigestService recordedParticipantDigestService;
   @MockitoSpyBean private VersionAssetArtifactService versionAssetArtifactService;
 
@@ -245,6 +249,7 @@ class PublishAttemptServiceTransactionIntegrationTest {
     String publishRequestId =
         fixture.operation().account().input().selection().intent().publishRequestId();
     String publishWorkflowId = fixture.operation().workflowId();
+    AtomicReference<Throwable> controlPlaneDigestFailure = captureControlPlaneDigestFailure();
 
     Mockito.when(
             publishGateService.collectFullVersionParticipantDigests(
@@ -275,6 +280,7 @@ class PublishAttemptServiceTransactionIntegrationTest {
         .thenAnswer(invocation -> recordFixtureCandidate(fixture));
 
     Object snapshot = reconcileSelectedPublicationMechanics(fixture);
+    assertNoControlPlaneDigestFailure(controlPlaneDigestFailure.get());
     assertMechanicsSnapshot(snapshot, "SUCCEEDED", "");
 
     PublishAttempt attempt =
@@ -315,6 +321,7 @@ class PublishAttemptServiceTransactionIntegrationTest {
     AtomicReference<String> remapSetId = new AtomicReference<>();
     AtomicReference<Throwable> recordedDigestFailure = new AtomicReference<>();
     AtomicReference<Throwable> exportCallbackFailure = new AtomicReference<>();
+    AtomicReference<Throwable> controlPlaneDigestFailure = captureControlPlaneDigestFailure();
     AtomicBoolean exportCompleted = new AtomicBoolean();
     AtomicBoolean finalizationFailureInjected = new AtomicBoolean();
 
@@ -397,6 +404,7 @@ class PublishAttemptServiceTransactionIntegrationTest {
             Mockito.eq(exportedManifest.manifestHash()));
 
     Object snapshot = reconcileSelectedPublicationMechanics(fixture);
+    assertNoControlPlaneDigestFailure(controlPlaneDigestFailure.get());
     assertMechanicsSnapshot(snapshot, "FAILED", "forced finalization failure");
     PublishAttempt attempt =
         publishAttemptRepository.findByPublishWorkflowId(publishWorkflowId).orElseThrow();
@@ -537,53 +545,50 @@ class PublishAttemptServiceTransactionIntegrationTest {
   /** Fixture-only Account/World inputs; this exercises GD's actual selected owner transaction. */
   private SelectedPublicationFixture selectedPublicationFixture(
       String tenantId, String gameName, boolean includePublishedSource) {
-    return new TransactionTemplate(transactionManager)
-        .execute(
-            status -> {
-              Game game = new Game();
-              game.setTenantId(tenantId);
-              game.setName(gameName);
-              gameRepository.save(game);
+    TransactionTemplate sourceTransaction = new TransactionTemplate(transactionManager);
+    sourceTransaction.setIsolationLevel(TransactionDefinition.ISOLATION_READ_COMMITTED);
+    return sourceTransaction.execute(
+        status -> {
+          Game game = new Game();
+          game.setTenantId(tenantId);
+          game.setName(gameName);
+          gameRepository.save(game);
 
-              if (includePublishedSource) {
-                Version source = new Version();
-                source.setTenantId(tenantId);
-                source.setVersionNumber(1);
-                source.setVersionState(VersionLifecycleState.PUBLISHED);
-                source.setVersionStateEpoch(2L);
-                source.setNotes("ISOLATED remap source");
-                versionRepository.save(source);
-              }
+          if (includePublishedSource) {
+            Version source = new Version();
+            source.setTenantId(tenantId);
+            source.setVersionNumber(1);
+            source.setVersionState(VersionLifecycleState.PUBLISHED);
+            source.setVersionStateEpoch(2L);
+            source.setNotes("ISOLATED remap source");
+            versionRepository.save(source);
+          }
 
-              Version draft = new Version();
-              draft.setTenantId(tenantId);
-              draft.setVersionNumber(includePublishedSource ? 2 : 1);
-              draft.setVersionState(VersionLifecycleState.DRAFT);
-              draft.setVersionStateEpoch(1L);
-              draft.setNotes("ISOLATED selected publication");
-              Version persisted = versionRepository.save(draft);
-              TargetProof target =
-                  new TargetProof(
-                      persisted.getCanonicalTenantId(),
-                      persisted.getCanonicalVersionId(),
-                      persisted.getId(),
-                      persisted.getTenantId(),
-                      persisted.getIdentitySourceGameRowId(),
-                      persisted.getIdentitySourceGameTenantKey(),
-                      persisted.getIdentitySourceProvenanceKind());
-              try {
-                GameDesignPublicationOperation operation =
-                    IsolatedPublicationOwnerSetup.retainFrozenSourceBacked(
-                        dsl,
-                        target,
-                        persisted.getVersionStateEpoch(),
-                        "ISOLATED publication proof");
-                return new SelectedPublicationFixture(persisted, operation);
-              } catch (Exception failure) {
-                throw new IllegalStateException(
-                    "Selected publication fixture setup failed", failure);
-              }
-            });
+          Version draft = new Version();
+          draft.setTenantId(tenantId);
+          draft.setVersionNumber(includePublishedSource ? 2 : 1);
+          draft.setVersionState(VersionLifecycleState.DRAFT);
+          draft.setVersionStateEpoch(1L);
+          draft.setNotes("ISOLATED selected publication");
+          Version persisted = versionRepository.save(draft);
+          TargetProof target =
+              new TargetProof(
+                  persisted.getCanonicalTenantId(),
+                  persisted.getCanonicalVersionId(),
+                  persisted.getId(),
+                  persisted.getTenantId(),
+                  persisted.getIdentitySourceGameRowId(),
+                  persisted.getIdentitySourceGameTenantKey(),
+                  persisted.getIdentitySourceProvenanceKind());
+          try {
+            GameDesignPublicationOperation operation =
+                IsolatedPublicationOwnerSetup.retainFrozenSourceBacked(
+                    dsl, target, persisted.getVersionStateEpoch(), "ISOLATED publication proof");
+            return new SelectedPublicationFixture(persisted, operation);
+          } catch (Exception failure) {
+            throw new IllegalStateException("Selected publication fixture setup failed", failure);
+          }
+        });
   }
 
   private Object reconcileSelectedPublicationMechanics(SelectedPublicationFixture fixture) {
@@ -665,6 +670,31 @@ class PublishAttemptServiceTransactionIntegrationTest {
       Object snapshot, String expectedStatus, String expectedFailureMessage) {
     assertThat(snapshotValue(snapshot, "status")).isEqualTo(expectedStatus);
     assertThat(snapshotValue(snapshot, "failureMessage")).isEqualTo(expectedFailureMessage);
+  }
+
+  private AtomicReference<Throwable> captureControlPlaneDigestFailure() {
+    AtomicReference<Throwable> failure = new AtomicReference<>();
+    Mockito.doAnswer(
+            invocation -> {
+              try {
+                return invocation.callRealMethod();
+              } catch (Throwable exception) {
+                failure.set(exception);
+                throw exception;
+              }
+            })
+        .when(controlPlaneDigestService)
+        .getDigestForVersion(Mockito.any(VersionDto.class));
+    return failure;
+  }
+
+  private static void assertNoControlPlaneDigestFailure(Throwable failure) {
+    if (failure == null) {
+      return;
+    }
+    StringWriter stackTrace = new StringWriter();
+    failure.printStackTrace(new PrintWriter(stackTrace));
+    assertThat(failure).as("real control-plane digest computation failed:\n" + stackTrace).isNull();
   }
 
   private static String snapshotValue(Object snapshot, String accessorName) {
