@@ -1,12 +1,20 @@
 package net.firedevops.firemud.gamedesign.repository;
 
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
+import java.nio.charset.StandardCharsets;
 import java.sql.Timestamp;
 import java.time.LocalDateTime;
+import java.util.Arrays;
+import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
+import net.firedevops.firemud.common.world.WorldPublishedStartLocationEvidence;
 import net.firedevops.firemud.gamedesign.entity.PublishedReleaseBundle;
+import net.firedevops.firemud.gamedesign.publication.CommandSource;
+import net.firedevops.firemud.gamedesign.publication.GameDesignPublicationOperation;
+import net.firedevops.firemud.gamedesign.publication.GameDesignPublicationOperationRepository;
+import net.firedevops.firemud.gamedesign.publication.GameDesignSourceRepository;
 import org.jooq.DSLContext;
 import org.jooq.Field;
 import org.jooq.Record;
@@ -52,6 +60,8 @@ public class PublishedReleaseBundleRepository {
       DSL.field(DSL.name("participant_digests_json"), String.class);
   private static final Field<String> COMMAND_DEFINITIONS_JSON =
       DSL.field(DSL.name("command_definitions_json"), String.class);
+  private static final Field<String> WORLD_SELECTOR_EVIDENCE_JSON =
+      DSL.field(DSL.name("world_published_start_location_evidence_json"), String.class);
   private static final Field<Boolean> SCRIPT_ONLY =
       DSL.field(DSL.name("script_only"), Boolean.class);
   private static final Field<String> SCRIPT_PATCH_VERSION =
@@ -103,6 +113,54 @@ public class PublishedReleaseBundleRepository {
             .fetchOne(this::toEntity));
   }
 
+  /**
+   * Reads the exact full-version command snapshot frozen for the retained publication operation.
+   * The requested Version tuple, operation selection, World evidence, and both source captures are
+   * checked before a bundle producer can persist command bytes.
+   */
+  public List<String> requireSelectedCommandDefinitions(
+      String tenantId,
+      Long versionId,
+      String publishWorkflowId,
+      WorldPublishedStartLocationEvidence worldEvidence) {
+    Objects.requireNonNull(tenantId, "tenantId");
+    Objects.requireNonNull(versionId, "versionId");
+    Objects.requireNonNull(publishWorkflowId, "publishWorkflowId");
+    Objects.requireNonNull(worldEvidence, "worldEvidence");
+
+    GameDesignPublicationOperation operation =
+        new GameDesignPublicationOperationRepository(dsl)
+            .read(publishWorkflowId)
+            .map(GameDesignPublicationOperationRepository.Readback::operation)
+            .orElseThrow(
+                () -> new IllegalStateException("SELECTED_PUBLICATION_OPERATION_UNAVAILABLE"));
+    var selection = operation.account().input().selection();
+    var target = selection.target();
+    if (!tenantId.equals(operation.tenantKey())
+        || !versionId.equals(operation.versionId())
+        || !publishWorkflowId.equals(operation.workflowId())
+        || !tenantId.equals(target.gameDesignVersionTenantKey())
+        || !versionId.equals(target.gameDesignVersionRowId())
+        || !Arrays.equals(operation.world().canonicalBytes(), worldEvidence.canonicalBytes())
+        || !target.canonicalTenantId().equals(worldEvidence.request().canonicalTenantId())
+        || !target.canonicalVersionId().equals(worldEvidence.request().canonicalVersionId())
+        || !publishWorkflowId.equals(worldEvidence.request().publishWorkflowId())) {
+      throw new IllegalStateException("SELECTED_PUBLICATION_OPERATION_BINDING_CONFLICT");
+    }
+
+    GameDesignSourceRepository.Capture capture =
+        new GameDesignSourceRepository(dsl)
+            .readCapture(operation)
+            .orElseThrow(() -> new IllegalStateException("SELECTED_SOURCE_CAPTURE_UNAVAILABLE"));
+    if (!Arrays.equals(
+        capture.command().operation().canonicalBytes(), operation.canonicalBytes())) {
+      throw new IllegalStateException("SELECTED_COMMAND_CAPTURE_OPERATION_CONFLICT");
+    }
+    return capture.command().snapshot().definitions().stream()
+        .map(CommandSource.Definition::definitionJson)
+        .toList();
+  }
+
   public PublishedReleaseBundle save(PublishedReleaseBundle bundle) {
     Objects.requireNonNull(bundle, "bundle");
     if (bundle.getId() != null) {
@@ -122,10 +180,27 @@ public class PublishedReleaseBundleRepository {
       DSLContext tx, PublishedReleaseBundle bundle, LocalDateTime publishedAt) {
     CanonicalSource source = findExactCanonicalSource(tx, bundle);
     rejectCallerIdentitySubstitution(bundle, source);
-    if (!"v1".equals(bundle.getAttestationSchemaVersion())) {
+    verifySelectorSource(bundle, source);
+    if (!"v1".equals(bundle.getAttestationSchemaVersion())
+        && !"v2".equals(bundle.getAttestationSchemaVersion())) {
       throw new IllegalArgumentException(
           "Unsupported published release bundle attestation schema "
               + bundle.getAttestationSchemaVersion());
+    }
+    if ("v2".equals(bundle.getAttestationSchemaVersion())) {
+      PublishedReleaseBundle existing =
+          tx.selectFrom(TABLE_REF)
+              .where(TENANT_ID.eq(bundle.getTenantId()).and(VERSION_ID.eq(bundle.getVersionId())))
+              .fetchOne(this::toEntity);
+      if (existing != null) {
+        try {
+          verifyPersistedSource(existing, bundle, source, existing.getPublishedReleaseBundleRef());
+        } catch (IllegalStateException conflict) {
+          throw new IllegalStateException(
+              "IDEMPOTENCY_CONFLICT: changed immutable selector release input", conflict);
+        }
+        return existing;
+      }
     }
     String publishedReleaseBundleRef = UUID.randomUUID().toString();
 
@@ -146,6 +221,7 @@ public class PublishedReleaseBundleRepository {
             .set(REQUIRED_MANIFEST_ASSET_KEYS_JSON, bundle.getRequiredManifestAssetKeysJson())
             .set(PARTICIPANT_DIGESTS_JSON, bundle.getParticipantDigestsJson())
             .set(COMMAND_DEFINITIONS_JSON, bundle.getCommandDefinitionsJson())
+            .set(WORLD_SELECTOR_EVIDENCE_JSON, bundle.getWorldPublishedStartLocationEvidenceJson())
             .set(SCRIPT_ONLY, bundle.isScriptOnly())
             .set(SCRIPT_PATCH_VERSION, bundle.getScriptPatchVersion())
             .set(PUBLISHED_AT, Timestamp.valueOf(publishedAt))
@@ -227,6 +303,9 @@ public class PublishedReleaseBundleRepository {
             persisted.getManifestSchemaVersion(), requested.getManifestSchemaVersion())
         || !Objects.equals(persisted.getArtifactDigestsJson(), requested.getArtifactDigestsJson())
         || !Objects.equals(
+            persisted.getWorldPublishedStartLocationEvidenceJson(),
+            requested.getWorldPublishedStartLocationEvidenceJson())
+        || !Objects.equals(
             persisted.getAttestationSchemaVersion(), requested.getAttestationSchemaVersion())
         || !Objects.equals(persisted.getPublishWorkflowId(), requested.getPublishWorkflowId())
         || persisted.getVersionNumber() != requested.getVersionNumber()
@@ -272,11 +351,37 @@ public class PublishedReleaseBundleRepository {
     bundle.setRequiredManifestAssetKeysJson(record.get(REQUIRED_MANIFEST_ASSET_KEYS_JSON));
     bundle.setParticipantDigestsJson(record.get(PARTICIPANT_DIGESTS_JSON));
     bundle.setCommandDefinitionsJson(record.get(COMMAND_DEFINITIONS_JSON));
+    bundle.setWorldPublishedStartLocationEvidenceJson(record.get(WORLD_SELECTOR_EVIDENCE_JSON));
     bundle.setScriptOnly(Boolean.TRUE.equals(record.get(SCRIPT_ONLY)));
     bundle.setScriptPatchVersion(record.get(SCRIPT_PATCH_VERSION));
     Timestamp publishedAt = record.get(PUBLISHED_AT);
     bundle.setPublishedAt(publishedAt == null ? null : publishedAt.toLocalDateTime());
+    verifySelectorSource(
+        bundle, new CanonicalSource(bundle.getCanonicalTenantId(), bundle.getCanonicalVersionId()));
     return bundle;
+  }
+
+  private static void verifySelectorSource(PublishedReleaseBundle bundle, CanonicalSource source) {
+    String bytes = bundle.getWorldPublishedStartLocationEvidenceJson();
+    if (!"v2".equals(bundle.getAttestationSchemaVersion())) {
+      if (bytes != null) {
+        throw new IllegalArgumentException(
+            "Selector evidence is forbidden on historical release schemas");
+      }
+      return;
+    }
+    if (bytes == null) {
+      throw new IllegalArgumentException("World selector evidence is mandatory for release v2");
+    }
+    var request =
+        WorldPublishedStartLocationEvidence.fromStored(bytes.getBytes(StandardCharsets.UTF_8))
+            .request();
+    if (!request.canonicalTenantId().equals(source.canonicalTenantId())
+        || !request.canonicalVersionId().equals(source.canonicalVersionId())
+        || !request.publishWorkflowId().equals(bundle.getPublishWorkflowId())) {
+      throw new IllegalArgumentException(
+          "World selector differs from exact Version source/workflow");
+    }
   }
 
   private record CanonicalSource(UUID canonicalTenantId, UUID canonicalVersionId) {}

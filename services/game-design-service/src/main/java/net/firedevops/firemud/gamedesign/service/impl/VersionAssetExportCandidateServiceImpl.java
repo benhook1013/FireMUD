@@ -128,8 +128,9 @@ public final class VersionAssetExportCandidateServiceImpl
             .orElseThrow(() -> new IllegalStateException(CANDIDATE_NOT_FOUND));
     var attempt =
         attemptRepository.findByPublishWorkflowIdForUpdate(initialArtifact.getLastWorkflowId());
-    // Candidate recording is not publication authority. If an attempt exists, enforce its exact
-    // tenant, Version, and pending status before admitting candidate evidence.
+    // Standalone private candidate recording is not publication authority. If an actual selected
+    // attempt exists, its immutable operation must still be open before any new candidate
+    // admission.
     if (attempt.isPresent()) {
       var current = attempt.get();
       if (!Objects.equals(current.getTenantId(), tenantId)
@@ -137,6 +138,7 @@ public final class VersionAssetExportCandidateServiceImpl
           || current.getStatus() != PublishAttemptStatus.PENDING) {
         throw new IllegalStateException(CANDIDATE_CONFLICT);
       }
+      if (current.getRequestDigest() != null) attemptRepository.requirePublicationPending(current);
     }
     Version version =
         versionRepository

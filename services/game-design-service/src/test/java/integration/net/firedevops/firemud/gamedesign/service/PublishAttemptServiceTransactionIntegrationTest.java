@@ -13,10 +13,12 @@ import java.time.LocalDateTime;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
+import net.firedevops.firemud.common.authoring.DraftCommitBinding.TargetProof;
 import net.firedevops.firemud.common.publication.PublicationDigestRequestBinding;
 import net.firedevops.firemud.common.temporal.FiremudWorkflowIds;
 import net.firedevops.firemud.gamedesign.GameDesignServiceApplication;
-import net.firedevops.firemud.gamedesign.dto.PublishParticipantDigestDto;
+import net.firedevops.firemud.gamedesign.draft.AuthoredDraftPublishSelection.PublishIntent;
+import net.firedevops.firemud.gamedesign.draft.IsolatedPublicationOwnerSetup;
 import net.firedevops.firemud.gamedesign.dto.VersionDto;
 import net.firedevops.firemud.gamedesign.entity.Game;
 import net.firedevops.firemud.gamedesign.entity.GameAsset;
@@ -30,6 +32,7 @@ import net.firedevops.firemud.gamedesign.model.PublishType;
 import net.firedevops.firemud.gamedesign.model.TemplateRemapSetStatus;
 import net.firedevops.firemud.gamedesign.model.VersionAssetArtifactState;
 import net.firedevops.firemud.gamedesign.model.VersionLifecycleState;
+import net.firedevops.firemud.gamedesign.publication.GameDesignPublicationOperation;
 import net.firedevops.firemud.gamedesign.repository.GameAssetRepository;
 import net.firedevops.firemud.gamedesign.repository.GameRepository;
 import net.firedevops.firemud.gamedesign.repository.PublishAttemptRepository;
@@ -38,12 +41,14 @@ import net.firedevops.firemud.gamedesign.repository.VersionAssetArtifactReposito
 import net.firedevops.firemud.gamedesign.repository.VersionRepository;
 import net.firedevops.firemud.gamedesign.repository.VersionTemplateRemapSetRepository;
 import net.firedevops.firemud.gamedesign.service.impl.PublishAttemptServiceImpl;
+import net.firedevops.firemud.gamedesign.service.impl.PublishedWorldSelectorFixtures;
 import net.firedevops.firemud.gamedesign.service.impl.TemporalVersionPublishWorkflow;
 import net.firedevops.firemud.gamedesign.service.impl.VersionPublishCommandServiceImpl;
 import net.firedevops.firemud.gamedesign.service.impl.VersionServiceImpl;
 import net.firedevops.firemud.test.NoGrpcServerTestConfiguration;
 import net.firedevops.firemud.test.PostgresBackedServiceTestSupport;
 import net.firedevops.firemud.test.TestContainerImages;
+import org.jooq.DSLContext;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -54,6 +59,10 @@ import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
 import org.springframework.test.util.AopTestUtils;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.TransactionDefinition;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
+import org.springframework.transaction.support.TransactionTemplate;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
@@ -103,13 +112,30 @@ class PublishAttemptServiceTransactionIntegrationTest {
   @Autowired private VersionAssetArtifactRepository versionAssetArtifactRepository;
   @Autowired private VersionRepository versionRepository;
   @Autowired private VersionTemplateRemapSetRepository templateRemapSetRepository;
-  @Autowired private VersionAssetPublicationService versionAssetPublicationService;
+  @Autowired private DSLContext dsl;
+  @Autowired private PlatformTransactionManager transactionManager;
   @Autowired private VersionAssetExportCandidateService exportCandidateService;
+  @Autowired private VersionAssetPublicationService versionAssetPublicationService;
   @MockitoBean private AssetExportService assetExportService;
   @MockitoBean private PublishGateService publishGateService;
   @MockitoSpyBean private ControlPlaneDigestService controlPlaneDigestService;
   @MockitoSpyBean private RecordedParticipantDigestService recordedParticipantDigestService;
   @MockitoSpyBean private VersionAssetArtifactService versionAssetArtifactService;
+
+  @Test
+  void fullVersionSealTransactionUsesExplicitReadCommittedIsolation() {
+    AtomicReference<Integer> isolation = new AtomicReference<>();
+
+    publishAttemptService.executeFullVersionTransaction(
+        () -> {
+          assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isTrue();
+          assertThat(TransactionSynchronizationManager.isCurrentTransactionReadOnly()).isFalse();
+          isolation.set(TransactionSynchronizationManager.getCurrentTransactionIsolationLevel());
+          return null;
+        });
+
+    assertThat(isolation.get()).isEqualTo(TransactionDefinition.ISOLATION_READ_COMMITTED);
+  }
 
   @Test
   void fullVersionTransactionRollsBackVersionBundleArtifactAndAttemptTogether() {
@@ -316,17 +342,11 @@ class PublishAttemptServiceTransactionIntegrationTest {
   @Test
   void privateMechanicsHarnessCommitsAttemptVersionAndReleaseBundleTogether() {
     String tenantId = "9002";
-    String publishRequestId = "successful-reconcile-request";
-    String publishWorkflowId =
-        FiremudWorkflowIds.workflowId(
-            TemporalVersionPublishWorkflow.WORKFLOW_FAMILY,
-            tenantId,
-            "publish-request",
-            publishRequestId);
-    Game game = new Game();
-    game.setTenantId(tenantId);
-    game.setName("successful-transaction-proof-game");
-    gameRepository.save(game);
+    SelectedPublicationFixture fixture =
+        selectedPublicationFixture(tenantId, "successful-transaction-proof-game", false);
+    String publishRequestId =
+        fixture.operation().account().input().selection().intent().publishRequestId();
+    String publishWorkflowId = fixture.operation().workflowId();
     AtomicReference<Throwable> controlPlaneDigestFailure = captureControlPlaneDigestFailure();
 
     Mockito.when(
@@ -337,29 +357,20 @@ class PublishAttemptServiceTransactionIntegrationTest {
         .thenAnswer(
             invocation -> {
               VersionDto version = invocation.getArgument(0);
-              return List.of(
-                  new PublishParticipantDigestDto(
-                      "GAME_DESIGN_CONTROL_PLANE",
-                      String.valueOf(version.id()),
-                      "version:" + version.id(),
-                      "transaction-proof-design-digest",
-                      1,
-                      null,
-                      null));
+              return PublishedWorldSelectorFixtures.participants(
+                  version.id(), fixture.operation().world());
             });
-    Mockito.when(assetExportService.exportAssets(tenantId, 1))
-        .thenAnswer(invocation -> recordFixtureCandidate(tenantId, invocation.getArgument(1)));
+    Mockito.when(assetExportService.exportAssets(tenantId, fixture.version().getVersionNumber()))
+        .thenAnswer(invocation -> recordFixtureCandidate(fixture));
 
-    Object snapshot =
-        reconcileFullVersionPublishMechanics(
-            tenantId, "successful transaction proof", publishRequestId, publishWorkflowId);
+    Object snapshot = reconcileSelectedPublicationMechanics(fixture);
     assertNoControlPlaneDigestFailure(controlPlaneDigestFailure.get());
     assertMechanicsSnapshot(snapshot, "SUCCEEDED", "");
 
     PublishAttempt attempt =
         publishAttemptRepository.findByPublishWorkflowId(publishWorkflowId).orElseThrow();
     Version storedVersion =
-        versionRepository.findByTenantIdAndId(tenantId, attempt.getVersionId()).orElseThrow();
+        versionRepository.findByTenantIdAndId(tenantId, fixture.version().getId()).orElseThrow();
     PublishedReleaseBundle bundle =
         publishedReleaseBundleRepository
             .findByTenantIdAndVersionId(tenantId, attempt.getVersionId())
@@ -380,25 +391,13 @@ class PublishAttemptServiceTransactionIntegrationTest {
   @Test
   void privateMechanicsHarnessRetainsCandidateAndRemapAfterFinalizationFailure() {
     String tenantId = "9003";
-    String publishRequestId = "failed-remap-request";
-    String publishWorkflowId =
-        FiremudWorkflowIds.workflowId(
-            TemporalVersionPublishWorkflow.WORKFLOW_FAMILY,
-            tenantId,
-            "publish-request",
-            publishRequestId);
-    Game game = new Game();
-    game.setTenantId(tenantId);
-    game.setName("failed-remap-proof-game");
-    gameRepository.save(game);
-
-    Version sourceVersion = new Version();
-    sourceVersion.setTenantId(tenantId);
-    sourceVersion.setVersionNumber(1);
-    sourceVersion.setVersionState(VersionLifecycleState.PUBLISHED);
-    sourceVersion.setVersionStateEpoch(2L);
-    sourceVersion.setNotes("remap source");
-    sourceVersion = versionRepository.save(sourceVersion);
+    SelectedPublicationFixture fixture =
+        selectedPublicationFixture(tenantId, "failed-remap-proof-game", true);
+    String publishRequestId =
+        fixture.operation().account().input().selection().intent().publishRequestId();
+    String publishWorkflowId = fixture.operation().workflowId();
+    Version sourceVersion =
+        versionRepository.findByTenantIdAndVersionNumber(tenantId, 1).orElseThrow();
     long sourceVersionId = sourceVersion.getId();
     AtomicReference<Long> candidateVersionId = new AtomicReference<>();
     AtomicReference<Integer> candidateVersionNumber = new AtomicReference<>();
@@ -420,15 +419,8 @@ class PublishAttemptServiceTransactionIntegrationTest {
               VersionDto candidate = invocation.getArgument(0);
               candidateVersionId.set(candidate.id());
               candidateVersionNumber.set(candidate.versionNumber());
-              return List.of(
-                  new PublishParticipantDigestDto(
-                      "GAME_DESIGN_CONTROL_PLANE",
-                      String.valueOf(candidate.id()),
-                      "version:" + candidate.id(),
-                      "failed-remap-design-digest",
-                      1,
-                      null,
-                      null));
+              return PublishedWorldSelectorFixtures.participants(
+                  candidate.id(), fixture.operation().world());
             });
     Mockito.doAnswer(
             invocation -> {
@@ -462,8 +454,7 @@ class PublishAttemptServiceTransactionIntegrationTest {
                 templateRemapSetRepository.save(approvedRemapSet);
                 remapSetId.set(approvedRemapSet.getRemapSetId());
                 exportCompleted.set(true);
-                return recordFixtureCandidate(
-                    tenantId, invocation.getArgument(1), exportedManifest);
+                return recordFixtureCandidate(fixture, exportedManifest);
               } catch (Throwable failure) {
                 exportCallbackFailure.set(failure);
                 throw failure;
@@ -482,9 +473,7 @@ class PublishAttemptServiceTransactionIntegrationTest {
             Mockito.eq(publishWorkflowId),
             Mockito.eq(exportedManifest.manifestHash()));
 
-    Object snapshot =
-        reconcileFullVersionPublishMechanics(
-            tenantId, "failed remap proof", publishRequestId, publishWorkflowId);
+    Object snapshot = reconcileSelectedPublicationMechanics(fixture);
     assertNoControlPlaneDigestFailure(controlPlaneDigestFailure.get());
     assertMechanicsSnapshot(snapshot, "FAILED", "forced finalization failure");
     PublishAttempt attempt =
@@ -623,21 +612,86 @@ class PublishAttemptServiceTransactionIntegrationTest {
     Mockito.verifyNoInteractions(assetExportService);
   }
 
-  /** Exercises the private transaction mechanics only; this is not production ingress proof. */
-  private Object reconcileFullVersionPublishMechanics(
-      String tenantId, String notes, String publishRequestId, String publishWorkflowId) {
+  /** Fixture-only Account/World inputs; this exercises GD's actual selected owner transaction. */
+  private SelectedPublicationFixture selectedPublicationFixture(
+      String tenantId, String gameName, boolean includePublishedSource) {
+    TransactionTemplate sourceTransaction = new TransactionTemplate(transactionManager);
+    sourceTransaction.setIsolationLevel(TransactionDefinition.ISOLATION_READ_COMMITTED);
+    return sourceTransaction.execute(
+        status -> {
+          Game game = new Game();
+          game.setTenantId(tenantId);
+          game.setName(gameName);
+          gameRepository.save(game);
+
+          if (includePublishedSource) {
+            Version source = new Version();
+            source.setTenantId(tenantId);
+            source.setVersionNumber(1);
+            source.setVersionState(VersionLifecycleState.PUBLISHED);
+            source.setVersionStateEpoch(2L);
+            source.setNotes("ISOLATED remap source");
+            versionRepository.save(source);
+          }
+
+          Version draft = new Version();
+          draft.setTenantId(tenantId);
+          draft.setVersionNumber(includePublishedSource ? 2 : 1);
+          draft.setVersionState(VersionLifecycleState.DRAFT);
+          draft.setVersionStateEpoch(1L);
+          draft.setNotes("ISOLATED selected publication");
+          Version persisted = versionRepository.save(draft);
+          TargetProof target =
+              new TargetProof(
+                  persisted.getCanonicalTenantId(),
+                  persisted.getCanonicalVersionId(),
+                  persisted.getId(),
+                  persisted.getTenantId(),
+                  persisted.getIdentitySourceGameRowId(),
+                  persisted.getIdentitySourceGameTenantKey(),
+                  persisted.getIdentitySourceProvenanceKind());
+          try {
+            GameDesignPublicationOperation operation =
+                IsolatedPublicationOwnerSetup.retainFrozenSourceBacked(
+                    dsl, target, persisted.getVersionStateEpoch(), "ISOLATED publication proof");
+            return new SelectedPublicationFixture(persisted, operation);
+          } catch (Exception failure) {
+            throw new IllegalStateException("Selected publication fixture setup failed", failure);
+          }
+        });
+  }
+
+  private Object reconcileSelectedPublicationMechanics(SelectedPublicationFixture fixture) {
     try {
       Class<?> requestType =
           Class.forName("net.firedevops.firemud.gamedesign.service.impl.PublishWorkflowRequest");
+      var selected = fixture.operation().account().input().selection();
+      var selectedIntent = selected.intent();
+      var selectedCommit = selected.selectedCommit();
+      PublishIntent intent =
+          new PublishIntent(
+              selected.target().canonicalTenantId(),
+              selected.target().canonicalVersionId(),
+              selectedIntent.publishRequestId(),
+              selectedIntent.expectedVersionStateEpoch(),
+              selectedIntent.notes(),
+              selectedCommit.requestId(),
+              selectedCommit.commitId(),
+              selectedCommit.digest());
       Constructor<?> requestConstructor =
           requestType.getDeclaredConstructor(
-              String.class, String.class, String.class, String.class);
+              String.class, String.class, String.class, String.class, PublishIntent.class);
       requestConstructor.setAccessible(true);
       Object request =
-          requestConstructor.newInstance(tenantId, notes, publishRequestId, publishWorkflowId);
+          requestConstructor.newInstance(
+              fixture.version().getTenantId(),
+              selectedIntent.notes(),
+              selectedIntent.publishRequestId(),
+              fixture.operation().workflowId(),
+              intent);
       Method mechanics =
           VersionPublishCommandServiceImpl.class.getDeclaredMethod(
-              "reconcileFullVersionPublishMechanics", requestType);
+              "reconcileSelectedPublicationMechanics", requestType);
       mechanics.setAccessible(true);
       Object target = AopTestUtils.getTargetObject(versionPublishCommandService);
       return mechanics.invoke(target, request);
@@ -655,10 +709,47 @@ class PublishAttemptServiceTransactionIntegrationTest {
     }
   }
 
+  private ExportedAssetManifest recordFixtureCandidate(SelectedPublicationFixture fixture) {
+    return recordFixtureCandidate(fixture, exportedManifest());
+  }
+
+  private ExportedAssetManifest recordFixtureCandidate(
+      SelectedPublicationFixture fixture, ExportedAssetManifest candidate) {
+    String tenantId = fixture.version().getTenantId();
+    int versionNumber = fixture.version().getVersionNumber();
+    Version version =
+        versionRepository
+            .findByTenantIdAndVersionNumber(tenantId, versionNumber)
+            .orElseThrow(() -> new IllegalStateException("Fixture Version was not persisted"));
+    GameAsset asset = new GameAsset();
+    asset.setTenantId(tenantId);
+    asset.setFileName("fixture.bin");
+    asset.setContentType("application/octet-stream");
+    asset.setData(FIXTURE_ASSET_BYTES);
+    GameAsset persistedAsset = gameAssetRepository.save(asset);
+    versionAssetPublicationService.associateDraftAsset(
+        tenantId, version.getId(), persistedAsset.getId(), "fixture.bin");
+    versionAssetPublicationService.freezeOrReadSnapshot(tenantId, versionNumber);
+    return exportCandidateService.recordExportCandidate(tenantId, versionNumber, candidate);
+  }
+
+  private record SelectedPublicationFixture(
+      Version version, GameDesignPublicationOperation operation) {}
+
   private static void assertMechanicsSnapshot(
       Object snapshot, String expectedStatus, String expectedFailureMessage) {
-    assertThat(snapshotValue(snapshot, "status")).isEqualTo(expectedStatus);
-    assertThat(snapshotValue(snapshot, "failureMessage")).isEqualTo(expectedFailureMessage);
+    String actualStatus = snapshotValue(snapshot, "status");
+    String actualFailureCode = snapshotValue(snapshot, "failureCode");
+    String actualFailureMessage = snapshotValue(snapshot, "failureMessage");
+    String failureContext =
+        "publication mechanics snapshot: status="
+            + actualStatus
+            + ", failureCode="
+            + actualFailureCode
+            + ", failureMessage="
+            + actualFailureMessage;
+    assertThat(actualStatus).as(failureContext).isEqualTo(expectedStatus);
+    assertThat(actualFailureMessage).as(failureContext).isEqualTo(expectedFailureMessage);
   }
 
   private AtomicReference<Throwable> captureControlPlaneDigestFailure() {
@@ -718,27 +809,5 @@ class PublishAttemptServiceTransactionIntegrationTest {
                 ARTIFACT_DIGEST,
                 "application/octet-stream",
                 1)));
-  }
-
-  private ExportedAssetManifest recordFixtureCandidate(String tenantId, int versionNumber) {
-    return recordFixtureCandidate(tenantId, versionNumber, exportedManifest());
-  }
-
-  private ExportedAssetManifest recordFixtureCandidate(
-      String tenantId, int versionNumber, ExportedAssetManifest candidate) {
-    Version version =
-        versionRepository
-            .findByTenantIdAndVersionNumber(tenantId, versionNumber)
-            .orElseThrow(() -> new IllegalStateException("Fixture Version was not persisted"));
-    GameAsset asset = new GameAsset();
-    asset.setTenantId(tenantId);
-    asset.setFileName("fixture.bin");
-    asset.setContentType("application/octet-stream");
-    asset.setData(FIXTURE_ASSET_BYTES);
-    GameAsset persistedAsset = gameAssetRepository.save(asset);
-    versionAssetPublicationService.associateDraftAsset(
-        tenantId, version.getId(), persistedAsset.getId(), "fixture.bin");
-    versionAssetPublicationService.freezeOrReadSnapshot(tenantId, versionNumber);
-    return exportCandidateService.recordExportCandidate(tenantId, versionNumber, candidate);
   }
 }

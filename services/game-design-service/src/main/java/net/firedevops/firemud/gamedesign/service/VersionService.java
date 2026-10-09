@@ -2,6 +2,7 @@ package net.firedevops.firemud.gamedesign.service;
 
 import java.time.LocalDateTime;
 import java.util.List;
+import net.firedevops.firemud.gamedesign.draft.AuthoredDraftPublishSelection.PublishIntent;
 import net.firedevops.firemud.gamedesign.dto.DesignControlPlaneDigestDto;
 import net.firedevops.firemud.gamedesign.dto.PluginVersionStatusEventDto;
 import net.firedevops.firemud.gamedesign.dto.PublishedPluginVersionDto;
@@ -11,7 +12,12 @@ import net.firedevops.firemud.gamedesign.dto.VersionStateDto;
 import net.firedevops.firemud.gamedesign.model.VersionLifecycleState;
 
 public interface VersionService {
-  VersionDto publishVersion(String tenantId, String notes, String publishRequestId)
+  VersionDto publishVersion(PublishIntent intent) throws Exception;
+
+  /**
+   * Replays retained terminal evidence for a pre-selection request; it cannot start publication.
+   */
+  VersionDto replayLegacyFullVersion(String tenantId, String notes, String publishRequestId)
       throws Exception;
 
   VersionDto publishScriptPatchVersion(
