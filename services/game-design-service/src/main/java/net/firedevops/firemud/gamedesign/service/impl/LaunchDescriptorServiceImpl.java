@@ -31,6 +31,8 @@ import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
+import tools.jackson.databind.DeserializationFeature;
+import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
 
 @Service
@@ -653,18 +655,34 @@ public class LaunchDescriptorServiceImpl implements LaunchDescriptorService {
         normalizeBlank(template.getDefaultRuntimeFlagsJson()) == null
             ? "{}"
             : template.getDefaultRuntimeFlagsJson();
+    requireRuntimeFlagsObjectJson(templateFlags);
     String requested =
-        request.requestedRuntimeFlagsJsonPresent()
-            ? normalizeBlank(request.requestedRuntimeFlagsJson())
-            : null;
+        request.requestedRuntimeFlagsJsonPresent() ? request.requestedRuntimeFlagsJson() : null;
     if (requested == null) {
       return templateFlags;
     }
+    requireRuntimeFlagsObjectJson(requested);
     if (!"{}".equals(templateFlags)) {
       throw denial(
           "INVALID_TEMPLATE_CONFIGURATION", "template-owned runtime flags cannot be overridden");
     }
     return requested;
+  }
+
+  private void requireRuntimeFlagsObjectJson(String runtimeFlagsJson) {
+    final JsonNode runtimeFlags;
+    try {
+      runtimeFlags =
+          objectMapper
+              .readerFor(JsonNode.class)
+              .with(DeserializationFeature.FAIL_ON_TRAILING_TOKENS)
+              .readValue(runtimeFlagsJson);
+    } catch (Exception invalidJson) {
+      throw denial("INVALID_TEMPLATE_CONFIGURATION", "runtime flags must be a JSON object");
+    }
+    if (runtimeFlags == null || !runtimeFlags.isObject()) {
+      throw denial("INVALID_TEMPLATE_CONFIGURATION", "runtime flags must be a JSON object");
+    }
   }
 
   private void requireReadyScriptPatch(String scriptPatchVersion) {
