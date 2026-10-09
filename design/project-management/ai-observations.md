@@ -88,3 +88,10 @@ Entry format:
   - Expected pattern: verify resolver endpoint access before interpreting this error as absent Java support or inventing platform mappings. Keep generated artifacts unchanged on failure and prove the generator through the read-only hosted PR job when local endpoint access is unavailable.
   - Current status: local generator proof is unavailable; the bounded maintenance workflow includes hosted generation proof without publishing credentials. Buf remote generation and compilation passed independently.
   - Reconsideration trigger: revisit after the hosted generator result or restored local Foojay access establishes whether the denial is environment-specific; remove the blocker only after actual generator output is verified.
+
+- `2026-10-09`: Foojay failure follow-up distinguishes request denial from absent vendor metadata
+  - Context: the read-only hosted Java 21/Adoptium generator failed with the same missing-platform message as the earlier local attempt.
+  - Correction to the preceding observation: HTTP 403 depended on request headers and did not establish the generator's cause. Requests matching the resolver's actual endpoints succeeded, but Foojay's Temurin distribution metadata omitted Java 21 and its Java 21 package query returned no packages. The failure was therefore not established as WSL-specific network denial.
+  - Expected pattern: inspect the resolver's actual distribution and package metadata before attributing configuration-cache failures to transport. A bounded official Adoptium metadata input to Gradle's native generator preserves generator ownership without inventing Foojay IDs or unsupported platform aliases.
+  - Current status: the maintenance helper now validates one official Java 21 release across six supported platforms; successful generation and hosted exact-head proof must be recorded separately.
+  - Reconsideration trigger: revisit resolver-only maintenance after official Foojay metadata again provides the required Temurin platforms; retain the metadata validation and generated-artifact proof.
