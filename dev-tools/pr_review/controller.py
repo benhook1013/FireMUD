@@ -784,6 +784,44 @@ class ReviewController:
                     )
         return history_cache[key]
 
+    def _prefetch_target_history_payloads(
+        self,
+        state: ReviewState,
+        live: Mapping[int, LivePullRequest],
+        anchors: Mapping[int, AnchorFacts],
+        selected_evidence_prs: set[int],
+        history_cache: dict[tuple[int, str], list[Any]] | None,
+    ) -> None:
+        """Warm only complete histories this request selection will consume."""
+
+        budget = github.active_hosted_preflight_budget()
+        prefetch = getattr(self._evidence_provider, "prefetch_history_payloads", None)
+        if budget is None or not callable(prefetch):
+            return
+        required: list[int] = []
+        channels = (policy.Channel.HOSTED, policy.Channel.CLI)
+        for pr in state.ordered_prs:
+            if pr not in selected_evidence_prs or live[pr].merged:
+                continue
+            missing_history = history_cache is None or any(
+                (pr, channel.value) not in history_cache for channel in channels
+            )
+            anchor = anchors.get(pr)
+            stopped_reconciliation_exception = bool(
+                anchor is not None
+                and any(
+                    decision.pr == pr
+                    and decision.matches(pr, anchor.as_dict())
+                    and (allocation := state.allocations.get(f"{pr}:{decision.channel}")) is not None
+                    and allocation.stop_basis is not None
+                    for decision in state.reconciliations
+                )
+            )
+            if missing_history or stopped_reconciliation_exception:
+                required.append(pr)
+        if required:
+            prefetch(tuple(required))
+
     @staticmethod
     def _project_cli_hosted_ambiguity(channel: policy.Channel, history: Sequence[Any]) -> list[Any]:
         """Keep verified terminal Hosted attribution ambiguity from holding CLI policy."""
@@ -1517,6 +1555,7 @@ class ReviewController:
         history_cache: dict[tuple[int, str], list[Any]] | None = None,
         remote_head_snapshot: Mapping[str, str] | None = None,
         phase_timings: dict[str, float] | None = None,
+        prefetch_complete_history: bool = False,
     ) -> tuple[dict[int, LivePullRequest], stack.Reconciliation]:
         remote_heads = remote_head_snapshot if remote_head_snapshot is not None else self.git.remote_heads()
         live, snapshots, default_tip = self._live_snapshots(
@@ -1638,6 +1677,7 @@ class ReviewController:
         legacy_transition_prs: set[int] = set()
         legacy_transition_fingerprints: dict[int, Mapping[str, tuple[str, ...]]] = {}
         anchor_failures: dict[int, str] = {}
+        reconciliation_candidates: list[int] = []
         for pr in state.ordered_prs:
             if live[pr].merged or baseline.status_for(pr) != stack.ReconciliationStatus.COHERENT:
                 continue
@@ -1671,9 +1711,18 @@ class ReviewController:
                     "hosted": transition.hosted_fingerprints,
                     "cli": transition.cli_fingerprints,
                 }
-            decision = self._active_stack_reconciliation(state, pr, current) if pr in selected_evidence_prs else None
-            if decision is not None:
-                reconciled[pr] = decision
+            if pr in selected_evidence_prs:
+                reconciliation_candidates.append(pr)
+                if not prefetch_complete_history:
+                    decision = self._active_stack_reconciliation(state, pr, current)
+                    if decision is not None:
+                        reconciled[pr] = decision
+        if prefetch_complete_history:
+            self._prefetch_target_history_payloads(state, live, anchors, selected_evidence_prs, history_cache)
+            for pr in reconciliation_candidates:
+                decision = self._active_stack_reconciliation(state, pr, anchors[pr])
+                if decision is not None:
+                    reconciled[pr] = decision
         anchored: dict[int, str] = {}
         for pr in state.ordered_prs:
             if pr in reconciled or pr not in selected_evidence_prs:
@@ -5362,6 +5411,7 @@ class ReviewController:
             refresh_prs=set() if live_identities is not None else None,
             history_cache=history_cache,
             remote_head_snapshot=selection_remote_heads,
+            prefetch_complete_history=selected == policy.Channel.HOSTED and budget is not None,
         )
         if budget is not None:
             budget.set_phase("target_stack_reconciliation_complete", total=1)

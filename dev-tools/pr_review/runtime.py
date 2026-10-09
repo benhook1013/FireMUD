@@ -16,6 +16,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from contextlib import ExitStack
 from datetime import datetime, timezone
 from pathlib import Path
+from threading import Event
 from typing import Any
 
 from . import evidence, github, hosted, sqlite_hosted_capture
@@ -168,12 +169,14 @@ class LiveEvidence:
         self.state_store = state_store
         self.records = records
         self._payloads: dict[int, dict[str, Any]] = {}
+        self._complete_payloads: set[int] = set()
         self._histories: dict[tuple[int, str], list[dict[str, Any]]] = {}
         self._records_histories: dict[int, dict[str, Any] | None] = {}
 
     def _payload(self, pr: int) -> dict[str, Any]:
         if pr not in self._payloads:
             self._payloads[pr] = github.fetch_pull_request(self.repo, pr)
+            self._complete_payloads.add(pr)
         return self._payloads[pr]
 
     def prefetch_payload(self, pr: int, payload: dict[str, Any] | None = None) -> None:
@@ -183,14 +186,126 @@ class LiveEvidence:
             self._payload(pr)
         else:
             self._payloads[pr] = payload
+            self._complete_payloads.discard(pr)
             self._histories.pop((pr, "hosted"), None)
             self._histories.pop((pr, "cli"), None)
             self._records_histories.pop(pr, None)
+
+    @staticmethod
+    def _validate_complete_history_payload(pr: int, payload: Any) -> dict[str, Any]:
+        if not isinstance(payload, dict):
+            raise TypeError("GitHub returned a malformed complete review payload")
+        pull = github._pull_request_from_graphql_payload(payload)
+        if type(pull.get("number")) is not int or pull["number"] != pr:
+            raise TypeError("GitHub returned a complete review payload for a different pull request")
+        if (
+            not isinstance(pull.get("headRefOid"), str)
+            or evidence.EXACT_SHA.fullmatch(pull["headRefOid"]) is None
+            or type(pull.get("changedFiles")) is not int
+            or pull["changedFiles"] < 0
+        ):
+            raise TypeError("GitHub returned an incomplete pull-request identity with review history")
+        for connection in github.REVIEW_CONNECTIONS:
+            value = pull.get(connection)
+            nodes = value.get("nodes") if isinstance(value, Mapping) else None
+            if not isinstance(nodes, list) or any(not isinstance(item, Mapping) for item in nodes):
+                raise TypeError(f"GitHub returned malformed complete {connection} history")
+            if connection == "reviewThreads":
+                for thread in nodes:
+                    comments = thread.get("comments")
+                    comment_nodes = comments.get("nodes") if isinstance(comments, Mapping) else None
+                    if not isinstance(comment_nodes, list) or any(
+                        not isinstance(item, Mapping) for item in comment_nodes
+                    ):
+                        raise TypeError("GitHub returned malformed complete review-thread comments")
+        return payload
+
+    def prefetch_history_payloads(self, pr_numbers: Sequence[int]) -> None:
+        """Fetch complete review payloads in parallel, then publish them in caller order.
+
+        The workers perform only bounded GitHub reads. Cache mutation and all
+        history parsing stay on the caller so reconciliation and channel
+        projections retain their deterministic serial order.
+        """
+
+        ordered = tuple(pr_numbers)
+        if any(type(pr) is not int or pr <= 0 for pr in ordered) or len(set(ordered)) != len(ordered):
+            raise ControllerError("complete review history prefetch requires unique positive PR numbers")
+        budget = github.active_hosted_preflight_budget()
+        if budget is None:
+            return
+        missing = tuple(pr for pr in ordered if pr not in self._complete_payloads)
+        if not missing:
+            return
+
+        phase = "target_complete_history_prefetch"
+        budget.set_phase(phase, total=len(missing))
+        abort = Event()
+        aborted = object()
+
+        def fetch(pr: int) -> dict[str, Any] | object:
+            if abort.is_set():
+                return aborted
+            try:
+                with github.bind_hosted_preflight_budget(budget):
+                    budget.remaining_seconds()
+                    payload = github.fetch_pull_request(self.repo, pr)
+                    return self._validate_complete_history_payload(pr, payload)
+            except Exception:
+                # Signal from the worker before it returns its future so an
+                # already-dequeued sibling can skip its network read too.
+                abort.set()
+                raise
+
+        fetched: dict[int, dict[str, Any]] = {}
+        failures: dict[int, Exception] = {}
+        completed_reads = 0
+        with ThreadPoolExecutor(max_workers=min(4, len(missing))) as pool:
+            futures = {pool.submit(fetch, pr): pr for pr in missing}
+            try:
+                for future in as_completed(futures):
+                    pr = futures[future]
+                    if future.cancelled():
+                        continue
+                    try:
+                        payload = future.result()
+                    except Exception as error:  # noqa: BLE001 - retain the original failed read
+                        failures[pr] = error
+                        abort.set()
+                        for pending in futures:
+                            if pending is not future:
+                                pending.cancel()
+                    else:
+                        if payload is aborted:
+                            continue
+                        fetched[pr] = payload
+                    completed_reads += 1
+                    budget.set_completed(completed_reads)
+            except Exception:
+                abort.set()
+                for future in futures:
+                    future.cancel()
+                raise
+
+        budget.remaining_seconds()
+        for pr in missing:
+            if pr in failures:
+                error = failures[pr]
+                if isinstance(error, github.HostedPreflightDeadlineExceeded):
+                    raise error
+                raise ControllerError(
+                    f"complete paginated GitHub review history for PR #{pr} cannot be verified"
+                ) from error
+
+        for pr in missing:
+            self.prefetch_payload(pr, fetched[pr])
+            self._complete_payloads.add(pr)
 
     def admission_history(self, pr: int, channel: str) -> Sequence[dict[str, Any]]:
         """Refresh one capped channel after execution exclusion, before state mutation."""
 
         self._payloads.pop(pr, None)
+        self._complete_payloads.discard(pr)
         self._histories.pop((pr, channel), None)
         self._records_histories.pop(pr, None)
         return self.history(pr, channel)
