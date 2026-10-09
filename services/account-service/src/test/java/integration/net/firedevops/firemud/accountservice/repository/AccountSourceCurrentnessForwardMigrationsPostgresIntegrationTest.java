@@ -9,6 +9,7 @@ import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
+import java.sql.Connection;
 import java.sql.SQLException;
 import java.time.Instant;
 import java.time.OffsetDateTime;
@@ -165,6 +166,33 @@ class AccountSourceCurrentnessForwardMigrationsPostgresIntegrationTest {
             "ORDER BY account_publication_authorization_source_sort_key(l.source_key) FOR UPDATE OF l");
     for (String[] trigger :
         new String[][] {
+          {
+            "account_password_reset_operation_no_truncate",
+            "account_password_reset_operation_receipts"
+          },
+          {"account_logout_all_operation_no_truncate", "account_logout_all_operation_receipts"},
+          {
+            "account_tenant_creation_bootstrap_no_truncate",
+            "account_tenant_creation_bootstrap_operations"
+          },
+          {"account_hosted_terms_catalog_no_truncate", "account_hosted_terms_catalog_versions"},
+          {
+            "account_hosted_terms_acceptance_no_truncate",
+            "account_individual_hosted_terms_acceptances"
+          },
+          {"account_hosted_terms_scope_no_truncate", "account_hosted_terms_scopes"},
+          {
+            "account_hosted_terms_publication_no_truncate",
+            "account_hosted_terms_publication_operations"
+          },
+          {
+            "account_hosted_terms_environment_binding_no_truncate",
+            "account_hosted_terms_environment_bindings"
+          },
+          {
+            "account_hosted_terms_environment_binding_publication_no_truncate",
+            "account_hosted_terms_environment_binding_publications"
+          },
           {
             "account_hosted_terms_disclosure_handoffs_no_truncate",
             "account_hosted_terms_disclosure_handoffs"
@@ -921,6 +949,104 @@ class AccountSourceCurrentnessForwardMigrationsPostgresIntegrationTest {
   }
 
   @Test
+  void draftFenceInspectionDoesNotLockOperationRowsAndOwnerWriteKeepsSourceLocks() {
+    TestContext context = context(null);
+    SourceEvidence source =
+        new SourceEvidence(
+            SourceKind.GLOBAL_ROLES,
+            UUID.randomUUID().toString(),
+            "1",
+            "1",
+            null,
+            null,
+            utf8("test-only draft fence inspection source"));
+    DraftAuthorizationFenceBinding binding = draftBinding(source);
+    DraftAuthorizationFenceRepository fences = new DraftAuthorizationFenceRepository(context.dsl());
+    context.transaction().executeWithoutResult(status -> fences.reserve(binding));
+
+    SourceEvidence changedSource =
+        new SourceEvidence(
+            source.kind(),
+            source.scopeId(),
+            source.generation(),
+            source.sourceVersion(),
+            source.checkpointStream(),
+            source.checkpointSequence(),
+            utf8("changed test-only source evidence"));
+    DraftAuthorizationFenceBinding changedBinding =
+        new DraftAuthorizationFenceBinding(
+            binding.operationId(),
+            binding.requestId(),
+            binding.commitId(),
+            binding.fenceId(),
+            binding.actorAccountId(),
+            binding.tenantId(),
+            binding.versionId(),
+            binding.baseCommitId(),
+            binding.expectedDraftEpoch(),
+            binding.gameDesignBinding(),
+            binding.normalizedInput(),
+            binding.inputDigest(),
+            List.of(changedSource),
+            binding.schemaVersion(),
+            binding.requiredOwners());
+
+    context
+        .transaction()
+        .executeWithoutResult(
+            status -> {
+              assertThat(fences.read(binding).ordering())
+                  .isEqualTo(DraftAuthorizationFenceRepository.Ordering.RESERVED);
+              assertThat(fences.readSettlement(binding))
+                  .isEqualTo(DraftAuthorizationFenceRepository.Settlement.PENDING);
+              assertThat(fences.readOriginalBinding(binding.operationId())).contains(binding);
+              assertThat(fences.readOwnerResult(binding, Owner.GAME_DESIGN)).isEmpty();
+              assertThat(fences.readUnresolvedOperations(null, 10))
+                  .extracting(DraftAuthorizationFenceRepository.UnresolvedOperation::binding)
+                  .containsExactly(binding);
+              assertThatThrownBy(() -> fences.read(changedBinding))
+                  .isInstanceOf(IllegalArgumentException.class)
+                  .hasMessageContaining("changed immutable Draft operation");
+
+              // This separate connection can take the operation row while every inspection above
+              // remains in its caller transaction; no timing or thread scheduling is involved.
+              assertThat(lockFenceNowait(context, binding.operationId()))
+                  .isEqualTo(binding.operationId());
+            });
+
+    context
+        .transaction()
+        .executeWithoutResult(
+            status ->
+                assertThat(fences.claimCommitOrder(binding).ordering())
+                    .isEqualTo(DraftAuthorizationFenceRepository.Ordering.COMMIT_ORDER));
+
+    OwnerReadback ownerReadback =
+        new OwnerReadback(
+            Owner.GAME_DESIGN,
+            Outcome.COMMITTED,
+            binding.operationId(),
+            binding.commitId(),
+            binding.fenceId(),
+            binding.inputDigest(),
+            binding.canonicalBytes(),
+            utf8("test-only exact owner result"));
+    context
+        .transaction()
+        .executeWithoutResult(
+            status -> {
+              fences.recordOwnerReadback(binding, ownerReadback);
+              assertThat(fences.readOwnerResult(binding, Owner.GAME_DESIGN))
+                  .hasValueSatisfying(
+                      result -> assertThat(result.outcome()).isEqualTo(Outcome.COMMITTED));
+              assertThatThrownBy(() -> lockSourceNowait(context, source.key()))
+                  .isInstanceOf(DataAccessException.class);
+              assertThatThrownBy(() -> lockFenceNowait(context, binding.operationId()))
+                  .isInstanceOf(DataAccessException.class);
+            });
+  }
+
+  @Test
   void hostedTermsDisclosureHandoffPersistsExactSourceAndFencesOnlyThatSource() {
     TestContext context = context(null);
     UUID hostedScopeId = UUID.randomUUID();
@@ -1046,6 +1172,72 @@ class AccountSourceCurrentnessForwardMigrationsPostgresIntegrationTest {
                         handoffBinding,
                         sha256(handoffBinding)))
         .isInstanceOf(DataAccessException.class);
+    assertThatThrownBy(
+            () ->
+                context
+                    .dsl()
+                    .execute(
+                        "UPDATE account_hosted_terms_disclosure_handoffs "
+                            + "SET status = 'DISPATCH_AUTHORIZED', dispatch_attempts = 1 "
+                            + "WHERE handoff_id = ?",
+                        handoffId))
+        .isInstanceOf(DataAccessException.class);
+    assertThat(
+            context
+                .dsl()
+                .resultQuery(
+                    "SELECT status FROM account_hosted_terms_disclosure_handoffs "
+                        + "WHERE handoff_id = ?",
+                    handoffId)
+                .fetchOne(0, String.class))
+        .isEqualTo("PREPARED");
+
+    UUID unrelatedHandoffId = UUID.randomUUID();
+    context
+        .dsl()
+        .execute(
+            "INSERT INTO account_hosted_terms_disclosure_handoffs "
+                + "(handoff_id, request_id, kind, source_key, predecessor_digest, "
+                + "candidate_digest, effective_at, binding, binding_digest, status, "
+                + "dispatch_attempts) VALUES (?, ?, 'CATALOG', ?, ?, ?, ?::timestamptz, ?, ?, "
+                + "'PREPARED', 0)",
+            unrelatedHandoffId,
+            UUID.randomUUID(),
+            exactSource.key(),
+            sha256("unrelated predecessor".getBytes(StandardCharsets.UTF_8)),
+            HostedTermsEncoding.digest(document),
+            effectiveAt,
+            handoffBinding,
+            sha256(handoffBinding));
+    context
+        .dsl()
+        .execute(
+            "INSERT INTO account_hosted_terms_disclosure_sources "
+                + "(handoff_id, source_key, source_evidence, source_evidence_digest) "
+                + "VALUES (?, ?, ?, ?)",
+            unrelatedHandoffId,
+            exactSource.key(),
+            exactSourceEvidence,
+            sha256(exactSourceEvidence));
+    assertThatThrownBy(
+            () ->
+                context
+                    .dsl()
+                    .execute(
+                        "UPDATE account_hosted_terms_disclosure_handoffs "
+                            + "SET status = 'DISPATCH_AUTHORIZED', dispatch_attempts = 1 "
+                            + "WHERE handoff_id = ?",
+                        handoffId))
+        .isInstanceOf(DataAccessException.class);
+    assertThat(
+            context
+                .dsl()
+                .resultQuery(
+                    "SELECT status FROM account_hosted_terms_disclosure_handoffs "
+                        + "WHERE handoff_id = ?",
+                    handoffId)
+                .fetchOne(0, String.class))
+        .isEqualTo("PREPARED");
 
     context
         .dsl()
@@ -1782,6 +1974,243 @@ class AccountSourceCurrentnessForwardMigrationsPostgresIntegrationTest {
   }
 
   @Test
+  void syntheticHostedTermsAndEnvironmentEvidenceSurvivesTruncateAttempts() {
+    TestContext context = context(null);
+    TestIdentity identity = testIdentity(context);
+    UUID hostedScopeId = UUID.randomUUID();
+    UUID termsVersionId = UUID.randomUUID();
+    UUID termsPublicationRequestId = UUID.randomUUID();
+    UUID creatorPartyId = UUID.randomUUID();
+    UUID acceptanceEvidenceId = UUID.randomUUID();
+    UUID acceptanceActionRequestId = UUID.randomUUID();
+    String environmentBoundary = "test-only/environment-boundary";
+    UUID bindingPublicationRequestId = UUID.randomUUID();
+    UUID bindingId = UUID.randomUUID();
+    byte[] document =
+        "synthetic test fixture only; not legal terms".getBytes(StandardCharsets.UTF_8);
+    byte[] versionPayload =
+        "synthetic hosted terms catalog payload".getBytes(StandardCharsets.UTF_8);
+    byte[] termsPublicationPayload =
+        "synthetic initial catalog publication request".getBytes(StandardCharsets.UTF_8);
+    byte[] creatorSource =
+        "synthetic verified creator-party evidence".getBytes(StandardCharsets.UTF_8);
+    byte[] bindingPayload =
+        "synthetic environment binding payload".getBytes(StandardCharsets.UTF_8);
+    byte[] bindingPublicationPayload =
+        "synthetic environment binding publication request".getBytes(StandardCharsets.UTF_8);
+    OffsetDateTime effectiveAt = OffsetDateTime.now(ZoneOffset.UTC).minusMinutes(1);
+    String affirmativeActionJson =
+        "{\"schema\":\"account-hosted-terms-affirmative-action/v1\","
+            + "\"actionRequestId\":\""
+            + acceptanceActionRequestId
+            + "\",\"affirmative\":true,\"accountId\":\""
+            + identity.accountUuid()
+            + "\",\"creatorPartyId\":\""
+            + creatorPartyId
+            + "\",\"hostedScopeId\":\""
+            + hostedScopeId
+            + "\",\"shownVersionId\":\""
+            + termsVersionId
+            + "\",\"shownDocumentDigest\":\""
+            + sha256(document)
+            + "\",\"shownOperatorLegalIdentity\":\"TEST FIXTURE ONLY\","
+            + "\"shownOperatorIdentityVersion\":\"1\"}";
+    byte[] affirmativeAction = affirmativeActionJson.getBytes(StandardCharsets.UTF_8);
+
+    // These isolated synthetic rows exercise the persisted guards only; no production writer or
+    // runtime activation is involved.
+    context
+        .transaction()
+        .executeWithoutResult(
+            status -> {
+              context
+                  .dsl()
+                  .execute(
+                      "INSERT INTO account_hosted_terms_scopes (hosted_scope_id) VALUES (?)",
+                      hostedScopeId);
+              context
+                  .dsl()
+                  .execute(
+                      "INSERT INTO account_hosted_terms_catalog_versions "
+                          + "(version_id, hosted_scope_id, predecessor_version_id, "
+                          + "operator_legal_identity, operator_identity_version, document_bytes, "
+                          + "document_digest, source_version, material_generation, materiality, "
+                          + "publication_evidence_reference, publication_evidence_version, "
+                          + "notice_evidence_reference, notice_evidence_version, effective_at, "
+                          + "version_payload, version_digest) "
+                          + "VALUES (?, ?, NULL, 'TEST FIXTURE ONLY', 1, ?, ?, 1, 1, 'INITIAL', "
+                          + "'test-only/publication', 1, 'test-only/notice', 1, ?::timestamptz, ?, ?)",
+                      termsVersionId,
+                      hostedScopeId,
+                      document,
+                      sha256(document),
+                      effectiveAt,
+                      versionPayload,
+                      sha256(versionPayload));
+              context
+                  .dsl()
+                  .execute(
+                      "INSERT INTO account_hosted_terms_publication_operations "
+                          + "(request_id, hosted_scope_id, request_payload, request_digest, status) "
+                          + "VALUES (?, ?, ?, ?, 'RECEIVED')",
+                      termsPublicationRequestId,
+                      hostedScopeId,
+                      termsPublicationPayload,
+                      sha256(termsPublicationPayload));
+              context
+                  .dsl()
+                  .execute(
+                      "UPDATE account_hosted_terms_publication_operations "
+                          + "SET status = 'SCHEDULED', candidate_version_id = ? "
+                          + "WHERE request_id = ?",
+                      termsVersionId,
+                      termsPublicationRequestId);
+              context
+                  .dsl()
+                  .execute(
+                      "UPDATE account_hosted_terms_scopes SET current_version_id = ?, "
+                          + "current_source_version = 1, current_material_generation = 1 "
+                          + "WHERE hosted_scope_id = ?",
+                      termsVersionId,
+                      hostedScopeId);
+              context
+                  .dsl()
+                  .execute(
+                      "UPDATE account_hosted_terms_publication_operations SET status = 'COMMITTED', "
+                          + "result_payload = ?, result_digest = ?, committed_at = CURRENT_TIMESTAMP "
+                          + "WHERE request_id = ?",
+                      versionPayload,
+                      sha256(versionPayload),
+                      termsPublicationRequestId);
+              context
+                  .dsl()
+                  .execute(
+                      "INSERT INTO account_individual_creator_party_sources "
+                          + "(creator_party_id, account_uuid, verification_status, identity_version, "
+                          + "policy_reference, policy_version, verification_evidence_reference, "
+                          + "verification_evidence_version, source_version, source_payload, source_digest) "
+                          + "VALUES (?, ?, 'VERIFIED', 1, 'test-only/policy', 1, "
+                          + "'test-only/verification', 1, 1, ?, ?)",
+                      creatorPartyId,
+                      identity.accountUuid(),
+                      creatorSource,
+                      sha256(creatorSource));
+              context
+                  .dsl()
+                  .execute(
+                      "INSERT INTO account_individual_hosted_terms_acceptances "
+                          + "(evidence_id, action_request_id, creator_party_id, account_uuid, "
+                          + "hosted_scope_id, terms_version_id, document_digest, "
+                          + "operator_legal_identity, operator_identity_version, source_version, "
+                          + "material_generation, individual_party_source, "
+                          + "individual_party_source_digest, affirmative_action_evidence, "
+                          + "affirmative_action_digest, accepted_at) "
+                          + "VALUES (?, ?, ?, ?, ?, ?, ?, 'TEST FIXTURE ONLY', 1, 1, 1, ?, ?, ?, ?, "
+                          + "CURRENT_TIMESTAMP)",
+                      acceptanceEvidenceId,
+                      acceptanceActionRequestId,
+                      creatorPartyId,
+                      identity.accountUuid(),
+                      hostedScopeId,
+                      termsVersionId,
+                      sha256(document),
+                      creatorSource,
+                      sha256(creatorSource),
+                      affirmativeAction,
+                      sha256(affirmativeAction));
+              context
+                  .dsl()
+                  .execute(
+                      "INSERT INTO account_hosted_terms_environment_binding_heads "
+                          + "(environment_boundary) VALUES (?)",
+                      environmentBoundary);
+              context
+                  .dsl()
+                  .execute(
+                      "INSERT INTO account_hosted_terms_environment_binding_publications "
+                          + "(request_id, environment_boundary, request_payload, request_digest, status) "
+                          + "VALUES (?, ?, ?, ?, 'RECEIVED')",
+                      bindingPublicationRequestId,
+                      environmentBoundary,
+                      bindingPublicationPayload,
+                      sha256(bindingPublicationPayload));
+              context
+                  .dsl()
+                  .execute(
+                      "INSERT INTO account_hosted_terms_environment_bindings "
+                          + "(binding_id, publication_request_id, environment_boundary, hosted_scope_id, "
+                          + "operator_legal_identity, operator_identity_version, catalog_version_id, "
+                          + "catalog_source_version, authenticated_publisher_identity, "
+                          + "publication_event_identity, publication_evidence_digest, "
+                          + "predecessor_binding_id, predecessor_source_version, source_version, "
+                          + "binding_payload, binding_digest) "
+                          + "VALUES (?, ?, ?, ?, 'TEST FIXTURE ONLY', 1, ?, 1, 'test-only/publisher', "
+                          + "'test-only/event', ?, NULL, NULL, 1, ?, ?)",
+                      bindingId,
+                      bindingPublicationRequestId,
+                      environmentBoundary,
+                      hostedScopeId,
+                      termsVersionId,
+                      sha256(bindingPublicationPayload),
+                      bindingPayload,
+                      sha256(bindingPayload));
+              context
+                  .dsl()
+                  .execute(
+                      "UPDATE account_hosted_terms_environment_binding_publications "
+                          + "SET status = 'COMMITTED', candidate_binding_id = ?, result_payload = ?, "
+                          + "result_digest = ?, committed_at = CURRENT_TIMESTAMP WHERE request_id = ?",
+                      bindingId,
+                      bindingPayload,
+                      sha256(bindingPayload),
+                      bindingPublicationRequestId);
+              context
+                  .dsl()
+                  .execute(
+                      "UPDATE account_hosted_terms_environment_binding_heads "
+                          + "SET current_binding_id = ?, current_source_version = 1 "
+                          + "WHERE environment_boundary = ?",
+                      bindingId,
+                      environmentBoundary);
+            });
+
+    assertTruncateRejected(context, "account_hosted_terms_catalog_versions");
+    assertTruncateRejected(context, "account_hosted_terms_scopes");
+    assertTruncateRejected(context, "account_individual_hosted_terms_acceptances");
+    assertTruncateRejected(context, "account_hosted_terms_publication_operations");
+    assertTruncateRejected(context, "account_hosted_terms_environment_bindings");
+    assertTruncateRejected(context, "account_hosted_terms_environment_binding_publications");
+    assertThat(count(context, "account_hosted_terms_scopes", "hosted_scope_id", hostedScopeId))
+        .isEqualTo(1L);
+    assertThat(
+            count(context, "account_hosted_terms_catalog_versions", "version_id", termsVersionId))
+        .isEqualTo(1L);
+    assertThat(
+            count(
+                context,
+                "account_individual_hosted_terms_acceptances",
+                "evidence_id",
+                acceptanceEvidenceId))
+        .isEqualTo(1L);
+    assertThat(
+            count(
+                context,
+                "account_hosted_terms_publication_operations",
+                "request_id",
+                termsPublicationRequestId))
+        .isEqualTo(1L);
+    assertThat(count(context, "account_hosted_terms_environment_bindings", "binding_id", bindingId))
+        .isEqualTo(1L);
+    assertThat(
+            count(
+                context,
+                "account_hosted_terms_environment_binding_publications",
+                "request_id",
+                bindingPublicationRequestId))
+        .isEqualTo(1L);
+  }
+
+  @Test
   void creatorBootstrapWithoutAuthorizationSourceDeniesBeforeAnyOwnerWrite() {
     TestContext context = context(null);
     Account creator = account("player");
@@ -1828,6 +2257,71 @@ class AccountSourceCurrentnessForwardMigrationsPostgresIntegrationTest {
                 .resultQuery("SELECT count(*) FROM account_authority_outbox_events")
                 .fetchOne(0, Long.class))
         .isZero();
+  }
+
+  @Test
+  void statementTruncateCannotRemovePasswordResetLogoutOrBootstrapEvidence() {
+    TestContext context = context(null);
+    TestIdentity identity = testIdentity(context);
+
+    assertTruncateRejected(context, "account_password_reset_operation_receipts");
+    assertTruncateRejected(context, "account_logout_all_operation_receipts");
+    assertThat(
+            context
+                .dsl()
+                .resultQuery("SELECT count(*) FROM account_password_reset_operation_receipts")
+                .fetchOne(0, Long.class))
+        .isZero();
+    assertThat(
+            context
+                .dsl()
+                .resultQuery("SELECT count(*) FROM account_logout_all_operation_receipts")
+                .fetchOne(0, Long.class))
+        .isZero();
+
+    UUID requestId = UUID.randomUUID();
+    UUID tenantUuid = UUID.randomUUID();
+    UUID creationRequestId = UUID.randomUUID();
+    UUID creationOperationId = UUID.randomUUID();
+    byte[] creatorEvidence =
+        "synthetic creator-bootstrap evidence".getBytes(StandardCharsets.UTF_8);
+    byte[] sourceSnapshot = "synthetic tenant source snapshot".getBytes(StandardCharsets.UTF_8);
+    byte[] requestPayload = "synthetic bootstrap request".getBytes(StandardCharsets.UTF_8);
+    context
+        .dsl()
+        .execute(
+            "INSERT INTO account_tenant_creation_bootstrap_operations "
+                + "(request_id, schema_version, initiating_account_uuid, tenant_uuid, "
+                + "creation_request_id, creation_operation_id, account_authorization_operation_id, "
+                + "account_authorization_digest, creator_evidence_digest, creator_evidence_payload, "
+                + "source_snapshot_payload, source_snapshot_digest, request_payload, request_digest, "
+                + "baseline_membership_version, baseline_membership_authority_generation, "
+                + "baseline_event_sequence, status) "
+                + "VALUES (?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 1, 0, 'IN_PROGRESS')",
+            requestId,
+            identity.accountUuid(),
+            tenantUuid,
+            creationRequestId,
+            creationOperationId,
+            requestId,
+            sha256("synthetic authorization".getBytes(StandardCharsets.UTF_8)),
+            sha256(creatorEvidence),
+            creatorEvidence,
+            sourceSnapshot,
+            sha256(sourceSnapshot),
+            requestPayload,
+            sha256(requestPayload));
+
+    assertTruncateRejected(context, "account_tenant_creation_bootstrap_operations");
+    assertThat(
+            context
+                .dsl()
+                .resultQuery(
+                    "SELECT count(*) FROM account_tenant_creation_bootstrap_operations "
+                        + "WHERE request_id = ?",
+                    requestId)
+                .fetchOne(0, Long.class))
+        .isEqualTo(1L);
   }
 
   private static FreshTenantCreatorEvidence creatorEvidence(UUID accountUuid) {
@@ -1933,6 +2427,55 @@ class AccountSourceCurrentnessForwardMigrationsPostgresIntegrationTest {
             .dsl()
             .resultQuery("SELECT count(*) FROM " + table + " WHERE " + column + " = ?", value)
             .fetchOne(0, Long.class));
+  }
+
+  private static void assertTruncateRejected(TestContext context, String relation) {
+    assertThatThrownBy(() -> context.dsl().execute("TRUNCATE " + relation + " CASCADE"))
+        .as("TRUNCATE of immutable evidence relation %s", relation)
+        .isInstanceOf(DataAccessException.class);
+  }
+
+  private static UUID lockFenceNowait(TestContext context, UUID operationId) {
+    return independentTransaction(
+        context,
+        dsl ->
+            dsl.resultQuery(
+                    "SELECT operation_id FROM account_draft_authorization_fences "
+                        + "WHERE operation_id = ? FOR UPDATE NOWAIT",
+                    operationId)
+                .fetchSingle(0, UUID.class));
+  }
+
+  private static String lockSourceNowait(TestContext context, String sourceKey) {
+    return independentTransaction(
+        context,
+        dsl ->
+            dsl.resultQuery(
+                    "SELECT source_key FROM account_draft_authorization_source_locks "
+                        + "WHERE source_key = ? FOR UPDATE NOWAIT",
+                    sourceKey)
+                .fetchSingle(0, String.class));
+  }
+
+  private static <T> T independentTransaction(
+      TestContext context, java.util.function.Function<DSLContext, T> work) {
+    try (Connection connection = POSTGRES.dataSource(context.schema()).getConnection()) {
+      connection.setAutoCommit(false);
+      try {
+        T result = work.apply(DSL.using(connection, SQLDialect.POSTGRES));
+        connection.commit();
+        return result;
+      } catch (RuntimeException | Error failure) {
+        try {
+          connection.rollback();
+        } catch (SQLException rollbackFailure) {
+          failure.addSuppressed(rollbackFailure);
+        }
+        throw failure;
+      }
+    } catch (SQLException failure) {
+      throw new IllegalStateException("Independent PostgreSQL lock probe failed", failure);
+    }
   }
 
   private static String sha256(byte[] value) {

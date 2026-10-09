@@ -9,6 +9,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
+import java.util.function.Function;
 import net.firedevops.firemud.common.account.authority.MembershipAuthorityEventV1Codec.AccountSecurityCutoff;
 import net.firedevops.firemud.common.account.authority.MembershipAuthorityEventV1Codec.AuthorityTuple;
 import net.firedevops.firemud.common.account.authority.MembershipAuthorityEventV1Codec.MembershipEvent;
@@ -214,78 +215,27 @@ public final class RuntimeMembershipAuthorityEvidenceValidator {
       return null;
     }
 
-    AccountSource event;
-    try {
-      var verified = AccountAuthoritySourceEventV1Codec.verify(supplied.canonicalEventJson());
-      if (!(verified instanceof AccountAuthoritySourceEventV1Codec.AccountEvent account)) {
-        throw invalid("account source", "must be an Account event");
-      }
-      event =
-          new AccountSource(
-              account.eventId(),
-              account.eventDigest(),
-              account.canonicalJson(),
-              account.outboxStreamKey(),
-              account.outboxSequence(),
-              account.accountId(),
-              account.accountAuthorityGeneration(),
-              account.accountSecurityCutoff().accountAuthorityGeneration(),
-              account.accountSecurityCutoff().outboxStreamKey(),
-              account.accountSecurityCutoff().outboxSequence());
-    } catch (IllegalArgumentException currentSchemaMismatch) {
+    List<Function<String, AccountSource>> decoders =
+        List.of(
+            RuntimeMembershipAuthorityEvidenceValidator::decodeCurrentAccountSource,
+            RuntimeMembershipAuthorityEvidenceValidator::decodePasswordResetAccountSource,
+            RuntimeMembershipAuthorityEvidenceValidator::decodeLogoutAllAccountSource,
+            RuntimeMembershipAuthorityEvidenceValidator::decodeSecurityStateAccountSource);
+    List<IllegalArgumentException> failures = new ArrayList<>(decoders.size());
+    AccountSource event = null;
+    for (Function<String, AccountSource> decoder : decoders) {
       try {
-        var reset = PasswordResetAuthorityEventV1Codec.verify(supplied.canonicalEventJson());
-        event =
-            new AccountSource(
-                reset.eventId(),
-                reset.eventDigest(),
-                reset.canonicalJson(),
-                reset.outboxStreamKey(),
-                reset.outboxSequence(),
-                reset.accountId(),
-                reset.accountAuthorityGeneration(),
-                reset.accountSecurityCutoff().accountAuthorityGeneration(),
-                reset.accountSecurityCutoff().outboxStreamKey(),
-                reset.accountSecurityCutoff().outboxSequence());
-      } catch (IllegalArgumentException resetFailure) {
-        try {
-          var logout = AccountLogoutAllAuthorityEventV1Codec.verify(supplied.canonicalEventJson());
-          event =
-              new AccountSource(
-                  logout.eventId(),
-                  logout.eventDigest(),
-                  logout.canonicalJson(),
-                  logout.outboxStreamKey(),
-                  logout.outboxSequence(),
-                  logout.accountId(),
-                  logout.accountAuthorityGeneration(),
-                  logout.accountSecurityCutoff().accountAuthorityGeneration(),
-                  logout.accountSecurityCutoff().outboxStreamKey(),
-                  logout.accountSecurityCutoff().outboxSequence());
-        } catch (IllegalArgumentException logoutFailure) {
-          try {
-            var security =
-                AccountSecurityStateAuthorityEventV1Codec.verify(supplied.canonicalEventJson());
-            event =
-                new AccountSource(
-                    security.eventId(),
-                    security.eventDigest(),
-                    security.canonicalJson(),
-                    security.outboxStreamKey(),
-                    security.outboxSequence(),
-                    security.accountId(),
-                    security.accountAuthorityGeneration(),
-                    security.accountSecurityCutoff().accountAuthorityGeneration(),
-                    security.accountSecurityCutoff().outboxStreamKey(),
-                    security.accountSecurityCutoff().outboxSequence());
-          } catch (IllegalArgumentException securityFailure) {
-            securityFailure.addSuppressed(currentSchemaMismatch);
-            securityFailure.addSuppressed(resetFailure);
-            securityFailure.addSuppressed(logoutFailure);
-            throw securityFailure;
-          }
-        }
+        event = decoder.apply(supplied.canonicalEventJson());
+        break;
+      } catch (IllegalArgumentException unsupportedSchema) {
+        failures.add(unsupportedSchema);
       }
+    }
+    if (event == null) {
+      IllegalArgumentException failure =
+          invalid("account source", "does not match any supported Account event schema");
+      failures.forEach(failure::addSuppressed);
+      throw failure;
     }
     requireSourceIdentity(
         supplied,
@@ -303,6 +253,69 @@ public final class RuntimeMembershipAuthorityEvidenceValidator {
     requireEquals(event.outboxStreamKey(), event.cutoffStream(), "account cutoff stream key");
     requireEquals(event.outboxSequence(), event.cutoffSequence(), "account cutoff sequence");
     return event;
+  }
+
+  private static AccountSource decodeCurrentAccountSource(String canonicalJson) {
+    var verified = AccountAuthoritySourceEventV1Codec.verify(canonicalJson);
+    if (!(verified instanceof AccountAuthoritySourceEventV1Codec.AccountEvent account)) {
+      throw invalid("account source", "must be an Account event");
+    }
+    return new AccountSource(
+        account.eventId(),
+        account.eventDigest(),
+        account.canonicalJson(),
+        account.outboxStreamKey(),
+        account.outboxSequence(),
+        account.accountId(),
+        account.accountAuthorityGeneration(),
+        account.accountSecurityCutoff().accountAuthorityGeneration(),
+        account.accountSecurityCutoff().outboxStreamKey(),
+        account.accountSecurityCutoff().outboxSequence());
+  }
+
+  private static AccountSource decodePasswordResetAccountSource(String canonicalJson) {
+    var reset = PasswordResetAuthorityEventV1Codec.verify(canonicalJson);
+    return new AccountSource(
+        reset.eventId(),
+        reset.eventDigest(),
+        reset.canonicalJson(),
+        reset.outboxStreamKey(),
+        reset.outboxSequence(),
+        reset.accountId(),
+        reset.accountAuthorityGeneration(),
+        reset.accountSecurityCutoff().accountAuthorityGeneration(),
+        reset.accountSecurityCutoff().outboxStreamKey(),
+        reset.accountSecurityCutoff().outboxSequence());
+  }
+
+  private static AccountSource decodeLogoutAllAccountSource(String canonicalJson) {
+    var logout = AccountLogoutAllAuthorityEventV1Codec.verify(canonicalJson);
+    return new AccountSource(
+        logout.eventId(),
+        logout.eventDigest(),
+        logout.canonicalJson(),
+        logout.outboxStreamKey(),
+        logout.outboxSequence(),
+        logout.accountId(),
+        logout.accountAuthorityGeneration(),
+        logout.accountSecurityCutoff().accountAuthorityGeneration(),
+        logout.accountSecurityCutoff().outboxStreamKey(),
+        logout.accountSecurityCutoff().outboxSequence());
+  }
+
+  private static AccountSource decodeSecurityStateAccountSource(String canonicalJson) {
+    var security = AccountSecurityStateAuthorityEventV1Codec.verify(canonicalJson);
+    return new AccountSource(
+        security.eventId(),
+        security.eventDigest(),
+        security.canonicalJson(),
+        security.outboxStreamKey(),
+        security.outboxSequence(),
+        security.accountId(),
+        security.accountAuthorityGeneration(),
+        security.accountSecurityCutoff().accountAuthorityGeneration(),
+        security.accountSecurityCutoff().outboxStreamKey(),
+        security.accountSecurityCutoff().outboxSequence());
   }
 
   private static MembershipEvent verifyMembershipSource(

@@ -171,7 +171,7 @@ BEGIN
     RAISE EXCEPTION 'Account creator-bootstrap history cannot be deleted'
         USING ERRCODE = '23514',
             CONSTRAINT = 'account_tenant_creation_bootstrap_no_delete';
-    RETURN OLD;
+    RETURN NULL;
 END;
 $$;
 
@@ -186,4 +186,7 @@ CREATE TRIGGER account_tenant_creation_bootstrap_update
 CREATE TRIGGER account_tenant_creation_bootstrap_delete
     BEFORE DELETE ON account_tenant_creation_bootstrap_operations
     FOR EACH ROW EXECUTE FUNCTION account_tenant_creation_bootstrap_no_delete();
+CREATE TRIGGER account_tenant_creation_bootstrap_no_truncate
+    BEFORE TRUNCATE ON account_tenant_creation_bootstrap_operations
+    FOR EACH STATEMENT EXECUTE FUNCTION account_tenant_creation_bootstrap_no_delete();
 -- [jooq ignore stop]

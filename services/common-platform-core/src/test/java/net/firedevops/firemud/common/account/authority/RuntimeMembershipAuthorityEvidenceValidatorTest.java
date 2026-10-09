@@ -179,6 +179,37 @@ class RuntimeMembershipAuthorityEvidenceValidatorTest {
   }
 
   @Test
+  void reportsAccountSourceFailureWithEverySupportedDecoderDiagnostic() {
+    var valid = currentSnapshot();
+    var accountSource = valid.sourceEvidence().get(0);
+    var malformedSource =
+        new RuntimeMembershipAuthorityEvidenceValidator.SourceEvidence(
+            accountSource.outboxStreamKey(),
+            accountSource.outboxSequence(),
+            accountSource.eventId(),
+            accountSource.eventDigest(),
+            "{\"unsupported\":true}");
+
+    assertThatThrownBy(
+            () ->
+                RuntimeMembershipAuthorityEvidenceValidator.validate(
+                    copyWith(
+                        valid,
+                        valid.checkpoints(),
+                        List.of(malformedSource, valid.sourceEvidence().get(1)))))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("account source")
+        .hasMessageContaining("supported Account event schema")
+        .satisfies(
+            failure -> {
+              assertThat(failure.getSuppressed()).hasSize(4);
+              assertThat(failure.getSuppressed())
+                  .allSatisfy(
+                      diagnostic -> assertThat(diagnostic.getMessage()).isNotNull().isNotBlank());
+            });
+  }
+
+  @Test
   void requiresSortedExactCheckpointAndSourceInventories() {
     var valid = currentSnapshot();
     List<RuntimeMembershipAuthorityEvidenceValidator.Checkpoint> reversed =

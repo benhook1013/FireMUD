@@ -766,6 +766,8 @@ public class AccountAuthoritySourceEvidenceRepository {
         scope.kind() == ScopeKind.ACCOUNT
             ? readAccountIdentityForClosedReadback(scope.accountId())
             : null;
+    AccountAuthoritySourceEventReadback eventReadback =
+        scope.kind() == ScopeKind.ACCOUNT ? closedEventReadback() : null;
     for (long current = 1L; current <= sequence; current++) {
       Event stored =
           outbox
@@ -813,8 +815,7 @@ public class AccountAuthoritySourceEvidenceRepository {
       } else if (scope.kind() == ScopeKind.ACCOUNT) {
         final RetainedEventEvidence receiptEvidence;
         try {
-          receiptEvidence =
-              closedEventReadback().requireRetainedEvent(sourceAccount, stored, authority);
+          receiptEvidence = eventReadback.requireRetainedEvent(sourceAccount, stored, authority);
         } catch (RuntimeException missingOrInvalidReceipt) {
           throw new SourceEvidenceUnavailableException();
         }
