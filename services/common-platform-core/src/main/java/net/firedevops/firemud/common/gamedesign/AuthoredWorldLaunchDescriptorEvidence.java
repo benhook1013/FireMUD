@@ -122,6 +122,15 @@ public record AuthoredWorldLaunchDescriptorEvidence(
     requireOptional(remapSetIdPresent, remapSetId, "remapSetId");
     requireText(launchDescriptorId, "launchDescriptorId");
     requirePositive(versionId, "versionId");
+    if (targetVersionIdPresent && targetVersionId.longValue() != versionId) {
+      throw new IllegalArgumentException("Resolved versionId does not match the requested target");
+    }
+    if (requestedScriptPatchVersionPresent
+        && (!scriptPatchVersionPresent
+            || !requestedScriptPatchVersion.equals(scriptPatchVersion))) {
+      throw new IllegalArgumentException(
+          "Resolved scriptPatchVersion does not match the requested override");
+    }
     requireText(runtimeFlagsJson, "runtimeFlagsJson");
     requireText(generationConfigRevision, "generationConfigRevision");
     if (versionStateEpoch <= 0) {
