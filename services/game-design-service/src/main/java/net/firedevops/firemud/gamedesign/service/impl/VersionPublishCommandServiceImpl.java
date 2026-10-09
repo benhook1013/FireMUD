@@ -709,6 +709,10 @@ public class VersionPublishCommandServiceImpl {
     VersionAssetArtifactStateDto artifact =
         readVersionAssetArtifactState(request.tenantId(), attempt.getVersionId());
     if (bundle == null
+        && isExactPendingStagedCandidate(request, attempt, version.get(), artifact)) {
+      return PublicationReadback.absent();
+    }
+    if (bundle == null
         && artifact == null
         && version.get().getVersionState() == VersionLifecycleState.DRAFT) {
       return PublicationReadback.absent();
@@ -727,6 +731,37 @@ public class VersionPublishCommandServiceImpl {
       return PublicationReadback.partial();
     }
     return PublicationReadback.complete(version.get(), bundle, artifact);
+  }
+
+  private boolean isExactPendingStagedCandidate(
+      PublishWorkflowRequest request,
+      PublishAttempt attempt,
+      Version version,
+      VersionAssetArtifactStateDto artifact) {
+    return attempt.getPublishType() == PublishType.FULL_VERSION
+        && attempt.getStatus() == PublishAttemptStatus.PENDING
+        && Objects.equals(attempt.getTenantId(), request.tenantId())
+        && Objects.equals(attempt.getPublishWorkflowId(), request.publishWorkflowId())
+        && attempt.getVersionId() != null
+        && Objects.equals(version.getTenantId(), request.tenantId())
+        && Objects.equals(version.getId(), attempt.getVersionId())
+        && version.getVersionNumber() == attempt.getVersionNumber()
+        && version.getVersionState() == VersionLifecycleState.DRAFT
+        && !version.isScriptOnly()
+        && version.getVersionStateEpoch() != null
+        && version.getVersionStateEpoch() > 0
+        && artifact != null
+        && Objects.equals(artifact.tenantId(), request.tenantId())
+        && Objects.equals(artifact.versionId(), attempt.getVersionId())
+        && artifact.exportedVersionNumber() == attempt.getVersionNumber()
+        && "STAGED".equals(artifact.artifactState())
+        && artifact.stateEpoch() > 0
+        && Objects.equals(artifact.lastWorkflowId(), request.publishWorkflowId())
+        && artifact.manifestHash() == null
+        && artifact.lastErrorCode() == null
+        && artifact.lastErrorMessage() == null
+        && artifact.exportedManifestAssetKeys() != null
+        && artifact.exportedManifestAssetKeys().isEmpty();
   }
 
   private void requireExactBundleEvidence(

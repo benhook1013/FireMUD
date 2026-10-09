@@ -1005,6 +1005,144 @@ class VersionPublishCommandServiceImplTest {
   }
 
   @Test
+  void privateMechanicsContinuesFromExactStagedCandidateReadback() {
+    String workflowId = "publish:tenant-1:publish-request:workflow-1";
+    PublishAttempt attempt = fullAttempt(PublishAttemptStatus.PENDING, 10L, 1, workflowId);
+    Version version = fullVersion(10L, 1, VersionLifecycleState.DRAFT);
+    List<PublishParticipantDigestDto> participantDigests = participantDigests();
+    ExportedAssetManifest manifest = exportedManifest(List.of("manifest.json"));
+    VersionAssetArtifactStateDto stagedArtifact =
+        new VersionAssetArtifactStateDto(
+            "tenant-1",
+            10L,
+            1,
+            "STAGED",
+            1L,
+            null,
+            workflowId,
+            null,
+            null,
+            LocalDateTime.now(),
+            List.of());
+    Game game = new Game();
+    game.setTenantId("tenant-1");
+    when(publishAttemptRepository.findByPublishWorkflowId(workflowId))
+        .thenReturn(Optional.of(attempt));
+    when(gameRepository.findByTenantIdForUpdate("tenant-1")).thenReturn(game);
+    when(versionRepository.findByTenantIdAndId("tenant-1", 10L)).thenReturn(Optional.of(version));
+    when(versionAssetArtifactService.findState("tenant-1", 10L))
+        .thenReturn(Optional.empty(), Optional.of(stagedArtifact));
+    when(publishGateService.collectFullVersionParticipantDigests(
+            any(VersionDto.class), any(String.class), any(String.class)))
+        .thenReturn(participantDigests);
+    when(assetExportService.exportAssets("tenant-1", 1)).thenReturn(manifest);
+    when(controlPlaneDigestService.getDigestForVersion(any(VersionDto.class)))
+        .thenReturn(new DesignControlPlaneDigestDto("tenant-1", "10", "version:10", "digest", 1));
+    when(versionAssetArtifactService.markExportedUnattested(
+            any(String.class),
+            any(Long.class),
+            any(Integer.class),
+            any(String.class),
+            any(ExportedAssetManifest.class)))
+        .thenReturn(
+            new VersionAssetArtifactStateDto(
+                "tenant-1",
+                10L,
+                1,
+                "EXPORTED_UNATTESTED",
+                2L,
+                MANIFEST_HASH,
+                workflowId,
+                null,
+                null,
+                LocalDateTime.now(),
+                List.of("manifest.json")));
+
+    PublishWorkflowSnapshot snapshot =
+        mechanicsHarness(new PublishWorkflowRequest("tenant-1", "notes", "workflow-1", workflowId));
+
+    assertEquals("SUCCEEDED", snapshot.status(), snapshot.toString());
+    verify(publishAttemptService).markFullVersionSucceeded(workflowId);
+  }
+
+  @Test
+  void mismatchedStagedArtifactWorkflowRemainsPartial() {
+    String workflowId = "publish:tenant-1:publish-request:workflow-1";
+    assertStagedArtifactRemainsPartial(
+        VersionLifecycleState.DRAFT,
+        new VersionAssetArtifactStateDto(
+            "tenant-1",
+            10L,
+            1,
+            "STAGED",
+            1L,
+            null,
+            "other-workflow",
+            null,
+            null,
+            LocalDateTime.now(),
+            List.of()));
+  }
+
+  @Test
+  void mismatchedStagedArtifactScopeRemainsPartial() {
+    assertStagedArtifactRemainsPartial(
+        VersionLifecycleState.DRAFT,
+        new VersionAssetArtifactStateDto(
+            "tenant-1",
+            10L,
+            2,
+            "STAGED",
+            1L,
+            null,
+            "publish:tenant-1:publish-request:workflow-1",
+            null,
+            null,
+            LocalDateTime.now(),
+            List.of()));
+  }
+
+  @Test
+  void stagedArtifactForPublishedVersionRemainsPartial() {
+    assertStagedArtifactRemainsPartial(
+        VersionLifecycleState.PUBLISHED,
+        new VersionAssetArtifactStateDto(
+            "tenant-1",
+            10L,
+            1,
+            "STAGED",
+            1L,
+            null,
+            "publish:tenant-1:publish-request:workflow-1",
+            null,
+            null,
+            LocalDateTime.now(),
+            List.of()));
+  }
+
+  private void assertStagedArtifactRemainsPartial(
+      VersionLifecycleState versionState, VersionAssetArtifactStateDto artifact) {
+    String workflowId = "publish:tenant-1:publish-request:workflow-1";
+    PublishAttempt attempt = fullAttempt(PublishAttemptStatus.PENDING, 10L, 1, workflowId);
+    Version version = fullVersion(10L, 1, versionState);
+    when(publishAttemptRepository.findByPublishWorkflowId(workflowId))
+        .thenReturn(Optional.of(attempt));
+    when(versionRepository.findByTenantIdAndId("tenant-1", 10L)).thenReturn(Optional.of(version));
+    when(versionAssetArtifactService.findState("tenant-1", 10L)).thenReturn(Optional.of(artifact));
+
+    VersionPublishCommandServiceImpl.PendingReconciliationException thrown =
+        assertThrows(
+            VersionPublishCommandServiceImpl.PendingReconciliationException.class,
+            () ->
+                mechanicsHarness(
+                    new PublishWorkflowRequest("tenant-1", "notes", "workflow-1", workflowId)));
+
+    assertTrue(thrown.getMessage().contains("incomplete"));
+    verify(assetExportService, never()).exportAssets(any(String.class), any(Integer.class));
+    verify(publishAttemptService, never()).executeFullVersionTransaction(any());
+  }
+
+  @Test
   void legacyFullAttemptWithMismatchedVersionEvidenceIsNotRewritten() {
     String workflowId = "publish:tenant-1:publish-request:workflow-1";
     PublishAttempt attempt = fullAttempt(PublishAttemptStatus.PENDING, 10L, 1, workflowId);
@@ -1219,7 +1357,21 @@ class VersionPublishCommandServiceImplTest {
         .thenReturn(bundle);
     when(publishedReleaseBundleService.findPublishedReleaseBundle("tenant-1", 10L))
         .thenReturn(Optional.empty());
-    when(versionAssetArtifactService.findState("tenant-1", 10L)).thenReturn(Optional.empty());
+    VersionAssetArtifactStateDto stagedArtifact =
+        new VersionAssetArtifactStateDto(
+            "tenant-1",
+            10L,
+            1,
+            "STAGED",
+            1L,
+            null,
+            workflowId,
+            null,
+            null,
+            LocalDateTime.now(),
+            List.of());
+    when(versionAssetArtifactService.findState("tenant-1", 10L))
+        .thenReturn(Optional.empty(), Optional.of(stagedArtifact));
     org.mockito.Mockito.doAnswer(
             invocation -> {
               // The production transaction rolls managed entity changes back before readback.

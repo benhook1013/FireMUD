@@ -51,7 +51,7 @@ import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
-/** PostgreSQL proof for isolated publication mechanics, retention, and public-ingress denial. */
+/** PostgreSQL proof for private publication mechanics, retention, and public-ingress denial. */
 @Testcontainers(disabledWithoutDocker = true)
 @SpringBootTest(
     classes = GameDesignServiceApplication.class,
