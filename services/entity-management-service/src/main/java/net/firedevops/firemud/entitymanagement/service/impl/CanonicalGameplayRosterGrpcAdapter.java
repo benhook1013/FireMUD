@@ -1,6 +1,7 @@
 package net.firedevops.firemud.entitymanagement.service.impl;
 
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
+import io.grpc.Status;
 import io.grpc.stub.StreamObserver;
 import io.micrometer.core.annotation.Timed;
 import io.micrometer.core.instrument.MeterRegistry;
@@ -11,12 +12,15 @@ import net.firedevops.firemud.common.security.SessionContext;
 import net.firedevops.firemud.entitymanagement.security.CanonicalGameplayRosterPeerInterceptor;
 import net.firedevops.firemud.entitymanagement.service.CanonicalGameplayRosterActor;
 import net.firedevops.firemud.entitymanagement.service.CanonicalGameplayRosterEntryPolicy;
+import net.firedevops.firemud.entitymanagement.service.CanonicalGameplayRosterExecutionContext;
+import net.firedevops.firemud.entitymanagement.service.CanonicalGameplayRosterOwnerEvidencePort;
 import net.firedevops.firemud.entitymanagement.service.CanonicalGameplayRosterReadRequest;
 import net.firedevops.firemud.entitymanagement.service.CanonicalGameplayRosterSelectedAssignmentReadRequest;
 import net.firedevops.firemud.entitymanagement.service.CanonicalGameplayRosterSelectedAssignmentReference;
 import net.firedevops.firemud.entitymanagement.service.CanonicalGameplayRosterSelectedAssignmentService;
 import net.firedevops.firemud.entitymanagement.service.CanonicalGameplayRosterService;
 import net.firedevops.firemud.entitymanagement.service.CanonicalGameplayRosterSnapshot;
+import net.firedevops.firemud.entitymanagement.service.CanonicalGameplayRosterSnapshotReference;
 import net.firedevops.firemud.entitymanagement.service.CanonicalGameplayRosterTarget;
 import net.firedevops.firemud.entitymanagement.v1.CanonicalGameplayRosterActorKind;
 import net.firedevops.firemud.entitymanagement.v1.CanonicalGameplayRosterRequest;
@@ -26,6 +30,8 @@ import net.firedevops.firemud.entitymanagement.v1.CanonicalGameplayRosterSelecte
 import net.firedevops.firemud.entitymanagement.v1.CanonicalGameplayRosterServiceGrpc;
 import net.firedevops.firemud.entitymanagement.v1.CanonicalGameplayRosterTarget.Builder;
 import net.firedevops.firemud.entitymanagement.v1.PlayableStateScope;
+import net.firedevops.firemud.shared.v1.PlayerExecutionContext;
+import org.jooq.exception.DataAccessException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.grpc.server.service.GrpcService;
@@ -61,30 +67,17 @@ public final class CanonicalGameplayRosterGrpcAdapter
   public void listPreseededRoster(
       CanonicalGameplayRosterRequest request,
       StreamObserver<CanonicalGameplayRosterResponse> responseObserver) {
+    CanonicalGameplayRosterResponse response;
     try {
       requireTrustedPeer();
       CanonicalGameplayRosterReadRequest parsed = parseRequest(request);
       CanonicalGameplayRosterSnapshot snapshot = rosterService.read(parsed);
-      responseObserver.onNext(toResponse(snapshot));
-    } catch (AdminAuthorizationException denied) {
-      responseObserver.onNext(error("PERMISSION_DENIED", "Trusted Game Session caller required"));
-    } catch (UnsupportedOperationException unsupported) {
-      responseObserver.onNext(error("UNSUPPORTED_ENTRY_POLICY", "Entry policy is unsupported"));
-    } catch (
-        net.firedevops.firemud.entitymanagement.service.CanonicalGameplayRosterOwnerEvidencePort
-                .OwnerEvidenceUnavailableException
-            unavailable) {
-      responseObserver.onNext(error("OWNER_EVIDENCE_UNAVAILABLE", "Owner evidence is unavailable"));
-    } catch (IllegalArgumentException malformed) {
-      responseObserver.onNext(error("INVALID_ARGUMENT", malformed.getMessage()));
-    } catch (IllegalStateException rejected) {
-      responseObserver.onNext(error("FAILED_PRECONDITION", rejected.getMessage()));
+      response = toResponse(snapshot);
     } catch (Exception failure) {
-      responseObserver.onNext(
-          CanonicalGameplayRosterResponse.newBuilder()
-              .setError(GrpcAppErrors.internal(meterRegistry, LOGGER, OPERATION, failure))
-              .build());
+      responseObserver.onError(toStatus(failure, OPERATION));
+      return;
     }
+    responseObserver.onNext(response);
     responseObserver.onCompleted();
   }
 
@@ -93,38 +86,19 @@ public final class CanonicalGameplayRosterGrpcAdapter
   public void readSelectedPreseededAssignment(
       CanonicalGameplayRosterSelectedAssignmentRequest request,
       StreamObserver<CanonicalGameplayRosterSelectedAssignmentResponse> responseObserver) {
+    CanonicalGameplayRosterSelectedAssignmentResponse response;
     try {
       requireTrustedPeer();
       CanonicalGameplayRosterSelectedAssignmentReadRequest parsed =
           parseSelectedAssignmentRequest(request);
       CanonicalGameplayRosterSelectedAssignmentReference reference =
           selectedAssignmentService.read(parsed);
-      responseObserver.onNext(toSelectedAssignmentResponse(reference));
-    } catch (AdminAuthorizationException denied) {
-      responseObserver.onNext(
-          selectedAssignmentError("PERMISSION_DENIED", "Trusted Game Session caller required"));
-    } catch (UnsupportedOperationException unsupported) {
-      responseObserver.onNext(
-          selectedAssignmentError("UNSUPPORTED_TARGET", "Target is unsupported"));
-    } catch (
-        net.firedevops.firemud.entitymanagement.service.CanonicalGameplayRosterOwnerEvidencePort
-                .OwnerEvidenceUnavailableException
-            unavailable) {
-      responseObserver.onNext(
-          selectedAssignmentError("OWNER_EVIDENCE_UNAVAILABLE", "Owner evidence is unavailable"));
-    } catch (IllegalArgumentException malformed) {
-      responseObserver.onNext(selectedAssignmentError("INVALID_ARGUMENT", malformed.getMessage()));
-    } catch (IllegalStateException rejected) {
-      responseObserver.onNext(
-          selectedAssignmentError("FAILED_PRECONDITION", rejected.getMessage()));
+      response = toSelectedAssignmentResponse(reference);
     } catch (Exception failure) {
-      responseObserver.onNext(
-          CanonicalGameplayRosterSelectedAssignmentResponse.newBuilder()
-              .setError(
-                  GrpcAppErrors.internal(
-                      meterRegistry, LOGGER, SELECTED_ASSIGNMENT_OPERATION, failure))
-              .build());
+      responseObserver.onError(toStatus(failure, SELECTED_ASSIGNMENT_OPERATION));
+      return;
     }
+    responseObserver.onNext(response);
     responseObserver.onCompleted();
   }
 
@@ -136,21 +110,36 @@ public final class CanonicalGameplayRosterGrpcAdapter
     if (!request.hasExpectedTarget()) {
       throw new IllegalArgumentException("Complete expected target is required");
     }
+    if (!request.hasExpectedSnapshot()
+        || !request.getExpectedSnapshot().getUnknownFields().asMap().isEmpty()) {
+      throw new IllegalArgumentException("Exact expected_snapshot is required");
+    }
+    UUID selectedCharacterUuid =
+        parseCanonicalUuid(request.getSelectedCharacterUuid(), "selected_character_uuid");
     CanonicalGameplayRosterReadRequest parsedTarget =
         parseRequest(
             CanonicalGameplayRosterRequest.newBuilder()
                 .setRequestUuid(request.getRequestUuid())
                 .setCanonicalAccountUuid(request.getCanonicalAccountUuid())
                 .setExpectedTarget(request.getExpectedTarget())
-                .build());
+                .setPlayerExecutionContext(request.getPlayerExecutionContext())
+                .build(),
+            true);
     return new CanonicalGameplayRosterSelectedAssignmentReadRequest(
         parsedTarget.requestUuid(),
         parsedTarget.canonicalAccountUuid(),
-        parseCanonicalUuid(request.getSelectedCharacterUuid(), "selected_character_uuid"),
-        parsedTarget.expectedTarget());
+        selectedCharacterUuid,
+        parsedTarget.expectedTarget(),
+        parseSnapshotReference(request.getExpectedSnapshot()),
+        parsedTarget.playerExecutionContext());
   }
 
   static CanonicalGameplayRosterReadRequest parseRequest(CanonicalGameplayRosterRequest request) {
+    return parseRequest(request, false);
+  }
+
+  private static CanonicalGameplayRosterReadRequest parseRequest(
+      CanonicalGameplayRosterRequest request, boolean selectedAssignment) {
     if (request == null || !request.getUnknownFields().asMap().isEmpty()) {
       throw new IllegalArgumentException("Request is absent or contains unknown fields");
     }
@@ -162,6 +151,14 @@ public final class CanonicalGameplayRosterGrpcAdapter
     UUID requestUuid = parseCanonicalUuid(request.getRequestUuid(), "request_uuid");
     UUID accountUuid =
         parseCanonicalUuid(request.getCanonicalAccountUuid(), "canonical_account_uuid");
+    if (!request.hasPlayerExecutionContext()) {
+      throw new IllegalArgumentException("player_execution_context is required");
+    }
+    CanonicalGameplayRosterExecutionContext executionContext =
+        parseExecutionContext(request.getPlayerExecutionContext());
+    if (!selectedAssignment && executionContext.characterUuid() != null) {
+      throw new IllegalArgumentException("character_id must be unset for roster discovery");
+    }
     PlayableStateScope scope = target.getPlayableStateScope();
     if (scope == PlayableStateScope.PLAYABLE_STATE_SCOPE_UNSPECIFIED
         || scope == PlayableStateScope.UNRECOGNIZED) {
@@ -197,7 +194,49 @@ public final class CanonicalGameplayRosterGrpcAdapter
                 target.getPlayableStateNamespaceUuid(), "playable_state_namespace_uuid"),
             scope,
             entryPolicy);
-    return new CanonicalGameplayRosterReadRequest(requestUuid, accountUuid, expectedTarget);
+    executionContext.requireTargetBinding(requestUuid, accountUuid, expectedTarget);
+    return new CanonicalGameplayRosterReadRequest(
+        requestUuid, accountUuid, expectedTarget, executionContext);
+  }
+
+  private static CanonicalGameplayRosterExecutionContext parseExecutionContext(
+      PlayerExecutionContext context) {
+    if (context == null || !context.getUnknownFields().asMap().isEmpty()) {
+      throw new IllegalArgumentException(
+          "player_execution_context is absent or contains unknown fields");
+    }
+    PlayableStateScope scope =
+        switch (context.getPlayableStateScope()) {
+          case "SHARED" -> PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED;
+          case "ISOLATED" -> PlayableStateScope.PLAYABLE_STATE_SCOPE_ISOLATED;
+          default ->
+              throw new IllegalArgumentException(
+                  "player_execution_context.playable_state_scope must be SHARED or ISOLATED");
+        };
+    UUID characterUuid =
+        context.getCharacterId().isEmpty()
+            ? null
+            : parseCanonicalUuid(context.getCharacterId(), "player_execution_context.character_id");
+    return new CanonicalGameplayRosterExecutionContext(
+        parseCanonicalUuid(context.getAccountId(), "player_execution_context.account_id"),
+        parseCanonicalUuid(context.getTenantId(), "player_execution_context.tenant_id"),
+        parseCanonicalUuid(
+            context.getPlayableStateNamespaceId(),
+            "player_execution_context.playable_state_namespace_id"),
+        parseCanonicalUuid(
+            context.getGameInstanceId(), "player_execution_context.game_instance_id"),
+        characterUuid,
+        parseCanonicalUuid(context.getSessionId(), "player_execution_context.session_id"),
+        parseCanonicalUuid(context.getRealmId(), "player_execution_context.realm_id"),
+        parseCanonicalUuid(context.getRequestId(), "player_execution_context.request_id"),
+        scope);
+  }
+
+  private static CanonicalGameplayRosterSnapshotReference parseSnapshotReference(
+      net.firedevops.firemud.entitymanagement.v1.CanonicalGameplayRosterSnapshotReference ref) {
+    return new CanonicalGameplayRosterSnapshotReference(
+        parseCanonicalUuid(ref.getSnapshotUuid(), "expected_snapshot.snapshot_uuid"),
+        ref.getSnapshotDigest());
   }
 
   private static UUID parseCanonicalUuid(String value, String fieldName) {
@@ -217,10 +256,49 @@ public final class CanonicalGameplayRosterGrpcAdapter
   }
 
   private void requireTrustedPeer() {
-    if (CanonicalGameplayRosterPeerInterceptor.currentVerifiedPeer() == null
-        || SessionContext.hasAuthenticatedCallerContext()) {
+    if (CanonicalGameplayRosterPeerInterceptor.currentVerifiedPeer() == null) {
+      throw new UnauthenticatedPeerException();
+    }
+    if (SessionContext.hasAuthenticatedCallerContext()) {
       throw new AdminAuthorizationException("Trusted Game Session certificate peer is required");
     }
+  }
+
+  private RuntimeException toStatus(Exception failure, String operation) {
+    if (failure instanceof UnauthenticatedPeerException) {
+      return Status.UNAUTHENTICATED
+          .withDescription("Authenticated Game Session peer required")
+          .asRuntimeException();
+    }
+    if (failure instanceof AdminAuthorizationException) {
+      return Status.PERMISSION_DENIED
+          .withDescription("Trusted Game Session caller required")
+          .asRuntimeException();
+    }
+    if (failure
+            instanceof CanonicalGameplayRosterOwnerEvidencePort.OwnerEvidenceUnavailableException
+        || failure instanceof DataAccessException) {
+      return Status.UNAVAILABLE
+          .withDescription("Owner evidence is unavailable")
+          .asRuntimeException();
+    }
+    if (failure instanceof UnsupportedOperationException) {
+      return Status.FAILED_PRECONDITION
+          .withDescription("Target policy or scope is unsupported")
+          .asRuntimeException();
+    }
+    if (failure instanceof IllegalArgumentException) {
+      return Status.INVALID_ARGUMENT
+          .withDescription("Request is malformed or inconsistent")
+          .asRuntimeException();
+    }
+    if (failure instanceof IllegalStateException) {
+      return Status.FAILED_PRECONDITION
+          .withDescription("Request precondition is not satisfied")
+          .asRuntimeException();
+    }
+    GrpcAppErrors.internal(meterRegistry, LOGGER, operation, failure);
+    return Status.INTERNAL.withDescription("Internal error").asRuntimeException();
   }
 
   private CanonicalGameplayRosterResponse toResponse(CanonicalGameplayRosterSnapshot snapshot) {
@@ -280,21 +358,6 @@ public final class CanonicalGameplayRosterGrpcAdapter
     return proto.build();
   }
 
-  private CanonicalGameplayRosterResponse error(String code, String message) {
-    return CanonicalGameplayRosterResponse.newBuilder()
-        .setError(GrpcAppErrors.error(meterRegistry, LOGGER, OPERATION, code, message))
-        .build();
-  }
-
-  private CanonicalGameplayRosterSelectedAssignmentResponse selectedAssignmentError(
-      String code, String message) {
-    return CanonicalGameplayRosterSelectedAssignmentResponse.newBuilder()
-        .setError(
-            GrpcAppErrors.error(
-                meterRegistry, LOGGER, SELECTED_ASSIGNMENT_OPERATION, code, message))
-        .build();
-  }
-
   static CanonicalGameplayRosterSelectedAssignmentResponse toSelectedAssignmentResponse(
       CanonicalGameplayRosterSelectedAssignmentReference reference) {
     return CanonicalGameplayRosterSelectedAssignmentResponse.newBuilder()
@@ -304,6 +367,16 @@ public final class CanonicalGameplayRosterGrpcAdapter
         .setTarget(toProto(reference.target()))
         .setAssignmentUuid(reference.assignmentUuid().toString())
         .setIntentDigest(reference.intentDigest())
+        .setSnapshot(
+            net.firedevops.firemud.entitymanagement.v1.CanonicalGameplayRosterSnapshotReference
+                .newBuilder()
+                .setSnapshotUuid(reference.snapshot().snapshotUuid().toString())
+                .setSnapshotDigest(reference.snapshot().snapshotDigest())
+                .build())
         .build();
+  }
+
+  private static final class UnauthenticatedPeerException extends RuntimeException {
+    private static final long serialVersionUID = 1L;
   }
 }

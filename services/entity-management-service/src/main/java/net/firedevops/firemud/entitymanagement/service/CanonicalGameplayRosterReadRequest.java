@@ -5,13 +5,18 @@ import java.util.UUID;
 
 /** Exact-account canonical roster lookup with an independently checked target precondition. */
 public record CanonicalGameplayRosterReadRequest(
-    UUID requestUuid, UUID canonicalAccountUuid, CanonicalGameplayRosterTarget expectedTarget) {
+    UUID requestUuid,
+    UUID canonicalAccountUuid,
+    CanonicalGameplayRosterTarget expectedTarget,
+    CanonicalGameplayRosterExecutionContext playerExecutionContext) {
   private static final UUID NIL_UUID = new UUID(0L, 0L);
 
   public CanonicalGameplayRosterReadRequest {
     requireNonNil(requestUuid, "requestUuid");
     requireNonNil(canonicalAccountUuid, "canonicalAccountUuid");
     Objects.requireNonNull(expectedTarget, "expectedTarget");
+    Objects.requireNonNull(playerExecutionContext, "playerExecutionContext")
+        .requireTargetBinding(requestUuid, canonicalAccountUuid, expectedTarget);
   }
 
   private static void requireNonNil(UUID value, String fieldName) {

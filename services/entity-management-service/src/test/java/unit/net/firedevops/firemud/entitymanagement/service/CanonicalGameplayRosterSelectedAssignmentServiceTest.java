@@ -3,6 +3,7 @@ package net.firedevops.firemud.entitymanagement.service;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
@@ -26,13 +27,19 @@ class CanonicalGameplayRosterSelectedAssignmentServiceTest {
     CanonicalGameplayRosterSelectedAssignmentReadRequest request = request(target());
     CanonicalGameplayRosterReadRequest ownerRequest =
         new CanonicalGameplayRosterReadRequest(
-            request.requestUuid(), request.canonicalAccountUuid(), request.expectedTarget());
+            request.requestUuid(),
+            request.canonicalAccountUuid(),
+            request.expectedTarget(),
+            request.playerExecutionContext());
     CanonicalGameplayRosterOwnerEvidence evidence =
         evidence(ownerRequest, request.expectedTarget());
     PreseededActorAssignmentExpectedTarget assignmentTarget =
         assignmentTarget(request.expectedTarget());
     PreseededActorAssignmentReceipt receipt = receipt(request, assignmentTarget);
     when(ownerPort.resolveCurrentTarget(ownerRequest)).thenReturn(evidence);
+    when(repository.readCurrentCanonicalGameplayRosterSnapshot(
+            request.canonicalAccountUuid(), request.expectedTarget(), request.expectedSnapshot()))
+        .thenReturn(snapshot(request));
     when(repository.readSelectedPreseededActorAssignmentReceipt(
             request.canonicalAccountUuid(),
             request.selectedCharacterUuid(),
@@ -46,9 +53,13 @@ class CanonicalGameplayRosterSelectedAssignmentServiceTest {
     assertThat(result.canonicalAccountUuid()).isEqualTo(request.canonicalAccountUuid());
     assertThat(result.selectedCharacterUuid()).isEqualTo(request.selectedCharacterUuid());
     assertThat(result.target()).isEqualTo(request.expectedTarget());
+    assertThat(result.snapshot()).isEqualTo(request.expectedSnapshot());
     assertThat(result.assignmentUuid()).isEqualTo(receipt.assignmentUuid());
     assertThat(result.intentDigest()).isEqualTo(receipt.intentDigest());
     verify(ownerPort).resolveCurrentTarget(ownerRequest);
+    verify(repository)
+        .readCurrentCanonicalGameplayRosterSnapshot(
+            request.canonicalAccountUuid(), request.expectedTarget(), request.expectedSnapshot());
     verify(repository)
         .readSelectedPreseededActorAssignmentReceipt(
             request.canonicalAccountUuid(),
@@ -62,7 +73,10 @@ class CanonicalGameplayRosterSelectedAssignmentServiceTest {
     CanonicalGameplayRosterSelectedAssignmentReadRequest request = request(target());
     CanonicalGameplayRosterReadRequest ownerRequest =
         new CanonicalGameplayRosterReadRequest(
-            request.requestUuid(), request.canonicalAccountUuid(), request.expectedTarget());
+            request.requestUuid(),
+            request.canonicalAccountUuid(),
+            request.expectedTarget(),
+            request.playerExecutionContext());
     CanonicalGameplayRosterOwnerEvidencePort unavailableOwnerPort =
         mock(CanonicalGameplayRosterOwnerEvidencePort.class);
     CharacterRepository unavailableRepository = mock(CharacterRepository.class);
@@ -178,9 +192,15 @@ class CanonicalGameplayRosterSelectedAssignmentServiceTest {
     CanonicalGameplayRosterSelectedAssignmentReadRequest request = request(target());
     CanonicalGameplayRosterReadRequest ownerRequest =
         new CanonicalGameplayRosterReadRequest(
-            request.requestUuid(), request.canonicalAccountUuid(), request.expectedTarget());
+            request.requestUuid(),
+            request.canonicalAccountUuid(),
+            request.expectedTarget(),
+            request.playerExecutionContext());
     when(ownerPort.resolveCurrentTarget(ownerRequest))
         .thenReturn(evidence(ownerRequest, request.expectedTarget()));
+    when(repository.readCurrentCanonicalGameplayRosterSnapshot(
+            request.canonicalAccountUuid(), request.expectedTarget(), request.expectedSnapshot()))
+        .thenReturn(snapshot(request));
     when(repository.readSelectedPreseededActorAssignmentReceipt(
             request.canonicalAccountUuid(),
             request.selectedCharacterUuid(),
@@ -193,10 +213,83 @@ class CanonicalGameplayRosterSelectedAssignmentServiceTest {
         .hasMessage("SELECTED_PRESEEDED_ASSIGNMENT_UNAVAILABLE");
   }
 
+  @Test
+  void changedSnapshotOrActorAbsentFromItFailsBeforeReceiptRead() {
+    CanonicalGameplayRosterOwnerEvidencePort ownerPort =
+        mock(CanonicalGameplayRosterOwnerEvidencePort.class);
+    CharacterRepository repository = mock(CharacterRepository.class);
+    CanonicalGameplayRosterSelectedAssignmentService service =
+        new CanonicalGameplayRosterSelectedAssignmentService(ownerPort, repository);
+    CanonicalGameplayRosterSelectedAssignmentReadRequest request = request(target());
+    CanonicalGameplayRosterReadRequest ownerRequest =
+        new CanonicalGameplayRosterReadRequest(
+            request.requestUuid(),
+            request.canonicalAccountUuid(),
+            request.expectedTarget(),
+            request.playerExecutionContext());
+    when(ownerPort.resolveCurrentTarget(ownerRequest))
+        .thenReturn(evidence(ownerRequest, request.expectedTarget()));
+    when(repository.readCurrentCanonicalGameplayRosterSnapshot(
+            request.canonicalAccountUuid(), request.expectedTarget(), request.expectedSnapshot()))
+        .thenReturn(
+            new CanonicalGameplayRosterSnapshot(
+                request.canonicalAccountUuid(),
+                request.expectedSnapshot().snapshotUuid(),
+                request.expectedSnapshot().snapshotDigest(),
+                request.expectedTarget(),
+                java.util.List.of(new CanonicalGameplayRosterActor(UUID.randomUUID(), "Other"))));
+
+    assertThatThrownBy(() -> service.read(request))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessage("SELECTED_PRESEEDED_ASSIGNMENT_NOT_IN_EXPECTED_SNAPSHOT");
+    verify(repository, never())
+        .readSelectedPreseededActorAssignmentReceipt(
+            request.canonicalAccountUuid(),
+            request.selectedCharacterUuid(),
+            assignmentTarget(request.expectedTarget()),
+            request.expectedTarget().publishedOwnerProofDigest());
+  }
+
   private static CanonicalGameplayRosterSelectedAssignmentReadRequest request(
       CanonicalGameplayRosterTarget target) {
+    UUID requestUuid = UUID.randomUUID();
+    UUID accountUuid = UUID.randomUUID();
+    UUID selectedUuid = UUID.randomUUID();
     return new CanonicalGameplayRosterSelectedAssignmentReadRequest(
-        UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID(), target);
+        requestUuid,
+        accountUuid,
+        selectedUuid,
+        target,
+        new CanonicalGameplayRosterSnapshotReference(UUID.randomUUID(), "a".repeat(64)),
+        executionContext(target, requestUuid, accountUuid, selectedUuid));
+  }
+
+  private static CanonicalGameplayRosterExecutionContext executionContext(
+      CanonicalGameplayRosterTarget target,
+      UUID requestUuid,
+      UUID accountUuid,
+      UUID characterUuid) {
+    return new CanonicalGameplayRosterExecutionContext(
+        accountUuid,
+        target.tenantUuid(),
+        target.playableStateNamespaceId(),
+        target.gameInstanceUuid(),
+        characterUuid,
+        UUID.randomUUID(),
+        target.realmUuid(),
+        requestUuid,
+        target.playableStateScope());
+  }
+
+  private static CanonicalGameplayRosterSnapshot snapshot(
+      CanonicalGameplayRosterSelectedAssignmentReadRequest request) {
+    return new CanonicalGameplayRosterSnapshot(
+        request.canonicalAccountUuid(),
+        request.expectedSnapshot().snapshotUuid(),
+        request.expectedSnapshot().snapshotDigest(),
+        request.expectedTarget(),
+        java.util.List.of(
+            new CanonicalGameplayRosterActor(request.selectedCharacterUuid(), "Selected Actor")));
   }
 
   private static void assertOwnerMismatchBeforeRepository(
@@ -211,7 +304,10 @@ class CanonicalGameplayRosterSelectedAssignmentServiceTest {
         new CanonicalGameplayRosterSelectedAssignmentService(ownerPort, repository);
     CanonicalGameplayRosterReadRequest ownerRequest =
         new CanonicalGameplayRosterReadRequest(
-            request.requestUuid(), request.canonicalAccountUuid(), request.expectedTarget());
+            request.requestUuid(),
+            request.canonicalAccountUuid(),
+            request.expectedTarget(),
+            request.playerExecutionContext());
     when(ownerPort.resolveCurrentTarget(ownerRequest)).thenReturn(evidence);
 
     assertThatThrownBy(() -> service.read(request))

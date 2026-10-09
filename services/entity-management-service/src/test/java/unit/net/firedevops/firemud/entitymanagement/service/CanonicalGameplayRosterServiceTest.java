@@ -13,6 +13,7 @@ import java.util.UUID;
 import net.firedevops.firemud.entitymanagement.repository.CharacterRepository;
 import net.firedevops.firemud.entitymanagement.v1.PlayableStateScope;
 import org.junit.jupiter.api.Test;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 class CanonicalGameplayRosterServiceTest {
   @Test
@@ -196,8 +197,52 @@ class CanonicalGameplayRosterServiceTest {
     verifyNoInteractions(repository);
   }
 
+  @Test
+  void ownerReadCannotRunInsideAmbientTransactionOrSynchronization() {
+    CanonicalGameplayRosterOwnerEvidencePort ownerPort =
+        mock(CanonicalGameplayRosterOwnerEvidencePort.class);
+    CharacterRepository repository = mock(CharacterRepository.class);
+    CanonicalGameplayRosterService service =
+        new CanonicalGameplayRosterService(ownerPort, repository);
+    CanonicalGameplayRosterReadRequest request = request(target());
+
+    TransactionSynchronizationManager.setActualTransactionActive(true);
+    try {
+      assertThatThrownBy(() -> service.read(request))
+          .isInstanceOf(IllegalStateException.class)
+          .hasMessage("CANONICAL_GAMEPLAY_ROSTER_OWNER_READ_REQUIRES_NO_AMBIENT_TRANSACTION");
+    } finally {
+      TransactionSynchronizationManager.clear();
+    }
+
+    TransactionSynchronizationManager.initSynchronization();
+    try {
+      assertThatThrownBy(() -> service.read(request))
+          .isInstanceOf(IllegalStateException.class)
+          .hasMessage("CANONICAL_GAMEPLAY_ROSTER_OWNER_READ_REQUIRES_NO_AMBIENT_TRANSACTION");
+    } finally {
+      TransactionSynchronizationManager.clear();
+    }
+    verifyNoInteractions(ownerPort, repository);
+  }
+
   private static CanonicalGameplayRosterReadRequest request(CanonicalGameplayRosterTarget target) {
-    return new CanonicalGameplayRosterReadRequest(UUID.randomUUID(), UUID.randomUUID(), target);
+    UUID requestUuid = UUID.randomUUID();
+    UUID accountUuid = UUID.randomUUID();
+    return new CanonicalGameplayRosterReadRequest(
+        requestUuid,
+        accountUuid,
+        target,
+        new CanonicalGameplayRosterExecutionContext(
+            accountUuid,
+            target.tenantUuid(),
+            target.playableStateNamespaceId(),
+            target.gameInstanceUuid(),
+            null,
+            UUID.randomUUID(),
+            target.realmUuid(),
+            requestUuid,
+            target.playableStateScope()));
   }
 
   private static CanonicalGameplayRosterOwnerEvidence evidence(

@@ -19,13 +19,16 @@ public final class CanonicalGameplayRosterSelectedAssignmentService {
 
   public CanonicalGameplayRosterSelectedAssignmentReference read(
       CanonicalGameplayRosterSelectedAssignmentReadRequest request) {
-    requireNoAmbientTransaction();
     Objects.requireNonNull(request, "request");
+    requireNoAmbientTransaction();
     requireSupportedTarget(request.expectedTarget());
 
     CanonicalGameplayRosterReadRequest ownerRequest =
         new CanonicalGameplayRosterReadRequest(
-            request.requestUuid(), request.canonicalAccountUuid(), request.expectedTarget());
+            request.requestUuid(),
+            request.canonicalAccountUuid(),
+            request.expectedTarget(),
+            request.playerExecutionContext());
     CanonicalGameplayRosterOwnerEvidence evidence =
         ownerEvidencePort.resolveCurrentTarget(ownerRequest);
     if (evidence == null) {
@@ -36,6 +39,17 @@ public final class CanonicalGameplayRosterSelectedAssignmentService {
         || !request.canonicalAccountUuid().equals(evidence.canonicalAccountUuid())
         || !request.expectedTarget().equals(evidence.target())) {
       throw new IllegalStateException("SELECTED_PRESEEDED_ASSIGNMENT_OWNER_TARGET_MISMATCH");
+    }
+
+    var snapshot =
+        characterRepository.readCurrentCanonicalGameplayRosterSnapshot(
+            request.canonicalAccountUuid(), request.expectedTarget(), request.expectedSnapshot());
+    long selectedOccurrences =
+        snapshot.actors().stream()
+            .filter(actor -> request.selectedCharacterUuid().equals(actor.characterUuid()))
+            .count();
+    if (selectedOccurrences != 1L) {
+      throw new IllegalStateException("SELECTED_PRESEEDED_ASSIGNMENT_NOT_IN_EXPECTED_SNAPSHOT");
     }
 
     PreseededActorAssignmentExpectedTarget expectedAssignmentTarget =
@@ -65,6 +79,7 @@ public final class CanonicalGameplayRosterSelectedAssignmentService {
         request.canonicalAccountUuid(),
         request.selectedCharacterUuid(),
         request.expectedTarget(),
+        request.expectedSnapshot(),
         receipt.assignmentUuid(),
         receipt.intentDigest());
   }

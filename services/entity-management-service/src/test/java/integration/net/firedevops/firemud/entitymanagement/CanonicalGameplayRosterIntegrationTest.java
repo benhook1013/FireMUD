@@ -14,9 +14,11 @@ import net.firedevops.firemud.common.account.RuntimeAccountIdentityEvidence;
 import net.firedevops.firemud.entitymanagement.repository.CharacterRepository;
 import net.firedevops.firemud.entitymanagement.service.CanonicalGameplayRosterActor;
 import net.firedevops.firemud.entitymanagement.service.CanonicalGameplayRosterEntryPolicy;
+import net.firedevops.firemud.entitymanagement.service.CanonicalGameplayRosterExecutionContext;
 import net.firedevops.firemud.entitymanagement.service.CanonicalGameplayRosterOwnerEvidence;
 import net.firedevops.firemud.entitymanagement.service.CanonicalGameplayRosterReadRequest;
 import net.firedevops.firemud.entitymanagement.service.CanonicalGameplayRosterSnapshot;
+import net.firedevops.firemud.entitymanagement.service.CanonicalGameplayRosterSnapshotReference;
 import net.firedevops.firemud.entitymanagement.service.CanonicalGameplayRosterTarget;
 import net.firedevops.firemud.entitymanagement.service.PreseededActorAssignmentExpectedTarget;
 import net.firedevops.firemud.entitymanagement.service.PreseededActorAssignmentOwnerEvidence;
@@ -125,6 +127,21 @@ class CanonicalGameplayRosterIntegrationTest {
     CanonicalGameplayRosterSnapshot identical = readRoster(accountUuid, exactTarget);
     assertThat(identical.snapshotUuid()).isEqualTo(first.snapshotUuid());
     assertThat(identical.snapshotDigest()).isEqualTo(first.snapshotDigest());
+    CanonicalGameplayRosterSnapshotReference expectedReference =
+        new CanonicalGameplayRosterSnapshotReference(first.snapshotUuid(), first.snapshotDigest());
+    assertThat(
+            characterRepository.readCurrentCanonicalGameplayRosterSnapshot(
+                accountUuid, exactTarget, expectedReference))
+        .isEqualTo(first);
+    assertThatThrownBy(
+            () ->
+                characterRepository.readCurrentCanonicalGameplayRosterSnapshot(
+                    accountUuid,
+                    exactTarget,
+                    new CanonicalGameplayRosterSnapshotReference(
+                        UUID.randomUUID(), first.snapshotDigest())))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessage("CANONICAL_GAMEPLAY_ROSTER_SNAPSHOT_READBACK_UNAVAILABLE");
     assertThat(
             jdbcTemplate.queryForObject(
                 "SELECT canonical_version_uuid FROM entity_canonical_gameplay_roster_snapshots "
@@ -185,6 +202,12 @@ class CanonicalGameplayRosterIntegrationTest {
     assertThat(changedRoster.snapshotDigest()).isNotEqualTo(first.snapshotDigest());
     assertThat(changedRoster.actors())
         .containsExactly(new CanonicalGameplayRosterActor(actor, "After Rename"));
+    assertThatThrownBy(
+            () ->
+                characterRepository.readCurrentCanonicalGameplayRosterSnapshot(
+                    accountUuid, exactTarget, expectedReference))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessage("CANONICAL_GAMEPLAY_ROSTER_SNAPSHOT_STALE");
 
     CanonicalGameplayRosterTarget changedRuntimeFence = target(namespaceUuid, UUID.randomUUID());
     CanonicalGameplayRosterSnapshot changedTarget = readRoster(accountUuid, changedRuntimeFence);
@@ -266,8 +289,22 @@ class CanonicalGameplayRosterIntegrationTest {
 
   private CanonicalGameplayRosterSnapshot readRoster(
       UUID canonicalAccountUuid, CanonicalGameplayRosterTarget target) {
+    UUID requestUuid = UUID.randomUUID();
     CanonicalGameplayRosterReadRequest request =
-        new CanonicalGameplayRosterReadRequest(UUID.randomUUID(), canonicalAccountUuid, target);
+        new CanonicalGameplayRosterReadRequest(
+            requestUuid,
+            canonicalAccountUuid,
+            target,
+            new CanonicalGameplayRosterExecutionContext(
+                canonicalAccountUuid,
+                target.tenantUuid(),
+                target.playableStateNamespaceId(),
+                target.gameInstanceUuid(),
+                null,
+                UUID.randomUUID(),
+                target.realmUuid(),
+                requestUuid,
+                target.playableStateScope()));
     return characterRepository.captureCanonicalGameplayRosterSnapshot(
         request,
         new CanonicalGameplayRosterOwnerEvidence(

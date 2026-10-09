@@ -9,6 +9,7 @@ public record CanonicalGameplayRosterSelectedAssignmentReference(
     UUID canonicalAccountUuid,
     UUID selectedCharacterUuid,
     CanonicalGameplayRosterTarget target,
+    CanonicalGameplayRosterSnapshotReference snapshot,
     UUID assignmentUuid,
     String intentDigest) {
   private static final UUID NIL_UUID = new UUID(0L, 0L);
@@ -18,6 +19,7 @@ public record CanonicalGameplayRosterSelectedAssignmentReference(
     requireNonNil(canonicalAccountUuid, "canonicalAccountUuid");
     requireNonNil(selectedCharacterUuid, "selectedCharacterUuid");
     Objects.requireNonNull(target, "target");
+    Objects.requireNonNull(snapshot, "snapshot");
     requireNonNil(assignmentUuid, "assignmentUuid");
     if (intentDigest == null || !intentDigest.matches("[0-9a-f]{64}")) {
       throw new IllegalArgumentException("intentDigest must be lowercase SHA-256 hex");

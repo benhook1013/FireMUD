@@ -19,6 +19,7 @@ import net.firedevops.firemud.common.world.GameSessionCanonicalInitialAdmissionO
 import net.firedevops.firemud.common.world.WorldCanonicalInitialAdmissionHold;
 import net.firedevops.firemud.entitymanagement.client.GameSessionCanonicalGameplayRosterOwnerReadClient;
 import net.firedevops.firemud.entitymanagement.service.CanonicalGameplayRosterEntryPolicy;
+import net.firedevops.firemud.entitymanagement.service.CanonicalGameplayRosterExecutionContext;
 import net.firedevops.firemud.entitymanagement.service.CanonicalGameplayRosterOwnerEvidence;
 import net.firedevops.firemud.entitymanagement.service.CanonicalGameplayRosterOwnerEvidencePort;
 import net.firedevops.firemud.entitymanagement.service.CanonicalGameplayRosterReadRequest;
@@ -290,9 +291,7 @@ class GameSessionCanonicalGameplayRosterOwnerEvidenceAdapterTest {
   }
 
   private static CanonicalGameplayRosterReadRequest entityRequest() {
-    return new CanonicalGameplayRosterReadRequest(
-        REQUEST_ID,
-        ACCOUNT_ID,
+    CanonicalGameplayRosterTarget target =
         new CanonicalGameplayRosterTarget(
             TENANT_ID,
             REALM_ID,
@@ -309,7 +308,21 @@ class GameSessionCanonicalGameplayRosterOwnerEvidenceAdapterTest {
             "7".repeat(64),
             NAMESPACE_ID,
             PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED,
-            CanonicalGameplayRosterEntryPolicy.PRESEEDED_ONLY));
+            CanonicalGameplayRosterEntryPolicy.PRESEEDED_ONLY);
+    return new CanonicalGameplayRosterReadRequest(
+        REQUEST_ID,
+        ACCOUNT_ID,
+        target,
+        new CanonicalGameplayRosterExecutionContext(
+            ACCOUNT_ID,
+            TENANT_ID,
+            NAMESPACE_ID,
+            INSTANCE_ID,
+            null,
+            UUID.randomUUID(),
+            REALM_ID,
+            REQUEST_ID,
+            PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED));
   }
 
   private static UUID uuid(String value) {

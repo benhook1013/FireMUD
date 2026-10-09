@@ -25,6 +25,7 @@ import net.firedevops.firemud.entitymanagement.service.CanonicalGameplayRosterOw
 import net.firedevops.firemud.entitymanagement.service.CanonicalGameplayRosterReadRequest;
 import net.firedevops.firemud.entitymanagement.service.CanonicalGameplayRosterSnapshot;
 import net.firedevops.firemud.entitymanagement.service.CanonicalGameplayRosterSnapshotDigest;
+import net.firedevops.firemud.entitymanagement.service.CanonicalGameplayRosterSnapshotReference;
 import net.firedevops.firemud.entitymanagement.service.CanonicalGameplayRosterTarget;
 import net.firedevops.firemud.entitymanagement.service.PreseededActorAssignmentExpectedTarget;
 import net.firedevops.firemud.entitymanagement.service.PreseededActorAssignmentOwnerEvidence;
@@ -33,6 +34,7 @@ import net.firedevops.firemud.entitymanagement.service.PreseededActorAssignmentR
 import net.firedevops.firemud.entitymanagement.service.PreseededActorAssignmentRequest;
 import net.firedevops.firemud.entitymanagement.service.PreseededActorAssignmentResult;
 import net.firedevops.firemud.entitymanagement.service.PreseededActorAssignmentResult.Outcome;
+import org.jooq.Condition;
 import org.jooq.DSLContext;
 import org.jooq.Field;
 import org.jooq.Record;
@@ -1012,7 +1014,57 @@ public class CharacterRepository {
     }
 
     return readBackCanonicalGameplayRosterSnapshot(
-        request.canonicalAccountUuid(), target, currentActors, digest);
+        request.canonicalAccountUuid(), target, currentActors, digest, null);
+  }
+
+  /**
+   * Reads back a previously sealed snapshot only when it still exactly describes the current
+   * owner-resolved roster. This never captures or creates a snapshot.
+   */
+  @Transactional
+  public CanonicalGameplayRosterSnapshot readCurrentCanonicalGameplayRosterSnapshot(
+      UUID canonicalAccountUuid,
+      CanonicalGameplayRosterTarget expectedTarget,
+      CanonicalGameplayRosterSnapshotReference expectedSnapshot) {
+    Objects.requireNonNull(canonicalAccountUuid, "canonicalAccountUuid");
+    Objects.requireNonNull(expectedTarget, "expectedTarget");
+    Objects.requireNonNull(expectedSnapshot, "expectedSnapshot");
+    if (expectedTarget.entryPolicy()
+        != net.firedevops.firemud.entitymanagement.service.CanonicalGameplayRosterEntryPolicy
+            .PRESEEDED_ONLY) {
+      throw new IllegalArgumentException("PRESEEDED_ONLY target is required");
+    }
+
+    String enrolledScope =
+        dsl.select(ENTITY_PLAYABLE_STATE_NAMESPACE_SCOPES.PLAYABLE_STATE_SCOPE)
+            .from(ENTITY_PLAYABLE_STATE_NAMESPACE_SCOPES)
+            .where(
+                ENTITY_PLAYABLE_STATE_NAMESPACE_SCOPES
+                    .TENANT_UUID
+                    .eq(expectedTarget.tenantUuid())
+                    .and(
+                        ENTITY_PLAYABLE_STATE_NAMESPACE_SCOPES.PLAYABLE_STATE_NAMESPACE_ID.eq(
+                            expectedTarget.playableStateNamespaceId())))
+            .forShare()
+            .fetchOne(ENTITY_PLAYABLE_STATE_NAMESPACE_SCOPES.PLAYABLE_STATE_SCOPE);
+    if (!expectedTarget.playableStateScope().name().equals(enrolledScope)) {
+      throw new IllegalStateException("CANONICAL_GAMEPLAY_ROSTER_NAMESPACE_SCOPE_MISMATCH");
+    }
+
+    List<CanonicalGameplayRosterActor> currentActors =
+        readCurrentCanonicalRoster(canonicalAccountUuid, expectedTarget);
+    String currentDigest =
+        CanonicalGameplayRosterSnapshotDigest.compute(
+            canonicalAccountUuid, expectedTarget, currentActors);
+    if (!expectedSnapshot.snapshotDigest().equals(currentDigest)) {
+      throw new IllegalStateException("CANONICAL_GAMEPLAY_ROSTER_SNAPSHOT_STALE");
+    }
+    return readBackCanonicalGameplayRosterSnapshot(
+        canonicalAccountUuid,
+        expectedTarget,
+        currentActors,
+        currentDigest,
+        expectedSnapshot.snapshotUuid());
   }
 
   private void lockCanonicalRosterNamespace(CanonicalGameplayRosterTarget target) {
@@ -1080,7 +1132,12 @@ public class CharacterRepository {
       UUID canonicalAccountUuid,
       CanonicalGameplayRosterTarget expectedTarget,
       List<CanonicalGameplayRosterActor> expectedActors,
-      String expectedDigest) {
+      String expectedDigest,
+      UUID expectedSnapshotUuid) {
+    Condition snapshotCondition = ROSTER_SNAPSHOT_DIGEST.eq(expectedDigest);
+    if (expectedSnapshotUuid != null) {
+      snapshotCondition = snapshotCondition.and(ROSTER_SNAPSHOT_UUID.eq(expectedSnapshotUuid));
+    }
     Record stored =
         dsl.select(
                 ROSTER_SNAPSHOT_UUID,
@@ -1106,8 +1163,8 @@ public class CharacterRepository {
                 ROSTER_COUNT,
                 ROSTER_CONSTRUCTION_STATE)
             .from(ROSTER_SNAPSHOTS)
-            .where(ROSTER_SNAPSHOT_DIGEST.eq(expectedDigest))
-            .forUpdate()
+            .where(snapshotCondition)
+            .forShare()
             .fetchOne();
     if (stored == null
         || !"SEALED".equals(stored.get(ROSTER_CONSTRUCTION_STATE))
@@ -1157,6 +1214,7 @@ public class CharacterRepository {
     Short storedCount = stored.get(ROSTER_COUNT);
     UUID storedSnapshotUuid = stored.get(ROSTER_SNAPSHOT_UUID);
     if (storedSnapshotUuid == null
+        || (expectedSnapshotUuid != null && !expectedSnapshotUuid.equals(storedSnapshotUuid))
         || !expectedDigest.equals(stored.get(ROSTER_SNAPSHOT_DIGEST))
         || !canonicalAccountUuid.equals(stored.get(ROSTER_ACCOUNT_UUID))
         || storedCount == null
