@@ -54,6 +54,7 @@ import net.firedevops.firemud.accountservice.mapper.ProfileMapper;
 import net.firedevops.firemud.accountservice.repository.AccountAuditOutboxRepository;
 import net.firedevops.firemud.accountservice.repository.AccountAuthorityGenerationRepository;
 import net.firedevops.firemud.accountservice.repository.AccountAuthorityOutboxRepository;
+import net.firedevops.firemud.accountservice.repository.AccountAuthoritySourceEvidenceRepository;
 import net.firedevops.firemud.accountservice.repository.AccountConnectScopeRepository;
 import net.firedevops.firemud.accountservice.repository.AccountEmailLoginChallengeRepository;
 import net.firedevops.firemud.accountservice.repository.AccountJoinOperationRepository;
@@ -104,6 +105,7 @@ class AccountServiceImplTest {
       "a741a4b8-a2cb-405e-a330-8fbf3dfb841f";
   @Mock private AccountRepository accountRepository;
   @Mock private AccountAuthorityGenerationRepository accountAuthorityGenerationRepository;
+  @Mock private AccountAuthoritySourceEvidenceRepository accountAuthoritySourceEvidenceRepository;
   @Mock private AccountAuthorityOutboxRepository accountAuthorityOutboxRepository;
   @Mock private AccountPasswordResetOperationRepository accountPasswordResetOperationRepository;
   @Mock private AccountLogoutAllOperationRepository accountLogoutAllOperationRepository;
@@ -224,6 +226,7 @@ class AccountServiceImplTest {
         new AccountServiceImpl(
             accountRepository,
             accountAuthorityGenerationRepository,
+            accountAuthoritySourceEvidenceRepository,
             accountAuthorityOutboxRepository,
             accountPasswordResetOperationRepository,
             accountLogoutAllOperationRepository,
@@ -2219,6 +2222,7 @@ class AccountServiceImplTest {
         new AccountServiceImpl(
             accountRepository,
             accountAuthorityGenerationRepository,
+            accountAuthoritySourceEvidenceRepository,
             accountAuthorityOutboxRepository,
             accountPasswordResetOperationRepository,
             accountLogoutAllOperationRepository,
@@ -5759,6 +5763,167 @@ class AccountServiceImplTest {
     org.mockito.Mockito.verify(passwordResetTokenRepository, org.mockito.Mockito.never())
         .consumeIfUnexpired(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any());
     org.mockito.Mockito.verify(accountRepository, org.mockito.Mockito.never()).save(account);
+    org.mockito.Mockito.verify(accountRepository, org.mockito.Mockito.never())
+        .updatePasswordHashForLockedAccount(
+            org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.anyString());
+  }
+
+  @Test
+  void passwordResetIssuanceFenceOverflowStopsBeforeTokenPasswordOrEventMutation() {
+    UUID accountUuid = UUID.randomUUID();
+    var account = new Account();
+    account.setId(2L);
+    account.setAccountUuid(accountUuid);
+    account.setAccountUuidProvenance(AccountIdentityProvenance.ACCOUNT_REPOSITORY_INSERT);
+    account.setAccountUuidSourceNumericId(2L);
+    account.setPasswordHash("original-password-hash");
+    var token = new net.firedevops.firemud.accountservice.entity.PasswordResetToken();
+    token.setId(7L);
+    token.setAccount(account);
+    token.setToken("overflow-reset-token");
+    token.setExpiresAt(java.time.LocalDateTime.now().plusMinutes(10));
+    when(passwordResetTokenRepository.findByToken(token.getToken())).thenReturn(Optional.of(token));
+    when(accountRepository.findByIdForUpdate(account.getId())).thenReturn(Optional.of(account));
+    when(accountPasswordResetOperationRepository.findByTokenHash(
+            org.mockito.ArgumentMatchers.anyString()))
+        .thenReturn(Optional.empty());
+    when(accountPasswordResetDraftSourceChangeRepository.findAccountIdByTokenHash(
+            org.mockito.ArgumentMatchers.anyString()))
+        .thenReturn(Optional.empty());
+    var accountScope =
+        net.firedevops.firemud.accountservice.repository.AccountAuthorityGenerationRepository
+            .AuthorityScope.account(accountUuid);
+    when(accountAuthorityGenerationRepository.read(accountScope))
+        .thenReturn(
+            new net.firedevops.firemud.accountservice.repository
+                .AccountAuthorityGenerationRepository.ScopeState(
+                accountScope,
+                1L,
+                1L,
+                new net.firedevops.firemud.accountservice.repository
+                    .AccountAuthorityGenerationRepository.IssuanceFence(
+                    accountUuid, Long.MAX_VALUE, 1L)));
+    when(accountAuthorityOutboxRepository.readCheckpoint(org.mockito.ArgumentMatchers.anyString()))
+        .thenReturn(Optional.empty());
+
+    org.jooq.DSLContext dsl = org.mockito.Mockito.mock(org.jooq.DSLContext.class);
+    var sourceChanges = new AccountPasswordResetDraftSourceChangeRepository(dsl);
+    when(accountPasswordResetDraftSourceChangeRepository.participate(
+            org.mockito.ArgumentMatchers.any(),
+            org.mockito.ArgumentMatchers.anyLong(),
+            org.mockito.ArgumentMatchers.anyString(),
+            org.mockito.ArgumentMatchers.any(),
+            org.mockito.ArgumentMatchers.anyString(),
+            org.mockito.ArgumentMatchers.anyString(),
+            org.mockito.ArgumentMatchers.any(),
+            org.mockito.ArgumentMatchers.any()))
+        .thenAnswer(
+            invocation ->
+                sourceChanges.participate(
+                    invocation.getArgument(0),
+                    invocation.getArgument(1),
+                    invocation.getArgument(2),
+                    invocation.getArgument(3),
+                    invocation.getArgument(4),
+                    invocation.getArgument(5),
+                    invocation.getArgument(6),
+                    invocation.getArgument(7)));
+
+    org.springframework.transaction.support.TransactionSynchronizationManager
+        .setActualTransactionActive(true);
+    try {
+      assertThrows(
+          ArithmeticException.class,
+          () ->
+              service.completePasswordReset(
+                  new net.firedevops.firemud.accountservice.dto.CompletePasswordResetRequest(
+                      token.getToken(), "overflow-password")));
+    } finally {
+      org.springframework.transaction.support.TransactionSynchronizationManager.clear();
+    }
+
+    org.mockito.Mockito.verify(passwordResetTokenRepository, org.mockito.Mockito.never())
+        .consumeIfUnexpired(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any());
+    org.mockito.Mockito.verify(passwordResetTokenRepository, org.mockito.Mockito.never())
+        .deleteExactAfterSourceAbort(
+            org.mockito.ArgumentMatchers.anyLong(),
+            org.mockito.ArgumentMatchers.anyLong(),
+            org.mockito.ArgumentMatchers.anyString(),
+            org.mockito.ArgumentMatchers.any());
+    org.mockito.Mockito.verify(accountRepository, org.mockito.Mockito.never())
+        .updatePasswordHashForLockedAccount(
+            org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.anyString());
+    org.mockito.Mockito.verify(accountPasswordResetOperationRepository, org.mockito.Mockito.never())
+        .insert(org.mockito.ArgumentMatchers.any());
+    org.mockito.Mockito.verify(accountAuthorityOutboxRepository, org.mockito.Mockito.never())
+        .append(
+            org.mockito.ArgumentMatchers.anyString(),
+            org.mockito.ArgumentMatchers.anyString(),
+            org.mockito.ArgumentMatchers.anyString(),
+            org.mockito.ArgumentMatchers.anyString(),
+            org.mockito.ArgumentMatchers.any(byte[].class));
+    org.mockito.Mockito.verify(dsl, org.mockito.Mockito.never())
+        .execute(
+            org.mockito.ArgumentMatchers.anyString(),
+            org.mockito.ArgumentMatchers.any(Object[].class));
+  }
+
+  @Test
+  void abortedPasswordResetRetryReturnsInvalidTokenWithoutReplayingMutation() {
+    UUID accountUuid = UUID.randomUUID();
+    var account = new Account();
+    account.setId(2L);
+    account.setAccountUuid(accountUuid);
+    account.setAccountUuidProvenance(AccountIdentityProvenance.ACCOUNT_REPOSITORY_INSERT);
+    account.setAccountUuidSourceNumericId(2L);
+    account.setPasswordHash("original-password-hash");
+    var abortedIntent =
+        org.mockito.Mockito.mock(AccountPasswordResetDraftSourceChangeRepository.Intent.class);
+    when(accountPasswordResetOperationRepository.findByTokenHash(
+            org.mockito.ArgumentMatchers.anyString()))
+        .thenReturn(Optional.empty());
+    when(accountPasswordResetDraftSourceChangeRepository.findAccountIdByTokenHash(
+            org.mockito.ArgumentMatchers.anyString()))
+        .thenReturn(Optional.of(account.getId()));
+    when(accountRepository.findByIdForUpdate(account.getId())).thenReturn(Optional.of(account));
+    when(accountPasswordResetDraftSourceChangeRepository.findByTokenHash(
+            org.mockito.ArgumentMatchers.anyString()))
+        .thenReturn(Optional.of(abortedIntent));
+    when(abortedIntent.accountId()).thenReturn(account.getId());
+    when(abortedIntent.accountUuid()).thenReturn(accountUuid);
+    when(abortedIntent.status()).thenReturn("SOURCE_ABORTED");
+
+    IllegalArgumentException error =
+        assertThrows(
+            IllegalArgumentException.class,
+            () ->
+                service.completePasswordReset(
+                    new net.firedevops.firemud.accountservice.dto.CompletePasswordResetRequest(
+                        "aborted-reset-token", "retry-password")));
+
+    assertEquals("Invalid token", error.getMessage());
+    verifyNoInteractions(accountAuthorityGenerationRepository, accountAuthorityOutboxRepository);
+    org.mockito.Mockito.verify(passwordResetTokenRepository, org.mockito.Mockito.never())
+        .findByToken(org.mockito.ArgumentMatchers.anyString());
+    org.mockito.Mockito.verify(passwordResetTokenRepository, org.mockito.Mockito.never())
+        .consumeIfUnexpired(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any());
+    org.mockito.Mockito.verify(passwordResetTokenRepository, org.mockito.Mockito.never())
+        .deleteExactAfterSourceAbort(
+            org.mockito.ArgumentMatchers.anyLong(),
+            org.mockito.ArgumentMatchers.anyLong(),
+            org.mockito.ArgumentMatchers.anyString(),
+            org.mockito.ArgumentMatchers.any());
+    org.mockito.Mockito.verify(
+            accountPasswordResetDraftSourceChangeRepository, org.mockito.Mockito.never())
+        .participate(
+            org.mockito.ArgumentMatchers.any(),
+            org.mockito.ArgumentMatchers.anyLong(),
+            org.mockito.ArgumentMatchers.anyString(),
+            org.mockito.ArgumentMatchers.any(),
+            org.mockito.ArgumentMatchers.anyString(),
+            org.mockito.ArgumentMatchers.anyString(),
+            org.mockito.ArgumentMatchers.any(),
+            org.mockito.ArgumentMatchers.any());
     org.mockito.Mockito.verify(accountRepository, org.mockito.Mockito.never())
         .updatePasswordHashForLockedAccount(
             org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.anyString());

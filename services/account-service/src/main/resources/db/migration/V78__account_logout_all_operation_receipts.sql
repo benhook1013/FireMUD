@@ -87,4 +87,4 @@ $$;
 CREATE TRIGGER account_logout_all_operation_immutable
     BEFORE UPDATE OR DELETE ON account_logout_all_operation_receipts
     FOR EACH ROW EXECUTE FUNCTION account_logout_all_operation_immutable_guard();
--- [jooq ignore end]
+-- [jooq ignore stop]

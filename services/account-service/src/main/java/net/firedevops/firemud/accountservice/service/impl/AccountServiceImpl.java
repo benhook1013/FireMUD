@@ -150,6 +150,7 @@ public class AccountServiceImpl implements AccountService {
 
   private final AccountRepository accountRepository;
   private final AccountAuthorityGenerationRepository accountAuthorityGenerationRepository;
+  private final AccountAuthoritySourceEvidenceRepository accountAuthoritySourceEvidenceRepository;
   private final AccountAuthorityOutboxRepository accountAuthorityOutboxRepository;
   private final AccountPasswordResetOperationRepository passwordResetOperationRepository;
   private final AccountAuthoritySourceEventReadback accountAuthoritySourceEventReadback;
@@ -186,6 +187,7 @@ public class AccountServiceImpl implements AccountService {
   public AccountServiceImpl(
       AccountRepository accountRepository,
       AccountAuthorityGenerationRepository accountAuthorityGenerationRepository,
+      AccountAuthoritySourceEvidenceRepository accountAuthoritySourceEvidenceRepository,
       AccountAuthorityOutboxRepository accountAuthorityOutboxRepository,
       AccountPasswordResetOperationRepository passwordResetOperationRepository,
       AccountLogoutAllOperationRepository logoutAllOperationRepository,
@@ -217,6 +219,7 @@ public class AccountServiceImpl implements AccountService {
       PlatformTransactionManager transactionManager) {
     this.accountRepository = accountRepository;
     this.accountAuthorityGenerationRepository = accountAuthorityGenerationRepository;
+    this.accountAuthoritySourceEvidenceRepository = accountAuthoritySourceEvidenceRepository;
     this.accountAuthorityOutboxRepository = accountAuthorityOutboxRepository;
     this.passwordResetOperationRepository = passwordResetOperationRepository;
     this.accountAuthoritySourceEventReadback =
@@ -2429,6 +2432,9 @@ public class AccountServiceImpl implements AccountService {
             || !originalIntent.accountUuid().equals(account.getAccountUuid()))) {
       throw new IllegalStateException("Password-reset Draft intent Account binding changed");
     }
+    if (originalIntent != null && "SOURCE_ABORTED".equals(originalIntent.status())) {
+      return PasswordResetAttempt.aborted("Invalid token");
+    }
 
     net.firedevops.firemud.accountservice.entity.PasswordResetToken token =
         passwordResetTokenRepository.findByToken(request.token()).orElse(null);
@@ -2510,6 +2516,7 @@ public class AccountServiceImpl implements AccountService {
           intent,
           net.firedevops.firemud.accountservice.authordraft.DraftAuthorizationFenceRepository
               .SourceChangeAbortReason.DEFINITIVE_ABORT);
+      deleteAbortedPasswordResetToken(intent);
       return PasswordResetAttempt.aborted("Invalid token");
     }
     if (token == null
@@ -2520,6 +2527,7 @@ public class AccountServiceImpl implements AccountService {
           intent,
           net.firedevops.firemud.accountservice.authordraft.DraftAuthorizationFenceRepository
               .SourceChangeAbortReason.DEFINITIVE_ABORT);
+      deleteAbortedPasswordResetToken(intent);
       return PasswordResetAttempt.aborted("Invalid token");
     }
     LocalDateTime claimTime = LocalDateTime.now();
@@ -2528,6 +2536,7 @@ public class AccountServiceImpl implements AccountService {
           intent,
           net.firedevops.firemud.accountservice.authordraft.DraftAuthorizationFenceRepository
               .SourceChangeAbortReason.EXPIRED);
+      deleteAbortedPasswordResetToken(intent);
       return PasswordResetAttempt.aborted("Token expired");
     }
     if (!passwordResetTokenRepository.consumeIfUnexpired(token, claimTime)) {
@@ -2535,16 +2544,21 @@ public class AccountServiceImpl implements AccountService {
           intent,
           net.firedevops.firemud.accountservice.authordraft.DraftAuthorizationFenceRepository
               .SourceChangeAbortReason.DEFINITIVE_ABORT);
+      deleteAbortedPasswordResetToken(intent);
       return PasswordResetAttempt.aborted("Invalid token");
     }
+
+    AccountAuthoritySourceEvidenceRepository.CurrentSourceEvidence currentSource =
+        accountAuthoritySourceEvidenceRepository.readCurrentAccountSource(
+            account.getAccountUuid(), currentAuthority);
+    ScopeState advancedAuthority =
+        accountAuthoritySourceEvidenceRepository.prepareClosedAccountAdvance(
+            account.getAccountUuid(), currentSource);
+    requireAdvancedPasswordResetAuthority(accountScope, currentAuthority, advancedAuthority);
 
     Account passwordUpdated =
         accountRepository.updatePasswordHashForLockedAccount(account, newPasswordVerifier);
     requireAccountReadback(account, passwordUpdated, newPasswordVerifier);
-    ScopeState advancedAuthority =
-        accountAuthorityGenerationRepository.advance(
-            currentAuthority, currentAuthority.issuanceFence());
-    requireAdvancedPasswordResetAuthority(accountScope, currentAuthority, advancedAuthority);
 
     Event appended =
         accountAuthorityOutboxRepository.append(
@@ -2589,6 +2603,8 @@ public class AccountServiceImpl implements AccountService {
             advancedAuthority,
             advancedAuthority.issuanceFence());
     passwordResetOperationRepository.insert(receipt);
+    accountAuthoritySourceEvidenceRepository.advanceClosedAccountHead(
+        account.getAccountUuid(), currentAuthority, advancedAuthority, appended);
     passwordResetDraftSourceChanges.markSourceCommitted(intent, appended);
 
     Account finalAccount =
@@ -2909,6 +2925,11 @@ public class AccountServiceImpl implements AccountService {
     } catch (NoSuchAlgorithmException exception) {
       throw new IllegalStateException("SHA-256 is unavailable", exception);
     }
+  }
+
+  private void deleteAbortedPasswordResetToken(Intent intent) {
+    passwordResetTokenRepository.deleteExactAfterSourceAbort(
+        intent.tokenId(), intent.accountId(), intent.tokenHash(), intent.tokenExpiresAt());
   }
 
   private void updateLengthPrefixed(MessageDigest digest, String value) {

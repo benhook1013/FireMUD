@@ -51,7 +51,7 @@ class AccountSourceFoundationV73UpgradePostgresIntegrationTest {
                 "INSERT INTO accounts (username, email, password_hash, role) "
                     + "VALUES (?, ?, ?, 'player') RETURNING id",
                 Long.class,
-                "retained-source-" + suffix,
+                "retained-source-" + suffix.replace("-", ""),
                 suffix + "@example.test",
                 "retained-password-" + suffix));
     UUID accountUuid =
@@ -84,6 +84,28 @@ class AccountSourceFoundationV73UpgradePostgresIntegrationTest {
         .locations("classpath:db/migration")
         .load()
         .migrate();
+
+    assertThat(
+            jdbc.queryForObject(
+                "SELECT version FROM flyway_schema_history WHERE success AND version = '97'",
+                String.class))
+        .isEqualTo("97");
+    for (String relation :
+        new String[] {
+          "account_game_logic_intake_source_read_reservations",
+          "account_game_logic_intake_source_read_sources",
+          "account_game_logic_intake_source_read_aborts"
+        }) {
+      assertThat(jdbc.queryForObject("SELECT to_regclass(?)::TEXT", String.class, relation))
+          .as("forward relation %s", relation)
+          .isNotNull();
+    }
+    assertThat(
+            jdbc.queryForObject(
+                "SELECT to_regprocedure(?)::TEXT",
+                String.class,
+                "account_game_logic_intake_source_read_is_pending(uuid)"))
+        .isNotNull();
 
     assertThat(
             jdbc.queryForObject(

@@ -18,6 +18,8 @@ import net.firedevops.firemud.accountservice.repository.AccountAuthorityOutboxRe
 import net.firedevops.firemud.accountservice.repository.AccountAuthorityOutboxRepository.Checkpoint;
 import net.firedevops.firemud.accountservice.repository.AccountAuthorityOutboxRepository.Event;
 import net.firedevops.firemud.accountservice.repository.AccountAuthorityOutboxRepository.EventEvidence;
+import net.firedevops.firemud.accountservice.repository.AccountAuthoritySourceEvidenceRepository;
+import net.firedevops.firemud.accountservice.repository.AccountAuthoritySourceEvidenceRepository.CurrentSourceEvidence;
 import net.firedevops.firemud.accountservice.repository.AccountLogoutAllOperationRepository;
 import net.firedevops.firemud.accountservice.repository.AccountLogoutAllOperationRepository.LogoutAllReceipt;
 import net.firedevops.firemud.accountservice.repository.AccountRepository;
@@ -46,6 +48,7 @@ public final class AccountLogoutAllAuthorityEventProducer {
 
   private final AccountRepository accountRepository;
   private final AccountAuthorityGenerationRepository generationRepository;
+  private final AccountAuthoritySourceEvidenceRepository sourceEvidence;
   private final AccountAuthorityOutboxRepository outboxRepository;
   private final AccountLogoutAllOperationRepository operationRepository;
   private final AccountAuthoritySourceEventReadback sourceReadback;
@@ -55,6 +58,7 @@ public final class AccountLogoutAllAuthorityEventProducer {
   public AccountLogoutAllAuthorityEventProducer(
       AccountRepository accountRepository,
       AccountAuthorityGenerationRepository generationRepository,
+      AccountAuthoritySourceEvidenceRepository sourceEvidence,
       AccountAuthorityOutboxRepository outboxRepository,
       AccountLogoutAllOperationRepository operationRepository,
       AccountAuthoritySourceEventReadback sourceReadback,
@@ -64,6 +68,8 @@ public final class AccountLogoutAllAuthorityEventProducer {
         Objects.requireNonNull(accountRepository, "Account repository is required");
     this.generationRepository =
         Objects.requireNonNull(generationRepository, "authority-generation repository is required");
+    this.sourceEvidence =
+        Objects.requireNonNull(sourceEvidence, "Account source-evidence repository is required");
     this.outboxRepository =
         Objects.requireNonNull(outboxRepository, "authority outbox repository is required");
     this.operationRepository =
@@ -245,7 +251,10 @@ public final class AccountLogoutAllAuthorityEventProducer {
       throw new IllegalStateException("Settled logout-all source change is not permitted");
     }
 
-    ScopeState advanced = generationRepository.advance(current, current.issuanceFence());
+    CurrentSourceEvidence currentSource =
+        sourceEvidence.readCurrentAccountSource(account.getAccountUuid(), current);
+    ScopeState advanced =
+        sourceEvidence.prepareClosedAccountAdvance(account.getAccountUuid(), currentSource);
     requireAdvancedState(current, advanced, nextGeneration, nextSourceVersion, nextIssuanceFence);
 
     Event appended =
@@ -292,6 +301,7 @@ public final class AccountLogoutAllAuthorityEventProducer {
             advanced,
             advanced.issuanceFence());
     operationRepository.insert(receipt);
+    sourceEvidence.advanceClosedAccountHead(account.getAccountUuid(), current, advanced, appended);
 
     Event requestReadback =
         outboxRepository

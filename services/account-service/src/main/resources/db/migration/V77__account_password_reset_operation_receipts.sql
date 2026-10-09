@@ -88,4 +88,4 @@ $$;
 CREATE TRIGGER account_password_reset_operation_immutable
     BEFORE UPDATE OR DELETE ON account_password_reset_operation_receipts
     FOR EACH ROW EXECUTE FUNCTION account_password_reset_operation_immutable_guard();
--- [jooq ignore end]
+-- [jooq ignore stop]

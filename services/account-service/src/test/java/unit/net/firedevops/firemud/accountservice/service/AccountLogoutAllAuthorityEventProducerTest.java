@@ -11,6 +11,7 @@ import net.firedevops.firemud.accountservice.entity.Account;
 import net.firedevops.firemud.accountservice.entity.AccountIdentityProvenance;
 import net.firedevops.firemud.accountservice.repository.AccountAuthorityGenerationRepository;
 import net.firedevops.firemud.accountservice.repository.AccountAuthorityOutboxRepository;
+import net.firedevops.firemud.accountservice.repository.AccountAuthoritySourceEvidenceRepository;
 import net.firedevops.firemud.accountservice.repository.AccountLogoutAllOperationRepository;
 import net.firedevops.firemud.accountservice.repository.AccountPasswordResetOperationRepository;
 import net.firedevops.firemud.accountservice.repository.AccountRepository;
@@ -188,6 +189,7 @@ class AccountLogoutAllAuthorityEventProducerTest {
     return new AccountLogoutAllAuthorityEventProducer(
         collaborators.accountRepository(),
         collaborators.generationRepository(),
+        collaborators.sourceEvidence(),
         collaborators.outboxRepository(),
         collaborators.logoutAllRepository(),
         readback,
@@ -207,6 +209,7 @@ class AccountLogoutAllAuthorityEventProducerTest {
   private record Collaborators(
       AccountRepository accountRepository,
       AccountAuthorityGenerationRepository generationRepository,
+      AccountAuthoritySourceEvidenceRepository sourceEvidence,
       AccountAuthorityOutboxRepository outboxRepository,
       AccountPasswordResetOperationRepository passwordResetRepository,
       AccountLogoutAllOperationRepository logoutAllRepository,
@@ -217,6 +220,7 @@ class AccountLogoutAllAuthorityEventProducerTest {
       this(
           mock(AccountRepository.class),
           mock(AccountAuthorityGenerationRepository.class),
+          mock(AccountAuthoritySourceEvidenceRepository.class),
           mock(AccountAuthorityOutboxRepository.class),
           mock(AccountPasswordResetOperationRepository.class),
           mock(AccountLogoutAllOperationRepository.class),
@@ -229,6 +233,7 @@ class AccountLogoutAllAuthorityEventProducerTest {
       verifyNoInteractions(
           accountRepository,
           generationRepository,
+          sourceEvidence,
           outboxRepository,
           passwordResetRepository,
           logoutAllRepository,

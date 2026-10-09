@@ -61,25 +61,25 @@ class AccountSourceCurrentnessForwardMigrationsPostgresIntegrationTest {
   }
 
   @Test
-  void freshInstallAppliesEveryForwardMigrationThroughV89() {
+  void freshInstallAppliesEveryForwardMigrationThroughV97() {
     TestContext context = context(null);
 
     assertThat(
             context
                 .dsl()
                 .resultQuery(
-                    "SELECT version FROM flyway_schema_history WHERE success "
-                        + "ORDER BY installed_rank DESC LIMIT 1")
+                    "SELECT version FROM flyway_schema_history "
+                        + "WHERE success AND version = '97'")
                 .fetchOne(0, String.class))
-        .isEqualTo("89");
+        .isEqualTo("97");
     assertThat(
             context
                 .dsl()
                 .resultQuery(
                     "SELECT count(*) FROM flyway_schema_history "
-                        + "WHERE version BETWEEN '74' AND '89' AND success")
+                        + "WHERE version::numeric BETWEEN 74 AND 97 AND success")
                 .fetchOne(0, Long.class))
-        .isEqualTo(16L);
+        .isEqualTo(24L);
 
     for (String relation :
         new String[] {
@@ -98,7 +98,10 @@ class AccountSourceCurrentnessForwardMigrationsPostgresIntegrationTest {
           "account_hosted_terms_catalog_versions",
           "account_hosted_terms_environment_binding_heads",
           "account_logout_all_draft_source_changes",
-          "account_password_reset_draft_source_changes"
+          "account_password_reset_draft_source_changes",
+          "account_game_logic_intake_source_read_reservations",
+          "account_game_logic_intake_source_read_sources",
+          "account_game_logic_intake_source_read_aborts"
         }) {
       assertThat(
               context
@@ -114,7 +117,11 @@ class AccountSourceCurrentnessForwardMigrationsPostgresIntegrationTest {
           "account_draft_authorization_is_settled(uuid)",
           "account_creator_party_initial_receipt_guard()",
           "account_hosted_terms_acceptance_insert_guard()",
-          "account_password_reset_draft_link_guard()"
+          "account_password_reset_draft_link_guard()",
+          "account_game_logic_intake_source_read_is_pending(uuid)",
+          "account_game_logic_intake_source_read_complete_guard()",
+          "account_game_logic_intake_source_read_source_guard()",
+          "account_game_logic_intake_source_read_terminal_guard()"
         }) {
       assertThat(
               context
@@ -590,7 +597,7 @@ class AccountSourceCurrentnessForwardMigrationsPostgresIntegrationTest {
   private static Account account(String role) {
     String suffix = UUID.randomUUID().toString();
     Account account = new Account();
-    account.setUsername("forward-source-" + suffix);
+    account.setUsername("forward-source-" + suffix.replace("-", ""));
     account.setEmail(suffix.replace("-", "") + "@example.test");
     account.setPasswordHash("test-only-password-hash");
     account.setRole(role);

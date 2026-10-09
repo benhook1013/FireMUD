@@ -55,11 +55,12 @@ public class AccountRepository {
   }
 
   /** Locks one exact persisted Account row before an owner-local authority mutation. */
-  @Transactional
+  @Transactional(propagation = Propagation.MANDATORY)
   public Optional<Account> findByIdForUpdate(Long id) {
     if (id == null || id <= 0L) {
       throw new IllegalArgumentException("A positive persisted Account ID is required");
     }
+    requireWritableOwnerTransaction();
     return Optional.ofNullable(
         dsl.selectFrom(ACCOUNTS).where(ACCOUNTS.ID.eq(id)).forUpdate().fetchOne(this::toEntity));
   }
@@ -142,6 +143,10 @@ public class AccountRepository {
     Objects.requireNonNull(entity, "Account is required");
     entity.setEmail(EmailCanonicalization.normalize(entity.getEmail()));
     if (entity.getId() == null) {
+      if (entity.getLifecycleState() != AccountLifecycleState.ACTIVE) {
+        throw new IllegalArgumentException(
+            "Fresh Accounts must be created in the ACTIVE lifecycle state");
+      }
       UUID expectedUuid = UUID.randomUUID();
       AccountsRecord inserted =
           dsl.insertInto(ACCOUNTS)

@@ -506,32 +506,31 @@ public final class HostedTermsRepository {
   }
 
   private IndividualHostedTermsAcceptance acceptance(Record row) {
-    IndividualHostedTermsAcceptance acceptance =
-        new IndividualHostedTermsAcceptance(
-            row.get("evidence_id", UUID.class),
-            row.get("action_request_id", UUID.class),
-            row.get("creator_party_id", UUID.class),
-            row.get("account_uuid", UUID.class),
-            row.get("hosted_scope_id", UUID.class),
-            row.get("terms_version_id", UUID.class),
-            row.get("document_digest", String.class),
-            row.get("operator_legal_identity", String.class),
-            row.get("operator_identity_version", Long.class),
-            row.get("source_version", Long.class),
-            row.get("material_generation", Long.class),
-            row.get("individual_party_source", byte[].class),
-            row.get("individual_party_source_digest", String.class),
-            row.get("affirmative_action_evidence", byte[].class),
-            row.get("affirmative_action_digest", String.class),
-            row.get("accepted_at", OffsetDateTime.class));
-    if (!Arrays.equals(
-            acceptance.affirmativeActionEvidence(),
-            row.get("affirmative_action_evidence", byte[].class))
-        || !HostedTermsEncoding.digest(acceptance.individualPartySource())
-            .equals(row.get("individual_party_source_digest", String.class))) {
+    byte[] individualPartySource = row.get("individual_party_source", byte[].class);
+    String individualPartySourceDigest = row.get("individual_party_source_digest", String.class);
+    byte[] affirmativeActionEvidence = row.get("affirmative_action_evidence", byte[].class);
+    String affirmativeActionDigest = row.get("affirmative_action_digest", String.class);
+    if (!HostedTermsEncoding.digest(affirmativeActionEvidence).equals(affirmativeActionDigest)
+        || !HostedTermsEncoding.digest(individualPartySource).equals(individualPartySourceDigest)) {
       throw new IllegalStateException("Stored acceptance evidence digest conflicts");
     }
-    return acceptance;
+    return new IndividualHostedTermsAcceptance(
+        row.get("evidence_id", UUID.class),
+        row.get("action_request_id", UUID.class),
+        row.get("creator_party_id", UUID.class),
+        row.get("account_uuid", UUID.class),
+        row.get("hosted_scope_id", UUID.class),
+        row.get("terms_version_id", UUID.class),
+        row.get("document_digest", String.class),
+        row.get("operator_legal_identity", String.class),
+        row.get("operator_identity_version", Long.class),
+        row.get("source_version", Long.class),
+        row.get("material_generation", Long.class),
+        individualPartySource,
+        individualPartySourceDigest,
+        affirmativeActionEvidence,
+        affirmativeActionDigest,
+        row.get("accepted_at", OffsetDateTime.class));
   }
 
   private void requireTransaction() {

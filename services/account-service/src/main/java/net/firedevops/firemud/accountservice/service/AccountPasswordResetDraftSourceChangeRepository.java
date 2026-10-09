@@ -31,7 +31,7 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
 @SuppressFBWarnings(
     value = "EI_EXPOSE_REP2",
     justification = "The transaction-aware DSLContext is an internal persistence collaborator.")
-public final class AccountPasswordResetDraftSourceChangeRepository {
+public class AccountPasswordResetDraftSourceChangeRepository {
   private static final String TABLE = "account_password_reset_draft_source_changes";
   private static final String REQUEST_SCHEMA = "account-password-reset-draft-source-request/v1";
   private static final String MUTATION_SCHEMA = "account-password-reset-draft-source-mutation/v1";
@@ -43,6 +43,11 @@ public final class AccountPasswordResetDraftSourceChangeRepository {
   private final DSLContext dsl;
   private final DraftAuthorizationFenceRepository fences;
 
+  @SuppressFBWarnings(
+      value = "CT_CONSTRUCTOR_THROW",
+      justification =
+          "Constructor validation guards only the injected persistence collaborator; the repository"
+              + " must remain non-final for Spring exception-translation proxies.")
   public AccountPasswordResetDraftSourceChangeRepository(DSLContext dsl) {
     this.dsl = Objects.requireNonNull(dsl);
     this.fences = new DraftAuthorizationFenceRepository(dsl);
@@ -299,6 +304,14 @@ public final class AccountPasswordResetDraftSourceChangeRepository {
             Math.addExact(intent.checkpointSequence(), 1L),
             intent.requestId(),
             intent.eventId());
+    boolean verifierRetentionMatches =
+        switch (intent.status()) {
+          case "WAITING" ->
+              intent.passwordVerifier() != null
+                  && sha256Hex(intent.passwordVerifier()).equals(intent.passwordVerifierDigest());
+          case "SOURCE_COMMITTED", "SOURCE_ABORTED" -> intent.passwordVerifier() == null;
+          default -> false;
+        };
     if (intent.requestDigestVersion() != 1
         || !MessageDigest.isEqual(expectedRequest, intent.requestPayload())
         || !MessageDigest.isEqual(expectedMutation, intent.sourceChange().mutation())
@@ -311,7 +324,7 @@ public final class AccountPasswordResetDraftSourceChangeRepository {
             .getFirst()
             .key()
             .equals("ACCOUNT:" + intent.accountUuid())
-        || !sha256Hex(intent.passwordVerifier()).equals(intent.passwordVerifierDigest())
+        || !verifierRetentionMatches
         || !intent.requestId().equals(REQUEST_ID_PREFIX + intent.tokenHash())
         || !intent.eventId().equals(EVENT_ID_PREFIX + intent.tokenHash())) {
       throw new IllegalStateException("Stored password-reset Draft intent is inconsistent");

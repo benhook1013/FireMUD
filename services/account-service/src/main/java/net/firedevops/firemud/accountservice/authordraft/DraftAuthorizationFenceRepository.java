@@ -711,7 +711,7 @@ public final class DraftAuthorizationFenceRepository {
   /**
    * Rows-first creator producer acquisition: never wait on a source-first mutation while retaining
    * Account/tenant/terms locks. Missing rows or contention must roll back the entire owner capture;
-   * neither condition is a terminal authorization outcome. V99 establishes real-source lock rows.
+   * neither condition is a terminal authorization outcome. V87 establishes real-source lock rows.
    */
   public void lockProducerSourcesNowait(List<SourceEvidence> sources) {
     requireTransaction();

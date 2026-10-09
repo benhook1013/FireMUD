@@ -3,6 +3,7 @@ package integration.net.firedevops.firemud.accountservice;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
@@ -27,6 +28,7 @@ import net.firedevops.firemud.accountservice.repository.AccountAuthorityGenerati
 import net.firedevops.firemud.accountservice.repository.AccountAuthorityGenerationRepository.AuthorityScope;
 import net.firedevops.firemud.accountservice.repository.AccountAuthorityGenerationRepository.ScopeState;
 import net.firedevops.firemud.accountservice.repository.AccountAuthorityOutboxRepository;
+import net.firedevops.firemud.accountservice.repository.AccountAuthoritySourceEvidenceRepository;
 import net.firedevops.firemud.accountservice.repository.AccountLogoutAllOperationRepository;
 import net.firedevops.firemud.accountservice.repository.AccountPasswordResetOperationRepository;
 import net.firedevops.firemud.accountservice.repository.AccountPasswordResetOperationRepository.OperationConflictException;
@@ -34,6 +36,7 @@ import net.firedevops.firemud.accountservice.repository.AccountPasswordResetOper
 import net.firedevops.firemud.accountservice.repository.AccountRepository;
 import net.firedevops.firemud.accountservice.repository.AccountSecurityStateOperationRepository;
 import net.firedevops.firemud.accountservice.repository.PasswordResetTokenRepository;
+import net.firedevops.firemud.accountservice.service.AccountAuthoritySourceEventReadback.LatestSourceSnapshot;
 import net.firedevops.firemud.accountservice.service.AccountPasswordResetDraftSourceChangeRepository;
 import net.firedevops.firemud.accountservice.service.impl.AccountServiceImpl;
 import net.firedevops.firemud.common.account.authority.PasswordResetAuthorityEventV1Codec;
@@ -72,6 +75,7 @@ class PasswordResetAuthorityProducerPostgresIntegrationTest {
   @Test
   void commitsPasswordTokenAuthorityFenceClosedEventAndImmutableReceiptTogether() {
     Fixture fixture = newFixture();
+    assertRealDraftOwnerFenceStorage(fixture);
     Seed seed = seedAccountAndToken(fixture, "initial-password");
 
     reset(fixture, seed.rawToken(), "new-password-one");
@@ -90,6 +94,18 @@ class PasswordResetAuthorityProducerPostgresIntegrationTest {
         transaction(
             fixture.transaction(),
             () -> fixture.outbox().findEvent(streamKey, receipt.outboxSequence()).orElseThrow());
+    var sourceHead =
+        Objects.requireNonNull(
+            fixture
+                .setupDsl()
+                .fetchOne(
+                    "SELECT current_generation, current_source_version, current_issuance_fence, "
+                        + "current_issuance_fence_source_version, last_outbox_sequence, "
+                        + "last_event_id, last_event_digest, cutoff_generation, cutoff_stream_key, "
+                        + "cutoff_sequence FROM account_authority_source_records "
+                        + "WHERE scope_kind = 'ACCOUNT' AND account_uuid = ?",
+                    seed.accountUuid()),
+            "The reset must advance the real Account source head");
     var decoded =
         PasswordResetAuthorityEventV1Codec.verify(
             new String(event.payload(), StandardCharsets.UTF_8));
@@ -112,6 +128,20 @@ class PasswordResetAuthorityProducerPostgresIntegrationTest {
     assertThat(checkpoint.outboxSequence()).isEqualTo(receipt.outboxSequence());
     assertThat(checkpoint.sourceEventId()).isEqualTo(receipt.eventId());
     assertThat(checkpoint.sourceEventDigest()).isEqualTo(receipt.eventDigest());
+    assertThat(sourceHead.get("current_generation", Long.class)).isEqualTo(authority.generation());
+    assertThat(sourceHead.get("current_source_version", Long.class))
+        .isEqualTo(authority.sourceVersion());
+    assertThat(sourceHead.get("current_issuance_fence", Long.class))
+        .isEqualTo(authority.issuanceFence().value());
+    assertThat(sourceHead.get("current_issuance_fence_source_version", Long.class))
+        .isEqualTo(authority.issuanceFence().sourceVersion());
+    assertThat(sourceHead.get("last_outbox_sequence", Long.class))
+        .isEqualTo(receipt.outboxSequence());
+    assertThat(sourceHead.get("last_event_id", String.class)).isEqualTo(receipt.eventId());
+    assertThat(sourceHead.get("last_event_digest", String.class)).isEqualTo(receipt.eventDigest());
+    assertThat(sourceHead.get("cutoff_generation", Long.class)).isEqualTo(authority.generation());
+    assertThat(sourceHead.get("cutoff_stream_key", String.class)).isEqualTo(streamKey);
+    assertThat(sourceHead.get("cutoff_sequence", Long.class)).isEqualTo(receipt.outboxSequence());
     assertThat(decoded.accountId()).isEqualTo(seed.accountUuid().toString());
     assertThat(decoded.accountAuthorityGeneration()).isEqualTo("2");
     assertThat(decoded.sourceVersion()).isEqualTo("2");
@@ -151,9 +181,37 @@ class PasswordResetAuthorityProducerPostgresIntegrationTest {
 
     reset(fixture, seed.rawToken(), "recovered-password");
     StoredState committed = snapshot(fixture, seed);
+    var journalBeforeRetry =
+        Objects.requireNonNull(
+            fixture
+                .setupDsl()
+                .fetchOne(
+                    "SELECT password_verifier, password_verifier_digest, request_digest, "
+                        + "request_payload, source_change_binding "
+                        + "FROM account_password_reset_draft_source_changes WHERE token_hash = ?",
+                    HexFormat.of().parseHex(tokenHash(seed.rawToken()))));
+    assertThat(journalBeforeRetry.get("password_verifier", String.class)).isNull();
     reset(fixture, seed.rawToken(), "recovered-password");
 
     assertThat(snapshot(fixture, seed)).isEqualTo(committed);
+    var journalAfterRetry =
+        Objects.requireNonNull(
+            fixture
+                .setupDsl()
+                .fetchOne(
+                    "SELECT password_verifier, password_verifier_digest, request_digest, "
+                        + "request_payload, source_change_binding "
+                        + "FROM account_password_reset_draft_source_changes WHERE token_hash = ?",
+                    HexFormat.of().parseHex(tokenHash(seed.rawToken()))));
+    assertThat(journalAfterRetry.get("password_verifier", String.class)).isNull();
+    assertThat(journalAfterRetry.get("password_verifier_digest", byte[].class))
+        .isEqualTo(journalBeforeRetry.get("password_verifier_digest", byte[].class));
+    assertThat(journalAfterRetry.get("request_digest", byte[].class))
+        .isEqualTo(journalBeforeRetry.get("request_digest", byte[].class));
+    assertThat(journalAfterRetry.get("request_payload", byte[].class))
+        .isEqualTo(journalBeforeRetry.get("request_payload", byte[].class));
+    assertThat(journalAfterRetry.get("source_change_binding", byte[].class))
+        .isEqualTo(journalBeforeRetry.get("source_change_binding", byte[].class));
   }
 
   @Test
@@ -208,7 +266,8 @@ class PasswordResetAuthorityProducerPostgresIntegrationTest {
             fixture
                 .setupDsl()
                 .fetchOne(
-                    "SELECT status, request_payload, source_evidence, source_change_binding "
+                    "SELECT status, request_payload, source_evidence, source_change_binding, "
+                        + "password_verifier, password_verifier_digest "
                         + "FROM account_password_reset_draft_source_changes WHERE token_hash = ?",
                     HexFormat.of().parseHex(tokenHash(seed.rawToken()))),
             "Waiting password-reset source intent must be persisted");
@@ -216,9 +275,23 @@ class PasswordResetAuthorityProducerPostgresIntegrationTest {
     byte[] requestBytes = intentBeforeSettlement.get("request_payload", byte[].class);
     byte[] capturedSource = intentBeforeSettlement.get("source_evidence", byte[].class);
     byte[] changeBinding = intentBeforeSettlement.get("source_change_binding", byte[].class);
+    String waitingVerifier = intentBeforeSettlement.get("password_verifier", String.class);
+    byte[] verifierDigest = intentBeforeSettlement.get("password_verifier_digest", byte[].class);
     assertThat(requestBytes).isNotEmpty();
     assertThat(capturedSource).isNotEmpty();
     assertThat(changeBinding).isNotEmpty();
+    assertThat(waitingVerifier).isNotBlank();
+    assertThat(verifierDigest).hasSize(32);
+    assertThat(sha256Hex(waitingVerifier)).isEqualTo(HexFormat.of().formatHex(verifierDigest));
+    assertThatThrownBy(
+            () ->
+                fixture
+                    .setupDsl()
+                    .execute(
+                        "UPDATE account_password_reset_draft_source_changes "
+                            + "SET password_verifier = NULL WHERE token_hash = ?",
+                        HexFormat.of().parseHex(tokenHash(seed.rawToken()))))
+        .isInstanceOf(DataAccessException.class);
     var persistedTokenBinding =
         Objects.requireNonNull(
             fixture
@@ -263,11 +336,30 @@ class PasswordResetAuthorityProducerPostgresIntegrationTest {
             fixture
                 .setupDsl()
                 .fetchOne(
-                    "SELECT status FROM account_password_reset_draft_source_changes "
+                    "SELECT status, password_verifier, password_verifier_digest, request_digest, "
+                        + "request_payload, source_change_binding "
+                        + "FROM account_password_reset_draft_source_changes "
                         + "WHERE token_hash = ?",
                     HexFormat.of().parseHex(tokenHash(seed.rawToken()))),
             "Committed password-reset source intent must remain readable");
     assertThat(committedResetIntent.get("status", String.class)).isEqualTo("SOURCE_COMMITTED");
+    assertThat(committedResetIntent.get("password_verifier", String.class)).isNull();
+    assertThat(committedResetIntent.get("password_verifier_digest", byte[].class))
+        .isEqualTo(verifierDigest);
+    assertThat(committedResetIntent.get("request_digest", byte[].class)).hasSize(32);
+    assertThat(committedResetIntent.get("request_payload", byte[].class)).isEqualTo(requestBytes);
+    assertThat(committedResetIntent.get("source_change_binding", byte[].class))
+        .isEqualTo(changeBinding);
+    assertThatThrownBy(
+            () ->
+                fixture
+                    .setupDsl()
+                    .execute(
+                        "UPDATE account_password_reset_draft_source_changes "
+                            + "SET password_verifier_digest = password_verifier_digest "
+                            + "WHERE token_hash = ?",
+                        HexFormat.of().parseHex(tokenHash(seed.rawToken()))))
+        .isInstanceOf(DataAccessException.class);
     var committedV76Change =
         Objects.requireNonNull(
             fixture
@@ -279,6 +371,127 @@ class PasswordResetAuthorityProducerPostgresIntegrationTest {
                     HexFormat.of().parseHex(tokenHash(seed.rawToken()))),
             "Committed V76 source change must remain readable");
     assertThat(committedV76Change.get("status", String.class)).isEqualTo("SOURCE_COMMITTED");
+  }
+
+  @Test
+  void expiredWaitingResetAbortsAndDeletesOnlyItsExactOriginalToken() {
+    Fixture fixture = newFixture();
+    Seed seed =
+        seedAccountAndToken(fixture, "initial-password", LocalDateTime.now().minusMinutes(1));
+    DraftAuthorizationFenceBinding binding = draftBinding(seed);
+    transaction(
+        fixture.transaction(),
+        () -> {
+          fixture.fences().reserve(binding);
+          return null;
+        });
+
+    String verifier = hashPasswordForTest("expired-password");
+    String tokenHash = tokenHash(seed.rawToken());
+    String requestDigest = passwordResetRequestDigest(seed, sha256Hex(verifier));
+    transaction(
+        fixture.transaction(),
+        () -> {
+          Account account = fixture.accounts().findById(seed.accountId()).orElseThrow();
+          PasswordResetToken token = fixture.tokens().findByToken(seed.rawToken()).orElseThrow();
+          ScopeState current = readAuthority(fixture, seed.accountUuid());
+          fixture
+              .sourceChanges()
+              .participate(
+                  account,
+                  token.getId(),
+                  tokenHash,
+                  seed.deadline(),
+                  requestDigest,
+                  verifier,
+                  current,
+                  new LatestSourceSnapshot(0L, Optional.empty()));
+          return null;
+        });
+    var waitingIntent =
+        Objects.requireNonNull(
+            fixture
+                .setupDsl()
+                .fetchOne(
+                    "SELECT request_digest, password_verifier_digest, request_payload, "
+                        + "source_change_binding FROM account_password_reset_draft_source_changes "
+                        + "WHERE token_hash = ?",
+                    HexFormat.of().parseHex(tokenHash)),
+            "Expired waiting intent must persist its exact request");
+    boolean wrongHashDeleted =
+        transaction(
+            fixture.transaction(),
+            () -> {
+              PasswordResetToken token =
+                  fixture.tokens().findByToken(seed.rawToken()).orElseThrow();
+              return fixture
+                  .tokens()
+                  .deleteExactAfterSourceAbort(
+                      token.getId(), seed.accountId(), "0".repeat(64), seed.deadline());
+            });
+    assertThat(wrongHashDeleted).isFalse();
+    assertThat(tokenExists(fixture, seed.rawToken())).isTrue();
+    transaction(
+        fixture.transaction(),
+        () -> {
+          fixture.fences().recordOwnerReadback(binding, ownerDenial(binding, Owner.GAME_DESIGN));
+          fixture.fences().recordOwnerReadback(binding, ownerDenial(binding, Owner.WORLD));
+          return null;
+        });
+
+    assertThatThrownBy(() -> reset(fixture, seed.rawToken(), "expired-password"))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessage("Token expired");
+
+    assertThat(tokenExists(fixture, seed.rawToken())).isFalse();
+    assertThat(snapshot(fixture, seed))
+        .isEqualTo(new StoredState(seed.originalVerifier(), 1L, 1L, 1L, 0L, 0L, 0L));
+    var abortedIntent =
+        Objects.requireNonNull(
+            fixture
+                .setupDsl()
+                .fetchOne(
+                    "SELECT status, abort_reason, password_verifier, password_verifier_digest, "
+                        + "request_digest, request_payload, source_change_binding "
+                        + "FROM account_password_reset_draft_source_changes WHERE token_hash = ?",
+                    HexFormat.of().parseHex(tokenHash)),
+            "Aborted source intent must remain readable after exact token deletion");
+    assertThat(abortedIntent.get("status", String.class)).isEqualTo("SOURCE_ABORTED");
+    assertThat(abortedIntent.get("abort_reason", String.class)).isEqualTo("EXPIRED");
+    assertThat(abortedIntent.get("password_verifier", String.class)).isNull();
+    assertThat(abortedIntent.get("password_verifier_digest", byte[].class))
+        .isEqualTo(waitingIntent.get("password_verifier_digest", byte[].class));
+    assertThat(abortedIntent.get("request_digest", byte[].class))
+        .isEqualTo(waitingIntent.get("request_digest", byte[].class));
+    assertThat(abortedIntent.get("request_payload", byte[].class))
+        .isEqualTo(waitingIntent.get("request_payload", byte[].class));
+    assertThat(abortedIntent.get("source_change_binding", byte[].class))
+        .isEqualTo(waitingIntent.get("source_change_binding", byte[].class));
+    assertThatThrownBy(
+            () ->
+                fixture
+                    .setupDsl()
+                    .execute(
+                        "UPDATE account_password_reset_draft_source_changes "
+                            + "SET status = 'WAITING' WHERE token_hash = ?",
+                        HexFormat.of().parseHex(tokenHash)))
+        .isInstanceOf(DataAccessException.class);
+    assertThatThrownBy(
+            () ->
+                fixture
+                    .setupDsl()
+                    .execute(
+                        "DELETE FROM account_password_reset_draft_source_changes "
+                            + "WHERE token_hash = ?",
+                        HexFormat.of().parseHex(tokenHash)))
+        .isInstanceOf(DataAccessException.class);
+
+    assertThatThrownBy(() -> reset(fixture, seed.rawToken(), "expired-password"))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessage("Invalid token");
+    assertThat(tokenExists(fixture, seed.rawToken())).isFalse();
+    assertThat(snapshot(fixture, seed))
+        .isEqualTo(new StoredState(seed.originalVerifier(), 1L, 1L, 1L, 0L, 0L, 0L));
   }
 
   @Test
@@ -364,32 +577,22 @@ class PasswordResetAuthorityProducerPostgresIntegrationTest {
   }
 
   @Test
-  void issuanceFenceOverflowRollsBackTokenPasswordAuthorityAndOutbox() {
+  void issuanceFenceRejectsAnUnbackedOverflowAdvance() {
     Fixture fixture = newFixture();
     Seed seed = seedAccountAndToken(fixture, "initial-password");
-    fixture
-        .setupDsl()
-        .execute(
-            "ALTER TABLE account_authority_issuance_fences DISABLE TRIGGER account_authority_issuance_fences_monotonic");
-    try {
-      fixture
-          .setupDsl()
-          .execute(
-              "UPDATE account_authority_issuance_fences "
-                  + "SET issuance_fence = ?, source_version = ? WHERE account_uuid = ?",
-              Long.MAX_VALUE,
-              11L,
-              seed.accountUuid());
-    } finally {
-      fixture
-          .setupDsl()
-          .execute(
-              "ALTER TABLE account_authority_issuance_fences ENABLE TRIGGER account_authority_issuance_fences_monotonic");
-    }
-
-    assertThatThrownBy(() -> reset(fixture, seed.rawToken(), "overflow-password"))
-        .isInstanceOf(RuntimeException.class);
-    assertUnchangedAfterRollback(fixture, seed, Long.MAX_VALUE, 11L);
+    assertThatThrownBy(
+            () ->
+                fixture
+                    .setupDsl()
+                    .execute(
+                        "UPDATE account_authority_issuance_fences "
+                            + "SET issuance_fence = ?, source_version = ? WHERE account_uuid = ?",
+                        Long.MAX_VALUE,
+                        11L,
+                        seed.accountUuid()))
+        .isInstanceOf(DataAccessException.class)
+        .hasMessageContaining("lacks exact owner source evidence");
+    assertUnchangedAfterRollback(fixture, seed, 1L, 1L);
   }
 
   private boolean concurrentReset(
@@ -453,6 +656,11 @@ class PasswordResetAuthorityProducerPostgresIntegrationTest {
   }
 
   private Seed seedAccountAndToken(Fixture fixture, String initialVerifier) {
+    return seedAccountAndToken(fixture, initialVerifier, LocalDateTime.now().plusHours(2));
+  }
+
+  private Seed seedAccountAndToken(
+      Fixture fixture, String initialVerifier, LocalDateTime deadline) {
     return transaction(
         fixture.transaction(),
         () -> {
@@ -464,7 +672,6 @@ class PasswordResetAuthorityProducerPostgresIntegrationTest {
           Account saved = fixture.accounts().save(account);
 
           String tokenValue = "reset-token-" + unique;
-          LocalDateTime deadline = LocalDateTime.now().plusHours(2);
           PasswordResetToken token = new PasswordResetToken();
           token.setAccount(saved);
           token.setToken(tokenValue);
@@ -482,6 +689,8 @@ class PasswordResetAuthorityProducerPostgresIntegrationTest {
     return new AccountServiceImpl(
         fixture.accounts(),
         fixture.authority(),
+        new AccountAuthoritySourceEvidenceRepository(
+            fixture.transactionDsl(), fixture.authority(), fixture.outbox()),
         fixture.outbox(),
         operations,
         fixture.logoutAllOperations(),
@@ -663,12 +872,124 @@ class PasswordResetAuthorityProducerPostgresIntegrationTest {
         "Password-reset event count readback is missing");
   }
 
+  private void assertRealDraftOwnerFenceStorage(Fixture fixture) {
+    var installed =
+        Objects.requireNonNull(
+            fixture
+                .setupDsl()
+                .fetchOne(
+                    "SELECT to_regclass('account_control_ui_issuance_operations') IS NOT NULL "
+                        + "AS issuance_operations, "
+                        + "to_regclass('account_selected_publication_authorizations') IS NOT NULL "
+                        + "AS publication_authorizations, "
+                        + "to_regclass('account_selected_publication_sources') IS NOT NULL "
+                        + "AS publication_sources, "
+                        + "to_regclass('account_selected_publication_settlements') IS NOT NULL "
+                        + "AS publication_settlements, "
+                        + "to_regclass('account_game_logic_intake_authorizations') IS NOT NULL "
+                        + "AS game_logic_authorizations, "
+                        + "to_regclass('account_game_logic_intake_sources') IS NOT NULL "
+                        + "AS game_logic_sources, "
+                        + "to_regclass('account_game_logic_intake_settlements') IS NOT NULL "
+                        + "AS game_logic_settlements, "
+                        + "to_regclass('account_game_logic_intake_source_read_reservations') "
+                        + "IS NOT NULL AS source_read_reservations, "
+                        + "to_regclass('account_game_logic_intake_source_read_sources') "
+                        + "IS NOT NULL AS source_read_sources, "
+                        + "to_regclass('account_game_logic_intake_source_read_aborts') "
+                        + "IS NOT NULL AS source_read_aborts, "
+                        + "to_regprocedure('account_selected_publication_is_settled(uuid)') "
+                        + "IS NOT NULL AS publication_settlement_function, "
+                        + "to_regprocedure('account_game_logic_intake_is_settled(uuid)') "
+                        + "IS NOT NULL AS game_logic_settlement_function, "
+                        + "to_regprocedure('account_game_logic_intake_source_read_is_pending(uuid)') "
+                        + "IS NOT NULL AS source_read_pending_function, "
+                        + "to_regprocedure('require_selected_inventory_operation_v2(bytea)') "
+                        + "IS NOT NULL AS selected_inventory_guard, "
+                        + "NOT EXISTS (SELECT 1 FROM account_control_ui_issuance_operations) "
+                        + "AND NOT EXISTS (SELECT 1 FROM account_selected_publication_authorizations) "
+                        + "AND NOT EXISTS (SELECT 1 FROM account_game_logic_intake_authorizations) "
+                        + "AND NOT EXISTS (SELECT 1 FROM account_game_logic_intake_source_read_reservations) "
+                        + "AS owner_operations_absent"),
+            "Real inactive owner-fence storage must be installed");
+    for (String column :
+        List.of(
+            "issuance_operations",
+            "publication_authorizations",
+            "publication_sources",
+            "publication_settlements",
+            "game_logic_authorizations",
+            "game_logic_sources",
+            "game_logic_settlements",
+            "source_read_reservations",
+            "source_read_sources",
+            "source_read_aborts",
+            "publication_settlement_function",
+            "game_logic_settlement_function",
+            "source_read_pending_function",
+            "selected_inventory_guard",
+            "owner_operations_absent")) {
+      assertThat(installed.get(column, Boolean.class)).as(column).isTrue();
+    }
+
+    UUID unknownOperation = UUID.randomUUID();
+    var unknown =
+        Objects.requireNonNull(
+            fixture
+                .setupDsl()
+                .fetchOne(
+                    "SELECT account_selected_publication_is_settled(?::uuid) "
+                        + "AS publication_settled, "
+                        + "account_game_logic_intake_is_settled(?::uuid) "
+                        + "AS game_logic_settled, "
+                        + "account_game_logic_intake_source_read_is_pending(?::uuid) "
+                        + "AS source_read_pending",
+                    unknownOperation,
+                    unknownOperation,
+                    unknownOperation),
+            "Unknown external owner operation state must be readable");
+    assertThat(unknown.get("publication_settled", Boolean.class)).isFalse();
+    assertThat(unknown.get("game_logic_settled", Boolean.class)).isFalse();
+    assertThat(unknown.get("source_read_pending", Boolean.class)).isFalse();
+  }
+
   private String streamKey(UUID accountUuid) {
     return STREAM_PREFIX + accountUuid;
   }
 
   private String tokenHash(String rawToken) {
     return sha256Hex(rawToken);
+  }
+
+  private String passwordResetRequestDigest(Seed seed, String verifierDigest) {
+    try {
+      MessageDigest digest = MessageDigest.getInstance("SHA-256");
+      for (String field :
+          List.of(
+              "account-password-reset-request/v1",
+              "PASSWORD_RESET",
+              seed.accountUuid().toString(),
+              tokenHash(seed.rawToken()),
+              seed.deadline().toString(),
+              verifierDigest)) {
+        byte[] encoded = field.getBytes(StandardCharsets.UTF_8);
+        digest.update(ByteBuffer.allocate(Integer.BYTES).putInt(encoded.length).array());
+        digest.update(encoded);
+      }
+      return HexFormat.of().formatHex(digest.digest());
+    } catch (NoSuchAlgorithmException exception) {
+      throw new IllegalStateException("SHA-256 is unavailable", exception);
+    }
+  }
+
+  private String hashPasswordForTest(String password) {
+    de.mkammerer.argon2.Argon2 argon2 = de.mkammerer.argon2.Argon2Factory.create();
+    char[] chars = password.toCharArray();
+    try {
+      return argon2.hash(1, 8192, 1, chars);
+    } finally {
+      argon2.wipeArray(chars);
+    }
   }
 
   private String sha256Hex(String value) {

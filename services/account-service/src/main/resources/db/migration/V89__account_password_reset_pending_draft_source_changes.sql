@@ -10,7 +10,7 @@ CREATE TABLE account_password_reset_draft_source_changes (
     event_id VARCHAR(128) NOT NULL UNIQUE,
     request_digest_version INTEGER NOT NULL CHECK (request_digest_version = 1),
     request_digest BYTEA NOT NULL CHECK (octet_length(request_digest) = 32),
-    password_verifier VARCHAR(255) NOT NULL CHECK (length(btrim(password_verifier)) > 0),
+    password_verifier VARCHAR(255) CHECK (password_verifier IS NULL OR length(btrim(password_verifier)) > 0),
     password_verifier_digest BYTEA NOT NULL CHECK (octet_length(password_verifier_digest) = 32),
     token_expires_at TIMESTAMP WITHOUT TIME ZONE NOT NULL,
     token_expires_epoch_nanos BIGINT NOT NULL CHECK (token_expires_epoch_nanos > 0),
@@ -48,14 +48,15 @@ CREATE TABLE account_password_reset_draft_source_changes (
     CONSTRAINT account_password_reset_draft_status_check
         CHECK ((status = 'WAITING' AND abort_reason IS NULL AND committed_at IS NULL
                 AND aborted_at IS NULL AND event_stream IS NULL AND event_sequence IS NULL
-                AND event_digest IS NULL AND event_payload IS NULL)
+                AND event_digest IS NULL AND event_payload IS NULL AND password_verifier IS NOT NULL)
             OR (status = 'SOURCE_COMMITTED' AND abort_reason IS NULL AND committed_at IS NOT NULL
                 AND aborted_at IS NULL AND event_stream IS NOT NULL AND event_sequence IS NOT NULL
                 AND event_digest ~ '^sha256:[0-9a-f]{64}$'
-                AND event_payload IS NOT NULL AND octet_length(event_payload) > 0)
+                AND event_payload IS NOT NULL AND octet_length(event_payload) > 0
+                AND password_verifier IS NULL)
             OR (status = 'SOURCE_ABORTED' AND abort_reason IS NOT NULL AND committed_at IS NULL
                 AND aborted_at IS NOT NULL AND event_stream IS NULL AND event_sequence IS NULL
-                AND event_digest IS NULL AND event_payload IS NULL))
+                AND event_digest IS NULL AND event_payload IS NULL AND password_verifier IS NULL))
 );
 
 -- [jooq ignore start]
@@ -138,6 +139,7 @@ BEGIN
             END IF;
             NEW.aborted_at = CURRENT_TIMESTAMP;
         END IF;
+        NEW.password_verifier = NULL;
         RETURN NEW;
     END IF;
 
@@ -336,7 +338,8 @@ BEGIN
                 AND issuance_fence_source_version = journal.expected_issuance_fence_source_version + 1)
         OR EXISTS (SELECT 1 FROM password_reset_token WHERE id = journal.token_id)
         OR NOT EXISTS (SELECT 1 FROM accounts WHERE id = journal.account_id
-            AND account_uuid = journal.account_uuid AND password_hash = journal.password_verifier)) THEN
+            AND account_uuid = journal.account_uuid
+            AND sha256(convert_to(password_hash, 'UTF8')) = journal.password_verifier_digest)) THEN
         RAISE EXCEPTION 'Committed password-reset intent lacks exact receipt, event, token, or Account readback'
             USING ERRCODE = '23514';
     END IF;

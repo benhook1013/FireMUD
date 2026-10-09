@@ -18,6 +18,7 @@ import net.firedevops.firemud.accountservice.repository.AccountAuthorityGenerati
 import net.firedevops.firemud.accountservice.repository.AccountAuthorityOutboxRepository;
 import net.firedevops.firemud.accountservice.repository.AccountAuthorityOutboxRepository.Checkpoint;
 import net.firedevops.firemud.accountservice.repository.AccountAuthorityOutboxRepository.Event;
+import net.firedevops.firemud.accountservice.repository.AccountAuthoritySourceEvidenceRepository.SourceEvidenceUnavailableException;
 import net.firedevops.firemud.accountservice.repository.AccountLogoutAllOperationRepository;
 import net.firedevops.firemud.accountservice.repository.AccountLogoutAllOperationRepository.LogoutAllReceipt;
 import net.firedevops.firemud.accountservice.repository.AccountPasswordResetOperationRepository;
@@ -464,7 +465,7 @@ public final class AccountAuthoritySourceEventReadback {
               security.canonicalJsonUtf8());
           yield VerifiedSourceEvent.securityState(security);
         }
-        default -> throw new IllegalStateException("Account source event schema is unsupported");
+        default -> throw new SourceEvidenceUnavailableException();
       };
     } catch (tools.jackson.core.JacksonException | IllegalArgumentException invalid) {
       throw new IllegalStateException("Account source event is invalid", invalid);
@@ -651,8 +652,8 @@ public final class AccountAuthoritySourceEventReadback {
           || outboxSequence <= 0L
           || accountAuthorityGeneration <= 0L
           || sourceVersion <= 0L
-          || issuanceFence != accountAuthorityGeneration
-          || issuanceFenceSourceVersion != sourceVersion
+          || issuanceFence <= 0L
+          || issuanceFenceSourceVersion <= 0L
           || accountSecurityCutoff == null
           || !outboxStreamKey.equals(accountSecurityCutoff.outboxStreamKey())
           || outboxSequence != Long.parseLong(accountSecurityCutoff.outboxSequence())
