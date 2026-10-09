@@ -206,6 +206,15 @@ public final class AccountControlUiOriginalOrderFixture implements AutoCloseable
         .create(namespace, original, originalCreator.compact());
   }
 
+  /** Exact creator evidence retained by prepareOriginalDraftOrder, without issuing it twice. */
+  IssuedCreator preparedOriginalCreator() {
+    if (originalCreator == null) {
+      throw new IllegalStateException(
+          "Prepare the original Draft order before reading its creator");
+    }
+    return originalCreator;
+  }
+
   /** Real unregistered Account producer, with Account-internal environment capture. */
   public io.grpc.BindableService originalDraftOrderProducer(String namespace) {
     return new AccountOriginalDraftOrderGrpcService(

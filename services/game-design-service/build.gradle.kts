@@ -25,6 +25,7 @@ testing {
 
 dependencies {
     integrationTestImplementation(project(mapOf("path" to ":account-service", "configuration" to "accountOriginalOrderProof")))
+    integrationTestImplementation(project(":game-logic-service"))
     compileOnly(libs.spotbugs.annotations)
     testCompileOnly(libs.spotbugs.annotations)
     add("integrationTestCompileOnly", libs.spotbugs.annotations)
