@@ -207,7 +207,8 @@ class AccountSourceCurrentnessForwardMigrationsPostgresIntegrationTest {
               hostedTerms.ensureScope(hostedScopeId);
               hostedTerms.insertCandidate(candidate);
               persistedCatalogEvidence[0] =
-                  HostedTermsEncoding.catalog(hostedTerms.readCatalog(hostedScopeId, termsVersionId));
+                  HostedTermsEncoding.catalog(
+                      hostedTerms.readCatalog(hostedScopeId, termsVersionId));
             });
     SourceEvidence exactSource =
         new SourceEvidence(
@@ -342,12 +343,9 @@ class AccountSourceCurrentnessForwardMigrationsPostgresIntegrationTest {
                 .fetchOne(0, String.class))
         .isEqualTo("PREPARED");
 
-    DraftAuthorizationFenceRepository fences =
-        new DraftAuthorizationFenceRepository(context.dsl());
+    DraftAuthorizationFenceRepository fences = new DraftAuthorizationFenceRepository(context.dsl());
     DraftAuthorizationFenceBinding preparedCapture = draftBinding(exactSource);
-    context
-        .transaction()
-        .executeWithoutResult(status -> fences.reserve(preparedCapture));
+    context.transaction().executeWithoutResult(status -> fences.reserve(preparedCapture));
 
     // This is only a persisted test fixture state for exercising the exact-read predicate. No
     // publisher is authenticated, no RPC/dispatch is performed, and no consumer is activated.
@@ -390,16 +388,12 @@ class AccountSourceCurrentnessForwardMigrationsPostgresIntegrationTest {
             null,
             HostedTermsEncoding.catalog(mismatchedCandidate));
     DraftAuthorizationFenceBinding mismatchedCapture = draftBinding(mismatchedSource);
-    context
-        .transaction()
-        .executeWithoutResult(status -> fences.reserve(mismatchedCapture));
+    context.transaction().executeWithoutResult(status -> fences.reserve(mismatchedCapture));
 
     DraftAuthorizationFenceBinding exactCapture = draftBinding(exactSource);
     assertThatThrownBy(
             () ->
-                context
-                    .transaction()
-                    .executeWithoutResult(status -> fences.reserve(exactCapture)))
+                context.transaction().executeWithoutResult(status -> fences.reserve(exactCapture)))
         .isInstanceOf(IllegalStateException.class)
         .hasMessageContaining("Exact hosted terms source has authorized disclosure");
     assertThat(
@@ -413,15 +407,10 @@ class AccountSourceCurrentnessForwardMigrationsPostgresIntegrationTest {
 
     assertThatThrownBy(
             () ->
-                context
-                    .dsl()
-                    .execute("TRUNCATE account_hosted_terms_disclosure_handoffs CASCADE"))
+                context.dsl().execute("TRUNCATE account_hosted_terms_disclosure_handoffs CASCADE"))
         .isInstanceOf(DataAccessException.class);
     assertThatThrownBy(
-            () ->
-                context
-                    .dsl()
-                    .execute("TRUNCATE account_hosted_terms_disclosure_sources"))
+            () -> context.dsl().execute("TRUNCATE account_hosted_terms_disclosure_sources"))
         .isInstanceOf(DataAccessException.class);
     assertThat(
             context
@@ -477,8 +466,7 @@ class AccountSourceCurrentnessForwardMigrationsPostgresIntegrationTest {
         .isEqualTo("98");
     for (String relation :
         new String[] {
-          "account_hosted_terms_disclosure_handoffs",
-          "account_hosted_terms_disclosure_sources"
+          "account_hosted_terms_disclosure_handoffs", "account_hosted_terms_disclosure_sources"
         }) {
       assertThat(
               context
