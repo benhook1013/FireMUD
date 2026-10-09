@@ -15,6 +15,7 @@ import org.junit.jupiter.api.parallel.ExecutionMode;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
+import org.testcontainers.utility.DockerImageName;
 
 /**
  * Disposable-image feasibility probe for the pg_walinspect module and a restricted wrapper reader.
@@ -33,7 +34,9 @@ class AccountPostgresWalModuleFeasibilityIntegrationTest {
   static final PostgreSQLContainer<?> POSTGRES_16 = new PostgreSQLContainer<>("postgres:16-alpine");
 
   @Container
-  static final PostgreSQLContainer<?> POSTGRES_18 = new PostgreSQLContainer<>(POSTGRES_18_IMAGE);
+  static final PostgreSQLContainer<?> POSTGRES_18 =
+      new PostgreSQLContainer<>(
+          DockerImageName.parse(POSTGRES_18_IMAGE).asCompatibleSubstituteFor("postgres"));
 
   @Test
   void postgres16AlpineHasInstallableWalInspectAndRestrictedReaderWrapper() throws SQLException {

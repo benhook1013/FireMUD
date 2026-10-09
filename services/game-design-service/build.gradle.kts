@@ -25,7 +25,8 @@ testing {
 
 dependencies {
     integrationTestImplementation(project(mapOf("path" to ":account-service", "configuration" to "accountOriginalOrderProof")))
-    integrationTestImplementation(project(":game-logic-service"))
+    integrationTestImplementation(project(mapOf("path" to ":game-logic-service", "configuration" to "gameLogicClassesProof")))
+    integrationTestImplementation("io.grpc:grpc-util:${libs.versions.grpc.get()}")
     compileOnly(libs.spotbugs.annotations)
     testCompileOnly(libs.spotbugs.annotations)
     add("integrationTestCompileOnly", libs.spotbugs.annotations)

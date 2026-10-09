@@ -34,6 +34,7 @@ public final class AccountControlUiOriginalOrderFixture implements AutoCloseable
   private final AccountControlUiOwnerSourcesFixture f;
   private final AccountControlUiActorService actors;
   private final AccountControlUiIssuanceService issuance;
+  private final AccountControlUiCoordination coordination;
   private final RedisClient accountClient;
   private final Path temporary;
   private IssuedCreator originalCreator;
@@ -139,7 +140,7 @@ public final class AccountControlUiOriginalOrderFixture implements AutoCloseable
     } finally {
       admin.shutdown();
     }
-    var registry =
+    coordination =
         new AccountControlUiCoordination(
             () -> accountClient.connect(ByteArrayCodec.INSTANCE),
             new AccountGameplayDelegationRedisClient.AcknowledgementRequirements(1, 1, 5000),
@@ -153,7 +154,7 @@ public final class AccountControlUiOriginalOrderFixture implements AutoCloseable
             operations,
             f.authority,
             lifecycle.signer,
-            registry,
+            coordination,
             publicSource,
             f.fences,
             f.manager,
@@ -167,7 +168,7 @@ public final class AccountControlUiOriginalOrderFixture implements AutoCloseable
             lifecycle.signer,
             new AccountControlUiResponseCryptography(
                 new AccountControlUiKeyring(temporary.resolve("custody")), Clock.systemUTC()),
-            registry,
+            coordination,
             actors,
             f.manager,
             Clock.systemUTC(),
@@ -213,6 +214,10 @@ public final class AccountControlUiOriginalOrderFixture implements AutoCloseable
           "Prepare the original Draft order before reading its creator");
     }
     return originalCreator;
+  }
+
+  AccountControlUiCoordination coordination() {
+    return coordination;
   }
 
   /** Real unregistered Account producer, with Account-internal environment capture. */

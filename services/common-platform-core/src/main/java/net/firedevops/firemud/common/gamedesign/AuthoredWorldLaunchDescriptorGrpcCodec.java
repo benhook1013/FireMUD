@@ -179,6 +179,81 @@ public final class AuthoredWorldLaunchDescriptorGrpcCodec {
     }
   }
 
+  /** Encodes and revalidates the exact immutable descriptor and release-attestation pair. */
+  public static GetCompleteLaunchBindingResponse toCompleteResponse(
+      GetLaunchDescriptorRequest request, CompleteLaunchBindingEvidence evidence) {
+    Objects.requireNonNull(request, "request");
+    Objects.requireNonNull(evidence, "evidence");
+    evidence.descriptor().requireValid();
+    evidence.releaseAttestation().requireValid(evidence.descriptor());
+    GetCompleteLaunchBindingResponse response =
+        GetCompleteLaunchBindingResponse.newBuilder()
+            .setRequestId(request.getRequestId())
+            .setLaunchDescriptor(toLaunchDescriptor(evidence.descriptor()))
+            .setReleaseAttestation(toReleaseAttestation(evidence.releaseAttestation()))
+            .build();
+    fromCompleteResponse(request, response);
+    return response;
+  }
+
+  private static LaunchDescriptor toLaunchDescriptor(
+      AuthoredWorldLaunchDescriptorEvidence evidence) {
+    evidence.requireValid();
+    net.firedevops.firemud.gamedesign.v1.AuthoredWorldLaunchDescriptorEvidence.Builder binding =
+        net.firedevops.firemud.gamedesign.v1.AuthoredWorldLaunchDescriptorEvidence.newBuilder()
+            .setSchemaVersion(evidence.schemaVersion())
+            .setTargetNamespace(evidence.targetNamespace())
+            .setControlPlaneRequestId(evidence.controlPlaneRequestId())
+            .setCanonicalTenantId(evidence.canonicalTenantId().toString())
+            .setWorldSlug(evidence.worldSlug())
+            .setAuthoredWorldSourceOperationId(evidence.authoredWorldSourceOperationId().toString())
+            .setAuthoredWorldSourceEvidenceDigest(evidence.authoredWorldSourceEvidenceDigest())
+            .setGameTemplateId(evidence.gameTemplateId())
+            .setRequestDigest(evidence.requestDigest())
+            .setLaunchDescriptorId(evidence.launchDescriptorId())
+            .setVersionId(evidence.versionId())
+            .setRuntimeFlagsJson(evidence.runtimeFlagsJson())
+            .setGenerationConfigRevision(evidence.generationConfigRevision())
+            .setVersionStateEpoch(evidence.versionStateEpoch())
+            .setReleaseBundleId(evidence.releaseBundleId())
+            .setPublishedReleaseBundleRef(evidence.publishedReleaseBundleRef())
+            .setResultDigest(evidence.resultDigest());
+    if (evidence.requestedScriptPatchVersionPresent()) {
+      binding.setRequestedScriptPatchVersion(evidence.requestedScriptPatchVersion());
+    }
+    if (evidence.sourceVersionIdPresent()) {
+      binding.setSourceVersionId(evidence.sourceVersionId());
+    }
+    if (evidence.targetVersionIdPresent()) {
+      binding.setTargetVersionId(evidence.targetVersionId());
+    }
+    if (evidence.requestedRuntimeFlagsJsonPresent()) {
+      binding.setRequestedRuntimeFlagsJson(evidence.requestedRuntimeFlagsJson());
+    }
+    if (evidence.scriptPatchVersionPresent()) {
+      binding.setScriptPatchVersion(evidence.scriptPatchVersion());
+    }
+    if (evidence.remapSetIdPresent()) {
+      binding.setRemapSetId(evidence.remapSetId());
+    }
+    return LaunchDescriptor.newBuilder()
+        .setLaunchDescriptorId(evidence.launchDescriptorId())
+        .setCanonicalTenantId(evidence.canonicalTenantId().toString())
+        .setGameTemplateId(evidence.gameTemplateId())
+        .setControlPlaneRequestId(evidence.controlPlaneRequestId())
+        .setVersionId(evidence.versionId())
+        .setScriptPatchVersion(
+            evidence.scriptPatchVersionPresent() ? evidence.scriptPatchVersion() : "")
+        .setRuntimeFlagsJson(evidence.runtimeFlagsJson())
+        .setGenerationConfigRevision(evidence.generationConfigRevision())
+        .setVersionStateEpoch(evidence.versionStateEpoch())
+        .setReleaseBundleId(evidence.releaseBundleId())
+        .setPublishedReleaseBundleRef(evidence.publishedReleaseBundleRef())
+        .setRemapSetId(evidence.remapSetIdPresent() ? evidence.remapSetId() : "")
+        .setAuthoredWorldBinding(binding.build())
+        .build();
+  }
+
   /** Encodes the separate closed release attestation without changing descriptor/v1. */
   public static net.firedevops.firemud.gamedesign.v1.AuthoredWorldReleaseAttestationEvidence
       toReleaseAttestation(AuthoredWorldReleaseAttestationEvidence evidence) {

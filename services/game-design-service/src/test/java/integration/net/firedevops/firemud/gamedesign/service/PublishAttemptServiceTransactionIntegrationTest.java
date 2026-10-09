@@ -491,6 +491,16 @@ class PublishAttemptServiceTransactionIntegrationTest {
                 Mockito.eq(publishRequestId),
                 Mockito.eq(publishWorkflowId)))
         .thenReturn(participantDigests);
+    Mockito.when(
+            publishGateService.collectSelectedFullVersionParticipantDigests(
+                Mockito.any(VersionDto.class),
+                Mockito.eq(
+                    PublicationDigestRequestBinding.full(
+                        candidate.getCanonicalTenantId().toString(),
+                        Long.toString(candidate.getId()),
+                        publishRequestId)),
+                Mockito.eq(publishWorkflowId)))
+        .thenReturn(participantDigests);
     Mockito.when(assetExportService.exportAssets(tenantId, 1)).thenReturn(immutableEmptyManifest());
 
     VersionDto publishedVersion =
@@ -623,6 +633,16 @@ class PublishAttemptServiceTransactionIntegrationTest {
             publishGateService.collectFullVersionParticipantDigests(
                 Mockito.any(VersionDto.class),
                 Mockito.eq(publishRequestId),
+                Mockito.eq(workflowId)))
+        .thenReturn(participantDigests);
+    Mockito.when(
+            publishGateService.collectSelectedFullVersionParticipantDigests(
+                Mockito.any(VersionDto.class),
+                Mockito.eq(
+                    PublicationDigestRequestBinding.full(
+                        candidate.getCanonicalTenantId().toString(),
+                        Long.toString(candidate.getId()),
+                        publishRequestId)),
                 Mockito.eq(workflowId)))
         .thenReturn(participantDigests);
     Mockito.when(assetExportService.exportAssets(tenantId, 1)).thenReturn(immutableEmptyManifest());
@@ -1162,6 +1182,16 @@ class PublishAttemptServiceTransactionIntegrationTest {
             publishGateService.collectFullVersionParticipantDigests(
                 Mockito.any(VersionDto.class),
                 Mockito.eq(publishRequestId),
+                Mockito.eq(publishWorkflowId)))
+        .thenReturn(participantDigests);
+    Mockito.when(
+            publishGateService.collectSelectedFullVersionParticipantDigests(
+                Mockito.any(VersionDto.class),
+                Mockito.eq(
+                    PublicationDigestRequestBinding.full(
+                        candidate.getCanonicalTenantId().toString(),
+                        Long.toString(candidate.getId()),
+                        publishRequestId)),
                 Mockito.eq(publishWorkflowId)))
         .thenReturn(participantDigests);
     Mockito.doAnswer(

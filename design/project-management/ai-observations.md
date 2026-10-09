@@ -144,3 +144,9 @@ Entry format:
   - Observation: Saying validation was underway did not consume its terminal result or advance the assigned correction. A process identifier is not a wake-capable handoff.
   - Expected pattern: Remain with local validation through terminal evidence, integrate failures and continue safe assigned work. If a genuine interruption requires yielding, preserve the exact pending process and next action without describing it as completed work.
   - Current status: The terminal result was consumed, disjoint Common and Account fixture/transport corrections were delegated, and the parent resumed integration. No proof or completion credit was assigned to the failed gate.
+
+- `2026-10-09`: Cross-owner test dependencies can import another service's Flyway migrations
+  - Context: Document added Game Logic's ordinary project dependency to Game Design integration tests for a genuine source-to-receipt composition. Local compilation and checks passed with Docker-dependent cases skipped; required CI then failed Spring fixture startup with duplicate V1 migrations from both service jars.
+  - Observation: Successful compilation and skipped database tests did not establish a safe resolved resource classpath. Account already provided a resource-isolated opt-in proof artifact for this same cross-owner testing boundary.
+  - Expected pattern: Consume an opt-in classes-only proof artifact when another service's owner classes are needed. Keep each owner migration directory explicit in composed fixtures; do not suppress Flyway checks or change production resource scanning to accommodate tests.
+  - Current status: Game Logic's resource-isolated proof artifact and its Game Design consumer are prepared. Resolved artifact inspection and corrected-head physical PostgreSQL execution remain required; no production migration or activation guard changed.

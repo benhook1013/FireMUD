@@ -31,6 +31,7 @@ import net.firedevops.firemud.common.security.GrpcAuthProperties;
 import net.firedevops.firemud.common.security.JwtUtil;
 import net.firedevops.firemud.common.tenant.FreshTenantCreationEvidence;
 import net.firedevops.firemud.common.tenant.GameTenantCreationDigest;
+import net.firedevops.firemud.gamedesign.repository.GameAuthoredWorldSourceRepository;
 import net.firedevops.firemud.gamedesign.repository.GameTenantCreationRepository;
 import net.firedevops.firemud.gamedesign.service.impl.TenantIdentityGrpcService;
 import net.firedevops.firemud.gamedesign.v1.ResolveFreshTenantCreationRequest;
@@ -51,6 +52,10 @@ import org.springframework.core.io.FileSystemResource;
 class TenantIdentityGrpcAuthWiringTest {
   private static final String FRESH_CREATION_METHOD =
       "gamedesign.v1.TenantIdentityService/ResolveFreshTenantCreation";
+  private static final String COMPLETE_LAUNCH_BINDING_METHOD =
+      "gamedesign.v1.GameDesignService/GetCompleteLaunchBinding";
+  private static final String AUTHORED_WORLD_SOURCE_METHOD =
+      "gamedesign.v1.TenantIdentityService/ResolveAuthoredWorldSource";
   private static final String OTHER_METHOD = "gamedesign.v1.TenantIdentityService/UnlistedMethod";
   private static final String ACCOUNT_URI = "spiffe://firemud/ns/test/sa/account-service";
   private static final String GAME_SESSION_URI = "spiffe://firemud/ns/test/sa/game-session-service";
@@ -62,10 +67,13 @@ class TenantIdentityGrpcAuthWiringTest {
       GameTenantCreationDigest.requestDigest("test", REQUEST_ID, SOURCE_KEY, "Fresh Realm", null);
 
   @Test
-  void defaultAndProductionProfilesAllowOnlyFreshReadAndRequireClientTls() throws IOException {
+  void defaultAndProductionProfilesAllowOnlyExplicitOwnerReadsAndRequireClientTls()
+      throws IOException {
     for (String file : List.of("application.yml", "application-prod.yml")) {
       GrpcConfiguration config = load(file);
-      assertThat(config.publicMethods()).containsExactly(FRESH_CREATION_METHOD);
+      assertThat(config.publicMethods())
+          .containsExactly(
+              FRESH_CREATION_METHOD, COMPLETE_LAUNCH_BINDING_METHOD, AUTHORED_WORLD_SOURCE_METHOD);
       assertThat(config.clientAuth()).isEqualTo("REQUIRE");
     }
   }
@@ -75,7 +83,9 @@ class TenantIdentityGrpcAuthWiringTest {
     withConfiguredInterceptor(
         interceptor -> {
           GameTenantCreationRepository repository = mock(GameTenantCreationRepository.class);
-          TenantIdentityGrpcService service = new TenantIdentityGrpcService(repository, "test");
+          TenantIdentityGrpcService service =
+              new TenantIdentityGrpcService(
+                  repository, mock(GameAuthoredWorldSourceRepository.class), "test");
           FreshTenantCreationEvidence evidence = evidence("test", REQUEST_DIGEST);
           when(repository.read(REQUEST_ID, "test")).thenReturn(Optional.of(evidence));
 
@@ -90,7 +100,8 @@ class TenantIdentityGrpcAuthWiringTest {
           GameTenantCreationRepository gameSessionRepository =
               mock(GameTenantCreationRepository.class);
           TenantIdentityGrpcService gameSessionService =
-              new TenantIdentityGrpcService(gameSessionRepository, "test");
+              new TenantIdentityGrpcService(
+                  gameSessionRepository, mock(GameAuthoredWorldSourceRepository.class), "test");
           when(gameSessionRepository.read(REQUEST_ID, "test")).thenReturn(Optional.of(evidence));
 
           DispatchResult gameSession = dispatch(interceptor, gameSessionService, GAME_SESSION_URI);
@@ -104,7 +115,8 @@ class TenantIdentityGrpcAuthWiringTest {
           GameTenantCreationRepository unauthorizedRepository =
               mock(GameTenantCreationRepository.class);
           TenantIdentityGrpcService unauthorizedService =
-              new TenantIdentityGrpcService(unauthorizedRepository, "test");
+              new TenantIdentityGrpcService(
+                  unauthorizedRepository, mock(GameAuthoredWorldSourceRepository.class), "test");
           DispatchResult unauthorized =
               dispatch(
                   interceptor,
@@ -119,7 +131,7 @@ class TenantIdentityGrpcAuthWiringTest {
   }
 
   @Test
-  void jwtBypassAppliesOnlyToTheConfiguredFreshReadMethod() throws IOException {
+  void jwtBypassAppliesOnlyToTheConfiguredOwnerReadMethods() throws IOException {
     AuthTokenInterceptor interceptor =
         new AuthTokenInterceptor(
             mock(JwtUtil.class), Set.copyOf(load("application.yml").publicMethods()));
@@ -127,6 +139,16 @@ class TenantIdentityGrpcAuthWiringTest {
     AuthDispatchResult fresh = dispatchWithoutPeer(interceptor, FRESH_CREATION_METHOD);
     assertThat(fresh.dispatched()).isTrue();
     assertThat(fresh.closedStatus()).isNull();
+
+    AuthDispatchResult completeLaunchBinding =
+        dispatchWithoutPeer(interceptor, COMPLETE_LAUNCH_BINDING_METHOD);
+    assertThat(completeLaunchBinding.dispatched()).isTrue();
+    assertThat(completeLaunchBinding.closedStatus()).isNull();
+
+    AuthDispatchResult authoredWorldSource =
+        dispatchWithoutPeer(interceptor, AUTHORED_WORLD_SOURCE_METHOD);
+    assertThat(authoredWorldSource.dispatched()).isTrue();
+    assertThat(authoredWorldSource.closedStatus()).isNull();
 
     AuthDispatchResult other = dispatchWithoutPeer(interceptor, OTHER_METHOD);
     assertThat(other.dispatched()).isFalse();
@@ -180,7 +202,10 @@ class TenantIdentityGrpcAuthWiringTest {
             context -> {
               assertThat(context).hasSingleBean(AuthTokenInterceptor.class);
               assertThat(context.getBean(GrpcAuthProperties.class).getPublicMethods())
-                  .containsExactly(FRESH_CREATION_METHOD);
+                  .containsExactly(
+                      FRESH_CREATION_METHOD,
+                      COMPLETE_LAUNCH_BINDING_METHOD,
+                      AUTHORED_WORLD_SOURCE_METHOD);
               action.accept(context.getBean(AuthTokenInterceptor.class));
             });
   }

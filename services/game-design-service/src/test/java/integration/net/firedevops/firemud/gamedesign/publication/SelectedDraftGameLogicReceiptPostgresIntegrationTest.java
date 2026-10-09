@@ -174,22 +174,35 @@ class SelectedDraftGameLogicReceiptPostgresIntegrationTest {
   }
 
   @Test
-  void publicationReadFailsClosedOnConflictingRetainedWorkflowField() {
+  void publicationReadFailsClosedOnConflictingRetainedAuthorizationBytes() {
     var value = receiptFixture();
     var fixture = fixture(value);
     var dsl = fixture.dsl();
     var repository = new SelectedDraftGameLogicReceiptRepository(dsl);
     fixture.tx().executeWithoutResult(ignored -> repository.retain(value));
-    // Fault injection bypasses the immutable-row trigger to model conflicting retained bytes.
+    var conflictingAuthorization =
+        new GameLogicIntakeAuthorizationBinding(
+            value.authorization().operationId(),
+            UUID.randomUUID(),
+            value.authorization().intakeRequestId(),
+            value.authorization().actorAccountId(),
+            value.authorization().source(),
+            value.authorization().sources());
+    // The trigger is bypassed to inject a changed but valid authorization payload. The database
+    // CHECK constraints remain active; the repository must detect the digest mismatch on read.
     dsl.execute(
         "ALTER TABLE game_design_selected_game_logic_receipt DISABLE TRIGGER trg_gd_selected_game_logic_receipt");
     dsl.execute(
-        "UPDATE game_design_selected_game_logic_receipt SET workflow_identity = ?",
-        "publish:wrong-tenant:publish-request:publish-1");
+        "UPDATE game_design_selected_game_logic_receipt SET authorization_bytes = ?",
+        conflictingAuthorization.canonicalBytes());
 
     assertThatThrownBy(() -> repository.readForPublication(publicationBinding(value)))
         .isInstanceOf(IllegalStateException.class)
         .hasMessageContaining("integrity conflict");
+    assertThat(
+            dsl.fetchSingle("SELECT receipt_bytes FROM game_design_selected_game_logic_receipt")
+                .get(0, byte[].class))
+        .containsExactly(value.receipt().canonicalBytes());
   }
 
   @Test

@@ -40,6 +40,50 @@ public final class AuthoredWorldSourceGrpcCodec {
         .build();
   }
 
+  /** Decodes the exact owner-read selector using the receiver's locally configured namespace. */
+  public static ReadRequest fromReadRequest(
+      String trustedNamespace, ResolveAuthoredWorldSourceRequest request) {
+    Objects.requireNonNull(request, "request");
+    if (!request.getUnknownFields().asMap().isEmpty()) {
+      throw new IllegalArgumentException(
+          "Authored-world source request contains unsupported fields");
+    }
+    try {
+      return new ReadRequest(
+          trustedNamespace,
+          parseCanonicalNonNilUuid(request.getRequestId(), "requestId"),
+          parseCanonicalNonNilUuid(request.getOperationId(), "operationId"),
+          parseCanonicalNonNilUuid(request.getCanonicalTenantId(), "canonicalTenantId"),
+          request.getWorldSlug());
+    } catch (IllegalArgumentException exception) {
+      throw new IllegalArgumentException("Authored-world source request is invalid", exception);
+    }
+  }
+
+  /** Encodes the exact immutable source receipt and the independent read identity. */
+  public static ResolveAuthoredWorldSourceResponse toReadResponse(
+      ReadRequest request, AuthoredWorldSourceEvidence evidence) {
+    Objects.requireNonNull(request, "request");
+    Objects.requireNonNull(evidence, "evidence");
+    requireExactSelector(request, evidence);
+    return ResolveAuthoredWorldSourceResponse.newBuilder()
+        .setSchemaVersion(evidence.schemaVersion())
+        .setTargetNamespace(evidence.targetNamespace())
+        .setRequestId(request.requestId().toString())
+        .setRegistrationRequestId(evidence.registrationRequestId().toString())
+        .setOperationId(evidence.operationId().toString())
+        .setRequestDigest(evidence.requestDigest())
+        .setCanonicalTenantId(evidence.canonicalTenantId().toString())
+        .setTenantSlug(evidence.tenantSlug())
+        .setWorldSlug(evidence.worldSlug())
+        .setWorldDisplayName(evidence.worldDisplayName())
+        .setSourceGameRowId(evidence.sourceGameRowId())
+        .setSourceGameTenantKey(evidence.sourceGameTenantKey())
+        .setProvenanceKind(evidence.provenanceKind())
+        .setEvidenceDigest(evidence.evidenceDigest())
+        .build();
+  }
+
   /** Decodes the complete closed receipt and binds all echoed fields to the exact read request. */
   public static AuthoredWorldSourceEvidence fromReadResponse(
       ReadRequest request, ResolveAuthoredWorldSourceResponse response) {
@@ -73,6 +117,12 @@ public final class AuthoredWorldSourceGrpcCodec {
       throw new IllegalArgumentException("Authored-world source response is invalid", exception);
     }
 
+    requireExactSelector(request, evidence);
+    return evidence;
+  }
+
+  private static void requireExactSelector(
+      ReadRequest request, AuthoredWorldSourceEvidence evidence) {
     if (!request.targetNamespace().equals(evidence.targetNamespace())
         || !request.operationId().equals(evidence.operationId())
         || !request.canonicalTenantId().equals(evidence.canonicalTenantId())
@@ -80,7 +130,6 @@ public final class AuthoredWorldSourceGrpcCodec {
       throw new IllegalArgumentException(
           "Authored-world source response does not match the exact request");
     }
-    return evidence;
   }
 
   private static void requireNoUnknownFields(Message message) {

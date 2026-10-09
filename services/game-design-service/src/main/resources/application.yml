@@ -62,6 +62,8 @@ firemud:
     grpc:
       public-methods:
         - gamedesign.v1.TenantIdentityService/ResolveFreshTenantCreation
+        - gamedesign.v1.GameDesignService/GetCompleteLaunchBinding
+        - gamedesign.v1.TenantIdentityService/ResolveAuthoredWorldSource
     http:
       enabled: true
       role-requirement: PRIVILEGED

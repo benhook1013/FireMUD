@@ -3,7 +3,6 @@ package net.firedevops.firemud.accountservice.service.session;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.when;
 
 import io.grpc.BindableService;
 import io.grpc.Metadata;
@@ -15,6 +14,7 @@ import io.grpc.ServerInterceptors;
 import io.grpc.netty.shaded.io.grpc.netty.GrpcSslContexts;
 import io.grpc.netty.shaded.io.grpc.netty.NettyServerBuilder;
 import io.grpc.netty.shaded.io.netty.handler.ssl.ClientAuth;
+import io.grpc.util.MutableHandlerRegistry;
 import java.net.InetSocketAddress;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -93,9 +93,9 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 
 /**
  * Real GD Account-ordered typed gameplay source through selection, Account intake, GL terminal,
- * Account settlement and the immutable V61 GD receipt. The Account current actor and original
- * terminal readback are real; only the fixture's exact current Redis registry bytes are replayed to
- * the source-permission read owner. Loopback owner calls use test-only mutual TLS identities.
+ * Account settlement and the immutable V61 GD receipt. The Account current actor, Redis-backed
+ * registry check and original terminal readback are real. Loopback owner calls use test-only mutual
+ * TLS identities.
  */
 @Testcontainers(disabledWithoutDocker = true)
 @SuppressWarnings("resource")
@@ -167,25 +167,12 @@ class GenuineSelectedGameLogicIntakePostgresIntegrationTest {
       var accountAccess = account.preparedOriginalCreator();
       var original = originalRequest.original();
       var credential = originalRequest.originalCreatorCredential();
-      var originalActor =
-          accountAccess
-              .actors()
-              .withCurrent(
-                  credential,
-                  local.target().canonicalTenantId(),
-                  accountAccess.environment(),
-                  current ->
-                      new ActiveRegistry(
-                          current.stored().tokenHash, current.stored().activeRegistry.clone()));
-
-      var registry = mock(AccountControlUiCoordination.class);
-      when(registry.readActive(originalActor.tokenHash())).thenReturn(originalActor.bytes());
       var accountRepository =
           new AccountGameLogicIntakeAuthorizationRepository(accountAccess.sources().dsl);
       var accountSourcePermissionOwner =
           new AccountGameLogicIntakeSourceReadService(
               accountRepository,
-              registry,
+              account.coordination(),
               accountAccess.sources().manager,
               Clock.systemUTC(),
               NAMESPACE);
@@ -195,80 +182,91 @@ class GenuineSelectedGameLogicIntakePostgresIntegrationTest {
 
       var endpoints = new ServiceEndpointsProperties();
       var pki = new TestPki(temporary.resolve("pki"));
-      var accountToGameDesignSource =
-          new GameplayRuleSourceReadClient(
-              endpoints,
-              pki.accountClient().properties(pki.ca()),
-              new GrpcChannelFactory(),
-              NAMESPACE);
-      var gameDesignToAccountPermission =
-          new GrpcGameLogicIntakeSourceReadClient(
-              endpoints,
-              pki.gameDesignClient().properties(pki.ca()),
-              new GrpcChannelFactory(),
-              NAMESPACE);
-      var gameLogicToAccountHeld =
-          new GameLogicIntakeAuthorizationReadClient(
-              endpoints,
-              pki.gameLogicClient().properties(pki.ca()),
-              new GrpcChannelFactory(),
-              NAMESPACE);
-      var gameLogicToGameDesignSource =
-          new GameplayRuleSourceReadClient(
-              endpoints,
-              pki.gameLogicClient().properties(pki.ca()),
-              new GrpcChannelFactory(),
-              NAMESPACE);
-      var accountToGameLogicTerminal =
-          new GameLogicIntakeTerminalReadClient(
-              endpoints,
-              pki.accountClient().properties(pki.ca()),
-              new GrpcChannelFactory(),
-              NAMESPACE);
-      var gameDesignToAccountAuthorization =
-          new GrpcGameLogicIntakeAuthorizationClient(
-              endpoints,
-              pki.gameDesignClient().properties(pki.ca()),
-              new GrpcChannelFactory(),
-              NAMESPACE);
-      var gameDesignToGameLogicRetain =
-          new GrpcGameLogicIntakeRetainClient(
-              endpoints,
-              pki.gameDesignClient().properties(pki.ca()),
-              new GrpcChannelFactory(),
-              NAMESPACE);
-      var gameDesignToAccountSettlement =
-          new GrpcAccountGameLogicIntakeSettlementReadClient(
-              endpoints,
-              pki.gameDesignClient().properties(pki.ca()),
-              new GrpcChannelFactory(),
-              NAMESPACE);
-      var originalOrderClient =
-          new AccountOriginalDraftOrderClient(
-              endpoints,
-              pki.gameDesignClient().properties(pki.ca()),
-              new GrpcChannelFactory(),
-              NAMESPACE);
-      var originalTerminalClient =
-          new GameDesignDraftTerminalReadClient(
-              endpoints,
-              pki.accountClient().properties(pki.ca()),
-              new GrpcChannelFactory(),
-              NAMESPACE);
-
-      var gameDesignSourceOwner =
-          new GameDesignGameplayRuleSourceReadService(
-              new GameplayRuleSourceRepository(local.dsl()),
-              local.transactions(),
-              gameDesignToAccountPermission,
-              NAMESPACE);
-      var gameDesignTerminalOwner = new GameDesignDraftTerminalOutcomeRepository(local.dsl());
       var gameDesignSourceReads = new AtomicInteger();
       var gameDesignTerminalReads = new AtomicInteger();
+      var gameLogicTerminalReads = new AtomicInteger();
+      var accountHandlers = new MutableHandlerRegistry();
+      var gameDesignHandlers = new MutableHandlerRegistry();
+      var gameLogicHandlers = new MutableHandlerRegistry();
       Server accountServer = null;
       Server gameDesignServer = null;
       Server gameLogicServer = null;
       try {
+        accountServer = startServer(pki, pki.accountServer(), accountHandlers);
+        endpoints.setAccountService(loopback(accountServer));
+        gameDesignServer = startServer(pki, pki.gameDesignServer(), gameDesignHandlers);
+        endpoints.setGameDesignService(loopback(gameDesignServer));
+        gameLogicServer = startServer(pki, pki.gameLogicServer(), gameLogicHandlers);
+        endpoints.setGameLogicService(loopback(gameLogicServer));
+
+        var accountToGameDesignSource =
+            new GameplayRuleSourceReadClient(
+                endpoints,
+                pki.accountClient().properties(pki.ca()),
+                new GrpcChannelFactory(),
+                NAMESPACE);
+        var gameDesignToAccountPermission =
+            new GrpcGameLogicIntakeSourceReadClient(
+                endpoints,
+                pki.gameDesignClient().properties(pki.ca()),
+                new GrpcChannelFactory(),
+                NAMESPACE);
+        var gameLogicToAccountHeld =
+            new GameLogicIntakeAuthorizationReadClient(
+                endpoints,
+                pki.gameLogicClient().properties(pki.ca()),
+                new GrpcChannelFactory(),
+                NAMESPACE);
+        var gameLogicToGameDesignSource =
+            new GameplayRuleSourceReadClient(
+                endpoints,
+                pki.gameLogicClient().properties(pki.ca()),
+                new GrpcChannelFactory(),
+                NAMESPACE);
+        var accountToGameLogicTerminal =
+            new GameLogicIntakeTerminalReadClient(
+                endpoints,
+                pki.accountClient().properties(pki.ca()),
+                new GrpcChannelFactory(),
+                NAMESPACE);
+        var gameDesignToAccountAuthorization =
+            new GrpcGameLogicIntakeAuthorizationClient(
+                endpoints,
+                pki.gameDesignClient().properties(pki.ca()),
+                new GrpcChannelFactory(),
+                NAMESPACE);
+        var gameDesignToGameLogicRetain =
+            new GrpcGameLogicIntakeRetainClient(
+                endpoints,
+                pki.gameDesignClient().properties(pki.ca()),
+                new GrpcChannelFactory(),
+                NAMESPACE);
+        var gameDesignToAccountSettlement =
+            new GrpcAccountGameLogicIntakeSettlementReadClient(
+                endpoints,
+                pki.gameDesignClient().properties(pki.ca()),
+                new GrpcChannelFactory(),
+                NAMESPACE);
+        var originalOrderClient =
+            new AccountOriginalDraftOrderClient(
+                endpoints,
+                pki.gameDesignClient().properties(pki.ca()),
+                new GrpcChannelFactory(),
+                NAMESPACE);
+        var originalTerminalClient =
+            new GameDesignDraftTerminalReadClient(
+                endpoints,
+                pki.accountClient().properties(pki.ca()),
+                new GrpcChannelFactory(),
+                NAMESPACE);
+
+        var gameDesignSourceOwner =
+            new GameDesignGameplayRuleSourceReadService(
+                new GameplayRuleSourceRepository(local.dsl()),
+                local.transactions(),
+                gameDesignToAccountPermission,
+                NAMESPACE);
+        var gameDesignTerminalOwner = new GameDesignDraftTerminalOutcomeRepository(local.dsl());
         var accountAuthorizationOwner =
             new AccountGameLogicIntakeAuthorizationService(
                 accountAccess.actors(),
@@ -283,32 +281,6 @@ class GenuineSelectedGameLogicIntakePostgresIntegrationTest {
                 accountToGameLogicTerminal,
                 accountAccess.sources().manager,
                 NAMESPACE);
-        accountServer =
-            startServer(
-                pki,
-                pki.accountServer(),
-                Map.of(),
-                account.originalDraftOrderProducer(NAMESPACE),
-                new AccountGameLogicIntakeAuthorizationGrpcService(
-                    accountAuthorizationOwner, accountAccess.sources().terms, NAMESPACE),
-                new AccountGameLogicIntakeSourceReadGrpcService(
-                    accountSourcePermissionOwner, NAMESPACE),
-                new AccountGameLogicIntakeAuthorizationReadGrpcService(
-                    accountHeldReadOwner, NAMESPACE),
-                new AccountGameLogicIntakeSettlementGrpcService(accountSettlementOwner, NAMESPACE));
-        endpoints.setAccountService(loopback(accountServer));
-
-        gameDesignServer =
-            startServer(
-                pki,
-                pki.gameDesignServer(),
-                Map.of(
-                    "readselectedgameplayrulesource", gameDesignSourceReads,
-                    "readgamedesigndraftterminaloutcome", gameDesignTerminalReads),
-                new GameDesignGameplayRuleSourceReadGrpcService(gameDesignSourceOwner, NAMESPACE),
-                new GameDesignDraftTerminalReadGrpcService(gameDesignTerminalOwner, NAMESPACE));
-        endpoints.setGameDesignService(loopback(gameDesignServer));
-
         var gameLogicRepository = new GameLogicGameplayRuleIntakeRepository(gameLogic.dsl());
         var gameLogicOwner =
             new GameLogicGameplayRuleIntakeService(
@@ -317,18 +289,30 @@ class GenuineSelectedGameLogicIntakePostgresIntegrationTest {
                 gameLogicToAccountHeld,
                 gameLogicToGameDesignSource,
                 NAMESPACE);
-        var gameLogicTerminalReads = new AtomicInteger();
-        gameLogicServer =
-            startServer(
-                pki,
-                pki.gameLogicServer(),
-                Map.of("readgameplayruleintaketerminal", gameLogicTerminalReads),
-                new GameLogicGameplayRuleIntakeGrpcService(gameLogicOwner, NAMESPACE),
-                new GameLogicGameplayRuleIntakeTerminalReadGrpcService(
-                    new GameLogicGameplayRuleIntakeTerminalReadService(
-                        gameLogicRepository, NAMESPACE),
-                    NAMESPACE));
-        endpoints.setGameLogicService(loopback(gameLogicServer));
+        registerServices(
+            accountHandlers,
+            Map.of(),
+            account.originalDraftOrderProducer(NAMESPACE),
+            new AccountGameLogicIntakeAuthorizationGrpcService(
+                accountAuthorizationOwner, accountAccess.sources().terms, NAMESPACE),
+            new AccountGameLogicIntakeSourceReadGrpcService(
+                accountSourcePermissionOwner, NAMESPACE),
+            new AccountGameLogicIntakeAuthorizationReadGrpcService(accountHeldReadOwner, NAMESPACE),
+            new AccountGameLogicIntakeSettlementGrpcService(accountSettlementOwner, NAMESPACE));
+        registerServices(
+            gameDesignHandlers,
+            Map.of(
+                "readselectedgameplayrulesource", gameDesignSourceReads,
+                "readgamedesigndraftterminaloutcome", gameDesignTerminalReads),
+            new GameDesignGameplayRuleSourceReadGrpcService(gameDesignSourceOwner, NAMESPACE),
+            new GameDesignDraftTerminalReadGrpcService(gameDesignTerminalOwner, NAMESPACE));
+        registerServices(
+            gameLogicHandlers,
+            Map.of("readgameplayruleintaketerminal", gameLogicTerminalReads),
+            new GameLogicGameplayRuleIntakeGrpcService(gameLogicOwner, NAMESPACE),
+            new GameLogicGameplayRuleIntakeTerminalReadGrpcService(
+                new GameLogicGameplayRuleIntakeTerminalReadService(gameLogicRepository, NAMESPACE),
+                NAMESPACE));
 
         try (accountToGameDesignSource;
             gameDesignToAccountPermission;
@@ -500,9 +484,7 @@ class GenuineSelectedGameLogicIntakePostgresIntegrationTest {
               .isEqualTo(DraftAuthorizationFenceRepository.Settlement.COMMITTED);
         }
       } finally {
-        stop(gameLogicServer);
-        stop(gameDesignServer);
-        stop(accountServer);
+        stopAll(gameLogicServer, gameDesignServer, accountServer);
       }
     }
   }
@@ -658,13 +640,10 @@ class GenuineSelectedGameLogicIntakePostgresIntegrationTest {
   }
 
   private static Server startServer(
-      TestPki pki,
-      TestIdentity identity,
-      Map<String, AtomicInteger> methodCounts,
-      BindableService... services)
-      throws Exception {
+      TestPki pki, TestIdentity identity, MutableHandlerRegistry handlers) throws Exception {
     var builder =
         NettyServerBuilder.forAddress(new InetSocketAddress("127.0.0.1", 0))
+            .fallbackHandlerRegistry(handlers)
             .maxInboundMessageSize(20 * 1024 * 1024)
             .maxInboundMetadataSize(AccountOriginalDraftOrderGrpcCodec.MAX_METADATA_BYTES)
             .sslContext(
@@ -672,11 +651,17 @@ class GenuineSelectedGameLogicIntakePostgresIntegrationTest {
                     .trustManager(pki.ca().toFile())
                     .clientAuth(ClientAuth.REQUIRE)
                     .build());
+    return builder.build().start();
+  }
+
+  private static void registerServices(
+      MutableHandlerRegistry handlers,
+      Map<String, AtomicInteger> methodCounts,
+      BindableService... services) {
     for (var service : services)
-      builder.addService(
+      handlers.addService(
           ServerInterceptors.intercept(
               service, new GrpcPeerIdentityInterceptor(), countingInterceptor(methodCounts)));
-    return builder.build().start();
   }
 
   private static ServerInterceptor countingInterceptor(Map<String, AtomicInteger> methodCounts) {
@@ -698,11 +683,12 @@ class GenuineSelectedGameLogicIntakePostgresIntegrationTest {
     return "127.0.0.1:" + server.getPort();
   }
 
-  private static void stop(Server server) throws InterruptedException {
-    if (server == null) return;
-    server.shutdownNow();
-    if (!server.awaitTermination(5, TimeUnit.SECONDS))
-      throw new IllegalStateException("Test owner server did not stop");
+  private static void stopAll(Server... servers) throws InterruptedException {
+    for (var server : servers) if (server != null) server.shutdownNow();
+    var terminated = true;
+    for (var server : servers)
+      if (server != null) terminated &= server.awaitTermination(5, TimeUnit.SECONDS);
+    if (!terminated) throw new IllegalStateException("Test owner server did not stop");
   }
 
   private record Local(
@@ -711,8 +697,6 @@ class GenuineSelectedGameLogicIntakePostgresIntegrationTest {
       DraftCommitBinding.TargetProof target) {}
 
   private record GameLogicStore(DSLContext dsl, DataSourceTransactionManager transactions) {}
-
-  private record ActiveRegistry(String tokenHash, byte[] bytes) {}
 
   private record TestIdentity(Path certificate, Path key) {
     CommonGrpcClientProperties properties(Path ca) {

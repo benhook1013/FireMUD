@@ -11,6 +11,7 @@ import static org.mockito.Mockito.when;
 import io.grpc.ManagedChannel;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.List;
 import java.util.UUID;
 import net.firedevops.firemud.common.config.ServiceEndpointsProperties;
 import net.firedevops.firemud.common.grpc.CommonGrpcClientProperties;
@@ -42,6 +43,80 @@ class AuthoredWorldLaunchDescriptorClientTest {
                     request(NAMESPACE), response))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("legacy tenant selector");
+  }
+
+  @Test
+  void completeBindingResponseRoundTripsTheExactDescriptorAndAttestationPair() {
+    AuthoredWorldLaunchDescriptorEvidence.Request sourceRequest = request(NAMESPACE);
+    AuthoredWorldLaunchDescriptorEvidence descriptor =
+        AuthoredWorldLaunchDescriptorEvidence.create(
+            sourceRequest,
+            "launch-descriptor-7",
+            7L,
+            false,
+            null,
+            "{}",
+            "generation-revision-1",
+            3L,
+            11L,
+            "release-ref-11",
+            false,
+            null);
+    String commitId = "commit-7";
+    List<AuthoredWorldReleaseAttestationEvidence.Participant> participants =
+        AuthoredWorldReleaseAttestationEvidence.requiredParticipantOrder().stream()
+            .map(
+                participantKey ->
+                    new AuthoredWorldReleaseAttestationEvidence.Participant(
+                        participantKey,
+                        "7",
+                        false,
+                        null,
+                        commitId,
+                        "d".repeat(64),
+                        AuthoredWorldReleaseAttestationEvidence.supportedParticipantDigestSchema(
+                            participantKey),
+                        "GAME_LOGIC".equals(participantKey),
+                        "GAME_LOGIC".equals(participantKey) ? "sha256:" + "e".repeat(64) : null))
+            .toList();
+    AuthoredWorldReleaseAttestationEvidence releaseAttestation =
+        AuthoredWorldReleaseAttestationEvidence.create(
+            NAMESPACE,
+            descriptor.resultDigest(),
+            TENANT_ID,
+            UUID.fromString("82345678-1234-4234-8234-123456789abc"),
+            sourceRequest.worldSlug(),
+            SOURCE_OPERATION_ID,
+            sourceRequest.authoredWorldSourceEvidenceDigest(),
+            descriptor.launchDescriptorId(),
+            descriptor.publishedReleaseBundleRef(),
+            descriptor.versionStateEpoch(),
+            "publish-workflow-7",
+            commitId,
+            participants,
+            "sha256:" + "c".repeat(64),
+            1,
+            List.of(),
+            List.of(),
+            List.of(),
+            descriptor.generationConfigRevision());
+    CompleteLaunchBindingEvidence evidence =
+        new CompleteLaunchBindingEvidence(descriptor, releaseAttestation);
+    GetLaunchDescriptorRequest readRequest =
+        GetLaunchDescriptorRequest.newBuilder()
+            .setRequestId(READ_REQUEST_ID.toString())
+            .setCanonicalTenantId(TENANT_ID.toString())
+            .setWorldSlug(sourceRequest.worldSlug())
+            .setControlPlaneRequestId(sourceRequest.controlPlaneRequestId())
+            .setExpectedRequestDigest(descriptor.requestDigest())
+            .setExpectedResultDigest(descriptor.resultDigest())
+            .build();
+
+    var response = AuthoredWorldLaunchDescriptorGrpcCodec.toCompleteResponse(readRequest, evidence);
+
+    org.assertj.core.api.Assertions.assertThat(
+            AuthoredWorldLaunchDescriptorGrpcCodec.fromCompleteResponse(readRequest, response))
+        .isEqualTo(evidence);
   }
 
   @Test

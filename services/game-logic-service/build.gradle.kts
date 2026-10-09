@@ -19,3 +19,17 @@ dependencies {
     implementation(project(":common-security"))
     annotationProcessor(libs.spring.boot.configuration.processor)
 }
+
+// Opt-in proof artifact: expose Game Logic classes to owner integration tests without its application resources.
+val gameLogicClassesProofJar by tasks.registering(Jar::class) {
+    archiveClassifier.set("classes-proof")
+    dependsOn(tasks.named("classes"))
+    from(sourceSets.main.get().output.classesDirs)
+}
+
+val gameLogicClassesProof by configurations.creating {
+    isCanBeConsumed = true
+    isCanBeResolved = false
+    extendsFrom(configurations.implementation.get())
+    outgoing.artifact(gameLogicClassesProofJar)
+}
