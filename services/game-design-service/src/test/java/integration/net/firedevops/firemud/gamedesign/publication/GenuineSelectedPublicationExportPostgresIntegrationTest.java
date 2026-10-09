@@ -51,7 +51,6 @@ import net.firedevops.firemud.accountservice.authordraft.DraftAuthorizationFence
 import net.firedevops.firemud.common.account.StartSessionRedeemedOperationProjectionClient;
 import net.firedevops.firemud.common.authoring.AccountOriginalDraftOrderClient;
 import net.firedevops.firemud.common.authoring.AccountOriginalDraftOrderGrpcCodec;
-import net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding.AffectedUnit;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding.Owner;
@@ -88,21 +87,28 @@ import net.firedevops.firemud.common.operator.StartSessionAuthorityEvidenceBundl
 import net.firedevops.firemud.common.operator.StartSessionOperatorAction;
 import net.firedevops.firemud.common.operator.StartSessionPostAuthorizationExecutionTuple;
 import net.firedevops.firemud.common.operator.StartSessionPreAuthorizationReservationTuple;
+import net.firedevops.firemud.common.publication.AccountPublicationAuthorizationBinding;
+import net.firedevops.firemud.common.publication.AccountPublicationAuthorizationReadClient;
 import net.firedevops.firemud.common.publication.AuthoredDraftPublishSelectionBinding;
+import net.firedevops.firemud.common.publication.AuthoredDraftPublishSelectionReadClient;
 import net.firedevops.firemud.common.publication.PublicationDigestRequestBinding;
+import net.firedevops.firemud.common.publication.WorldSelectedDraftPublicationFreezeClient;
+import net.firedevops.firemud.common.publication.WorldSelectedDraftPublicationFreezeEvidence;
+import net.firedevops.firemud.common.publication.WorldSelectedDraftPublicationFreezeGrpcCodec;
+import net.firedevops.firemud.common.publication.WorldSelectedPublicationArtifactInventoryClient;
 import net.firedevops.firemud.common.security.PublicationReadGuard;
 import net.firedevops.firemud.common.tenant.AuthoredWorldSourceClient;
 import net.firedevops.firemud.common.tenant.WorldAuthoredSourceIntakeClient;
 import net.firedevops.firemud.common.tenant.WorldAuthoredSourceIntakeGrpcCodec;
-import net.firedevops.firemud.common.world.WorldDraftStartLocationEvidence;
-import net.firedevops.firemud.common.world.WorldPublishedStartLocationEvidence;
 import net.firedevops.firemud.gamedesign.client.GameLogicClient;
+import net.firedevops.firemud.gamedesign.client.WorldPublishedStartLocationClient;
 import net.firedevops.firemud.gamedesign.config.AssetStoreProperties;
 import net.firedevops.firemud.gamedesign.draft.AuthoredDraftPublishSelection;
 import net.firedevops.firemud.gamedesign.draft.AuthoredDraftPublishSelectionRepository;
 import net.firedevops.firemud.gamedesign.draft.DraftCommitCoordinatorRepository;
 import net.firedevops.firemud.gamedesign.draft.GameDesignDraftTerminalOutcomeRepository;
 import net.firedevops.firemud.gamedesign.draft.GameDesignDraftTerminalReadGrpcService;
+import net.firedevops.firemud.gamedesign.draft.GameDesignSelectedDraftPublicationReadGrpcService;
 import net.firedevops.firemud.gamedesign.draft.GameDesignWorldSourceCommitService;
 import net.firedevops.firemud.gamedesign.dto.DesignControlPlaneDigestDto;
 import net.firedevops.firemud.gamedesign.dto.PublishParticipantDigestDto;
@@ -113,19 +119,16 @@ import net.firedevops.firemud.gamedesign.model.VersionLifecycleState;
 import net.firedevops.firemud.gamedesign.publication.AssetSource;
 import net.firedevops.firemud.gamedesign.publication.GameDesignGameplayRuleSourceReadGrpcService;
 import net.firedevops.firemud.gamedesign.publication.GameDesignGameplayRuleSourceReadService;
-import net.firedevops.firemud.gamedesign.publication.GameDesignPublicationOperation;
 import net.firedevops.firemud.gamedesign.publication.GameDesignSourceRepository;
 import net.firedevops.firemud.gamedesign.publication.GameplayRuleSource;
-import net.firedevops.firemud.gamedesign.publication.IsolatedPublicationOperationFixtures;
 import net.firedevops.firemud.gamedesign.publication.SelectedDraftAssetInventory;
 import net.firedevops.firemud.gamedesign.publication.SelectedDraftAssetInventoryReadService;
 import net.firedevops.firemud.gamedesign.publication.SelectedDraftControlPlaneDigest;
 import net.firedevops.firemud.gamedesign.publication.SelectedDraftGameLogicIntakeCommandService;
 import net.firedevops.firemud.gamedesign.publication.SelectedDraftGameLogicReceipt;
 import net.firedevops.firemud.gamedesign.publication.SelectedDraftGameLogicReceiptService;
+import net.firedevops.firemud.gamedesign.publication.SelectedDraftPublicationAdmissionService;
 import net.firedevops.firemud.gamedesign.publication.SelectedDraftPublicationDigestReadService;
-import net.firedevops.firemud.gamedesign.publication.SelectedDraftPublicationOwner;
-import net.firedevops.firemud.gamedesign.publication.SelectedDraftTemplateWorldSourceAssociation.SourceRead;
 import net.firedevops.firemud.gamedesign.publication.SelectedDraftTemplateWorldSourceAssociationRepository;
 import net.firedevops.firemud.gamedesign.publication.StartSessionLaunchDescriptorProducer;
 import net.firedevops.firemud.gamedesign.publication.StartSessionTemplateAssociationReadService;
@@ -171,6 +174,7 @@ import net.firedevops.firemud.gamelogic.sourceintake.GameLogicGameplayRuleIntake
 import net.firedevops.firemud.gamelogic.sourceintake.GameLogicGameplayRuleIntakeTerminalReadService;
 import net.firedevops.firemud.gamelogic.sourceintake.GameLogicPublicationSourceReadService;
 import net.firedevops.firemud.test.TestContainerImages;
+import net.firedevops.firemud.worldmanagement.tenant.GenuineWorldSelectedPublicationProofFactory;
 import net.firedevops.firemud.worldmanagement.tenant.WorldAuthoredSourceIntakeGrpcService;
 import net.firedevops.firemud.worldmanagement.tenant.WorldAuthoredSourceIntakeRepository;
 import net.firedevops.firemud.worldmanagement.tenant.WorldAuthoredSourceIntakeService;
@@ -181,7 +185,6 @@ import net.firedevops.firemud.worldmanagement.tenant.WorldDesignPublicationFence
 import net.firedevops.firemud.worldmanagement.tenant.WorldDraftCommitOrderVerifier;
 import net.firedevops.firemud.worldmanagement.tenant.WorldDraftGraphApplicationRepository;
 import net.firedevops.firemud.worldmanagement.tenant.WorldDraftGraphApplicationService;
-import net.firedevops.firemud.worldmanagement.tenant.WorldDraftGraphAppliedResult;
 import net.firedevops.firemud.worldmanagement.tenant.WorldDraftTerminalOutcomeRepository;
 import net.firedevops.firemud.worldmanagement.tenant.WorldDraftTerminalReadGrpcService;
 import net.firedevops.firemud.worldmanagement.tenant.WorldOriginalDraftGraphApplicationService;
@@ -224,11 +227,15 @@ import tools.jackson.databind.ObjectMapper;
 
 /**
  * Real original GD+World source settlement and Account/GL intake-to-GD-receipt, followed by actual
- * selected inventory/export, the owner-local publication finalizer, and descriptor SQL storage.
- * Selected-publication Account/freeze/inventory admission and Entity/Automation participant digests
- * are stipulated; the World participant uses only retained fixture freeze evidence. In-memory S3
- * and StartSession Account projection are test doubles. This is not a four-owner authenticated
- * release, runtime launch, activation, or registration proof.
+ * selected inventory/export, the owner-local publication finalizer, and descriptor SQL storage. The
+ * distinct Account publication order comes from the actual Account owner fixture; its inbound Game
+ * Design peer and upstream selection/platform/legal evidence are supplied by test context. The
+ * immutable selection read and held-order reads use loopback mTLS. World freeze, immutable
+ * inventory and published selector use their actual owner services over loopback mTLS, with the
+ * canonical frozen selector captured owner-locally from the committed freeze and retained APPLIED
+ * graph. Entity/Automation participant digests, in-memory S3 and the StartSession Account
+ * projection remain test doubles. This is not a complete four-owner authenticated release, runtime
+ * launch, activation or registration proof.
  */
 @Testcontainers(disabledWithoutDocker = true)
 @SuppressWarnings("resource")
@@ -386,6 +393,27 @@ class GenuineSelectedPublicationExportPostgresIntegrationTest {
                   endpoints, pki.client("game-design-service"), channels, NAMESPACE);
           var gdToAccountSettlement =
               new GrpcAccountGameLogicIntakeSettlementReadClient(
+                  endpoints, pki.client("game-design-service"), channels, NAMESPACE);
+          var accountSelectionReadClient =
+              new AuthoredDraftPublishSelectionReadClient(
+                  endpoints, pki.client("account-service"), channels, NAMESPACE);
+          var worldSelectionReadClient =
+              new AuthoredDraftPublishSelectionReadClient(
+                  endpoints, pki.client("world-management-service"), channels, NAMESPACE);
+          var worldAccountReadClient =
+              new AccountPublicationAuthorizationReadClient(
+                  endpoints, pki.client("world-management-service"), channels, NAMESPACE);
+          var gdAccountPublicationReadClient =
+              new AccountPublicationAuthorizationReadClient(
+                  endpoints, pki.client("game-design-service"), channels, NAMESPACE);
+          var selectedPublicationFreezeClient =
+              new WorldSelectedDraftPublicationFreezeClient(
+                  endpoints, pki.client("game-design-service"), channels, NAMESPACE);
+          var selectedPublicationInventoryClient =
+              new WorldSelectedPublicationArtifactInventoryClient(
+                  endpoints, pki.client("game-design-service"), channels, NAMESPACE);
+          var publishedStartLocationClient =
+              new WorldPublishedStartLocationClient(
                   endpoints, pki.client("game-design-service"), channels, NAMESPACE)) {
         sourceClient.init();
         versionClient.init();
@@ -455,14 +483,37 @@ class GenuineSelectedPublicationExportPostgresIntegrationTest {
             accountHandlers,
             account.originalDraftOrderProducer(NAMESPACE),
             new AccountDraftCommitOrderReadGrpcService(
-                account.heldOrderOwner(NAMESPACE), NAMESPACE));
+                account.heldOrderOwner(NAMESPACE), NAMESPACE),
+            new AccountPublicationAuthorizationReadGrpcService(
+                account.heldPublicationOwner(NAMESPACE), NAMESPACE));
 
         var coordinator = new DraftCommitCoordinatorRepository(gd.dsl());
         var gdTerminals = new GameDesignDraftTerminalOutcomeRepository(gd.dsl());
         var gdSources = new GameDesignSourceRepository(gd.dsl());
+        var selectionRepository =
+            new AuthoredDraftPublishSelectionRepository(gd.dsl(), coordinator);
+        register(
+            gdHandlers,
+            new GameDesignSelectedDraftPublicationReadGrpcService(selectionRepository, NAMESPACE));
         var worldFence = new WorldDesignPublicationFenceRepository(world.dsl(), worldIntakes);
         var worldApplications =
             new WorldDraftGraphApplicationRepository(world.dsl(), worldFence, new ObjectMapper());
+        var worldPublicationProof =
+            new GenuineWorldSelectedPublicationProofFactory(
+                NAMESPACE,
+                world.dsl(),
+                world.transactions(),
+                worldIntakes,
+                worldFence,
+                worldApplications,
+                worldSelectionReadClient,
+                versionClient,
+                worldAccountReadClient,
+                new ObjectMapper());
+        register(
+            worldHandlers,
+            worldPublicationProof.freezeAndInventoryService(),
+            worldPublicationProof.publishedStartLocationReadService());
         var worldApplicationService =
             new WorldDraftGraphApplicationService(
                 worldApplications,
@@ -572,6 +623,13 @@ class GenuineSelectedPublicationExportPostgresIntegrationTest {
         gdToAccountIntakeAuthorization.init();
         gdToGlRetain.init();
         gdToAccountSettlement.init();
+        accountSelectionReadClient.init();
+        worldSelectionReadClient.init();
+        worldAccountReadClient.init();
+        gdAccountPublicationReadClient.init();
+        selectedPublicationFreezeClient.init();
+        selectedPublicationInventoryClient.init();
+        publishedStartLocationClient.init();
 
         var sourceCommit =
             new GameDesignWorldSourceCommitService(
@@ -634,12 +692,17 @@ class GenuineSelectedPublicationExportPostgresIntegrationTest {
                 selectedCommit.requestId(),
                 selectedCommit.commitId(),
                 selectedCommit.digest());
-        var selection =
-            gd.transaction(
-                () ->
-                    new AuthoredDraftPublishSelectionRepository(gd.dsl(), coordinator)
-                        .reserve(intent)
-                        .selection());
+        var selection = gd.transaction(() -> selectionRepository.reserve(intent).selection());
+        var selectionBinding =
+            AuthoredDraftPublishSelectionBinding.fromStored(
+                selection.canonicalJson(), selection.digest());
+        var accountPublicationOrder =
+            account.authorizePublication(selectionBinding, accountSelectionReadClient, NAMESPACE);
+        assertThat(accountPublicationOrder.input().selection().canonicalBytes())
+            .containsExactly(selection.canonicalBytes());
+        assertThat(accountPublicationOrder.operationId()).isNotEqualTo(original.operationId());
+        assertThat(accountPublicationOrder.fenceId()).isNotEqualTo(original.fenceId());
+        account.assertPublicationSourcesHeld(accountPublicationOrder);
         var intakeRequest =
             GameLogicIntakeAuthorizationEvidence.Request.create(
                 NAMESPACE, UUID.randomUUID(), selection.selectedCommit());
@@ -682,34 +745,78 @@ class GenuineSelectedPublicationExportPostgresIntegrationTest {
         assertThat(gd.dsl().fetchCount(DSL.table("game_design_selected_game_logic_receipt")))
             .isOne();
 
-        var selectorEvidence =
-            selectedPublicationWorldEvidence(
-                original, appliedWorld, selectedCommit, selection, intent, publishRequestId);
-        GameDesignPublicationOperation publicationOperation =
-            IsolatedPublicationOperationFixtures.forSelection(
-                AuthoredDraftPublishSelectionBinding.fromStored(
-                    selection.canonicalJson(), selection.digest()),
-                selectorEvidence);
-        var selectedWorldSourceRequest =
-            new WorldAuthoredSourceIntakeGrpcCodec.ByIdReadRequest(
-                1,
-                NAMESPACE,
-                UUID.randomUUID(),
-                appliedWorld.application().operation().ownerBinding().intakeRequestId(),
-                gd.target().canonicalTenantId());
-        var selectedWorldSourceRead =
-            new SourceRead(
-                selectedWorldSourceRequest, worldIntakeClient.readById(selectedWorldSourceRequest));
+        var publicationAdmission =
+            new SelectedDraftPublicationAdmissionService(
+                gd.dsl(),
+                gd.transactions(),
+                gdAccountPublicationReadClient,
+                selectedPublicationFreezeClient,
+                selectedPublicationInventoryClient,
+                publishedStartLocationClient,
+                worldIntakeClient,
+                NAMESPACE);
         var publicationReservation =
-            gd.transaction(
-                () ->
-                    new SelectedDraftPublicationOwner(gd.dsl())
-                        .reserve(
-                            intent,
-                            publicationOperation.account(),
-                            publicationOperation.world(),
-                            publicationOperation.inventory(),
-                            selectedWorldSourceRead));
+            publicationAdmission.admitAndReserve(intent, accountPublicationOrder);
+        var exactAdmissionRetry =
+            publicationAdmission.admitAndReserve(intent, accountPublicationOrder);
+        assertThat(exactAdmissionRetry.operation().canonicalBytes())
+            .containsExactly(publicationReservation.operation().canonicalBytes());
+        assertThat(exactAdmissionRetry.attemptId()).isEqualTo(publicationReservation.attemptId());
+        assertThat(publicationReservation.operation().account().canonicalBytes())
+            .containsExactly(accountPublicationOrder.canonicalBytes());
+
+        var exactFreezeRequest =
+            WorldSelectedDraftPublicationFreezeEvidence.Request.create(
+                NAMESPACE,
+                intent.canonicalTenantId(),
+                intent.canonicalVersionId(),
+                intent.publishRequestId(),
+                Long.parseLong(intent.expectedVersionStateEpoch()),
+                selection.digest().substring("sha256:".length()),
+                accountPublicationOrder);
+        var actualFreeze = selectedPublicationFreezeClient.begin(exactFreezeRequest);
+        assertThat(actualFreeze.acknowledgement().publicationFence().toString())
+            .isEqualTo(publicationReservation.operation().world().request().publicationFence());
+        assertThat(actualFreeze.acknowledgement().appliedCommitId())
+            .isEqualTo(selectedCommit.commitId().toString());
+        var changedAccountOrder =
+            new AccountPublicationAuthorizationBinding(
+                UUID.randomUUID(),
+                accountPublicationOrder.fenceId(),
+                accountPublicationOrder.input(),
+                accountPublicationOrder.sources());
+        var selectedFreezeRequest =
+            WorldSelectedDraftPublicationFreezeEvidence.Request.create(
+                NAMESPACE,
+                intent.canonicalTenantId(),
+                intent.canonicalVersionId(),
+                intent.publishRequestId(),
+                Long.parseLong(intent.expectedVersionStateEpoch()),
+                selection.digest().substring("sha256:".length()),
+                changedAccountOrder);
+        assertFailedPrecondition(
+            () -> selectedPublicationFreezeClient.begin(selectedFreezeRequest));
+        var substitutedFreezeAcknowledgement =
+            new WorldSelectedDraftPublicationFreezeEvidence.Acknowledgement(
+                actualFreeze.request(),
+                actualFreeze.acknowledgement().intakeRequestId(),
+                actualFreeze.acknowledgement().versionStateEpoch(),
+                UUID.randomUUID(),
+                WorldSelectedDraftPublicationFreezeEvidence.OwnerFreezePhase.FROZEN,
+                actualFreeze.acknowledgement().appliedCommitId(),
+                actualFreeze.acknowledgement().contentDigest(),
+                actualFreeze.acknowledgement().digestSchemaVersion());
+        var substitutedFreeze =
+            WorldSelectedDraftPublicationFreezeGrpcCodec.fromResponse(
+                actualFreeze.request(),
+                WorldSelectedDraftPublicationFreezeGrpcCodec.toResponse(
+                    substitutedFreezeAcknowledgement));
+        assertFailedPrecondition(() -> selectedPublicationInventoryClient.read(substitutedFreeze));
+        assertThat(world.dsl().fetchCount(DSL.table("world_design_publication_fence_attempt")))
+            .isOne();
+        assertThat(
+                world.dsl().fetchCount(DSL.table("world_selected_publication_artifact_inventory")))
+            .isOne();
         var retainedTemplateAssociations =
             new SelectedDraftTemplateWorldSourceAssociationRepository(gd.dsl())
                 .readExact(
@@ -748,9 +855,9 @@ class GenuineSelectedPublicationExportPostgresIntegrationTest {
         assertThat(retainedWorldDigest.appliedCommitId())
             .isEqualTo(selectedCommit.commitId().toString());
         assertThat(retainedWorldDigest.contentDigest())
-            .isEqualTo(publicationOperation.world().request().contentDigest());
+            .isEqualTo(publicationReservation.operation().world().request().contentDigest());
         assertThat(retainedWorldDigest.digestSchemaVersion())
-            .isEqualTo(publicationOperation.world().request().digestSchemaVersion());
+            .isEqualTo(publicationReservation.operation().world().request().digestSchemaVersion());
         var inventoryReader =
             new SelectedDraftAssetInventoryReadService(gd.dsl(), gd.transactions());
         SelectedDraftAssetInventory actualInventory = inventoryReader.read(publicationRequest);
@@ -984,7 +1091,7 @@ class GenuineSelectedPublicationExportPostgresIntegrationTest {
                 gd.target().gameDesignVersionTenantKey(), gd.target().gameDesignVersionRowId());
         assertThat(release.attestationSchemaVersion()).isEqualTo("v2");
         assertThat(release.worldPublishedStartLocationEvidence())
-            .isEqualTo(publicationOperation.world());
+            .isEqualTo(publicationReservation.operation().world());
         var retainedGameLogicParticipant =
             release.participantDigests().stream()
                 .filter(digest -> "GAME_LOGIC".equals(digest.participantKey()))
@@ -1159,10 +1266,9 @@ class GenuineSelectedPublicationExportPostgresIntegrationTest {
   }
 
   /**
-   * Entity and Automation participant rows remain stipulated test inputs. The World digest comes
-   * only from the retained fixture freeze; Game Design and Game Logic use their actual owner-local
-   * selected-source reads. This does not prove authenticated fresh World freeze admission or a
-   * complete four-owner publication.
+   * Entity and Automation participant rows remain stipulated test inputs. World freeze, inventory,
+   * selector and Game Design and Game Logic source reads come from their actual owner compositions.
+   * This does not prove complete four-owner publication or activation.
    */
   private static List<PublishParticipantDigestDto> selectedSelectorParticipantDigests(
       DraftCommitBinding selectedCommit,
@@ -1752,61 +1858,6 @@ class GenuineSelectedPublicationExportPostgresIntegrationTest {
         .setOperation(WorldDesignMutationOperation.WORLD_DESIGN_MUTATION_OPERATION_UPSERT)
         .setScopeType(WorldDesignScopeType.WORLD_DESIGN_SCOPE_TYPE_REGION_SUBTREE)
         .setScopeId(region.toString());
-  }
-
-  private static WorldPublishedStartLocationEvidence selectedPublicationWorldEvidence(
-      DraftAuthorizationFenceBinding original,
-      WorldDraftGraphAppliedResult applied,
-      DraftCommitBinding selectedCommit,
-      AuthoredDraftPublishSelection selection,
-      AuthoredDraftPublishSelection.PublishIntent intent,
-      String publishRequestId) {
-    var retained = applied.startLocationReceipt().orElseThrow();
-    var selectorReceipt =
-        WorldDraftStartLocationEvidence.create(
-                retained.targetNamespace(),
-                retained.operationId(),
-                retained.requestId(),
-                retained.commitId(),
-                retained.authorizationFenceId(),
-                retained.accountBindingDigest(),
-                retained.bindingDigest(),
-                retained.startLocation(),
-                retained.graphDigest())
-            .canonicalBytes();
-    var tuples =
-        selectedCommit.affectedUnits(Owner.WORLD_MANAGEMENT).stream()
-            .map(
-                unit ->
-                    new WorldPublishedStartLocationEvidence.OwnedAffectedTuple(
-                        unit.owner().name(),
-                        unit.aggregateType(),
-                        unit.aggregateId(),
-                        unit.scopeType(),
-                        unit.scopeId(),
-                        unit.expectedEpoch()))
-            .toList();
-    var request =
-        new WorldPublishedStartLocationEvidence.Request(
-            NAMESPACE,
-            selectedCommit.target().canonicalTenantId(),
-            selectedCommit.target().canonicalVersionId(),
-            applied.application().operation().ownerBinding().intakeRequestId(),
-            UUID.randomUUID(),
-            publishRequestId,
-            selection.digest().substring("sha256:".length()),
-            Long.parseLong(intent.expectedVersionStateEpoch()),
-            PublicationDigestRequestBinding.full(
-                    selectedCommit.target().canonicalTenantId().toString(),
-                    Long.toString(selectedCommit.target().gameDesignVersionRowId()),
-                    publishRequestId)
-                .derivedWorkflowIdentity(),
-            selectedCommit.commitId().toString(),
-            retained.graphDigest(),
-            3,
-            tuples);
-    return new WorldPublishedStartLocationEvidence(
-        request, selectorReceipt, original.canonicalBytes(), applied.canonicalBytes());
   }
 
   private static Server startServer(TestPki pki, String service, MutableHandlerRegistry handlers)

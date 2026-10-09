@@ -162,3 +162,9 @@ Entry format:
   - Observation: The separate substantive Validation run 37928625721 was still executing on the same head; metadata and required runs use distinct concurrency groups. The body edit had not cancelled it. A pending-proof metadata failure is neither a runtime failure nor evidence that no physical validation was dispatched.
   - Expected pattern: Before requesting replacement CI or routing a dispatch failure, inspect enough same-head runs to distinguish substantive execution from newer metadata preservation, then assign one observer to the actual execution transition.
   - Current status: Wider read-only inspection established the active run, and the parent corrected the Overseer request. A sole sentinel owns its outcome; no replacement run or workflow/topology change was made.
+
+- `2026-10-10`: Validate required controller fields before replacing a standing brief
+  - Context: Document read the absent JSON field `body` instead of the required `brief` field when appending an accepted disposition through guarded `jobs revise`.
+  - Observation: The revision guard prevented concurrent replacement but did not prevent a semantically incomplete payload; the standing brief was briefly replaced by the addendum alone.
+  - Expected pattern: Require a string-valued `brief`, preserve it without a missing-field fallback, and read back both the original mandate and the appended instruction after revision. A revision guard is not content validation.
+  - Current status: Restored the complete revision-302 brief from controller history and appended the disposition in revision 304; readback confirmed 66,031 characters and the original mandate. Overseer was informed and preserved the correction in revision 305. No repository behavior or controller policy changed.

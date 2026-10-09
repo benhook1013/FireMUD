@@ -3,9 +3,11 @@ package net.firedevops.firemud.worldmanagement.tenant;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
@@ -14,6 +16,7 @@ import io.grpc.Context;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Supplier;
 import net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding;
@@ -95,7 +98,8 @@ class WorldSelectedDraftPublicationFreezeRequestTest {
             collaborators.applications,
             collaborators.fence,
             collaborators.authorizationRepository,
-            collaborators.artifactInventoryRepository);
+            collaborators.artifactInventoryRepository,
+            collaborators.selectorCapture);
     order
         .verify(collaborators.applications)
         .readSelectedPublicationApplication(NAMESPACE, TENANT, VERSION, fixture.selection());
@@ -104,6 +108,7 @@ class WorldSelectedDraftPublicationFreezeRequestTest {
     order
         .verify(collaborators.artifactInventoryRepository)
         .readCommitted(prior, fixture.accountBinding());
+    order.verify(collaborators.selectorCapture).capture(fixture.application(), acknowledgement);
     verifyNoInteractions(
         collaborators.selectionClient,
         collaborators.versionStateClient,
@@ -132,7 +137,8 @@ class WorldSelectedDraftPublicationFreezeRequestTest {
         collaborators.versionStateClient,
         collaborators.accountClient,
         collaborators.authorizationRepository,
-        collaborators.checkpointRepository);
+        collaborators.checkpointRepository,
+        collaborators.selectorCapture);
     assertThat(collaborators.transactionManager.commits).isZero();
   }
 
@@ -172,6 +178,75 @@ class WorldSelectedDraftPublicationFreezeRequestTest {
         collaborators.versionStateClient,
         collaborators.accountClient);
     verify(collaborators.fence, never()).claimFreeze(any(), any());
+    verify(collaborators.selectorCapture, never()).capture(any(), any());
+    assertThat(collaborators.transactionManager.commits).isZero();
+  }
+
+  @Test
+  void committedFreezeCaptureFailureRetriesWithoutFreshMutableAuthorityReads() {
+    Fixture fixture = fixture();
+    Collaborators collaborators = new Collaborators();
+    FrozenAttempt prior = frozen(fixture.evidence(), fixture.binding());
+    when(collaborators.applications.readSelectedPublicationApplication(
+            NAMESPACE, TENANT, VERSION, fixture.selection()))
+        .thenReturn(Optional.of(fixture.application()));
+    when(collaborators.fence.readAttempt(fixture.evidence())).thenReturn(Optional.of(prior));
+    when(collaborators.authorizationRepository.readCommitted(prior))
+        .thenReturn(Optional.of(fixture.accountBinding()));
+    var captureCalls = new AtomicInteger();
+    var unavailable =
+        new WorldDesignPublicationFenceRepository.ConflictException(
+            "canonical selector capture is temporarily unavailable");
+    doAnswer(
+            invocation -> {
+              if (captureCalls.getAndIncrement() == 0) throw unavailable;
+              return null;
+            })
+        .when(collaborators.selectorCapture)
+        .capture(any(), any());
+    var service = service(fixture, collaborators);
+
+    assertThatThrownBy(() -> withGameDesign(() -> service.begin(fixture.request())))
+        .isSameAs(unavailable);
+    var acknowledgement = withGameDesign(() -> service.begin(fixture.request()));
+
+    assertThat(acknowledgement.publicationFence()).isEqualTo(prior.publicationFence());
+    assertThat(acknowledgement.appliedCommitId())
+        .isEqualTo(fixture.binding().commitId().toString());
+    verify(collaborators.fence, times(2)).readAttempt(fixture.evidence());
+    verify(collaborators.selectorCapture, times(2)).capture(any(), any());
+    verifyNoInteractions(
+        collaborators.selectionClient,
+        collaborators.versionStateClient,
+        collaborators.accountClient,
+        collaborators.intakeRepository,
+        collaborators.checkpointRepository);
+    verify(collaborators.fence, never()).claimFreeze(any(), any());
+    assertThat(collaborators.transactionManager.commits).isZero();
+  }
+
+  @Test
+  void freezeOnlyPrimitiveCannotBeginWithoutAppliedResolverAndSelectorCapture() {
+    Fixture fixture = fixture();
+    Collaborators collaborators = new Collaborators();
+    var service =
+        new WorldSelectedDraftPublicationFreezeService(
+            NAMESPACE,
+            collaborators.selectionClient,
+            collaborators.versionStateClient,
+            collaborators.accountClient,
+            collaborators.intakeRepository,
+            collaborators.fence,
+            collaborators.checkpointRepository,
+            collaborators.authorizationRepository,
+            collaborators.artifactInventoryRepository,
+            collaborators.transactionManager);
+
+    assertThatThrownBy(() -> withGameDesign(() -> service.begin(fixture.request())))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("APPLIED resolution and selector capture");
+
+    collaborators.verifyNoReadsOrWrites();
     assertThat(collaborators.transactionManager.commits).isZero();
   }
 
@@ -188,6 +263,7 @@ class WorldSelectedDraftPublicationFreezeRequestTest {
         collaborators.authorizationRepository,
         collaborators.artifactInventoryRepository,
         collaborators.applications,
+        collaborators.selectorCapture,
         collaborators.transactionManager);
   }
 
@@ -276,6 +352,7 @@ class WorldSelectedDraftPublicationFreezeRequestTest {
                     List.of())));
     var operation = mock(WorldDraftTerminalOperation.class);
     when(operation.binding()).thenReturn(binding);
+    when(operation.commitId()).thenReturn(commitId);
     when(operation.ownerBinding()).thenReturn(owner);
     when(operation.canonicalTenantId()).thenReturn(TENANT);
     when(operation.canonicalVersionId()).thenReturn(VERSION);
@@ -387,6 +464,8 @@ class WorldSelectedDraftPublicationFreezeRequestTest {
         mock(WorldSelectedPublicationArtifactInventoryRepository.class);
     final WorldDraftGraphApplicationRepository applications =
         mock(WorldDraftGraphApplicationRepository.class);
+    final WorldSelectedPublicationSelectorCapture selectorCapture =
+        mock(WorldSelectedPublicationSelectorCapture.class);
     final RecordingTransactionManager transactionManager = new RecordingTransactionManager();
 
     void verifyNoReadsOrWrites() {
@@ -399,7 +478,8 @@ class WorldSelectedDraftPublicationFreezeRequestTest {
           checkpointRepository,
           authorizationRepository,
           artifactInventoryRepository,
-          applications);
+          applications,
+          selectorCapture);
     }
   }
 

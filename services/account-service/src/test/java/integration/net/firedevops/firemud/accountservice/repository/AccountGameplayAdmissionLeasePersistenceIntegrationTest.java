@@ -21,15 +21,22 @@ import java.util.Objects;
 import java.util.UUID;
 import java.util.concurrent.Callable;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.Function;
 import java.util.function.Supplier;
 import javax.sql.DataSource;
 import net.firedevops.firemud.account.v1.AbortGameplayAdmissionLeaseRequest;
 import net.firedevops.firemud.account.v1.FinalizeGameplayAdmissionLeaseRequest;
 import net.firedevops.firemud.account.v1.ReadGameplayAdmissionLeaseRequest;
+import net.firedevops.firemud.accountservice.dto.AccountGameplayAdmissionCommitConfirmation;
 import net.firedevops.firemud.accountservice.dto.AccountGameplayAdmissionLeaseOperation;
 import net.firedevops.firemud.accountservice.dto.AccountGameplayAdmissionLeaseOperation.State;
 import net.firedevops.firemud.accountservice.dto.AccountGameplayAdmissionOriginalAckReceipt;
@@ -101,6 +108,8 @@ class AccountGameplayAdmissionLeasePersistenceIntegrationTest {
 
   private static final String TENANT = "22222222-2222-4222-8222-222222222222";
   private static final String OTHER = "33333333-3333-4333-8333-333333333333";
+  private static final long V90_WAL_COORDINATOR_TIMEOUT_SECONDS = 3;
+  private static final String V90_WAL_MARKER_TABLE = "account_v90_wal_coverage_markers";
 
   @BeforeAll
   static void start() {
@@ -1133,13 +1142,25 @@ class AccountGameplayAdmissionLeasePersistenceIntegrationTest {
     UUID decision = UUID.randomUUID();
     new AccountGameplayAdmissionOriginalCommitExecutor(context.dataSource())
         .execute(original, decision);
+    createV90WalCoverageMarkerTable(context);
+    String applicationName = v90ApplicationName();
     var trace = new ReceiptCommitTrace();
     var owner =
         new AccountGameplayAdmissionCommitConfirmationOwner(
-            receiptCommitDataSource(context.dataSource(), ReceiptCommitFault.NONE, trace), "test");
+            receiptCommitDataSource(
+                applicationNamedDataSource(context.dataSource(), applicationName),
+                ReceiptCommitFault.NONE,
+                trace),
+            "test");
 
     var receipt =
-        syntheticReadPeer().call(() -> owner.confirm(confirmationRequest(original, decision)));
+        withV90WalCoverageCoordinator(
+            context,
+            applicationName,
+            () ->
+                callWithSyntheticReadPeer(
+                    () -> owner.confirm(confirmationRequest(original, decision))),
+            AccountGameplayAdmissionCommitConfirmation::walInsertLsn);
 
     assertThat(trace.count("physical-commit")).isEqualTo(2);
     assertThat(trace.count("v90-read")).isEqualTo(1);
@@ -1656,6 +1677,7 @@ class AccountGameplayAdmissionLeasePersistenceIntegrationTest {
     var repository = new AccountGameplayAdmissionLeaseRepository(context.dsl());
     UUID decision = UUID.randomUUID();
     tx(context, () -> repository.recordCommitted(original, decision));
+    createV90WalCoverageMarkerTable(context);
     for (boolean subtransaction : List.of(false, true)) {
       assertThatThrownBy(
               () ->
@@ -1663,7 +1685,21 @@ class AccountGameplayAdmissionLeasePersistenceIntegrationTest {
                       context,
                       () -> {
                         if (subtransaction) context.dsl().execute("SAVEPOINT receipt_creation");
-                        confirm(context, original, decision);
+                        String applicationName = v90ApplicationName();
+                        var receipt =
+                            withV90WalCoverageCoordinator(
+                                context,
+                                applicationName,
+                                () -> {
+                                  setLocalApplicationName(context.dsl(), applicationName);
+                                  return confirm(context, original, decision);
+                                },
+                                row -> row.get("wal_insert_lsn", String.class));
+                        assertThat(receipt.get("committed_before_ms", Long.class))
+                            .isPositive()
+                            .isLessThan(expiresAt(original));
+                        assertThat(receipt.get("expires_at_ms", Long.class))
+                            .isEqualTo(expiresAt(original));
                         if (subtransaction)
                           context.dsl().execute("RELEASE SAVEPOINT receipt_creation");
                         assertDeniedInSavepoint(
@@ -1679,7 +1715,20 @@ class AccountGameplayAdmissionLeasePersistenceIntegrationTest {
         .isZero();
     assertThatThrownBy(() -> tx(context, () -> readConfirmation(context, original, decision)))
         .hasMessageContaining("exact durable receipt required");
-    var receipt = tx(context, () -> confirm(context, original, decision));
+    var receipt =
+        tx(
+            context,
+            () -> {
+              String applicationName = v90ApplicationName();
+              return withV90WalCoverageCoordinator(
+                  context,
+                  applicationName,
+                  () -> {
+                    setLocalApplicationName(context.dsl(), applicationName);
+                    return confirm(context, original, decision);
+                  },
+                  row -> row.get("wal_insert_lsn", String.class));
+            });
     assertThat(tx(context, () -> readConfirmation(context, original, decision))).isEqualTo(receipt);
   }
 
@@ -2306,6 +2355,397 @@ class AccountGameplayAdmissionLeasePersistenceIntegrationTest {
                 original.sha256(),
                 decision));
   }
+
+  private static <T> T withV90WalCoverageCoordinator(
+      Context context,
+      String applicationName,
+      Supplier<T> confirmation,
+      Function<T, String> insertFence) {
+    var actionFinished = new AtomicBoolean();
+    var coordinatorLock = new Object();
+    var monitorReady = new CountDownLatch(1);
+    var coordinatorConnection = new AtomicReference<Connection>();
+    ExecutorService executor =
+        Executors.newSingleThreadExecutor(
+            task -> {
+              Thread thread = new Thread(task, "account-v90-wal-coordinator-" + applicationName);
+              thread.setDaemon(true);
+              return thread;
+            });
+    Future<V90WalCoverageObservation> future =
+        executor.submit(
+            () ->
+                observeV90WalCoverage(
+                    context,
+                    applicationName,
+                    actionFinished,
+                    coordinatorLock,
+                    monitorReady,
+                    coordinatorConnection));
+
+    T result = null;
+    Throwable actionFailure = null;
+    try {
+      if (!monitorReady.await(2, TimeUnit.SECONDS)) {
+        actionFailure =
+            new IllegalStateException(
+                "Account V90 WAL coverage coordinator could not open its observation connection");
+      } else {
+        result = confirmation.get();
+      }
+    } catch (InterruptedException failure) {
+      Thread.currentThread().interrupt();
+      actionFailure = new IllegalStateException("Interrupted before Account confirmation", failure);
+    } catch (RuntimeException | Error failure) {
+      actionFailure = failure;
+    } finally {
+      synchronized (coordinatorLock) {
+        actionFinished.set(true);
+      }
+    }
+
+    executor.shutdown();
+    V90WalCoverageObservation observation = null;
+    Throwable coordinatorFailure = null;
+    try {
+      observation = future.get(2, TimeUnit.SECONDS);
+    } catch (ExecutionException failure) {
+      coordinatorFailure = failure.getCause();
+    } catch (TimeoutException failure) {
+      coordinatorFailure = failure;
+      future.cancel(true);
+      executor.shutdownNow();
+      closeCoordinatorConnection(coordinatorConnection, coordinatorFailure);
+    } catch (InterruptedException failure) {
+      Thread.currentThread().interrupt();
+      coordinatorFailure = failure;
+      future.cancel(true);
+      executor.shutdownNow();
+      closeCoordinatorConnection(coordinatorConnection, coordinatorFailure);
+    }
+
+    try {
+      if (!executor.awaitTermination(2, TimeUnit.SECONDS)) {
+        executor.shutdownNow();
+        var cleanupFailure =
+            new IllegalStateException("Account V90 WAL coverage coordinator did not terminate");
+        closeCoordinatorConnection(coordinatorConnection, cleanupFailure);
+        if (!executor.awaitTermination(2, TimeUnit.SECONDS)) {
+          if (coordinatorFailure == null) coordinatorFailure = cleanupFailure;
+          else coordinatorFailure.addSuppressed(cleanupFailure);
+        }
+      }
+    } catch (InterruptedException failure) {
+      Thread.currentThread().interrupt();
+      executor.shutdownNow();
+      if (coordinatorFailure == null) coordinatorFailure = failure;
+      else coordinatorFailure.addSuppressed(failure);
+      closeCoordinatorConnection(coordinatorConnection, coordinatorFailure);
+    }
+
+    if (actionFailure != null) {
+      if (coordinatorFailure != null) actionFailure.addSuppressed(coordinatorFailure);
+      actionFailure.addSuppressed(
+          new IllegalStateException(
+              describeV90WalCoordinatorOutcome(applicationName, observation)));
+      if (actionFailure instanceof RuntimeException runtimeFailure) throw runtimeFailure;
+      throw (Error) actionFailure;
+    }
+
+    if (coordinatorFailure != null) {
+      throw new IllegalStateException(
+          "Account V90 confirmation succeeded, but its bounded WAL coordinator failed",
+          coordinatorFailure);
+    }
+    if (observation != null && observation.marker() != null) {
+      String fence = Objects.requireNonNull(insertFence.apply(result));
+      Boolean covered =
+          Objects.requireNonNull(
+                  context
+                      .dsl()
+                      .fetchOne(
+                          "SELECT ?::pg_lsn >= ?::pg_lsn AS covered",
+                          observation.marker().flushLsn(),
+                          fence))
+              .get("covered", Boolean.class);
+      assertThat(covered)
+          .as(
+              "independent marker COMMIT flush covers V90 fence %s from backend %s",
+              fence, observation.backendPid())
+          .isTrue();
+    }
+    return result;
+  }
+
+  private static V90WalCoverageObservation observeV90WalCoverage(
+      Context context,
+      String applicationName,
+      AtomicBoolean actionFinished,
+      Object coordinatorLock,
+      CountDownLatch monitorReady,
+      AtomicReference<Connection> coordinatorConnection)
+      throws SQLException {
+    Integer backendPid = null;
+    String lastWaitEventType = null;
+    String lastWaitEvent = null;
+    long deadline =
+        System.nanoTime() + TimeUnit.SECONDS.toNanos(V90_WAL_COORDINATOR_TIMEOUT_SECONDS);
+    try (Connection connection = context.dataSource().getConnection();
+        PreparedStatement activity =
+            connection.prepareStatement(
+                "SELECT pid, wait_event_type, wait_event FROM pg_stat_activity "
+                    + "WHERE application_name = ? AND state = 'active' "
+                    + "AND strpos(query, 'account_gameplay_admission_confirm_committed') > 0 "
+                    + "AND (?::integer IS NULL OR pid = ?)")) {
+      coordinatorConnection.set(connection);
+      activity.setQueryTimeout(1);
+      monitorReady.countDown();
+      while (System.nanoTime() < deadline) {
+        activity.setString(1, applicationName);
+        if (backendPid == null) {
+          activity.setNull(2, java.sql.Types.INTEGER);
+          activity.setNull(3, java.sql.Types.INTEGER);
+        } else {
+          activity.setInt(2, backendPid);
+          activity.setInt(3, backendPid);
+        }
+        try (ResultSet rows = activity.executeQuery()) {
+          if (rows.next()) {
+            int currentPid = rows.getInt("pid");
+            if (backendPid != null && backendPid != currentPid) {
+              throw new SQLException(
+                  "Account V90 confirmation backend changed during WAL coordination");
+            }
+            backendPid = currentPid;
+            lastWaitEventType = rows.getString("wait_event_type");
+            lastWaitEvent = rows.getString("wait_event");
+            if (rows.next()) {
+              throw new SQLException(
+                  "Multiple Account V90 confirmation backends matched unique application name");
+            }
+            if ("Timeout".equals(lastWaitEventType) && "PgSleep".equals(lastWaitEvent)) {
+              synchronized (coordinatorLock) {
+                if (actionFinished.get()) {
+                  return new V90WalCoverageObservation(
+                      backendPid, lastWaitEventType, lastWaitEvent, null, false);
+                }
+                connection.close();
+                coordinatorConnection.compareAndSet(connection, null);
+                V90WalCoverageMarker marker =
+                    commitV90WalCoverageMarker(context, coordinatorConnection);
+                return new V90WalCoverageObservation(
+                    backendPid, lastWaitEventType, lastWaitEvent, marker, false);
+              }
+            }
+          }
+        }
+        synchronized (coordinatorLock) {
+          if (actionFinished.get()) {
+            return new V90WalCoverageObservation(
+                backendPid, lastWaitEventType, lastWaitEvent, null, false);
+          }
+        }
+        Thread.yield();
+      }
+      return new V90WalCoverageObservation(
+          backendPid, lastWaitEventType, lastWaitEvent, null, true);
+    } finally {
+      monitorReady.countDown();
+    }
+  }
+
+  private static V90WalCoverageMarker commitV90WalCoverageMarker(
+      Context context, AtomicReference<Connection> coordinatorConnection) throws SQLException {
+    UUID markerId = UUID.randomUUID();
+    String markerValue = UUID.randomUUID().toString();
+    int writerBackendPid;
+    try (Connection writer = context.dataSource().getConnection()) {
+      coordinatorConnection.set(writer);
+      writer.setAutoCommit(false);
+      try {
+        try (Statement statement = writer.createStatement()) {
+          statement.setQueryTimeout(1);
+          statement.execute("SET LOCAL synchronous_commit = on");
+          try (ResultSet settings =
+              statement.executeQuery(
+                  "SELECT pg_backend_pid(), current_setting('synchronous_commit')")) {
+            if (!settings.next() || !"on".equals(settings.getString(2))) {
+              throw new SQLException("Account V90 marker writer did not retain synchronous COMMIT");
+            }
+            writerBackendPid = settings.getInt(1);
+            if (settings.next()) {
+              throw new SQLException(
+                  "Account V90 marker writer settings query returned multiple rows");
+            }
+          }
+        }
+        try (PreparedStatement insert =
+            writer.prepareStatement(
+                "INSERT INTO "
+                    + V90_WAL_MARKER_TABLE
+                    + " (marker_id, marker_value) VALUES (?, ?)")) {
+          insert.setQueryTimeout(1);
+          insert.setObject(1, markerId);
+          insert.setString(2, markerValue);
+          if (insert.executeUpdate() != 1) {
+            throw new SQLException("Account V90 marker INSERT did not write exactly one row");
+          }
+        }
+        writer.commit();
+      } catch (SQLException | RuntimeException | Error failure) {
+        try {
+          writer.rollback();
+        } catch (SQLException rollbackFailure) {
+          failure.addSuppressed(rollbackFailure);
+        }
+        throw failure;
+      } finally {
+        coordinatorConnection.compareAndSet(writer, null);
+      }
+    }
+
+    int readerBackendPid;
+    try (Connection reader = context.dataSource().getConnection();
+        PreparedStatement readback =
+            reader.prepareStatement(
+                "SELECT marker_value, pg_backend_pid() FROM "
+                    + V90_WAL_MARKER_TABLE
+                    + " WHERE marker_id = ?")) {
+      coordinatorConnection.set(reader);
+      readback.setQueryTimeout(1);
+      readback.setObject(1, markerId);
+      try (ResultSet row = readback.executeQuery()) {
+        if (!row.next() || !markerValue.equals(row.getString(1))) {
+          throw new SQLException("Committed Account V90 WAL marker was not independently readable");
+        }
+        readerBackendPid = row.getInt(2);
+        if (readerBackendPid == writerBackendPid || row.next()) {
+          throw new SQLException("Account V90 WAL marker readback was not exact and independent");
+        }
+      }
+      String flushLsn;
+      try (Statement statement = reader.createStatement()) {
+        statement.setQueryTimeout(1);
+        try (ResultSet result = statement.executeQuery("SELECT pg_current_wal_flush_lsn()::text")) {
+          if (!result.next())
+            throw new SQLException("Account V90 marker flush location unavailable");
+          flushLsn = result.getString(1);
+        }
+      }
+      return new V90WalCoverageMarker(flushLsn);
+    } finally {
+      coordinatorConnection.set(null);
+    }
+  }
+
+  private static void createV90WalCoverageMarkerTable(Context context) {
+    context
+        .dsl()
+        .execute(
+            "CREATE TABLE "
+                + V90_WAL_MARKER_TABLE
+                + " (marker_id UUID PRIMARY KEY, marker_value TEXT NOT NULL)");
+  }
+
+  private static DataSource applicationNamedDataSource(DataSource source, String applicationName) {
+    return new DelegatingDataSource(source) {
+      @Override
+      public Connection getConnection() throws SQLException {
+        return setApplicationName(super.getConnection(), applicationName);
+      }
+
+      @Override
+      public Connection getConnection(String username, String password) throws SQLException {
+        return setApplicationName(super.getConnection(username, password), applicationName);
+      }
+    };
+  }
+
+  private static Connection setApplicationName(Connection connection, String applicationName)
+      throws SQLException {
+    try (PreparedStatement statement =
+        connection.prepareStatement("SELECT set_config('application_name', ?, false)")) {
+      statement.setString(1, applicationName);
+      try (ResultSet result = statement.executeQuery()) {
+        if (!result.next() || !applicationName.equals(result.getString(1)) || result.next()) {
+          throw new SQLException("Account V90 application name could not be verified");
+        }
+        return connection;
+      }
+    } catch (SQLException failure) {
+      try {
+        connection.close();
+      } catch (SQLException closeFailure) {
+        failure.addSuppressed(closeFailure);
+      }
+      throw failure;
+    }
+  }
+
+  private static void setLocalApplicationName(DSLContext dsl, String applicationName) {
+    String configured =
+        Objects.requireNonNull(
+                dsl.fetchOne(
+                    "SELECT set_config('application_name', ?, true) AS application_name",
+                    applicationName))
+            .get("application_name", String.class);
+    assertThat(configured).isEqualTo(applicationName);
+  }
+
+  private static String v90ApplicationName() {
+    return "account-v90-" + UUID.randomUUID().toString().replace("-", "");
+  }
+
+  private static <T> T callWithSyntheticReadPeer(Callable<T> action) {
+    try {
+      return syntheticReadPeer().call(action);
+    } catch (RuntimeException | Error failure) {
+      throw failure;
+    } catch (Exception failure) {
+      throw new IllegalStateException("Synthetic Account confirmation call failed", failure);
+    }
+  }
+
+  private static String describeV90WalCoordinatorOutcome(
+      String applicationName, V90WalCoverageObservation observation) {
+    if (observation == null) {
+      return "Account V90 coordinator produced no observation for application_name="
+          + applicationName;
+    }
+    return "Account V90 coordinator outcome"
+        + ": application_name="
+        + applicationName
+        + " backend_pid="
+        + observation.backendPid()
+        + " last_wait_event_type="
+        + observation.waitEventType()
+        + " last_wait_event="
+        + observation.waitEvent()
+        + " timed_out="
+        + observation.timedOut()
+        + " marker_independently_read="
+        + (observation.marker() != null);
+  }
+
+  private static void closeCoordinatorConnection(
+      AtomicReference<Connection> connectionReference, Throwable failure) {
+    Connection connection = connectionReference.getAndSet(null);
+    if (connection == null) return;
+    try {
+      connection.close();
+    } catch (SQLException closeFailure) {
+      failure.addSuppressed(closeFailure);
+    }
+  }
+
+  private record V90WalCoverageMarker(String flushLsn) {}
+
+  private record V90WalCoverageObservation(
+      Integer backendPid,
+      String waitEventType,
+      String waitEvent,
+      V90WalCoverageMarker marker,
+      boolean timedOut) {}
 
   private static FinalizeGameplayAdmissionLeaseRequest confirmationRequest(
       AccountGameplayAdmissionLeaseEvidence evidence, UUID decision) {

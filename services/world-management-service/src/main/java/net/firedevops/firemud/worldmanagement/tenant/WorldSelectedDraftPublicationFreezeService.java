@@ -47,6 +47,7 @@ final class WorldSelectedDraftPublicationFreezeService {
   private final WorldSelectedDraftPublicationAuthorizationRepository authorizationRepository;
   private final WorldSelectedPublicationArtifactInventoryRepository artifactInventoryRepository;
   private final WorldDraftGraphApplicationRepository graphApplicationRepository;
+  private final WorldSelectedPublicationSelectorCapture selectorCapture;
   private final TransactionTemplate ownerTransaction;
 
   WorldSelectedDraftPublicationFreezeService(
@@ -71,6 +72,7 @@ final class WorldSelectedDraftPublicationFreezeService {
         authorizationRepository,
         artifactInventoryRepository,
         null,
+        null,
         transactionManager);
   }
 
@@ -85,6 +87,7 @@ final class WorldSelectedDraftPublicationFreezeService {
       WorldSelectedDraftPublicationAuthorizationRepository authorizationRepository,
       WorldSelectedPublicationArtifactInventoryRepository artifactInventoryRepository,
       WorldDraftGraphApplicationRepository graphApplicationRepository,
+      WorldSelectedPublicationSelectorCapture selectorCapture,
       PlatformTransactionManager transactionManager) {
     if (!GrpcPeerIdentity.isValidNamespace(workloadNamespace)) {
       throw new IllegalArgumentException("World workload namespace is invalid");
@@ -101,7 +104,12 @@ final class WorldSelectedDraftPublicationFreezeService {
         Objects.requireNonNull(authorizationRepository, "authorizationRepository");
     this.artifactInventoryRepository =
         Objects.requireNonNull(artifactInventoryRepository, "artifactInventoryRepository");
+    if ((graphApplicationRepository == null) != (selectorCapture == null)) {
+      throw new IllegalArgumentException(
+          "World selected-publication begin requires both APPLIED resolution and selector capture");
+    }
     this.graphApplicationRepository = graphApplicationRepository;
+    this.selectorCapture = selectorCapture;
     this.ownerTransaction = new TransactionTemplate(Objects.requireNonNull(transactionManager));
     this.ownerTransaction.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
     this.ownerTransaction.setIsolationLevel(TransactionDefinition.ISOLATION_READ_COMMITTED);
@@ -112,8 +120,9 @@ final class WorldSelectedDraftPublicationFreezeService {
    * Owner-resolves the exact selected APPLIED graph before deriving private World freeze evidence.
    *
    * <p>The caller supplies no plan or private World identity. A committed retry resolves the same
-   * immutable APPLIED carrier, then returns the retained freeze and Account correlation before any
-   * mutable Game Design or Account remote read is repeated.
+   * immutable APPLIED carrier, then replays the retained freeze and Account correlation before any
+   * mutable Game Design or Account remote read is repeated. The canonical selector is captured only
+   * after the exact committed freeze readback succeeds.
    */
   Acknowledgement begin(Request request) {
     requireAuthenticatedGameDesignCaller();
@@ -123,9 +132,9 @@ final class WorldSelectedDraftPublicationFreezeService {
       throw new SecurityException(
           "World selected-publication freeze target namespace differs from this workload");
     }
-    if (graphApplicationRepository == null) {
+    if (graphApplicationRepository == null || selectorCapture == null) {
       throw new IllegalStateException(
-          "World selected-publication freeze requires its committed APPLIED resolver");
+          "World selected-publication begin requires committed APPLIED resolution and selector capture");
     }
 
     AccountPublicationAuthorizationBinding accountBinding = request.accountBinding();
@@ -183,15 +192,18 @@ final class WorldSelectedDraftPublicationFreezeService {
                     request.publicationRequestId())
                 .derivedWorkflowIdentity());
     FrozenAttempt attempt = freeze(evidence, selectedPlan, accountBinding);
-    return new Acknowledgement(
-        request,
-        owner.intakeRequestId(),
-        attempt.request().versionStateEpoch(),
-        attempt.publicationFence(),
-        OwnerFreezePhase.FROZEN,
-        attempt.checkpoint().appliedCommitId(),
-        attempt.checkpoint().contentDigest(),
-        attempt.checkpoint().digestSchemaVersion());
+    Acknowledgement acknowledgement =
+        new Acknowledgement(
+            request,
+            owner.intakeRequestId(),
+            attempt.request().versionStateEpoch(),
+            attempt.publicationFence(),
+            OwnerFreezePhase.FROZEN,
+            attempt.checkpoint().appliedCommitId(),
+            attempt.checkpoint().contentDigest(),
+            attempt.checkpoint().digestSchemaVersion());
+    selectorCapture.capture(application, acknowledgement);
+    return acknowledgement;
   }
 
   /**

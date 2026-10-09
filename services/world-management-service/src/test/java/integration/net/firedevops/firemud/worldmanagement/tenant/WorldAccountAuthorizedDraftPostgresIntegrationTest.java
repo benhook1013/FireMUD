@@ -1529,6 +1529,9 @@ class WorldAccountAuthorizedDraftPostgresIntegrationTest {
       AuthoredDraftPublishSelectionReadClient selectionRead,
       AuthoredWorldVersionStateClient versionStateRead,
       AccountPublicationAuthorizationReadClient accountRead) {
+    var selectorCapture =
+        new WorldSelectedPublicationSelectorCapture(
+            NAMESPACE, new WorldCanonicalFrozenTopologyService(frozenRepository(), manager));
     return new WorldSelectedDraftPublicationFreezeService(
         NAMESPACE,
         selectionRead,
@@ -1540,6 +1543,7 @@ class WorldAccountAuthorizedDraftPostgresIntegrationTest {
         publicationAuthorizationRepository(),
         artifactInventoryRepository(),
         appliedRepository(),
+        selectorCapture,
         manager);
   }
 
