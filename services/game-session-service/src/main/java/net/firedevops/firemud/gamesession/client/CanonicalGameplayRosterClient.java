@@ -615,6 +615,9 @@ public final class CanonicalGameplayRosterClient
       return selectedCharacterUuid;
     }
 
+    @SuppressFBWarnings(
+        value = "EI_EXPOSE_REP",
+        justification = "The target is an immutable generated protobuf message.")
     public CanonicalGameplayRosterTarget target() {
       return target;
     }

@@ -1,5 +1,6 @@
 package net.firedevops.firemud.gamesession.command.text;
 
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Objects;
@@ -243,6 +244,9 @@ public final class CanonicalGameplayActorSelection {
       return rosterSnapshotDigest;
     }
 
+    @SuppressFBWarnings(
+        value = "EI_EXPOSE_REP",
+        justification = "CanonicalGameplayRosterTarget is an immutable generated protobuf message.")
     public CanonicalGameplayRosterTarget target() {
       return target;
     }
