@@ -134,6 +134,9 @@ public class WorldDraftTerminalReadGrpcCodecTest {
 
     assertThat(evidence.request()).isEqualTo(request);
     assertThat(evidence.ownerReadback()).isEmpty();
+    assertThatThrownBy(evidence::appliedIntakeRequestId)
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("committed terminal readback");
     assertThat(response.getStatus())
         .isEqualTo(WorldDraftTerminalReadStatus.WORLD_DRAFT_TERMINAL_READ_STATUS_UNKNOWN);
     assertThat(response.getOwnerReadbackBytes()).isEmpty();
@@ -158,6 +161,9 @@ public class WorldDraftTerminalReadGrpcCodecTest {
     var evidence = WorldDraftTerminalReadGrpcCodec.fromResponse(request, response);
 
     var decodedAbort = evidence.ownerReadback().orElseThrow();
+    assertThatThrownBy(evidence::appliedIntakeRequestId)
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("committed terminal readback");
     assertThat(decodedAbort.canonicalBytes()).containsExactly(abort.canonicalBytes());
     assertThat(decodedAbort.fullBinding()).containsExactly(request.originalAccountBinding());
     assertThat(decodedAbort.result()).containsExactly(1, 2, 3);
@@ -233,12 +239,11 @@ public class WorldDraftTerminalReadGrpcCodecTest {
     var response = WorldDraftTerminalReadGrpcCodec.toResponse(request, Optional.of(committed));
     assertThat(response.getStatus())
         .isEqualTo(WorldDraftTerminalReadStatus.WORLD_DRAFT_TERMINAL_READ_STATUS_COMMITTED);
-    assertThat(
-            WorldDraftTerminalReadGrpcCodec.fromResponse(request, response)
-                .ownerReadback()
-                .orElseThrow()
-                .canonicalBytes())
+    var evidence = WorldDraftTerminalReadGrpcCodec.fromResponse(request, response);
+    assertThat(evidence.ownerReadback().orElseThrow().canonicalBytes())
         .containsExactly(committed.canonicalBytes());
+    assertThat(evidence.appliedIntakeRequestId())
+        .isEqualTo(uuid("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"));
     assertThatThrownBy(
             () ->
                 WorldDraftTerminalReadGrpcCodec.fromResponse(

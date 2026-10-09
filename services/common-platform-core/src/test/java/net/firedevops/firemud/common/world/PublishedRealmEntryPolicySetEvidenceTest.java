@@ -594,7 +594,7 @@ class PublishedRealmEntryPolicySetEvidenceTest {
         operation.canonicalBytes(), Outcome.PUBLISHED, release, epoch);
   }
 
-  private static ReleaseContent release(
+  static ReleaseContent release(
       GameDesignPublicationOperationBinding operation, String generation) {
     var request = operation.world().request();
     var participants =
@@ -638,7 +638,7 @@ class PublishedRealmEntryPolicySetEvidenceTest {
         operation.world());
   }
 
-  private static GameDesignPublicationOperationBinding operation(long epoch) throws Exception {
+  static GameDesignPublicationOperationBinding operation(long epoch) throws Exception {
     var seed = WorldPublishedStartLocationGrpcCodecTest.evidence();
     var original = DraftAuthorizationFenceBinding.fromStored(seed.originalAccountBindingBytes());
     var draft =

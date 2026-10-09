@@ -31,6 +31,20 @@ public record WorldDraftTerminalReadEvidence(
         });
   }
 
+  /** Returns the intake request identity from this validated committed World APPLIED result. */
+  public UUID appliedIntakeRequestId() {
+    DraftAuthorizationFenceBinding.OwnerReadback readback =
+        ownerReadback.orElseThrow(
+            () ->
+                new IllegalStateException(
+                    "World APPLIED intake request requires a committed terminal readback"));
+    if (readback.outcome() != DraftAuthorizationFenceBinding.Outcome.COMMITTED) {
+      throw new IllegalStateException(
+          "World APPLIED intake request requires a committed terminal readback");
+    }
+    return WorldDraftTerminalReadGrpcCodec.requireCommittedResult(request, readback);
+  }
+
   /** The canonical original Account binding and a separate caller-owned fresh read identity. */
   public record Request(
       int schemaVersion,

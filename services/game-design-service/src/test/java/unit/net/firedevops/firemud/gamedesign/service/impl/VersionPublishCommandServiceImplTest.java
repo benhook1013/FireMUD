@@ -1070,6 +1070,94 @@ class VersionPublishCommandServiceImplTest {
   }
 
   @Test
+  void selectedStagedArtifactWithMismatchedWorkflowRemainsPartial() {
+    SelectedPublishFixture fixture = selectedPublishFixture(1);
+    PublishWorkflowRequest request = fixture.request();
+    VersionAssetArtifactStateDto artifact =
+        new VersionAssetArtifactStateDto(
+            "tenant-1",
+            10L,
+            1,
+            "STAGED",
+            1L,
+            null,
+            "other-workflow",
+            null,
+            null,
+            LocalDateTime.now(),
+            List.of());
+
+    assertSelectedStagedArtifactRemainsPartial(fixture, artifact);
+  }
+
+  @Test
+  void selectedStagedArtifactWithMismatchedScopeRemainsPartial() {
+    SelectedPublishFixture fixture = selectedPublishFixture(1);
+    VersionAssetArtifactStateDto artifact =
+        new VersionAssetArtifactStateDto(
+            "tenant-1",
+            10L,
+            2,
+            "STAGED",
+            1L,
+            null,
+            fixture.request().publishWorkflowId(),
+            null,
+            null,
+            LocalDateTime.now(),
+            List.of());
+
+    assertSelectedStagedArtifactRemainsPartial(fixture, artifact);
+  }
+
+  @Test
+  void selectedStagedArtifactForPublishedVersionRemainsPartial() {
+    SelectedPublishFixture fixture = selectedPublishFixture(1);
+    fixture.version().setVersionState(VersionLifecycleState.PUBLISHED);
+    fixture.version().setVersionStateEpoch(2L);
+    VersionAssetArtifactStateDto artifact = stagedArtifact(fixture.request(), fixture.version());
+
+    assertSelectedStagedArtifactRemainsPartial(fixture, artifact);
+  }
+
+  @Test
+  void selectedStagedArtifactWithMismatchedExportCandidateRemainsPartial() {
+    SelectedPublishFixture fixture = selectedPublishFixture(1);
+    PublishWorkflowRequest request = fixture.request();
+    VersionAssetArtifactStateDto artifact =
+        new VersionAssetArtifactStateDto(
+            "tenant-1",
+            10L,
+            1,
+            "STAGED",
+            1L,
+            MANIFEST_HASH,
+            request.publishWorkflowId(),
+            null,
+            null,
+            LocalDateTime.now(),
+            List.of("manifest.json"));
+    when(versionAssetArtifactService.getExportCandidate("tenant-1", 10L)).thenReturn(null);
+
+    assertSelectedStagedArtifactRemainsPartial(fixture, artifact);
+    verify(versionAssetArtifactService).getExportCandidate("tenant-1", 10L);
+  }
+
+  private void assertSelectedStagedArtifactRemainsPartial(
+      SelectedPublishFixture fixture, VersionAssetArtifactStateDto artifact) {
+    when(versionAssetArtifactService.findState("tenant-1", 10L)).thenReturn(Optional.of(artifact));
+
+    VersionPublishCommandServiceImpl.PendingReconciliationException thrown =
+        assertThrows(
+            VersionPublishCommandServiceImpl.PendingReconciliationException.class,
+            () -> reflectiveUnitHarnessReconcileSelectedPublicationMechanics(fixture.request()));
+
+    assertTrue(thrown.getMessage().contains("incomplete"));
+    verify(assetExportService, never()).exportAssets(any(String.class), any(Integer.class));
+    verify(publishAttemptService, never()).executeFullVersionTransaction(any());
+  }
+
+  @Test
   void pendingAttemptStillReconcilesCompleteReadbackThroughCurrentGates() {
     SelectedPublishFixture fixture = selectedPublishFixture(1);
     PublishWorkflowRequest request = fixture.request();

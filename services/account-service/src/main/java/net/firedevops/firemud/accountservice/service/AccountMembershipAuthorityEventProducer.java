@@ -385,21 +385,19 @@ public class AccountMembershipAuthorityEventProducer {
                         "accountAuthorityGeneration", cutoff.accountAuthorityGeneration(),
                         "outboxStreamKey", cutoff.outboxStreamKey(),
                         "outboxSequence", cutoff.outboxSequence())));
-    if (tenantSourceEvent != null) {
-      authorityTuple.put(
-          "tenantBillingCutoff",
-          Map.of(
-              tenantUuid.toString(),
-              Map.of(
-                  "tenantAuthorityGeneration",
-                  decimal(tenantSourceEvent.tenantAuthorityGeneration()),
-                  "tenantBillingSequence",
-                  decimal(tenantSourceEvent.tenantBillingSequence()),
-                  "outboxStreamKey",
-                  tenantSourceEvent.outboxStreamKey(),
-                  "outboxSequence",
-                  decimal(tenantSourceEvent.outboxSequence()))));
-    }
+    authorityTuple.put(
+        "tenantBillingCutoff",
+        Map.of(
+            tenantUuid.toString(),
+            Map.of(
+                "tenantAuthorityGeneration",
+                decimal(tenantSourceEvent.tenantAuthorityGeneration()),
+                "tenantBillingSequence",
+                decimal(tenantSourceEvent.tenantBillingSequence()),
+                "outboxStreamKey",
+                tenantSourceEvent.outboxStreamKey(),
+                "outboxSequence",
+                decimal(tenantSourceEvent.outboxSequence()))));
 
     Map<String, Object> event = new LinkedHashMap<>();
     event.put("schemaVersion", MembershipAuthorityEventV1Codec.SCHEMA_VERSION);
@@ -641,7 +639,8 @@ public class AccountMembershipAuthorityEventProducer {
   private TenantAuthorityEventV1Codec.Event readCurrentTenantSourceEvent(
       UUID tenantUuid, VerifiedTenantProvenance provenance, ScopeState tenantAuthority) {
     if (tenantAuthority.generation() == 1L && tenantAuthority.sourceVersion() == 1L) {
-      return null;
+      throw new IllegalStateException(
+          "Canonical first JOIN requires exact current public-JOIN entitlement and tenant authority evidence");
     }
     TenantAuthorityEventV1Codec.Event event =
         tenantAuthorityEventRepository.readCurrentByTenant(tenantUuid);
@@ -658,7 +657,7 @@ public class AccountMembershipAuthorityEventProducer {
       UUID tenantUuid,
       VerifiedTenantProvenance provenance) {
     if (event == null) {
-      return tenantAuthority.generation() == 1L && tenantAuthority.sourceVersion() == 1L;
+      return false;
     }
     var source = event.sourceEvidence();
     return event.tenantId().equals(tenantUuid)
