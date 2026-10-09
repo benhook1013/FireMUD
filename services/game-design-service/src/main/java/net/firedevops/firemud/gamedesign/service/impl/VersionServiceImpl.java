@@ -403,13 +403,21 @@ public class VersionServiceImpl implements VersionService {
       return new ScriptPatchFinalization(
           attempt.getStatus(), null, attempt.getFailureCode(), attempt.getFailureMessage());
     }
-    Optional<Version> draft =
-        versionRepository.findByTenantIdAndId(patchBinding.tenantId(), attempt.getVersionId());
-    if (draft.isPresent() && draft.get().getVersionState() != VersionLifecycleState.DRAFT) {
+    Version draft =
+        versionRepository
+            .findByTenantIdAndIdForUpdate(patchBinding.tenantId(), attempt.getVersionId())
+            .orElseThrow(
+                () ->
+                    new IllegalStateException(
+                        "PUBLISH_ATTEMPT_INCONSISTENT: pending attempt references a missing version"));
+    if (draft.getVersionState() != VersionLifecycleState.DRAFT) {
       throw new IllegalStateException(
           "PUBLISH_ATTEMPT_INCONSISTENT: pending attempt references a non-draft version");
     }
-    draft.ifPresent(versionRepository::delete);
+    draft.setVersionState(VersionLifecycleState.FAILED);
+    draft.setVersionStateEpoch(Math.addExact(draft.getVersionStateEpoch(), 1L));
+    draft.setUpdatedAt(LocalDateTime.now());
+    versionRepository.save(draft);
     publishAttemptService.markScriptPatchFailed(
         reservation.publishWorkflowId(), failureCode, failureMessage);
     return new ScriptPatchFinalization(

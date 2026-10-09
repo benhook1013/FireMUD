@@ -4,6 +4,7 @@ import java.io.ByteArrayOutputStream;
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.util.Base64;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -261,28 +262,27 @@ public final class AuthoringFixtures {
   }
 
   private static DraftCommitBinding freshGraphBinding() throws Exception {
+    List<Map<String, Object>> familyCounts =
+        List.of(
+            insertionOrderedMap("family", "WORLD_DESIGN_AGGREGATE_TYPE_REGION", "count", 1),
+            insertionOrderedMap("family", "WORLD_DESIGN_AGGREGATE_TYPE_ZONE", "count", 1),
+            insertionOrderedMap("family", "WORLD_DESIGN_AGGREGATE_TYPE_ROOM", "count", 1),
+            insertionOrderedMap("family", "WORLD_DESIGN_AGGREGATE_TYPE_ROOM_EXIT", "count", 0),
+            insertionOrderedMap(
+                "family", "WORLD_DESIGN_AGGREGATE_TYPE_GENERATION_RULE", "count", 0),
+            insertionOrderedMap(
+                "family", "WORLD_DESIGN_AGGREGATE_TYPE_WORLD_ENTITY_SPAWN_BINDING", "count", 0));
     String declaration =
         JSON.writeValueAsString(
-            Map.of(
+            insertionOrderedMap(
                 "tenantId", TENANT_ID.toString(),
                 "versionId", VERSION_ID.toString(),
                 "startLocation",
-                    Map.of(
+                    insertionOrderedMap(
                         "tenantId", TENANT_ID.toString(),
                         "versionId", VERSION_ID.toString(),
                         "roomTemplateId", ROOM_TEMPLATE_ID.toString()),
-                "familyCounts",
-                    List.of(
-                        Map.of("family", "WORLD_DESIGN_AGGREGATE_TYPE_REGION", "count", 1),
-                        Map.of("family", "WORLD_DESIGN_AGGREGATE_TYPE_ZONE", "count", 1),
-                        Map.of("family", "WORLD_DESIGN_AGGREGATE_TYPE_ROOM", "count", 1),
-                        Map.of("family", "WORLD_DESIGN_AGGREGATE_TYPE_ROOM_EXIT", "count", 0),
-                        Map.of("family", "WORLD_DESIGN_AGGREGATE_TYPE_GENERATION_RULE", "count", 0),
-                        Map.of(
-                            "family",
-                            "WORLD_DESIGN_AGGREGATE_TYPE_WORLD_ENTITY_SPAWN_BINDING",
-                            "count",
-                            0))));
+                "familyCounts", familyCounts));
     return DraftCommitBinding.create(
         new TargetProof(
             TENANT_ID, VERSION_ID, 19L, "tenant-key", 42L, "tenant-key", "NEW_GAME_ROW"),
@@ -318,6 +318,17 @@ public final class AuthoringFixtures {
             .stream()
             .flatMap(List::stream)
             .toList());
+  }
+
+  private static Map<String, Object> insertionOrderedMap(Object... entries) {
+    if (entries.length % 2 != 0) {
+      throw new IllegalArgumentException("Map entries must be key-value pairs");
+    }
+    Map<String, Object> result = new LinkedHashMap<>();
+    for (int index = 0; index < entries.length; index += 2) {
+      result.put((String) entries[index], entries[index + 1]);
+    }
+    return result;
   }
 
   private static String worldRevisionPayload(
