@@ -17,6 +17,7 @@ import net.firedevops.firemud.gamedesign.repository.PublishAttemptParticipantDig
 import net.firedevops.firemud.gamedesign.repository.PublishAttemptRepository;
 import net.firedevops.firemud.gamedesign.service.PublishAttemptService;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Isolation;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -46,7 +47,9 @@ public class PublishAttemptServiceImpl implements PublishAttemptService {
   }
 
   @Override
-  @Transactional(propagation = Propagation.REQUIRES_NEW)
+  @Transactional(
+      propagation = Propagation.REQUIRES_NEW,
+      isolation = Isolation.READ_COMMITTED)
   public <T> T executeFullVersionTransaction(Supplier<T> operation) {
     try {
       return operation.get();
