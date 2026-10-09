@@ -339,7 +339,7 @@ class GameSessionCanonicalRealmCatalogRepositoryIntegrationTest {
         .isEqualTo(1);
 
     IntakeReceipt retained =
-        fixture.register(tenant(3), "retained-world", "Retained World", "RETAINED_GAME_V30");
+        fixture.register(tenant(3), "retained-world", "Retained World", "RETAINED_GAME_V29");
     assertThatThrownBy(
             () ->
                 fixture.create(
@@ -680,20 +680,32 @@ class GameSessionCanonicalRealmCatalogRepositoryIntegrationTest {
     void insertRetainedAssociation(IntakeReceipt source, UUID requestId) {
       AuthoredWorldSourceEvidence evidence = source.source();
       String digest = "sha256:" + "a".repeat(64);
-      dsl.execute(
-          "INSERT INTO game_session_retained_tenant_association ("
-              + "operation_id, approval_schema_version, target_namespace, association_request_id, "
-              + "request_digest, approval_operation_id, signer_key_id, approved_by, "
-              + "approval_reference, signed_at, legacy_game_session_tenant_id, canonical_tenant_id, "
-              + "source_game_row_id, source_game_tenant_key, provenance_kind, "
-              + "game_session_evidence_digest, approval_manifest_digest, approval_signature, "
-              + "snapshot_canonical_json, snapshot_evidence_digest, receipt_digest) "
-              + "VALUES (?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+      UUID operationId =
           UUID.nameUUIDFromBytes(
               ("retained-operation-" + requestId)
-                  .getBytes(java.nio.charset.StandardCharsets.UTF_8)),
+                  .getBytes(java.nio.charset.StandardCharsets.UTF_8));
+      dsl.execute(
+          "INSERT INTO game_session_retained_tenant_association ("
+              + "operation_id, target_namespace, association_request_id, "
+              + "legacy_game_session_tenant_id, canonical_tenant_id, source_game_row_id, "
+              + "source_game_tenant_key, provenance_kind) "
+              + "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+          operationId,
           NAMESPACE,
           requestId,
+          RETAINED_TENANT_ID,
+          evidence.canonicalTenantId(),
+          evidence.sourceGameRowId(),
+          evidence.sourceGameTenantKey(),
+          evidence.provenanceKind());
+      dsl.execute(
+          "INSERT INTO game_session_retained_tenant_association_payload ("
+              + "operation_id, request_digest, approval_operation_id, approval_schema_version, "
+              + "signer_key_id, approved_by, approval_reference, signed_at, "
+              + "game_session_evidence_digest, approval_manifest_digest, approval_signature, "
+              + "snapshot_canonical_json, snapshot_evidence_digest, receipt_digest) "
+              + "VALUES (?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+          operationId,
           digest,
           UUID.nameUUIDFromBytes(
               ("approval-operation-" + requestId)
@@ -702,15 +714,18 @@ class GameSessionCanonicalRealmCatalogRepositoryIntegrationTest {
           "fixture-operator",
           "fixture-reference",
           "2026-10-03T00:00:00Z",
-          RETAINED_TENANT_ID,
-          evidence.canonicalTenantId(),
-          evidence.sourceGameRowId(),
-          evidence.sourceGameTenantKey(),
-          evidence.provenanceKind(),
           evidence.evidenceDigest(),
           digest,
           "A".repeat(86) + "==",
-          "{}",
+          "{\"canonicalTenantId\":\""
+              + evidence.canonicalTenantId()
+              + "\",\"sourceGameRowId\":"
+              + evidence.sourceGameRowId()
+              + ",\"sourceGameTenantKey\":\""
+              + evidence.sourceGameTenantKey()
+              + "\",\"provenanceKind\":\""
+              + evidence.provenanceKind()
+              + "\"}",
           digest,
           digest);
     }

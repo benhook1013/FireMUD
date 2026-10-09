@@ -79,8 +79,8 @@ class GameSessionCanonicalLaunchPreparationServiceIntegrationTest {
             fixture.dsl.fetchCount(
                 DSL.table(DSL.name("game_session_canonical_launch_preparation"))))
         .isZero();
-    IntakeReceipt source = java.util.Objects.requireNonNull(fixture.preV14Source);
-    CanonicalRealmCatalogSnapshot catalog = java.util.Objects.requireNonNull(fixture.preV14Catalog);
+    IntakeReceipt source = java.util.Objects.requireNonNull(fixture.preV24Source);
+    CanonicalRealmCatalogSnapshot catalog = java.util.Objects.requireNonNull(fixture.preV24Catalog);
     assertThat(
             fixture.sourceRepository.read(
                 source.operationId(), TENANT, source.source().worldSlug(), NAMESPACE))
@@ -363,7 +363,7 @@ class GameSessionCanonicalLaunchPreparationServiceIntegrationTest {
   }
 
   private Fixture fixture(
-      boolean seedRetainedNumericRows, boolean seedCanonicalOwnerEvidenceBeforeV14) {
+      boolean seedRetainedNumericRows, boolean seedCanonicalOwnerEvidenceBeforeV24) {
     String schema = "gs_canonical_launch_" + UUID.randomUUID().toString().replace("-", "");
     DriverManagerDataSource dataSource = new DriverManagerDataSource();
     dataSource.setUrl(postgres.getJdbcUrl());
@@ -426,7 +426,7 @@ class GameSessionCanonicalLaunchPreparationServiceIntegrationTest {
         .defaultSchema(schema)
         .table("flyway_schema_history")
         .locations(MIGRATION_LOCATION)
-        .target(MigrationVersion.fromVersion("13"))
+        .target(MigrationVersion.fromVersion("23"))
         .load()
         .migrate();
     DataSourceTransactionManager transactionManager = new DataSourceTransactionManager(dataSource);
@@ -437,10 +437,10 @@ class GameSessionCanonicalLaunchPreparationServiceIntegrationTest {
         new GameSessionAuthoredWorldSourceRepository(transactionalDsl);
     GameSessionCanonicalRealmCatalogRepository catalogRepository =
         new GameSessionCanonicalRealmCatalogRepository(transactionalDsl);
-    IntakeReceipt preV14Source = null;
-    CanonicalRealmCatalogSnapshot preV14Catalog = null;
-    if (seedCanonicalOwnerEvidenceBeforeV14) {
-      preV14Source =
+    IntakeReceipt preV24Source = null;
+    CanonicalRealmCatalogSnapshot preV24Catalog = null;
+    if (seedCanonicalOwnerEvidenceBeforeV24) {
+      preV24Source =
           java.util.Objects.requireNonNull(
               transactions.execute(
                   status -> sourceRepository.register(INTAKE_REQUEST, freshSource())));
@@ -449,7 +449,7 @@ class GameSessionCanonicalLaunchPreparationServiceIntegrationTest {
               CATALOG_REQUEST,
               NAMESPACE,
               TENANT,
-              preV14Source.operationId(),
+              preV24Source.operationId(),
               "violet-realm",
               "Violet Realm",
               true,
@@ -459,7 +459,7 @@ class GameSessionCanonicalLaunchPreparationServiceIntegrationTest {
               null,
               null);
       var preparedCatalog = catalogRepository.prepareInitialPublicProduction(catalogRequest);
-      preV14Catalog =
+      preV24Catalog =
           java.util.Objects.requireNonNull(
               transactions.execute(
                   status -> catalogRepository.createInitialPublicProduction(preparedCatalog)));
@@ -482,8 +482,8 @@ class GameSessionCanonicalLaunchPreparationServiceIntegrationTest {
         preparationRepository,
         transactionManager,
         transactions,
-        preV14Source,
-        preV14Catalog);
+        preV24Source,
+        preV24Catalog);
   }
 
   private static AuthoredWorldSourceEvidence freshSource() {
@@ -545,8 +545,8 @@ class GameSessionCanonicalLaunchPreparationServiceIntegrationTest {
       GameSessionCanonicalLaunchPreparationRepository preparationRepository,
       DataSourceTransactionManager transactionManager,
       TransactionTemplate transactions,
-      IntakeReceipt preV14Source,
-      CanonicalRealmCatalogSnapshot preV14Catalog) {
+      IntakeReceipt preV24Source,
+      CanonicalRealmCatalogSnapshot preV24Catalog) {
     IntakeReceipt registerFreshSource() {
       IntakeReceipt receipt =
           transactions.execute(status -> sourceRepository.register(INTAKE_REQUEST, freshSource()));
