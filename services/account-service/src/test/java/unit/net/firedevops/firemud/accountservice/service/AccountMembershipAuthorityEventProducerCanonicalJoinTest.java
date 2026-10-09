@@ -369,6 +369,30 @@ class AccountMembershipAuthorityEventProducerCanonicalJoinTest {
   }
 
   @Test
+  void firstJoinDeniesBareGenerationOneTenantBaselineBeforeEntitlementLookupOrMutation() {
+    Fixture fixture = new Fixture();
+    fixture.arrangePendingFirstJoin();
+    when(fixture.authority.readCompositeSnapshot(
+            "firemud-account-service", ACCOUNT_UUID, List.of(TENANT_UUID), List.of(TENANT_UUID)))
+        .thenReturn(fixture.authoritySnapshot(1L, 1L, 1L, 1L));
+    fixture.startWritableTransaction();
+
+    assertThatThrownBy(
+            () ->
+                fixture.producer.publishCanonicalFirstJoinMembershipChange(
+                    fixture.scope, REQUEST_ID, CALLER_BINDING))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessage(
+            "Canonical first JOIN requires exact current public-JOIN entitlement and tenant authority evidence");
+
+    verify(fixture.tenantAuthorityEvents, never()).readCurrentByTenant(TENANT_UUID);
+    verify(fixture.entitlements, never()).readCurrent(TENANT_UUID);
+    verify(fixture.outbox, never())
+        .append(eq(MEMBERSHIP_STREAM), eq(REQUEST_ID), any(LongFunction.class));
+    verify(fixture.pairs, never()).commitTransition(any(), any());
+  }
+
+  @Test
   void firstJoinDeniesAStalePendingEntitlementVersionWithoutMutation() {
     Fixture fixture = new Fixture();
     fixture.arrangePendingFirstJoin();

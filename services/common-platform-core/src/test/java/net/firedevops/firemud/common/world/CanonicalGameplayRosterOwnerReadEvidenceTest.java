@@ -275,12 +275,15 @@ class CanonicalGameplayRosterOwnerReadEvidenceTest {
                     GameSessionCanonicalInitialAdmissionOwnerProofCodec.canonicalBytes(pending)))
             .setPublishedPolicySetEvidence(
                 ByteString.copyFrom(evidence.publishedPolicySetEvidence().canonicalBytes()))
+            .setAdmissionPointerSnapshotDigest(evidence.admissionPointerSnapshotDigest())
             .build();
     assertThatThrownBy(
             () ->
                 CanonicalGameplayRosterOwnerReadGrpcCodec.fromResponse(
                     request, nonCommittedResponse))
-        .isInstanceOf(IllegalArgumentException.class);
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining(
+            "Game Session proof is not the exact current committed roster target");
   }
 
   private static CanonicalGameplayRosterOwnerReadEvidence fixture() throws Exception {
