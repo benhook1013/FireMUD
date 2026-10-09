@@ -1142,6 +1142,258 @@ class VersionPublishCommandServiceImplTest {
     verify(versionAssetArtifactService).getExportCandidate("tenant-1", 10L);
   }
 
+  @Test
+  void selectedStagedArtifactWithExactPersistedCandidateRetriesWithoutTreatingItAsPublished() {
+    SelectedPublishFixture fixture = selectedPublishFixture(1);
+    PublishWorkflowRequest request = fixture.request();
+    PublishAttempt attempt = fixture.attempt();
+    VersionAssetArtifactStateDto stagedCandidate =
+        new VersionAssetArtifactStateDto(
+            "tenant-1",
+            10L,
+            1,
+            "STAGED",
+            2L,
+            MANIFEST_HASH,
+            request.publishWorkflowId(),
+            null,
+            null,
+            LocalDateTime.now(),
+            List.of("manifest.json"));
+    ExportedAssetManifest candidate = exportedManifest(List.of("manifest.json"));
+    when(versionAssetArtifactService.findState("tenant-1", 10L))
+        .thenReturn(Optional.of(stagedCandidate));
+    when(versionAssetArtifactService.getExportCandidate("tenant-1", 10L)).thenReturn(candidate);
+    when(publishGateService.collectFullVersionParticipantDigests(
+            any(VersionDto.class), any(String.class), any(String.class)))
+        .thenReturn(participantDigests());
+    when(assetExportService.exportAssets("tenant-1", 1))
+        .thenThrow(new AssetExportOutcomePendingException("exact export readback is unavailable"));
+
+    VersionPublishCommandServiceImpl.PendingReconciliationException thrown =
+        assertThrows(
+            VersionPublishCommandServiceImpl.PendingReconciliationException.class,
+            () -> reflectiveUnitHarnessReconcileSelectedPublicationMechanics(request));
+
+    assertTrue(thrown.getMessage().contains("asset export outcome remains unresolved"));
+    assertEquals(PublishAttemptStatus.PENDING, attempt.getStatus());
+    verify(versionAssetArtifactService).getExportCandidate("tenant-1", 10L);
+    verify(assetExportService).exportAssets("tenant-1", 1);
+    verify(versionAssetArtifactService, never())
+        .stageExport(any(String.class), any(Long.class), any(Integer.class), any(String.class));
+    verify(versionAssetArtifactService, never())
+        .markExportedUnattested(
+            any(String.class),
+            any(Long.class),
+            any(Integer.class),
+            any(String.class),
+            any(ExportedAssetManifest.class));
+    verify(publishedReleaseBundleService, never())
+        .createFullVersionBundle(
+            any(VersionDto.class),
+            any(String.class),
+            any(ExportedAssetManifest.class),
+            any(String.class),
+            any(List.class),
+            same(capturedWorldPublicationEvidence));
+    verify(publishAttemptService, never()).markFullVersionSucceeded(any(String.class));
+    verify(publishAttemptRepository, never())
+        .sealPublication(any(PublishAttempt.class), org.mockito.ArgumentMatchers.anyBoolean());
+  }
+
+  @Test
+  void selectedStagedCandidateRetryAttestsTheExactFullManifestBeforeSuccess() {
+    SelectedPublishFixture fixture = selectedPublishFixture(1);
+    PublishWorkflowRequest request = fixture.request();
+    PublishAttempt attempt = fixture.attempt();
+    Version version = fixture.version();
+    String workflowId = request.publishWorkflowId();
+    List<PublishParticipantDigestDto> participantDigests = participantDigests();
+    ExportedAssetManifest candidate = exportedManifest(List.of("manifest.json"));
+    VersionAssetArtifactStateDto stagedCandidate =
+        new VersionAssetArtifactStateDto(
+            "tenant-1",
+            version.getId(),
+            version.getVersionNumber(),
+            "STAGED",
+            2L,
+            candidate.manifestHash(),
+            workflowId,
+            null,
+            null,
+            LocalDateTime.now(),
+            candidate.requiredManifestAssetKeys());
+    VersionAssetArtifactStateDto exportedArtifact =
+        new VersionAssetArtifactStateDto(
+            "tenant-1",
+            version.getId(),
+            version.getVersionNumber(),
+            "EXPORTED_UNATTESTED",
+            3L,
+            candidate.manifestHash(),
+            workflowId,
+            null,
+            null,
+            LocalDateTime.now(),
+            candidate.requiredManifestAssetKeys());
+    VersionAssetArtifactStateDto publishedArtifact =
+        new VersionAssetArtifactStateDto(
+            "tenant-1",
+            version.getId(),
+            version.getVersionNumber(),
+            "PUBLISHED",
+            4L,
+            candidate.manifestHash(),
+            workflowId,
+            null,
+            null,
+            LocalDateTime.now(),
+            candidate.requiredManifestAssetKeys());
+    PublishedReleaseBundleDto bundle =
+        publishedReleaseBundleDto(
+            1L,
+            "tenant-1",
+            version.getId(),
+            version.getVersionNumber(),
+            "v1",
+            workflowId,
+            candidate.manifestHash(),
+            candidate.requiredManifestAssetKeys(),
+            participantDigests,
+            "generation-revision",
+            false,
+            null,
+            LocalDateTime.now());
+    when(versionAssetArtifactService.findState("tenant-1", version.getId()))
+        .thenReturn(Optional.of(stagedCandidate));
+    when(versionAssetArtifactService.getExportCandidate("tenant-1", version.getId()))
+        .thenReturn(candidate);
+    when(publishGateService.collectFullVersionParticipantDigests(
+            any(VersionDto.class), any(String.class), any(String.class)))
+        .thenReturn(participantDigests);
+    when(assetExportService.exportAssets("tenant-1", version.getVersionNumber()))
+        .thenReturn(candidate);
+    when(controlPlaneDigestService.getDigestForVersion(any(VersionDto.class)))
+        .thenReturn(new DesignControlPlaneDigestDto("tenant-1", "10", "version:10", "digest", 1));
+    when(versionAssetArtifactService.markExportedUnattested(
+            "tenant-1", version.getId(), version.getVersionNumber(), workflowId, candidate))
+        .thenReturn(exportedArtifact);
+    when(publishedReleaseBundleService.createFullVersionBundle(
+            any(VersionDto.class),
+            org.mockito.ArgumentMatchers.eq(workflowId),
+            org.mockito.ArgumentMatchers.eq(candidate),
+            any(String.class),
+            org.mockito.ArgumentMatchers.eq(participantDigests),
+            same(capturedWorldPublicationEvidence)))
+        .thenReturn(bundle);
+    when(versionAssetArtifactService.markPublished(
+            "tenant-1",
+            version.getId(),
+            exportedArtifact.stateEpoch(),
+            workflowId,
+            candidate.manifestHash()))
+        .thenReturn(publishedArtifact);
+
+    PublishWorkflowSnapshot snapshot =
+        reflectiveUnitHarnessReconcileSelectedPublicationMechanics(request);
+
+    assertEquals("SUCCEEDED", snapshot.status(), snapshot.toString());
+    verify(versionAssetArtifactService, org.mockito.Mockito.times(2))
+        .getExportCandidate("tenant-1", version.getId());
+    verify(versionAssetArtifactService, never())
+        .stageExport(any(String.class), any(Long.class), any(Integer.class), any(String.class));
+    verify(versionAssetArtifactService)
+        .markExportedUnattested(
+            "tenant-1", version.getId(), version.getVersionNumber(), workflowId, candidate);
+    verify(publishedReleaseBundleService)
+        .createFullVersionBundle(
+            any(VersionDto.class),
+            org.mockito.ArgumentMatchers.eq(workflowId),
+            org.mockito.ArgumentMatchers.eq(candidate),
+            any(String.class),
+            org.mockito.ArgumentMatchers.eq(participantDigests),
+            same(capturedWorldPublicationEvidence));
+    verify(publishAttemptService).markFullVersionSucceeded(workflowId);
+    verify(publishAttemptRepository).sealPublication(attempt, true);
+  }
+
+  @Test
+  void selectedStagedArtifactWithMismatchedPersistedCandidateKeysRemainsPartial() {
+    SelectedPublishFixture fixture = selectedPublishFixture(1);
+    PublishWorkflowRequest request = fixture.request();
+    VersionAssetArtifactStateDto artifact =
+        new VersionAssetArtifactStateDto(
+            "tenant-1",
+            10L,
+            1,
+            "STAGED",
+            2L,
+            MANIFEST_HASH,
+            request.publishWorkflowId(),
+            null,
+            null,
+            LocalDateTime.now(),
+            List.of("manifest.json"));
+    when(versionAssetArtifactService.getExportCandidate("tenant-1", 10L))
+        .thenReturn(exportedManifest(List.of("different.json")));
+
+    assertSelectedStagedArtifactRemainsPartial(fixture, artifact);
+    verify(versionAssetArtifactService).getExportCandidate("tenant-1", 10L);
+  }
+
+  @Test
+  void selectedStagedArtifactWithMismatchedPersistedCandidateHashRemainsPartial() {
+    SelectedPublishFixture fixture = selectedPublishFixture(1);
+    PublishWorkflowRequest request = fixture.request();
+    VersionAssetArtifactStateDto artifact =
+        new VersionAssetArtifactStateDto(
+            "tenant-1",
+            10L,
+            1,
+            "STAGED",
+            2L,
+            MANIFEST_HASH,
+            request.publishWorkflowId(),
+            null,
+            null,
+            LocalDateTime.now(),
+            List.of("manifest.json"));
+    when(versionAssetArtifactService.getExportCandidate("tenant-1", 10L))
+        .thenReturn(
+            new ExportedAssetManifest(
+                "sha256:" + "c".repeat(64),
+                1,
+                List.of("manifest.json"),
+                artifactDigests(List.of("manifest.json"))));
+
+    assertSelectedStagedArtifactRemainsPartial(fixture, artifact);
+    verify(versionAssetArtifactService).getExportCandidate("tenant-1", 10L);
+  }
+
+  @Test
+  void selectedStagedArtifactWithUncertainPersistedCandidateRemainsPartial() {
+    SelectedPublishFixture fixture = selectedPublishFixture(1);
+    PublishWorkflowRequest request = fixture.request();
+    VersionAssetArtifactStateDto artifact =
+        new VersionAssetArtifactStateDto(
+            "tenant-1",
+            10L,
+            1,
+            "STAGED",
+            2L,
+            MANIFEST_HASH,
+            request.publishWorkflowId(),
+            null,
+            null,
+            LocalDateTime.now(),
+            List.of("manifest.json"));
+    when(versionAssetArtifactService.getExportCandidate("tenant-1", 10L))
+        .thenThrow(new IllegalStateException("ASSET_EXPORT_CANDIDATE_UNAVAILABLE"));
+
+    assertSelectedStagedArtifactRemainsPartial(fixture, artifact);
+    verify(versionAssetArtifactService).getExportCandidate("tenant-1", 10L);
+  }
+
   private void assertSelectedStagedArtifactRemainsPartial(
       SelectedPublishFixture fixture, VersionAssetArtifactStateDto artifact) {
     when(versionAssetArtifactService.findState("tenant-1", 10L)).thenReturn(Optional.of(artifact));
