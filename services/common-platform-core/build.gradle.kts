@@ -27,4 +27,5 @@ dependencies {
     compileOnly(libs.spotbugs.annotations)
     testImplementation(libs.grpc.spring.boot.starter)
     testImplementation(libs.spring.boot.starter.test)
+    testImplementation(testFixtures(project(":common-test-support")))
 }

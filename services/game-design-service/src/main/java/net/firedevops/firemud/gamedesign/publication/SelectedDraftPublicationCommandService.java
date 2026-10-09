@@ -7,6 +7,7 @@ import net.firedevops.firemud.common.publication.AccountPublicationAuthorization
 import net.firedevops.firemud.common.publication.AccountPublicationAuthorizationReadClient;
 import net.firedevops.firemud.common.publication.PublicationDigestRequestBinding;
 import net.firedevops.firemud.common.publication.WorldSelectedDraftPublicationFreezeClient;
+import net.firedevops.firemud.common.publication.WorldSelectedPublicationArtifactInventoryClient;
 import net.firedevops.firemud.common.world.WorldPublishedStartLocationEvidence;
 import net.firedevops.firemud.gamedesign.client.WorldPublishedStartLocationClient;
 import net.firedevops.firemud.gamedesign.draft.AuthoredDraftPublishSelection;
@@ -35,12 +36,19 @@ public final class SelectedDraftPublicationCommandService {
       PlatformTransactionManager transactionManager,
       AccountPublicationAuthorizationReadClient accountClient,
       WorldSelectedDraftPublicationFreezeClient freezeClient,
+      WorldSelectedPublicationArtifactInventoryClient inventoryClient,
       WorldPublishedStartLocationClient worldClient,
       String workloadNamespace,
       VersionPublishCommandServiceImpl finalizer) {
     this(
         new SelectedDraftPublicationAdmissionService(
-            dsl, transactionManager, accountClient, freezeClient, worldClient, workloadNamespace),
+            dsl,
+            transactionManager,
+            accountClient,
+            freezeClient,
+            inventoryClient,
+            worldClient,
+            workloadNamespace),
         new DatabaseDurableStateReader(dsl),
         finalizer);
   }

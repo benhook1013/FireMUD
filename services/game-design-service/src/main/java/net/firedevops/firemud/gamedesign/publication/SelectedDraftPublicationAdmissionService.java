@@ -13,6 +13,7 @@ import net.firedevops.firemud.common.publication.GameDesignPublicationOperationB
 import net.firedevops.firemud.common.publication.PublicationDigestRequestBinding;
 import net.firedevops.firemud.common.publication.WorldSelectedDraftPublicationFreezeClient;
 import net.firedevops.firemud.common.publication.WorldSelectedDraftPublicationFreezeEvidence;
+import net.firedevops.firemud.common.publication.WorldSelectedPublicationArtifactInventoryClient;
 import net.firedevops.firemud.common.world.WorldPublishedStartLocationEvidence;
 import net.firedevops.firemud.gamedesign.client.WorldPublishedStartLocationClient;
 import net.firedevops.firemud.gamedesign.draft.AuthoredDraftPublishSelection;
@@ -32,6 +33,7 @@ public final class SelectedDraftPublicationAdmissionService {
   private final AccountPublicationAuthorizationReadClient accountClient;
   private final WorldPublishedStartLocationClient worldClient;
   private final WorldSelectedDraftPublicationFreezeClient freezeClient;
+  private final WorldSelectedPublicationArtifactInventoryClient inventoryClient;
   private final SelectionReader selectionReader;
   private final SelectedDraftPublicationOwner owner;
   private final TransactionTemplate reservationTransaction;
@@ -42,12 +44,14 @@ public final class SelectedDraftPublicationAdmissionService {
       PlatformTransactionManager transactionManager,
       AccountPublicationAuthorizationReadClient accountClient,
       WorldSelectedDraftPublicationFreezeClient freezeClient,
+      WorldSelectedPublicationArtifactInventoryClient inventoryClient,
       WorldPublishedStartLocationClient worldClient,
       String workloadNamespace) {
     this(
         transactionManager,
         accountClient,
         freezeClient,
+        inventoryClient,
         worldClient,
         new SelectedDraftPublicationOwner(Objects.requireNonNull(dsl, "dsl")),
         intent ->
@@ -65,6 +69,7 @@ public final class SelectedDraftPublicationAdmissionService {
       PlatformTransactionManager transactionManager,
       AccountPublicationAuthorizationReadClient accountClient,
       WorldSelectedDraftPublicationFreezeClient freezeClient,
+      WorldSelectedPublicationArtifactInventoryClient inventoryClient,
       WorldPublishedStartLocationClient worldClient,
       SelectedDraftPublicationOwner owner,
       SelectionReader selectionReader,
@@ -72,6 +77,7 @@ public final class SelectedDraftPublicationAdmissionService {
     this.accountClient = Objects.requireNonNull(accountClient, "accountClient");
     this.worldClient = Objects.requireNonNull(worldClient, "worldClient");
     this.freezeClient = Objects.requireNonNull(freezeClient, "freezeClient");
+    this.inventoryClient = Objects.requireNonNull(inventoryClient, "inventoryClient");
     this.selectionReader = Objects.requireNonNull(selectionReader, "selectionReader");
     this.owner = Objects.requireNonNull(owner, "owner");
     if (!GrpcPeerIdentity.isValidNamespace(workloadNamespace)) {
@@ -127,6 +133,13 @@ public final class SelectedDraftPublicationAdmissionService {
           "World publication freeze readback differs from the exact request");
     }
     var acknowledgement = freeze.acknowledgement();
+    var inventory = inventoryClient.read(freeze);
+    if (inventory == null
+        || !freeze.request().equals(inventory.freezeEvidence().request())
+        || !freeze.acknowledgement().equals(inventory.freezeEvidence().acknowledgement())) {
+      throw new IllegalStateException(
+          "World inventory readback differs from exact acknowledged freeze");
+    }
     var worldRequest =
         new WorldPublishedStartLocationEvidence.Request(
             workloadNamespace,
@@ -161,11 +174,14 @@ public final class SelectedDraftPublicationAdmissionService {
                 .toList());
     WorldPublishedStartLocationEvidence worldEvidence = worldClient.read(worldRequest);
     requireExactWorldReadback(worldRequest, worldEvidence);
-    new GameDesignPublicationOperationBinding(accountEvidence.request().binding(), worldEvidence);
+    new GameDesignPublicationOperationBinding(
+        accountEvidence.request().binding(), worldEvidence, inventory);
 
     return Objects.requireNonNull(
         reservationTransaction.execute(
-            status -> owner.reserve(intent, accountEvidence.request().binding(), worldEvidence)),
+            status ->
+                owner.reserve(
+                    intent, accountEvidence.request().binding(), worldEvidence, inventory)),
         "Selected Draft publication reservation returned no result");
   }
 

@@ -214,7 +214,11 @@ class GameDesignPublicationTerminalReadGrpcCodecTest {
             Base64.getDecoder().decode(result.get("startLocationReceiptBase64").textValue()),
             applied.fullBinding(),
             applied.result());
-    return new GameDesignPublicationOperationBinding(account, world);
+    return new GameDesignPublicationOperationBinding(
+        account,
+        world,
+        net.firedevops.firemud.test.IsolatedWorldPublicationInventoryFixtures.stipulated(
+            account, world));
   }
 
   static GameDesignPublicationTerminalEvidence terminal(

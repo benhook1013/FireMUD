@@ -4,6 +4,7 @@ import java.util.Arrays;
 import java.util.Objects;
 import net.firedevops.firemud.common.publication.AccountPublicationAuthorizationBinding;
 import net.firedevops.firemud.common.publication.PublicationDigestRequestBinding;
+import net.firedevops.firemud.common.publication.WorldSelectedPublicationArtifactInventoryEvidence;
 import net.firedevops.firemud.common.world.WorldPublishedStartLocationEvidence;
 import net.firedevops.firemud.gamedesign.draft.AuthoredDraftPublishSelection;
 import net.firedevops.firemud.gamedesign.draft.AuthoredDraftPublishSelectionRepository;
@@ -53,7 +54,8 @@ public final class SelectedDraftPublicationOwner {
   public Reservation reserve(
       AuthoredDraftPublishSelection.PublishIntent intent,
       AccountPublicationAuthorizationBinding account,
-      WorldPublishedStartLocationEvidence world) {
+      WorldPublishedStartLocationEvidence world,
+      WorldSelectedPublicationArtifactInventoryEvidence inventory) {
     requireWritableReadCommittedTransaction();
     Objects.requireNonNull(intent, "intent");
     Objects.requireNonNull(account, "account");
@@ -81,7 +83,7 @@ public final class SelectedDraftPublicationOwner {
       throw new IllegalStateException("SELECTED_PUBLICATION_SELECTION_CHANGED");
     }
 
-    var operation = new GameDesignPublicationOperation(account, world);
+    var operation = new GameDesignPublicationOperation(account, world, inventory);
     String workflowId =
         PublicationDigestRequestBinding.full(
                 selection.target().canonicalTenantId().toString(),

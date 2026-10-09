@@ -163,7 +163,7 @@ public final class IsolatedPublicationOwnerSetup {
     if (captureSources) {
       operation =
           new SelectedDraftPublicationOwner(dsl)
-              .reserve(intent, operation.account(), operation.world())
+              .reserve(intent, operation.account(), operation.world(), operation.inventory())
               .operation();
     } else {
       var attempt = new PublishAttempt();

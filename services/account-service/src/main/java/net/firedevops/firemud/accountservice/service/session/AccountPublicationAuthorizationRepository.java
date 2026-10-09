@@ -313,7 +313,7 @@ public final class AccountPublicationAuthorizationRepository {
       Record row, AccountPublicationAuthorizationBinding binding) {
     byte[] worldEvidence = row == null ? null : row.get("world_evidence", byte[].class);
     if (worldEvidence != null) {
-      new GameDesignPublicationOperationBinding(
+      GameDesignPublicationOperationBinding.requireAccountWorldCorrelation(
           binding, WorldPublishedStartLocationEvidence.fromStored(worldEvidence));
     }
   }

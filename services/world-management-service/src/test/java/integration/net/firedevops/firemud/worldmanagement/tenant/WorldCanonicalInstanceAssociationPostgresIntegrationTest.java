@@ -28,6 +28,7 @@ import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 import net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding.AffectedUnit;
@@ -43,6 +44,7 @@ import net.firedevops.firemud.common.gamedesign.GameDesignPublicationTerminalEvi
 import net.firedevops.firemud.common.publication.AccountPublicationAuthorizationBinding;
 import net.firedevops.firemud.common.publication.AuthoredDraftPublishSelectionBinding;
 import net.firedevops.firemud.common.publication.GameDesignPublicationOperationBinding;
+import net.firedevops.firemud.common.publication.WorldSelectedPublicationArtifactInventoryEvidence;
 import net.firedevops.firemud.common.tenant.AuthoredWorldSourceDigest;
 import net.firedevops.firemud.common.tenant.AuthoredWorldSourceEvidence;
 import net.firedevops.firemud.common.world.WorldPublishedStartLocationEvidence;
@@ -1415,6 +1417,9 @@ class WorldCanonicalInstanceAssociationPostgresIntegrationTest {
                       + ":publish-request:"
                       + publicationRequest);
           var attemptCreatedInTransaction = new AtomicBoolean();
+          var capturedCheckpoint =
+              new AtomicReference<
+                  WorldSelectedDraftPublicationCheckpointRepository.CapturedCheckpoint>();
           var attempt =
               Objects.requireNonNull(
                   ownerTransaction()
@@ -1424,23 +1429,23 @@ class WorldCanonicalInstanceAssociationPostgresIntegrationTest {
                                 publicationFence.claimFreeze(
                                     evidence,
                                     () -> {
-                                      var digest =
-                                          digestService.getDraftDesignDigest(
-                                              Long.toString(
-                                                  fixture.source().receipt().localTenantKey()),
-                                              Long.toString(
-                                                  fixture.versionIdentity().localVersionKey()));
+                                      var captured =
+                                          checkpointRepository().captureWithSource(evidence, draft);
+                                      capturedCheckpoint.set(captured);
                                       attemptCreatedInTransaction.set(true);
-                                      return new WorldDesignPublicationFenceEvidence.Checkpoint(
-                                          draft.binding().commitId().toString(),
-                                          digest.contentDigest(),
-                                          3);
+                                      return captured.checkpoint();
                                     });
                             new WorldSelectedDraftPublicationAuthorizationRepository(dsl)
                                 .retainOrRequireExact(
                                     frozenAttempt,
                                     accountBinding,
                                     attemptCreatedInTransaction.get());
+                            artifactInventoryRepository()
+                                .retainOrRequireExact(
+                                    frozenAttempt,
+                                    accountBinding,
+                                    attemptCreatedInTransaction.get(),
+                                    capturedCheckpoint.get());
                             return frozenAttempt;
                           }),
                   "Synthetic frozen preparation fixture returned no publication checkpoint");
@@ -1539,6 +1544,27 @@ class WorldCanonicalInstanceAssociationPostgresIntegrationTest {
         digestService);
   }
 
+  private WorldSelectedDraftPublicationCheckpointRepository checkpointRepository() {
+    return new WorldSelectedDraftPublicationCheckpointRepository(
+        publicationFence,
+        appliedRepository(),
+        new WorldDraftTopologyCommitRepository(dsl, publicationFence, objectMapper),
+        digestService);
+  }
+
+  private WorldSelectedPublicationArtifactInventoryRepository artifactInventoryRepository() {
+    return new WorldSelectedPublicationArtifactInventoryRepository(dsl);
+  }
+
+  private WorldSelectedPublicationArtifactInventoryEvidence retainedInventoryEvidence(
+      AccountPublicationAuthorizationBinding account, WorldPublishedStartLocationEvidence world) {
+    var attempt =
+        publicationFence.readAttemptByFence(world.request().publicationFence()).orElseThrow();
+    var retained = artifactInventoryRepository().readCommitted(attempt, account);
+    return WorldSelectedPublicationArtifactInventoryEvidence.fromRetainedSelection(
+        account, world, retained.publicCanonicalBytes(), retained.publicDigest());
+  }
+
   private WorldPublishedStartLocationRepository publishedSelectors() {
     return new WorldPublishedStartLocationRepository(dsl, frozenRepository(), appliedRepository());
   }
@@ -1622,7 +1648,9 @@ class WorldCanonicalInstanceAssociationPostgresIntegrationTest {
     var account =
         isolatedPublicationAccountBinding(
             world.originalAccountBindingBytes(), selection, world.request().publicationRequestId());
-    var operation = new GameDesignPublicationOperationBinding(account, world);
+    var operation =
+        new GameDesignPublicationOperationBinding(
+            account, world, retainedInventoryEvidence(account, world));
     return new GameDesignPublicationTerminalEvidence(
         operation.canonicalBytes(),
         Outcome.PUBLISHED,

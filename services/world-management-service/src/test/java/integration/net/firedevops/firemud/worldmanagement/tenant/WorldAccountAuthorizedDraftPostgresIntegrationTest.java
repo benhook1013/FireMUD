@@ -52,6 +52,7 @@ import net.firedevops.firemud.common.publication.AuthoredDraftPublishSelectionBi
 import net.firedevops.firemud.common.publication.AuthoredDraftPublishSelectionBinding.VisibilityFence;
 import net.firedevops.firemud.common.publication.AuthoredDraftPublishSelectionReadClient;
 import net.firedevops.firemud.common.publication.AuthoredDraftPublishSelectionReadGrpcCodec;
+import net.firedevops.firemud.common.publication.GameDesignPublicationOperationBinding;
 import net.firedevops.firemud.common.publication.WorldSelectedDraftPublicationFreezeClient;
 import net.firedevops.firemud.common.publication.WorldSelectedDraftPublicationFreezeEvidence;
 import net.firedevops.firemud.common.publication.WorldSelectedDraftPublicationFreezeGrpcCodec;
@@ -466,6 +467,20 @@ class WorldAccountAuthorizedDraftPostgresIntegrationTest {
                 .doesNotContain(
                     "localTenantKey", "localVersionKey", "gameDesignVersionId", "sourceGameRowId");
             assertThat(inventory.publicDigest()).matches("sha256:[0-9a-f]{64}");
+            assertThat(
+                    org.springframework.transaction.support.TransactionSynchronizationManager
+                        .isActualTransactionActive())
+                .isFalse();
+            assertThat(
+                    org.springframework.transaction.support.TransactionSynchronizationManager
+                        .isSynchronizationActive())
+                .isFalse();
+            var directOwnerInventoryRead =
+                withGameDesignCaller(
+                    () -> selectedPublicationArtifactInventoryReadService().read(firstFreeze));
+            assertThat(directOwnerInventoryRead.canonicalBytes())
+                .containsExactly(inventory.publicCanonicalBytes());
+            assertThat(directOwnerInventoryRead.digest()).isEqualTo(inventory.publicDigest());
             var firstInventoryRead =
                 readArtifactInventoryOverMtls(selectedFreezeService, firstFreeze, pki);
             assertThat(firstInventoryRead.canonicalBytes())
@@ -680,6 +695,104 @@ class WorldAccountAuthorizedDraftPostgresIntegrationTest {
                     .isEqualTo(retained.selectorReceipt().canonicalBytes());
                 assertThat(client.read(request).canonicalBytes())
                     .isEqualTo(evidence.canonicalBytes());
+                var inventoryEvidence =
+                    WorldSelectedPublicationArtifactInventoryEvidence.fromRetainedSelection(
+                        publicationOrder,
+                        evidence,
+                        inventory.publicCanonicalBytes(),
+                        inventory.publicDigest());
+                var publicationOperation =
+                    new GameDesignPublicationOperationBinding(
+                        publicationOrder, evidence, inventoryEvidence);
+                assertThat(publicationOperation.inventory().canonicalBytes())
+                    .containsExactly(inventory.publicCanonicalBytes());
+                String privateInventoryJson =
+                    new String(inventory.canonicalBytes(), java.nio.charset.StandardCharsets.UTF_8);
+                assertThat(privateInventoryJson)
+                    .contains(
+                        "\"sourceIntake\"",
+                        "\"localTenantKey\"",
+                        "\"localVersionKey\"",
+                        "\"gameDesignVersionId\"",
+                        "\"canonicalBindingBytes\"");
+                assertThat(publicInventoryJson)
+                    .doesNotContain(
+                        "sourceIntake",
+                        "localTenantKey",
+                        "localVersionKey",
+                        "gameDesignVersionId",
+                        "canonicalBindingBytes",
+                        "sourceGameRowId");
+                var ownerBeforeInventoryOperation = ownerSnapshot(world, plan);
+                assertThat(
+                        Objects.requireNonNull(
+                                dsl.fetchOne(
+                                    "SELECT world_require_publication_operation_account_binding(?,?,?)",
+                                    publicationOperation.canonicalBytes(),
+                                    evidence.request().publicationFence(),
+                                    evidence.canonicalBytes()),
+                                "World publication operation guard returned no result")
+                            .get(0, Boolean.class))
+                    .isTrue();
+                String sourceGraphDigest = inventory.publicEvidence().sourceModel().graphDigest();
+                byte[] substitutedInventory =
+                    publicInventoryJson
+                        .replace(
+                            "\"graphDigest\":\"" + sourceGraphDigest + "\"",
+                            "\"graphDigest\":\"sha256:" + "0".repeat(64) + "\"")
+                        .getBytes(java.nio.charset.StandardCharsets.UTF_8);
+                byte[] validOperation = publicationOperation.canonicalBytes();
+                byte[] missingInventory =
+                    operationBytes(
+                        GameDesignPublicationOperationBinding.SCHEMA,
+                        publicationOrder.canonicalBytes(),
+                        evidence.canonicalBytes(),
+                        new byte[0],
+                        DraftAuthorizationFenceBinding.digest(new byte[0]));
+                byte[] mismatchedDigest =
+                    operationBytes(
+                        GameDesignPublicationOperationBinding.SCHEMA,
+                        publicationOrder.canonicalBytes(),
+                        evidence.canonicalBytes(),
+                        inventory.publicCanonicalBytes(),
+                        "sha256:" + "0".repeat(64));
+                byte[] changedInventory =
+                    operationBytes(
+                        GameDesignPublicationOperationBinding.SCHEMA,
+                        publicationOrder.canonicalBytes(),
+                        evidence.canonicalBytes(),
+                        substitutedInventory,
+                        DraftAuthorizationFenceBinding.digest(substitutedInventory));
+                byte[] retainedV1 =
+                    operationBytes(
+                        "game-design-publication-operation/v1",
+                        publicationOrder.canonicalBytes(),
+                        evidence.canonicalBytes(),
+                        null,
+                        null);
+                byte[] trailingOperation = Arrays.copyOf(validOperation, validOperation.length + 1);
+                for (byte[] rejectedOperation :
+                    List.of(
+                        missingInventory,
+                        mismatchedDigest,
+                        changedInventory,
+                        retainedV1,
+                        trailingOperation)) {
+                  assertThatThrownBy(
+                          () ->
+                              dsl.fetchOne(
+                                  "SELECT world_require_publication_operation_account_binding(?,?,?)",
+                                  rejectedOperation,
+                                  evidence.request().publicationFence(),
+                                  evidence.canonicalBytes()))
+                      .satisfies(failure -> assertSqlState(failure, "23514"));
+                  assertThat(ownerSnapshot(world, plan)).isEqualTo(ownerBeforeInventoryOperation);
+                }
+                assertThat(
+                        inventoryRepository
+                            .readCommitted(frozenAttempt, publicationOrder)
+                            .canonicalBytes())
+                    .containsExactly(inventory.canonicalBytes());
               }
               // Trusted CA alone is not authority: the World workload cannot read the GD-only
               // selector.
@@ -798,6 +911,19 @@ class WorldAccountAuthorizedDraftPostgresIntegrationTest {
         stop(accountServer);
       }
     }
+  }
+
+  private static byte[] operationBytes(
+      String schema, byte[] accountBytes, byte[] worldBytes, byte[] inventoryBytes, String digest) {
+    var out = new java.io.ByteArrayOutputStream();
+    DraftAuthorizationFenceBinding.frame(out, schema);
+    DraftAuthorizationFenceBinding.frame(out, accountBytes);
+    DraftAuthorizationFenceBinding.frame(out, worldBytes);
+    if (schema.equals(GameDesignPublicationOperationBinding.SCHEMA)) {
+      DraftAuthorizationFenceBinding.frame(out, inventoryBytes);
+      DraftAuthorizationFenceBinding.frame(out, digest);
+    }
+    return out.toByteArray();
   }
 
   private static void assertSqlState(Throwable failure, String expectedState) {

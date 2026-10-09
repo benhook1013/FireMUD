@@ -157,6 +157,10 @@ public final class IsolatedPublicationOperationFixtures {
             seed.selectorReceiptBytes(),
             seed.originalAccountBindingBytes(),
             seed.appliedResultBytes());
-    return new GameDesignPublicationOperation(account, world);
+    return new GameDesignPublicationOperation(
+        account,
+        world,
+        net.firedevops.firemud.test.IsolatedWorldPublicationInventoryFixtures.stipulated(
+            account, world));
   }
 }

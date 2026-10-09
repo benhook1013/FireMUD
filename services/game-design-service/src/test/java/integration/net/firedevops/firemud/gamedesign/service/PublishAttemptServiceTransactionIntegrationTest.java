@@ -466,7 +466,11 @@ class PublishAttemptServiceTransactionIntegrationTest {
         inOwnerTransaction(
             () ->
                 new SelectedDraftPublicationOwner(dsl)
-                    .reserve(selection.intent(), operation.account(), operation.world()));
+                    .reserve(
+                        selection.intent(),
+                        operation.account(),
+                        operation.world(),
+                        operation.inventory()));
     assertThat(exactReservationRetry.selection()).isEqualTo(selection);
     assertThat(exactReservationRetry.operation().canonicalBytes())
         .containsExactly(operation.canonicalBytes());
@@ -651,6 +655,13 @@ class PublishAttemptServiceTransactionIntegrationTest {
                   publicationReadIdentities.gameDesignClient().properties(pki.ca),
                   new GrpcChannelFactory(),
                   NAMESPACE);
+          var inventoryClient =
+              new net.firedevops.firemud.common.publication
+                  .WorldSelectedPublicationArtifactInventoryClient(
+                  endpoints,
+                  publicationReadIdentities.gameDesignClient().properties(pki.ca),
+                  new GrpcChannelFactory(),
+                  NAMESPACE);
           var worldClient =
               new WorldPublishedStartLocationClient(
                   endpoints,
@@ -659,6 +670,7 @@ class PublishAttemptServiceTransactionIntegrationTest {
                   NAMESPACE)) {
         accountClient.init();
         freezeClient.init();
+        inventoryClient.init();
         worldClient.init();
         var command =
             new SelectedDraftPublicationCommandService(
@@ -666,6 +678,7 @@ class PublishAttemptServiceTransactionIntegrationTest {
                 transactionManager,
                 accountClient,
                 freezeClient,
+                inventoryClient,
                 worldClient,
                 NAMESPACE,
                 versionPublishCommandService);
@@ -724,6 +737,7 @@ class PublishAttemptServiceTransactionIntegrationTest {
         assertThat(accountEndpoint.readCount()).isEqualTo(3);
         assertThat(worldEndpoint.readCount()).isEqualTo(2);
         assertThat(freezeEndpoint.beginCount()).isEqualTo(2);
+        assertThat(freezeEndpoint.inventoryReadCount()).isEqualTo(2);
 
         PublishAttempt attempt =
             publishAttemptRepository.findByPublishWorkflowId(workflowId).orElseThrow();
@@ -761,6 +775,10 @@ class PublishAttemptServiceTransactionIntegrationTest {
         String releaseRefBeforeRetry = bundle.getPublishedReleaseBundleRef();
         VersionDto exactRetry =
             command.publishSelectedDraftFullVersion(selection.intent(), operation.account());
+        assertThat(freezeEndpoint.inventoryReadCount()).isEqualTo(2);
+        assertThat(freezeEndpoint.beginCount()).isEqualTo(2);
+        assertThat(accountEndpoint.readCount()).isEqualTo(3);
+        assertThat(worldEndpoint.readCount()).isEqualTo(2);
         assertThat(exactRetry.id()).isEqualTo(published.id());
         assertThat(
                 publishAttemptRepository.findByPublishWorkflowId(workflowId).orElseThrow().getId())
@@ -905,7 +923,8 @@ class PublishAttemptServiceTransactionIntegrationTest {
   }
 
   @Test
-  void selectedDraftReservationRejectsChangedSelectionAndAccountOperationEvidence() {
+  void selectedDraftReservationRejectsChangedSelectionAndAccountOperationEvidence()
+      throws Exception {
     String tenantId = "9006";
     Game game = new Game();
     game.setTenantId(tenantId);
@@ -940,7 +959,11 @@ class PublishAttemptServiceTransactionIntegrationTest {
                 inOwnerTransaction(
                     () ->
                         new SelectedDraftPublicationOwner(dsl)
-                            .reserve(changedIntent, operation.account(), operation.world())))
+                            .reserve(
+                                changedIntent,
+                                operation.account(),
+                                operation.world(),
+                                operation.inventory())))
         .isInstanceOf(IllegalStateException.class)
         .hasMessageContaining("changed notes");
 
@@ -955,9 +978,13 @@ class PublishAttemptServiceTransactionIntegrationTest {
                 inOwnerTransaction(
                     () ->
                         new SelectedDraftPublicationOwner(dsl)
-                            .reserve(selection.intent(), changedAccount, operation.world())))
+                            .reserve(
+                                selection.intent(),
+                                changedAccount,
+                                operation.world(),
+                                operation.inventory())))
         .isInstanceOf(IllegalArgumentException.class)
-        .hasMessageContaining("PUBLICATION_OPERATION_IDENTITY_CONFLICT");
+        .hasMessageContaining("World public inventory differs from exact selected Account order");
 
     var retained =
         new GameDesignPublicationOperationRepository(dsl)
@@ -965,6 +992,89 @@ class PublishAttemptServiceTransactionIntegrationTest {
             .orElseThrow();
     assertThat(retained.outcome()).isEqualTo("PENDING");
     assertThat(retained.operation().canonicalBytes()).containsExactly(operation.canonicalBytes());
+    // Real owner SQL rejects partial/unknown profiles even when the forged payload has a fresh
+    // matching digest. Upstream inventory authority is still expressly stipulated in this fixture.
+    var mapper = tools.jackson.databind.json.JsonMapper.builder().build();
+    for (int mutation = 0; mutation < 5; mutation++) {
+      var publicJson =
+          (tools.jackson.databind.node.ObjectNode)
+              mapper.readTree(operation.inventory().canonicalBytes());
+      var model = (tools.jackson.databind.node.ObjectNode) publicJson.get("sourceModel");
+      switch (mutation) {
+        case 0 ->
+            ((tools.jackson.databind.node.ObjectNode) publicJson.get("ownerScope"))
+                .remove("intakeReceiptDigest");
+        case 1 -> model.put("unknownSourceFamily", true);
+        case 2 -> model.putArray("familyCounts");
+        case 3 ->
+            ((tools.jackson.databind.node.ObjectNode) model.get("regionGeneratorInputs").get(0))
+                .put("generatorType", "opaque");
+        case 4 ->
+            ((tools.jackson.databind.node.ObjectNode) model.get("familyCounts").get(2))
+                .put("rowCount", 0);
+        default -> throw new AssertionError();
+      }
+      byte[] changedInventory =
+          net.firedevops.firemud.common.json.Rfc8785CanonicalJson.canonicalizeUtf8(
+              mapper.writeValueAsString(publicJson));
+      var bytes = new java.io.ByteArrayOutputStream();
+      net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding.frame(
+          bytes, GameDesignPublicationOperationBinding.SCHEMA);
+      net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding.frame(
+          bytes, operation.account().canonicalBytes());
+      net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding.frame(
+          bytes, operation.world().canonicalBytes());
+      net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding.frame(
+          bytes, changedInventory);
+      net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding.frame(
+          bytes,
+          "sha256:"
+              + java.util.HexFormat.of()
+                  .formatHex(
+                      java.security.MessageDigest.getInstance("SHA-256").digest(changedInventory)));
+      assertThatThrownBy(
+              () ->
+                  dsl.fetch(
+                      "SELECT require_selected_inventory_operation_v2(?)", bytes.toByteArray()))
+          .isInstanceOf(org.jooq.exception.DataAccessException.class);
+    }
+    dsl.fetch("SELECT require_selected_inventory_operation_v2(?)", operation.canonicalBytes());
+    // Supply the historical three-frame schema without retrofitting any retained owner rows.
+    // This is actual policy-table ingress denial, not proof that a genuine v1 row was migrated.
+    var historicalV1 = new java.io.ByteArrayOutputStream();
+    net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding.frame(
+        historicalV1, "game-design-publication-operation/v1");
+    net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding.frame(
+        historicalV1, operation.account().canonicalBytes());
+    net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding.frame(
+        historicalV1, operation.world().canonicalBytes());
+    var policySetsBefore =
+        dsl.fetch("SELECT * FROM game_design_published_realm_policy_set").intoMaps();
+    var policiesBefore = dsl.fetch("SELECT * FROM game_design_published_realm_policy").intoMaps();
+    assertThatThrownBy(
+            () ->
+                inOwnerTransaction(
+                    () ->
+                        dsl.execute(
+                            "INSERT INTO game_design_published_realm_policy_set (operation_bytes) VALUES (?)",
+                            historicalV1.toByteArray())))
+        .rootCause()
+        .isInstanceOf(java.sql.SQLException.class)
+        .hasMessageContaining("Published realm policy evidence requires immutable v2 operation")
+        .satisfies(
+            failure ->
+                assertThat(((java.sql.SQLException) failure).getSQLState()).isEqualTo("23514"));
+    assertThat(dsl.fetch("SELECT * FROM game_design_published_realm_policy_set").intoMaps())
+        .isEqualTo(policySetsBefore);
+    assertThat(dsl.fetch("SELECT * FROM game_design_published_realm_policy").intoMaps())
+        .isEqualTo(policiesBefore);
+    assertThat(
+            new GameDesignPublicationOperationRepository(dsl)
+                .read(operation.workflowId())
+                .orElseThrow()
+                .operation()
+                .canonicalBytes())
+        .containsExactly(operation.canonicalBytes());
     assertThat(
             publishAttemptRepository
                 .findByPublishWorkflowId(operation.workflowId())
@@ -1326,7 +1436,12 @@ class PublishAttemptServiceTransactionIntegrationTest {
             UUID.randomUUID(),
             operation.account().input(),
             operation.account().sources());
-    var substituted = new GameDesignPublicationOperationBinding(changedAccount, operation.world());
+    var substituted =
+        new GameDesignPublicationOperationBinding(
+            changedAccount,
+            operation.world(),
+            net.firedevops.firemud.test.IsolatedWorldPublicationInventoryFixtures.stipulated(
+                changedAccount, operation.world()));
     var missing =
         IsolatedPublicationOperationFixtures.fresh(
             operation.account().input().selection().target());
@@ -1553,6 +1668,7 @@ class PublishAttemptServiceTransactionIntegrationTest {
           .WorldSelectedDraftPublicationFreezeServiceImplBase {
     private final GameDesignPublicationOperation operation;
     private final AtomicInteger begins = new AtomicInteger();
+    private final AtomicInteger inventoryReads = new AtomicInteger();
 
     private StipulatedWorldFreezeEndpoint(GameDesignPublicationOperation operation) {
       this.operation = operation;
@@ -1601,6 +1717,37 @@ class PublishAttemptServiceTransactionIntegrationTest {
                 .withDescription("Invalid stipulated freeze request")
                 .asRuntimeException());
       }
+    }
+
+    @Override
+    public void readSelectedPublicationArtifactInventory(
+        net.firedevops.firemud.worldmanagement.v1.ReadSelectedPublicationArtifactInventoryRequest
+            request,
+        StreamObserver<
+                net.firedevops.firemud.worldmanagement.v1
+                    .ReadSelectedPublicationArtifactInventoryResponse>
+            observer) {
+      if (!requireGameDesignPeer(observer)) return;
+      inventoryReads.incrementAndGet();
+      var freeze =
+          net.firedevops.firemud.common.publication
+              .WorldSelectedPublicationArtifactInventoryGrpcCodec.fromRequest(request);
+      if (!freeze.request().equals(operation.inventory().freezeEvidence().request())
+          || !freeze
+              .acknowledgement()
+              .equals(operation.inventory().freezeEvidence().acknowledgement())) {
+        observer.onError(Status.FAILED_PRECONDITION.asRuntimeException());
+        return;
+      }
+      observer.onNext(
+          net.firedevops.firemud.common.publication
+              .WorldSelectedPublicationArtifactInventoryGrpcCodec.toResponse(
+              operation.inventory()));
+      observer.onCompleted();
+    }
+
+    int inventoryReadCount() {
+      return inventoryReads.get();
     }
 
     int beginCount() {

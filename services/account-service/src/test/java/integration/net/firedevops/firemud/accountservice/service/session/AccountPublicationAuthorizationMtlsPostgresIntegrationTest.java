@@ -38,7 +38,6 @@ import net.firedevops.firemud.common.publication.AccountSelectedPublicationOrder
 import net.firedevops.firemud.common.publication.AccountSelectedPublicationOrderGrpcCodec;
 import net.firedevops.firemud.common.publication.AuthoredDraftPublishSelectionReadClient;
 import net.firedevops.firemud.common.publication.AuthoredDraftPublishSelectionReadGrpcCodec;
-import net.firedevops.firemud.common.publication.GameDesignPublicationOperationBinding;
 import net.firedevops.firemud.common.publication.GameDesignPublicationTerminalReadClient;
 import net.firedevops.firemud.common.publication.GameDesignPublicationTerminalReadGrpcCodec;
 import net.firedevops.firemud.common.publication.WorldPublicationTerminalReadClient;
@@ -380,7 +379,9 @@ class AccountPublicationAuthorizationMtlsPostgresIntegrationTest {
         var order =
             new AccountPublicationAuthorizationService(issued.actors(), sources.fences, repository)
                 .authorize(issued.compact(), descriptor.selection(), issued.environment());
-        var operation = new GameDesignPublicationOperationBinding(order, descriptor.world());
+        var operation =
+            AccountPublicationAuthorizationPostgresIntegrationTest.operation(
+                order, descriptor.world());
         var terminal =
             AccountPublicationAuthorizationPostgresIntegrationTest.terminal(operation, outcome);
         var mode = new AtomicReference<>("exact");

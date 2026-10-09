@@ -22,6 +22,7 @@ import net.firedevops.firemud.common.publication.AccountPublicationAuthorization
 import net.firedevops.firemud.common.publication.WorldSelectedDraftPublicationFreezeClient;
 import net.firedevops.firemud.common.publication.WorldSelectedDraftPublicationFreezeEvidence;
 import net.firedevops.firemud.common.publication.WorldSelectedDraftPublicationFreezeGrpcCodec;
+import net.firedevops.firemud.common.publication.WorldSelectedPublicationArtifactInventoryClient;
 import net.firedevops.firemud.common.world.WorldPublishedStartLocationEvidence;
 import net.firedevops.firemud.gamedesign.client.WorldPublishedStartLocationClient;
 import net.firedevops.firemud.gamedesign.draft.AuthoredDraftPublishSelection;
@@ -41,6 +42,7 @@ class SelectedDraftPublicationAdmissionServiceTest {
     var fixture = fixture();
     var account = mock(AccountPublicationAuthorizationReadClient.class);
     var freeze = freezeClient(fixture);
+    var inventory = inventoryClient(fixture);
     var world = mock(WorldPublishedStartLocationClient.class);
     var owner = mock(SelectedDraftPublicationOwner.class);
     var reader = mock(SelectedDraftPublicationAdmissionService.SelectionReader.class);
@@ -75,18 +77,20 @@ class SelectedDraftPublicationAdmissionServiceTest {
                 binding ->
                     Arrays.equals(
                         binding.canonicalBytes(), fixture.operation().account().canonicalBytes())),
-            same(fixture.operation().world())))
+            same(fixture.operation().world()),
+            same(fixture.operation().inventory())))
         .thenReturn(reservation);
     var service =
         new SelectedDraftPublicationAdmissionService(
-            transactions, account, freeze, world, owner, reader, NAMESPACE);
+            transactions, account, freeze, inventory, world, owner, reader, NAMESPACE);
 
     assertThat(service.admitAndReserve(fixture.intent(), fixture.operation().account()))
         .isSameAs(reservation);
-    var order = inOrder(reader, account, freeze, world, transactions, owner);
+    var order = inOrder(reader, account, freeze, inventory, world, transactions, owner);
     order.verify(reader).read(fixture.intent());
     order.verify(account).read(any());
     order.verify(freeze).begin(any());
+    order.verify(inventory).read(any());
     order.verify(world).read(fixture.worldRequest());
     order.verify(transactions).getTransaction(any());
     order
@@ -97,7 +101,8 @@ class SelectedDraftPublicationAdmissionServiceTest {
                 binding ->
                     Arrays.equals(
                         binding.canonicalBytes(), fixture.operation().account().canonicalBytes())),
-            same(fixture.operation().world()));
+            same(fixture.operation().world()),
+            same(fixture.operation().inventory()));
   }
 
   @Test
@@ -105,18 +110,26 @@ class SelectedDraftPublicationAdmissionServiceTest {
     var fixture = fixture();
     var account = mock(AccountPublicationAuthorizationReadClient.class);
     var freeze = mock(WorldSelectedDraftPublicationFreezeClient.class);
+    var inventory = mock(WorldSelectedPublicationArtifactInventoryClient.class);
     var world = mock(WorldPublishedStartLocationClient.class);
     var owner = mock(SelectedDraftPublicationOwner.class);
     var transactions = mock(PlatformTransactionManager.class);
     var service =
         new SelectedDraftPublicationAdmissionService(
-            transactions, account, freeze, world, owner, intent -> Optional.empty(), NAMESPACE);
+            transactions,
+            account,
+            freeze,
+            inventory,
+            world,
+            owner,
+            intent -> Optional.empty(),
+            NAMESPACE);
 
     assertThatThrownBy(
             () -> service.admitAndReserve(fixture.intent(), fixture.operation().account()))
         .isInstanceOf(IllegalStateException.class)
         .hasMessageContaining("SELECTION_UNAVAILABLE");
-    verifyNoInteractions(account, freeze, world, owner, transactions);
+    verifyNoInteractions(account, freeze, inventory, world, owner, transactions);
   }
 
   @Test
@@ -124,6 +137,7 @@ class SelectedDraftPublicationAdmissionServiceTest {
     var fixture = fixture();
     var account = mock(AccountPublicationAuthorizationReadClient.class);
     var freeze = mock(WorldSelectedDraftPublicationFreezeClient.class);
+    var inventory = mock(WorldSelectedPublicationArtifactInventoryClient.class);
     var world = mock(WorldPublishedStartLocationClient.class);
     var owner = mock(SelectedDraftPublicationOwner.class);
     var transactions = mock(PlatformTransactionManager.class);
@@ -133,6 +147,7 @@ class SelectedDraftPublicationAdmissionServiceTest {
             transactions,
             account,
             freeze,
+            inventory,
             world,
             owner,
             intent ->
@@ -153,7 +168,7 @@ class SelectedDraftPublicationAdmissionServiceTest {
     assertThatThrownBy(
             () -> service.admitAndReserve(fixture.intent(), fixture.operation().account()))
         .isSameAs(failure);
-    verifyNoInteractions(world, owner, transactions);
+    verifyNoInteractions(inventory, world, owner, transactions);
   }
 
   @AfterEach
@@ -162,6 +177,43 @@ class SelectedDraftPublicationAdmissionServiceTest {
     if (TransactionSynchronizationManager.isSynchronizationActive()) {
       TransactionSynchronizationManager.clearSynchronization();
     }
+  }
+
+  @Test
+  void missingInventoryAfterAcknowledgedFreezeNeverReadsSelectorOrOpensSql() throws Exception {
+    var fixture = fixture();
+    var account = mock(AccountPublicationAuthorizationReadClient.class);
+    when(account.read(any()))
+        .thenAnswer(
+            invocation -> {
+              var evidence = mock(AccountPublicationAuthorizationReadEvidence.class);
+              when(evidence.request()).thenReturn(invocation.getArgument(0));
+              return evidence;
+            });
+    var inventory = mock(WorldSelectedPublicationArtifactInventoryClient.class);
+    var world = mock(WorldPublishedStartLocationClient.class);
+    var owner = mock(SelectedDraftPublicationOwner.class);
+    var transactions = mock(PlatformTransactionManager.class);
+    var selection = fixture.operation().account().input().selection();
+    var service =
+        new SelectedDraftPublicationAdmissionService(
+            transactions,
+            account,
+            freezeClient(fixture),
+            inventory,
+            world,
+            owner,
+            intent ->
+                Optional.of(
+                    AuthoredDraftPublishSelection.fromStored(
+                        selection.canonicalJson(), selection.digest())),
+            NAMESPACE);
+    assertThatThrownBy(
+            () -> service.admitAndReserve(fixture.intent(), fixture.operation().account()))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("inventory readback");
+    verify(inventory).read(any());
+    verifyNoInteractions(world, owner, transactions);
   }
 
   @Test
@@ -283,6 +335,7 @@ class SelectedDraftPublicationAdmissionServiceTest {
         mock(PlatformTransactionManager.class),
         accountClient,
         freezeClient(fixture),
+        inventoryClient(fixture),
         worldClient,
         owner,
         intent ->
@@ -291,6 +344,18 @@ class SelectedDraftPublicationAdmissionServiceTest {
                     fixture.operation().account().input().selection().canonicalJson(),
                     fixture.operation().account().input().selection().digest())),
         NAMESPACE);
+  }
+
+  private static WorldSelectedPublicationArtifactInventoryClient inventoryClient(Fixture fixture) {
+    var client = mock(WorldSelectedPublicationArtifactInventoryClient.class);
+    when(client.read(any()))
+        .thenAnswer(
+            invocation -> {
+              assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+              assertThat(TransactionSynchronizationManager.isSynchronizationActive()).isFalse();
+              return fixture.operation().inventory();
+            });
+    return client;
   }
 
   private static WorldSelectedDraftPublicationFreezeClient freezeClient(Fixture fixture) {

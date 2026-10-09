@@ -71,6 +71,7 @@ import net.firedevops.firemud.common.publication.RealmEntryPolicy;
 import net.firedevops.firemud.common.publication.WorldPublicationTerminalReadClient;
 import net.firedevops.firemud.common.publication.WorldPublicationTerminalReadEvidence;
 import net.firedevops.firemud.common.publication.WorldPublicationTerminalReadGrpcCodec;
+import net.firedevops.firemud.common.publication.WorldSelectedPublicationArtifactInventoryEvidence;
 import net.firedevops.firemud.common.security.SessionContext;
 import net.firedevops.firemud.common.tenant.AuthoredWorldSourceDigest;
 import net.firedevops.firemud.common.tenant.AuthoredWorldSourceEvidence;
@@ -957,7 +958,11 @@ class WorldDraftGraphApplicationPostgresIntegrationTest {
                             new byte[] {2}))));
         for (AccountPublicationAuthorizationBinding changedAccount : changedAccounts) {
           var changedOperation =
-              new GameDesignPublicationOperationBinding(changedAccount, originalOperation.world());
+              new GameDesignPublicationOperationBinding(
+                  changedAccount,
+                  originalOperation.world(),
+                  net.firedevops.firemud.test.IsolatedWorldPublicationInventoryFixtures.stipulated(
+                      changedAccount, originalOperation.world()));
           var changedTerminal =
               outcome == Outcome.PUBLISHED
                   ? new GameDesignPublicationTerminalEvidence(
@@ -1078,7 +1083,12 @@ class WorldDraftGraphApplicationPostgresIntegrationTest {
   private GameDesignPublicationTerminalEvidence isolatedTerminalEvidence(
       GameDesignPublicationTerminalEvidence original,
       AccountPublicationAuthorizationBinding account) {
-    var operation = new GameDesignPublicationOperationBinding(account, original.worldEvidence());
+    var operation =
+        new GameDesignPublicationOperationBinding(
+            account,
+            original.worldEvidence(),
+            net.firedevops.firemud.test.IsolatedWorldPublicationInventoryFixtures.stipulated(
+                account, original.worldEvidence()));
     return new GameDesignPublicationTerminalEvidence(
         operation.canonicalBytes(),
         original.outcome(),
@@ -4478,7 +4488,9 @@ class WorldDraftGraphApplicationPostgresIntegrationTest {
     var account =
         isolatedPublicationAccountBinding(
             world.originalAccountBindingBytes(), selection, world.request().publicationRequestId());
-    var operation = new GameDesignPublicationOperationBinding(account, world);
+    var operation =
+        new GameDesignPublicationOperationBinding(
+            account, world, retainedInventoryEvidence(account, world));
     return new GameDesignPublicationTerminalEvidence(
         operation.canonicalBytes(),
         Outcome.PUBLISHED,
@@ -5611,6 +5623,23 @@ class WorldDraftGraphApplicationPostgresIntegrationTest {
     return new WorldCanonicalFrozenTopologyRepository(dsl, snapshots, repository(), digestService);
   }
 
+  private WorldSelectedDraftPublicationCheckpointRepository checkpointRepository() {
+    return new WorldSelectedDraftPublicationCheckpointRepository(
+        fence, appliedRepository(), repository(), digestService);
+  }
+
+  private WorldSelectedPublicationArtifactInventoryRepository artifactInventoryRepository() {
+    return new WorldSelectedPublicationArtifactInventoryRepository(dsl);
+  }
+
+  private WorldSelectedPublicationArtifactInventoryEvidence retainedInventoryEvidence(
+      AccountPublicationAuthorizationBinding account, WorldPublishedStartLocationEvidence world) {
+    var attempt = fence.readAttemptByFence(world.request().publicationFence()).orElseThrow();
+    var retained = artifactInventoryRepository().readCommitted(attempt, account);
+    return WorldSelectedPublicationArtifactInventoryEvidence.fromRetainedSelection(
+        account, world, retained.publicCanonicalBytes(), retained.publicDigest());
+  }
+
   private WorldPublishedStartLocationRepository publishedSelectors() {
     return new WorldPublishedStartLocationRepository(dsl, frozenRepository(), appliedRepository());
   }
@@ -5655,6 +5684,9 @@ class WorldDraftGraphApplicationPostgresIntegrationTest {
             1,
             "publish:" + owner.canonicalTenantId() + ":publish-request:" + publicationRequest);
     var attemptCreatedInTransaction = new AtomicBoolean();
+    var capturedCheckpoint =
+        new java.util.concurrent.atomic.AtomicReference<
+            WorldSelectedDraftPublicationCheckpointRepository.CapturedCheckpoint>();
     var attempt =
         Objects.requireNonNull(
             ownerTransaction()
@@ -5664,6 +5696,13 @@ class WorldDraftGraphApplicationPostgresIntegrationTest {
                           fence.claimFreeze(
                               evidence,
                               () -> {
+                                if (accountBinding != null) {
+                                  var captured =
+                                      checkpointRepository().captureWithSource(evidence, plan);
+                                  capturedCheckpoint.set(captured);
+                                  attemptCreatedInTransaction.set(true);
+                                  return captured.checkpoint();
+                                }
                                 var identity =
                                     Objects.requireNonNull(
                                         dsl.fetchOne(
@@ -5683,6 +5722,12 @@ class WorldDraftGraphApplicationPostgresIntegrationTest {
                         new WorldSelectedDraftPublicationAuthorizationRepository(dsl)
                             .retainOrRequireExact(
                                 frozenAttempt, accountBinding, attemptCreatedInTransaction.get());
+                        artifactInventoryRepository()
+                            .retainOrRequireExact(
+                                frozenAttempt,
+                                accountBinding,
+                                attemptCreatedInTransaction.get(),
+                                capturedCheckpoint.get());
                       }
                       return frozenAttempt;
                     }));

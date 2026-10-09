@@ -684,8 +684,8 @@ class VersionAssetPublicationPostgresIntegrationTest {
 
   private Game saveGame(Fixture fixture, String tenantPrefix) {
     Game game = new Game();
-    game.setTenantId(tenantPrefix + "-" + UUID.randomUUID().toString().replace("-", ""));
-    game.setName("Version asset publication fixture");
+    game.setTenantId(UUID.randomUUID().toString());
+    game.setName("Version asset publication fixture: " + tenantPrefix);
     game.setDescription("Synthetic Game Design source row for persistence proof");
     return Objects.requireNonNull(
         fixture.transaction().execute(status -> fixture.games().save(game)));

@@ -1,6 +1,6 @@
 # Ability & Action Design Tools
 
-This document outlines the editors for defining abilities, actions, and combat mechanics. The tooling is part of the Game Design Service and pushes finalized data to the [Game Logic Service](../game-logic-service/README.md) during version publishing.
+This document outlines Game Design's authored ability, action and combat definitions. Game Design owns their authoring and revision history; Game Logic owns validation and immutable retention of the exact selected gameplay-rule inputs under its [selected-release intake contract](../game-logic-service/runtime-and-data.md#selected-release-rule-inputs-and-intake). That mutation-authorized source handoff precedes the read-only publication digest gate. Game Logic is not a mutation participant in the publication workflow, and a digest read never creates or repairs its retained source.
 
 The publish workflow is part of the durable control-plane workflow described in [Versioning & Runtime Configuration](../../system-architecture-versioning-runtime.md).
 
@@ -8,8 +8,7 @@ The publish workflow is part of the durable control-plane workflow described in 
 
 The current proven behavior is stable-reference validation against the exact published base version for the plugin publication path. `abilitySchemaDigest` is persisted in plugin metadata and exposed by the publication read, but dedicated Game Logic-owned release-attested ability-schema validation remains target-state and unproved. Current plugin publication and activation compare the plugin's `abilitySchemaDigest` with the published `AUTOMATION_SCRIPTING` aggregate participant digest; that aggregate comparison is not a dedicated ability-schema attestation. Script-patch publication does not currently enforce same-tenant published-base identity, and launch resolution does not currently prove same-base published patch identity or Automation `READY`; those are implementation gaps. Exact `scriptPinEpoch` propagation and same-version old-epoch rejection at runtime handoff are target-state and remain unproved; this design-time editor does not establish that runtime proof. See the [Automation and Scheduler Runtime tracker](../../../project-management/implementation-tracking/automation-and-scheduler-runtime.md#script-transition-reconciliation) and [Versioning & Runtime Configuration](../../system-architecture-versioning-runtime.md).
 
-Data entered in these editors is stored as revisions using the `SaveRevision` gRPC call defined in [`game_design_service.proto`](../../../../protos/game-design/v1/game_design_service.proto).
-Finalized versions are published with `PublishVersion` so the Game Logic Service can load the rules as part of the cross-service publish workflow described in the [Game Design Service Architecture](README.md).
+The current `SaveRevision` API in [`game_design_service.proto`](../../../../protos/game-design/v1/game_design_service.proto) stores revision data; its supported `COMMAND_DEFINITION` shape and selected command-source capture do not implement the complete ability/action catalogs, policies or targeting declarations below. In particular, its existing `actionTags` are not the dedicated `admissionTags` contract. An authenticated Game Design source producer, Game Logic retained manifest and exact source-operation readback remain absent; missing storage or unsupported declarations cannot establish an empty rule set. `PublishVersion` must consume the independently retained owner evidence rather than populate Game Logic through the digest read.
 
 Ability definitions use a structured schema delivered through the API.
 
@@ -121,7 +120,7 @@ Example: if an `onInterval` combat-support handler can branch into at most eight
 
 At runtime, a published game version ties together:
 
-- Ability/action definitions owned by the Game Logic Service.
+- Game Design-authored ability/action definitions validated and immutably retained by Game Logic for the exact selected release.
 - Script and plugin patch versions owned by the Automation & Scripting Service.
 
 Within a given published game version:
@@ -160,12 +159,12 @@ From an observability perspective, live script and plugin invocations (`isDryRun
 - **Balancing Metrics** – display damage, healing, and resource impact to help tune gameplay.
 - **Integration with [Item & Equipment Balancing](item-equipment-balancing.md)** – ability damage values can be compared against item statistics for overall balance.
 
-## Workflow
+## Target Workflow
 
-1. Abilities and actions are created in the web UI and saved via `SaveRevision`.
-2. Designers can group related abilities into categories for organization.
-3. Each revision becomes part of a published version through `PublishVersion`.
-4. When a version is published, abilities are copied to the Game Logic Service using the `version_id`.
+1. Designers author typed ability/action and referenced catalog definitions through Game Design's revision and synchronized-commit boundary. The complete editor and source writers remain subject to the implementation limits above.
+2. Before publication digest collection, an authenticated, mutation-authorized source operation delivers the exact selected commit's complete effective inputs to Game Logic for validation and immutable retention.
+3. `PublishVersion` reads the already retained Game Logic evidence and independently checks its aggregate manifest and dedicated ability-schema attestations for that same selection. It neither copies abilities as a publication mutation nor repairs missing source through a digest read.
+4. Runtime consumes only the resulting pinned, published release. Intake or digest success alone does not activate it.
 
 ## Related Documentation
 

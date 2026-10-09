@@ -23,6 +23,7 @@ import net.firedevops.firemud.common.publication.PublicationDigestRequestBinding
 import net.firedevops.firemud.common.world.RoomTemplateRef;
 import net.firedevops.firemud.common.world.WorldDraftStartLocationEvidence;
 import net.firedevops.firemud.common.world.WorldPublishedStartLocationEvidence;
+import net.firedevops.firemud.test.IsolatedWorldPublicationInventoryFixtures;
 import net.firedevops.firemud.test.TestContainerImages;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -98,7 +99,7 @@ class AccountPublicationAuthorizationPostgresIntegrationTest {
         var service =
             new AccountPublicationAuthorizationService(issued.actors(), f.fences, repository);
         var order = service.authorize(issued.compact(), proof.selection(), issued.environment());
-        var operation = new GameDesignPublicationOperationBinding(order, proof.world());
+        var operation = operation(order, proof.world());
         var terminal = terminal(operation, outcome);
         String phase =
             outcome == GameDesignPublicationTerminalEvidence.Outcome.PUBLISHED
@@ -199,14 +200,14 @@ class AccountPublicationAuthorizationPostgresIntegrationTest {
       var service =
           new AccountPublicationAuthorizationService(issued.actors(), f.fences, repository);
       var order = service.authorize(issued.compact(), proof.selection(), issued.environment());
-      var operation = new GameDesignPublicationOperationBinding(order, proof.world());
+      var operation = operation(order, proof.world());
       var noPublication =
           terminal(operation, GameDesignPublicationTerminalEvidence.Outcome.NO_PUBLICATION);
       var published = terminal(operation, GameDesignPublicationTerminalEvidence.Outcome.PUBLISHED);
       var wrongFence =
           new net.firedevops.firemud.common.publication.AccountPublicationAuthorizationBinding(
               order.operationId(), UUID.randomUUID(), order.input(), order.sources());
-      var wrongOperation = new GameDesignPublicationOperationBinding(wrongFence, proof.world());
+      var wrongOperation = operation(wrongFence, proof.world());
       for (Runnable rejected :
           List.<Runnable>of(
               () ->
@@ -296,7 +297,7 @@ class AccountPublicationAuthorizationPostgresIntegrationTest {
       var secondSelection =
           selection(proof.selection().selectedCommit(), "other order", "another-publication");
       var second = service.authorize(issued.compact(), secondSelection, issued.environment());
-      var operation = new GameDesignPublicationOperationBinding(first, proof.world());
+      var operation = operation(first, proof.world());
       var terminal =
           terminal(operation, GameDesignPublicationTerminalEvidence.Outcome.NO_PUBLICATION);
       f.tx(() -> repository.settle(operation, terminal, "ABORTED", terminal.canonicalBytes()));
@@ -379,6 +380,36 @@ class AccountPublicationAuthorizationPostgresIntegrationTest {
         Math.addExact(request.versionStateEpoch(), 1));
   }
 
+  static GameDesignPublicationOperationBinding operation(
+      net.firedevops.firemud.common.publication.AccountPublicationAuthorizationBinding account,
+      WorldPublishedStartLocationEvidence world) {
+    return new GameDesignPublicationOperationBinding(
+        account, world, IsolatedWorldPublicationInventoryFixtures.stipulated(account, world));
+  }
+
+  private static byte[] rawOperation(
+      String schema, byte[] accountBytes, byte[] worldBytes, byte[] inventoryBytes, String digest) {
+    var out = new java.io.ByteArrayOutputStream();
+    DraftAuthorizationFenceBinding.frame(out, schema);
+    DraftAuthorizationFenceBinding.frame(out, accountBytes);
+    DraftAuthorizationFenceBinding.frame(out, worldBytes);
+    if (schema.equals(GameDesignPublicationOperationBinding.SCHEMA)) {
+      DraftAuthorizationFenceBinding.frame(out, inventoryBytes);
+      DraftAuthorizationFenceBinding.frame(out, digest);
+    }
+    return out.toByteArray();
+  }
+
+  private static void assertSqlState(Throwable failure, String expectedState) {
+    String sqlState = null;
+    for (Throwable cause = failure; cause != null; cause = cause.getCause()) {
+      if (cause instanceof java.sql.SQLException sqlException) {
+        sqlState = sqlException.getSQLState();
+      }
+    }
+    assertThat(sqlState).isEqualTo(expectedState);
+  }
+
   @Test
   void directMalformedOrSubstitutedReceiptRowsDoNotRemovePendingProtection() throws Exception {
     try (var fixture = fixture()) {
@@ -389,7 +420,7 @@ class AccountPublicationAuthorizationPostgresIntegrationTest {
       var order =
           new AccountPublicationAuthorizationService(issued.actors(), f.fences, repository)
               .authorize(issued.compact(), proof.selection(), issued.environment());
-      var operation = new GameDesignPublicationOperationBinding(order, proof.world());
+      var operation = operation(order, proof.world());
       var terminal =
           terminal(operation, GameDesignPublicationTerminalEvidence.Outcome.NO_PUBLICATION);
       var out = new java.io.ByteArrayOutputStream();
@@ -476,6 +507,62 @@ class AccountPublicationAuthorizationPostgresIntegrationTest {
         assertThatThrownBy(() -> f.tx(() -> f.dsl.execute(insert, values)))
             .isInstanceOf(org.jooq.exception.DataAccessException.class);
       }
+      String publicInventoryJson =
+          new String(
+              operation.inventory().canonicalBytes(), java.nio.charset.StandardCharsets.UTF_8);
+      String graphDigest = operation.inventory().publicEvidence().sourceModel().graphDigest();
+      byte[] substitutedInventory =
+          publicInventoryJson
+              .replace(
+                  "\"graphDigest\":\"" + graphDigest + "\"",
+                  "\"graphDigest\":\"sha256:" + "0".repeat(64) + "\"")
+              .getBytes(java.nio.charset.StandardCharsets.UTF_8);
+      byte[] validOperation = operation.canonicalBytes();
+      List<byte[]> invalidOperations =
+          List.of(
+              rawOperation(
+                  GameDesignPublicationOperationBinding.SCHEMA,
+                  order.canonicalBytes(),
+                  proof.world().canonicalBytes(),
+                  new byte[0],
+                  DraftAuthorizationFenceBinding.digest(new byte[0])),
+              rawOperation(
+                  GameDesignPublicationOperationBinding.SCHEMA,
+                  order.canonicalBytes(),
+                  proof.world().canonicalBytes(),
+                  operation.inventory().canonicalBytes(),
+                  "sha256:" + "0".repeat(64)),
+              rawOperation(
+                  GameDesignPublicationOperationBinding.SCHEMA,
+                  order.canonicalBytes(),
+                  proof.world().canonicalBytes(),
+                  substitutedInventory,
+                  DraftAuthorizationFenceBinding.digest(substitutedInventory)),
+              rawOperation(
+                  "game-design-publication-operation/v1",
+                  order.canonicalBytes(),
+                  proof.world().canonicalBytes(),
+                  null,
+                  null),
+              java.util.Arrays.copyOf(validOperation, validOperation.length + 1));
+      for (byte[] invalidOperation : invalidOperations) {
+        assertThatThrownBy(
+                () ->
+                    f.tx(
+                        () ->
+                            f.dsl.execute(
+                                insert,
+                                order.operationId(),
+                                order.fenceId(),
+                                order.canonicalBytes(),
+                                invalidOperation,
+                                "NO_PUBLICATION",
+                                terminal.canonicalBytes(),
+                                "ABORTED",
+                                terminal.canonicalBytes(),
+                                receipt)))
+            .satisfies(failure -> assertSqlState(failure, "23514"));
+      }
       assertThat(
               f.dsl.fetchCount(org.jooq.impl.DSL.table("account_selected_publication_settlements")))
           .isZero();
@@ -505,7 +592,7 @@ class AccountPublicationAuthorizationPostgresIntegrationTest {
       var order =
           new AccountPublicationAuthorizationService(issued.actors(), f.fences, repository)
               .authorize(issued.compact(), proof.selection(), issued.environment());
-      var operation = new GameDesignPublicationOperationBinding(order, proof.world());
+      var operation = operation(order, proof.world());
       var terminal =
           terminal(operation, GameDesignPublicationTerminalEvidence.Outcome.NO_PUBLICATION);
       var executor = java.util.concurrent.Executors.newSingleThreadExecutor();
@@ -575,8 +662,7 @@ class AccountPublicationAuthorizationPostgresIntegrationTest {
                   .get("world_evidence", byte[].class))
           .isNull();
       // The immutable Account order is available before the separate World capture is correlated.
-      new net.firedevops.firemud.common.publication.GameDesignPublicationOperationBinding(
-          original, proof.world());
+      operation(original, proof.world());
       assertThat(original.sources()).hasSize(8);
       var readOwner =
           new AccountPublicationAuthorizationReadService(

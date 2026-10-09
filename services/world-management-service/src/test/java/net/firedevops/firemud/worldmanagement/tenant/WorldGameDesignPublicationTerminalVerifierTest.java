@@ -54,6 +54,7 @@ import net.firedevops.firemud.common.publication.PublicationDigestRequestBinding
 import net.firedevops.firemud.common.world.WorldPublishedStartLocationEvidence;
 import net.firedevops.firemud.gamedesign.v1.GameDesignPublicationTerminalReadServiceGrpc;
 import net.firedevops.firemud.gamedesign.v1.ReadPublicationTerminalResponse;
+import net.firedevops.firemud.test.IsolatedWorldPublicationInventoryFixtures;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -304,7 +305,8 @@ class WorldGameDesignPublicationTerminalVerifierTest {
             Base64.getDecoder().decode(result.get("startLocationReceiptBase64").textValue()),
             applied.fullBinding(),
             applied.result());
-    return new GameDesignPublicationOperationBinding(account, world);
+    return new GameDesignPublicationOperationBinding(
+        account, world, IsolatedWorldPublicationInventoryFixtures.stipulated(account, world));
   }
 
   private static GameDesignPublicationTerminalEvidence terminal(

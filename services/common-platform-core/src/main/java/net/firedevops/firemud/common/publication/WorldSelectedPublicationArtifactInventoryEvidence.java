@@ -95,6 +95,17 @@ public final class WorldSelectedPublicationArtifactInventoryEvidence {
   private final byte[] canonicalBytes;
   private final String digest;
 
+  @Override
+  public boolean equals(Object other) {
+    return other instanceof WorldSelectedPublicationArtifactInventoryEvidence evidence
+        && Arrays.equals(canonicalBytes, evidence.canonicalBytes);
+  }
+
+  @Override
+  public int hashCode() {
+    return Arrays.hashCode(canonicalBytes);
+  }
+
   private WorldSelectedPublicationArtifactInventoryEvidence(
       WorldSelectedDraftPublicationFreezeEvidence freezeEvidence, PublicEvidence publicEvidence) {
     this.freezeEvidence = Objects.requireNonNull(freezeEvidence, "freezeEvidence");
@@ -133,6 +144,77 @@ public final class WorldSelectedPublicationArtifactInventoryEvidence {
       throw new IllegalArgumentException("World public inventory is not canonical JSON");
     }
     return new WorldSelectedPublicationArtifactInventoryEvidence(freezeEvidence, evidence);
+  }
+
+  /**
+   * Reconstructs original freeze correlation from retained Account/selector evidence. This never
+   * authenticates a producer anew and cannot substitute for the first authenticated owner read.
+   */
+  public static WorldSelectedPublicationArtifactInventoryEvidence fromRetainedSelection(
+      AccountPublicationAuthorizationBinding account,
+      net.firedevops.firemud.common.world.WorldPublishedStartLocationEvidence world,
+      byte[] inventoryBytes,
+      String inventoryDigest) {
+    GameDesignPublicationOperationBinding.requireAccountWorldCorrelation(account, world);
+    var selector = world.request();
+    var request =
+        Request.create(
+            selector.targetNamespace(),
+            selector.canonicalTenantId(),
+            selector.canonicalVersionId(),
+            selector.publicationRequestId(),
+            selector.versionStateEpoch(),
+            selector.requestDigest(),
+            account);
+    var acknowledgement =
+        new Acknowledgement(
+            request,
+            selector.intakeRequestId(),
+            selector.versionStateEpoch(),
+            selector.publicationFence(),
+            WorldSelectedDraftPublicationFreezeEvidence.OwnerFreezePhase.FROZEN,
+            selector.appliedCommitId(),
+            selector.contentDigest(),
+            selector.digestSchemaVersion());
+    var result =
+        fromCanonicalBytes(
+            new WorldSelectedDraftPublicationFreezeEvidence(request, acknowledgement),
+            inventoryBytes,
+            inventoryDigest);
+    var original =
+        net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding.fromStored(
+            world.originalAccountBindingBytes());
+    var receipt =
+        net.firedevops.firemud.common.world.WorldDraftStartLocationEvidence.fromStored(
+            world.selectorReceiptBytes());
+    final tools.jackson.databind.JsonNode applied;
+    try {
+      applied = JSON.readTree(world.appliedResultBytes());
+    } catch (RuntimeException invalid) {
+      throw new IllegalArgumentException("Retained World APPLIED bytes are invalid", invalid);
+    }
+    byte[] operationBytes;
+    try {
+      operationBytes =
+          java.util.Base64.getDecoder().decode(applied.path("operationBytesBase64").textValue());
+    } catch (RuntimeException invalid) {
+      throw new IllegalArgumentException("Retained World APPLIED operation is invalid", invalid);
+    }
+    var operation =
+        new net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding.FrameReader(
+            operationBytes);
+    operation.expect("world-draft-terminal-operation/v1");
+    String operationId = new String(operation.bytes(), java.nio.charset.StandardCharsets.UTF_8);
+    var application = result.publicEvidence().selectedApplication();
+    if (!sha256(world.appliedResultBytes()).equals(application.appliedResultDigest())
+        || !original.operationId().equals(application.applicationOperationId())
+        || !application.applicationOperationId().toString().equals(operationId)
+        || !receipt.graphDigest().equals(result.publicEvidence().sourceModel().graphDigest())
+        || !receipt.graphDigest().equals(applied.path("graphDigest").textValue())) {
+      throw new IllegalArgumentException(
+          "World inventory differs from exact selector APPLIED operation or graph");
+    }
+    return result;
   }
 
   public WorldSelectedDraftPublicationFreezeEvidence freezeEvidence() {
