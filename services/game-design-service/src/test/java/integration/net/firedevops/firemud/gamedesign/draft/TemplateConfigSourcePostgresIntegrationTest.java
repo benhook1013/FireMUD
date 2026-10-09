@@ -12,6 +12,7 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding;
+import net.firedevops.firemud.common.automation.AutomationAuthoredSourceInventoryDeclaration;
 import net.firedevops.firemud.common.gamelogic.GameplayRuleManifest;
 import net.firedevops.firemud.common.publication.AuthoredDraftPublishSelectionBinding;
 import net.firedevops.firemud.common.tenant.WorldAuthoredSourceIntakeGrpcCodec;
@@ -55,6 +56,149 @@ class TemplateConfigSourcePostgresIntegrationTest {
   @Container
   static final PostgreSQLContainer<?> POSTGRES =
       new PostgreSQLContainer<>(TestContainerImages.postgres());
+
+  @Test
+  void authoredAutomationInventoryHasExactRetryInheritanceAndFrozenOriginalProvenance() {
+    var f = fixture();
+    var inventory = AutomationAuthoredSourceInventoryDeclaration.parse(automationInventory());
+    var declaration =
+        binding(
+            f,
+            TemplateConfigSource.ownerInventoryPayload(
+                DraftCommitBinding.Owner.AUTOMATION_SCRIPTING, inventory),
+            TemplateConfigSource.SCOPE,
+            "0");
+    apply(f, declaration);
+
+    var first = source(f, declaration);
+    assertThat(first.sourceEpoch()).isEqualTo("1");
+    assertThat(first.entries()).isEmpty();
+    assertThat(first.ownerSourceInventoryDeclarations()).hasSize(1);
+    assertThat(first.ownerSourceInventoryDeclarations().getFirst().sourceBinding())
+        .isEqualTo(declaration);
+    assertThat(first.ownerSourceInventoryDeclarations().getFirst().revisionOrder()).isEqualTo("0");
+    assertThat(first.ownerSourceInventoryDeclarations().getFirst().revisionId())
+        .isEqualTo(declaration.revisions().getFirst().revisionId());
+    assertThat(f.dsl.fetchSingle("SELECT count(*) FROM game_templates").get(0, Long.class))
+        .isZero();
+    assertThat(
+            f.dsl
+                .fetchSingle(
+                    "SELECT count(*) FROM game_design_template_config_owner_source_inventory_declaration")
+                .get(0, Long.class))
+        .isEqualTo(1L);
+
+    f.tx.executeWithoutResult(
+        ignored ->
+            assertThat(new TemplateConfigSourceRepository(f.dsl).apply(declaration).orElseThrow())
+                .isEqualTo(new TemplateConfigSourceSnapshot.Application(declaration, "0", first)));
+    assertThat(f.dsl.fetchSingle("SELECT count(*) FROM game_templates").get(0, Long.class))
+        .isZero();
+
+    var unrelated =
+        binding(
+            f,
+            GameplayRuleSource.upsertPayload(new GameplayRuleManifest.AdmissionTag("unrelated")),
+            GameplayRuleSource.SCOPE,
+            "0");
+    apply(f, unrelated);
+    var inherited = source(f, unrelated);
+    assertThat(inherited.sourceEpoch()).isEqualTo("1");
+    assertThat(inherited.ownerSourceInventoryDeclarations())
+        .containsExactly(first.ownerSourceInventoryDeclarations().getFirst());
+    assertThat(inherited.ownerSourceInventoryDeclarations().getFirst().sourceBinding())
+        .isEqualTo(declaration);
+
+    var actualTemplate =
+        binding(
+            f,
+            TemplateConfigSource.createPayload("Starter", config(f, "[]")),
+            TemplateConfigSource.SCOPE,
+            "1");
+    apply(f, actualTemplate);
+    assertThat(source(f, actualTemplate).entries()).hasSize(1);
+    assertThat(source(f, actualTemplate).ownerSourceInventoryDeclarations())
+        .containsExactly(first.ownerSourceInventoryDeclarations().getFirst());
+    assertThat(f.dsl.fetchSingle("SELECT count(*) FROM game_templates").get(0, Long.class))
+        .isEqualTo(1L);
+
+    var operation =
+        f.tx.execute(
+            ignored -> {
+              try {
+                return IsolatedPublicationOwnerSetup.retainSourceBacked(
+                    f.dsl, f.target, 1L, "Automation inventory declaration source freeze");
+              } catch (Exception e) {
+                throw new IllegalStateException("Unable to retain source-backed publication", e);
+              }
+            });
+    var capture =
+        new GameDesignSourceRepository(f.dsl)
+            .readCapture(operation)
+            .orElseThrow()
+            .templateConfig()
+            .snapshot();
+    assertThat(capture.ownerSourceInventoryDeclarations())
+        .containsExactly(first.ownerSourceInventoryDeclarations().getFirst());
+    assertThat(capture.ownerSourceInventoryDeclarations().getFirst().sourceBinding())
+        .isEqualTo(declaration);
+    assertThat(capture.binding()).isEqualTo(actualTemplate);
+  }
+
+  @Test
+  void latestSameOrderAutomationDeclarationRetainsItsExactBindingAcrossRetryAndInheritance() {
+    var f = fixture();
+    var inventory = AutomationAuthoredSourceInventoryDeclaration.parse(automationInventory());
+    String identicalContent =
+        TemplateConfigSource.ownerInventoryPayload(
+            DraftCommitBinding.Owner.AUTOMATION_SCRIPTING, inventory);
+    var first = binding(f, identicalContent, TemplateConfigSource.SCOPE, "0");
+    apply(f, first);
+    var firstSnapshot = source(f, first);
+    assertThat(firstSnapshot.ownerSourceInventoryDeclarations().getFirst().sourceBinding())
+        .isEqualTo(first);
+    assertThat(firstSnapshot.ownerSourceInventoryDeclarations().getFirst().revisionOrder())
+        .isEqualTo("0");
+
+    var second = binding(f, identicalContent, TemplateConfigSource.SCOPE, "1");
+    assertThat(second.revisions().getFirst().revisionOrder()).isEqualTo("0");
+    assertThat(second.revisions().getFirst().payload()).isEqualTo(identicalContent);
+    apply(f, second);
+    var secondSnapshot = source(f, second);
+    var latest = secondSnapshot.ownerSourceInventoryDeclarations().getFirst();
+    assertThat(secondSnapshot.sourceEpoch()).isEqualTo("2");
+    assertThat(secondSnapshot.ownerSourceInventoryDeclarations()).hasSize(1);
+    assertThat(latest.sourceBinding()).isEqualTo(second);
+    assertThat(latest.revisionOrder()).isEqualTo("0");
+    assertThat(latest.revisionId()).isEqualTo(second.revisions().getFirst().revisionId());
+    assertThat(latest.inventory()).isEqualTo(inventory);
+
+    f.tx.executeWithoutResult(
+        ignored ->
+            assertThat(new TemplateConfigSourceRepository(f.dsl).apply(second).orElseThrow())
+                .isEqualTo(
+                    new TemplateConfigSourceSnapshot.Application(second, "1", secondSnapshot)));
+    var unrelated =
+        binding(
+            f,
+            GameplayRuleSource.upsertPayload(new GameplayRuleManifest.AdmissionTag("unrelated")),
+            GameplayRuleSource.SCOPE,
+            "0");
+    apply(f, unrelated);
+    var inherited = source(f, unrelated);
+    assertThat(inherited.sourceEpoch()).isEqualTo("2");
+    assertThat(inherited.ownerSourceInventoryDeclarations()).containsExactly(latest);
+    assertThat(inherited.ownerSourceInventoryDeclarations().getFirst().sourceBinding())
+        .isEqualTo(second);
+    assertThat(
+            f.dsl
+                .fetchSingle(
+                    "SELECT count(*) FROM game_design_template_config_owner_source_inventory_declaration")
+                .get(0, Long.class))
+        .isEqualTo(2L);
+    assertThat(f.dsl.fetchSingle("SELECT count(*) FROM game_templates").get(0, Long.class))
+        .isZero();
+  }
 
   @Test
   void actualCreateAndSameCommitGameplayInputHaveDurableGeneratedIdentityAndExactRetry() {
@@ -641,6 +785,12 @@ class TemplateConfigSourcePostgresIntegrationTest {
             + "\",\"world\":{\"regions\":[],\"rooms\":[]},\"entity\":{\"items\":[],\"npcs\":[]},\"gameLogic\":{\"inputs\":"
             + inputs
             + "},\"automation\":{\"scripts\":[],\"scriptPatch\":{\"presence\":\"ABSENT\"}},\"supportedSettings\":[]}");
+  }
+
+  private static String automationInventory() {
+    return "{\"schema\":\"automation-authored-source-inventory/v1\","
+        + "\"families\":{\"SCRIPT_DEFINITIONS\":[],\"EVENT_BINDINGS\":[],"
+        + "\"SCRIPT_PATCH_SOURCES\":[]}}";
   }
 
   private DraftCommitBinding binding(Fixture f, String payload, String scope, String epoch) {

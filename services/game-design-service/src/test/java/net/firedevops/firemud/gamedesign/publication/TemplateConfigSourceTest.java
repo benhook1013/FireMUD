@@ -8,6 +8,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding;
+import net.firedevops.firemud.common.automation.AutomationAuthoredSourceInventoryDeclaration;
 import org.junit.jupiter.api.Test;
 
 class TemplateConfigSourceTest {
@@ -138,10 +139,127 @@ class TemplateConfigSourceTest {
         .isInstanceOf(IllegalArgumentException.class);
   }
 
+  @Test
+  void automationInventoryUsesItsExactVersionedOperationAndPreservesLegacySnapshotBytes() {
+    var inventory = AutomationAuthoredSourceInventoryDeclaration.parse(automationInventory());
+    String payload =
+        TemplateConfigSource.ownerInventoryPayload(
+            DraftCommitBinding.Owner.AUTOMATION_SCRIPTING, inventory);
+    assertThat(CommandSource.tree(payload).path("inventory").isObject()).isTrue();
+    assertThat(payload).doesNotContain("inventoryJson");
+    var authored = binding(payload);
+    var mutation = TemplateConfigSource.mutations(authored).getFirst();
+    assertThat(mutation.operation())
+        .isEqualTo(TemplateConfigSource.OperationKind.DECLARE_OWNER_SOURCE_INVENTORY);
+    assertThat(mutation.templateId()).isNull();
+    assertThat(mutation.templateName()).isNull();
+    assertThat(mutation.config()).isNull();
+
+    var declarations = TemplateConfigSource.replayOwnerInventoryDeclarations(List.of(), authored);
+    var inherited =
+        TemplateConfigSource.replayOwnerInventoryDeclarations(
+            declarations, binding(CommandSource.deletePayload("absent")));
+    assertThat(inherited).containsExactly(declarations.getFirst());
+    assertThat(inherited.getFirst().sourceBinding()).isSameAs(authored);
+
+    var oldBinding =
+        binding(
+            TemplateConfigSource.createPayload(
+                "Starter", new TemplateConfigSource.Config(config())));
+    var oldEntries =
+        TemplateConfigSource.replay(
+            List.of(), oldBinding, Map.of(oldBinding.revisions().getFirst().revisionId(), "7"));
+    var oldSnapshot =
+        new TemplateConfigSourceSnapshot(oldBinding, "1", null, UUID.randomUUID(), oldEntries);
+    String legacySnapshotBytes =
+        CommandSource.canonical(
+            Map.of(
+                "schema",
+                TemplateConfigSourceSnapshot.SCHEMA,
+                "bindingJson",
+                oldBinding.canonicalJson(),
+                "bindingDigest",
+                oldBinding.digest(),
+                "sourceEpoch",
+                "1",
+                "inheritedCommitId",
+                "",
+                "genesisReceiptId",
+                oldSnapshot.genesisReceiptId().toString(),
+                "entries",
+                oldEntries.stream().map(TemplateConfigSource.Entry::object).toList()));
+    assertThat(oldSnapshot.canonicalJson()).isEqualTo(legacySnapshotBytes);
+    assertThat(oldSnapshot.canonicalJson())
+        .contains("\"schema\":\"game-design-template-config-source-snapshot/v1\"")
+        .doesNotContain("ownerSourceInventoryDeclarations");
+    assertThat(TemplateConfigSourceSnapshot.fromStored(oldSnapshot.canonicalJson()))
+        .isEqualTo(oldSnapshot);
+
+    var v2Snapshot =
+        new TemplateConfigSourceSnapshot(
+            authored, "1", null, UUID.randomUUID(), List.of(), declarations);
+    assertThat(v2Snapshot.canonicalJson())
+        .contains("\"schema\":\"game-design-template-config-source-snapshot/v2\"")
+        .contains("ownerSourceInventoryDeclarations")
+        .contains(authored.requestId().toString())
+        .contains(authored.commitId().toString());
+    assertThat(TemplateConfigSourceSnapshot.fromStored(v2Snapshot.canonicalJson()))
+        .isEqualTo(v2Snapshot);
+  }
+
+  @Test
+  void ownerInventoryOperationRejectsMissingUnknownAndUnsupportedContent() {
+    var inventory = AutomationAuthoredSourceInventoryDeclaration.parse(automationInventory());
+    String valid =
+        TemplateConfigSource.ownerInventoryPayload(
+            DraftCommitBinding.Owner.AUTOMATION_SCRIPTING, inventory);
+    String missingInventory =
+        CommandSource.canonical(
+            Map.of(
+                "schemaVersion",
+                2,
+                "revisionKind",
+                TemplateConfigSource.REVISION_KIND,
+                "operation",
+                "DECLARE_OWNER_SOURCE_INVENTORY",
+                "owner",
+                "AUTOMATION_SCRIPTING"));
+    assertThatThrownBy(() -> TemplateConfigSource.mutations(binding(missingInventory)))
+        .isInstanceOf(IllegalArgumentException.class);
+    assertThatThrownBy(
+            () ->
+                TemplateConfigSource.mutations(
+                    binding(valid.replace("AUTOMATION_SCRIPTING", "ENTITY_MANAGEMENT"))))
+        .isInstanceOf(IllegalArgumentException.class);
+    assertThatThrownBy(
+            () ->
+                AutomationAuthoredSourceInventoryDeclaration.parse(
+                    automationInventory()
+                        .replace("\"SCRIPT_DEFINITIONS\":[]", "\"SCRIPT_DEFINITIONS\":[{}]")))
+        .isInstanceOf(IllegalArgumentException.class);
+    assertThat(
+            TemplateConfigSourceSnapshot.fromStored(
+                    new TemplateConfigSourceSnapshot(
+                            binding(CommandSource.deletePayload("absent")),
+                            "0",
+                            null,
+                            UUID.randomUUID(),
+                            List.of())
+                        .canonicalJson())
+                .ownerSourceInventoryDeclarations())
+        .isEmpty();
+  }
+
   private static String config() {
     return "{\"schemaVersion\":1,\"baseVersionId\":\""
         + VERSION
         + "\",\"world\":{\"regions\":[],\"rooms\":[]},\"entity\":{\"items\":[],\"npcs\":[]},\"gameLogic\":{\"inputs\":[]},\"automation\":{\"scripts\":[],\"scriptPatch\":{\"presence\":\"ABSENT\"}},\"supportedSettings\":[]}";
+  }
+
+  private static String automationInventory() {
+    return "{\"schema\":\"automation-authored-source-inventory/v1\","
+        + "\"families\":{\"SCRIPT_DEFINITIONS\":[],\"EVENT_BINDINGS\":[],"
+        + "\"SCRIPT_PATCH_SOURCES\":[]}}";
   }
 
   private static DraftCommitBinding binding(String... payloads) {

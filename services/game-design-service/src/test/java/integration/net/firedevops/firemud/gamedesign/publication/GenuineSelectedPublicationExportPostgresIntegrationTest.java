@@ -110,6 +110,7 @@ import net.firedevops.firemud.gamedesign.draft.GameDesignDraftTerminalOutcomeRep
 import net.firedevops.firemud.gamedesign.draft.GameDesignDraftTerminalReadGrpcService;
 import net.firedevops.firemud.gamedesign.draft.GameDesignSelectedDraftPublicationReadGrpcService;
 import net.firedevops.firemud.gamedesign.draft.GameDesignWorldSourceCommitService;
+import net.firedevops.firemud.gamedesign.dto.CompleteLaunchBindingDto;
 import net.firedevops.firemud.gamedesign.dto.DesignControlPlaneDigestDto;
 import net.firedevops.firemud.gamedesign.dto.PublishParticipantDigestDto;
 import net.firedevops.firemud.gamedesign.entity.GameAsset;
@@ -136,8 +137,10 @@ import net.firedevops.firemud.gamedesign.publication.TemplateConfigSource;
 import net.firedevops.firemud.gamedesign.publication.TemplateConfigSourceRepository;
 import net.firedevops.firemud.gamedesign.publication.TemplateReferenceRepository;
 import net.firedevops.firemud.gamedesign.repository.GameAssetRepository;
+import net.firedevops.firemud.gamedesign.repository.GameAuthoredWorldSourceDeliveryRepository;
 import net.firedevops.firemud.gamedesign.repository.GameAuthoredWorldSourceRepository;
 import net.firedevops.firemud.gamedesign.repository.GameRepository;
+import net.firedevops.firemud.gamedesign.repository.GameTemplateRepository;
 import net.firedevops.firemud.gamedesign.repository.GameTenantCreationRepository;
 import net.firedevops.firemud.gamedesign.repository.LaunchDescriptorRepository;
 import net.firedevops.firemud.gamedesign.repository.PublishAttemptParticipantDigestRepository;
@@ -150,16 +153,21 @@ import net.firedevops.firemud.gamedesign.repository.VersionAssetPurgeWorkflowRep
 import net.firedevops.firemud.gamedesign.repository.VersionRepository;
 import net.firedevops.firemud.gamedesign.repository.VersionTemplateRemapSetRepository;
 import net.firedevops.firemud.gamedesign.service.AssetExportService.SelectedExportResult;
+import net.firedevops.firemud.gamedesign.service.CompleteLaunchBindingService;
 import net.firedevops.firemud.gamedesign.service.ExportedAssetManifest;
 import net.firedevops.firemud.gamedesign.service.PublishAttemptService;
 import net.firedevops.firemud.gamedesign.service.PublishGateService;
 import net.firedevops.firemud.gamedesign.service.RecordedParticipantDigestService;
+import net.firedevops.firemud.gamedesign.service.TemplateRemapSetService;
 import net.firedevops.firemud.gamedesign.service.VersionAssetExportCandidateService;
 import net.firedevops.firemud.gamedesign.service.impl.AssetExportServiceImpl;
 import net.firedevops.firemud.gamedesign.service.impl.AuthoredWorldVersionStateGrpcService;
 import net.firedevops.firemud.gamedesign.service.impl.AuthoredWorldVersionStateService;
+import net.firedevops.firemud.gamedesign.service.impl.CompleteLaunchBindingServiceImpl;
+import net.firedevops.firemud.gamedesign.service.impl.LaunchDescriptorServiceImpl;
 import net.firedevops.firemud.gamedesign.service.impl.PublishAttemptServiceImpl;
 import net.firedevops.firemud.gamedesign.service.impl.PublishedReleaseBundleServiceImpl;
+import net.firedevops.firemud.gamedesign.service.impl.TemplateRemapSetServiceImpl;
 import net.firedevops.firemud.gamedesign.service.impl.TenantIdentityGrpcService;
 import net.firedevops.firemud.gamedesign.service.impl.VersionAssetArtifactServiceImpl;
 import net.firedevops.firemud.gamedesign.service.impl.VersionAssetExportCandidateServiceImpl;
@@ -227,15 +235,17 @@ import tools.jackson.databind.ObjectMapper;
 
 /**
  * Real original GD+World source settlement and Account/GL intake-to-GD-receipt, followed by actual
- * selected inventory/export, the owner-local publication finalizer, and descriptor SQL storage. The
- * distinct Account publication order comes from the actual Account owner fixture; its inbound Game
- * Design peer and upstream selection/platform/legal evidence are supplied by test context. The
- * immutable selection read and held-order reads use loopback mTLS. World freeze, immutable
- * inventory and published selector use their actual owner services over loopback mTLS, with the
- * canonical frozen selector captured owner-locally from the committed freeze and retained APPLIED
- * graph. Entity/Automation participant digests, in-memory S3 and the StartSession Account
- * projection remain test doubles. This is not a complete four-owner authenticated release, runtime
- * launch, activation or registration proof.
+ * selected inventory/export, the owner-local publication finalizer, descriptor SQL storage, and the
+ * owner-local complete launch-binding read. The distinct Account publication order comes from the
+ * actual Account owner fixture; its inbound Game Design peer and upstream selection/platform/legal
+ * evidence are supplied by test context. The immutable selection read and held-order reads use
+ * loopback mTLS. World freeze, immutable inventory and published selector use their actual owner
+ * services over loopback mTLS, with the canonical frozen selector captured owner-locally from the
+ * committed freeze and retained APPLIED graph. Entity/Automation participant digests, in-memory S3
+ * and the StartSession Account projection remain test doubles. The complete launch-binding read
+ * uses the actual owner implementation in an explicitly established read-only repeatable-read
+ * snapshot, but does not exercise the authenticated GetCompleteLaunchBinding transport. This is not
+ * a complete four-owner authenticated release, runtime launch, activation or registration proof.
  */
 @Testcontainers(disabledWithoutDocker = true)
 @SuppressWarnings("resource")
@@ -440,16 +450,36 @@ class GenuineSelectedPublicationExportPostgresIntegrationTest {
                         "genuine-selected-export-tenant",
                         "genuine-selected-export-world",
                         "Genuine selected export source"));
-        var worldIntakeRequest =
-            new WorldAuthoredSourceIntakeGrpcCodec.IntakeRequest(
-                1,
-                NAMESPACE,
-                UUID.randomUUID(),
-                worldSource.canonicalTenantId(),
-                worldSource.worldSlug(),
-                worldSource.operationId(),
-                worldSource.evidenceDigest());
+        assertThat(worldSource.canonicalTenantId()).isEqualTo(gd.target().canonicalTenantId());
+        assertThat(worldSource.sourceGameRowId()).isEqualTo(gd.target().sourceGameRowId());
+        assertThat(worldSource.sourceGameTenantKey()).isEqualTo(gd.target().sourceGameTenantKey());
+        assertThat(worldSource.provenanceKind()).isEqualTo(gd.target().sourceProvenanceKind());
+        var worldSourceDeliveryRepository = new GameAuthoredWorldSourceDeliveryRepository(gd.dsl());
+        var originalWorldSourceDelivery =
+            worldSourceDeliveryRepository.read(worldSource.operationId()).orElseThrow();
+        assertThat(originalWorldSourceDelivery.source()).isEqualTo(worldSource);
+        assertThat(originalWorldSourceDelivery.acknowledgedReceipt()).isEmpty();
+        assertThat(originalWorldSourceDelivery.request().intakeRequestId())
+            .isNotEqualTo(worldSource.operationId());
+        assertThat(originalWorldSourceDelivery.request().sourceOperationId())
+            .isEqualTo(worldSource.operationId());
+        assertThat(originalWorldSourceDelivery.request().expectedSourceEvidenceDigest())
+            .isEqualTo(worldSource.evidenceDigest());
+        var worldIntakeRequest = originalWorldSourceDelivery.request();
         var worldIntakeReceipt = worldIntakeClient.intake(worldIntakeRequest);
+        assertThat(worldIntakeReceipt.intakeRequestId())
+            .isEqualTo(originalWorldSourceDelivery.request().intakeRequestId());
+        assertThat(worldIntakeReceipt.requestDigest())
+            .isEqualTo(WorldAuthoredSourceIntakeGrpcCodec.requestDigest(worldIntakeRequest));
+        var acknowledgedWorldSourceDelivery =
+            gd.transaction(
+                () ->
+                    worldSourceDeliveryRepository.acknowledge(
+                        originalWorldSourceDelivery, worldIntakeReceipt));
+        assertThat(acknowledgedWorldSourceDelivery.acknowledgedReceipt())
+            .contains(worldIntakeReceipt);
+        assertThat(worldSourceDeliveryRepository.read(worldSource.operationId()).orElseThrow())
+            .isEqualTo(acknowledgedWorldSourceDelivery);
         var worldIdentityRequest =
             new WorldAuthoredVersionIdentityEvidence.Request(
                 1,
@@ -1173,6 +1203,170 @@ class GenuineSelectedPublicationExportPostgresIntegrationTest {
           assertThat(firstDescriptorBinding.descriptor().launchDescriptorId()).isNotBlank();
           assertThat(firstDescriptorBinding.associationRead().association().associationDigest())
               .isEqualTo(association.digest());
+          var expectedAuthoredWorldBinding =
+              firstDescriptorBinding.descriptor().authoredWorldBinding();
+
+          var versionRepository = new VersionRepository(gd.dsl());
+          var launchDescriptorRepository = new LaunchDescriptorRepository(gd.dsl());
+          TemplateRemapSetService remapSetService =
+              new TemplateRemapSetServiceImpl(
+                  new VersionTemplateRemapSetRepository(gd.dsl()), versionRepository);
+          var launchDescriptorService =
+              new LaunchDescriptorServiceImpl(
+                  new GameTemplateRepository(gd.dsl()),
+                  launchDescriptorRepository,
+                  versionRepository,
+                  releaseService,
+                  remapSetService,
+                  sourceRepository,
+                  new ObjectMapper());
+          ReflectionTestUtils.setField(launchDescriptorService, "workloadNamespace", NAMESPACE);
+          CompleteLaunchBindingService completeLaunchBindingService =
+              new CompleteLaunchBindingServiceImpl(
+                  launchDescriptorService, sourceRepository, releaseService, versionRepository);
+          ReflectionTestUtils.setField(
+              completeLaunchBindingService, "workloadNamespace", NAMESPACE);
+          UUID completeBindingReadRequestId = UUID.randomUUID();
+          var persistedLaunchDescriptor =
+              launchDescriptorRepository
+                  .findBoundByRequest(
+                      NAMESPACE, gd.target().canonicalTenantId(), controlPlaneRequestId)
+                  .orElseThrow();
+          List<String> completeBindingOwnerRowsBefore =
+              completeBindingOwnerRowVersions(
+                  gd.dsl(),
+                  persistedLaunchDescriptor.getId(),
+                  release.id(),
+                  gd.target().gameDesignVersionRowId(),
+                  worldSource.operationId(),
+                  gd.target().canonicalTenantId(),
+                  controlPlaneRequestId);
+          var completeBinding =
+              readCompleteLaunchBindingInOwnerSnapshot(
+                  gd,
+                  completeLaunchBindingService,
+                  completeBindingReadRequestId,
+                  gd.target().canonicalTenantId(),
+                  worldSource.worldSlug(),
+                  controlPlaneRequestId,
+                  expectedAuthoredWorldBinding.requestDigest(),
+                  expectedAuthoredWorldBinding.resultDigest());
+          assertThat(completeBinding.descriptor()).isEqualTo(expectedAuthoredWorldBinding);
+          completeBinding.releaseAttestation().requireValid(completeBinding.descriptor());
+          assertThat(completeBinding.releaseAttestation().descriptorResultDigest())
+              .isEqualTo(expectedAuthoredWorldBinding.resultDigest());
+          assertThat(completeBinding.releaseAttestation().worldStartLocationEvidence())
+              .isEqualTo(release.worldPublishedStartLocationEvidence());
+          var completeWorldSelector =
+              completeBinding.releaseAttestation().worldStartLocationEvidence();
+          assertThat(completeWorldSelector.request().canonicalTenantId())
+              .isEqualTo(gd.target().canonicalTenantId());
+          assertThat(completeWorldSelector.request().canonicalVersionId())
+              .isEqualTo(gd.target().canonicalVersionId());
+          assertThat(completeWorldSelector.request().publicationRequestId())
+              .isEqualTo(intent.publishRequestId());
+          assertThat(completeWorldSelector.request().publicationFence())
+              .isEqualTo(actualFreeze.acknowledgement().publicationFence());
+          assertThat(completeWorldSelector.request().appliedCommitId())
+              .isEqualTo(selectedCommit.commitId().toString());
+          assertThat(completeWorldSelector.request().contentDigest())
+              .isEqualTo(retainedWorldDigest.contentDigest());
+          assertThat(completeWorldSelector.request().digestSchemaVersion())
+              .isEqualTo(retainedWorldDigest.digestSchemaVersion());
+          assertThat(completeWorldSelector.request().worldAffectedTuples()).isNotEmpty();
+          var completeWorldParticipant =
+              completeBinding.releaseAttestation().participantDigests().getFirst();
+          assertThat(completeWorldParticipant.participantKey()).isEqualTo("WORLD_MANAGEMENT");
+          assertThat(completeWorldParticipant.appliedCommitId())
+              .isEqualTo(selectedCommit.commitId().toString());
+          assertThat(completeWorldParticipant.contentDigest())
+              .isEqualTo(retainedWorldDigest.contentDigest());
+          assertThat(completeWorldParticipant.digestSchemaVersion())
+              .isEqualTo(retainedWorldDigest.digestSchemaVersion());
+          var completeGameLogicParticipant =
+              completeBinding.releaseAttestation().participantDigests().stream()
+                  .filter(participant -> "GAME_LOGIC".equals(participant.participantKey()))
+                  .findFirst()
+                  .orElseThrow();
+          assertThat(completeGameLogicParticipant.appliedCommitId())
+              .isEqualTo(selectedCommit.commitId().toString());
+          assertThat(completeGameLogicParticipant.contentDigest())
+              .isEqualTo(actualGameLogicDigest.contentDigest());
+          assertThat(completeGameLogicParticipant.digestSchemaVersion())
+              .isEqualTo(actualGameLogicDigest.digestSchemaVersion());
+          assertThat(completeGameLogicParticipant.abilitySchemaDigest())
+              .isEqualTo(actualGameLogicDigest.abilitySchemaDigest());
+
+          var completeBindingRetry =
+              readCompleteLaunchBindingInOwnerSnapshot(
+                  gd,
+                  completeLaunchBindingService,
+                  completeBindingReadRequestId,
+                  gd.target().canonicalTenantId(),
+                  worldSource.worldSlug(),
+                  controlPlaneRequestId,
+                  expectedAuthoredWorldBinding.requestDigest(),
+                  expectedAuthoredWorldBinding.resultDigest());
+          assertThat(completeBindingRetry).isEqualTo(completeBinding);
+
+          assertThatThrownBy(
+                  () ->
+                      readCompleteLaunchBindingInOwnerSnapshot(
+                          gd,
+                          completeLaunchBindingService,
+                          completeBindingReadRequestId,
+                          gd.target().canonicalTenantId(),
+                          worldSource.worldSlug(),
+                          controlPlaneRequestId,
+                          changedDigest(expectedAuthoredWorldBinding.requestDigest()),
+                          expectedAuthoredWorldBinding.resultDigest()))
+              .isInstanceOf(IllegalArgumentException.class);
+          assertThatThrownBy(
+                  () ->
+                      readCompleteLaunchBindingInOwnerSnapshot(
+                          gd,
+                          completeLaunchBindingService,
+                          completeBindingReadRequestId,
+                          gd.target().canonicalTenantId(),
+                          worldSource.worldSlug(),
+                          controlPlaneRequestId,
+                          expectedAuthoredWorldBinding.requestDigest(),
+                          changedDigest(expectedAuthoredWorldBinding.resultDigest())))
+              .isInstanceOf(IllegalArgumentException.class);
+          assertThatThrownBy(
+                  () ->
+                      readCompleteLaunchBindingInOwnerSnapshot(
+                          gd,
+                          completeLaunchBindingService,
+                          completeBindingReadRequestId,
+                          UUID.randomUUID(),
+                          worldSource.worldSlug(),
+                          controlPlaneRequestId,
+                          expectedAuthoredWorldBinding.requestDigest(),
+                          expectedAuthoredWorldBinding.resultDigest()))
+              .isInstanceOf(IllegalArgumentException.class);
+          assertThatThrownBy(
+                  () ->
+                      readCompleteLaunchBindingInOwnerSnapshot(
+                          gd,
+                          completeLaunchBindingService,
+                          completeBindingReadRequestId,
+                          gd.target().canonicalTenantId(),
+                          "genuine-selected-export-world-substitute",
+                          controlPlaneRequestId,
+                          expectedAuthoredWorldBinding.requestDigest(),
+                          expectedAuthoredWorldBinding.resultDigest()))
+              .isInstanceOf(IllegalArgumentException.class);
+          assertThat(
+                  completeBindingOwnerRowVersions(
+                      gd.dsl(),
+                      persistedLaunchDescriptor.getId(),
+                      release.id(),
+                      gd.target().gameDesignVersionRowId(),
+                      worldSource.operationId(),
+                      gd.target().canonicalTenantId(),
+                      controlPlaneRequestId))
+              .containsExactlyElementsOf(completeBindingOwnerRowsBefore);
 
           var replay =
               withGameSessionPeer(
@@ -1913,6 +2107,70 @@ class GenuineSelectedPublicationExportPostgresIntegrationTest {
     } catch (NoSuchAlgorithmException impossible) {
       throw new IllegalStateException("SHA-256 is unavailable", impossible);
     }
+  }
+
+  private static String changedDigest(String digest) {
+    if (digest == null || !digest.matches("sha256:[0-9a-f]{64}")) {
+      throw new IllegalArgumentException("Expected a sha256-prefixed digest");
+    }
+    char replacement = digest.charAt(digest.length() - 1) == '0' ? '1' : '0';
+    return digest.substring(0, digest.length() - 1) + replacement;
+  }
+
+  private static CompleteLaunchBindingDto readCompleteLaunchBindingInOwnerSnapshot(
+      Store owner,
+      CompleteLaunchBindingService service,
+      UUID readRequestId,
+      UUID canonicalTenantId,
+      String worldSlug,
+      String controlPlaneRequestId,
+      String expectedRequestDigest,
+      String expectedResultDigest) {
+    TransactionTemplate ownerSnapshot = new TransactionTemplate(owner.transactions());
+    ownerSnapshot.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
+    ownerSnapshot.setIsolationLevel(TransactionDefinition.ISOLATION_REPEATABLE_READ);
+    ownerSnapshot.setReadOnly(true);
+    return Objects.requireNonNull(
+        ownerSnapshot.execute(
+            ignored ->
+                service.getCompleteLaunchBinding(
+                    readRequestId,
+                    canonicalTenantId,
+                    worldSlug,
+                    controlPlaneRequestId,
+                    expectedRequestDigest,
+                    expectedResultDigest)));
+  }
+
+  private static List<String> completeBindingOwnerRowVersions(
+      DSLContext dsl,
+      long launchDescriptorRowId,
+      long releaseBundleId,
+      long versionRowId,
+      UUID sourceOperationId,
+      UUID canonicalTenantId,
+      String controlPlaneRequestId) {
+    return List.of(
+        dsl.fetchSingle(
+                "select xmin::text from launch_descriptor where id = ?", launchDescriptorRowId)
+            .get(0, String.class),
+        dsl.fetchSingle(
+                "select xmin::text from published_release_bundle where id = ?", releaseBundleId)
+            .get(0, String.class),
+        dsl.fetchSingle("select xmin::text from version where id = ?", versionRowId)
+            .get(0, String.class),
+        dsl.fetchSingle(
+                "select xmin::text from game_design_authored_world_source_operations where operation_id = ?",
+                sourceOperationId)
+            .get(0, String.class),
+        dsl.fetchSingle(
+                "select xmin::text from game_design_start_session_launch_descriptor_binding "
+                    + "where target_namespace = ? and canonical_tenant_id = ? "
+                    + "and control_plane_request_id = ?",
+                NAMESPACE,
+                canonicalTenantId,
+                controlPlaneRequestId)
+            .get(0, String.class));
   }
 
   private record Store(

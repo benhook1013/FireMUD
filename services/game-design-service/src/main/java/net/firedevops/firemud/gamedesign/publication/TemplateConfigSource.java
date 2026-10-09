@@ -11,6 +11,7 @@ import java.util.Set;
 import java.util.UUID;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding.Owner;
+import net.firedevops.firemud.common.automation.AutomationAuthoredSourceInventoryDeclaration;
 import net.firedevops.firemud.common.gamelogic.GameplayRuleManifest;
 import net.firedevops.firemud.common.gamelogic.GameplayRuleManifest.Family;
 import tools.jackson.databind.JsonNode;
@@ -26,7 +27,8 @@ public final class TemplateConfigSource {
   public enum OperationKind {
     CREATE,
     UPSERT,
-    DELETE
+    DELETE,
+    DECLARE_OWNER_SOURCE_INVENTORY
   }
 
   public record GameplayInput(Family family, String key, UUID revisionId) {
@@ -144,11 +146,45 @@ public final class TemplateConfigSource {
       OperationKind operation,
       String templateId,
       String templateName,
-      Config config) {
+      Config config,
+      Owner declaredOwner,
+      AutomationAuthoredSourceInventoryDeclaration inventory) {
+    public Mutation(
+        DraftCommitBinding binding,
+        String revisionOrder,
+        UUID revisionId,
+        OperationKind operation,
+        String templateId,
+        String templateName,
+        Config config) {
+      this(
+          binding,
+          revisionOrder,
+          revisionId,
+          operation,
+          templateId,
+          templateName,
+          config,
+          null,
+          null);
+    }
+
     public Mutation {
       Objects.requireNonNull(binding);
       Objects.requireNonNull(operation);
-      if (operation == OperationKind.CREATE) {
+      if (operation == OperationKind.DECLARE_OWNER_SOURCE_INVENTORY) {
+        if (templateId != null
+            || templateName != null
+            || config != null
+            || declaredOwner != Owner.AUTOMATION_SCRIPTING
+            || inventory == null)
+          throw new IllegalArgumentException(
+              "Owner inventory declaration carries only Automation authored content");
+        new TemplateConfigOwnerSourceInventoryDeclaration(
+            declaredOwner, inventory, binding, revisionOrder, revisionId);
+      } else if (declaredOwner != null || inventory != null) {
+        throw new IllegalArgumentException("Template row mutations carry no owner inventory");
+      } else if (operation == OperationKind.CREATE) {
         if (templateId != null
             || templateName == null
             || templateName.isBlank()
@@ -160,12 +196,13 @@ public final class TemplateConfigSource {
         if (templateName != null)
           throw new IllegalArgumentException("Only CREATE carries a display name");
       }
-      if (operation != OperationKind.DELETE) {
+      if (operation != OperationKind.DELETE
+          && operation != OperationKind.DECLARE_OWNER_SOURCE_INVENTORY) {
         Objects.requireNonNull(config);
         if (!binding.target().canonicalVersionId().equals(config.baseVersionId()))
           throw new IllegalArgumentException(
               "Template config base differs from its exact source version");
-      } else if (config != null)
+      } else if (operation == OperationKind.DELETE && config != null)
         throw new IllegalArgumentException("Template DELETE carries no config");
       var revision =
           binding.revisions().stream()
@@ -175,22 +212,25 @@ public final class TemplateConfigSource {
               .findFirst()
               .orElseThrow();
       String expected =
-          operation == OperationKind.CREATE
-              ? createPayload(templateName, config)
-              : operation == OperationKind.UPSERT
-                  ? upsertPayload(templateId, config)
-                  : deletePayload(templateId);
+          payloadFor(operation, templateId, templateName, config, declaredOwner, inventory);
       if (!expected.equals(CommandSource.canonical(CommandSource.tree(revision.payload()))))
         throw new IllegalArgumentException(
             "Template config differs from its exact original revision");
     }
 
     public String payload() {
-      return operation == OperationKind.CREATE
-          ? createPayload(templateName, config)
-          : operation == OperationKind.UPSERT
-              ? upsertPayload(templateId, config)
-              : deletePayload(templateId);
+      return payloadFor(operation, templateId, templateName, config, declaredOwner, inventory);
+    }
+
+    public boolean changesTemplateRow() {
+      return operation != OperationKind.DECLARE_OWNER_SOURCE_INVENTORY;
+    }
+
+    public TemplateConfigOwnerSourceInventoryDeclaration ownerInventoryDeclaration() {
+      return operation == OperationKind.DECLARE_OWNER_SOURCE_INVENTORY
+          ? new TemplateConfigOwnerSourceInventoryDeclaration(
+              declaredOwner, inventory, binding, revisionOrder, revisionId)
+          : null;
     }
   }
 
@@ -234,6 +274,7 @@ public final class TemplateConfigSource {
 
   public static List<Mutation> mutations(DraftCommitBinding binding) {
     List<Mutation> result = new ArrayList<>();
+    Set<Owner> declaredOwners = new HashSet<>();
     for (var revision : binding.revisions()) {
       if (revision.owner() != Owner.GAME_DESIGN_CONTROL_PLANE) continue;
       JsonNode root = CommandSource.tree(revision.payload());
@@ -248,6 +289,31 @@ public final class TemplateConfigSource {
       if (!REVISION_KIND.equals(kind))
         throw new IllegalArgumentException("Unknown Game Design revision kind");
       OperationKind operation = OperationKind.valueOf(text(root, "operation"));
+      int schemaVersion =
+          root.path("schemaVersion").isInt() ? root.path("schemaVersion").intValue() : -1;
+      if (operation == OperationKind.DECLARE_OWNER_SOURCE_INVENTORY) {
+        if (schemaVersion != 2)
+          throw new IllegalArgumentException("Unsupported owner inventory source schemaVersion");
+        fields(root, "schemaVersion", "revisionKind", "operation", "owner", "inventory");
+        Owner owner = Owner.valueOf(text(root, "owner"));
+        if (owner != Owner.AUTOMATION_SCRIPTING || !declaredOwners.add(owner))
+          throw new IllegalArgumentException("Only one Automation owner inventory is supported");
+        result.add(
+            new Mutation(
+                binding,
+                revision.revisionOrder(),
+                revision.revisionId(),
+                operation,
+                null,
+                null,
+                null,
+                owner,
+                AutomationAuthoredSourceInventoryDeclaration.parse(
+                    CommandSource.canonical(root.path("inventory")))));
+        continue;
+      }
+      if (schemaVersion != 1)
+        throw new IllegalArgumentException("Unsupported template source schemaVersion");
       fields(
           root,
           operation == OperationKind.CREATE
@@ -259,8 +325,6 @@ public final class TemplateConfigSource {
                     "schemaVersion", "revisionKind", "operation", "templateId", "configJson"
                   }
                   : new String[] {"schemaVersion", "revisionKind", "operation", "templateId"});
-      if (!root.path("schemaVersion").isInt() || root.path("schemaVersion").intValue() != 1)
-        throw new IllegalArgumentException("Unsupported template source schemaVersion");
       result.add(
           new Mutation(
               binding,
@@ -321,6 +385,56 @@ public final class TemplateConfigSource {
             templateId));
   }
 
+  public static String ownerInventoryPayload(
+      Owner owner, AutomationAuthoredSourceInventoryDeclaration inventory) {
+    if (owner != Owner.AUTOMATION_SCRIPTING)
+      throw new IllegalArgumentException("Only Automation source inventory is supported");
+    Objects.requireNonNull(inventory);
+    return CommandSource.canonical(
+        Map.of(
+            "schemaVersion", 2,
+            "revisionKind", REVISION_KIND,
+            "operation", OperationKind.DECLARE_OWNER_SOURCE_INVENTORY.name(),
+            "owner", owner.name(),
+            "inventory", CommandSource.tree(inventory.canonicalJson())));
+  }
+
+  public static List<TemplateConfigOwnerSourceInventoryDeclaration>
+      replayOwnerInventoryDeclarations(
+          List<TemplateConfigOwnerSourceInventoryDeclaration> inherited,
+          DraftCommitBinding binding) {
+    Map<Owner, TemplateConfigOwnerSourceInventoryDeclaration> declarations =
+        new java.util.EnumMap<>(Owner.class);
+    for (var declaration : inherited) {
+      if (!binding.target().equals(declaration.sourceBinding().target())
+          || declarations.put(declaration.owner(), declaration) != null)
+        throw new IllegalArgumentException("Invalid inherited owner inventory declarations");
+    }
+    for (Mutation mutation : mutations(binding)) {
+      if (mutation.operation() == OperationKind.DECLARE_OWNER_SOURCE_INVENTORY) {
+        declarations.put(mutation.declaredOwner(), mutation.ownerInventoryDeclaration());
+      }
+    }
+    return declarations.values().stream()
+        .sorted(Comparator.comparing(value -> value.owner().name()))
+        .toList();
+  }
+
+  private static String payloadFor(
+      OperationKind operation,
+      String templateId,
+      String templateName,
+      Config config,
+      Owner declaredOwner,
+      AutomationAuthoredSourceInventoryDeclaration inventory) {
+    return switch (operation) {
+      case CREATE -> createPayload(templateName, config);
+      case UPSERT -> upsertPayload(templateId, config);
+      case DELETE -> deletePayload(templateId);
+      case DECLARE_OWNER_SOURCE_INVENTORY -> ownerInventoryPayload(declaredOwner, inventory);
+    };
+  }
+
   public static List<Entry> replay(
       List<Entry> inherited, DraftCommitBinding binding, Map<UUID, String> createdRows) {
     Map<String, Entry> entries = new java.util.HashMap<>();
@@ -330,6 +444,7 @@ public final class TemplateConfigSource {
         throw new IllegalArgumentException("Invalid inherited template config inventory");
     }
     for (Mutation mutation : mutations(binding)) {
+      if (!mutation.changesTemplateRow()) continue;
       if (mutation.operation() == OperationKind.DELETE) {
         if (entries.remove(mutation.templateId()) == null)
           throw new IllegalArgumentException("Template DELETE requires an authored entry");

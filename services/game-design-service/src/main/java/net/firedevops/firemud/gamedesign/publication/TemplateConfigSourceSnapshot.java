@@ -18,8 +18,19 @@ public record TemplateConfigSourceSnapshot(
     String sourceEpoch,
     UUID inheritedCommitId,
     UUID genesisReceiptId,
-    List<TemplateConfigSource.Entry> entries) {
+    List<TemplateConfigSource.Entry> entries,
+    List<TemplateConfigOwnerSourceInventoryDeclaration> ownerSourceInventoryDeclarations) {
   public static final String SCHEMA = "game-design-template-config-source-snapshot/v1";
+  public static final String SCHEMA_V2 = "game-design-template-config-source-snapshot/v2";
+
+  public TemplateConfigSourceSnapshot(
+      DraftCommitBinding binding,
+      String sourceEpoch,
+      UUID inheritedCommitId,
+      UUID genesisReceiptId,
+      List<TemplateConfigSource.Entry> entries) {
+    this(binding, sourceEpoch, inheritedCommitId, genesisReceiptId, entries, List.of());
+  }
 
   public TemplateConfigSourceSnapshot {
     Objects.requireNonNull(binding);
@@ -36,25 +47,46 @@ public record TemplateConfigSourceSnapshot(
         entries.stream()
             .sorted(java.util.Comparator.comparing(e -> new BigInteger(e.templateId())))
             .toList())) throw new IllegalArgumentException("Canonical template row order required");
+    ownerSourceInventoryDeclarations = List.copyOf(ownerSourceInventoryDeclarations);
+    var owners =
+        new java.util.HashSet<net.firedevops.firemud.common.authoring.DraftCommitBinding.Owner>();
+    for (var declaration : ownerSourceInventoryDeclarations) {
+      if (!declaration.sourceBinding().target().equals(binding.target())
+          || !owners.add(declaration.owner()))
+        throw new IllegalArgumentException("Template owner inventory target or identity conflict");
+    }
+    if (!ownerSourceInventoryDeclarations.equals(
+        ownerSourceInventoryDeclarations.stream()
+            .sorted(java.util.Comparator.comparing(value -> value.owner().name()))
+            .toList()))
+      throw new IllegalArgumentException("Canonical owner inventory order required");
   }
 
   public String canonicalJson() {
-    return CommandSource.canonical(
-        Map.of(
-            "schema",
-            SCHEMA,
-            "bindingJson",
-            binding.canonicalJson(),
-            "bindingDigest",
-            binding.digest(),
-            "sourceEpoch",
-            sourceEpoch,
-            "inheritedCommitId",
-            inheritedCommitId == null ? "" : inheritedCommitId.toString(),
-            "genesisReceiptId",
-            genesisReceiptId.toString(),
-            "entries",
-            entries.stream().map(TemplateConfigSource.Entry::object).toList()));
+    Map<String, Object> value =
+        new java.util.LinkedHashMap<>(
+            Map.of(
+                "schema",
+                ownerSourceInventoryDeclarations.isEmpty() ? SCHEMA : SCHEMA_V2,
+                "bindingJson",
+                binding.canonicalJson(),
+                "bindingDigest",
+                binding.digest(),
+                "sourceEpoch",
+                sourceEpoch,
+                "inheritedCommitId",
+                inheritedCommitId == null ? "" : inheritedCommitId.toString(),
+                "genesisReceiptId",
+                genesisReceiptId.toString(),
+                "entries",
+                entries.stream().map(TemplateConfigSource.Entry::object).toList()));
+    if (!ownerSourceInventoryDeclarations.isEmpty())
+      value.put(
+          "ownerSourceInventoryDeclarations",
+          ownerSourceInventoryDeclarations.stream()
+              .map(TemplateConfigOwnerSourceInventoryDeclaration::object)
+              .toList());
+    return CommandSource.canonical(value);
   }
 
   public byte[] canonicalBytes() {
@@ -67,18 +99,35 @@ public record TemplateConfigSourceSnapshot(
 
   public static TemplateConfigSourceSnapshot fromStored(String json) {
     var root = CommandSource.tree(json);
-    CommandSource.requireStoredFields(
-        root,
-        "schema",
-        "bindingJson",
-        "bindingDigest",
-        "sourceEpoch",
-        "inheritedCommitId",
-        "genesisReceiptId",
-        "entries");
-    if (!SCHEMA.equals(CommandSource.requiredStoredText(root, "schema"))
-        || !root.path("entries").isArray())
+    String schema = CommandSource.requiredStoredText(root, "schema");
+    if (SCHEMA.equals(schema)) {
+      CommandSource.requireStoredFields(
+          root,
+          "schema",
+          "bindingJson",
+          "bindingDigest",
+          "sourceEpoch",
+          "inheritedCommitId",
+          "genesisReceiptId",
+          "entries");
+    } else if (SCHEMA_V2.equals(schema)) {
+      CommandSource.requireStoredFields(
+          root,
+          "schema",
+          "bindingJson",
+          "bindingDigest",
+          "sourceEpoch",
+          "inheritedCommitId",
+          "genesisReceiptId",
+          "entries",
+          "ownerSourceInventoryDeclarations");
+    } else {
       throw new IllegalArgumentException("Unsupported template config source snapshot");
+    }
+    if (!root.path("entries").isArray()
+        || (SCHEMA_V2.equals(schema) && !root.path("ownerSourceInventoryDeclarations").isArray()))
+      throw new IllegalArgumentException(
+          "Template config source snapshot collections are required");
     var binding =
         DraftCommitBinding.fromStored(
             CommandSource.requiredStoredText(root, "bindingJson"),
@@ -108,6 +157,10 @@ public record TemplateConfigSourceSnapshot(
               TemplateConfigSource.uuid(CommandSource.requiredStoredText(node, "revisionId")),
               name.isEmpty() ? null : name));
     }
+    List<TemplateConfigOwnerSourceInventoryDeclaration> declarations = new ArrayList<>();
+    if (SCHEMA_V2.equals(schema))
+      for (var node : root.path("ownerSourceInventoryDeclarations"))
+        declarations.add(TemplateConfigOwnerSourceInventoryDeclaration.fromStored(node));
     if (!root.path("inheritedCommitId").isTextual())
       throw new IllegalArgumentException("Explicit predecessor required");
     String inherited = root.path("inheritedCommitId").textValue();
@@ -117,7 +170,11 @@ public record TemplateConfigSourceSnapshot(
             CommandSource.requiredStoredText(root, "sourceEpoch"),
             inherited.isEmpty() ? null : TemplateConfigSource.uuid(inherited),
             TemplateConfigSource.uuid(CommandSource.requiredStoredText(root, "genesisReceiptId")),
-            entries);
+            entries,
+            declarations);
+    if ((SCHEMA.equals(schema) && !result.ownerSourceInventoryDeclarations().isEmpty())
+        || (SCHEMA_V2.equals(schema) && result.ownerSourceInventoryDeclarations().isEmpty()))
+      throw new IllegalArgumentException("Template config source snapshot schema mismatch");
     if (!json.equals(result.canonicalJson()))
       throw new IllegalArgumentException("Noncanonical template config snapshot");
     return result;

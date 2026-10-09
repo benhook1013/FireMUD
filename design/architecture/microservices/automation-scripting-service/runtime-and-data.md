@@ -39,6 +39,29 @@ The current dry-run and readiness capacity reservations also are not idempotent 
 
 The current queue consumer has an additional bounded-drain limitation that must remain explicit: `drainWorkItems` and `drainIndexedWorkItemPointers` consume pointers with atomic Redis `LPOP`, so a producer's concurrent `RPUSH` is not discarded by a range/read followed by deletion. The indexed path still uses database-wide `KEYS("automation:queue:*")`, and the current lists have no pointer TTL or maximum-length bound, so the path is not a cluster-safe discovery or retention proof. Durable claim fallback can process pending PostgreSQL rows independently, but it does not establish a reset/rebuild recovery gate. Target enqueue/rebuild must atomically apply `SCRIPT_OUTBOX_QUEUE_POINTER_TTL_SECONDS` and `SCRIPT_OUTBOX_QUEUE_MAX_POINTERS_PER_KEY`, preserve or durably account for unreturned tails and concurrent appends, use an owner-maintained/cursor-based cluster-safe queue index rather than database-wide `KEYS`, and trigger bounded durable re-drive with exact identity/readback before reset-gate release. The two settings remain environment/service configuration (currently `TBD`); no target support claim is valid until each environment supplies validated positive bounds and focused concurrent-drain, truncation/expiry, cluster, and re-drive proof.
 
+## Authored Template Source Inventory
+
+Automation owns the source inventory declaration schema carried as authored content by a new versioned Game Design `TEMPLATE_CONFIG` source ([closed schema and reference rules](../game-design-service/game-templates.md#closed-versioned-configuration-and-references-target-state)). The Automation value schema is `automation-authored-source-inventory/v1` with exactly three required family arrays: `SCRIPT_DEFINITIONS`, `EVENT_BINDINGS`, and `SCRIPT_PATCH_SOURCES`. The current shared value accepts only explicitly authored empty arrays; omitted, null, unknown, malformed, duplicate, trailing, oversized, or nonempty input is rejected. Its canonical RFC 8785 bytes preserve the authored declaration deterministically. This declaration is content only: it is not an owner receipt, source readback, authorization, provenance, or proof of owner completeness, and cannot qualify a publication on its own. Existing `TEMPLATE_CONFIG` schema-version content is not reinterpreted as this declaration.
+
+The authored shape is:
+
+```json
+{
+  "schema": "automation-authored-source-inventory/v1",
+  "families": {
+    "SCRIPT_DEFINITIONS": [],
+    "EVENT_BINDINGS": [],
+    "SCRIPT_PATCH_SOURCES": []
+  }
+}
+```
+
+Script schedule definitions remain derived from script source and are not another authored family. The optional template `automation.scriptPatch` is a separate default selection of one exact patch for the same base version; its absence means no template default and does not establish an empty patch-source inventory. The declaration producer, Automation owner intake/readback, and physical proof remain incomplete; publication must continue to deny where that evidence is unavailable.
+
+An Automation selected-source intake is a distinct Account-authorized operation, not participation inferred from a Game Design-only commit. Account must first authorize the exact immutable source read; after the read, Automation must retain the original content and outcome while holding revalidated current Account authority through its local commit. The declaration must originate in a genuine authored revision of the exact selected Game Design commit. Its inventory covers script roots, every event binding and patch source, and all dependent or inbound behavior/hook references from the complete selected World and other authored inputs. An explicit empty declaration is supported only when authenticated owner evidence closes that whole selected input set and rejects conflicting or unqualified existing content. Missing producers, omitted families, unavailable rows and a tenant-wide script query are not absence proof; an unsupported nonempty input denies instead of being discarded.
+
+The immutable intake result retains the canonical tenant/version and selected commit, original source revision and operation, complete inventory bytes, exact Account authorization binding, original owner terminal and their digests. The result and authenticated readback are derived after the authored source commit, outside its preimage. An identical retry reads the original result; changed scope, selection, content or authorization binding conflicts rather than manufacturing a new receipt. A workload identity, creator declaration or matching digest alone is insufficient. Until the required selected-input producers and held-authority proof exist, the owner receipt remains unavailable and publication must not substitute an empty or synthetic version marker.
+
 ## Architecture and Design Notes
 
 - Executes scripts in response to world or player events received via gRPC callbacks from Game Session and other domain services. Standard lifecycle events (`onSpawn`, `onEnterRegion`, `onCommand`, and similar) are delivered as unary gRPC calls via `TriggerScriptEvent`, while tick-derived scheduling signals are driven by a gRPC streaming tick heartbeat originating from Game Session.

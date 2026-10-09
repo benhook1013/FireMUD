@@ -122,12 +122,36 @@ public final class TemplateConfigSourceRepository {
         ? fence.isPresent() || !"0".equals(epoch)
         : fence.isEmpty() || !inherited.equals(fence.orElseThrow().commitId()))
       throw new IllegalStateException("TEMPLATE_CONFIG_PREVIOUS_FENCE_CHANGED");
-    List<TemplateConfigSource.Entry> previous =
+    var previousSnapshot =
         inherited == null
-            ? List.of()
-            : readSnapshot(binding.target(), inherited).orElseThrow().entries();
+            ? Optional.<TemplateConfigSourceSnapshot>empty()
+            : Optional.of(readSnapshot(binding.target(), inherited).orElseThrow());
+    List<TemplateConfigSource.Entry> previous =
+        previousSnapshot.map(TemplateConfigSourceSnapshot::entries).orElseGet(List::of);
+    List<TemplateConfigOwnerSourceInventoryDeclaration> previousDeclarations =
+        previousSnapshot
+            .map(TemplateConfigSourceSnapshot::ownerSourceInventoryDeclarations)
+            .orElseGet(List::of);
     var createdRows = new java.util.HashMap<UUID, String>();
     for (var mutation : mutations) {
+      if (mutation.operation()
+          == TemplateConfigSource.OperationKind.DECLARE_OWNER_SOURCE_INVENTORY) {
+        var declaration = mutation.ownerInventoryDeclaration();
+        dsl.execute(
+            "INSERT INTO game_design_template_config_owner_source_inventory_declaration "
+                + "(canonical_tenant_id, canonical_version_id, request_id, commit_id, revision_id, revision_order, owner, inventory_json, payload_json) "
+                + "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            binding.target().canonicalTenantId(),
+            binding.target().canonicalVersionId(),
+            binding.requestId(),
+            binding.commitId(),
+            mutation.revisionId(),
+            Integer.parseInt(mutation.revisionOrder()),
+            mutation.declaredOwner().name(),
+            mutation.inventory().canonicalJson(),
+            mutation.payload());
+        continue;
+      }
       if (mutation.config() != null) {
         mutation.config().requireAvailableOwnerReads();
         requireGameplayInputs(binding, mutation.config());
@@ -205,7 +229,8 @@ public final class TemplateConfigSourceRepository {
             new BigInteger(epoch).add(BigInteger.ONE).toString(),
             inherited,
             head.get("genesis_receipt_id", UUID.class),
-            TemplateConfigSource.replay(previous, binding, createdRows));
+            TemplateConfigSource.replay(previous, binding, createdRows),
+            TemplateConfigSource.replayOwnerInventoryDeclarations(previousDeclarations, binding));
     var result = new TemplateConfigSourceSnapshot.Application(binding, epoch, snapshot);
     dsl.execute(
         "INSERT INTO game_design_template_config_source_application (canonical_tenant_id, canonical_version_id, request_id, commit_id, "
@@ -228,7 +253,11 @@ public final class TemplateConfigSourceRepository {
             inherited)
         != 1) throw new IllegalStateException("TEMPLATE_CONFIG_EPOCH_CONFLICT");
     templateReferences.synchronizeCurrentProjection(
-        binding.target(), binding, snapshot, mutations, createdRows);
+        binding.target(),
+        binding,
+        snapshot,
+        mutations.stream().filter(TemplateConfigSource.Mutation::changesTemplateRow).toList(),
+        createdRows);
     return Optional.of(application(binding).orElseThrow());
   }
 
@@ -255,10 +284,16 @@ public final class TemplateConfigSourceRepository {
     } else {
       if (applied.isPresent())
         throw new IllegalStateException("TEMPLATE_CONFIG_UNDECLARED_APPLICATION");
-      var entries =
+      var inheritedSnapshot =
           inherited == null
-              ? List.<TemplateConfigSource.Entry>of()
-              : readSnapshot(binding.target(), inherited).orElseThrow().entries();
+              ? Optional.<TemplateConfigSourceSnapshot>empty()
+              : Optional.of(readSnapshot(binding.target(), inherited).orElseThrow());
+      var entries =
+          inheritedSnapshot.map(TemplateConfigSourceSnapshot::entries).orElseGet(List::of);
+      var declarations =
+          inheritedSnapshot
+              .map(TemplateConfigSourceSnapshot::ownerSourceInventoryDeclarations)
+              .orElseGet(List::of);
       if (inherited == null && !"0".equals(head.get("source_epoch", String.class)))
         throw new IllegalStateException("TEMPLATE_CONFIG_GENESIS_NOT_CURRENT");
       snapshot =
@@ -267,7 +302,8 @@ public final class TemplateConfigSourceRepository {
               head.get("source_epoch", String.class),
               inherited,
               head.get("genesis_receipt_id", UUID.class),
-              entries);
+              entries,
+              declarations);
     }
     requireSelectedReferences(snapshot);
     requireCurrentInventory(snapshot);
@@ -323,6 +359,7 @@ public final class TemplateConfigSourceRepository {
     if (fence == null || !snapshot.binding().digest().equals(fence.get(0, String.class)))
       throw new IllegalStateException("TEMPLATE_CONFIG_SNAPSHOT_FENCE_CONFLICT");
     verifyEntries(snapshot);
+    verifyOwnerInventoryDeclarations(snapshot);
     requireSelectedReferences(snapshot);
     return Optional.of(snapshot);
   }
@@ -468,11 +505,142 @@ public final class TemplateConfigSourceRepository {
             .getValues("payload_json", String.class);
     if (!stored.equals(
         TemplateConfigSource.mutations(binding).stream()
+            .filter(TemplateConfigSource.Mutation::changesTemplateRow)
             .map(TemplateConfigSource.Mutation::payload)
             .toList()))
       throw new IllegalStateException("TEMPLATE_CONFIG_REVISION_READBACK_CONFLICT");
+    verifyOwnerInventoryApplication(binding);
     verifyEntries(result.snapshot());
+    verifyOwnerInventoryDeclarations(result.snapshot());
     return Optional.of(result);
+  }
+
+  private void verifyOwnerInventoryApplication(DraftCommitBinding binding) {
+    var expected =
+        TemplateConfigSource.mutations(binding).stream()
+            .filter(
+                mutation ->
+                    mutation.operation()
+                        == TemplateConfigSource.OperationKind.DECLARE_OWNER_SOURCE_INVENTORY)
+            .toList();
+    var rows =
+        dsl.fetch(
+            "SELECT revision_id, revision_order, owner, inventory_json, payload_json "
+                + "FROM game_design_template_config_owner_source_inventory_declaration "
+                + "WHERE canonical_tenant_id = ? AND canonical_version_id = ? AND request_id = ? AND commit_id = ? "
+                + "ORDER BY revision_order",
+            binding.target().canonicalTenantId(),
+            binding.target().canonicalVersionId(),
+            binding.requestId(),
+            binding.commitId());
+    if (rows.size() != expected.size())
+      throw new IllegalStateException("TEMPLATE_CONFIG_OWNER_INVENTORY_READBACK_CONFLICT");
+    for (int i = 0; i < expected.size(); i++) {
+      var mutation = expected.get(i);
+      var row = rows.get(i);
+      if (!mutation.revisionId().equals(row.get("revision_id", UUID.class))
+          || Integer.parseInt(mutation.revisionOrder()) != row.get("revision_order", Integer.class)
+          || !mutation.declaredOwner().name().equals(row.get("owner", String.class))
+          || !mutation.inventory().canonicalJson().equals(row.get("inventory_json", String.class))
+          || !mutation.payload().equals(row.get("payload_json", String.class)))
+        throw new IllegalStateException("TEMPLATE_CONFIG_OWNER_INVENTORY_READBACK_CONFLICT");
+    }
+  }
+
+  private void verifyOwnerInventoryDeclarations(TemplateConfigSourceSnapshot snapshot) {
+    var target = snapshot.binding().target();
+    var effectiveRows =
+        dsl.fetch(
+            "SELECT DISTINCT ON (d.owner) d.request_id, d.commit_id, d.revision_id, d.revision_order, "
+                + "d.owner, d.inventory_json, d.payload_json, c.binding_json, c.input_digest "
+                + "FROM game_design_template_config_owner_source_inventory_declaration d "
+                + "JOIN game_design_template_config_source_application a ON a.canonical_tenant_id = d.canonical_tenant_id "
+                + "AND a.canonical_version_id = d.canonical_version_id AND a.request_id = d.request_id AND a.commit_id = d.commit_id "
+                + "JOIN game_design_draft_commit c ON c.canonical_tenant_id = d.canonical_tenant_id "
+                + "AND c.canonical_version_id = d.canonical_version_id AND c.request_id = d.request_id AND c.commit_id = d.commit_id "
+                + "WHERE d.canonical_tenant_id = ? AND d.canonical_version_id = ? AND a.expected_epoch::NUMERIC < CAST(? AS NUMERIC) "
+                + "ORDER BY d.owner, a.expected_epoch::NUMERIC DESC, d.revision_order DESC",
+            target.canonicalTenantId(),
+            target.canonicalVersionId(),
+            snapshot.sourceEpoch());
+    var effectiveDeclarations =
+        new java.util.ArrayList<TemplateConfigOwnerSourceInventoryDeclaration>();
+    for (var row : effectiveRows) {
+      var sourceBinding =
+          DraftCommitBinding.fromStored(
+              row.get("binding_json", String.class), row.get("input_digest", String.class));
+      exact(sourceBinding);
+      var mutation =
+          TemplateConfigSource.mutations(sourceBinding).stream()
+              .filter(m -> m.revisionId().equals(row.get("revision_id", UUID.class)))
+              .filter(
+                  m ->
+                      Integer.parseInt(m.revisionOrder())
+                          == row.get("revision_order", Integer.class))
+              .filter(
+                  m ->
+                      m.operation()
+                          == TemplateConfigSource.OperationKind.DECLARE_OWNER_SOURCE_INVENTORY)
+              .findFirst()
+              .orElseThrow(
+                  () ->
+                      new IllegalStateException(
+                          "TEMPLATE_CONFIG_OWNER_INVENTORY_SOURCE_UNAVAILABLE"));
+      if (!sourceBinding.requestId().equals(row.get("request_id", UUID.class))
+          || !sourceBinding.commitId().equals(row.get("commit_id", UUID.class))
+          || !mutation.declaredOwner().name().equals(row.get("owner", String.class))
+          || !mutation.inventory().canonicalJson().equals(row.get("inventory_json", String.class))
+          || !mutation.payload().equals(row.get("payload_json", String.class)))
+        throw new IllegalStateException("TEMPLATE_CONFIG_OWNER_INVENTORY_SOURCE_CHANGED");
+      effectiveDeclarations.add(mutation.ownerInventoryDeclaration());
+    }
+    if (!effectiveDeclarations.equals(snapshot.ownerSourceInventoryDeclarations()))
+      throw new IllegalStateException("TEMPLATE_CONFIG_OWNER_INVENTORY_SNAPSHOT_CONFLICT");
+
+    for (var declaration : snapshot.ownerSourceInventoryDeclarations()) {
+      exact(declaration.sourceBinding());
+      var mutation =
+          TemplateConfigSource.mutations(declaration.sourceBinding()).stream()
+              .filter(m -> m.revisionId().equals(declaration.revisionId()))
+              .filter(m -> m.revisionOrder().equals(declaration.revisionOrder()))
+              .filter(
+                  m ->
+                      m.operation()
+                          == TemplateConfigSource.OperationKind.DECLARE_OWNER_SOURCE_INVENTORY)
+              .findFirst()
+              .orElseThrow(
+                  () ->
+                      new IllegalStateException(
+                          "TEMPLATE_CONFIG_OWNER_INVENTORY_SOURCE_UNAVAILABLE"));
+      var row =
+          dsl.fetchOne(
+              "SELECT request_id, commit_id, owner, inventory_json, payload_json "
+                  + "FROM game_design_template_config_owner_source_inventory_declaration "
+                  + "WHERE canonical_tenant_id = ? AND canonical_version_id = ? AND request_id = ? "
+                  + "AND commit_id = ? AND revision_id = ? AND revision_order = ? AND owner = ?",
+              snapshot.binding().target().canonicalTenantId(),
+              snapshot.binding().target().canonicalVersionId(),
+              declaration.sourceBinding().requestId(),
+              declaration.sourceBinding().commitId(),
+              declaration.revisionId(),
+              Integer.parseInt(declaration.revisionOrder()),
+              declaration.owner().name());
+      if (row == null
+          || !declaration.sourceBinding().requestId().equals(row.get("request_id", UUID.class))
+          || !declaration.sourceBinding().commitId().equals(row.get("commit_id", UUID.class))
+          || !declaration.owner().name().equals(row.get("owner", String.class))
+          || !declaration
+              .inventory()
+              .canonicalJson()
+              .equals(row.get("inventory_json", String.class))
+          || !mutation.payload().equals(row.get("payload_json", String.class)))
+        throw new IllegalStateException("TEMPLATE_CONFIG_OWNER_INVENTORY_SOURCE_CHANGED");
+    }
+    for (var mutation : TemplateConfigSource.mutations(snapshot.binding()))
+      if (mutation.operation() == TemplateConfigSource.OperationKind.DECLARE_OWNER_SOURCE_INVENTORY
+          && snapshot.ownerSourceInventoryDeclarations().stream()
+              .noneMatch(d -> d.revisionId().equals(mutation.revisionId())))
+        throw new IllegalStateException("TEMPLATE_CONFIG_OWNER_INVENTORY_SNAPSHOT_MISSING");
   }
 
   private void verifyEntries(TemplateConfigSourceSnapshot snapshot) {
