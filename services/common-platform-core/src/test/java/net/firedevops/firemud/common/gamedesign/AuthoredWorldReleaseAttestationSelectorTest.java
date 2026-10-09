@@ -7,8 +7,7 @@ import java.nio.charset.StandardCharsets;
 import java.util.Base64;
 import java.util.List;
 import java.util.UUID;
-import net.firedevops.firemud.common.authoring.DraftCommitBinding;
-import net.firedevops.firemud.common.authoring.WorldDraftTerminalReadGrpcCodecTest;
+import net.firedevops.firemud.common.testing.AuthoringFixtures;
 import net.firedevops.firemud.common.world.WorldPublishedStartLocationEvidence;
 import org.junit.jupiter.api.Test;
 import tools.jackson.databind.json.JsonMapper;
@@ -139,48 +138,7 @@ class AuthoredWorldReleaseAttestationSelectorTest {
   }
 
   static WorldPublishedStartLocationEvidence selectorEvidence() throws Exception {
-    var terminal =
-        WorldDraftTerminalReadGrpcCodecTest.freshGraphRequestForStartLocationEvidenceTest();
-    var applied =
-        WorldDraftTerminalReadGrpcCodecTest.committedFreshGraphReadbackForStartLocationEvidenceTest(
-            terminal);
-    var account = terminal.accountBinding();
-    var draft =
-        DraftCommitBinding.fromStored(
-            new String(account.gameDesignBinding(), StandardCharsets.UTF_8), account.inputDigest());
-    var tuples =
-        draft.affectedUnits(DraftCommitBinding.Owner.WORLD_MANAGEMENT).stream()
-            .map(
-                unit ->
-                    new WorldPublishedStartLocationEvidence.OwnedAffectedTuple(
-                        unit.owner().name(),
-                        unit.aggregateType(),
-                        unit.aggregateId(),
-                        unit.scopeType(),
-                        unit.scopeId(),
-                        unit.expectedEpoch()))
-            .toList();
-    var request =
-        new WorldPublishedStartLocationEvidence.Request(
-            "test",
-            account.tenantId(),
-            account.versionId(),
-            UUID.fromString("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"),
-            UUID.fromString("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"),
-            "publication-request",
-            "a".repeat(64),
-            5L,
-            "publish-workflow",
-            account.commitId().toString(),
-            "b".repeat(64),
-            3,
-            tuples);
-    var result = JSON.readTree(applied.result());
-    return new WorldPublishedStartLocationEvidence(
-        request,
-        Base64.getDecoder().decode(result.get("startLocationReceiptBase64").textValue()),
-        applied.fullBinding(),
-        applied.result());
+    return AuthoringFixtures.startLocationEvidence();
   }
 
   static AuthoredWorldLaunchDescriptorEvidence descriptor(

@@ -77,10 +77,6 @@ public final class CanonicalGameplayRosterSelectionService {
     } catch (RuntimeException invalidOrUnavailable) {
       return new Denied(Denial.INVALID_ROSTER_PROOF);
     }
-    if (snapshot == null) {
-      return new Denied(Denial.INVALID_ROSTER_PROOF);
-    }
-
     Denial listFreshnessFailure = requireExactCurrentRoute(current);
     if (listFreshnessFailure != null) {
       return new Denied(listFreshnessFailure);
