@@ -730,10 +730,14 @@ class GameSessionCanonicalLaunchPreparationServiceTest {
       CreateCanonicalLaunchPreparationRequest request,
       CanonicalRealmCatalogSnapshot catalog,
       AuthoredWorldSourceEvidence source) {
+    long targetVersionId =
+        request.targetVersionIdPresent()
+            ? java.util.Objects.requireNonNull(request.targetVersionId(), "targetVersionId")
+            : 72L;
     return AuthoredWorldLaunchDescriptorEvidence.create(
         request.descriptorRequest(catalog, source),
         "launch-descriptor-1",
-        request.targetVersionIdPresent() ? request.targetVersionId() : 72,
+        targetVersionId,
         request.requestedScriptPatchVersionPresent(),
         request.requestedScriptPatchVersion(),
         "{}",
