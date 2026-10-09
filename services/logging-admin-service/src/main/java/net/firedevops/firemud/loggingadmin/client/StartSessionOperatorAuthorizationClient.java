@@ -5,6 +5,8 @@ import com.google.protobuf.Timestamp;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.time.Clock;
 import java.time.Instant;
 import java.util.Objects;
@@ -24,6 +26,10 @@ import net.firedevops.firemud.common.grpc.BlockingGrpcStubCustomizer;
 import net.firedevops.firemud.common.grpc.CommonGrpcClientProperties;
 import net.firedevops.firemud.common.grpc.GrpcChannelFactory;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
+import net.firedevops.firemud.common.grpc.GrpcServerPeerIdentityCallCredentials;
+import net.firedevops.firemud.common.grpc.GrpcServerPeerIdentityClientInterceptor;
+import net.firedevops.firemud.common.grpc.GrpcTlsMaterialResolver;
+import net.firedevops.firemud.common.grpc.ResolvedGrpcTlsMaterial;
 import net.firedevops.firemud.common.operator.StartSessionAuthorityEvidenceBundle;
 import net.firedevops.firemud.common.operator.StartSessionPreAuthorizationReservationTuple;
 
@@ -46,6 +52,7 @@ public class StartSessionOperatorAuthorizationClient
       Pattern.compile("arfp/v1/[A-Za-z0-9_-]{1,64}/[0-9a-f]{64}");
 
   private final Clock clock;
+  private final CommonGrpcClientProperties transportTlsProperties;
 
   @SuppressFBWarnings(
       value = "CT_CONSTRUCTOR_THROW",
@@ -76,6 +83,8 @@ public class StartSessionOperatorAuthorizationClient
         stubCustomizer,
         StartSessionOperatorAuthorizationClient.class);
     this.clock = Objects.requireNonNull(clock, "clock is required");
+    this.transportTlsProperties =
+        Objects.requireNonNull(tlsProps, "TLS properties are required").copy();
   }
 
   /**
@@ -126,7 +135,7 @@ public class StartSessionOperatorAuthorizationClient
             .setCurrentClaimFence(currentClaimFence)
             .build();
     IssueHumanOperatorAuthorizationReferenceResponse response =
-        requireStub()
+        requirePinnedAccountStub(tuple.action().scope().targetNamespace())
             .withDeadlineAfter(RPC_DEADLINE_SECONDS, TimeUnit.SECONDS)
             .issueHumanOperatorAuthorizationReference(request);
     return validateResponse(
@@ -161,7 +170,7 @@ public class StartSessionOperatorAuthorizationClient
             .setCurrentClaimFence(currentClaimFence)
             .build();
     RecoverOperatorAuthorizationReferenceResponse response =
-        requireStub()
+        requirePinnedAccountStub(tuple.action().scope().targetNamespace())
             .withDeadlineAfter(RPC_DEADLINE_SECONDS, TimeUnit.SECONDS)
             .recoverOperatorAuthorizationReference(request);
     return validateResponse(
@@ -185,6 +194,48 @@ public class StartSessionOperatorAuthorizationClient
       throw new IllegalStateException("Account authorization client has not been initialized");
     }
     return value;
+  }
+
+  private StartSessionOperatorAuthorizationServiceGrpc
+          .StartSessionOperatorAuthorizationServiceBlockingStub
+      requirePinnedAccountStub(String targetNamespace) {
+    String expectedServerUri = accountServerUri(targetNamespace);
+    requireFileBackedMtls();
+    return requireStub()
+        .withCallCredentials(new GrpcServerPeerIdentityCallCredentials(expectedServerUri))
+        .withInterceptors(new GrpcServerPeerIdentityClientInterceptor(expectedServerUri));
+  }
+
+  static String accountServerUri(String targetNamespace) {
+    if (!GrpcPeerIdentity.isValidNamespace(targetNamespace)) {
+      throw new IllegalArgumentException("StartSession target namespace is invalid");
+    }
+    return "spiffe://firemud/ns/" + targetNamespace + "/sa/account-service";
+  }
+
+  private void requireFileBackedMtls() {
+    if (transportTlsProperties.isPlaintext()) {
+      throw new IllegalStateException("Account authorization requires workload mTLS");
+    }
+    ResolvedGrpcTlsMaterial material;
+    try {
+      material = new GrpcTlsMaterialResolver().resolve(transportTlsProperties);
+    } catch (IOException | RuntimeException ignored) {
+      throw new IllegalStateException(
+          "Account authorization requires readable file-backed workload mTLS");
+    }
+    if (material == null
+        || !isReadableFile(material.certChain())
+        || !isReadableFile(material.privateKey())
+        || !isReadableFile(material.caCert())) {
+      throw new IllegalStateException(
+          "Account authorization requires readable file-backed workload mTLS");
+    }
+  }
+
+  private static boolean isReadableFile(ResolvedGrpcTlsMaterial.TlsResource resource) {
+    Path path = resource == null ? null : resource.watchPath();
+    return path != null && Files.isRegularFile(path) && Files.isReadable(path);
   }
 
   private AuthorizationReference validateResponse(

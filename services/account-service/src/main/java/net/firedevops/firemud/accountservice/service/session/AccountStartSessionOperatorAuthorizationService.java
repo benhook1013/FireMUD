@@ -42,9 +42,9 @@ import tools.jackson.databind.DeserializationFeature;
 import tools.jackson.databind.json.JsonMapper;
 
 /**
- * Deliberately unregistered Account owner service for the approved human StartSession path.
- * Transport composition remains separate; every public operation authenticates the immediate
- * certificate-derived peer before parsing request data or opening Account storage.
+ * Conditionally composed Account owner service for the approved human StartSession path. Its Spring
+ * composition and receiving transport are disabled by default; every public operation authenticates
+ * the immediate certificate-derived peer before parsing request data or opening Account storage.
  */
 public final class AccountStartSessionOperatorAuthorizationService {
   private static final String ENVELOPE_OPERATION = "human-start-session-authorization/v1";

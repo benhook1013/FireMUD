@@ -24,9 +24,7 @@ import io.lettuce.core.codec.ByteArrayCodec;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.security.SecureRandom;
 import java.time.Clock;
-import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -42,8 +40,11 @@ import net.firedevops.firemud.account.v1.RecoverOperatorAuthorizationReferenceRe
 import net.firedevops.firemud.account.v1.RedeemOperatorAuthorizationRequest;
 import net.firedevops.firemud.account.v1.StartSessionOperatorAuthorizationServiceGrpc;
 import net.firedevops.firemud.accountservice.client.StartSessionReservationEvidenceClient;
+import net.firedevops.firemud.accountservice.config.AccountStartSessionOperatorAuthorizationConfiguration;
+import net.firedevops.firemud.accountservice.hostedterms.AccountHostedTermsService;
 import net.firedevops.firemud.accountservice.repository.AccountStartSessionOperatorAuthorizationRepository;
 import net.firedevops.firemud.accountservice.service.impl.StartSessionOperatorAuthorizationGrpcService;
+import net.firedevops.firemud.accountservice.service.session.AccountOperatorAuthorizationFingerprintKeyring.OwnerKeySource;
 import net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding;
 import net.firedevops.firemud.common.config.ServiceEndpointsProperties;
@@ -74,8 +75,12 @@ import org.jooq.impl.DSL;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.springframework.boot.convert.ApplicationConversionService;
+import org.springframework.context.annotation.AnnotationConfigApplicationContext;
+import org.springframework.core.env.MapPropertySource;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
 import org.springframework.test.util.ReflectionTestUtils;
+import org.springframework.transaction.PlatformTransactionManager;
 import org.testcontainers.containers.GenericContainer;
 import org.testcontainers.containers.Network;
 import org.testcontainers.containers.PostgreSQLContainer;
@@ -385,8 +390,6 @@ class AccountControlUiPositiveOwnerPostgresIntegrationTest {
       // Controlled test-only Game Session owner-attempt binding; no GS mutation workflow runs here.
       UUID ownerAttemptId = UUID.randomUUID();
       long ownerFence = 7L;
-      var operatorClock = Clock.systemUTC();
-
       String loggingSchema = "start_session_" + UUID.randomUUID().toString().replace("-", "");
       var loggingDataSource =
           new DriverManagerDataSource(
@@ -471,205 +474,236 @@ class AccountControlUiPositiveOwnerPostgresIntegrationTest {
           new AccountOperatorAuthorizationFingerprintKeyring.KeyMaterial(
               "test-operator-key", new SecretKeySpec(operatorFingerprintKey, "HmacSHA256"));
       Arrays.fill(operatorFingerprintKey, (byte) 0);
-      var fingerprintKeys =
-          new AccountOperatorAuthorizationFingerprintKeyring(
-              () ->
-                  new AccountOperatorAuthorizationFingerprintKeyring.Snapshot(
-                      fingerprintKey, List.of()),
-              operatorClock,
-              Duration.ofMinutes(2));
       custody("operator-response-envelope", "test-envelope-key", 53);
-      var dedicatedOperatorResponseCryptography =
-          new AccountResponseEnvelopeCryptography(
-              new AccountResponseEnvelopeKeyring(
-                  temporary.resolve("custody/operator-response-envelope").toString()),
-              operatorClock,
-              new SecureRandom());
       var operatorRepository = new AccountStartSessionOperatorAuthorizationRepository(f.dsl);
-      String gameSessionPeer = "spiffe://firemud/ns/control-ui-owner-proof/sa/game-session-service";
       String gameDesignPeer = "spiffe://firemud/ns/control-ui-owner-proof/sa/game-design-service";
-      var operatorAuthorization =
-          new AccountStartSessionOperatorAuthorizationService(
+      String gameSessionPeer = "spiffe://firemud/ns/control-ui-owner-proof/sa/game-session-service";
+      try (var operatorContext =
+          operatorAuthorizationContext(
               actors,
               operations,
               loggingTransport.accountClient(),
               operatorRepository,
-              fingerprintKeys,
-              dedicatedOperatorResponseCryptography,
+              () ->
+                  new AccountOperatorAuthorizationFingerprintKeyring.Snapshot(
+                      fingerprintKey, List.of()),
               f.terms,
               f.manager,
-              operatorClock,
-              new SecureRandom(),
-              AccountControlUiOwnerWorkflowPostgresIntegrationTest.CALLER,
-              gameSessionPeer,
-              Duration.ofMinutes(5),
-              Duration.ofMinutes(1));
+              temporary.resolve("custody/operator-response-envelope"))) {
+        var operatorAuthorization =
+            operatorContext.getBean(AccountStartSessionOperatorAuthorizationService.class);
+        var accountReceiver =
+            new StartSessionOperatorAuthorizationGrpcService(
+                operatorAuthorization, "control-ui-owner-proof");
+        try (var accountTransport =
+            inProcessAccountTransport(accountReceiver, "control-ui-owner-proof")) {
+          var issueRequest =
+              IssueHumanOperatorAuthorizationReferenceRequest.newBuilder()
+                  .setCanonicalPreAuthorizationTupleBytes(ByteString.copyFrom(tupleBytes))
+                  .setControlUiJwt(compact)
+                  .setReservationOwnerId(claimEvidence.reservationOwnerId().toString())
+                  .setReservationClaimFence(claimEvidence.reservationClaimFence())
+                  .setCurrentClaimOwnerId(claimEvidence.currentClaimOwnerId().toString())
+                  .setCurrentClaimFence(claimEvidence.currentClaimFence())
+                  .build();
 
-      var accountReceiver =
-          new StartSessionOperatorAuthorizationGrpcService(
-              operatorAuthorization, "control-ui-owner-proof");
-      try (var accountTransport =
-          inProcessAccountTransport(accountReceiver, "control-ui-owner-proof")) {
-        var issueRequest =
-            IssueHumanOperatorAuthorizationReferenceRequest.newBuilder()
-                .setCanonicalPreAuthorizationTupleBytes(ByteString.copyFrom(tupleBytes))
-                .setControlUiJwt(compact)
-                .setReservationOwnerId(claimEvidence.reservationOwnerId().toString())
-                .setReservationClaimFence(claimEvidence.reservationClaimFence())
-                .setCurrentClaimOwnerId(claimEvidence.currentClaimOwnerId().toString())
-                .setCurrentClaimFence(claimEvidence.currentClaimFence())
-                .build();
+          assertThatThrownBy(
+                  () ->
+                      accountTransport
+                          .gameDesign()
+                          .issueHumanOperatorAuthorizationReference(issueRequest))
+              .isInstanceOf(StatusRuntimeException.class)
+              .extracting(failure -> ((StatusRuntimeException) failure).getStatus().getCode())
+              .isEqualTo(Status.Code.PERMISSION_DENIED);
+          assertThat(
+                  f.tx(
+                      () ->
+                          operatorRepository.findByControlPlaneRequestId(
+                              tuple.controlPlaneRequestId())))
+              .isEmpty();
 
-        assertThatThrownBy(
-                () ->
-                    accountTransport
-                        .gameDesign()
-                        .issueHumanOperatorAuthorizationReference(issueRequest))
-            .isInstanceOf(StatusRuntimeException.class)
-            .extracting(failure -> ((StatusRuntimeException) failure).getStatus().getCode())
-            .isEqualTo(Status.Code.PERMISSION_DENIED);
-        assertThat(
-                f.tx(
-                    () ->
-                        operatorRepository.findByControlPlaneRequestId(
-                            tuple.controlPlaneRequestId())))
-            .isEmpty();
+          var issuedOperator =
+              accountTransport.logging().issueHumanOperatorAuthorizationReference(issueRequest);
+          assertThat(issuedOperator.getAuthenticatedLoggingWorkloadIdentity())
+              .isEqualTo(AccountControlUiOwnerWorkflowPostgresIntegrationTest.CALLER);
+          var recoverRequest =
+              RecoverOperatorAuthorizationReferenceRequest.newBuilder()
+                  .setCanonicalPreAuthorizationTupleBytes(ByteString.copyFrom(tupleBytes))
+                  .setReservationOwnerId(claimEvidence.reservationOwnerId().toString())
+                  .setReservationClaimFence(claimEvidence.reservationClaimFence())
+                  .setCurrentClaimOwnerId(claimEvidence.currentClaimOwnerId().toString())
+                  .setCurrentClaimFence(claimEvidence.currentClaimFence())
+                  .build();
+          var recoveredOperator =
+              accountTransport.logging().recoverOperatorAuthorizationReference(recoverRequest);
+          assertThat(recoveredOperator.getOperatorAuthorizationReference())
+              .isEqualTo(issuedOperator.getOperatorAuthorizationReference());
+          assertThat(recoveredOperator.getAuthorizationReferenceFingerprint())
+              .isEqualTo(issuedOperator.getAuthorizationReferenceFingerprint());
+          assertThat(recoveredOperator.getExpiresAt()).isEqualTo(issuedOperator.getExpiresAt());
+          assertThat(recoveredOperator.getAuthorityEvidenceBundle())
+              .isEqualTo(issuedOperator.getAuthorityEvidenceBundle());
+          assertThat(recoveredOperator.getBundleReference())
+              .isEqualTo(issuedOperator.getBundleReference());
+          assertThat(recoveredOperator.getAuthenticatedLoggingWorkloadIdentity())
+              .isEqualTo(issuedOperator.getAuthenticatedLoggingWorkloadIdentity());
 
-        var issuedOperator =
-            accountTransport.logging().issueHumanOperatorAuthorizationReference(issueRequest);
-        assertThat(issuedOperator.getAuthenticatedLoggingWorkloadIdentity())
-            .isEqualTo(AccountControlUiOwnerWorkflowPostgresIntegrationTest.CALLER);
-        var recoverRequest =
-            RecoverOperatorAuthorizationReferenceRequest.newBuilder()
-                .setCanonicalPreAuthorizationTupleBytes(ByteString.copyFrom(tupleBytes))
-                .setReservationOwnerId(claimEvidence.reservationOwnerId().toString())
-                .setReservationClaimFence(claimEvidence.reservationClaimFence())
-                .setCurrentClaimOwnerId(claimEvidence.currentClaimOwnerId().toString())
-                .setCurrentClaimFence(claimEvidence.currentClaimFence())
-                .build();
-        var recoveredOperator =
-            accountTransport.logging().recoverOperatorAuthorizationReference(recoverRequest);
-        assertThat(recoveredOperator.getOperatorAuthorizationReference())
-            .isEqualTo(issuedOperator.getOperatorAuthorizationReference());
-        assertThat(recoveredOperator.getAuthorizationReferenceFingerprint())
-            .isEqualTo(issuedOperator.getAuthorizationReferenceFingerprint());
-        assertThat(recoveredOperator.getExpiresAt()).isEqualTo(issuedOperator.getExpiresAt());
-        assertThat(recoveredOperator.getAuthorityEvidenceBundle())
-            .isEqualTo(issuedOperator.getAuthorityEvidenceBundle());
-        assertThat(recoveredOperator.getBundleReference())
-            .isEqualTo(issuedOperator.getBundleReference());
-        assertThat(recoveredOperator.getAuthenticatedLoggingWorkloadIdentity())
-            .isEqualTo(issuedOperator.getAuthenticatedLoggingWorkloadIdentity());
+          var issuedBundle =
+              AccountStartSessionOperatorAuthorityBundle.decode(
+                  issuedOperator.getAuthorityEvidenceBundle().toByteArray());
+          assertThat(issuedBundle.jsonValue()).containsEntry("issuanceKind", "human_operator");
+          assertThat(issuedBundle.jsonValue().get("issuanceEvidence"))
+              .isInstanceOf(java.util.Map.class);
+          var humanEvidence =
+              (java.util.Map<?, ?>) issuedBundle.jsonValue().get("issuanceEvidence");
+          assertThat(humanEvidence.get("evidenceType")).isEqualTo("HumanAuthorityEvidence/v1");
+          assertThat(humanEvidence.get("role")).isEqualTo("tenantAdmin");
+          assertThat(humanEvidence.containsKey("assurance")).isFalse();
 
-        var issuedBundle =
-            AccountStartSessionOperatorAuthorityBundle.decode(
-                issuedOperator.getAuthorityEvidenceBundle().toByteArray());
-        assertThat(issuedBundle.jsonValue()).containsEntry("issuanceKind", "human_operator");
-        assertThat(issuedBundle.jsonValue().get("issuanceEvidence"))
-            .isInstanceOf(java.util.Map.class);
-        var humanEvidence = (java.util.Map<?, ?>) issuedBundle.jsonValue().get("issuanceEvidence");
-        assertThat(humanEvidence.get("evidenceType")).isEqualTo("HumanAuthorityEvidence/v1");
-        assertThat(humanEvidence.get("role")).isEqualTo("tenantAdmin");
-        assertThat(humanEvidence.containsKey("assurance")).isFalse();
+          var redeemRequest =
+              RedeemOperatorAuthorizationRequest.newBuilder()
+                  .setCanonicalPreAuthorizationTupleBytes(ByteString.copyFrom(tupleBytes))
+                  .setOperatorAuthorizationReference(
+                      issuedOperator.getOperatorAuthorizationReference())
+                  .setAuthorizationReferenceFingerprint(
+                      issuedOperator.getAuthorizationReferenceFingerprint())
+                  .setReservationOwnerId(claimEvidence.reservationOwnerId().toString())
+                  .setReservationClaimFence(claimEvidence.reservationClaimFence())
+                  .setOwnerAttemptId(ownerAttemptId.toString())
+                  .setOwnerFence(ownerFence)
+                  .build();
+          var redeemed = accountTransport.gameSession().redeemOperatorAuthorization(redeemRequest);
+          assertThat(redeemed.getReplay()).isFalse();
+          assertThat(redeemed.getAuthorizationReferenceFingerprint())
+              .isEqualTo(issuedOperator.getAuthorizationReferenceFingerprint());
+          assertThat(redeemed.getAuthorityEvidenceBundle())
+              .isEqualTo(issuedOperator.getAuthorityEvidenceBundle());
 
-        var redeemRequest =
-            RedeemOperatorAuthorizationRequest.newBuilder()
-                .setCanonicalPreAuthorizationTupleBytes(ByteString.copyFrom(tupleBytes))
-                .setOperatorAuthorizationReference(
-                    issuedOperator.getOperatorAuthorizationReference())
-                .setAuthorizationReferenceFingerprint(
-                    issuedOperator.getAuthorizationReferenceFingerprint())
-                .setReservationOwnerId(claimEvidence.reservationOwnerId().toString())
-                .setReservationClaimFence(claimEvidence.reservationClaimFence())
-                .setOwnerAttemptId(ownerAttemptId.toString())
-                .setOwnerFence(ownerFence)
-                .build();
-        var redeemed = accountTransport.gameSession().redeemOperatorAuthorization(redeemRequest);
-        assertThat(redeemed.getReplay()).isFalse();
-        assertThat(redeemed.getAuthorizationReferenceFingerprint())
-            .isEqualTo(issuedOperator.getAuthorizationReferenceFingerprint());
-        assertThat(redeemed.getAuthorityEvidenceBundle())
-            .isEqualTo(issuedOperator.getAuthorityEvidenceBundle());
+          var projectionRequest =
+              ReadRedeemedOperationProjectionRequest.newBuilder()
+                  .setCanonicalPreAuthorizationTupleBytes(ByteString.copyFrom(tupleBytes))
+                  .setAuthorizationReferenceFingerprint(
+                      issuedOperator.getAuthorizationReferenceFingerprint())
+                  .setReservationOwnerId(claimEvidence.reservationOwnerId().toString())
+                  .setReservationClaimFence(claimEvidence.reservationClaimFence())
+                  .setOwnerAttemptId(ownerAttemptId.toString())
+                  .setOwnerFence(ownerFence)
+                  .build();
+          var projection =
+              accountTransport.gameDesign().readRedeemedOperationProjection(projectionRequest);
+          var exactRetry =
+              accountTransport.gameDesign().readRedeemedOperationProjection(projectionRequest);
 
-        var projectionRequest =
-            ReadRedeemedOperationProjectionRequest.newBuilder()
-                .setCanonicalPreAuthorizationTupleBytes(ByteString.copyFrom(tupleBytes))
-                .setAuthorizationReferenceFingerprint(
-                    issuedOperator.getAuthorizationReferenceFingerprint())
-                .setReservationOwnerId(claimEvidence.reservationOwnerId().toString())
-                .setReservationClaimFence(claimEvidence.reservationClaimFence())
-                .setOwnerAttemptId(ownerAttemptId.toString())
-                .setOwnerFence(ownerFence)
-                .build();
-        var projection =
-            accountTransport.gameDesign().readRedeemedOperationProjection(projectionRequest);
-        var exactRetry =
-            accountTransport.gameDesign().readRedeemedOperationProjection(projectionRequest);
+          var changedAction =
+              new StartSessionOperatorAction(
+                  startSessionAction.actionFamilySchemaId(),
+                  startSessionAction.actionFamilySchemaVersion(),
+                  startSessionAction.scope(),
+                  new StartSessionOperatorAction.Target(
+                      startSessionAction.target().gameTemplateId() + 1L,
+                      startSessionAction.target().ownerAccountId()),
+                  startSessionAction.expectedVersion(),
+                  startSessionAction.mutation(),
+                  "test-only changed StartSession operation");
+          var changedTuple =
+              StartSessionPreAuthorizationReservationTuple.createHuman(
+                  tuple.controlPlaneRequestId(), tuple.actor().accountId(), changedAction);
+          var wrongOperationRead =
+              projectionRequest.toBuilder()
+                  .setCanonicalPreAuthorizationTupleBytes(
+                      ByteString.copyFrom(
+                          changedTuple.canonicalJson().getBytes(StandardCharsets.UTF_8)))
+                  .build();
+          assertThatThrownBy(
+                  () ->
+                      accountTransport
+                          .gameDesign()
+                          .readRedeemedOperationProjection(wrongOperationRead))
+              .isInstanceOf(StatusRuntimeException.class)
+              .extracting(failure -> ((StatusRuntimeException) failure).getStatus().getCode())
+              .isEqualTo(Status.Code.FAILED_PRECONDITION);
 
-        var changedAction =
-            new StartSessionOperatorAction(
-                startSessionAction.actionFamilySchemaId(),
-                startSessionAction.actionFamilySchemaVersion(),
-                startSessionAction.scope(),
-                new StartSessionOperatorAction.Target(
-                    startSessionAction.target().gameTemplateId() + 1L,
-                    startSessionAction.target().ownerAccountId()),
-                startSessionAction.expectedVersion(),
-                startSessionAction.mutation(),
-                "test-only changed StartSession operation");
-        var changedTuple =
-            StartSessionPreAuthorizationReservationTuple.createHuman(
-                tuple.controlPlaneRequestId(), tuple.actor().accountId(), changedAction);
-        var wrongOperationRead =
-            projectionRequest.toBuilder()
-                .setCanonicalPreAuthorizationTupleBytes(
-                    ByteString.copyFrom(
-                        changedTuple.canonicalJson().getBytes(StandardCharsets.UTF_8)))
-                .build();
-        assertThatThrownBy(
-                () ->
-                    accountTransport
-                        .gameDesign()
-                        .readRedeemedOperationProjection(wrongOperationRead))
-            .isInstanceOf(StatusRuntimeException.class)
-            .extracting(failure -> ((StatusRuntimeException) failure).getStatus().getCode())
-            .isEqualTo(Status.Code.FAILED_PRECONDITION);
+          var storedAfterDeniedRead =
+              f.tx(
+                  () ->
+                      operatorRepository
+                          .findByControlPlaneRequestId(tuple.controlPlaneRequestId())
+                          .orElseThrow());
+          assertThat(storedAfterDeniedRead.status())
+              .isEqualTo(AccountStartSessionOperatorAuthorizationRepository.Status.REDEEMED);
+          assertThat(storedAfterDeniedRead.redemptionRedeemerWorkloadUri())
+              .isEqualTo(gameSessionPeer);
+          assertThat(storedAfterDeniedRead.redemptionOwnerAttemptId()).isEqualTo(ownerAttemptId);
+          assertThat(storedAfterDeniedRead.redemptionOwnerFence()).isEqualTo(ownerFence);
+          assertThat(storedAfterDeniedRead.redemptionAuthorityEvidenceBundle())
+              .isEqualTo(issuedOperator.getAuthorityEvidenceBundle().toByteArray());
 
-        var storedAfterDeniedRead =
-            f.tx(
-                () ->
-                    operatorRepository
-                        .findByControlPlaneRequestId(tuple.controlPlaneRequestId())
-                        .orElseThrow());
-        assertThat(storedAfterDeniedRead.status())
-            .isEqualTo(AccountStartSessionOperatorAuthorizationRepository.Status.REDEEMED);
-        assertThat(storedAfterDeniedRead.redemptionRedeemerWorkloadUri())
-            .isEqualTo(gameSessionPeer);
-        assertThat(storedAfterDeniedRead.redemptionOwnerAttemptId()).isEqualTo(ownerAttemptId);
-        assertThat(storedAfterDeniedRead.redemptionOwnerFence()).isEqualTo(ownerFence);
-        assertThat(storedAfterDeniedRead.redemptionAuthorityEvidenceBundle())
-            .isEqualTo(issuedOperator.getAuthorityEvidenceBundle().toByteArray());
-
-        assertThat(projection.getControlPlaneRequestId()).isEqualTo(tuple.controlPlaneRequestId());
-        assertThat(projection.getCanonicalPreAuthorizationTupleBytes().toByteArray())
-            .isEqualTo(tupleBytes);
-        assertThat(projection.getMutationDigest()).isEqualTo(tuple.mutationDigest());
-        assertThat(projection.getAuthorizationReferenceFingerprint())
-            .isEqualTo(issuedOperator.getAuthorizationReferenceFingerprint());
-        assertThat(projection.getAuthenticatedRedeemerWorkloadIdentity())
-            .isEqualTo(gameSessionPeer);
-        assertThat(projection.getOwnerAttemptId()).isEqualTo(ownerAttemptId.toString());
-        assertThat(projection.getOwnerFence()).isEqualTo(ownerFence);
-        assertThat(projection.getReferenceExpiresAt()).isEqualTo(issuedOperator.getExpiresAt());
-        assertThat(projection.getIssuanceOperationId())
-            .isEqualTo(redeemed.getIssuanceOperationId());
-        assertThat(projection.getIssuanceFence()).isEqualTo(redeemed.getIssuanceFence());
-        assertThat(projection.getBundleReference()).isEqualTo(issuedOperator.getBundleReference());
-        assertThat(projection.getAuthorityEvidenceBundle())
-            .isEqualTo(issuedOperator.getAuthorityEvidenceBundle());
-        assertThat(exactRetry).isEqualTo(projection);
+          assertThat(projection.getControlPlaneRequestId())
+              .isEqualTo(tuple.controlPlaneRequestId());
+          assertThat(projection.getCanonicalPreAuthorizationTupleBytes().toByteArray())
+              .isEqualTo(tupleBytes);
+          assertThat(projection.getMutationDigest()).isEqualTo(tuple.mutationDigest());
+          assertThat(projection.getAuthorizationReferenceFingerprint())
+              .isEqualTo(issuedOperator.getAuthorizationReferenceFingerprint());
+          assertThat(projection.getAuthenticatedRedeemerWorkloadIdentity())
+              .isEqualTo(gameSessionPeer);
+          assertThat(projection.getOwnerAttemptId()).isEqualTo(ownerAttemptId.toString());
+          assertThat(projection.getOwnerFence()).isEqualTo(ownerFence);
+          assertThat(projection.getReferenceExpiresAt()).isEqualTo(issuedOperator.getExpiresAt());
+          assertThat(projection.getIssuanceOperationId())
+              .isEqualTo(redeemed.getIssuanceOperationId());
+          assertThat(projection.getIssuanceFence()).isEqualTo(redeemed.getIssuanceFence());
+          assertThat(projection.getBundleReference())
+              .isEqualTo(issuedOperator.getBundleReference());
+          assertThat(projection.getAuthorityEvidenceBundle())
+              .isEqualTo(issuedOperator.getAuthorityEvidenceBundle());
+          assertThat(exactRetry).isEqualTo(projection);
+        }
       }
     }
+  }
+
+  private AnnotationConfigApplicationContext operatorAuthorizationContext(
+      AccountControlUiActorService actors,
+      AccountControlUiIssuanceRepository issuanceOperations,
+      StartSessionReservationEvidenceClient reservationEvidence,
+      AccountStartSessionOperatorAuthorizationRepository repository,
+      OwnerKeySource ownerKeySource,
+      AccountHostedTermsService hostedTerms,
+      PlatformTransactionManager transactions,
+      Path operatorEnvelopeMount) {
+    var context = new AnnotationConfigApplicationContext();
+    context.getBeanFactory().setConversionService(ApplicationConversionService.getSharedInstance());
+    context
+        .getEnvironment()
+        .getPropertySources()
+        .addFirst(
+            new MapPropertySource(
+                "positive-owner-test-operator-authorization",
+                Map.of(
+                    "firemud.account.start-session-operator-authorization.enabled",
+                    "true",
+                    "firemud.grpc.workload-namespace",
+                    "control-ui-owner-proof",
+                    "firemud.account.start-session-operator-authorization.fingerprint-post-expiry-retention",
+                    "PT2M",
+                    "firemud.account.start-session-operator-authorization.response-envelope.keyring-path",
+                    operatorEnvelopeMount.toAbsolutePath().toString(),
+                    "firemud.account.start-session-operator-authorization.reference-lifetime",
+                    "PT5M",
+                    "firemud.account.start-session-operator-authorization.response-recovery-window",
+                    "PT1M")));
+    context.registerBean(AccountControlUiActorService.class, () -> actors);
+    context.registerBean(AccountControlUiIssuanceRepository.class, () -> issuanceOperations);
+    context.registerBean(StartSessionReservationEvidenceClient.class, () -> reservationEvidence);
+    context.registerBean(
+        AccountStartSessionOperatorAuthorizationRepository.class, () -> repository);
+    context.registerBean(OwnerKeySource.class, () -> ownerKeySource);
+    context.registerBean(AccountHostedTermsService.class, () -> hostedTerms);
+    context.registerBean(PlatformTransactionManager.class, () -> transactions);
+    context.register(AccountStartSessionOperatorAuthorizationConfiguration.class);
+    context.refresh();
+    return context;
   }
 
   private static DraftAuthorizationFenceBinding originalBinding(

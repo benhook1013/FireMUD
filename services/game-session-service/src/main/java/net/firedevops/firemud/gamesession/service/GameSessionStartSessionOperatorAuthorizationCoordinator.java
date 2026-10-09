@@ -20,7 +20,8 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
 import org.springframework.transaction.support.TransactionTemplate;
 
 /**
- * Unregistered, non-activating composition of the durable owner attempt and Account redemption.
+ * Disabled-by-default, non-activating composition of the durable owner attempt and Account
+ * redemption.
  *
  * <p>It commits the exact owner claim before making the one Account call. Exact retries only return
  * the existing snapshot; an ambiguous Account transport outcome remains pending and is never

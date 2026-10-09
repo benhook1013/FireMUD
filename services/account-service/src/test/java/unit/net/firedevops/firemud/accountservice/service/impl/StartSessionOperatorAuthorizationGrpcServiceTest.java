@@ -13,6 +13,8 @@ import com.google.protobuf.UnknownFieldSet;
 import io.grpc.Context;
 import io.grpc.Status;
 import io.grpc.stub.StreamObserver;
+import java.io.IOException;
+import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.util.List;
@@ -42,6 +44,8 @@ import net.firedevops.firemud.common.security.SessionContext;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
+import org.springframework.core.io.FileSystemResource;
+import org.springframework.util.StreamUtils;
 
 class StartSessionOperatorAuthorizationGrpcServiceTest {
   private static final String NAMESPACE = "test";
@@ -75,7 +79,7 @@ class StartSessionOperatorAuthorizationGrpcServiceTest {
   }
 
   @Test
-  void grpcRegistrationIsExplicitlyOptIn() {
+  void grpcRegistrationIsExplicitlyOptIn() throws IOException {
     ConditionalOnProperty condition =
         StartSessionOperatorAuthorizationGrpcService.class.getAnnotation(
             ConditionalOnProperty.class);
@@ -86,6 +90,16 @@ class StartSessionOperatorAuthorizationGrpcServiceTest {
     assertThat(condition.name()).containsExactly("enabled");
     assertThat(condition.havingValue()).isEqualTo("true");
     assertThat(condition.matchIfMissing()).isFalse();
+
+    try (InputStream input =
+        new FileSystemResource("src/main/resources/application.yml").getInputStream()) {
+      String applicationConfiguration = StreamUtils.copyToString(input, StandardCharsets.UTF_8);
+      assertThat(applicationConfiguration)
+          .contains(
+              "start-session-operator-authorization:\n"
+                  + "      enabled: "
+                  + "${FIREMUD_ACCOUNT_START_SESSION_OPERATOR_AUTHORIZATION_ENABLED:false}");
+    }
   }
 
   @Test

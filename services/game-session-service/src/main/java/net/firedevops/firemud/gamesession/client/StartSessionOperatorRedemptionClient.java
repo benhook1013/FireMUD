@@ -26,11 +26,12 @@ import net.firedevops.firemud.gamesession.repository.GameSessionStartSessionOper
 import net.firedevops.firemud.gamesession.repository.GameSessionStartSessionOperatorAttemptRepository.AttemptClaim;
 
 /**
- * Explicitly initialized, typed Game Session client for Account's StartSession redemption RPC.
+ * Typed Game Session client for Account's StartSession redemption RPC, registered only by the
+ * disabled-by-default owner authorization configuration.
  *
- * <p>This is an unregistered transport boundary: it does not acquire claims, retry ambiguous
- * redemption, issue references, dispatch a mutation, or transition an owner attempt to a terminal
- * result. The raw reference exists only in the bounded in-flight request object.
+ * <p>This transport does not acquire claims, retry ambiguous redemption, issue references, dispatch
+ * a mutation, or transition an owner attempt to a terminal result. The raw reference exists only in
+ * the bounded in-flight request object.
  */
 public class StartSessionOperatorRedemptionClient
     extends AbstractReloadingBlockingGrpcClient<

@@ -6,17 +6,22 @@ import static org.assertj.core.api.Assertions.catchThrowable;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.google.protobuf.ByteString;
 import com.google.protobuf.Timestamp;
 import com.google.protobuf.UnknownFieldSet;
+import io.grpc.CallCredentials;
+import io.grpc.ClientInterceptor;
 import io.grpc.ManagedChannel;
 import io.grpc.Status;
 import io.grpc.StatusRuntimeException;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.ZoneOffset;
@@ -35,14 +40,20 @@ import net.firedevops.firemud.common.config.ServiceEndpointsProperties;
 import net.firedevops.firemud.common.grpc.BlockingGrpcStubCustomizer;
 import net.firedevops.firemud.common.grpc.CommonGrpcClientProperties;
 import net.firedevops.firemud.common.grpc.GrpcChannelFactory;
+import net.firedevops.firemud.common.grpc.GrpcServerPeerIdentityCallCredentials;
+import net.firedevops.firemud.common.grpc.GrpcServerPeerIdentityClientInterceptor;
 import net.firedevops.firemud.common.json.Rfc8785CanonicalJson;
 import net.firedevops.firemud.common.operator.StartSessionAuthorityEvidenceBundle;
 import net.firedevops.firemud.common.operator.StartSessionOperatorAction;
 import net.firedevops.firemud.common.operator.StartSessionPreAuthorizationReservationTuple;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
+import org.mockito.ArgumentCaptor;
 import tools.jackson.databind.json.JsonMapper;
 
 class StartSessionOperatorAuthorizationClientTest {
+  @TempDir private Path tlsDirectory;
+
   private static final UUID TENANT_ID = UUID.fromString("9f8f06b4-36e5-4d11-9c2a-5adfd7f41531");
   private static final UUID ACTOR_ID = UUID.fromString("a4f5f4eb-8243-4d42-903a-33495456a622");
   private static final UUID OWNER_ACCOUNT_ID =
@@ -77,7 +88,7 @@ class StartSessionOperatorAuthorizationClientTest {
     when(stub.recoverOperatorAuthorizationReference(any()))
         .thenReturn(recoverResponse(tuple, NOW.plusSeconds(300), bundle));
 
-    try (TestClient client = new TestClient(stub)) {
+    try (TestClient client = new TestClient(stub, fileBackedTlsProperties())) {
       StartSessionOperatorAuthorizationClient.AuthorizationReference issued =
           client.issueHuman(tuple, CONTROL_UI_TOKEN, RESERVATION_OWNER, 9L, CLAIM_OWNER, 11L);
       StartSessionOperatorAuthorizationClient.AuthorizationReference recovered =
@@ -128,6 +139,25 @@ class StartSessionOperatorAuthorizationClientTest {
       assertThat(recoverCaptor.getValue().getCurrentClaimOwnerId())
           .isEqualTo(CLAIM_OWNER.toString());
       assertThat(recoverCaptor.getValue().getCurrentClaimFence()).isEqualTo(12L);
+
+      var credentialsCaptor = ArgumentCaptor.forClass(CallCredentials.class);
+      verify(stub, times(2)).withCallCredentials(credentialsCaptor.capture());
+      assertThat(credentialsCaptor.getAllValues())
+          .allSatisfy(
+              credentials ->
+                  assertThat(credentials)
+                      .isInstanceOf(GrpcServerPeerIdentityCallCredentials.class));
+      var interceptorCaptor = ArgumentCaptor.forClass(ClientInterceptor[].class);
+      verify(stub, times(2)).withInterceptors(interceptorCaptor.capture());
+      assertThat(interceptorCaptor.getAllValues())
+          .allSatisfy(
+              interceptors -> {
+                assertThat(interceptors).hasSize(1);
+                assertThat(interceptors[0])
+                    .isInstanceOf(GrpcServerPeerIdentityClientInterceptor.class);
+              });
+      assertThat(StartSessionOperatorAuthorizationClient.accountServerUri("world-runtime"))
+          .isEqualTo("spiffe://firemud/ns/world-runtime/sa/account-service");
     }
   }
 
@@ -143,7 +173,7 @@ class StartSessionOperatorAuthorizationClientTest {
     when(stub.issueHumanOperatorAuthorizationReference(any()))
         .thenReturn(issueResponse(tuple, NOW.plusSeconds(300), bundle));
 
-    try (TestClient client = new TestClient(stub)) {
+    try (TestClient client = new TestClient(stub, fileBackedTlsProperties())) {
       assertThat(client.accountTarget()).isEqualTo("account-service.operator.svc:6565");
       client.issueHuman(tuple, CONTROL_UI_TOKEN, RESERVATION_OWNER, 9L, CLAIM_OWNER, 11L);
       verify(stub).issueHumanOperatorAuthorizationReference(any());
@@ -236,7 +266,7 @@ class StartSessionOperatorAuthorizationClientTest {
     when(stub.withDeadlineAfter(5L, TimeUnit.SECONDS)).thenReturn(stub);
     StartSessionPreAuthorizationReservationTuple tuple = tuple("client-invalid-request");
 
-    try (TestClient client = new TestClient(stub)) {
+    try (TestClient client = new TestClient(stub, fileBackedTlsProperties())) {
       assertThatThrownBy(
               () ->
                   client.issueHuman(
@@ -253,6 +283,43 @@ class StartSessionOperatorAuthorizationClientTest {
   }
 
   @Test
+  void refusesIssueAndRecoverWithoutReadableFileBackedMtlsBeforeCallingAccount() throws Exception {
+    var stub =
+        mock(
+            StartSessionOperatorAuthorizationServiceGrpc
+                .StartSessionOperatorAuthorizationServiceBlockingStub.class);
+    when(stub.withDeadlineAfter(5L, TimeUnit.SECONDS)).thenReturn(stub);
+    StartSessionPreAuthorizationReservationTuple tuple = tuple("client-missing-mtls");
+
+    CommonGrpcClientProperties plaintext = new CommonGrpcClientProperties();
+    plaintext.setPlaintext(true);
+    CommonGrpcClientProperties missing = new CommonGrpcClientProperties();
+    CommonGrpcClientProperties classpath = new CommonGrpcClientProperties();
+    classpath.setCertChain("classpath:application.yml");
+    classpath.setPrivateKey("classpath:application.yml");
+    classpath.setCaCert("classpath:application.yml");
+    CommonGrpcClientProperties directoryInsteadOfCertificate = fileBackedTlsProperties();
+    directoryInsteadOfCertificate.setCertChain(tlsDirectory.toString());
+    CommonGrpcClientProperties incomplete = fileBackedTlsProperties();
+    incomplete.setCaCert(null);
+
+    for (CommonGrpcClientProperties invalidTls :
+        List.of(plaintext, missing, classpath, directoryInsteadOfCertificate, incomplete)) {
+      try (TestClient client = new TestClient(stub, invalidTls)) {
+        assertThatThrownBy(
+                () ->
+                    client.issueHuman(
+                        tuple, CONTROL_UI_TOKEN, RESERVATION_OWNER, 9L, CLAIM_OWNER, 11L))
+            .isInstanceOf(IllegalStateException.class);
+        assertThatThrownBy(() -> client.recover(tuple, RESERVATION_OWNER, 9L, CLAIM_OWNER, 11L))
+            .isInstanceOf(IllegalStateException.class);
+      }
+    }
+    verify(stub, never()).issueHumanOperatorAuthorizationReference(any());
+    verify(stub, never()).recoverOperatorAuthorizationReference(any());
+  }
+
+  @Test
   void unavailableAccountResponseRemainsUnavailableWithoutCreatingFallback() throws Exception {
     var stub =
         mock(
@@ -263,7 +330,7 @@ class StartSessionOperatorAuthorizationClientTest {
         .thenThrow(Status.UNAVAILABLE.withDescription("account unavailable").asRuntimeException());
     StartSessionPreAuthorizationReservationTuple tuple = tuple("client-unavailable");
 
-    try (TestClient client = new TestClient(stub)) {
+    try (TestClient client = new TestClient(stub, fileBackedTlsProperties())) {
       Throwable failure =
           catchThrowable(
               () ->
@@ -275,7 +342,7 @@ class StartSessionOperatorAuthorizationClientTest {
     }
   }
 
-  private static void assertRejected(
+  private void assertRejected(
       StartSessionPreAuthorizationReservationTuple tuple,
       IssueHumanOperatorAuthorizationReferenceResponse response)
       throws Exception {
@@ -285,7 +352,7 @@ class StartSessionOperatorAuthorizationClientTest {
                 .StartSessionOperatorAuthorizationServiceBlockingStub.class);
     when(stub.withDeadlineAfter(5L, TimeUnit.SECONDS)).thenReturn(stub);
     when(stub.issueHumanOperatorAuthorizationReference(any())).thenReturn(response);
-    try (TestClient client = new TestClient(stub)) {
+    try (TestClient client = new TestClient(stub, fileBackedTlsProperties())) {
       assertThatThrownBy(
               () ->
                   client.issueHuman(
@@ -294,7 +361,7 @@ class StartSessionOperatorAuthorizationClientTest {
     }
   }
 
-  private static void assertRecoverRejected(
+  private void assertRecoverRejected(
       StartSessionPreAuthorizationReservationTuple tuple,
       RecoverOperatorAuthorizationReferenceResponse response)
       throws Exception {
@@ -304,7 +371,7 @@ class StartSessionOperatorAuthorizationClientTest {
                 .StartSessionOperatorAuthorizationServiceBlockingStub.class);
     when(stub.withDeadlineAfter(5L, TimeUnit.SECONDS)).thenReturn(stub);
     when(stub.recoverOperatorAuthorizationReference(any())).thenReturn(response);
-    try (TestClient client = new TestClient(stub)) {
+    try (TestClient client = new TestClient(stub, fileBackedTlsProperties())) {
       assertThatThrownBy(() -> client.recover(tuple, RESERVATION_OWNER, 9L, CLAIM_OWNER, 11L))
           .isInstanceOf(IllegalStateException.class);
     }
@@ -465,16 +532,29 @@ class StartSessionOperatorAuthorizationClientTest {
     private TestClient(
         StartSessionOperatorAuthorizationServiceGrpc
                 .StartSessionOperatorAuthorizationServiceBlockingStub
-            stub)
+            stub,
+        CommonGrpcClientProperties tlsProperties)
         throws Exception {
       super(
           endpoints(),
-          plaintextTlsProperties(),
+          tlsProperties,
           stubChannelFactory(),
           BlockingGrpcStubCustomizer.noop(),
           Clock.fixed(NOW, ZoneOffset.UTC));
       this.stub = stub;
-      initialize();
+      when(stub.withCallCredentials(any(CallCredentials.class))).thenReturn(stub);
+      when(stub.withInterceptors(any(ClientInterceptor[].class))).thenReturn(stub);
+      String reloadSetting = System.getProperty("firemud.grpc.tls-reload.enabled");
+      System.setProperty("firemud.grpc.tls-reload.enabled", "false");
+      try {
+        initialize();
+      } finally {
+        if (reloadSetting == null) {
+          System.clearProperty("firemud.grpc.tls-reload.enabled");
+        } else {
+          System.setProperty("firemud.grpc.tls-reload.enabled", reloadSetting);
+        }
+      }
     }
 
     @Override
@@ -495,9 +575,17 @@ class StartSessionOperatorAuthorizationClientTest {
     return endpoints;
   }
 
-  private static CommonGrpcClientProperties plaintextTlsProperties() {
+  private CommonGrpcClientProperties fileBackedTlsProperties() throws IOException {
+    Path certChain = tlsDirectory.resolve("client.crt");
+    Path privateKey = tlsDirectory.resolve("client.key");
+    Path caCert = tlsDirectory.resolve("ca.crt");
+    Files.writeString(certChain, "test-only certificate placeholder");
+    Files.writeString(privateKey, "test-only private-key placeholder");
+    Files.writeString(caCert, "test-only CA placeholder");
     CommonGrpcClientProperties properties = new CommonGrpcClientProperties();
-    properties.setPlaintext(true);
+    properties.setCertChain(certChain.toString());
+    properties.setPrivateKey(privateKey.toString());
+    properties.setCaCert(caCert.toString());
     return properties;
   }
 

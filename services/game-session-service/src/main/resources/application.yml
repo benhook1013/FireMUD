@@ -57,6 +57,9 @@ game:
   logic:
     default-room-id: "R-1021"
 firemud:
+  start-session-operator-authorization:
+    enabled: false
+    owner-claim-lease: ${FIREMUD_START_SESSION_OPERATOR_OWNER_CLAIM_LEASE:}
   gameplay:
     pointer-bootstrap:
       pointers:
