@@ -23,9 +23,15 @@ import net.firedevops.firemud.common.publication.WorldSelectedDraftPublicationFr
 import net.firedevops.firemud.common.publication.WorldSelectedDraftPublicationFreezeEvidence;
 import net.firedevops.firemud.common.publication.WorldSelectedDraftPublicationFreezeGrpcCodec;
 import net.firedevops.firemud.common.publication.WorldSelectedPublicationArtifactInventoryClient;
+import net.firedevops.firemud.common.tenant.AuthoredWorldSourceDigest;
+import net.firedevops.firemud.common.tenant.AuthoredWorldSourceEvidence;
+import net.firedevops.firemud.common.tenant.WorldAuthoredSourceIntakeClient;
+import net.firedevops.firemud.common.tenant.WorldAuthoredSourceIntakeGrpcCodec;
 import net.firedevops.firemud.common.world.WorldPublishedStartLocationEvidence;
 import net.firedevops.firemud.gamedesign.client.WorldPublishedStartLocationClient;
 import net.firedevops.firemud.gamedesign.draft.AuthoredDraftPublishSelection;
+import net.firedevops.firemud.gamedesign.repository.GameAuthoredWorldSourceDeliveryRepository;
+import net.firedevops.firemud.gamedesign.repository.GameAuthoredWorldSourceRepository;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.transaction.PlatformTransactionManager;
@@ -44,6 +50,28 @@ class SelectedDraftPublicationAdmissionServiceTest {
     var freeze = freezeClient(fixture);
     var inventory = inventoryClient(fixture);
     var world = mock(WorldPublishedStartLocationClient.class);
+    var sourceIntake = mock(WorldAuthoredSourceIntakeClient.class);
+    var sourceRepository = mock(GameAuthoredWorldSourceRepository.class);
+    var deliveryRepository = mock(GameAuthoredWorldSourceDeliveryRepository.class);
+    var sourceFixture = sourceFixture(fixture.worldRequest());
+    when(sourceIntake.readById(any()))
+        .thenAnswer(
+            invocation -> {
+              assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+              assertThat(TransactionSynchronizationManager.isSynchronizationActive()).isFalse();
+              return sourceReceipt(invocation.getArgument(0), sourceFixture);
+            });
+    when(sourceRepository.read(
+            sourceFixture.source().operationId(),
+            sourceFixture.source().canonicalTenantId(),
+            sourceFixture.source().worldSlug(),
+            NAMESPACE))
+        .thenReturn(Optional.of(sourceFixture.source()));
+    when(deliveryRepository.read(sourceFixture.source().operationId()))
+        .thenReturn(
+            Optional.of(
+                new GameAuthoredWorldSourceDeliveryRepository.DeliveryClaim(
+                    sourceFixture.source(), sourceFixture.intakeRequest(), Optional.empty())));
     var owner = mock(SelectedDraftPublicationOwner.class);
     var reader = mock(SelectedDraftPublicationAdmissionService.SelectionReader.class);
     var transactions = mock(PlatformTransactionManager.class);
@@ -78,20 +106,64 @@ class SelectedDraftPublicationAdmissionServiceTest {
                     Arrays.equals(
                         binding.canonicalBytes(), fixture.operation().account().canonicalBytes())),
             same(fixture.operation().world()),
-            same(fixture.operation().inventory())))
+            same(fixture.operation().inventory()),
+            any()))
         .thenReturn(reservation);
     var service =
         new SelectedDraftPublicationAdmissionService(
-            transactions, account, freeze, inventory, world, owner, reader, NAMESPACE);
+            transactions,
+            account,
+            freeze,
+            inventory,
+            world,
+            sourceIntake,
+            sourceRepository,
+            deliveryRepository,
+            owner,
+            reader,
+            NAMESPACE);
 
     assertThat(service.admitAndReserve(fixture.intent(), fixture.operation().account()))
         .isSameAs(reservation);
-    var order = inOrder(reader, account, freeze, inventory, world, transactions, owner);
+    var order =
+        inOrder(
+            reader,
+            account,
+            freeze,
+            inventory,
+            world,
+            sourceIntake,
+            sourceRepository,
+            deliveryRepository,
+            transactions,
+            owner);
     order.verify(reader).read(fixture.intent());
     order.verify(account).read(any());
     order.verify(freeze).begin(any());
     order.verify(inventory).read(any());
     order.verify(world).read(fixture.worldRequest());
+    order
+        .verify(sourceIntake)
+        .readById(
+            argThat(
+                request ->
+                    request.schemaVersion() == 1
+                        && request.targetNamespace().equals(NAMESPACE)
+                        && request
+                            .intakeRequestId()
+                            .equals(fixture.worldRequest().intakeRequestId())
+                        && request
+                            .canonicalTenantId()
+                            .equals(fixture.worldRequest().canonicalTenantId())
+                        && !request.readRequestId().equals(request.intakeRequestId())));
+    order
+        .verify(sourceRepository)
+        .read(
+            sourceFixture.source().operationId(),
+            sourceFixture.source().canonicalTenantId(),
+            sourceFixture.source().worldSlug(),
+            NAMESPACE);
+    order.verify(deliveryRepository).read(sourceFixture.source().operationId());
     order.verify(transactions).getTransaction(any());
     order
         .verify(owner)
@@ -102,7 +174,8 @@ class SelectedDraftPublicationAdmissionServiceTest {
                     Arrays.equals(
                         binding.canonicalBytes(), fixture.operation().account().canonicalBytes())),
             same(fixture.operation().world()),
-            same(fixture.operation().inventory()));
+            same(fixture.operation().inventory()),
+            any());
   }
 
   @Test
@@ -112,6 +185,9 @@ class SelectedDraftPublicationAdmissionServiceTest {
     var freeze = mock(WorldSelectedDraftPublicationFreezeClient.class);
     var inventory = mock(WorldSelectedPublicationArtifactInventoryClient.class);
     var world = mock(WorldPublishedStartLocationClient.class);
+    var sourceIntake = mock(WorldAuthoredSourceIntakeClient.class);
+    var sourceRepository = mock(GameAuthoredWorldSourceRepository.class);
+    var deliveryRepository = mock(GameAuthoredWorldSourceDeliveryRepository.class);
     var owner = mock(SelectedDraftPublicationOwner.class);
     var transactions = mock(PlatformTransactionManager.class);
     var service =
@@ -121,6 +197,9 @@ class SelectedDraftPublicationAdmissionServiceTest {
             freeze,
             inventory,
             world,
+            sourceIntake,
+            sourceRepository,
+            deliveryRepository,
             owner,
             intent -> Optional.empty(),
             NAMESPACE);
@@ -129,7 +208,96 @@ class SelectedDraftPublicationAdmissionServiceTest {
             () -> service.admitAndReserve(fixture.intent(), fixture.operation().account()))
         .isInstanceOf(IllegalStateException.class)
         .hasMessageContaining("SELECTION_UNAVAILABLE");
-    verifyNoInteractions(account, freeze, inventory, world, owner, transactions);
+    verifyNoInteractions(
+        account,
+        freeze,
+        inventory,
+        world,
+        sourceIntake,
+        sourceRepository,
+        deliveryRepository,
+        owner,
+        transactions);
+  }
+
+  @Test
+  void mismatchedRetainedDeliveryAcknowledgementDeniesBeforeReservation() throws Exception {
+    var fixture = fixture();
+    var account = mock(AccountPublicationAuthorizationReadClient.class);
+    when(account.read(any()))
+        .thenAnswer(
+            invocation -> {
+              var evidence = mock(AccountPublicationAuthorizationReadEvidence.class);
+              when(evidence.request()).thenReturn(invocation.getArgument(0));
+              return evidence;
+            });
+    var sourceFixture = sourceFixture(fixture.worldRequest());
+    var sourceIntake = mock(WorldAuthoredSourceIntakeClient.class);
+    when(sourceIntake.readById(any()))
+        .thenAnswer(invocation -> sourceReceipt(invocation.getArgument(0), sourceFixture));
+    var sourceRepository = mock(GameAuthoredWorldSourceRepository.class);
+    when(sourceRepository.read(
+            sourceFixture.source().operationId(),
+            sourceFixture.source().canonicalTenantId(),
+            sourceFixture.source().worldSlug(),
+            NAMESPACE))
+        .thenReturn(Optional.of(sourceFixture.source()));
+    var receipt =
+        sourceReceipt(
+            new WorldAuthoredSourceIntakeGrpcCodec.ByIdReadRequest(
+                1,
+                NAMESPACE,
+                UUID.randomUUID(),
+                fixture.worldRequest().intakeRequestId(),
+                fixture.worldRequest().canonicalTenantId()),
+            sourceFixture);
+    var wrongAcknowledgement =
+        new WorldAuthoredSourceIntakeGrpcCodec.CommittedReceipt(
+            receipt.schemaVersion(),
+            receipt.targetNamespace(),
+            receipt.intakeRequestId(),
+            receipt.operationId(),
+            receipt.canonicalTenantId(),
+            receipt.worldSlug(),
+            receipt.sourceOperationId(),
+            receipt.sourceEvidenceDigest(),
+            receipt.requestDigest(),
+            "sha256:" + "b".repeat(64));
+    var deliveryRepository = mock(GameAuthoredWorldSourceDeliveryRepository.class);
+    when(deliveryRepository.read(sourceFixture.source().operationId()))
+        .thenReturn(
+            Optional.of(
+                new GameAuthoredWorldSourceDeliveryRepository.DeliveryClaim(
+                    sourceFixture.source(),
+                    sourceFixture.intakeRequest(),
+                    Optional.of(wrongAcknowledgement))));
+    var world = mock(WorldPublishedStartLocationClient.class);
+    when(world.read(fixture.worldRequest())).thenReturn(fixture.operation().world());
+    var owner = mock(SelectedDraftPublicationOwner.class);
+    var transactions = mock(PlatformTransactionManager.class);
+    var service =
+        new SelectedDraftPublicationAdmissionService(
+            transactions,
+            account,
+            freezeClient(fixture),
+            inventoryClient(fixture),
+            world,
+            sourceIntake,
+            sourceRepository,
+            deliveryRepository,
+            owner,
+            intent ->
+                Optional.of(
+                    AuthoredDraftPublishSelection.fromStored(
+                        fixture.operation().account().input().selection().canonicalJson(),
+                        fixture.operation().account().input().selection().digest())),
+            NAMESPACE);
+
+    assertThatThrownBy(
+            () -> service.admitAndReserve(fixture.intent(), fixture.operation().account()))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("OWNER_READBACK_CONFLICT");
+    verifyNoInteractions(transactions, owner);
   }
 
   @Test
@@ -139,6 +307,9 @@ class SelectedDraftPublicationAdmissionServiceTest {
     var freeze = mock(WorldSelectedDraftPublicationFreezeClient.class);
     var inventory = mock(WorldSelectedPublicationArtifactInventoryClient.class);
     var world = mock(WorldPublishedStartLocationClient.class);
+    var sourceIntake = mock(WorldAuthoredSourceIntakeClient.class);
+    var sourceRepository = mock(GameAuthoredWorldSourceRepository.class);
+    var deliveryRepository = mock(GameAuthoredWorldSourceDeliveryRepository.class);
     var owner = mock(SelectedDraftPublicationOwner.class);
     var transactions = mock(PlatformTransactionManager.class);
     var selection = fixture.operation().account().input().selection();
@@ -149,6 +320,9 @@ class SelectedDraftPublicationAdmissionServiceTest {
             freeze,
             inventory,
             world,
+            sourceIntake,
+            sourceRepository,
+            deliveryRepository,
             owner,
             intent ->
                 Optional.of(
@@ -192,6 +366,9 @@ class SelectedDraftPublicationAdmissionServiceTest {
             });
     var inventory = mock(WorldSelectedPublicationArtifactInventoryClient.class);
     var world = mock(WorldPublishedStartLocationClient.class);
+    var sourceIntake = mock(WorldAuthoredSourceIntakeClient.class);
+    var sourceRepository = mock(GameAuthoredWorldSourceRepository.class);
+    var deliveryRepository = mock(GameAuthoredWorldSourceDeliveryRepository.class);
     var owner = mock(SelectedDraftPublicationOwner.class);
     var transactions = mock(PlatformTransactionManager.class);
     var selection = fixture.operation().account().input().selection();
@@ -202,6 +379,9 @@ class SelectedDraftPublicationAdmissionServiceTest {
             freezeClient(fixture),
             inventory,
             world,
+            sourceIntake,
+            sourceRepository,
+            deliveryRepository,
             owner,
             intent ->
                 Optional.of(
@@ -213,7 +393,8 @@ class SelectedDraftPublicationAdmissionServiceTest {
         .isInstanceOf(IllegalStateException.class)
         .hasMessageContaining("inventory readback");
     verify(inventory).read(any());
-    verifyNoInteractions(world, owner, transactions);
+    verifyNoInteractions(
+        world, sourceIntake, sourceRepository, deliveryRepository, owner, transactions);
   }
 
   @Test
@@ -337,6 +518,9 @@ class SelectedDraftPublicationAdmissionServiceTest {
         freezeClient(fixture),
         inventoryClient(fixture),
         worldClient,
+        mock(WorldAuthoredSourceIntakeClient.class),
+        mock(GameAuthoredWorldSourceRepository.class),
+        mock(GameAuthoredWorldSourceDeliveryRepository.class),
         owner,
         intent ->
             Optional.of(
@@ -385,6 +569,76 @@ class SelectedDraftPublicationAdmissionServiceTest {
     return client;
   }
 
+  private static SourceFixture sourceFixture(WorldPublishedStartLocationEvidence.Request selected) {
+    UUID registrationRequestId = UUID.randomUUID();
+    UUID sourceOperationId = UUID.randomUUID();
+    String tenantSlug = "fixture-tenant";
+    String worldSlug = "fixture-world";
+    String worldDisplayName = "Fixture World";
+    String requestDigest =
+        AuthoredWorldSourceDigest.requestDigest(
+            selected.targetNamespace(),
+            registrationRequestId,
+            selected.canonicalTenantId(),
+            tenantSlug,
+            worldSlug,
+            worldDisplayName);
+    var source =
+        new AuthoredWorldSourceEvidence(
+            1,
+            selected.targetNamespace(),
+            registrationRequestId,
+            sourceOperationId,
+            requestDigest,
+            selected.canonicalTenantId(),
+            tenantSlug,
+            worldSlug,
+            worldDisplayName,
+            42L,
+            "tenant-key",
+            "NEW_GAME_ROW",
+            AuthoredWorldSourceDigest.evidenceDigest(
+                selected.targetNamespace(),
+                registrationRequestId,
+                sourceOperationId,
+                requestDigest,
+                selected.canonicalTenantId(),
+                tenantSlug,
+                worldSlug,
+                worldDisplayName,
+                42L,
+                "tenant-key",
+                "NEW_GAME_ROW"));
+    var intakeRequest =
+        new WorldAuthoredSourceIntakeGrpcCodec.IntakeRequest(
+            1,
+            selected.targetNamespace(),
+            selected.intakeRequestId(),
+            selected.canonicalTenantId(),
+            source.worldSlug(),
+            source.operationId(),
+            source.evidenceDigest());
+    return new SourceFixture(source, intakeRequest);
+  }
+
+  private static WorldAuthoredSourceIntakeGrpcCodec.PublicReceipt sourceReceipt(
+      WorldAuthoredSourceIntakeGrpcCodec.ByIdReadRequest request, SourceFixture fixture) {
+    var source = fixture.source();
+    return new WorldAuthoredSourceIntakeGrpcCodec.PublicReceipt(
+        1,
+        request.targetNamespace(),
+        request.intakeRequestId(),
+        UUID.nameUUIDFromBytes(
+            "synthetic-world-operation".getBytes(java.nio.charset.StandardCharsets.UTF_8)),
+        request.canonicalTenantId(),
+        source.worldSlug(),
+        source.operationId(),
+        source.evidenceDigest(),
+        WorldAuthoredSourceIntakeGrpcCodec.requestDigest(fixture.intakeRequest()),
+        "sha256:" + "a".repeat(64),
+        source);
+  }
+
   private static Fixture fixture() throws Exception {
     var target =
         new TargetProof(
@@ -414,4 +668,8 @@ class SelectedDraftPublicationAdmissionServiceTest {
       GameDesignPublicationOperation operation,
       AuthoredDraftPublishSelection.PublishIntent intent,
       WorldPublishedStartLocationEvidence.Request worldRequest) {}
+
+  private record SourceFixture(
+      AuthoredWorldSourceEvidence source,
+      WorldAuthoredSourceIntakeGrpcCodec.IntakeRequest intakeRequest) {}
 }

@@ -14,11 +14,17 @@ import net.firedevops.firemud.common.publication.PublicationDigestRequestBinding
 import net.firedevops.firemud.common.publication.WorldSelectedDraftPublicationFreezeClient;
 import net.firedevops.firemud.common.publication.WorldSelectedDraftPublicationFreezeEvidence;
 import net.firedevops.firemud.common.publication.WorldSelectedPublicationArtifactInventoryClient;
+import net.firedevops.firemud.common.tenant.WorldAuthoredSourceIntakeClient;
+import net.firedevops.firemud.common.tenant.WorldAuthoredSourceIntakeGrpcCodec;
+import net.firedevops.firemud.common.tenant.WorldAuthoredSourceIntakeGrpcCodec.ByIdReadRequest;
+import net.firedevops.firemud.common.tenant.WorldAuthoredSourceIntakeGrpcCodec.CommittedReceipt;
 import net.firedevops.firemud.common.world.WorldPublishedStartLocationEvidence;
 import net.firedevops.firemud.gamedesign.client.WorldPublishedStartLocationClient;
 import net.firedevops.firemud.gamedesign.draft.AuthoredDraftPublishSelection;
 import net.firedevops.firemud.gamedesign.draft.AuthoredDraftPublishSelectionRepository;
 import net.firedevops.firemud.gamedesign.draft.DraftCommitCoordinatorRepository;
+import net.firedevops.firemud.gamedesign.repository.GameAuthoredWorldSourceDeliveryRepository;
+import net.firedevops.firemud.gamedesign.repository.GameAuthoredWorldSourceRepository;
 import org.jooq.DSLContext;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.TransactionDefinition;
@@ -36,6 +42,9 @@ public final class SelectedDraftPublicationAdmissionService {
   private final WorldSelectedPublicationArtifactInventoryClient inventoryClient;
   private final SelectionReader selectionReader;
   private final SelectedDraftPublicationOwner owner;
+  private final WorldAuthoredSourceIntakeClient worldSourceIntakeClient;
+  private final GameAuthoredWorldSourceRepository worldSourceRepository;
+  private final GameAuthoredWorldSourceDeliveryRepository worldSourceDeliveryRepository;
   private final TransactionTemplate reservationTransaction;
   private final String workloadNamespace;
 
@@ -46,6 +55,7 @@ public final class SelectedDraftPublicationAdmissionService {
       WorldSelectedDraftPublicationFreezeClient freezeClient,
       WorldSelectedPublicationArtifactInventoryClient inventoryClient,
       WorldPublishedStartLocationClient worldClient,
+      WorldAuthoredSourceIntakeClient worldSourceIntakeClient,
       String workloadNamespace) {
     this(
         transactionManager,
@@ -53,6 +63,9 @@ public final class SelectedDraftPublicationAdmissionService {
         freezeClient,
         inventoryClient,
         worldClient,
+        worldSourceIntakeClient,
+        new GameAuthoredWorldSourceRepository(Objects.requireNonNull(dsl, "dsl")),
+        new GameAuthoredWorldSourceDeliveryRepository(dsl),
         new SelectedDraftPublicationOwner(Objects.requireNonNull(dsl, "dsl")),
         intent ->
             new AuthoredDraftPublishSelectionRepository(
@@ -71,6 +84,9 @@ public final class SelectedDraftPublicationAdmissionService {
       WorldSelectedDraftPublicationFreezeClient freezeClient,
       WorldSelectedPublicationArtifactInventoryClient inventoryClient,
       WorldPublishedStartLocationClient worldClient,
+      WorldAuthoredSourceIntakeClient worldSourceIntakeClient,
+      GameAuthoredWorldSourceRepository worldSourceRepository,
+      GameAuthoredWorldSourceDeliveryRepository worldSourceDeliveryRepository,
       SelectedDraftPublicationOwner owner,
       SelectionReader selectionReader,
       String workloadNamespace) {
@@ -78,6 +94,12 @@ public final class SelectedDraftPublicationAdmissionService {
     this.worldClient = Objects.requireNonNull(worldClient, "worldClient");
     this.freezeClient = Objects.requireNonNull(freezeClient, "freezeClient");
     this.inventoryClient = Objects.requireNonNull(inventoryClient, "inventoryClient");
+    this.worldSourceIntakeClient =
+        Objects.requireNonNull(worldSourceIntakeClient, "worldSourceIntakeClient");
+    this.worldSourceRepository =
+        Objects.requireNonNull(worldSourceRepository, "worldSourceRepository");
+    this.worldSourceDeliveryRepository =
+        Objects.requireNonNull(worldSourceDeliveryRepository, "worldSourceDeliveryRepository");
     this.selectionReader = Objects.requireNonNull(selectionReader, "selectionReader");
     this.owner = Objects.requireNonNull(owner, "owner");
     if (!GrpcPeerIdentity.isValidNamespace(workloadNamespace)) {
@@ -93,8 +115,9 @@ public final class SelectedDraftPublicationAdmissionService {
   }
 
   /**
-   * Verifies the retained selection, authenticates Account HELD, freezes World, then reads its
-   * exact selector before reserving locally. All remote calls complete outside SQL.
+   * Verifies the retained selection, authenticates Account HELD, freezes World, and reads the exact
+   * selector and complete source receipt before reserving locally. All owner reads complete outside
+   * SQL.
    */
   public SelectedDraftPublicationOwner.Reservation admitAndReserve(
       AuthoredDraftPublishSelection.PublishIntent intent,
@@ -176,13 +199,82 @@ public final class SelectedDraftPublicationAdmissionService {
     requireExactWorldReadback(worldRequest, worldEvidence);
     new GameDesignPublicationOperationBinding(
         accountEvidence.request().binding(), worldEvidence, inventory);
+    SelectedDraftTemplateWorldSourceAssociation.SourceRead worldSourceRead =
+        readAndVerifyWorldSource(worldEvidence, selection.target());
 
     return Objects.requireNonNull(
         reservationTransaction.execute(
             status ->
                 owner.reserve(
-                    intent, accountEvidence.request().binding(), worldEvidence, inventory)),
+                    intent,
+                    accountEvidence.request().binding(),
+                    worldEvidence,
+                    inventory,
+                    worldSourceRead)),
         "Selected Draft publication reservation returned no result");
+  }
+
+  private SelectedDraftTemplateWorldSourceAssociation.SourceRead readAndVerifyWorldSource(
+      WorldPublishedStartLocationEvidence worldEvidence,
+      DraftCommitBinding.TargetProof selectedTarget) {
+    var selected = worldEvidence.request();
+    java.util.UUID readRequestId = java.util.UUID.randomUUID();
+    while (readRequestId.equals(selected.intakeRequestId())) {
+      readRequestId = java.util.UUID.randomUUID();
+    }
+    var request =
+        new ByIdReadRequest(
+            1,
+            selected.targetNamespace(),
+            readRequestId,
+            selected.intakeRequestId(),
+            selected.canonicalTenantId());
+    var receipt = worldSourceIntakeClient.readById(request);
+    var worldRead = new SelectedDraftTemplateWorldSourceAssociation.SourceRead(request, receipt);
+    var source =
+        worldSourceRepository
+            .read(
+                receipt.sourceOperationId(),
+                receipt.canonicalTenantId(),
+                receipt.worldSlug(),
+                selected.targetNamespace())
+            .orElseThrow(
+                () -> new IllegalStateException("SELECTED_WORLD_SOURCE_GD_RECORD_UNAVAILABLE"));
+    var delivery =
+        worldSourceDeliveryRepository
+            .read(receipt.sourceOperationId())
+            .orElseThrow(
+                () -> new IllegalStateException("SELECTED_WORLD_SOURCE_DELIVERY_UNAVAILABLE"));
+    var expectedReceipt =
+        new CommittedReceipt(
+            receipt.schemaVersion(),
+            receipt.targetNamespace(),
+            receipt.intakeRequestId(),
+            receipt.operationId(),
+            receipt.canonicalTenantId(),
+            receipt.worldSlug(),
+            receipt.sourceOperationId(),
+            receipt.sourceEvidenceDigest(),
+            receipt.requestDigest(),
+            receipt.receiptDigest());
+    if (!source.equals(receipt.source())
+        || !delivery.source().equals(source)
+        || !delivery.request().targetNamespace().equals(selected.targetNamespace())
+        || !delivery.request().intakeRequestId().equals(selected.intakeRequestId())
+        || !delivery.request().canonicalTenantId().equals(selected.canonicalTenantId())
+        || !delivery.request().worldSlug().equals(receipt.worldSlug())
+        || !delivery.request().sourceOperationId().equals(receipt.sourceOperationId())
+        || !delivery.request().expectedSourceEvidenceDigest().equals(receipt.sourceEvidenceDigest())
+        || source.sourceGameRowId() != selectedTarget.sourceGameRowId()
+        || !source.sourceGameTenantKey().equals(selectedTarget.sourceGameTenantKey())
+        || !source.provenanceKind().equals(selectedTarget.sourceProvenanceKind())
+        || !WorldAuthoredSourceIntakeGrpcCodec.requestDigest(delivery.request())
+            .equals(receipt.requestDigest())
+        || delivery.acknowledgedReceipt().filter(ack -> !ack.equals(expectedReceipt)).isPresent()) {
+      throw new IllegalStateException(
+          "SELECTED_WORLD_SOURCE_OWNER_READBACK_CONFLICT: World, retained source, and original delivery differ");
+    }
+    return worldRead;
   }
 
   private void requireRequestIdentity(

@@ -54,6 +54,11 @@ import net.firedevops.firemud.common.publication.WorldSelectedDraftPublicationFr
 import net.firedevops.firemud.common.publication.WorldSelectedDraftPublicationFreezeEvidence;
 import net.firedevops.firemud.common.publication.WorldSelectedDraftPublicationFreezeGrpcCodec;
 import net.firedevops.firemud.common.temporal.FiremudWorkflowIds;
+import net.firedevops.firemud.common.tenant.WorldAuthoredSourceIntakeGrpcCodec;
+import net.firedevops.firemud.common.tenant.WorldAuthoredSourceIntakeGrpcCodec.ByIdReadRequest;
+import net.firedevops.firemud.common.tenant.WorldAuthoredSourceIntakeGrpcCodec.CommittedReceipt;
+import net.firedevops.firemud.common.tenant.WorldAuthoredSourceIntakeGrpcCodec.IntakeRequest;
+import net.firedevops.firemud.common.tenant.WorldAuthoredSourceIntakeGrpcCodec.PublicReceipt;
 import net.firedevops.firemud.common.world.WorldPublishedStartLocationEvidence;
 import net.firedevops.firemud.common.world.WorldPublishedStartLocationGrpcCodec;
 import net.firedevops.firemud.gamedesign.GameDesignServiceApplication;
@@ -63,6 +68,7 @@ import net.firedevops.firemud.gamedesign.draft.AuthoredDraftPublishSelectionRepo
 import net.firedevops.firemud.gamedesign.draft.DraftCommitCoordinatorRepository;
 import net.firedevops.firemud.gamedesign.draft.GameDesignSelectedDraftPublicationReadGrpcService;
 import net.firedevops.firemud.gamedesign.draft.IsolatedPublicationOwnerSetup;
+import net.firedevops.firemud.gamedesign.dto.PublishParticipantDigestDto;
 import net.firedevops.firemud.gamedesign.dto.VersionDto;
 import net.firedevops.firemud.gamedesign.entity.Game;
 import net.firedevops.firemud.gamedesign.entity.PublishAttempt;
@@ -82,6 +88,9 @@ import net.firedevops.firemud.gamedesign.publication.GameDesignPublicationTermin
 import net.firedevops.firemud.gamedesign.publication.IsolatedPublicationOperationFixtures;
 import net.firedevops.firemud.gamedesign.publication.SelectedDraftPublicationCommandService;
 import net.firedevops.firemud.gamedesign.publication.SelectedDraftPublicationOwner;
+import net.firedevops.firemud.gamedesign.publication.SelectedDraftTemplateWorldSourceAssociation;
+import net.firedevops.firemud.gamedesign.repository.GameAuthoredWorldSourceDeliveryRepository;
+import net.firedevops.firemud.gamedesign.repository.GameAuthoredWorldSourceRepository;
 import net.firedevops.firemud.gamedesign.repository.GameRepository;
 import net.firedevops.firemud.gamedesign.repository.PublishAttemptRepository;
 import net.firedevops.firemud.gamedesign.repository.PublishedReleaseBundleRepository;
@@ -98,8 +107,11 @@ import net.firedevops.firemud.test.PostgresBackedServiceTestSupport;
 import net.firedevops.firemud.test.TestContainerImages;
 import net.firedevops.firemud.worldmanagement.v1.BeginVersionPublicationFreezeRequest;
 import net.firedevops.firemud.worldmanagement.v1.BeginVersionPublicationFreezeResponse;
+import net.firedevops.firemud.worldmanagement.v1.ReadAuthoredWorldSourceIntakeByIdRequest;
+import net.firedevops.firemud.worldmanagement.v1.ReadAuthoredWorldSourceIntakeByIdResponse;
 import net.firedevops.firemud.worldmanagement.v1.ReadWorldPublishedStartLocationRequest;
 import net.firedevops.firemud.worldmanagement.v1.ReadWorldPublishedStartLocationResponse;
+import net.firedevops.firemud.worldmanagement.v1.WorldAuthoredSourceIntakeServiceGrpc;
 import net.firedevops.firemud.worldmanagement.v1.WorldPublishedStartLocationReadServiceGrpc;
 import net.firedevops.firemud.worldmanagement.v1.WorldSelectedDraftPublicationFreezeServiceGrpc;
 import org.jooq.DSLContext;
@@ -470,7 +482,8 @@ class PublishAttemptServiceTransactionIntegrationTest {
                         selection.intent(),
                         operation.account(),
                         operation.world(),
-                        operation.inventory()));
+                        operation.inventory(),
+                        IsolatedPublicationOwnerSetup.syntheticWorldSourceRead(operation)));
     assertThat(exactReservationRetry.selection()).isEqualTo(selection);
     assertThat(exactReservationRetry.operation().canonicalBytes())
         .containsExactly(operation.canonicalBytes());
@@ -482,8 +495,7 @@ class PublishAttemptServiceTransactionIntegrationTest {
                 .getId());
     String publishRequestId = operation.account().publishRequestId();
     String publishWorkflowId = operation.workflowId();
-    var participantDigests =
-        PublishedWorldSelectorFixtures.participants(candidate.getId(), operation.world());
+    var participantDigests = selectedParticipants(candidate.getId(), operation.world());
     var expectedDigestBinding =
         PublicationDigestRequestBinding.full(
             candidate.getCanonicalTenantId().toString(),
@@ -516,6 +528,10 @@ class PublishAttemptServiceTransactionIntegrationTest {
             Mockito.any(VersionDto.class),
             Mockito.argThat(actual -> sameCanonicalPreimage(actual, expectedDigestBinding)),
             Mockito.eq(publishWorkflowId));
+    PublishedReleaseBundle bundleBeforeRetry =
+        publishedReleaseBundleRepository
+            .findByTenantIdAndVersionId(tenantId, publishedVersion.id())
+            .orElseThrow();
     VersionDto terminalReplay =
         versionPublishCommandService.publishSelectedDraftFullVersion(
             tenantId,
@@ -533,6 +549,9 @@ class PublishAttemptServiceTransactionIntegrationTest {
         publishedReleaseBundleRepository
             .findByTenantIdAndVersionId(tenantId, publishedVersion.id())
             .orElseThrow();
+    assertThat(bundle.getId()).isEqualTo(bundleBeforeRetry.getId());
+    assertThat(bundle.getPublishedReleaseBundleRef())
+        .isEqualTo(bundleBeforeRetry.getPublishedReleaseBundleRef());
     VersionAssetArtifact artifact =
         versionAssetArtifactRepository
             .findByTenantIdAndVersionId(tenantId, publishedVersion.id())
@@ -555,8 +574,8 @@ class PublishAttemptServiceTransactionIntegrationTest {
 
   /**
    * Exercises the real GD admission, owner reservation, and finalizer. The Account HELD response,
-   * World freeze/selector, original Draft outcomes, participant digests, and empty export are
-   * explicitly stipulated test fixtures; this is not genuine upstream production proof.
+   * World freeze/selector/source read, original Draft outcomes, participant digests, and empty
+   * export are stipulated test fixtures; this is not genuine upstream producer proof.
    */
   @Test
   void selectedDraftCompositionUsesAuthenticatedOwnerReadsAndReconcilesExactV2Release(
@@ -593,6 +612,9 @@ class PublishAttemptServiceTransactionIntegrationTest {
             AuthoredDraftPublishSelectionBinding.fromStored(
                 selection.canonicalJson(), selection.digest()),
             prepared.world());
+    var stipulatedWorldSourceRead =
+        IsolatedPublicationOwnerSetup.syntheticWorldSourceRead(operation);
+    retainStipulatedWorldSourceAndDelivery(stipulatedWorldSourceRead);
     assertThat(operation.account().input().selection().canonicalBytes())
         .containsExactly(selection.canonicalBytes());
     assertThat(operation.world().selectorReceiptBytes())
@@ -633,8 +655,7 @@ class PublishAttemptServiceTransactionIntegrationTest {
     String publishRequestId = operation.account().publishRequestId();
     String publishedWorldEvidenceJson =
         new String(operation.world().canonicalBytes(), StandardCharsets.UTF_8);
-    var participantDigests =
-        PublishedWorldSelectorFixtures.participants(candidate.getId(), operation.world());
+    var participantDigests = selectedParticipants(candidate.getId(), operation.world());
     var expectedDigestBinding =
         PublicationDigestRequestBinding.full(
             candidate.getCanonicalTenantId().toString(),
@@ -661,11 +682,17 @@ class PublishAttemptServiceTransactionIntegrationTest {
         new StipulatedAccountPublicationReadEndpoint(operation.account(), heldDenied);
     var worldEndpoint = new StipulatedWorldPublicationReadEndpoint(operation.world());
     var freezeEndpoint = new StipulatedWorldFreezeEndpoint(operation);
+    var worldSourceEndpoint =
+        new StipulatedWorldAuthoredSourceIntakeEndpoint(stipulatedWorldSourceRead.receipt());
     Server accountServer =
         publicationOwnerServer(publicationReadIdentities.accountServer(), pki, accountEndpoint);
     Server worldServer =
         publicationOwnerServer(
-            publicationReadIdentities.worldManagementServer(), pki, worldEndpoint, freezeEndpoint);
+            publicationReadIdentities.worldManagementServer(),
+            pki,
+            worldEndpoint,
+            freezeEndpoint,
+            worldSourceEndpoint);
     var endpoints = new ServiceEndpointsProperties();
     endpoints.setAccountService("127.0.0.1:" + accountServer.getPort());
     endpoints.setWorldManagementService("127.0.0.1:" + worldServer.getPort());
@@ -689,6 +716,12 @@ class PublishAttemptServiceTransactionIntegrationTest {
                   publicationReadIdentities.gameDesignClient().properties(pki.ca),
                   new GrpcChannelFactory(),
                   NAMESPACE);
+          var worldSourceIntakeClient =
+              new net.firedevops.firemud.common.tenant.WorldAuthoredSourceIntakeClient(
+                  endpoints,
+                  publicationReadIdentities.gameDesignClient().properties(pki.ca),
+                  new GrpcChannelFactory(),
+                  NAMESPACE);
           var worldClient =
               new WorldPublishedStartLocationClient(
                   endpoints,
@@ -698,6 +731,7 @@ class PublishAttemptServiceTransactionIntegrationTest {
         accountClient.init();
         freezeClient.init();
         inventoryClient.init();
+        worldSourceIntakeClient.init();
         worldClient.init();
         var command =
             new SelectedDraftPublicationCommandService(
@@ -707,6 +741,7 @@ class PublishAttemptServiceTransactionIntegrationTest {
                 freezeClient,
                 inventoryClient,
                 worldClient,
+                worldSourceIntakeClient,
                 NAMESPACE,
                 versionPublishCommandService);
 
@@ -716,6 +751,7 @@ class PublishAttemptServiceTransactionIntegrationTest {
         assertThat(accountEndpoint.readCount()).isEqualTo(1);
         assertThat(worldEndpoint.readCount()).isZero();
         assertThat(freezeEndpoint.beginCount()).isZero();
+        assertThat(worldSourceEndpoint.readCount()).isZero();
         assertThat(publishAttemptRepository.findByPublishWorkflowId(workflowId)).isEmpty();
         assertThat(new GameDesignPublicationOperationRepository(dsl).read(workflowId)).isEmpty();
         assertThat(
@@ -753,6 +789,7 @@ class PublishAttemptServiceTransactionIntegrationTest {
             Status.Code.UNAVAILABLE,
             () -> command.publishSelectedDraftFullVersion(selection.intent(), operation.account()));
         assertThat(freezeEndpoint.beginCount()).isEqualTo(1);
+        assertThat(worldSourceEndpoint.readCount()).isZero();
         assertThat(new GameDesignPublicationOperationRepository(dsl).read(workflowId)).isEmpty();
         assertThat(publishAttemptRepository.findByPublishWorkflowId(workflowId)).isEmpty();
         worldEndpoint.unavailable.set(false);
@@ -770,6 +807,17 @@ class PublishAttemptServiceTransactionIntegrationTest {
         assertThat(worldEndpoint.readCount()).isEqualTo(2);
         assertThat(freezeEndpoint.beginCount()).isEqualTo(2);
         assertThat(freezeEndpoint.inventoryReadCount()).isEqualTo(2);
+        assertThat(worldSourceEndpoint.readCount()).isEqualTo(1);
+        assertThat(worldSourceEndpoint.lastReadRequest())
+            .satisfies(
+                request -> {
+                  assertThat(request.targetNamespace()).isEqualTo(NAMESPACE);
+                  assertThat(request.intakeRequestId())
+                      .isEqualTo(operation.world().request().intakeRequestId());
+                  assertThat(request.canonicalTenantId())
+                      .isEqualTo(operation.world().request().canonicalTenantId());
+                  assertThat(request.readRequestId()).isNotEqualTo(request.intakeRequestId());
+                });
 
         PublishAttempt attempt =
             publishAttemptRepository.findByPublishWorkflowId(workflowId).orElseThrow();
@@ -811,6 +859,7 @@ class PublishAttemptServiceTransactionIntegrationTest {
         assertThat(freezeEndpoint.beginCount()).isEqualTo(2);
         assertThat(accountEndpoint.readCount()).isEqualTo(3);
         assertThat(worldEndpoint.readCount()).isEqualTo(2);
+        assertThat(worldSourceEndpoint.readCount()).isEqualTo(1);
         assertThat(exactRetry.id()).isEqualTo(published.id());
         assertThat(
                 publishAttemptRepository.findByPublishWorkflowId(workflowId).orElseThrow().getId())
@@ -848,6 +897,7 @@ class PublishAttemptServiceTransactionIntegrationTest {
             .isEqualTo(1L);
         assertThat(accountEndpoint.readCount()).isEqualTo(3);
         assertThat(worldEndpoint.readCount()).isEqualTo(2);
+        assertThat(worldSourceEndpoint.readCount()).isEqualTo(1);
         assertThat(freezeEndpoint.beginCount()).isEqualTo(2);
         assertThat(versionCountForTenant(tenantId)).isEqualTo(versionCountBeforePublish);
 
@@ -867,6 +917,7 @@ class PublishAttemptServiceTransactionIntegrationTest {
             .containsExactly(terminalBeforeChangedRetry);
         assertThat(accountEndpoint.readCount()).isEqualTo(3);
         assertThat(worldEndpoint.readCount()).isEqualTo(2);
+        assertThat(worldSourceEndpoint.readCount()).isEqualTo(1);
         assertThat(freezeEndpoint.beginCount()).isEqualTo(2);
         assertThat(versionCountForTenant(tenantId)).isEqualTo(versionCountBeforePublish);
       }
@@ -995,7 +1046,8 @@ class PublishAttemptServiceTransactionIntegrationTest {
                                 changedIntent,
                                 operation.account(),
                                 operation.world(),
-                                operation.inventory())))
+                                operation.inventory(),
+                                IsolatedPublicationOwnerSetup.syntheticWorldSourceRead(operation))))
         .isInstanceOf(IllegalStateException.class)
         .hasMessageContaining("changed notes");
 
@@ -1014,7 +1066,8 @@ class PublishAttemptServiceTransactionIntegrationTest {
                                 selection.intent(),
                                 changedAccount,
                                 operation.world(),
-                                operation.inventory())))
+                                operation.inventory(),
+                                IsolatedPublicationOwnerSetup.syntheticWorldSourceRead(operation))))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("World public inventory differs from exact selected Account order");
 
@@ -1181,8 +1234,7 @@ class PublishAttemptServiceTransactionIntegrationTest {
     long selectedCandidateVersionId = candidate.getId();
     candidateVersionId.set(selectedCandidateVersionId);
     candidateVersionNumber.set(candidate.getVersionNumber());
-    var participantDigests =
-        PublishedWorldSelectorFixtures.participants(candidate.getId(), operation.world());
+    var participantDigests = selectedParticipants(candidate.getId(), operation.world());
     var expectedDigestBinding =
         PublicationDigestRequestBinding.full(
             candidate.getCanonicalTenantId().toString(),
@@ -1653,6 +1705,112 @@ class PublishAttemptServiceTransactionIntegrationTest {
     return builder.build().start();
   }
 
+  private void retainStipulatedWorldSourceAndDelivery(
+      SelectedDraftTemplateWorldSourceAssociation.SourceRead worldSourceRead) {
+    var source = worldSourceRead.receipt().source();
+    ByIdReadRequest byIdRequest = worldSourceRead.request();
+    IntakeRequest intakeRequest =
+        new IntakeRequest(
+            source.schemaVersion(),
+            source.targetNamespace(),
+            byIdRequest.intakeRequestId(),
+            source.canonicalTenantId(),
+            source.worldSlug(),
+            source.operationId(),
+            source.evidenceDigest());
+    String intakeRequestDigest = WorldAuthoredSourceIntakeGrpcCodec.requestDigest(intakeRequest);
+    // Preserve the selected World intake identity exactly; the repository's normal registration
+    // allocates a different random delivery identity. SQL guards and canonical repository reads
+    // still validate the stipulated source and delivery tuples against this Game row.
+    inOwnerTransaction(
+        () -> {
+          dsl.execute(
+              "INSERT INTO game_design_tenant_slug_binding "
+                  + "(target_namespace, canonical_tenant_id, tenant_slug, source_game_row_id, "
+                  + "source_game_tenant_key, provenance_kind) VALUES (?, ?, ?, ?, ?, ?)",
+              source.targetNamespace(),
+              source.canonicalTenantId(),
+              source.tenantSlug(),
+              source.sourceGameRowId(),
+              source.sourceGameTenantKey(),
+              source.provenanceKind());
+          dsl.execute(
+              "INSERT INTO game_design_authored_world_source_operations "
+                  + "(operation_id, schema_version, target_namespace, registration_request_id, "
+                  + "request_digest, canonical_tenant_id, tenant_slug, world_slug, "
+                  + "world_display_name, source_game_row_id, source_game_tenant_key, "
+                  + "provenance_kind, evidence_digest) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+              source.operationId(),
+              source.schemaVersion(),
+              source.targetNamespace(),
+              source.registrationRequestId(),
+              source.requestDigest(),
+              source.canonicalTenantId(),
+              source.tenantSlug(),
+              source.worldSlug(),
+              source.worldDisplayName(),
+              source.sourceGameRowId(),
+              source.sourceGameTenantKey(),
+              source.provenanceKind(),
+              source.evidenceDigest());
+          dsl.execute(
+              "INSERT INTO game_design_authored_world_source_deliveries "
+                  + "(source_operation_id, source_schema_version, target_namespace, "
+                  + "registration_request_id, source_request_digest, canonical_tenant_id, "
+                  + "tenant_slug, world_slug, world_display_name, source_game_row_id, "
+                  + "source_game_tenant_key, provenance_kind, source_evidence_digest, "
+                  + "intake_schema_version, intake_request_id, intake_request_digest) "
+                  + "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+              source.operationId(),
+              source.schemaVersion(),
+              source.targetNamespace(),
+              source.registrationRequestId(),
+              source.requestDigest(),
+              source.canonicalTenantId(),
+              source.tenantSlug(),
+              source.worldSlug(),
+              source.worldDisplayName(),
+              source.sourceGameRowId(),
+              source.sourceGameTenantKey(),
+              source.provenanceKind(),
+              source.evidenceDigest(),
+              intakeRequest.schemaVersion(),
+              intakeRequest.intakeRequestId(),
+              intakeRequestDigest);
+          return null;
+        });
+
+    var sourceRepository = new GameAuthoredWorldSourceRepository(dsl);
+    assertThat(
+            sourceRepository.read(
+                source.operationId(),
+                source.canonicalTenantId(),
+                source.worldSlug(),
+                source.targetNamespace()))
+        .contains(source);
+    var deliveryRepository = new GameAuthoredWorldSourceDeliveryRepository(dsl);
+    var pendingClaim = deliveryRepository.read(source.operationId()).orElseThrow();
+    assertThat(pendingClaim.source()).isEqualTo(source);
+    assertThat(pendingClaim.request()).isEqualTo(intakeRequest);
+    assertThat(pendingClaim.acknowledgedReceipt()).isEmpty();
+    PublicReceipt publicReceipt = worldSourceRead.receipt();
+    CommittedReceipt committedReceipt =
+        new CommittedReceipt(
+            publicReceipt.schemaVersion(),
+            publicReceipt.targetNamespace(),
+            publicReceipt.intakeRequestId(),
+            publicReceipt.operationId(),
+            publicReceipt.canonicalTenantId(),
+            publicReceipt.worldSlug(),
+            publicReceipt.sourceOperationId(),
+            publicReceipt.sourceEvidenceDigest(),
+            publicReceipt.requestDigest(),
+            publicReceipt.receiptDigest());
+    inOwnerTransaction(() -> deliveryRepository.acknowledge(pendingClaim, committedReceipt));
+    assertThat(deliveryRepository.read(source.operationId()).orElseThrow().acknowledgedReceipt())
+        .contains(committedReceipt);
+  }
+
   private static boolean requireGameDesignPeer(StreamObserver<?> observer) {
     var peer = GrpcPeerIdentity.current();
     if (peer == null) {
@@ -1884,6 +2042,67 @@ class PublishAttemptServiceTransactionIntegrationTest {
 
     int readCount() {
       return reads.get();
+    }
+  }
+
+  /** Test-only authenticated source read; source evidence remains explicitly stipulated. */
+  private static final class StipulatedWorldAuthoredSourceIntakeEndpoint
+      extends WorldAuthoredSourceIntakeServiceGrpc.WorldAuthoredSourceIntakeServiceImplBase {
+    private final PublicReceipt expectedReceipt;
+    private final AtomicInteger reads = new AtomicInteger();
+    private final AtomicReference<ByIdReadRequest> lastRequest = new AtomicReference<>();
+
+    private StipulatedWorldAuthoredSourceIntakeEndpoint(PublicReceipt expectedReceipt) {
+      this.expectedReceipt = expectedReceipt;
+    }
+
+    @Override
+    public void readAuthoredWorldSourceIntakeById(
+        ReadAuthoredWorldSourceIntakeByIdRequest request,
+        StreamObserver<ReadAuthoredWorldSourceIntakeByIdResponse> observer) {
+      if (!requireGameDesignPeer(observer)) return;
+      reads.incrementAndGet();
+      final ByIdReadRequest decoded;
+      try {
+        decoded = WorldAuthoredSourceIntakeGrpcCodec.fromReadByIdRequest(request);
+      } catch (IllegalArgumentException invalid) {
+        observer.onError(
+            Status.INVALID_ARGUMENT
+                .withDescription("Invalid stipulated authored-source read request")
+                .asRuntimeException());
+        return;
+      }
+      if (!NAMESPACE.equals(decoded.targetNamespace())
+          || !expectedReceipt.intakeRequestId().equals(decoded.intakeRequestId())
+          || !expectedReceipt.canonicalTenantId().equals(decoded.canonicalTenantId())) {
+        observer.onError(
+            Status.FAILED_PRECONDITION
+                .withDescription("Different stipulated authored-source selector")
+                .asRuntimeException());
+        return;
+      }
+      if (org.springframework.transaction.support.TransactionSynchronizationManager
+              .isActualTransactionActive()
+          || org.springframework.transaction.support.TransactionSynchronizationManager
+              .isSynchronizationActive()) {
+        observer.onError(
+            Status.FAILED_PRECONDITION
+                .withDescription("Authored-source owner read must precede local reservation")
+                .asRuntimeException());
+        return;
+      }
+      lastRequest.set(decoded);
+      observer.onNext(
+          WorldAuthoredSourceIntakeGrpcCodec.toReadByIdResponse(decoded, expectedReceipt));
+      observer.onCompleted();
+    }
+
+    int readCount() {
+      return reads.get();
+    }
+
+    ByIdReadRequest lastReadRequest() {
+      return lastRequest.get();
     }
   }
 
@@ -2169,6 +2388,26 @@ class PublishAttemptServiceTransactionIntegrationTest {
       return "none";
     }
     return failure.getStackTrace()[0].toString();
+  }
+
+  private static List<PublishParticipantDigestDto> selectedParticipants(
+      long versionId, WorldPublishedStartLocationEvidence evidence) {
+    return PublishedWorldSelectorFixtures.participants(versionId, evidence).stream()
+        .map(
+            participant ->
+                "GAME_DESIGN_CONTROL_PLANE".equals(participant.participantKey())
+                    ? new PublishParticipantDigestDto(
+                        participant.participantKey(),
+                        participant.scopeValue(),
+                        participant.baseVersionId(),
+                        participant.appliedCommitId(),
+                        participant.contentDigest(),
+                        2,
+                        participant.abilitySchemaDigest(),
+                        participant.errorCode(),
+                        participant.errorMessage())
+                    : participant)
+        .toList();
   }
 
   private static boolean sameCanonicalPreimage(

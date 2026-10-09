@@ -10,6 +10,7 @@ import java.util.Objects;
 import java.util.UUID;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding.TargetProof;
 import net.firedevops.firemud.common.world.WorldPublishedStartLocationEvidence;
+import net.firedevops.firemud.gamedesign.dto.PublishParticipantDigestDto;
 import net.firedevops.firemud.gamedesign.entity.Game;
 import net.firedevops.firemud.gamedesign.entity.PublishedReleaseBundle;
 import net.firedevops.firemud.gamedesign.entity.Version;
@@ -680,12 +681,33 @@ class PublishedReleaseCanonicalIdentityIntegrationTest {
     WorldPublishedStartLocationEvidence evidence = operation.world();
     var json = new ObjectMapper();
     String original = new String(evidence.canonicalBytes(), StandardCharsets.UTF_8);
-    String participants =
-        json.writeValueAsString(
-            PublishedWorldSelectorFixtures.participants(version.getId(), evidence));
+    String participants = json.writeValueAsString(selectedParticipants(version.getId(), evidence));
     var originalRequest = json.readTree(original).path("request");
     assertThat(originalRequest.path("versionStateEpoch").isTextual()).isTrue();
     assertThat(originalRequest.path("versionStateEpoch").asText()).matches("[1-9][0-9]*");
+    var selectedV1ControlPlaneParticipants =
+        (tools.jackson.databind.node.ArrayNode) json.readTree(participants);
+    boolean foundControlPlaneParticipant = false;
+    for (var participant : selectedV1ControlPlaneParticipants) {
+      if ("GAME_DESIGN_CONTROL_PLANE".equals(participant.path("participantKey").asText())) {
+        assertThat(participant.path("digestSchemaVersion").asInt()).isEqualTo(2);
+        ((tools.jackson.databind.node.ObjectNode) participant).put("digestSchemaVersion", 1);
+        foundControlPlaneParticipant = true;
+        break;
+      }
+    }
+    assertThat(foundControlPlaneParticipant).isTrue();
+    assertThatThrownBy(
+            () ->
+                insertRawSelector(
+                    fixture,
+                    version,
+                    "v2",
+                    original,
+                    json.writeValueAsString(selectedV1ControlPlaneParticipants)))
+        .isInstanceOf(DataAccessException.class)
+        .hasMessageContaining("release v2 participant differs from selected commit/digest/schema");
+    assertThat(bundleCount(fixture.dsl())).isZero();
     assertThatThrownBy(() -> insertRawSelector(fixture, version, "v2", null, participants))
         .isInstanceOf(DataAccessException.class);
     assertThatThrownBy(() -> insertRawSelector(fixture, version, "v1", original, participants))
@@ -835,12 +857,30 @@ class PublishedReleaseCanonicalIdentityIntegrationTest {
     bundle.setAttestationSchemaVersion("v2");
     bundle.setPublishWorkflowId(evidence.request().publishWorkflowId());
     bundle.setParticipantDigestsJson(
-        new ObjectMapper()
-            .writeValueAsString(
-                PublishedWorldSelectorFixtures.participants(version.getId(), evidence)));
+        new ObjectMapper().writeValueAsString(selectedParticipants(version.getId(), evidence)));
     bundle.setWorldPublishedStartLocationEvidenceJson(
         new String(evidence.canonicalBytes(), StandardCharsets.UTF_8));
     return bundle;
+  }
+
+  private List<PublishParticipantDigestDto> selectedParticipants(
+      long versionId, WorldPublishedStartLocationEvidence evidence) {
+    return PublishedWorldSelectorFixtures.participants(versionId, evidence).stream()
+        .map(
+            participant ->
+                "GAME_DESIGN_CONTROL_PLANE".equals(participant.participantKey())
+                    ? new PublishParticipantDigestDto(
+                        participant.participantKey(),
+                        participant.scopeValue(),
+                        participant.baseVersionId(),
+                        participant.appliedCommitId(),
+                        participant.contentDigest(),
+                        2,
+                        participant.abilitySchemaDigest(),
+                        participant.errorCode(),
+                        participant.errorMessage())
+                    : participant)
+        .toList();
   }
 
   private void insertRawSelector(

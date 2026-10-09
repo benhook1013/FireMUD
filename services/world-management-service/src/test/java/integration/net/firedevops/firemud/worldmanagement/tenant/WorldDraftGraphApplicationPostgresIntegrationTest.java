@@ -5301,6 +5301,103 @@ class WorldDraftGraphApplicationPostgresIntegrationTest {
   }
 
   @Test
+  void publicationOwnerReadsIntakeOnlyInsideWritableReadCommittedTransaction() {
+    Fixture f = fixture();
+    WorldAuthoredSourceIntakeRepository intakeReader = new WorldAuthoredSourceIntakeRepository(dsl);
+    OwnerBinding owner = f.owner();
+    WorldDesignPublicationFenceEvidence freezeEvidence =
+        new WorldDesignPublicationFenceEvidence(
+            owner.targetNamespace(),
+            owner.canonicalTenantId(),
+            owner.canonicalVersionId(),
+            owner.versionIdentityOperationId(),
+            owner.gameDesignVersionId(),
+            owner.intakeRequestId(),
+            owner.intakeOperationId(),
+            owner.intakeRequestDigest(),
+            owner.sourceOperationId(),
+            owner.sourceEvidenceDigest(),
+            owner.intakeReceiptDigest(),
+            "transaction-dispatch-" + UUID.randomUUID(),
+            "a".repeat(64),
+            1,
+            "publish:" + owner.canonicalTenantId() + ":transaction-dispatch");
+
+    assertThatThrownBy(
+            () ->
+                intakeReader.readInOwnerPublicationTransaction(
+                    NAMESPACE, f.intake().intakeRequestId()))
+        .hasMessageContaining("writable READ COMMITTED owner transaction");
+
+    TransactionTemplate readOnlyOwner = new TransactionTemplate(manager);
+    readOnlyOwner.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
+    readOnlyOwner.setIsolationLevel(TransactionDefinition.ISOLATION_READ_COMMITTED);
+    readOnlyOwner.setReadOnly(true);
+    assertThatThrownBy(
+            () ->
+                readOnlyOwner.execute(
+                    status ->
+                        intakeReader.readInOwnerPublicationTransaction(
+                            NAMESPACE, f.intake().intakeRequestId())))
+        .hasMessageContaining("writable READ COMMITTED owner transaction");
+
+    TransactionTemplate repeatableReadOwner = new TransactionTemplate(manager);
+    repeatableReadOwner.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
+    repeatableReadOwner.setIsolationLevel(TransactionDefinition.ISOLATION_REPEATABLE_READ);
+    assertThatThrownBy(
+            () ->
+                repeatableReadOwner.execute(
+                    status ->
+                        intakeReader.readInOwnerPublicationTransaction(
+                            NAMESPACE, f.intake().intakeRequestId())))
+        .hasMessageContaining("writable READ COMMITTED owner transaction");
+
+    Boolean ownerResolutionSucceeded =
+        ownerTransaction()
+            .execute(
+                status -> {
+                  assertThat(TransactionSynchronizationManager.isActualTransactionActive())
+                      .isTrue();
+                  assertThat(TransactionSynchronizationManager.isCurrentTransactionReadOnly())
+                      .isFalse();
+                  assertThat(
+                          TransactionSynchronizationManager.getCurrentTransactionIsolationLevel())
+                      .isEqualTo(java.sql.Connection.TRANSACTION_READ_COMMITTED);
+                  Record physicalTransaction =
+                      dsl.fetchOne(
+                          "SELECT current_setting('transaction_isolation') AS isolation, "
+                              + "current_setting('transaction_read_only') AS read_only");
+                  assertThat(physicalTransaction.get("isolation", String.class))
+                      .isEqualTo("read committed");
+                  assertThat(physicalTransaction.get("read_only", String.class)).isEqualTo("off");
+
+                  assertThat(
+                          intakeReader.readInOwnerPublicationTransaction(
+                              NAMESPACE, f.intake().intakeRequestId()))
+                      .contains(f.intake());
+                  assertThatThrownBy(
+                          () -> intakeReader.read(NAMESPACE, f.intake().intakeRequestId()))
+                      .hasMessageContaining("committed-outcome owner read");
+                  assertThat(fence.lockOpenAndResolve(owner).receipt()).isEqualTo(f.intake());
+                  return true;
+                });
+    assertThat(ownerResolutionSucceeded).isTrue();
+
+    var frozen =
+        ownerTransaction()
+            .execute(
+                status ->
+                    fence.claimFreeze(
+                        freezeEvidence,
+                        () ->
+                            new WorldDesignPublicationFenceEvidence.Checkpoint(
+                                "transaction-dispatch-commit", "b".repeat(64), 2)));
+    assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+    assertThat(TransactionSynchronizationManager.isSynchronizationActive()).isFalse();
+    assertThat(fence.readAttempt(freezeEvidence)).contains(frozen);
+  }
+
+  @Test
   void publishedSelectorJoinsExactFrozenCheckpointToOriginalAppliedWithoutWrites() {
     Fixture f = fixture();
     var application = application(f);

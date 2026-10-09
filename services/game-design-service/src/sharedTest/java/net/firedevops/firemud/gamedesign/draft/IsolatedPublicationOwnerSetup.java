@@ -1,10 +1,16 @@
 package net.firedevops.firemud.gamedesign.draft;
 
 import java.math.BigInteger;
+import java.nio.charset.StandardCharsets;
 import java.util.List;
+import java.util.UUID;
 import java.util.function.Supplier;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding;
 import net.firedevops.firemud.common.publication.AuthoredDraftPublishSelectionBinding;
+import net.firedevops.firemud.common.tenant.AuthoredWorldSourceDigest;
+import net.firedevops.firemud.common.tenant.AuthoredWorldSourceEvidence;
+import net.firedevops.firemud.common.tenant.WorldAuthoredSourceIntakeGrpcCodec;
+import net.firedevops.firemud.common.tenant.WorldAuthoredSourceIntakeGrpcCodec.ByIdReadRequest;
 import net.firedevops.firemud.common.world.WorldPublishedStartLocationEvidence;
 import net.firedevops.firemud.gamedesign.entity.PublishAttempt;
 import net.firedevops.firemud.gamedesign.entity.PublishedReleaseBundle;
@@ -19,6 +25,7 @@ import net.firedevops.firemud.gamedesign.publication.GameDesignPublicationOperat
 import net.firedevops.firemud.gamedesign.publication.GameDesignSourceRepository;
 import net.firedevops.firemud.gamedesign.publication.IsolatedPublicationOperationFixtures;
 import net.firedevops.firemud.gamedesign.publication.SelectedDraftPublicationOwner;
+import net.firedevops.firemud.gamedesign.publication.SelectedDraftTemplateWorldSourceAssociation;
 import net.firedevops.firemud.gamedesign.repository.PublishAttemptRepository;
 import net.firedevops.firemud.gamedesign.repository.VersionAssetArtifactRepository;
 import net.firedevops.firemud.gamedesign.repository.VersionAssetPublicationRepository;
@@ -30,6 +37,102 @@ import org.jooq.DSLContext;
  */
 public final class IsolatedPublicationOwnerSetup {
   private IsolatedPublicationOwnerSetup() {}
+
+  /**
+   * Explicit owner-local synthetic World source evidence. It is structurally correlated to the
+   * operation's exact intake identity but does not represent World or Account producer authority.
+   */
+  public static SelectedDraftTemplateWorldSourceAssociation.SourceRead syntheticWorldSourceRead(
+      GameDesignPublicationOperation operation) {
+    var world = operation.world().request();
+    var selection = operation.account().input().selection();
+    UUID sourceOperationId = fixtureId(operation, "source-operation");
+    UUID registrationRequestId = fixtureId(operation, "source-registration");
+    String tenantSlug = "synthetic-tenant";
+    String worldSlug = "synthetic-world-" + world.canonicalTenantId().toString().substring(0, 8);
+    String displayName = "Synthetic owner-local authored world";
+    String requestDigest =
+        AuthoredWorldSourceDigest.requestDigest(
+            world.targetNamespace(),
+            registrationRequestId,
+            world.canonicalTenantId(),
+            tenantSlug,
+            worldSlug,
+            displayName);
+    var source =
+        new AuthoredWorldSourceEvidence(
+            1,
+            world.targetNamespace(),
+            registrationRequestId,
+            sourceOperationId,
+            requestDigest,
+            world.canonicalTenantId(),
+            tenantSlug,
+            worldSlug,
+            displayName,
+            selection.target().sourceGameRowId(),
+            selection.target().sourceGameTenantKey(),
+            selection.target().sourceProvenanceKind(),
+            AuthoredWorldSourceDigest.evidenceDigest(
+                world.targetNamespace(),
+                registrationRequestId,
+                sourceOperationId,
+                requestDigest,
+                world.canonicalTenantId(),
+                tenantSlug,
+                worldSlug,
+                displayName,
+                selection.target().sourceGameRowId(),
+                selection.target().sourceGameTenantKey(),
+                selection.target().sourceProvenanceKind()));
+    var intake =
+        new WorldAuthoredSourceIntakeGrpcCodec.IntakeRequest(
+            1,
+            world.targetNamespace(),
+            world.intakeRequestId(),
+            world.canonicalTenantId(),
+            worldSlug,
+            sourceOperationId,
+            source.evidenceDigest());
+    var readRequest =
+        new ByIdReadRequest(
+            1,
+            world.targetNamespace(),
+            fixtureId(operation, "source-read"),
+            world.intakeRequestId(),
+            world.canonicalTenantId());
+    var receipt =
+        new WorldAuthoredSourceIntakeGrpcCodec.PublicReceipt(
+            1,
+            world.targetNamespace(),
+            world.intakeRequestId(),
+            fixtureId(operation, "world-operation"),
+            world.canonicalTenantId(),
+            worldSlug,
+            sourceOperationId,
+            source.evidenceDigest(),
+            WorldAuthoredSourceIntakeGrpcCodec.requestDigest(intake),
+            "sha256:" + "a".repeat(64),
+            source);
+    return new SelectedDraftTemplateWorldSourceAssociation.SourceRead(readRequest, receipt);
+  }
+
+  private static UUID fixtureId(GameDesignPublicationOperation operation, String purpose) {
+    UUID value =
+        UUID.nameUUIDFromBytes(
+            (operation.workflowId() + ":synthetic-owner-local:" + purpose)
+                .getBytes(StandardCharsets.UTF_8));
+    int salt = 0;
+    while (value.equals(new UUID(0L, 0L))
+        || value.equals(operation.world().request().intakeRequestId())) {
+      salt++;
+      value =
+          UUID.nameUUIDFromBytes(
+              (operation.workflowId() + ":synthetic-owner-local:" + purpose + ":" + salt)
+                  .getBytes(StandardCharsets.UTF_8));
+    }
+    return value;
+  }
 
   /** Actual ordinary source/coordinator transaction; does not stipulate complete inventory. */
   public static DraftCommitBinding applyOrdinaryReferences(
@@ -163,7 +266,12 @@ public final class IsolatedPublicationOwnerSetup {
     if (captureSources) {
       operation =
           new SelectedDraftPublicationOwner(dsl)
-              .reserve(intent, operation.account(), operation.world(), operation.inventory())
+              .reserve(
+                  intent,
+                  operation.account(),
+                  operation.world(),
+                  operation.inventory(),
+                  syntheticWorldSourceRead(operation))
               .operation();
     } else {
       var attempt = new PublishAttempt();

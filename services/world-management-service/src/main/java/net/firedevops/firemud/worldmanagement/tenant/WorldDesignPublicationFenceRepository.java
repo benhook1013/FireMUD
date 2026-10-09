@@ -31,6 +31,11 @@ public class WorldDesignPublicationFenceRepository {
   private static final String FROZEN = "FROZEN";
   private static final UUID NIL_UUID = new UUID(0L, 0L);
 
+  private enum IntakeReadIntent {
+    COMMITTED_READ,
+    WRITABLE_OWNER_TRANSACTION
+  }
+
   private static final Table<?> OWNER = DSL.table(DSL.name("world_design_publication_fence_owner"));
   private static final Table<?> ATTEMPT =
       DSL.table(DSL.name("world_design_publication_fence_attempt"));
@@ -143,7 +148,8 @@ public class WorldDesignPublicationFenceRepository {
   @Transactional(propagation = Propagation.MANDATORY)
   OpenOwner lockOpenAndResolve(OwnerBinding binding) {
     requireWritableReadCommittedOwnerTransaction();
-    ResolvedVersion resolvedVersion = resolveVersion(binding);
+    ResolvedVersion resolvedVersion =
+        resolveVersion(binding, IntakeReadIntent.WRITABLE_OWNER_TRANSACTION);
     Record owner = createAndLockOwner(resolvedVersion);
     requireMatchingOwnerBinding(owner, resolvedVersion);
     if (!OPEN.equals(owner.get(OWNER_FREEZE_PHASE, String.class))) {
@@ -169,7 +175,8 @@ public class WorldDesignPublicationFenceRepository {
     requireWritableReadCommittedOwnerTransaction();
     Objects.requireNonNull(checkpointSupplier, "checkpointSupplier");
     OwnerBinding binding = evidence.ownerBinding();
-    ResolvedVersion resolvedVersion = resolveVersion(binding);
+    ResolvedVersion resolvedVersion =
+        resolveVersion(binding, IntakeReadIntent.WRITABLE_OWNER_TRANSACTION);
     rejectLegacyAttempt(evidence, resolvedVersion.localVersionKey());
     Record owner = createAndLockOwner(resolvedVersion);
     requireMatchingOwnerBinding(owner, resolvedVersion);
@@ -231,7 +238,8 @@ public class WorldDesignPublicationFenceRepository {
     if (TransactionSynchronizationManager.isActualTransactionActive()) {
       throw new IllegalStateException("World publication attempt read requires a committed read");
     }
-    ResolvedVersion resolvedVersion = resolveVersion(evidence.ownerBinding());
+    ResolvedVersion resolvedVersion =
+        resolveVersion(evidence.ownerBinding(), IntakeReadIntent.COMMITTED_READ);
     rejectLegacyAttempt(evidence, resolvedVersion.localVersionKey());
     FrozenAttempt stored = findAttemptByRequest(evidence, resolvedVersion.localVersionKey());
     if (stored == null) {
@@ -260,15 +268,22 @@ public class WorldDesignPublicationFenceRepository {
     return Optional.ofNullable(stored);
   }
 
-  private ResolvedVersion resolveVersion(OwnerBinding binding) {
+  private ResolvedVersion resolveVersion(OwnerBinding binding, IntakeReadIntent readIntent) {
     Objects.requireNonNull(binding, "binding");
+    Objects.requireNonNull(readIntent, "readIntent");
+    Optional<WorldAuthoredSourceIntakeReceipt> intake =
+        switch (readIntent) {
+          case COMMITTED_READ ->
+              intakeRepository.read(binding.targetNamespace(), binding.intakeRequestId());
+          case WRITABLE_OWNER_TRANSACTION ->
+              intakeRepository.readInOwnerPublicationTransaction(
+                  binding.targetNamespace(), binding.intakeRequestId());
+        };
     WorldAuthoredSourceIntakeReceipt receipt =
-        intakeRepository
-            .read(binding.targetNamespace(), binding.intakeRequestId())
-            .orElseThrow(
-                () ->
-                    new MissingIntakeException(
-                        "World publication fence requires an already committed authored-source intake"));
+        intake.orElseThrow(
+            () ->
+                new MissingIntakeException(
+                    "World publication fence requires an already committed authored-source intake"));
     requireExactIntake(binding, receipt);
 
     Record identity =

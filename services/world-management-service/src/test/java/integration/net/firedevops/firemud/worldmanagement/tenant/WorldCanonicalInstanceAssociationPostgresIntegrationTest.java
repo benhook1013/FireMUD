@@ -2243,7 +2243,12 @@ class WorldCanonicalInstanceAssociationPostgresIntegrationTest {
             participant("GAME_LOGIC", 1, "c", true, descriptor.versionId(), commit),
             participant("AUTOMATION_SCRIPTING", 5, "d", false, descriptor.versionId(), commit),
             participant(
-                "GAME_DESIGN_CONTROL_PLANE", 1, "e", false, descriptor.versionId(), commit));
+                "GAME_DESIGN_CONTROL_PLANE",
+                selector == null ? 1 : 2,
+                "e",
+                false,
+                descriptor.versionId(),
+                commit));
     if (selector == null) {
       return AuthoredWorldReleaseAttestationEvidence.create(
           NAMESPACE,

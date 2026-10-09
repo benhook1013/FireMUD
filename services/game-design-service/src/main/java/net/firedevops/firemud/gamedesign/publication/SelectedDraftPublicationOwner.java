@@ -23,11 +23,11 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
 
 /**
  * Unregistered Game Design owner entry for reserving publication of one existing synchronized
- * Draft. It persists exact local selection/attempt/source state; supplied Account and World binding
- * objects are structured evidence, not proof that either remote owner authenticated its producer. A
- * production caller must obtain them from the authenticated Account publication producer and the
- * protected World selector read. Isolated fixtures may supply synthetic values only to test this
- * owner-local boundary.
+ * Draft. It persists exact local selection/attempt/source state; supplied Account, World, and
+ * World-source objects are structured evidence, not proof that either remote owner authenticated
+ * its producer. A production caller must obtain them from the authenticated Account publication
+ * producer and protected World reads. Isolated fixtures may supply synthetic values only to test
+ * this owner-local boundary.
  */
 public final class SelectedDraftPublicationOwner {
   private final GameRepository games;
@@ -35,6 +35,7 @@ public final class SelectedDraftPublicationOwner {
   private final AuthoredDraftPublishSelectionRepository selections;
   private final PublishAttemptRepository attempts;
   private final GameDesignPublicationOperationRepository operations;
+  private final SelectedDraftTemplateWorldSourceAssociationRepository templateWorldSources;
 
   public SelectedDraftPublicationOwner(DSLContext dsl) {
     Objects.requireNonNull(dsl, "dsl");
@@ -44,22 +45,25 @@ public final class SelectedDraftPublicationOwner {
     selections = new AuthoredDraftPublishSelectionRepository(dsl, coordinator);
     attempts = new PublishAttemptRepository(dsl);
     operations = new GameDesignPublicationOperationRepository(dsl);
+    templateWorldSources = new SelectedDraftTemplateWorldSourceAssociationRepository(dsl);
   }
 
   /**
-   * Retains a first or exact-replay selection and the original external publication inputs in one
-   * caller-owned writable READ_COMMITTED transaction. The immutable selection determines attempt
-   * identity; an old full-publish digest is never rewritten or upgraded here.
+   * Retains a first selection and its original external publication inputs in one caller-owned
+   * writable READ_COMMITTED transaction. Existing operations only exact-read their original source
+   * relation; an old full-publish digest is never rewritten or upgraded here.
    */
   public Reservation reserve(
       AuthoredDraftPublishSelection.PublishIntent intent,
       AccountPublicationAuthorizationBinding account,
       WorldPublishedStartLocationEvidence world,
-      WorldSelectedPublicationArtifactInventoryEvidence inventory) {
+      WorldSelectedPublicationArtifactInventoryEvidence inventory,
+      SelectedDraftTemplateWorldSourceAssociation.SourceRead worldSourceRead) {
     requireWritableReadCommittedTransaction();
     Objects.requireNonNull(intent, "intent");
     Objects.requireNonNull(account, "account");
     Objects.requireNonNull(world, "world");
+    Objects.requireNonNull(worldSourceRead, "worldSourceRead");
 
     Version identityCandidate =
         versions
@@ -106,6 +110,14 @@ public final class SelectedDraftPublicationOwner {
       throw new IllegalStateException("SELECTED_PUBLICATION_OPERATION_BINDING_CHANGED");
     }
 
+    var priorOperation = operations.read(operation.workflowId());
+    if (priorOperation.isPresent()
+        && !Arrays.equals(
+            operation.canonicalBytes(),
+            priorOperation.orElseThrow().operation().canonicalBytes())) {
+      throw new IllegalStateException("SELECTED_PUBLICATION_OPERATION_IDENTITY_CONFLICT");
+    }
+
     if (!tenantKey.equals(selection.target().gameDesignVersionTenantKey())) {
       throw new IllegalStateException("SELECTED_PUBLICATION_TENANT_KEY_CHANGED");
     }
@@ -135,6 +147,8 @@ public final class SelectedDraftPublicationOwner {
     }
 
     var capture = operations.reserveSourceBacked(operation);
+    templateWorldSources.retainOrRead(
+        operation, capture.templateConfig(), worldSourceRead, priorOperation.isEmpty());
     var retained =
         operations
             .read(operation.workflowId())

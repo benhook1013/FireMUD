@@ -8,6 +8,7 @@ import net.firedevops.firemud.common.publication.AccountPublicationAuthorization
 import net.firedevops.firemud.common.publication.PublicationDigestRequestBinding;
 import net.firedevops.firemud.common.publication.WorldSelectedDraftPublicationFreezeClient;
 import net.firedevops.firemud.common.publication.WorldSelectedPublicationArtifactInventoryClient;
+import net.firedevops.firemud.common.tenant.WorldAuthoredSourceIntakeClient;
 import net.firedevops.firemud.common.world.WorldPublishedStartLocationEvidence;
 import net.firedevops.firemud.gamedesign.client.WorldPublishedStartLocationClient;
 import net.firedevops.firemud.gamedesign.draft.AuthoredDraftPublishSelection;
@@ -38,6 +39,7 @@ public final class SelectedDraftPublicationCommandService {
       WorldSelectedDraftPublicationFreezeClient freezeClient,
       WorldSelectedPublicationArtifactInventoryClient inventoryClient,
       WorldPublishedStartLocationClient worldClient,
+      WorldAuthoredSourceIntakeClient worldSourceIntakeClient,
       String workloadNamespace,
       VersionPublishCommandServiceImpl finalizer) {
     this(
@@ -48,6 +50,7 @@ public final class SelectedDraftPublicationCommandService {
             freezeClient,
             inventoryClient,
             worldClient,
+            worldSourceIntakeClient,
             workloadNamespace),
         new DatabaseDurableStateReader(dsl),
         finalizer);
@@ -280,6 +283,8 @@ public final class SelectedDraftPublicationCommandService {
   private static final class DatabaseDurableStateReader implements DurableStateReader {
     private final AuthoredDraftPublishSelectionRepository selections;
     private final GameDesignPublicationOperationRepository operations;
+    private final GameDesignSourceRepository sources;
+    private final SelectedDraftTemplateWorldSourceAssociationRepository templateWorldSources;
 
     private DatabaseDurableStateReader(DSLContext dsl) {
       Objects.requireNonNull(dsl, "dsl");
@@ -287,6 +292,8 @@ public final class SelectedDraftPublicationCommandService {
           new AuthoredDraftPublishSelectionRepository(
               dsl, new DraftCommitCoordinatorRepository(dsl));
       operations = new GameDesignPublicationOperationRepository(dsl);
+      sources = new GameDesignSourceRepository(dsl);
+      templateWorldSources = new SelectedDraftTemplateWorldSourceAssociationRepository(dsl);
     }
 
     @Override
@@ -301,7 +308,17 @@ public final class SelectedDraftPublicationCommandService {
           selection
               .map(SelectedDraftPublicationCommandService::workflowId)
               .orElseGet(() -> workflowId(accountBinding));
-      return new DurableState(selection, operations.read(retainedWorkflow));
+      Optional<GameDesignPublicationOperationRepository.Readback> operation =
+          operations.read(retainedWorkflow);
+      operation.ifPresent(
+          retained ->
+              sources
+                  .readCapture(retained.operation())
+                  .ifPresent(
+                      capture ->
+                          templateWorldSources.readExact(
+                              retained.operation(), capture.templateConfig())));
+      return new DurableState(selection, operation);
     }
   }
 }

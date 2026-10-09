@@ -208,7 +208,14 @@ public class WorldAuthoredSourceIntakeRepository {
    */
   Optional<WorldAuthoredSourceIntakeReceipt> readInOwnerActivationTransaction(
       String namespace, UUID intakeRequestId) {
-    requireWritableActivationTransaction();
+    requireWritablePhysicalReadCommittedOwnerTransaction();
+    return readValidated(namespace, intakeRequestId);
+  }
+
+  /** Reads the same immutable intake inside the writable publication-owner transaction. */
+  Optional<WorldAuthoredSourceIntakeReceipt> readInOwnerPublicationTransaction(
+      String namespace, UUID intakeRequestId) {
+    requireWritablePhysicalReadCommittedOwnerTransaction();
     return readValidated(namespace, intakeRequestId);
   }
 
@@ -527,13 +534,13 @@ public class WorldAuthoredSourceIntakeRepository {
     }
   }
 
-  private void requireWritableActivationTransaction() {
+  private void requireWritablePhysicalReadCommittedOwnerTransaction() {
     if (!TransactionSynchronizationManager.isActualTransactionActive()
         || TransactionSynchronizationManager.isCurrentTransactionReadOnly()
         || !Integer.valueOf(Connection.TRANSACTION_READ_COMMITTED)
             .equals(TransactionSynchronizationManager.getCurrentTransactionIsolationLevel())) {
       throw new IllegalStateException(
-          "World authored-source activation read requires a writable READ COMMITTED owner transaction");
+          "World authored-source owner read requires a writable READ COMMITTED owner transaction");
     }
     Record state =
         Objects.requireNonNull(
@@ -544,7 +551,7 @@ public class WorldAuthoredSourceIntakeRepository {
     if (!"read committed".equals(state.get("isolation", String.class))
         || !"off".equals(state.get("read_only", String.class))) {
       throw new IllegalStateException(
-          "World authored-source activation read requires a writable READ COMMITTED owner transaction");
+          "World authored-source owner read requires a writable READ COMMITTED owner transaction");
     }
   }
 
