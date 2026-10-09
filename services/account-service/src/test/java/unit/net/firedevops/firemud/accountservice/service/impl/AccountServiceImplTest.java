@@ -16,6 +16,7 @@ import de.mkammerer.argon2.Argon2Factory;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -5766,6 +5767,53 @@ class AccountServiceImplTest {
     org.mockito.Mockito.verify(accountRepository, org.mockito.Mockito.never())
         .updatePasswordHashForLockedAccount(
             org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.anyString());
+  }
+
+  @Test
+  void candidatePasswordVerifierIsPreparedBeforeWritableOwnerTransactionBegins() {
+    AtomicBoolean candidateVerifierPrepared = new AtomicBoolean();
+    Argon2 argon2 = org.mockito.Mockito.mock(Argon2.class);
+    when(argon2.hash(
+            org.mockito.ArgumentMatchers.eq(2),
+            org.mockito.ArgumentMatchers.eq(65536),
+            org.mockito.ArgumentMatchers.eq(1),
+            org.mockito.ArgumentMatchers.any(char[].class)))
+        .thenAnswer(
+            invocation -> {
+              candidateVerifierPrepared.set(true);
+              return "prepared-candidate-verifier";
+            });
+    org.mockito.Mockito.doAnswer(
+            invocation -> {
+              assertTrue(
+                  candidateVerifierPrepared.get(),
+                  "Password hashing must complete before the owner transaction starts");
+              return new SimpleTransactionStatus();
+            })
+        .when(transactionManager)
+        .getTransaction(org.mockito.ArgumentMatchers.any(TransactionDefinition.class));
+    when(accountPasswordResetOperationRepository.findByTokenHash(
+            org.mockito.ArgumentMatchers.anyString()))
+        .thenReturn(Optional.empty());
+    when(accountPasswordResetDraftSourceChangeRepository.findAccountIdByTokenHash(
+            org.mockito.ArgumentMatchers.anyString()))
+        .thenReturn(Optional.empty());
+    when(passwordResetTokenRepository.findByToken(org.mockito.ArgumentMatchers.anyString()))
+        .thenReturn(Optional.empty());
+
+    try (org.mockito.MockedStatic<Argon2Factory> argon2Factory =
+        org.mockito.Mockito.mockStatic(Argon2Factory.class)) {
+      argon2Factory.when(Argon2Factory::create).thenReturn(argon2);
+
+      assertThrows(
+          IllegalArgumentException.class,
+          () ->
+              service.completePasswordReset(
+                  new net.firedevops.firemud.accountservice.dto.CompletePasswordResetRequest(
+                      "invalid-reset-token", "candidate-password")));
+    }
+
+    assertTrue(candidateVerifierPrepared.get());
   }
 
   @Test

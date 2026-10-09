@@ -38,6 +38,9 @@ import net.firedevops.firemud.accountservice.service.AccountCreatorMembershipSou
 import net.firedevops.firemud.accountservice.service.AccountTenantCreationBootstrapAuthorizationSource;
 import net.firedevops.firemud.accountservice.service.AccountTenantCreationBootstrapService;
 import net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding;
+import net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding.Outcome;
+import net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding.Owner;
+import net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding.OwnerReadback;
 import net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding.SourceEvidence;
 import net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding.SourceKind;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding;
@@ -389,30 +392,84 @@ class AccountSourceCurrentnessForwardMigrationsPostgresIntegrationTest {
     UUID fenceId = UUID.randomUUID();
     UUID requestId = UUID.randomUUID();
     String namespace = "test";
-    byte[] supplementarySource = sourceEvidence("TEST", "\uD83D\uDE00");
-    byte[] bmpSource = sourceEvidence("TEST", "\uE000");
-    String supplementaryKey = "TEST:\uD83D\uDE00";
-    String bmpKey = "TEST:\uE000";
+    SourceEvidence supplementaryEvidence =
+        new SourceEvidence(
+            SourceKind.ISSUER,
+            "\uD83D\uDE00",
+            "1",
+            "1",
+            "test-only-source-checkpoint",
+            "1",
+            utf8("synthetic supplementary issuer evidence"));
+    SourceEvidence bmpEvidence =
+        new SourceEvidence(
+            SourceKind.ISSUER,
+            "\uE000",
+            "1",
+            "1",
+            "test-only-source-checkpoint",
+            "1",
+            utf8("synthetic BMP issuer evidence"));
+    byte[] supplementarySource = supplementaryEvidence.canonicalBytes();
+    byte[] bmpSource = bmpEvidence.canonicalBytes();
+    String supplementaryKey = supplementaryEvidence.key();
+    String bmpKey = bmpEvidence.key();
     List<byte[]> sourceVector = List.of(supplementarySource, bmpSource);
+    List<SourceEvidence> sourceEvidenceVector = List.of(supplementaryEvidence, bmpEvidence);
     String sourcePayload =
         publicationSourcePayload(identity, true, true, sourceJsonArray(sourceVector));
     String bundlePayload = publicationBundle(true);
+    byte[] sourcePayloadBytes = sourcePayload.getBytes(StandardCharsets.UTF_8);
+    byte[] bundlePayloadBytes = bundlePayload.getBytes(StandardCharsets.UTF_8);
     ControlUiIssuance issuance =
-        insertCommittedControlUiIssuance(
-            context,
-            identity,
-            sourcePayload.getBytes(StandardCharsets.UTF_8),
-            bundlePayload.getBytes(StandardCharsets.UTF_8));
-    String bindingJson =
-        "{\"canonicalTenantId\":\""
-            + identity.tenantUuid()
-            + "\",\"canonicalVersionId\":\""
-            + versionUuid
-            + "\"}";
+        insertCommittedControlUiIssuance(context, identity, sourcePayloadBytes, bundlePayloadBytes);
+    DraftCommitBinding selectedCommit =
+        DraftCommitBinding.create(
+            new DraftCommitBinding.TargetProof(
+                identity.tenantUuid(),
+                versionUuid,
+                1,
+                "test-only-tenant",
+                2,
+                "test-only-tenant",
+                "NEW_GAME_ROW"),
+            UUID.randomUUID(),
+            UUID.randomUUID(),
+            "test-only/base",
+            List.of(
+                new DraftCommitBinding.RevisionPayload(
+                    "0",
+                    UUID.randomUUID(),
+                    DraftCommitBinding.Owner.WORLD_MANAGEMENT,
+                    "test-only-world-payload")),
+            List.of(
+                new DraftCommitBinding.AffectedUnit(
+                    DraftCommitBinding.Owner.WORLD_MANAGEMENT,
+                    "region",
+                    "test-region",
+                    "aggregate",
+                    "test-region",
+                    "0")));
+    DraftAuthorizationFenceBinding originalDraftBinding =
+        new DraftAuthorizationFenceBinding(
+            UUID.randomUUID(),
+            selectedCommit.requestId(),
+            selectedCommit.commitId(),
+            UUID.randomUUID(),
+            identity.accountUuid(),
+            identity.tenantUuid(),
+            versionUuid,
+            selectedCommit.baseCommitId(),
+            "0",
+            selectedCommit.canonicalBytes(),
+            selectedCommit.canonicalBytes(),
+            selectedCommit.digest(),
+            sourceEvidenceVector);
+    String bindingJson = selectedCommit.canonicalJson();
     String snapshotJson =
         "{\"schema\":\"game-design-gameplay-rule-source-snapshot/v1\","
             + "\"bindingJson\":\""
-            + bindingJson.replace("\"", "\\\"")
+            + bindingJson.replace("\\", "\\\\").replace("\"", "\\\"")
             + "\",\"bindingDigest\":\""
             + sha256(utf8(bindingJson))
             + "\",\"manifestJson\":\"{}\"}";
@@ -439,6 +496,84 @@ class AccountSourceCurrentnessForwardMigrationsPostgresIntegrationTest {
         .dsl()
         .execute(
             "INSERT INTO account_draft_authorization_source_locks (source_key) VALUES (?)", bmpKey);
+    DraftAuthorizationFenceRepository draftFences =
+        new DraftAuthorizationFenceRepository(context.dsl());
+    context
+        .transaction()
+        .executeWithoutResult(
+            status -> {
+              draftFences.reserve(originalDraftBinding);
+              draftFences.claimCommitOrder(originalDraftBinding);
+              for (Owner owner : originalDraftBinding.requiredOwners()) {
+                draftFences.recordOwnerReadback(
+                    originalDraftBinding,
+                    new OwnerReadback(
+                        owner,
+                        Outcome.COMMITTED,
+                        originalDraftBinding.operationId(),
+                        originalDraftBinding.commitId(),
+                        originalDraftBinding.fenceId(),
+                        originalDraftBinding.inputDigest(),
+                        originalDraftBinding.canonicalBytes(),
+                        utf8("test-only settled original owner fixture")));
+              }
+              assertThat(draftFences.readSettlement(originalDraftBinding))
+                  .isEqualTo(DraftAuthorizationFenceRepository.Settlement.COMMITTED);
+            });
+
+    byte[] sourceReadScope =
+        encodeFrames(
+            List.of(
+                utf8("account-game-logic-intake-source-read/v1"),
+                utf8(namespace),
+                utf8(operationId.toString()),
+                utf8(fenceId.toString()),
+                utf8(requestId.toString()),
+                utf8(identity.accountUuid().toString()),
+                selectedCommit.canonicalBytes(),
+                utf8(sha256(selectedCommit.canonicalBytes())),
+                utf8("spiffe://firemud/ns/" + namespace + "/sa/account-service"),
+                utf8("GAME_LOGIC_INTAKE_SOURCE")));
+    byte[] outboxCheckpoints = "[]".getBytes(StandardCharsets.UTF_8);
+    context
+        .transaction()
+        .executeWithoutResult(
+            status -> {
+              context
+                  .dsl()
+                  .execute(
+                      "INSERT INTO account_game_logic_intake_source_read_reservations "
+                          + "(operation_id, fence_id, intake_request_id, actor_account_uuid, "
+                          + "tenant_uuid, version_uuid, scope_bytes, scope_digest, "
+                          + "issuance_operation_id, issuance_fence, source_payload, "
+                          + "issuance_bundle, outbox_checkpoints) "
+                          + "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                      operationId,
+                      fenceId,
+                      requestId,
+                      identity.accountUuid(),
+                      identity.tenantUuid(),
+                      versionUuid,
+                      sourceReadScope,
+                      sha256(sourceReadScope),
+                      issuance.operationId(),
+                      issuance.fence(),
+                      sourcePayloadBytes,
+                      bundlePayloadBytes,
+                      outboxCheckpoints);
+              context
+                  .dsl()
+                  .execute(
+                      "INSERT INTO account_game_logic_intake_source_read_sources "
+                          + "(operation_id, source_key, source_evidence) "
+                          + "VALUES (?, ?, ?), (?, ?, ?)",
+                      operationId,
+                      supplementaryKey,
+                      supplementarySource,
+                      operationId,
+                      bmpKey,
+                      bmpSource);
+            });
     context
         .transaction()
         .executeWithoutResult(
@@ -461,9 +596,9 @@ class AccountSourceCurrentnessForwardMigrationsPostgresIntegrationTest {
                       intakeBinding,
                       issuance.operationId(),
                       issuance.fence(),
-                      sourcePayload.getBytes(StandardCharsets.UTF_8),
-                      bundlePayload.getBytes(StandardCharsets.UTF_8),
-                      "[]".getBytes(StandardCharsets.UTF_8));
+                      sourcePayloadBytes,
+                      bundlePayloadBytes,
+                      outboxCheckpoints);
               context
                   .dsl()
                   .execute(
