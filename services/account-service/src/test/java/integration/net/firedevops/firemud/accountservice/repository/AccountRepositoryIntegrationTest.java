@@ -121,8 +121,13 @@ class AccountRepositoryIntegrationTest {
             legacyLifecycleMigrationSchema(AccountLifecycleState.SECURITY_LOCKED),
             legacyLifecycleMigrationSchema(AccountLifecycleState.DEACTIVATED_PENDING_DELETE),
             legacyLifecycleMigrationSchema(AccountLifecycleState.DELETED))) {
+      boolean validLifecycleSchema =
+          !schema.startsWith("account_lifecycle_")
+              || schema.matches(
+                  "account_lifecycle_(active|security_locked|pending_delete|deleted)_[a-f0-9]{12}");
       if (!schema.matches("account_[a-z_]+_[a-f0-9]{12}")
-          || !schema.endsWith("_" + SCHEMA_SUFFIX)) {
+          || !schema.endsWith("_" + SCHEMA_SUFFIX)
+          || !validLifecycleSchema) {
         throw new IllegalStateException("Refusing to dispose an unowned PostgreSQL schema");
       }
       jdbc.execute("DROP SCHEMA IF EXISTS " + schema + " CASCADE");
@@ -770,7 +775,11 @@ class AccountRepositoryIntegrationTest {
   }
 
   private String legacyLifecycleMigrationSchema(AccountLifecycleState lifecycleState) {
-    return "account_legacy_lifecycle_" + lifecycleState.storageValue() + "_" + SCHEMA_SUFFIX;
+    String lifecycleSlug =
+        lifecycleState == AccountLifecycleState.DEACTIVATED_PENDING_DELETE
+            ? "pending_delete"
+            : lifecycleState.storageValue();
+    return "account_lifecycle_" + lifecycleSlug + "_" + SCHEMA_SUFFIX;
   }
 
   private static void assertNoAuthorityBirthEvidence(DSLContext dsl, UUID accountUuid) {

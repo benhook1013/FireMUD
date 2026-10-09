@@ -7,14 +7,20 @@ import static org.mockito.Mockito.mock;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
+import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.util.HexFormat;
+import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
+import net.firedevops.firemud.accountservice.authordraft.DraftAuthorizationFenceRepository;
 import net.firedevops.firemud.accountservice.entity.Account;
 import net.firedevops.firemud.accountservice.entity.AccountLifecycleState;
+import net.firedevops.firemud.accountservice.hostedterms.HostedTermsCatalogVersion;
+import net.firedevops.firemud.accountservice.hostedterms.HostedTermsEncoding;
+import net.firedevops.firemud.accountservice.hostedterms.HostedTermsRepository;
 import net.firedevops.firemud.accountservice.repository.AccountAuditOutboxRepository;
 import net.firedevops.firemud.accountservice.repository.AccountAuthorityOutboxRepository;
 import net.firedevops.firemud.accountservice.repository.AccountMembershipPairAuthorityRepository;
@@ -26,6 +32,10 @@ import net.firedevops.firemud.accountservice.repository.FreshTenantIdentityAssoc
 import net.firedevops.firemud.accountservice.service.AccountCreatorMembershipSourceReader;
 import net.firedevops.firemud.accountservice.service.AccountTenantCreationBootstrapAuthorizationSource;
 import net.firedevops.firemud.accountservice.service.AccountTenantCreationBootstrapService;
+import net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding;
+import net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding.SourceEvidence;
+import net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding.SourceKind;
+import net.firedevops.firemud.common.authoring.DraftCommitBinding;
 import net.firedevops.firemud.common.tenant.FreshTenantCreationEvidence;
 import net.firedevops.firemud.common.tenant.FreshTenantCreatorDigest;
 import net.firedevops.firemud.common.tenant.FreshTenantCreatorEvidence;
@@ -61,7 +71,7 @@ class AccountSourceCurrentnessForwardMigrationsPostgresIntegrationTest {
   }
 
   @Test
-  void freshInstallAppliesEveryForwardMigrationThroughV97() {
+  void freshInstallAppliesEveryForwardMigrationThroughV98() {
     TestContext context = context(null);
 
     assertThat(
@@ -69,17 +79,17 @@ class AccountSourceCurrentnessForwardMigrationsPostgresIntegrationTest {
                 .dsl()
                 .resultQuery(
                     "SELECT version FROM flyway_schema_history "
-                        + "WHERE success AND version = '97'")
+                        + "WHERE success AND version = '98'")
                 .fetchOne(0, String.class))
-        .isEqualTo("97");
+        .isEqualTo("98");
     assertThat(
             context
                 .dsl()
                 .resultQuery(
                     "SELECT count(*) FROM flyway_schema_history "
-                        + "WHERE version::numeric BETWEEN 74 AND 97 AND success")
+                        + "WHERE version::numeric BETWEEN 74 AND 98 AND success")
                 .fetchOne(0, Long.class))
-        .isEqualTo(24L);
+        .isEqualTo(25L);
 
     for (String relation :
         new String[] {
@@ -101,7 +111,9 @@ class AccountSourceCurrentnessForwardMigrationsPostgresIntegrationTest {
           "account_password_reset_draft_source_changes",
           "account_game_logic_intake_source_read_reservations",
           "account_game_logic_intake_source_read_sources",
-          "account_game_logic_intake_source_read_aborts"
+          "account_game_logic_intake_source_read_aborts",
+          "account_hosted_terms_disclosure_handoffs",
+          "account_hosted_terms_disclosure_sources"
         }) {
       assertThat(
               context
@@ -121,7 +133,10 @@ class AccountSourceCurrentnessForwardMigrationsPostgresIntegrationTest {
           "account_game_logic_intake_source_read_is_pending(uuid)",
           "account_game_logic_intake_source_read_complete_guard()",
           "account_game_logic_intake_source_read_source_guard()",
-          "account_game_logic_intake_source_read_terminal_guard()"
+          "account_game_logic_intake_source_read_terminal_guard()",
+          "account_hosted_terms_disclosure_handoff_guard()",
+          "account_hosted_terms_disclosure_immutable_guard()",
+          "account_hosted_terms_disclosure_source_insert_guard()"
         }) {
       assertThat(
               context
@@ -131,6 +146,302 @@ class AccountSourceCurrentnessForwardMigrationsPostgresIntegrationTest {
           .as("forward SQL guard %s", function)
           .isNotNull();
     }
+    for (String[] trigger :
+        new String[][] {
+          {
+            "account_hosted_terms_disclosure_handoffs_no_truncate",
+            "account_hosted_terms_disclosure_handoffs"
+          },
+          {
+            "account_hosted_terms_disclosure_sources_no_truncate",
+            "account_hosted_terms_disclosure_sources"
+          }
+        }) {
+      assertThat(
+              context
+                  .dsl()
+                  .resultQuery(
+                      "SELECT count(*) FROM pg_trigger WHERE tgname = ? "
+                          + "AND tgrelid = ?::regclass AND NOT tgisinternal",
+                      trigger[0],
+                      trigger[1])
+                  .fetchOne(0, Long.class))
+          .as("statement-level immutable trigger %s", trigger[0])
+          .isEqualTo(1L);
+    }
+  }
+
+  @Test
+  void hostedTermsDisclosureHandoffPersistsExactSourceAndFencesOnlyThatSource() {
+    TestContext context = context(null);
+    UUID hostedScopeId = UUID.randomUUID();
+    UUID termsVersionId = UUID.randomUUID();
+    byte[] document =
+        "synthetic hosted-terms catalog fixture; not legal terms or a publication"
+            .getBytes(StandardCharsets.UTF_8);
+    HostedTermsCatalogVersion candidate =
+        new HostedTermsCatalogVersion(
+            termsVersionId,
+            hostedScopeId,
+            null,
+            "TEST FIXTURE ONLY - no authenticated legal identity",
+            1,
+            document,
+            HostedTermsEncoding.digest(document),
+            1,
+            1,
+            HostedTermsCatalogVersion.Materiality.INITIAL,
+            null,
+            null,
+            "test-only/no-publication",
+            1,
+            "test-only/no-notice",
+            1,
+            Instant.parse("2040-01-01T00:00:00Z"));
+    HostedTermsRepository hostedTerms = new HostedTermsRepository(context.dsl());
+    byte[][] persistedCatalogEvidence = new byte[1][];
+    context
+        .transaction()
+        .executeWithoutResult(
+            status -> {
+              hostedTerms.ensureScope(hostedScopeId);
+              hostedTerms.insertCandidate(candidate);
+              persistedCatalogEvidence[0] =
+                  HostedTermsEncoding.catalog(hostedTerms.readCatalog(hostedScopeId, termsVersionId));
+            });
+    SourceEvidence exactSource =
+        new SourceEvidence(
+            SourceKind.HOSTED_TERMS,
+            hostedScopeId.toString(),
+            "1",
+            "1",
+            null,
+            null,
+            persistedCatalogEvidence[0]);
+    byte[] exactSourceEvidence = exactSource.canonicalBytes();
+    UUID handoffId = UUID.randomUUID();
+    UUID requestId = UUID.randomUUID();
+    byte[] handoffBinding =
+        "synthetic PREPARED disclosure intent only; no dispatch or legal authorization"
+            .getBytes(StandardCharsets.UTF_8);
+    OffsetDateTime effectiveAt =
+        OffsetDateTime.ofInstant(Instant.parse("2040-02-01T00:00:00Z"), ZoneOffset.UTC);
+
+    context
+        .dsl()
+        .execute(
+            "INSERT INTO account_draft_authorization_source_locks (source_key) VALUES (?)",
+            exactSource.key());
+    context
+        .dsl()
+        .execute(
+            "INSERT INTO account_hosted_terms_disclosure_handoffs "
+                + "(handoff_id, request_id, kind, source_key, predecessor_digest, "
+                + "candidate_digest, effective_at, binding, binding_digest, status, "
+                + "dispatch_attempts) VALUES (?, ?, 'CATALOG', ?, ?, ?, ?, ?, ?, 'PREPARED', 0)",
+            handoffId,
+            requestId,
+            exactSource.key(),
+            sha256("test-only predecessor".getBytes(StandardCharsets.UTF_8)),
+            HostedTermsEncoding.digest(document),
+            effectiveAt,
+            handoffBinding,
+            sha256(handoffBinding));
+    context
+        .dsl()
+        .execute(
+            "INSERT INTO account_hosted_terms_disclosure_sources "
+                + "(handoff_id, source_key, source_evidence, source_evidence_digest) "
+                + "VALUES (?, ?, ?, ?)",
+            handoffId,
+            exactSource.key(),
+            exactSourceEvidence,
+            sha256(exactSourceEvidence));
+
+    var persisted =
+        Objects.requireNonNull(
+            context
+                .dsl()
+                .fetchOne(
+                    "SELECT h.*, s.source_evidence, s.source_evidence_digest "
+                        + "FROM account_hosted_terms_disclosure_handoffs h "
+                        + "JOIN account_hosted_terms_disclosure_sources s "
+                        + "ON s.handoff_id = h.handoff_id WHERE h.handoff_id = ?",
+                    handoffId));
+    assertThat(persisted.get("request_id", UUID.class)).isEqualTo(requestId);
+    assertThat(persisted.get("kind", String.class)).isEqualTo("CATALOG");
+    assertThat(persisted.get("source_key", String.class)).isEqualTo(exactSource.key());
+    assertThat(persisted.get("predecessor_digest", String.class))
+        .isEqualTo(sha256("test-only predecessor".getBytes(StandardCharsets.UTF_8)));
+    assertThat(persisted.get("candidate_digest", String.class))
+        .isEqualTo(HostedTermsEncoding.digest(document));
+    assertThat(persisted.get("effective_at", OffsetDateTime.class)).isEqualTo(effectiveAt);
+    assertThat(persisted.get("binding", byte[].class)).containsExactly(handoffBinding);
+    assertThat(persisted.get("binding_digest", String.class)).isEqualTo(sha256(handoffBinding));
+    assertThat(persisted.get("status", String.class)).isEqualTo("PREPARED");
+    assertThat(persisted.get("dispatch_attempts", Integer.class)).isZero();
+    assertThat(persisted.get("source_evidence", byte[].class)).containsExactly(exactSourceEvidence);
+    assertThat(persisted.get("source_evidence_digest", String.class))
+        .isEqualTo(sha256(exactSourceEvidence));
+
+    assertThatThrownBy(
+            () ->
+                context
+                    .dsl()
+                    .execute(
+                        "UPDATE account_hosted_terms_disclosure_sources "
+                            + "SET source_evidence = ? WHERE handoff_id = ? AND source_key = ?",
+                        new byte[] {1},
+                        handoffId,
+                        exactSource.key()))
+        .isInstanceOf(DataAccessException.class);
+    assertThatThrownBy(
+            () ->
+                context
+                    .dsl()
+                    .execute(
+                        "DELETE FROM account_hosted_terms_disclosure_sources "
+                            + "WHERE handoff_id = ? AND source_key = ?",
+                        handoffId,
+                        exactSource.key()))
+        .isInstanceOf(DataAccessException.class);
+    assertThatThrownBy(
+            () ->
+                context
+                    .dsl()
+                    .execute(
+                        "UPDATE account_hosted_terms_disclosure_handoffs SET status = 'AMBIGUOUS', "
+                            + "dispatch_attempts = 1 WHERE handoff_id = ?",
+                        handoffId))
+        .isInstanceOf(DataAccessException.class);
+    assertThatThrownBy(
+            () ->
+                context
+                    .dsl()
+                    .execute(
+                        "UPDATE account_hosted_terms_disclosure_handoffs "
+                            + "SET binding = ? WHERE handoff_id = ?",
+                        new byte[] {2},
+                        handoffId))
+        .isInstanceOf(DataAccessException.class);
+    assertThatThrownBy(
+            () ->
+                context
+                    .dsl()
+                    .execute(
+                        "DELETE FROM account_hosted_terms_disclosure_handoffs WHERE handoff_id = ?",
+                        handoffId))
+        .isInstanceOf(DataAccessException.class);
+    assertThat(
+            context
+                .dsl()
+                .resultQuery(
+                    "SELECT status FROM account_hosted_terms_disclosure_handoffs "
+                        + "WHERE handoff_id = ?",
+                    handoffId)
+                .fetchOne(0, String.class))
+        .isEqualTo("PREPARED");
+
+    DraftAuthorizationFenceRepository fences =
+        new DraftAuthorizationFenceRepository(context.dsl());
+    DraftAuthorizationFenceBinding preparedCapture = draftBinding(exactSource);
+    context
+        .transaction()
+        .executeWithoutResult(status -> fences.reserve(preparedCapture));
+
+    // This is only a persisted test fixture state for exercising the exact-read predicate. No
+    // publisher is authenticated, no RPC/dispatch is performed, and no consumer is activated.
+    context
+        .dsl()
+        .execute(
+            "UPDATE account_hosted_terms_disclosure_handoffs SET status = 'DISPATCH_AUTHORIZED', "
+                + "dispatch_attempts = 1 WHERE handoff_id = ?",
+            handoffId);
+
+    byte[] mismatchedDocument =
+        "different synthetic hosted-terms candidate; not legal terms or a publication"
+            .getBytes(StandardCharsets.UTF_8);
+    HostedTermsCatalogVersion mismatchedCandidate =
+        new HostedTermsCatalogVersion(
+            UUID.randomUUID(),
+            hostedScopeId,
+            termsVersionId,
+            candidate.operatorLegalIdentity(),
+            candidate.operatorIdentityVersion(),
+            mismatchedDocument,
+            HostedTermsEncoding.digest(mismatchedDocument),
+            2,
+            1,
+            HostedTermsCatalogVersion.Materiality.NONMATERIAL,
+            "test-only/materiality-evidence",
+            1L,
+            "test-only/no-publication",
+            2,
+            "test-only/no-notice",
+            2,
+            Instant.parse("2041-01-01T00:00:00Z"));
+    SourceEvidence mismatchedSource =
+        new SourceEvidence(
+            SourceKind.HOSTED_TERMS,
+            hostedScopeId.toString(),
+            "1",
+            "2",
+            null,
+            null,
+            HostedTermsEncoding.catalog(mismatchedCandidate));
+    DraftAuthorizationFenceBinding mismatchedCapture = draftBinding(mismatchedSource);
+    context
+        .transaction()
+        .executeWithoutResult(status -> fences.reserve(mismatchedCapture));
+
+    DraftAuthorizationFenceBinding exactCapture = draftBinding(exactSource);
+    assertThatThrownBy(
+            () ->
+                context
+                    .transaction()
+                    .executeWithoutResult(status -> fences.reserve(exactCapture)))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("Exact hosted terms source has authorized disclosure");
+    assertThat(
+            context
+                .dsl()
+                .resultQuery(
+                    "SELECT count(*) FROM account_draft_authorization_fences WHERE operation_id = ?",
+                    exactCapture.operationId())
+                .fetchOne(0, Long.class))
+        .isZero();
+
+    assertThatThrownBy(
+            () ->
+                context
+                    .dsl()
+                    .execute("TRUNCATE account_hosted_terms_disclosure_handoffs CASCADE"))
+        .isInstanceOf(DataAccessException.class);
+    assertThatThrownBy(
+            () ->
+                context
+                    .dsl()
+                    .execute("TRUNCATE account_hosted_terms_disclosure_sources"))
+        .isInstanceOf(DataAccessException.class);
+    assertThat(
+            context
+                .dsl()
+                .resultQuery(
+                    "SELECT count(*) FROM account_hosted_terms_disclosure_handoffs "
+                        + "WHERE handoff_id = ?",
+                    handoffId)
+                .fetchOne(0, Long.class))
+        .isEqualTo(1L);
+    assertThat(
+            context
+                .dsl()
+                .resultQuery(
+                    "SELECT count(*) FROM account_hosted_terms_disclosure_sources "
+                        + "WHERE handoff_id = ? AND source_key = ?",
+                    handoffId,
+                    exactSource.key())
+                .fetchOne(0, Long.class))
+        .isEqualTo(1L);
   }
 
   @Test
@@ -156,6 +467,27 @@ class AccountSourceCurrentnessForwardMigrationsPostgresIntegrationTest {
                 .fetchOne(0, UUID.class));
 
     migrate(context, null);
+    assertThat(
+            context
+                .dsl()
+                .resultQuery(
+                    "SELECT version FROM flyway_schema_history "
+                        + "WHERE success AND version = '98'")
+                .fetchOne(0, String.class))
+        .isEqualTo("98");
+    for (String relation :
+        new String[] {
+          "account_hosted_terms_disclosure_handoffs",
+          "account_hosted_terms_disclosure_sources"
+        }) {
+      assertThat(
+              context
+                  .dsl()
+                  .resultQuery("SELECT to_regclass(?)::TEXT", relation)
+                  .fetchOne(0, String.class))
+          .as("V98 forward relation %s", relation)
+          .isNotNull();
+    }
     Account fresh = account(null);
     context
         .transaction()
@@ -428,7 +760,7 @@ class AccountSourceCurrentnessForwardMigrationsPostgresIntegrationTest {
             hostedScopeId,
             nonoperativeDocument,
             sha256(nonoperativeDocument),
-            OffsetDateTime.now(ZoneOffset.UTC).plusDays(1).toString(),
+            OffsetDateTime.now(ZoneOffset.UTC).plusDays(1),
             versionPayload,
             sha256(versionPayload));
 
@@ -592,6 +924,50 @@ class AccountSourceCurrentnessForwardMigrationsPostgresIntegrationTest {
             1, creation, accountUuid, authorizationOperationId, authorizationDigest);
     return new FreshTenantCreatorEvidence(
         1, creation, accountUuid, authorizationOperationId, authorizationDigest, creatorDigest);
+  }
+
+  private static DraftAuthorizationFenceBinding draftBinding(SourceEvidence source) {
+    DraftCommitBinding complete =
+        DraftCommitBinding.create(
+            new DraftCommitBinding.TargetProof(
+                UUID.randomUUID(),
+                UUID.randomUUID(),
+                1,
+                "test-only-tenant",
+                2,
+                "test-only-tenant",
+                "NEW_GAME_ROW"),
+            UUID.randomUUID(),
+            UUID.randomUUID(),
+            "test-only/base",
+            List.of(
+                new DraftCommitBinding.RevisionPayload(
+                    "0",
+                    UUID.randomUUID(),
+                    DraftCommitBinding.Owner.WORLD_MANAGEMENT,
+                    "test-only-world-payload")),
+            List.of(
+                new DraftCommitBinding.AffectedUnit(
+                    DraftCommitBinding.Owner.WORLD_MANAGEMENT,
+                    "region",
+                    "test-region",
+                    "aggregate",
+                    "test-region",
+                    "0")));
+    return new DraftAuthorizationFenceBinding(
+        UUID.randomUUID(),
+        complete.requestId(),
+        complete.commitId(),
+        UUID.randomUUID(),
+        UUID.randomUUID(),
+        complete.target().canonicalTenantId(),
+        complete.target().canonicalVersionId(),
+        complete.baseCommitId(),
+        "0",
+        complete.canonicalBytes(),
+        complete.canonicalBytes(),
+        complete.digest(),
+        List.of(source));
   }
 
   private static Account account(String role) {
