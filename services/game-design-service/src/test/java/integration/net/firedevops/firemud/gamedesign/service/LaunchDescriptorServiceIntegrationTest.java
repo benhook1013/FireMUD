@@ -189,6 +189,7 @@ class LaunchDescriptorServiceIntegrationTest {
     assertThat(persisted.getPublishedReleaseBundleRef())
         .isEqualTo(original.publishedReleaseBundleRef());
     assertThat(persisted.getGenerationConfigRevision()).isEqualTo(generationConfigRevision);
+    assertDescriptorSourceTuple(persisted, fixture.source());
     assertThat(
             dsl.fetchCount(
                 LAUNCH_DESCRIPTOR,
@@ -274,6 +275,7 @@ class LaunchDescriptorServiceIntegrationTest {
     assertThat(failed.getRequestDigest()).isEqualTo(fixture.request().requestDigest());
     assertThat(failed.getOriginalRequestJson()).isNotBlank();
     assertThat(failed.getSourceEvidenceJson()).isNotBlank();
+    assertDescriptorSourceTuple(failed, fixture.source());
     assertThat(failed.getLaunchDescriptorId()).isNull();
     assertThat(failed.getGameTemplateId()).isNull();
     assertThat(failed.getVersionId()).isNull();
@@ -871,9 +873,13 @@ class LaunchDescriptorServiceIntegrationTest {
     descriptor.setDescriptorSchemaVersion(evidence.schemaVersion());
     descriptor.setTargetNamespace(evidence.targetNamespace());
     descriptor.setCanonicalTenantId(evidence.canonicalTenantId().toString());
+    descriptor.setAuthoredWorldSourceTenantSlug(fixture.source().tenantSlug());
     descriptor.setWorldSlug(evidence.worldSlug());
     descriptor.setAuthoredWorldSourceOperationId(
         evidence.authoredWorldSourceOperationId().toString());
+    descriptor.setAuthoredWorldSourceGameRowId(fixture.source().sourceGameRowId());
+    descriptor.setAuthoredWorldSourceGameTenantKey(fixture.source().sourceGameTenantKey());
+    descriptor.setAuthoredWorldSourceProvenanceKind(fixture.source().provenanceKind());
     descriptor.setAuthoredWorldSourceEvidenceDigest(evidence.authoredWorldSourceEvidenceDigest());
     descriptor.setRequestDigest(evidence.requestDigest());
     descriptor.setResultDigest(evidence.resultDigest());
@@ -1033,6 +1039,21 @@ class LaunchDescriptorServiceIntegrationTest {
     return "src-" + UUID.randomUUID().toString().replace("-", "");
   }
 
+  private void assertDescriptorSourceTuple(
+      LaunchDescriptor descriptor, AuthoredWorldSourceEvidence source) {
+    assertThat(descriptor.getTargetNamespace()).isEqualTo(source.targetNamespace());
+    assertThat(descriptor.getCanonicalTenantId()).isEqualTo(source.canonicalTenantId().toString());
+    assertThat(descriptor.getAuthoredWorldSourceTenantSlug()).isEqualTo(source.tenantSlug());
+    assertThat(descriptor.getWorldSlug()).isEqualTo(source.worldSlug());
+    assertThat(descriptor.getAuthoredWorldSourceOperationId())
+        .isEqualTo(source.operationId().toString());
+    assertThat(descriptor.getAuthoredWorldSourceGameRowId()).isEqualTo(source.sourceGameRowId());
+    assertThat(descriptor.getAuthoredWorldSourceGameTenantKey())
+        .isEqualTo(source.sourceGameTenantKey());
+    assertThat(descriptor.getAuthoredWorldSourceProvenanceKind()).isEqualTo(source.provenanceKind());
+    assertThat(descriptor.getAuthoredWorldSourceEvidenceDigest()).isEqualTo(source.evidenceDigest());
+  }
+
   private void assertRetainedRowUnchanged(LaunchDescriptor expected, LaunchDescriptor actual) {
     assertThat(actual.getId()).isEqualTo(expected.getId());
     assertThat(actual.getLaunchDescriptorId()).isEqualTo(expected.getLaunchDescriptorId());
@@ -1054,8 +1075,12 @@ class LaunchDescriptorServiceIntegrationTest {
     assertThat(actual.getDescriptorSchemaVersion()).isNull();
     assertThat(actual.getTargetNamespace()).isNull();
     assertThat(actual.getCanonicalTenantId()).isNull();
+    assertThat(actual.getAuthoredWorldSourceTenantSlug()).isNull();
     assertThat(actual.getWorldSlug()).isNull();
     assertThat(actual.getAuthoredWorldSourceOperationId()).isNull();
+    assertThat(actual.getAuthoredWorldSourceGameRowId()).isNull();
+    assertThat(actual.getAuthoredWorldSourceGameTenantKey()).isNull();
+    assertThat(actual.getAuthoredWorldSourceProvenanceKind()).isNull();
     assertThat(actual.getAuthoredWorldSourceEvidenceDigest()).isNull();
     assertThat(actual.getRequestDigest()).isNull();
     assertThat(actual.getResultDigest()).isNull();

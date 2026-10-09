@@ -187,6 +187,7 @@ class LaunchDescriptorServiceImplTest {
         inserted.get().getTenantId(),
         "The private source key remains owner-local and is not the canonical tenant UUID");
     assertEquals(CANONICAL_TENANT_ID.toString(), inserted.get().getCanonicalTenantId());
+    assertDescriptorSourceTuple(inserted.get(), sourceEvidence(WORLD_SLUG));
     verify(authoredWorldSourceRepository)
         .read(SOURCE_OPERATION_ID, CANONICAL_TENANT_ID, WORLD_SLUG, NAMESPACE);
     verify(gameTemplateRepository).findLaunchConfigByTenantIdAndId(PRIVATE_SOURCE_TENANT_KEY, 9L);
@@ -470,6 +471,7 @@ class LaunchDescriptorServiceImplTest {
     assertEquals(LaunchDescriptor.OUTCOME_FAILED, failure.getValue().getOutcomeStatus());
     assertEquals("SCRIPT_PATCH_NOT_READY", failure.getValue().getFailureCode());
     assertEquals(request.requestDigest(), failure.getValue().getRequestDigest());
+    assertDescriptorSourceTuple(failure.getValue(), sourceEvidence(WORLD_SLUG));
     assertEquals(null, failure.getValue().getLaunchDescriptorId());
     assertEquals(null, failure.getValue().getVersionId());
   }
@@ -533,8 +535,12 @@ class LaunchDescriptorServiceImplTest {
     failure.setDescriptorSchemaVersion(AuthoredWorldLaunchDescriptorEvidence.SCHEMA_VERSION);
     failure.setTargetNamespace(NAMESPACE);
     failure.setCanonicalTenantId(CANONICAL_TENANT_ID.toString());
+    failure.setAuthoredWorldSourceTenantSlug(source.tenantSlug());
     failure.setWorldSlug(WORLD_SLUG);
     failure.setAuthoredWorldSourceOperationId(SOURCE_OPERATION_ID.toString());
+    failure.setAuthoredWorldSourceGameRowId(source.sourceGameRowId());
+    failure.setAuthoredWorldSourceGameTenantKey(source.sourceGameTenantKey());
+    failure.setAuthoredWorldSourceProvenanceKind(source.provenanceKind());
     failure.setAuthoredWorldSourceEvidenceDigest(request.authoredWorldSourceEvidenceDigest());
     failure.setRequestDigest(request.requestDigest());
     failure.setOriginalRequestJson(new ObjectMapper().writeValueAsString(request));
@@ -575,6 +581,25 @@ class LaunchDescriptorServiceImplTest {
 
     assertEquals(
         "LAUNCH_DESCRIPTOR_CONFLICT: stored resolved result digest is inconsistent",
+        thrown.getMessage());
+  }
+
+  @Test
+  void storedDescriptorReplayRejectsChangedAuthoredSourceTuple() {
+    AuthoredWorldLaunchDescriptorEvidence.Request request = request("cp-tampered-source", 9L);
+    stubSuccessfulLaunch(request, 7L, 11L);
+    LaunchDescriptor stored = descriptorFor(request, 7L, 11L);
+    stored.setAuthoredWorldSourceGameRowId(902L);
+    when(launchDescriptorRepository.findBoundByRequest(
+            NAMESPACE, CANONICAL_TENANT_ID, request.controlPlaneRequestId()))
+        .thenReturn(Optional.of(stored));
+
+    IllegalArgumentException thrown =
+        assertThrows(
+            IllegalArgumentException.class, () -> service.resolveLaunchDescriptor(request));
+
+    assertEquals(
+        "LAUNCH_DESCRIPTOR_CONFLICT: stored descriptor is not the exact immutable request",
         thrown.getMessage());
   }
 
@@ -897,9 +922,13 @@ class LaunchDescriptorServiceImplTest {
     descriptor.setDescriptorSchemaVersion(evidence.schemaVersion());
     descriptor.setTargetNamespace(evidence.targetNamespace());
     descriptor.setCanonicalTenantId(evidence.canonicalTenantId().toString());
+    descriptor.setAuthoredWorldSourceTenantSlug(source.tenantSlug());
     descriptor.setWorldSlug(evidence.worldSlug());
     descriptor.setAuthoredWorldSourceOperationId(
         evidence.authoredWorldSourceOperationId().toString());
+    descriptor.setAuthoredWorldSourceGameRowId(source.sourceGameRowId());
+    descriptor.setAuthoredWorldSourceGameTenantKey(source.sourceGameTenantKey());
+    descriptor.setAuthoredWorldSourceProvenanceKind(source.provenanceKind());
     descriptor.setAuthoredWorldSourceEvidenceDigest(evidence.authoredWorldSourceEvidenceDigest());
     descriptor.setRequestDigest(evidence.requestDigest());
     descriptor.setResultDigest(evidence.resultDigest());
@@ -944,6 +973,19 @@ class LaunchDescriptorServiceImplTest {
             901L,
             PRIVATE_SOURCE_TENANT_KEY,
             "NEW_GAME_ROW"));
+  }
+
+  private void assertDescriptorSourceTuple(
+      LaunchDescriptor descriptor, AuthoredWorldSourceEvidence source) {
+    assertEquals(source.targetNamespace(), descriptor.getTargetNamespace());
+    assertEquals(source.canonicalTenantId().toString(), descriptor.getCanonicalTenantId());
+    assertEquals(source.tenantSlug(), descriptor.getAuthoredWorldSourceTenantSlug());
+    assertEquals(source.worldSlug(), descriptor.getWorldSlug());
+    assertEquals(source.operationId().toString(), descriptor.getAuthoredWorldSourceOperationId());
+    assertEquals(source.sourceGameRowId(), descriptor.getAuthoredWorldSourceGameRowId());
+    assertEquals(source.sourceGameTenantKey(), descriptor.getAuthoredWorldSourceGameTenantKey());
+    assertEquals(source.provenanceKind(), descriptor.getAuthoredWorldSourceProvenanceKind());
+    assertEquals(source.evidenceDigest(), descriptor.getAuthoredWorldSourceEvidenceDigest());
   }
 
   private AuthoredWorldLaunchDescriptorEvidence.Request request(
