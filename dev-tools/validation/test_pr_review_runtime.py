@@ -29,6 +29,7 @@ sys.path.insert(0, str(ROOT / "dev-tools"))
 
 from pr_review import cli as review_cli
 from pr_review import evidence, github, hosted, sqlite_hosted_capture, sqlite_review_records, sqlite_store
+from pr_review import runtime as runtime_module
 from pr_review.cli_runner import EffectiveParent, PullRequestSnapshot, ReviewRunnerError, ReviewTarget
 from pr_review.controller import (
     ControllerError,
@@ -510,6 +511,231 @@ class RuntimeTest(unittest.TestCase):
         self.assertEqual(observer._payloads[99], {"unrelated": True})
         self.assertEqual(observer._histories[(99, "hosted")], [{"unrelated": True}])
         self.assertEqual(observer._records_histories[99], {"unrelated": True})
+
+    def test_complete_history_prefetch_is_bounded_and_publishes_in_configured_order(self) -> None:
+        observer = LiveEvidence("owner/repo", LiveGitHub("owner/repo"))
+        numbers = tuple(range(42, 50))
+        release = threading.Event()
+        active = 0
+        maximum_active = 0
+        observed_budgets = []
+        published = []
+        lock = threading.Lock()
+        payloads = {}
+        for number in numbers:
+            payload = self._payload()
+            pull = payload["data"]["repository"]["pullRequest"]
+            pull["number"] = number
+            pull["changedFiles"] = 1
+            payloads[number] = payload
+
+        def fetch(_repo, number):
+            nonlocal active, maximum_active
+            budget = github.active_hosted_preflight_budget()
+            with lock:
+                active += 1
+                maximum_active = max(maximum_active, active)
+                observed_budgets.append(budget)
+                if active == 4:
+                    release.set()
+            try:
+                if not release.wait(timeout=2):
+                    raise AssertionError("the bounded pool did not start four independent payload reads")
+                time.sleep((4 - (number - numbers[0]) % 4) * 0.02)
+                return payloads[number]
+            finally:
+                with lock:
+                    active -= 1
+
+        original_store = observer.prefetch_payload
+
+        def store(number, payload):
+            published.append(number)
+            original_store(number, payload)
+
+        started = time.monotonic()
+        with (
+            github.activate_hosted_preflight_budget(timeout_seconds=20) as budget,
+            patch.object(github, "fetch_pull_request", side_effect=fetch),
+            patch.object(observer, "prefetch_payload", side_effect=store),
+        ):
+            observer.prefetch_history_payloads(numbers)
+        elapsed = time.monotonic() - started
+
+        self.assertEqual(maximum_active, 4)
+        self.assertLessEqual(maximum_active, 4)
+        self.assertTrue(all(item is budget for item in observed_budgets))
+        self.assertEqual(published, list(numbers))
+        self.assertEqual(observer._complete_payloads, set(numbers))
+        self.assertLess(elapsed, 0.32)
+
+    def test_complete_history_prefetch_stops_queued_reads_after_failure_without_partial_cache(self) -> None:
+        numbers = tuple(range(42, 50))
+        payloads = {}
+        for number in numbers:
+            payload = self._payload()
+            pull = payload["data"]["repository"]["pullRequest"]
+            pull["number"] = number
+            pull["changedFiles"] = 1
+            payloads[number] = payload
+
+        for failure in ("fetch", "malformed", "deadline"):
+            with self.subTest(failure=failure):
+                observer = LiveEvidence("owner/repo", LiveGitHub("owner/repo"))
+                initial_reads = threading.Barrier(4)
+                release_initial_reads = threading.Event()
+                abort_check_observed = threading.Event()
+                calls = []
+                published = []
+                lock = threading.Lock()
+                real_event = threading.Event
+
+                class TrackedAbortEvent:
+                    def __init__(self, real_event=real_event):
+                        self._event = real_event()
+
+                    def set(self):
+                        self._event.set()
+
+                    def is_set(self, abort_check_observed=abort_check_observed):
+                        is_set = self._event.is_set()
+                        if is_set:
+                            abort_check_observed.set()
+                        return is_set
+
+                def fetch(
+                    _repo,
+                    number,
+                    *,
+                    failure=failure,
+                    numbers=numbers,
+                    payloads=payloads,
+                    lock=lock,
+                    calls=calls,
+                    initial_reads=initial_reads,
+                    release_initial_reads=release_initial_reads,
+                ):
+                    with lock:
+                        calls.append(number)
+                    initial_reads.wait(timeout=2)
+                    if number == numbers[0] and failure == "deadline":
+                        raise github.HostedPreflightDeadlineExceeded(
+                            "target_complete_history_prefetch", 121, 120, 1, len(numbers)
+                        )
+                    if number == numbers[0] and failure == "fetch":
+                        raise RuntimeError("synthetic original fetch failure")
+                    if number == numbers[0] and failure == "malformed":
+                        return {"data": {"repository": {"pullRequest": {"number": number, "changedFiles": 1}}}}
+                    if not release_initial_reads.wait(timeout=2):
+                        raise AssertionError("already-running sibling did not receive release")
+                    return payloads[number]
+
+                def record_publication(number, _payload, *, published=published):
+                    published.append(number)
+
+                real_as_completed = runtime_module.as_completed
+
+                def wait_for_dequeued_sibling_abort(
+                    futures,
+                    *,
+                    abort_check_observed=abort_check_observed,
+                    release_initial_reads=release_initial_reads,
+                    real_as_completed=real_as_completed,
+                ):
+                    if not abort_check_observed.wait(timeout=2):
+                        release_initial_reads.set()
+                        raise AssertionError("a dequeued sibling did not observe the worker abort")
+                    release_initial_reads.set()
+                    return real_as_completed(futures)
+
+                with (
+                    github.activate_hosted_preflight_budget(timeout_seconds=20),
+                    patch.object(github, "fetch_pull_request", side_effect=fetch),
+                    patch.object(observer, "prefetch_payload", side_effect=record_publication),
+                    patch.object(runtime_module, "Event", new=TrackedAbortEvent),
+                    patch.object(runtime_module, "as_completed", side_effect=wait_for_dequeued_sibling_abort),
+                ):
+                    if failure == "deadline":
+                        with self.assertRaises(github.HostedPreflightDeadlineExceeded):
+                            observer.prefetch_history_payloads(numbers)
+                    else:
+                        with self.assertRaisesRegex(ControllerError, "PR #42 cannot be verified") as raised:
+                            observer.prefetch_history_payloads(numbers)
+                        expected_cause = RuntimeError if failure == "fetch" else TypeError
+                        self.assertIsInstance(raised.exception.__cause__, expected_cause)
+
+                self.assertEqual(len(calls), 4)
+                self.assertEqual(set(calls), set(numbers[:4]))
+
+                self.assertEqual(observer._payloads, {})
+                self.assertEqual(observer._complete_payloads, set())
+                self.assertEqual(published, [])
+
+    def test_complete_paginated_prefetch_is_reused_by_both_channel_histories(self) -> None:
+        observer = LiveEvidence("owner/repo", LiveGitHub("owner/repo"))
+        first_page = self._payload()
+        pull = first_page["data"]["repository"]["pullRequest"]
+        pull["changedFiles"] = 1
+        pull["comments"] = {
+            "nodes": [],
+            "pageInfo": {"hasNextPage": True, "endCursor": "comment-page-one"},
+        }
+        pull["reviews"] = {"nodes": [], "pageInfo": {"hasNextPage": False, "endCursor": None}}
+        pull["reviewThreads"] = {"nodes": [], "pageInfo": {"hasNextPage": False, "endCursor": None}}
+        second_page_comment = {
+            "id": "IC_kw_second_page",
+            "databaseId": 102,
+            "author": {"login": "benhook1013"},
+            "body": "**Review scope changed:** second page\n<!-- firemud-review-scope-change -->",
+            "createdAt": "2026-10-01T00:00:00Z",
+            "updatedAt": "2026-10-01T00:00:00Z",
+            "url": "https://example.test/comments/102",
+        }
+        queries = []
+
+        def query(_text, variables):
+            queries.append(dict(variables))
+            if "after" not in variables:
+                return first_page
+            self.assertEqual(variables["after"], "comment-page-one")
+            return {
+                "data": {
+                    "repository": {
+                        "pullRequest": {
+                            "comments": {
+                                "nodes": [second_page_comment],
+                                "pageInfo": {"hasNextPage": False, "endCursor": None},
+                            }
+                        }
+                    }
+                }
+            }
+
+        with (
+            tempfile.TemporaryDirectory() as directory,
+            github.activate_hosted_preflight_budget(timeout_seconds=20),
+            patch.object(github, "run_gh_query", side_effect=query),
+            patch.object(hosted, "current_trigger_record_paths", return_value=[]),
+            patch.object(evidence, "resolve_cli_capture_context", return_value=(Path(directory), None)),
+            patch.object(evidence, "discover_cli_captures", return_value=[]),
+            patch.object(observer, "_active_cli_history", return_value=[]),
+        ):
+            observer.prefetch_history_payloads((42,))
+            hosted_history = observer.history(42, "hosted")
+            cli_history = observer.history(42, "cli")
+
+        for history in (hosted_history, cli_history):
+            self.assertTrue(
+                any(
+                    item.get("kind") == "scope_change" and item.get("comment_id") == 102
+                    for item in history
+                )
+            )
+        self.assertEqual(len(queries), 2)
+        self.assertEqual(
+            [item["databaseId"] for item in observer._payloads[42]["data"]["repository"]["pullRequest"]["comments"]["nodes"]],
+            [102],
+        )
 
     def test_hosted_source_resolution_retries_transient_history_failure_and_casefolds_repository(self) -> None:
         origin = {

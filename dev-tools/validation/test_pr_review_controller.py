@@ -364,6 +364,88 @@ class ControllerTests(unittest.TestCase):
         self.assertEqual(observed_phases, ["target_selection"])
         self.assertEqual(adapter_calls, [])
 
+    def test_hosted_complete_history_prefetch_failure_stops_before_adapter_or_reservation(self):
+        values, heads = _stacked_prs(2)
+        evidence = CountingEvidence()
+        controller = self.make(values, evidence, heads=heads)
+        controller.set_stack(list(values))
+        self._enable_batch_status(controller, values)
+        prefetch_calls = []
+        adapter = Mock()
+
+        def fail_prefetch(numbers):
+            prefetch_calls.append(tuple(numbers))
+            budget = github.active_hosted_preflight_budget()
+            self.assertIsNotNone(budget)
+            raise github.HostedPreflightDeadlineExceeded(
+                "target_complete_history_prefetch", 120, 120, 0, len(numbers)
+            )
+
+        evidence.prefetch_history_payloads = fail_prefetch
+        controller.hosted_adapter = adapter
+
+        with self.assertRaisesRegex(ControllerError, "target_complete_history_prefetch"):
+            controller.run_hosted(expected_pr=1)
+
+        self.assertEqual(prefetch_calls, [(1, 2)])
+        self.assertEqual(evidence.history_reads, [])
+        adapter.assert_not_called()
+
+    def test_hosted_history_prefetch_skips_request_only_histories_and_keeps_reconciliation_exception(self):
+        values, heads = _stacked_prs(4, merged=(1,))
+        evidence = CountingEvidence()
+        controller = self.make(values, evidence, heads=heads, sqlite=True)
+        controller.set_stack(list(values))
+        for pr_number in (2, 3):
+            for channel in ("hosted", "cli"):
+                controller.decide_stop(pr=pr_number, channel=channel, reason="no further discovery")
+
+        state = controller.store.load()
+        live, reconciliation = controller._reconciliation(state, evidence_prs=set())
+        current = controller._anchor(3, live[3], reconciliation.links[3])
+        decision = StackReconciliationDecision(
+            pr=3,
+            channel="hosted",
+            checkpoint="stopped-reconciliation-checkpoint",
+            prior_head=current.child_head,
+            child_head=current.child_head,
+            parent_identity=current.parent_identity,
+            parent_head=current.parent_head,
+            merge_base=current.merge_base,
+            patch_id=current.patch_id,
+            reason="verify the saved complete-history reconciliation exception",
+        )
+        controller.store.update(
+            lambda current_state: dataclasses.replace(current_state, reconciliations=(decision,))
+        )
+        evidence.history_reads.clear()
+        self._enable_batch_status(controller, values)
+        prefetch_calls = []
+        read_counts_at_prefetch = []
+        request_reads_at_prefetch = []
+
+        def record_prefetch(numbers):
+            prefetch_calls.append(tuple(numbers))
+            read_counts_at_prefetch.append(tuple(evidence.history_reads))
+            request_reads_at_prefetch.append(tuple(evidence.request_history_reads))
+
+        evidence.prefetch_history_payloads = record_prefetch
+        with github.hosted_preflight_budget(timeout_seconds=60):
+            target = controller._target("hosted", expected_pr=4)
+
+        self.assertEqual(target.pr, 4)
+        self.assertEqual(prefetch_calls, [(3, 4)])
+        self.assertEqual(read_counts_at_prefetch, [()])
+        self.assertEqual(
+            set(request_reads_at_prefetch[0]),
+            {(2, "hosted"), (2, "cli"), (3, "hosted"), (3, "cli")},
+        )
+        self.assertNotIn((1, "hosted"), evidence.history_reads)
+        self.assertNotIn((1, "cli"), evidence.history_reads)
+        self.assertNotIn((2, "hosted"), evidence.history_reads)
+        self.assertNotIn((2, "cli"), evidence.history_reads)
+        self.assertIn((3, "hosted"), evidence.history_reads)
+
     def test_cli_preflight_deadline_covers_target_selection_before_adapter(self):
         controller = self.make({})
         adapter_calls = []
