@@ -2,8 +2,10 @@ package net.firedevops.firemud.gamedesign.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
-import static org.assertj.core.api.Assertions.catchThrowable;
 
+import java.lang.reflect.Constructor;
+import java.lang.reflect.InvocationTargetException;
+import java.lang.reflect.Method;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -44,11 +46,12 @@ import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
+import org.springframework.test.util.AopTestUtils;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
-/** PostgreSQL proof for full-version publication transactions and failure retention. */
+/** PostgreSQL proof for isolated publication mechanics, retention, and public-ingress denial. */
 @Testcontainers(disabledWithoutDocker = true)
 @SpringBootTest(
     classes = GameDesignServiceApplication.class,
@@ -217,7 +220,7 @@ class PublishAttemptServiceTransactionIntegrationTest {
   }
 
   @Test
-  void reconciledFullVersionPublicationCommitsAttemptVersionAndReleaseBundleTogether() {
+  void privateMechanicsHarnessCommitsAttemptVersionAndReleaseBundleTogether() {
     String tenantId = "9002";
     String publishRequestId = "successful-reconcile-request";
     String publishWorkflowId =
@@ -251,25 +254,26 @@ class PublishAttemptServiceTransactionIntegrationTest {
             });
     Mockito.when(assetExportService.exportAssets(tenantId, 1)).thenReturn(exportedManifest());
 
-    VersionDto publishedVersion =
-        versionPublishCommandService.publishFullVersion(
+    Object snapshot =
+        reconcileFullVersionPublishMechanics(
             tenantId, "successful transaction proof", publishRequestId, publishWorkflowId);
+    assertMechanicsSnapshot(snapshot, "SUCCEEDED", "");
 
     PublishAttempt attempt =
         publishAttemptRepository.findByPublishWorkflowId(publishWorkflowId).orElseThrow();
     Version storedVersion =
-        versionRepository.findByTenantIdAndId(tenantId, publishedVersion.id()).orElseThrow();
+        versionRepository.findByTenantIdAndId(tenantId, attempt.getVersionId()).orElseThrow();
     PublishedReleaseBundle bundle =
         publishedReleaseBundleRepository
-            .findByTenantIdAndVersionId(tenantId, publishedVersion.id())
+            .findByTenantIdAndVersionId(tenantId, attempt.getVersionId())
             .orElseThrow();
     VersionAssetArtifact artifact =
         versionAssetArtifactRepository
-            .findByTenantIdAndVersionId(tenantId, publishedVersion.id())
+            .findByTenantIdAndVersionId(tenantId, attempt.getVersionId())
             .orElseThrow();
 
     assertThat(attempt.getStatus()).isEqualTo(PublishAttemptStatus.SUCCEEDED);
-    assertThat(attempt.getVersionId()).isEqualTo(publishedVersion.id());
+    assertThat(attempt.getVersionId()).isEqualTo(storedVersion.getId());
     assertThat(storedVersion.getVersionState()).isEqualTo(VersionLifecycleState.PUBLISHED);
     assertThat(bundle.getPublishWorkflowId()).isEqualTo(publishWorkflowId);
     assertThat(bundle.getManifestHash()).isEqualTo(MANIFEST_HASH);
@@ -277,7 +281,7 @@ class PublishAttemptServiceTransactionIntegrationTest {
   }
 
   @Test
-  void finalizationFailureAfterExportRetainsCandidateReferencedByApprovedRemapSet() {
+  void privateMechanicsHarnessRetainsCandidateAndRemapAfterFinalizationFailure() {
     String tenantId = "9003";
     String publishRequestId = "failed-remap-request";
     String publishWorkflowId =
@@ -379,17 +383,14 @@ class PublishAttemptServiceTransactionIntegrationTest {
             Mockito.eq(publishWorkflowId),
             Mockito.eq(exportedManifest.manifestHash()));
 
-    Throwable publishFailure =
-        catchThrowable(
-            () ->
-                versionPublishCommandService.publishFullVersion(
-                    tenantId, "failed remap proof", publishRequestId, publishWorkflowId));
-
-    assertThat(publishFailure).isInstanceOf(RuntimeException.class);
+    Object snapshot =
+        reconcileFullVersionPublishMechanics(
+            tenantId, "failed remap proof", publishRequestId, publishWorkflowId);
+    assertMechanicsSnapshot(snapshot, "FAILED", "forced finalization failure");
     PublishAttempt attempt =
         publishAttemptRepository.findByPublishWorkflowId(publishWorkflowId).orElseThrow();
     String failureContext =
-        "publish failure context (candidateVersionId="
+        "mechanics snapshot context (candidateVersionId="
             + candidateVersionId.get()
             + ", candidateVersionNumber="
             + candidateVersionNumber.get()
@@ -407,10 +408,10 @@ class PublishAttemptServiceTransactionIntegrationTest {
             + exportCallbackFailure.get()
             + ", exportCallbackFailureFrame="
             + firstStackFrame(exportCallbackFailure.get())
-            + ", failure="
-            + publishFailure.getClass().getName()
-            + ": "
-            + publishFailure.getMessage()
+            + ", snapshotStatus="
+            + snapshotValue(snapshot, "status")
+            + ", snapshotFailureMessage="
+            + snapshotValue(snapshot, "failureMessage")
             + ")";
     assertThat(exportCompleted.get()).as(failureContext).isTrue();
     assertThat(finalizationFailureInjected.get()).as(failureContext).isTrue();
@@ -439,6 +440,137 @@ class PublishAttemptServiceTransactionIntegrationTest {
     assertThat(retainedRemapSet.getApprovedAt()).isNotNull();
     assertThat(retainedRemapSet.getSourceVersionId()).isEqualTo(sourceVersionId);
     assertThat(retainedRemapSet.getTargetVersionId()).isEqualTo(candidateVersionId.get());
+  }
+
+  @Test
+  void publicFreshAndPendingFullVersionPublicationAreDeniedBeforeMutation() {
+    String freshTenantId = "9010";
+    String freshRequestId = "fresh-public-denial";
+    String freshWorkflowId =
+        FiremudWorkflowIds.workflowId(
+            TemporalVersionPublishWorkflow.WORKFLOW_FAMILY,
+            freshTenantId,
+            "publish-request",
+            freshRequestId);
+    Game freshGame = new Game();
+    freshGame.setTenantId(freshTenantId);
+    freshGame.setName("fresh-public-denial-game");
+    gameRepository.save(freshGame);
+
+    assertThatThrownBy(
+            () ->
+                versionPublishCommandService.publishFullVersion(
+                    freshTenantId, "fresh public denial", freshRequestId, freshWorkflowId))
+        .isInstanceOf(MutationOwnerProofUnavailableException.class)
+        .hasMessage(
+            "FULL_VERSION_PUBLICATION_UNAVAILABLE: fresh and pending full-version publication require a production Draft association");
+    assertThat(publishAttemptRepository.findByPublishWorkflowId(freshWorkflowId)).isEmpty();
+    assertThat(versionRepository.findByTenantIdAndVersionNumber(freshTenantId, 1)).isEmpty();
+
+    String pendingTenantId = "9011";
+    String pendingRequestId = "pending-public-denial";
+    String pendingWorkflowId =
+        FiremudWorkflowIds.workflowId(
+            TemporalVersionPublishWorkflow.WORKFLOW_FAMILY,
+            pendingTenantId,
+            "publish-request",
+            pendingRequestId);
+    Game pendingGame = new Game();
+    pendingGame.setTenantId(pendingTenantId);
+    pendingGame.setName("pending-public-denial-game");
+    gameRepository.save(pendingGame);
+    Version draft = new Version();
+    draft.setTenantId(pendingTenantId);
+    draft.setVersionNumber(1);
+    draft.setVersionState(VersionLifecycleState.DRAFT);
+    draft.setVersionStateEpoch(1L);
+    draft.setNotes("pre-existing pending attempt");
+    Version savedDraft = versionRepository.save(draft);
+    PublishAttempt pendingAttempt = new PublishAttempt();
+    pendingAttempt.setTenantId(pendingTenantId);
+    pendingAttempt.setPublishWorkflowId(pendingWorkflowId);
+    pendingAttempt.setPublishType(PublishType.FULL_VERSION);
+    pendingAttempt.setStatus(PublishAttemptStatus.PENDING);
+    pendingAttempt.setVersionId(savedDraft.getId());
+    pendingAttempt.setVersionNumber(savedDraft.getVersionNumber());
+    publishAttemptRepository.save(pendingAttempt);
+
+    assertThatThrownBy(
+            () ->
+                versionPublishCommandService.publishFullVersion(
+                    pendingTenantId, "pending public denial", pendingRequestId, pendingWorkflowId))
+        .isInstanceOf(MutationOwnerProofUnavailableException.class)
+        .hasMessage(
+            "FULL_VERSION_PUBLICATION_UNAVAILABLE: fresh and pending full-version publication require a production Draft association");
+    PublishAttempt retainedAttempt =
+        publishAttemptRepository.findByPublishWorkflowId(pendingWorkflowId).orElseThrow();
+    assertThat(retainedAttempt.getStatus()).isEqualTo(PublishAttemptStatus.PENDING);
+    assertThat(retainedAttempt.getVersionId()).isEqualTo(savedDraft.getId());
+    assertThat(
+            versionRepository
+                .findByTenantIdAndId(pendingTenantId, savedDraft.getId())
+                .orElseThrow()
+                .getVersionState())
+        .isEqualTo(VersionLifecycleState.DRAFT);
+    assertThat(
+            versionAssetArtifactRepository.findByTenantIdAndVersionId(
+                pendingTenantId, savedDraft.getId()))
+        .isEmpty();
+    assertThat(
+            publishedReleaseBundleRepository.findByTenantIdAndVersionId(
+                pendingTenantId, savedDraft.getId()))
+        .isEmpty();
+    Mockito.verifyNoInteractions(assetExportService);
+  }
+
+  /** Exercises the private transaction mechanics only; this is not production ingress proof. */
+  private Object reconcileFullVersionPublishMechanics(
+      String tenantId, String notes, String publishRequestId, String publishWorkflowId) {
+    try {
+      Class<?> requestType =
+          Class.forName("net.firedevops.firemud.gamedesign.service.impl.PublishWorkflowRequest");
+      Constructor<?> requestConstructor =
+          requestType.getDeclaredConstructor(
+              String.class, String.class, String.class, String.class);
+      requestConstructor.setAccessible(true);
+      Object request =
+          requestConstructor.newInstance(tenantId, notes, publishRequestId, publishWorkflowId);
+      Method mechanics =
+          VersionPublishCommandServiceImpl.class.getDeclaredMethod(
+              "reconcileFullVersionPublishMechanics", requestType);
+      mechanics.setAccessible(true);
+      Object target = AopTestUtils.getTargetObject(versionPublishCommandService);
+      return mechanics.invoke(target, request);
+    } catch (InvocationTargetException exception) {
+      Throwable cause = exception.getCause();
+      if (cause instanceof RuntimeException runtimeException) {
+        throw runtimeException;
+      }
+      if (cause instanceof Error error) {
+        throw error;
+      }
+      throw new AssertionError("private publication mechanics failed", cause);
+    } catch (ReflectiveOperationException exception) {
+      throw new AssertionError("private publication mechanics harness is unavailable", exception);
+    }
+  }
+
+  private static void assertMechanicsSnapshot(
+      Object snapshot, String expectedStatus, String expectedFailureMessage) {
+    assertThat(snapshotValue(snapshot, "status")).isEqualTo(expectedStatus);
+    assertThat(snapshotValue(snapshot, "failureMessage")).isEqualTo(expectedFailureMessage);
+  }
+
+  private static String snapshotValue(Object snapshot, String accessorName) {
+    try {
+      Method accessor = snapshot.getClass().getDeclaredMethod(accessorName);
+      accessor.setAccessible(true);
+      return (String) accessor.invoke(snapshot);
+    } catch (InvocationTargetException exception) {
+      throw new AssertionError("publication snapshot accessor failed", exception.getCause());
+    } catch (ReflectiveOperationException exception) {
+      throw new AssertionError("publication snapshot accessor is unavailable", exception);
+    }
   }
 
   private static String firstStackFrame(Throwable failure) {
