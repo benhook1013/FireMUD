@@ -1,6 +1,7 @@
 package net.firedevops.firemud.gamedesign.service.impl;
 
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
+import java.nio.charset.StandardCharsets;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
@@ -10,6 +11,7 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
+import net.firedevops.firemud.common.world.WorldPublishedStartLocationEvidence;
 import net.firedevops.firemud.gamedesign.dto.PublishParticipantDigestDto;
 import net.firedevops.firemud.gamedesign.dto.PublishedReleaseBundleDto;
 import net.firedevops.firemud.gamedesign.dto.VersionDto;
@@ -56,8 +58,8 @@ public class PublishedReleaseBundleServiceImpl implements PublishedReleaseBundle
       ExportedAssetManifest exportedManifest,
       String generationConfigRevision,
       List<PublishParticipantDigestDto> participantDigests) {
-    return createBundle(
-        version, publishWorkflowId, exportedManifest, generationConfigRevision, participantDigests);
+    throw new IllegalStateException(
+        "PUBLISH_SELECTION_REQUIRED: full-version bundles require the captured publication operation");
   }
 
   private PublishedReleaseBundleDto createBundle(
@@ -161,7 +163,17 @@ public class PublishedReleaseBundleServiceImpl implements PublishedReleaseBundle
                     entity.getArtifactDigestsJson(),
                     objectMapper
                         .getTypeFactory()
-                        .constructCollectionType(List.class, PublishedArtifactDigest.class)));
+                        .constructCollectionType(List.class, PublishedArtifactDigest.class)),
+            entity.getWorldPublishedStartLocationEvidenceJson() == null
+                ? null
+                : WorldPublishedStartLocationEvidence.fromStored(
+                    entity
+                        .getWorldPublishedStartLocationEvidenceJson()
+                        .getBytes(StandardCharsets.UTF_8)));
+    if (PublishedReleaseBundleContract.SELECTOR_ATTESTATION_SCHEMA_VERSION.equals(
+        dto.attestationSchemaVersion())) {
+      PublishedReleaseBundleContract.requireSelectorBinding(dto);
+    }
     return dto;
   }
 

@@ -5,14 +5,12 @@ import static net.firedevops.firemud.gamedesign.service.impl.CommandDefinitionFi
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
-import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.when;
 
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
-import net.firedevops.firemud.gamedesign.dto.PublishParticipantDigestDto;
 import net.firedevops.firemud.gamedesign.dto.VersionDto;
 import net.firedevops.firemud.gamedesign.entity.PublishedReleaseBundle;
 import net.firedevops.firemud.gamedesign.entity.Revision;
@@ -54,82 +52,13 @@ class PublishedReleaseBundleServiceImplTest {
   }
 
   @Test
-  void createFullVersionBundlePersistsImmutableAttestation() {
-    VersionDto version =
-        new VersionDto(
-            7L,
-            "tenant-1",
-            8,
-            VersionLifecycleState.PUBLISHED,
-            2L,
-            null,
-            null,
-            false,
-            "notes",
-            LocalDateTime.now(),
-            LocalDateTime.now());
-    when(repository.findByTenantIdAndVersionId("tenant-1", 7L)).thenReturn(Optional.empty());
-    Revision commandDefinition = new Revision();
-    commandDefinition.setData(validCommandDefinition());
-    when(revisionRepository.findByTenantIdAndVersionIdAndRevisionKindOrderByIdAsc(
-            "tenant-1", 7L, "COMMAND_DEFINITION"))
-        .thenReturn(List.of(commandDefinition));
-    when(repository.save(any(PublishedReleaseBundle.class)))
-        .thenAnswer(
-            invocation -> {
-              PublishedReleaseBundle entity = invocation.getArgument(0);
-              entity.setId(11L);
-              entity.setPublishedReleaseBundleRef("owner-issued-reference-11");
-              return entity;
-            });
-
-    var dto =
-        service.createFullVersionBundle(
-            version,
-            "workflow-1",
-            logoManifest(),
-            "genrev-1",
-            List.of(
-                new PublishParticipantDigestDto(
-                    "GAME_LOGIC",
-                    "7",
-                    null,
-                    "version:7",
-                    "digest-logic",
-                    1,
-                    "ability-schema-v1",
-                    null,
-                    null),
-                new PublishParticipantDigestDto(
-                    "GAME_DESIGN_CONTROL_PLANE", "7", "version:7", "digest-1", 1, null, null)));
-
-    assertEquals(11L, dto.id());
-    assertEquals("tenant-1", dto.tenantId());
-    assertEquals(7L, dto.versionId());
-    assertEquals(MANIFEST_HASH, dto.manifestHash());
-    assertEquals(1, dto.manifestSchemaVersion());
-    assertEquals(List.of(logoProof()), dto.artifactDigests());
-    assertEquals("genrev-1", dto.generationConfigRevision());
-    assertEquals(List.of("logo.png"), dto.requiredManifestAssetKeys());
-    assertEquals(2, dto.participantDigests().size());
-    assertEquals("GAME_LOGIC", dto.participantDigests().getFirst().participantKey());
-    assertEquals("version:7", dto.participantDigests().getFirst().appliedCommitId());
-    assertEquals("digest-logic", dto.participantDigests().getFirst().contentDigest());
-    assertEquals(1, dto.participantDigests().getFirst().digestSchemaVersion());
-    assertEquals("ability-schema-v1", dto.participantDigests().getFirst().abilitySchemaDigest());
-    assertEquals(List.of(validCommandDefinition()), dto.commandDefinitions());
-    assertEquals("v1", dto.attestationSchemaVersion());
-    assertEquals("owner-issued-reference-11", dto.publishedReleaseBundleRef());
-    assertEquals(sourceIdentity().getCanonicalTenantId(), dto.canonicalTenantId());
-    assertEquals(sourceIdentity().getCanonicalVersionId(), dto.canonicalVersionId());
-    org.mockito.Mockito.verify(repository)
-        .save(
-            org.mockito.ArgumentMatchers.argThat(
-                saved ->
-                    sourceIdentity().getCanonicalTenantId().equals(saved.getCanonicalTenantId())
-                        && sourceIdentity()
-                            .getCanonicalVersionId()
-                            .equals(saved.getCanonicalVersionId())));
+  void legacyFullVersionBundleFailsClosedBeforeReadingMutableSources() {
+    assertThrows(
+        IllegalStateException.class,
+        () ->
+            service.createFullVersionBundle(
+                version(), "workflow-1", logoManifest(), "genrev-1", List.of()));
+    org.mockito.Mockito.verifyNoInteractions(repository, revisionRepository, versionRepository);
   }
 
   @Test
@@ -152,7 +81,21 @@ class PublishedReleaseBundleServiceImplTest {
     assertNull(dto.publishedReleaseBundleRef());
     assertNull(dto.manifestSchemaVersion());
     assertNull(dto.artifactDigests());
+    assertNull(dto.worldPublishedStartLocationEvidence());
     assertNull(dto.participantDigests().getFirst().abilitySchemaDigest());
+  }
+
+  @Test
+  void corruptedSelectorEvidenceIsRejectedOnRead() {
+    PublishedReleaseBundle retained = new PublishedReleaseBundle();
+    retained.setAttestationSchemaVersion("v2");
+    retained.setTenantId("tenant-1");
+    retained.setVersionId(7L);
+    retained.setWorldPublishedStartLocationEvidenceJson("{}");
+    when(repository.findByTenantIdAndVersionId("tenant-1", 7L)).thenReturn(Optional.of(retained));
+
+    assertThrows(
+        IllegalArgumentException.class, () -> service.getPublishedReleaseBundle("tenant-1", 7L));
   }
 
   private Version sourceIdentity() {
@@ -265,7 +208,7 @@ class PublishedReleaseBundleServiceImplTest {
   }
 
   @Test
-  void createFullVersionBundleRejectsMalformedCommandEffectDeclaration() {
+  void legacyFullVersionBundleDoesNotReachMutableCommandValidation() {
     VersionDto version = version();
     when(repository.findByTenantIdAndVersionId("tenant-1", 7L)).thenReturn(Optional.empty());
     Revision commandDefinition = new Revision();
@@ -275,7 +218,7 @@ class PublishedReleaseBundleServiceImplTest {
         .thenReturn(List.of(commandDefinition));
 
     assertThrows(
-        IllegalArgumentException.class,
+        IllegalStateException.class,
         () ->
             service.createFullVersionBundle(
                 version, "workflow-1", emptyManifest(), "genrev-1", List.of()));

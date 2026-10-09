@@ -1905,6 +1905,47 @@ public class AccountServiceImpl implements AccountService {
     return accountRepository.findByUsername(usernameOrEmail);
   }
 
+  /**
+   * Explicit internal control-ui owner hook. It performs real primary authentication and consumes
+   * the exact OTP in the caller's writable issuance transaction; it issues no token or session. The
+   * owner must catch primary credential denial inside that transaction so failed-attempt accounting
+   * commits, then report the denial outside it. Successful OTP consumption remains rollback-capable
+   * when later issuance preparation fails.
+   */
+  @Transactional(
+      propagation = org.springframework.transaction.annotation.Propagation.MANDATORY,
+      noRollbackFor = AuthenticationException.class)
+  public ControlUiPrimaryIdentity authenticateControlUiPrimaryIdentity(
+      String email, String secret) {
+    if (!TransactionSynchronizationManager.isActualTransactionActive()
+        || TransactionSynchronizationManager.isCurrentTransactionReadOnly()) {
+      throw new IllegalStateException("Writable Account issuance transaction required");
+    }
+    PrimaryAuthentication result = authenticateAccountIdentity(email, secret, true);
+    result.emailLoginChallenge().ifPresent(accountEmailLoginChallengeRepository::delete);
+    Account account = result.account();
+    UUID accountUuid = UUID.fromString(accountMapper.toDto(account).id());
+    return new ControlUiPrimaryIdentity(accountUuid);
+  }
+
+  /** No external constructor: only successful Account primary authentication creates this proof. */
+  public static final class ControlUiPrimaryIdentity {
+    private final UUID accountId;
+
+    private ControlUiPrimaryIdentity(UUID accountId) {
+      this.accountId = accountId;
+    }
+
+    public UUID accountId() {
+      return accountId;
+    }
+
+    @Override
+    public String toString() {
+      return "ControlUiPrimaryIdentity[redacted]";
+    }
+  }
+
   private PrimaryAuthentication authenticateAccountIdentity(
       String username, String password, boolean allowEmailLoginOtp) {
     Optional<Account> accountOpt = findAccountForAuthentication(username);

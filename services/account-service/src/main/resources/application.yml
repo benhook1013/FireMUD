@@ -107,6 +107,10 @@ firemud:
         - account.v1.AccountService/JoinPublicProductionMembership
         - account.v1.RuntimeAccountIdentityService/ResolveRuntimeAccountIdentity
         - account.v1.AccountActorStagingEligibilityService/ResolvePreseededActorStagingEligibility
+        - account.v1.StartSessionOperatorAuthorizationService/IssueHumanOperatorAuthorizationReference
+        - account.v1.StartSessionOperatorAuthorizationService/RecoverOperatorAuthorizationReference
+        - account.v1.StartSessionOperatorAuthorizationService/RedeemOperatorAuthorization
+        - account.v1.StartSessionOperatorAuthorizationService/ReadRedeemedOperationProjection
 
 management:
   endpoints:

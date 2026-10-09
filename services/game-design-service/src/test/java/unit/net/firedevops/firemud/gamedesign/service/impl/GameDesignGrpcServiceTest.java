@@ -26,6 +26,7 @@ import net.firedevops.firemud.gamedesign.dto.VersionStateDto;
 import net.firedevops.firemud.gamedesign.model.PublishGateFailureCode;
 import net.firedevops.firemud.gamedesign.model.TemplateRemapSetStatus;
 import net.firedevops.firemud.gamedesign.model.VersionLifecycleState;
+import net.firedevops.firemud.gamedesign.service.CompleteLaunchBindingService;
 import net.firedevops.firemud.gamedesign.service.GameAuthoredHelpTopicService;
 import net.firedevops.firemud.gamedesign.service.LaunchDescriptorService;
 import net.firedevops.firemud.gamedesign.service.MutationOwnerProofUnavailableException;
@@ -99,6 +100,8 @@ class GameDesignGrpcServiceTest {
   private final VersionService versionService = Mockito.mock(VersionService.class);
   private final LaunchDescriptorService launchDescriptorService =
       Mockito.mock(LaunchDescriptorService.class);
+  private final CompleteLaunchBindingService completeLaunchBindingService =
+      Mockito.mock(CompleteLaunchBindingService.class);
   private final TemplateRemapSetService templateRemapSetService =
       Mockito.mock(TemplateRemapSetService.class);
   private final VersionAssetArtifactService versionAssetArtifactService =
@@ -115,6 +118,7 @@ class GameDesignGrpcServiceTest {
           revisionService,
           versionService,
           launchDescriptorService,
+          completeLaunchBindingService,
           templateRemapSetService,
           versionAssetArtifactService,
           settingsAuthorityService,
@@ -1141,17 +1145,20 @@ class GameDesignGrpcServiceTest {
   }
 
   @Test
-  void resolveLaunchDescriptorFailsClosedBeforeOwnerRead() {
+  void resolveLaunchDescriptorRejectsUnboundLegacyRequestBeforeOwnerRead() {
     AtomicReference<ResolveLaunchDescriptorResponse> ref = new AtomicReference<>();
-    service.resolveLaunchDescriptor(
-        ResolveLaunchDescriptorRequest.newBuilder()
-            .setTenantId("tenant-1")
-            .setGameTemplateId(9L)
-            .setControlPlaneRequestId("cp-legacy")
-            .build(),
-        observerFor(ref));
+    underLaunchPeer(
+        "game-session-service",
+        () ->
+            service.resolveLaunchDescriptor(
+                ResolveLaunchDescriptorRequest.newBuilder()
+                    .setCanonicalTenantId("67d7b75b-42d1-4ac6-9572-684c5e633cda")
+                    .setGameTemplateId(9L)
+                    .setControlPlaneRequestId("cp-legacy")
+                    .build(),
+                observerFor(ref)));
 
-    assertEquals("AUTHORED_WORLD_LAUNCH_BINDING_REQUIRED", ref.get().getError().getCode());
+    assertEquals("INVALID_ARGUMENT", ref.get().getError().getCode());
     Mockito.verifyNoInteractions(launchDescriptorService);
   }
 

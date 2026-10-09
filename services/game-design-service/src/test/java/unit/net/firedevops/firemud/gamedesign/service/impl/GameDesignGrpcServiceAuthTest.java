@@ -14,6 +14,7 @@ import java.util.concurrent.atomic.AtomicReference;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
 import net.firedevops.firemud.common.security.SessionContext;
 import net.firedevops.firemud.gamedesign.dto.PublishedReleaseBundleDto;
+import net.firedevops.firemud.gamedesign.service.CompleteLaunchBindingService;
 import net.firedevops.firemud.gamedesign.service.GameAuthoredHelpTopicService;
 import net.firedevops.firemud.gamedesign.service.LaunchDescriptorService;
 import net.firedevops.firemud.gamedesign.service.PingService;
@@ -53,6 +54,7 @@ class GameDesignGrpcServiceAuthTest {
             Mockito.mock(RevisionService.class),
             Mockito.mock(VersionService.class),
             Mockito.mock(LaunchDescriptorService.class),
+            Mockito.mock(CompleteLaunchBindingService.class),
             Mockito.mock(TemplateRemapSetService.class),
             Mockito.mock(VersionAssetArtifactService.class),
             Mockito.mock(SettingsAuthorityService.class),
@@ -119,6 +121,7 @@ class GameDesignGrpcServiceAuthTest {
             Mockito.mock(RevisionService.class),
             versionService,
             launchDescriptorService,
+            Mockito.mock(CompleteLaunchBindingService.class),
             Mockito.mock(TemplateRemapSetService.class),
             Mockito.mock(VersionAssetArtifactService.class),
             Mockito.mock(SettingsAuthorityService.class),

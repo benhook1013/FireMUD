@@ -2,6 +2,14 @@
 
 This document defines the Logging & Admin Service REST and gRPC surfaces, authentication classes, and endpoint availability expectations.
 
+## StartSession Reservation Claim Evidence
+
+`logging_admin.v1.StartSessionReservationEvidenceService/ReadCurrentClaimEvidence` is a read-only internal Account handoff for [ADR 0048](../../decisions/adr-0048-durable-idempotent-operator-write-execution.md)'s current pre-authorization reservation. It requires the exact certificate-derived `account-service` peer in the configured workload namespace and rejects caller JWT context before reading the reservation. It is not an external operator route, authorization-reference issuance, claim renewal, ownership transfer, or commit-spanning CAS proof.
+
+The request binds the canonical non-nil `controlPlaneRequestId`, exact bounded canonical UTF-8 `preAuthorizationReservationTuple/v1`, original reservation owner/fence, current claim owner/fence, and an explicit `ISSUE` or `RECOVER` purpose. `ISSUE` requires the original owner/fence; `RECOVER` requires a distinct recovery owner and a later fence. Only an exact, unexpired, active `ACCOUNT_AUTHORIZATION/AUTHORIZATION_PENDING` row can supply evidence. The response echoes the exact tuple, mutation digest, both owner/fence pairs, purpose, claim expiry, and observation time. Missing, changed, expired, or unavailable evidence fails closed; unknown fields and malformed or non-canonical input are rejected. Account validates all returned bindings and freshness before using this snapshot as an issuance or recovery precondition; it must still establish its own current authority and durable operation boundary.
+
+Implementation status: the claim-evidence receiver and Account read client exist with focused proof. The complete Account operator-reference lifecycle and Logging-to-Game Session authorized execution remain incomplete; this read does not establish that an operator command can execute.
+
 ## Account Audit Ingress and Receipt
 
 The canonical Account-to-Logging & Admin audit ingress is the existing `logging_admin.v1.LoggingAdminService/CreateLogEvent` RPC, converged in place rather than duplicated as a parallel ingress. It is a non-destructive internal service RPC, not an operator/admin mutation. Account is the producer and source authority for account state; Logging & Admin owns the receiver-side audit envelope, durable receipt/readback, deduplication, and audit projection. The audit ingress follows only shared envelope fundamentals (stable identity, event type/schema, producer occurrence time, and at-least-once/idempotent delivery) from [Session Behavior](../../system-architecture-session-behavior.md); it does **not** inherit that document's membership-specific field set or `eventDigest` grammar. Internal workload identity and method authorization follow [Authentication](../../system-architecture-authentication.md) and [gRPC](../../system-architecture-grpc.md#tls-requirements).
