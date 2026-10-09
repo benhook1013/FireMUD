@@ -21,6 +21,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Supplier;
 import net.firedevops.firemud.accountservice.authordraft.DraftAuthorizationFenceRepository;
+import net.firedevops.firemud.accountservice.authordraft.DraftAuthorizationFenceRepository.SourceChange;
 import net.firedevops.firemud.accountservice.dto.CompletePasswordResetRequest;
 import net.firedevops.firemud.accountservice.entity.Account;
 import net.firedevops.firemud.accountservice.entity.PasswordResetToken;
@@ -371,6 +372,89 @@ class PasswordResetAuthorityProducerPostgresIntegrationTest {
                     HexFormat.of().parseHex(tokenHash(seed.rawToken()))),
             "Committed V76 source change must remain readable");
     assertThat(committedV76Change.get("status", String.class)).isEqualTo("SOURCE_COMMITTED");
+  }
+
+  @Test
+  void overlappingWaitingSourceChangeMakesPasswordResetRetryableAndRollsBack() {
+    Fixture fixture = newFixture();
+    Seed seed = seedAccountAndToken(fixture, "initial-password");
+    DraftAuthorizationFenceBinding committed = draftBinding(seed);
+    DraftAuthorizationFenceBinding aborted = draftBinding(seed);
+    transaction(
+        fixture.transaction(),
+        () -> {
+          fixture.fences().reserve(committed);
+          fixture.fences().reserve(aborted);
+          fixture.fences().claimCommitOrder(committed);
+          fixture.fences().claimCommitOrder(aborted);
+          for (Owner owner : List.of(Owner.GAME_DESIGN, Owner.WORLD)) {
+            fixture
+                .fences()
+                .recordOwnerReadback(committed, ownerOutcome(committed, owner, Outcome.COMMITTED));
+            fixture.fences().recordOwnerReadback(aborted, ownerDenial(aborted, owner));
+          }
+          return null;
+        });
+
+    SourceChange overlappingChange =
+        new SourceChange(
+            UUID.randomUUID(),
+            committed.sources(),
+            "overlapping-source-change".getBytes(StandardCharsets.UTF_8));
+    boolean settled =
+        transaction(
+            fixture.transaction(), () -> fixture.fences().requestSourceChange(overlappingChange));
+    assertThat(settled).isTrue();
+    assertThat(
+            transaction(
+                fixture.transaction(),
+                () -> fixture.fences().sourceMutationPermitted(overlappingChange)))
+        .isTrue();
+
+    assertThatThrownBy(() -> reset(fixture, seed.rawToken(), "overlapping-password"))
+        .isInstanceOf(
+            AccountAuthoritySourceEvidenceRepository.SourceEvidenceUnavailableException.class);
+    assertUnchangedAfterRollback(fixture, seed, 1L, 1L);
+    assertThat(
+            fixture
+                .setupDsl()
+                .fetchSingle(
+                    "SELECT status FROM account_draft_authorization_source_changes "
+                        + "WHERE change_id = ?",
+                    overlappingChange.changeId())
+                .get("status", String.class))
+        .isEqualTo("WAITING");
+    assertThat(
+            fixture
+                .setupDsl()
+                .fetchOne(
+                    "SELECT token_hash FROM account_password_reset_draft_source_changes "
+                        + "WHERE token_hash = ?",
+                    HexFormat.of().parseHex(tokenHash(seed.rawToken()))))
+        .isNull();
+  }
+
+  @Test
+  void unrelatedSourcePersistenceFailurePropagatesAndRollsBackPasswordReset() {
+    Fixture fixture = newFixture();
+    Seed seed = seedAccountAndToken(fixture, "initial-password");
+    fixture
+        .setupDsl()
+        .execute(
+            "ALTER TABLE account_draft_authorization_source_changes "
+                + "ADD CONSTRAINT test_reject_waiting_source_change CHECK (status <> 'WAITING')");
+
+    assertThatThrownBy(() -> reset(fixture, seed.rawToken(), "unrelated-failure-password"))
+        .isInstanceOf(DataAccessException.class);
+
+    assertUnchangedAfterRollback(fixture, seed, 1L, 1L);
+    assertThat(
+            fixture
+                .setupDsl()
+                .fetchOne(
+                    "SELECT change_id FROM account_draft_authorization_source_changes "
+                        + "WHERE status = 'WAITING'"))
+        .isNull();
   }
 
   @Test
@@ -787,9 +871,14 @@ class PasswordResetAuthorityProducerPostgresIntegrationTest {
   }
 
   private OwnerReadback ownerDenial(DraftAuthorizationFenceBinding binding, Owner owner) {
+    return ownerOutcome(binding, owner, Outcome.DEFINITIVELY_ABORTED);
+  }
+
+  private OwnerReadback ownerOutcome(
+      DraftAuthorizationFenceBinding binding, Owner owner, Outcome outcome) {
     return new OwnerReadback(
         owner,
-        Outcome.DEFINITIVELY_ABORTED,
+        outcome,
         binding.operationId(),
         binding.commitId(),
         binding.fenceId(),

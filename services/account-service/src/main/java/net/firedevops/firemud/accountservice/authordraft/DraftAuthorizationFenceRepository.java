@@ -64,6 +64,21 @@ public final class DraftAuthorizationFenceRepository {
     DEFINITIVE_ABORT
   }
 
+  /** A distinct source mutation cannot capture the same authority source while one is waiting. */
+  public static final class PendingSourceChangeException extends IllegalStateException {
+    private static final long serialVersionUID = 1L;
+    private final UUID sourceChangeId;
+
+    public PendingSourceChangeException(UUID sourceChangeId) {
+      super("Another authority source change is already pending for this source");
+      this.sourceChangeId = Objects.requireNonNull(sourceChangeId);
+    }
+
+    public UUID sourceChangeId() {
+      return sourceChangeId;
+    }
+  }
+
   public record FenceSnapshot(
       Ordering ordering, byte[] binding, OffsetDateTime reservedAt, OffsetDateTime orderedAt) {
     public FenceSnapshot {
@@ -398,7 +413,7 @@ public final class DraftAuthorizationFenceRepository {
       }
     } else {
       if (hasWaitingChange(change.sources())) {
-        throw new IllegalStateException("Another authority source change is already pending");
+        throw new PendingSourceChangeException(change.changeId());
       }
       dsl.execute(
           "INSERT INTO " + CHANGES + " (change_id, binding, status) VALUES (?, ?, 'WAITING')",
@@ -435,7 +450,7 @@ public final class DraftAuthorizationFenceRepository {
         && allAffectedSettled(change.sources());
   }
 
-  /** A no-mutation cancellation is safe only after every affected owner operation is settled. */
+  /** A no-mutation cancellation is safe only after every affected operation has settled. */
   public boolean sourceAbortPermitted(SourceChange change) {
     requireTransaction();
     lockSources(change.sources());
@@ -479,9 +494,9 @@ public final class DraftAuthorizationFenceRepository {
   }
 
   /**
-   * Records a terminal no-mutation result. The same ordering-aware settlement predicate used for
-   * source commit applies: revoke order requires two definitive aborts; commit order requires two
-   * exact terminal owner readbacks, including a mixed vector.
+   * Records a terminal no-mutation result after every affected operation settles under its own
+   * ordering and exact owner readbacks. Owners must agree within each operation; distinct
+   * operations may have different terminal outcomes.
    */
   public void markSourceAborted(SourceChange change, SourceChangeAbortReason reason) {
     requireTransaction();
@@ -799,8 +814,9 @@ public final class DraftAuthorizationFenceRepository {
   }
 
   /**
-   * Every original required owner must report one uniform exact terminal outcome. Missing or mixed
-   * evidence always remains pending.
+   * Every affected operation is checked independently through its exact owner settlement. Missing
+   * or mixed owner evidence within an operation remains pending; terminal outcomes may differ
+   * between affected operations.
    */
   private boolean allAffectedSettled(List<SourceEvidence> sources) {
     if (hasPendingPublication(sources) || hasPendingGameLogicIntake(sources)) {

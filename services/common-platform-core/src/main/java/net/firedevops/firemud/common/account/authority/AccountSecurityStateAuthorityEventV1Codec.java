@@ -1,22 +1,16 @@
 package net.firedevops.firemud.common.account.authority;
 
-import com.fasterxml.jackson.core.JsonFactory;
-import com.fasterxml.jackson.core.StreamReadFeature;
-import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
-import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
-import java.util.HexFormat;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
-import java.util.regex.Pattern;
 import net.firedevops.firemud.common.json.Rfc8785CanonicalJson;
 
 /** Closed source evidence for one Account-owned, non-password security-state mutation. */
@@ -57,15 +51,7 @@ public final class AccountSecurityStateAuthorityEventV1Codec {
       Set.of("platformAdmin", "support", "billingAdmin");
   private static final Set<String> LIFECYCLE_STATES =
       Set.of("ACTIVE", "SECURITY_LOCKED", "DEACTIVATED_PENDING_DELETE", "DELETED");
-  private static final Pattern UUID_PATTERN =
-      Pattern.compile("[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}");
-  private static final Pattern POSITIVE_DECIMAL = Pattern.compile("[1-9][0-9]*");
-  private static final Pattern DIGEST_PATTERN = Pattern.compile("sha256:[0-9a-f]{64}");
-  private static final String NIL_UUID = "00000000-0000-0000-0000-000000000000";
-  private static final ObjectMapper JSON =
-      new ObjectMapper(
-              JsonFactory.builder().enable(StreamReadFeature.STRICT_DUPLICATE_DETECTION).build())
-          .enable(DeserializationFeature.FAIL_ON_TRAILING_TOKENS);
+  private static final ObjectMapper JSON = StrictAuthorityEventSupport.strictJsonMapper();
 
   static {
     var fields = new java.util.HashSet<>(PREIMAGE_FIELDS);
@@ -104,7 +90,7 @@ public final class AccountSecurityStateAuthorityEventV1Codec {
     }
     exactFields(wire, WIRE_FIELDS);
     String supplied = text(wire, "eventDigest");
-    if (!DIGEST_PATTERN.matcher(supplied).matches()) {
+    if (!StrictAuthorityEventSupport.isCanonicalSha256Digest(supplied)) {
       throw invalid("eventDigest must be canonical sha256 hexadecimal");
     }
     ObjectNode preimage = wire.deepCopy();
@@ -183,9 +169,7 @@ public final class AccountSecurityStateAuthorityEventV1Codec {
   }
 
   private static void exactFields(ObjectNode object, Set<String> expected) {
-    Set<String> actual = new java.util.HashSet<>();
-    object.fieldNames().forEachRemaining(actual::add);
-    if (!actual.equals(expected)) {
+    if (!StrictAuthorityEventSupport.hasExactFields(object, expected)) {
       throw invalid("object must contain exactly the declared fields");
     }
   }
@@ -206,42 +190,30 @@ public final class AccountSecurityStateAuthorityEventV1Codec {
 
   private static String uuid(ObjectNode object, String field) {
     String value = text(object, field);
-    if (!UUID_PATTERN.matcher(value).matches() || NIL_UUID.equals(value)) {
+    if (!StrictAuthorityEventSupport.isCanonicalUuid(value)) {
       throw invalid(field + " must be a canonical lowercase non-nil UUID");
     }
     return value;
   }
 
   private static void positive(ObjectNode object, String field) {
-    if (!POSITIVE_DECIMAL.matcher(text(object, field)).matches()) {
+    if (!StrictAuthorityEventSupport.isPositiveCanonicalDecimal(text(object, field))) {
       throw invalid(field + " must be a positive canonical decimal string");
     }
   }
 
   private static String canonicalJson(ObjectNode object) {
-    try {
-      return new String(
-          Rfc8785CanonicalJson.canonicalizeUtf8(object.toString()), StandardCharsets.UTF_8);
-    } catch (IOException exception) {
-      throw new IllegalArgumentException("event cannot be canonicalized", exception);
-    }
+    return StrictAuthorityEventSupport.canonicalJson(object, "event cannot be canonicalized");
   }
 
   private static String digest(ObjectNode object) {
-    try {
-      return "sha256:"
-          + HexFormat.of()
-              .formatHex(
-                  MessageDigest.getInstance("SHA-256")
-                      .digest(canonicalJson(object).getBytes(StandardCharsets.UTF_8)));
-    } catch (NoSuchAlgorithmException exception) {
-      throw new IllegalStateException("SHA-256 is unavailable", exception);
-    }
+    return StrictAuthorityEventSupport.digest(object, "event cannot be canonicalized");
   }
 
   private static AccountSecurityStateAuthorityEvent evidence(ObjectNode wire, String digest) {
     ObjectNode state = object(wire, "accountState");
     ObjectNode cutoff = object(wire, "accountSecurityCutoff");
+    var cutoffFields = StrictAuthorityEventSupport.accountSecurityCutoffFields(cutoff);
     return new AccountSecurityStateAuthorityEvent(
         text(wire, "eventId"),
         text(wire, "requestId"),
@@ -251,9 +223,9 @@ public final class AccountSecurityStateAuthorityEventV1Codec {
         text(wire, "accountAuthorityGeneration"),
         text(wire, "sourceVersion"),
         new AccountSecurityCutoff(
-            text(cutoff, "accountAuthorityGeneration"),
-            text(cutoff, "outboxStreamKey"),
-            text(cutoff, "outboxSequence")),
+            cutoffFields.accountAuthorityGeneration(),
+            cutoffFields.outboxStreamKey(),
+            cutoffFields.outboxSequence()),
         orderedValues(wire.get("mutationKinds"), MUTATION_KINDS, "mutationKinds"),
         new AccountState(
             state.get("emailVerified").booleanValue(),

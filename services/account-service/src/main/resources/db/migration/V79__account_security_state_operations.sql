@@ -205,7 +205,7 @@ BEGIN
         OR capture_bytes <> NEW.capture_payload THEN
         RAISE EXCEPTION 'Security-state request/capture bytes or digest differ' USING ERRCODE = '23514';
     END IF;
-    -- Reuse the exact V57 framing; correlation cannot substitute a different source vector.
+    -- Reuse the exact V75/V76 framing; correlation cannot substitute a different source vector.
     key := 'account:auth-authority:v1:account/' || NEW.account_uuid::TEXT;
     account_source_bytes := account_security_state_frame(convert_to('account-draft-source-evidence/v1','UTF8'))
         || account_security_state_frame(convert_to('ACCOUNT','UTF8'))
@@ -233,7 +233,7 @@ BEGIN
     END IF;
     change_bytes := change_bytes || account_security_state_frame(capture_bytes);
     IF change_bytes <> NEW.source_change_binding THEN
-        RAISE EXCEPTION 'Security-state exact V57 participation binding differs' USING ERRCODE = '23514';
+        RAISE EXCEPTION 'Security-state exact V75/V76 participation binding differs' USING ERRCODE = '23514';
     END IF;
     SELECT * INTO account_row FROM accounts WHERE id = NEW.account_id FOR UPDATE;
     IF NOT FOUND OR account_row.account_uuid <> NEW.account_uuid
@@ -245,7 +245,7 @@ BEGIN
         WHERE change_id = NEW.source_change_id FOR SHARE;
     IF NOT FOUND OR source_row.binding <> NEW.source_change_binding
         OR source_row.status <> (CASE WHEN TG_OP = 'INSERT' THEN 'WAITING' ELSE 'SOURCE_COMMITTED' END) THEN
-        RAISE EXCEPTION 'Security-state V57 source change differs' USING ERRCODE = '23514';
+        RAISE EXCEPTION 'Security-state V75/V76 source change differs' USING ERRCODE = '23514';
     END IF;
     SELECT * INTO authority_row FROM account_authority_generations
         WHERE scope_kind = 'ACCOUNT' AND account_uuid = NEW.account_uuid FOR SHARE;

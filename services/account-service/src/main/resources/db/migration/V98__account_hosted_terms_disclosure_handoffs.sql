@@ -34,7 +34,8 @@ CREATE TABLE account_hosted_terms_disclosure_handoffs (
             AND result_payload IS NOT NULL AND octet_length(result_payload) > 0
             AND result_digest IS NOT NULL
             AND result_recorded_at IS NOT NULL)
-    )
+    ),
+    CHECK (result_digest IS NULL OR result_digest = 'sha256:' || encode(sha256(result_payload), 'hex'))
 );
 
 CREATE TABLE account_hosted_terms_disclosure_sources (

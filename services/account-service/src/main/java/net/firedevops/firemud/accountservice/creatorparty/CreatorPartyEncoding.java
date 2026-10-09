@@ -16,6 +16,8 @@ import tools.jackson.databind.json.JsonMapper;
 
 /** Closed canonical encodings; every identity, reference and independent version is bound. */
 public final class CreatorPartyEncoding {
+  private static final JsonMapper JSON = JsonMapper.builder().build();
+
   private CreatorPartyEncoding() {}
 
   public static byte[] party(IndividualCreatorPartySource source) {
@@ -98,8 +100,7 @@ public final class CreatorPartyEncoding {
 
   private static byte[] canonical(Map<String, Object> fields) {
     try {
-      return Rfc8785CanonicalJson.canonicalizeUtf8(
-          JsonMapper.builder().build().writeValueAsString(fields));
+      return Rfc8785CanonicalJson.canonicalizeUtf8(JSON.writeValueAsString(fields));
     } catch (IOException exception) {
       throw new IllegalArgumentException(
           "Creator-party evidence cannot be canonically encoded", exception);
