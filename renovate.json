@@ -210,11 +210,11 @@
         "/^services/common-test-support/src/testFixtures/resources/net/firedevops/firemud/test/container-images\\.properties$/"
       ],
       "matchStrings": [
-        "(?:postgres\\.image|redis\\.image)=(?<depName>postgres|redis):(?<currentValue>[0-9][A-Za-z0-9_.-]*)(?:@(?<currentDigest>sha256:[0-9a-f]{64}))?(?:\\r?\\n|$)"
+        "(?<depName>postgres|redis)\\.image=(?<packageName>public\\.ecr\\.aws/docker/library/(?:postgres|redis)):(?<currentValue>[0-9][A-Za-z0-9_.-]*)@(?<currentDigest>sha256:[0-9a-f]{64})(?:\\r?\\n|$)"
       ],
       "datasourceTemplate": "docker",
       "versioningTemplate": "docker",
-      "autoReplaceStringTemplate": "{{{depName}}}.image={{{depName}}}:{{#if newValue}}{{{newValue}}}{{else}}{{{currentValue}}}{{/if}}{{#if newDigest}}@{{{newDigest}}}{{else}}{{#if currentDigest}}@{{{currentDigest}}}{{/if}}{{/if}}\n"
+      "autoReplaceStringTemplate": "{{{depName}}}.image={{{packageName}}}:{{#if newValue}}{{{newValue}}}{{else}}{{{currentValue}}}{{/if}}{{#if newDigest}}@{{{newDigest}}}{{else}}{{#if currentDigest}}@{{{currentDigest}}}{{/if}}{{/if}}\n"
     },
     {
       "customType": "regex",
@@ -496,7 +496,9 @@
       ],
       "matchPackageNames": [
         "postgres",
-        "redis"
+        "redis",
+        "public.ecr.aws/docker/library/postgres",
+        "public.ecr.aws/docker/library/redis"
       ],
       "matchUpdateTypes": [
         "major"
@@ -511,7 +513,7 @@
       "matchManagers": [
         "custom.regex"
       ],
-      "matchPackageNames": [
+      "matchDepNames": [
         "postgres",
         "redis"
       ],

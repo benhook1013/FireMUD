@@ -11,21 +11,19 @@ public final class TestContainerImages {
   private TestContainerImages() {}
 
   public static DockerImageName postgres() {
-    return PostgresBackedServiceTestSupport.postgresImage(
-        selectedReference(IMAGES, "postgres", true));
+    return PostgresBackedServiceTestSupport.postgresImage(selectedReference(IMAGES, "postgres"));
   }
 
   public static DockerImageName redis() {
-    return DockerImageName.parse(selectedReference(IMAGES, "redis", false));
+    return DockerImageName.parse(selectedReference(IMAGES, "redis"));
   }
 
-  static String selectedReference(Properties images, String repository, boolean requireDigest) {
+  static String selectedReference(Properties images, String repository) {
     String reference = images.getProperty(repository + ".image");
     String pattern =
-        repository
-            + ":[A-Za-z0-9_][A-Za-z0-9_.-]*"
-            + "(?:@sha256:[0-9a-f]{64})"
-            + (requireDigest ? "" : "?");
+        "public\\.ecr\\.aws/docker/library/"
+            + repository
+            + ":[A-Za-z0-9_][A-Za-z0-9_.-]*@sha256:[0-9a-f]{64}";
     if (reference == null || !reference.matches(pattern)) {
       throw new IllegalStateException(
           "Missing or malformed test image reference for " + repository);
