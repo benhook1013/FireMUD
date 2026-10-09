@@ -1,5 +1,9 @@
 # StartSession Operator Action Schema
 
+## Implementation status
+
+The shared typed action, digest codec, and pre-authorization reservation tuple are implemented. Logging & Admin has durable reservation, claim expiry, and read-only recovery-claim seams; Account has read-only verification of existing committed tenant-scoped control-ui issuance against its protected signer/registry and current membership evidence. These are prerequisites, not an executable StartSession route. Account operator-reference issuance/redemption, post-authorization owner handoff, canonical Game Session consumption, and physical cross-service proof remain incomplete. No external route or runtime activation is enabled by this boundary.
+
 ## Normative contract
 
 This document defines the StartSession action-family schema `firemud.game-session.start-session`, version `1`, owned by `game-session-service`. It defines the digest input shape for the `StartSession` operator action. It does not make the external operator route routable or establish an authorization decision.
