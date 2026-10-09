@@ -471,7 +471,7 @@ class LaunchDescriptorServiceIntegrationTest {
   void v35AndV36MigrationsPreserveRetainedBundleAndUnboundDescriptorWithoutBackfill() {
     String schema = "game_design_launch_history_" + UUID.randomUUID().toString().replace("-", "");
     DriverManagerDataSource dataSource = isolatedDataSource(schema);
-    migrate(dataSource, schema, MigrationVersion.fromVersion("34"));
+    migrate(dataSource, schema, MigrationVersion.fromVersion("34.1"));
     DSLContext isolatedDsl =
         DSL.using(new TransactionAwareDataSourceProxy(dataSource), SQLDialect.POSTGRES);
     DataSourceTransactionManager isolatedTransactionManager =
