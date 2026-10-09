@@ -94,6 +94,7 @@ import net.firedevops.firemud.common.publication.AccountPublicationAuthorization
 import net.firedevops.firemud.common.publication.AuthoredDraftPublishSelectionBinding;
 import net.firedevops.firemud.common.publication.AuthoredDraftPublishSelectionReadClient;
 import net.firedevops.firemud.common.publication.PublicationDigestRequestBinding;
+import net.firedevops.firemud.common.publication.RealmEntryPolicy;
 import net.firedevops.firemud.common.publication.WorldSelectedDraftPublicationFreezeClient;
 import net.firedevops.firemud.common.publication.WorldSelectedDraftPublicationFreezeEvidence;
 import net.firedevops.firemud.common.publication.WorldSelectedDraftPublicationFreezeGrpcCodec;
@@ -124,6 +125,7 @@ import net.firedevops.firemud.gamedesign.publication.GameDesignGameplayRuleSourc
 import net.firedevops.firemud.gamedesign.publication.GameDesignGameplayRuleSourceReadService;
 import net.firedevops.firemud.gamedesign.publication.GameDesignSourceRepository;
 import net.firedevops.firemud.gamedesign.publication.GameplayRuleSource;
+import net.firedevops.firemud.gamedesign.publication.RealmPolicySource;
 import net.firedevops.firemud.gamedesign.publication.SelectedDraftAssetInventory;
 import net.firedevops.firemud.gamedesign.publication.SelectedDraftAssetInventoryReadService;
 import net.firedevops.firemud.gamedesign.publication.SelectedDraftControlPlaneDigest;
@@ -517,7 +519,13 @@ class GenuineSelectedPublicationExportPostgresIntegrationTest {
         assetToSave.setData(assetBytes);
         GameAsset sourceAsset =
             gd.transaction(() -> new GameAssetRepository(gd.dsl()).save(assetToSave));
-        var selectedCommit = binding(gd.target(), sourceAsset.getId(), sourceAsset.getFileName());
+        var selectedCommit =
+            binding(
+                gd.target(),
+                sourceAsset.getId(),
+                sourceAsset.getFileName(),
+                worldSource.worldSlug(),
+                worldSource.worldDisplayName());
         var originalOrder = account.prepareOriginalDraftOrder(selectedCommit, NAMESPACE);
         var original = originalOrder.original();
         var accountAccess = account.preparedOriginalCreator();
@@ -704,6 +712,19 @@ class GenuineSelectedPublicationExportPostgresIntegrationTest {
         assertThat(appliedWorld.status()).isEqualTo("APPLIED");
         assertThat(appliedWorld.startLocationReceipt()).isPresent();
         assertThat(world.dsl().fetchCount(DSL.table("world_draft_graph_application"))).isOne();
+        var selectedPolicyRevision =
+            selectedCommit.revisions().stream()
+                .filter(RealmPolicySource::isPolicyRevision)
+                .findFirst()
+                .orElseThrow();
+        var expectedPolicy = RealmPolicySource.revision(selectedCommit, selectedPolicyRevision);
+        var selectedSources =
+            new GameDesignSourceRepository(gd.dsl())
+                .readSynchronized(gd.target(), selectedCommit.commitId())
+                .orElseThrow();
+        assertThat(selectedSources.policy().binding()).isEqualTo(selectedCommit);
+        assertThat(RealmPolicySource.ordered(selectedSources.policy().policies()))
+            .containsExactly(expectedPolicy);
 
         var templateSource =
             new TemplateConfigSourceRepository(gd.dsl())
@@ -1980,7 +2001,8 @@ class GenuineSelectedPublicationExportPostgresIntegrationTest {
     throw new IllegalStateException("Service migration directory is unavailable: " + service);
   }
 
-  private static DraftCommitBinding binding(TargetProof target, long assetId, String fileName)
+  private static DraftCommitBinding binding(
+      TargetProof target, long assetId, String fileName, String worldSlug, String worldDisplayName)
       throws Exception {
     UUID commit = UUID.randomUUID();
     UUID region = UUID.randomUUID();
@@ -2080,6 +2102,21 @@ class GenuineSelectedPublicationExportPostgresIntegrationTest {
             AssetSource.SCOPE,
             AssetSource.SCOPE_ID,
             "0"));
+    UUID realmPolicyRevisionId = UUID.randomUUID();
+    revisions.add(
+        new RevisionPayload(
+            Integer.toString(revisions.size()),
+            realmPolicyRevisionId,
+            Owner.GAME_DESIGN_CONTROL_PLANE,
+            realmPolicyRevisionPayload(worldSlug, worldDisplayName, realmPolicyRevisionId)));
+    units.add(
+        new AffectedUnit(
+            Owner.GAME_DESIGN_CONTROL_PLANE,
+            RealmPolicySource.SCOPE,
+            target.canonicalVersionId().toString(),
+            RealmPolicySource.SCOPE,
+            "effective",
+            "0"));
     var templateConfig =
         new TemplateConfigSource.Config(
             "{\"schemaVersion\":1,\"baseVersionId\":\""
@@ -2134,6 +2171,40 @@ class GenuineSelectedPublicationExportPostgresIntegrationTest {
     }
     return DraftCommitBinding.create(
         target, UUID.randomUUID(), commit, "base-commit-0", revisions, units);
+  }
+
+  private static String realmPolicyRevisionPayload(
+      String worldSlug, String worldDisplayName, UUID revisionId) throws Exception {
+    var mapper = new ObjectMapper();
+    var policyInput =
+        Map.of(
+            "schemaVersion",
+            1,
+            "worldSlug",
+            worldSlug,
+            "worldDisplayName",
+            worldDisplayName,
+            "realmSlug",
+            "genuine-selected-export",
+            "realmDisplayName",
+            "Genuine Selected Export",
+            "visible",
+            true,
+            "publicProduction",
+            true,
+            "stateScope",
+            RealmEntryPolicy.StateScope.SHARED.name(),
+            "entryPolicy",
+            RealmEntryPolicy.EntryPolicy.PRESEEDED_ONLY.name());
+    var policy = RealmEntryPolicy.parse(mapper.writeValueAsString(policyInput), mapper);
+    var revision =
+        Map.of(
+            "revisionKind", RealmEntryPolicy.REVISION_KIND,
+            "logicalRevisionId", revisionId.toString(),
+            "policy", mapper.readTree(policy.canonicalJson()));
+    return new String(
+        Rfc8785CanonicalJson.canonicalizeUtf8(mapper.writeValueAsString(revision)),
+        StandardCharsets.UTF_8);
   }
 
   private static WorldDesignMutationRevision.Builder mutation(

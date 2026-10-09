@@ -203,7 +203,7 @@ class TemplateConfigSourcePostgresIntegrationTest {
   }
 
   @Test
-  void v68AddsEntityWithoutRewritingV67AutomationOrSnapshotHistory() {
+  void v67RejectsOwnerDeclarationThenV68RetriesExactBindingWithoutRewritingV67History() {
     var f = fixture("67");
     var initialTemplate =
         binding(
@@ -230,6 +230,12 @@ class TemplateConfigSourcePostgresIntegrationTest {
                 f.target.canonicalVersionId(),
                 initialTemplate.commitId())
             .get("snapshot_digest", String.class);
+    var originalV1Snapshot =
+        new TemplateConfigSourceRepository(f.dsl)
+            .readSnapshot(f.target, initialTemplate.commitId())
+            .orElseThrow();
+    assertThat(originalV1Snapshot.canonicalJson()).isEqualTo(v1SnapshotJson);
+    assertThat(originalV1Snapshot.digest()).isEqualTo(v1SnapshotDigest);
 
     var automationInventory =
         AutomationAuthoredSourceInventoryDeclaration.parse(automationInventory());
@@ -237,6 +243,68 @@ class TemplateConfigSourcePostgresIntegrationTest {
         TemplateConfigSource.ownerInventoryPayload(
             DraftCommitBinding.Owner.AUTOMATION_SCRIPTING, automationInventory);
     var automation = binding(f, automationPayload, TemplateConfigSource.SCOPE, "1");
+    var priorHead =
+        f.dsl.fetchSingle(
+            "SELECT source_epoch, applied_commit_id, visible_commit_id "
+                + "FROM game_design_template_config_source_head "
+                + "WHERE canonical_tenant_id = ? AND canonical_version_id = ?",
+            f.target.canonicalTenantId(),
+            f.target.canonicalVersionId());
+    assertThatThrownBy(() -> apply(f, automation))
+        .isInstanceOf(org.springframework.transaction.TransactionSystemException.class)
+        .hasStackTraceContaining("branding application requires exact atomic owner result");
+    var unchangedHead =
+        f.dsl.fetchSingle(
+            "SELECT source_epoch, applied_commit_id, visible_commit_id "
+                + "FROM game_design_template_config_source_head "
+                + "WHERE canonical_tenant_id = ? AND canonical_version_id = ?",
+            f.target.canonicalTenantId(),
+            f.target.canonicalVersionId());
+    assertThat(unchangedHead.get("source_epoch", String.class))
+        .isEqualTo(priorHead.get("source_epoch", String.class));
+    assertThat(unchangedHead.get("applied_commit_id", UUID.class))
+        .isEqualTo(priorHead.get("applied_commit_id", UUID.class));
+    assertThat(unchangedHead.get("visible_commit_id", UUID.class))
+        .isEqualTo(priorHead.get("visible_commit_id", UUID.class));
+    assertThat(unchangedHead.get("source_epoch", String.class)).isEqualTo("1");
+    assertThat(unchangedHead.get("applied_commit_id", UUID.class))
+        .isEqualTo(initialTemplate.commitId());
+    assertThat(unchangedHead.get("visible_commit_id", UUID.class))
+        .isEqualTo(initialTemplate.commitId());
+    assertThat(
+            f.dsl
+                .fetchSingle(
+                    "SELECT count(*) FROM game_design_template_config_owner_source_inventory_declaration "
+                        + "WHERE canonical_tenant_id = ? AND canonical_version_id = ? AND commit_id = ?",
+                    f.target.canonicalTenantId(),
+                    f.target.canonicalVersionId(),
+                    automation.commitId())
+                .get(0, Long.class))
+        .isZero();
+    assertThat(
+            f.dsl
+                .fetchSingle(
+                    "SELECT count(*) FROM game_design_template_config_source_application "
+                        + "WHERE canonical_tenant_id = ? AND canonical_version_id = ? AND commit_id = ?",
+                    f.target.canonicalTenantId(),
+                    f.target.canonicalVersionId(),
+                    automation.commitId())
+                .get(0, Long.class))
+        .isZero();
+    assertThat(
+            f.dsl
+                .fetchSingle(
+                    "SELECT count(*) FROM game_design_draft_commit "
+                        + "WHERE canonical_tenant_id = ? AND canonical_version_id = ? "
+                        + "AND request_id = ? AND commit_id = ?",
+                    f.target.canonicalTenantId(),
+                    f.target.canonicalVersionId(),
+                    automation.requestId(),
+                    automation.commitId())
+                .get(0, Long.class))
+        .isZero();
+
+    migrateToLatest(f);
     apply(f, automation);
     var automationSource = source(f, automation);
     assertThat(automationSource.ownerSourceInventoryDeclarations()).hasSize(1);
@@ -298,7 +366,6 @@ class TemplateConfigSourcePostgresIntegrationTest {
                 .isEqualTo(
                     new TemplateConfigSourceSnapshot.Application(
                         automation, "1", automationSource)));
-    migrateToLatest(f);
 
     var migratedDeclaration =
         f.dsl.fetchSingle(
@@ -397,6 +464,8 @@ class TemplateConfigSourcePostgresIntegrationTest {
     var entitySource = source(f, entity);
     assertThat(entitySource.sourceEpoch()).isEqualTo("3");
     assertThat(entitySource.ownerSourceInventoryDeclarations()).hasSize(2);
+    assertThat(entitySource.ownerSourceInventoryDeclarations().get(0))
+        .isEqualTo(automationSource.ownerSourceInventoryDeclarations().getFirst());
     assertThat(entitySource.ownerSourceInventoryDeclarations().get(0).owner())
         .isEqualTo(DraftCommitBinding.Owner.AUTOMATION_SCRIPTING);
     assertThat(entitySource.ownerSourceInventoryDeclarations().get(0).sourceBinding())
@@ -428,6 +497,106 @@ class TemplateConfigSourcePostgresIntegrationTest {
         .isEqualTo(automation);
     assertThat(inherited.ownerSourceInventoryDeclarations().get(1).sourceBinding())
         .isEqualTo(entity);
+    var postEntityReadback = new TemplateConfigSourceRepository(f.dsl);
+    var retainedV1 =
+        postEntityReadback.readSnapshot(f.target, initialTemplate.commitId()).orElseThrow();
+    assertThat(retainedV1.canonicalJson()).isEqualTo(v1SnapshotJson);
+    assertThat(retainedV1.digest()).isEqualTo(v1SnapshotDigest);
+    var retainedAutomation =
+        postEntityReadback.readSnapshot(f.target, automation.commitId()).orElseThrow();
+    assertThat(retainedAutomation.canonicalJson()).isEqualTo(v2SnapshotJson);
+    assertThat(retainedAutomation.digest()).isEqualTo(v2SnapshotDigest);
+    var retainedInherited =
+        postEntityReadback.readSnapshot(f.target, unrelated.commitId()).orElseThrow();
+    assertThat(retainedInherited.ownerSourceInventoryDeclarations())
+        .containsExactlyElementsOf(entitySource.ownerSourceInventoryDeclarations());
+    var postEntityAutomationApplication =
+        f.dsl.fetchSingle(
+            "SELECT snapshot_json, result_bytes FROM game_design_template_config_source_application "
+                + "WHERE canonical_tenant_id = ? AND canonical_version_id = ? AND commit_id = ?",
+            f.target.canonicalTenantId(),
+            f.target.canonicalVersionId(),
+            automation.commitId());
+    assertThat(postEntityAutomationApplication.get("snapshot_json", String.class))
+        .isEqualTo(v2SnapshotJson);
+    assertThat(postEntityAutomationApplication.get("result_bytes", byte[].class))
+        .isEqualTo(originalApplicationBytes);
+    var postEntityAutomationDeclaration =
+        f.dsl.fetchSingle(
+            "SELECT request_id, commit_id, revision_order, owner, inventory_json, payload_json FROM "
+                + "game_design_template_config_owner_source_inventory_declaration "
+                + "WHERE canonical_tenant_id = ? AND canonical_version_id = ? AND revision_id = ?",
+            f.target.canonicalTenantId(),
+            f.target.canonicalVersionId(),
+            automation.revisions().getFirst().revisionId());
+    assertThat(postEntityAutomationDeclaration.get("request_id", UUID.class))
+        .isEqualTo(automation.requestId());
+    assertThat(postEntityAutomationDeclaration.get("commit_id", UUID.class))
+        .isEqualTo(automation.commitId());
+    assertThat(postEntityAutomationDeclaration.get("revision_order", Integer.class)).isZero();
+    assertThat(postEntityAutomationDeclaration.get("owner", String.class))
+        .isEqualTo("AUTOMATION_SCRIPTING");
+    assertThat(postEntityAutomationDeclaration.get("inventory_json", String.class))
+        .isEqualTo(originalInventoryJson);
+    assertThat(postEntityAutomationDeclaration.get("payload_json", String.class))
+        .isEqualTo(originalPayloadJson);
+  }
+
+  @Test
+  void deferredTemplateApplicationGuardRejectsMissingOrChangedAtomicOwnerResult() {
+    var f = fixture();
+    var automationInventory =
+        AutomationAuthoredSourceInventoryDeclaration.parse(automationInventory());
+    var missingResult =
+        binding(
+            f,
+            TemplateConfigSource.ownerInventoryPayload(
+                DraftCommitBinding.Owner.AUTOMATION_SCRIPTING, automationInventory),
+            TemplateConfigSource.SCOPE,
+            "0");
+    assertThatThrownBy(
+            () ->
+                f.tx.executeWithoutResult(
+                    ignored -> {
+                      stageInProgressTemplateApplication(f, missingResult);
+                      f.dsl.execute(
+                          "SET CONSTRAINTS template_config_application_commit_guard IMMEDIATE");
+                    }))
+        .isInstanceOf(org.jooq.exception.DataAccessException.class)
+        .hasStackTraceContaining("branding application requires exact atomic owner result");
+
+    var entityInventory = EntityAuthoredSourceInventoryDeclaration.parse(entityInventory());
+    var changedResult =
+        binding(
+            f,
+            TemplateConfigSource.ownerInventoryPayload(
+                DraftCommitBinding.Owner.ENTITY_MANAGEMENT, entityInventory),
+            TemplateConfigSource.SCOPE,
+            "0");
+    assertThatThrownBy(
+            () ->
+                f.tx.executeWithoutResult(
+                    ignored -> {
+                      var application = stageInProgressTemplateApplication(f, changedResult);
+                      byte[] alteredResultBytes = application.canonicalBytes();
+                      alteredResultBytes[0] ^= 1;
+                      new DraftCommitCoordinatorRepository(f.dsl)
+                          .recordOwnerOutcome(
+                              changedResult,
+                              new DraftCommitCoordinatorRepository.OwnerOutcome(
+                                  DraftCommitBinding.Owner.GAME_DESIGN_CONTROL_PLANE,
+                                  DraftCommitCoordinatorRepository.OwnerStatus.APPLIED,
+                                  changedResult.commitId(),
+                                  changedResult.digest(),
+                                  "ordinary-source:" + changedResult.commitId(),
+                                  alteredResultBytes,
+                                  List.of(application.appliedEpoch())));
+                      f.dsl.execute(
+                          "SET CONSTRAINTS template_config_application_commit_guard IMMEDIATE");
+                    }))
+        .isInstanceOf(org.jooq.exception.DataAccessException.class)
+        .hasStackTraceContaining(
+            "branding owner result must contain exact complete tagged source bytes");
   }
 
   @Test
@@ -1006,6 +1175,15 @@ class TemplateConfigSourcePostgresIntegrationTest {
           sources.captureSynchronized(binding);
           coordinator.releaseApplicationSlot(binding);
         });
+  }
+
+  private static TemplateConfigSourceSnapshot.Application stageInProgressTemplateApplication(
+      Fixture f, DraftCommitBinding binding) {
+    var coordinator = new DraftCommitCoordinatorRepository(f.dsl);
+    coordinator.claim(binding);
+    coordinator.claimApplicationSlot(binding);
+    coordinator.markOwnerInProgress(binding, DraftCommitBinding.Owner.GAME_DESIGN_CONTROL_PLANE);
+    return new TemplateConfigSourceRepository(f.dsl).apply(binding).orElseThrow();
   }
 
   private static TemplateConfigSource.Config config(Fixture f, String inputs) {
