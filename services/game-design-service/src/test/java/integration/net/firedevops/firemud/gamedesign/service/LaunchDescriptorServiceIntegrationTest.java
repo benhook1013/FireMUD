@@ -48,10 +48,10 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.context.annotation.Import;
 import org.springframework.dao.DataAccessException;
 import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.datasource.DataSourceTransactionManager;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
 import org.springframework.jdbc.datasource.TransactionAwareDataSourceProxy;
-import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.util.ReflectionTestUtils;
@@ -1113,6 +1113,7 @@ class LaunchDescriptorServiceIntegrationTest {
           null);
     }
   }
+
   @Test
   void authoredSourceMigrationBindsFullSourceTupleAndRetainsLegacyRows() {
     String tenantId = "launch-schema-" + UUID.randomUUID().toString().substring(0, 8);
