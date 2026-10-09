@@ -47,9 +47,7 @@ public class PublishAttemptServiceImpl implements PublishAttemptService {
   }
 
   @Override
-  @Transactional(
-      propagation = Propagation.REQUIRES_NEW,
-      isolation = Isolation.READ_COMMITTED)
+  @Transactional(propagation = Propagation.REQUIRES_NEW, isolation = Isolation.READ_COMMITTED)
   public <T> T executeFullVersionTransaction(Supplier<T> operation) {
     try {
       return operation.get();
