@@ -123,6 +123,15 @@ abstract class PrepareAccountJooqMigrationProjectionTask : DefaultTask() {
         if (!sourceRoot.isDirectory) {
             throw GradleException("Account Flyway migration source directory is unavailable")
         }
+        val migrations = sourceRoot.walkTopDown().filter { it.isFile }.toList()
+        val inventoryMigrations = migrations.filter { INVENTORY_MIGRATION_PATTERN.matches(it.name) }
+        if (inventoryMigrations.size != 1) {
+            throw GradleException(
+                "Expected exactly one correctly versioned Account validator-inventory migration"
+            )
+        }
+        val inventoryMigration = inventoryMigrations.single()
+
         if (outputRoot.exists() && !outputRoot.deleteRecursively()) {
             throw GradleException("Account jOOQ migration projection could not be refreshed")
         }
@@ -130,16 +139,12 @@ abstract class PrepareAccountJooqMigrationProjectionTask : DefaultTask() {
             throw GradleException("Account jOOQ migration projection directory is unavailable")
         }
 
-        val migrations = sourceRoot.walkTopDown().filter { it.isFile }.toList()
-        if (migrations.none { it.name == INVENTORY_MIGRATION }) {
-            throw GradleException("Expected Account validator-inventory migration is missing")
-        }
         migrations.forEach { source ->
             val destination = outputRoot.resolve(source.relativeTo(sourceRoot).path)
             if (!destination.parentFile.mkdirs() && !destination.parentFile.isDirectory) {
                 throw GradleException("Account jOOQ migration projection path is unavailable")
             }
-            if (source.name == INVENTORY_MIGRATION) {
+            if (source == inventoryMigration) {
                 destination.writeBytes(projectInventoryMigration(source.readBytes()))
             } else {
                 // Every other migration remains a byte-for-byte copy of Flyway's authority.
@@ -168,7 +173,8 @@ abstract class PrepareAccountJooqMigrationProjectionTask : DefaultTask() {
     private fun String.countOccurrences(value: String): Int = split(value).size - 1
 
     private companion object {
-        const val INVENTORY_MIGRATION = "V52__account_jwt_validator_inventory_snapshots.sql"
+        val INVENTORY_MIGRATION_PATTERN =
+            Regex("""V[0-9]+(?:\.[0-9]+)*__account_jwt_validator_inventory_snapshots\.sql""")
         const val IGNORE_END = "-- [jooq ignore end]"
         const val IGNORE_STOP = "-- [jooq ignore stop]"
         const val INVENTORY_ALTER =

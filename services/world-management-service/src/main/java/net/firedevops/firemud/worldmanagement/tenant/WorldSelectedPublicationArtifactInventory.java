@@ -292,24 +292,7 @@ public final class WorldSelectedPublicationArtifactInventory {
 
     List<SpawnBindingInput> spawnInputs = new ArrayList<>();
     for (var row : graph.family(WorldCanonicalAuthoredGraph.Family.WORLD_ENTITY_SPAWN_BINDING)) {
-      if (!row.content().hasWorldEntitySpawnBinding() || row.entityReference() == null) {
-        throw unrepresentable(
-            UnrepresentableReason.UNKNOWN_GRAPH_FAMILY,
-            "World selected graph spawn binding lacks its closed typed Entity reference");
-      }
-      var spawn = row.content().getWorldEntitySpawnBinding();
-      var reference = row.entityReference();
-      spawnInputs.add(
-          new SpawnBindingInput(
-              row.template().templateId(),
-              UUID.fromString(spawn.getRoomId()),
-              spawn.getEntityTemplateType().name(),
-              reference.kind().name(),
-              reference.tenantId(),
-              reference.versionId(),
-              reference.templateId(),
-              spawn.getSpawnCount(),
-              spawn.getRespawnDelaySeconds()));
+      spawnInputs.add(projectSpawnBinding(graph.tenantId(), graph.versionId(), row));
     }
     requireSupportedRequiredness(
         graph.tenantId(), graph.versionId(), generatorInputs, generationRuleCount, spawnInputs);
@@ -399,6 +382,49 @@ public final class WorldSelectedPublicationArtifactInventory {
             ARTIFACT_DECISIONS);
     requireEnvelopeBinding(envelope, attempt, accountBinding);
     return new WorldSelectedPublicationArtifactInventory(envelope, encode(envelope));
+  }
+
+  static SpawnBindingInput projectSpawnBinding(
+      UUID tenantId, UUID versionId, WorldCanonicalAuthoredGraph.Row row) {
+    if (row.template().family() != WorldCanonicalAuthoredGraph.Family.WORLD_ENTITY_SPAWN_BINDING
+        || !row.content().hasWorldEntitySpawnBinding()
+        || row.entityReference() == null) {
+      throw unrepresentable(
+          UnrepresentableReason.SPAWN_BINDING_INPUT,
+          "World selected graph spawn binding lacks its closed typed Entity reference");
+    }
+    var spawn = row.content().getWorldEntitySpawnBinding();
+    var reference = row.entityReference();
+    String templateType =
+        switch (spawn.getEntityTemplateType()) {
+          case ENTITY_TEMPLATE_REFERENCE_TYPE_ITEM -> "ITEM";
+          case ENTITY_TEMPLATE_REFERENCE_TYPE_NPC -> "NPC";
+          default ->
+              throw unrepresentable(
+                  UnrepresentableReason.SPAWN_BINDING_INPUT,
+                  "World selected graph spawn binding has an unsupported Entity subtype");
+        };
+    if (reference.kind() != spawn.getEntityTemplateType()
+        || !tenantId.equals(reference.tenantId())
+        || !versionId.equals(reference.versionId())
+        || reference.templateId().equals(new UUID(0L, 0L))
+        || !reference.templateId().toString().equals(spawn.getEntityTemplateId())) {
+      throw unrepresentable(
+          UnrepresentableReason.SPAWN_BINDING_INPUT,
+          "World selected graph spawn binding differs from its same-scope canonical Entity reference");
+    }
+    // The subtype and identity representation are distinct fields. This tag follows validation of
+    // the original typed UUID reference; it is neither a proto enum nor Entity owner authority.
+    return new SpawnBindingInput(
+        row.template().templateId(),
+        UUID.fromString(spawn.getRoomId()),
+        templateType,
+        "ENTITY_TEMPLATE_REFERENCE_TYPE_CANONICAL_UUID",
+        reference.tenantId(),
+        reference.versionId(),
+        reference.templateId(),
+        spawn.getSpawnCount(),
+        spawn.getRespawnDelaySeconds());
   }
 
   static WorldSelectedPublicationArtifactInventory fromStored(

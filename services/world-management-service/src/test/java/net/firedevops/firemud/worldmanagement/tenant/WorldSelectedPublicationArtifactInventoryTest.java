@@ -10,11 +10,139 @@ import java.util.List;
 import java.util.UUID;
 import net.firedevops.firemud.common.gamedesign.DraftSynchronizedVisibilityEvidence.AppliedEpoch;
 import net.firedevops.firemud.common.publication.WorldSelectedPublicationArtifactInventoryEvidence;
+import net.firedevops.firemud.gamedesign.v1.WorldDesignMutationRevision;
+import net.firedevops.firemud.worldmanagement.v1.EntityTemplateReferenceType;
+import net.firedevops.firemud.worldmanagement.v1.WorldEntitySpawnBindingDesignMutation;
 import org.junit.jupiter.api.Test;
 
 class WorldSelectedPublicationArtifactInventoryTest {
   private static final UUID TENANT = UUID.fromString("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa");
   private static final UUID VERSION = UUID.fromString("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb");
+
+  @Test
+  void projectsOriginalTypedItemAndNpcSourcesWithCanonicalUuidRepresentation() {
+    for (var subtype :
+        List.of(
+            EntityTemplateReferenceType.ENTITY_TEMPLATE_REFERENCE_TYPE_ITEM,
+            EntityTemplateReferenceType.ENTITY_TEMPLATE_REFERENCE_TYPE_NPC)) {
+      var row = typedSpawnRow(subtype, subtype, TENANT, VERSION);
+      var projected =
+          WorldSelectedPublicationArtifactInventory.projectSpawnBinding(TENANT, VERSION, row);
+
+      assertThat(projected.entityTemplateType())
+          .isEqualTo(
+              subtype == EntityTemplateReferenceType.ENTITY_TEMPLATE_REFERENCE_TYPE_ITEM
+                  ? "ITEM"
+                  : "NPC");
+      assertThat(projected.entityReferenceKind())
+          .isEqualTo("ENTITY_TEMPLATE_REFERENCE_TYPE_CANONICAL_UUID");
+      assertThat(projected.entityTenantId()).isEqualTo(TENANT);
+      assertThat(projected.entityVersionId()).isEqualTo(VERSION);
+      assertThat(projected.entityTemplateId()).isEqualTo(row.entityReference().templateId());
+      assertThat(projected.spawnCount()).isEqualTo(2);
+      assertThatCode(
+              () ->
+                  WorldSelectedPublicationArtifactInventory.requireSupportedRequiredness(
+                      TENANT, VERSION, List.of(), 0, List.of(projected)))
+          .doesNotThrowAnyException();
+    }
+  }
+
+  @Test
+  void rejectsUnknownUnspecifiedOrMismatchedOriginalSpawnSubtype() {
+    var npc = EntityTemplateReferenceType.ENTITY_TEMPLATE_REFERENCE_TYPE_NPC;
+    for (var row :
+        List.of(
+            typedSpawnRow(
+                EntityTemplateReferenceType.ENTITY_TEMPLATE_REFERENCE_TYPE_UNSPECIFIED,
+                npc,
+                TENANT,
+                VERSION),
+            typedSpawnRow(EntityTemplateReferenceType.UNRECOGNIZED, npc, TENANT, VERSION),
+            typedSpawnRow(
+                npc,
+                EntityTemplateReferenceType.ENTITY_TEMPLATE_REFERENCE_TYPE_ITEM,
+                TENANT,
+                VERSION))) {
+      assertReason(
+          () -> WorldSelectedPublicationArtifactInventory.projectSpawnBinding(TENANT, VERSION, row),
+          WorldSelectedPublicationArtifactInventory.UnrepresentableReason.SPAWN_BINDING_INPUT);
+    }
+  }
+
+  @Test
+  void rejectsTypedSpawnReferenceOutsideOriginalTenantOrVersion() {
+    var npc = EntityTemplateReferenceType.ENTITY_TEMPLATE_REFERENCE_TYPE_NPC;
+    for (var row :
+        List.of(
+            typedSpawnRow(npc, npc, UUID.randomUUID(), VERSION),
+            typedSpawnRow(npc, npc, TENANT, UUID.randomUUID()))) {
+      assertReason(
+          () -> WorldSelectedPublicationArtifactInventory.projectSpawnBinding(TENANT, VERSION, row),
+          WorldSelectedPublicationArtifactInventory.UnrepresentableReason.SPAWN_BINDING_INPUT);
+    }
+  }
+
+  @Test
+  void rejectsNilOrSubstitutedTypedEntityIdentityBeforeAssigningRepresentation() {
+    var npc = EntityTemplateReferenceType.ENTITY_TEMPLATE_REFERENCE_TYPE_NPC;
+    var original = typedSpawnRow(npc, npc, TENANT, VERSION);
+    var authored = original.authored();
+    for (UUID templateId : List.of(new UUID(0L, 0L), UUID.randomUUID())) {
+      var changed =
+          new WorldCanonicalAuthoredGraph.Row(
+              original.template(),
+              original.mappingKey(),
+              original.privateRowKey(),
+              new WorldDraftTopologyInputGraph.Node(
+                  authored.revisionOrder(),
+                  authored.revisionId(),
+                  authored.templateId(),
+                  authored.scopeId(),
+                  authored.mutation(),
+                  new WorldDraftTopologyInputGraph.EntityTemplateReference(
+                      npc, TENANT, VERSION, templateId)),
+              original.content());
+      assertReason(
+          () ->
+              WorldSelectedPublicationArtifactInventory.projectSpawnBinding(
+                  TENANT, VERSION, changed),
+          WorldSelectedPublicationArtifactInventory.UnrepresentableReason.SPAWN_BINDING_INPUT);
+    }
+  }
+
+  private static WorldCanonicalAuthoredGraph.Row typedSpawnRow(
+      EntityTemplateReferenceType subtype,
+      EntityTemplateReferenceType referenceSubtype,
+      UUID referenceTenant,
+      UUID referenceVersion) {
+    UUID bindingId = UUID.randomUUID();
+    UUID entityId = UUID.randomUUID();
+    var mutation =
+        WorldDesignMutationRevision.newBuilder()
+            .setWorldEntitySpawnBinding(
+                WorldEntitySpawnBindingDesignMutation.newBuilder()
+                    .setRoomId(UUID.randomUUID().toString())
+                    .setEntityTemplateTypeValue(
+                        subtype == EntityTemplateReferenceType.UNRECOGNIZED
+                            ? 99
+                            : subtype.getNumber())
+                    .setEntityTemplateId(entityId.toString())
+                    .setSpawnCount(2)
+                    .setRespawnDelaySeconds(30))
+            .build();
+    var reference =
+        new WorldDraftTopologyInputGraph.EntityTemplateReference(
+            referenceSubtype, referenceTenant, referenceVersion, entityId);
+    return new WorldCanonicalAuthoredGraph.Row(
+        new WorldCanonicalAuthoredGraph.Template(
+            WorldCanonicalAuthoredGraph.Family.WORLD_ENTITY_SPAWN_BINDING, bindingId),
+        1L,
+        2L,
+        new WorldDraftTopologyInputGraph.Node(
+            "0", UUID.randomUUID(), bindingId, UUID.randomUUID(), mutation, reference),
+        mutation);
+  }
 
   @Test
   void acceptsExplicitEmptyRegionInputsAndClosedCanonicalSpawnBinding() {

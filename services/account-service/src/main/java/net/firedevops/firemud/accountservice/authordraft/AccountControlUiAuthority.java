@@ -9,6 +9,8 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
 import net.firedevops.firemud.accountservice.hostedterms.AccountHostedTermsService.CapturedEnvironmentBoundary;
+import net.firedevops.firemud.accountservice.repository.AccountAuthorityGenerationRepository.IssuanceFence;
+import net.firedevops.firemud.accountservice.service.AccountMembershipAuthorityEventProducer.CreatorControlCaptureSources;
 import net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding.SourceEvidence;
 import net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding.SourceKind;
 import net.firedevops.firemud.common.json.Rfc8785CanonicalJson;
@@ -108,6 +110,7 @@ public final class AccountControlUiAuthority {
               authority.put("tenantBillingCutoff", Map.copyOf(values));
             });
     var upstream = existing.issuerAccount();
+    var issuanceFenceSource = requireIssuanceFenceSource(member);
     byte[] issuer = upstream.canonicalIssuerProjection().toJson().getBytes(StandardCharsets.UTF_8);
     byte[] account =
         upstream.canonicalAccountProjection().toJson().getBytes(StandardCharsets.UTF_8);
@@ -222,10 +225,23 @@ public final class AccountControlUiAuthority {
         Map.copyOf(authority),
         numeric(member.membershipVersion()),
         Long.parseLong(member.issuanceFence()),
+        issuanceFenceSource.sourceVersion(),
         List.copyOf(vector),
         evidence,
         checkpoints,
         identity);
+  }
+
+  static IssuanceFence requireIssuanceFenceSource(CreatorControlCaptureSources member) {
+    var source =
+        Objects.requireNonNull(
+            Objects.requireNonNull(member).authoritySnapshot().issuanceFence(),
+            "Authenticated Account issuance fence source required");
+    if (source.sourceVersion() <= 0L
+        || !Long.toString(source.value()).equals(member.issuanceFence())) {
+      throw new IllegalStateException("Authenticated Account issuance fence source required");
+    }
+    return source;
   }
 
   private static Map<String, Long> numeric(Map<String, String> values) {
@@ -285,6 +301,7 @@ public final class AccountControlUiAuthority {
     private final Map<String, Object> tuple;
     private final Map<String, Long> membership;
     private final long fence;
+    private final long issuanceFenceSourceVersion;
     private final List<SourceEvidence> vector;
     private final byte[] evidence;
     private final List<Map<String, Object>> checkpoints;
@@ -296,6 +313,7 @@ public final class AccountControlUiAuthority {
         Map<String, Object> tuple,
         Map<String, Long> membership,
         long fence,
+        long issuanceFenceSourceVersion,
         List<SourceEvidence> vector,
         byte[] evidence,
         List<Map<String, Object>> checkpoints,
@@ -305,6 +323,7 @@ public final class AccountControlUiAuthority {
       this.tuple = Map.copyOf(tuple);
       this.membership = Map.copyOf(membership);
       this.fence = fence;
+      this.issuanceFenceSourceVersion = issuanceFenceSourceVersion;
       this.vector = List.copyOf(vector);
       this.evidence = evidence.clone();
       this.checkpoints = List.copyOf(checkpoints);
@@ -329,6 +348,10 @@ public final class AccountControlUiAuthority {
 
     public long issuanceFence() {
       return fence;
+    }
+
+    public long issuanceFenceSourceVersion() {
+      return issuanceFenceSourceVersion;
     }
 
     public List<SourceEvidence> sources() {

@@ -3,6 +3,7 @@ package net.firedevops.firemud.gamedesign.repository;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import java.sql.Timestamp;
 import java.time.LocalDateTime;
 import java.util.Locale;
 import java.util.concurrent.atomic.AtomicReference;
@@ -24,6 +25,8 @@ class GameAssetRepositoryTest {
   private static final Field<byte[]> DATA = DSL.field(DSL.name("data"), byte[].class);
   private static final Field<LocalDateTime> CREATED_AT =
       DSL.field(DSL.name("created_at"), LocalDateTime.class);
+  private static final Field<Timestamp> JDBC_CREATED_AT =
+      DSL.field(DSL.name("created_at"), Timestamp.class);
 
   @Test
   void insertUsesPostgresReturningFieldsAndMapsThePersistedRow() {
@@ -69,6 +72,52 @@ class GameAssetRepositoryTest {
     assertThat(saved.getContentType()).isEqualTo("image/png");
     assertThat(saved.getData()).containsExactly(1, 2, 3);
     assertThat(saved.getCreatedAt()).isEqualTo(LocalDateTime.of(2026, 10, 9, 12, 30));
+  }
+
+  @Test
+  void tenantReadConvertsJdbcTimestampFromUntypedSelectAndPreservesData() {
+    AtomicReference<String> executedSql = new AtomicReference<>();
+    LocalDateTime createdAt = LocalDateTime.of(2026, 10, 9, 12, 30, 45, 123_456_789);
+    byte[] data = new byte[] {4, 5, 6};
+    DSLContext dsl =
+        DSL.using(
+            new MockConnection(
+                context -> {
+                  executedSql.set(context.sql());
+                  var result =
+                      DSL.using(SQLDialect.POSTGRES)
+                          .newResult(ID, TENANT_ID, FILE_NAME, CONTENT_TYPE, DATA, JDBC_CREATED_AT);
+                  var row =
+                      DSL.using(SQLDialect.POSTGRES)
+                          .newRecord(ID, TENANT_ID, FILE_NAME, CONTENT_TYPE, DATA, JDBC_CREATED_AT);
+                  row.set(ID, 74L);
+                  row.set(TENANT_ID, "tenant-1");
+                  row.set(FILE_NAME, "room.bin");
+                  row.set(CONTENT_TYPE, "application/octet-stream");
+                  row.set(DATA, data);
+                  row.set(JDBC_CREATED_AT, Timestamp.valueOf(createdAt));
+                  result.add(row);
+                  return new MockResult[] {new MockResult(1, result)};
+                }),
+            SQLDialect.POSTGRES);
+
+    var assets = new GameAssetRepository(dsl).findByTenantId("tenant-1");
+
+    assertThat(executedSql.get().toLowerCase(Locale.ROOT))
+        .contains(
+            "select * from \"game_assets\"", "where \"tenant_id\" = ?", "order by \"id\" asc");
+    assertThat(assets)
+        .singleElement()
+        .satisfies(
+            asset -> {
+              assertThat(asset.getId()).isEqualTo(74L);
+              assertThat(asset.getTenantId()).isEqualTo("tenant-1");
+              assertThat(asset.getFileName()).isEqualTo("room.bin");
+              assertThat(asset.getContentType()).isEqualTo("application/octet-stream");
+              assertThat(asset.getData()).containsExactly(4, 5, 6);
+              assertThat(asset.getCreatedAt()).isEqualTo(createdAt);
+              assertThat(asset.getCreatedAt().getNano()).isEqualTo(123_456_789);
+            });
   }
 
   @Test

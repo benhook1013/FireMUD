@@ -1009,37 +1009,43 @@ class WorldDraftGraphApplicationPostgresIntegrationTest {
 
   @Test
   void terminalRejectsUnqualifiedHistoricalFreezeWithoutInventingAccountOrder() {
-    Fixture f = fixture();
-    var graphApplication = application(generationFreePlan(f));
-    appliedComponent().apply(graphApplication);
-    var frozen = capture(graphApplication.plan());
+    HistoricalSchemaFixture schema = historicalSchemaAt("world_v52_unqualified_freeze", "52");
+    var historical = schema.database();
+    Fixture f = historical.fixture();
+    var graphApplication =
+        historical.application(
+            historical.withoutInboundSourceClosure(historical.generationFreePlan(f)));
+    historical.retainHistoricalApplication(graphApplication);
+    var frozen = historical.captureHistoricalUnqualified(graphApplication.plan());
+    historical.migrateHistoricalSchema(schema.schema(), "62");
     var selector =
-        publishedEvidence(
-            publishedSelectors().readCommitted(frozen.request().freeze()).orElseThrow());
-    var input = preparationInput(f, frozen, selector);
+        historical.publishedEvidence(
+            historical.publishedSelectors().readCommitted(frozen.request().freeze()).orElseThrow());
+    var input = historical.preparationInput(f, frozen, selector);
     UUID fence = selector.request().publicationFence();
-    var ownerBefore = ownerSnapshot(f, graphApplication.plan());
+    var ownerBefore = historical.ownerSnapshot(f, graphApplication.plan());
     var artifactInventoryRowsBefore =
-        rowJson(
+        historical.rowJson(
             "SELECT to_jsonb(i)::text FROM world_selected_publication_artifact_inventory i "
                 + "WHERE publication_fence=? ORDER BY publication_fence",
             fence);
 
-    assertThat(publicationAccountQualificationCount(fence)).isZero();
+    assertThat(historical.publicationAccountQualificationCount(fence)).isZero();
     assertThat(artifactInventoryRowsBefore).isEmpty();
-    assertThatThrownBy(() -> isolatedTerminalEvidence(input))
+    assertThatThrownBy(() -> historical.isolatedTerminalEvidence(input))
         .isInstanceOf(WorldDesignPublicationFenceRepository.ConflictException.class)
         .hasMessage("Exact frozen World publication has no complete artifact inventory");
-    assertThat(ownerSnapshot(f, graphApplication.plan())).isEqualTo(ownerBefore);
+    assertThat(historical.ownerSnapshot(f, graphApplication.plan())).isEqualTo(ownerBefore);
     assertThat(
-            rowJson(
+            historical.rowJson(
                 "SELECT to_jsonb(i)::text FROM world_selected_publication_artifact_inventory i "
                     + "WHERE publication_fence=? ORDER BY publication_fence",
                 fence))
         .isEqualTo(artifactInventoryRowsBefore);
-    assertThat(publicationOwnerPhase(fence)).isEqualTo("FROZEN");
-    assertThat(publicationTerminalCount(fence)).isZero();
-    assertThat(publicationAccountQualificationCount(fence)).isZero();
+    assertThat(historical.publicationOwnerPhase(fence)).isEqualTo("FROZEN");
+    assertThat(historical.publicationTerminalCount(fence)).isZero();
+    assertThat(historical.publicationAccountQualificationCount(fence)).isZero();
+    historical.assertOrigin();
   }
 
   @Test
@@ -3460,7 +3466,8 @@ class WorldDraftGraphApplicationPostgresIntegrationTest {
             selector.originalAccountBindingBytes(),
             selector.appliedResultBytes());
     assertThatThrownBy(() -> preparationInput(f, frozen, changed))
-        .hasMessageContaining("World selector differs from the exact attested release checkpoint");
+        .hasMessageContaining(
+            "Release selector differs from the exact frozen request, declaration or ROOM");
     var input = preparationInput(f, frozen, selector);
     var encoded =
         (tools.jackson.databind.node.ObjectNode)
@@ -3540,8 +3547,10 @@ class WorldDraftGraphApplicationPostgresIntegrationTest {
     HistoricalSchemaFixture schema = historicalSchemaAt("world_v42_inert_v1", "42");
     WorldDraftGraphApplicationPostgresIntegrationTest historical = schema.database();
     Fixture f = historical.fixture();
-    var application = historical.application(historical.generationFreePlan(f));
-    historical.appliedComponent().apply(application);
+    var application =
+        historical.application(
+            historical.withoutInboundSourceClosure(historical.generationFreePlan(f)));
+    historical.retainHistoricalApplication(application);
     var frozen = historical.captureHistoricalUnqualified(application.plan());
     var input = historical.preparationInput(f, frozen, null);
     var first = historical.prepareV1ThroughOwnerFunction(input);
@@ -3738,8 +3747,10 @@ class WorldDraftGraphApplicationPostgresIntegrationTest {
     HistoricalSchemaFixture schema = historicalSchemaAt("world_v41_preparation", "41");
     WorldDraftGraphApplicationPostgresIntegrationTest historical = schema.database();
     Fixture f = historical.fixture();
-    var application = historical.application(historical.generationFreePlan(f));
-    var applied = historical.appliedComponent().apply(application);
+    var application =
+        historical.application(
+            historical.withoutInboundSourceClosure(historical.generationFreePlan(f)));
+    var applied = historical.retainHistoricalApplication(application);
     var frozen = historical.captureHistoricalUnqualified(application.plan());
     var input = historical.preparationInput(f, frozen, null);
     var first = historical.prepareV1ThroughOwnerFunction(input);
@@ -4701,7 +4712,12 @@ class WorldDraftGraphApplicationPostgresIntegrationTest {
         release.canonicalVersionId(),
         release.publishedReleaseBundleRef(),
         1,
-        "v2",
+        switch (release.schemaVersion()) {
+          case AuthoredWorldReleaseAttestationEvidence.SELECTOR_SCHEMA_VERSION -> "v2";
+          case AuthoredWorldReleaseAttestationEvidence.CLOSURE_SELECTOR_SCHEMA_VERSION -> "v3";
+          default ->
+              throw new IllegalArgumentException("Release has no paired terminal content profile");
+        },
         release.publishWorkflowId(),
         release.manifestHash(),
         release.manifestSchemaVersion(),
@@ -5974,6 +5990,105 @@ class WorldDraftGraphApplicationPostgresIntegrationTest {
     return capture(plan, publicationRequest, selection, null);
   }
 
+  /** Synthetic pre-closure application, inserted under the actual V41/V42/V52 owner guards. */
+  private WorldDraftGraphAppliedResult retainHistoricalApplication(
+      WorldDraftGraphApplication application) {
+    assertThat(application.plan().graph().freshGraphDeclaration()).isPresent();
+    assertThat(
+            application.plan().graph().freshGraphDeclaration().orElseThrow().inboundSourceClosure())
+        .isEmpty();
+    var result =
+        Objects.requireNonNull(
+            ownerTransaction()
+                .execute(
+                    status -> {
+                      var retained =
+                          new WorldDraftTopologyCommitRepository(dsl, fence, mapper)
+                              .store(application.plan());
+                      var applied =
+                          WorldDraftGraphAppliedResult.create(application, retained.graphBytes());
+                      new WorldDraftStartLocationReceiptRepository(dsl)
+                          .store(
+                              applied.startLocationReceipt().orElseThrow(),
+                              application.operation().accountBindingBytes());
+                      insertReceipt(application, applied.canonicalBytes());
+                      return applied;
+                    }));
+    assertThat(mapper.readTree(result.graphBytes()).get("schemaVersion").asText()).isEqualTo("2");
+    assertThat(appliedRepository().readCommitted(application).orElseThrow().canonicalBytes())
+        .containsExactly(result.canonicalBytes());
+    return result;
+  }
+
+  /**
+   * Synthetic retained V31 graph/2 capture with digest/3; SQL validates the original FROZEN
+   * checkpoint and source rows. No Account publication qualification is supplied or inferred.
+   */
+  private WorldCanonicalFrozenTopology retainHistoricalFrozenTopology(
+      WorldCanonicalFrozenTopology.Request request) {
+    assertThat(request.freeze().digestSchemaVersion()).isEqualTo(3);
+    ownerTransaction()
+        .executeWithoutResult(
+            status -> {
+              snapshots.lockAndResolve(request.freeze());
+              var retained =
+                  new WorldDraftTopologyCommitRepository(dsl, fence, mapper)
+                      .readUnderFrozenLock(request.plan());
+              assertThat(mapper.readTree(retained.graphBytes()).get("schemaVersion").asText())
+                  .isEqualTo("2");
+              var source =
+                  Objects.requireNonNull(
+                      dsl.fetchOne(
+                          "SELECT to_jsonb(v)::text AS identity_json, to_jsonb(i)::text AS intake_json "
+                              + "FROM world_authored_version_identity v JOIN world_authored_source_intake i "
+                              + "ON i.operation_id=v.intake_operation_id WHERE v.operation_id=?",
+                          request.plan().ownerBinding().versionIdentityOperationId()));
+              String identityJson = source.get("identity_json", String.class);
+              String intakeJson = source.get("intake_json", String.class);
+              UUID captureId = UUID.randomUUID();
+              Map<String, Object> result = new LinkedHashMap<>();
+              result.put("schemaVersion", "1");
+              result.put("status", WorldCanonicalFrozenTopology.STATUS);
+              result.put(
+                  "missingProof",
+                  List.of(
+                      "ACCOUNT_AUTHORIZATION",
+                      "COMPLETE_PARTICIPANT_COMMIT",
+                      "PUBLICATION_CHECKPOINT_DIGEST"));
+              result.put("captureId", captureId.toString());
+              result.put("freeze", request.freeze());
+              result.put("ownerBinding", request.plan().ownerBinding());
+              result.put("bindingJson", request.plan().binding().canonicalJson());
+              result.put("bindingDigest", request.plan().binding().digest());
+              result.put("identityJson", identityJson);
+              result.put("intakeJson", intakeJson);
+              result.put("graphBytes", retained.graphBytes());
+              result.put("storageResultBytes", retained.resultBytes());
+              dsl.execute(
+                  "INSERT INTO world_canonical_frozen_topology (capture_id,publication_fence,"
+                      + "request_id,commit_id,version_identity_operation_id,freeze_request_json,owner_binding_json,"
+                      + "binding_json,binding_digest,identity_json,intake_json,graph_bytes,graph_sha256,"
+                      + "storage_result_bytes,result_bytes,capture_status) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                  captureId,
+                  request.freeze().publicationFence(),
+                  request.plan().binding().requestId(),
+                  request.plan().binding().commitId(),
+                  request.plan().ownerBinding().versionIdentityOperationId(),
+                  mapper.writeValueAsString(request.freeze()),
+                  mapper.writeValueAsString(request.plan().ownerBinding()),
+                  request.plan().binding().canonicalJson(),
+                  request.plan().binding().digest(),
+                  identityJson,
+                  intakeJson,
+                  retained.graphBytes(),
+                  WorldAuthoredGraphSnapshotCapture.sha256(retained.graphBytes()),
+                  retained.resultBytes(),
+                  mapper.writeValueAsBytes(result),
+                  WorldCanonicalFrozenTopology.STATUS);
+            });
+    return frozenRepository().readCommitted(request).orElseThrow();
+  }
+
   private WorldCanonicalFrozenTopology captureForTerminal(
       WorldDraftTopologyCommitPlan plan, byte[] originalDraftAccountBinding) {
     String publicationRequest = "selector-" + UUID.randomUUID();
@@ -6082,8 +6197,12 @@ class WorldDraftGraphApplicationPostgresIntegrationTest {
             attempt.checkpoint().contentDigest(),
             attempt.checkpoint().digestSchemaVersion(),
             tuples);
+    var canonicalRequest = new WorldCanonicalFrozenTopology.Request(plan, request);
+    if (accountBinding == null) {
+      return retainHistoricalFrozenTopology(canonicalRequest);
+    }
     return new WorldCanonicalFrozenTopologyService(frozenRepository(), manager)
-        .capture(new WorldCanonicalFrozenTopology.Request(plan, request));
+        .capture(canonicalRequest);
   }
 
   @Test

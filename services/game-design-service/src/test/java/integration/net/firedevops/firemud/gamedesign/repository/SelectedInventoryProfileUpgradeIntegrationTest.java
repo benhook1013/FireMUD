@@ -81,13 +81,14 @@ class SelectedInventoryProfileUpgradeIntegrationTest {
     TargetProof target = targetProof(version);
 
     // This shared fixture creates the historical inventory/v1 + graph/2 + digest/3 profile.
-    // The owner setup writes real GD selection, attempt and operation rows; Account and World
-    // source/receipt authority remains stipulated test evidence, not a production claim.
+    // The owner setup applies the required GD owner and writes real source, selection, attempt and
+    // operation rows; Account and World source/receipt authority remains stipulated test evidence,
+    // not a production claim.
     GameDesignPublicationOperation historicalV1 =
         transaction.execute(
             status -> {
               try {
-                return IsolatedPublicationOwnerSetup.retain(
+                return IsolatedPublicationOwnerSetup.retainSourceBacked(
                     dsl, target, version.getVersionStateEpoch(), "synthetic V69 history");
               } catch (Exception failure) {
                 throw new IllegalStateException(failure);

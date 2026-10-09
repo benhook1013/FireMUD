@@ -53,6 +53,8 @@ The `pr-review`, `report-worktree-pr-topology.sh`, and `maintenance/cloc-report.
 - `tests/` – contract tests for repo-owned tooling.
 - `validation/` – repo policy and static validation scripts used by Gradle and CI.
 
+The focused [Account jOOQ projection contract](tests/account-jooq-projection-contract.sh) executes the registered projection task with original and forward-versioned inventory migration fixtures. It checks byte-preserving projection and rejects missing or ambiguous semantic migration identities before touching existing output; it is not PostgreSQL migration proof.
+
 The documentation lock is sourced from the unpinned direct roots in `config/docs/requirements.in` and generated into `config/docs/requirements.txt` with the repository Python version and `pip-compile --allow-unsafe --generate-hashes --index-url=https://pypi.org/simple --output-file=config/docs/requirements.txt config/docs/requirements.in`. The existing lock seeds compilation and preserves satisfying package pins unless you explicitly request an upgrade. When the installed pip-tools version mis-serializes its default index options into an unsupported header, set `CUSTOM_COMPILE_COMMAND` to that exact command so the generated header remains parseable. Keep the source roots and lock hashes in sync; do not edit lock hashes manually.
 
 ## Placement guidance

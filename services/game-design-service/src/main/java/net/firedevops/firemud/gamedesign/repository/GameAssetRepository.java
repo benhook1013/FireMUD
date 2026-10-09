@@ -78,7 +78,7 @@ public class GameAssetRepository {
     asset.setFileName(record.get(FILE_NAME));
     asset.setContentType(record.get(CONTENT_TYPE));
     asset.setData(record.get(DATA));
-    asset.setCreatedAt(record.get(CREATED_AT));
+    asset.setCreatedAt(record.get(CREATED_AT.getName(), LocalDateTime.class));
     return asset;
   }
 }
