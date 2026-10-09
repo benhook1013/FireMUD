@@ -1005,25 +1005,25 @@ class VersionPublishCommandServiceImplTest {
   }
 
   @Test
-  void privateMechanicsContinuesFromExactStagedCandidateReadback() {
+  void privateMechanicsRetriesFromExactPersistedStagedCandidateReadback() {
     String workflowId = "publish:tenant-1:publish-request:workflow-1";
     PublishAttempt attempt = fullAttempt(PublishAttemptStatus.PENDING, 10L, 1, workflowId);
     Version version = fullVersion(10L, 1, VersionLifecycleState.DRAFT);
     List<PublishParticipantDigestDto> participantDigests = participantDigests();
     ExportedAssetManifest manifest = exportedManifest(List.of("manifest.json"));
-    VersionAssetArtifactStateDto stagedArtifact =
+    VersionAssetArtifactStateDto stagedCandidate =
         new VersionAssetArtifactStateDto(
             "tenant-1",
             10L,
             1,
             "STAGED",
-            1L,
-            null,
+            2L,
+            MANIFEST_HASH,
             workflowId,
             null,
             null,
             LocalDateTime.now(),
-            List.of());
+            List.of("manifest.json"));
     Game game = new Game();
     game.setTenantId("tenant-1");
     when(publishAttemptRepository.findByPublishWorkflowId(workflowId))
@@ -1031,7 +1031,8 @@ class VersionPublishCommandServiceImplTest {
     when(gameRepository.findByTenantIdForUpdate("tenant-1")).thenReturn(game);
     when(versionRepository.findByTenantIdAndId("tenant-1", 10L)).thenReturn(Optional.of(version));
     when(versionAssetArtifactService.findState("tenant-1", 10L))
-        .thenReturn(Optional.empty(), Optional.of(stagedArtifact));
+        .thenReturn(Optional.of(stagedCandidate), Optional.of(stagedCandidate));
+    when(versionAssetArtifactService.getExportCandidate("tenant-1", 10L)).thenReturn(manifest);
     when(publishGateService.collectFullVersionParticipantDigests(
             any(VersionDto.class), any(String.class), any(String.class)))
         .thenReturn(participantDigests);
@@ -1062,7 +1063,100 @@ class VersionPublishCommandServiceImplTest {
         mechanicsHarness(new PublishWorkflowRequest("tenant-1", "notes", "workflow-1", workflowId));
 
     assertEquals("SUCCEEDED", snapshot.status(), snapshot.toString());
+    verify(versionAssetArtifactService, org.mockito.Mockito.times(2))
+        .getExportCandidate("tenant-1", 10L);
+    verify(versionAssetArtifactService)
+        .markExportedUnattested("tenant-1", 10L, 1, workflowId, manifest);
+    verify(publishedReleaseBundleService)
+        .createFullVersionBundle(
+            any(VersionDto.class),
+            org.mockito.ArgumentMatchers.eq(workflowId),
+            org.mockito.ArgumentMatchers.eq(manifest),
+            any(String.class),
+            org.mockito.ArgumentMatchers.eq(participantDigests));
+    verify(versionAssetArtifactService)
+        .markPublished("tenant-1", 10L, 2L, workflowId, MANIFEST_HASH);
     verify(publishAttemptService).markFullVersionSucceeded(workflowId);
+  }
+
+  @Test
+  void mismatchedPersistedStagedCandidateRemainsPartial() {
+    String workflowId = "publish:tenant-1:publish-request:workflow-1";
+    PublishAttempt attempt = fullAttempt(PublishAttemptStatus.PENDING, 10L, 1, workflowId);
+    Version version = fullVersion(10L, 1, VersionLifecycleState.DRAFT);
+    VersionAssetArtifactStateDto stagedCandidate =
+        new VersionAssetArtifactStateDto(
+            "tenant-1",
+            10L,
+            1,
+            "STAGED",
+            2L,
+            MANIFEST_HASH,
+            workflowId,
+            null,
+            null,
+            LocalDateTime.now(),
+            List.of("manifest.json"));
+    when(publishAttemptRepository.findByPublishWorkflowId(workflowId))
+        .thenReturn(Optional.of(attempt));
+    when(versionRepository.findByTenantIdAndId("tenant-1", 10L)).thenReturn(Optional.of(version));
+    when(versionAssetArtifactService.findState("tenant-1", 10L))
+        .thenReturn(Optional.of(stagedCandidate));
+    when(versionAssetArtifactService.getExportCandidate("tenant-1", 10L))
+        .thenReturn(exportedManifest(List.of("different.json")));
+
+    VersionPublishCommandServiceImpl.PendingReconciliationException thrown =
+        assertThrows(
+            VersionPublishCommandServiceImpl.PendingReconciliationException.class,
+            () ->
+                mechanicsHarness(
+                    new PublishWorkflowRequest("tenant-1", "notes", "workflow-1", workflowId)));
+
+    assertTrue(thrown.getMessage().contains("incomplete"));
+    verify(assetExportService, never()).exportAssets(any(String.class), any(Integer.class));
+    verify(publishAttemptService, never()).executeFullVersionTransaction(any());
+    verify(publishAttemptService, never())
+        .markFullVersionFailed(any(String.class), any(String.class), any(String.class));
+  }
+
+  @Test
+  void malformedPersistedStagedCandidateReadbackRemainsPartial() {
+    String workflowId = "publish:tenant-1:publish-request:workflow-1";
+    PublishAttempt attempt = fullAttempt(PublishAttemptStatus.PENDING, 10L, 1, workflowId);
+    Version version = fullVersion(10L, 1, VersionLifecycleState.DRAFT);
+    VersionAssetArtifactStateDto stagedCandidate =
+        new VersionAssetArtifactStateDto(
+            "tenant-1",
+            10L,
+            1,
+            "STAGED",
+            2L,
+            MANIFEST_HASH,
+            workflowId,
+            null,
+            null,
+            LocalDateTime.now(),
+            List.of("manifest.json"));
+    when(publishAttemptRepository.findByPublishWorkflowId(workflowId))
+        .thenReturn(Optional.of(attempt));
+    when(versionRepository.findByTenantIdAndId("tenant-1", 10L)).thenReturn(Optional.of(version));
+    when(versionAssetArtifactService.findState("tenant-1", 10L))
+        .thenReturn(Optional.of(stagedCandidate));
+    when(versionAssetArtifactService.getExportCandidate("tenant-1", 10L))
+        .thenThrow(new IllegalStateException("ASSET_EXPORT_CANDIDATE_UNAVAILABLE"));
+
+    VersionPublishCommandServiceImpl.PendingReconciliationException thrown =
+        assertThrows(
+            VersionPublishCommandServiceImpl.PendingReconciliationException.class,
+            () ->
+                mechanicsHarness(
+                    new PublishWorkflowRequest("tenant-1", "notes", "workflow-1", workflowId)));
+
+    assertTrue(thrown.getMessage().contains("incomplete"));
+    verify(assetExportService, never()).exportAssets(any(String.class), any(Integer.class));
+    verify(publishAttemptService, never()).executeFullVersionTransaction(any());
+    verify(publishAttemptService, never())
+        .markFullVersionFailed(any(String.class), any(String.class), any(String.class));
   }
 
   @Test
@@ -1075,13 +1169,13 @@ class VersionPublishCommandServiceImplTest {
             10L,
             1,
             "STAGED",
-            1L,
-            null,
+            2L,
+            MANIFEST_HASH,
             "other-workflow",
             null,
             null,
             LocalDateTime.now(),
-            List.of()));
+            List.of("manifest.json")));
   }
 
   @Test
@@ -1093,13 +1187,13 @@ class VersionPublishCommandServiceImplTest {
             10L,
             2,
             "STAGED",
-            1L,
-            null,
+            2L,
+            MANIFEST_HASH,
             "publish:tenant-1:publish-request:workflow-1",
             null,
             null,
             LocalDateTime.now(),
-            List.of()));
+            List.of("manifest.json")));
   }
 
   @Test
@@ -1129,6 +1223,8 @@ class VersionPublishCommandServiceImplTest {
         .thenReturn(Optional.of(attempt));
     when(versionRepository.findByTenantIdAndId("tenant-1", 10L)).thenReturn(Optional.of(version));
     when(versionAssetArtifactService.findState("tenant-1", 10L)).thenReturn(Optional.of(artifact));
+    when(versionAssetArtifactService.getExportCandidate("tenant-1", 10L))
+        .thenReturn(exportedManifest(List.of("manifest.json")));
 
     VersionPublishCommandServiceImpl.PendingReconciliationException thrown =
         assertThrows(

@@ -738,7 +738,7 @@ public class VersionPublishCommandServiceImpl {
       PublishAttempt attempt,
       Version version,
       VersionAssetArtifactStateDto artifact) {
-    return attempt.getPublishType() == PublishType.FULL_VERSION
+    if (!(attempt.getPublishType() == PublishType.FULL_VERSION
         && attempt.getStatus() == PublishAttemptStatus.PENDING
         && Objects.equals(attempt.getTenantId(), request.tenantId())
         && Objects.equals(attempt.getPublishWorkflowId(), request.publishWorkflowId())
@@ -757,11 +757,28 @@ public class VersionPublishCommandServiceImpl {
         && "STAGED".equals(artifact.artifactState())
         && artifact.stateEpoch() > 0
         && Objects.equals(artifact.lastWorkflowId(), request.publishWorkflowId())
-        && artifact.manifestHash() == null
         && artifact.lastErrorCode() == null
-        && artifact.lastErrorMessage() == null
-        && artifact.exportedManifestAssetKeys() != null
-        && artifact.exportedManifestAssetKeys().isEmpty();
+        && artifact.lastErrorMessage() == null)) {
+      return false;
+    }
+
+    try {
+      ExportedAssetManifest candidate =
+          versionAssetArtifactService.getExportCandidate(
+              request.tenantId(), attempt.getVersionId());
+      if (candidate == null) {
+        return artifact.manifestHash() == null
+            && artifact.exportedManifestAssetKeys() != null
+            && artifact.exportedManifestAssetKeys().isEmpty();
+      }
+      return Objects.equals(artifact.manifestHash(), candidate.manifestHash())
+          && Objects.equals(
+              artifact.exportedManifestAssetKeys(), candidate.requiredManifestAssetKeys());
+    } catch (RuntimeException malformedOrAmbiguousCandidate) {
+      // Candidate evidence is not a committed release. Any unreadable or contradictory candidate
+      // remains reconciliation-required rather than being treated as an empty staged intent.
+      return false;
+    }
   }
 
   private void requireExactBundleEvidence(
