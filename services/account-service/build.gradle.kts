@@ -12,6 +12,7 @@ firemudJooq {
 }
 
 dependencies {
+    implementation("com.fasterxml.jackson.core:jackson-databind")
     implementation(libs.spring.boot.starter.mail)
     implementation(libs.argon2)
     implementation(libs.stripe.java)

@@ -1,0 +1,167 @@
+{
+  "schemaId": "firemud.game-session.start-session",
+  "schemaVersion": "1",
+  "vectors": [
+    {
+      "name": "base",
+      "accepted": true,
+      "input": "{\"actionFamilySchemaId\":\"firemud.game-session.start-session\",\"actionFamilySchemaVersion\":\"1\",\"scope\":{\"tenantId\":\"22222222-2222-4222-8222-222222222222\",\"targetNamespace\":\"firemud\"},\"target\":{\"gameTemplateId\":\"42\",\"ownerAccountId\":\"33333333-3333-4333-8333-333333333333\"},\"mutation\":{\"clientIp\":\"192.0.2.1\"},\"auditReason\":\"scheduled launch\"}",
+      "preimageHex": "31373a6d75746174696f6e4469676573742f763132303a616374696f6e46616d696c79536368656d614964363a737472696e673133343a666972656d75642e67616d652d73657373696f6e2e73746172742d73657373696f6e32353a616374696f6e46616d696c79536368656d6156657273696f6e363a737472696e6731313a31353a73636f7065363a6f626a6563743139373a313a32383a74656e616e744964363a737472696e673133363a32323232323232322d323232322d343232322d383232322d32323232323232323232323231353a7461726765744e616d657370616365363a737472696e6731373a666972656d7564363a746172676574363a6f626a6563743139383a313a3231343a67616d6554656d706c6174654964363a737472696e6731323a343231343a6f776e65724163636f756e744964363a737472696e673133363a33333333333333332d333333332d343333332d383333332d33333333333333333333333331353a657870656374656456657273696f6e363a616273656e7430303a383a6d75746174696f6e363a6f626a6563743133333a313a31383a636c69656e744970363a737472696e6731393a3139322e302e322e3131313a6175646974526561736f6e363a737472696e673131363a7363686564756c6564206c61756e6368",
+      "digest": "f81e35e943d51078a1d1c5eb7f3175bedbd7e704f55fe7b450050b852dd62e29"
+    },
+    {
+      "name": "changed-target",
+      "accepted": true,
+      "input": "{\"actionFamilySchemaId\":\"firemud.game-session.start-session\",\"actionFamilySchemaVersion\":\"1\",\"scope\":{\"tenantId\":\"22222222-2222-4222-8222-222222222222\",\"targetNamespace\":\"firemud\"},\"target\":{\"gameTemplateId\":\"43\",\"ownerAccountId\":\"33333333-3333-4333-8333-333333333333\"},\"mutation\":{\"clientIp\":\"192.0.2.1\"},\"auditReason\":\"scheduled launch\"}",
+      "preimageHex": "31373a6d75746174696f6e4469676573742f763132303a616374696f6e46616d696c79536368656d614964363a737472696e673133343a666972656d75642e67616d652d73657373696f6e2e73746172742d73657373696f6e32353a616374696f6e46616d696c79536368656d6156657273696f6e363a737472696e6731313a31353a73636f7065363a6f626a6563743139373a313a32383a74656e616e744964363a737472696e673133363a32323232323232322d323232322d343232322d383232322d32323232323232323232323231353a7461726765744e616d657370616365363a737472696e6731373a666972656d7564363a746172676574363a6f626a6563743139383a313a3231343a67616d6554656d706c6174654964363a737472696e6731323a343331343a6f776e65724163636f756e744964363a737472696e673133363a33333333333333332d333333332d343333332d383333332d33333333333333333333333331353a657870656374656456657273696f6e363a616273656e7430303a383a6d75746174696f6e363a6f626a6563743133333a313a31383a636c69656e744970363a737472696e6731393a3139322e302e322e3131313a6175646974526561736f6e363a737472696e673131363a7363686564756c6564206c61756e6368",
+      "digest": "5c736b3aa5c0772f0edef9fbf00a60b585ab99cccf774cb08196f7eb5cca346d"
+    },
+    {
+      "name": "changed-scope",
+      "accepted": true,
+      "input": "{\"actionFamilySchemaId\":\"firemud.game-session.start-session\",\"actionFamilySchemaVersion\":\"1\",\"scope\":{\"tenantId\":\"44444444-4444-4444-8444-444444444444\",\"targetNamespace\":\"firemud\"},\"target\":{\"gameTemplateId\":\"42\",\"ownerAccountId\":\"33333333-3333-4333-8333-333333333333\"},\"mutation\":{\"clientIp\":\"192.0.2.1\"},\"auditReason\":\"scheduled launch\"}",
+      "preimageHex": "31373a6d75746174696f6e4469676573742f763132303a616374696f6e46616d696c79536368656d614964363a737472696e673133343a666972656d75642e67616d652d73657373696f6e2e73746172742d73657373696f6e32353a616374696f6e46616d696c79536368656d6156657273696f6e363a737472696e6731313a31353a73636f7065363a6f626a6563743139373a313a32383a74656e616e744964363a737472696e673133363a34343434343434342d343434342d343434342d383434342d34343434343434343434343431353a7461726765744e616d657370616365363a737472696e6731373a666972656d7564363a746172676574363a6f626a6563743139383a313a3231343a67616d6554656d706c6174654964363a737472696e6731323a343231343a6f776e65724163636f756e744964363a737472696e673133363a33333333333333332d333333332d343333332d383333332d33333333333333333333333331353a657870656374656456657273696f6e363a616273656e7430303a383a6d75746174696f6e363a6f626a6563743133333a313a31383a636c69656e744970363a737472696e6731393a3139322e302e322e3131313a6175646974526561736f6e363a737472696e673131363a7363686564756c6564206c61756e6368",
+      "digest": "cdb171f110e99654085d935f9dd0c9d0dd46877272976080b01f84320ec45008"
+    },
+    {
+      "name": "changed-audit-reason",
+      "accepted": true,
+      "input": "{\"actionFamilySchemaId\":\"firemud.game-session.start-session\",\"actionFamilySchemaVersion\":\"1\",\"scope\":{\"tenantId\":\"22222222-2222-4222-8222-222222222222\",\"targetNamespace\":\"firemud\"},\"target\":{\"gameTemplateId\":\"42\",\"ownerAccountId\":\"33333333-3333-4333-8333-333333333333\"},\"mutation\":{\"clientIp\":\"192.0.2.1\"},\"auditReason\":\"operator launch\"}",
+      "preimageHex": "31373a6d75746174696f6e4469676573742f763132303a616374696f6e46616d696c79536368656d614964363a737472696e673133343a666972656d75642e67616d652d73657373696f6e2e73746172742d73657373696f6e32353a616374696f6e46616d696c79536368656d6156657273696f6e363a737472696e6731313a31353a73636f7065363a6f626a6563743139373a313a32383a74656e616e744964363a737472696e673133363a32323232323232322d323232322d343232322d383232322d32323232323232323232323231353a7461726765744e616d657370616365363a737472696e6731373a666972656d7564363a746172676574363a6f626a6563743139383a313a3231343a67616d6554656d706c6174654964363a737472696e6731323a343231343a6f776e65724163636f756e744964363a737472696e673133363a33333333333333332d333333332d343333332d383333332d33333333333333333333333331353a657870656374656456657273696f6e363a616273656e7430303a383a6d75746174696f6e363a6f626a6563743133333a313a31383a636c69656e744970363a737472696e6731393a3139322e302e322e3131313a6175646974526561736f6e363a737472696e673131353a6f70657261746f72206c61756e6368",
+      "digest": "43ac8a4e4c8618c090ed7cd298a223e42dffca4519c7a1c38509b8cc1eb16867"
+    },
+    {
+      "name": "client-ip-absent",
+      "accepted": true,
+      "input": "{\"actionFamilySchemaId\":\"firemud.game-session.start-session\",\"actionFamilySchemaVersion\":\"1\",\"scope\":{\"tenantId\":\"22222222-2222-4222-8222-222222222222\",\"targetNamespace\":\"firemud\"},\"target\":{\"gameTemplateId\":\"42\",\"ownerAccountId\":\"33333333-3333-4333-8333-333333333333\"},\"mutation\":{},\"auditReason\":\"scheduled launch\"}",
+      "preimageHex": "31373a6d75746174696f6e4469676573742f763132303a616374696f6e46616d696c79536368656d614964363a737472696e673133343a666972656d75642e67616d652d73657373696f6e2e73746172742d73657373696f6e32353a616374696f6e46616d696c79536368656d6156657273696f6e363a737472696e6731313a31353a73636f7065363a6f626a6563743139373a313a32383a74656e616e744964363a737472696e673133363a32323232323232322d323232322d343232322d383232322d32323232323232323232323231353a7461726765744e616d657370616365363a737472696e6731373a666972656d7564363a746172676574363a6f626a6563743139383a313a3231343a67616d6554656d706c6174654964363a737472696e6731323a343231343a6f776e65724163636f756e744964363a737472696e673133363a33333333333333332d333333332d343333332d383333332d33333333333333333333333331353a657870656374656456657273696f6e363a616273656e7430303a383a6d75746174696f6e363a6f626a6563743132343a313a31383a636c69656e744970363a616273656e7430303a31313a6175646974526561736f6e363a737472696e673131363a7363686564756c6564206c61756e6368",
+      "digest": "01b67879242b7213c9dd9dafbed8a4ed5cbec72ba671d9a04c263bf3b52e3195"
+    },
+    {
+      "name": "client-ip-empty",
+      "accepted": true,
+      "input": "{\"actionFamilySchemaId\":\"firemud.game-session.start-session\",\"actionFamilySchemaVersion\":\"1\",\"scope\":{\"tenantId\":\"22222222-2222-4222-8222-222222222222\",\"targetNamespace\":\"firemud\"},\"target\":{\"gameTemplateId\":\"42\",\"ownerAccountId\":\"33333333-3333-4333-8333-333333333333\"},\"mutation\":{\"clientIp\":\"\"},\"auditReason\":\"scheduled launch\"}",
+      "preimageHex": "31373a6d75746174696f6e4469676573742f763132303a616374696f6e46616d696c79536368656d614964363a737472696e673133343a666972656d75642e67616d652d73657373696f6e2e73746172742d73657373696f6e32353a616374696f6e46616d696c79536368656d6156657273696f6e363a737472696e6731313a31353a73636f7065363a6f626a6563743139373a313a32383a74656e616e744964363a737472696e673133363a32323232323232322d323232322d343232322d383232322d32323232323232323232323231353a7461726765744e616d657370616365363a737472696e6731373a666972656d7564363a746172676574363a6f626a6563743139383a313a3231343a67616d6554656d706c6174654964363a737472696e6731323a343231343a6f776e65724163636f756e744964363a737472696e673133363a33333333333333332d333333332d343333332d383333332d33333333333333333333333331353a657870656374656456657273696f6e363a616273656e7430303a383a6d75746174696f6e363a6f626a6563743132343a313a31383a636c69656e744970363a737472696e6731303a31313a6175646974526561736f6e363a737472696e673131363a7363686564756c6564206c61756e6368",
+      "digest": "880d0f5718ce3f1150d559b6e1df62bbe22249cfb95774b3040715be29966ec1"
+    },
+    {
+      "name": "unicode-composed",
+      "accepted": true,
+      "input": "{\"actionFamilySchemaId\":\"firemud.game-session.start-session\",\"actionFamilySchemaVersion\":\"1\",\"scope\":{\"tenantId\":\"22222222-2222-4222-8222-222222222222\",\"targetNamespace\":\"firemud\"},\"target\":{\"gameTemplateId\":\"42\",\"ownerAccountId\":\"33333333-3333-4333-8333-333333333333\"},\"mutation\":{\"clientIp\":\"192.0.2.1\"},\"auditReason\":\"caf\\u00e9 launch\"}",
+      "preimageHex": "31373a6d75746174696f6e4469676573742f763132303a616374696f6e46616d696c79536368656d614964363a737472696e673133343a666972656d75642e67616d652d73657373696f6e2e73746172742d73657373696f6e32353a616374696f6e46616d696c79536368656d6156657273696f6e363a737472696e6731313a31353a73636f7065363a6f626a6563743139373a313a32383a74656e616e744964363a737472696e673133363a32323232323232322d323232322d343232322d383232322d32323232323232323232323231353a7461726765744e616d657370616365363a737472696e6731373a666972656d7564363a746172676574363a6f626a6563743139383a313a3231343a67616d6554656d706c6174654964363a737472696e6731323a343231343a6f776e65724163636f756e744964363a737472696e673133363a33333333333333332d333333332d343333332d383333332d33333333333333333333333331353a657870656374656456657273696f6e363a616273656e7430303a383a6d75746174696f6e363a6f626a6563743133333a313a31383a636c69656e744970363a737472696e6731393a3139322e302e322e3131313a6175646974526561736f6e363a737472696e673131323a636166c3a9206c61756e6368",
+      "digest": "7dd8d54b05c485e62d580b1b31bbdc0d6e5634d0caaf234a643d1cc46a5dab09"
+    },
+    {
+      "name": "unicode-decomposed",
+      "accepted": true,
+      "input": "{\"actionFamilySchemaId\":\"firemud.game-session.start-session\",\"actionFamilySchemaVersion\":\"1\",\"scope\":{\"tenantId\":\"22222222-2222-4222-8222-222222222222\",\"targetNamespace\":\"firemud\"},\"target\":{\"gameTemplateId\":\"42\",\"ownerAccountId\":\"33333333-3333-4333-8333-333333333333\"},\"mutation\":{\"clientIp\":\"192.0.2.1\"},\"auditReason\":\"cafe\\u0301 launch\"}",
+      "preimageHex": "31373a6d75746174696f6e4469676573742f763132303a616374696f6e46616d696c79536368656d614964363a737472696e673133343a666972656d75642e67616d652d73657373696f6e2e73746172742d73657373696f6e32353a616374696f6e46616d696c79536368656d6156657273696f6e363a737472696e6731313a31353a73636f7065363a6f626a6563743139373a313a32383a74656e616e744964363a737472696e673133363a32323232323232322d323232322d343232322d383232322d32323232323232323232323231353a7461726765744e616d657370616365363a737472696e6731373a666972656d7564363a746172676574363a6f626a6563743139383a313a3231343a67616d6554656d706c6174654964363a737472696e6731323a343231343a6f776e65724163636f756e744964363a737472696e673133363a33333333333333332d333333332d343333332d383333332d33333333333333333333333331353a657870656374656456657273696f6e363a616273656e7430303a383a6d75746174696f6e363a6f626a6563743133333a313a31383a636c69656e744970363a737472696e6731393a3139322e302e322e3131313a6175646974526561736f6e363a737472696e673131323a636166c3a9206c61756e6368",
+      "digest": "7dd8d54b05c485e62d580b1b31bbdc0d6e5634d0caaf234a643d1cc46a5dab09"
+    },
+    {
+      "name": "client-ip-null",
+      "accepted": false,
+      "input": "{\"actionFamilySchemaId\":\"firemud.game-session.start-session\",\"actionFamilySchemaVersion\":\"1\",\"scope\":{\"tenantId\":\"22222222-2222-4222-8222-222222222222\",\"targetNamespace\":\"firemud\"},\"target\":{\"gameTemplateId\":\"42\",\"ownerAccountId\":\"33333333-3333-4333-8333-333333333333\"},\"mutation\":{\"clientIp\":null},\"auditReason\":\"scheduled launch\"}"
+    },
+    {
+      "name": "expected-version-null",
+      "accepted": false,
+      "input": "{\"actionFamilySchemaId\":\"firemud.game-session.start-session\",\"actionFamilySchemaVersion\":\"1\",\"scope\":{\"tenantId\":\"22222222-2222-4222-8222-222222222222\",\"targetNamespace\":\"firemud\"},\"target\":{\"gameTemplateId\":\"42\",\"ownerAccountId\":\"33333333-3333-4333-8333-333333333333\"},\"expectedVersion\":null,\"mutation\":{\"clientIp\":\"192.0.2.1\"},\"auditReason\":\"scheduled launch\"}"
+    },
+    {
+      "name": "expected-version-present",
+      "accepted": false,
+      "input": "{\"actionFamilySchemaId\":\"firemud.game-session.start-session\",\"actionFamilySchemaVersion\":\"1\",\"scope\":{\"tenantId\":\"22222222-2222-4222-8222-222222222222\",\"targetNamespace\":\"firemud\"},\"target\":{\"gameTemplateId\":\"42\",\"ownerAccountId\":\"33333333-3333-4333-8333-333333333333\"},\"expectedVersion\":1,\"mutation\":{\"clientIp\":\"192.0.2.1\"},\"auditReason\":\"scheduled launch\"}"
+    },
+    {
+      "name": "wrong-type-client-ip",
+      "accepted": false,
+      "input": "{\"actionFamilySchemaId\":\"firemud.game-session.start-session\",\"actionFamilySchemaVersion\":\"1\",\"scope\":{\"tenantId\":\"22222222-2222-4222-8222-222222222222\",\"targetNamespace\":\"firemud\"},\"target\":{\"gameTemplateId\":\"42\",\"ownerAccountId\":\"33333333-3333-4333-8333-333333333333\"},\"mutation\":{\"clientIp\":7},\"auditReason\":\"scheduled launch\"}"
+    },
+    {
+      "name": "duplicate-root-key",
+      "accepted": false,
+      "input": "{\"actionFamilySchemaId\":\"firemud.game-session.start-session\",\"actionFamilySchemaId\":\"firemud.game-session.start-session\",\"actionFamilySchemaVersion\":\"1\",\"scope\":{\"tenantId\":\"22222222-2222-4222-8222-222222222222\",\"targetNamespace\":\"firemud\"},\"target\":{\"gameTemplateId\":\"42\",\"ownerAccountId\":\"33333333-3333-4333-8333-333333333333\"},\"mutation\":{},\"auditReason\":\"scheduled launch\"}"
+    },
+    {
+      "name": "normalized-key-collision",
+      "accepted": false,
+      "input": "{\"actionFamilySchemaId\":\"firemud.game-session.start-session\",\"actionFamilySchemaVersion\":\"1\",\"scope\":{\"tenantId\":\"22222222-2222-4222-8222-222222222222\",\"targetNamespace\":\"firemud\"},\"target\":{\"gameTemplateId\":\"42\",\"ownerAccountId\":\"33333333-3333-4333-8333-333333333333\"},\"mutation\":{\"t\\u00e9\":\"x\",\"te\\u0301\":\"y\"},\"auditReason\":\"scheduled launch\"}"
+    },
+    {
+      "name": "unknown-member",
+      "accepted": false,
+      "input": "{\"actionFamilySchemaId\":\"firemud.game-session.start-session\",\"actionFamilySchemaVersion\":\"1\",\"scope\":{\"tenantId\":\"22222222-2222-4222-8222-222222222222\",\"targetNamespace\":\"firemud\"},\"target\":{\"gameTemplateId\":\"42\",\"ownerAccountId\":\"33333333-3333-4333-8333-333333333333\"},\"mutation\":{\"clientIp\":\"192.0.2.1\",\"extra\":true},\"auditReason\":\"scheduled launch\"}"
+    },
+    {
+      "name": "missing-audit-reason",
+      "accepted": false,
+      "input": "{\"actionFamilySchemaId\":\"firemud.game-session.start-session\",\"actionFamilySchemaVersion\":\"1\",\"scope\":{\"tenantId\":\"22222222-2222-4222-8222-222222222222\",\"targetNamespace\":\"firemud\"},\"target\":{\"gameTemplateId\":\"42\",\"ownerAccountId\":\"33333333-3333-4333-8333-333333333333\"},\"mutation\":{}}"
+    },
+    {
+      "name": "wrong-scope-member-order",
+      "accepted": false,
+      "input": "{\"actionFamilySchemaId\":\"firemud.game-session.start-session\",\"actionFamilySchemaVersion\":\"1\",\"scope\":{\"targetNamespace\":\"firemud\",\"tenantId\":\"22222222-2222-4222-8222-222222222222\"},\"target\":{\"gameTemplateId\":\"42\",\"ownerAccountId\":\"33333333-3333-4333-8333-333333333333\"},\"mutation\":{},\"auditReason\":\"scheduled launch\"}"
+    },
+    {
+      "name": "malformed-unicode",
+      "accepted": false,
+      "input": "{\"actionFamilySchemaId\":\"firemud.game-session.start-session\",\"actionFamilySchemaVersion\":\"1\",\"scope\":{\"tenantId\":\"22222222-2222-4222-8222-222222222222\",\"targetNamespace\":\"firemud\"},\"target\":{\"gameTemplateId\":\"42\",\"ownerAccountId\":\"33333333-3333-4333-8333-333333333333\"},\"mutation\":{},\"auditReason\":\"\\uD800\"}"
+    },
+    {
+      "name": "invalid-utf8",
+      "accepted": false,
+      "rawHex": "7b22616374696f6e46616d696c79536368656d614964223a22666972656d75642e67616d652d73657373696f6e2e73746172742d73657373696f6e222c22616374696f6e46616d696c79536368656d6156657273696f6e223a2231222c2273636f7065223a7b2274656e616e744964223a2232323232323232322d323232322d343232322d383232322d323232323232323232323232222c227461726765744e616d657370616365223a22666972656d7564227d2c22746172676574223a7b2267616d6554656d706c6174654964223a223432222c226f776e65724163636f756e744964223a2233333333333333332d333333332d343333332d383333332d333333333333333333333333227d2c226d75746174696f6e223a7b22636c69656e744970223a223139322e302e322e31227d2c226175646974526561736f6e223a22ff227d"
+    },
+    {
+      "name": "numeric-template-id-rejected",
+      "accepted": false,
+      "input": "{\"actionFamilySchemaId\":\"firemud.game-session.start-session\",\"actionFamilySchemaVersion\":\"1\",\"scope\":{\"tenantId\":\"22222222-2222-4222-8222-222222222222\",\"targetNamespace\":\"firemud\"},\"target\":{\"gameTemplateId\":42,\"ownerAccountId\":\"33333333-3333-4333-8333-333333333333\"},\"mutation\":{},\"auditReason\":\"scheduled launch\"}"
+    },
+    {
+      "name": "non-canonical-template-id-string",
+      "accepted": false,
+      "input": "{\"actionFamilySchemaId\":\"firemud.game-session.start-session\",\"actionFamilySchemaVersion\":\"1\",\"scope\":{\"tenantId\":\"22222222-2222-4222-8222-222222222222\",\"targetNamespace\":\"firemud\"},\"target\":{\"gameTemplateId\":\"042\",\"ownerAccountId\":\"33333333-3333-4333-8333-333333333333\"},\"mutation\":{},\"auditReason\":\"scheduled launch\"}"
+    },
+    {
+      "name": "template-id-overflow-rejected",
+      "accepted": false,
+      "input": "{\"actionFamilySchemaId\":\"firemud.game-session.start-session\",\"actionFamilySchemaVersion\":\"1\",\"scope\":{\"tenantId\":\"22222222-2222-4222-8222-222222222222\",\"targetNamespace\":\"firemud\"},\"target\":{\"gameTemplateId\":\"9223372036854775808\",\"ownerAccountId\":\"33333333-3333-4333-8333-333333333333\"},\"mutation\":{},\"auditReason\":\"scheduled launch\"}"
+    },
+    {
+      "name": "nil-owner-account-id",
+      "accepted": false,
+      "input": "{\"actionFamilySchemaId\":\"firemud.game-session.start-session\",\"actionFamilySchemaVersion\":\"1\",\"scope\":{\"tenantId\":\"22222222-2222-4222-8222-222222222222\",\"targetNamespace\":\"firemud\"},\"target\":{\"gameTemplateId\":\"42\",\"ownerAccountId\":\"00000000-0000-0000-0000-000000000000\"},\"mutation\":{},\"auditReason\":\"scheduled launch\"}"
+    }
+  ],
+  "grammarVectors": [
+    {"name": "absent", "kind": "absent", "canonicalValueHex": "363a616273656e7430303a"},
+    {"name": "null", "kind": "raw", "rawValue": "null", "canonicalValueHex": "343a6e756c6c31303a"},
+    {"name": "number-one", "kind": "raw", "rawValue": "1", "canonicalValueHex": "363a6e756d62657231313a31"},
+    {"name": "string-one", "kind": "raw", "rawValue": "\"1\"", "canonicalValueHex": "363a737472696e6731313a31"},
+    {"name": "number-ten-trailing-zeroes", "kind": "raw", "rawValue": "10.000", "canonicalValueHex": "363a6e756d62657231323a3130"},
+    {"name": "number-negative-decimal", "kind": "raw", "rawValue": "-12.3400", "canonicalValueHex": "363a6e756d62657231363a2d31322e3334"},
+    {"name": "number-signed-zero", "kind": "raw", "rawValue": "-0.00", "canonicalValueHex": "363a6e756d62657231313a30"},
+    {"name": "number-zero", "kind": "raw", "rawValue": "0", "canonicalValueHex": "363a6e756d62657231313a30"},
+    {"name": "array-order", "kind": "raw", "rawValue": "[1,\"1\",null]", "canonicalValueHex": "353a61727261793133363a313a33363a6e756d62657231313a31363a737472696e6731313a31343a6e756c6c31303a"},
+    {"name": "unicode-key-composed", "kind": "raw", "rawValue": "{\"\\u00e9\":\"x\"}", "canonicalValueHex": "363a6f626a6563743131393a313a31323ac3a9363a737472696e6731313a78"},
+    {"name": "unicode-key-decomposed", "kind": "raw", "rawValue": "{\"e\\u0301\":\"x\"}", "canonicalValueHex": "363a6f626a6563743131393a313a31323ac3a9363a737472696e6731313a78"},
+    {"name": "malformed-surrogate-rejected", "kind": "reject", "rawValue": "\"\\uD800\""},
+    {"name": "nesting-depth-rejected", "kind": "reject", "rawValue": "[[[[[[[[[0]]]]]]]]]"},
+    {"name": "duplicate-object-key-rejected", "kind": "reject", "rawValue": "{\"a\":1,\"a\":2}"},
+    {"name": "normalized-object-key-collision-rejected", "kind": "reject", "rawValue": "{\"\\u00e9\":1,\"e\\u0301\":2}"},
+    {"name": "number-space-prefix-rejected", "kind": "numberLexeme", "accepted": false, "rawLexeme": " 1"},
+    {"name": "number-space-suffix-rejected", "kind": "numberLexeme", "accepted": false, "rawLexeme": "1 "},
+    {"name": "number-trailing-point-rejected", "kind": "numberLexeme", "accepted": false, "rawLexeme": "1."},
+    {"name": "number-leading-point-rejected", "kind": "numberLexeme", "accepted": false, "rawLexeme": ".5"},
+    {"name": "number-nan-rejected", "kind": "numberLexeme", "accepted": false, "rawLexeme": "NaN"},
+    {"name": "number-infinity-rejected", "kind": "numberLexeme", "accepted": false, "rawLexeme": "Infinity"},
+    {"name": "number-negative-infinity-rejected", "kind": "numberLexeme", "accepted": false, "rawLexeme": "-Infinity"},
+    {"name": "number-exponent-lexeme-rejected", "kind": "numberLexeme", "accepted": false, "rawLexeme": "1e3"},
+    {"name": "number-plus-lexeme-rejected", "kind": "numberLexeme", "accepted": false, "rawLexeme": "+1"},
+    {"name": "number-leading-zero-lexeme-rejected", "kind": "numberLexeme", "accepted": false, "rawLexeme": "01"},
+    {"name": "number-exponent-rejected", "kind": "reject", "rawValue": "1e3"},
+    {"name": "number-plus-rejected", "kind": "reject", "rawValue": "+1"},
+    {"name": "number-leading-zero-rejected", "kind": "reject", "rawValue": "01"}
+  ]
+}
