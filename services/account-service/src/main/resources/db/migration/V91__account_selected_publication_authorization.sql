@@ -21,7 +21,9 @@ CREATE TABLE account_selected_publication_authorizations (
 
 CREATE TABLE account_selected_publication_sources (
     operation_id UUID NOT NULL REFERENCES account_selected_publication_authorizations(operation_id),
-    source_key VARCHAR(512) NOT NULL REFERENCES account_draft_authorization_source_locks(source_key),
+    source_key VARCHAR(2048) NOT NULL
+        CHECK (length(source_key) > 0 AND octet_length(source_key) <= 2048)
+        REFERENCES account_draft_authorization_source_locks(source_key),
     source_evidence BYTEA NOT NULL CHECK (octet_length(source_evidence) BETWEEN 1 AND 131072),
     PRIMARY KEY (operation_id, source_key)
 );
@@ -58,12 +60,12 @@ BEGIN
     IF issuer.status IS DISTINCT FROM 'COMMITTED' OR issuer.account_uuid <> NEW.actor_account_uuid
         OR issuer.tenant_uuid <> NEW.tenant_uuid OR issuer.source_payload <> NEW.source_payload
         OR issuer.bundle_payload <> NEW.issuance_bundle
-        OR (convert_from(NEW.issuance_bundle, 'UTF8')::JSONB->>'issuanceFence')::BIGINT <> NEW.issuance_fence
+        OR (convert_from(NEW.issuance_bundle, 'UTF8')::JSONB->>'issuanceFence')::BIGINT IS DISTINCT FROM NEW.issuance_fence
         OR convert_from(NEW.issuance_bundle, 'UTF8')::JSONB->'outboxCheckpoints'
             IS DISTINCT FROM convert_from(NEW.outbox_checkpoints, 'UTF8')::JSONB
         OR NEW.producer_xid <> txid_current()
-        OR convert_from(NEW.source_payload, 'UTF8')::JSONB->>'accountId' <> NEW.actor_account_uuid::TEXT
-        OR convert_from(NEW.source_payload, 'UTF8')::JSONB->>'tenantId' <> NEW.tenant_uuid::TEXT THEN
+        OR convert_from(NEW.source_payload, 'UTF8')::JSONB->>'accountId' IS DISTINCT FROM NEW.actor_account_uuid::TEXT
+        OR convert_from(NEW.source_payload, 'UTF8')::JSONB->>'tenantId' IS DISTINCT FROM NEW.tenant_uuid::TEXT THEN
         RAISE EXCEPTION 'Publication requires exact original committed issuance evidence' USING ERRCODE = '23514';
     END IF;
     SELECT frame_value, next_position INTO parsed, p FROM account_publication_authorization_read_frame(NEW.binding, p);
@@ -91,19 +93,22 @@ BEGIN
         RAISE EXCEPTION 'Changed publication actor' USING ERRCODE = '23514';
     END IF;
     SELECT frame_value, next_position INTO parsed, source_position FROM account_publication_authorization_read_frame(input_bytes, source_position);
-    IF convert_from(parsed, 'UTF8')::JSONB->'intent'->>'canonicalTenantId' <> NEW.tenant_uuid::TEXT
-        OR convert_from(parsed, 'UTF8')::JSONB->'intent'->>'publishRequestId' <> NEW.publish_request_id THEN
+    IF convert_from(parsed, 'UTF8')::JSONB->'intent'->>'canonicalTenantId' IS DISTINCT FROM NEW.tenant_uuid::TEXT
+        OR convert_from(parsed, 'UTF8')::JSONB->'intent'->>'publishRequestId' IS DISTINCT FROM NEW.publish_request_id THEN
         RAISE EXCEPTION 'Changed publication selection identity' USING ERRCODE = '23514';
     END IF;
     SELECT frame_value, next_position INTO parsed, p FROM account_publication_authorization_read_frame(NEW.binding, p);
     source_count := convert_from(parsed, 'UTF8')::INTEGER;
-    IF source_count < 1 OR source_count <> (SELECT count(*) FROM account_selected_publication_sources WHERE operation_id = NEW.operation_id)
-        OR source_count <> jsonb_array_length(convert_from(NEW.source_payload, 'UTF8')::JSONB->'sources') THEN
+    IF source_count < 1 OR source_count IS DISTINCT FROM
+            (SELECT count(*)::INTEGER FROM account_selected_publication_sources WHERE operation_id = NEW.operation_id)
+        OR source_count IS DISTINCT FROM
+            jsonb_array_length(convert_from(NEW.source_payload, 'UTF8')::JSONB->'sources') THEN
         RAISE EXCEPTION 'Incomplete publication sources' USING ERRCODE = '23514';
     END IF;
     FOR i IN 1..source_count LOOP
         SELECT frame_value, next_position INTO source_bytes, p FROM account_publication_authorization_read_frame(NEW.binding, p);
-        IF source_bytes <> decode(convert_from(NEW.source_payload, 'UTF8')::JSONB->'sources'->>(i - 1), 'base64') THEN
+        IF source_bytes IS DISTINCT FROM
+            decode(convert_from(NEW.source_payload, 'UTF8')::JSONB->'sources'->>(i - 1), 'base64') THEN
             RAISE EXCEPTION 'Publication source differs from original complete issuance vector' USING ERRCODE = '23514';
         END IF;
         SELECT frame_value, next_position INTO parsed, source_position FROM account_publication_authorization_read_frame(source_bytes, 1);

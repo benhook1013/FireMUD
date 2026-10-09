@@ -591,7 +591,8 @@ class PasswordResetAuthorityProducerPostgresIntegrationTest {
                         11L,
                         seed.accountUuid()))
         .isInstanceOf(DataAccessException.class)
-        .hasMessageContaining("lacks exact owner source evidence");
+        .hasMessageContaining(
+            "Account authority issuance fence and source version must advance by one");
     assertUnchangedAfterRollback(fixture, seed, 1L, 1L);
   }
 

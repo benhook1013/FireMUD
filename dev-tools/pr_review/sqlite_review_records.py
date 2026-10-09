@@ -1106,6 +1106,210 @@ class SqliteReviewRecords:
                 self.finalize_run(attempt_id, finalized_at=run.get("finished_at"), _connection=connection)
         return recorded
 
+    @_translate_database_errors
+    def supplement_hosted_publication(
+        self, attempt_id: str, *, repository: str, trigger_record: Mapping[str, Any], payload: dict[str, Any]
+    ) -> dict[str, Any]:
+        """Recover missing explicit batches on one unfinalized native Hosted run.
+
+        Original import and terminal archives remain immutable. The existing
+        imported-artifact table retains the complete supplemental evidence;
+        observations and a bounded attempt-metadata receipt commit with it.
+        """
+        from . import github, hosted
+        from . import sqlite_hosted_capture as capture
+
+        attempt_id = _safe_identifier(attempt_id, "attempt ID", maximum=100)
+        record = capture._validate_trigger_record(repository, trigger_record["pr_number"], trigger_record)
+        source_pr = record["pr_number"]
+        pull_request = capture._complete_pull_request(payload, source_pr)
+        result = hosted.trigger_state(repository, source_pr, payload, record)
+        if result.state != "completed" or not result.attributed or not result.publication_review_ids:
+            raise ReviewRecordsError("Hosted supplement requires one complete attributable publication")
+        finished_at, primary, response_comment = capture._terminal_event(result, pull_request, observed_at=None)
+        findings = capture._findings_for_completed_result(
+            result,
+            pull_request,
+            record,
+            response_review=primary,
+            response_comment=response_comment,
+            finished_at=finished_at,
+        )
+        window = capture.archive_window(
+            pull_request,
+            record,
+            finished_at=finished_at,
+            response_id=result.response_id,
+            publication_review_ids=result.publication_review_ids,
+        )
+        # Only publication reviews belong in the supplement; original artifacts
+        # retain the original trigger and any unrelated earlier evidence.
+        window["reviews"] = [
+            review
+            for review in window["reviews"]
+            if github.immutable_database_id(review) in result.publication_review_ids
+        ]
+        marker = hosted.review_publication_marker(primary["body"])
+        receipt = {
+            "publication": marker[0],
+            "provider_attempt": marker[1],
+            "review_ids": list(result.publication_review_ids),
+            "response_id": result.response_id,
+            "finished_at": finished_at,
+        }
+        archived = {
+            kind: _archive_artifact(kind, content)
+            for kind, content in {
+                "hosted_review": _json(window["reviews"]),
+                "hosted_comments": _json({"comments": [], "review_threads": window["review_threads"]}),
+                "metadata": _json(
+                    {
+                        "kind": "hosted_publication_supplement",
+                        "repository": repository,
+                        "pull_request": source_pr,
+                        "head_sha": record["head_sha"],
+                        "trigger_id": record["trigger"]["id"],
+                        **receipt,
+                    }
+                ),
+            }.items()
+        }
+        with self._write_connection() as connection:
+            attempt = connection.execute(
+                "SELECT source_pr, channel, candidate_sha, state, run_id, trigger_id, provider_review_id, metadata_json "
+                "FROM review_attempts WHERE attempt_id = ?",
+                (attempt_id,),
+            ).fetchone()
+            run = connection.execute(
+                "SELECT source_pr, channel, source_head, outcome, attributable, finalized, import_payload_json "
+                "FROM review_runs WHERE run_id = ?",
+                (attempt_id,),
+            ).fetchone()
+            if (
+                attempt is None
+                or run is None
+                or attempt[:7]
+                != (
+                    source_pr,
+                    "hosted",
+                    record["head_sha"],
+                    "completed",
+                    attempt_id,
+                    str(record["trigger"]["id"]),
+                    str(result.response_id),
+                )
+                or run[:5] != (source_pr, "hosted", record["head_sha"], "completed", 1)
+                or record.get("sqlite_attempt_id") != attempt_id
+            ):
+                raise ReviewRecordsError("Hosted supplement conflicts with its native attempt and source run")
+            metadata = json.loads(attempt[7])
+            if metadata.get("repository") != repository:
+                raise ReviewRecordsError("Hosted supplement conflicts with its repository")
+            originals = self.attempt_artifacts(attempt_id, _connection=connection)
+            original_metadata = json.loads(originals.get("metadata", "{}"))
+            if any(
+                original_metadata.get(key) != value
+                for key, value in {
+                    "repository": repository,
+                    "pull_request": source_pr,
+                    "head_sha": record["head_sha"],
+                    "trigger_id": record["trigger"]["id"],
+                    "response_id": result.response_id,
+                    "state": "completed",
+                    "terminal": True,
+                    "attributable": True,
+                }.items()
+            ):
+                raise ReviewRecordsError("Hosted supplement conflicts with its original capture identity")
+            original_reviews = json.loads(originals.get("hosted_review", "[]"))
+            original_primary = [
+                review for review in original_reviews if github.immutable_database_id(review) == result.response_id
+            ]
+            if len(original_primary) != 1 or original_primary[0] != primary:
+                raise ReviewRecordsError("Hosted supplement changes the original primary review")
+            original_marker = hosted.review_publication_marker(original_primary[0].get("body"))
+            if original_marker != marker or marker[2] != 1:
+                raise ReviewRecordsError("Hosted supplement changes its publication identity")
+            existing = {
+                row[0]: row[1:]
+                for row in connection.execute(
+                    "SELECT f.source_finding_key, o.title, o.detail FROM finding_observations o "
+                    "JOIN findings f USING(finding_id) WHERE o.run_id = ?",
+                    (attempt_id,),
+                )
+            }
+            incoming = {finding.source_finding_key: finding for finding in findings}
+            if len(incoming) != len(findings) or any(
+                key not in incoming or values != (incoming[key].title, incoming[key].detail)
+                for key, values in existing.items()
+            ):
+                raise ReviewRecordsError("Hosted supplement changes or omits an existing finding")
+            additions = [finding for key, finding in incoming.items() if key not in existing]
+            retained_ids = {github.immutable_database_id(review) for review in original_reviews}
+            needs_supplement = bool(additions) or not set(result.publication_review_ids) <= retained_ids
+            prior_receipt = metadata.get("hosted_publication_supplement")
+            if prior_receipt is not None:
+                if prior_receipt != receipt or additions:
+                    raise ReviewRecordsError("Hosted supplement conflicts with its retained recovery")
+                stored_kinds = {
+                    row[0]
+                    for row in connection.execute(
+                        "SELECT kind FROM imported_artifacts WHERE run_id = ?",
+                        (attempt_id,),
+                    )
+                }
+                if not {"hosted_review", "hosted_comments", "metadata"} <= stored_kinds:
+                    raise ReviewRecordsError("Hosted supplement is missing its retained evidence")
+                return {
+                    "counts": dict(
+                        zip(("found", "accepted", "routed"), self._current_run_counts(connection, attempt_id))
+                    ),
+                    "idempotent_replay": True,
+                }
+            if not needs_supplement:
+                return {
+                    "counts": dict(
+                        zip(("found", "accepted", "routed"), self._current_run_counts(connection, attempt_id))
+                    ),
+                    "idempotent_replay": True,
+                }
+            if run[5]:
+                raise ReviewRecordsError("finalized Hosted partial runs cannot be supplemented")
+            if connection.execute("SELECT 1 FROM imported_artifacts WHERE run_id = ?", (attempt_id,)).fetchone():
+                raise ReviewRecordsError("Hosted supplement conflicts with existing imported artifacts")
+            if len(findings) > 200:
+                raise ReviewRecordsError("Hosted supplement exceeds the finding limit")
+            for finding in additions:
+                finding_id = _stable_id("finding", source_pr, "hosted", finding.source_finding_key)
+                connection.execute(
+                    "INSERT OR IGNORE INTO findings VALUES (?, ?, ?, ?, ?)",
+                    (finding_id, source_pr, "hosted", finding.source_finding_key, finished_at),
+                )
+                connection.execute(
+                    "INSERT INTO finding_observations "
+                    "(run_id, finding_id, source_pr, source_channel, title, detail, disposition, route_id, display_severity) "
+                    "VALUES (?, ?, ?, 'hosted', ?, ?, 'unresolved', NULL, ?)",
+                    (attempt_id, finding_id, source_pr, finding.title, finding.detail, finding.display_severity),
+                )
+            for kind, (content, digest, redactions) in archived.items():
+                connection.execute(
+                    "INSERT INTO imported_artifacts VALUES (?, ?, ?, ?, ?)",
+                    (attempt_id, kind, content, digest, redactions),
+                )
+            metadata["hosted_publication_supplement"] = receipt
+            metadata_json, _, redactions = _archive_artifact("metadata", _json(metadata))
+            if redactions:
+                raise ReviewRecordsError("Hosted supplement metadata requires redaction")
+            connection.execute(
+                "UPDATE review_attempts SET metadata_json = ? WHERE attempt_id = ?", (metadata_json, attempt_id)
+            )
+            counts = self._current_run_counts(connection, attempt_id)
+            connection.execute(
+                "UPDATE review_runs SET found_count = ?, accepted_count = ?, routed_count = ? WHERE run_id = ?",
+                (*counts, attempt_id),
+            )
+        return {"counts": dict(zip(("found", "accepted", "routed"), counts)), "idempotent_replay": False}
+
     def link_provider_origin(
         self,
         *,
@@ -3667,6 +3871,11 @@ class SqliteReviewRecords:
                             "origin": metadata.get("origin"),
                             "legacy_outcome": metadata.get("legacy_outcome"),
                             "repository": metadata.get("repository"),
+                            **(
+                                {"hosted_publication_supplement": metadata["hosted_publication_supplement"]}
+                                if row[1] == "hosted" and "hosted_publication_supplement" in metadata
+                                else {}
+                            ),
                             **(
                                 {"model": metadata["model"]}
                                 if row[1] == "subagent" and isinstance(metadata.get("model"), str)

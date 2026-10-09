@@ -4,17 +4,28 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.mock;
 
+import java.io.ByteArrayOutputStream;
+import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
+import java.sql.SQLException;
+import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
+import java.util.ArrayList;
+import java.util.Base64;
 import java.util.HexFormat;
+import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
+import net.firedevops.firemud.accountservice.authordraft.DraftAuthorizationFenceRepository;
 import net.firedevops.firemud.accountservice.entity.Account;
 import net.firedevops.firemud.accountservice.entity.AccountLifecycleState;
+import net.firedevops.firemud.accountservice.hostedterms.HostedTermsCatalogVersion;
+import net.firedevops.firemud.accountservice.hostedterms.HostedTermsEncoding;
+import net.firedevops.firemud.accountservice.hostedterms.HostedTermsRepository;
 import net.firedevops.firemud.accountservice.repository.AccountAuditOutboxRepository;
 import net.firedevops.firemud.accountservice.repository.AccountAuthorityOutboxRepository;
 import net.firedevops.firemud.accountservice.repository.AccountMembershipPairAuthorityRepository;
@@ -26,6 +37,10 @@ import net.firedevops.firemud.accountservice.repository.FreshTenantIdentityAssoc
 import net.firedevops.firemud.accountservice.service.AccountCreatorMembershipSourceReader;
 import net.firedevops.firemud.accountservice.service.AccountTenantCreationBootstrapAuthorizationSource;
 import net.firedevops.firemud.accountservice.service.AccountTenantCreationBootstrapService;
+import net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding;
+import net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding.SourceEvidence;
+import net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding.SourceKind;
+import net.firedevops.firemud.common.authoring.DraftCommitBinding;
 import net.firedevops.firemud.common.tenant.FreshTenantCreationEvidence;
 import net.firedevops.firemud.common.tenant.FreshTenantCreatorDigest;
 import net.firedevops.firemud.common.tenant.FreshTenantCreatorEvidence;
@@ -61,7 +76,7 @@ class AccountSourceCurrentnessForwardMigrationsPostgresIntegrationTest {
   }
 
   @Test
-  void freshInstallAppliesEveryForwardMigrationThroughV97() {
+  void freshInstallAppliesEveryForwardMigrationThroughV98() {
     TestContext context = context(null);
 
     assertThat(
@@ -69,17 +84,17 @@ class AccountSourceCurrentnessForwardMigrationsPostgresIntegrationTest {
                 .dsl()
                 .resultQuery(
                     "SELECT version FROM flyway_schema_history "
-                        + "WHERE success AND version = '97'")
+                        + "WHERE success AND version = '98'")
                 .fetchOne(0, String.class))
-        .isEqualTo("97");
+        .isEqualTo("98");
     assertThat(
             context
                 .dsl()
                 .resultQuery(
                     "SELECT count(*) FROM flyway_schema_history "
-                        + "WHERE version::numeric BETWEEN 74 AND 97 AND success")
+                        + "WHERE version::numeric BETWEEN 74 AND 98 AND success")
                 .fetchOne(0, Long.class))
-        .isEqualTo(24L);
+        .isEqualTo(25L);
 
     for (String relation :
         new String[] {
@@ -101,7 +116,9 @@ class AccountSourceCurrentnessForwardMigrationsPostgresIntegrationTest {
           "account_password_reset_draft_source_changes",
           "account_game_logic_intake_source_read_reservations",
           "account_game_logic_intake_source_read_sources",
-          "account_game_logic_intake_source_read_aborts"
+          "account_game_logic_intake_source_read_aborts",
+          "account_hosted_terms_disclosure_handoffs",
+          "account_hosted_terms_disclosure_sources"
         }) {
       assertThat(
               context
@@ -121,7 +138,10 @@ class AccountSourceCurrentnessForwardMigrationsPostgresIntegrationTest {
           "account_game_logic_intake_source_read_is_pending(uuid)",
           "account_game_logic_intake_source_read_complete_guard()",
           "account_game_logic_intake_source_read_source_guard()",
-          "account_game_logic_intake_source_read_terminal_guard()"
+          "account_game_logic_intake_source_read_terminal_guard()",
+          "account_hosted_terms_disclosure_handoff_guard()",
+          "account_hosted_terms_disclosure_immutable_guard()",
+          "account_hosted_terms_disclosure_source_insert_guard()"
         }) {
       assertThat(
               context
@@ -131,6 +151,1033 @@ class AccountSourceCurrentnessForwardMigrationsPostgresIntegrationTest {
           .as("forward SQL guard %s", function)
           .isNotNull();
     }
+    String settlementGuard =
+        context
+            .dsl()
+            .resultQuery(
+                "SELECT pg_get_functiondef('account_game_logic_intake_settlement_guard()'::REGPROCEDURE)")
+            .fetchOne(0, String.class);
+    assertThat(settlementGuard)
+        .contains(
+            "ORDER BY account_publication_authorization_source_sort_key(l.source_key) FOR UPDATE OF l");
+    for (String[] trigger :
+        new String[][] {
+          {
+            "account_hosted_terms_disclosure_handoffs_no_truncate",
+            "account_hosted_terms_disclosure_handoffs"
+          },
+          {
+            "account_hosted_terms_disclosure_sources_no_truncate",
+            "account_hosted_terms_disclosure_sources"
+          }
+        }) {
+      assertThat(
+              context
+                  .dsl()
+                  .resultQuery(
+                      "SELECT count(*) FROM pg_trigger WHERE tgname = ? "
+                          + "AND tgrelid = ?::regclass AND NOT tgisinternal",
+                      trigger[0],
+                      trigger[1])
+                  .fetchOne(0, Long.class))
+          .as("statement-level immutable trigger %s", trigger[0])
+          .isEqualTo(1L);
+    }
+  }
+
+  @Test
+  void controlUiIssuanceMustStartPreparedAndCanCommitAfterProtectedResponseReadback() {
+    TestContext context = context(null);
+    TestIdentity identity = testIdentity(context);
+    long issuedAt = Instant.now().getEpochSecond();
+    OffsetDateTime recoveryExpiresAt =
+        OffsetDateTime.ofInstant(Instant.ofEpochSecond(issuedAt + 30), ZoneOffset.UTC);
+    UUID rejectedOperationId = UUID.randomUUID();
+    byte[] sourcePayload = "{}".getBytes(StandardCharsets.UTF_8);
+    byte[] bundlePayload = "{}".getBytes(StandardCharsets.UTF_8);
+    byte[] candidate = new byte[] {1};
+
+    // This row satisfies the table CHECKs. The INSERT guard must still reject a direct terminal
+    // state before it can bypass the protected response readback transition.
+    assertThatThrownBy(
+            () ->
+                context
+                    .dsl()
+                    .execute(
+                        "INSERT INTO account_control_ui_issuance_operations "
+                            + "(request_id, operation_id, token_jti, account_uuid, tenant_uuid, "
+                            + "caller_workload, caller_context_id, request_mac_key_id, request_digest, "
+                            + "claims_payload, source_payload, bundle_payload, signer_receipt, "
+                            + "issued_at_epoch_second, expires_at_epoch_second, recovery_expires_at, "
+                            + "status, token_hash, pending_registry, active_registry, pending_receipt, "
+                            + "committed_at) VALUES (?, ?, ?, ?, ?, 'test', ?, 'test-key', ?, ?, ?, ?, ?, ?, ?, "
+                            + "?::timestamptz, 'COMMITTED', ?, ?, ?, ?, CURRENT_TIMESTAMP)",
+                        UUID.randomUUID(),
+                        rejectedOperationId,
+                        UUID.randomUUID(),
+                        identity.accountUuid(),
+                        identity.tenantUuid(),
+                        UUID.randomUUID(),
+                        "a".repeat(64),
+                        candidate,
+                        sourcePayload,
+                        bundlePayload,
+                        candidate,
+                        issuedAt,
+                        issuedAt + 300,
+                        recoveryExpiresAt,
+                        "b".repeat(64),
+                        candidate,
+                        candidate,
+                        candidate))
+        .isInstanceOf(DataAccessException.class);
+
+    ControlUiIssuance committed =
+        insertCommittedControlUiIssuance(context, identity, sourcePayload, bundlePayload);
+    assertThat(
+            context
+                .dsl()
+                .resultQuery(
+                    "SELECT status FROM account_control_ui_issuance_operations WHERE operation_id = ?",
+                    committed.operationId())
+                .fetchOne(0, String.class))
+        .isEqualTo("COMMITTED");
+    assertThat(
+            context
+                .dsl()
+                .resultQuery(
+                    "SELECT count(*) FROM account_control_ui_response_envelopes WHERE operation_id = ?",
+                    committed.operationId())
+                .fetchOne(0, Long.class))
+        .isEqualTo(1L);
+  }
+
+  @Test
+  void publicationCompletenessRejectsMissingJsonValuesAndAcceptsMaximumHostedSourceKey() {
+    TestContext context = context(null);
+    TestIdentity identity = testIdentity(context);
+    String boundary = "e".repeat(512);
+    String sourceScope = "environment-boundary/" + boundary;
+    String sourceKey = "HOSTED_TERMS:" + sourceScope;
+    byte[] sourceEvidence = sourceEvidence("HOSTED_TERMS", sourceScope);
+    assertThat(sourceKey.getBytes(StandardCharsets.UTF_8)).hasSize(546);
+    context
+        .dsl()
+        .execute(
+            "INSERT INTO account_draft_authorization_source_locks (source_key) VALUES (?)",
+            sourceKey);
+
+    String validSources = sourceJsonArray(List.of(sourceEvidence));
+    String validPayload = publicationSourcePayload(identity, true, true, validSources);
+    String validBundle = publicationBundle(true);
+    String validRequest = UUID.randomUUID().toString();
+    String validIntent = publicationIntent(identity, validRequest, true, true);
+    exerciseSelectedPublication(
+        context,
+        identity,
+        sourceEvidence,
+        validPayload,
+        validBundle,
+        validRequest,
+        validIntent,
+        1,
+        true);
+
+    String missingFenceRequest = UUID.randomUUID().toString();
+    exerciseSelectedPublication(
+        context,
+        identity,
+        sourceEvidence,
+        validPayload,
+        publicationBundle(false),
+        missingFenceRequest,
+        publicationIntent(identity, missingFenceRequest, true, true),
+        1,
+        false);
+
+    String missingAccountRequest = UUID.randomUUID().toString();
+    exerciseSelectedPublication(
+        context,
+        identity,
+        sourceEvidence,
+        publicationSourcePayload(identity, false, true, validSources),
+        validBundle,
+        missingAccountRequest,
+        publicationIntent(identity, missingAccountRequest, true, true),
+        1,
+        false);
+
+    String missingTenantRequest = UUID.randomUUID().toString();
+    exerciseSelectedPublication(
+        context,
+        identity,
+        sourceEvidence,
+        publicationSourcePayload(identity, true, false, validSources),
+        validBundle,
+        missingTenantRequest,
+        publicationIntent(identity, missingTenantRequest, true, true),
+        1,
+        false);
+
+    String missingCanonicalTenantRequest = UUID.randomUUID().toString();
+    exerciseSelectedPublication(
+        context,
+        identity,
+        sourceEvidence,
+        validPayload,
+        validBundle,
+        missingCanonicalTenantRequest,
+        publicationIntent(identity, missingCanonicalTenantRequest, false, true),
+        1,
+        false);
+
+    String missingPublishRequest = UUID.randomUUID().toString();
+    exerciseSelectedPublication(
+        context,
+        identity,
+        sourceEvidence,
+        validPayload,
+        validBundle,
+        missingPublishRequest,
+        publicationIntent(identity, missingPublishRequest, true, false),
+        1,
+        false);
+
+    String missingSourcesRequest = UUID.randomUUID().toString();
+    exerciseSelectedPublication(
+        context,
+        identity,
+        sourceEvidence,
+        publicationSourcePayload(identity, true, true, null),
+        validBundle,
+        missingSourcesRequest,
+        publicationIntent(identity, missingSourcesRequest, true, true),
+        1,
+        false);
+
+    String nullSourceRequest = UUID.randomUUID().toString();
+    exerciseSelectedPublication(
+        context,
+        identity,
+        sourceEvidence,
+        publicationSourcePayload(identity, true, true, "[null]"),
+        validBundle,
+        nullSourceRequest,
+        publicationIntent(identity, nullSourceRequest, true, true),
+        1,
+        false);
+
+    String mismatchedCountRequest = UUID.randomUUID().toString();
+    exerciseSelectedPublication(
+        context,
+        identity,
+        sourceEvidence,
+        validPayload,
+        validBundle,
+        mismatchedCountRequest,
+        publicationIntent(identity, mismatchedCountRequest, true, true),
+        2,
+        false);
+  }
+
+  @Test
+  void gameLogicSettlementAcceptsCompleteTerminalAndUsesCanonicalSourceLockOrder() {
+    TestContext context = context(null);
+    TestIdentity identity = testIdentity(context);
+    UUID versionUuid = UUID.randomUUID();
+    UUID operationId = UUID.randomUUID();
+    UUID fenceId = UUID.randomUUID();
+    UUID requestId = UUID.randomUUID();
+    String namespace = "test";
+    byte[] supplementarySource = sourceEvidence("TEST", "\uD83D\uDE00");
+    byte[] bmpSource = sourceEvidence("TEST", "\uE000");
+    String supplementaryKey = "TEST:\uD83D\uDE00";
+    String bmpKey = "TEST:\uE000";
+    List<byte[]> sourceVector = List.of(supplementarySource, bmpSource);
+    String sourcePayload =
+        publicationSourcePayload(identity, true, true, sourceJsonArray(sourceVector));
+    String bundlePayload = publicationBundle(true);
+    ControlUiIssuance issuance =
+        insertCommittedControlUiIssuance(
+            context,
+            identity,
+            sourcePayload.getBytes(StandardCharsets.UTF_8),
+            bundlePayload.getBytes(StandardCharsets.UTF_8));
+    String bindingJson =
+        "{\"canonicalTenantId\":\""
+            + identity.tenantUuid()
+            + "\",\"canonicalVersionId\":\""
+            + versionUuid
+            + "\"}";
+    String snapshotJson =
+        "{\"schema\":\"game-design-gameplay-rule-source-snapshot/v1\","
+            + "\"bindingJson\":\""
+            + bindingJson.replace("\"", "\\\"")
+            + "\",\"bindingDigest\":\""
+            + sha256(utf8(bindingJson))
+            + "\",\"manifestJson\":\"{}\"}";
+    byte[] snapshot = utf8(snapshotJson);
+    byte[] intakeBinding =
+        encodeFrames(
+            List.of(
+                utf8("account-game-logic-intake-authorization/v1"),
+                utf8(operationId.toString()),
+                utf8(fenceId.toString()),
+                utf8(requestId.toString()),
+                utf8(identity.accountUuid().toString()),
+                snapshot,
+                utf8("2"),
+                supplementarySource,
+                bmpSource));
+
+    context
+        .dsl()
+        .execute(
+            "INSERT INTO account_draft_authorization_source_locks (source_key) VALUES (?)",
+            supplementaryKey);
+    context
+        .dsl()
+        .execute(
+            "INSERT INTO account_draft_authorization_source_locks (source_key) VALUES (?)", bmpKey);
+    context
+        .transaction()
+        .executeWithoutResult(
+            status -> {
+              context
+                  .dsl()
+                  .execute(
+                      "INSERT INTO account_game_logic_intake_authorizations "
+                          + "(operation_id, fence_id, actor_account_uuid, tenant_uuid, version_uuid, "
+                          + "intake_request_id, source_digest, binding, issuance_operation_id, "
+                          + "issuance_fence, source_payload, issuance_bundle, outbox_checkpoints) "
+                          + "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                      operationId,
+                      fenceId,
+                      identity.accountUuid(),
+                      identity.tenantUuid(),
+                      versionUuid,
+                      requestId,
+                      sha256(snapshot),
+                      intakeBinding,
+                      issuance.operationId(),
+                      issuance.fence(),
+                      sourcePayload.getBytes(StandardCharsets.UTF_8),
+                      bundlePayload.getBytes(StandardCharsets.UTF_8),
+                      "[]".getBytes(StandardCharsets.UTF_8));
+              context
+                  .dsl()
+                  .execute(
+                      "INSERT INTO account_game_logic_intake_sources "
+                          + "(operation_id, source_key, source_evidence) VALUES (?, ?, ?), (?, ?, ?)",
+                      operationId,
+                      supplementaryKey,
+                      supplementarySource,
+                      operationId,
+                      bmpKey,
+                      bmpSource);
+            });
+
+    var orderedKeys =
+        context
+            .dsl()
+            .fetch(
+                "SELECT source_key FROM account_game_logic_intake_sources WHERE operation_id = ? "
+                    + "ORDER BY account_publication_authorization_source_sort_key(source_key)",
+                operationId)
+            .getValues(0, String.class);
+    assertThat(orderedKeys).containsExactly(supplementaryKey, bmpKey);
+
+    byte[] operationBinding =
+        encodeFrames(
+            List.of(
+                utf8("game-logic-gameplay-rule-intake-operation/v1"),
+                utf8(namespace),
+                intakeBinding));
+    byte[] terminal =
+        encodeFrames(
+            List.of(
+                utf8("game-logic-gameplay-rule-intake-terminal/v1"),
+                utf8("RETAINED"),
+                operationBinding,
+                intakeBinding,
+                utf8("PRESENT"),
+                snapshot,
+                utf8("PRESENT"),
+                utf8("{}")));
+    byte[] receipt =
+        encodeFrames(List.of(utf8("account-game-logic-intake-settlement/v1"), terminal));
+    context
+        .dsl()
+        .execute(
+            "INSERT INTO account_game_logic_intake_settlements "
+                + "(operation_id, target_namespace, outcome, terminal_bytes, terminal_digest, "
+                + "receipt_bytes, receipt_digest) VALUES (?, ?, 'RETAINED', ?, ?, ?, ?)",
+            operationId,
+            namespace,
+            terminal,
+            sha256(terminal),
+            receipt,
+            sha256(receipt));
+    assertThat(
+            context
+                .dsl()
+                .resultQuery(
+                    "SELECT outcome FROM account_game_logic_intake_settlements WHERE operation_id = ?",
+                    operationId)
+                .fetchOne(0, String.class))
+        .isEqualTo("RETAINED");
+  }
+
+  private static TestIdentity testIdentity(TestContext context) {
+    Account account = account("player");
+    context
+        .transaction()
+        .executeWithoutResult(status -> new AccountRepository(context.dsl()).save(account));
+
+    UUID tenantUuid = UUID.randomUUID();
+    UUID requestId = UUID.randomUUID();
+    UUID operationId = UUID.randomUUID();
+    String suffix = UUID.randomUUID().toString();
+    context
+        .dsl()
+        .execute(
+            "INSERT INTO account_fresh_tenant_identity_associations "
+                + "(schema_version, target_namespace, creation_request_id, operation_id, "
+                + "request_digest, canonical_tenant_id, source_game_row_id, source_game_tenant_key, "
+                + "provenance_kind, evidence_digest) "
+                + "VALUES (1, 'test', ?, ?, ?, ?, ?, ?, 'NEW_GAME_ROW', ?)",
+            requestId,
+            operationId,
+            sha256(("request-" + suffix).getBytes(StandardCharsets.UTF_8)),
+            tenantUuid,
+            Math.max(1L, System.nanoTime() & Long.MAX_VALUE),
+            "fixture-" + suffix.substring(0, 8),
+            sha256(("evidence-" + suffix).getBytes(StandardCharsets.UTF_8)));
+    return new TestIdentity(account.getAccountUuid(), tenantUuid);
+  }
+
+  private static ControlUiIssuance insertCommittedControlUiIssuance(
+      TestContext context, TestIdentity identity, byte[] sourcePayload, byte[] bundlePayload) {
+    UUID operationId = UUID.randomUUID();
+    UUID requestId = UUID.randomUUID();
+    UUID tokenJti = UUID.randomUUID();
+    long issuedAt = Instant.now().getEpochSecond();
+    long expiresAt = issuedAt + 300;
+    OffsetDateTime recoveryExpiresAt =
+        OffsetDateTime.ofInstant(Instant.ofEpochSecond(issuedAt + 30), ZoneOffset.UTC);
+    byte[] candidate = new byte[] {1, 2, 3};
+    byte[] response = new byte[] {4, 5, 6};
+    byte[] ownerBinding = new byte[] {7, 8, 9};
+    String tokenHash = sha256(tokenJti.toString().getBytes(StandardCharsets.UTF_8)).substring(7);
+
+    context
+        .transaction()
+        .executeWithoutResult(
+            status -> {
+              context
+                  .dsl()
+                  .execute(
+                      "INSERT INTO account_control_ui_issuance_operations "
+                          + "(request_id, operation_id, token_jti, account_uuid, tenant_uuid, "
+                          + "caller_workload, caller_context_id, request_mac_key_id, request_digest, "
+                          + "claims_payload, source_payload, bundle_payload, signer_receipt, "
+                          + "issued_at_epoch_second, expires_at_epoch_second, recovery_expires_at, status) "
+                          + "VALUES (?, ?, ?, ?, ?, 'test-workload', ?, 'test-key', ?, ?, ?, ?, ?, ?, ?, "
+                          + "?::timestamptz, 'PREPARED')",
+                      requestId,
+                      operationId,
+                      tokenJti,
+                      identity.accountUuid(),
+                      identity.tenantUuid(),
+                      UUID.randomUUID(),
+                      "a".repeat(64),
+                      candidate,
+                      sourcePayload,
+                      bundlePayload,
+                      candidate,
+                      issuedAt,
+                      expiresAt,
+                      recoveryExpiresAt);
+              context
+                  .dsl()
+                  .execute(
+                      "UPDATE account_control_ui_issuance_operations "
+                          + "SET status = 'CANDIDATE', token_hash = ?, pending_registry = ?, "
+                          + "active_registry = ? WHERE operation_id = ?",
+                      tokenHash,
+                      candidate,
+                      candidate,
+                      operationId);
+              context
+                  .dsl()
+                  .execute(
+                      "INSERT INTO account_control_ui_response_envelopes "
+                          + "(operation_id, encrypted_response, owner_binding, recovery_expires_at) "
+                          + "VALUES (?, ?, ?, ?::timestamptz)",
+                      operationId,
+                      response,
+                      ownerBinding,
+                      recoveryExpiresAt);
+              context
+                  .dsl()
+                  .execute(
+                      "UPDATE account_control_ui_issuance_operations SET status = 'COMMITTED', "
+                          + "pending_receipt = ?, committed_at = CURRENT_TIMESTAMP "
+                          + "WHERE operation_id = ?",
+                      response,
+                      operationId);
+            });
+    return new ControlUiIssuance(operationId, 1L);
+  }
+
+  private static void exerciseSelectedPublication(
+      TestContext context,
+      TestIdentity identity,
+      byte[] sourceEvidence,
+      String sourcePayload,
+      String bundlePayload,
+      String publishRequestId,
+      String inputIntent,
+      int declaredSourceCount,
+      boolean accepted) {
+    byte[] sourcePayloadBytes = sourcePayload.getBytes(StandardCharsets.UTF_8);
+    byte[] bundlePayloadBytes = bundlePayload.getBytes(StandardCharsets.UTF_8);
+    ControlUiIssuance issuance =
+        insertCommittedControlUiIssuance(context, identity, sourcePayloadBytes, bundlePayloadBytes);
+    UUID operationId = UUID.randomUUID();
+    UUID fenceId = UUID.randomUUID();
+    byte[] input =
+        encodeFrames(
+            List.of(
+                utf8("account-publication-input/v1"),
+                utf8(identity.accountUuid().toString()),
+                utf8(inputIntent)));
+    byte[] binding =
+        encodeFrames(
+            List.of(
+                utf8("account-publication-authorization/v1"),
+                utf8(operationId.toString()),
+                utf8(fenceId.toString()),
+                input,
+                utf8(Integer.toString(declaredSourceCount)),
+                sourceEvidence));
+    byte[] outboxCheckpoints = "[]".getBytes(StandardCharsets.UTF_8);
+    byte[] evidenceCopy = sourceEvidence.clone();
+    String sourceKey = "HOSTED_TERMS:environment-boundary/" + "e".repeat(512);
+
+    context
+        .dsl()
+        .execute(
+            "INSERT INTO account_draft_authorization_source_locks (source_key) VALUES (?) "
+                + "ON CONFLICT DO NOTHING",
+            sourceKey);
+    try {
+      context
+          .transaction()
+          .executeWithoutResult(
+              status -> {
+                context
+                    .dsl()
+                    .execute(
+                        "INSERT INTO account_selected_publication_authorizations "
+                            + "(operation_id, fence_id, actor_account_uuid, tenant_uuid, "
+                            + "publish_request_id, input_digest, binding, world_evidence, "
+                            + "issuance_operation_id, issuance_fence, source_payload, issuance_bundle, "
+                            + "outbox_checkpoints) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                        operationId,
+                        fenceId,
+                        identity.accountUuid(),
+                        identity.tenantUuid(),
+                        publishRequestId,
+                        sha256(input),
+                        binding,
+                        new byte[] {1},
+                        issuance.operationId(),
+                        issuance.fence(),
+                        sourcePayloadBytes,
+                        bundlePayloadBytes,
+                        outboxCheckpoints);
+                context
+                    .dsl()
+                    .execute(
+                        "INSERT INTO account_selected_publication_sources "
+                            + "(operation_id, source_key, source_evidence) VALUES (?, ?, ?)",
+                        operationId,
+                        sourceKey,
+                        evidenceCopy);
+              });
+      assertThat(accepted)
+          .as("selected publication should satisfy its deferred completeness guard")
+          .isTrue();
+    } catch (RuntimeException failure) {
+      if (accepted) {
+        throw failure;
+      }
+      Throwable rootCause = failure;
+      while (rootCause.getCause() != null) {
+        rootCause = rootCause.getCause();
+      }
+      assertThat(rootCause)
+          .as("missing or contradictory JSON completeness evidence must fail in PostgreSQL")
+          .isInstanceOf(SQLException.class);
+      assertThat(((SQLException) rootCause).getSQLState()).isEqualTo("23514");
+    }
+  }
+
+  private static String publicationSourcePayload(
+      TestIdentity identity, boolean includeAccount, boolean includeTenant, String sourcesJson) {
+    List<String> fields = new ArrayList<>();
+    if (includeAccount) {
+      fields.add("\"accountId\":\"" + identity.accountUuid() + "\"");
+    }
+    if (includeTenant) {
+      fields.add("\"tenantId\":\"" + identity.tenantUuid() + "\"");
+    }
+    if (sourcesJson != null) {
+      fields.add("\"sources\":" + sourcesJson);
+    }
+    return "{" + String.join(",", fields) + "}";
+  }
+
+  private static String publicationBundle(boolean includeIssuanceFence) {
+    return includeIssuanceFence
+        ? "{\"issuanceFence\":1,\"outboxCheckpoints\":[]}"
+        : "{\"outboxCheckpoints\":[]}";
+  }
+
+  private static String publicationIntent(
+      TestIdentity identity,
+      String publishRequestId,
+      boolean includeTenant,
+      boolean includeRequest) {
+    List<String> fields = new ArrayList<>();
+    if (includeTenant) {
+      fields.add("\"canonicalTenantId\":\"" + identity.tenantUuid() + "\"");
+    }
+    if (includeRequest) {
+      fields.add("\"publishRequestId\":\"" + publishRequestId + "\"");
+    }
+    return "{\"intent\":{" + String.join(",", fields) + "}}";
+  }
+
+  private static String sourceJsonArray(List<byte[]> sourceEvidence) {
+    return "["
+        + sourceEvidence.stream()
+            .map(value -> "\"" + Base64.getEncoder().encodeToString(value) + "\"")
+            .collect(java.util.stream.Collectors.joining(","))
+        + "]";
+  }
+
+  private static byte[] sourceEvidence(String kind, String scope) {
+    return encodeFrames(List.of(utf8("account-draft-source-evidence/v1"), utf8(kind), utf8(scope)));
+  }
+
+  private static byte[] encodeFrames(List<byte[]> frames) {
+    ByteArrayOutputStream encoded = new ByteArrayOutputStream();
+    for (byte[] frame : frames) {
+      encoded.writeBytes(ByteBuffer.allocate(Integer.BYTES).putInt(frame.length).array());
+      encoded.writeBytes(frame);
+    }
+    return encoded.toByteArray();
+  }
+
+  private static byte[] utf8(String value) {
+    return value.getBytes(StandardCharsets.UTF_8);
+  }
+
+  @Test
+  void hostedTermsDisclosureHandoffPersistsExactSourceAndFencesOnlyThatSource() {
+    TestContext context = context(null);
+    UUID hostedScopeId = UUID.randomUUID();
+    UUID termsVersionId = UUID.randomUUID();
+    byte[] document =
+        "synthetic hosted-terms catalog fixture; not legal terms or a publication"
+            .getBytes(StandardCharsets.UTF_8);
+    HostedTermsCatalogVersion candidate =
+        new HostedTermsCatalogVersion(
+            termsVersionId,
+            hostedScopeId,
+            null,
+            "TEST FIXTURE ONLY - no authenticated legal identity",
+            1,
+            document,
+            HostedTermsEncoding.digest(document),
+            1,
+            1,
+            HostedTermsCatalogVersion.Materiality.INITIAL,
+            null,
+            null,
+            "test-only/no-publication",
+            1,
+            "test-only/no-notice",
+            1,
+            Instant.parse("2040-01-01T00:00:00Z"));
+    HostedTermsRepository hostedTerms = new HostedTermsRepository(context.dsl());
+    byte[][] persistedCatalogEvidence = new byte[1][];
+    context
+        .transaction()
+        .executeWithoutResult(
+            status -> {
+              hostedTerms.ensureScope(hostedScopeId);
+              hostedTerms.insertCandidate(candidate);
+              persistedCatalogEvidence[0] =
+                  HostedTermsEncoding.catalog(
+                      hostedTerms.readCatalog(hostedScopeId, termsVersionId));
+            });
+    SourceEvidence exactSource =
+        new SourceEvidence(
+            SourceKind.HOSTED_TERMS,
+            hostedScopeId.toString(),
+            "1",
+            "1",
+            null,
+            null,
+            persistedCatalogEvidence[0]);
+    assertThat(
+            context
+                .dsl()
+                .resultQuery(
+                    "SELECT count(*) FROM account_draft_authorization_source_locks "
+                        + "WHERE source_key = ?",
+                    exactSource.key())
+                .fetchOne(0, Long.class))
+        .as("the hosted-terms scope insert creates exactly one source lock")
+        .isEqualTo(1L);
+    byte[] exactSourceEvidence = exactSource.canonicalBytes();
+    UUID handoffId = UUID.randomUUID();
+    UUID requestId = UUID.randomUUID();
+    byte[] handoffBinding =
+        "synthetic PREPARED disclosure intent only; no dispatch or legal authorization"
+            .getBytes(StandardCharsets.UTF_8);
+    OffsetDateTime effectiveAt =
+        OffsetDateTime.ofInstant(Instant.parse("2040-02-01T00:00:00Z"), ZoneOffset.UTC);
+
+    context
+        .dsl()
+        .execute(
+            "INSERT INTO account_hosted_terms_disclosure_handoffs "
+                + "(handoff_id, request_id, kind, source_key, predecessor_digest, "
+                + "candidate_digest, effective_at, binding, binding_digest, status, "
+                + "dispatch_attempts) VALUES (?, ?, 'CATALOG', ?, ?, ?, ?::timestamptz, ?, ?, "
+                + "'PREPARED', 0)",
+            handoffId,
+            requestId,
+            exactSource.key(),
+            sha256("test-only predecessor".getBytes(StandardCharsets.UTF_8)),
+            HostedTermsEncoding.digest(document),
+            effectiveAt,
+            handoffBinding,
+            sha256(handoffBinding));
+
+    byte[] directTerminalPayload = "direct terminal fixture".getBytes(StandardCharsets.UTF_8);
+    assertThatThrownBy(
+            () ->
+                context
+                    .dsl()
+                    .execute(
+                        "INSERT INTO account_hosted_terms_disclosure_handoffs "
+                            + "(handoff_id, request_id, kind, source_key, predecessor_digest, "
+                            + "candidate_digest, effective_at, binding, binding_digest, status, "
+                            + "dispatch_attempts, result_outcome, result_payload, result_digest, "
+                            + "result_recorded_at) VALUES (?, ?, 'CATALOG', ?, ?, ?, ?::timestamptz, ?, ?, "
+                            + "'DISCLOSED', 1, 'DISCLOSED', ?, ?, CURRENT_TIMESTAMP)",
+                        UUID.randomUUID(),
+                        UUID.randomUUID(),
+                        exactSource.key(),
+                        sha256("direct predecessor".getBytes(StandardCharsets.UTF_8)),
+                        HostedTermsEncoding.digest(document),
+                        effectiveAt,
+                        handoffBinding,
+                        sha256(handoffBinding),
+                        directTerminalPayload,
+                        sha256(directTerminalPayload)))
+        .isInstanceOf(DataAccessException.class);
+    assertThatThrownBy(
+            () ->
+                context
+                    .dsl()
+                    .execute(
+                        "INSERT INTO account_hosted_terms_disclosure_handoffs "
+                            + "(handoff_id, request_id, kind, source_key, predecessor_digest, "
+                            + "candidate_digest, effective_at, binding, binding_digest, status, "
+                            + "dispatch_attempts) VALUES (?, ?, 'CATALOG', ?, ?, ?, ?::timestamptz, ?, ?, "
+                            + "'DISPATCH_AUTHORIZED', 1)",
+                        UUID.randomUUID(),
+                        UUID.randomUUID(),
+                        exactSource.key(),
+                        sha256("direct authorization predecessor".getBytes(StandardCharsets.UTF_8)),
+                        HostedTermsEncoding.digest(document),
+                        effectiveAt,
+                        handoffBinding,
+                        sha256(handoffBinding)))
+        .isInstanceOf(DataAccessException.class);
+
+    context
+        .dsl()
+        .execute(
+            "INSERT INTO account_hosted_terms_disclosure_sources "
+                + "(handoff_id, source_key, source_evidence, source_evidence_digest) "
+                + "VALUES (?, ?, ?, ?)",
+            handoffId,
+            exactSource.key(),
+            exactSourceEvidence,
+            sha256(exactSourceEvidence));
+
+    String maximumEnvironmentBoundary = "e".repeat(512);
+    String maximumEnvironmentSourceKey =
+        "HOSTED_TERMS:environment-boundary/" + maximumEnvironmentBoundary;
+    assertThat(maximumEnvironmentSourceKey.getBytes(StandardCharsets.UTF_8)).hasSize(546);
+    context
+        .dsl()
+        .execute(
+            "INSERT INTO account_draft_authorization_source_locks (source_key) VALUES (?)",
+            maximumEnvironmentSourceKey);
+    UUID maximumKeyHandoffId = UUID.randomUUID();
+    context
+        .dsl()
+        .execute(
+            "INSERT INTO account_hosted_terms_disclosure_handoffs "
+                + "(handoff_id, request_id, kind, source_key, predecessor_digest, candidate_digest, "
+                + "effective_at, binding, binding_digest, status, dispatch_attempts) "
+                + "VALUES (?, ?, 'ENVIRONMENT_BINDING', ?, ?, ?, ?::timestamptz, ?, ?, 'PREPARED', 0)",
+            maximumKeyHandoffId,
+            UUID.randomUUID(),
+            maximumEnvironmentSourceKey,
+            sha256("maximum environment predecessor".getBytes(StandardCharsets.UTF_8)),
+            HostedTermsEncoding.digest(document),
+            effectiveAt,
+            handoffBinding,
+            sha256(handoffBinding));
+    context
+        .dsl()
+        .execute(
+            "INSERT INTO account_hosted_terms_disclosure_sources "
+                + "(handoff_id, source_key, source_evidence, source_evidence_digest) "
+                + "VALUES (?, ?, ?, ?)",
+            maximumKeyHandoffId,
+            maximumEnvironmentSourceKey,
+            exactSourceEvidence,
+            sha256(exactSourceEvidence));
+    String oversizedSourceKey = "é".repeat(1025);
+    assertThat(oversizedSourceKey.getBytes(StandardCharsets.UTF_8)).hasSize(2050);
+    assertThatThrownBy(
+            () ->
+                context
+                    .dsl()
+                    .execute(
+                        "INSERT INTO account_draft_authorization_source_locks (source_key) VALUES (?)",
+                        oversizedSourceKey))
+        .isInstanceOf(DataAccessException.class);
+
+    var persisted =
+        Objects.requireNonNull(
+            context
+                .dsl()
+                .fetchOne(
+                    "SELECT h.*, s.source_evidence, s.source_evidence_digest "
+                        + "FROM account_hosted_terms_disclosure_handoffs h "
+                        + "JOIN account_hosted_terms_disclosure_sources s "
+                        + "ON s.handoff_id = h.handoff_id WHERE h.handoff_id = ?",
+                    handoffId));
+    assertThat(persisted.get("request_id", UUID.class)).isEqualTo(requestId);
+    assertThat(persisted.get("kind", String.class)).isEqualTo("CATALOG");
+    assertThat(persisted.get("source_key", String.class)).isEqualTo(exactSource.key());
+    assertThat(persisted.get("predecessor_digest", String.class))
+        .isEqualTo(sha256("test-only predecessor".getBytes(StandardCharsets.UTF_8)));
+    assertThat(persisted.get("candidate_digest", String.class))
+        .isEqualTo(HostedTermsEncoding.digest(document));
+    assertThat(persisted.get("effective_at", OffsetDateTime.class)).isEqualTo(effectiveAt);
+    assertThat(persisted.get("binding", byte[].class)).containsExactly(handoffBinding);
+    assertThat(persisted.get("binding_digest", String.class)).isEqualTo(sha256(handoffBinding));
+    assertThat(persisted.get("status", String.class)).isEqualTo("PREPARED");
+    assertThat(persisted.get("dispatch_attempts", Integer.class)).isZero();
+    assertThat(persisted.get("source_evidence", byte[].class)).containsExactly(exactSourceEvidence);
+    assertThat(persisted.get("source_evidence_digest", String.class))
+        .isEqualTo(sha256(exactSourceEvidence));
+
+    assertThatThrownBy(
+            () ->
+                context
+                    .dsl()
+                    .execute(
+                        "UPDATE account_hosted_terms_disclosure_sources "
+                            + "SET source_evidence = ? WHERE handoff_id = ? AND source_key = ?",
+                        new byte[] {1},
+                        handoffId,
+                        exactSource.key()))
+        .isInstanceOf(DataAccessException.class);
+    assertThatThrownBy(
+            () ->
+                context
+                    .dsl()
+                    .execute(
+                        "DELETE FROM account_hosted_terms_disclosure_sources "
+                            + "WHERE handoff_id = ? AND source_key = ?",
+                        handoffId,
+                        exactSource.key()))
+        .isInstanceOf(DataAccessException.class);
+    assertThatThrownBy(
+            () ->
+                context
+                    .dsl()
+                    .execute(
+                        "UPDATE account_hosted_terms_disclosure_handoffs SET status = 'AMBIGUOUS', "
+                            + "dispatch_attempts = 1 WHERE handoff_id = ?",
+                        handoffId))
+        .isInstanceOf(DataAccessException.class);
+    assertThatThrownBy(
+            () ->
+                context
+                    .dsl()
+                    .execute(
+                        "UPDATE account_hosted_terms_disclosure_handoffs "
+                            + "SET binding = ? WHERE handoff_id = ?",
+                        new byte[] {2},
+                        handoffId))
+        .isInstanceOf(DataAccessException.class);
+    assertThatThrownBy(
+            () ->
+                context
+                    .dsl()
+                    .execute(
+                        "DELETE FROM account_hosted_terms_disclosure_handoffs WHERE handoff_id = ?",
+                        handoffId))
+        .isInstanceOf(DataAccessException.class);
+    assertThat(
+            context
+                .dsl()
+                .resultQuery(
+                    "SELECT status FROM account_hosted_terms_disclosure_handoffs "
+                        + "WHERE handoff_id = ?",
+                    handoffId)
+                .fetchOne(0, String.class))
+        .isEqualTo("PREPARED");
+
+    DraftAuthorizationFenceRepository fences = new DraftAuthorizationFenceRepository(context.dsl());
+    DraftAuthorizationFenceBinding preparedCapture = draftBinding(exactSource);
+    context.transaction().executeWithoutResult(status -> fences.reserve(preparedCapture));
+
+    // This is only a persisted test fixture state for exercising the exact-read predicate. No
+    // publisher is authenticated, no RPC/dispatch is performed, and no consumer is activated.
+    context
+        .dsl()
+        .execute(
+            "UPDATE account_hosted_terms_disclosure_handoffs SET status = 'DISPATCH_AUTHORIZED', "
+                + "dispatch_attempts = 1 WHERE handoff_id = ?",
+            handoffId);
+
+    byte[] mismatchedDocument =
+        "different synthetic hosted-terms candidate; not legal terms or a publication"
+            .getBytes(StandardCharsets.UTF_8);
+    HostedTermsCatalogVersion mismatchedCandidate =
+        new HostedTermsCatalogVersion(
+            UUID.randomUUID(),
+            hostedScopeId,
+            termsVersionId,
+            candidate.operatorLegalIdentity(),
+            candidate.operatorIdentityVersion(),
+            mismatchedDocument,
+            HostedTermsEncoding.digest(mismatchedDocument),
+            2,
+            1,
+            HostedTermsCatalogVersion.Materiality.NONMATERIAL,
+            "test-only/materiality-evidence",
+            1L,
+            "test-only/no-publication",
+            2,
+            "test-only/no-notice",
+            2,
+            Instant.parse("2041-01-01T00:00:00Z"));
+    SourceEvidence mismatchedSource =
+        new SourceEvidence(
+            SourceKind.HOSTED_TERMS,
+            hostedScopeId.toString(),
+            "1",
+            "2",
+            null,
+            null,
+            HostedTermsEncoding.catalog(mismatchedCandidate));
+    DraftAuthorizationFenceBinding mismatchedCapture = draftBinding(mismatchedSource);
+    context.transaction().executeWithoutResult(status -> fences.reserve(mismatchedCapture));
+
+    DraftAuthorizationFenceBinding exactCapture = draftBinding(exactSource);
+    assertThatThrownBy(
+            () ->
+                context.transaction().executeWithoutResult(status -> fences.reserve(exactCapture)))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("Exact hosted terms source has authorized disclosure");
+    assertThat(
+            context
+                .dsl()
+                .resultQuery(
+                    "SELECT count(*) FROM account_draft_authorization_fences WHERE operation_id = ?",
+                    exactCapture.operationId())
+                .fetchOne(0, Long.class))
+        .isZero();
+
+    assertThatThrownBy(
+            () ->
+                context.dsl().execute("TRUNCATE account_hosted_terms_disclosure_handoffs CASCADE"))
+        .isInstanceOf(DataAccessException.class);
+    assertThatThrownBy(
+            () -> context.dsl().execute("TRUNCATE account_hosted_terms_disclosure_sources"))
+        .isInstanceOf(DataAccessException.class);
+    assertThat(
+            context
+                .dsl()
+                .resultQuery(
+                    "SELECT count(*) FROM account_hosted_terms_disclosure_handoffs "
+                        + "WHERE handoff_id = ?",
+                    handoffId)
+                .fetchOne(0, Long.class))
+        .isEqualTo(1L);
+    assertThat(
+            context
+                .dsl()
+                .resultQuery(
+                    "SELECT count(*) FROM account_hosted_terms_disclosure_sources "
+                        + "WHERE handoff_id = ? AND source_key = ?",
+                    handoffId,
+                    exactSource.key())
+                .fetchOne(0, Long.class))
+        .isEqualTo(1L);
+
+    context
+        .dsl()
+        .execute(
+            "UPDATE account_hosted_terms_disclosure_handoffs SET status = 'AMBIGUOUS' "
+                + "WHERE handoff_id = ?",
+            handoffId);
+    context
+        .dsl()
+        .execute(
+            "UPDATE account_hosted_terms_disclosure_handoffs SET status = 'DISPATCH_AUTHORIZED', "
+                + "dispatch_attempts = 2 WHERE handoff_id = ?",
+            handoffId);
+    byte[] disclosedPayload =
+        "test-only terminal disclosure result".getBytes(StandardCharsets.UTF_8);
+    context
+        .dsl()
+        .execute(
+            "UPDATE account_hosted_terms_disclosure_handoffs SET status = 'DISCLOSED', "
+                + "result_outcome = 'DISCLOSED', result_payload = ?, result_digest = ?, "
+                + "result_recorded_at = CURRENT_TIMESTAMP WHERE handoff_id = ?",
+            disclosedPayload,
+            sha256(disclosedPayload),
+            handoffId);
+    assertThat(
+            context
+                .dsl()
+                .resultQuery(
+                    "SELECT status, dispatch_attempts FROM account_hosted_terms_disclosure_handoffs "
+                        + "WHERE handoff_id = ?",
+                    handoffId)
+                .fetchOne())
+        .satisfies(
+            row -> {
+              assertThat(row.get("status", String.class)).isEqualTo("DISCLOSED");
+              assertThat(row.get("dispatch_attempts", Integer.class)).isEqualTo(2);
+            });
   }
 
   @Test
@@ -156,6 +1203,26 @@ class AccountSourceCurrentnessForwardMigrationsPostgresIntegrationTest {
                 .fetchOne(0, UUID.class));
 
     migrate(context, null);
+    assertThat(
+            context
+                .dsl()
+                .resultQuery(
+                    "SELECT version FROM flyway_schema_history "
+                        + "WHERE success AND version = '98'")
+                .fetchOne(0, String.class))
+        .isEqualTo("98");
+    for (String relation :
+        new String[] {
+          "account_hosted_terms_disclosure_handoffs", "account_hosted_terms_disclosure_sources"
+        }) {
+      assertThat(
+              context
+                  .dsl()
+                  .resultQuery("SELECT to_regclass(?)::TEXT", relation)
+                  .fetchOne(0, String.class))
+          .as("V98 forward relation %s", relation)
+          .isNotNull();
+    }
     Account fresh = account(null);
     context
         .transaction()
@@ -423,12 +1490,12 @@ class AccountSourceCurrentnessForwardMigrationsPostgresIntegrationTest {
                 + "publication_evidence_version, notice_evidence_reference, notice_evidence_version, "
                 + "effective_at, version_payload, version_digest) "
                 + "VALUES (?, ?, NULL, 'TEST FIXTURE ONLY', 1, ?, ?, 1, 1, 'INITIAL', "
-                + "'no-publication-fixture', 1, 'no-notice-fixture', 1, ?, ?, ?)",
+                + "'no-publication-fixture', 1, 'no-notice-fixture', 1, ?::timestamptz, ?, ?)",
             termsVersionId,
             hostedScopeId,
             nonoperativeDocument,
             sha256(nonoperativeDocument),
-            OffsetDateTime.now(ZoneOffset.UTC).plusDays(1).toString(),
+            OffsetDateTime.now(ZoneOffset.UTC).plusDays(1),
             versionPayload,
             sha256(versionPayload));
 
@@ -594,6 +1661,50 @@ class AccountSourceCurrentnessForwardMigrationsPostgresIntegrationTest {
         1, creation, accountUuid, authorizationOperationId, authorizationDigest, creatorDigest);
   }
 
+  private static DraftAuthorizationFenceBinding draftBinding(SourceEvidence source) {
+    DraftCommitBinding complete =
+        DraftCommitBinding.create(
+            new DraftCommitBinding.TargetProof(
+                UUID.randomUUID(),
+                UUID.randomUUID(),
+                1,
+                "test-only-tenant",
+                2,
+                "test-only-tenant",
+                "NEW_GAME_ROW"),
+            UUID.randomUUID(),
+            UUID.randomUUID(),
+            "test-only/base",
+            List.of(
+                new DraftCommitBinding.RevisionPayload(
+                    "0",
+                    UUID.randomUUID(),
+                    DraftCommitBinding.Owner.WORLD_MANAGEMENT,
+                    "test-only-world-payload")),
+            List.of(
+                new DraftCommitBinding.AffectedUnit(
+                    DraftCommitBinding.Owner.WORLD_MANAGEMENT,
+                    "region",
+                    "test-region",
+                    "aggregate",
+                    "test-region",
+                    "0")));
+    return new DraftAuthorizationFenceBinding(
+        UUID.randomUUID(),
+        complete.requestId(),
+        complete.commitId(),
+        UUID.randomUUID(),
+        UUID.randomUUID(),
+        complete.target().canonicalTenantId(),
+        complete.target().canonicalVersionId(),
+        complete.baseCommitId(),
+        "0",
+        complete.canonicalBytes(),
+        complete.canonicalBytes(),
+        complete.digest(),
+        List.of(source));
+  }
+
   private static Account account(String role) {
     String suffix = UUID.randomUUID().toString();
     Account account = new Account();
@@ -654,4 +1765,8 @@ class AccountSourceCurrentnessForwardMigrationsPostgresIntegrationTest {
       DriverManagerDataSource dataSource,
       DSLContext dsl,
       TransactionTemplate transaction) {}
+
+  private record TestIdentity(UUID accountUuid, UUID tenantUuid) {}
+
+  private record ControlUiIssuance(UUID operationId, long fence) {}
 }

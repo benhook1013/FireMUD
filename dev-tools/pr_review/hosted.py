@@ -123,7 +123,9 @@ ARCHIVED = re.compile(r"^trigger-([1-9][0-9]*)\.json$")
 TIMEOUT_REASON = "bounded wait expired before a terminal CodeRabbit response"
 LATER_TRIGGER_AMBIGUITY_REASON = "a later or concurrent full-review trigger prevents attribution"
 UNKNOWN_RATE_LIMIT_BACKOFF = timedelta(seconds=3600)
-UNKNOWN_RATE_LIMIT_REASON = "CodeRabbit rate limited; response creation time is unavailable or invalid, so cooldown remains unresolved"
+UNKNOWN_RATE_LIMIT_REASON = (
+    "CodeRabbit rate limited; response creation time is unavailable or invalid, so cooldown remains unresolved"
+)
 
 
 @dataclass(frozen=True)
@@ -149,6 +151,8 @@ class TriggerState:
     age_seconds: int | None = None
     manual_adjudication_required: bool = False
     duration_seconds: int | None = None
+    publication_review_ids: tuple[int, ...] = ()
+    publication_finished_at: str | None = None
 
     def as_dict(self) -> dict[str, Any]:
         return self.__dict__.copy()
@@ -1340,6 +1344,140 @@ def _substantive(body: str) -> bool:
     return any(marker in body for marker in SUBSTANTIVE_MARKERS)
 
 
+_PUBLICATION_UUID = r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"
+_PUBLICATION_MARKER = re.compile(
+    rf"<!-- coderabbit-review-publication v1 publication=({_PUBLICATION_UUID}) "
+    rf"attempt=({_PUBLICATION_UUID}) batch=([1-9][0-9]*)/([1-9][0-9]*) -->"
+)
+
+
+def review_publication_marker(body: Any) -> tuple[str, str, int, int] | None:
+    """Read one explicit provider marker, excluding quoted and fenced examples."""
+    if not isinstance(body, str):
+        return None
+    visible = _without_fenced_code(_unquoted(body))
+    if "coderabbit-review-publication" not in visible:
+        return None
+    matches = list(_PUBLICATION_MARKER.finditer(visible))
+    if len(matches) != 1 or visible.count("coderabbit-review-publication") != 1:
+        raise ValueError("Hosted publication marker is malformed or duplicated")
+    publication, attempt, ordinal, total = matches[0].groups()
+    if not 1 <= int(ordinal) <= int(total) <= 200:
+        raise ValueError("Hosted publication batch ordinal is invalid")
+    return publication, attempt, int(ordinal), int(total)
+
+
+def review_publications(
+    reviews: Sequence[dict[str, Any]], head: str, after: datetime, before: datetime | None
+) -> list[dict[str, Any]]:
+    """Validate explicit batches within one authenticated exact-head request window."""
+    groups: dict[str, list[tuple[dict[str, Any], tuple[str, str, int, int]]]] = {}
+    seen_ids: set[int] = set()
+    for review in reviews:
+        if not is_coderabbit_login((review.get("author") or {}).get("login")):
+            continue
+        submitted = strict_provider_timestamp(review.get("submittedAt"))
+        if submitted is not None and (submitted <= after or (before is not None and submitted >= before)):
+            continue
+        marker = review_publication_marker(review.get("body"))
+        if marker is None:
+            continue
+        if submitted is None:
+            raise ValueError("Hosted publication batch has no immutable submission time")
+        identity = immutable_database_id(review)
+        if identity is None or identity in seen_ids:
+            raise ValueError("Hosted publication repeats or lacks an immutable review identity")
+        seen_ids.add(identity)
+        groups.setdefault(marker[0], []).append((review, marker))
+    publications = []
+    for publication, entries in groups.items():
+        attempts = {marker[1] for _, marker in entries}
+        totals = {marker[3] for _, marker in entries}
+        ordinals = [marker[2] for _, marker in entries]
+        identities = [immutable_database_id(review) for review, _ in entries]
+        if (
+            len(attempts) != 1
+            or len(totals) != 1
+            or len(ordinals) != len(set(ordinals))
+            or None in identities
+            or len(identities) != len(set(identities))
+            or any(
+                review.get("state") not in {"COMMENTED", "APPROVED", "CHANGES_REQUESTED"}
+                or not isinstance((review.get("commit") or {}).get("oid"), str)
+                or review["commit"]["oid"].casefold() != head.casefold()
+                for review, _ in entries
+            )
+        ):
+            raise ValueError("Hosted publication batches have conflicting immutable identities")
+        ordered = sorted(entries, key=lambda entry: entry[1][2])
+        primary = ordered[0][0]
+        total = next(iter(totals))
+        complete = set(ordinals) == set(range(1, total + 1))
+        if complete and (
+            not _substantive(primary.get("body") or "")
+            or any(_substantive(review.get("body") or "") for review, marker in ordered if marker[2] != 1)
+        ):
+            raise ValueError("Hosted publication has no unique substantive primary batch")
+        latest = max(
+            (review for review, _ in ordered), key=lambda review: strict_provider_timestamp(review["submittedAt"])
+        )
+        publications.append(
+            {
+                "publication": publication,
+                "attempt": next(iter(attempts)),
+                "total": total,
+                "complete": complete,
+                "primary": primary,
+                "reviews": [review for review, _ in ordered],
+                "review_ids": tuple(immutable_database_id(review) for review, _ in ordered),
+                "finished_at": latest["submittedAt"],
+            }
+        )
+    return publications
+
+
+def validate_publication_comments(
+    publication: dict[str, Any], pull_request: dict[str, Any], head: str, after: datetime
+) -> None:
+    """Require the primary provider count and every owned actionable root.
+
+    Summary-only outside-diff and duplicate sections are separate evidence and
+    do not contribute to the provider's attached actionable-comment count.
+    """
+    body = _without_fenced_code(_unquoted(publication["primary"].get("body") or ""))
+    counts = re.findall(r"^[ \t]*\*\*Actionable comments posted: ([0-9]+)\*\*[ \t]*\r?$", body, re.MULTILINE)
+    if len(counts) != 1 or int(counts[0]) > 200:
+        raise ValueError("Hosted publication has no unique bounded actionable-comment count")
+    expected = int(counts[0])
+    finished = strict_provider_timestamp(publication["finished_at"])
+    owned_ids: set[int] = set()
+    for thread in (pull_request.get("reviewThreads") or {}).get("nodes", []):
+        nodes = (thread.get("comments") or {}).get("nodes", [])
+        if not nodes:
+            continue
+        comment = nodes[0]
+        parent = immutable_database_id(comment.get("pullRequestReview") or {})
+        created = strict_provider_timestamp(comment.get("createdAt"))
+        login = (comment.get("author") or {}).get("login")
+        if parent not in publication["review_ids"]:
+            if parent is None and is_coderabbit_login(login) and (created is None or after < created <= finished):
+                raise ValueError("Hosted publication root has no immutable parent review")
+            continue
+        if not is_coderabbit_login(login):
+            raise ValueError("Hosted publication owned root has a different author")
+        if created is None or not after < created <= finished:
+            raise ValueError("Hosted publication owned root has no valid immutable window timestamp")
+        original_commit = (comment.get("originalCommit") or {}).get("oid")
+        if not isinstance(original_commit, str) or original_commit.casefold() != head.casefold():
+            raise ValueError("Hosted publication owned root has a different or missing original commit")
+        identity = immutable_database_id(comment)
+        if identity is None or identity in owned_ids or not isinstance(comment.get("body"), str):
+            raise ValueError("Hosted publication owned root has incomplete or duplicated immutable identity")
+        owned_ids.add(identity)
+    if len(owned_ids) != expected:
+        raise ValueError("Hosted publication owned actionable-comment evidence is incomplete or conflicting")
+
+
 def _active_only_acknowledgement(body: str) -> bool:
     visible = _unquoted(body)
     return bool(ACTIVE_PATTERN.search(visible)) and not (
@@ -2447,6 +2585,42 @@ def trigger_state(
         )
     ]
     next_dt = min((parse_timestamp(item.get("createdAt")) for item in newer), default=None)
+    try:
+        publications = review_publications(reviews, record["head_sha"], trigger_dt, next_dt)
+        complete_publications = [publication for publication in publications if publication["complete"]]
+        if len(complete_publications) > 1:
+            raise ValueError("more than one complete Hosted publication is eligible for the captured trigger")
+        for publication in complete_publications:
+            validate_publication_comments(publication, pr, record["head_sha"], trigger_dt)
+    except ValueError as exc:
+        return TriggerState(
+            "ambiguous",
+            False,
+            False,
+            **base,
+            response_id=None,
+            response_created_at=None,
+            response_url=None,
+            cooldown_until=None,
+            reason=str(exc),
+        )
+    incomplete = [publication for publication in publications if not publication["complete"]]
+    if incomplete:
+        return TriggerState(
+            "active",
+            False,
+            True,
+            **base,
+            response_id=None,
+            response_created_at=None,
+            response_url=None,
+            cooldown_until=None,
+            reason="Hosted publication is awaiting its remaining batches",
+        )
+    publication_by_response = {
+        immutable_database_id(publication["primary"]): publication for publication in publications
+    }
+    publication_review_ids = {identity for publication in publications for identity in publication["review_ids"]}
     candidates: list[tuple[datetime, str, dict[str, Any], datetime | None]] = []
     window_rate_limit_responses: list[dict[str, Any]] = []
     unresolved_rate_limit_timestamp = False
@@ -2532,7 +2706,13 @@ def trigger_state(
                 order_at = created
             candidates.append((order_at, state, item, None))
     review_candidates: list[tuple[datetime, str, dict[str, Any], datetime | None]] = []
+    for publication in publications:
+        review_candidates.append(
+            (parse_timestamp(publication["finished_at"]), "completed", publication["primary"], None)
+        )
     for review in reviews:
+        if immutable_database_id(review) in publication_review_ids:
+            continue
         if not is_coderabbit_login((review.get("author") or {}).get("login")) or review.get("state") == "DISMISSED":
             continue
         submitted = parse_timestamp(review.get("submittedAt"))
@@ -2637,6 +2817,7 @@ def trigger_state(
     # A rate-limit cooldown itself may use only the immutable comment timestamp.
     response_at = response.get("createdAt") or response.get("submittedAt")
     response_id = immutable_database_id(response)
+    publication = publication_by_response.get(response_id)
     cooldown_basis = None
     if state == "rate_limited":
         if unresolved_rate_limit_timestamp:
@@ -2694,6 +2875,8 @@ def trigger_state(
         )
     response_dt = parse_timestamp(response_at)
     terminal_dt = response_dt
+    if publication is not None:
+        terminal_dt = parse_timestamp(publication["finished_at"])
     if (
         state == "completed"
         and response in comments
@@ -2748,6 +2931,8 @@ def trigger_state(
         reason=reason,
         cooldown_basis=cooldown_basis,
         duration_seconds=elapsed if elapsed is not None and elapsed >= 0 else None,
+        publication_review_ids=publication["review_ids"] if publication is not None else (),
+        publication_finished_at=publication["finished_at"] if publication is not None else None,
     )
 
 

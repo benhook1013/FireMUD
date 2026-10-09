@@ -405,7 +405,7 @@ query($owner:String!, $repo:String!, $number:Int!) {
     changedFiles
     commits(last:1) { nodes { commit { oid committedDate statusCheckRollup { state } } } }
     reviewThreads(first:100) { nodes { id isResolved isOutdated path line comments(first:20) {
-      nodes { id databaseId author { login } body url createdAt updatedAt }
+      nodes { id databaseId author { login } body url createdAt updatedAt pullRequestReview { databaseId } originalCommit { oid } }
       pageInfo { hasNextPage endCursor }
     } } pageInfo { hasNextPage endCursor } }
     comments(first:100) { nodes { id databaseId author { login } body createdAt updatedAt url }
@@ -419,7 +419,7 @@ query($owner:String!, $repo:String!, $number:Int!) {
 
 def _connection_query(connection: str) -> str:
     fields = {
-        "reviewThreads": "nodes { id isResolved isOutdated path line comments(first:20) { nodes { id databaseId author { login } body url createdAt updatedAt } pageInfo { hasNextPage endCursor } } }",
+        "reviewThreads": "nodes { id isResolved isOutdated path line comments(first:20) { nodes { id databaseId author { login } body url createdAt updatedAt pullRequestReview { databaseId } originalCommit { oid } } pageInfo { hasNextPage endCursor } } }",
         "comments": "nodes { id databaseId author { login } body createdAt updatedAt url }",
         "reviews": "nodes { id databaseId author { login } body state submittedAt url commit { oid } }",
     }[connection]
@@ -438,7 +438,7 @@ query($threadId:ID!, $after:String!) {
   node(id:$threadId) {
     ... on PullRequestReviewThread {
       comments(first:20, after:$after) {
-        nodes { id databaseId author { login } body url createdAt updatedAt }
+        nodes { id databaseId author { login } body url createdAt updatedAt pullRequestReview { databaseId } originalCommit { oid } }
         pageInfo { hasNextPage endCursor }
       }
     }
