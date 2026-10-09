@@ -2346,9 +2346,12 @@ public class AccountServiceImpl implements AccountService {
       throw new IllegalArgumentException("Password-reset token and new password are required");
     }
     String tokenHash = sha256Hex(request.token());
+    String candidatePasswordVerifier = hashPassword(request.newPassword());
     PasswordResetAttempt attempt =
         passwordResetOwnerTransaction.execute(
-            status -> completePasswordResetInOwnerTransaction(request, tokenHash));
+            status ->
+                completePasswordResetInOwnerTransaction(
+                    request, tokenHash, candidatePasswordVerifier));
     if (attempt == null) {
       throw new IllegalStateException("Password-reset owner transaction returned no result");
     }
@@ -2375,7 +2378,7 @@ public class AccountServiceImpl implements AccountService {
   }
 
   private PasswordResetAttempt completePasswordResetInOwnerTransaction(
-      CompletePasswordResetRequest request, String tokenHash) {
+      CompletePasswordResetRequest request, String tokenHash, String candidatePasswordVerifier) {
     Optional<PasswordResetReceipt> resolvedReceipt =
         passwordResetOperationRepository.findByTokenHash(tokenHash);
     Optional<Long> resolvedIntentAccountId =
@@ -2459,7 +2462,7 @@ public class AccountServiceImpl implements AccountService {
       if (token.getExpiresAt() == null || !token.getExpiresAt().isAfter(LocalDateTime.now())) {
         throw new IllegalArgumentException("Token expired");
       }
-      newPasswordVerifier = hashPassword(request.newPassword());
+      newPasswordVerifier = candidatePasswordVerifier;
       passwordVerifierDigest = sha256Hex(newPasswordVerifier);
       tokenExpiresAt = token.getExpiresAt();
       requestDigest =
