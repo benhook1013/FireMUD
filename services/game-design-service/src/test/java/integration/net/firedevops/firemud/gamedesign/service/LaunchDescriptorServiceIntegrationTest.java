@@ -1050,8 +1050,10 @@ class LaunchDescriptorServiceIntegrationTest {
     assertThat(descriptor.getAuthoredWorldSourceGameRowId()).isEqualTo(source.sourceGameRowId());
     assertThat(descriptor.getAuthoredWorldSourceGameTenantKey())
         .isEqualTo(source.sourceGameTenantKey());
-    assertThat(descriptor.getAuthoredWorldSourceProvenanceKind()).isEqualTo(source.provenanceKind());
-    assertThat(descriptor.getAuthoredWorldSourceEvidenceDigest()).isEqualTo(source.evidenceDigest());
+    assertThat(descriptor.getAuthoredWorldSourceProvenanceKind())
+        .isEqualTo(source.provenanceKind());
+    assertThat(descriptor.getAuthoredWorldSourceEvidenceDigest())
+        .isEqualTo(source.evidenceDigest());
   }
 
   private void assertRetainedRowUnchanged(LaunchDescriptor expected, LaunchDescriptor actual) {

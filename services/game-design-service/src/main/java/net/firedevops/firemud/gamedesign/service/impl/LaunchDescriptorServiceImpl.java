@@ -589,8 +589,7 @@ public class LaunchDescriptorServiceImpl implements LaunchDescriptorService {
         && Objects.equals(descriptor.getWorldSlug(), source.worldSlug())
         && Objects.equals(
             descriptor.getAuthoredWorldSourceOperationId(), source.operationId().toString())
-        && Objects.equals(
-            descriptor.getAuthoredWorldSourceGameRowId(), source.sourceGameRowId())
+        && Objects.equals(descriptor.getAuthoredWorldSourceGameRowId(), source.sourceGameRowId())
         && Objects.equals(
             descriptor.getAuthoredWorldSourceGameTenantKey(), source.sourceGameTenantKey())
         && Objects.equals(
