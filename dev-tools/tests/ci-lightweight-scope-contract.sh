@@ -29,7 +29,7 @@ for expected in \
   require_contains "$CLASSIFIER" "$expected"
 done
 
-python3 - "$CI_WORKFLOW" "$SECURITY_WORKFLOW" "$PREVIEW_WORKFLOW" "$ZAP_WORKFLOW" "$CLASSIFIER" <<'PY'
+python3 - "$CI_WORKFLOW" "$SECURITY_WORKFLOW" "$PREVIEW_WORKFLOW" "$ZAP_WORKFLOW" "$CLASSIFIER" "$ROOT_DIR/build.gradle.kts" <<'PY'
 import copy
 import json
 from pathlib import Path
@@ -608,6 +608,16 @@ require_contains(
     "ci workflow",
 )
 
+test_logs_step = find_step(
+    ci, "build-and-test", "Upload Test Logs if Failed", "ci workflow"
+)
+require_equal(
+    test_logs_step,
+    ("if",),
+    "${{ failure() || cancelled() }}",
+    "ci workflow",
+)
+
 junit_results_step = find_step(
     ci, "build-and-test", "Upload JUnit Test Results", "ci workflow"
 )
@@ -647,6 +657,39 @@ require_equal(
     "14",
     "ci workflow",
 )
+
+gradle_build = Path(sys.argv[6]).read_text(encoding="utf-8")
+test_logging_match = re.search(
+    (
+        r"tasks\.withType<Test>\(\)\.configureEach\s*\{\s*"
+        r"testLogging\s*\{(?P<settings>.*?)\n\s*\}\s*\}"
+    ),
+    gradle_build,
+    re.DOTALL,
+)
+if test_logging_match is None:
+    raise SystemExit(
+        "build.gradle.kts: missing canonical Test task logging configuration"
+    )
+test_logging_settings = test_logging_match.group("settings")
+for expected in (
+    "exceptionFormat = TestExceptionFormat.FULL",
+    "showExceptions = true",
+    "showCauses = true",
+    "showStackTraces = true",
+):
+    if expected not in test_logging_settings:
+        raise SystemExit(
+            f"build.gradle.kts: Test task failure logging must include {expected!r}"
+        )
+if re.search(r"\bevents\s*(?:=|\()", test_logging_settings):
+    raise SystemExit(
+        "build.gradle.kts: Test task failure logging must preserve inherited events"
+    )
+if "showStandardStreams = true" in test_logging_settings:
+    raise SystemExit(
+        "build.gradle.kts: Test task failure logging must not expose standard streams"
+    )
 
 require_equal(
     security,

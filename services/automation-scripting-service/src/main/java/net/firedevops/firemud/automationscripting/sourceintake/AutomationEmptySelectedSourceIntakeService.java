@@ -94,7 +94,8 @@ public final class AutomationEmptySelectedSourceIntakeService {
     // Re-sample HELD after the remote World read to reduce the gap before local commit. This is
     // only a point-in-time observation: finalized pending Account source participation remains
     // under its source-writer exclusion guards. This preparation neither extends nor settles or
-    // releases them; exact Automation terminal settlement is not implemented.
+    // releases them. Account's separate exact Automation terminal settlement owns that release;
+    // this intake method does not invoke it, and unregistered construction is not activation proof.
     SelectedOwnerIntakeAuthorizationReadEvidence.Request finalAuthorizationReadRequest =
         SelectedOwnerIntakeAuthorizationReadEvidence.Request.create(
             targetNamespace, originalBinding);

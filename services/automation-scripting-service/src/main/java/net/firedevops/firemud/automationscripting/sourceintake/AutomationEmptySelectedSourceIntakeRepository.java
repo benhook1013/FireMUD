@@ -320,7 +320,8 @@ public final class AutomationEmptySelectedSourceIntakeRepository {
                 + "canonical_tenant_id, canonical_version_id, selected_commit_id, "
                 + "source_revision_id, source_revision_order, local_tenant_key, "
                 + "local_version_key, request_digest, authorization_binding_digest, "
-                + "receipt_digest, associated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                + "receipt_digest, associated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, "
+                + "CAST(? AS TIMESTAMPTZ))",
             receipt.targetNamespace(),
             receipt.operationId(),
             receipt.fenceId(),
@@ -350,7 +351,7 @@ public final class AutomationEmptySelectedSourceIntakeRepository {
             "INSERT INTO "
                 + RECEIPT
                 + " (target_namespace, intake_request_id, request_digest, receipt_digest, "
-                + "receipt_bytes, retained_at) VALUES (?, ?, ?, ?, ?, ?)",
+                + "receipt_bytes, retained_at) VALUES (?, ?, ?, ?, ?, CAST(? AS TIMESTAMPTZ))",
             receipt.targetNamespace(),
             receipt.intakeRequestId(),
             receipt.requestDigest(),

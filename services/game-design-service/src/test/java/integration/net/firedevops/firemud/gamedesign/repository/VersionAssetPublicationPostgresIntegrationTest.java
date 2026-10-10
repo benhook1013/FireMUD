@@ -32,6 +32,7 @@ import net.firedevops.firemud.gamedesign.publication.AssetSourceRepository;
 import net.firedevops.firemud.gamedesign.publication.GameDesignSourceRepository;
 import net.firedevops.firemud.gamedesign.publication.GameplayRuleSourceRepository;
 import net.firedevops.firemud.gamedesign.publication.IsolatedPublicationOperationFixtures;
+import net.firedevops.firemud.gamedesign.publication.RealmPolicySourceRepository;
 import net.firedevops.firemud.gamedesign.repository.GameAssetRepository;
 import net.firedevops.firemud.gamedesign.repository.GameRepository;
 import net.firedevops.firemud.gamedesign.repository.VersionAssetPublicationRepository;
@@ -346,6 +347,123 @@ class VersionAssetPublicationPostgresIntegrationTest {
     assertThat(readback.asset()).isEqualTo(result.asset().orElseThrow().snapshot());
     assertThat(readback.command()).isEqualTo(result.command().orElseThrow().snapshot());
     assertThat(readback.policy()).isEqualTo(result.policy().orElseThrow().snapshot());
+  }
+
+  @Test
+  void playerCreatedPolicyDescriptorPersistsAndReplaysWithIndependentAuthoredProvenance() {
+    Fixture fixture = fixture(null);
+    Game owner = saveGame(fixture, "player-created-policy");
+    Version version = saveDraftVersion(fixture, owner, 1);
+    String descriptorRevisionId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+    String policyBytes = playerCreatedPolicy(descriptorRevisionId);
+    String authoredPayload = policyRevision(policyBytes);
+    var binding = sourceBinding(fixture, version, authoredPayload);
+    UUID authoredRevisionId = binding.revisions().getFirst().revisionId();
+
+    var applied = inTransaction(fixture, () -> applySources(fixture, binding));
+    var original = applied.policy().orElseThrow().snapshot();
+    assertThat(original.policies()).hasSize(1);
+    var authored = original.policies().getFirst();
+    assertThat(authored.commitId()).isEqualTo(binding.commitId());
+    assertThat(authored.revisionId()).isEqualTo(authoredRevisionId);
+    assertThat(authoredRevisionId.toString()).isNotEqualTo(descriptorRevisionId);
+    assertThat(authored.policy().canonicalJson()).isEqualTo(policyBytes);
+
+    String applicationJson =
+        fixture
+            .dsl()
+            .fetchSingle(
+                "SELECT snapshot_json FROM game_design_realm_policy_application WHERE canonical_tenant_id = ? AND canonical_version_id = ? AND commit_id = ?",
+                binding.target().canonicalTenantId(),
+                binding.target().canonicalVersionId(),
+                binding.commitId())
+            .get(0, String.class);
+    assertThat(applicationJson).isEqualTo(original.canonicalJson());
+    var stored =
+        new RealmPolicySourceRepository(fixture.dsl())
+            .readSnapshot(binding.target(), binding.commitId())
+            .orElseThrow();
+    assertThat(stored.canonicalBytes()).containsExactly(original.canonicalBytes());
+    assertThat(stored.policies().getFirst().policy().canonicalJson()).isEqualTo(policyBytes);
+
+    var retry =
+        inTransaction(fixture, () -> new GameDesignSourceRepository(fixture.dsl()).apply(binding));
+    assertThat(retry.ownerOutcome()).isEqualTo(applied.ownerOutcome());
+    assertThat(retry.policy().orElseThrow().canonicalBytes())
+        .containsExactly(applied.policy().orElseThrow().canonicalBytes());
+
+    var originalRevision = binding.revisions().getFirst();
+    var changedSameIdentity =
+        DraftCommitBinding.create(
+            binding.target(),
+            binding.requestId(),
+            binding.commitId(),
+            binding.baseCommitId(),
+            List.of(
+                new DraftCommitBinding.RevisionPayload(
+                    originalRevision.revisionOrder(),
+                    originalRevision.revisionId(),
+                    originalRevision.owner(),
+                    policyRevision(playerCreatedPolicy("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb")))),
+            binding.affectedUnits());
+    assertThat(changedSameIdentity.digest()).isNotEqualTo(binding.digest());
+    assertThatThrownBy(
+            () ->
+                inTransaction(
+                    fixture,
+                    () ->
+                        new RealmPolicySourceRepository(fixture.dsl()).apply(changedSameIdentity)))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessage("POLICY_COMMIT_BINDING_CONFLICT");
+    assertThat(
+            new RealmPolicySourceRepository(fixture.dsl())
+                .readSnapshot(binding.target(), binding.commitId())
+                .orElseThrow()
+                .canonicalBytes())
+        .containsExactly(original.canonicalBytes());
+
+    var inheritedBinding =
+        sourceBinding(fixture, version, CommandSource.deletePayload("no-such-command"));
+    inTransaction(fixture, () -> applySources(fixture, inheritedBinding));
+    var inherited =
+        new RealmPolicySourceRepository(fixture.dsl())
+            .readSnapshot(inheritedBinding.target(), inheritedBinding.commitId())
+            .orElseThrow();
+    assertThat(inherited.policies()).hasSize(1);
+    assertThat(inherited.policies().getFirst().commitId()).isEqualTo(binding.commitId());
+    assertThat(inherited.policies().getFirst().revisionId()).isEqualTo(authoredRevisionId);
+    assertThat(inherited.policies().getFirst().policy().canonicalJson()).isEqualTo(policyBytes);
+
+    String changedPolicyBytes = playerCreatedPolicy("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb");
+    var changedBinding = sourceBinding(fixture, version, policyRevision(changedPolicyBytes));
+    var changed = inTransaction(fixture, () -> applySources(fixture, changedBinding));
+    var changedPolicy = changed.policy().orElseThrow().snapshot().policies().getFirst();
+    assertThat(changedPolicy.commitId()).isEqualTo(changedBinding.commitId());
+    assertThat(changedPolicy.revisionId())
+        .isEqualTo(changedBinding.revisions().getFirst().revisionId());
+    assertThat(changedPolicy.policy().canonicalJson()).isEqualTo(changedPolicyBytes);
+    assertThat(changedPolicy.policy().canonicalJson()).isNotEqualTo(policyBytes);
+    assertThat(
+            new RealmPolicySourceRepository(fixture.dsl())
+                .readSnapshot(binding.target(), binding.commitId())
+                .orElseThrow()
+                .policies()
+                .getFirst()
+                .policy()
+                .canonicalJson())
+        .isEqualTo(policyBytes);
+  }
+
+  private String playerCreatedPolicy(String descriptorRevisionId) {
+    return "{\"creationDescriptor\":{\"dependencies\":[],\"descriptorId\":\"99999999-9999-4999-8999-999999999999\",\"descriptorRevisionId\":\""
+        + descriptorRevisionId
+        + "\",\"inputKind\":\"EMPTY_OBJECT\",\"schemaVersion\":1},\"entryPolicy\":\"PLAYER_CREATED\",\"publicProduction\":false,\"realmDisplayName\":\"Player Realm\",\"realmSlug\":\"player-realm\",\"schemaVersion\":2,\"stateScope\":\"ISOLATED\",\"visible\":true,\"worldDisplayName\":\"Player World\",\"worldSlug\":\"player-world\"}";
+  }
+
+  private String policyRevision(String policyBytes) {
+    return "{\"logicalRevisionId\":\"player-created-realm-policy\",\"policy\":"
+        + policyBytes
+        + ",\"revisionKind\":\"REALM_ENTRY_POLICY\"}";
   }
 
   @ParameterizedTest
