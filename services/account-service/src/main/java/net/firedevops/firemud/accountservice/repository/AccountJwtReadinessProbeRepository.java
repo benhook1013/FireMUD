@@ -454,32 +454,50 @@ public class AccountJwtReadinessProbeRepository {
     }
     ReadinessProbePlan stored = readbackPlan(plan, false);
     requirePreparedPlanMatches(stored, generation, promotion, publication);
-    if (readinessPlanOutOfWindow(stored)) {
+    boolean dispatched = promotion.privatePromotionDispatched();
+    if (!dispatched && readinessPlanOutOfWindow(stored)) {
       return Optional.empty();
     }
     if (!stored.validatorInventoryComplete()) {
       return Optional.empty();
     }
-    if (stored.planVersion() != INVENTORY_PLAN_VERSION || liveInventory == null) {
+    if (stored.planVersion() != INVENTORY_PLAN_VERSION) {
       return Optional.empty();
     }
-    requireLiveInventoryMatches(
-        stored,
-        binding,
-        trust,
-        liveInventory,
-        observationContext(
-            generation.operationId(), generation.operationDigest(), stored.expectedFence()));
+    String inventoryDigest;
+    if (dispatched) {
+      inventoryDigest = stored.inventorySnapshotDigest().orElseThrow();
+      if (!matchesStoredV2Inventory(stored)) {
+        return Optional.empty();
+      }
+    } else {
+      if (liveInventory == null) {
+        return Optional.empty();
+      }
+      requireLiveInventoryMatches(
+          stored,
+          binding,
+          trust,
+          liveInventory,
+          observationContext(
+              generation.operationId(), generation.operationDigest(), stored.expectedFence()));
+      inventoryDigest = liveInventory.digest();
+    }
     if (!hasCompletePodReceiptClosure(stored)) {
       return Optional.empty();
     }
-    return Optional.of(
+    ReadinessPromotionProof proof =
         new ReadinessPromotionProof(
             stored,
             generation,
             publication,
-            "protected-validator-inventory:" + liveInventory.digest(),
-            liveInventory.digest()));
+            "protected-validator-inventory:" + inventoryDigest,
+            inventoryDigest);
+    if (!promotion.readinessEvidenceDigest().equals(proof.readinessEvidenceDigest())) {
+      throw new QuarantinedStateException(
+          "Recovered readiness proof differs from the immutable PREPARED evidence");
+    }
+    return Optional.of(proof);
   }
 
   private boolean readinessPlanOutOfWindow(ReadinessProbePlan plan) {
@@ -1351,6 +1369,11 @@ public class AccountJwtReadinessProbeRepository {
       throw new ReceiverUnavailableException();
     }
     requireLiveInventoryMatches(plan, binding, trust, liveInventory, observationContext(current));
+    AccountJwtReadinessProbeOwnerSelector.LocalIdentity local = selector.localIdentity();
+    if (!local.sourceInventoryRevision().equals(liveInventory.inventoryBindingRevision())
+        || !local.sourceInventoryDigest().equals(liveInventory.inventoryBindingDigest())) {
+      throw new ReceiverUnavailableException();
+    }
     if (readinessPlanOutOfWindow(plan)) {
       throw new ReceiverUnavailableException();
     }
@@ -1402,7 +1425,6 @@ public class AccountJwtReadinessProbeRepository {
     ExpectedPod expectedPod = selectedPods.getFirst();
     PodTarget target = expectedPod.target();
     target.requireRoutablePodIdentity();
-    AccountJwtReadinessProbeOwnerSelector.LocalIdentity local = selector.localIdentity();
     if (!target.validatorId().equals(selector.validatorId())
         || !expectedPod.rotationOperationId().equals(selector.rotationOperationId())
         || !expectedPod.planDigest().equals(plan.planDigest())
