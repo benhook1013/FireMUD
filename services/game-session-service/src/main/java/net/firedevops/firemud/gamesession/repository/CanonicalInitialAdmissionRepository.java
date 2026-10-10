@@ -415,6 +415,11 @@ public class CanonicalInitialAdmissionRepository {
     return new CurrentOpenSnapshot(proof, snapshotDigestOrReconciliation(before, proof));
   }
 
+  @SuppressFBWarnings(
+      value = "DCN_NULLPOINTER_EXCEPTION",
+      justification =
+          "Canonical projection validation rejects missing persisted fields with NullPointerException;"
+              + " this narrow readback boundary translates that rejection into required reconciliation.")
   private static String snapshotDigestOrReconciliation(
       CurrentOpenPointer pointer, CanonicalInitialAdmissionOwnerProof proof) {
     try {
