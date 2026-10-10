@@ -37,6 +37,21 @@ class WorldStartSessionExecutionTerminalReadGrpcCodecTest {
   private static final JsonMapper JSON = JsonMapper.builder().build();
 
   @Test
+  void rejectsAnOverboundWireEnvelopeBeforeDecodingItsTerminal() {
+    var response =
+        ReadWorldStartSessionExecutionTerminalResponse.newBuilder()
+            .setReadRequestId(READ_ID.toString())
+            .setCanonicalTerminalBytes(
+                com.google.protobuf.ByteString.copyFrom(
+                    new byte[WorldStartSessionExecutionTerminalReadGrpcCodec.MAX_RESPONSE_BYTES]))
+            .build();
+    assertThatThrownBy(
+            () -> WorldStartSessionExecutionTerminalReadGrpcCodec.fromResponse(request(), response))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("wire limit");
+  }
+
+  @Test
   void roundTripsFreshReadAndOnlyCanonicalTerminalResult() {
     var request = request();
     var wireRequest = WorldStartSessionExecutionTerminalReadGrpcCodec.toRequest(request);

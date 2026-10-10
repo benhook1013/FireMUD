@@ -56,7 +56,8 @@ public final class WorldCanonicalInstancePreparationService {
    */
   public Result prepare(Input input) {
     Objects.requireNonNull(input, "input");
-    if (TransactionSynchronizationManager.isActualTransactionActive()) {
+    if (TransactionSynchronizationManager.isActualTransactionActive()
+        || TransactionSynchronizationManager.isSynchronizationActive()) {
       throw new IllegalStateException(
           "Canonical World preparation must verify outside an ambient transaction");
     }
@@ -82,7 +83,8 @@ public final class WorldCanonicalInstancePreparationService {
   public WorldCanonicalInstancePreparationRepository.ExecutionLookup recoverExact(
       WorldCanonicalInstanceExecutionIdentity originalIdentity) {
     Objects.requireNonNull(originalIdentity, "original World execution identity is required");
-    if (TransactionSynchronizationManager.isActualTransactionActive()) {
+    if (TransactionSynchronizationManager.isActualTransactionActive()
+        || TransactionSynchronizationManager.isSynchronizationActive()) {
       throw new IllegalStateException(
           "Exact World execution recovery must authenticate outside an ambient transaction");
     }

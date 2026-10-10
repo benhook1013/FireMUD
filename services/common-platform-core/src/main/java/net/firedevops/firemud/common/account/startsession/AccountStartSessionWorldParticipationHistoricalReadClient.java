@@ -1,4 +1,4 @@
-package net.firedevops.firemud.common.world;
+package net.firedevops.firemud.common.account.startsession;
 
 import io.grpc.ManagedChannel;
 import java.io.IOException;
@@ -7,6 +7,7 @@ import java.nio.file.Path;
 import java.util.Objects;
 import java.util.concurrent.TimeUnit;
 import javax.net.ssl.SSLException;
+import net.firedevops.firemud.account.v1.AccountStartSessionWorldParticipationHistoricalReadServiceGrpc;
 import net.firedevops.firemud.common.config.ServiceEndpointsProperties;
 import net.firedevops.firemud.common.grpc.AbstractReloadingBlockingGrpcClient;
 import net.firedevops.firemud.common.grpc.CommonGrpcClientProperties;
@@ -14,21 +15,22 @@ import net.firedevops.firemud.common.grpc.GrpcChannelFactory;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
 import net.firedevops.firemud.common.grpc.GrpcServerPeerIdentityCallCredentials;
 import net.firedevops.firemud.common.grpc.GrpcServerPeerIdentityClientInterceptor;
-import net.firedevops.firemud.worldmanagement.v1.WorldStartSessionExecutionTerminalReadServiceGrpc;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 
-/** Explicit file-backed mTLS client for the unregistered Account-authenticated World read. */
-public final class WorldStartSessionExecutionTerminalReadClient
+/**
+ * Explicit file-backed mTLS client for Account's unregistered historical World participation read.
+ */
+public final class AccountStartSessionWorldParticipationHistoricalReadClient
     extends AbstractReloadingBlockingGrpcClient<
-        WorldStartSessionExecutionTerminalReadServiceGrpc
-            .WorldStartSessionExecutionTerminalReadServiceBlockingStub> {
+        AccountStartSessionWorldParticipationHistoricalReadServiceGrpc
+            .AccountStartSessionWorldParticipationHistoricalReadServiceBlockingStub> {
   private static final long CALL_DEADLINE_SECONDS = 5L;
 
   private final String workloadNamespace;
   private volatile boolean initialized;
   private volatile boolean closed;
 
-  public WorldStartSessionExecutionTerminalReadClient(
+  public AccountStartSessionWorldParticipationHistoricalReadClient(
       ServiceEndpointsProperties endpoints,
       CommonGrpcClientProperties tlsProperties,
       GrpcChannelFactory channelFactory,
@@ -37,75 +39,76 @@ public final class WorldStartSessionExecutionTerminalReadClient
         endpoints,
         requireFileBackedMtls(tlsProperties),
         channelFactory,
-        WorldStartSessionExecutionTerminalReadClient.class);
+        AccountStartSessionWorldParticipationHistoricalReadClient.class);
     if (!GrpcPeerIdentity.isValidNamespace(workloadNamespace)) {
       throw new IllegalArgumentException("Workload namespace must be one canonical DNS label");
     }
     this.workloadNamespace = workloadNamespace;
   }
 
-  /** Initializes only when an owning service explicitly starts this client. */
+  /** Initializes only when an owning World component explicitly starts this client. */
   public synchronized void init() throws SSLException, IOException {
     if (closed) {
-      throw new IllegalStateException("World StartSession terminal read client is closed");
+      throw new IllegalStateException("Account historical participation client is closed");
     }
-    if (initialized) {
-      return;
-    }
+    if (initialized) return;
     initReloadingClient();
     if (stub() == null) {
-      throw new IllegalStateException("World StartSession terminal read client has no gRPC stub");
+      throw new IllegalStateException("Account historical participation client has no gRPC stub");
     }
     initialized = true;
   }
 
-  /** Reads one exact historical terminal without renewing or settling its source participation. */
-  public WorldStartSessionExecutionTerminal read(
-      WorldStartSessionExecutionTerminalReadRequest request) {
-    Objects.requireNonNull(request, "World StartSession terminal read request");
+  /** Reads only the exact retained Account row; it does not admit or renew World execution. */
+  public AccountStartSessionWorldParticipationHistoricalReadEvidence read(
+      AccountStartSessionWorldParticipationHistoricalReadRequest request) {
+    Objects.requireNonNull(request, "historical participation request is required");
     if (!workloadNamespace.equals(request.targetNamespace())) {
       throw new IllegalArgumentException(
-          "World StartSession terminal request must use the configured workload namespace");
+          "Account historical participation request must use the configured workload namespace");
     }
     if (TransactionSynchronizationManager.isActualTransactionActive()
         || TransactionSynchronizationManager.isSynchronizationActive()) {
       throw new IllegalStateException(
-          "World StartSession terminal read must start outside an ambient transaction");
+          "Account historical participation read must start outside an ambient transaction");
     }
     var response =
         requireStub()
             .withDeadlineAfter(CALL_DEADLINE_SECONDS, TimeUnit.SECONDS)
-            .readWorldStartSessionExecutionTerminal(
-                WorldStartSessionExecutionTerminalReadGrpcCodec.toRequest(request));
+            .withMaxInboundMessageSize(
+                AccountStartSessionWorldParticipationHistoricalReadGrpcCodec
+                    .MAX_RESPONSE_WIRE_BYTES)
+            .readHistoricalStartSessionWorldParticipation(
+                AccountStartSessionWorldParticipationHistoricalReadGrpcCodec.toRequest(request));
     try {
-      return WorldStartSessionExecutionTerminalReadGrpcCodec.fromResponse(request, response);
+      return AccountStartSessionWorldParticipationHistoricalReadGrpcCodec.fromResponse(
+          request, response);
     } catch (IllegalArgumentException invalid) {
       throw new IllegalStateException(
-          "World returned invalid original StartSession terminal evidence", invalid);
+          "Account returned invalid historical World participation evidence", invalid);
     }
   }
 
   @Override
   protected String configuredTarget(ServiceEndpointsProperties endpoints) {
-    return endpoints.getWorldManagementService();
+    return endpoints.getAccountService();
   }
 
   @Override
   protected String defaultTarget() {
-    return "world-management-service:6565";
+    return "account-service:6565";
   }
 
   @Override
-  protected WorldStartSessionExecutionTerminalReadServiceGrpc
-          .WorldStartSessionExecutionTerminalReadServiceBlockingStub
+  protected AccountStartSessionWorldParticipationHistoricalReadServiceGrpc
+          .AccountStartSessionWorldParticipationHistoricalReadServiceBlockingStub
       buildStub(ManagedChannel channel) {
-    String expectedPeerUri =
-        "spiffe://firemud/ns/" + workloadNamespace + "/sa/world-management-service";
-    return WorldStartSessionExecutionTerminalReadServiceGrpc.newBlockingStub(channel)
-        .withMaxInboundMessageSize(
-            WorldStartSessionExecutionTerminalReadGrpcCodec.MAX_RESPONSE_BYTES)
+    String expectedPeerUri = "spiffe://firemud/ns/" + workloadNamespace + "/sa/account-service";
+    return AccountStartSessionWorldParticipationHistoricalReadServiceGrpc.newBlockingStub(channel)
         .withCallCredentials(new GrpcServerPeerIdentityCallCredentials(expectedPeerUri))
         .withInterceptors(new GrpcServerPeerIdentityClientInterceptor(expectedPeerUri))
+        .withMaxInboundMessageSize(
+            AccountStartSessionWorldParticipationHistoricalReadGrpcCodec.MAX_RESPONSE_WIRE_BYTES)
         .withCompression("gzip");
   }
 
@@ -116,13 +119,13 @@ public final class WorldStartSessionExecutionTerminalReadClient
     super.close();
   }
 
-  private WorldStartSessionExecutionTerminalReadServiceGrpc
-          .WorldStartSessionExecutionTerminalReadServiceBlockingStub
+  private AccountStartSessionWorldParticipationHistoricalReadServiceGrpc
+          .AccountStartSessionWorldParticipationHistoricalReadServiceBlockingStub
       requireStub() {
     var currentStub = stub();
     if (closed || !initialized || currentStub == null) {
       throw new IllegalStateException(
-          "World StartSession terminal read client is not initialized and available");
+          "Account historical participation client is not initialized and available");
     }
     return currentStub;
   }
@@ -130,7 +133,8 @@ public final class WorldStartSessionExecutionTerminalReadClient
   private static CommonGrpcClientProperties requireFileBackedMtls(
       CommonGrpcClientProperties tlsProperties) {
     if (tlsProperties == null || tlsProperties.isPlaintext()) {
-      throw new IllegalArgumentException("World StartSession terminal read requires workload mTLS");
+      throw new IllegalArgumentException(
+          "Account historical participation read requires workload mTLS");
     }
     requireReadableFile(tlsProperties.getCertChain(), "certificate chain");
     requireReadableFile(tlsProperties.getPrivateKey(), "private key");
@@ -141,24 +145,24 @@ public final class WorldStartSessionExecutionTerminalReadClient
   private static void requireReadableFile(String configuredPath, String label) {
     if (configuredPath == null || configuredPath.isBlank()) {
       throw new IllegalArgumentException(
-          "World StartSession terminal read requires file-backed certificate, key, and CA material");
+          "Account historical participation read requires file-backed certificate, key, and CA material");
     }
     String pathText = configuredPath.trim();
     if (pathText.startsWith("classpath:")) {
       throw new IllegalArgumentException(
-          "World StartSession terminal read requires file-backed certificate, key, and CA material");
+          "Account historical participation read requires file-backed certificate, key, and CA material");
     }
     Path path;
     try {
       path = Path.of(pathText);
     } catch (RuntimeException invalid) {
       throw new IllegalArgumentException(
-          "World StartSession terminal read " + label + " must be a readable file-backed path",
+          "Account historical participation read " + label + " must be a readable file-backed path",
           invalid);
     }
     if (!Files.isRegularFile(path) || !Files.isReadable(path)) {
       throw new IllegalArgumentException(
-          "World StartSession terminal read " + label + " must be an existing readable file");
+          "Account historical participation read " + label + " must be an existing readable file");
     }
   }
 }

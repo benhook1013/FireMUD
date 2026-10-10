@@ -10,6 +10,10 @@ import net.firedevops.firemud.worldmanagement.v1.ReadWorldStartSessionExecutionT
 
 /** Closed protobuf adapter for exact historical StartSession terminal readback. */
 public final class WorldStartSessionExecutionTerminalReadGrpcCodec {
+  /** Canonical terminal plus bounded protobuf framing and the fresh read UUID. */
+  public static final int MAX_RESPONSE_BYTES =
+      WorldStartSessionExecutionTerminal.MAX_CANONICAL_BYTES + 1_024;
+
   private static final UUID NIL_UUID = new UUID(0L, 0L);
 
   private WorldStartSessionExecutionTerminalReadGrpcCodec() {}
@@ -62,6 +66,9 @@ public final class WorldStartSessionExecutionTerminalReadGrpcCodec {
       ReadWorldStartSessionExecutionTerminalResponse response) {
     Objects.requireNonNull(request, "World StartSession terminal read request");
     Objects.requireNonNull(response, "World StartSession terminal response");
+    if (response.getSerializedSize() > MAX_RESPONSE_BYTES) {
+      throw invalid("World StartSession terminal response exceeds its wire limit");
+    }
     requireNoUnknownFields(response, "response");
     UUID readRequestId = canonicalUuid(response.getReadRequestId(), "readRequestId");
     if (!request.readRequestId().equals(readRequestId)) {

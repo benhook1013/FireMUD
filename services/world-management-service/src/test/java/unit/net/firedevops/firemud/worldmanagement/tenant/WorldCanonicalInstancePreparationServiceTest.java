@@ -91,6 +91,47 @@ class WorldCanonicalInstancePreparationServiceTest {
   }
 
   @Test
+  void ambientSynchronizationIsDeniedBeforeRecoveryAuthenticationOrStorage() {
+    var repository = mock(WorldCanonicalInstancePreparationRepository.class);
+    var recoveryVerifier =
+        mock(WorldCanonicalInstancePreparationService.OriginalOperationRecoveryVerifier.class);
+    var identity = mock(WorldCanonicalInstanceExecutionIdentity.class);
+    var commitVerifier =
+        mock(WorldCanonicalInstancePreparationService.CommitAuthorityVerifier.class);
+    var service =
+        new WorldCanonicalInstancePreparationService(repository, commitVerifier, recoveryVerifier);
+    TransactionSynchronizationManager.initSynchronization();
+
+    assertThatThrownBy(() -> service.recoverExact(identity))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("must authenticate outside an ambient transaction");
+
+    verifyNoInteractions(repository, recoveryVerifier, commitVerifier);
+  }
+
+  @Test
+  void ambientSynchronizationIsDeniedBeforeFreshPreparationVerificationOrStorage() {
+    var repository = mock(WorldCanonicalInstancePreparationRepository.class);
+    var commitVerifier =
+        mock(WorldCanonicalInstancePreparationService.CommitAuthorityVerifier.class);
+    var recoveryVerifier =
+        mock(WorldCanonicalInstancePreparationService.OriginalOperationRecoveryVerifier.class);
+    var input =
+        mock(
+            net.firedevops.firemud.worldmanagement.tenant.WorldCanonicalInstancePreparation.Input
+                .class);
+    var service =
+        new WorldCanonicalInstancePreparationService(repository, commitVerifier, recoveryVerifier);
+    TransactionSynchronizationManager.initSynchronization();
+
+    assertThatThrownBy(() -> service.prepare(input))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("must verify outside an ambient transaction");
+
+    verifyNoInteractions(repository, recoveryVerifier, commitVerifier, input);
+  }
+
+  @Test
   void exactRecoveryAuthenticatesThenReturnsTheUnchangedReadOnlyLookup() {
     var repository = mock(WorldCanonicalInstancePreparationRepository.class);
     var recoveryVerifier =

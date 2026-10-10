@@ -314,7 +314,7 @@ $$;
 CREATE FUNCTION account_start_session_world_participation_insert_guard()
 RETURNS TRIGGER LANGUAGE plpgsql AS $$
 DECLARE
-    authorization account_start_session_operator_authorizations%ROWTYPE;
+    authorization_row account_start_session_operator_authorizations%ROWTYPE;
     capture account_start_session_authority_captures%ROWTYPE;
     tuple_value JSONB;
     reservation_value JSONB;
@@ -340,15 +340,15 @@ BEGIN
     source_keys := account_start_session_world_participation_lock_sources(snapshot_value);
     PERFORM account_start_session_world_participation_assert_exclusive(source_keys, snapshot_value);
 
-    SELECT * INTO STRICT authorization FROM account_start_session_operator_authorizations
+    SELECT * INTO STRICT authorization_row FROM account_start_session_operator_authorizations
         WHERE control_plane_request_id = NEW.control_plane_request_id;
     tuple_value := convert_from(NEW.original_post_authorization_tuple, 'UTF8')::JSONB;
-    IF authorization.status IS DISTINCT FROM 'REDEEMED'
-        OR authorization.reference_expires_at <= clock_timestamp()
+    IF authorization_row.status IS DISTINCT FROM 'REDEEMED'
+        OR authorization_row.reference_expires_at <= clock_timestamp()
         OR tuple_value->'preAuthorizationReservationTuple' IS DISTINCT FROM
-            convert_from(authorization.pre_authorization_tuple, 'UTF8')::JSONB
-        OR authorization.redemption_owner_attempt_id IS DISTINCT FROM NEW.game_session_owner_attempt_id
-        OR authorization.redemption_owner_fence IS DISTINCT FROM NEW.game_session_owner_fence THEN
+            convert_from(authorization_row.pre_authorization_tuple, 'UTF8')::JSONB
+        OR authorization_row.redemption_owner_attempt_id IS DISTINCT FROM NEW.game_session_owner_attempt_id
+        OR authorization_row.redemption_owner_fence IS DISTINCT FROM NEW.game_session_owner_fence THEN
         RAISE EXCEPTION 'StartSession World participation requires the exact unexpired redeemed original authorization'
             USING ERRCODE = '23514';
     END IF;
@@ -358,31 +358,31 @@ BEGIN
         OR tuple_value->>'tupleSchemaVersion' IS DISTINCT FROM '1'
         OR tuple_value->>'issuanceKind' IS DISTINCT FROM 'human_operator'
         OR tuple_value->>'controlPlaneRequestId' IS DISTINCT FROM NEW.control_plane_request_id
-        OR tuple_value->>'mutationDigest' IS DISTINCT FROM authorization.mutation_digest
+        OR tuple_value->>'mutationDigest' IS DISTINCT FROM authorization_row.mutation_digest
         OR tuple_value->>'authorizationReferenceFingerprint' IS DISTINCT FROM
-            authorization.authorization_reference_fingerprint
-        OR tuple_value->>'issuanceFence' IS DISTINCT FROM authorization.issuance_fence::TEXT
-        OR tuple_value->>'reservationOwnerId' IS DISTINCT FROM authorization.reservation_owner_id::TEXT
-        OR tuple_value->>'reservationClaimFence' IS DISTINCT FROM authorization.reservation_claim_fence::TEXT
+            authorization_row.authorization_reference_fingerprint
+        OR tuple_value->>'issuanceFence' IS DISTINCT FROM authorization_row.issuance_fence::TEXT
+        OR tuple_value->>'reservationOwnerId' IS DISTINCT FROM authorization_row.reservation_owner_id::TEXT
+        OR tuple_value->>'reservationClaimFence' IS DISTINCT FROM authorization_row.reservation_claim_fence::TEXT
         OR tuple_value->>'authorityEvidenceBundleReference' IS NULL
-        OR bundle_reference->>'bundleVersion' IS DISTINCT FROM authorization.bundle_version
-        OR bundle_reference->>'sourceVersion' IS DISTINCT FROM authorization.bundle_source_version
-        OR bundle_reference->>'sourceFence' IS DISTINCT FROM authorization.bundle_source_fence
-        OR bundle_reference->>'linearization' IS DISTINCT FROM authorization.bundle_linearization
+        OR bundle_reference->>'bundleVersion' IS DISTINCT FROM authorization_row.bundle_version
+        OR bundle_reference->>'sourceVersion' IS DISTINCT FROM authorization_row.bundle_source_version
+        OR bundle_reference->>'sourceFence' IS DISTINCT FROM authorization_row.bundle_source_fence
+        OR bundle_reference->>'linearization' IS DISTINCT FROM authorization_row.bundle_linearization
         OR tuple_value->'authorityEvidenceBundle' IS DISTINCT FROM
-            convert_from(authorization.authority_evidence_bundle, 'UTF8')::JSONB
-        OR authorization.redemption_reference_fingerprint IS DISTINCT FROM
-            authorization.authorization_reference_fingerprint
-        OR authorization.redemption_authority_evidence_bundle IS DISTINCT FROM
-            authorization.authority_evidence_bundle
-        OR capture.pre_authorization_tuple IS DISTINCT FROM authorization.pre_authorization_tuple
+            convert_from(authorization_row.authority_evidence_bundle, 'UTF8')::JSONB
+        OR authorization_row.redemption_reference_fingerprint IS DISTINCT FROM
+            authorization_row.authorization_reference_fingerprint
+        OR authorization_row.redemption_authority_evidence_bundle IS DISTINCT FROM
+            authorization_row.authority_evidence_bundle
+        OR capture.pre_authorization_tuple IS DISTINCT FROM authorization_row.pre_authorization_tuple
         OR capture.account_uuid IS DISTINCT FROM (tuple_value->'actor'->>'accountId')::UUID
         OR capture.tenant_uuid IS DISTINCT FROM NEW.canonical_tenant_id
         OR capture.target_owner IS DISTINCT FROM tuple_value->'targetOwner'->>'ownerService'
-        OR capture.mutation_digest IS DISTINCT FROM authorization.mutation_digest
-        OR capture.reservation_owner_id IS DISTINCT FROM authorization.reservation_owner_id
-        OR capture.reservation_claim_fence IS DISTINCT FROM authorization.reservation_claim_fence
-        OR capture.issuance_fence IS DISTINCT FROM authorization.issuance_fence
+        OR capture.mutation_digest IS DISTINCT FROM authorization_row.mutation_digest
+        OR capture.reservation_owner_id IS DISTINCT FROM authorization_row.reservation_owner_id
+        OR capture.reservation_claim_fence IS DISTINCT FROM authorization_row.reservation_claim_fence
+        OR capture.issuance_fence IS DISTINCT FROM authorization_row.issuance_fence
         OR capture.source_version::TEXT IS DISTINCT FROM bundle_reference->>'sourceVersion'
         OR capture.source_fence::TEXT IS DISTINCT FROM bundle_reference->>'sourceFence'
         OR capture.linearization IS DISTINCT FROM bundle_reference->>'linearization'

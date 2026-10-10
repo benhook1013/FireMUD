@@ -1,7 +1,9 @@
 package net.firedevops.firemud.common.world;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import io.grpc.ManagedChannelBuilder;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import net.firedevops.firemud.common.config.ServiceEndpointsProperties;
@@ -12,6 +14,27 @@ import org.junit.jupiter.api.io.TempDir;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 class WorldStartSessionExecutionTerminalReadClientTest {
+  @Test
+  void clientReceiveLimitIncludesTheCompleteCanonicalTerminalEnvelope(@TempDir Path directory)
+      throws Exception {
+    var client =
+        new WorldStartSessionExecutionTerminalReadClient(
+            new ServiceEndpointsProperties(),
+            fileBacked(directory),
+            new GrpcChannelFactory(),
+            "world-runtime");
+    // No connection is made: this verifies stub configuration, not authenticated socket proof.
+    var channel = ManagedChannelBuilder.forTarget("localhost:1").usePlaintext().build();
+    try {
+      assertThat(client.buildStub(channel).getCallOptions().getMaxInboundMessageSize())
+          .isEqualTo(WorldStartSessionExecutionTerminalReadGrpcCodec.MAX_RESPONSE_BYTES)
+          .isGreaterThan(WorldStartSessionExecutionTerminal.MAX_CANONICAL_BYTES);
+    } finally {
+      channel.shutdownNow();
+      client.close();
+    }
+  }
+
   @Test
   void requiresFileBackedMtlsInitializationAndAnIndependentCallerTransaction(
       @TempDir Path directory) throws Exception {

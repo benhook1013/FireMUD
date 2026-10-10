@@ -3,6 +3,7 @@ package net.firedevops.firemud.accountservice.service.session;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import io.grpc.Context;
 import io.lettuce.core.ClientOptions;
 import io.lettuce.core.RedisClient;
 import io.lettuce.core.RedisURI;
@@ -16,8 +17,11 @@ import java.util.Collection;
 import java.util.List;
 import java.util.UUID;
 import net.firedevops.firemud.accountservice.hostedterms.AccountHostedTermsService.CapturedEnvironmentBoundary;
+import net.firedevops.firemud.accountservice.service.session.AccountSelectedOwnerIntakeSourceReservationRepository.Recovery;
+import net.firedevops.firemud.common.account.sourceintake.SelectedOwnerIntakeSourceReadScope;
 import net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding;
+import net.firedevops.firemud.common.authoring.DraftCommitBinding.Owner;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
 import net.firedevops.firemud.common.publication.AccountPublicationAuthorizationBinding;
 import net.firedevops.firemud.common.publication.AuthoredDraftPublishSelectionBinding;
@@ -218,6 +222,71 @@ public final class AccountControlUiOriginalOrderFixture implements AutoCloseable
 
   AccountControlUiCoordination coordination() {
     return coordination;
+  }
+
+  /**
+   * Invokes the real preliminary reservation owner with the existing creator and current Account
+   * environment. The Game Design peer context is stipulated by this direct fixture call; this does
+   * not prove authenticated transport.
+   */
+  public SelectedOwnerIntakeSourceReadScope reserveSelectedOwnerSourceRead(
+      UUID intakeRequestId, Owner owner, DraftCommitBinding selected, String namespace) {
+    requireOriginalCreator();
+    var service = selectedOwnerSourceReservationService(namespace);
+    return asStipulatedGameDesignPeer(
+        namespace,
+        () ->
+            service.reserveSourceRead(
+                originalCreator.compact(),
+                intakeRequestId,
+                owner,
+                selected,
+                originalCreator.environment()));
+  }
+
+  /** Exact historical recovery of one preliminary source reservation. */
+  public Recovery recoverSelectedOwnerSourceRead(
+      SelectedOwnerIntakeSourceReadScope scope, String namespace) {
+    var service = selectedOwnerSourceReservationService(namespace);
+    return asStipulatedGameDesignPeer(namespace, () -> service.recover(scope));
+  }
+
+  /** Definitively aborts only the supplied preliminary source reservation. */
+  public Recovery abortSelectedOwnerSourceRead(
+      SelectedOwnerIntakeSourceReadScope scope, String namespace) {
+    var service = selectedOwnerSourceReservationService(namespace);
+    return asStipulatedGameDesignPeer(namespace, () -> service.abortSourceRead(scope));
+  }
+
+  private AccountSelectedOwnerIntakeSourceReservationService selectedOwnerSourceReservationService(
+      String namespace) {
+    return new AccountSelectedOwnerIntakeSourceReservationService(
+        actors,
+        f.fences,
+        new AccountSelectedOwnerIntakeSourceReservationRepository(f.dsl),
+        f.manager,
+        namespace);
+  }
+
+  private void requireOriginalCreator() {
+    if (originalCreator == null) {
+      throw new IllegalStateException(
+          "Prepare the original Draft order before reserving selected-owner source reads");
+    }
+  }
+
+  private static <T> T asStipulatedGameDesignPeer(
+      String namespace, java.util.function.Supplier<T> action) {
+    var identity =
+        GrpcPeerIdentity.parseUri("spiffe://firemud/ns/" + namespace + "/sa/game-design-service")
+            .orElseThrow();
+    Context context = Context.current().withValue(GrpcPeerIdentity.CONTEXT_KEY, identity);
+    Context previous = context.attach();
+    try {
+      return action.get();
+    } finally {
+      context.detach(previous);
+    }
   }
 
   /** Real unregistered Account producer, with Account-internal environment capture. */

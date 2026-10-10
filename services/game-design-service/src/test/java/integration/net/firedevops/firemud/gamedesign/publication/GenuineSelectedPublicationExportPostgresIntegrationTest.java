@@ -745,6 +745,87 @@ class GenuineSelectedPublicationExportPostgresIntegrationTest {
                     .sources()
                     .tx(() -> accountAccess.sources().fences.readSettlement(original)))
             .isEqualTo(DraftAuthorizationFenceRepository.Settlement.COMMITTED);
+
+        // Entity and Automation are later source readers, not members required by the original
+        // Draft's mutation participant vector. These are distinct Account reservations under the
+        // same current creator and exact already-settled selected Draft.
+        UUID entityIntakeRequest = UUID.randomUUID();
+        var entitySourceReservation =
+            account.reserveSelectedOwnerSourceRead(
+                entityIntakeRequest, Owner.ENTITY_MANAGEMENT, selectedCommit, NAMESPACE);
+        var entitySourceReservationRetry =
+            account.reserveSelectedOwnerSourceRead(
+                entityIntakeRequest, Owner.ENTITY_MANAGEMENT, selectedCommit, NAMESPACE);
+        assertThat(entitySourceReservation.owner()).isEqualTo(Owner.ENTITY_MANAGEMENT);
+        assertThat(entitySourceReservation.intakeRequestId()).isEqualTo(entityIntakeRequest);
+        assertThat(entitySourceReservation.selected().canonicalBytes())
+            .containsExactly(selectedCommit.canonicalBytes());
+        assertThat(entitySourceReservation.actorAccountId()).isEqualTo(original.actorAccountId());
+        assertThat(entitySourceReservation.operationId()).isNotEqualTo(original.operationId());
+        assertThat(entitySourceReservation.fenceId()).isNotEqualTo(original.fenceId());
+        assertThat(entitySourceReservationRetry.canonicalBytes())
+            .containsExactly(entitySourceReservation.canonicalBytes());
+        assertThat(
+                account.recoverSelectedOwnerSourceRead(entitySourceReservation, NAMESPACE).state())
+            .isEqualTo(AccountSelectedOwnerIntakeSourceReservationRepository.State.RESERVED);
+
+        UUID automationIntakeRequest = UUID.randomUUID();
+        var automationSourceReservation =
+            account.reserveSelectedOwnerSourceRead(
+                automationIntakeRequest, Owner.AUTOMATION_SCRIPTING, selectedCommit, NAMESPACE);
+        var automationSourceReservationRetry =
+            account.reserveSelectedOwnerSourceRead(
+                automationIntakeRequest, Owner.AUTOMATION_SCRIPTING, selectedCommit, NAMESPACE);
+        assertThat(automationSourceReservation.owner()).isEqualTo(Owner.AUTOMATION_SCRIPTING);
+        assertThat(automationSourceReservation.intakeRequestId())
+            .isEqualTo(automationIntakeRequest);
+        assertThat(automationSourceReservation.intakeRequestId())
+            .isNotEqualTo(entitySourceReservation.intakeRequestId());
+        assertThat(automationSourceReservation.selected().canonicalBytes())
+            .containsExactly(selectedCommit.canonicalBytes());
+        assertThat(automationSourceReservation.actorAccountId())
+            .isEqualTo(original.actorAccountId());
+        assertThat(automationSourceReservation.operationId())
+            .isNotEqualTo(original.operationId())
+            .isNotEqualTo(entitySourceReservation.operationId());
+        assertThat(automationSourceReservation.fenceId())
+            .isNotEqualTo(original.fenceId())
+            .isNotEqualTo(entitySourceReservation.fenceId());
+        assertThat(automationSourceReservationRetry.canonicalBytes())
+            .containsExactly(automationSourceReservation.canonicalBytes());
+        assertThat(
+                account
+                    .recoverSelectedOwnerSourceRead(automationSourceReservation, NAMESPACE)
+                    .state())
+            .isEqualTo(AccountSelectedOwnerIntakeSourceReservationRepository.State.RESERVED);
+
+        var expectedAccountSourceEvidence =
+            original.sources().stream()
+                .map(
+                    source ->
+                        source.key() + ":" + HexFormat.of().formatHex(source.canonicalBytes()))
+                .sorted()
+                .toList();
+        var accountSourceDsl = accountAccess.sources().dsl;
+        var entityReservationSourcesBeforeAbort =
+            selectedOwnerReservationSourceRows(
+                accountSourceDsl, entitySourceReservation.operationId());
+        var automationReservationSourcesBeforeAbort =
+            selectedOwnerReservationSourceRows(
+                accountSourceDsl, automationSourceReservation.operationId());
+        assertThat(entityReservationSourcesBeforeAbort)
+            .containsExactlyElementsOf(expectedAccountSourceEvidence);
+        assertThat(automationReservationSourcesBeforeAbort)
+            .containsExactlyElementsOf(expectedAccountSourceEvidence);
+        var accountReservationSourcesBeforeExport =
+            Map.of(
+                Owner.ENTITY_MANAGEMENT,
+                selectedOwnerReservationSourceRows(
+                    accountSourceDsl, entitySourceReservation.operationId()),
+                Owner.AUTOMATION_SCRIPTING,
+                selectedOwnerReservationSourceRows(
+                    accountSourceDsl, automationSourceReservation.operationId()));
+
         var appliedWorld =
             worldApplications.readCommitted(NAMESPACE, original.canonicalBytes()).orElseThrow();
         assertThat(appliedWorld.status()).isEqualTo("APPLIED");
@@ -767,14 +848,20 @@ class GenuineSelectedPublicationExportPostgresIntegrationTest {
         var ownerIntakeSourceRepository = new GameDesignSourceRepository(gd.dsl());
         var sourceRowsBeforeExport = selectedOwnerSourceRowCounts(gd.dsl());
         for (Owner owner : List.of(Owner.ENTITY_MANAGEMENT, Owner.AUTOMATION_SCRIPTING)) {
-          // This scope is only the export's integrity input. No Account authorization or owner
-          // retention receipt exists for these domains in this composed fixture.
-          var scope = selectedOwnerSourceScope(owner, selectedCommit);
+          // Account's real preliminary scope authorizes source-read participation only. The direct
+          // Game Design repository export below checks selected-source integrity, not authenticated
+          // transport, owner retention, settlement, or activation.
+          var scope =
+              owner == Owner.ENTITY_MANAGEMENT
+                  ? entitySourceReservation
+                  : automationSourceReservation;
           SelectedOwnerIntakeSourceExport exportedSource =
               ownerIntakeSourceRepository.requireSelectedOwnerIntakeSource(scope);
           SelectedOwnerIntakeSourceExport exactRetry =
               ownerIntakeSourceRepository.requireSelectedOwnerIntakeSource(scope);
 
+          assertThat(exportedSource.scope().canonicalBytes())
+              .containsExactly(scope.canonicalBytes());
           assertThat(exportedSource.scope().selected().canonicalBytes())
               .containsExactly(selectedCommit.canonicalBytes());
           assertThat(exportedSource.sources().command().binding()).isEqualTo(selectedCommit);
@@ -788,6 +875,34 @@ class GenuineSelectedPublicationExportPostgresIntegrationTest {
           assertThat(exactRetry.canonicalBytes()).containsExactly(exportedSource.canonicalBytes());
           assertThat(exactRetry.digest()).isEqualTo(exportedSource.digest());
         }
+        assertThat(
+                selectedOwnerReservationSourceRows(
+                    accountSourceDsl, entitySourceReservation.operationId()))
+            .containsExactlyElementsOf(
+                accountReservationSourcesBeforeExport.get(Owner.ENTITY_MANAGEMENT));
+        assertThat(
+                selectedOwnerReservationSourceRows(
+                    accountSourceDsl, automationSourceReservation.operationId()))
+            .containsExactlyElementsOf(
+                accountReservationSourcesBeforeExport.get(Owner.AUTOMATION_SCRIPTING));
+        assertThat(account.abortSelectedOwnerSourceRead(entitySourceReservation, NAMESPACE).state())
+            .isEqualTo(AccountSelectedOwnerIntakeSourceReservationRepository.State.ABORTED);
+        assertThat(
+                account.recoverSelectedOwnerSourceRead(entitySourceReservation, NAMESPACE).state())
+            .isEqualTo(AccountSelectedOwnerIntakeSourceReservationRepository.State.ABORTED);
+        assertThat(
+                account
+                    .recoverSelectedOwnerSourceRead(automationSourceReservation, NAMESPACE)
+                    .state())
+            .isEqualTo(AccountSelectedOwnerIntakeSourceReservationRepository.State.RESERVED);
+        assertThat(
+                selectedOwnerReservationSourceRows(
+                    accountSourceDsl, entitySourceReservation.operationId()))
+            .containsExactlyElementsOf(entityReservationSourcesBeforeAbort);
+        assertThat(
+                selectedOwnerReservationSourceRows(
+                    accountSourceDsl, automationSourceReservation.operationId()))
+            .containsExactlyElementsOf(automationReservationSourcesBeforeAbort);
         var wrongTarget =
             new TargetProof(
                 gd.target().canonicalTenantId(),
@@ -2139,6 +2254,19 @@ class GenuineSelectedPublicationExportPostgresIntegrationTest {
         dsl.fetchCount(DSL.table("game_design_branding_source_snapshot")),
         "template-config",
         dsl.fetchCount(DSL.table("game_design_template_config_source_snapshot")));
+  }
+
+  private static List<String> selectedOwnerReservationSourceRows(DSLContext dsl, UUID operationId) {
+    return dsl.fetch(
+            "SELECT source_key, source_evidence "
+                + "FROM account_selected_owner_intake_source_read_sources "
+                + "WHERE operation_id = ? ORDER BY source_key",
+            operationId)
+        .map(
+            row ->
+                row.get("source_key", String.class)
+                    + ":"
+                    + HexFormat.of().formatHex(row.get("source_evidence", byte[].class)));
   }
 
   private static Store serviceStore(PostgreSQLContainer<?> postgres, String service) {
