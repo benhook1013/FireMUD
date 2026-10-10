@@ -777,7 +777,7 @@ class AccountJwtReadinessStoragePostgresIntegrationTest {
         .satisfies(
             failure ->
                 assertThat(postgresConstraint(failure))
-                    .isEqualTo("account_jwt_signer_promotion_immutable"));
+                    .isEqualTo("account_jwt_signer_operation_immutable"));
 
     AccountJwtSignerDesiredStateRepository restartedDesired =
         new AccountJwtSignerDesiredStateRepository(context.dsl());
