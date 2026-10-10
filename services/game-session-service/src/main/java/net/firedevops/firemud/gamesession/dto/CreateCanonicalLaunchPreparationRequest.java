@@ -54,6 +54,10 @@ public record CreateCanonicalLaunchPreparationRequest(
         requestedScriptPatchVersionPresent,
         requestedScriptPatchVersion,
         "requestedScriptPatchVersion");
+    if (requestedScriptPatchVersionPresent && requestedScriptPatchVersion.isBlank()) {
+      throw new IllegalArgumentException(
+          "requestedScriptPatchVersion must be nonblank when present");
+    }
     requireOptional(sourceVersionIdPresent, sourceVersionId, "sourceVersionId");
     if (sourceVersionIdPresent && sourceVersionId <= 0L) {
       throw new IllegalArgumentException("sourceVersionId must be positive when present");

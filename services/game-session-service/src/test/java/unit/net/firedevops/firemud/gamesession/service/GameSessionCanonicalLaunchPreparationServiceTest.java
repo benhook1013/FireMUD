@@ -492,7 +492,7 @@ class GameSessionCanonicalLaunchPreparationServiceTest {
             SOURCE_INTAKE_OPERATION,
             71,
             true,
-            "", // Present-empty remains distinct from absence.
+            "patch-v1",
             false,
             null,
             false,
@@ -678,7 +678,7 @@ class GameSessionCanonicalLaunchPreparationServiceTest {
     IntakeReceipt intake = intake(source);
     CanonicalRealmCatalogSnapshot catalog = catalog(intake);
     AuthoredWorldLaunchDescriptorEvidence absentDescriptor = descriptor(absent, catalog, source);
-    CreateCanonicalLaunchPreparationRequest presentEmpty =
+    CreateCanonicalLaunchPreparationRequest present =
         new CreateCanonicalLaunchPreparationRequest(
             CONTROL_PLANE_REQUEST,
             ACTOR,
@@ -690,22 +690,21 @@ class GameSessionCanonicalLaunchPreparationServiceTest {
             SOURCE_INTAKE_OPERATION,
             71,
             true,
-            "",
+            "patch-v1",
             false,
             null,
             false,
             null,
             false,
             null);
-    AuthoredWorldLaunchDescriptorEvidence presentEmptyDescriptor =
-        descriptor(presentEmpty, catalog, source);
+    AuthoredWorldLaunchDescriptorEvidence presentDescriptor = descriptor(present, catalog, source);
 
     assertThat(
             GameSessionCanonicalLaunchPreparationRepository.requestDigest(
                 absent, catalog, intake, absentDescriptor))
         .isNotEqualTo(
             GameSessionCanonicalLaunchPreparationRepository.requestDigest(
-                presentEmpty, catalog, intake, presentEmptyDescriptor));
+                present, catalog, intake, presentDescriptor));
 
     CanonicalRealmCatalogSnapshot changedCatalogPayload =
         new CanonicalRealmCatalogSnapshot(
@@ -732,6 +731,44 @@ class GameSessionCanonicalLaunchPreparationServiceTest {
         .isNotEqualTo(
             GameSessionCanonicalLaunchPreparationRepository.requestDigest(
                 absent, catalog, intake, absentDescriptor));
+  }
+
+  @Test
+  void presentScriptPatchIdentifierMustBeNonblank() {
+    assertThatThrownBy(() -> requestWithScriptPatch(null))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("presence does not match its value");
+    assertThatThrownBy(() -> requestWithScriptPatch(""))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("must be nonblank when present");
+    assertThatThrownBy(() -> requestWithScriptPatch(" \t\n"))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("must be nonblank when present");
+
+    assertThat(requestWithScriptPatch("patch-v1").requestedScriptPatchVersion())
+        .isEqualTo("patch-v1");
+    assertThat(request().requestedScriptPatchVersionPresent()).isFalse();
+  }
+
+  private static CreateCanonicalLaunchPreparationRequest requestWithScriptPatch(String patch) {
+    return new CreateCanonicalLaunchPreparationRequest(
+        CONTROL_PLANE_REQUEST,
+        ACTOR,
+        NAMESPACE,
+        TENANT,
+        REALM,
+        CATALOG_REQUEST,
+        1,
+        SOURCE_INTAKE_OPERATION,
+        71,
+        true,
+        patch,
+        false,
+        null,
+        false,
+        null,
+        false,
+        null);
   }
 
   private GameSessionCanonicalLaunchPreparationService authorizedService() {
