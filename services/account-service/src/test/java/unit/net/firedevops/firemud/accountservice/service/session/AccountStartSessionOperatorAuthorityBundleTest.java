@@ -8,9 +8,11 @@ import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
+import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
+import java.util.Base64;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -27,25 +29,38 @@ class AccountStartSessionOperatorAuthorityBundleTest {
   private static final Instant ISSUED_AT = Instant.parse("2026-10-08T11:00:00Z");
 
   @Test
-  void encodesExactHumanTenantArmAndKeepsOwnerLinearizationSeparate() {
+  void encodesClosedHumanTenantArmAndBindsCaptureReferenceSeparatelyFromAccountFence() {
     Fixture fixture = new Fixture(Map.of());
-    var linearization = new AccountControlUiIssuanceRepository.OwnerLinearization("123456", 99L);
+    var capture = fixture.capture();
     var bundle =
         AccountStartSessionOperatorAuthorityBundle.create(
             fixture.tuple,
-            fixture.source,
+            capture,
             fixture.issuance,
             UUID.randomUUID(),
-            linearization,
             ISSUED_AT,
             ISSUED_AT.plusSeconds(60));
     Map<String, Object> evidence = object(bundle.jsonValue().get("issuanceEvidence"));
-    var reference = bundle.referenceForSource(fixture.source, linearization);
+    var reference = bundle.referenceForCapture(capture);
 
     assertThat(bundle.jsonValue())
         .containsEntry("bundleVersion", "authorityEvidenceBundle/v1")
         .containsEntry("issuanceKind", "human_operator")
-        .doesNotContainKey("sourceReference");
+        .containsEntry("issuanceFence", Long.toString(fixture.source.issuanceFence()))
+        .doesNotContainKeys("sourceReference", "captureReference");
+    assertThat(object(bundle.jsonValue().get("accountProjectionEvidence")))
+        .containsEntry("evaluatedAt", ISSUED_AT.toString());
+    assertThat(bundle.jsonValue().keySet())
+        .containsExactlyInAnyOrder(
+            "bundleVersion",
+            "authorityScope",
+            "accountProjectionEvidence",
+            "issuanceOperationIdentity",
+            "issuanceKind",
+            "authorityTuple",
+            "membershipVersion",
+            "issuanceFence",
+            "issuanceEvidence");
     assertThat(evidence)
         .containsEntry("evidenceType", "HumanAuthorityEvidence/v1")
         .containsEntry("actorAccountId", fixture.actorId.toString())
@@ -63,8 +78,12 @@ class AccountStartSessionOperatorAuthorityBundleTest {
     assertThat(reference.asJsonValue())
         .containsEntry("bundleVersion", "authorityEvidenceBundle/v1")
         .containsEntry("sourceVersion", "7")
-        .containsEntry("sourceFence", "99")
+        .containsEntry("sourceFence", "31")
         .containsEntry("linearization", "123456");
+    assertThat(reference.sourceFence()).isNotEqualTo(Long.toString(fixture.source.issuanceFence()));
+    assertThat(new String(capture.snapshotBytes(), StandardCharsets.UTF_8))
+        .contains("\"issuanceFence\":\"70\"")
+        .contains("\"issuanceFenceSourceVersion\":\"107\"");
 
     var decoded = AccountStartSessionOperatorAuthorityBundle.decode(bundle.canonicalBytes());
     decoded.requireTupleBinding(fixture.tuple);
@@ -124,14 +143,13 @@ class AccountStartSessionOperatorAuthorityBundleTest {
   @Test
   void currentSourceMustRetainExactActorGenerationAndSelectedTenant() {
     Fixture fixture = new Fixture(Map.of());
-    var linearization = new AccountControlUiIssuanceRepository.OwnerLinearization("123456", 99L);
+    var capture = fixture.capture();
     var bundle =
         AccountStartSessionOperatorAuthorityBundle.create(
             fixture.tuple,
-            fixture.source,
+            capture,
             fixture.issuance,
             UUID.randomUUID(),
-            linearization,
             ISSUED_AT,
             ISSUED_AT.plusSeconds(60));
     var substitutedSource =
@@ -143,7 +161,7 @@ class AccountStartSessionOperatorAuthorityBundleTest {
                     substitutedSource,
                     fixture.issuance,
                     fixture.tuple,
-                    bundle.referenceForSource(fixture.source, linearization),
+                    bundle.referenceForCapture(capture),
                     ISSUED_AT.plusSeconds(1)))
         .isInstanceOf(IllegalStateException.class);
   }
@@ -193,17 +211,16 @@ class AccountStartSessionOperatorAuthorityBundleTest {
   @Test
   void sameAttemptReplayAfterEnvelopeHorizonRetainsOriginalSourceLinearization() {
     Fixture fixture = new Fixture(Map.of());
-    var linearization = new AccountControlUiIssuanceRepository.OwnerLinearization("123456", 99L);
+    var capture = fixture.capture();
     var bundle =
         AccountStartSessionOperatorAuthorityBundle.create(
             fixture.tuple,
-            fixture.source,
+            capture,
             fixture.issuance,
             UUID.randomUUID(),
-            linearization,
             ISSUED_AT,
             ISSUED_AT.plusSeconds(60));
-    var originalReference = bundle.referenceForSource(fixture.source, linearization);
+    var originalReference = bundle.referenceForCapture(capture);
 
     bundle.requireCurrentSnapshotForExactReplay(
         fixture.source, fixture.issuance, fixture.tuple, originalReference);
@@ -257,6 +274,7 @@ class AccountStartSessionOperatorAuthorityBundleTest {
         tuple(actorId, tenantId, "request-" + UUID.randomUUID());
     final AccountControlUiAuthority.Snapshot source;
     final AccountControlUiIssuanceRepository.Stored issuance;
+    final UUID reservationOwnerId = UUID.randomUUID();
 
     Fixture(Map<String, Object> additionalClaims) {
       source = source(actorId, tenantId, 7L, new byte[] {7}, 1L);
@@ -265,13 +283,55 @@ class AccountStartSessionOperatorAuthorityBundleTest {
 
     AccountStartSessionOperatorAuthorityBundle create() {
       return AccountStartSessionOperatorAuthorityBundle.create(
-          tuple,
-          source,
-          issuance,
-          UUID.randomUUID(),
-          new AccountControlUiIssuanceRepository.OwnerLinearization("123456", 99L),
-          ISSUED_AT,
-          ISSUED_AT.plusSeconds(60));
+          tuple, capture(), issuance, UUID.randomUUID(), ISSUED_AT, ISSUED_AT.plusSeconds(60));
+    }
+
+    AccountStartSessionAuthorityCapture capture() {
+      byte[] signerReceipt = issuance.signerReceipt.clone();
+      Map<String, Object> snapshot =
+          Map.ofEntries(
+              Map.entry("schema", "account-start-session-authority-snapshot/v1"),
+              Map.entry("controlPlaneRequestId", tuple.controlPlaneRequestId()),
+              Map.entry(
+                  "preAuthorizationTuple",
+                  Base64.getEncoder()
+                      .encodeToString(tuple.canonicalJson().getBytes(StandardCharsets.UTF_8))),
+              Map.entry("mutationDigest", tuple.mutationDigest()),
+              Map.entry("accountId", actorId.toString()),
+              Map.entry("tenantId", tenantId.toString()),
+              Map.entry("targetOwner", tuple.targetOwner()),
+              Map.entry("loggingWorkloadUri", "spiffe://firemud/ns/test/sa/logging-admin-service"),
+              Map.entry("reservationOwnerId", reservationOwnerId.toString()),
+              Map.entry("reservationClaimFence", "3"),
+              Map.entry("controlUiOperationId", issuance.operationId.toString()),
+              Map.entry("controlUiTokenJti", issuance.jti.toString()),
+              Map.entry("controlUiTokenHash", issuance.tokenHash),
+              Map.entry(
+                  "controlUiSignerReceipt", Base64.getEncoder().encodeToString(signerReceipt)),
+              Map.entry("controlUiSignerReceiptSha256", sha256(signerReceipt)),
+              Map.entry(
+                  "sourceVectorEvidence", Base64.getEncoder().encodeToString(source.evidence())),
+              Map.entry(
+                  "sourceVector",
+                  source.sources().stream()
+                      .map(
+                          evidence -> Base64.getEncoder().encodeToString(evidence.canonicalBytes()))
+                      .toList()),
+              Map.entry("outboxCheckpoints", source.outboxCheckpoints()),
+              Map.entry("authorityTuple", source.authorityTuple()),
+              Map.entry("membershipVersion", source.membershipVersion()),
+              Map.entry("accountIdentitySource", source.accountIdentitySource()),
+              Map.entry("issuanceFence", Long.toString(source.issuanceFence())),
+              Map.entry(
+                  "issuanceFenceSourceVersion",
+                  Long.toString(source.issuanceFenceSourceVersion())));
+      return AccountStartSessionAuthorityCapture.create(
+          tuple.controlPlaneRequestId(),
+          7L,
+          31L,
+          "123456",
+          "2026-10-08T11:00:00.000Z",
+          AccountControlUiAuthority.canonical(snapshot));
     }
 
     AccountControlUiAuthority.Snapshot source(
@@ -293,7 +353,13 @@ class AccountStartSessionOperatorAuthorityBundleTest {
       when(snapshot.tenant()).thenReturn(tenant);
       when(snapshot.authorityTuple()).thenReturn(authorityTuple);
       when(snapshot.membershipVersion()).thenReturn(Map.of(tenant.toString(), 2L));
+      when(snapshot.issuanceFence()).thenReturn(sourceVersion * 10L);
+      when(snapshot.issuanceFenceSourceVersion()).thenReturn(sourceVersion + 100L);
       when(snapshot.evidence()).thenReturn(evidence.clone());
+      when(snapshot.outboxCheckpoints())
+          .thenReturn(List.of(Map.of("stream", "account", "sequence", 1L)));
+      when(snapshot.accountIdentitySource())
+          .thenReturn(Map.of("accountId", actor.toString(), "sourceVersion", sourceVersion));
       when(snapshot.sources())
           .thenReturn(
               List.of(
@@ -306,6 +372,15 @@ class AccountStartSessionOperatorAuthorityBundleTest {
                       null,
                       evidence)));
       return snapshot;
+    }
+  }
+
+  private static String sha256(byte[] value) {
+    try {
+      return java.util.HexFormat.of()
+          .formatHex(java.security.MessageDigest.getInstance("SHA-256").digest(value));
+    } catch (java.security.NoSuchAlgorithmException unavailable) {
+      throw new IllegalStateException(unavailable);
     }
   }
 

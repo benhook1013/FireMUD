@@ -243,6 +243,24 @@ class StartSessionOperatorAuthorizationGrpcServiceTest {
   }
 
   @Test
+  void exactOriginalGameSessionRedeemerMayReadCredentialFreeProjection() {
+    byte[] tupleBytes = canonicalTupleBytes();
+    when(ownerService.readRedeemedOperationProjection(any()))
+        .thenReturn(redeemedOperationProjection(tupleBytes));
+
+    TestObserver<ReadRedeemedOperationProjectionResponse> observer =
+        callReadProjection(readProjectionRequest(tupleBytes), GAME_SESSION_URI);
+
+    assertThat(observer.failure).isNull();
+    assertThat(observer.completed).isTrue();
+    assertThat(observer.value.getAuthenticatedRedeemerWorkloadIdentity())
+        .isEqualTo(GAME_SESSION_URI);
+    assertThat(observer.value.getCanonicalPreAuthorizationTupleBytes().toByteArray())
+        .containsExactly(tupleBytes);
+    verify(ownerService).readRedeemedOperationProjection(any());
+  }
+
+  @Test
   void deniesWrongPeerBeforeParsingAndRejectsMalformedProjectionRead() {
     ReadRedeemedOperationProjectionRequest malformed =
         readProjectionRequest(new byte[] {(byte) 0xc3, 0x28});
@@ -250,7 +268,7 @@ class StartSessionOperatorAuthorizationGrpcServiceTest {
         new String[] {
           null,
           "spiffe://firemud/ns/other/sa/game-design-service",
-          GAME_SESSION_URI,
+          "spiffe://firemud/ns/other/sa/game-session-service",
           LOGGING_URI,
           ACCOUNT_URI
         }) {
