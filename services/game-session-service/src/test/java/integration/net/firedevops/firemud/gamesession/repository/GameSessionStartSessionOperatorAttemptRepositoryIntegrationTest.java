@@ -27,6 +27,7 @@ import net.firedevops.firemud.common.operator.StartSessionAuthorityEvidenceBundl
 import net.firedevops.firemud.common.operator.StartSessionOperatorAction;
 import net.firedevops.firemud.common.operator.StartSessionPostAuthorizationExecutionTuple;
 import net.firedevops.firemud.common.operator.StartSessionPreAuthorizationReservationTuple;
+import net.firedevops.firemud.gamesession.repository.CanonicalGameplayBindingRuntimeTestFixtures;
 import net.firedevops.firemud.gamesession.repository.GameSessionStartSessionLaunchDescriptorRepository;
 import net.firedevops.firemud.gamesession.repository.GameSessionStartSessionLaunchDescriptorRepository.PinnedLaunchDescriptorSnapshot;
 import net.firedevops.firemud.gamesession.repository.GameSessionStartSessionOperatorAttemptRepository;
@@ -76,6 +77,141 @@ class GameSessionStartSessionOperatorAttemptRepositoryIntegrationTest {
   @Container
   static PostgreSQLContainer<?> postgres =
       new PostgreSQLContainer<>(TestContainerImages.postgres());
+
+  @Test
+  void v34_3BaselineUpgradePreservesLegitimateEvidenceAndCreatesContinuationConstraints() {
+    String schema = "gs_original_claim_upgrade_" + UUID.randomUUID().toString().replace("-", "");
+    DriverManagerDataSource dataSource = dataSourceForSchema(schema);
+    try {
+      Flyway.configure()
+          .dataSource(dataSource)
+          .schemas(schema)
+          .defaultSchema(schema)
+          .table("flyway_schema_history")
+          .locations(MIGRATION_LOCATION)
+          .target("34.3")
+          .load()
+          .migrate();
+
+      DSLContext dsl =
+          DSL.using(new TransactionAwareDataSourceProxy(dataSource), SQLDialect.POSTGRES);
+      var target = CanonicalGameplayBindingRuntimeTestFixtures.seedRunningLaunch(dsl);
+      String catalogEvidenceBefore =
+          dsl.fetch(
+                  "SELECT md5(to_jsonb(catalog)::text) FROM game_session_canonical_realm_catalog catalog"
+                      + " WHERE target_namespace = ? AND canonical_tenant_id = ?",
+                  target.targetNamespace(),
+                  target.canonicalTenantId())
+              .get(0)
+              .get(0, String.class);
+      String launchEvidenceBefore =
+          dsl.fetch(
+                  "SELECT md5(to_jsonb(launch)::text) FROM game_session_canonical_instance_launch launch"
+                      + " WHERE target_namespace = ? AND control_plane_request_id = ?",
+                  target.targetNamespace(),
+                  target.controlPlaneRequestId())
+              .get(0)
+              .get(0, String.class);
+      assertThat(catalogEvidenceBefore).isNotBlank();
+      assertThat(launchEvidenceBefore).isNotBlank();
+      assertThat(dsl.fetchCount(DSL.table(DSL.name("gameplay_admission_pointer")))).isZero();
+      assertThat(
+              dsl.fetch(
+                      "SELECT version FROM flyway_schema_history WHERE success"
+                          + " ORDER BY installed_rank DESC LIMIT 1")
+                  .get(0)
+                  .get(0, String.class))
+          .isEqualTo("34.3");
+
+      Flyway.configure()
+          .dataSource(dataSource)
+          .schemas(schema)
+          .defaultSchema(schema)
+          .table("flyway_schema_history")
+          .locations(MIGRATION_LOCATION)
+          .load()
+          .migrate();
+
+      assertThat(
+              dsl.fetch(
+                      "SELECT version FROM flyway_schema_history"
+                          + " WHERE success AND version IN ('35', '37', '38')"
+                          + " ORDER BY installed_rank")
+                  .getValues("version", String.class))
+          .containsExactly("35", "37", "38");
+      assertThat(
+              dsl.fetch(
+                      "SELECT md5(to_jsonb(catalog)::text) FROM game_session_canonical_realm_catalog catalog"
+                          + " WHERE target_namespace = ? AND canonical_tenant_id = ?",
+                      target.targetNamespace(),
+                      target.canonicalTenantId())
+                  .get(0)
+                  .get(0, String.class))
+          .isEqualTo(catalogEvidenceBefore);
+      assertThat(
+              dsl.fetch(
+                      "SELECT md5(to_jsonb(launch)::text) FROM game_session_canonical_instance_launch launch"
+                          + " WHERE target_namespace = ? AND control_plane_request_id = ?",
+                      target.targetNamespace(),
+                      target.controlPlaneRequestId())
+                  .get(0)
+                  .get(0, String.class))
+          .isEqualTo(launchEvidenceBefore);
+
+      assertConstraintsReady(
+          dsl,
+          "game_session_start_session_operator_attempt",
+          "chk_gs_start_session_operator_attempt_identity",
+          "chk_gs_start_session_operator_attempt_pending",
+          "chk_gs_start_session_operator_attempt_tuple",
+          "pk_gs_start_session_operator_attempt",
+          "uq_gs_start_session_operator_attempt_id",
+          "uq_gs_start_session_operator_fence",
+          "uq_gs_start_session_operator_mutation_id");
+      assertConstraintsReady(
+          dsl,
+          "game_session_start_session_template_association_pin",
+          "chk_gs_start_session_template_association_evidence",
+          "chk_gs_start_session_template_association_identity",
+          "fk_gs_start_session_template_association_attempt",
+          "pk_gs_start_session_template_association_pin",
+          "uq_gs_start_session_template_association_attempt");
+      assertConstraintsReady(
+          dsl,
+          "game_session_start_session_launch_descriptor_pin",
+          "chk_gs_start_session_launch_descriptor_evidence",
+          "chk_gs_start_session_launch_descriptor_identity",
+          "fk_gs_start_session_launch_descriptor_association",
+          "pk_gs_start_session_launch_descriptor_pin",
+          "uq_gs_start_session_launch_descriptor_attempt");
+      assertEnabledTriggers(
+          dsl,
+          "game_session_start_session_operator_attempt",
+          "game_session_start_session_operator_attempt_immutable",
+          "game_session_start_session_operator_attempt_no_truncate");
+      assertEnabledTriggers(
+          dsl,
+          "game_session_start_session_template_association_pin",
+          "gs_start_session_template_association_pin_immutable",
+          "gs_start_session_template_association_pin_no_truncate");
+      assertEnabledTriggers(
+          dsl,
+          "game_session_start_session_launch_descriptor_pin",
+          "gs_start_session_launch_descriptor_pin_immutable",
+          "gs_start_session_launch_descriptor_pin_no_truncate");
+      assertUniqueIndex(dsl, "uq_gs_start_session_operator_attempt_pin_binding");
+      assertUniqueIndex(dsl, "uq_gs_start_session_template_association_pin_binding");
+      assertThat(
+              dsl.fetch(
+                  "SELECT 1 FROM information_schema.sequences"
+                      + " WHERE sequence_schema = current_schema()"
+                      + " AND sequence_name = ?",
+                  "game_session_start_session_operator_owner_fence_seq"))
+          .hasSize(1);
+    } finally {
+      dropSchema(schema);
+    }
+  }
 
   @Test
   void oneConcurrentClaimWinsAndExactReplayReturnsOnlyTheOriginalSnapshot() throws Exception {
@@ -796,6 +932,69 @@ class GameSessionStartSessionOperatorAttemptRepositoryIntegrationTest {
   private static StartSessionAuthorityEvidenceBundle.BundleReference reference(String version) {
     return new StartSessionAuthorityEvidenceBundle.BundleReference(
         StartSessionAuthorityEvidenceBundle.BUNDLE_VERSION, version, "23", "18446744073709551615");
+  }
+
+  private static DriverManagerDataSource dataSourceForSchema(String schema) {
+    DriverManagerDataSource dataSource = new DriverManagerDataSource();
+    dataSource.setDriverClassName("org.postgresql.Driver");
+    dataSource.setUrl(postgres.getJdbcUrl());
+    dataSource.setUsername(postgres.getUsername());
+    dataSource.setPassword(postgres.getPassword());
+    dataSource.setSchema(schema);
+    return dataSource;
+  }
+
+  private static void assertConstraintsReady(
+      DSLContext dsl, String tableName, String... expectedConstraintNames) {
+    List<String> actualConstraintNames =
+        dsl.fetch(
+                "SELECT constraint_row.conname FROM pg_constraint constraint_row"
+                    + " JOIN pg_class relation ON relation.oid = constraint_row.conrelid"
+                    + " JOIN pg_namespace namespace ON namespace.oid = relation.relnamespace"
+                    + " WHERE namespace.nspname = current_schema() AND relation.relname = ?"
+                    + " AND constraint_row.contype IN ('c', 'p', 'u', 'f')"
+                    + " AND constraint_row.convalidated"
+                    + " ORDER BY constraint_row.conname",
+                tableName)
+            .getValues("conname", String.class);
+    assertThat(actualConstraintNames).containsExactlyInAnyOrder(expectedConstraintNames);
+  }
+
+  private static void assertEnabledTriggers(
+      DSLContext dsl, String tableName, String... expectedTriggerNames) {
+    List<String> actualTriggerNames =
+        dsl.fetch(
+                "SELECT trigger_row.tgname FROM pg_trigger trigger_row"
+                    + " JOIN pg_class relation ON relation.oid = trigger_row.tgrelid"
+                    + " JOIN pg_namespace namespace ON namespace.oid = relation.relnamespace"
+                    + " WHERE namespace.nspname = current_schema() AND relation.relname = ?"
+                    + " AND NOT trigger_row.tgisinternal AND trigger_row.tgenabled = 'O'"
+                    + " ORDER BY trigger_row.tgname",
+                tableName)
+            .getValues("tgname", String.class);
+    assertThat(actualTriggerNames).containsExactlyInAnyOrder(expectedTriggerNames);
+  }
+
+  private static void assertUniqueIndex(DSLContext dsl, String indexName) {
+    String indexDefinition =
+        dsl.fetch(
+                "SELECT indexdef FROM pg_indexes WHERE schemaname = current_schema() AND indexname = ?",
+                indexName)
+            .get(0)
+            .get("indexdef", String.class);
+    assertThat(indexDefinition).startsWith("CREATE UNIQUE INDEX");
+  }
+
+  private static void dropSchema(String schema) {
+    try (var connection =
+            java.sql.DriverManager.getConnection(
+                postgres.getJdbcUrl(), postgres.getUsername(), postgres.getPassword());
+        var statement = connection.createStatement()) {
+      statement.execute("DROP SCHEMA IF EXISTS \"" + schema + "\" CASCADE");
+    } catch (java.sql.SQLException failure) {
+      throw new IllegalStateException(
+          "Failed to dispose StartSession upgrade-test schema", failure);
+    }
   }
 
   private static Fixture fixture(Duration claimLease) {
