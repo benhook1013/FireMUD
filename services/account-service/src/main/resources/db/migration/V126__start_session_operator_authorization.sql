@@ -67,7 +67,7 @@ CREATE TABLE account_start_session_operator_authorizations (
             AND redemption_owner_attempt_id <> '00000000-0000-0000-0000-000000000000'::UUID
             AND redemption_owner_fence IS NOT NULL
             AND redeemed_at IS NOT NULL
-            AND redeemed_at > issued_at
+            AND redeemed_at >= issued_at
             AND redeemed_at < reference_expires_at
             AND redemption_reference_fingerprint = authorization_reference_fingerprint
             AND redemption_authority_evidence_bundle = authority_evidence_bundle)
