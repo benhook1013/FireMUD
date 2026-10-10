@@ -419,7 +419,7 @@ public final class CanonicalGameInstanceLaunchAssociationRepository {
       throw new IllegalStateException(
           "Original StartSession descriptor or association pin differs from the STARTING binding");
     }
-    return new OriginalStartSessionAssociation(association, ownerAttemptId, ownerFence);
+    return new OriginalStartSessionAssociation(association, tuple, ownerAttemptId, ownerFence);
   }
 
   private static Result decodeAssociationPin(
@@ -1242,11 +1242,24 @@ public final class CanonicalGameInstanceLaunchAssociationRepository {
 
   /** Owner-derived association readback; deliberately not an AttemptClaim or continuation token. */
   public record OriginalStartSessionAssociation(
-      CanonicalGameInstanceLaunchAssociation association, UUID ownerAttemptId, long ownerFence) {
+      CanonicalGameInstanceLaunchAssociation association,
+      StartSessionPostAuthorizationExecutionTuple postAuthorizationExecutionTuple,
+      UUID ownerAttemptId,
+      long ownerFence) {
     public OriginalStartSessionAssociation {
       Objects.requireNonNull(association, "association");
+      Objects.requireNonNull(postAuthorizationExecutionTuple, "postAuthorizationExecutionTuple");
       requireNonNil(ownerAttemptId, "ownerAttemptId");
       requirePositive(ownerFence, "ownerFence");
+      var scope = postAuthorizationExecutionTuple.preAuthorizationTuple().action().scope();
+      if (!association.targetNamespace().equals(scope.targetNamespace())
+          || !association.canonicalTenantId().equals(scope.tenantId())
+          || !association
+              .controlPlaneRequestId()
+              .equals(postAuthorizationExecutionTuple.controlPlaneRequestId())) {
+        throw new IllegalArgumentException(
+            "Original StartSession tuple differs from its retained association scope");
+      }
     }
   }
 

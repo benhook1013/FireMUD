@@ -38,15 +38,19 @@ import net.firedevops.firemud.common.grpc.CommonGrpcClientProperties;
 import net.firedevops.firemud.common.grpc.GrpcChannelFactory;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentityInterceptor;
+import net.firedevops.firemud.common.testing.AuthoringFixtures;
 import net.firedevops.firemud.common.world.WorldCanonicalInitialAdmissionHold;
 import net.firedevops.firemud.common.world.WorldCanonicalInitialAdmissionHold.HoldIdentity;
 import net.firedevops.firemud.common.world.WorldCanonicalInitialAdmissionHold.InitialAdmissionOrigin;
 import net.firedevops.firemud.common.world.WorldCanonicalInitialAdmissionHold.Request;
+import net.firedevops.firemud.common.world.WorldCanonicalInitialAdmissionHoldState;
 import net.firedevops.firemud.common.world.WorldCanonicalInstanceLifecycleEvidence;
 import net.firedevops.firemud.worldmanagement.v1.AcquireCanonicalInitialAdmissionHoldRequest;
 import net.firedevops.firemud.worldmanagement.v1.AcquireCanonicalInitialAdmissionHoldResponse;
 import net.firedevops.firemud.worldmanagement.v1.ReadCanonicalInitialAdmissionHoldIdentityRequest;
 import net.firedevops.firemud.worldmanagement.v1.ReadCanonicalInitialAdmissionHoldIdentityResponse;
+import net.firedevops.firemud.worldmanagement.v1.ReadCanonicalInitialAdmissionHoldStateRequest;
+import net.firedevops.firemud.worldmanagement.v1.ReadCanonicalInitialAdmissionHoldStateResponse;
 import net.firedevops.firemud.worldmanagement.v1.WorldCanonicalInitialAdmissionHoldServiceGrpc;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeAll;
@@ -54,7 +58,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 
-/** Physical mTLS proof for the opt-in Game Session to World hold identity client. */
+/** Physical mTLS proof for the opt-in Game Session to World hold identity and state client. */
 class WorldCanonicalInitialAdmissionHoldClientTest {
   private static final String NAMESPACE = "test";
   private static final String WORLD_URI = "spiffe://firemud/ns/test/sa/world-management-service";
@@ -82,6 +86,7 @@ class WorldCanonicalInitialAdmissionHoldClientTest {
   private AtomicReference<String> receivedPeerUri;
   private AtomicReference<AcquireCanonicalInitialAdmissionHoldRequest> receivedAcquire;
   private AtomicReference<ReadCanonicalInitialAdmissionHoldIdentityRequest> receivedRead;
+  private AtomicReference<ReadCanonicalInitialAdmissionHoldStateRequest> receivedStateRead;
 
   @BeforeAll
   static void createTrustedWorkloadCertificates() throws Exception {
@@ -194,15 +199,30 @@ class WorldCanonicalInitialAdmissionHoldClientTest {
   void requiresExplicitInitializationConfiguredNamespaceMatchingAndNoAmbientTransaction()
       throws Exception {
     Request request = request();
+    HoldIdentity identity = new HoldIdentity(request, HOLD_ID, HOLD_FENCE);
     client = newClientPropertiesOnly();
 
     assertThatThrownBy(() -> client.acquire(request, lifecycleRequest()))
         .isInstanceOf(IllegalStateException.class)
         .hasMessageContaining("not initialized and available");
+    assertThatThrownBy(() -> client.readState(identity, lifecycleRequest()))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("not initialized and available");
     assertThatThrownBy(() -> client.readIdentity(request("other")))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("configured workload namespace");
+    assertThatThrownBy(() -> client.readState(identity, lifecycleRequest("other")))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("exact initial-admission target");
     assertThatThrownBy(() -> client.acquire(request, lifecycleRequest("other")))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("exact initial-admission target");
+    assertThatThrownBy(
+            () ->
+                client.readState(
+                    identity,
+                    lifecycleRequest(
+                        NAMESPACE, true, uuid("99999999-9999-4999-8999-999999999999"))))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("exact initial-admission target");
     assertThatThrownBy(() -> lifecycleRequest(NAMESPACE, false))
@@ -213,15 +233,176 @@ class WorldCanonicalInitialAdmissionHoldClientTest {
     assertThatThrownBy(() -> client.readIdentity(request))
         .isInstanceOf(IllegalStateException.class)
         .hasMessageContaining("no ambient owner transaction");
+    assertThatThrownBy(() -> client.readState(identity, lifecycleRequest()))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("no ambient owner transaction");
+  }
+
+  @Test
+  void stateReadSendsExactIdentityAndLifecycleReadTupleAndRejectsMalformedOwnerBytes()
+      throws Exception {
+    Request request = request();
+    HoldIdentity identity = new HoldIdentity(request, HOLD_ID, HOLD_FENCE);
+    WorldCanonicalInstanceLifecycleEvidence.Request lifecycle = lifecycleRequest();
+    startServer(pki.worldServer(), ResponseMode.MALFORMED_STATE, request);
+    client = newClient(server);
+    client.init();
+
+    assertThatThrownBy(() -> client.readState(identity, lifecycle))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("invalid canonical initial-admission hold state");
+
+    assertThat(applicationCalls).hasValue(1);
+    assertThat(serverCallStarts).hasValue(1);
+    assertThat(receivedPeerUri).hasValue(GAME_SESSION_URI);
+    assertThat(receivedStateRead.get().getReadRequestId())
+        .isEqualTo(lifecycle.readRequestId().toString());
+    assertThat(receivedStateRead.get().getHoldIdentityBytes().toByteArray())
+        .containsExactly(identity.canonicalBytes());
+    assertThat(
+            WorldCanonicalInstanceLifecycleEvidence.Request.fromStored(
+                receivedStateRead.get().getCanonicalLifecycleReadRequestBytes().toByteArray()))
+        .isEqualTo(lifecycle);
+  }
+
+  @Test
+  void stateReadReturnsEveryTypedOwnerStateOverPhysicalMtlsWithoutInferringAdmission()
+      throws Exception {
+    WorldCanonicalInstanceLifecycleEvidence lifecycle =
+        AuthoringFixtures.lifecycleEvidence("ACTIVE", 7L);
+    Request request = stateHoldRequest(lifecycle);
+    HoldIdentity identity = new HoldIdentity(request, HOLD_ID, HOLD_FENCE);
+
+    for (WorldCanonicalInitialAdmissionHoldState.HoldStatus status :
+        List.of(
+            WorldCanonicalInitialAdmissionHoldState.HoldStatus.PENDING,
+            WorldCanonicalInitialAdmissionHoldState.HoldStatus.RECONCILIATION_REQUIRED,
+            WorldCanonicalInitialAdmissionHoldState.HoldStatus.COMMITTED,
+            WorldCanonicalInitialAdmissionHoldState.HoldStatus.ABORTED)) {
+      WorldCanonicalInitialAdmissionHoldState expected =
+          new WorldCanonicalInitialAdmissionHoldState(identity, status, lifecycle);
+      startServer(pki.worldServer(), ResponseMode.EXACT, request, expected.canonicalBytes());
+      client = newClient(server);
+      client.init();
+
+      WorldCanonicalInitialAdmissionHoldState observed =
+          client.readState(identity, lifecycle.request());
+
+      assertThat(observed).isEqualTo(expected);
+      assertThat(observed.isPendingAtExpectedActiveEpoch())
+          .isEqualTo(status == WorldCanonicalInitialAdmissionHoldState.HoldStatus.PENDING);
+      assertThat(applicationCalls).hasValue(1);
+      assertThat(serverCallStarts).hasValue(1);
+      assertThat(receivedPeerUri).hasValue(GAME_SESSION_URI);
+      assertThat(receivedStateRead.get().getReadRequestId())
+          .isEqualTo(lifecycle.request().readRequestId().toString());
+      assertThat(receivedStateRead.get().getHoldIdentityBytes().toByteArray())
+          .containsExactly(identity.canonicalBytes());
+      assertThat(receivedStateRead.get().getCanonicalLifecycleReadRequestBytes().toByteArray())
+          .containsExactly(lifecycle.request().canonicalBytes());
+      stopTransport();
+    }
+  }
+
+  @Test
+  void stateReadRejectsAlteredIdentityLifecycleRequestAndNoncanonicalState() throws Exception {
+    WorldCanonicalInstanceLifecycleEvidence lifecycle =
+        AuthoringFixtures.lifecycleEvidence("ACTIVE", 7L);
+    Request request = stateHoldRequest(lifecycle);
+    HoldIdentity identity = new HoldIdentity(request, HOLD_ID, HOLD_FENCE);
+    var status = WorldCanonicalInitialAdmissionHoldState.HoldStatus.PENDING;
+
+    var alteredIdentity =
+        new HoldIdentity(request, HOLD_ID, uuid("dddddddd-dddd-4ddd-8ddd-dddddddddddd"));
+    var identityMismatch =
+        new WorldCanonicalInitialAdmissionHoldState(alteredIdentity, status, lifecycle);
+    startServer(pki.worldServer(), ResponseMode.EXACT, request, identityMismatch.canonicalBytes());
+    client = newClient(server);
+    client.init();
+    assertThatThrownBy(() -> client.readState(identity, lifecycle.request()))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("invalid canonical initial-admission hold state");
+    stopTransport();
+
+    var alteredLifecycle =
+        withReadRequestId(lifecycle, uuid("ffffffff-ffff-4fff-8fff-ffffffffffff"));
+    var lifecycleMismatch =
+        new WorldCanonicalInitialAdmissionHoldState(identity, status, alteredLifecycle);
+    startServer(pki.worldServer(), ResponseMode.EXACT, request, lifecycleMismatch.canonicalBytes());
+    client = newClient(server);
+    client.init();
+    assertThatThrownBy(() -> client.readState(identity, lifecycle.request()))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("invalid canonical initial-admission hold state");
+    stopTransport();
+
+    byte[] noncanonical =
+        (new String(
+                    new WorldCanonicalInitialAdmissionHoldState(identity, status, lifecycle)
+                        .canonicalBytes(),
+                    StandardCharsets.UTF_8)
+                + " ")
+            .getBytes(StandardCharsets.UTF_8);
+    startServer(pki.worldServer(), ResponseMode.EXACT, request, noncanonical);
+    client = newClient(server);
+    client.init();
+    assertThatThrownBy(() -> client.readState(identity, lifecycle.request()))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("invalid canonical initial-admission hold state");
+  }
+
+  @Test
+  void stateReadRejectsWrongPeerCorrelationAndUnknownResponseFieldsBeforeAcceptingState()
+      throws Exception {
+    Request request = request();
+    HoldIdentity identity = new HoldIdentity(request, HOLD_ID, HOLD_FENCE);
+    WorldCanonicalInstanceLifecycleEvidence.Request lifecycle = lifecycleRequest();
+
+    startServer(pki.wrongWorldServer(), ResponseMode.EMPTY_STATE, request);
+    client = newClient(server);
+    client.init();
+    assertThatThrownBy(() -> client.readState(identity, lifecycle))
+        .isInstanceOf(StatusRuntimeException.class)
+        .satisfies(
+            failure ->
+                assertThat(Status.fromThrowable(failure).getCode())
+                    .isEqualTo(Status.Code.UNAUTHENTICATED));
+    assertThat(serverCallStarts).hasValue(0);
+    assertThat(applicationCalls).hasValue(0);
+    stopTransport();
+
+    startServer(pki.worldServer(), ResponseMode.WRONG_READ_REQUEST_ID, request);
+    client = newClient(server);
+    client.init();
+    assertThatThrownBy(() -> client.readState(identity, lifecycle))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("invalid canonical initial-admission hold state");
+    assertThat(applicationCalls).hasValue(1);
+    stopTransport();
+
+    startServer(pki.worldServer(), ResponseMode.UNKNOWN_RESPONSE_FIELD, request);
+    client = newClient(server);
+    client.init();
+    assertThatThrownBy(() -> client.readState(identity, lifecycle))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("invalid canonical initial-admission hold state");
+    assertThat(applicationCalls).hasValue(1);
   }
 
   private void startServer(TestIdentity identity, ResponseMode mode, Request expectedRequest)
+      throws Exception {
+    startServer(identity, mode, expectedRequest, null);
+  }
+
+  private void startServer(
+      TestIdentity identity, ResponseMode mode, Request expectedRequest, byte[] holdStateBytes)
       throws Exception {
     applicationCalls = new AtomicInteger();
     serverCallStarts = new AtomicInteger();
     receivedPeerUri = new AtomicReference<>();
     receivedAcquire = new AtomicReference<>();
     receivedRead = new AtomicReference<>();
+    receivedStateRead = new AtomicReference<>();
     var service =
         new WorldCanonicalInitialAdmissionHoldServiceGrpc
             .WorldCanonicalInitialAdmissionHoldServiceImplBase() {
@@ -258,6 +439,31 @@ class WorldCanonicalInitialAdmissionHoldClientTest {
                             : request.getReadRequestId());
             responseIdentity(expectedRequest, mode)
                 .ifPresent(bytes -> response.setHoldIdentityBytes(ByteString.copyFrom(bytes)));
+            if (mode == ResponseMode.UNKNOWN_RESPONSE_FIELD) {
+              response.setUnknownFields(unknownFields());
+            }
+            observer.onNext(response.build());
+            observer.onCompleted();
+          }
+
+          @Override
+          public void readCanonicalInitialAdmissionHoldState(
+              ReadCanonicalInitialAdmissionHoldStateRequest request,
+              StreamObserver<ReadCanonicalInitialAdmissionHoldStateResponse> observer) {
+            applicationCalls.incrementAndGet();
+            capturePeer();
+            receivedStateRead.set(request);
+            ReadCanonicalInitialAdmissionHoldStateResponse.Builder response =
+                ReadCanonicalInitialAdmissionHoldStateResponse.newBuilder()
+                    .setReadRequestId(
+                        mode == ResponseMode.WRONG_READ_REQUEST_ID
+                            ? uuid("ffffffff-ffff-4fff-8fff-ffffffffffff").toString()
+                            : request.getReadRequestId());
+            if (mode == ResponseMode.MALFORMED_STATE) {
+              response.setHoldStateBytes(ByteString.copyFrom(new byte[] {0x01, 0x02, 0x03}));
+            } else if (holdStateBytes != null) {
+              response.setHoldStateBytes(ByteString.copyFrom(holdStateBytes));
+            }
             if (mode == ResponseMode.UNKNOWN_RESPONSE_FIELD) {
               response.setUnknownFields(unknownFields());
             }
@@ -350,6 +556,58 @@ class WorldCanonicalInitialAdmissionHoldClientTest {
         null);
   }
 
+  private static Request stateHoldRequest(WorldCanonicalInstanceLifecycleEvidence lifecycle) {
+    var request = lifecycle.request();
+    return new Request(
+        request.targetNamespace(),
+        request.canonicalTenantId(),
+        request.worldSlug(),
+        REALM,
+        request.playableStateNamespaceId(),
+        request.playableStateScope(),
+        request.canonicalGameInstanceId(),
+        request.canonicalVersionId(),
+        lifecycle.lifecycleEpoch(),
+        REQUEST_ID,
+        REQUEST_DIGEST,
+        InitialAdmissionOrigin.NO_PRIOR_POINTER,
+        12L,
+        null);
+  }
+
+  private static WorldCanonicalInstanceLifecycleEvidence withReadRequestId(
+      WorldCanonicalInstanceLifecycleEvidence lifecycle, UUID readRequestId) {
+    var source = lifecycle.request();
+    var alteredRequest =
+        new WorldCanonicalInstanceLifecycleEvidence.Request(
+            source.schemaVersion(),
+            readRequestId,
+            source.targetNamespace(),
+            source.canonicalTenantId(),
+            source.worldSlug(),
+            source.canonicalGameInstanceId(),
+            source.playableStateNamespaceId(),
+            source.playableStateScope(),
+            source.publicProduction(),
+            source.controlPlaneRequestId(),
+            source.canonicalVersionId(),
+            source.expectedDescriptorRequestDigest(),
+            source.expectedDescriptorResultDigest(),
+            source.expectedReleaseAttestationDigest());
+    return new WorldCanonicalInstanceLifecycleEvidence(
+        alteredRequest,
+        lifecycle.launchBinding(),
+        lifecycle.startLocation(),
+        lifecycle.runtimeRoomInstanceId(),
+        lifecycle.lifecycleStatus(),
+        lifecycle.lifecycleEpoch(),
+        lifecycle.rowVersion(),
+        lifecycle.captureId(),
+        lifecycle.graphSha256(),
+        lifecycle.preparationInputDigest(),
+        lifecycle.operationalRegionAssignments());
+  }
+
   private static WorldCanonicalInstanceLifecycleEvidence.Request lifecycleRequest() {
     return lifecycleRequest(NAMESPACE, true);
   }
@@ -361,13 +619,18 @@ class WorldCanonicalInitialAdmissionHoldClientTest {
 
   private static WorldCanonicalInstanceLifecycleEvidence.Request lifecycleRequest(
       String namespace, boolean publicProduction) {
+    return lifecycleRequest(namespace, publicProduction, GAME_INSTANCE);
+  }
+
+  private static WorldCanonicalInstanceLifecycleEvidence.Request lifecycleRequest(
+      String namespace, boolean publicProduction, UUID gameInstanceId) {
     return new WorldCanonicalInstanceLifecycleEvidence.Request(
         WorldCanonicalInstanceLifecycleEvidence.Request.SCHEMA_VERSION,
         uuid("cccccccc-cccc-4ccc-8ccc-cccccccccccc"),
         namespace,
         TENANT,
         "green-hollow",
-        GAME_INSTANCE,
+        gameInstanceId,
         PLAYABLE_NAMESPACE,
         "SHARED",
         publicProduction,
@@ -384,6 +647,8 @@ class WorldCanonicalInitialAdmissionHoldClientTest {
 
   private enum ResponseMode {
     EXACT,
+    EMPTY_STATE,
+    MALFORMED_STATE,
     EMPTY_IDENTITY,
     UNKNOWN_RESPONSE_FIELD,
     WRONG_READ_REQUEST_ID,

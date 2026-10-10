@@ -12,6 +12,7 @@ import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.time.Duration;
 import java.time.Instant;
+import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.Base64;
 import java.util.HexFormat;
@@ -119,7 +120,8 @@ class GameSessionStartSessionTemplateAssociationRepositoryIntegrationTest {
   private static final ObjectMapper JSON = new ObjectMapper();
   private static final String MIGRATION_LOCATION =
       "filesystem:" + Path.of("src/main/resources/db/migration").toAbsolutePath().normalize();
-  private static final Instant AUTHORITY_REFERENCE_TIME = Instant.now();
+  private static final Instant AUTHORITY_REFERENCE_TIME =
+      Instant.now().truncatedTo(ChronoUnit.MILLIS);
   private static final Instant AUTHORITY_EVALUATED_AT = AUTHORITY_REFERENCE_TIME.minusSeconds(60L);
   private static final Instant AUTHORITY_EXPIRES_AT =
       AUTHORITY_REFERENCE_TIME.plus(Duration.ofHours(1));

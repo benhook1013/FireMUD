@@ -157,6 +157,67 @@ class CanonicalInitialAdmissionRepositoryIntegrationTest {
                     .get(0, Long.class)))
         .isZero();
 
+    UUID mismatchedGameInstance = uuid(998);
+    assertThatThrownBy(
+            () ->
+                fixture.dsl.execute(
+                    "INSERT INTO gameplay_admission_pointer_event ("
+                        + "world_slug, realm_slug, world_display_name, realm_display_name, tenant_id, "
+                        + "game_instance_id, pointer_version, visible, requires_character_selection, "
+                        + "state_scope, character_creation_policy, actor_principal, reason, "
+                        + "control_plane_request_id, occurred_at, prepared_version_upgrade_id, "
+                        + "public_production_realm, catalog_revision, realm_id, "
+                        + "playable_state_namespace_id, representation_version, target_namespace, "
+                        + "canonical_tenant_id, admission_state, canonical_game_instance_id, "
+                        + "canonical_version_id, runtime_version_id, initial_admission_request_id, "
+                        + "initial_admission_request_digest, initial_admission_origin_kind, "
+                        + "initial_admission_prior_pointer_version, initial_admission_active_epoch, "
+                        + "initial_admission_hold_id, initial_admission_hold_fence, "
+                        + "initial_admission_hold_binding_digest) "
+                        + "SELECT attempt.world_slug, catalog.realm_slug, catalog.source_world_display_name, "
+                        + "catalog.realm_display_name, attempt.game_session_tenant_id, attempt.game_instance_id, "
+                        + "CASE WHEN attempt.origin_kind = 'NO_PRIOR_POINTER' THEN 1 "
+                        + "ELSE attempt.expected_prior_pointer_version + 1 END, catalog.visible, NULL, "
+                        + "attempt.playable_state_scope, catalog.character_creation_policy, "
+                        + "'game-session-canonical-initial-admission', 'World-held initial admission', "
+                        + "attempt.initial_admission_request_id, CURRENT_TIMESTAMP, NULL, "
+                        + "catalog.public_production, attempt.expected_catalog_revision, attempt.realm_id, "
+                        + "attempt.playable_state_namespace_id, 3, attempt.target_namespace, "
+                        + "attempt.canonical_tenant_id, 'OPEN', ?, attempt.canonical_version_id, "
+                        + "attempt.runtime_version_id, attempt.initial_admission_request_id, "
+                        + "attempt.request_digest, attempt.origin_kind, attempt.expected_prior_pointer_version, "
+                        + "attempt.active_lifecycle_epoch, attempt.hold_id, attempt.hold_fence, "
+                        + "attempt.hold_binding_digest "
+                        + "FROM game_session_canonical_initial_admission_attempt attempt "
+                        + "JOIN game_session_canonical_realm_catalog catalog "
+                        + "ON catalog.target_namespace = attempt.target_namespace "
+                        + "AND catalog.canonical_tenant_id = attempt.canonical_tenant_id "
+                        + "AND catalog.realm_id = attempt.realm_id "
+                        + "AND catalog.catalog_revision = attempt.expected_catalog_revision "
+                        + "JOIN game_session_canonical_instance_launch launch "
+                        + "ON launch.target_namespace = attempt.target_namespace "
+                        + "AND launch.canonical_tenant_id = attempt.canonical_tenant_id "
+                        + "AND launch.canonical_realm_id = attempt.realm_id "
+                        + "AND launch.game_session_tenant_id = attempt.game_session_tenant_id "
+                        + "AND launch.game_instance_id = attempt.game_instance_id "
+                        + "AND launch.game_instance_uuid = attempt.canonical_game_instance_id "
+                        + "AND launch.version_id = attempt.runtime_version_id "
+                        + "WHERE attempt.target_namespace = ? "
+                        + "AND attempt.initial_admission_request_id = ? AND attempt.status = 'PENDING'",
+                    mismatchedGameInstance,
+                    NAMESPACE,
+                    request.initialAdmissionRequestId()))
+        .hasMessageContaining("Numeric-only tenant scope cannot use a fresh source-bound key");
+    assertThat(
+            fixture.initialAdmissionRepository.read(NAMESPACE, request.initialAdmissionRequestId()))
+        .map(CanonicalInitialAdmissionOwnerProof::outcome)
+        .contains(CanonicalInitialAdmissionOwnerProof.Outcome.PENDING);
+    assertThat(
+            fixture.dsl.fetchCount(
+                DSL.table(DSL.name("gameplay_admission_pointer_event")),
+                DSL.field(DSL.name("representation_version"), Integer.class).eq(3)))
+        .isZero();
+
     fixture.transactions.execute(
         status -> {
           fixture.initialAdmissionRepository.commit(request, worldProof, null);

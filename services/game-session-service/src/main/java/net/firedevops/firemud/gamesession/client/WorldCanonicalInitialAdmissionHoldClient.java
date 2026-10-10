@@ -20,9 +20,11 @@ import net.firedevops.firemud.common.grpc.GrpcServerPeerIdentityClientIntercepto
 import net.firedevops.firemud.common.world.WorldCanonicalInitialAdmissionHold;
 import net.firedevops.firemud.common.world.WorldCanonicalInitialAdmissionHold.HoldIdentity;
 import net.firedevops.firemud.common.world.WorldCanonicalInitialAdmissionHold.Request;
+import net.firedevops.firemud.common.world.WorldCanonicalInitialAdmissionHoldState;
 import net.firedevops.firemud.common.world.WorldCanonicalInstanceLifecycleEvidence;
 import net.firedevops.firemud.worldmanagement.v1.AcquireCanonicalInitialAdmissionHoldRequest;
 import net.firedevops.firemud.worldmanagement.v1.ReadCanonicalInitialAdmissionHoldIdentityRequest;
+import net.firedevops.firemud.worldmanagement.v1.ReadCanonicalInitialAdmissionHoldStateRequest;
 import net.firedevops.firemud.worldmanagement.v1.WorldCanonicalInitialAdmissionHoldServiceGrpc;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 
@@ -131,6 +133,54 @@ public final class WorldCanonicalInitialAdmissionHoldClient
     }
   }
 
+  /**
+   * Reads one authenticated World snapshot for the exact immutable hold and lifecycle request. The
+   * returned state is observational only; it does not prove continuing protection or authorize an
+   * admission-pointer commit.
+   */
+  public WorldCanonicalInitialAdmissionHoldState readState(
+      HoldIdentity holdIdentity, WorldCanonicalInstanceLifecycleEvidence.Request lifecycleRequest) {
+    requireNoAmbientOwnerTransaction();
+    Objects.requireNonNull(holdIdentity, "holdIdentity");
+    Request holdRequest = holdIdentity.request();
+    requireConfiguredNamespace(holdRequest);
+    requireLifecycleStateReadRequestMatches(holdRequest, lifecycleRequest);
+
+    UUID readRequestId = lifecycleRequest.readRequestId();
+    var response =
+        requireStub()
+            .withDeadlineAfter(CALL_DEADLINE_SECONDS, TimeUnit.SECONDS)
+            .readCanonicalInitialAdmissionHoldState(
+                ReadCanonicalInitialAdmissionHoldStateRequest.newBuilder()
+                    .setReadRequestId(readRequestId.toString())
+                    .setHoldIdentityBytes(ByteString.copyFrom(holdIdentity.canonicalBytes()))
+                    .setCanonicalLifecycleReadRequestBytes(
+                        ByteString.copyFrom(lifecycleRequest.canonicalBytes()))
+                    .build());
+    try {
+      requireNoUnknownFields(response, "ReadCanonicalInitialAdmissionHoldStateResponse");
+      if (!readRequestId.toString().equals(response.getReadRequestId())) {
+        throw new IllegalArgumentException(
+            "World initial-admission state read changed its correlation UUID");
+      }
+      WorldCanonicalInitialAdmissionHoldState state =
+          WorldCanonicalInitialAdmissionHoldState.fromStored(
+              response.getHoldStateBytes().toByteArray());
+      if (!holdIdentity.equals(state.holdIdentity())) {
+        throw new IllegalArgumentException(
+            "World initial-admission state changed the exact immutable hold identity");
+      }
+      if (!lifecycleRequest.equals(state.lifecycleEvidence().request())) {
+        throw new IllegalArgumentException(
+            "World initial-admission state changed the complete lifecycle read request");
+      }
+      return state;
+    } catch (IllegalArgumentException invalid) {
+      throw new IllegalStateException(
+          "World returned invalid canonical initial-admission hold state", invalid);
+    }
+  }
+
   @Override
   protected String configuredTarget(ServiceEndpointsProperties endpoints) {
     return endpoints.getWorldManagementService();
@@ -185,6 +235,27 @@ public final class WorldCanonicalInitialAdmissionHoldClient
     if (!lifecycleRequest.publicProduction()) {
       throw new IllegalArgumentException(
           "World initial-admission hold acquisition requires public-production lifecycle evidence");
+    }
+    if (!workloadNamespace.equals(lifecycleRequest.targetNamespace())
+        || !holdRequest.canonicalTenantId().equals(lifecycleRequest.canonicalTenantId())
+        || !holdRequest.worldSlug().equals(lifecycleRequest.worldSlug())
+        || !holdRequest.canonicalGameInstanceId().equals(lifecycleRequest.canonicalGameInstanceId())
+        || !holdRequest
+            .playableStateNamespaceId()
+            .equals(lifecycleRequest.playableStateNamespaceId())
+        || !holdRequest.playableStateScope().equals(lifecycleRequest.playableStateScope())
+        || !holdRequest.canonicalVersionId().equals(lifecycleRequest.canonicalVersionId())) {
+      throw new IllegalArgumentException(
+          "World lifecycle request must bind the exact initial-admission target");
+    }
+  }
+
+  private void requireLifecycleStateReadRequestMatches(
+      Request holdRequest, WorldCanonicalInstanceLifecycleEvidence.Request lifecycleRequest) {
+    Objects.requireNonNull(lifecycleRequest, "lifecycleRequest");
+    if (!lifecycleRequest.publicProduction()) {
+      throw new IllegalArgumentException(
+          "World initial-admission hold-state reads require public-production lifecycle evidence");
     }
     if (!workloadNamespace.equals(lifecycleRequest.targetNamespace())
         || !holdRequest.canonicalTenantId().equals(lifecycleRequest.canonicalTenantId())

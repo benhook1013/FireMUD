@@ -7,6 +7,7 @@ import java.io.IOException;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.time.Instant;
+import java.time.temporal.ChronoUnit;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -428,7 +429,7 @@ class GameSessionStartSessionOperatorAttemptRepositoryIntegrationTest {
   void descriptorInsertRechecksOriginalReferenceExpiryAfterContinuationPrechecks()
       throws Exception {
     Fixture fixture = fixture(Duration.ofSeconds(30));
-    Instant authorityExpiresAt = Instant.now().plusSeconds(15);
+    Instant authorityExpiresAt = Instant.now().truncatedTo(ChronoUnit.MILLIS).plusSeconds(15);
     StartSessionPostAuthorizationExecutionTuple tuple =
         tuple(
             "operator-attempt-descriptor-reference-expired",

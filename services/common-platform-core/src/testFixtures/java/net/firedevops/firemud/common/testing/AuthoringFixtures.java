@@ -18,7 +18,12 @@ import net.firedevops.firemud.common.authoring.DraftCommitBinding.AffectedUnit;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding.RevisionPayload;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding.TargetProof;
 import net.firedevops.firemud.common.authoring.WorldDraftTerminalReadEvidence;
+import net.firedevops.firemud.common.gamedesign.AuthoredWorldLaunchDescriptorEvidence;
+import net.firedevops.firemud.common.gamedesign.AuthoredWorldReleaseAttestationEvidence;
+import net.firedevops.firemud.common.gamedesign.CompleteLaunchBindingEvidence;
 import net.firedevops.firemud.common.json.Rfc8785CanonicalJson;
+import net.firedevops.firemud.common.world.WorldCanonicalInstanceLifecycleEvidence;
+import net.firedevops.firemud.common.world.WorldDraftStartLocationEvidence;
 import net.firedevops.firemud.common.world.WorldPublishedStartLocationEvidence;
 import tools.jackson.databind.ObjectMapper;
 import tools.jackson.databind.node.ObjectNode;
@@ -97,6 +102,113 @@ public final class AuthoringFixtures {
         Base64.getDecoder().decode(applied.get("startLocationReceiptBase64").textValue());
     return new WorldPublishedStartLocationEvidence(
         request, receipt, committed.fullBinding(), committed.result());
+  }
+
+  public static WorldCanonicalInstanceLifecycleEvidence lifecycleEvidence(String status, long epoch)
+      throws Exception {
+    WorldPublishedStartLocationEvidence selector = startLocationEvidence();
+    var descriptorRequest =
+        new AuthoredWorldLaunchDescriptorEvidence.Request(
+            selector.request().targetNamespace(),
+            "world-lifecycle-control-request",
+            selector.request().canonicalTenantId(),
+            "synthetic-world",
+            uuid("dddddddd-dddd-4ddd-8ddd-dddddddddddd"),
+            "sha256:" + "a".repeat(64),
+            19L,
+            false,
+            null,
+            false,
+            null,
+            false,
+            null,
+            false,
+            null);
+    AuthoredWorldLaunchDescriptorEvidence descriptor =
+        AuthoredWorldLaunchDescriptorEvidence.create(
+            descriptorRequest,
+            "canonical-instance-launch-descriptor",
+            42L,
+            false,
+            null,
+            "{}",
+            "generation-revision",
+            9L,
+            7L,
+            "release-bundle",
+            false,
+            null);
+    List<AuthoredWorldReleaseAttestationEvidence.Participant> participants =
+        AuthoredWorldReleaseAttestationEvidence.requiredParticipantOrder().stream()
+            .map(
+                owner ->
+                    new AuthoredWorldReleaseAttestationEvidence.Participant(
+                        owner,
+                        Long.toString(descriptor.versionId()),
+                        false,
+                        null,
+                        selector.request().appliedCommitId(),
+                        selector.request().contentDigest(),
+                        AuthoredWorldReleaseAttestationEvidence.supportedParticipantDigestSchema(
+                            owner, AuthoredWorldReleaseAttestationEvidence.SELECTOR_SCHEMA_VERSION),
+                        "GAME_LOGIC".equals(owner),
+                        "GAME_LOGIC".equals(owner) ? "sha256:" + "c".repeat(64) : null))
+            .toList();
+    AuthoredWorldReleaseAttestationEvidence release =
+        AuthoredWorldReleaseAttestationEvidence.create(
+            descriptor.targetNamespace(),
+            descriptor.resultDigest(),
+            descriptor.canonicalTenantId(),
+            selector.request().canonicalVersionId(),
+            descriptor.worldSlug(),
+            descriptor.authoredWorldSourceOperationId(),
+            descriptor.authoredWorldSourceEvidenceDigest(),
+            descriptor.launchDescriptorId(),
+            descriptor.publishedReleaseBundleRef(),
+            descriptor.versionStateEpoch(),
+            selector.request().publishWorkflowId(),
+            selector.request().appliedCommitId(),
+            participants,
+            "sha256:" + "d".repeat(64),
+            1,
+            List.of(),
+            List.of(),
+            List.of(),
+            descriptor.generationConfigRevision(),
+            selector);
+    CompleteLaunchBindingEvidence binding = new CompleteLaunchBindingEvidence(descriptor, release);
+    WorldDraftStartLocationEvidence selectorReceipt =
+        WorldDraftStartLocationEvidence.fromStored(selector.selectorReceiptBytes());
+    var request =
+        new WorldCanonicalInstanceLifecycleEvidence.Request(
+            WorldCanonicalInstanceLifecycleEvidence.Request.SCHEMA_VERSION,
+            uuid("eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee"),
+            descriptor.targetNamespace(),
+            descriptor.canonicalTenantId(),
+            descriptor.worldSlug(),
+            uuid("11111111-1111-4111-8111-111111111111"),
+            uuid("22222222-2222-4222-8222-222222222222"),
+            "SHARED",
+            true,
+            descriptor.controlPlaneRequestId(),
+            release.canonicalVersionId(),
+            descriptor.requestDigest(),
+            descriptor.resultDigest(),
+            release.evidenceDigest());
+    return new WorldCanonicalInstanceLifecycleEvidence(
+        request,
+        binding,
+        selectorReceipt.startLocation(),
+        1042L,
+        status,
+        epoch,
+        0L,
+        uuid("33333333-3333-4333-8333-333333333333"),
+        selectorReceipt.graphDigest().substring("sha256:".length()),
+        "sha256:" + "e".repeat(64),
+        Map.of(
+            uuid("11111111-1111-4111-8111-111111111111"),
+            uuid("22222222-2222-4222-8222-222222222222")));
   }
 
   public static byte[] accountBinding(DraftCommitBinding draft) {
