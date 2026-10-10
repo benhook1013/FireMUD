@@ -84,6 +84,7 @@ import tools.jackson.databind.json.JsonMapper;
  */
 class AccountJwtReadinessStoragePostgresIntegrationTest {
   private static final String SCHEMA_PREFIX = "jwt_readiness_owner_storage";
+  private static final int BULK_READINESS_PLAN_HEADROOM_SECONDS = 300;
   private static final int DISPATCHED_RECOVERY_HEADROOM_SECONDS = 70;
   private static final int DISPATCHED_RECOVERY_EXPIRY_WAIT_SECONDS = 75;
   private static final AccountPostgresIntegrationFixture POSTGRES =
@@ -147,7 +148,7 @@ class AccountJwtReadinessStoragePostgresIntegrationTest {
         databaseNow
             - AccountJwtReadinessProbeRepository.MAX_VALIDATOR_CACHE_AGE_SECONDS
             - AccountJwtReadinessProbeRepository.PROBE_LIFETIME_SECONDS
-            + DISPATCHED_RECOVERY_HEADROOM_SECONDS;
+            + BULK_READINESS_PLAN_HEADROOM_SECONDS;
     Instant plannedAt = Instant.ofEpochSecond(plannedAtEpochSecond);
     InventorySnapshot inventory = completeInventorySnapshot(plannedAt, observationContext);
     inTransaction(
@@ -165,6 +166,17 @@ class AccountJwtReadinessStoragePostgresIntegrationTest {
                 });
     assertThat(planTemplate).isNotNull();
     assertThat(count(context, "account_jwt_readiness_probe_plans")).isZero();
+
+    assertReadinessInventoryClosureGuardRejectsMatrixMismatch(
+        context,
+        planTemplate,
+        readinessMatrixWithExtraValidator(planTemplate.applicabilityMatrixJson()),
+        "validator ID set differs from the canonical inventory snapshot");
+    assertReadinessInventoryClosureGuardRejectsMatrixMismatch(
+        context,
+        planTemplate,
+        readinessMatrixWithDifferentApplicableProfiles(planTemplate.applicabilityMatrixJson()),
+        "matching validator IDs have different applicable profile membership");
 
     ReadinessProbePlan legacyPlanTemplate =
         context
@@ -193,6 +205,244 @@ class AccountJwtReadinessStoragePostgresIntegrationTest {
             "validatorId",
             "productionProfiles",
             "applicableProfiles"));
+
+    ReadinessProbePlan canonicalPlan =
+        inTransaction(
+            context,
+            () -> owner.readiness().planCurrent(BINDING, owner.trust(), plannedAt, inventory));
+    assertThat(canonicalPlan.validatorInventoryComplete()).isTrue();
+    assertThat(count(context, "account_jwt_readiness_probe_plans")).isEqualTo(1L);
+    assertThat(count(context, "account_jwt_readiness_probe_entries")).isEqualTo(8L);
+    assertThat(count(context, "account_jwt_readiness_validator_pods")).isEqualTo(12L);
+  }
+
+  @Test
+  void recoversDispatchedReceiptBoundPromotionAfterReadinessPlanExpiry() throws Exception {
+    TestContext context = newTestContext(null);
+    OwnerState owner = createOwnerState(context);
+    ObservationContext observationContext =
+        inTransaction(
+            context,
+            () -> owner.readiness().readCurrentInventoryObservationContext(BINDING, owner.trust()));
+    long databaseNow = databaseNow(context);
+    long plannedAtEpochSecond =
+        databaseNow
+            - AccountJwtReadinessProbeRepository.MAX_VALIDATOR_CACHE_AGE_SECONDS
+            - AccountJwtReadinessProbeRepository.PROBE_LIFETIME_SECONDS
+            + DISPATCHED_RECOVERY_HEADROOM_SECONDS;
+    Instant plannedAt = Instant.ofEpochSecond(plannedAtEpochSecond);
+    InventorySnapshot inventory = completeInventorySnapshot(plannedAt, observationContext);
+    ReadinessProbePlan plan =
+        inTransaction(
+            context,
+            () -> owner.readiness().planCurrent(BINDING, owner.trust(), plannedAt, inventory));
+    assertThat(plan.expiresAtEpochSecond())
+        .isEqualTo(databaseNow + DISPATCHED_RECOVERY_HEADROOM_SECONDS);
+    assertThat(plan.entries()).hasSize(8);
+
+    Path privateMount = Files.createDirectory(tempDirectory.resolve("expiry-private-mount"));
+    Path publicMount = Files.createDirectory(tempDirectory.resolve("expiry-public-mount"));
+    Files.writeString(
+        privateMount.resolve("pending.key"),
+        privateBundleJson(owner.request(), owner.result(), owner.keyPair()));
+    Files.writeString(publicMount.resolve("jwks.json"), owner.desiredJwks());
+    var expectedIdentity =
+        new AccountMountedJwtSignerBundle.ExpectedIdentity(
+            BINDING.environmentId(),
+            BINDING.clusterId(),
+            BINDING.namespace(),
+            owner.result().operationId().toString(),
+            owner.result().targetGeneration(),
+            owner.result().targetKid(),
+            owner.result().publicKeyFingerprint());
+    assertThat(
+            completeRemainingProbes(
+                context, owner, plan, inventory, privateMount, publicMount, expectedIdentity))
+        .isEqualTo(12L);
+
+    var proof =
+        inTransaction(
+            context,
+            () ->
+                owner
+                    .readiness()
+                    .readCurrentPromotionPrerequisites(
+                        BINDING, owner.trust(), owner.result().operationId(), inventory)
+                    .orElseThrow());
+    assertThat(proof.verifiedProbes()).hasSize(plan.entries().size());
+    byte[] exactPreimage = proof.readinessEvidencePreimage();
+    assertThat(sha256(exactPreimage)).isEqualTo(proof.readinessEvidenceDigest());
+
+    var publicationEvidence = proof.publication();
+    PromotionPreparation preparation =
+        new PromotionPreparation(
+            proof.generationResult().operationId(),
+            proof.generationResult(),
+            new EnrollmentIdentity(
+                CLUSTER_UID,
+                NAMESPACE_UID,
+                TRUST_DIGEST,
+                TRUST_REVISION,
+                API_DIGEST,
+                API_REVISION,
+                CONFIG_MAP_UID,
+                INITIAL_CONFIG_MAP_RESOURCE_VERSION,
+                AccountJwtJwksPublicationRepository.snapshotDigest(INITIAL_CONFIG_MAP_DATA)),
+            API_DIGEST,
+            API_REVISION,
+            CONFIG_MAP_UID,
+            publicationEvidence.receipt().observedResourceVersion(),
+            publicationEvidence.intent().intentDigest(),
+            publicationEvidence.receipt().receiptDigest(),
+            publicationEvidence.mountedCorrespondence().observationDigest(),
+            proof.plan().planDigest(),
+            proof.readinessEvidenceDigest(),
+            publicationEvidence.intent().jwksJson());
+    var prepared =
+        inTransaction(
+            context,
+            () ->
+                owner
+                    .desired()
+                    .prepareCurrentGeneration(BINDING, owner.trust(), preparation, proof));
+    assertThat(prepared.status()).isEqualTo("PREPARED");
+
+    AccountJwtSignerDesiredStateRepository restartedDesired =
+        new AccountJwtSignerDesiredStateRepository(context.dsl());
+    AccountJwtJwksPublicationRepository restartedPublication =
+        new AccountJwtJwksPublicationRepository(context.dsl(), restartedDesired);
+    AccountJwtValidatorInventoryRepository restartedInventory =
+        new AccountJwtValidatorInventoryRepository(context.dsl());
+    AccountJwtReadinessProbeRepository restartedReadiness =
+        new AccountJwtReadinessProbeRepository(
+            context.dsl(), restartedDesired, restartedPublication, restartedInventory);
+    var restartedProof =
+        inTransaction(
+            context,
+            () ->
+                restartedReadiness
+                    .readPromotionProof(
+                        BINDING, owner.trust(), owner.result().operationId(), inventory)
+                    .orElseThrow());
+    assertThat(restartedProof.readinessEvidencePreimage()).isEqualTo(exactPreimage);
+    assertThat(databaseClockNow(context)).isLessThan(plan.expiresAtEpochSecond());
+    var dispatchedEvidence =
+        inTransaction(
+            context,
+            () -> restartedDesired.readAndMarkPreparedPromotionDispatched(BINDING, owner.trust()));
+    assertThat(dispatchedEvidence.promotion().privatePromotionDispatched()).isTrue();
+    var dispatchedProof =
+        inTransaction(
+            context,
+            () ->
+                restartedReadiness
+                    .readPromotionProof(BINDING, owner.trust(), owner.result().operationId())
+                    .orElseThrow());
+    assertThat(dispatchedProof.readinessEvidencePreimage()).isEqualTo(exactPreimage);
+    OwnerState restartedOwner =
+        new OwnerState(
+            restartedDesired,
+            restartedPublication,
+            restartedInventory,
+            restartedReadiness,
+            owner.trust(),
+            owner.request(),
+            owner.result(),
+            owner.keyPair(),
+            owner.desiredJwks());
+    assertThat(
+            inTransaction(
+                context,
+                () ->
+                    restartedOwner
+                        .desired()
+                        .prepareCurrentGeneration(
+                            BINDING, restartedOwner.trust(), preparation, dispatchedProof)))
+        .isEqualTo(prepared);
+
+    var dispatchedPromotion = dispatchedEvidence.promotion();
+    PrivatePromotionObservation privatePromotionObservation =
+        new PrivatePromotionObservation(
+            dispatchedPromotion.operationId(),
+            dispatchedPromotion.requestDigest(),
+            dispatchedPromotion.generationOperationId(),
+            dispatchedPromotion.generationOperationDigest(),
+            owner.result().secretUid(),
+            dispatchedPromotion.expectedPrivateResourceVersion(),
+            "14",
+            new PublicKeyIdentity(
+                dispatchedPromotion.targetGeneration(),
+                dispatchedPromotion.targetKid(),
+                dispatchedPromotion.targetPublicKeyFingerprint()),
+            Optional.empty(),
+            List.of("current"));
+    var privatePromotionReceipt =
+        inTransaction(
+            context,
+            () ->
+                restartedDesired.recordPrivatePromotionResult(
+                    BINDING, owner.trust(), privatePromotionObservation));
+    var activeJwksPromotionReceipt =
+        inTransaction(
+            context,
+            () ->
+                restartedDesired.recordActiveJwksPromotionResult(
+                    BINDING,
+                    owner.trust(),
+                    new ActiveJwksPromotionObservation(
+                        dispatchedPromotion.publicConfigMapUid(),
+                        dispatchedPromotion.expectedPublicResourceVersion(),
+                        "43",
+                        dispatchedPromotion.expectedPublicJwksJson(),
+                        dispatchedPromotion.expectedActiveMarkerJson())));
+    var receiptBoundPrepared =
+        inTransaction(
+            context,
+            () -> restartedDesired.readPreparedGenerationForRecovery(BINDING, owner.trust()));
+    assertThat(receiptBoundPrepared.promotion().privatePromotionReceiptDigest())
+        .contains(privatePromotionReceipt.receiptDigest());
+    assertThat(receiptBoundPrepared.promotion().activeJwksReceiptDigest())
+        .contains(activeJwksPromotionReceipt.receiptDigest());
+
+    awaitDatabaseClockAtOrAfter(context, plan.expiresAtEpochSecond());
+    assertThat(databaseClockNow(context)).isGreaterThanOrEqualTo(plan.expiresAtEpochSecond());
+    var expiredDispatchedProof =
+        inTransaction(
+            context,
+            () ->
+                restartedReadiness
+                    .readPromotionProof(BINDING, owner.trust(), owner.result().operationId())
+                    .orElseThrow());
+    assertThat(expiredDispatchedProof.plan().planDigest()).isEqualTo(plan.planDigest());
+    assertThat(expiredDispatchedProof.plan().expiresAtEpochSecond())
+        .isEqualTo(plan.expiresAtEpochSecond());
+    assertThat(expiredDispatchedProof.readinessEvidencePreimage()).isEqualTo(exactPreimage);
+    assertThat(expiredDispatchedProof.readinessEvidenceDigest())
+        .isEqualTo(proof.readinessEvidenceDigest());
+    assertThat(expiredDispatchedProof.verifiedProbes()).hasSize(plan.entries().size());
+    assertThat(
+            inTransaction(
+                context,
+                () ->
+                    restartedOwner
+                        .desired()
+                        .prepareCurrentGeneration(
+                            BINDING, restartedOwner.trust(), preparation, expiredDispatchedProof)))
+        .isEqualTo(prepared);
+
+    var committed =
+        inTransaction(
+            context,
+            () ->
+                restartedDesired.commitPreparedPromotion(
+                    BINDING, owner.trust(), prepared.operationId(), expiredDispatchedProof));
+    assertThat(committed.promotion().status()).isEqualTo("COMMITTED");
+    assertThat(committed.promotion().privatePromotionReceiptDigest())
+        .contains(privatePromotionReceipt.receiptDigest());
+    assertThat(committed.promotion().activeJwksReceiptDigest())
+        .contains(activeJwksPromotionReceipt.receiptDigest());
+    assertThat(committed.privateReceipt()).isEqualTo(privatePromotionReceipt);
+    assertThat(committed.publicReceipt()).isEqualTo(activeJwksPromotionReceipt);
   }
 
   @Test
@@ -214,7 +464,7 @@ class AccountJwtReadinessStoragePostgresIntegrationTest {
         databaseNow
             - AccountJwtReadinessProbeRepository.MAX_VALIDATOR_CACHE_AGE_SECONDS
             - AccountJwtReadinessProbeRepository.PROBE_LIFETIME_SECONDS
-            + DISPATCHED_RECOVERY_HEADROOM_SECONDS;
+            + BULK_READINESS_PLAN_HEADROOM_SECONDS;
     Instant planTimestamp = Instant.ofEpochSecond(plannedAtEpochSecond);
     InventorySnapshot planningInventory =
         completeInventorySnapshot(planTimestamp, observationContext);
@@ -227,7 +477,7 @@ class AccountJwtReadinessStoragePostgresIntegrationTest {
                     .planCurrent(BINDING, owner.trust(), planTimestamp, planningInventory));
     assertThat(plan.planVersion()).isEqualTo(2);
     assertThat(plan.expiresAtEpochSecond())
-        .isEqualTo(databaseNow + DISPATCHED_RECOVERY_HEADROOM_SECONDS);
+        .isEqualTo(databaseNow + BULK_READINESS_PLAN_HEADROOM_SECONDS);
     assertThat(plan.validatorInventoryComplete()).isTrue();
     assertThat(plan.inventorySnapshotDigest()).contains(planningInventory.digest());
     assertThat(plan.trustFence()).isEqualTo(owner.trust());
@@ -974,8 +1224,7 @@ class AccountJwtReadinessStoragePostgresIntegrationTest {
                             BINDING, restartedOwner.trust(), preparation, dispatchedProof)))
         .isEqualTo(prepared);
 
-    // These synthetic owner readbacks stand for the two exact external CAS receipts. They are
-    // stored before plan expiry, then the repository restarts its proof read after the deadline.
+    // These synthetic owner readbacks stand for the two exact external CAS receipts.
     var dispatchedPromotion = dispatchedEvidence.promotion();
     PrivatePromotionObservation privatePromotionObservation =
         new PrivatePromotionObservation(
@@ -1020,22 +1269,21 @@ class AccountJwtReadinessStoragePostgresIntegrationTest {
     assertThat(receiptBoundPrepared.promotion().activeJwksReceiptDigest())
         .contains(activeJwksPromotionReceipt.receiptDigest());
 
-    awaitDatabaseClockAtOrAfter(context, plan.expiresAtEpochSecond());
-    assertThat(databaseClockNow(context)).isGreaterThanOrEqualTo(plan.expiresAtEpochSecond());
-    var expiredDispatchedProof =
+    assertThat(databaseClockNow(context)).isLessThan(plan.expiresAtEpochSecond());
+    var receiptBoundProof =
         inTransaction(
             context,
             () ->
                 restartedReadiness
                     .readPromotionProof(BINDING, owner.trust(), owner.result().operationId())
                     .orElseThrow());
-    assertThat(expiredDispatchedProof.plan().planDigest()).isEqualTo(plan.planDigest());
-    assertThat(expiredDispatchedProof.plan().expiresAtEpochSecond())
+    assertThat(receiptBoundProof.plan().planDigest()).isEqualTo(plan.planDigest());
+    assertThat(receiptBoundProof.plan().expiresAtEpochSecond())
         .isEqualTo(plan.expiresAtEpochSecond());
-    assertThat(expiredDispatchedProof.readinessEvidencePreimage()).isEqualTo(exactPreimage);
-    assertThat(expiredDispatchedProof.readinessEvidenceDigest())
+    assertThat(receiptBoundProof.readinessEvidencePreimage()).isEqualTo(exactPreimage);
+    assertThat(receiptBoundProof.readinessEvidenceDigest())
         .isEqualTo(proof.readinessEvidenceDigest());
-    assertThat(expiredDispatchedProof.verifiedProbes()).hasSize(plan.entries().size());
+    assertThat(receiptBoundProof.verifiedProbes()).hasSize(plan.entries().size());
     assertThat(
             inTransaction(
                 context,
@@ -1043,7 +1291,7 @@ class AccountJwtReadinessStoragePostgresIntegrationTest {
                     restartedOwner
                         .desired()
                         .prepareCurrentGeneration(
-                            BINDING, restartedOwner.trust(), preparation, expiredDispatchedProof)))
+                            BINDING, restartedOwner.trust(), preparation, receiptBoundProof)))
         .isEqualTo(prepared);
 
     var committed =
@@ -1051,7 +1299,7 @@ class AccountJwtReadinessStoragePostgresIntegrationTest {
             context,
             () ->
                 restartedDesired.commitPreparedPromotion(
-                    BINDING, owner.trust(), prepared.operationId(), expiredDispatchedProof));
+                    BINDING, owner.trust(), prepared.operationId(), receiptBoundProof));
     assertThat(committed.promotion().status()).isEqualTo("COMMITTED");
     assertThat(committed.promotion().privatePromotionReceiptDigest())
         .contains(privatePromotionReceipt.receiptDigest());
@@ -1513,6 +1761,175 @@ class AccountJwtReadinessStoragePostgresIntegrationTest {
     }
   }
 
+  private static String readinessMatrixWithExtraValidator(String validMatrixJson) {
+    try {
+      @SuppressWarnings("unchecked")
+      Map<String, Object> matrix = (Map<String, Object>) JSON.readValue(validMatrixJson, Map.class);
+      @SuppressWarnings("unchecked")
+      List<Map<String, Object>> parsedValidators =
+          (List<Map<String, Object>>) matrix.get("validators");
+      List<Map<String, Object>> validators = new java.util.ArrayList<>(parsedValidators);
+      Map<String, Object> extraValidator = new LinkedHashMap<>(validators.getFirst());
+      extraValidator.put("validatorId", "unexpected-validator");
+      validators.add(extraValidator);
+      matrix.put("validators", validators);
+      matrix.put("inventoryStatus", "PARTIAL_UNCONFIRMED");
+      return JSON.writeValueAsString(matrix);
+    } catch (Exception failure) {
+      throw new AssertionError("Readiness SQL validator-set fixture could not be mutated", failure);
+    }
+  }
+
+  private static String readinessMatrixWithDifferentApplicableProfiles(String validMatrixJson) {
+    try {
+      @SuppressWarnings("unchecked")
+      Map<String, Object> matrix = (Map<String, Object>) JSON.readValue(validMatrixJson, Map.class);
+      @SuppressWarnings("unchecked")
+      List<Map<String, Object>> validators = (List<Map<String, Object>>) matrix.get("validators");
+      Map<String, Object> accountValidator =
+          validators.stream()
+              .filter(validator -> "account-service".equals(validator.get("validatorId")))
+              .findFirst()
+              .orElseThrow();
+      @SuppressWarnings("unchecked")
+      List<Map<String, Object>> parsedProfiles =
+          (List<Map<String, Object>>) accountValidator.get("applicableProfiles");
+      List<Map<String, Object>> profiles = new java.util.ArrayList<>(parsedProfiles);
+      profiles.removeFirst();
+      accountValidator.put("applicableProfiles", profiles);
+      matrix.put("inventoryStatus", "PARTIAL_UNCONFIRMED");
+      return JSON.writeValueAsString(matrix);
+    } catch (Exception failure) {
+      throw new AssertionError("Readiness SQL profile fixture could not be mutated", failure);
+    }
+  }
+
+  private static void assertReadinessInventoryClosureGuardRejectsMatrixMismatch(
+      TestContext context,
+      ReadinessProbePlan plan,
+      String mismatchedMatrixJson,
+      String mismatchDescription) {
+    assertThatThrownBy(
+            () ->
+                inTransaction(
+                    context,
+                    () -> {
+                      insertRawReadinessPlanClosure(context, plan, mismatchedMatrixJson, false);
+                      assertThat(count(context, "account_jwt_readiness_probe_entries"))
+                          .isEqualTo(plan.entries().size());
+                      assertThat(count(context, "account_jwt_readiness_validator_pods"))
+                          .isEqualTo(12L);
+                      return null;
+                    }))
+        .as("deferred V2 closure must reject %s", mismatchDescription)
+        .satisfies(failure -> assertThat(postgresSqlState(failure)).isEqualTo("23514"));
+    assertThat(count(context, "account_jwt_readiness_probe_plans")).isZero();
+    assertThat(count(context, "account_jwt_readiness_probe_entries")).isZero();
+    assertThat(count(context, "account_jwt_readiness_validator_pods")).isZero();
+  }
+
+  private static void insertRawReadinessPlanClosure(
+      TestContext context,
+      ReadinessProbePlan plan,
+      String applicabilityMatrixJson,
+      boolean inventoryComplete) {
+    insertRawReadinessPlan(context, plan, applicabilityMatrixJson, inventoryComplete);
+    for (ProbeEntry entry : plan.entries()) {
+      context
+          .dsl()
+          .execute(
+              """
+              INSERT INTO account_jwt_readiness_probe_entries (
+                  rotation_operation_id, plan_digest, validator_id, token_profile, audience,
+                  probe_kind, jti, target_generation, target_kid, expected_active_generation,
+                  expected_active_kid, registry_version, entry_version,
+                  planned_issued_at_epoch_seconds, expires_at_epoch_seconds, state, entry_plan_version
+              ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+              """,
+              entry.rotationOperationId(),
+              entry.planDigest(),
+              entry.validatorId(),
+              entry.tokenProfile(),
+              entry.audience(),
+              entry.probeKind().name(),
+              entry.jti(),
+              Long.parseLong(entry.targetGeneration()),
+              entry.targetKid(),
+              entry.expectedActive().map(value -> Long.parseLong(value.generation())).orElse(null),
+              entry.expectedActive().map(value -> value.kid()).orElse(null),
+              entry.registryVersion(),
+              entry.entryVersion(),
+              entry.plannedIssuedAtEpochSecond(),
+              entry.expiresAtEpochSecond(),
+              entry.state().name(),
+              plan.planVersion());
+    }
+    context
+        .dsl()
+        .execute(
+            """
+            INSERT INTO account_jwt_readiness_validator_pods (
+                rotation_operation_id, plan_digest, validator_id, token_profile, audience,
+                probe_kind, jti, inventory_snapshot_digest, environment_id, cluster_id,
+                cluster_incarnation_uid, kubernetes_namespace, namespace_uid,
+                api_binding_revision, api_binding_digest, inventory_binding_revision,
+                inventory_binding_digest, deployment_uid, pod_uid, pod_ip, image,
+                verifier_config_sha256, applicability_matrix_digest, expected_outcome,
+                exact_pod_endpoint, canonical_service_uri, expected_pod_leaf_spki_sha256
+            )
+            SELECT entry.rotation_operation_id,
+                   entry.plan_digest,
+                   entry.validator_id,
+                   entry.token_profile,
+                   entry.audience,
+                   entry.probe_kind,
+                   entry.jti,
+                   snapshot.snapshot_digest,
+                   snapshot.environment_id,
+                   snapshot.cluster_id,
+                   snapshot.cluster_incarnation_uid,
+                   snapshot.kubernetes_namespace,
+                   snapshot.namespace_uid,
+                   snapshot.api_binding_revision,
+                   snapshot.api_binding_digest,
+                   snapshot.inventory_binding_revision,
+                   snapshot.inventory_binding_digest,
+                   (validator.value ->> 'deploymentUid')::uuid,
+                   (pod.value ->> 'uid')::uuid,
+                   pod.value ->> 'podIp',
+                   pod.value ->> 'image',
+                   pod.value ->> 'verifierConfigSha256',
+                   plan.applicability_matrix_digest,
+                   CASE
+                       WHEN entry.probe_kind = 'CANARY'
+                         OR EXISTS (
+                              SELECT 1
+                                FROM jsonb_array_elements(validator.value -> 'profiles') AS profile(value)
+                               WHERE profile.value ->> 'tokenProfile' = entry.token_profile
+                                 AND profile.value ->> 'audience' = entry.audience)
+                           THEN 'ACCEPT'
+                       ELSE 'INAPPLICABLE_REJECT'
+                   END,
+                   pod.value ->> 'exactPodEndpoint',
+                   pod.value ->> 'canonicalServiceUri',
+                   pod.value ->> 'leafSpkiSha256'
+              FROM account_jwt_readiness_probe_entries AS entry
+              JOIN account_jwt_readiness_probe_plans AS plan
+                ON plan.rotation_operation_id = entry.rotation_operation_id
+               AND plan.plan_digest = entry.plan_digest
+              JOIN account_jwt_validator_inventory_snapshots AS snapshot
+                ON snapshot.snapshot_digest = plan.inventory_snapshot_digest
+              CROSS JOIN LATERAL jsonb_array_elements(
+                  convert_from(snapshot.canonical_snapshot, 'UTF8')::jsonb -> 'validators') AS validator(value)
+              CROSS JOIN LATERAL jsonb_array_elements(validator.value -> 'pods') AS pod(value)
+             WHERE entry.rotation_operation_id = ?
+               AND entry.plan_digest = ?
+               AND validator.value ->> 'validatorId' = entry.validator_id
+            """,
+            plan.operationId(),
+            plan.planDigest());
+  }
+
   private static void assertReadinessPlanInventoryGuardRejects(
       TestContext context, ReadinessProbePlan plan, List<String> requiredFields) {
     for (String field : requiredFields) {
@@ -1549,6 +1966,15 @@ class AccountJwtReadinessStoragePostgresIntegrationTest {
 
   private static void insertRawReadinessPlan(
       TestContext context, ReadinessProbePlan plan, String applicabilityMatrixJson) {
+    insertRawReadinessPlan(
+        context, plan, applicabilityMatrixJson, plan.validatorInventoryComplete());
+  }
+
+  private static void insertRawReadinessPlan(
+      TestContext context,
+      ReadinessProbePlan plan,
+      String applicabilityMatrixJson,
+      boolean validatorInventoryComplete) {
     new JdbcTemplate(context.dataSource())
         .update(
             """
@@ -1598,7 +2024,7 @@ class AccountJwtReadinessStoragePostgresIntegrationTest {
             plan.mountedObservationDigest(),
             applicabilityMatrixJson,
             plan.applicabilityMatrixDigest(),
-            plan.validatorInventoryComplete(),
+            validatorInventoryComplete,
             plan.maximumCacheAgeSeconds(),
             plan.plannedAtEpochSecond(),
             plan.notBeforeEpochSecond(),
