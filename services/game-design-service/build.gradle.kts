@@ -29,6 +29,14 @@ dependencies {
     integrationTestImplementation(
         project(
             mapOf(
+                "path" to ":game-session-service",
+                "configuration" to "gameSessionClassesProof"
+            )
+        )
+    )
+    integrationTestImplementation(
+        project(
+            mapOf(
                 "path" to ":world-management-service",
                 "configuration" to "worldSelectedOwnerInventoryProof"
             )

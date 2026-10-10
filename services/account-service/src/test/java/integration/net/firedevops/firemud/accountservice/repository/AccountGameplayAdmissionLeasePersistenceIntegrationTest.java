@@ -1601,7 +1601,7 @@ class AccountGameplayAdmissionLeasePersistenceIntegrationTest {
   }
 
   @Test
-  void originalAckReceiptRecoversExactOriginalProofAfterLostReceiptAcknowledgement() {
+  void originalAckReceiptReadAfterLostReceiptAckRequiresWalCoverage() {
     var context = context(null);
     var original = pending(context, account(context));
     UUID decision = UUID.randomUUID();
@@ -1628,51 +1628,40 @@ class AccountGameplayAdmissionLeasePersistenceIntegrationTest {
     assertThat(rowBeforeRecoveryRecord.get("receipt_xid", String.class))
         .isNotEqualTo(rowBeforeRecoveryRecord.get("finalization_xid", String.class));
 
-    var recovered = receiptExecutor.read(original, decision);
+    var sourcesBeforeRecovery = storageSnapshot(context);
+    var historicalRead = readWithConditionalWalCoverage(receiptExecutor, original, decision);
 
-    assertThat(trace.count("receipt-physical-commit")).isEqualTo(2);
-    assertThat(trace.count("receipt-durable-read")).isEqualTo(1);
+    assertThat(trace.count("receipt-durable-read")).isGreaterThanOrEqualTo(1);
     assertThat(trace.count("receipt-exact-read")).isZero();
     var lostReceiptCommit = firstEvent(trace, "receipt-physical-commit");
-    var historicalRead = firstEvent(trace, "receipt-durable-read");
+    var historicalReadEvent = firstEvent(trace, "receipt-durable-read");
     assertThat(trace.events().indexOf(lostReceiptCommit))
-        .isLessThan(trace.events().indexOf(historicalRead));
-    assertThat(historicalRead.connectionId()).isNotEqualTo(lostReceiptCommit.connectionId());
-    assertThat(recovered.operation().evidence().canonicalJson())
-        .isEqualTo(original.canonicalJson());
-    assertThat(recovered.operation().evidence().sha256()).isEqualTo(original.sha256());
-    assertThat(recovered.operation().bindingDecisionId()).isEqualTo(decision);
-    assertThat(recovered.schemaVersion())
-        .isEqualTo(rowBeforeRecoveryRecord.get("schema_version", Short.class));
-    assertThat(recovered.requestId()).isEqualTo(requestId(original));
-    assertThat(recovered.accountId())
-        .isEqualTo(rowBeforeRecoveryRecord.get("account_uuid", UUID.class));
-    assertThat(recovered.leaseId()).isEqualTo(rowBeforeRecoveryRecord.get("lease_id", UUID.class));
-    assertThat(recovered.leaseFence())
-        .isEqualTo(rowBeforeRecoveryRecord.get("lease_fence", Long.class));
-    assertThat(recovered.evidenceSha256()).isEqualTo(original.sha256());
-    assertThat(recovered.bindingDecisionId()).isEqualTo(decision);
-    assertThat(recovered.expiresAtMs())
-        .isEqualTo(rowBeforeRecoveryRecord.get("expires_at_ms", Long.class));
-    assertThat(recovered.committedBeforeMs())
-        .isEqualTo(rowBeforeRecoveryRecord.get("committed_before_ms", Long.class))
-        .isLessThan(recovered.expiresAtMs());
-    assertThat(recovered.finalizationXid())
-        .isEqualTo(rowBeforeRecoveryRecord.get("finalization_xid", String.class));
-    assertThat(recovered.receiptXid())
-        .isEqualTo(rowBeforeRecoveryRecord.get("receipt_xid", String.class));
+        .isLessThan(trace.events().indexOf(historicalReadEvent));
+    assertThat(historicalReadEvent.connectionId()).isNotEqualTo(lostReceiptCommit.connectionId());
+    if (historicalRead.receipt() != null) {
+      assertThat(trace.count("receipt-physical-commit")).isEqualTo(2);
+      assertHistoricalReceiptMatchesOriginal(
+          historicalRead.receipt(), original, decision, acknowledgement, rowBeforeRecoveryRecord);
+    } else {
+      assertThat(trace.count("receipt-physical-commit")).isEqualTo(1);
+      assertThat(historicalRead.walCoverageUnavailableDetail())
+          .as("Historical recovery was denied because independent WAL coverage was unavailable")
+          .isNotBlank();
+    }
     assertThat(originalAckReceiptRow(context, original).intoMap()).isEqualTo(rowBeforeRecovery);
     assertThat(operation(context, original).intoMap()).isEqualTo(operationBeforeRecovery);
+    assertThat(storageSnapshot(context)).isEqualTo(sourcesBeforeRecovery);
 
     assertThatThrownBy(() -> originalExecutor.execute(original, decision))
         .hasMessageContaining("Fresh owned Account original COMMIT required");
     assertThat(operation(context, original).intoMap()).isEqualTo(operationBeforeRecovery);
+    assertThat(originalAckReceiptRow(context, original).intoMap()).isEqualTo(rowBeforeRecovery);
+    assertThat(storageSnapshot(context)).isEqualTo(sourcesBeforeRecovery);
     assertThat(trace.count("original-physical-commit")).isEqualTo(1);
   }
 
   @Test
-  void concurrentOriginalAckReceiptRecoveriesRetainExactProofBeforeAndAfterExpiry()
-      throws Exception {
+  void concurrentOriginalAckReceiptReadsRequireWalCoverageBeforeAndAfterExpiry() throws Exception {
     var context = context(null);
     var original = pending(context, account(context));
     UUID decision = UUID.randomUUID();
@@ -1692,48 +1681,46 @@ class AccountGameplayAdmissionLeasePersistenceIntegrationTest {
 
     var operationBeforeRecovery = operation(context, original).intoMap();
     var sourcesBeforeRecovery = storageSnapshot(context);
-    var receiptBeforeRecovery = originalAckReceiptRow(context, original).intoMap();
+    var receiptBeforeRecoveryRecord = originalAckReceiptRow(context, original);
+    var receiptBeforeRecovery = receiptBeforeRecoveryRecord.intoMap();
     var start = new CountDownLatch(1);
-    Callable<AccountGameplayAdmissionOriginalAckReceipt> duplicateRead =
+    Callable<HistoricalReceiptRead> duplicateRead =
         () -> {
           if (!start.await(10, TimeUnit.SECONDS)) throw new IllegalStateException("start timeout");
-          return retrySerialization(() -> receiptExecutor.read(original, decision));
+          return retrySerialization(
+              () -> readWithConditionalWalCoverage(receiptExecutor, original, decision));
         };
 
-    AccountGameplayAdmissionOriginalAckReceipt leftReceipt;
-    AccountGameplayAdmissionOriginalAckReceipt rightReceipt;
+    HistoricalReceiptRead leftRead;
+    HistoricalReceiptRead rightRead;
     try (var executor = Executors.newFixedThreadPool(2)) {
       var left = executor.submit(duplicateRead);
       var right = executor.submit(duplicateRead);
       start.countDown();
-      leftReceipt = left.get(30, TimeUnit.SECONDS);
-      rightReceipt = right.get(30, TimeUnit.SECONDS);
+      leftRead = left.get(30, TimeUnit.SECONDS);
+      rightRead = right.get(30, TimeUnit.SECONDS);
     }
 
     assertThat(databaseNow(context)).isLessThan(expiresAt(original));
-    assertThat(rightReceipt).isEqualTo(leftReceipt);
-    assertThat(leftReceipt.operation().evidence().canonicalJson())
-        .isEqualTo(original.canonicalJson());
-    assertThat(leftReceipt.operation().evidence().sha256()).isEqualTo(original.sha256());
-    assertThat(leftReceipt.operation().bindingDecisionId()).isEqualTo(decision);
-    assertThat(leftReceipt.requestId()).isEqualTo(requestId(original));
-    assertThat(leftReceipt.accountId())
-        .isEqualTo(
-            UUID.fromString(
-                (String) ((Map<?, ?>) original.carrier().get("bindingScope")).get("accountId")));
-    assertThat(leftReceipt.leaseId())
-        .isEqualTo(UUID.fromString((String) original.carrier().get("leaseId")));
-    assertThat(leftReceipt.leaseFence()).isEqualTo(original.leaseFence().longValueExact());
-    assertThat(leftReceipt.evidenceSha256()).isEqualTo(original.sha256());
-    assertThat(leftReceipt.bindingDecisionId()).isEqualTo(decision);
-    assertThat(leftReceipt.expiresAtMs()).isEqualTo(expiresAt(original));
-    assertThat(leftReceipt.committedBeforeMs())
-        .isEqualTo(acknowledgement.committedBeforeMs())
-        .isPositive()
-        .isLessThan(leftReceipt.expiresAtMs());
-    assertThat(leftReceipt.finalizationXid()).isEqualTo(acknowledgement.finalizationXid());
-    assertThat(leftReceipt.receiptXid())
-        .isEqualTo((String) receiptBeforeRecovery.get("receipt_xid"));
+    if (leftRead.receipt() != null) {
+      assertHistoricalReceiptMatchesOriginal(
+          leftRead.receipt(), original, decision, acknowledgement, receiptBeforeRecoveryRecord);
+    } else {
+      assertThat(leftRead.walCoverageUnavailableDetail())
+          .as("First concurrent historical read was denied for unavailable WAL coverage")
+          .isNotBlank();
+    }
+    if (rightRead.receipt() != null) {
+      assertHistoricalReceiptMatchesOriginal(
+          rightRead.receipt(), original, decision, acknowledgement, receiptBeforeRecoveryRecord);
+    } else {
+      assertThat(rightRead.walCoverageUnavailableDetail())
+          .as("Second concurrent historical read was denied for unavailable WAL coverage")
+          .isNotBlank();
+    }
+    if (leftRead.receipt() != null && rightRead.receipt() != null) {
+      assertThat(rightRead.receipt()).isEqualTo(leftRead.receipt());
+    }
     assertThat(trace.count("original-physical-commit")).isEqualTo(1);
     assertThat(trace.count("receipt-durable-read")).isGreaterThanOrEqualTo(2);
     assertThat(trace.count("receipt-exact-read")).isZero();
@@ -1748,12 +1735,19 @@ class AccountGameplayAdmissionLeasePersistenceIntegrationTest {
 
     // The V122 receipt is immutable historical proof; expiry does not restamp or renew it.
     waitPastDeadline(context, original);
-    var recoveredAfterExpiry = receiptExecutor.read(original, decision);
-    assertThat(recoveredAfterExpiry).isEqualTo(leftReceipt);
-    assertThat(recoveredAfterExpiry.expiresAtMs()).isEqualTo(expiresAt(original));
-    assertThat(recoveredAfterExpiry.committedBeforeMs())
-        .isEqualTo(acknowledgement.committedBeforeMs())
-        .isLessThan(expiresAt(original));
+    var readAfterExpiry = readWithConditionalWalCoverage(receiptExecutor, original, decision);
+    if (readAfterExpiry.receipt() != null) {
+      assertHistoricalReceiptMatchesOriginal(
+          readAfterExpiry.receipt(),
+          original,
+          decision,
+          acknowledgement,
+          receiptBeforeRecoveryRecord);
+    } else {
+      assertThat(readAfterExpiry.walCoverageUnavailableDetail())
+          .as("Historical read after expiry was denied for unavailable WAL coverage")
+          .isNotBlank();
+    }
     assertThat(trace.count("original-physical-commit")).isEqualTo(1);
     assertThat(trace.count("receipt-durable-read")).isGreaterThanOrEqualTo(3);
     assertThat(
@@ -1769,6 +1763,91 @@ class AccountGameplayAdmissionLeasePersistenceIntegrationTest {
     assertThat(trace.count("original-physical-commit")).isEqualTo(1);
     assertThat(operation(context, original).intoMap()).isEqualTo(operationBeforeRecovery);
     assertThat(storageSnapshot(context)).isEqualTo(sourcesBeforeRecovery);
+  }
+
+  private record HistoricalReceiptRead(
+      AccountGameplayAdmissionOriginalAckReceipt receipt, String walCoverageUnavailableDetail) {}
+
+  /** Returns an exact historical proof only when the native reader proves its WAL coverage. */
+  private static HistoricalReceiptRead readWithConditionalWalCoverage(
+      AccountGameplayAdmissionOriginalAckReceiptCommitExecutor executor,
+      AccountGameplayAdmissionLeaseEvidence original,
+      UUID decision) {
+    try {
+      return new HistoricalReceiptRead(executor.read(original, decision), null);
+    } catch (RuntimeException failure) {
+      PSQLException postgresFailure = null;
+      Throwable cause = failure;
+      var visited =
+          java.util.Collections.newSetFromMap(new java.util.IdentityHashMap<Throwable, Boolean>());
+      while (cause != null && visited.add(cause)) {
+        if (cause instanceof PSQLException candidate) {
+          postgresFailure = candidate;
+          break;
+        }
+        cause = cause.getCause();
+      }
+      if (postgresFailure == null || !"23514".equals(postgresFailure.getSQLState())) {
+        throw failure;
+      }
+
+      var serverError = postgresFailure.getServerErrorMessage();
+      if (serverError == null
+          || !"account_admission_original_ack_receipt_wal_coverage"
+              .equals(serverError.getConstraint())
+          || postgresFailure.getMessage() == null
+          || !postgresFailure
+              .getMessage()
+              .contains("Original Account acknowledgement receipt WAL coverage unavailable")) {
+        throw failure;
+      }
+      String detail = serverError.getDetail();
+      assertThat(detail)
+          .contains("insert_fence=")
+          .contains("initial_flush=")
+          .contains("final_flush=")
+          .contains("unchanged_expiry_ms=");
+      return new HistoricalReceiptRead(null, detail);
+    }
+  }
+
+  private static void assertHistoricalReceiptMatchesOriginal(
+      AccountGameplayAdmissionOriginalAckReceipt receipt,
+      AccountGameplayAdmissionLeaseEvidence original,
+      UUID decision,
+      AccountGameplayAdmissionOriginalCommitExecutor.OriginalCommitAcknowledgement acknowledgement,
+      Record storedReceipt) {
+    assertThat(receipt.operation().evidence().canonicalJson()).isEqualTo(original.canonicalJson());
+    assertThat(receipt.operation().evidence().sha256()).isEqualTo(original.sha256());
+    assertThat(receipt.operation().bindingDecisionId()).isEqualTo(decision);
+    assertThat(receipt.schemaVersion()).isEqualTo(storedReceipt.get("schema_version", Short.class));
+    assertThat(receipt.requestId()).isEqualTo(requestId(original));
+    var scope = (Map<?, ?>) original.carrier().get("bindingScope");
+    assertThat(receipt.accountId())
+        .isEqualTo(UUID.fromString((String) scope.get("accountId")))
+        .isEqualTo(storedReceipt.get("account_uuid", UUID.class));
+    assertThat(receipt.leaseId())
+        .isEqualTo(UUID.fromString((String) original.carrier().get("leaseId")))
+        .isEqualTo(storedReceipt.get("lease_id", UUID.class));
+    assertThat(receipt.leaseFence())
+        .isEqualTo(original.leaseFence().longValueExact())
+        .isEqualTo(storedReceipt.get("lease_fence", Long.class));
+    assertThat(receipt.evidenceSha256()).isEqualTo(original.sha256());
+    assertThat(receipt.bindingDecisionId()).isEqualTo(decision);
+    assertThat(receipt.expiresAtMs())
+        .isEqualTo(expiresAt(original))
+        .isEqualTo(storedReceipt.get("expires_at_ms", Long.class));
+    assertThat(receipt.committedBeforeMs())
+        .isEqualTo(storedReceipt.get("committed_before_ms", Long.class))
+        .isPositive()
+        .isLessThan(receipt.expiresAtMs());
+    assertThat(receipt.committedBeforeMs()).isEqualTo(acknowledgement.committedBeforeMs());
+    assertThat(receipt.finalizationXid())
+        .isEqualTo(storedReceipt.get("finalization_xid", String.class))
+        .isEqualTo(acknowledgement.finalizationXid());
+    assertThat(receipt.receiptXid())
+        .isEqualTo(storedReceipt.get("receipt_xid", String.class))
+        .isNotEqualTo(receipt.finalizationXid());
   }
 
   private static Record originalAckReceiptRow(
