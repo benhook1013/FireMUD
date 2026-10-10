@@ -487,7 +487,7 @@ class AccountControlUiCommittedIssuanceRepositoryIntegrationTest {
               transactionDsl.execute(
                   "INSERT INTO account_control_ui_response_envelopes "
                       + "(operation_id, encrypted_response, owner_binding, recovery_expires_at) "
-                      + "VALUES (?, ?, ?, ?)",
+                      + "VALUES (?, ?, ?, CAST(? AS timestamptz))",
                   seed.operationId(),
                   seed.encryptedResponse(),
                   seed.ownerBinding(),
