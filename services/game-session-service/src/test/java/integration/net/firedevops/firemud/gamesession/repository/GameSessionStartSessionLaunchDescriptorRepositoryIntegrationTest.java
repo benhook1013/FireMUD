@@ -903,18 +903,18 @@ class GameSessionStartSessionLaunchDescriptorRepositoryIntegrationTest {
     }
 
     boolean ownerClaimLeaseLive(String requestId) {
-      return Boolean.TRUE.equals(
-          dsl.fetchValue(
+      var result =
+          dsl.fetchOne(
               "SELECT lease_expires_at > clock_timestamp() FROM "
                   + "game_session_start_session_operator_attempt "
                   + "WHERE control_plane_request_id = ?",
-              Boolean.class,
-              requestId));
+              requestId);
+      return result != null && Boolean.TRUE.equals(result.get(0, Boolean.class));
     }
 
     boolean originalAuthorizationReferenceLive(String expiresAt) {
-      return Boolean.TRUE.equals(
-          dsl.fetchValue("SELECT ?::timestamptz > clock_timestamp()", Boolean.class, expiresAt));
+      var result = dsl.fetchOne("SELECT ?::timestamptz > clock_timestamp()", expiresAt);
+      return result != null && Boolean.TRUE.equals(result.get(0, Boolean.class));
     }
 
     PinnedAssociationSnapshot pinAssociation(AttemptClaim claim, Result result) {
