@@ -44,7 +44,7 @@ end
 
 if current == pending then
   local stored = redis.call('SET', key, active, 'PXAT', deadline, 'XX')
-  if stored ~= 'OK' then
+  if type(stored) ~= 'table' or stored.ok ~= 'OK' then
     return -5
   end
   return 1
@@ -53,7 +53,7 @@ end
 if current == active then
   -- Exact lost-ack retry: reassert only the original absolute deadline, never a relative TTL.
   local stored = redis.call('SET', key, active, 'PXAT', deadline, 'XX')
-  if stored ~= 'OK' then
+  if type(stored) ~= 'table' or stored.ok ~= 'OK' then
     return -5
   end
   return 0

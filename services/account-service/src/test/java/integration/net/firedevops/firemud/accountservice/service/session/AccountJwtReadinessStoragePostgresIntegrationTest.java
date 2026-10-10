@@ -85,8 +85,9 @@ import tools.jackson.databind.json.JsonMapper;
 class AccountJwtReadinessStoragePostgresIntegrationTest {
   private static final String SCHEMA_PREFIX = "jwt_readiness_owner_storage";
   private static final int BULK_READINESS_PLAN_HEADROOM_SECONDS = 300;
-  private static final int DISPATCHED_RECOVERY_HEADROOM_SECONDS = 70;
-  private static final int DISPATCHED_RECOVERY_EXPIRY_WAIT_SECONDS = 75;
+  private static final int DISPATCHED_RECOVERY_PLAN_HEADROOM_SECONDS = 70;
+  private static final int DISPATCHED_RECOVERY_EXPIRY_WAIT_SECONDS =
+      DISPATCHED_RECOVERY_PLAN_HEADROOM_SECONDS + 30;
   private static final AccountPostgresIntegrationFixture POSTGRES =
       new AccountPostgresIntegrationFixture();
   private static final Binding BINDING =
@@ -229,16 +230,27 @@ class AccountJwtReadinessStoragePostgresIntegrationTest {
         databaseNow
             - AccountJwtReadinessProbeRepository.MAX_VALIDATOR_CACHE_AGE_SECONDS
             - AccountJwtReadinessProbeRepository.PROBE_LIFETIME_SECONDS
-            + DISPATCHED_RECOVERY_HEADROOM_SECONDS;
+            + DISPATCHED_RECOVERY_PLAN_HEADROOM_SECONDS;
     Instant plannedAt = Instant.ofEpochSecond(plannedAtEpochSecond);
-    InventorySnapshot inventory = completeInventorySnapshot(plannedAt, observationContext);
+    InventorySnapshot planningInventory = completeInventorySnapshot(plannedAt, observationContext);
     ReadinessProbePlan plan =
         inTransaction(
             context,
-            () -> owner.readiness().planCurrent(BINDING, owner.trust(), plannedAt, inventory));
+            () ->
+                owner
+                    .readiness()
+                    .planCurrent(BINDING, owner.trust(), plannedAt, planningInventory));
+    assertThat(plan.notBeforeEpochSecond()).isLessThan(databaseNow);
     assertThat(plan.expiresAtEpochSecond())
-        .isEqualTo(databaseNow + DISPATCHED_RECOVERY_HEADROOM_SECONDS);
+        .isEqualTo(databaseNow + DISPATCHED_RECOVERY_PLAN_HEADROOM_SECONDS);
     assertThat(plan.entries()).hasSize(8);
+
+    Instant refreshedInventoryObservedAt = Instant.ofEpochSecond(databaseClockNow(context));
+    InventorySnapshot refreshedInventory =
+        completeInventorySnapshot(refreshedInventoryObservedAt, observationContext);
+    assertThat(refreshedInventory.observedAt()).isEqualTo(refreshedInventoryObservedAt);
+    assertThat(refreshedInventory.digest()).isEqualTo(planningInventory.digest());
+    assertThat(refreshedInventory.canonicalBytes()).isEqualTo(planningInventory.canonicalBytes());
 
     Path privateMount = Files.createDirectory(tempDirectory.resolve("expiry-private-mount"));
     Path publicMount = Files.createDirectory(tempDirectory.resolve("expiry-public-mount"));
@@ -257,7 +269,13 @@ class AccountJwtReadinessStoragePostgresIntegrationTest {
             owner.result().publicKeyFingerprint());
     assertThat(
             completeRemainingProbes(
-                context, owner, plan, inventory, privateMount, publicMount, expectedIdentity))
+                context,
+                owner,
+                plan,
+                refreshedInventory,
+                privateMount,
+                publicMount,
+                expectedIdentity))
         .isEqualTo(12L);
 
     var proof =
@@ -267,7 +285,7 @@ class AccountJwtReadinessStoragePostgresIntegrationTest {
                 owner
                     .readiness()
                     .readCurrentPromotionPrerequisites(
-                        BINDING, owner.trust(), owner.result().operationId(), inventory)
+                        BINDING, owner.trust(), owner.result().operationId(), refreshedInventory)
                     .orElseThrow());
     assertThat(proof.verifiedProbes()).hasSize(plan.entries().size());
     byte[] exactPreimage = proof.readinessEvidencePreimage();
@@ -306,6 +324,9 @@ class AccountJwtReadinessStoragePostgresIntegrationTest {
                     .desired()
                     .prepareCurrentGeneration(BINDING, owner.trust(), preparation, proof));
     assertThat(prepared.status()).isEqualTo("PREPARED");
+    assertThat(databaseClockNow(context))
+        .as("the exact readiness proof reaches PREPARED before real plan expiry")
+        .isLessThan(plan.expiresAtEpochSecond());
 
     AccountJwtSignerDesiredStateRepository restartedDesired =
         new AccountJwtSignerDesiredStateRepository(context.dsl());
@@ -322,15 +343,20 @@ class AccountJwtReadinessStoragePostgresIntegrationTest {
             () ->
                 restartedReadiness
                     .readPromotionProof(
-                        BINDING, owner.trust(), owner.result().operationId(), inventory)
+                        BINDING, owner.trust(), owner.result().operationId(), refreshedInventory)
                     .orElseThrow());
     assertThat(restartedProof.readinessEvidencePreimage()).isEqualTo(exactPreimage);
-    assertThat(databaseClockNow(context)).isLessThan(plan.expiresAtEpochSecond());
+    assertThat(databaseClockNow(context))
+        .as("the exact readiness proof remains before expiry through DISPATCHED")
+        .isLessThan(plan.expiresAtEpochSecond());
     var dispatchedEvidence =
         inTransaction(
             context,
             () -> restartedDesired.readAndMarkPreparedPromotionDispatched(BINDING, owner.trust()));
     assertThat(dispatchedEvidence.promotion().privatePromotionDispatched()).isTrue();
+    assertThat(databaseClockNow(context))
+        .as("the exact readiness proof reaches DISPATCHED before real plan expiry")
+        .isLessThan(plan.expiresAtEpochSecond());
     var dispatchedProof =
         inTransaction(
             context,

@@ -422,6 +422,8 @@ class AccountGameplayDelegationRedisClientTest {
         .contains("return string.len(left) > string.len(right)")
         .contains("return left > right")
         .contains("local function decrement_decimal(value)")
+        .contains("if type(stored) ~= 'table' or stored.ok ~= 'OK' then return -3 end")
+        .doesNotContain("stored ~= 'OK'")
         .doesNotContain("tonumber(value.generation)")
         .doesNotContain("tonumber(value.sourceVersion)")
         .doesNotContain("tonumber(value.issuanceFence)");
@@ -505,6 +507,7 @@ class AccountGameplayDelegationRedisClientTest {
         .contains("if current == pending then")
         .contains("if current == active then")
         .contains("'PXAT', deadline, 'XX'")
+        .contains("if type(stored) ~= 'table' or stored.ok ~= 'OK' then")
         .doesNotContain("cjson.decode", "cjson.encode", "redis.call('EXPIRE'", "PSETEX");
   }
 

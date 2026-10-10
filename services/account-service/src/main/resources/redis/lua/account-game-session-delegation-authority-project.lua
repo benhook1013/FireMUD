@@ -123,5 +123,5 @@ if current then
 end
 
 local stored = redis.call('SET', key, ARGV[1])
-if stored ~= 'OK' then return -3 end
+if type(stored) ~= 'table' or stored.ok ~= 'OK' then return -3 end
 return 1
