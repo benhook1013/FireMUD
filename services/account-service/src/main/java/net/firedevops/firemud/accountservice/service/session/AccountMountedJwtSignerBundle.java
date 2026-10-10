@@ -23,8 +23,10 @@ import java.security.spec.PKCS8EncodedKeySpec;
 import java.security.spec.RSAPublicKeySpec;
 import java.util.Arrays;
 import java.util.Base64;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.IdentityHashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -277,7 +279,7 @@ public final class AccountMountedJwtSignerBundle {
       if (spec.bound().isPresent()) {
         var bound = spec.bound().orElseThrow();
         delegation.put("tenantId", bound.tenantId());
-        delegation.put("authorityTuple", bound.authorityTuple());
+        delegation.put("authorityTuple", mergeBoundAuthorityTuple(authority, bound));
         delegation.put("membershipVersion", bound.membershipVersion());
       }
       net.firedevops.firemud.common.security.GameSessionAccountDelegationJwtProfileValidator
@@ -451,6 +453,84 @@ public final class AccountMountedJwtSignerBundle {
     claims.put("membershipVersion", Map.of());
     claims.put("issuanceFence", Long.toString(authority.issuanceFence()));
     return claims;
+  }
+
+  private static Map<String, Object> mergeBoundAuthorityTuple(
+      AccountAuthoritySnapshot authority, BoundDelegationClaims bound) {
+    Map<String, Object> supplied = bound.authorityTuple();
+    Map<String, Object> canonical =
+        GameSessionAccountDelegationProfile.authorityTuple(
+            authority.issuerGeneration(),
+            authority.accountGeneration(),
+            authority.accountSecurityCutoff());
+    if (!Objects.equals(supplied.get("issuerAuthGeneration"), canonical.get("issuerAuthGeneration"))
+        || !Objects.equals(
+            supplied.get("accountAuthorityGeneration"), canonical.get("accountAuthorityGeneration"))
+        || supplied.containsKey("accountSecurityCutoff")
+            != canonical.containsKey("accountSecurityCutoff")
+        || !Objects.equals(
+            supplied.get("accountSecurityCutoff"), canonical.get("accountSecurityCutoff"))) {
+      throw invalid();
+    }
+
+    Map<String, Object> merged = new LinkedHashMap<>(canonical);
+    merged.put("tenantAuthorityGeneration", supplied.get("tenantAuthorityGeneration"));
+    merged.put("membershipAuthorityGeneration", supplied.get("membershipAuthorityGeneration"));
+    if (supplied.containsKey("tenantBillingCutoff")) {
+      merged.put("tenantBillingCutoff", supplied.get("tenantBillingCutoff"));
+    }
+    return merged;
+  }
+
+  private static Map<String, Object> immutableAuthorityTupleCopy(Map<String, Object> source) {
+    Object copied = immutableJsonValueCopy(source, new IdentityHashMap<>());
+    if (!(copied instanceof Map<?, ?> copiedMap)) {
+      throw invalid();
+    }
+    Map<String, Object> result = new LinkedHashMap<>();
+    for (Map.Entry<?, ?> entry : copiedMap.entrySet()) {
+      if (!(entry.getKey() instanceof String key)) {
+        throw invalid();
+      }
+      result.put(key, entry.getValue());
+    }
+    return Collections.unmodifiableMap(result);
+  }
+
+  private static Object immutableJsonValueCopy(
+      Object value, IdentityHashMap<Object, Boolean> active) {
+    if (value instanceof Map<?, ?> source) {
+      if (active.put(source, Boolean.TRUE) != null) {
+        throw invalid();
+      }
+      try {
+        Map<String, Object> copy = new LinkedHashMap<>();
+        for (Map.Entry<?, ?> entry : source.entrySet()) {
+          if (!(entry.getKey() instanceof String key)) {
+            throw invalid();
+          }
+          copy.put(key, immutableJsonValueCopy(entry.getValue(), active));
+        }
+        return Collections.unmodifiableMap(copy);
+      } finally {
+        active.remove(source);
+      }
+    }
+    if (value instanceof List<?> source) {
+      if (active.put(source, Boolean.TRUE) != null) {
+        throw invalid();
+      }
+      try {
+        List<Object> copy = new java.util.ArrayList<>(source.size());
+        for (Object item : source) {
+          copy.add(immutableJsonValueCopy(item, active));
+        }
+        return Collections.unmodifiableList(copy);
+      } finally {
+        active.remove(source);
+      }
+    }
+    return value;
   }
 
   private static VerifiedMountedSigner readAndVerifyMounted(
@@ -1055,10 +1135,10 @@ public final class AccountMountedJwtSignerBundle {
   record BoundDelegationClaims(
       String tenantId, Map<String, Object> authorityTuple, Map<String, String> membershipVersion) {
     BoundDelegationClaims {
+      authorityTuple = immutableAuthorityTupleCopy(authorityTuple);
+      membershipVersion = Map.copyOf(membershipVersion);
       net.firedevops.firemud.common.security.GameSessionAccountDelegationProfile
           .requirePublicTenantBoundAuthority(tenantId, authorityTuple, membershipVersion);
-      authorityTuple = Map.copyOf(authorityTuple);
-      membershipVersion = Map.copyOf(membershipVersion);
     }
   }
 
