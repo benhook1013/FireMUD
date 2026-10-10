@@ -62,6 +62,8 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.InOrder;
 import org.mockito.Mock;
 import org.mockito.MockitoAnnotations;
+import org.postgresql.util.PSQLException;
+import org.postgresql.util.ServerErrorMessage;
 
 class VersionPublishCommandServiceImplTest {
   @Mock private VersionRepository versionRepository;
@@ -94,6 +96,77 @@ class VersionPublishCommandServiceImplTest {
         diagnostic);
     assertTrue(!diagnostic.contains("secret-auth-bytes"));
     assertTrue(!diagnostic.contains("credential payload"));
+  }
+
+  @Test
+  void failureDiagnosticsExposeOnlyAllowlistedPostgresConstraintAndRoutineLine() {
+    ServerErrorMessage serverError = org.mockito.Mockito.mock(ServerErrorMessage.class);
+    when(serverError.getConstraint()).thenReturn("publication_commit_guard");
+    when(serverError.getWhere())
+        .thenReturn(
+            "PL/pgSQL function verify_publication_operation_commit() line 126 at RAISE\n"
+                + "SQL statement: secret-row-and-credential-context");
+    PSQLException sqlFailure = org.mockito.Mockito.mock(PSQLException.class);
+    when(sqlFailure.getSQLState()).thenReturn("23514");
+    when(sqlFailure.getErrorCode()).thenReturn(0);
+    when(sqlFailure.getServerErrorMessage()).thenReturn(serverError);
+    IllegalStateException failure = new IllegalStateException("secret payload", sqlFailure);
+
+    String diagnostic =
+        VersionPublishCommandServiceImpl.safeFailureDiagnostic("RELEASE_FINALIZATION", failure);
+
+    assertEquals(
+        "stage=RELEASE_FINALIZATION causeTypes=java.lang.IllegalStateException"
+            + " <- org.postgresql.util.PSQLException[sqlState=23514,vendorCode=0"
+            + ",constraint=publication_commit_guard"
+            + ",routine=verify_publication_operation_commit,line=126]",
+        diagnostic);
+    assertTrue(!diagnostic.contains("secret"));
+    assertTrue(!diagnostic.contains("SQL statement"));
+  }
+
+  @Test
+  void failureDiagnosticsRejectUnsafePostgresIdentifiersAndDeepCauses() {
+    ServerErrorMessage unsafeServerError = org.mockito.Mockito.mock(ServerErrorMessage.class);
+    when(unsafeServerError.getConstraint()).thenReturn("guard,secret=credential");
+    when(unsafeServerError.getWhere())
+        .thenReturn("PL/pgSQL function unsafe-routine() line 7 at RAISE secret-context");
+    PSQLException unsafeSqlFailure = org.mockito.Mockito.mock(PSQLException.class);
+    when(unsafeSqlFailure.getSQLState()).thenReturn("23514");
+    when(unsafeSqlFailure.getErrorCode()).thenReturn(0);
+    when(unsafeSqlFailure.getServerErrorMessage()).thenReturn(unsafeServerError);
+
+    String unsafeDiagnostic =
+        VersionPublishCommandServiceImpl.safeFailureDiagnostic(
+            "RELEASE_FINALIZATION", unsafeSqlFailure);
+
+    assertEquals(
+        "stage=RELEASE_FINALIZATION causeTypes=org.postgresql.util.PSQLException"
+            + "[sqlState=23514,vendorCode=0]",
+        unsafeDiagnostic);
+    assertTrue(!unsafeDiagnostic.contains("credential"));
+    assertTrue(!unsafeDiagnostic.contains("secret"));
+
+    ServerErrorMessage deepServerError = org.mockito.Mockito.mock(ServerErrorMessage.class);
+    when(deepServerError.getConstraint()).thenReturn("hidden_deep_constraint");
+    when(deepServerError.getWhere())
+        .thenReturn("PL/pgSQL function hidden_deep_routine() line 8 at RAISE");
+    PSQLException deepSqlFailure = org.mockito.Mockito.mock(PSQLException.class);
+    when(deepSqlFailure.getSQLState()).thenReturn("23514");
+    when(deepSqlFailure.getErrorCode()).thenReturn(0);
+    when(deepSqlFailure.getServerErrorMessage()).thenReturn(deepServerError);
+    Throwable deepFailure = deepSqlFailure;
+    for (int index = 0; index < 5; index++) {
+      deepFailure = new IllegalStateException("secret-depth-message", deepFailure);
+    }
+
+    String deepDiagnostic =
+        VersionPublishCommandServiceImpl.safeFailureDiagnostic("RELEASE_FINALIZATION", deepFailure);
+
+    assertTrue(deepDiagnostic.endsWith(" <- ..."));
+    assertTrue(!deepDiagnostic.contains("hidden_deep_constraint"));
+    assertTrue(!deepDiagnostic.contains("hidden_deep_routine"));
+    assertTrue(!deepDiagnostic.contains("secret-depth-message"));
   }
 
   @BeforeEach

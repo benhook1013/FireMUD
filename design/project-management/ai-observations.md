@@ -174,3 +174,9 @@ Entry format:
   - Observation: Cancellation text did not establish concurrency cancellation; configured job limits caused termination. Missing reports prevent complete executed/failed/skipped counts and positive corrected-head proof even when individual failure names appear in logs.
   - Expected pattern: Distinguish job timeout, container initialization and assertion failures; retain exact checkout provenance and never turn absent artifacts into passing or skipped totals. Diagnose reproducible fixture causes independently without weakening production guards or inferring provisioning authority.
   - Current status: The source and synthetic merge are recorded in the owning tracker/controller. The historical V75 fixture incorrectly called the current initializer requiring V81 tables; its test-only seed is corrected, with physical execution still required. No workflow timeout or infrastructure change was made.
+
+- `2026-10-10`: Redacted publication failures still need safe database guard identity
+  - Context: PR #3105's genuine selected-export PostgreSQL fixture repeatedly returned `Cannot commit transaction`; saved diagnostics established SQLSTATE `23514` at release finalization but did not identify the failed guard.
+  - Observation: Exception types and SQLSTATE alone could not distinguish several integrity checks. Guessing a cause would risk changing a valid guard, while logging full SQL exception text could disclose row or authorization data.
+  - Expected pattern: Preserve bounded, allowlisted constraint identifiers and PL/pgSQL routine/line metadata alongside existing status, never raw messages, SQL, row values or full server context. Keep unknown root causes explicit until attributable evidence exists.
+  - Current status: The existing publication diagnostic and focused secret-exclusion tests pass the affected full checks. Corrected PostgreSQL execution remains pending, and no publication integrity guard is changed.

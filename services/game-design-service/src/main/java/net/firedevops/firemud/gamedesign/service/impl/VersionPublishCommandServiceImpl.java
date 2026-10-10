@@ -6,6 +6,8 @@ import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import net.firedevops.firemud.common.LoggingUtil;
 import net.firedevops.firemud.common.publication.PublicationDigestRequestBinding;
 import net.firedevops.firemud.common.world.WorldPublishedStartLocationEvidence;
@@ -33,6 +35,8 @@ import net.firedevops.firemud.gamedesign.service.PublishGateService;
 import net.firedevops.firemud.gamedesign.service.PublishedReleaseBundleService;
 import net.firedevops.firemud.gamedesign.service.RecordedParticipantDigestService;
 import net.firedevops.firemud.gamedesign.service.VersionAssetArtifactService;
+import org.postgresql.util.PSQLException;
+import org.postgresql.util.ServerErrorMessage;
 import org.slf4j.Logger;
 import org.springframework.stereotype.Service;
 
@@ -43,6 +47,12 @@ import org.springframework.stereotype.Service;
 public class VersionPublishCommandServiceImpl {
   private static final java.util.regex.Pattern SELECTION_DIGEST =
       java.util.regex.Pattern.compile("sha256:[0-9a-f]{64}");
+  private static final Pattern POSTGRES_IDENTIFIER = Pattern.compile("[A-Za-z_][A-Za-z0-9_]{0,62}");
+  private static final Pattern PLPGSQL_ROUTINE_LINE =
+      Pattern.compile(
+          "(?:^|\\n)PL/pgSQL function (?:[A-Za-z_][A-Za-z0-9_]{0,62}\\.)?"
+              + "([A-Za-z_][A-Za-z0-9_]{0,62})\\(\\) line ([1-9][0-9]{0,5})"
+              + " at [A-Za-z_ ]+(?:\\r?\\n|$)");
   private static final Logger logger =
       LoggingUtil.getLogger(VersionPublishCommandServiceImpl.class);
 
@@ -1060,8 +1070,11 @@ public class VersionPublishCommandServiceImpl {
             .append("[sqlState=")
             .append(emptyIfNullStatic(sqlException.getSQLState()))
             .append(",vendorCode=")
-            .append(sqlException.getErrorCode())
-            .append(']');
+            .append(sqlException.getErrorCode());
+        if (sqlException instanceof PSQLException postgresException) {
+          appendPostgresFailureIdentity(diagnostic, postgresException.getServerErrorMessage());
+        }
+        diagnostic.append(']');
       }
       current = current.getCause();
       depth++;
@@ -1070,6 +1083,34 @@ public class VersionPublishCommandServiceImpl {
       diagnostic.append(" <- ...");
     }
     return diagnostic.toString();
+  }
+
+  private static void appendPostgresFailureIdentity(
+      StringBuilder diagnostic, ServerErrorMessage serverError) {
+    if (serverError == null) {
+      return;
+    }
+    String constraint = serverError.getConstraint();
+    if (isSafePostgresIdentifier(constraint)) {
+      diagnostic.append(",constraint=").append(constraint);
+    }
+
+    Matcher contextMatcher =
+        PLPGSQL_ROUTINE_LINE.matcher(emptyIfNullStatic(serverError.getWhere()));
+    if (contextMatcher.find()) {
+      String routine = contextMatcher.group(1);
+      if (isSafePostgresIdentifier(routine)) {
+        diagnostic
+            .append(",routine=")
+            .append(routine)
+            .append(",line=")
+            .append(contextMatcher.group(2));
+      }
+    }
+  }
+
+  private static boolean isSafePostgresIdentifier(String value) {
+    return value != null && POSTGRES_IDENTIFIER.matcher(value).matches();
   }
 
   private static String emptyIfNullStatic(String value) {

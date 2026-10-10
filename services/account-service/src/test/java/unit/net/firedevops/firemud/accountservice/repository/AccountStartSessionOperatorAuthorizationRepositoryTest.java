@@ -54,6 +54,33 @@ class AccountStartSessionOperatorAuthorizationRepositoryTest {
   }
 
   @Test
+  void timestampWritesAndExpiryPredicateUseExplicitPostgresTypes() {
+    MockStore store = new MockStore();
+    var repository = repository(store);
+    var candidate = candidate(tuple());
+    var created = inTransaction(() -> repository.createOrReadExact(candidate));
+    var redeemed =
+        inTransaction(
+            () -> repository.redeemExact(redemption(candidate, OWNER_ATTEMPT_ID, 8L, OWNER_URI)));
+
+    assertThat(created.issuance().issuedAt()).isEqualTo(candidate.issuedAt());
+    assertThat(redeemed).isNotNull();
+    assertThat(store.queries)
+        .anySatisfy(
+            sql ->
+                assertThat(sql)
+                    .contains(
+                        "cast(? as timestamptz), cast(? as timestamptz), "
+                            + "cast(? as timestamptz), 'issued'"))
+        .anySatisfy(
+            sql ->
+                assertThat(sql)
+                    .contains(
+                        "redeemed_at = cast(? as timestamptz)",
+                        "reference_expires_at > cast(? as timestamptz)"));
+  }
+
+  @Test
   void exactDuplicateReturnsOriginalOutputAndNeverReplacesIt() {
     MockStore store = new MockStore();
     AccountStartSessionOperatorAuthorizationRepository repository = repository(store);
@@ -684,6 +711,7 @@ class AccountStartSessionOperatorAuthorizationRepositoryTest {
     private final AtomicInteger databaseCallCount = new AtomicInteger();
     private final AtomicInteger insertCount = new AtomicInteger();
     private final AtomicInteger redemptionUpdateCount = new AtomicInteger();
+    private final List<String> queries = new java.util.ArrayList<>();
     private String lastLockSql = "";
     private StoredRow row;
 
@@ -691,6 +719,7 @@ class AccountStartSessionOperatorAuthorizationRepositoryTest {
     public MockResult[] execute(MockExecuteContext context) throws SQLException {
       databaseCallCount.incrementAndGet();
       String sql = context.sql().stripLeading().toLowerCase(java.util.Locale.ROOT);
+      queries.add(sql);
       Object[] bind = context.bindings();
       if (sql.startsWith("insert into account_start_session_operator_authorizations")) {
         if (row == null) {
