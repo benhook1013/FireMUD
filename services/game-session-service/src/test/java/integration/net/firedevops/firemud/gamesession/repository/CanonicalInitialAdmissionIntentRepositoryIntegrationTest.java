@@ -111,9 +111,20 @@ class CanonicalInitialAdmissionIntentRepositoryIntegrationTest {
               target.intents().read(target.targetNamespace(), request.initialAdmissionRequestId()))
           .contains(reserved);
 
+      harness.transactions.execute(
+          status -> {
+            harness.dsl.execute(
+                "UPDATE game_instances SET row_version = row_version + 1 "
+                    + "WHERE tenant_id = ? AND id = ?",
+                target.gameSessionTenantId(),
+                target.gameInstanceId());
+            return null;
+          });
       CanonicalInitialAdmissionIntentSnapshot retry =
           harness.transactions.execute(status -> target.intents().reserve(request, lifecycle));
       assertThat(retry).isEqualTo(reserved);
+      assertThat(retry.sourceBinding().currentRowVersion())
+          .isEqualTo(reserved.sourceBinding().currentRowVersion());
 
       var changedLifecycle = target.lifecycleRequest(uuid(413));
       assertThatThrownBy(
@@ -152,6 +163,8 @@ class CanonicalInitialAdmissionIntentRepositoryIntegrationTest {
       assertThat(attached.state())
           .isEqualTo(CanonicalInitialAdmissionIntentSnapshot.IntentState.HOLD_ATTACHED);
       assertThat(attached.holdIdentity()).isEqualTo(identity);
+      assertThat(attached.sourceBinding().currentRowVersion())
+          .isEqualTo(reserved.sourceBinding().currentRowVersion());
       CanonicalInitialAdmissionIntentSnapshot attachedReplay =
           harness.transactions.execute(status -> target.intents().attach(request, identity));
       assertThat(attachedReplay).isEqualTo(attached);
@@ -290,7 +303,7 @@ class CanonicalInitialAdmissionIntentRepositoryIntegrationTest {
   }
 
   @Test
-  void rollbackLeavesNoIntentAndChangedRuntimeVersionBlocksAttachment() {
+  void rollbackLeavesNoIntentAndRowVersionRegressionBlocksRetry() {
     Harness harness = harness();
     try {
       OwnerTarget target = harness.seed();
@@ -310,6 +323,15 @@ class CanonicalInitialAdmissionIntentRepositoryIntegrationTest {
           .isEmpty();
       assertNoAdmissionMutation(harness.dsl);
 
+      harness.transactions.execute(
+          status -> {
+            harness.dsl.execute(
+                "UPDATE game_instances SET row_version = row_version + 1 "
+                    + "WHERE tenant_id = ? AND id = ?",
+                target.gameSessionTenantId(),
+                target.gameInstanceId());
+            return null;
+          });
       CanonicalInitialAdmissionIntentSnapshot reserved =
           harness.transactions.execute(status -> target.intents().reserve(request, lifecycle));
       harness.transactions.execute(
@@ -321,6 +343,21 @@ class CanonicalInitialAdmissionIntentRepositoryIntegrationTest {
                 target.gameInstanceId());
             return null;
           });
+      CanonicalInitialAdmissionIntentSnapshot monotonicRetry =
+          harness.transactions.execute(status -> target.intents().reserve(request, lifecycle));
+      assertThat(monotonicRetry).isEqualTo(reserved);
+      assertThat(monotonicRetry.sourceBinding().currentRowVersion())
+          .isEqualTo(reserved.sourceBinding().currentRowVersion());
+
+      harness.transactions.execute(
+          status -> {
+            harness.dsl.execute(
+                "UPDATE game_instances SET row_version = ? WHERE tenant_id = ? AND id = ?",
+                reserved.sourceBinding().currentRowVersion() - 1,
+                target.gameSessionTenantId(),
+                target.gameInstanceId());
+            return null;
+          });
 
       var identity =
           new net.firedevops.firemud.common.world.WorldCanonicalInitialAdmissionHold.HoldIdentity(
@@ -328,9 +365,80 @@ class CanonicalInitialAdmissionIntentRepositoryIntegrationTest {
       assertThatThrownBy(
               () ->
                   harness.transactions.execute(
+                      status -> target.intents().reserve(request, lifecycle)))
+          .isInstanceOf(IllegalStateException.class)
+          .hasMessageContaining("retained request or locked owner source binding");
+      assertThatThrownBy(
+              () ->
+                  harness.transactions.execute(
                       status -> target.intents().attach(request, identity)))
           .isInstanceOf(IllegalStateException.class)
           .hasMessageContaining("retained request or locked owner source binding");
+      assertThat(
+              target.intents().read(target.targetNamespace(), request.initialAdmissionRequestId()))
+          .contains(reserved);
+      assertNoAdmissionMutation(harness.dsl);
+    } finally {
+      harness.close();
+    }
+  }
+
+  @Test
+  void retryRejectsRuntimeVersionDescriptorAndCatalogChanges() {
+    assertRuntimeSourceMutationRejected(
+        "UPDATE game_instances SET version_id = version_id + 1, "
+            + "row_version = row_version + 1 WHERE tenant_id = ? AND id = ?");
+    assertRuntimeSourceMutationRejected(
+        "UPDATE game_instances SET launch_descriptor_id = launch_descriptor_id || '-changed', "
+            + "row_version = row_version + 1 WHERE tenant_id = ? AND id = ?");
+
+    Harness harness = harness();
+    try {
+      OwnerTarget target = harness.seed();
+      var request = holdRequest(target, "intent-catalog-change");
+      var lifecycle = target.lifecycleRequest(uuid(423));
+      CanonicalInitialAdmissionIntentSnapshot reserved =
+          harness.transactions.execute(status -> target.intents().reserve(request, lifecycle));
+      var changedCatalogRequest =
+          holdRequest(
+              target, request.initialAdmissionRequestId(), target.catalog().catalogRevision() + 1);
+
+      assertThatThrownBy(
+              () ->
+                  harness.transactions.execute(
+                      status -> target.intents().reserve(changedCatalogRequest, lifecycle)))
+          .isInstanceOf(
+              GameSessionCanonicalRealmCatalogRepository.InvalidCatalogEvidenceException.class)
+          .hasMessageContaining("missing or stale");
+      assertThat(
+              target.intents().read(target.targetNamespace(), request.initialAdmissionRequestId()))
+          .contains(reserved);
+      assertNoAdmissionMutation(harness.dsl);
+    } finally {
+      harness.close();
+    }
+  }
+
+  private static void assertRuntimeSourceMutationRejected(String updateSql) {
+    Harness harness = harness();
+    try {
+      OwnerTarget target = harness.seed();
+      var request = holdRequest(target, "intent-runtime-source-change");
+      var lifecycle = target.lifecycleRequest(uuid(424));
+      CanonicalInitialAdmissionIntentSnapshot reserved =
+          harness.transactions.execute(status -> target.intents().reserve(request, lifecycle));
+      harness.transactions.execute(
+          status -> {
+            harness.dsl.execute(updateSql, target.gameSessionTenantId(), target.gameInstanceId());
+            return null;
+          });
+
+      assertThatThrownBy(
+              () ->
+                  harness.transactions.execute(
+                      status -> target.intents().reserve(request, lifecycle)))
+          .isInstanceOf(IllegalStateException.class)
+          .hasMessageContaining("complete launch binding");
       assertThat(
               target.intents().read(target.targetNamespace(), request.initialAdmissionRequestId()))
           .contains(reserved);
@@ -397,6 +505,11 @@ class CanonicalInitialAdmissionIntentRepositoryIntegrationTest {
 
   private static WorldCanonicalInitialAdmissionHold.Request holdRequest(
       OwnerTarget target, String requestId) {
+    return holdRequest(target, requestId, target.catalog().catalogRevision());
+  }
+
+  private static WorldCanonicalInitialAdmissionHold.Request holdRequest(
+      OwnerTarget target, String requestId, long expectedCatalogRevision) {
     long activeEpoch = 2L;
     var launch = target.launch().association();
     UUID canonicalVersionId = target.launch().canonicalVersionId();
@@ -411,7 +524,7 @@ class CanonicalInitialAdmissionIntentRepositoryIntegrationTest {
             launch.gameInstanceUuid(),
             canonicalVersionId,
             activeEpoch,
-            target.catalog().catalogRevision(),
+            expectedCatalogRevision,
             CanonicalInitialAdmissionRequest.OriginKind.NO_PRIOR_POINTER,
             null,
             requestId);
@@ -428,7 +541,7 @@ class CanonicalInitialAdmissionIntentRepositoryIntegrationTest {
         requestId,
         requestDigest,
         WorldCanonicalInitialAdmissionHold.InitialAdmissionOrigin.NO_PRIOR_POINTER,
-        target.catalog().catalogRevision(),
+        expectedCatalogRevision,
         null);
   }
 

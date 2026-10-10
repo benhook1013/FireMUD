@@ -19,9 +19,6 @@ import net.firedevops.firemud.gamesession.dto.CanonicalRealmCatalogSnapshot;
 import org.jooq.DSLContext;
 import org.jooq.Record;
 import org.jooq.exception.DataAccessException;
-import org.springframework.transaction.annotation.Isolation;
-import org.springframework.transaction.annotation.Propagation;
-import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 /** Durable Game Session intent persisted before an initial-admission request reaches World. */
@@ -44,7 +41,6 @@ public final class CanonicalInitialAdmissionIntentRepository {
   }
 
   /** Locks both Game Session owner sources and commits exact World request bytes before acquire. */
-  @Transactional(isolation = Isolation.READ_COMMITTED)
   public CanonicalInitialAdmissionIntentSnapshot reserve(
       Request holdRequest, WorldCanonicalInstanceLifecycleEvidence.Request lifecycleRequest) {
     Objects.requireNonNull(holdRequest, "holdRequest");
@@ -91,7 +87,6 @@ public final class CanonicalInitialAdmissionIntentRepository {
   }
 
   /** Attaches only World-issued acquisition identity to an already committed exact intent. */
-  @Transactional(isolation = Isolation.READ_COMMITTED)
   public CanonicalInitialAdmissionIntentSnapshot attach(
       Request exactHoldRequest, HoldIdentity holdIdentity) {
     Objects.requireNonNull(exactHoldRequest, "exactHoldRequest");
@@ -168,7 +163,6 @@ public final class CanonicalInitialAdmissionIntentRepository {
   }
 
   /** Returns one committed immutable intent readback, without asserting live World hold state. */
-  @Transactional(propagation = Propagation.NOT_SUPPORTED, readOnly = true)
   public Optional<CanonicalInitialAdmissionIntentSnapshot> read(
       String targetNamespace, String initialAdmissionRequestId) {
     requireSelector(targetNamespace, initialAdmissionRequestId);
@@ -384,10 +378,49 @@ public final class CanonicalInitialAdmissionIntentRepository {
       SourceBinding currentSource) {
     if (!Arrays.equals(snapshot.holdRequest().canonicalRequestBytes(), expectedHoldBytes)
         || !Arrays.equals(snapshot.lifecycleRequest().canonicalBytes(), expectedLifecycleBytes)
-        || !snapshot.sourceBinding().equals(currentSource)) {
+        || !matchesRetainedSourceBinding(snapshot.sourceBinding(), currentSource)) {
       throw conflict(
           "Initial-admission retry differs from its retained request or locked owner source binding");
     }
+  }
+
+  /** Checks immutable source equality while allowing only a monotonic live runtime-row advance. */
+  public static boolean matchesRetainedSourceBinding(
+      SourceBinding retained, SourceBinding current) {
+    Objects.requireNonNull(retained, "retained");
+    Objects.requireNonNull(current, "current");
+    return current.currentRowVersion() >= retained.currentRowVersion()
+        && current.capturedStartingRowVersion() == retained.capturedStartingRowVersion()
+        && retained.equals(withCurrentRowVersion(current, retained.currentRowVersion()));
+  }
+
+  private static SourceBinding withCurrentRowVersion(SourceBinding source, long rowVersion) {
+    return new SourceBinding(
+        source.targetNamespace(),
+        source.canonicalTenantId(),
+        source.worldSlug(),
+        source.realmId(),
+        source.playableStateNamespaceId(),
+        source.playableStateScope(),
+        source.catalogVisible(),
+        source.catalogPublicProduction(),
+        source.catalogRevision(),
+        source.catalogCreationRequestId(),
+        source.catalogRequestDigest(),
+        source.catalogReceiptDigest(),
+        source.tenantAssociationOperationId(),
+        source.gameSessionTenantId(),
+        source.canonicalGameInstanceId(),
+        source.gameInstanceId(),
+        source.canonicalVersionId(),
+        source.runtimeVersionId(),
+        source.controlPlaneRequestId(),
+        source.launchDescriptorId(),
+        source.capturedStartingRowVersion(),
+        rowVersion,
+        source.descriptorRequestDigest(),
+        source.descriptorResultDigest(),
+        source.releaseAttestationDigest());
   }
 
   private static byte[] boundedRequestBytes(byte[] bytes, String label) {

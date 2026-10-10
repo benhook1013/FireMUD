@@ -9,32 +9,43 @@ import net.firedevops.firemud.gamesession.repository.GameSessionCanonicalAdmissi
 import net.firedevops.firemud.gamesession.repository.GameSessionCanonicalAdmissionPointerRepository.PreparedExpectedClosed;
 import net.firedevops.firemud.gamesession.service.CanonicalInitialAdmissionService;
 import net.firedevops.firemud.gamesession.service.CanonicalInitialAdmissionWorldVerifier;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
+import org.springframework.transaction.support.TransactionTemplate;
 
 /**
- * Durable owner operation; remote World proof is acquired before entering its short SQL
- * transaction.
+ * Durable owner operation. Reservation and terminal mutation use short owner transactions; remote
+ * World proof and owner readbacks run between them outside SQL.
  */
 public final class DatabaseCanonicalInitialAdmissionService
     implements CanonicalInitialAdmissionService {
   private final CanonicalInitialAdmissionRepository repository;
   private final GameSessionCanonicalAdmissionPointerRepository pointerRepository;
   private final CanonicalInitialAdmissionWorldVerifier worldVerifier;
+  private final TransactionTemplate ownerWriteTransaction;
 
   public DatabaseCanonicalInitialAdmissionService(
       CanonicalInitialAdmissionRepository repository,
       GameSessionCanonicalAdmissionPointerRepository pointerRepository,
-      CanonicalInitialAdmissionWorldVerifier worldVerifier) {
+      CanonicalInitialAdmissionWorldVerifier worldVerifier,
+      PlatformTransactionManager transactionManager) {
     this.repository = Objects.requireNonNull(repository, "repository");
     this.pointerRepository = Objects.requireNonNull(pointerRepository, "pointerRepository");
     this.worldVerifier = Objects.requireNonNull(worldVerifier, "worldVerifier");
+    this.ownerWriteTransaction =
+        new TransactionTemplate(Objects.requireNonNull(transactionManager, "transactionManager"));
+    this.ownerWriteTransaction.setPropagationBehavior(
+        TransactionDefinition.PROPAGATION_REQUIRES_NEW);
+    this.ownerWriteTransaction.setIsolationLevel(TransactionDefinition.ISOLATION_READ_COMMITTED);
+    this.ownerWriteTransaction.setReadOnly(false);
   }
 
   @Override
   public CanonicalInitialAdmissionOwnerProof bind(CanonicalInitialAdmissionRequest request) {
     requireNoAmbientTransaction();
     Objects.requireNonNull(request, "request");
-    repository.reserve(request);
+    ownerWriteTransaction.executeWithoutResult(status -> repository.reserve(request));
     CanonicalInitialAdmissionOwnerProof beforeRemote =
         requireRead(request.targetNamespace(), request.initialAdmissionRequestId());
     if (beforeRemote.outcome() != CanonicalInitialAdmissionOwnerProof.Outcome.PENDING) {
@@ -49,7 +60,8 @@ public final class DatabaseCanonicalInitialAdmissionService
       throw new IllegalStateException("World initial-admission verifier returned no owner proof");
     }
     worldProof.requireMatches(request);
-    repository.commit(request, worldProof, preparedOrigin);
+    ownerWriteTransaction.executeWithoutResult(
+        status -> repository.commit(request, worldProof, preparedOrigin));
 
     CanonicalInitialAdmissionOwnerProof result =
         requireRead(request.targetNamespace(), request.initialAdmissionRequestId());
@@ -66,14 +78,15 @@ public final class DatabaseCanonicalInitialAdmissionService
       CanonicalInitialAdmissionRequest request, String reason) {
     requireNoAmbientTransaction();
     Objects.requireNonNull(request, "request");
-    repository.reserve(request);
+    ownerWriteTransaction.executeWithoutResult(status -> repository.reserve(request));
     CanonicalInitialAdmissionOwnerProof beforeAbort =
         requireRead(request.targetNamespace(), request.initialAdmissionRequestId());
     if (beforeAbort.outcome() != CanonicalInitialAdmissionOwnerProof.Outcome.PENDING) {
       return beforeAbort;
     }
     PreparedExpectedClosed preparedOrigin = prepareExpectedClosed(request);
-    repository.abort(request, preparedOrigin, reason);
+    ownerWriteTransaction.executeWithoutResult(
+        status -> repository.abort(request, preparedOrigin, reason));
     return requireRead(request.targetNamespace(), request.initialAdmissionRequestId());
   }
 

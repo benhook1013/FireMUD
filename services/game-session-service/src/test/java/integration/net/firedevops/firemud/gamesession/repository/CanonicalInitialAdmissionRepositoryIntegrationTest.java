@@ -34,8 +34,10 @@ import net.firedevops.firemud.gamesession.repository.GameSessionCanonicalAdmissi
 import net.firedevops.firemud.gamesession.repository.GameSessionCanonicalLaunchPreparationRepository;
 import net.firedevops.firemud.gamesession.repository.GameSessionCanonicalRealmCatalogRepository;
 import net.firedevops.firemud.gamesession.repository.GameplayAdmissionPointerEventRepository;
+import net.firedevops.firemud.gamesession.service.CanonicalInitialAdmissionWorldVerifier;
 import net.firedevops.firemud.gamesession.service.FreshGameSessionTenantAssociation;
 import net.firedevops.firemud.gamesession.service.GameSessionCanonicalLaunchPreparationService;
+import net.firedevops.firemud.gamesession.service.impl.DatabaseCanonicalInitialAdmissionService;
 import net.firedevops.firemud.test.TestContainerImages;
 import org.flywaydb.core.Flyway;
 import org.jooq.DSLContext;
@@ -46,6 +48,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.jdbc.datasource.DataSourceTransactionManager;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
 import org.springframework.jdbc.datasource.TransactionAwareDataSourceProxy;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.transaction.support.TransactionTemplate;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
@@ -428,6 +431,64 @@ class CanonicalInitialAdmissionRepositoryIntegrationTest {
   }
 
   @Test
+  void directlyConstructedOwnerServiceRunsMutationsInExplicitPostgresTransactions() {
+    Fixture fixture = fixture();
+    IntakeReceipt source = fixture.registerSource();
+    CanonicalRealmCatalogSnapshot catalog = fixture.createCatalog(source);
+    CreateCanonicalLaunchPreparationRequest preparationRequest =
+        preparationRequest(source, catalog);
+    AuthoredWorldLaunchDescriptorClient syntheticGameDesign =
+        syntheticGameDesignClient(preparationRequest, catalog, source);
+    GameSessionCanonicalLaunchPreparationService preparationService =
+        new GameSessionCanonicalLaunchPreparationService(
+            syntheticGameDesign,
+            fixture.catalogRepository,
+            fixture.sourceRepository,
+            fixture.preparationRepository,
+            fixture.transactionManager,
+            NAMESPACE);
+    CanonicalLaunchPreparationSnapshot preparation = preparationService.prepare(preparationRequest);
+    CompleteLaunchBindingEvidence completeBinding =
+        preparationService.readCompleteBinding(preparation);
+    fixture.createTestOnlyFreshMappingAndRunningLaunch(source, completeBinding);
+    CanonicalInitialAdmissionRequest request = initialAdmissionRequest(catalog, completeBinding);
+    CanonicalInitialAdmissionWorldProof worldProof = testWorldProof(request);
+    CanonicalInitialAdmissionWorldVerifier worldVerifier =
+        mock(CanonicalInitialAdmissionWorldVerifier.class);
+    when(worldVerifier.verify(request))
+        .thenAnswer(
+            invocation -> {
+              assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+              assertThat(TransactionSynchronizationManager.isSynchronizationActive()).isFalse();
+              return worldProof;
+            });
+    DatabaseCanonicalInitialAdmissionService service =
+        new DatabaseCanonicalInitialAdmissionService(
+            fixture.initialAdmissionRepository,
+            fixture.pointerRepository,
+            worldVerifier,
+            fixture.transactionManager);
+
+    CanonicalInitialAdmissionOwnerProof committed = service.bind(request);
+
+    assertThat(committed.outcome())
+        .isEqualTo(CanonicalInitialAdmissionOwnerProof.Outcome.COMMITTED);
+    assertThat(committed.committedPointerVersion()).isEqualTo(1L);
+    assertThat(committed.auditEventId()).isPositive();
+    assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+    assertThat(
+            fixture.dsl.fetchCount(
+                DSL.table(DSL.name("game_session_canonical_initial_admission_attempt"))))
+        .isEqualTo(1);
+    assertThat(
+            fixture.dsl.fetchCount(
+                DSL.table(DSL.name("gameplay_admission_pointer_event")),
+                DSL.field(DSL.name("initial_admission_request_id"), String.class)
+                    .eq(request.initialAdmissionRequestId())))
+        .isEqualTo(1);
+  }
+
+  @Test
   void exactDefinitivelyAbortedAttemptCannotBeReopenedByRetry() {
     Fixture fixture = fixture();
     IntakeReceipt source = fixture.registerSource();
@@ -558,6 +619,7 @@ class CanonicalInitialAdmissionRepositoryIntegrationTest {
         sourceRepository,
         catalogRepository,
         preparationRepository,
+        pointerRepository,
         launchRepository,
         initialAdmissionRepository);
   }
@@ -789,6 +851,7 @@ class CanonicalInitialAdmissionRepositoryIntegrationTest {
       GameSessionAuthoredWorldSourceRepository sourceRepository,
       GameSessionCanonicalRealmCatalogRepository catalogRepository,
       GameSessionCanonicalLaunchPreparationRepository preparationRepository,
+      GameSessionCanonicalAdmissionPointerRepository pointerRepository,
       CanonicalGameInstanceLaunchAssociationRepository launchRepository,
       CanonicalInitialAdmissionRepository initialAdmissionRepository) {
     IntakeReceipt registerSource() {
