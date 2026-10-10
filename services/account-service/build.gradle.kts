@@ -13,6 +13,7 @@ firemudJooq {
 }
 
 dependencies {
+    implementation(project(":common-redis-contracts"))
     implementation(libs.spring.boot.starter.mail)
     implementation(libs.argon2)
     implementation(libs.stripe.java)
