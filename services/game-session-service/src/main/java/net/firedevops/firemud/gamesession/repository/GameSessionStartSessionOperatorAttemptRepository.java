@@ -10,6 +10,7 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
 import java.util.regex.Pattern;
+import net.firedevops.firemud.common.gamesession.OriginalStartSessionCurrentAttemptEvidence;
 import net.firedevops.firemud.common.json.Rfc8785CanonicalJson;
 import net.firedevops.firemud.common.operator.StartSessionAuthorityEvidenceBundle;
 import net.firedevops.firemud.common.operator.StartSessionPostAuthorizationExecutionTuple;
@@ -131,6 +132,80 @@ public final class GameSessionStartSessionOperatorAttemptRepository {
     requireClaimMatch(row, claim);
     requireUnexpired(row);
     return snapshot(row);
+  }
+
+  /**
+   * Reads the exact original pending attempt under its live database-clock lease and original
+   * Account authorization-reference expiry. The claim-owner identity is loaded only inside this
+   * repository and is never returned to the caller.
+   */
+  @Transactional(propagation = Propagation.MANDATORY, isolation = Isolation.READ_COMMITTED)
+  public AttemptSnapshot readCurrentOriginalAttempt(
+      OriginalStartSessionCurrentAttemptEvidence.Request request) {
+    requireWritableReadCommittedOwnerTransaction();
+    Objects.requireNonNull(request, "current original-attempt read request is required");
+    StartSessionPostAuthorizationExecutionTuple tuple = request.originalTuple();
+    String namespace = request.targetNamespace();
+    String requestId = tuple.controlPlaneRequestId();
+    Record row = selectAttempt(namespace, requestId, true);
+    if (row == null) {
+      throw new StaleStartSessionOperatorAttemptClaimException(
+          "Exact live original StartSession attempt is unavailable");
+    }
+
+    byte[] storedTuple = requiredBytes(row, "post_authorization_execution_tuple");
+    if (!Arrays.equals(storedTuple, request.canonicalPostAuthorizationTuple())) {
+      throw new StartSessionOperatorAttemptConflictException(
+          "Current original-attempt read differs from the complete StartSession tuple");
+    }
+    StartSessionPostAuthorizationExecutionTuple decodedTuple;
+    try {
+      decodedTuple = StartSessionPostAuthorizationExecutionTuple.decode(storedTuple);
+    } catch (IllegalArgumentException malformed) {
+      throw new IllegalStateException(
+          "Persisted current StartSession owner tuple is malformed", malformed);
+    }
+    if (!Arrays.equals(decodedTuple.canonicalBytes(), storedTuple)
+        || !namespace.equals(requiredText(row, "target_namespace"))
+        || !requestId.equals(requiredText(row, "control_plane_request_id"))) {
+      throw new IllegalStateException(
+          "Persisted current StartSession owner identity is not canonical");
+    }
+    requireStoredProjectionColumnsMatch(row, decodedTuple);
+    if (!request.expectedOwnerAttemptId().equals(requiredUuid(row, "owner_attempt_id"))
+        || !request.expectedOwnerMutationId().equals(requiredUuid(row, "owner_mutation_id"))
+        || request.expectedOwnerFence() != requiredLong(row, "owner_fence")) {
+      throw new StaleStartSessionOperatorAttemptClaimException(
+          "Current original-attempt read differs from the stored attempt, mutation, or fence");
+    }
+    if (!"OWNER_EXECUTION_PENDING".equals(requiredText(row, "phase_state"))) {
+      throw new StaleStartSessionOperatorAttemptClaimException(
+          "Only the original pending StartSession attempt supports a current lease read");
+    }
+
+    // The durable claimant credential is used only to revalidate this locked row internally.
+    AttemptClaim storedClaim =
+        new AttemptClaim(
+            namespace,
+            requestId,
+            request.expectedOwnerAttemptId(),
+            request.expectedOwnerMutationId(),
+            requiredUuid(row, "claim_owner_id"),
+            request.expectedOwnerFence());
+    AttemptSnapshot current = validateCurrentClaim(storedClaim);
+    byte[] projection = current.accountRedemptionProjection();
+    if (projection == null) {
+      throw new StaleStartSessionOperatorAttemptClaimException(
+          "Original StartSession attempt has no attached Account projection");
+    }
+    AccountRedemptionProjection expectedProjection = projectionFromTuple(decodedTuple);
+    if (!Arrays.equals(projection, expectedProjection.canonicalBytes())) {
+      throw new IllegalStateException(
+          "Attached Account projection differs from the exact current StartSession tuple");
+    }
+    requireProjectionMatches(decodedTuple, expectedProjection);
+    requireOriginalAuthorityUnexpired(decodedTuple);
+    return current;
   }
 
   /**
