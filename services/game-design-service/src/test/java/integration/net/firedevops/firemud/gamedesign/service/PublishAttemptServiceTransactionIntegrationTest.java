@@ -543,6 +543,12 @@ class PublishAttemptServiceTransactionIntegrationTest {
             exportCandidateService.readExportCandidate(
                 tenantId, retainedCandidate.getVersionNumber()))
         .isEqualTo(exportedManifest);
+    assertThatThrownBy(
+            () ->
+                exportCandidateService.recordExportCandidate(
+                    tenantId, retainedCandidate.getVersionNumber(), exportedManifest))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessage("ASSET_EXPORT_CANDIDATE_CONFLICT");
     Mockito.verify(versionAssetArtifactService, Mockito.never())
         .markPublished(
             Mockito.eq(tenantId),

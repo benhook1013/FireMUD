@@ -76,12 +76,12 @@ class GameSessionFreshTenantAssociationRepositoryIntegrationTest {
     assertThat(fixture.dsl.fetchCount(DSL.table(DSL.name("game_instances")))).isZero();
     assertThat(fixture.dsl.fetchCount(DSL.table(DSL.name("gameplay_admission_pointer")))).isZero();
     assertThat(
-            fixture
-                .dsl
-                .fetchOne(
-                    "SELECT reservation_kind FROM game_session_tenant_scope_reservation "
-                        + "WHERE game_session_tenant_id = ?",
-                    first.legacyGameSessionTenantId())
+            Objects.requireNonNull(
+                    fixture.dsl.fetchOne(
+                        "SELECT reservation_kind FROM game_session_tenant_scope_reservation "
+                            + "WHERE game_session_tenant_id = ?",
+                        first.legacyGameSessionTenantId()),
+                    "expected fresh source-bound reservation row")
                 .get("reservation_kind", String.class))
         .isEqualTo("FRESH_SOURCE_BOUND");
   }
@@ -127,12 +127,12 @@ class GameSessionFreshTenantAssociationRepositoryIntegrationTest {
         .isInstanceOf(FreshTenantAssociationConflictException.class);
 
     assertThat(
-            fixture
-                .dsl
-                .fetchOne(
-                    "SELECT legacy_game_session_tenant_id FROM game_session_fresh_tenant_association "
-                        + "WHERE association_operation_id = ?",
-                    associationOperationId)
+            Objects.requireNonNull(
+                    fixture.dsl.fetchOne(
+                        "SELECT legacy_game_session_tenant_id FROM game_session_fresh_tenant_association "
+                            + "WHERE association_operation_id = ?",
+                        associationOperationId),
+                    "expected retained fresh tenant association row")
                 .get("legacy_game_session_tenant_id", Long.class))
         .isEqualTo(committed.legacyGameSessionTenantId());
     assertThat(fixture.dsl.fetchCount(DSL.table(DSL.name("game_session_tenant_scope_reservation"))))
@@ -180,7 +180,7 @@ class GameSessionFreshTenantAssociationRepositoryIntegrationTest {
   void retainedSourceProvenanceCannotCreateAFreshTenantMapping() {
     Fixture fixture = fixture();
     IntakeReceipt retainedSource = fixture.registerRetainedSource(uuid(618));
-    assertThat(retainedSource.source().provenanceKind()).isEqualTo("RETAINED_GAME_V30");
+    assertThat(retainedSource.source().provenanceKind()).isEqualTo("RETAINED_GAME_V29");
 
     assertThatThrownBy(() -> fixture.associate(uuid(622), NAMESPACE, retainedSource))
         .isInstanceOf(InvalidFreshTenantSourceException.class)
@@ -389,7 +389,7 @@ class GameSessionFreshTenantAssociationRepositoryIntegrationTest {
           uuid(624),
           964L,
           "retained-world",
-          "RETAINED_GAME_V30");
+          "RETAINED_GAME_V29");
     }
 
     IntakeReceipt registerSource(

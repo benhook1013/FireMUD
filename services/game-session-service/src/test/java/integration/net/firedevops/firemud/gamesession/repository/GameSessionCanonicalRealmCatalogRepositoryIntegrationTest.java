@@ -57,8 +57,7 @@ class GameSessionCanonicalRealmCatalogRepositoryIntegrationTest {
     Fixture fixture = fixture(true);
     IntakeReceipt source = fixture.register(tenant(1), "new-world", "Fresh World", "NEW_GAME_ROW");
     CreateCanonicalRealmCatalogRequest request =
-        request(
-            source, uuid(20), " Public Realm / East ", "Public Realm", "owner-policy-v2", "SHARED");
+        request(source, uuid(20), "public-realm-east", "Public Realm", "owner-policy-v2", "SHARED");
     String retainedNamespaceXmin =
         requiredRecord(
                 fixture.dsl,
@@ -87,7 +86,7 @@ class GameSessionCanonicalRealmCatalogRepositoryIntegrationTest {
     assertThat(created.tenantId()).isEqualTo(tenant(1));
     assertThat(created.tenantSlug()).isEqualTo(source.source().tenantSlug());
     assertThat(created.worldSlug()).isEqualTo("new-world");
-    assertThat(created.realmSlug()).isEqualTo(" Public Realm / East ");
+    assertThat(created.realmSlug()).isEqualTo("public-realm-east");
     assertThat(created.stateScope()).isEqualTo("SHARED");
     assertThat(created.catalogRevision()).isEqualTo(1L);
     assertThat(created.playableStateNamespaceId()).isNotEqualTo(RETAINED_SHARED_NAMESPACE_ID);
@@ -339,7 +338,7 @@ class GameSessionCanonicalRealmCatalogRepositoryIntegrationTest {
         .isEqualTo(1);
 
     IntakeReceipt retained =
-        fixture.register(tenant(3), "retained-world", "Retained World", "RETAINED_GAME_V30");
+        fixture.register(tenant(3), "retained-world", "Retained World", "RETAINED_GAME_V29");
     assertThatThrownBy(
             () ->
                 fixture.create(

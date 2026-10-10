@@ -76,6 +76,7 @@ class VersionAssetExportCandidateServiceImplTest {
   private final S3Client s3Client = mock(S3Client.class);
   private final Map<String, StoredObject> objectStore = new HashMap<>();
 
+  private VersionAssetExportCandidateService candidateService;
   private Version version;
   private VersionAssetArtifact artifact;
   private PublishAttempt attempt;
@@ -169,7 +170,7 @@ class VersionAssetExportCandidateServiceImplTest {
                   stored.bytes());
             });
 
-    VersionAssetExportCandidateService candidateService =
+    candidateService =
         new VersionAssetExportCandidateServiceImpl(
             versionRepository,
             gameRepository,
@@ -359,6 +360,27 @@ class VersionAssetExportCandidateServiceImplTest {
                                 digest(snapshot.items().get(0).bytes()),
                                 "image/png",
                                 1))))));
+
+    verify(s3Client, never()).putObject(any(PutObjectRequest.class), any(RequestBody.class));
+  }
+
+  @Test
+  void failedCandidateRemainsReadableButCannotBeRecordedOrExported() {
+    ExportedAssetManifest retained = exporter.exportAssets(TENANT_ID, VERSION_NUMBER);
+    attempt.setStatus(PublishAttemptStatus.FAILED);
+    version.setVersionState(VersionLifecycleState.FAILED);
+    version.setVersionStateEpoch(4L);
+    artifact.setArtifactState(VersionAssetArtifactState.FAILED);
+    artifact.setStateEpoch(3L);
+    clearInvocations(s3Client);
+
+    assertEquals(retained, candidateService.readExportCandidate(TENANT_ID, VERSION_NUMBER));
+
+    assertThrows(
+        IllegalStateException.class,
+        () -> candidateService.recordExportCandidate(TENANT_ID, VERSION_NUMBER, retained));
+    assertThrows(
+        IllegalStateException.class, () -> exporter.exportAssets(TENANT_ID, VERSION_NUMBER));
 
     verify(s3Client, never()).putObject(any(PutObjectRequest.class), any(RequestBody.class));
   }

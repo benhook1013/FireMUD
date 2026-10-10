@@ -142,13 +142,13 @@ public final class VersionAssetExportCandidateServiceImpl
         versionRepository
             .findByTenantIdAndIdForUpdate(tenantId, initiallyFound.getId())
             .orElseThrow(() -> new IllegalStateException(CANDIDATE_NOT_FOUND));
-    validateVersion(version, tenantId, versionNumber);
+    validateVersion(version, tenantId, versionNumber, false);
 
     VersionAssetArtifact artifact =
         artifactRepository
             .findByTenantIdAndVersionIdForUpdate(tenantId, version.getId())
             .orElseThrow(() -> new IllegalStateException(CANDIDATE_NOT_FOUND));
-    validateArtifactScope(artifact, tenantId, version);
+    validateArtifactScope(artifact, tenantId, version, false);
 
     ExportSnapshot snapshot = readAndValidateSnapshot(tenantId, versionNumber, version);
     CandidateEvidence requestedEvidence = candidateEvidence(requested, snapshot);
@@ -202,12 +202,12 @@ public final class VersionAssetExportCandidateServiceImpl
         versionRepository
             .findByTenantIdAndVersionNumber(tenantId, versionNumber)
             .orElseThrow(() -> new IllegalStateException(CANDIDATE_NOT_FOUND));
-    validateVersion(version, tenantId, versionNumber);
+    validateVersion(version, tenantId, versionNumber, true);
     VersionAssetArtifact artifact =
         artifactRepository
             .findByTenantIdAndVersionId(tenantId, version.getId())
             .orElseThrow(() -> new IllegalStateException(CANDIDATE_NOT_FOUND));
-    validateArtifactScope(artifact, tenantId, version);
+    validateArtifactScope(artifact, tenantId, version, true);
     ExportSnapshot snapshot = readAndValidateSnapshot(tenantId, versionNumber, version);
     if (!hasAnyCandidateEvidence(artifact)) {
       throw new IllegalStateException(CANDIDATE_NOT_FOUND);
@@ -354,7 +354,8 @@ public final class VersionAssetExportCandidateServiceImpl
     }
   }
 
-  private void validateVersion(Version version, String tenantId, int versionNumber) {
+  private void validateVersion(
+      Version version, String tenantId, int versionNumber, boolean allowFailedForReadback) {
     if (version.getId() == null
         || version.getId() <= 0
         || !Objects.equals(version.getTenantId(), tenantId)
@@ -362,7 +363,9 @@ public final class VersionAssetExportCandidateServiceImpl
         || version.getVersionState() == null
         || !(version.getVersionState() == VersionLifecycleState.DRAFT
             || version.getVersionState() == VersionLifecycleState.PUBLISHED
-            || version.getVersionState() == VersionLifecycleState.ACTIVE)
+            || version.getVersionState() == VersionLifecycleState.ACTIVE
+            || (allowFailedForReadback
+                && version.getVersionState() == VersionLifecycleState.FAILED))
         || version.getVersionStateEpoch() == null
         || version.getVersionStateEpoch() <= 0
         || !isCanonicalUuid(version.getCanonicalTenantId())
@@ -377,7 +380,10 @@ public final class VersionAssetExportCandidateServiceImpl
   }
 
   private void validateArtifactScope(
-      VersionAssetArtifact artifact, String tenantId, Version version) {
+      VersionAssetArtifact artifact,
+      String tenantId,
+      Version version,
+      boolean allowFailedForReadback) {
     if (artifact.getId() == null
         || artifact.getId() <= 0
         || !Objects.equals(artifact.getTenantId(), tenantId)
@@ -385,7 +391,9 @@ public final class VersionAssetExportCandidateServiceImpl
         || artifact.getArtifactState() == null
         || !(artifact.getArtifactState() == VersionAssetArtifactState.STAGED
             || artifact.getArtifactState() == VersionAssetArtifactState.EXPORTED_UNATTESTED
-            || artifact.getArtifactState() == VersionAssetArtifactState.PUBLISHED)
+            || artifact.getArtifactState() == VersionAssetArtifactState.PUBLISHED
+            || (allowFailedForReadback
+                && artifact.getArtifactState() == VersionAssetArtifactState.FAILED))
         || artifact.getStateEpoch() <= 0) {
       throw new IllegalStateException(CANDIDATE_CONFLICT);
     }
