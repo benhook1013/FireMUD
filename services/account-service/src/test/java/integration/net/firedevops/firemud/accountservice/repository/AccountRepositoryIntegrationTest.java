@@ -116,9 +116,18 @@ class AccountRepositoryIntegrationTest {
             COLLISION_MIGRATION_PROOF_SCHEMA,
             PROFILE_IDENTITY_MIGRATION_PROOF_SCHEMA,
             GLOBAL_REGISTRATION_MIGRATION_PROOF_SCHEMA,
-            ACCOUNT_UUID_MIGRATION_PROOF_SCHEMA)) {
+            ACCOUNT_UUID_MIGRATION_PROOF_SCHEMA,
+            legacyLifecycleMigrationSchema(AccountLifecycleState.ACTIVE),
+            legacyLifecycleMigrationSchema(AccountLifecycleState.SECURITY_LOCKED),
+            legacyLifecycleMigrationSchema(AccountLifecycleState.DEACTIVATED_PENDING_DELETE),
+            legacyLifecycleMigrationSchema(AccountLifecycleState.DELETED))) {
+      boolean validLifecycleSchema =
+          !schema.startsWith("account_lifecycle_")
+              || schema.matches(
+                  "account_lifecycle_(active|security_locked|pending_delete|deleted)_[a-f0-9]{12}");
       if (!schema.matches("account_[a-z_]+_[a-f0-9]{12}")
-          || !schema.endsWith("_" + SCHEMA_SUFFIX)) {
+          || !schema.endsWith("_" + SCHEMA_SUFFIX)
+          || !validLifecycleSchema) {
         throw new IllegalStateException("Refusing to dispose an unowned PostgreSQL schema");
       }
       jdbc.execute("DROP SCHEMA IF EXISTS " + schema + " CASCADE");
@@ -603,11 +612,28 @@ class AccountRepositoryIntegrationTest {
         DSL.using(new TransactionAwareDataSourceProxy(dataSource), SQLDialect.POSTGRES);
     AccountRealmAccessGrantRepository grants =
         new AccountRealmAccessGrantRepository(transactionAwareDsl);
+    AccountAuthorityGenerationRepository authority =
+        new AccountAuthorityGenerationRepository(transactionAwareDsl);
+    AccountAuthorityOutboxRepository outbox =
+        new AccountAuthorityOutboxRepository(transactionAwareDsl);
+    AccountAuthoritySourceEvidenceRepository sourceEvidence =
+        new AccountAuthoritySourceEvidenceRepository(transactionAwareDsl, authority, outbox);
     DataSourceTransactionManager transactionManager = new DataSourceTransactionManager(dataSource);
     TransactionTemplate transaction = new TransactionTemplate(transactionManager);
     AccountServiceImpl accountService =
         new AccountServiceImpl(
             new AccountRepository(transactionAwareDsl),
+            authority,
+            sourceEvidence,
+            outbox,
+            new net.firedevops.firemud.accountservice.repository
+                .AccountPasswordResetOperationRepository(transactionAwareDsl),
+            new net.firedevops.firemud.accountservice.repository
+                .AccountLogoutAllOperationRepository(transactionAwareDsl),
+            new net.firedevops.firemud.accountservice.repository
+                .AccountSecurityStateOperationRepository(transactionAwareDsl),
+            new net.firedevops.firemud.accountservice.service
+                .AccountPasswordResetDraftSourceChangeRepository(transactionAwareDsl),
             null,
             null,
             null,
@@ -697,6 +723,93 @@ class AccountRepositoryIntegrationTest {
     return Objects.requireNonNull(
         new TransactionTemplate(new DataSourceTransactionManager(dataSource))
             .execute(status -> repository.save(account)));
+  }
+
+  private RetainedAccountFixture retainedAccountAtV39(AccountLifecycleState lifecycleState) {
+    String migrationSchema = legacyLifecycleMigrationSchema(lifecycleState);
+    DriverManagerDataSource retainedDataSource = postgres.dataSource(migrationSchema);
+    Flyway.configure()
+        .dataSource(retainedDataSource)
+        .schemas(migrationSchema)
+        .defaultSchema(migrationSchema)
+        .placeholders(Map.of("serviceSchema", migrationSchema))
+        .locations(MIGRATION_LOCATION)
+        .target("39")
+        .load()
+        .migrate();
+
+    DSLContext retainedDsl =
+        DSL.using(new TransactionAwareDataSourceProxy(retainedDataSource), SQLDialect.POSTGRES);
+    String suffix = UUID.randomUUID().toString();
+    Long accountId =
+        Objects.requireNonNull(
+                retainedDsl.fetchOne(
+                    "INSERT INTO accounts (username, email, password_hash, role, lifecycle_state) "
+                        + "VALUES (?, ?, ?, 'player', ?) RETURNING id",
+                    "legacy-" + suffix,
+                    suffix.replace("-", "") + "@example.test",
+                    "retained-password-hash",
+                    lifecycleState.storageValue()),
+                "expected retained pre-source Account row")
+            .get(0, Long.class);
+
+    Flyway.configure()
+        .dataSource(retainedDataSource)
+        .schemas(migrationSchema)
+        .defaultSchema(migrationSchema)
+        .placeholders(Map.of("serviceSchema", migrationSchema))
+        .locations(MIGRATION_LOCATION)
+        .load()
+        .migrate();
+
+    AccountRepository retainedRepository = new AccountRepository(retainedDsl);
+    Account retainedAccount = retainedRepository.findById(accountId).orElseThrow();
+    assertThat(retainedAccount.getLifecycleState()).isEqualTo(lifecycleState);
+    assertThat(retainedAccount.getAccountUuidProvenance())
+        .isEqualTo(AccountIdentityProvenance.ACCOUNT_DATABASE_INSERT);
+    return new RetainedAccountFixture(
+        retainedDsl,
+        retainedRepository,
+        retainedAccount,
+        new TransactionTemplate(new DataSourceTransactionManager(retainedDataSource)));
+  }
+
+  private String legacyLifecycleMigrationSchema(AccountLifecycleState lifecycleState) {
+    String lifecycleSlug =
+        lifecycleState == AccountLifecycleState.DEACTIVATED_PENDING_DELETE
+            ? "pending_delete"
+            : lifecycleState.storageValue();
+    return "account_lifecycle_" + lifecycleSlug + "_" + SCHEMA_SUFFIX;
+  }
+
+  private static void assertNoAuthorityBirthEvidence(DSLContext dsl, UUID accountUuid) {
+    Long accountSourceRecordCount =
+        dsl.resultQuery(
+                "SELECT count(*) FROM account_authority_source_records "
+                    + "WHERE scope_kind = 'ACCOUNT' AND account_uuid = ?",
+                accountUuid)
+            .fetchOne(0, Long.class);
+    Long globalRoleSourceCount =
+        dsl.resultQuery(
+                "SELECT count(*) FROM account_global_role_sources WHERE account_uuid = ?",
+                accountUuid)
+            .fetchOne(0, Long.class);
+    Long restrictionBirthCount =
+        dsl.resultQuery(
+                "SELECT count(*) FROM account_platform_restriction_births WHERE account_uuid = ?",
+                accountUuid)
+            .fetchOne(0, Long.class);
+    Long authorityEventCount =
+        dsl.resultQuery(
+                "SELECT count(*) FROM account_authority_outbox_events "
+                    + "WHERE outbox_stream_key = ?",
+                "account:auth-authority:v1:account/" + accountUuid)
+            .fetchOne(0, Long.class);
+
+    assertThat(accountSourceRecordCount).isZero();
+    assertThat(globalRoleSourceCount).isZero();
+    assertThat(restrictionBirthCount).isZero();
+    assertThat(authorityEventCount).isZero();
   }
 
   @Test
@@ -925,18 +1038,14 @@ class AccountRepositoryIntegrationTest {
   }
 
   @ParameterizedTest
-  @EnumSource(AccountLifecycleState.class)
+  @EnumSource(value = AccountLifecycleState.class, mode = EnumSource.Mode.EXCLUDE, names = "ACTIVE")
   void genericUpdateRejectsLifecycleChangeWithoutMutatingAccountOrAuthorityEvidence(
-      AccountLifecycleState lifecycleState) {
-    Account persisted = account("original", "original@example.com", lifecycleState);
+      AccountLifecycleState requestedLifecycleState) {
+    Account persisted = account("original", "original@example.com", AccountLifecycleState.ACTIVE);
     persisted.setPasswordHash("original-password-hash");
     Account saved = saveInTransaction(persisted);
     UUID accountUuid = saved.getAccountUuid();
 
-    AccountLifecycleState requestedLifecycleState =
-        lifecycleState == AccountLifecycleState.ACTIVE
-            ? AccountLifecycleState.SECURITY_LOCKED
-            : AccountLifecycleState.ACTIVE;
     Account staleUpdate = account("updated", "updated@example.com", requestedLifecycleState);
     staleUpdate.setPasswordHash("updated-password-hash");
     staleUpdate.setId(saved.getId());
@@ -1020,24 +1129,47 @@ class AccountRepositoryIntegrationTest {
 
   @ParameterizedTest
   @EnumSource(AccountLifecycleState.class)
-  void genericUpdateAllowsOrdinaryChangesWhenLifecycleMatches(
-      AccountLifecycleState lifecycleState) {
-    Account persisted = account("original", "original@example.com", lifecycleState);
-    Account saved = saveInTransaction(persisted);
+  void genericUpdateAllowsProfileChangesWhenLifecycleMatches(AccountLifecycleState lifecycleState) {
+    AccountRepository lifecycleRepository = repository;
+    TransactionTemplate lifecycleTransaction =
+        new TransactionTemplate(new DataSourceTransactionManager(dataSource));
+    DSLContext lifecycleDsl = dsl;
+    Account saved;
+    if (lifecycleState == AccountLifecycleState.ACTIVE) {
+      saved =
+          saveInTransaction(
+              account("original", "original@example.com", AccountLifecycleState.ACTIVE));
+    } else {
+      RetainedAccountFixture retained = retainedAccountAtV39(lifecycleState);
+      lifecycleRepository = retained.repository();
+      lifecycleTransaction = retained.transaction();
+      lifecycleDsl = retained.dsl();
+      saved = retained.account();
+      assertNoAuthorityBirthEvidence(lifecycleDsl, saved.getAccountUuid());
+    }
+    AccountRepository selectedRepository = lifecycleRepository;
+    TransactionTemplate selectedTransaction = lifecycleTransaction;
+    DSLContext selectedDsl = lifecycleDsl;
     UUID accountUuid = saved.getAccountUuid();
+    String passwordBefore = saved.getPasswordHash();
 
-    Account ordinaryUpdate = account("updated", " Updated@Example.COM ", lifecycleState);
-    ordinaryUpdate.setPasswordHash("updated-password-hash");
-    ordinaryUpdate.setId(saved.getId());
-    Account updated = saveInTransaction(ordinaryUpdate);
+    Account ordinaryUpdate = selectedRepository.findById(saved.getId()).orElseThrow();
+    ordinaryUpdate.setUsername("updated");
+    ordinaryUpdate.setEmail(" Updated@Example.COM ");
+    Account updated =
+        Objects.requireNonNull(
+            selectedTransaction.execute(status -> selectedRepository.save(ordinaryUpdate)));
 
-    Account loaded = repository.findById(saved.getId()).orElseThrow();
+    Account loaded = selectedRepository.findById(saved.getId()).orElseThrow();
     assertThat(loaded.getUsername()).isEqualTo("updated");
     assertThat(loaded.getEmail()).isEqualTo("updated@example.com");
-    assertThat(loaded.getPasswordHash()).isEqualTo("updated-password-hash");
+    assertThat(loaded.getPasswordHash()).isEqualTo(passwordBefore);
     assertThat(loaded.getLifecycleState()).isEqualTo(lifecycleState);
     assertThat(updated.getAccountUuid()).isEqualTo(accountUuid);
     assertThat(updated.getLifecycleState()).isEqualTo(lifecycleState);
+    if (lifecycleState != AccountLifecycleState.ACTIVE) {
+      assertNoAuthorityBirthEvidence(selectedDsl, accountUuid);
+    }
   }
 
   @Test
@@ -2064,4 +2196,10 @@ class AccountRepositoryIntegrationTest {
   private String jsonRow(String query, Object... bindings) {
     return Objects.requireNonNull(dsl.fetchOne(query, bindings)).get(0, String.class);
   }
+
+  private record RetainedAccountFixture(
+      DSLContext dsl,
+      AccountRepository repository,
+      Account account,
+      TransactionTemplate transaction) {}
 }

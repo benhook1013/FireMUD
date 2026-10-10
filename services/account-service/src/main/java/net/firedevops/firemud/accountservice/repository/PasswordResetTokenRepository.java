@@ -10,6 +10,8 @@ import net.firedevops.firemud.accountservice.entity.PasswordResetToken;
 import org.jooq.DSLContext;
 import org.jooq.Record;
 import org.springframework.stereotype.Repository;
+import org.springframework.transaction.annotation.Propagation;
+import org.springframework.transaction.annotation.Transactional;
 
 @Repository
 @SuppressFBWarnings(
@@ -59,6 +61,52 @@ public class PasswordResetTokenRepository {
           .where(PASSWORD_RESET_TOKEN.ID.eq(entity.getId()))
           .execute();
     }
+  }
+
+  /** Atomically consumes the exact still-valid token row under the caller's owner transaction. */
+  @Transactional(propagation = Propagation.MANDATORY)
+  public boolean consumeIfUnexpired(PasswordResetToken token, LocalDateTime capturedNow) {
+    if (token == null || token.getId() == null || capturedNow == null) {
+      return false;
+    }
+    return dsl.deleteFrom(PASSWORD_RESET_TOKEN)
+            .where(
+                PASSWORD_RESET_TOKEN
+                    .ID
+                    .eq(token.getId())
+                    .and(PASSWORD_RESET_TOKEN.TOKEN.eq(token.getToken()))
+                    .and(
+                        PASSWORD_RESET_TOKEN.ACCOUNT_ID.eq(
+                            token.getAccount() == null ? null : token.getAccount().getId()))
+                    .and(PASSWORD_RESET_TOKEN.EXPIRES_AT.eq(token.getExpiresAt()))
+                    .and(PASSWORD_RESET_TOKEN.EXPIRES_AT.gt(capturedNow)))
+            .execute()
+        == 1;
+  }
+
+  /**
+   * Removes only the exact original token row after a terminal password-reset source abort. Unlike
+   * ordinary consumption, this also removes an expired token; mismatched or absent rows remain
+   * untouched for reconciliation.
+   */
+  @Transactional(propagation = Propagation.MANDATORY)
+  public boolean deleteExactAfterSourceAbort(
+      long tokenId, long accountId, String rawTokenHash, LocalDateTime originalExpiresAt) {
+    if (tokenId <= 0L
+        || accountId <= 0L
+        || rawTokenHash == null
+        || !rawTokenHash.matches("[0-9a-f]{64}")
+        || originalExpiresAt == null) {
+      return false;
+    }
+    return dsl.execute(
+            "DELETE FROM password_reset_token WHERE id = ? AND account_id = ? "
+                + "AND expires_at = ? AND encode(sha256(convert_to(token, 'UTF8')), 'hex') = ?",
+            tokenId,
+            accountId,
+            originalExpiresAt,
+            rawTokenHash)
+        == 1;
   }
 
   public void deleteByAccountId(Long accountId) {
