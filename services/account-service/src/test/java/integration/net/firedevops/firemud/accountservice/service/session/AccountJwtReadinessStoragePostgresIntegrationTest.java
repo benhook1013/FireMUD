@@ -27,6 +27,8 @@ import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Supplier;
+import net.firedevops.firemud.accountservice.config.AccountJwtReadinessTrustBinding;
+import net.firedevops.firemud.accountservice.config.AccountJwtReadinessTrustBinding.PeerIdentity;
 import net.firedevops.firemud.accountservice.config.AccountJwtValidatorInventoryBinding.ProfileExpectation;
 import net.firedevops.firemud.accountservice.repository.AccountJwtJwksPublicationRepository;
 import net.firedevops.firemud.accountservice.repository.AccountJwtReadinessProbeRepository;
@@ -132,6 +134,68 @@ class AccountJwtReadinessStoragePostgresIntegrationTest {
   }
 
   @Test
+  void rejectsMissingAndNullReadinessInventoryFieldsWithIndependentRawSqlAttempts()
+      throws Exception {
+    TestContext context = newTestContext(null);
+    OwnerState owner = createOwnerState(context);
+    ObservationContext observationContext =
+        inTransaction(
+            context,
+            () -> owner.readiness().readCurrentInventoryObservationContext(BINDING, owner.trust()));
+    long databaseNow = databaseNow(context);
+    long plannedAtEpochSecond =
+        databaseNow
+            - AccountJwtReadinessProbeRepository.MAX_VALIDATOR_CACHE_AGE_SECONDS
+            - AccountJwtReadinessProbeRepository.PROBE_LIFETIME_SECONDS
+            + DISPATCHED_RECOVERY_HEADROOM_SECONDS;
+    Instant plannedAt = Instant.ofEpochSecond(plannedAtEpochSecond);
+    InventorySnapshot inventory = completeInventorySnapshot(plannedAt, observationContext);
+    inTransaction(
+        context, () -> owner.inventory().persistOrReadback(inventory, BINDING, owner.trust()));
+
+    ReadinessProbePlan planTemplate =
+        context
+            .transaction()
+            .execute(
+                status -> {
+                  ReadinessProbePlan candidate =
+                      owner.readiness().planCurrent(BINDING, owner.trust(), plannedAt, inventory);
+                  status.setRollbackOnly();
+                  return candidate;
+                });
+    assertThat(planTemplate).isNotNull();
+    assertThat(count(context, "account_jwt_readiness_probe_plans")).isZero();
+
+    ReadinessProbePlan legacyPlanTemplate =
+        context
+            .transaction()
+            .execute(
+                status -> {
+                  ReadinessProbePlan candidate =
+                      owner.readiness().planCurrent(BINDING, owner.trust(), plannedAt);
+                  status.setRollbackOnly();
+                  return candidate;
+                });
+    assertThat(legacyPlanTemplate).isNotNull();
+    assertThat(legacyPlanTemplate.planVersion()).isEqualTo(1);
+    assertThat(count(context, "account_jwt_readiness_probe_plans")).isZero();
+
+    assertReadinessPlanInventoryGuardRejects(
+        context,
+        legacyPlanTemplate,
+        List.of("inventoryStatus", "schemaVersion", "validatorId", "applicableProfiles"));
+    assertReadinessPlanInventoryGuardRejects(
+        context,
+        planTemplate,
+        List.of(
+            "inventoryStatus",
+            "schemaVersion",
+            "validatorId",
+            "productionProfiles",
+            "applicableProfiles"));
+  }
+
+  @Test
   void persistsExactV2PodProjectionAndClosesPerPodReceiptsAcrossRepositoryRestart()
       throws Exception {
     TestContext context = newTestContext(null);
@@ -180,6 +244,53 @@ class AccountJwtReadinessStoragePostgresIntegrationTest {
     assertThat(count(context, "account_jwt_readiness_probe_plans")).isEqualTo(1L);
     assertThat(count(context, "account_jwt_readiness_probe_entries")).isEqualTo(8L);
     assertThat(count(context, "account_jwt_validator_inventory_snapshots")).isEqualTo(1L);
+
+    long harnessValidUntilEpochSecond = plan.expiresAtEpochSecond() + 600L;
+    String harnessPeerUri =
+        "spiffe://firemud/ns/" + BINDING.namespace() + "/sa/account-jwt-readiness-harness";
+    List<String> harnessPins = List.of("f".repeat(64));
+    String harnessInstanceId = "account-harness-test";
+    String harnessBindingDigest =
+        AccountJwtReadinessTrustBinding.computeBindingDigest(
+            "readiness-r1",
+            BINDING.environmentId(),
+            BINDING.clusterId(),
+            BINDING.namespace(),
+            CLUSTER_UID,
+            NAMESPACE_UID,
+            harnessPeerUri,
+            harnessPins,
+            harnessInstanceId,
+            harnessValidUntilEpochSecond);
+    var readinessBinding =
+        new AccountJwtReadinessTrustBinding.Binding(
+            BINDING.environmentId(),
+            BINDING.clusterId(),
+            BINDING.namespace(),
+            CLUSTER_UID,
+            NAMESPACE_UID,
+            harnessPeerUri,
+            harnessPins,
+            "readiness-r1",
+            "account-service",
+            harnessInstanceId,
+            harnessValidUntilEpochSecond,
+            harnessBindingDigest);
+    var deliveryClaim =
+        inTransaction(
+            context,
+            () ->
+                owner
+                    .readiness()
+                    .claimSingleDelivery(
+                        BINDING,
+                        owner.trust(),
+                        plan,
+                        readinessBinding,
+                        new PeerIdentity(harnessPeerUri, harnessPins.getFirst()),
+                        Instant.ofEpochSecond(databaseNow)));
+    assertThat(deliveryClaim.planDigest()).isEqualTo(plan.planDigest());
+    assertThat(count(context, "account_jwt_readiness_delivery_claims")).isEqualTo(1L);
 
     InventorySnapshot refreshedInventory =
         completeInventorySnapshot(Instant.ofEpochSecond(databaseNow), observationContext);
@@ -551,6 +662,13 @@ class AccountJwtReadinessStoragePostgresIntegrationTest {
         .isInstanceOf(AccountJwtReadinessProbeRepository.IdempotencyConflictException.class);
     assertThat(count(context, "account_jwt_readiness_pod_receipts")).isEqualTo(1L);
 
+    AuthenticatedAcceptance secondAcceptance =
+        testAcceptance(issuedEntry, expectedPods.get(1), databaseNow);
+    insertRawPodReceipt(context, partial, expectedPods.get(1), secondAcceptance);
+    assertThat(count(context, "account_jwt_readiness_pod_receipts")).isEqualTo(2L);
+    assertReadinessVerifiedTransitionRejectsChangedSigningAttempt(
+        context, partial, expectedPods.size(), secondAcceptance.observedAtEpochSecond());
+
     ProbeEntry verified =
         inTransaction(
             context,
@@ -562,9 +680,11 @@ class AccountJwtReadinessStoragePostgresIntegrationTest {
                         owner.trust(),
                         partial,
                         expectedPods.get(1),
-                        testAcceptance(issuedEntry, expectedPods.get(1), databaseNow),
+                        secondAcceptance,
                         refreshedInventory));
     assertThat(verified.state()).isEqualTo(ProbeState.VERIFIED);
+    assertThat(verified.signingAttemptedAtEpochSecond())
+        .isEqualTo(partial.signingAttemptedAtEpochSecond());
     assertThat(verified.verificationReceipt()).isPresent();
     assertThat(verified.verificationReceipt().orElseThrow().receiptVersion()).isEqualTo(2);
     assertThat(verified.verificationReceipt().orElseThrow().podReceiptCount()).isEqualTo(2);
@@ -939,6 +1059,15 @@ class AccountJwtReadinessStoragePostgresIntegrationTest {
         .contains(activeJwksPromotionReceipt.receiptDigest());
     assertThat(committed.privateReceipt()).isEqualTo(privatePromotionReceipt);
     assertThat(committed.publicReceipt()).isEqualTo(activeJwksPromotionReceipt);
+
+    assertReadinessEvidenceTruncateDeniedWithoutLoss(
+        context,
+        List.of(
+            "account_jwt_readiness_probe_plans",
+            "account_jwt_readiness_probe_entries",
+            "account_jwt_readiness_validator_pods",
+            "account_jwt_readiness_pod_receipts",
+            "account_jwt_readiness_delivery_claims"));
   }
 
   private static long completeRemainingProbes(
@@ -1356,6 +1485,334 @@ class AccountJwtReadinessStoragePostgresIntegrationTest {
     return java.util.Objects.requireNonNull(
         context.dsl().resultQuery("SELECT count(*) FROM " + table).fetchOne(0, Long.class),
         "Count query returned no row.");
+  }
+
+  private static String readinessMatrixWithMissingOrNullField(
+      String validMatrixJson, String field, boolean explicitNull) {
+    try {
+      @SuppressWarnings("unchecked")
+      Map<String, Object> matrix = (Map<String, Object>) JSON.readValue(validMatrixJson, Map.class);
+      Map<String, Object> target = matrix;
+      if (field.equals("validatorId") || field.equals("applicableProfiles")) {
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> validators = (List<Map<String, Object>>) matrix.get("validators");
+        target =
+            validators.stream()
+                .filter(validator -> "account-service".equals(validator.get("validatorId")))
+                .findFirst()
+                .orElseThrow();
+      }
+      if (explicitNull) {
+        target.put(field, null);
+      } else {
+        target.remove(field);
+      }
+      return JSON.writeValueAsString(matrix);
+    } catch (Exception failure) {
+      throw new AssertionError("Readiness inventory SQL fixture could not be mutated", failure);
+    }
+  }
+
+  private static void assertReadinessPlanInventoryGuardRejects(
+      TestContext context, ReadinessProbePlan plan, List<String> requiredFields) {
+    for (String field : requiredFields) {
+      for (boolean explicitNull : new boolean[] {false, true}) {
+        String malformedMatrix =
+            readinessMatrixWithMissingOrNullField(
+                plan.applicabilityMatrixJson(), field, explicitNull);
+        String fieldState = explicitNull ? "null " : "missing ";
+        assertThatThrownBy(
+                () ->
+                    inTransaction(
+                        context,
+                        () -> {
+                          insertRawReadinessPlan(context, plan, malformedMatrix);
+                          return null;
+                        }))
+            .as("raw SQL must reject V%s %s%s", plan.planVersion(), fieldState, field)
+            .satisfies(failure -> assertThat(postgresSqlState(failure)).isEqualTo("23514"));
+        assertThat(count(context, "account_jwt_readiness_probe_plans")).isZero();
+      }
+    }
+
+    context
+        .transaction()
+        .execute(
+            status -> {
+              insertRawReadinessPlan(context, plan, plan.applicabilityMatrixJson());
+              assertThat(count(context, "account_jwt_readiness_probe_plans")).isEqualTo(1L);
+              status.setRollbackOnly();
+              return null;
+            });
+    assertThat(count(context, "account_jwt_readiness_probe_plans")).isZero();
+  }
+
+  private static void insertRawReadinessPlan(
+      TestContext context, ReadinessProbePlan plan, String applicabilityMatrixJson) {
+    new JdbcTemplate(context.dataSource())
+        .update(
+            """
+            INSERT INTO account_jwt_readiness_probe_plans (
+                rotation_operation_id, environment_id, cluster_id, kubernetes_namespace, custody_mode,
+                operation_digest, generation_request_digest, generation_receipt_digest,
+                desired_state_version, expected_cluster_incarnation_uid, expected_namespace_uid,
+                trust_binding_digest, trust_config_revision, target_generation, target_kid,
+                target_public_key_fingerprint, expected_active_generation, expected_active_kid,
+                expected_published_generation, expected_published_kid, publication_intent_digest,
+                publication_receipt_digest, mounted_observation_digest, applicability_matrix_json,
+                applicability_matrix_digest, validator_inventory_complete, maximum_cache_age_seconds,
+                planned_at_epoch_seconds, not_before_epoch_seconds, expires_at_epoch_seconds,
+                plan_version, plan_digest, inventory_snapshot_digest
+            ) VALUES (
+                ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+            )
+            """,
+            plan.operationId(),
+            plan.binding().environmentId(),
+            plan.binding().clusterId(),
+            plan.binding().namespace(),
+            plan.binding().mode().value(),
+            plan.operationDigest(),
+            plan.generationRequestDigest(),
+            plan.generationReceiptDigest(),
+            plan.desiredStateVersion(),
+            UUID.fromString(plan.trustFence().expectedClusterIncarnationUid()),
+            UUID.fromString(plan.trustFence().expectedNamespaceUid()),
+            plan.trustFence().bindingDigest(),
+            plan.trustFence().configRevision(),
+            Long.parseLong(plan.targetGeneration()),
+            plan.targetKid(),
+            plan.targetPublicKeyFingerprint(),
+            plan.expectedFence()
+                .durableActive()
+                .map(value -> Long.parseLong(value.generation()))
+                .orElse(null),
+            plan.expectedFence().durableActive().map(value -> value.kid()).orElse(null),
+            plan.expectedFence()
+                .publishedActive()
+                .map(value -> Long.parseLong(value.generation()))
+                .orElse(null),
+            plan.expectedFence().publishedActive().map(value -> value.kid()).orElse(null),
+            plan.publicationIntentDigest(),
+            plan.publicationReceiptDigest(),
+            plan.mountedObservationDigest(),
+            applicabilityMatrixJson,
+            plan.applicabilityMatrixDigest(),
+            plan.validatorInventoryComplete(),
+            plan.maximumCacheAgeSeconds(),
+            plan.plannedAtEpochSecond(),
+            plan.notBeforeEpochSecond(),
+            plan.expiresAtEpochSecond(),
+            plan.planVersion(),
+            plan.planDigest(),
+            plan.inventorySnapshotDigest().orElse(null));
+  }
+
+  private static void assertReadinessEvidenceTruncateDeniedWithoutLoss(
+      TestContext context, List<String> tables) {
+    Map<String, Long> retainedCounts = new LinkedHashMap<>();
+    for (String table : tables) {
+      retainedCounts.put(table, count(context, table));
+    }
+    assertThat(retainedCounts.values()).allSatisfy(count -> assertThat(count).isPositive());
+
+    for (String table : tables) {
+      for (String cascade : List.of("", " CASCADE")) {
+        assertThatThrownBy(
+                () ->
+                    inTransaction(
+                        context,
+                        () -> {
+                          context.dsl().execute("TRUNCATE TABLE " + table + cascade);
+                          return null;
+                        }))
+            .as("raw TRUNCATE must retain readiness evidence in %s%s", table, cascade)
+            .satisfies(
+                failure -> {
+                  String sqlState = postgresSqlState(failure);
+                  List<String> expectedSqlStates =
+                      cascade.isEmpty() ? List.of("23514", "0A000") : List.of("23514");
+                  assertThat(sqlState).isIn(expectedSqlStates);
+                  if ("23514".equals(sqlState)) {
+                    assertThat(postgresServerMessage(failure))
+                        .contains("Account JWT readiness evidence");
+                  }
+                });
+        retainedCounts.forEach(
+            (retainedTable, expectedCount) ->
+                assertThat(count(context, retainedTable)).isEqualTo(expectedCount));
+      }
+    }
+  }
+
+  private static void insertRawPodReceipt(
+      TestContext context,
+      ProbeEntry entry,
+      ExpectedPod expectedPod,
+      AuthenticatedAcceptance acceptance) {
+    Map<String, Object> digestFields = new LinkedHashMap<>();
+    digestFields.put("domain", "account-jwt-readiness-per-pod-receipt/v1");
+    digestFields.put("rotationOperationId", entry.rotationOperationId().toString());
+    digestFields.put("planDigest", entry.planDigest());
+    digestFields.put("validatorId", entry.validatorId());
+    digestFields.put("tokenProfile", entry.tokenProfile());
+    digestFields.put("audience", entry.audience());
+    digestFields.put("probeKind", entry.probeKind().name());
+    digestFields.put("podUid", expectedPod.target().podUid());
+    digestFields.put("jti", entry.jti().toString());
+    digestFields.put("sourceEntryVersion", entry.entryVersion());
+    digestFields.put("compactTokenSha256", entry.compactTokenSha256().orElseThrow());
+    digestFields.put("targetGeneration", entry.targetGeneration());
+    digestFields.put("targetKid", entry.targetKid());
+    Map<String, Object> expectedActive = new LinkedHashMap<>();
+    expectedActive.put("present", entry.expectedActive().isPresent());
+    entry
+        .expectedActive()
+        .ifPresent(
+            active -> {
+              expectedActive.put("generation", active.generation());
+              expectedActive.put("kid", active.kid());
+            });
+    digestFields.put("expectedActive", expectedActive);
+    digestFields.put("outcome", acceptance.result().name());
+    digestFields.put("observedPodUid", acceptance.podUid());
+    digestFields.put("image", acceptance.image());
+    digestFields.put("verifierConfigSha256", acceptance.verifierConfigSha256());
+    digestFields.put("verifiedKid", acceptance.verifiedKid());
+    digestFields.put("receiverEndpoint", URI.create(acceptance.actualPodEndpoint()).toString());
+    digestFields.put("receiverServiceUri", acceptance.actualServiceUri());
+    digestFields.put("receiverPeerSpkiSha256", acceptance.actualPeerSpkiSha256());
+    digestFields.put("observedAtEpochSecond", acceptance.observedAtEpochSecond());
+    String receiptDigest;
+    try {
+      receiptDigest =
+          sha256(Rfc8785CanonicalJson.canonicalizeUtf8(JSON.writeValueAsString(digestFields)));
+    } catch (Exception failure) {
+      throw new AssertionError("Raw per-Pod receipt fixture could not be canonicalized", failure);
+    }
+    var target = expectedPod.target();
+    context
+        .dsl()
+        .execute(
+            "INSERT INTO account_jwt_readiness_pod_receipts ("
+                + "rotation_operation_id, plan_digest, validator_id, token_profile, audience, "
+                + "probe_kind, pod_uid, receipt_version, jti, source_entry_version, "
+                + "compact_token_sha256, target_generation, target_kid, expected_active_generation, "
+                + "expected_active_kid, outcome, observed_pod_uid, observed_image, "
+                + "observed_verifier_config_sha256, verified_kid, receiver_endpoint, "
+                + "receiver_service_uri, receiver_peer_spki_sha256, observed_at_epoch_seconds, receipt_sha256) "
+                + "VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            entry.rotationOperationId(),
+            entry.planDigest(),
+            entry.validatorId(),
+            entry.tokenProfile(),
+            entry.audience(),
+            entry.probeKind().name(),
+            UUID.fromString(target.podUid()),
+            entry.jti(),
+            entry.entryVersion(),
+            entry.compactTokenSha256().orElseThrow(),
+            Long.parseLong(entry.targetGeneration()),
+            entry.targetKid(),
+            entry.expectedActive().map(value -> Long.parseLong(value.generation())).orElse(null),
+            entry.expectedActive().map(value -> value.kid()).orElse(null),
+            acceptance.result().name(),
+            UUID.fromString(acceptance.podUid()),
+            acceptance.image(),
+            acceptance.verifierConfigSha256(),
+            acceptance.verifiedKid(),
+            acceptance.actualPodEndpoint(),
+            acceptance.actualServiceUri(),
+            acceptance.actualPeerSpkiSha256(),
+            acceptance.observedAtEpochSecond(),
+            receiptDigest);
+  }
+
+  private static void assertReadinessVerifiedTransitionRejectsChangedSigningAttempt(
+      TestContext context,
+      ProbeEntry issuedEntry,
+      int expectedPodCount,
+      long verifiedAtEpochSecond) {
+    String alteredReceiptDigest = "f".repeat(64);
+    assertThatThrownBy(
+            () ->
+                inTransaction(
+                    context,
+                    () -> {
+                      context
+                          .dsl()
+                          .execute(
+                              "UPDATE account_jwt_readiness_probe_entries SET "
+                                  + "state = 'VERIFIED', entry_version = entry_version + 1, "
+                                  + "signing_attempted_at_epoch_seconds = "
+                                  + "signing_attempted_at_epoch_seconds + 1, "
+                                  + "verification_receipt_version = 2, "
+                                  + "verification_source_entry_version = entry_version, "
+                                  + "verified_at_epoch_seconds = ?, verified_kid = target_kid, "
+                                  + "validator_instance_id = 'raw-sql-validator-1', "
+                                  + "validator_binding_digest = ?, "
+                                  + "validator_config_revision = 'config-r1', "
+                                  + "validator_peer_uri = ?, validator_peer_spki_sha256 = ?, "
+                                  + "verification_receipt_sha256 = ?, pod_receipt_count = ?, "
+                                  + "pod_receipt_closure_sha256 = ? "
+                                  + "WHERE rotation_operation_id = ? AND validator_id = ? "
+                                  + "AND token_profile = ? AND audience = ? AND probe_kind = ?",
+                              verifiedAtEpochSecond,
+                              "d".repeat(64),
+                              "spiffe://firemud/ns/firemud-prod/sa/account-jwt-validator",
+                              "e".repeat(64),
+                              alteredReceiptDigest,
+                              expectedPodCount,
+                              alteredReceiptDigest,
+                              issuedEntry.rotationOperationId(),
+                              issuedEntry.validatorId(),
+                              issuedEntry.tokenProfile(),
+                              issuedEntry.audience(),
+                              issuedEntry.probeKind().name());
+                      return null;
+                    }))
+        .satisfies(failure -> assertThat(postgresSqlState(failure)).isEqualTo("23514"));
+
+    var retainedEntry =
+        context
+            .dsl()
+            .fetchOne(
+                "SELECT state, signing_attempted_at_epoch_seconds "
+                    + "FROM account_jwt_readiness_probe_entries "
+                    + "WHERE rotation_operation_id = ? AND validator_id = ? AND token_profile = ? "
+                    + "AND audience = ? AND probe_kind = ?",
+                issuedEntry.rotationOperationId(),
+                issuedEntry.validatorId(),
+                issuedEntry.tokenProfile(),
+                issuedEntry.audience(),
+                issuedEntry.probeKind().name());
+    assertThat(retainedEntry).isNotNull();
+    assertThat(retainedEntry.get("state", String.class)).isEqualTo("ISSUED");
+    assertThat(retainedEntry.get("signing_attempted_at_epoch_seconds", Long.class))
+        .isEqualTo(issuedEntry.signingAttemptedAtEpochSecond().orElseThrow());
+  }
+
+  private static String postgresSqlState(Throwable failure) {
+    Throwable current = failure;
+    while (current != null) {
+      if (current instanceof PSQLException postgresFailure) {
+        return postgresFailure.getSQLState();
+      }
+      current = current.getCause();
+    }
+    return null;
+  }
+
+  private static String postgresServerMessage(Throwable failure) {
+    Throwable current = failure;
+    while (current != null) {
+      if (current instanceof PSQLException postgresFailure) {
+        var serverError = postgresFailure.getServerErrorMessage();
+        return serverError == null ? postgresFailure.getMessage() : serverError.getMessage();
+      }
+      current = current.getCause();
+    }
+    return String.valueOf(failure.getMessage());
   }
 
   private static long databaseNow(TestContext context) {
