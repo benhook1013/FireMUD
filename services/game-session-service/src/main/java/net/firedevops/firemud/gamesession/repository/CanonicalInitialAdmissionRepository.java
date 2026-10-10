@@ -102,6 +102,10 @@ public class CanonicalInitialAdmissionRepository {
       requireSameRequestIdentity(existing, request);
       return;
     }
+    if (existing == null
+        && request.originKind() == CanonicalInitialAdmissionRequest.OriginKind.NO_PRIOR_POINTER) {
+      lockAllAdmissionRepresentationsForNoPrior();
+    }
     CanonicalRealmCatalogSnapshot catalog = lockCatalog(request);
     CanonicalInitialAdmissionLaunchTarget launchTarget =
         lockLaunchTarget(request, existing == null);
@@ -115,6 +119,24 @@ public class CanonicalInitialAdmissionRepository {
     if (otherPending != null) {
       throw new CanonicalInitialAdmissionConflictException(
           "Another initial-admission request already owns the pending realm attempt");
+    }
+
+    if (request.originKind() == CanonicalInitialAdmissionRequest.OriginKind.NO_PRIOR_POINTER) {
+      pointerRepository.requireNoAdmissionPointerRepresentations(
+          request.targetNamespace(),
+          request.canonicalTenantId(),
+          request.realmId(),
+          request.worldSlug(),
+          catalog.realmSlug(),
+          launchTarget.association().gameSessionTenantId(),
+          launchTarget.gameInstanceId());
+    } else {
+      pointerRepository.lockExpectedClosedForRealm(
+          request.targetNamespace(),
+          request.canonicalTenantId(),
+          request.realmId(),
+          request.expectedPriorPointerVersion(),
+          request.expectedCatalogRevision());
     }
 
     Instant now = Instant.now().truncatedTo(ChronoUnit.MICROS);
@@ -687,8 +709,10 @@ public class CanonicalInitialAdmissionRepository {
         || attempt.gameSessionTenantId() != evidence.get("audit_game_session_tenant_id", Long.class)
         || attempt.gameInstanceId() != evidence.get("game_instance_id", Long.class)
         || attempt.gameInstanceId() != evidence.get("audit_game_instance_id", Long.class)
-        || attempt.pointerVersion() != evidence.get("pointer_version", Long.class)
-        || attempt.pointerVersion() != evidence.get("audit_pointer_version", Long.class)
+        || !pointerVersionMatches(
+            attempt.pointerVersion(), evidence.get("pointer_version", Long.class))
+        || !pointerVersionMatches(
+            attempt.pointerVersion(), evidence.get("audit_pointer_version", Long.class))
         || attempt.expectedCatalogRevision() != evidence.get("catalog_revision", Long.class)
         || attempt.expectedCatalogRevision() != evidence.get("audit_catalog_revision", Long.class)
         || !"OPEN".equals(evidence.get("admission_state", String.class))
@@ -818,6 +842,10 @@ public class CanonicalInitialAdmissionRepository {
       throw new CanonicalInitialAdmissionReconciliationRequiredException(
           "Original CLOSED request/event proof changed or no longer matches the attempt");
     }
+  }
+
+  static boolean pointerVersionMatches(Long attemptVersion, Long storedVersion) {
+    return Objects.equals(attemptVersion, storedVersion);
   }
 
   private boolean hasAttemptPointerEvidence(Attempt attempt) {

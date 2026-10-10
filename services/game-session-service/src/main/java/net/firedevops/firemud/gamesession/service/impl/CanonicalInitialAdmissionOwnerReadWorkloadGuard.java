@@ -3,7 +3,7 @@ package net.firedevops.firemud.gamesession.service.impl;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
 import net.firedevops.firemud.common.security.AdminAuthorizationException;
 import net.firedevops.firemud.common.security.SessionContext;
-import net.firedevops.firemud.gamesession.v1.GameSessionControlPlaneServiceGrpc;
+import net.firedevops.firemud.gamesession.v1.CanonicalInitialAdmissionOwnerProofReadServiceGrpc;
 
 /** Exact same-namespace World workload authorization for canonical owner proof readback. */
 public final class CanonicalInitialAdmissionOwnerReadWorkloadGuard {
@@ -16,9 +16,10 @@ public final class CanonicalInitialAdmissionOwnerReadWorkloadGuard {
 
   public void requireWorldManagementOwnerReadCaller() {
     GrpcPeerIdentity peerIdentity = GrpcPeerIdentity.current();
-    if (!"game_session.v1.GameSessionControlPlaneService/GetCanonicalInitialAdmissionOwnerProof"
+    if (!"game_session.v1.CanonicalInitialAdmissionOwnerProofReadService/GetCanonicalInitialAdmissionOwnerProof"
             .equals(
-                GameSessionControlPlaneServiceGrpc.getGetCanonicalInitialAdmissionOwnerProofMethod()
+                CanonicalInitialAdmissionOwnerProofReadServiceGrpc
+                    .getGetCanonicalInitialAdmissionOwnerProofMethod()
                     .getFullMethodName())
         || !GrpcPeerIdentity.isValidNamespace(trustedNamespace)
         || peerIdentity == null

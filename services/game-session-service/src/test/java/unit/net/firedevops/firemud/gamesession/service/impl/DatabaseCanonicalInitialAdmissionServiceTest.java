@@ -1,4 +1,4 @@
-package net.firedevops.firemud.gamesession.service.impl;
+package unit.net.firedevops.firemud.gamesession.service.impl;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -22,6 +22,7 @@ import net.firedevops.firemud.gamesession.dto.CanonicalInitialAdmissionWorldProo
 import net.firedevops.firemud.gamesession.repository.CanonicalInitialAdmissionRepository;
 import net.firedevops.firemud.gamesession.repository.GameSessionCanonicalAdmissionPointerRepository;
 import net.firedevops.firemud.gamesession.service.CanonicalInitialAdmissionWorldVerifier;
+import net.firedevops.firemud.gamesession.service.impl.DatabaseCanonicalInitialAdmissionService;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.transaction.PlatformTransactionManager;

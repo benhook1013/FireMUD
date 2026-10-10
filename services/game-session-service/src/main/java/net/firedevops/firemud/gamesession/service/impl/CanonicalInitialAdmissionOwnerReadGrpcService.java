@@ -12,7 +12,7 @@ import net.firedevops.firemud.common.world.WorldCanonicalInitialAdmissionHold.Re
 import net.firedevops.firemud.gamesession.dto.CanonicalInitialAdmissionOwnerProof;
 import net.firedevops.firemud.gamesession.repository.CanonicalInitialAdmissionRepository;
 import net.firedevops.firemud.gamesession.repository.CanonicalInitialAdmissionRepository.CanonicalInitialAdmissionReconciliationRequiredException;
-import net.firedevops.firemud.gamesession.v1.GameSessionControlPlaneServiceGrpc;
+import net.firedevops.firemud.gamesession.v1.CanonicalInitialAdmissionOwnerProofReadServiceGrpc;
 import net.firedevops.firemud.gamesession.v1.GetCanonicalInitialAdmissionOwnerProofRequest;
 import net.firedevops.firemud.gamesession.v1.GetCanonicalInitialAdmissionOwnerProofResponse;
 
@@ -23,7 +23,8 @@ import net.firedevops.firemud.gamesession.v1.GetCanonicalInitialAdmissionOwnerPr
  * remains valid through a later transaction owned by another service.
  */
 public final class CanonicalInitialAdmissionOwnerReadGrpcService
-    extends GameSessionControlPlaneServiceGrpc.GameSessionControlPlaneServiceImplBase {
+    extends CanonicalInitialAdmissionOwnerProofReadServiceGrpc
+        .CanonicalInitialAdmissionOwnerProofReadServiceImplBase {
   private final CanonicalInitialAdmissionRepository repository;
   private final CanonicalInitialAdmissionOwnerReadWorkloadGuard workloadGuard;
 

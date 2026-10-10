@@ -77,17 +77,14 @@ class AccountJwtValidatorInventorySourceTest {
   void rejectsPrivateSignerMaterialInInitAndEphemeralContainersAndProjectedVolumes()
       throws Exception {
     Fixture initContainer = new Fixture();
-    ObjectNode deployment =
-        (ObjectNode) JSON.readTree(deploymentJson("10", 1, 1, 1, false));
-    ObjectNode deploymentSpec =
-        (ObjectNode) deployment.path("spec").path("template").path("spec");
+    ObjectNode deployment = (ObjectNode) JSON.readTree(deploymentJson("10", 1, 1, 1, false));
+    ObjectNode deploymentSpec = (ObjectNode) deployment.path("spec").path("template").path("spec");
     deploymentSpec.set(
         "initContainers",
         JSON.readTree(
             "[{\"name\":\"setup\",\"envFrom\":[{\"secretRef\":{"
                 + "\"name\":\"jwt-signing-keys\"}}]}]"));
-    initContainer.stubDeployment(
-        new ApiResponse(200, JSON.writeValueAsBytes(deployment)));
+    initContainer.stubDeployment(new ApiResponse(200, JSON.writeValueAsBytes(deployment)));
     assertUnavailable(initContainer);
 
     Fixture ephemeralContainer = new Fixture();
@@ -119,10 +116,8 @@ class AccountJwtValidatorInventorySourceTest {
   @Test
   void acceptsPublicJwksSecretAndProjectedSources() throws Exception {
     Fixture fixture = new Fixture();
-    ObjectNode deployment =
-        (ObjectNode) JSON.readTree(deploymentJson("10", 1, 1, 1, false));
-    ObjectNode podSpec =
-        (ObjectNode) deployment.path("spec").path("template").path("spec");
+    ObjectNode deployment = (ObjectNode) JSON.readTree(deploymentJson("10", 1, 1, 1, false));
+    ObjectNode podSpec = (ObjectNode) deployment.path("spec").path("template").path("spec");
     ObjectNode container = (ObjectNode) podSpec.path("containers").get(0);
     container.set(
         "volumeMounts",
