@@ -159,9 +159,7 @@ class AutomationEmptySelectedSourceIntakePostgresIntegrationTest {
                     + "'automation_reject_empty_source_intake_mutation') "
                     + "AND p.prosecdef "
                     + "AND p.proconfig @> ARRAY[format('search_path=pg_catalog, %I', ?)]",
-                Integer.class,
-                schema,
-                schema))
+                Integer.class, schema, schema))
         .isEqualTo(4);
   }
 

@@ -930,8 +930,7 @@ class AccountStartSessionAdmissionProtectionPostgresIntegrationTest {
                     + "JOIN pg_namespace namespace ON namespace.oid = relation.relnamespace "
                     + "WHERE relation.oid = pg_get_serial_sequence("
                     + "format('%I.%I', current_schema(), ?), ?)::regclass",
-                "account_start_session_admission_protections",
-                "protection_fence");
+                "account_start_session_admission_protections", "protection_fence");
     return fixture
         .dsl()
         .select(DSL.field(DSL.name("last_value"), Long.class))
