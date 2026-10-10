@@ -506,17 +506,49 @@ public class AccountJwtSignerDesiredStateRepository {
     if (promotion == null || !"PREPARED".equals(promotion.status())) {
       throw new QuarantinedStateException("Account PREPARED JWT signer operation is missing");
     }
+    int expectedReadinessProbeCount = 0;
     if (!promotion.privatePromotionDispatched()) {
+      expectedReadinessProbeCount =
+          requireFreshReadinessBeforeDispatch(promotion, evidence.generationResult());
       int changed =
           dsl.execute(
-              "UPDATE "
+              "WITH readiness_clock AS MATERIALIZED (SELECT clock_timestamp() AS checked_at) "
+                  + "UPDATE "
                   + PROMOTION_TABLE
-                  + " SET private_promotion_dispatched_at = CURRENT_TIMESTAMP "
-                  + "WHERE operation_id = ? AND status = 'PREPARED' "
-                  + "AND private_promotion_dispatched_at IS NULL "
-                  + "AND private_promotion_receipt_digest IS NULL "
-                  + "AND active_jwks_receipt_digest IS NULL",
-              operationId);
+                  + " AS promotion SET private_promotion_dispatched_at = readiness_clock.checked_at "
+                  + "FROM readiness_clock WHERE promotion.operation_id = ? "
+                  + "AND promotion.status = 'PREPARED' "
+                  + "AND promotion.private_promotion_dispatched_at IS NULL "
+                  + "AND promotion.private_promotion_receipt_digest IS NULL "
+                  + "AND promotion.active_jwks_receipt_digest IS NULL "
+                  + "AND promotion.readiness_plan_digest = ? "
+                  + "AND promotion.readiness_evidence_digest = ? "
+                  + "AND encode(sha256(promotion.readiness_evidence_preimage), 'hex') "
+                  + "= promotion.readiness_evidence_digest "
+                  + "AND EXISTS (SELECT 1 FROM account_jwt_readiness_probe_plans plan "
+                  + "WHERE plan.rotation_operation_id = promotion.generation_operation_id "
+                  + "AND plan.plan_digest = promotion.readiness_plan_digest "
+                  + "AND plan.validator_inventory_complete = TRUE "
+                  + "AND plan.not_before_epoch_seconds <= "
+                  + "floor(extract(epoch FROM readiness_clock.checked_at))::BIGINT "
+                  + "AND plan.expires_at_epoch_seconds > "
+                  + "floor(extract(epoch FROM readiness_clock.checked_at))::BIGINT) "
+                  + "AND (SELECT count(*) FROM account_jwt_readiness_probe_entries entry "
+                  + "WHERE entry.rotation_operation_id = promotion.generation_operation_id "
+                  + "AND entry.plan_digest = promotion.readiness_plan_digest) = ? "
+                  + "AND (SELECT count(*) FROM account_jwt_readiness_probe_entries entry "
+                  + "WHERE entry.rotation_operation_id = promotion.generation_operation_id "
+                  + "AND entry.plan_digest = promotion.readiness_plan_digest "
+                  + "AND entry.state = 'VERIFIED' "
+                  + "AND entry.verification_receipt_sha256 IS NOT NULL "
+                  + "AND entry.verified_at_epoch_seconds < entry.expires_at_epoch_seconds "
+                  + "AND entry.expires_at_epoch_seconds > "
+                  + "floor(extract(epoch FROM readiness_clock.checked_at))::BIGINT) = ?",
+              operationId,
+              promotion.readinessPlanDigest(),
+              promotion.readinessEvidenceDigest(),
+              expectedReadinessProbeCount,
+              expectedReadinessProbeCount);
       if (changed != 1) {
         throw new VersionConflictException(
             "Account private promotion dispatch authorization CAS did not apply");
@@ -784,11 +816,10 @@ public class AccountJwtSignerDesiredStateRepository {
             promotion.expectedPublicJwksJson());
     requireReadinessProofMatches(
         result, commitPreparation, promotion, expectedBinding, trust, readinessProof);
-    requireUnexpiredCurrentReadinessProof(promotion, result, readinessProof);
 
-    // State is locked first above, matching readiness expiry/cleanup's owner lock order. The
-    // terminal UPDATE repeats the clock and complete-entry fence atomically; the count query in
-    // the helper is a validation read, not an entry-row lock.
+    // Readiness freshness was required before PREPARED and again at the one-way dispatch boundary.
+    // After dispatch, recovery is authorized by that exact immutable proof and the durable
+    // resource receipts, not by the proof's former wall-clock window.
     int changed =
         dsl.execute(
             "UPDATE "
@@ -797,22 +828,20 @@ public class AccountJwtSignerDesiredStateRepository {
                 + "AND status = 'PREPARED' AND private_promotion_dispatched_at IS NOT NULL "
                 + "AND private_promotion_receipt_digest IS NOT NULL "
                 + "AND active_jwks_receipt_digest IS NOT NULL "
+                + "AND readiness_plan_digest = ? AND readiness_evidence_digest = ? "
+                + "AND encode(sha256(readiness_evidence_preimage), 'hex') = readiness_evidence_digest "
                 + "AND EXISTS (SELECT 1 FROM account_jwt_readiness_probe_plans plan "
                 + "WHERE plan.rotation_operation_id = ? AND plan.plan_digest = ? "
-                + "AND plan.validator_inventory_complete = TRUE "
-                + "AND plan.not_before_epoch_seconds <= "
-                + "floor(extract(epoch FROM clock_timestamp()))::BIGINT "
-                + "AND plan.expires_at_epoch_seconds > "
-                + "floor(extract(epoch FROM clock_timestamp()))::BIGINT) "
+                + "AND plan.validator_inventory_complete = TRUE) "
                 + "AND (SELECT count(*) FROM account_jwt_readiness_probe_entries entry "
                 + "WHERE entry.rotation_operation_id = ? AND entry.plan_digest = ?) = ? "
                 + "AND (SELECT count(*) FROM account_jwt_readiness_probe_entries entry "
                 + "WHERE entry.rotation_operation_id = ? AND entry.plan_digest = ? "
                 + "AND entry.state = 'VERIFIED' AND entry.verification_receipt_sha256 IS NOT NULL "
-                + "AND entry.verified_at_epoch_seconds < entry.expires_at_epoch_seconds "
-                + "AND entry.expires_at_epoch_seconds > "
-                + "floor(extract(epoch FROM clock_timestamp()))::BIGINT) = ?",
+                + "AND entry.verified_at_epoch_seconds < entry.expires_at_epoch_seconds) = ?",
             promotionOperationId,
+            promotion.readinessPlanDigest(),
+            promotion.readinessEvidenceDigest(),
             promotion.generationOperationId(),
             promotion.readinessPlanDigest(),
             promotion.generationOperationId(),
@@ -1357,9 +1386,12 @@ public class AccountJwtSignerDesiredStateRepository {
     }
     if (preparedReplay != null
         && (!preparedReplay.readinessPlanDigest().equals(plan.planDigest())
-            || !preparedReplay.readinessEvidenceDigest().equals(proof.readinessEvidenceDigest()))) {
+            || !preparedReplay.readinessEvidenceDigest().equals(proof.readinessEvidenceDigest())
+            || !Arrays.equals(
+                preparedReplay.readinessEvidencePreimage().getBytes(StandardCharsets.UTF_8),
+                proof.readinessEvidencePreimage()))) {
       throw new IdempotencyConflictException(
-          "Readiness recovery proof changed for the exact PREPARED promotion");
+          "Readiness recovery proof changed from the exact frozen PREPARED evidence");
     }
     if (!plan.validatorInventoryComplete()
         || proof.inventoryEvidenceReference() == null
@@ -2404,25 +2436,20 @@ public class AccountJwtSignerDesiredStateRepository {
     }
   }
 
-  /**
-   * Rechecks the owner-created typed proof at the durable COMMITTED boundary. A proof read before
-   * this transaction is insufficient: the plan and every VERIFIED entry must still be inside their
-   * recorded validity window when Account commits the promotion.
-   */
-  private void requireUnexpiredCurrentReadinessProof(
-      StoredPromotion promotion, GenerationResult result, ReadinessPromotionProof proof) {
-    var expectedPlan = proof.plan();
+  /** Enforces readiness freshness at the last reversible boundary before private mutation. */
+  private int requireFreshReadinessBeforeDispatch(
+      StoredPromotion promotion, GenerationResult result) {
+    int expectedProbeCount = frozenReadinessProbeCount(promotion);
     Record currentPlan =
         dsl.fetchOne(
             "SELECT plan_digest, operation_digest, generation_request_digest, "
                 + "generation_receipt_digest, desired_state_version, target_generation, target_kid, "
                 + "target_public_key_fingerprint, publication_intent_digest, "
-                + "publication_receipt_digest, mounted_observation_digest, "
-                + "applicability_matrix_digest, validator_inventory_complete, "
-                + "maximum_cache_age_seconds, not_before_epoch_seconds, expires_at_epoch_seconds, "
+                + "publication_receipt_digest, mounted_observation_digest, validator_inventory_complete, "
+                + "not_before_epoch_seconds, expires_at_epoch_seconds, "
                 + "floor(extract(epoch FROM clock_timestamp()))::bigint AS checked_epoch "
                 + "FROM account_jwt_readiness_probe_plans WHERE rotation_operation_id = ? "
-                + "AND plan_digest = ? FOR UPDATE",
+                + "AND plan_digest = ? FOR SHARE",
             result.operationId(),
             promotion.readinessPlanDigest());
     if (currentPlan == null
@@ -2452,20 +2479,13 @@ public class AccountJwtSignerDesiredStateRepository {
         || !promotion
             .mountedObservationDigest()
             .equals(currentPlan.get("mounted_observation_digest", String.class))
-        || !expectedPlan
-            .applicabilityMatrixDigest()
-            .equals(currentPlan.get("applicability_matrix_digest", String.class))
-        || expectedPlan.maximumCacheAgeSeconds()
-            != currentPlan.get("maximum_cache_age_seconds", Short.class)
-        || expectedPlan.notBeforeEpochSecond()
-            != currentPlan.get("not_before_epoch_seconds", Long.class)
-        || expectedPlan.expiresAtEpochSecond()
-            != currentPlan.get("expires_at_epoch_seconds", Long.class)
         || currentPlan.get("checked_epoch", Long.class) == null
-        || currentPlan.get("checked_epoch", Long.class) < expectedPlan.notBeforeEpochSecond()
-        || currentPlan.get("checked_epoch", Long.class) >= expectedPlan.expiresAtEpochSecond()) {
+        || currentPlan.get("checked_epoch", Long.class)
+            < currentPlan.get("not_before_epoch_seconds", Long.class)
+        || currentPlan.get("checked_epoch", Long.class)
+            >= currentPlan.get("expires_at_epoch_seconds", Long.class)) {
       throw new PromotionPrerequisitesIncompleteException(
-          "Exact Account readiness proof is missing, changed, or expired at commit");
+          "Exact Account readiness proof is missing, changed, or expired before private dispatch");
     }
 
     Record currentEntries =
@@ -2483,10 +2503,30 @@ public class AccountJwtSignerDesiredStateRepository {
     if (total == null
         || verified == null
         || total <= 0L
-        || total != proof.verifiedProbes().size()
+        || total != expectedProbeCount
         || !total.equals(verified)) {
       throw new PromotionPrerequisitesIncompleteException(
-          "Every exact Account validator proof must remain VERIFIED and unexpired at commit");
+          "Every exact Account validator proof must remain VERIFIED and unexpired before private dispatch");
+    }
+    return expectedProbeCount;
+  }
+
+  private static int frozenReadinessProbeCount(StoredPromotion promotion) {
+    try {
+      JsonNode proof = STRICT_JSON.readTree(promotion.readinessEvidencePreimage());
+      JsonNode probes = proof == null ? null : proof.get("verifiedProbes");
+      if (proof == null
+          || !proof.isObject()
+          || probes == null
+          || !probes.isArray()
+          || probes.isEmpty()
+          || probes.size() > 32) {
+        throw new IllegalArgumentException("Frozen readiness probe set is malformed");
+      }
+      return probes.size();
+    } catch (Exception failure) {
+      throw new QuarantinedStateException(
+          "Frozen Account readiness proof cannot be read before private dispatch", failure);
     }
   }
 

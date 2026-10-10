@@ -85,6 +85,13 @@ BEGIN
             USING ERRCODE = '23514', CONSTRAINT = 'account_jwt_signer_promotion_insert_binding';
     END IF;
 
+    IF EXISTS (
+        SELECT 1 FROM account_jwt_signer_generation_abort_receipts AS abort_receipt
+         WHERE abort_receipt.operation_id = NEW.generation_operation_id) THEN
+        RAISE EXCEPTION 'JWT promotion cannot reuse a terminally aborted generation'
+            USING ERRCODE = '23514', CONSTRAINT = 'account_jwt_signer_promotion_insert_binding';
+    END IF;
+
     IF NEW.readiness_evidence_preimage IS NULL
         OR octet_length(NEW.readiness_evidence_preimage) NOT BETWEEN 2 AND 1048576
         OR encode(sha256(NEW.readiness_evidence_preimage), 'hex')
@@ -390,4 +397,85 @@ $$;
 CREATE TRIGGER account_jwt_signer_readiness_preimage_immutable
     BEFORE UPDATE OF readiness_evidence_preimage ON account_jwt_signer_promotion_operations
     FOR EACH ROW EXECUTE FUNCTION account_jwt_signer_readiness_preimage_immutable_guard();
+
+-- The dispatch marker is the last reversible boundary before the materializer may mutate the
+-- fixed private Secret. Keep a database-level freshness fence for direct SQL callers as well as
+-- the repository CAS; after this marker is durable, recovery uses the frozen proof and receipts.
+CREATE FUNCTION account_jwt_signer_promotion_readiness_dispatch_guard()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+AS $$
+DECLARE
+    proof_document JSONB;
+    checked_at TIMESTAMPTZ;
+    now_epoch BIGINT;
+    probe_count BIGINT;
+    plan_inventory_complete BOOLEAN;
+    plan_not_before BIGINT;
+    plan_expires_at BIGINT;
+    entry_count BIGINT;
+    verified_count BIGINT;
+BEGIN
+    IF OLD.private_promotion_dispatched_at IS NULL
+        AND NEW.private_promotion_dispatched_at IS NOT NULL THEN
+        IF NEW.readiness_evidence_preimage IS NULL
+            OR encode(sha256(NEW.readiness_evidence_preimage), 'hex')
+                IS DISTINCT FROM NEW.readiness_evidence_digest THEN
+            RAISE EXCEPTION 'JWT promotion dispatch lacks its exact frozen readiness proof'
+                USING ERRCODE = '23514', CONSTRAINT = 'account_jwt_signer_promotion_readiness_incomplete';
+        END IF;
+        proof_document := convert_from(NEW.readiness_evidence_preimage, 'UTF8')::JSONB;
+        IF jsonb_typeof(proof_document) IS DISTINCT FROM 'object'
+            OR jsonb_typeof(proof_document -> 'verifiedProbes') IS DISTINCT FROM 'array' THEN
+            RAISE EXCEPTION 'JWT promotion dispatch lacks its exact frozen readiness probe set'
+                USING ERRCODE = '23514', CONSTRAINT = 'account_jwt_signer_promotion_readiness_incomplete';
+        END IF;
+        probe_count := jsonb_array_length(proof_document -> 'verifiedProbes');
+        IF probe_count <= 0 OR probe_count > 32 THEN
+            RAISE EXCEPTION 'JWT promotion dispatch readiness probe set is outside its bound'
+                USING ERRCODE = '23514', CONSTRAINT = 'account_jwt_signer_promotion_readiness_incomplete';
+        END IF;
+
+        SELECT plan.validator_inventory_complete,
+               plan.not_before_epoch_seconds,
+               plan.expires_at_epoch_seconds
+          INTO plan_inventory_complete, plan_not_before, plan_expires_at
+          FROM account_jwt_readiness_probe_plans AS plan
+         WHERE plan.rotation_operation_id = NEW.generation_operation_id
+           AND plan.plan_digest = NEW.readiness_plan_digest
+         FOR SHARE;
+        PERFORM 1
+          FROM account_jwt_readiness_probe_entries AS entry
+         WHERE entry.rotation_operation_id = NEW.generation_operation_id
+           AND entry.plan_digest = NEW.readiness_plan_digest
+         FOR SHARE;
+        checked_at := clock_timestamp();
+        now_epoch := floor(extract(epoch FROM checked_at))::BIGINT;
+        SELECT count(*), count(*) FILTER (
+                   WHERE entry.state = 'VERIFIED'
+                     AND entry.verification_receipt_sha256 IS NOT NULL
+                     AND entry.verified_at_epoch_seconds < entry.expires_at_epoch_seconds
+                     AND entry.expires_at_epoch_seconds > now_epoch)
+          INTO entry_count, verified_count
+          FROM account_jwt_readiness_probe_entries AS entry
+         WHERE entry.rotation_operation_id = NEW.generation_operation_id
+           AND entry.plan_digest = NEW.readiness_plan_digest;
+        IF plan_inventory_complete IS DISTINCT FROM TRUE
+            OR plan_not_before IS NULL
+            OR plan_expires_at IS NULL
+            OR now_epoch < plan_not_before
+            OR now_epoch >= plan_expires_at
+            OR entry_count IS DISTINCT FROM probe_count
+            OR verified_count IS DISTINCT FROM probe_count THEN
+            RAISE EXCEPTION 'JWT promotion readiness expired or changed before private dispatch'
+                USING ERRCODE = '23514', CONSTRAINT = 'account_jwt_signer_promotion_readiness_incomplete';
+        END IF;
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+CREATE TRIGGER account_jwt_signer_promotion_readiness_dispatch_guard
+    BEFORE UPDATE OF private_promotion_dispatched_at ON account_jwt_signer_promotion_operations
+    FOR EACH ROW EXECUTE FUNCTION account_jwt_signer_promotion_readiness_dispatch_guard();
 -- [jooq ignore stop]
