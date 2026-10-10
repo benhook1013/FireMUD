@@ -196,6 +196,24 @@ class CanonicalInitialAdmissionOwnerReadGrpcServiceTest {
   }
 
   @Test
+  void refusesNullOrMalformedRequestBeforeDecodingForUnauthorizedCaller() {
+    CanonicalInitialAdmissionRepository repository =
+        mock(CanonicalInitialAdmissionRepository.class);
+    var service = service(repository);
+    var malformed =
+        GetCanonicalInitialAdmissionOwnerProofRequest.newBuilder()
+            .setUnknownFields(
+                UnknownFieldSet.newBuilder()
+                    .addField(99, UnknownFieldSet.Field.newBuilder().addVarint(1L).build())
+                    .build())
+            .build();
+
+    assertEquals(Status.Code.PERMISSION_DENIED, invoke(service, null).status().getCode());
+    assertEquals(Status.Code.PERMISSION_DENIED, invoke(service, malformed).status().getCode());
+    verifyNoInteractions(repository);
+  }
+
+  @Test
   void refusesForeignWorkloadAndMatchingForeignRequestOutsideTrustedNamespace() {
     CanonicalInitialAdmissionRepository repository =
         mock(CanonicalInitialAdmissionRepository.class);
@@ -249,6 +267,7 @@ class CanonicalInitialAdmissionOwnerReadGrpcServiceTest {
         invokeAsWorld(service, request(identity).toBuilder().setUnknownFields(unknown).build())
             .status()
             .getCode());
+    assertEquals(Status.Code.INVALID_ARGUMENT, invokeAsWorld(service, null).status().getCode());
     assertEquals(
         Status.Code.INVALID_ARGUMENT,
         invokeAsWorld(

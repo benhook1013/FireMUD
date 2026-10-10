@@ -39,6 +39,16 @@ public final class CanonicalInitialAdmissionOwnerReadGrpcService
       GetCanonicalInitialAdmissionOwnerProofRequest request,
       StreamObserver<GetCanonicalInitialAdmissionOwnerProofResponse> responseObserver) {
     Objects.requireNonNull(responseObserver, "responseObserver");
+    try {
+      workloadGuard.requireWorldManagementOwnerReadCaller();
+    } catch (AdminAuthorizationException unauthorized) {
+      responseObserver.onError(
+          Status.PERMISSION_DENIED
+              .withDescription("Owner proof caller is not authorized")
+              .asRuntimeException());
+      return;
+    }
+
     if (request == null) {
       responseObserver.onError(
           Status.INVALID_ARGUMENT
