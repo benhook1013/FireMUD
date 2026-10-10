@@ -17,13 +17,19 @@ import java.sql.Connection;
 import java.sql.SQLException;
 import java.util.List;
 import java.util.UUID;
+import net.firedevops.firemud.accountservice.repository.AccountStartSessionAdmissionProtectionRepository.PendingProtection;
 import net.firedevops.firemud.common.account.startsession.AccountStartSessionAdmissionProtectionSettlement;
 import net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding.SourceEvidence;
 import net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding.SourceKind;
 import org.jooq.ConnectionRunnable;
 import org.jooq.DSLContext;
+import org.jooq.Field;
 import org.jooq.Record;
+import org.jooq.Result;
+import org.jooq.SQLDialect;
 import org.jooq.exception.DataAccessException;
+import org.jooq.impl.DSL;
+import org.jooq.impl.SQLDataType;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
@@ -125,6 +131,51 @@ class AccountStartSessionAdmissionProtectionRepositoryTest {
         .hasMessageContaining("READ_COMMITTED");
 
     verifyNoInteractions(dsl, settlement);
+  }
+
+  @Test
+  void pendingPageUsesBoundedDescendingFenceKeysetAndDecodesExactIds() throws SQLException {
+    DSLContext dsl = writableDsl();
+    UUID newestId = UUID.fromString("c5dc6d8d-13ee-42a8-83a5-a78ee044b55c");
+    UUID olderId = UUID.fromString("db7c25cb-dcb1-4ec5-af07-8f48d1e0a62c");
+    when(dsl.fetch(anyString(), any(Object[].class)))
+        .thenReturn(pendingRows(newestId, 90L, olderId, 73L));
+    AccountStartSessionAdmissionProtectionRepository repository =
+        new AccountStartSessionAdmissionProtectionRepository(dsl);
+    beginWritableReadCommittedTransaction();
+
+    List<PendingProtection> candidates = repository.findUnsettledPageDescending(100L, 2);
+
+    assertThat(candidates)
+        .containsExactly(new PendingProtection(newestId, 90L), new PendingProtection(olderId, 73L));
+    ArgumentCaptor<String> query = ArgumentCaptor.forClass(String.class);
+    ArgumentCaptor<Object[]> arguments = ArgumentCaptor.forClass(Object[].class);
+    verify(dsl).fetch(query.capture(), arguments.capture());
+    assertThat(query.getValue())
+        .contains("SELECT protection.protection_id, protection.protection_fence")
+        .contains("NOT EXISTS")
+        .contains("protection.protection_fence < ?")
+        .contains("ORDER BY protection.protection_fence DESC LIMIT ?")
+        .doesNotContain("FOR UPDATE", "expires_at", "UPDATE ", "DELETE ");
+    assertThat(arguments.getValue()).containsExactly(100L, 2);
+  }
+
+  @Test
+  void pendingPageRejectsUnboundedLimitsBeforeSelect() throws SQLException {
+    DSLContext dsl = writableDsl();
+    AccountStartSessionAdmissionProtectionRepository repository =
+        new AccountStartSessionAdmissionProtectionRepository(dsl);
+    beginWritableReadCommittedTransaction();
+
+    assertThatThrownBy(
+            () ->
+                repository.findUnsettledPageDescending(
+                    null,
+                    AccountStartSessionAdmissionProtectionRepository.MAX_PENDING_SWEEP_SIZE + 1))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("bounded page size");
+
+    verify(dsl, times(0)).fetch(anyString(), any(Object[].class));
   }
 
   @Test
@@ -239,6 +290,23 @@ class AccountStartSessionAdmissionProtectionRepositoryTest {
         .when(dsl)
         .connection(any(ConnectionRunnable.class));
     return dsl;
+  }
+
+  private static Result<Record> pendingRows(
+      UUID firstId, long firstFence, UUID secondId, long secondFence) {
+    DSLContext resultDsl = DSL.using(SQLDialect.POSTGRES);
+    Field<UUID> idField = DSL.field("protection_id", SQLDataType.UUID);
+    Field<Long> fenceField = DSL.field("protection_fence", SQLDataType.BIGINT);
+    Result<Record> rows = resultDsl.newResult(new Field<?>[] {idField, fenceField});
+    Record first = resultDsl.newRecord(idField, fenceField);
+    first.setValue(idField, firstId);
+    first.setValue(fenceField, firstFence);
+    Record second = resultDsl.newRecord(idField, fenceField);
+    second.setValue(idField, secondId);
+    second.setValue(fenceField, secondFence);
+    rows.add(first);
+    rows.add(second);
+    return rows;
   }
 
   private static void beginWritableReadCommittedTransaction() {

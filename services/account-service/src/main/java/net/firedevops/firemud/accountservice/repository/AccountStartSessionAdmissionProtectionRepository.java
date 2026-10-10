@@ -50,6 +50,8 @@ import tools.jackson.databind.json.JsonMapper;
  */
 @Repository
 public class AccountStartSessionAdmissionProtectionRepository {
+  public static final int MAX_PENDING_SWEEP_SIZE = 100;
+
   private static final String PROTECTIONS = "account_start_session_admission_protections";
   private static final String SOURCES = "account_start_session_admission_protection_sources";
   private static final String SETTLEMENTS =
@@ -93,6 +95,8 @@ public class AccountStartSessionAdmissionProtectionRepository {
           "canonical_snapshot_bytes");
   private static final Set<String> SETTLEMENT_COLUMNS =
       Set.of("protection_id", "outcome", "terminal_bytes", "terminal_digest", "settled_at");
+  private static final Set<String> PENDING_PROTECTION_COLUMNS =
+      Set.of("protection_id", "protection_fence");
   private static final Set<String> CAPTURE_SNAPSHOT_FIELDS =
       Set.of(
           "schema",
@@ -321,6 +325,58 @@ public class AccountStartSessionAdmissionProtectionRepository {
     return readSettlementExact(protectionId, protectionFence, evidence.get());
   }
 
+  /**
+   * Selects one bounded descending keyset page of still-pending historical protections.
+   *
+   * <p>This query is lookup-only: it neither locks nor changes protection state, checks original
+   * expiry, or establishes terminal authority. The unique immutable positive fence is the page
+   * cursor; callers settle each returned identity through the separate authenticated composition.
+   *
+   * @param beforeProtectionFence exclusive descending cursor, or {@code null} for the first page
+   * @param limit maximum number of candidates to return
+   * @return candidates ordered by descending protection fence
+   */
+  @Transactional(propagation = Propagation.MANDATORY)
+  public List<PendingProtection> findUnsettledPageDescending(
+      Long beforeProtectionFence, int limit) {
+    requireWritableReadCommittedTransaction();
+    if ((beforeProtectionFence != null && beforeProtectionFence <= 0L)
+        || limit <= 0
+        || limit > MAX_PENDING_SWEEP_SIZE) {
+      throw new IllegalArgumentException("Positive cursor and bounded page size required");
+    }
+
+    String query =
+        "SELECT protection.protection_id, protection.protection_fence FROM "
+            + PROTECTIONS
+            + " protection WHERE NOT EXISTS (SELECT 1 FROM "
+            + SETTLEMENTS
+            + " settlement WHERE settlement.protection_id = protection.protection_id)";
+    Object[] parameters;
+    if (beforeProtectionFence == null) {
+      parameters = new Object[] {limit};
+    } else {
+      query += " AND protection.protection_fence < ?";
+      parameters = new Object[] {beforeProtectionFence, limit};
+    }
+    query += " ORDER BY protection.protection_fence DESC LIMIT ?";
+
+    List<PendingProtection> candidates = new ArrayList<>();
+    Long previousFence = beforeProtectionFence;
+    for (Record row : dsl.fetch(query, parameters)) {
+      requireColumns(row, PENDING_PROTECTION_COLUMNS, "pending admission protection candidate");
+      UUID protectionId = requiredUuid(row, "protection_id");
+      long protectionFence = positive(requiredLong(row, "protection_fence"));
+      if ((previousFence != null && protectionFence >= previousFence)
+          || candidates.size() >= limit) {
+        throw unavailable();
+      }
+      candidates.add(new PendingProtection(protectionId, protectionFence));
+      previousFence = protectionFence;
+    }
+    return List.copyOf(candidates);
+  }
+
   private void lockOriginalSourceRows(
       AccountStartSessionAdmissionProtectionEvidence expectedEvidence) {
     UUID protectionId = expectedEvidence.accountProtectionId();
@@ -434,6 +490,15 @@ public class AccountStartSessionAdmissionProtectionRepository {
 
     public GameSessionCanonicalInitialAdmissionOwnerProof.Outcome outcome() {
       return settlement.outcome();
+    }
+  }
+
+  /** Exact immutable protection identity selected for a later settlement attempt. */
+  public record PendingProtection(UUID protectionId, long protectionFence) {
+    public PendingProtection {
+      if (protectionId == null || NIL_UUID.equals(protectionId) || protectionFence <= 0L) {
+        throw new IllegalArgumentException("Non-nil protection ID and positive fence required");
+      }
     }
   }
 

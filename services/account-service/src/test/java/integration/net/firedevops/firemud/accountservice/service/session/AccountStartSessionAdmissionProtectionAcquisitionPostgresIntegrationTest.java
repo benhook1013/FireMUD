@@ -584,6 +584,70 @@ class AccountStartSessionAdmissionProtectionAcquisitionPostgresIntegrationTest {
   }
 
   @Test
+  void unsettledPageIsBoundedExclusiveExpiryIndependentAndSettlementAware() throws Exception {
+    try (Prepared prepared = prepare(Duration.ofSeconds(5))) {
+      AccountStartSessionAdmissionProtectionEvidence protection =
+          prepared.acquire(prepared.acquisitionService(prepared.account.manager));
+      var repository = new AccountStartSessionAdmissionProtectionRepository(prepared.account.dsl);
+      var expected =
+          new AccountStartSessionAdmissionProtectionRepository.PendingProtection(
+              protection.accountProtectionId(), protection.accountProtectionFence());
+      Record protectionBefore = protectionRow(prepared);
+      long sourceCountBefore =
+          rowCount(prepared.account.dsl, "account_start_session_admission_protection_sources");
+
+      var initialPage = prepared.account.tx(() -> repository.findUnsettledPageDescending(null, 1));
+      assertThat(initialPage).containsExactly(expected);
+      assertThat(
+              prepared.account.tx(
+                  () ->
+                      repository.findUnsettledPageDescending(
+                          protection.accountProtectionFence(), 1)))
+          .isEmpty();
+      assertProtectionRow(prepared, protection);
+      assertProtectionRowUnchanged(protectionBefore, protectionRow(prepared));
+      assertThat(
+              rowCount(
+                  prepared.account.dsl, "account_start_session_admission_protection_settlements"))
+          .isZero();
+      assertThat(
+              rowCount(prepared.account.dsl, "account_start_session_admission_protection_sources"))
+          .isEqualTo(sourceCountBefore);
+
+      awaitDatabaseTime(
+          prepared.account.dsl,
+          prepared.originalObservation.originalLeaseExpiresAt(),
+          Duration.ofSeconds(15));
+      assertThat(prepared.account.tx(() -> repository.findUnsettledPageDescending(null, 1)))
+          .containsExactly(expected);
+      assertProtectionRow(prepared, protection);
+      assertProtectionRowUnchanged(protectionBefore, protectionRow(prepared));
+      assertThat(
+              rowCount(
+                  prepared.account.dsl, "account_start_session_admission_protection_settlements"))
+          .isZero();
+
+      var settlement =
+          terminalSettlement(
+              protection,
+              GameSessionCanonicalInitialAdmissionOwnerProof.Outcome.COMMITTED,
+              Instant.parse("2026-10-10T04:05:06.123456789Z"));
+      prepared.account.tx(() -> repository.settleExact(settlement));
+      assertThat(prepared.account.tx(() -> repository.findUnsettledPageDescending(null, 1)))
+          .isEmpty();
+      assertProtectionRow(prepared, protection);
+      assertProtectionRowUnchanged(protectionBefore, protectionRow(prepared));
+      assertThat(
+              rowCount(
+                  prepared.account.dsl, "account_start_session_admission_protection_settlements"))
+          .isEqualTo(1L);
+      assertThat(
+              rowCount(prepared.account.dsl, "account_start_session_admission_protection_sources"))
+          .isEqualTo(sourceCountBefore);
+    }
+  }
+
+  @Test
   void leaseExpiryDuringRealOriginalActorIssuanceLockWaitDeniesDespiteTimelyRemoteRead()
       throws Exception {
     try (Prepared prepared = prepare(Duration.ofSeconds(10))) {
@@ -964,6 +1028,19 @@ class AccountStartSessionAdmissionProtectionAcquisitionPostgresIntegrationTest {
                 .toList());
     assertThat(encoded(evidence.sourceEvidenceVector()))
         .containsExactlyElementsOf(encoded(prepared.captureSources()));
+  }
+
+  private static void assertProtectionRowUnchanged(Record before, Record after) {
+    Object[] beforeValues = before.intoArray();
+    Object[] afterValues = after.intoArray();
+    assertThat(afterValues).hasSameSizeAs(beforeValues);
+    for (int index = 0; index < beforeValues.length; index++) {
+      if (beforeValues[index] instanceof byte[] bytes) {
+        assertThat((byte[]) afterValues[index]).containsExactly(bytes);
+      } else {
+        assertThat(afterValues[index]).isEqualTo(beforeValues[index]);
+      }
+    }
   }
 
   private static Record protectionRow(Prepared prepared) {
