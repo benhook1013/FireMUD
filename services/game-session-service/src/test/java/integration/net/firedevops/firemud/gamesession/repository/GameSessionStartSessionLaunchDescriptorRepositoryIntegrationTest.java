@@ -150,7 +150,11 @@ class GameSessionStartSessionLaunchDescriptorRepositoryIntegrationTest {
 
     PinnedLaunchDescriptorSnapshot valid =
         fixture.pin(retained.claim(), descriptor(retained, "valid-owner-tuple-descriptor"));
-    assertThat(fixture.find(retained.claim())).contains(valid);
+    PinnedLaunchDescriptorSnapshot read = fixture.find(retained.claim()).orElseThrow();
+    assertThat(read.requestWire()).containsExactly(valid.requestWire());
+    assertThat(read.responseWire()).containsExactly(valid.responseWire());
+    assertThat(read.requestDigest()).isEqualTo(valid.requestDigest());
+    assertThat(read.responseDigest()).isEqualTo(valid.responseDigest());
     assertThat(fixture.pinCount()).isOne();
   }
 
