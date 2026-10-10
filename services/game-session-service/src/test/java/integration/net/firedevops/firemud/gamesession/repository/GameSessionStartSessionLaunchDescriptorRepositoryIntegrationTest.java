@@ -449,7 +449,7 @@ class GameSessionStartSessionLaunchDescriptorRepositoryIntegrationTest {
           .isInstanceOf(
               GameSessionStartSessionOperatorAttemptRepository
                   .StaleStartSessionOperatorAttemptClaimException.class)
-          .hasMessageContaining("authorization reference expired during descriptor read");
+          .hasMessageContaining("Original Account authorization reference expired");
       blocker.get(15, TimeUnit.SECONDS);
       assertThat(fixture.pinCount()).isOne();
     } finally {
