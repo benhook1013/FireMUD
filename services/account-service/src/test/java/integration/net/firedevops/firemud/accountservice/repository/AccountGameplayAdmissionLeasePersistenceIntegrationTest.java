@@ -1222,9 +1222,11 @@ class AccountGameplayAdmissionLeasePersistenceIntegrationTest {
     assertThatThrownBy(() -> syntheticReadPeer().call(() -> owner.confirm(request)))
         .isInstanceOf(StatusRuntimeException.class)
         .satisfies(
-            failure ->
-                assertThat(Status.fromThrowable(failure).getCode())
-                    .isEqualTo(Status.Code.UNAVAILABLE));
+            failure -> {
+              if (trace.count("physical-commit") != 1) describeLostReceiptCommitFailure(failure);
+              assertThat(Status.fromThrowable(failure).getCode())
+                  .isEqualTo(Status.Code.UNAVAILABLE);
+            });
     assertThat(trace.count("physical-commit")).isEqualTo(1);
     assertThat(trace.count("v120-read")).isZero();
 
@@ -3019,6 +3021,37 @@ class AccountGameplayAdmissionLeasePersistenceIntegrationTest {
         .filter(event -> event.kind().equals(kind))
         .findFirst()
         .orElseThrow(() -> new AssertionError("Missing receipt JDBC event: " + kind));
+  }
+
+  private static void describeLostReceiptCommitFailure(Throwable failure) {
+    try {
+      var causeTypes = new ArrayList<String>();
+      var postgresDetails = new ArrayList<String>();
+      var visited =
+          java.util.Collections.newSetFromMap(new java.util.IdentityHashMap<Throwable, Boolean>());
+      Throwable cause = failure;
+      while (cause != null && visited.add(cause) && causeTypes.size() < 12) {
+        causeTypes.add(cause.getClass().getSimpleName());
+        if (cause instanceof PSQLException postgresFailure) {
+          var error = postgresFailure.getServerErrorMessage();
+          postgresDetails.add(
+              "SQLSTATE="
+                  + postgresFailure.getSQLState()
+                  + " constraint="
+                  + (error == null
+                      ? "<unavailable>"
+                      : Objects.toString(error.getConstraint(), "<none>")));
+        }
+        cause = cause.getCause();
+      }
+      System.err.printf(
+          "Lost receipt COMMIT diagnostic: causeTypes=%s postgres=%s%n",
+          causeTypes, postgresDetails);
+    } catch (Throwable diagnosticFailure) {
+      System.err.println(
+          "Lost receipt COMMIT diagnostic unavailable: "
+              + diagnosticFailure.getClass().getSimpleName());
+    }
   }
 
   private static void assertGlobalWalCoverageFailure(Throwable failure) {

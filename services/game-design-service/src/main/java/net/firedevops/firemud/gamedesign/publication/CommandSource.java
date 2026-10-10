@@ -493,6 +493,19 @@ public final class CommandSource {
     if (!definition.isObject() || definition.path("schemaVersion").asInt() != SCHEMA_VERSION) {
       throw new IllegalArgumentException("Unsupported command definition schema");
     }
+    fields(
+        definition,
+        "schemaVersion",
+        "commandId",
+        "semanticOwner",
+        "executionDiscipline",
+        "stageRequirement",
+        "promptPolicy",
+        "actionCategory",
+        "historyRecordable",
+        "aliases",
+        "actionTags",
+        "effects");
     requiredText(definition, "commandId");
     requiredText(definition, "semanticOwner");
     requireEnum(definition, "executionDiscipline", "DURABLE_GAMEPLAY");
@@ -524,6 +537,7 @@ public final class CommandSource {
   }
 
   private static void validateEffect(JsonNode effect) {
+    fields(effect, "effectKind", "schemaVersion", "targeting", "replayPolicy", "payload");
     if (!effect.isObject()
         || !"APPLY_ACTION_STATE".equals(requiredText(effect, "effectKind"))
         || !effect.path("schemaVersion").isInt()
@@ -533,8 +547,7 @@ public final class CommandSource {
       throw new IllegalArgumentException("Unsupported command effect declaration");
     }
     JsonNode payload = effect.get("payload");
-    if (payload == null || !payload.isObject())
-      throw new IllegalArgumentException("Effect payload must be an object");
+    fields(payload, "conditionKey", "durationSeconds", "effectPayload");
     requireIdentifier(payload, "conditionKey");
     JsonNode duration = payload.get("durationSeconds");
     if (duration == null
@@ -544,13 +557,15 @@ public final class CommandSource {
     }
     JsonNode effectPayload = payload.get("effectPayload");
     JsonNode modifiers = effectPayload == null ? null : effectPayload.get("modifiers");
-    if (effectPayload == null
-        || !effectPayload.isObject()
-        || modifiers == null
-        || !modifiers.isArray()) {
+    fields(effectPayload, "modifiers");
+    if (modifiers == null || !modifiers.isArray()) {
       throw new IllegalArgumentException("Command effect modifiers must be an array");
     }
     for (JsonNode modifier : modifiers) {
+      fields(
+          modifier,
+          List.of("operation", "target_key", "value"),
+          List.of("scope_kind", "scope_key", "priority"));
       if (!modifier.isObject())
         throw new IllegalArgumentException("Command effect modifier must be an object");
       String operation = requiredText(modifier, "operation");
@@ -625,12 +640,28 @@ public final class CommandSource {
   }
 
   private static void fields(JsonNode node, String... names) {
-    if (!node.isObject() || node.size() != names.length) {
+    if (node == null || !node.isObject() || node.size() != names.length) {
       throw new IllegalArgumentException("Closed command source operation fields are required");
     }
     for (String name : names) {
       if (node.get(name) == null)
         throw new IllegalArgumentException("Missing command source field " + name);
+    }
+  }
+
+  private static void fields(JsonNode node, List<String> required, List<String> optional) {
+    if (node == null || !node.isObject()) {
+      throw new IllegalArgumentException("Closed command source object fields are required");
+    }
+    List<String> supported = new ArrayList<>(required);
+    supported.addAll(optional);
+    if (node.properties().stream().anyMatch(property -> !supported.contains(property.getKey()))) {
+      throw new IllegalArgumentException("Unsupported command source field");
+    }
+    for (String name : required) {
+      if (node.get(name) == null) {
+        throw new IllegalArgumentException("Missing command source field " + name);
+      }
     }
   }
 
