@@ -45,7 +45,7 @@ class SelectedOwnerIntakeSettlementGrpcCodecTest {
   }
 
   @Test
-  void rejectsDefaultUnknownWrongOwnerAndChangedDigestRequests() {
+  void rejectsDefaultUnknownAndChangedDigestRequestsWhileAcceptingClosedEntityOwner() {
     assertThatThrownBy(
             () ->
                 SelectedOwnerIntakeSettlementGrpcCodec.fromRequest(
@@ -77,8 +77,11 @@ class SelectedOwnerIntakeSettlementGrpcCodecTest {
             .setOriginalIntakeAuthorizationBinding(ByteString.copyFrom(entity.canonicalBytes()))
             .setIntakeAuthorizationDigest(entity.digest())
             .build();
-    assertThatThrownBy(() -> SelectedOwnerIntakeSettlementGrpcCodec.fromRequest(wrongOwner))
-        .isInstanceOf(IllegalArgumentException.class);
+    assertThat(
+            SelectedOwnerIntakeSettlementGrpcCodec.fromRequest(wrongOwner)
+                .authorizationBinding()
+                .owner())
+        .isEqualTo(Owner.ENTITY_MANAGEMENT);
   }
 
   @Test

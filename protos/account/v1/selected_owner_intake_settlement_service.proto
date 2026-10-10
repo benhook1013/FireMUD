@@ -5,7 +5,7 @@ package account.v1;
 option java_package = "net.firedevops.firemud.account.v1";
 option java_multiple_files = true;
 
-// Standalone, unregistered command for settling one finalized Automation intake operation.
+// Standalone, unregistered command for settling one finalized Entity or Automation intake operation.
 service AccountSelectedOwnerIntakeSettlementService {
   rpc SettleSelectedOwnerIntake(SelectedOwnerIntakeSettlementRequest)
       returns (SelectedOwnerIntakeSettlementResponse);

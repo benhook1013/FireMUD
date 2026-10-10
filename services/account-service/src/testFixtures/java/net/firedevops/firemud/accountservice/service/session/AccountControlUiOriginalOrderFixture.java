@@ -86,10 +86,33 @@ public final class AccountControlUiOriginalOrderFixture implements AutoCloseable
       UUID gameDesignTenant,
       Clock actorClock)
       throws Exception {
+    this(
+        jdbcUrl,
+        username,
+        password,
+        redisHost,
+        redisPort,
+        temporary,
+        gameDesignTenant,
+        actorClock,
+        null);
+  }
+
+  public AccountControlUiOriginalOrderFixture(
+      String jdbcUrl,
+      String username,
+      String password,
+      String redisHost,
+      int redisPort,
+      Path temporary,
+      UUID gameDesignTenant,
+      Clock actorClock,
+      String migrationTarget)
+      throws Exception {
     this.temporary = temporary;
     f =
         new AccountControlUiOwnerSourcesFixture(
-            jdbcUrl, username, password, temporary, false, gameDesignTenant);
+            jdbcUrl, username, password, temporary, false, gameDesignTenant, migrationTarget);
     var lifecycle = new AccountControlUiSignerFixture(f, temporary);
     lifecycle.commit();
     var originalSigner = f.tx(lifecycle.signer::captureCurrent);

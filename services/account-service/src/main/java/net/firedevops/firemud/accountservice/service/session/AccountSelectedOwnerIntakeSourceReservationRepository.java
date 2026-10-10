@@ -19,6 +19,7 @@ import net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding.So
 import net.firedevops.firemud.common.authoring.DraftCommitBinding;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding.Owner;
 import net.firedevops.firemud.common.automation.sourceintake.AutomationSelectedSourceIntakeTerminalReadEvidence;
+import net.firedevops.firemud.common.entity.sourceintake.EntitySelectedSourceIntakeTerminalReadEvidence;
 import net.firedevops.firemud.common.gamedesign.SelectedOwnerIntakeSourceContent;
 import org.jooq.DSLContext;
 import org.jooq.Record;
@@ -338,7 +339,8 @@ public final class AccountSelectedOwnerIntakeSourceReservationRepository {
       SelectedOwnerIntakeAuthorizationBinding requested) {
     requireTransaction();
     Objects.requireNonNull(requested, "original selected-owner authorization is required");
-    if (requested.owner() != Owner.AUTOMATION_SCRIPTING) {
+    if (requested.owner() != Owner.AUTOMATION_SCRIPTING
+        && requested.owner() != Owner.ENTITY_MANAGEMENT) {
       throw new IllegalArgumentException("Automation terminal settlement required");
     }
     SelectedOwnerIntakeSourceReadScope scope = requested.content().scope();
@@ -404,23 +406,65 @@ public final class AccountSelectedOwnerIntakeSourceReservationRepository {
     return exactSettlement(settlement(requested.operationId()), requested, evidence);
   }
 
+  AccountSelectedOwnerIntakeSettlementReceipt settleEntityCommittedEmpty(
+      EntitySelectedSourceIntakeTerminalReadEvidence evidence) {
+    requireTransaction();
+    Objects.requireNonNull(evidence, "Entity terminal evidence is required");
+    var requested = evidence.request().binding();
+    if (requested.owner() != Owner.ENTITY_MANAGEMENT
+        || !"COMMITTED_EMPTY".equals(evidence.receipt().outcome())) {
+      throw new IllegalArgumentException("Exact Entity COMMITTED_EMPTY evidence required");
+    }
+    SelectedOwnerIntakeSourceReadScope scope = requested.content().scope();
+    lockReservedSources(scope);
+    requireReservation(reservation(scope), scope);
+    Record order = authorization(requested.operationId());
+    requireAuthorization(order, requested);
+    if (aborted(scope))
+      throw new IllegalArgumentException("Finalized owner authorization was aborted");
+
+    Record prior = settlement(requested.operationId());
+    if (prior != null) return exactSettlement(prior, requested, evidence);
+
+    AccountSelectedOwnerIntakeSettlementReceipt receipt =
+        AccountSelectedOwnerIntakeSettlementReceipt.create(evidence);
+    dsl.execute(
+        "INSERT INTO "
+            + SETTLEMENTS
+            + " (operation_id, fence_id, intake_request_id, owner, target_namespace, tenant_uuid, "
+            + "version_uuid, binding_bytes, binding_digest, terminal_read_request_id, "
+            + "terminal_receipt_bytes, terminal_receipt_digest, receipt_bytes, receipt_digest) "
+            + "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        receipt.operationId(),
+        requested.fenceId(),
+        requested.intakeRequestId(),
+        requested.owner().name(),
+        requested.targetNamespace(),
+        requested.tenantId(),
+        requested.versionId(),
+        requested.canonicalBytes(),
+        requested.digest(),
+        evidence.request().readRequestId(),
+        receipt.ownerReceiptBytes(),
+        receipt.ownerReceiptDigest(),
+        receipt.canonicalBytes(),
+        receipt.digest());
+    return exactSettlement(settlement(requested.operationId()), requested, evidence);
+  }
+
   private AccountSelectedOwnerIntakeSettlementReceipt exactSettlement(
-      Record row,
-      SelectedOwnerIntakeAuthorizationBinding requested,
-      AutomationSelectedSourceIntakeTerminalReadEvidence retryEvidence) {
+      Record row, SelectedOwnerIntakeAuthorizationBinding requested, Object retryEvidence) {
     if (row == null) throw new IllegalStateException("Account settlement commit readback absent");
     byte[] storedBytes = row.get("receipt_bytes", byte[].class);
     var receipt = AccountSelectedOwnerIntakeSettlementReceipt.fromStored(storedBytes);
     var original = receipt.authorizationBinding();
-    var request = receipt.terminalEvidence().request();
-    var ownerReceipt = receipt.terminalEvidence().receipt();
     if (!Arrays.equals(original.canonicalBytes(), requested.canonicalBytes())
         || !Arrays.equals(storedBytes, receipt.canonicalBytes())
         || !receipt.digest().equals(row.get("receipt_digest", String.class))
         || !Arrays.equals(
-            ownerReceipt.canonicalBytes(), row.get("terminal_receipt_bytes", byte[].class))
-        || !ownerReceipt.receiptDigest().equals(row.get("terminal_receipt_digest", String.class))
-        || !request.readRequestId().equals(row.get("terminal_read_request_id", UUID.class))
+            receipt.ownerReceiptBytes(), row.get("terminal_receipt_bytes", byte[].class))
+        || !receipt.ownerReceiptDigest().equals(row.get("terminal_receipt_digest", String.class))
+        || !receipt.terminalReadRequestId().equals(row.get("terminal_read_request_id", UUID.class))
         || !original.operationId().equals(row.get("operation_id", UUID.class))
         || !original.fenceId().equals(row.get("fence_id", UUID.class))
         || !original.intakeRequestId().equals(row.get("intake_request_id", UUID.class))
@@ -432,8 +476,13 @@ public final class AccountSelectedOwnerIntakeSourceReservationRepository {
         || !original.digest().equals(row.get("binding_digest", String.class))) {
       throw new IllegalArgumentException("Changed exact selected-owner terminal settlement");
     }
-    if (retryEvidence != null && !receipt.sameImmutableOwnerReceipt(retryEvidence)) {
+    if (retryEvidence instanceof AutomationSelectedSourceIntakeTerminalReadEvidence automation
+        && !receipt.sameImmutableOwnerReceipt(automation)) {
       throw new IllegalArgumentException("Changed Automation owner terminal receipt");
+    }
+    if (retryEvidence instanceof EntitySelectedSourceIntakeTerminalReadEvidence entity
+        && !receipt.sameImmutableOwnerReceipt(entity)) {
+      throw new IllegalArgumentException("Changed Entity owner terminal receipt");
     }
     return receipt;
   }

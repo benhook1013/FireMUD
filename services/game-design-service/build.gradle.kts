@@ -42,6 +42,14 @@ dependencies {
             )
         )
     )
+    integrationTestImplementation(
+        project(
+            mapOf(
+                "path" to ":entity-management-service",
+                "configuration" to "entityClassesProof"
+            )
+        )
+    )
     integrationTestImplementation("io.grpc:grpc-util:${libs.versions.grpc.get()}")
     compileOnly(libs.spotbugs.annotations)
     testCompileOnly(libs.spotbugs.annotations)

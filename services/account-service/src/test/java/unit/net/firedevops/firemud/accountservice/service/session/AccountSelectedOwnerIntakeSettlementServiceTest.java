@@ -28,6 +28,9 @@ import net.firedevops.firemud.common.authoring.DraftCommitBinding.Owner;
 import net.firedevops.firemud.common.automation.sourceintake.AutomationEmptySelectedSourceIntakeReceipt;
 import net.firedevops.firemud.common.automation.sourceintake.AutomationSelectedSourceIntakeTerminalReadClient;
 import net.firedevops.firemud.common.automation.sourceintake.AutomationSelectedSourceIntakeTerminalReadEvidence;
+import net.firedevops.firemud.common.entity.sourceintake.EntityEmptySelectedSourceIntakeReceipt;
+import net.firedevops.firemud.common.entity.sourceintake.EntitySelectedSourceIntakeTerminalReadClient;
+import net.firedevops.firemud.common.entity.sourceintake.EntitySelectedSourceIntakeTerminalReadEvidence;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
 import net.firedevops.firemud.common.security.SessionContext;
 import org.junit.jupiter.api.AfterEach;
@@ -265,7 +268,9 @@ class AccountSelectedOwnerIntakeSettlementServiceTest {
     when(harness.repository.settleCommittedEmpty(any()))
         .thenAnswer(
             invocation ->
-                AccountSelectedOwnerIntakeSettlementReceipt.create(invocation.getArgument(0)));
+                AccountSelectedOwnerIntakeSettlementReceipt.create(
+                    (AutomationSelectedSourceIntakeTerminalReadEvidence)
+                        invocation.getArgument(0)));
     harness.transactions.failCommitAt = 2;
 
     assertThatThrownBy(() -> asGameDesign(() -> harness.service.settle(ORIGINAL)))
@@ -376,6 +381,135 @@ class AccountSelectedOwnerIntakeSettlementServiceTest {
     assertThat(wrongBindingNamespace.transactions.begins).isZero();
   }
 
+  @Test
+  void entityLostLookupOnlyReadbackRecoversExactPriorWithoutAnotherRemoteReadOrWrite() {
+    // Synthetic receipt decoder and repository stand-ins prove transaction/call ordering only.
+    var binding =
+        AccountSelectedOwnerIntakeAuthorizationReadServiceTest.binding(Owner.ENTITY_MANAGEMENT);
+    Harness harness = new Harness(NAMESPACE, true);
+    var owner = entityReceipt(binding);
+    var stored = new AtomicReference<AccountSelectedOwnerIntakeSettlementReceipt>();
+    when(harness.repository.findSettlement(binding))
+        .thenAnswer(ignored -> Optional.ofNullable(stored.get()));
+    when(harness.entityClient.read(any()))
+        .thenAnswer(
+            invocation -> {
+              assertNoSql();
+              EntitySelectedSourceIntakeTerminalReadEvidence.Request request =
+                  invocation.getArgument(0);
+              return new EntitySelectedSourceIntakeTerminalReadEvidence(request, owner);
+            });
+    when(harness.repository.settleEntityCommittedEmpty(any()))
+        .thenAnswer(
+            invocation -> {
+              assertWritableReadCommittedTransaction();
+              EntitySelectedSourceIntakeTerminalReadEvidence evidence = invocation.getArgument(0);
+              var receipt = AccountSelectedOwnerIntakeSettlementReceipt.create(evidence);
+              stored.set(receipt);
+              return receipt;
+            });
+    // The first post-commit lookup is absent even though the immutable writer committed.
+    AtomicInteger reads = new AtomicInteger();
+    when(harness.repository.findSettlement(binding))
+        .thenAnswer(
+            ignored -> {
+              assertWritableReadCommittedTransaction();
+              return reads.incrementAndGet() <= 2 ? Optional.empty() : Optional.of(stored.get());
+            });
+    try (var decoder = Mockito.mockStatic(EntityEmptySelectedSourceIntakeReceipt.class)) {
+      decoder
+          .when(() -> EntityEmptySelectedSourceIntakeReceipt.fromStored(owner.canonicalBytes()))
+          .thenReturn(owner);
+      assertStatus(
+          Status.Code.FAILED_PRECONDITION,
+          () -> asGameDesign(() -> harness.service.settle(binding)));
+      var recovered = asGameDesign(() -> harness.service.settle(binding));
+      assertThat(recovered.canonicalBytes()).isEqualTo(stored.get().canonicalBytes());
+      assertThat(recovered.entityTerminalEvidence().receipt()).isSameAs(owner);
+      assertThat(harness.transactions.begins).isEqualTo(4);
+      verify(harness.entityClient, times(1)).read(any());
+      verify(harness.repository, times(1)).settleEntityCommittedEmpty(any());
+      verifyNoInteractions(harness.automationClient);
+    }
+  }
+
+  @Test
+  void entityCallerNamespaceEndUserAndAmbientSqlGatesPrecedeRepositoryAndRemoteAccess() {
+    var binding =
+        AccountSelectedOwnerIntakeAuthorizationReadServiceTest.binding(Owner.ENTITY_MANAGEMENT);
+    Harness harness = new Harness(NAMESPACE, true);
+    assertStatus(Status.Code.UNAUTHENTICATED, () -> harness.service.settle(binding));
+    asPeer(
+        peer("test", "automation-scripting-service"),
+        () -> assertStatus(Status.Code.PERMISSION_DENIED, () -> harness.service.settle(binding)));
+    asPeer(
+        peer("other", "game-design-service"),
+        () -> assertStatus(Status.Code.PERMISSION_DENIED, () -> harness.service.settle(binding)));
+    SessionContext.setContext("123", List.of(), Map.of());
+    asGameDesign(
+        () -> assertStatus(Status.Code.PERMISSION_DENIED, () -> harness.service.settle(binding)));
+    SessionContext.clear();
+    TransactionSynchronizationManager.initSynchronization();
+    asGameDesign(
+        () -> assertStatus(Status.Code.FAILED_PRECONDITION, () -> harness.service.settle(binding)));
+    TransactionSynchronizationManager.clear();
+    var other = new Harness("other", true);
+    asPeer(
+        peer("other", "game-design-service"),
+        () -> assertStatus(Status.Code.FAILED_PRECONDITION, () -> other.service.settle(binding)));
+    verifyNoInteractions(harness.repository, harness.entityClient, harness.automationClient);
+    verifyNoInteractions(other.repository, other.entityClient, other.automationClient);
+  }
+
+  @Test
+  void unavailableOrChangedEntityReadNeverCreatesAccountSettlement() {
+    var binding =
+        AccountSelectedOwnerIntakeAuthorizationReadServiceTest.binding(Owner.ENTITY_MANAGEMENT);
+    Harness missing = new Harness(NAMESPACE, true);
+    when(missing.repository.findSettlement(binding)).thenReturn(Optional.empty());
+    when(missing.entityClient.read(any())).thenReturn(null);
+    assertStatus(
+        Status.Code.FAILED_PRECONDITION, () -> asGameDesign(() -> missing.service.settle(binding)));
+    verify(missing.repository, never()).settleEntityCommittedEmpty(any());
+    Harness changed = new Harness(NAMESPACE, true);
+    when(changed.repository.findSettlement(binding)).thenReturn(Optional.empty());
+    when(changed.entityClient.read(any()))
+        .thenAnswer(
+            invocation ->
+                new EntitySelectedSourceIntakeTerminalReadEvidence(
+                    EntitySelectedSourceIntakeTerminalReadEvidence.Request.create(
+                        NAMESPACE, binding),
+                    entityReceipt(binding)));
+    assertStatus(
+        Status.Code.FAILED_PRECONDITION, () -> asGameDesign(() -> changed.service.settle(binding)));
+    verify(changed.repository, never()).settleEntityCommittedEmpty(any());
+    Harness unavailable = new Harness(NAMESPACE, true);
+    when(unavailable.repository.findSettlement(binding)).thenReturn(Optional.empty());
+    when(unavailable.entityClient.read(any())).thenThrow(Status.UNAVAILABLE.asRuntimeException());
+    assertStatus(
+        Status.Code.UNAVAILABLE, () -> asGameDesign(() -> unavailable.service.settle(binding)));
+    verify(unavailable.repository, never()).settleEntityCommittedEmpty(any());
+  }
+
+  private static EntityEmptySelectedSourceIntakeReceipt entityReceipt(
+      SelectedOwnerIntakeAuthorizationBinding binding) {
+    var receipt = Mockito.mock(EntityEmptySelectedSourceIntakeReceipt.class);
+    byte[] bytes = "synthetic Entity committed receipt".getBytes(StandardCharsets.UTF_8);
+    when(receipt.targetNamespace()).thenReturn(binding.targetNamespace());
+    when(receipt.operationId()).thenReturn(binding.operationId());
+    when(receipt.fenceId()).thenReturn(binding.fenceId());
+    when(receipt.intakeRequestId()).thenReturn(binding.intakeRequestId());
+    when(receipt.canonicalTenantId()).thenReturn(binding.tenantId());
+    when(receipt.canonicalVersionId()).thenReturn(binding.versionId());
+    when(receipt.selectedCommitId()).thenReturn(binding.selected().commitId());
+    when(receipt.authorizationBindingBytes()).thenReturn(binding.canonicalBytes());
+    when(receipt.authorizationBindingDigest()).thenReturn(binding.digest());
+    when(receipt.canonicalBytes()).thenReturn(bytes);
+    when(receipt.receiptDigest()).thenReturn(DraftAuthorizationFenceBinding.digest(bytes));
+    when(receipt.outcome()).thenReturn("COMMITTED_EMPTY");
+    return receipt;
+  }
+
   private static Harness preparedHarness() {
     Harness harness = new Harness(NAMESPACE);
     when(harness.repository.findSettlement(ORIGINAL)).thenReturn(Optional.empty());
@@ -459,14 +593,24 @@ class AccountSelectedOwnerIntakeSettlementServiceTest {
         Mockito.mock(AccountSelectedOwnerIntakeSourceReservationRepository.class);
     final AutomationSelectedSourceIntakeTerminalReadClient automationClient =
         Mockito.mock(AutomationSelectedSourceIntakeTerminalReadClient.class);
+    final EntitySelectedSourceIntakeTerminalReadClient entityClient =
+        Mockito.mock(EntitySelectedSourceIntakeTerminalReadClient.class);
     final OwnerTransactions transactions = new OwnerTransactions();
     final List<String> steps = new ArrayList<>();
     final AccountSelectedOwnerIntakeSettlementService service;
 
     Harness(String namespace) {
+      this(namespace, false);
+    }
+
+    Harness(String namespace, boolean entityEnabled) {
       service =
           new AccountSelectedOwnerIntakeSettlementService(
-              repository, automationClient, transactions, namespace);
+              repository,
+              automationClient,
+              entityEnabled ? entityClient : null,
+              transactions,
+              namespace);
     }
   }
 

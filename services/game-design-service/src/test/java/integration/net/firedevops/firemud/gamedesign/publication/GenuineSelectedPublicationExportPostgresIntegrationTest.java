@@ -3,7 +3,6 @@ package net.firedevops.firemud.accountservice.service.session;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
@@ -22,6 +21,7 @@ import io.grpc.util.MutableHandlerRegistry;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.io.IOException;
 import java.net.InetSocketAddress;
+import java.net.URI;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -36,6 +36,7 @@ import java.util.HexFormat;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.TreeMap;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
@@ -82,6 +83,9 @@ import net.firedevops.firemud.common.automation.sourceintake.AutomationSelectedS
 import net.firedevops.firemud.common.automation.sourceintake.AutomationSelectedSourceIntakeTerminalReadClient;
 import net.firedevops.firemud.common.config.ServiceEndpointsProperties;
 import net.firedevops.firemud.common.entity.EntityAuthoredSourceInventoryDeclaration;
+import net.firedevops.firemud.common.entity.sourceintake.EntityEmptySelectedSourceIntakeReceipt;
+import net.firedevops.firemud.common.entity.sourceintake.EntitySelectedSourceIntakeCommandEvidence;
+import net.firedevops.firemud.common.entity.sourceintake.EntitySelectedSourceIntakeTerminalReadEvidence;
 import net.firedevops.firemud.common.gamedesign.AssetSource;
 import net.firedevops.firemud.common.gamedesign.AuthoredWorldLaunchDescriptorClient;
 import net.firedevops.firemud.common.gamedesign.AuthoredWorldReleaseAttestationEvidence;
@@ -126,11 +130,18 @@ import net.firedevops.firemud.common.publication.WorldSelectedOwnerInventoryGrpc
 import net.firedevops.firemud.common.publication.WorldSelectedPublicationArtifactInventoryClient;
 import net.firedevops.firemud.common.security.PublicationReadGuard;
 import net.firedevops.firemud.common.security.sourceintake.GrpcAutomationSelectedSourceIntakeCommandClient;
+import net.firedevops.firemud.common.security.sourceintake.GrpcEntitySelectedSourceIntakeCommandClient;
+import net.firedevops.firemud.common.security.sourceintake.GrpcEntitySelectedSourceIntakeTerminalReadClient;
 import net.firedevops.firemud.common.security.sourceintake.GrpcSelectedOwnerIntakeAuthorizationProducerClient;
 import net.firedevops.firemud.common.security.sourceintake.GrpcSelectedOwnerIntakeSettlementClient;
 import net.firedevops.firemud.common.tenant.AuthoredWorldSourceClient;
 import net.firedevops.firemud.common.tenant.WorldAuthoredSourceIntakeClient;
 import net.firedevops.firemud.common.tenant.WorldAuthoredSourceIntakeGrpcCodec;
+import net.firedevops.firemud.entitymanagement.sourceintake.EntityEmptySelectedSourceIntakeRepository;
+import net.firedevops.firemud.entitymanagement.sourceintake.EntityEmptySelectedSourceIntakeService;
+import net.firedevops.firemud.entitymanagement.sourceintake.EntityEmptySelectedSourceIntakeTerminalReadService;
+import net.firedevops.firemud.entitymanagement.sourceintake.EntitySelectedSourceIntakeCommandGrpcService;
+import net.firedevops.firemud.entitymanagement.sourceintake.EntitySelectedSourceIntakeTerminalReadGrpcService;
 import net.firedevops.firemud.gamedesign.client.GameLogicClient;
 import net.firedevops.firemud.gamedesign.client.WorldPublishedStartLocationClient;
 import net.firedevops.firemud.gamedesign.config.AssetStoreProperties;
@@ -256,6 +267,7 @@ import org.jooq.SQLDialect;
 import org.jooq.impl.DSL;
 import org.jooq.impl.DataSourceConnectionProvider;
 import org.jooq.impl.DefaultConfiguration;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.mapstruct.factory.Mappers;
@@ -269,16 +281,22 @@ import org.springframework.transaction.support.TransactionTemplate;
 import org.testcontainers.containers.GenericContainer;
 import org.testcontainers.containers.Network;
 import org.testcontainers.containers.PostgreSQLContainer;
+import org.testcontainers.containers.wait.strategy.Wait;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
-import software.amazon.awssdk.core.ResponseBytes;
-import software.amazon.awssdk.core.sync.RequestBody;
+import org.testcontainers.utility.DockerImageName;
+import software.amazon.awssdk.auth.credentials.AwsBasicCredentials;
+import software.amazon.awssdk.auth.credentials.StaticCredentialsProvider;
+import software.amazon.awssdk.core.interceptor.ExecutionAttributes;
+import software.amazon.awssdk.core.interceptor.ExecutionInterceptor;
+import software.amazon.awssdk.regions.Region;
 import software.amazon.awssdk.services.s3.S3Client;
+import software.amazon.awssdk.services.s3.S3Configuration;
+import software.amazon.awssdk.services.s3.model.CreateBucketRequest;
 import software.amazon.awssdk.services.s3.model.GetObjectRequest;
-import software.amazon.awssdk.services.s3.model.GetObjectResponse;
+import software.amazon.awssdk.services.s3.model.ListObjectsV2Request;
 import software.amazon.awssdk.services.s3.model.PutObjectRequest;
-import software.amazon.awssdk.services.s3.model.PutObjectResponse;
-import software.amazon.awssdk.services.s3.model.S3Exception;
+import software.amazon.awssdk.services.s3.model.S3Object;
 import tools.jackson.databind.ObjectMapper;
 
 /**
@@ -296,21 +314,58 @@ import tools.jackson.databind.ObjectMapper;
  * empty-source receipt owner, and Account terminal settlement. Its positive Account authorization
  * command creates a fresh reservation through the native producer. Automation retention and Account
  * settlement each traverse their native command receivers over loopback mTLS. The earlier
- * disclosure/abort setup uses stipulated incoming Game Design peer contexts and is not the positive
- * authorization operation. Entity retention and Entity/Automation publication participant digests,
- * in-memory S3 and the StartSession Account projection remain test doubles. The complete
+ * disclosure/abort setup uses stipulated incoming Game Design peer contexts and is not either
+ * positive authorization operation. Entity retention also traverses the native Account, Game
+ * Design, Entity, World and settlement boundaries over loopback mTLS, with an isolated Entity
+ * PostgreSQL schema and migration path. Entity/Automation publication participant digests and the
+ * StartSession Account projection remain test doubles. MinIO object-store I/O is real. The complete
  * launch-binding case wires the actual Game Design handler and World Management mTLS client on this
  * fixture's loopback server to the actual owner implementation in an explicitly established
  * read-only repeatable-read snapshot; unrelated handler dependencies are isolated. This fixture
- * does not provide production-mounted certificates or full application server wiring, complete
- * owner census or production ingress, Account-projection-backed StartSession admission, a complete
- * four-owner authenticated release, runtime launch, activation or registration.
+ * does not provide production-mounted certificates or full application server wiring, production
+ * ingress, Account-projection-backed StartSession admission, a complete four-owner authenticated
+ * release, runtime launch, activation or registration.
  */
 @Testcontainers(disabledWithoutDocker = true)
 @SuppressWarnings("resource")
 class GenuineSelectedPublicationExportPostgresIntegrationTest {
   private static final String NAMESPACE = "firemud";
+  private static final String MINIO_IMAGE =
+      "ghcr.io/benhook1013/minio-server@sha256:a091800eb1c700ea662634c9ad5d9e4cf6980a1f61027a9b80aef0163e66c22a";
+  private static final String MINIO_ACCESS_KEY = "firemud-test";
+  private static final String MINIO_SECRET_KEY = "firemud-test-secret";
+  private static final String MINIO_BUCKET = "genuine-selected-export-test";
+  private static final Region MINIO_REGION = Region.US_EAST_1;
   private static final Network NETWORK = Network.newNetwork();
+  private static final Map<String, String> ENTITY_EMPTY_ONLY_PROVIDER_TABLES =
+      Map.ofEntries(
+          Map.entry(
+              "ACTOR_BODY_LAYOUT_ASSIGNMENTS", "entity_empty_source_actor_body_layout_assignments"),
+          Map.entry("ARCHETYPE_ASSIGNMENTS", "entity_empty_source_archetype_assignments"),
+          Map.entry("ARCHETYPE_CONSTRAINTS", "entity_empty_source_archetype_constraints"),
+          Map.entry("ARCHETYPE_ROOTS", "entity_empty_source_archetype_roots"),
+          Map.entry("BALANCE_CURVE_ATTACHMENTS", "entity_empty_source_balance_curve_attachments"),
+          Map.entry("BALANCE_CURVE_ROOTS", "entity_empty_source_balance_curve_roots"),
+          Map.entry("EQUIPMENT_ATTACHMENT_RULES", "entity_empty_source_equipment_attachment_rules"),
+          Map.entry("EQUIPMENT_CAPABILITIES", "entity_empty_source_equipment_capabilities"),
+          Map.entry(
+              "EQUIPMENT_COMPATIBILITY_RULES", "entity_empty_source_equipment_compatibility_rules"),
+          Map.entry("EQUIPMENT_OCCUPANCY_RULES", "entity_empty_source_equipment_occupancy_rules"),
+          Map.entry("INBOUND_LOOT_BINDINGS", "entity_empty_source_inbound_loot_bindings"),
+          Map.entry("LOOT_ITEM_MAPPINGS", "entity_empty_source_loot_item_mappings"),
+          Map.entry("LOOT_TABLE_ROOTS", "entity_empty_source_loot_table_roots"),
+          Map.entry(
+              "OTHER_ACTOR_TEMPLATE_ROOTS", "entity_empty_source_other_actor_template_roots"));
+
+  // Keep this digest aligned with the minio service in docker/docker-compose.yml.
+  @Container
+  private static final GenericContainer<?> MINIO =
+      new GenericContainer<>(DockerImageName.parse(MINIO_IMAGE))
+          .withEnv("MINIO_ROOT_USER", MINIO_ACCESS_KEY)
+          .withEnv("MINIO_ROOT_PASSWORD", MINIO_SECRET_KEY)
+          .withCommand("server", "/data")
+          .withExposedPorts(9000)
+          .waitingFor(Wait.forHttp("/minio/health/live").forPort(9000));
 
   @Container
   private static final PostgreSQLContainer<?> GAME_DESIGN_POSTGRES =
@@ -326,6 +381,10 @@ class GenuineSelectedPublicationExportPostgresIntegrationTest {
 
   @Container
   private static final PostgreSQLContainer<?> GAME_LOGIC_POSTGRES =
+      new PostgreSQLContainer<>(TestContainerImages.postgres());
+
+  @Container
+  private static final PostgreSQLContainer<?> ENTITY_POSTGRES =
       new PostgreSQLContainer<>(TestContainerImages.postgres());
 
   @Container
@@ -366,18 +425,30 @@ class GenuineSelectedPublicationExportPostgresIntegrationTest {
 
   @TempDir Path temporary;
 
+  private MinioConditionalObjectStore objectStore;
+
+  @AfterEach
+  void closeMinioClient() {
+    if (objectStore != null) {
+      objectStore.close();
+      objectStore = null;
+    }
+  }
+
   @Test
   void realSelectedSourceReceiptInventoryAndExportAreExactAndRetryable() throws Exception {
     var gd = gameDesignStore();
     var world = serviceStore(WORLD_POSTGRES, "world-management");
     var gameLogic = serviceStore(GAME_LOGIC_POSTGRES, "game-logic");
     var automation = serviceStore(GAME_LOGIC_POSTGRES, "automation-scripting");
+    var entity = serviceStore(ENTITY_POSTGRES, "entity-management");
     var pki = new TestPki(temporary.resolve("pki"));
     var gdHandlers = new MutableHandlerRegistry();
     var worldHandlers = new MutableHandlerRegistry();
     var accountHandlers = new MutableHandlerRegistry();
     var gameLogicHandlers = new MutableHandlerRegistry();
     var automationHandlers = new MutableHandlerRegistry();
+    var entityHandlers = new MutableHandlerRegistry();
     Map<String, StartSessionProjectionBinding> startSessionProjections = new ConcurrentHashMap<>();
 
     Server gdServer = startServer(pki, "game-design-service", gdHandlers);
@@ -385,6 +456,7 @@ class GenuineSelectedPublicationExportPostgresIntegrationTest {
     Server accountServer = startServer(pki, "account-service", accountHandlers);
     Server gameLogicServer = startServer(pki, "game-logic-service", gameLogicHandlers);
     Server automationServer = startServer(pki, "automation-scripting-service", automationHandlers);
+    Server entityServer = startServer(pki, "entity-management-service", entityHandlers);
     try (var account =
         new AccountControlUiOriginalOrderFixture(
             ACCOUNT_POSTGRES.getJdbcUrl(),
@@ -400,14 +472,21 @@ class GenuineSelectedPublicationExportPostgresIntegrationTest {
       endpoints.setWorldManagementService(loopback(worldServer));
       endpoints.setGameLogicService(loopback(gameLogicServer));
       endpoints.setAutomationScriptingService(loopback(automationServer));
+      endpoints.setEntityManagementService(loopback(entityServer));
       var channels = new GrpcChannelFactory();
       var automationIntakeRepository =
           new AutomationEmptySelectedSourceIntakeRepository(automation.dsl());
+      var entityIntakeRepository = new EntityEmptySelectedSourceIntakeRepository(entity.dsl());
       register(
           automationHandlers,
           new AutomationSelectedSourceIntakeTerminalReadGrpcService(
               new AutomationEmptySelectedSourceIntakeTerminalReadService(
                   automationIntakeRepository, NAMESPACE)));
+      register(
+          entityHandlers,
+          new EntitySelectedSourceIntakeTerminalReadGrpcService(
+              new EntityEmptySelectedSourceIntakeTerminalReadService(
+                  entityIntakeRepository, NAMESPACE)));
 
       var sourceRepository = new GameAuthoredWorldSourceRepository(gd.dsl());
       register(
@@ -485,6 +564,21 @@ class GenuineSelectedPublicationExportPostgresIntegrationTest {
                   endpoints, pki.client("game-design-service"), channels, NAMESPACE);
           var wrongWorkloadAutomationSelectedSourceCommandClient =
               new GrpcAutomationSelectedSourceIntakeCommandClient(
+                  endpoints, pki.client("world-management-service"), channels, NAMESPACE);
+          var entityToAccountHeld =
+              new AccountSelectedOwnerIntakeAuthorizationGrpcClient(
+                  endpoints, pki.client("entity-management-service"), channels, NAMESPACE);
+          var entityToWorldInventory =
+              new WorldSelectedOwnerInventoryGrpcClient(
+                  endpoints, pki.client("entity-management-service"), channels, NAMESPACE);
+          var accountToEntityTerminal =
+              new GrpcEntitySelectedSourceIntakeTerminalReadClient(
+                  endpoints, pki.client("account-service"), channels, NAMESPACE);
+          var entitySelectedSourceCommandClient =
+              new GrpcEntitySelectedSourceIntakeCommandClient(
+                  endpoints, pki.client("game-design-service"), channels, NAMESPACE);
+          var wrongWorkloadEntitySelectedSourceCommandClient =
+              new GrpcEntitySelectedSourceIntakeCommandClient(
                   endpoints, pki.client("world-management-service"), channels, NAMESPACE);
           var selectedOwnerSettlementClient =
               new GrpcSelectedOwnerIntakeSettlementClient(
@@ -838,6 +932,11 @@ class GenuineSelectedPublicationExportPostgresIntegrationTest {
         accountToAutomationTerminal.init();
         automationSelectedSourceCommandClient.init();
         wrongWorkloadAutomationSelectedSourceCommandClient.init();
+        entityToAccountHeld.init();
+        entityToWorldInventory.init();
+        accountToEntityTerminal.init();
+        entitySelectedSourceCommandClient.init();
+        wrongWorkloadEntitySelectedSourceCommandClient.init();
         selectedOwnerSettlementClient.init();
         wrongWorkloadSelectedOwnerSettlementClient.init();
         glToAccountHeld.init();
@@ -859,10 +958,17 @@ class GenuineSelectedPublicationExportPostgresIntegrationTest {
         register(
             automationHandlers,
             new AutomationSelectedSourceIntakeCommandGrpcService(automationIntakeOwner, NAMESPACE));
+        var entityIntakeOwner =
+            new EntityEmptySelectedSourceIntakeService(
+                NAMESPACE, entityIntakeRepository, entityToAccountHeld, entityToWorldInventory);
+        register(
+            entityHandlers,
+            new EntitySelectedSourceIntakeCommandGrpcService(entityIntakeOwner, NAMESPACE));
         var selectedOwnerSettlementOwner =
             new AccountSelectedOwnerIntakeSettlementService(
                 accountSelectedOwnerSourceRepository,
                 accountToAutomationTerminal,
+                accountToEntityTerminal,
                 accountAccess.sources().manager,
                 NAMESPACE);
         register(
@@ -1702,6 +1808,255 @@ class GenuineSelectedPublicationExportPostgresIntegrationTest {
         assertThat(automationSourceRowCounts(automation.dsl()))
             .isEqualTo(automationRowsAfterRetention);
 
+        UUID freshEntityIntakeRequest = UUID.randomUUID();
+        assertThat(freshEntityIntakeRequest)
+            .isNotEqualTo(entitySourceReservation.intakeRequestId());
+        var entityAuthorizationRequest =
+            SelectedOwnerIntakeAuthorizationProducerEvidence.Request.create(
+                NAMESPACE, freshEntityIntakeRequest, Owner.ENTITY_MANAGEMENT, selectedCommit);
+        var entityAuthorizationResult =
+            gdToAccountSelectedOwnerAuthorizationProducer.authorize(
+                entityAuthorizationRequest, accountAccess.compact());
+        var entityAuthorization = entityAuthorizationResult.binding();
+        var freshEntityScope = entityAuthorization.content().scope();
+        var freshEntityReservationSources =
+            selectedOwnerReservationSourceRows(accountSourceDsl, freshEntityScope.operationId());
+        assertThat(entityAuthorizationResult.request()).isEqualTo(entityAuthorizationRequest);
+        assertThat(entityAuthorizationResult.canonicalBindingBytes())
+            .containsExactly(entityAuthorization.canonicalBytes());
+        assertThat(entityAuthorizationResult.digest()).isEqualTo(entityAuthorization.digest());
+        assertThat(entityAuthorization.owner()).isEqualTo(Owner.ENTITY_MANAGEMENT);
+        assertThat(entityAuthorization.intakeRequestId()).isEqualTo(freshEntityIntakeRequest);
+        assertThat(entityAuthorization.operationId())
+            .isEqualTo(freshEntityScope.operationId())
+            .isNotEqualTo(entitySourceReservation.operationId());
+        assertThat(entityAuthorization.fenceId())
+            .isEqualTo(freshEntityScope.fenceId())
+            .isNotEqualTo(entitySourceReservation.fenceId());
+        assertThat(freshEntityScope.owner()).isEqualTo(Owner.ENTITY_MANAGEMENT);
+        assertThat(freshEntityScope.targetNamespace()).isEqualTo(NAMESPACE);
+        assertThat(freshEntityScope.intakeRequestId()).isEqualTo(freshEntityIntakeRequest);
+        assertThat(freshEntityScope.selected().canonicalBytes())
+            .containsExactly(selectedCommit.canonicalBytes());
+        assertThat(entityAuthorization.content().snapshotBytes("COMMAND"))
+            .containsExactly(selectedSources.command().canonicalBytes());
+        assertThat(entityAuthorization.content().snapshotBytes("REALM_POLICY"))
+            .containsExactly(selectedSources.policy().canonicalBytes());
+        assertThat(entityAuthorization.content().snapshotBytes("ASSET"))
+            .containsExactly(selectedSources.asset().canonicalBytes());
+        assertThat(entityAuthorization.content().snapshotBytes("GAMEPLAY_RULE"))
+            .containsExactly(selectedSources.gameplay().canonicalBytes());
+        assertThat(entityAuthorization.content().snapshotBytes("BRANDING"))
+            .containsExactly(selectedSources.branding().orElseThrow().canonicalBytes());
+        assertThat(entityAuthorization.content().snapshotBytes("TEMPLATE_CONFIG"))
+            .containsExactly(selectedSources.templateConfig().orElseThrow().canonicalBytes());
+        assertThat(entityAuthorization.content().digest())
+            .isEqualTo(
+                DraftAuthorizationFenceBinding.digest(
+                    entityAuthorization.content().canonicalBytes()));
+        assertThat(entityAuthorization.selected().canonicalBytes())
+            .containsExactly(selectedCommit.canonicalBytes());
+        assertThat(accountSelectedSourceReads).hasValue(2);
+        assertThat(freshEntityReservationSources)
+            .containsExactlyElementsOf(expectedAccountSourceEvidence);
+        assertThat(
+                accountSourceDsl.fetchOne(
+                    "SELECT operation_id FROM account_selected_owner_intake_authorizations "
+                        + "WHERE operation_id = ?",
+                    freshEntityScope.operationId()))
+            .isNotNull();
+        assertThat(account.recoverSelectedOwnerSourceRead(freshEntityScope, NAMESPACE).state())
+            .isEqualTo(AccountSelectedOwnerIntakeSourceReservationRepository.State.FINALIZED);
+        assertThat(
+                account.recoverSelectedOwnerSourceRead(entitySourceReservation, NAMESPACE).state())
+            .isEqualTo(AccountSelectedOwnerIntakeSourceReservationRepository.State.ABORTED);
+        assertThat(
+                selectedOwnerReservationSourceRows(
+                    accountSourceDsl, entitySourceReservation.operationId()))
+            .containsExactlyElementsOf(entityReservationSourcesBeforeAbort);
+
+        var entityRowsBeforeRetention = entitySourceRowCounts(entity.dsl());
+        assertThat(entityRowsBeforeRetention)
+            .allSatisfy((table, count) -> assertThat(count).as(table).isZero());
+        var entityRetainRequest =
+            EntitySelectedSourceIntakeCommandEvidence.Request.create(
+                NAMESPACE, entityAuthorization, actualFreeze);
+        assertThatThrownBy(
+                () -> wrongWorkloadEntitySelectedSourceCommandClient.retain(entityRetainRequest))
+            .isInstanceOf(io.grpc.StatusRuntimeException.class)
+            .satisfies(
+                failure ->
+                    assertThat(io.grpc.Status.fromThrowable(failure).getCode())
+                        .isEqualTo(io.grpc.Status.Code.PERMISSION_DENIED));
+        assertThat(entitySourceRowCounts(entity.dsl())).isEqualTo(entityRowsBeforeRetention);
+
+        var entityRetainEvidence = entitySelectedSourceCommandClient.retain(entityRetainRequest);
+        assertThat(entityRetainEvidence.request()).isEqualTo(entityRetainRequest);
+        var entityReceipt = entityRetainEvidence.receipt();
+        assertThat(entityReceipt.outcome()).isEqualTo("COMMITTED_EMPTY");
+        assertThat(entityReceipt.intakeRequestId()).isEqualTo(freshEntityIntakeRequest);
+        assertThat(entityReceipt.authorizationBindingBytes())
+            .containsExactly(entityAuthorization.canonicalBytes());
+        assertThat(entityReceipt.authorizationBindingDigest())
+            .isEqualTo(entityAuthorization.digest());
+        assertThat(entityReceipt.requestDigest())
+            .isEqualTo(
+                EntityEmptySelectedSourceIntakeReceipt.requestDigest(
+                    NAMESPACE, entityAuthorization, actualFreeze));
+        assertThat(entityReceipt.selectedSourceBytes())
+            .containsExactly(entityAuthorization.content().canonicalBytes());
+        assertThat(entityReceipt.selectedSourceDigest())
+            .isEqualTo(entityAuthorization.content().digest());
+        var entitySourceRevision = entityReceipt.inputs().ownerSourceInventoryDeclaration();
+        assertThat(entityReceipt.sourceRevisionId()).isEqualTo(entitySourceRevision.revisionId());
+        assertThat(entityReceipt.sourceRevisionOrder())
+            .isEqualTo(entitySourceRevision.revisionOrder());
+        assertThat(entityReceipt.selectedSourceRevisionBindingDigest())
+            .isEqualTo(entitySourceRevision.sourceBinding().digest());
+        assertThat(entitySourceRevision.sourceBinding().canonicalBytes())
+            .containsExactly(selectedCommit.canonicalBytes());
+        var entityWorldRead = entityReceipt.inputs().worldInventoryReadEvidence();
+        assertThat(entityWorldRead.request().authorizationBinding().canonicalBytes())
+            .containsExactly(entityAuthorization.canonicalBytes());
+        assertThat(entityWorldRead.request().freezeEvidence()).isEqualTo(actualFreeze);
+        assertThat(entityReceipt.worldReadRequestId())
+            .isEqualTo(entityWorldRead.request().readRequestId());
+        assertThat(entityReceipt.worldReadRequestBytes())
+            .containsExactly(
+                net.firedevops.firemud.common.publication.SelectedOwnerWorldInventoryReadGrpcCodec
+                    .toRequest(entityWorldRead.request())
+                    .toByteArray());
+        assertThat(entityReceipt.worldReadRequestDigest())
+            .isEqualTo(
+                DraftAuthorizationFenceBinding.digest(entityReceipt.worldReadRequestBytes()));
+        assertThat(entityReceipt.worldClosureBytes())
+            .containsExactly(entityWorldRead.inventory().canonicalBytes());
+        assertThat(entityReceipt.worldClosureDigest())
+            .isEqualTo(entityWorldRead.inventory().digest());
+        assertThat(entityReceipt.familyStates()).hasSize(23);
+        assertThat(entityReceipt.familyStates())
+            .allSatisfy(
+                family -> {
+                  assertThat(family.state())
+                      .isEqualTo(EntityEmptySelectedSourceIntakeReceipt.FamilyState.EMPTY);
+                  assertThat(family.rowCount()).isZero();
+                  assertThat(family.unqualifiedRowCount()).isZero();
+                  assertThat(family.retainedRowCount()).isZero();
+                  assertThat(family.selectedScopeRowCount()).isZero();
+                  assertThat(family.referenceCount()).isZero();
+                });
+        var entityRowsAfterRetention = entitySourceRowCounts(entity.dsl());
+        var persistedEntityReceipt =
+            entityIntakeRepository.read(NAMESPACE, freshEntityIntakeRequest).orElseThrow();
+        assertThat(persistedEntityReceipt.canonicalBytes())
+            .containsExactly(entityReceipt.canonicalBytes());
+        assertThat(persistedEntityReceipt.receiptDigest()).isEqualTo(entityReceipt.receiptDigest());
+        assertPersistedEntityReceipt(
+            entity.dsl(), persistedEntityReceipt, entityAuthorization, actualFreeze);
+
+        var entityReceiptRetryEvidence =
+            entitySelectedSourceCommandClient.retain(entityRetainRequest);
+        assertThat(entityReceiptRetryEvidence.request()).isEqualTo(entityRetainRequest);
+        assertThat(entityReceiptRetryEvidence.receipt().canonicalBytes())
+            .containsExactly(entityReceipt.canonicalBytes());
+        assertThat(entityReceiptRetryEvidence.receipt().receiptDigest())
+            .isEqualTo(entityReceipt.receiptDigest());
+        var entityRetainNewCorrelationRequest =
+            EntitySelectedSourceIntakeCommandEvidence.Request.create(
+                NAMESPACE, entityAuthorization, actualFreeze);
+        assertThat(entityRetainNewCorrelationRequest.transportRequestId())
+            .isNotEqualTo(entityRetainRequest.transportRequestId());
+        assertThat(entityRetainNewCorrelationRequest.originalIntakeAuthorizationBinding())
+            .containsExactly(entityAuthorization.canonicalBytes());
+        assertThat(entityRetainNewCorrelationRequest.freezeEvidence()).isEqualTo(actualFreeze);
+        var entityRetainNewCorrelationEvidence =
+            entitySelectedSourceCommandClient.retain(entityRetainNewCorrelationRequest);
+        assertThat(entityRetainNewCorrelationEvidence.request())
+            .isEqualTo(entityRetainNewCorrelationRequest);
+        assertThat(entityRetainNewCorrelationEvidence.receipt().canonicalBytes())
+            .containsExactly(entityReceipt.canonicalBytes());
+        assertThat(entityRetainNewCorrelationEvidence.receipt().receiptDigest())
+            .isEqualTo(entityReceipt.receiptDigest());
+        assertThat(entitySourceRowCounts(entity.dsl())).isEqualTo(entityRowsAfterRetention);
+
+        var entitySettlementRequest =
+            SelectedOwnerIntakeSettlementEvidence.Request.create(NAMESPACE, entityAuthorization);
+        var entitySettlementEvidence =
+            selectedOwnerSettlementClient.settle(entitySettlementRequest);
+        assertThat(entitySettlementEvidence.request()).isEqualTo(entitySettlementRequest);
+        var entitySettlement = entitySettlementEvidence.receipt();
+        assertThat(entitySettlement.authorizationBinding().canonicalBytes())
+            .containsExactly(entityAuthorization.canonicalBytes());
+        assertThat(entitySettlement.ownerReceiptBytes())
+            .containsExactly(entityReceipt.canonicalBytes());
+        assertThat(entitySettlement.ownerReceiptDigest()).isEqualTo(entityReceipt.receiptDigest());
+        assertThat(entitySettlement.entityTerminalEvidence().request().binding().canonicalBytes())
+            .containsExactly(entityAuthorization.canonicalBytes());
+        assertThat(entitySettlement.entityTerminalEvidence().request().terminalReadPurpose())
+            .isEqualTo(EntitySelectedSourceIntakeTerminalReadEvidence.TERMINAL_READ_PURPOSE);
+        assertThat(entitySettlement.entityTerminalEvidence().receipt().canonicalBytes())
+            .containsExactly(entityReceipt.canonicalBytes());
+        var entitySettlementRows =
+            accountSourceDsl.fetch(
+                "SELECT binding_bytes, binding_digest, terminal_read_request_id, "
+                    + "terminal_receipt_bytes, terminal_receipt_digest, receipt_bytes, "
+                    + "receipt_digest FROM account_selected_owner_intake_settlements "
+                    + "WHERE operation_id = ?",
+                entityAuthorization.operationId());
+        assertThat(entitySettlementRows).hasSize(1);
+        var entitySettlementRow = entitySettlementRows.getFirst();
+        assertThat(entitySettlementRow.get("binding_bytes", byte[].class))
+            .containsExactly(entityAuthorization.canonicalBytes());
+        assertThat(entitySettlementRow.get("binding_digest", String.class))
+            .isEqualTo(entityAuthorization.digest());
+        assertThat(entitySettlementRow.get("terminal_receipt_bytes", byte[].class))
+            .containsExactly(entityReceipt.canonicalBytes());
+        assertThat(entitySettlementRow.get("terminal_receipt_digest", String.class))
+            .isEqualTo(entityReceipt.receiptDigest());
+        assertThat(entitySettlementRow.get("receipt_bytes", byte[].class))
+            .containsExactly(entitySettlement.canonicalBytes());
+        assertThat(entitySettlementRow.get("receipt_digest", String.class))
+            .isEqualTo(entitySettlement.digest());
+        assertThat(entitySettlementRow.get("terminal_read_request_id", UUID.class))
+            .isEqualTo(entitySettlement.entityTerminalEvidence().request().readRequestId());
+
+        var entitySettlementRetry = selectedOwnerSettlementClient.settle(entitySettlementRequest);
+        assertThat(entitySettlementRetry.receipt().canonicalBytes())
+            .containsExactly(entitySettlement.canonicalBytes());
+        var entitySettlementNewCorrelationRequest =
+            SelectedOwnerIntakeSettlementEvidence.Request.create(NAMESPACE, entityAuthorization);
+        assertThat(entitySettlementNewCorrelationRequest.transportRequestId())
+            .isNotEqualTo(entitySettlementRequest.transportRequestId());
+        var entitySettlementNewCorrelation =
+            selectedOwnerSettlementClient.settle(entitySettlementNewCorrelationRequest);
+        assertThat(entitySettlementNewCorrelation.request())
+            .isEqualTo(entitySettlementNewCorrelationRequest);
+        assertThat(entitySettlementNewCorrelation.receipt().canonicalBytes())
+            .containsExactly(entitySettlement.canonicalBytes());
+        assertThat(
+                entitySettlementNewCorrelation
+                    .receipt()
+                    .entityTerminalEvidence()
+                    .request()
+                    .readRequestId())
+            .isEqualTo(entitySettlement.entityTerminalEvidence().request().readRequestId());
+        assertThat(
+                accountSourceDsl.fetch(
+                    "SELECT operation_id FROM account_selected_owner_intake_settlements "
+                        + "WHERE operation_id = ?",
+                    entityAuthorization.operationId()))
+            .hasSize(1);
+        assertFailedPrecondition(
+            () ->
+                entityToAccountHeld.read(
+                    SelectedOwnerIntakeAuthorizationReadEvidence.Request.create(
+                        NAMESPACE, entityAuthorization)));
+        var entityReceiptAfterSettlement =
+            entitySelectedSourceCommandClient.retain(entityRetainNewCorrelationRequest).receipt();
+        assertThat(entityReceiptAfterSettlement.canonicalBytes())
+            .containsExactly(entityReceipt.canonicalBytes());
+        assertThat(entitySourceRowCounts(entity.dsl())).isEqualTo(entityRowsAfterRetention);
+
         var publicationRequest =
             PublicationDigestRequestBinding.full(
                 gd.target().canonicalTenantId().toString(),
@@ -1819,11 +2174,16 @@ class GenuineSelectedPublicationExportPostgresIntegrationTest {
                 new VersionRepository(gd.dsl()),
                 gd.transactions(),
                 new ObjectMapper());
-        var objectStore = new InMemoryConditionalObjectStore(candidateService, publicationRequest);
+        var objectStore =
+            this.objectStore =
+                new MinioConditionalObjectStore(candidateService, publicationRequest);
         objectStore.requireCandidateBeforeWrites(actualInventory);
         var properties = new AssetStoreProperties();
-        properties.setEndpoint("https://objects.invalid");
-        properties.setBucket("genuine-selected-export-test");
+        properties.setEndpoint(objectStore.endpoint());
+        properties.setBucket(objectStore.bucket());
+        properties.setRegion(MINIO_REGION.id());
+        properties.setAccessKey(MINIO_ACCESS_KEY);
+        properties.setSecretKey(MINIO_SECRET_KEY);
         var exporter =
             new AssetExportServiceImpl(
                 new VersionAssetPublicationRepository(gd.dsl()),
@@ -1846,14 +2206,6 @@ class GenuineSelectedPublicationExportPostgresIntegrationTest {
         assertThat(first.manifest().artifactDigests().getFirst().contentDigest())
             .isEqualTo("sha256:" + sha256(assetBytes));
         assertThat(objectStore.objects()).hasSize(2);
-        assertThat(objectStore.bytesAt("artifacts/sha256/" + sha256(assetBytes)))
-            .containsExactly(assetBytes);
-        assertThat(objectStore.contentTypeAt("artifacts/sha256/" + sha256(assetBytes)))
-            .isEqualTo("text/plain");
-        assertThat(
-                objectStore.bytesAt(
-                    "manifests/sha256/" + first.manifest().manifestHash().substring(7)))
-            .containsExactly(first.candidateBinding().manifestBytes());
 
         SelectedExportResult retry = exporter.exportSelectedAssets(publicationRequest);
         assertThat(retry).isEqualTo(first);
@@ -1862,6 +2214,15 @@ class GenuineSelectedPublicationExportPostgresIntegrationTest {
         assertThat(candidateService.readSelectedCandidate(publicationRequest))
             .isEqualTo(first.candidateBinding());
         assertThat(gd.dsl().fetchCount(DSL.table("version_asset_export_candidate"))).isOne();
+        var exportedAsset = objectStore.objectAt("artifacts/sha256/" + sha256(assetBytes));
+        assertThat(exportedAsset.bytes()).containsExactly(assetBytes);
+        assertThat(exportedAsset.contentType()).isEqualTo("text/plain");
+        var exportedManifest =
+            objectStore.objectAt(
+                "manifests/sha256/" + first.manifest().manifestHash().substring(7));
+        assertThat(exportedManifest.bytes())
+            .containsExactly(first.candidateBinding().manifestBytes());
+        assertThat(exportedManifest.contentType()).isEqualTo("application/json");
 
         byte[] alteredManifestBytes = alteredManifest(first.candidateBinding().manifestBytes());
         var alteredManifest =
@@ -2398,15 +2759,16 @@ class GenuineSelectedPublicationExportPostgresIntegrationTest {
             .isEqualTo(first.candidateBinding());
       }
     } finally {
-      stopAll(automationServer, gameLogicServer, accountServer, worldServer, gdServer);
+      stopAll(
+          automationServer, entityServer, gameLogicServer, accountServer, worldServer, gdServer);
     }
   }
 
   /**
-   * Entity and Automation participant digests remain stipulated test inputs. Automation's source
-   * receipt and Account settlement do not replace those publication participants. World freeze,
-   * inventory, selector and Game Design and Game Logic source reads come from their actual owner
-   * compositions. This does not prove complete four-owner publication or activation.
+   * Entity and Automation participant digests remain stipulated test inputs. Their source receipts
+   * and Account settlements do not replace those publication participants. World freeze, inventory,
+   * selector and Game Design and Game Logic source reads come from their actual owner compositions.
+   * This does not prove complete four-owner publication or activation.
    */
   private static List<PublishParticipantDigestDto> selectedSelectorParticipantDigests(
       DraftCommitBinding selectedCommit,
@@ -2832,6 +3194,192 @@ class GenuineSelectedPublicationExportPostgresIntegrationTest {
             dsl.fetchCount(DSL.table("automation_empty_selected_source_receipt")),
         "automation_empty_source_numeric_key_reservation",
             dsl.fetchCount(DSL.table("automation_empty_source_numeric_key_reservation")));
+  }
+
+  private static Map<String, Integer> entitySourceRowCounts(DSLContext dsl) {
+    var counts = new TreeMap<String, Integer>();
+    for (String table :
+        List.of(
+            "actor_active_conditions",
+            "actor_resource_states",
+            "body_layout_slot_definitions",
+            "character_equipment",
+            "character_friend",
+            "characters",
+            "container_instances",
+            "crafting_ingredients",
+            "crafting_recipes",
+            "entity_mutation_effects",
+            "equipment_slot_definitions",
+            "inventory",
+            "item_instances",
+            "item_stacks",
+            "item_transfer_audits",
+            "item_visible_ref_counters",
+            "items",
+            "npcs",
+            "room_ground_inventory",
+            "entity_empty_source_numeric_key_reservation",
+            "entity_empty_selected_source_association",
+            "entity_empty_selected_source_family_state",
+            "entity_empty_selected_source_receipt")) {
+      counts.put(table, dsl.fetchCount(DSL.table(table)));
+    }
+    for (String table : ENTITY_EMPTY_ONLY_PROVIDER_TABLES.values()) {
+      counts.put(table, dsl.fetchCount(DSL.table(table)));
+    }
+    return Map.copyOf(counts);
+  }
+
+  private static void assertPersistedEntityReceipt(
+      DSLContext dsl,
+      EntityEmptySelectedSourceIntakeReceipt receipt,
+      net.firedevops.firemud.common.account.sourceintake.SelectedOwnerIntakeAuthorizationBinding
+          authorization,
+      WorldSelectedDraftPublicationFreezeEvidence freeze) {
+    assertThat(receipt.localTenantKey()).isPositive();
+    assertThat(receipt.localVersionKey()).isPositive().isNotEqualTo(receipt.localTenantKey());
+
+    var association =
+        dsl.fetchOne(
+            "SELECT genesis_id, operation_id, fence_id, intake_request_id, canonical_tenant_id, "
+                + "canonical_version_id, selected_commit_id, source_revision_id, "
+                + "source_revision_order, local_tenant_key, local_version_key, request_digest, "
+                + "schema_digest, authorization_binding_digest, selected_source_digest, "
+                + "world_read_request_id, world_read_request_digest, world_closure_digest, "
+                + "receipt_digest FROM entity_empty_selected_source_association "
+                + "WHERE target_namespace = ? AND intake_request_id = ?",
+            authorization.targetNamespace(),
+            authorization.intakeRequestId());
+    assertThat(association).isNotNull();
+    assertThat(association.get("operation_id", UUID.class)).isEqualTo(authorization.operationId());
+    assertThat(association.get("fence_id", UUID.class)).isEqualTo(authorization.fenceId());
+    assertThat(association.get("canonical_tenant_id", UUID.class))
+        .isEqualTo(authorization.tenantId());
+    assertThat(association.get("canonical_version_id", UUID.class))
+        .isEqualTo(authorization.versionId());
+    assertThat(association.get("selected_commit_id", UUID.class))
+        .isEqualTo(authorization.selected().commitId());
+    assertThat(association.get("source_revision_id", UUID.class))
+        .isEqualTo(receipt.sourceRevisionId());
+    assertThat(association.get("source_revision_order", String.class))
+        .isEqualTo(receipt.sourceRevisionOrder());
+    assertThat(association.get("local_tenant_key", Long.class)).isEqualTo(receipt.localTenantKey());
+    assertThat(association.get("local_version_key", Long.class))
+        .isEqualTo(receipt.localVersionKey());
+    assertThat(association.get("request_digest", String.class)).isEqualTo(receipt.requestDigest());
+    assertThat(association.get("schema_digest", String.class)).isEqualTo(receipt.schemaDigest());
+    assertThat(association.get("authorization_binding_digest", String.class))
+        .isEqualTo(authorization.digest());
+    assertThat(association.get("selected_source_digest", String.class))
+        .isEqualTo(receipt.selectedSourceDigest());
+    assertThat(association.get("world_read_request_id", UUID.class))
+        .isEqualTo(receipt.worldReadRequestId());
+    assertThat(association.get("world_read_request_digest", String.class))
+        .isEqualTo(receipt.worldReadRequestDigest());
+    assertThat(association.get("world_closure_digest", String.class))
+        .isEqualTo(receipt.worldClosureDigest());
+    assertThat(association.get("receipt_digest", String.class)).isEqualTo(receipt.receiptDigest());
+
+    var reservedKeys =
+        dsl.fetch(
+            "SELECT key_kind, numeric_key, claim_kind FROM entity_empty_source_numeric_key_reservation "
+                + "WHERE numeric_key IN (?, ?) ORDER BY key_kind",
+            receipt.localTenantKey(),
+            receipt.localVersionKey());
+    assertThat(reservedKeys).hasSize(2);
+    assertThat(reservedKeys.get(0).get("key_kind", String.class)).isEqualTo("TENANT");
+    assertThat(reservedKeys.get(0).get("numeric_key", Long.class))
+        .isEqualTo(receipt.localTenantKey());
+    assertThat(reservedKeys.get(0).get("claim_kind", String.class))
+        .isEqualTo("CANONICAL_EMPTY_SOURCE");
+    assertThat(reservedKeys.get(1).get("key_kind", String.class)).isEqualTo("VERSION");
+    assertThat(reservedKeys.get(1).get("numeric_key", Long.class))
+        .isEqualTo(receipt.localVersionKey());
+    assertThat(reservedKeys.get(1).get("claim_kind", String.class))
+        .isEqualTo("CANONICAL_EMPTY_SOURCE");
+
+    var persistedFamilyStates =
+        dsl.fetch(
+            "SELECT family_name, owner_state, evidence_kind, row_count, unqualified_row_count, "
+                + "retained_row_count, selected_scope_row_count, reference_count "
+                + "FROM entity_empty_selected_source_family_state "
+                + "WHERE target_namespace = ? AND intake_request_id = ? ORDER BY family_name",
+            authorization.targetNamespace(),
+            authorization.intakeRequestId());
+    var expectedFamilyNames =
+        receipt.familyStates().stream()
+            .map(EntityEmptySelectedSourceIntakeReceipt.FamilyCensus::family)
+            .sorted()
+            .toList();
+    assertThat(persistedFamilyStates).hasSize(23);
+    assertThat(persistedFamilyStates.map(row -> row.get("family_name", String.class)))
+        .containsExactlyElementsOf(expectedFamilyNames);
+    for (var persisted : persistedFamilyStates) {
+      var family =
+          receipt.familyStates().stream()
+              .filter(
+                  candidate ->
+                      candidate.family().equals(persisted.get("family_name", String.class)))
+              .findFirst()
+              .orElseThrow();
+      assertThat(persisted.get("owner_state", String.class)).isEqualTo(family.state().name());
+      assertThat(persisted.get("evidence_kind", String.class))
+          .isEqualTo(family.evidenceKind().name());
+      assertThat(persisted.get("row_count", Long.class)).isZero();
+      assertThat(persisted.get("unqualified_row_count", Long.class)).isZero();
+      assertThat(persisted.get("retained_row_count", Long.class)).isZero();
+      assertThat(persisted.get("selected_scope_row_count", Long.class)).isZero();
+      assertThat(persisted.get("reference_count", Long.class)).isZero();
+    }
+
+    for (var provider : ENTITY_EMPTY_ONLY_PROVIDER_TABLES.entrySet()) {
+      var providerRow =
+          dsl.fetchOne(
+              "SELECT provider_schema_version, owner_state, row_count, reference_count, "
+                  + "authorization_binding_digest, selected_source_digest, "
+                  + "source_revision_binding_digest, world_closure_digest, provider_state_digest "
+                  + "FROM "
+                  + provider.getValue()
+                  + " WHERE target_namespace = ? AND intake_request_id = ?",
+              authorization.targetNamespace(),
+              authorization.intakeRequestId());
+      assertThat(providerRow).as(provider.getKey()).isNotNull();
+      assertThat(providerRow.get("provider_schema_version", Short.class)).isEqualTo((short) 1);
+      assertThat(providerRow.get("owner_state", String.class)).isEqualTo("EMPTY");
+      assertThat(providerRow.get("row_count", Long.class)).isZero();
+      assertThat(providerRow.get("reference_count", Long.class)).isZero();
+      assertThat(providerRow.get("authorization_binding_digest", String.class))
+          .isEqualTo(authorization.digest());
+      assertThat(providerRow.get("selected_source_digest", String.class))
+          .isEqualTo(receipt.selectedSourceDigest());
+      assertThat(providerRow.get("source_revision_binding_digest", String.class))
+          .isEqualTo(receipt.selectedSourceRevisionBindingDigest());
+      assertThat(providerRow.get("world_closure_digest", String.class))
+          .isEqualTo(receipt.worldClosureDigest());
+      assertThat(providerRow.get("provider_state_digest", String.class))
+          .isEqualTo(receipt.providerStateDigest(provider.getKey()));
+    }
+
+    var persistedReceipt =
+        dsl.fetchOne(
+            "SELECT request_digest, schema_digest, receipt_digest, receipt_bytes "
+                + "FROM entity_empty_selected_source_receipt "
+                + "WHERE target_namespace = ? AND intake_request_id = ?",
+            authorization.targetNamespace(),
+            authorization.intakeRequestId());
+    assertThat(persistedReceipt).isNotNull();
+    assertThat(persistedReceipt.get("request_digest", String.class))
+        .isEqualTo(receipt.requestDigest());
+    assertThat(persistedReceipt.get("schema_digest", String.class))
+        .isEqualTo(receipt.schemaDigest());
+    assertThat(persistedReceipt.get("receipt_digest", String.class))
+        .isEqualTo(receipt.receiptDigest());
+    assertThat(persistedReceipt.get("receipt_bytes", byte[].class))
+        .containsExactly(receipt.canonicalBytes());
+
+    assertThat(receipt.inputs().worldInventoryReadEvidence().request().freezeEvidence())
+        .isEqualTo(freeze);
   }
 
   private static List<String> selectedOwnerReservationSourceRows(DSLContext dsl, UUID operationId) {
@@ -3423,7 +3971,8 @@ class GenuineSelectedPublicationExportPostgresIntegrationTest {
               "game-design-service",
               "world-management-service",
               "game-logic-service",
-              "automation-scripting-service")) {
+              "automation-scripting-service",
+              "entity-management-service")) {
         servers.put(service, issue(root, service, true, caKeys, caCertificate));
         clients.put(service, issue(root, service, false, caKeys, caCertificate));
       }
@@ -3513,99 +4062,79 @@ class GenuineSelectedPublicationExportPostgresIntegrationTest {
   }
 
   /**
-   * Object IO only; every put still observes the committed candidate through the real GD reader.
+   * Real S3-compatible object I/O; each outbound conditional PUT re-reads the committed candidate
+   * through the real GD reader immediately before transmission.
    */
-  private static final class InMemoryConditionalObjectStore {
+  private static final class MinioConditionalObjectStore implements AutoCloseable {
     private final VersionAssetExportCandidateService candidates;
     private final PublicationDigestRequestBinding request;
-    private final Map<String, StoredObject> stored = new ConcurrentHashMap<>();
     private final AtomicInteger puts = new AtomicInteger();
     private final AtomicInteger gets = new AtomicInteger();
-    private final S3Client client = mock(S3Client.class);
+    private final URI endpoint;
+    private final S3Client client;
     private byte[] inventoryBytes;
+    private String operationDigest;
+    private String selectedCommitDigest;
+    private String inventoryDigest;
 
-    InMemoryConditionalObjectStore(
+    MinioConditionalObjectStore(
         VersionAssetExportCandidateService candidates, PublicationDigestRequestBinding request) {
       this.candidates = candidates;
       this.request = request;
-      doAnswer(
-              invocation -> {
-                PutObjectRequest put = invocation.getArgument(0);
-                RequestBody body = invocation.getArgument(1);
-                puts.incrementAndGet();
-                if (!"*".equals(put.ifNoneMatch())) {
-                  throw new AssertionError("Selected object PUT was not conditional");
-                }
-                var retained = candidates.readSelectedCandidate(request);
-                if (inventoryBytes == null
-                    || !request.requestDigest().equals(retained.requestDigest())
-                    || !Arrays.equals(request.canonicalPreimage(), retained.requestPreimage())
-                    || !Arrays.equals(inventoryBytes, retained.inventoryBytes())
-                    || !("sha256:" + sha256(retained.inventoryBytes()))
-                        .equals(retained.inventoryDigest())
-                    || !("sha256:" + sha256(retained.manifestBytes()))
-                        .equals(retained.manifest().manifestHash())) {
-                  throw new AssertionError(
-                      "Exact durable candidate, inventory and manifest were not readable before object PUT");
-                }
-                byte[] bytes;
-                try (var stream = body.contentStreamProvider().newStream()) {
-                  bytes = stream.readAllBytes();
-                }
-                String key = put.key();
-                StoredObject prior =
-                    stored.putIfAbsent(key, new StoredObject(bytes, put.contentType()));
-                if (prior != null) {
-                  throw S3Exception.builder()
-                      .statusCode(412)
-                      .message("conditional collision")
-                      .build();
-                }
-                return PutObjectResponse.builder().build();
-              })
-          .when(client)
-          .putObject(any(PutObjectRequest.class), any(RequestBody.class));
-      when(client.getObjectAsBytes(any(GetObjectRequest.class)))
-          .thenAnswer(
-              invocation -> {
-                gets.incrementAndGet();
-                GetObjectRequest get = invocation.getArgument(0);
-                StoredObject object = stored.get(get.key());
-                if (object == null) {
-                  throw S3Exception.builder()
-                      .statusCode(404)
-                      .message("missing test object")
-                      .build();
-                }
-                return ResponseBytes.fromByteArray(
-                    GetObjectResponse.builder()
-                        .contentLength((long) object.bytes().length)
-                        .contentType(object.contentType())
-                        .build(),
-                    object.bytes());
-              });
+      endpoint = URI.create("http://" + MINIO.getHost() + ":" + MINIO.getMappedPort(9000));
+      client =
+          S3Client.builder()
+              .endpointOverride(endpoint)
+              .credentialsProvider(
+                  StaticCredentialsProvider.create(
+                      AwsBasicCredentials.create(MINIO_ACCESS_KEY, MINIO_SECRET_KEY)))
+              .region(MINIO_REGION)
+              .serviceConfiguration(S3Configuration.builder().pathStyleAccessEnabled(true).build())
+              .overrideConfiguration(
+                  configuration ->
+                      configuration.addExecutionInterceptor(
+                          new CandidateReadbackExecutionInterceptor()))
+              .build();
+      try {
+        client.createBucket(CreateBucketRequest.builder().bucket(MINIO_BUCKET).build());
+      } catch (RuntimeException failure) {
+        client.close();
+        throw failure;
+      }
     }
 
     void requireCandidateBeforeWrites(SelectedDraftAssetInventory inventory) {
       inventoryBytes = inventory.canonicalBytes();
-      if (!stored.isEmpty())
+      operationDigest = sha256(inventory.operation().canonicalBytes());
+      selectedCommitDigest = inventory.selectedCommit().digest();
+      inventoryDigest = inventory.digest();
+      if (!objects().isEmpty()) {
         throw new IllegalStateException("Test object store is already populated");
+      }
+    }
+
+    String endpoint() {
+      return endpoint.toString();
+    }
+
+    String bucket() {
+      return MINIO_BUCKET;
     }
 
     S3Client client() {
       return client;
     }
 
-    Map<String, StoredObject> objects() {
-      return Map.copyOf(stored);
+    List<S3Object> objects() {
+      return client
+          .listObjectsV2(ListObjectsV2Request.builder().bucket(MINIO_BUCKET).build())
+          .contents();
     }
 
-    byte[] bytesAt(String key) {
-      return Objects.requireNonNull(stored.get(key), "missing selected test object").bytes();
-    }
-
-    String contentTypeAt(String key) {
-      return Objects.requireNonNull(stored.get(key), "missing selected test object").contentType();
+    StoredObject objectAt(String key) {
+      var observed =
+          client.getObjectAsBytes(GetObjectRequest.builder().bucket(MINIO_BUCKET).key(key).build());
+      return new StoredObject(observed.asByteArray(), observed.response().contentType());
     }
 
     int putCalls() {
@@ -3614,6 +4143,47 @@ class GenuineSelectedPublicationExportPostgresIntegrationTest {
 
     int getCalls() {
       return gets.get();
+    }
+
+    @Override
+    public void close() {
+      client.close();
+    }
+
+    private void requireExactCandidateBeforePut() {
+      var retained = candidates.readSelectedCandidate(request);
+      if (inventoryBytes == null
+          || !request.requestDigest().equals(retained.requestDigest())
+          || !Arrays.equals(request.canonicalPreimage(), retained.requestPreimage())
+          || !operationDigest.equals(retained.operationDigest())
+          || !selectedCommitDigest.equals(retained.selectedCommitDigest())
+          || !SelectedDraftAssetInventory.SCHEMA.equals(retained.inventorySchema())
+          || !inventoryDigest.equals(retained.inventoryDigest())
+          || !Arrays.equals(inventoryBytes, retained.inventoryBytes())
+          || !("sha256:" + sha256(retained.inventoryBytes())).equals(retained.inventoryDigest())
+          || !("sha256:" + sha256(retained.manifestBytes()))
+              .equals(retained.manifest().manifestHash())) {
+        throw new AssertionError(
+            "Exact durable candidate, inventory and manifest were not readable before object PUT");
+      }
+    }
+
+    private final class CandidateReadbackExecutionInterceptor implements ExecutionInterceptor {
+      @Override
+      public void beforeTransmission(
+          software.amazon.awssdk.core.interceptor.Context.BeforeTransmission context,
+          ExecutionAttributes executionAttributes) {
+        if (context.request() instanceof PutObjectRequest put) {
+          if (!MINIO_BUCKET.equals(put.bucket()) || !"*".equals(put.ifNoneMatch())) {
+            throw new AssertionError("Selected object PUT was not conditional to the test bucket");
+          }
+          puts.incrementAndGet();
+          requireExactCandidateBeforePut();
+        } else if (context.request() instanceof GetObjectRequest get
+            && MINIO_BUCKET.equals(get.bucket())) {
+          gets.incrementAndGet();
+        }
+      }
     }
   }
 

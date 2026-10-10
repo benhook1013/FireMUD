@@ -73,8 +73,10 @@ public final class SelectedOwnerIntakeSettlementGrpcCodec {
     if (result == null) throw invalid("Complete settlement result is required");
     byte[] receipt = result.receipt().canonicalBytes();
     if (receipt.length == 0
-        || receipt.length > AccountSelectedOwnerIntakeSettlementReceipt.MAX_BYTES) {
-      throw invalid("Complete settlement receipt exceeds its 92,356,608 byte bound");
+        || receipt.length
+            > AccountSelectedOwnerIntakeSettlementReceipt.maxBytes(
+                result.request().authorizationBinding().owner())) {
+      throw invalid("Complete settlement receipt exceeds its owner bound");
     }
     var response =
         SelectedOwnerIntakeSettlementResponse.newBuilder()
@@ -96,8 +98,9 @@ public final class SelectedOwnerIntakeSettlementGrpcCodec {
       throw invalid("Account changed the complete settlement request");
     }
     if (response.getSettlementReceipt().size()
-        > AccountSelectedOwnerIntakeSettlementReceipt.MAX_BYTES) {
-      throw invalid("Complete settlement receipt exceeds its 92,356,608 byte bound");
+        > AccountSelectedOwnerIntakeSettlementReceipt.maxBytes(
+            request.authorizationBinding().owner())) {
+      throw invalid("Complete settlement receipt exceeds its owner bound");
     }
     byte[] receiptBytes = response.getSettlementReceipt().toByteArray();
     AccountSelectedOwnerIntakeSettlementReceipt receipt;

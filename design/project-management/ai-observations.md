@@ -210,3 +210,9 @@ Entry format:
   - Observation: An absolute repository path inside an executable patch is a live mutation target, not artifact content. Attempting to reverse the mistake introduced a second unsafe intermediate state. No concurrent build consumed the changed or missing parser, and the original tracked file was restored; unrelated edits were preserved.
   - Expected pattern: Use the temporary artifact path as the only outer patch target, with implementation patch text as its contents. Report mistaken mutation immediately and let the parent choose recovery after checking running validation and concurrent ownership; do not start an independent reversal sequence.
   - Current status: The parent stopped reversal, verified restoration and then explicitly authorized completion in the assigned Common files after the serialized owner gate finished. Integration inspection and consolidated proof remain required before publication.
+
+- `2026-10-11`: Replacement-string expansion can corrupt embedded SQL regexes
+  - Context: Parent inspection of an unpublished V138 extension found function terminator text inserted into Entity digest and timestamp regex literals.
+  - Observation: The helper identified JavaScript replacement-string dollar expansion while preparing the patch. The resulting SQL block is excluded from the schema simulator, so successful schema generation would not establish its correctness.
+  - Expected pattern: Preserve literal replacement content with a replacement callback, inspect the resulting complete procedural block, and require actual PostgreSQL migration and negative-case execution separately from generated metadata.
+  - Current status: The helper corrected the literals and new inline `CASE` operands before validation or publication. Physical PostgreSQL parsing and assertion proof remain pending.

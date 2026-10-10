@@ -117,18 +117,30 @@ final class AccountControlUiOwnerSourcesFixture {
       Path root,
       boolean installNegativeIssuer,
       UUID tenant) {
+    this(jdbcUrl, username, password, root, installNegativeIssuer, tenant, null);
+  }
+
+  AccountControlUiOwnerSourcesFixture(
+      String jdbcUrl,
+      String username,
+      String password,
+      Path root,
+      boolean installNegativeIssuer,
+      UUID tenant,
+      String migrationTarget) {
     this.tenant = Objects.requireNonNull(tenant);
     String schema = "control_ui_owner_" + UUID.randomUUID().toString().replace("-", "");
     var dataSource = new DriverManagerDataSource(jdbcUrl, username, password);
     dataSource.setSchema(schema);
-    Flyway.configure()
-        .dataSource(dataSource)
-        .schemas(schema)
-        .defaultSchema(schema)
-        .placeholders(Map.of("serviceSchema", schema))
-        .locations("filesystem:" + accountMigrations())
-        .load()
-        .migrate();
+    var migrations =
+        Flyway.configure()
+            .dataSource(dataSource)
+            .schemas(schema)
+            .defaultSchema(schema)
+            .placeholders(Map.of("serviceSchema", schema))
+            .locations("filesystem:" + accountMigrations());
+    if (migrationTarget != null) migrations.target(migrationTarget);
+    migrations.load().migrate();
     manager = new DataSourceTransactionManager(dataSource);
     transactions = new TransactionTemplate(manager);
     transactions.setIsolationLevel(TransactionDefinition.ISOLATION_READ_COMMITTED);

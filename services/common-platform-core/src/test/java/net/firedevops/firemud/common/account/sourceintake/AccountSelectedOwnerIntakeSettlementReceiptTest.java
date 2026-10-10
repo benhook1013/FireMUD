@@ -10,6 +10,8 @@ import net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding.Owner;
 import net.firedevops.firemud.common.automation.sourceintake.AutomationEmptySelectedSourceIntakeReceipt;
 import net.firedevops.firemud.common.automation.sourceintake.AutomationSelectedSourceIntakeTerminalReadEvidence;
+import net.firedevops.firemud.common.entity.sourceintake.EntityEmptySelectedSourceIntakeReceipt;
+import net.firedevops.firemud.common.entity.sourceintake.EntitySelectedSourceIntakeTerminalReadEvidence;
 import org.junit.jupiter.api.Test;
 
 /** Synthetic upstream value tests; mocks make no Account or Automation authentication claim. */
@@ -59,6 +61,60 @@ class AccountSelectedOwnerIntakeSettlementReceiptTest {
     assertThat(first.canonicalBytes()).isNotEqualTo(exposed);
     assertThatThrownBy(() -> AccountSelectedOwnerIntakeSettlementReceipt.fromStored(exposed))
         .isInstanceOf(IllegalArgumentException.class);
+  }
+
+  @Test
+  void keepsAutomationBoundsAndFramesWhileEntityUsesItsOwnTypedTerminal() {
+    assertThat(AccountSelectedOwnerIntakeSettlementReceipt.AUTOMATION_MAX_BYTES)
+        .isEqualTo(92356608);
+    assertThat(AccountSelectedOwnerIntakeSettlementReceipt.ENTITY_MAX_BYTES).isEqualTo(117506048);
+    var binding = binding();
+    when(binding.owner()).thenReturn(Owner.ENTITY_MANAGEMENT);
+    when(binding.schema()).thenReturn("account-entity-intake-authorization/v1");
+    when(binding.purpose()).thenReturn("ENTITY_INTAKE_RETENTION");
+    var owner = mock(EntityEmptySelectedSourceIntakeReceipt.class);
+    when(owner.targetNamespace()).thenReturn("test");
+    when(owner.authorizationBindingBytes()).thenReturn(BINDING_BYTES.clone());
+    when(owner.authorizationBindingDigest()).thenReturn(BINDING_DIGEST);
+    when(owner.outcome()).thenReturn("COMMITTED_EMPTY");
+    when(owner.canonicalBytes()).thenReturn(OWNER_RECEIPT_BYTES.clone());
+    when(owner.receiptDigest()).thenReturn(OWNER_RECEIPT_DIGEST);
+    var first =
+        new EntitySelectedSourceIntakeTerminalReadEvidence(
+            EntitySelectedSourceIntakeTerminalReadEvidence.Request.create("test", binding), owner);
+    var receipt = AccountSelectedOwnerIntakeSettlementReceipt.create(first);
+    var reader = new DraftAuthorizationFenceBinding.FrameReader(receipt.canonicalBytes());
+    reader.expect(AccountSelectedOwnerIntakeSettlementReceipt.DOMAIN);
+    reader.expect("1");
+    assertThat(reader.bytes()).isEqualTo(BINDING_BYTES);
+    reader.expect(BINDING_DIGEST);
+    reader.expect("1");
+    reader.expect("test");
+    reader.expect(first.request().readRequestId().toString());
+    reader.expect("spiffe://firemud/ns/test/sa/account-service");
+    reader.expect("ENTITY_INTAKE_TERMINAL_READ");
+    assertThat(reader.bytes()).isEqualTo(BINDING_BYTES);
+    reader.expect(BINDING_DIGEST);
+    assertThat(reader.bytes()).isEqualTo(OWNER_RECEIPT_BYTES);
+    reader.expect(OWNER_RECEIPT_DIGEST);
+    reader.requireEnd();
+    var retry =
+        new EntitySelectedSourceIntakeTerminalReadEvidence(
+            EntitySelectedSourceIntakeTerminalReadEvidence.Request.create("test", binding), owner);
+    assertThat(receipt.sameImmutableOwnerReceipt(retry)).isTrue();
+    assertThat(receipt.entityTerminalEvidence()).isSameAs(first);
+    assertThatThrownBy(receipt::terminalEvidence).isInstanceOf(IllegalStateException.class);
+    var changedOwner = mock(EntityEmptySelectedSourceIntakeReceipt.class);
+    when(changedOwner.targetNamespace()).thenReturn("test");
+    when(changedOwner.authorizationBindingBytes()).thenReturn(BINDING_BYTES.clone());
+    when(changedOwner.outcome()).thenReturn("COMMITTED_EMPTY");
+    when(changedOwner.canonicalBytes()).thenReturn(new byte[] {9});
+    when(changedOwner.receiptDigest())
+        .thenReturn(DraftAuthorizationFenceBinding.digest(new byte[] {9}));
+    assertThat(
+            receipt.sameImmutableOwnerReceipt(
+                new EntitySelectedSourceIntakeTerminalReadEvidence(retry.request(), changedOwner)))
+        .isFalse();
   }
 
   private static SelectedOwnerIntakeAuthorizationBinding binding() {

@@ -1,0 +1,34 @@
+syntax = "proto3";
+
+package entity_management.v1;
+option java_package = "net.firedevops.firemud.entitymanagement.v1";
+option java_multiple_files = true;
+
+// Standalone and unregistered. Only the same-namespace Account workload may read.
+service EntitySelectedSourceIntakeTerminalReadService {
+  rpc ReadSelectedSourceIntakeTerminal(
+      ReadSelectedSourceIntakeTerminalRequest)
+      returns (ReadSelectedSourceIntakeTerminalResponse);
+}
+
+message ReadSelectedSourceIntakeTerminalRequest {
+  uint32 schema_version = 1;
+  string target_namespace = 2;
+  string read_request_id = 3;
+  string intended_reader = 4;
+  string terminal_read_purpose = 5;
+  bytes original_intake_authorization_binding = 6;
+  string intake_authorization_digest = 7;
+}
+
+enum EntitySelectedSourceIntakeTerminalResult {
+  ENTITY_SELECTED_SOURCE_INTAKE_TERMINAL_RESULT_UNSPECIFIED = 0;
+  ENTITY_SELECTED_SOURCE_INTAKE_TERMINAL_RESULT_COMMITTED_EMPTY = 1;
+}
+
+message ReadSelectedSourceIntakeTerminalResponse {
+  ReadSelectedSourceIntakeTerminalRequest request = 1;
+  EntitySelectedSourceIntakeTerminalResult result = 2;
+  bytes committed_empty_receipt = 3;
+  string receipt_digest = 4;
+}

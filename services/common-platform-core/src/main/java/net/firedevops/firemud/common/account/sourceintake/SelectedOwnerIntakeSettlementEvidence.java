@@ -27,11 +27,15 @@ public final class SelectedOwnerIntakeSettlementEvidence {
       if (schemaVersion != SCHEMA_VERSION
           || !GrpcPeerIdentity.isValidNamespace(targetNamespace)
           || authorizationBinding == null
-          || authorizationBinding.owner() != Owner.AUTOMATION_SCRIPTING
+          || (authorizationBinding.owner() != Owner.AUTOMATION_SCRIPTING
+              && authorizationBinding.owner() != Owner.ENTITY_MANAGEMENT)
           || !targetNamespace.equals(authorizationBinding.targetNamespace())
-          || !"account-automation-intake-authorization/v1".equals(authorizationBinding.schema())
-          || !"AUTOMATION_INTAKE_RETENTION".equals(authorizationBinding.purpose())) {
-        throw invalid("Canonical same-namespace Automation authorization required");
+          || !(authorizationBinding.owner() == Owner.AUTOMATION_SCRIPTING
+              ? "account-automation-intake-authorization/v1".equals(authorizationBinding.schema())
+                  && "AUTOMATION_INTAKE_RETENTION".equals(authorizationBinding.purpose())
+              : "account-entity-intake-authorization/v1".equals(authorizationBinding.schema())
+                  && "ENTITY_INTAKE_RETENTION".equals(authorizationBinding.purpose()))) {
+        throw invalid("Canonical same-namespace selected-owner authorization required");
       }
       DraftAuthorizationFenceBinding.requireUuid(transportRequestId);
       if (transportRequestId.equals(authorizationBinding.operationId())
@@ -98,7 +102,9 @@ public final class SelectedOwnerIntakeSettlementEvidence {
       Objects.requireNonNull(receipt, "Complete Account settlement receipt is required");
       byte[] receiptBytes = receipt.canonicalBytes();
       if (receiptBytes.length == 0
-          || receiptBytes.length > AccountSelectedOwnerIntakeSettlementReceipt.MAX_BYTES
+          || receiptBytes.length
+              > AccountSelectedOwnerIntakeSettlementReceipt.maxBytes(
+                  request.authorizationBinding().owner())
           || !DraftAuthorizationFenceBinding.digest(receiptBytes).equals(receipt.digest())
           || !request.targetNamespace().equals(receipt.targetNamespace())
           || !Arrays.equals(

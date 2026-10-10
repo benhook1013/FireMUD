@@ -12,6 +12,9 @@ import net.firedevops.firemud.common.authoring.DraftCommitBinding.Owner;
 import net.firedevops.firemud.common.automation.sourceintake.AutomationEmptySelectedSourceIntakeReceipt;
 import net.firedevops.firemud.common.automation.sourceintake.AutomationSelectedSourceIntakeTerminalReadClient;
 import net.firedevops.firemud.common.automation.sourceintake.AutomationSelectedSourceIntakeTerminalReadEvidence;
+import net.firedevops.firemud.common.entity.sourceintake.EntityEmptySelectedSourceIntakeReceipt;
+import net.firedevops.firemud.common.entity.sourceintake.EntitySelectedSourceIntakeTerminalReadClient;
+import net.firedevops.firemud.common.entity.sourceintake.EntitySelectedSourceIntakeTerminalReadEvidence;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
 import net.firedevops.firemud.common.security.SessionContext;
 import org.springframework.transaction.PlatformTransactionManager;
@@ -20,19 +23,21 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
 import org.springframework.transaction.support.TransactionTemplate;
 
 /**
- * Unregistered composition for settling one exact finalized Automation intake operation.
+ * Unregistered composition for settling one exact finalized selected-owner intake operation.
  *
  * <p>The Account source reservation repository owns source-lock ordering and immutable settlement
  * persistence. This service only permits its pending participation to advance after an exact
- * authenticated Automation COMMITTED_EMPTY receipt has been read outside SQL.
+ * authenticated owner COMMITTED_EMPTY receipt has been read outside SQL.
  */
 public final class AccountSelectedOwnerIntakeSettlementService {
   private static final String AUTOMATION_READER = "automation-scripting-service";
+  private static final String ENTITY_READER = "entity-management-service";
   private static final String GAME_DESIGN_CALLER = "game-design-service";
   private static final String ACCOUNT_READER = "account-service";
 
   private final AccountSelectedOwnerIntakeSourceReservationRepository repository;
   private final AutomationSelectedSourceIntakeTerminalReadClient automationClient;
+  private final EntitySelectedSourceIntakeTerminalReadClient entityClient;
   private final TransactionTemplate ownerTransaction;
   private final String namespace;
 
@@ -41,6 +46,16 @@ public final class AccountSelectedOwnerIntakeSettlementService {
       AutomationSelectedSourceIntakeTerminalReadClient automationClient,
       PlatformTransactionManager transactionManager,
       String namespace) {
+    this(repository, automationClient, null, transactionManager, namespace);
+  }
+
+  public AccountSelectedOwnerIntakeSettlementService(
+      AccountSelectedOwnerIntakeSourceReservationRepository repository,
+      AutomationSelectedSourceIntakeTerminalReadClient automationClient,
+      EntitySelectedSourceIntakeTerminalReadClient entityClient,
+      PlatformTransactionManager transactionManager,
+      String namespace) {
+    this.entityClient = entityClient;
     this.repository = Objects.requireNonNull(repository, "source reservation repository required");
     this.automationClient = Objects.requireNonNull(automationClient, "Automation client required");
     if (!GrpcPeerIdentity.isValidNamespace(namespace)) {
@@ -56,7 +71,7 @@ public final class AccountSelectedOwnerIntakeSettlementService {
   }
 
   /**
-   * Settles or recovers the exact finalized Automation authorization selected by Game Design.
+   * Settles or recovers the exact finalized owner authorization selected by Game Design.
    *
    * <p>The authorization is a lookup key, not caller authority. Account revalidates its complete
    * retained value before checking for an immutable prior settlement or contacting Automation.
@@ -79,7 +94,7 @@ public final class AccountSelectedOwnerIntakeSettlementService {
                 return new Lookup(prior.orElse(null));
               } catch (IllegalArgumentException absentOrChanged) {
                 throw Status.FAILED_PRECONDITION
-                    .withDescription("Exact finalized Automation authorization is unavailable")
+                    .withDescription("Exact finalized selected-owner authorization is unavailable")
                     .withCause(absentOrChanged)
                     .asRuntimeException();
               }
@@ -91,6 +106,10 @@ public final class AccountSelectedOwnerIntakeSettlementService {
     }
     if (lookup.prior() != null) {
       return requireSettlement(lookup.prior(), original, null);
+    }
+
+    if (original.owner() == Owner.ENTITY_MANAGEMENT) {
+      return settleEntity(original);
     }
 
     AutomationSelectedSourceIntakeTerminalReadEvidence.Request request =
@@ -138,6 +157,84 @@ public final class AccountSelectedOwnerIntakeSettlementService {
     return readback;
   }
 
+  private AccountSelectedOwnerIntakeSettlementReceipt settleEntity(
+      SelectedOwnerIntakeAuthorizationBinding original) {
+    var request =
+        EntitySelectedSourceIntakeTerminalReadEvidence.Request.create(namespace, original);
+    requireNoAmbientTransaction();
+    final EntitySelectedSourceIntakeTerminalReadEvidence remote;
+    try {
+      remote = entityClient.read(request);
+    } catch (StatusRuntimeException failure) {
+      throw failure;
+    } catch (RuntimeException unavailable) {
+      throw Status.UNAVAILABLE
+          .withDescription("Entity terminal evidence is unavailable")
+          .withCause(unavailable)
+          .asRuntimeException();
+    }
+    final EntitySelectedSourceIntakeTerminalReadEvidence exact;
+    try {
+      if (remote == null
+          || !request.equals(remote.request())
+          || !workloadUri(namespace, ACCOUNT_READER).equals(remote.request().intendedReader())
+          || !EntitySelectedSourceIntakeTerminalReadEvidence.TERMINAL_READ_PURPOSE.equals(
+              remote.request().terminalReadPurpose())) {
+        throw new IllegalArgumentException("Entity changed the complete terminal-read request");
+      }
+      var receipt = remote.receipt();
+      byte[] bytes = receipt.canonicalBytes();
+      var canonical = EntityEmptySelectedSourceIntakeReceipt.fromStored(bytes);
+      if (bytes.length == 0
+          || bytes.length > EntityEmptySelectedSourceIntakeReceipt.MAX_BYTES
+          || !Arrays.equals(bytes, canonical.canonicalBytes())
+          || !DraftAuthorizationFenceBinding.digest(bytes).equals(receipt.receiptDigest())
+          || !canonical.receiptDigest().equals(receipt.receiptDigest())
+          || !"COMMITTED_EMPTY".equals(receipt.outcome())
+          || !namespace.equals(receipt.targetNamespace())
+          || !original.operationId().equals(receipt.operationId())
+          || !original.fenceId().equals(receipt.fenceId())
+          || !original.intakeRequestId().equals(receipt.intakeRequestId())
+          || !original.tenantId().equals(receipt.canonicalTenantId())
+          || !original.versionId().equals(receipt.canonicalVersionId())
+          || !original.selected().commitId().equals(receipt.selectedCommitId())
+          || !Arrays.equals(original.canonicalBytes(), receipt.authorizationBindingBytes())
+          || !original.digest().equals(receipt.authorizationBindingDigest())) {
+        throw new IllegalArgumentException(
+            "Entity terminal differs from the original authorization");
+      }
+      exact = new EntitySelectedSourceIntakeTerminalReadEvidence(request, canonical);
+    } catch (IllegalArgumentException invalid) {
+      throw Status.FAILED_PRECONDITION
+          .withDescription("Exact original Entity terminal is required")
+          .withCause(invalid)
+          .asRuntimeException();
+    }
+    requireNoAmbientTransaction();
+    var committed =
+        ownerTransaction.execute(ignored -> repository.settleEntityCommittedEmpty(exact));
+    requireSettlement(committed, original, exact);
+    requireNoAmbientTransaction();
+    var readback =
+        ownerTransaction.execute(
+            ignored ->
+                Objects.requireNonNull(
+                        repository.findSettlement(original), "Account lookup returned no result")
+                    .orElseThrow(
+                        () ->
+                            Status.FAILED_PRECONDITION
+                                .withDescription(
+                                    "Committed Account Entity settlement is not readable")
+                                .asRuntimeException()));
+    requireSettlement(readback, original, exact);
+    if (!sameSettlement(committed, readback)) {
+      throw Status.FAILED_PRECONDITION
+          .withDescription("Committed Account Entity readback differs")
+          .asRuntimeException();
+    }
+    return readback;
+  }
+
   private void requireGameDesignPeer() {
     GrpcPeerIdentity peer = GrpcPeerIdentity.current();
     if (peer == null) {
@@ -158,13 +255,19 @@ public final class AccountSelectedOwnerIntakeSettlementService {
 
   private void requireOriginalBinding(SelectedOwnerIntakeAuthorizationBinding original) {
     if (original == null
-        || original.owner() != Owner.AUTOMATION_SCRIPTING
+        || (original.owner() != Owner.AUTOMATION_SCRIPTING
+            && original.owner() != Owner.ENTITY_MANAGEMENT)
         || !namespace.equals(original.targetNamespace())
-        || !"account-automation-intake-authorization/v1".equals(original.schema())
-        || !"AUTOMATION_INTAKE_RETENTION".equals(original.purpose())
-        || !workloadUri(namespace, AUTOMATION_READER).equals(original.intendedReader())) {
+        || !(original.owner() == Owner.AUTOMATION_SCRIPTING
+            ? "account-automation-intake-authorization/v1".equals(original.schema())
+                && "AUTOMATION_INTAKE_RETENTION".equals(original.purpose())
+                && workloadUri(namespace, AUTOMATION_READER).equals(original.intendedReader())
+            : entityClient != null
+                && "account-entity-intake-authorization/v1".equals(original.schema())
+                && "ENTITY_INTAKE_RETENTION".equals(original.purpose())
+                && workloadUri(namespace, ENTITY_READER).equals(original.intendedReader()))) {
       throw Status.FAILED_PRECONDITION
-          .withDescription("Canonical same-namespace Automation authorization is required")
+          .withDescription("Canonical same-namespace selected-owner authorization is required")
           .asRuntimeException();
     }
     try {
@@ -179,7 +282,7 @@ public final class AccountSelectedOwnerIntakeSettlementService {
       }
     } catch (IllegalArgumentException invalid) {
       throw Status.FAILED_PRECONDITION
-          .withDescription("Canonical same-namespace Automation authorization is required")
+          .withDescription("Canonical same-namespace selected-owner authorization is required")
           .withCause(invalid)
           .asRuntimeException();
     }
@@ -244,7 +347,7 @@ public final class AccountSelectedOwnerIntakeSettlementService {
   private AccountSelectedOwnerIntakeSettlementReceipt requireSettlement(
       AccountSelectedOwnerIntakeSettlementReceipt receipt,
       SelectedOwnerIntakeAuthorizationBinding original,
-      AutomationSelectedSourceIntakeTerminalReadEvidence expectedOwnerTerminal) {
+      Object expectedOwnerTerminal) {
     if (receipt == null) {
       throw Status.FAILED_PRECONDITION
           .withDescription("Account terminal settlement receipt is unavailable")
@@ -257,23 +360,30 @@ public final class AccountSelectedOwnerIntakeSettlementService {
           || !namespace.equals(receipt.targetNamespace())
           || !Arrays.equals(
               original.canonicalBytes(),
-              receipt.terminalEvidence().request().binding().canonicalBytes())) {
+              (original.owner() == Owner.ENTITY_MANAGEMENT
+                      ? receipt.entityTerminalEvidence().request().binding()
+                      : receipt.terminalEvidence().request().binding())
+                  .canonicalBytes())) {
         throw new IllegalArgumentException("Account settlement changed the original binding");
       }
       AccountSelectedOwnerIntakeSettlementReceipt canonical =
-          AccountSelectedOwnerIntakeSettlementReceipt.create(receipt.terminalEvidence());
+          original.owner() == Owner.ENTITY_MANAGEMENT
+              ? AccountSelectedOwnerIntakeSettlementReceipt.create(receipt.entityTerminalEvidence())
+              : AccountSelectedOwnerIntakeSettlementReceipt.create(receipt.terminalEvidence());
       if (!Arrays.equals(canonical.canonicalBytes(), receipt.canonicalBytes())
           || !canonical.digest().equals(receipt.digest())
-          || (expectedOwnerTerminal != null
-              && !receipt.sameImmutableOwnerReceipt(expectedOwnerTerminal))) {
+          || (expectedOwnerTerminal
+                  instanceof AutomationSelectedSourceIntakeTerminalReadEvidence automation
+              && !receipt.sameImmutableOwnerReceipt(automation))
+          || (expectedOwnerTerminal instanceof EntitySelectedSourceIntakeTerminalReadEvidence entity
+              && !receipt.sameImmutableOwnerReceipt(entity))) {
         throw new IllegalArgumentException(
             "Account settlement receipt changed its canonical owner value");
       }
       return receipt;
     } catch (IllegalArgumentException invalid) {
       throw Status.FAILED_PRECONDITION
-          .withDescription(
-              "Account settlement receipt differs from the original Automation terminal")
+          .withDescription("Account settlement receipt differs from the original owner terminal")
           .withCause(invalid)
           .asRuntimeException();
     }
