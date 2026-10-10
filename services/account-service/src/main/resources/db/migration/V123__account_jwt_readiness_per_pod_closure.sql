@@ -236,6 +236,36 @@ CREATE TABLE account_jwt_readiness_pod_receipts (
 );
 
 -- [jooq ignore start]
+CREATE FUNCTION account_jwt_readiness_retained_evidence_truncate_guard()
+RETURNS trigger
+LANGUAGE plpgsql
+AS $$
+BEGIN
+    RAISE EXCEPTION 'Account JWT readiness evidence in table % cannot be truncated', TG_TABLE_NAME
+        USING ERRCODE = '23514';
+END;
+$$;
+
+CREATE TRIGGER account_jwt_readiness_probe_plans_no_truncate
+    BEFORE TRUNCATE ON account_jwt_readiness_probe_plans
+    FOR EACH STATEMENT EXECUTE FUNCTION account_jwt_readiness_retained_evidence_truncate_guard();
+
+CREATE TRIGGER account_jwt_readiness_probe_entries_no_truncate
+    BEFORE TRUNCATE ON account_jwt_readiness_probe_entries
+    FOR EACH STATEMENT EXECUTE FUNCTION account_jwt_readiness_retained_evidence_truncate_guard();
+
+CREATE TRIGGER account_jwt_readiness_delivery_claims_no_truncate
+    BEFORE TRUNCATE ON account_jwt_readiness_delivery_claims
+    FOR EACH STATEMENT EXECUTE FUNCTION account_jwt_readiness_retained_evidence_truncate_guard();
+
+CREATE TRIGGER account_jwt_readiness_validator_pods_no_truncate
+    BEFORE TRUNCATE ON account_jwt_readiness_validator_pods
+    FOR EACH STATEMENT EXECUTE FUNCTION account_jwt_readiness_retained_evidence_truncate_guard();
+
+CREATE TRIGGER account_jwt_readiness_pod_receipts_no_truncate
+    BEFORE TRUNCATE ON account_jwt_readiness_pod_receipts
+    FOR EACH STATEMENT EXECUTE FUNCTION account_jwt_readiness_retained_evidence_truncate_guard();
+
 CREATE OR REPLACE FUNCTION account_jwt_readiness_plan_inventory_guard()
 RETURNS trigger
 LANGUAGE plpgsql
@@ -248,11 +278,15 @@ BEGIN
     matrix := NEW.applicability_matrix_json::jsonb;
     IF NEW.plan_version = 1 THEN
         IF NEW.validator_inventory_complete
-           OR matrix ->> 'inventoryStatus' <> 'PARTIAL_UNCONFIRMED'
-           OR matrix ->> 'schemaVersion' <> '1'
-           OR jsonb_array_length(matrix -> 'validators') <> 1
-           OR matrix #>> '{validators,0,validatorId}' <> 'account-service'
-           OR jsonb_array_length(matrix #> '{validators,0,applicableProfiles}') <> 3
+           OR matrix ->> 'inventoryStatus' IS DISTINCT FROM 'PARTIAL_UNCONFIRMED'
+           OR matrix ->> 'schemaVersion' IS DISTINCT FROM '1'
+           OR (CASE WHEN jsonb_typeof(matrix -> 'validators') = 'array'
+                THEN jsonb_array_length(matrix -> 'validators') <> 1
+                ELSE TRUE END)
+           OR matrix #>> '{validators,0,validatorId}' IS DISTINCT FROM 'account-service'
+           OR (CASE WHEN jsonb_typeof(matrix #> '{validators,0,applicableProfiles}') = 'array'
+                THEN jsonb_array_length(matrix #> '{validators,0,applicableProfiles}') <> 3
+                ELSE TRUE END)
            OR NOT (matrix #> '{validators,0,applicableProfiles}' @>
               '[{"tokenProfile":"control-ui","audience":"control-ui"}]'::jsonb)
            OR NOT (matrix #> '{validators,0,applicableProfiles}' @>
@@ -267,11 +301,22 @@ BEGIN
 
     IF NEW.plan_version <> 2
        OR NEW.inventory_snapshot_digest IS NULL
-       OR matrix ->> 'schemaVersion' <> '2'
+       OR matrix ->> 'schemaVersion' IS DISTINCT FROM '2'
        OR matrix ->> 'inventorySnapshotDigest' IS DISTINCT FROM NEW.inventory_snapshot_digest
-       OR jsonb_array_length(matrix -> 'validators') < 1
-       OR jsonb_array_length(matrix -> 'validators') > 32
-       OR jsonb_array_length(matrix -> 'productionProfiles') <> 3 THEN
+       OR (CASE WHEN jsonb_typeof(matrix -> 'validators') = 'array'
+            THEN jsonb_array_length(matrix -> 'validators') NOT BETWEEN 1 AND 32
+            ELSE TRUE END)
+       OR (CASE WHEN jsonb_typeof(matrix -> 'productionProfiles') = 'array'
+            THEN jsonb_array_length(matrix -> 'productionProfiles') <> 3
+            ELSE TRUE END)
+       OR EXISTS (
+            SELECT 1
+              FROM jsonb_array_elements(
+                    CASE WHEN jsonb_typeof(matrix -> 'validators') = 'array'
+                         THEN matrix -> 'validators'
+                         ELSE '[]'::jsonb END) AS validator(value)
+             WHERE validator.value ->> 'validatorId' IS NULL
+                OR jsonb_typeof(validator.value -> 'applicableProfiles') IS DISTINCT FROM 'array') THEN
         RAISE EXCEPTION 'Readiness V2 plan must bind its protected live snapshot and closed profile family'
             USING ERRCODE = '23514';
     END IF;
@@ -282,20 +327,26 @@ BEGIN
         SELECT value -> 'applicableProfiles' INTO game_session_profiles
           FROM jsonb_array_elements(matrix -> 'validators') AS validator(value)
          WHERE value ->> 'validatorId' = 'game-session-service';
-        IF matrix ->> 'inventoryStatus' <> 'PROTECTED_LIVE_COMPLETE'
-           OR jsonb_array_length(matrix -> 'validators') <> 2
+        IF matrix ->> 'inventoryStatus' IS DISTINCT FROM 'PROTECTED_LIVE_COMPLETE'
+           OR (CASE WHEN jsonb_typeof(matrix -> 'validators') = 'array'
+                THEN jsonb_array_length(matrix -> 'validators') <> 2
+                ELSE TRUE END)
            OR account_profiles IS NULL
-           OR jsonb_array_length(account_profiles) <> 3
+           OR (CASE WHEN jsonb_typeof(account_profiles) = 'array'
+                THEN jsonb_array_length(account_profiles) <> 3
+                ELSE TRUE END)
            OR NOT (account_profiles @> '[{"tokenProfile":"control-ui","audience":"control-ui"}]'::jsonb)
            OR NOT (account_profiles @> '[{"tokenProfile":"player-bootstrap","audience":"player-bootstrap"}]'::jsonb)
            OR NOT (account_profiles @> '[{"tokenProfile":"game-session-account-delegation","audience":"account-service"}]'::jsonb)
            OR game_session_profiles IS NULL
-           OR jsonb_array_length(game_session_profiles) <> 1
+           OR (CASE WHEN jsonb_typeof(game_session_profiles) = 'array'
+                THEN jsonb_array_length(game_session_profiles) <> 1
+                ELSE TRUE END)
            OR NOT (game_session_profiles @> '[{"tokenProfile":"game-session-account-delegation","audience":"account-service"}]'::jsonb) THEN
             RAISE EXCEPTION 'Readiness V2 completion requires exact Account and Game Session profile inventory'
                 USING ERRCODE = '23514';
         END IF;
-    ELSIF matrix ->> 'inventoryStatus' <> 'PARTIAL_UNCONFIRMED' THEN
+    ELSIF matrix ->> 'inventoryStatus' IS DISTINCT FROM 'PARTIAL_UNCONFIRMED' THEN
         RAISE EXCEPTION 'Incomplete Readiness V2 inventory must remain explicitly partial'
             USING ERRCODE = '23514';
     END IF;
@@ -596,6 +647,7 @@ BEGIN
            OR NEW.entry_version IS DISTINCT FROM OLD.entry_version + 1
            OR NEW.target_kid IS DISTINCT FROM OLD.target_kid
            OR NEW.compact_token_sha256 IS DISTINCT FROM OLD.compact_token_sha256
+           OR NEW.signing_attempted_at_epoch_seconds IS DISTINCT FROM OLD.signing_attempted_at_epoch_seconds
            OR NEW.verified_at_epoch_seconds IS NULL
            OR NEW.verified_at_epoch_seconds < OLD.planned_issued_at_epoch_seconds
            OR NEW.verified_at_epoch_seconds >= OLD.expires_at_epoch_seconds

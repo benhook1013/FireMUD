@@ -222,17 +222,20 @@ public final class AccountJwtReadinessTrustBinding {
     }
     Path realParent = parent.toRealPath();
     Object fileOwner = Files.getAttribute(file, "unix:uid", LinkOption.NOFOLLOW_LINKS);
-    Object directoryOwner = Files.getAttribute(realParent, "unix:uid", LinkOption.NOFOLLOW_LINKS);
     Set<PosixFilePermission> fileMode =
         Files.getPosixFilePermissions(file, LinkOption.NOFOLLOW_LINKS);
-    Set<PosixFilePermission> directoryMode = Files.getPosixFilePermissions(realParent);
-    if (!(fileOwner instanceof Number fileUid)
-        || fileUid.longValue() != 0L
-        || !(directoryOwner instanceof Number directoryUid)
-        || directoryUid.longValue() != 0L
-        || writable(fileMode)
-        || writableByUntrusted(directoryMode)) {
+    if (!(fileOwner instanceof Number fileUid) || fileUid.longValue() != 0L || writable(fileMode)) {
       throw new IOException("Protected readiness binding ownership is invalid");
+    }
+    for (Path directory = realParent; directory != null; directory = directory.getParent()) {
+      Object directoryOwner = Files.getAttribute(directory, "unix:uid", LinkOption.NOFOLLOW_LINKS);
+      Set<PosixFilePermission> directoryMode =
+          Files.getPosixFilePermissions(directory, LinkOption.NOFOLLOW_LINKS);
+      if (!(directoryOwner instanceof Number directoryUid)
+          || directoryUid.longValue() != 0L
+          || writableByUntrusted(directoryMode)) {
+        throw new IOException("Protected readiness binding ownership is invalid");
+      }
     }
   }
 
