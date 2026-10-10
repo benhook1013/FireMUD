@@ -1154,6 +1154,96 @@ class StatusTest(unittest.TestCase):
         self.assertEqual([item["name"] for item in failed], ["deploy"])
         self.assertEqual(pending, [])
 
+    def test_rest_check_inventory_normalizes_identity_and_fails_closed_when_ambiguous(self) -> None:
+        def rest_check(
+            name: str,
+            workflow: str | None,
+            started_at: str | None,
+            conclusion: str,
+            url: str,
+        ) -> dict:
+            check_suite = {} if workflow is None else {"workflow_name": workflow}
+            check = {
+                "name": name,
+                "check_suite": check_suite,
+                "status": "COMPLETED",
+                "conclusion": conclusion,
+                "details_url": url,
+            }
+            if started_at is not None:
+                check["started_at"] = started_at
+            return check
+
+        rest_checks = [
+            rest_check(
+                "Validation Gate", "Validation", "2026-09-23T00:00:00Z", "FAILURE", "https://checks.test/old-failure"
+            ),
+            rest_check(
+                "Validation Gate", "Validation", "2026-09-23T00:01:00Z", "SUCCESS", "https://checks.test/new-success"
+            ),
+            rest_check(
+                "Shared Job", "Workflow A", "2026-09-23T00:00:00Z", "FAILURE", "https://checks.test/workflow-a-failure"
+            ),
+            rest_check(
+                "Shared Job", "Workflow B", "2026-09-23T00:01:00Z", "SUCCESS", "https://checks.test/workflow-b-success"
+            ),
+            rest_check(
+                "Latest Failure", "License", "2026-09-23T00:00:00Z", "SUCCESS", "https://checks.test/old-success"
+            ),
+            rest_check(
+                "Latest Failure", "License", "2026-09-23T00:01:00Z", "FAILURE", "https://checks.test/latest-failure"
+            ),
+            rest_check(
+                "Unknown Workflow", None, "2026-09-23T00:00:00Z", "FAILURE", "https://checks.test/unknown-failure"
+            ),
+            rest_check(
+                "Unknown Workflow", None, "2026-09-23T00:01:00Z", "SUCCESS", "https://checks.test/unknown-success"
+            ),
+            rest_check("Missing Start", "Ambiguous", None, "FAILURE", "https://checks.test/missing-start-failure"),
+            rest_check(
+                "Missing Start",
+                "Ambiguous",
+                "2026-09-23T00:01:00Z",
+                "SUCCESS",
+                "https://checks.test/missing-start-success",
+            ),
+            rest_check("Tied Start", "Tied", "2026-09-23T00:02:00Z", "FAILURE", "https://checks.test/tied-failure"),
+            rest_check("Tied Start", "Tied", "2026-09-23T00:02:00Z", "SUCCESS", "https://checks.test/tied-success"),
+        ]
+
+        with patch.object(
+            github,
+            "_fetch_api_pages",
+            side_effect=[[{"check_runs": rest_checks}], [{"statuses": []}]],
+        ) as fetch_pages:
+            inventory = github.fetch_check_inventory("owner/repo", HEAD)
+
+        self.assertEqual(fetch_pages.call_count, 2)
+        self.assertEqual(
+            fetch_pages.call_args_list[0].args[0], f"repos/owner/repo/commits/{HEAD}/check-runs?per_page=100"
+        )
+        self.assertEqual(inventory["check_runs"][0]["__typename"], "CheckRun")
+        self.assertEqual(inventory["check_runs"][0]["workflowName"], "Validation")
+        self.assertEqual(inventory["check_runs"][0]["startedAt"], "2026-09-23T00:00:00Z")
+        self.assertEqual(inventory["check_runs"][0]["detailsUrl"], "https://checks.test/old-failure")
+        self.assertEqual(inventory["check_runs"][0]["started_at"], "2026-09-23T00:00:00Z")
+        self.assertEqual(inventory["check_runs"][0]["details_url"], "https://checks.test/old-failure")
+
+        pending, failed, observed = status.normalize_checks(inventory["check_runs"])
+
+        self.assertEqual(observed, len(rest_checks))
+        self.assertEqual(pending, [])
+        self.assertEqual(
+            {item["url"] for item in failed},
+            {
+                "https://checks.test/workflow-a-failure",
+                "https://checks.test/latest-failure",
+                "https://checks.test/unknown-failure",
+                "https://checks.test/missing-start-failure",
+                "https://checks.test/tied-failure",
+            },
+        )
+
     def test_malformed_check_fails_closed(self) -> None:
         with self.assertRaises(status.StatusError):
             status.build_report(
@@ -1439,8 +1529,7 @@ class StatusTest(unittest.TestCase):
                 pr = payload["data"]["repository"]["pullRequest"]
                 pr["reviewThreads"] = {"nodes": []}
                 pr["statusCheckRollup"] = (
-                    [{"name": "Account", "status": "COMPLETED", "conclusion": "FAILURE"}]
-                    if failure else []
+                    [{"name": "Account", "status": "COMPLETED", "conclusion": "FAILURE"}] if failure else []
                 )
                 report = self._ready_report(
                     payload,
@@ -1660,7 +1749,9 @@ class StatusTest(unittest.TestCase):
                     }
                     controller = Mock()
 
-                    def fresh_stack_status(number: int, report: dict = report, stack_report: dict = stack_report) -> dict:
+                    def fresh_stack_status(
+                        number: int, report: dict = report, stack_report: dict = stack_report
+                    ) -> dict:
                         public_status.assert_called_once()
                         self.assertEqual(number, 2838)
                         self.assertTrue(report["ready"])

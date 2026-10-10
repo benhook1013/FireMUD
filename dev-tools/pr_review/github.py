@@ -846,6 +846,11 @@ def fetch_check_inventory(repo: str, head_sha: str) -> dict[str, Any]:
             raise RuntimeError("GitHub check-run inventory has malformed check_runs")
         for item in values:
             normalized = dict(item)
+            normalized.setdefault("__typename", "CheckRun")
+            if "startedAt" not in normalized and "started_at" in normalized:
+                normalized["startedAt"] = normalized["started_at"]
+            if "detailsUrl" not in normalized and "details_url" in normalized:
+                normalized["detailsUrl"] = normalized["details_url"]
             suite = normalized.get("check_suite")
             if isinstance(suite, dict) and isinstance(suite.get("workflow_name"), str):
                 normalized.setdefault("workflowName", suite["workflow_name"])
