@@ -299,74 +299,77 @@ public final class AccountJwtJwksApiBinding {
     } catch (Exception ex) {
       throw new BindingRejectedException();
     }
-    if ((call == ApiCall.READ_VALIDATOR_DEPLOYMENT
-            || call == ApiCall.LIST_VALIDATOR_PODS
-            || call == ApiCall.READ_VALIDATOR_REPLICA_SET)
-        != (protectedInventoryPath != null)) {
-      throw new BindingRejectedException();
-    }
-    URI uri =
-        credentialSnapshot
-            .config()
-            .apiServer()
-            .resolve(
-                protectedInventoryPath == null
-                    ? call.path(credentialSnapshot.config().namespace())
-                    : protectedInventoryPath);
-    HttpRequest.Builder request =
-        HttpRequest.newBuilder(uri)
-            .timeout(requestTimeout)
-            .header("Accept", "application/json")
-            .header("Authorization", "Bearer " + credentialSnapshot.bearerToken());
-    if (call == ApiCall.PATCH_JWKS_CONFIG_MAP) {
-      request.header("Content-Type", "application/merge-patch+json");
-    } else if (call == ApiCall.REVIEW_AUTHENTICATED_PRINCIPAL) {
-      request.header("Content-Type", "application/json");
-    }
-    if (requestBody == null) {
-      request.method(call.method(), HttpRequest.BodyPublishers.noBody());
-    } else {
-      request.method(call.method(), HttpRequest.BodyPublishers.ofByteArray(requestBody));
-    }
-
-    // Catch changed or withdrawn trust after client construction and immediately before send.
-    ProtectedState beforeSend = recheckProtectedState();
-    if (!baseline.equals(beforeSend.identity())
-        || !credentialSnapshot.bearerIdentity().equals(beforeSend.bearerIdentity())) {
-      throw new BindingRejectedException();
-    }
-    long responseDeadlineNanos = System.nanoTime() + requestTimeout.toNanos();
-    try {
-      HttpResponse<java.io.InputStream> response =
-          client.send(request.build(), HttpResponse.BodyHandlers.ofInputStream());
-      try (java.io.InputStream body = response.body()) {
-        ExecutorService bodyReader =
-            Executors.newSingleThreadExecutor(
-                task -> {
-                  Thread thread = new Thread(task, "account-jwks-api-response-reader");
-                  thread.setDaemon(true);
-                  return thread;
-                });
-        Future<byte[]> bodyFuture = bodyReader.submit(() -> readBounded(body, MAX_RESPONSE_BYTES));
-        try {
-          long remainingNanos = responseDeadlineNanos - System.nanoTime();
-          if (remainingNanos <= 0L) {
-            throw new TimeoutException();
-          }
-          return new ApiResponse(
-              response.statusCode(), bodyFuture.get(remainingNanos, TimeUnit.NANOSECONDS));
-        } catch (TimeoutException ex) {
-          bodyFuture.cancel(true);
-          throw new IOException("Kubernetes API response exceeded its deadline");
-        } finally {
-          bodyReader.shutdownNow();
-        }
+    try (client) {
+      if ((call == ApiCall.READ_VALIDATOR_DEPLOYMENT
+              || call == ApiCall.LIST_VALIDATOR_PODS
+              || call == ApiCall.READ_VALIDATOR_REPLICA_SET)
+          != (protectedInventoryPath != null)) {
+        throw new BindingRejectedException();
       }
-    } catch (InterruptedException ex) {
-      Thread.currentThread().interrupt();
-      throw new ApiTransportException();
-    } catch (Exception ex) {
-      throw new ApiTransportException();
+      URI uri =
+          credentialSnapshot
+              .config()
+              .apiServer()
+              .resolve(
+                  protectedInventoryPath == null
+                      ? call.path(credentialSnapshot.config().namespace())
+                      : protectedInventoryPath);
+      HttpRequest.Builder request =
+          HttpRequest.newBuilder(uri)
+              .timeout(requestTimeout)
+              .header("Accept", "application/json")
+              .header("Authorization", "Bearer " + credentialSnapshot.bearerToken());
+      if (call == ApiCall.PATCH_JWKS_CONFIG_MAP) {
+        request.header("Content-Type", "application/merge-patch+json");
+      } else if (call == ApiCall.REVIEW_AUTHENTICATED_PRINCIPAL) {
+        request.header("Content-Type", "application/json");
+      }
+      if (requestBody == null) {
+        request.method(call.method(), HttpRequest.BodyPublishers.noBody());
+      } else {
+        request.method(call.method(), HttpRequest.BodyPublishers.ofByteArray(requestBody));
+      }
+
+      // Catch changed or withdrawn trust after client construction and immediately before send.
+      ProtectedState beforeSend = recheckProtectedState();
+      if (!baseline.equals(beforeSend.identity())
+          || !credentialSnapshot.bearerIdentity().equals(beforeSend.bearerIdentity())) {
+        throw new BindingRejectedException();
+      }
+      long responseDeadlineNanos = System.nanoTime() + requestTimeout.toNanos();
+      try {
+        HttpResponse<java.io.InputStream> response =
+            client.send(request.build(), HttpResponse.BodyHandlers.ofInputStream());
+        try (java.io.InputStream body = response.body()) {
+          ExecutorService bodyReader =
+              Executors.newSingleThreadExecutor(
+                  task -> {
+                    Thread thread = new Thread(task, "account-jwks-api-response-reader");
+                    thread.setDaemon(true);
+                    return thread;
+                  });
+          Future<byte[]> bodyFuture =
+              bodyReader.submit(() -> readBounded(body, MAX_RESPONSE_BYTES));
+          try {
+            long remainingNanos = responseDeadlineNanos - System.nanoTime();
+            if (remainingNanos <= 0L) {
+              throw new TimeoutException();
+            }
+            return new ApiResponse(
+                response.statusCode(), bodyFuture.get(remainingNanos, TimeUnit.NANOSECONDS));
+          } catch (TimeoutException ex) {
+            bodyFuture.cancel(true);
+            throw new IOException("Kubernetes API response exceeded its deadline");
+          } finally {
+            bodyReader.shutdownNow();
+          }
+        }
+      } catch (InterruptedException ex) {
+        Thread.currentThread().interrupt();
+        throw new ApiTransportException();
+      } catch (Exception ex) {
+        throw new ApiTransportException();
+      }
     }
   }
 

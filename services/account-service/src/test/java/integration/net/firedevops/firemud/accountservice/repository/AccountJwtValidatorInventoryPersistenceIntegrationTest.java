@@ -5,13 +5,14 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
-import java.net.URI;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.time.Instant;
 import java.util.HexFormat;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
 import net.firedevops.firemud.accountservice.repository.AccountJwtSignerDesiredStateRepository.Binding;
 import net.firedevops.firemud.accountservice.repository.AccountJwtSignerDesiredStateRepository.CustodyMode;
 import net.firedevops.firemud.accountservice.repository.AccountJwtSignerDesiredStateRepository.TrustFence;
@@ -23,21 +24,19 @@ import org.jooq.SQLDialect;
 import org.jooq.exception.DataAccessException;
 import org.jooq.impl.DSL;
 import org.junit.jupiter.api.AfterAll;
-import org.junit.jupiter.api.Assumptions;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.datasource.DataSourceTransactionManager;
-import org.springframework.jdbc.datasource.DriverManagerDataSource;
 import org.springframework.jdbc.datasource.TransactionAwareDataSourceProxy;
 import org.springframework.transaction.support.TransactionTemplate;
-import org.testcontainers.DockerClientFactory;
-import org.testcontainers.containers.PostgreSQLContainer;
 
 /** Persistence-component proof only; fixture bytes are not evidence of a live Kubernetes read. */
 class AccountJwtValidatorInventoryPersistenceIntegrationTest {
   private static final String SCHEMA_PREFIX = "jwt_inv_snapshot_";
-  private static final String EXTERNAL_POSTGRES_URL_ENV =
-      "FIREMUD_ACCOUNT_SIGNER_TEST_POSTGRES_URL";
+  private static final AccountPostgresIntegrationFixture POSTGRES =
+      new AccountPostgresIntegrationFixture();
   private static final Binding BINDING =
       new Binding(
           "prod",
@@ -46,38 +45,28 @@ class AccountJwtValidatorInventoryPersistenceIntegrationTest {
           CustodyMode.INTERIM_ACCOUNT_ONLY_MOUNTED_FALLBACK);
   private static final String CLUSTER_UID = "11111111-1111-4111-8111-111111111111";
   private static final String NAMESPACE_UID = "22222222-2222-4222-8222-222222222222";
-  private static final PostgreSQLContainer<?> postgres =
-      new PostgreSQLContainer<>("postgres:16-alpine");
-
-  private static String jdbcUrl;
-  private static String username;
-  private static String password;
-  private static boolean startedOwnedContainer;
+  private final Set<String> schemas = ConcurrentHashMap.newKeySet();
 
   @BeforeAll
-  static void configureDatabase() {
-    String externalUrl = System.getenv(EXTERNAL_POSTGRES_URL_ENV);
-    if (externalUrl != null) {
-      jdbcUrl = validateExternalLoopbackPostgresUrl(externalUrl);
-      username = "postgres";
-      password = "";
-      return;
-    }
-    Assumptions.assumeTrue(
-        DockerClientFactory.instance().isDockerAvailable(),
-        "PostgreSQL integration proof requires the explicit loopback tunnel or an available Docker daemon");
-    postgres.start();
-    startedOwnedContainer = true;
-    jdbcUrl = postgres.getJdbcUrl();
-    username = postgres.getUsername();
-    password = postgres.getPassword();
+  static void startPostgres() {
+    POSTGRES.start();
   }
 
   @AfterAll
-  static void stopOwnedContainer() {
-    if (startedOwnedContainer) {
-      postgres.stop();
+  static void stopPostgres() {
+    POSTGRES.stop();
+  }
+
+  @AfterEach
+  void dropRunOwnedSchemas() {
+    JdbcTemplate jdbc = new JdbcTemplate(POSTGRES.dataSource());
+    for (String schema : schemas) {
+      if (!schema.startsWith(SCHEMA_PREFIX) || !schema.matches("[a-z][a-z0-9_]{0,62}")) {
+        throw new IllegalStateException("Refusing to clean an unowned PostgreSQL schema");
+      }
+      jdbc.execute("DROP SCHEMA IF EXISTS " + schema + " CASCADE");
     }
+    schemas.clear();
   }
 
   @Test
@@ -191,38 +180,10 @@ class AccountJwtValidatorInventoryPersistenceIntegrationTest {
     return snapshot;
   }
 
-  private static String validateExternalLoopbackPostgresUrl(String value) {
-    final URI uri;
-    try {
-      if (!value.startsWith("jdbc:")) {
-        throw new IllegalArgumentException("not a JDBC URL");
-      }
-      uri = URI.create(value.substring("jdbc:".length()));
-    } catch (RuntimeException failure) {
-      throw new IllegalStateException(
-          EXTERNAL_POSTGRES_URL_ENV + " must be a loopback JDBC URL", failure);
-    }
-    if (!"postgresql".equals(uri.getScheme())
-        || !"127.0.0.1".equals(uri.getHost())
-        || uri.getPort() < 1
-        || uri.getPort() > 65535
-        || !"/postgres".equals(uri.getPath())
-        || uri.getRawUserInfo() != null
-        || uri.getRawQuery() != null
-        || uri.getRawFragment() != null) {
-      throw new IllegalStateException(
-          EXTERNAL_POSTGRES_URL_ENV + " must target jdbc:postgresql://127.0.0.1:<port>/postgres");
-    }
-    return value;
-  }
-
-  private static TestContext newTestContext() {
+  private TestContext newTestContext() {
     String schema = SCHEMA_PREFIX + UUID.randomUUID().toString().replace("-", "");
-    DriverManagerDataSource dataSource = new DriverManagerDataSource();
-    String separator = jdbcUrl.contains("?") ? "&" : "?";
-    dataSource.setUrl(jdbcUrl + separator + "currentSchema=" + schema);
-    dataSource.setUsername(username);
-    dataSource.setPassword(password);
+    schemas.add(schema);
+    var dataSource = POSTGRES.dataSource(schema);
     Flyway.configure()
         .dataSource(dataSource)
         .schemas(schema)

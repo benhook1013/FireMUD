@@ -1,8 +1,10 @@
 package net.firedevops.firemud.common.gamesession;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
@@ -10,13 +12,22 @@ import static org.mockito.Mockito.when;
 
 import io.grpc.ManagedChannel;
 import java.io.IOException;
+import java.lang.reflect.Field;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.UUID;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
+import javax.net.ssl.SSLException;
 import net.firedevops.firemud.common.config.ServiceEndpointsProperties;
 import net.firedevops.firemud.common.gamesession.HistoricalOriginalStartSessionOwnerEvidence.Request;
+import net.firedevops.firemud.common.grpc.AbstractReloadingBlockingGrpcClient;
 import net.firedevops.firemud.common.grpc.CommonGrpcClientProperties;
 import net.firedevops.firemud.common.grpc.GrpcChannelFactory;
+import net.firedevops.firemud.common.grpc.TlsCertificateWatcher;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -88,6 +99,70 @@ class HistoricalOriginalStartSessionOwnerEvidenceReadClientTest {
             eq(true));
   }
 
+  @Test
+  void closeReleasesClientMonitorBeforeClosingCertificateWatcher(@TempDir Path dir)
+      throws Exception {
+    String previousReloadPolicy = System.getProperty("firemud.grpc.tls-reload.enabled");
+    System.setProperty("firemud.grpc.tls-reload.enabled", "false");
+    try {
+      CountingChannelFactory channelFactory = new CountingChannelFactory();
+      client = newClient(fileBackedMtls(dir), channelFactory);
+      client.init();
+
+      TlsCertificateWatcher watcher = mock(TlsCertificateWatcher.class);
+      CountDownLatch callbackFinished = new CountDownLatch(1);
+      AtomicBoolean callbackAcquiredMonitor = new AtomicBoolean();
+      AtomicReference<Throwable> callbackFailure = new AtomicReference<>();
+      doAnswer(
+              invocation -> {
+                assertThat(Thread.holdsLock(client)).isFalse();
+                Thread callback =
+                    new Thread(
+                        () -> {
+                          try {
+                            synchronized (client) {
+                              callbackAcquiredMonitor.set(true);
+                            }
+                          } catch (Throwable failure) {
+                            callbackFailure.set(failure);
+                          } finally {
+                            callbackFinished.countDown();
+                          }
+                        },
+                        "historical-original-owner-read-test-callback");
+                callback.start();
+                if (!callbackFinished.await(1, TimeUnit.SECONDS)) {
+                  callback.interrupt();
+                  callback.join(TimeUnit.SECONDS.toMillis(1));
+                  throw new AssertionError("Watcher callback could not acquire the client monitor");
+                }
+                callback.join(TimeUnit.SECONDS.toMillis(1));
+                assertThat(callback.isAlive()).isFalse();
+                assertThat(callbackAcquiredMonitor.get()).isTrue();
+                assertThat(callbackFailure.get()).isNull();
+                return null;
+              })
+          .when(watcher)
+          .close();
+      setWatcher(client, watcher);
+
+      client.close();
+
+      verify(watcher).close();
+      assertThat(channelFactory.buildAttempts.get()).isEqualTo(1);
+      assertThatThrownBy(client::init)
+          .isInstanceOf(IllegalStateException.class)
+          .hasMessage("Historical StartSession evidence client is closed");
+      assertThat(channelFactory.buildAttempts.get()).isEqualTo(1);
+    } finally {
+      if (previousReloadPolicy == null) {
+        System.clearProperty("firemud.grpc.tls-reload.enabled");
+      } else {
+        System.setProperty("firemud.grpc.tls-reload.enabled", previousReloadPolicy);
+      }
+    }
+  }
+
   private HistoricalOriginalStartSessionOwnerEvidenceReadClient newClient(
       CommonGrpcClientProperties tls, GrpcChannelFactory factory) {
     return new HistoricalOriginalStartSessionOwnerEvidenceReadClient(
@@ -118,5 +193,25 @@ class HistoricalOriginalStartSessionOwnerEvidenceReadClientTest {
             "sha256:" + "c".repeat(64)),
         UUID.fromString("44444444-4444-4444-8444-444444444444"),
         9L);
+  }
+
+  private static void setWatcher(
+      HistoricalOriginalStartSessionOwnerEvidenceReadClient client, TlsCertificateWatcher watcher)
+      throws ReflectiveOperationException {
+    Field watcherField = AbstractReloadingBlockingGrpcClient.class.getDeclaredField("watcher");
+    watcherField.setAccessible(true);
+    watcherField.set(client, watcher);
+  }
+
+  private static final class CountingChannelFactory extends GrpcChannelFactory {
+    private final AtomicInteger buildAttempts = new AtomicInteger();
+
+    @Override
+    public ManagedChannel buildChannel(
+        String target, int defaultPort, CommonGrpcClientProperties properties, boolean keepAlive)
+        throws SSLException {
+      buildAttempts.incrementAndGet();
+      return mock(ManagedChannel.class);
+    }
   }
 }

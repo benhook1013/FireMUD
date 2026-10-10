@@ -90,7 +90,9 @@ public class AccountStartSessionOperatorAuthorizationRepository {
                 + "bundle_source_fence, bundle_linearization, authority_evidence_bundle, "
                 + "authorization_reference_fingerprint, encrypted_response_envelope, issued_at, "
                 + "reference_expires_at, response_envelope_expires_at, status) "
-                + "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'ISSUED') "
+                + "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, "
+                + "CAST(? AS TIMESTAMPTZ), CAST(? AS TIMESTAMPTZ), "
+                + "CAST(? AS TIMESTAMPTZ), 'ISSUED') "
                 + "ON CONFLICT (control_plane_request_id) DO NOTHING",
             candidate.controlPlaneRequestId(),
             candidate.preAuthorizationTuple(),
@@ -165,11 +167,12 @@ public class AccountStartSessionOperatorAuthorizationRepository {
             "UPDATE "
                 + TABLE
                 + " SET status = 'REDEEMED', redemption_redeemer_workload_uri = ?, "
-                + "redemption_owner_attempt_id = ?, redemption_owner_fence = ?, redeemed_at = ?, "
+                + "redemption_owner_attempt_id = ?, redemption_owner_fence = ?, "
+                + "redeemed_at = CAST(? AS TIMESTAMPTZ), "
                 + "redemption_reference_fingerprint = ?, "
                 + "redemption_authority_evidence_bundle = ? "
                 + "WHERE control_plane_request_id = ? AND status = 'ISSUED' "
-                + "AND reference_expires_at > ?",
+                + "AND reference_expires_at > CAST(? AS TIMESTAMPTZ)",
             request.redeemerWorkloadUri(),
             request.ownerAttemptId(),
             request.ownerFence(),

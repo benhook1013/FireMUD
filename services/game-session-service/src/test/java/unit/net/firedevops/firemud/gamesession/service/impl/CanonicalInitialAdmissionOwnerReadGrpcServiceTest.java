@@ -5,6 +5,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
@@ -19,8 +20,10 @@ import java.time.Instant;
 import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicReference;
+import net.firedevops.firemud.common.gamesession.CanonicalInitialAdmissionOwnerGrpcCodec;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
 import net.firedevops.firemud.common.security.SessionContext;
+import net.firedevops.firemud.common.world.GameSessionCanonicalInitialAdmissionOwnerProof;
 import net.firedevops.firemud.common.world.WorldCanonicalInitialAdmissionHold.HoldIdentity;
 import net.firedevops.firemud.common.world.WorldCanonicalInitialAdmissionHold.InitialAdmissionOrigin;
 import net.firedevops.firemud.common.world.WorldCanonicalInitialAdmissionHold.Request;
@@ -149,6 +152,31 @@ class CanonicalInitialAdmissionOwnerReadGrpcServiceTest {
     var result = invokeAsWorld(service(repository), request(identity));
 
     assertEquals(Status.Code.FAILED_PRECONDITION, result.status().getCode());
+  }
+
+  @Test
+  void codecRejectsOverflowingPriorPointerWithTheExplicitOverflowCause() {
+    HoldIdentity exactHold = identity(InitialAdmissionOrigin.EXPECT_CLOSED, Long.MAX_VALUE);
+    CanonicalInitialAdmissionOwnerProof existingProof =
+        ownerProof(exactHold, "COMMITTED", TENANT, 1L);
+    GameSessionCanonicalInitialAdmissionOwnerProof proof =
+        new GameSessionCanonicalInitialAdmissionOwnerProof(
+            exactHold,
+            GameSessionCanonicalInitialAdmissionOwnerProof.Outcome.COMMITTED,
+            existingProof.committedPointerVersion(),
+            existingProof.auditEventId(),
+            existingProof.proofDigest(),
+            existingProof.positiveDurableAbort(),
+            existingProof.terminalAt());
+
+    IllegalArgumentException failure =
+        assertThrows(
+            IllegalArgumentException.class,
+            () -> CanonicalInitialAdmissionOwnerGrpcCodec.toResponse(exactHold, proof));
+
+    assertEquals(
+        "Expected prior pointer version cannot advance without overflow", failure.getMessage());
+    assertTrue(failure.getCause() instanceof ArithmeticException);
   }
 
   @Test

@@ -64,6 +64,21 @@ class AccountJwtValidatorInventoryRepositoryTest {
   }
 
   @Test
+  void rejectsRequiredSnapshotReadFromReadOnlyOwnerTransactionBeforeDatabaseAccess() {
+    DSLContext dsl = mock(DSLContext.class);
+    AccountJwtValidatorInventoryRepository repository =
+        new AccountJwtValidatorInventoryRepository(dsl);
+    TransactionSynchronizationManager.setActualTransactionActive(true);
+    TransactionSynchronizationManager.setCurrentTransactionReadOnly(true);
+
+    assertThatThrownBy(() -> repository.readRequired("a".repeat(64), BINDING, TRUST))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessage("A writable Account transaction is required");
+
+    verifyNoInteractions(dsl);
+  }
+
+  @Test
   void rejectsWrongClusterNamespaceOrIncarnationBeforeInsert() {
     DSLContext dsl = mock(DSLContext.class);
     AccountJwtValidatorInventoryRepository repository =

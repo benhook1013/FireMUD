@@ -64,4 +64,4 @@ CREATE TRIGGER account_jwt_validator_inventory_snapshot_immutable
 CREATE TRIGGER account_jwt_validator_inventory_snapshot_no_truncate
     BEFORE TRUNCATE ON account_jwt_validator_inventory_snapshots
     FOR EACH STATEMENT EXECUTE FUNCTION account_jwt_validator_inventory_snapshot_immutable_guard();
--- [jooq ignore end]
+-- [jooq ignore stop]

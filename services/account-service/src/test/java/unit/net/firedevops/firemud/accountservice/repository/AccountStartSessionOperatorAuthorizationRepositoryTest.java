@@ -88,6 +88,8 @@ class AccountStartSessionOperatorAuthorizationRepositoryTest {
     assertThat(duplicate.issuance().encryptedResponseEnvelope())
         .containsExactly(bytes("ciphertext-envelope"));
     assertThat(store.insertCount.get()).isEqualTo(1);
+    assertThat(store.lastInsertSql)
+        .contains("cast(? as timestamptz), cast(? as timestamptz), cast(? as timestamptz)");
     assertThat(store.lastLockSql).contains("for update");
 
     byte[] exposedTuple = duplicate.issuance().preAuthorizationTuple();
@@ -269,6 +271,10 @@ class AccountStartSessionOperatorAuthorizationRepositoryTest {
     assertThat(retry.authorityEvidenceBundle()).containsExactly(first.authorityEvidenceBundle());
     assertThat(first.issuanceOperationId()).isEqualTo(ISSUANCE_OPERATION_ID);
     assertThat(store.redemptionUpdateCount.get()).isEqualTo(1);
+    assertThat(store.lastRedemptionSql)
+        .contains(
+            "redeemed_at = cast(? as timestamptz)",
+            "reference_expires_at > cast(? as timestamptz)");
     assertThat(first.toString()).doesNotContain("bundle-v1", "ciphertext-envelope");
   }
 
@@ -557,6 +563,8 @@ class AccountStartSessionOperatorAuthorizationRepositoryTest {
     private final AtomicInteger databaseCallCount = new AtomicInteger();
     private final AtomicInteger insertCount = new AtomicInteger();
     private final AtomicInteger redemptionUpdateCount = new AtomicInteger();
+    private String lastInsertSql = "";
+    private String lastRedemptionSql = "";
     private String lastLockSql = "";
     private StoredRow row;
 
@@ -566,6 +574,7 @@ class AccountStartSessionOperatorAuthorizationRepositoryTest {
       String sql = context.sql().stripLeading().toLowerCase(java.util.Locale.ROOT);
       Object[] bind = context.bindings();
       if (sql.startsWith("insert into account_start_session_operator_authorizations")) {
+        lastInsertSql = sql;
         if (row == null) {
           row = StoredRow.fromInsert(bind);
           insertCount.incrementAndGet();
@@ -574,6 +583,7 @@ class AccountStartSessionOperatorAuthorizationRepositoryTest {
         return new MockResult[] {new MockResult(0)};
       }
       if (sql.startsWith("update account_start_session_operator_authorizations")) {
+        lastRedemptionSql = sql;
         if (row == null || !"ISSUED".equals(row.status)) {
           return new MockResult[] {new MockResult(0)};
         }

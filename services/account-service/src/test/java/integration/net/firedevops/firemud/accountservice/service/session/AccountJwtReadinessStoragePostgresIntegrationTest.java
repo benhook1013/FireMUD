@@ -39,6 +39,7 @@ import net.firedevops.firemud.accountservice.repository.AccountJwtSignerDesiredS
 import net.firedevops.firemud.accountservice.repository.AccountJwtSignerDesiredStateRepository.EnrollmentIdentity;
 import net.firedevops.firemud.accountservice.repository.AccountJwtSignerDesiredStateRepository.GenerationRequest;
 import net.firedevops.firemud.accountservice.repository.AccountJwtSignerDesiredStateRepository.GenerationResult;
+import net.firedevops.firemud.accountservice.repository.AccountJwtSignerDesiredStateRepository.PromotionPreparation;
 import net.firedevops.firemud.accountservice.repository.AccountJwtSignerDesiredStateRepository.TrustFence;
 import net.firedevops.firemud.accountservice.repository.AccountJwtValidatorInventoryRepository;
 import net.firedevops.firemud.accountservice.service.session.AccountJwtReadinessProbeOwnerSelector.LocalIdentity;
@@ -580,6 +581,321 @@ class AccountJwtReadinessStoragePostgresIntegrationTest {
     assertThat(restartedPlan.expectedFence().durableActive()).isEmpty();
     assertThat(restartedPlan.expectedFence().publishedActive()).isEmpty();
     assertThat(count(context, "account_jwt_readiness_pod_receipts")).isEqualTo(2L);
+
+    completeRemainingProbes(
+        context, owner, plan, refreshedInventory, privateMount, publicMount, expectedIdentity);
+    var proof =
+        inTransaction(
+            context,
+            () ->
+                owner
+                    .readiness()
+                    .readCurrentPromotionPrerequisites(
+                        BINDING, owner.trust(), owner.result().operationId(), refreshedInventory)
+                    .orElseThrow());
+    assertThat(proof.verifiedProbes()).hasSize(plan.entries().size());
+    assertThat(sha256(proof.readinessEvidencePreimage()))
+        .isEqualTo(proof.readinessEvidenceDigest());
+    byte[] callerCopy = proof.readinessEvidencePreimage();
+    callerCopy[0] ^= 1;
+    assertThat(sha256(proof.readinessEvidencePreimage()))
+        .isEqualTo(proof.readinessEvidenceDigest());
+
+    byte[] exactPreimage = proof.readinessEvidencePreimage();
+    assertThatThrownBy(
+            () -> insertDirectPromotion(context, owner, proof, "0".repeat(64), exactPreimage))
+        .isInstanceOf(RuntimeException.class);
+    String changedProofText =
+        new String(exactPreimage, StandardCharsets.UTF_8)
+            .replace(
+                proof.inventoryEvidenceReference(),
+                proof.inventoryEvidenceReference() + ":changed");
+    byte[] changedPreimage = changedProofText.getBytes(StandardCharsets.UTF_8);
+    assertThatThrownBy(
+            () ->
+                insertDirectPromotion(
+                    context, owner, proof, sha256(changedPreimage), changedPreimage))
+        .isInstanceOf(RuntimeException.class);
+
+    var publicationEvidence = proof.publication();
+    PromotionPreparation preparation =
+        new PromotionPreparation(
+            proof.generationResult().operationId(),
+            proof.generationResult(),
+            new EnrollmentIdentity(
+                CLUSTER_UID,
+                NAMESPACE_UID,
+                TRUST_DIGEST,
+                TRUST_REVISION,
+                API_DIGEST,
+                API_REVISION,
+                CONFIG_MAP_UID,
+                INITIAL_CONFIG_MAP_RESOURCE_VERSION,
+                AccountJwtJwksPublicationRepository.snapshotDigest(INITIAL_CONFIG_MAP_DATA)),
+            API_DIGEST,
+            API_REVISION,
+            CONFIG_MAP_UID,
+            publicationEvidence.receipt().observedResourceVersion(),
+            publicationEvidence.intent().intentDigest(),
+            publicationEvidence.receipt().receiptDigest(),
+            publicationEvidence.mountedCorrespondence().observationDigest(),
+            proof.plan().planDigest(),
+            proof.readinessEvidenceDigest(),
+            publicationEvidence.intent().jwksJson());
+    var prepared =
+        inTransaction(
+            context,
+            () ->
+                owner
+                    .desired()
+                    .prepareCurrentGeneration(BINDING, owner.trust(), preparation, proof));
+    assertThat(prepared.status()).isEqualTo("PREPARED");
+    assertThat(
+            inTransaction(
+                context,
+                () ->
+                    owner
+                        .desired()
+                        .prepareCurrentGeneration(BINDING, owner.trust(), preparation, proof)))
+        .isEqualTo(prepared);
+    assertThat(count(context, "account_jwt_signer_promotion_operations")).isEqualTo(1L);
+    assertThat(count(context, "account_jwt_readiness_pod_receipts"))
+        .isEqualTo(plan.entries().stream().mapToLong(entry -> 2L).sum());
+
+    byte[] persistedPreimage =
+        java.util.Objects.requireNonNull(
+                context
+                    .dsl()
+                    .fetchOne(
+                        "SELECT readiness_evidence_preimage FROM account_jwt_signer_promotion_operations "
+                            + "WHERE operation_id = ?",
+                        prepared.operationId()),
+                "Prepared promotion must retain its exact readiness preimage")
+            .get("readiness_evidence_preimage", byte[].class);
+    assertThat(persistedPreimage).isEqualTo(exactPreimage);
+    assertThatThrownBy(
+            () ->
+                inTransaction(
+                    context,
+                    () ->
+                        context
+                            .dsl()
+                            .execute(
+                                "UPDATE account_jwt_signer_promotion_operations "
+                                    + "SET readiness_evidence_digest = ? WHERE operation_id = ?",
+                                "0".repeat(64),
+                                prepared.operationId())))
+        .isInstanceOf(RuntimeException.class);
+    byte[] changedStoredPreimage = exactPreimage.clone();
+    changedStoredPreimage[0] ^= 1;
+    assertThatThrownBy(
+            () ->
+                inTransaction(
+                    context,
+                    () ->
+                        context
+                            .dsl()
+                            .execute(
+                                "UPDATE account_jwt_signer_promotion_operations "
+                                    + "SET readiness_evidence_preimage = ? WHERE operation_id = ?",
+                                changedStoredPreimage,
+                                prepared.operationId())))
+        .isInstanceOf(RuntimeException.class);
+
+    AccountJwtSignerDesiredStateRepository restartedDesired =
+        new AccountJwtSignerDesiredStateRepository(context.dsl());
+    AccountJwtJwksPublicationRepository restartedPublication =
+        new AccountJwtJwksPublicationRepository(context.dsl(), restartedDesired);
+    AccountJwtValidatorInventoryRepository restartedInventory =
+        new AccountJwtValidatorInventoryRepository(context.dsl());
+    AccountJwtReadinessProbeRepository restartedReadiness =
+        new AccountJwtReadinessProbeRepository(
+            context.dsl(), restartedDesired, restartedPublication, restartedInventory);
+    var restartedProof =
+        inTransaction(
+            context,
+            () ->
+                restartedReadiness
+                    .readPromotionProof(
+                        BINDING, owner.trust(), owner.result().operationId(), refreshedInventory)
+                    .orElseThrow());
+    assertThat(restartedProof.readinessEvidencePreimage()).isEqualTo(exactPreimage);
+    OwnerState restartedOwner =
+        new OwnerState(
+            restartedDesired,
+            restartedPublication,
+            restartedInventory,
+            restartedReadiness,
+            owner.trust(),
+            owner.request(),
+            owner.result(),
+            owner.keyPair(),
+            owner.desiredJwks());
+    assertThat(
+            inTransaction(
+                context,
+                () ->
+                    restartedOwner
+                        .desired()
+                        .prepareCurrentGeneration(
+                            BINDING, restartedOwner.trust(), preparation, restartedProof)))
+        .isEqualTo(prepared);
+  }
+
+  private static void completeRemainingProbes(
+      TestContext context,
+      OwnerState owner,
+      ReadinessProbePlan plan,
+      InventorySnapshot inventory,
+      Path privateMount,
+      Path publicMount,
+      AccountMountedJwtSignerBundle.ExpectedIdentity expectedIdentity)
+      throws Exception {
+    for (ProbeEntry planned : plan.entries()) {
+      ProbeEntry current =
+          inTransaction(
+                  context,
+                  () ->
+                      owner
+                          .readiness()
+                          .readCurrentPlan(BINDING, owner.trust(), owner.result().operationId()))
+              .entries()
+              .stream()
+              .filter(entry -> entry.jti().equals(planned.jti()))
+              .findFirst()
+              .orElseThrow();
+      if (current.state() == ProbeState.VERIFIED) {
+        continue;
+      }
+      var signingSpec =
+          new AccountMountedJwtSignerBundle.ReadinessProbeSigningSpec(
+              current.validatorId(),
+              current.probeKind(),
+              current.tokenProfile(),
+              current.audience(),
+              current.jti(),
+              current.targetGeneration(),
+              current.targetKid(),
+              current.plannedIssuedAtEpochSecond(),
+              current.expiresAtEpochSecond());
+      Instant plannedAt = Instant.ofEpochSecond(current.plannedIssuedAtEpochSecond());
+      AccountMountedJwtSignerBundle.signReadinessProbeDigest(
+          privateMount,
+          Path.of("pending.key"),
+          publicMount,
+          Path.of("jwks.json"),
+          expectedIdentity,
+          signingSpec,
+          (digest, compactJwt) -> {
+            inTransaction(
+                context,
+                () ->
+                    owner
+                        .readiness()
+                        .recordSigningAttempt(BINDING, owner.trust(), digest, plannedAt));
+            inTransaction(
+                context,
+                () -> owner.readiness().recordIssued(BINDING, owner.trust(), digest, plannedAt));
+          });
+      ProbeEntry issued =
+          inTransaction(
+                  context,
+                  () ->
+                      owner
+                          .readiness()
+                          .readCurrentPlan(BINDING, owner.trust(), owner.result().operationId()))
+              .entries()
+              .stream()
+              .filter(entry -> entry.jti().equals(planned.jti()))
+              .findFirst()
+              .orElseThrow();
+      ProbeEntry issuedForInventory = issued;
+      List<ExpectedPod> pods =
+          inTransaction(
+              context,
+              () ->
+                  owner
+                      .readiness()
+                      .readCurrentExpectedPods(
+                          BINDING, owner.trust(), issuedForInventory, inventory));
+      for (ExpectedPod pod : pods) {
+        ProbeEntry currentEvidence = issued;
+        var acceptance = testAcceptance(currentEvidence, pod, databaseNow(context));
+        issued =
+            inTransaction(
+                context,
+                () ->
+                    owner
+                        .readiness()
+                        .recordPodAcceptance(
+                            BINDING, owner.trust(), currentEvidence, pod, acceptance, inventory));
+      }
+      assertThat(issued.state()).isEqualTo(ProbeState.VERIFIED);
+    }
+  }
+
+  private static void insertDirectPromotion(
+      TestContext context,
+      OwnerState owner,
+      AccountJwtReadinessProbeRepository.ReadinessPromotionProof proof,
+      String readinessDigest,
+      byte[] readinessPreimage) {
+    var publication = proof.publication();
+    int inserted =
+        inTransaction(
+            context,
+            () ->
+                context
+                    .dsl()
+                    .execute(
+                        "INSERT INTO account_jwt_signer_promotion_operations "
+                            + "(operation_id, environment_id, cluster_id, kubernetes_namespace, custody_mode, "
+                            + "request_digest_version, request_digest, expected_record_version, "
+                            + "expected_previous_generation, expected_previous_kid, target_generation, target_kid, "
+                            + "target_algorithm, target_public_key_fingerprint, "
+                            + "expected_private_secret_resource_version, expected_public_jwks_resource_version, "
+                            + "expected_public_active_generation, expected_public_active_kid, operation_action, "
+                            + "allowed_private_slots_canonical_bytes, status, generation_operation_id, "
+                            + "expected_cluster_incarnation_uid, expected_namespace_uid, "
+                            + "materializer_trust_binding_digest, materializer_trust_config_revision, "
+                            + "api_binding_digest, api_config_revision, expected_private_secret_uid, "
+                            + "expected_public_config_map_uid, prepublication_intent_digest, "
+                            + "prepublication_receipt_digest, mounted_observation_digest, readiness_plan_digest, "
+                            + "readiness_evidence_digest, readiness_evidence_preimage, expected_public_jwks_json, "
+                            + "expected_active_generation_marker_json) "
+                            + "VALUES (?, ?, ?, ?, ?, 1, ?, ?, NULL, NULL, ?, ?, 'RS256', ?, ?, ?, "
+                            + "NULL, NULL, 'PROMOTE_PENDING', ?, 'PREPARED', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                        UUID.randomUUID(),
+                        BINDING.environmentId(),
+                        BINDING.clusterId(),
+                        BINDING.namespace(),
+                        BINDING.mode().value(),
+                        "a".repeat(64),
+                        owner.result().desiredStateVersion(),
+                        Long.parseLong(owner.result().targetGeneration()),
+                        owner.result().targetKid(),
+                        owner.result().publicKeyFingerprint(),
+                        owner.result().observedResourceVersion(),
+                        publication.receipt().observedResourceVersion(),
+                        "[\"current\",\"pending\",\"previous\"]".getBytes(StandardCharsets.UTF_8),
+                        owner.result().operationId(),
+                        UUID.fromString(owner.trust().expectedClusterIncarnationUid()),
+                        UUID.fromString(owner.trust().expectedNamespaceUid()),
+                        owner.trust().bindingDigest(),
+                        owner.trust().configRevision(),
+                        API_DIGEST,
+                        API_REVISION,
+                        UUID.fromString(owner.result().secretUid()),
+                        UUID.fromString(CONFIG_MAP_UID),
+                        publication.intent().intentDigest(),
+                        publication.receipt().receiptDigest(),
+                        publication.mountedCorrespondence().observationDigest(),
+                        proof.plan().planDigest(),
+                        readinessDigest,
+                        readinessPreimage,
+                        publication.intent().jwksJson(),
+                        "{}"));
+    assertThat(inserted).isEqualTo(1);
   }
 
   private OwnerState createOwnerState(TestContext context) throws Exception {
