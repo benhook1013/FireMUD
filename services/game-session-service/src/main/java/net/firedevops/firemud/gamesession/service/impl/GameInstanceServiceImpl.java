@@ -1272,7 +1272,7 @@ public class GameInstanceServiceImpl implements GameInstanceService {
     }
     return new ResolvedLaunchDescriptor(
         descriptor.getLaunchDescriptorId(),
-        requirePositiveExternalId(descriptor.getTenantId(), "tenantId"),
+        requirePositiveExternalId(descriptor.getCanonicalTenantId(), "tenantId"),
         descriptor.getGameTemplateId(),
         descriptor.getControlPlaneRequestId(),
         descriptor.getVersionId(),

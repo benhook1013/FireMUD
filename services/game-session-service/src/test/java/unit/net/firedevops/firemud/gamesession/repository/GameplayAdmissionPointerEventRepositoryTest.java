@@ -2,6 +2,9 @@ package net.firedevops.firemud.gamesession.repository;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verifyNoInteractions;
 
 import java.sql.Connection;
 import java.sql.DriverManager;
@@ -9,6 +12,9 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
+import net.firedevops.firemud.gamesession.dto.CanonicalInitialAdmissionLaunchTarget;
+import net.firedevops.firemud.gamesession.dto.CanonicalInitialAdmissionRequest;
+import net.firedevops.firemud.gamesession.dto.CanonicalRealmCatalogSnapshot;
 import net.firedevops.firemud.gamesession.entity.GameplayAdmissionPointerEvent;
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerAuthorityService.PointerAuditKey;
 import org.jooq.DSLContext;
@@ -17,6 +23,26 @@ import org.jooq.impl.DSL;
 import org.junit.jupiter.api.Test;
 
 class GameplayAdmissionPointerEventRepositoryTest {
+  @Test
+  void canonicalOpenAuditCannotBeWrittenOutsideItsWritableOwnerTransaction() {
+    DSLContext dsl = mock(DSLContext.class);
+    GameplayAdmissionPointerEventRepository repository =
+        new GameplayAdmissionPointerEventRepository(dsl);
+
+    assertThrows(
+        IllegalStateException.class,
+        () ->
+            repository.appendCanonicalInitialAdmissionOpen(
+                mock(CanonicalInitialAdmissionRequest.class),
+                mock(CanonicalRealmCatalogSnapshot.class),
+                mock(CanonicalInitialAdmissionLaunchTarget.class),
+                1L,
+                1L,
+                Instant.EPOCH));
+
+    verifyNoInteractions(dsl);
+  }
+
   @Test
   void savesCatalogRevisionAndStableIdentityAndKeepsUnknownValuesNull() throws Exception {
     try (Connection connection =

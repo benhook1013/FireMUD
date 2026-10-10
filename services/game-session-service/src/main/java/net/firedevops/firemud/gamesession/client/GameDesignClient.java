@@ -21,7 +21,6 @@ import net.firedevops.firemud.gamedesign.v1.GetVersionStateResponse;
 import net.firedevops.firemud.gamedesign.v1.HelpTopicScope;
 import net.firedevops.firemud.gamedesign.v1.ResolveHelpTopicRequest;
 import net.firedevops.firemud.gamedesign.v1.ResolveHelpTopicResponse;
-import net.firedevops.firemud.gamedesign.v1.ResolveLaunchDescriptorRequest;
 import net.firedevops.firemud.gamedesign.v1.ResolveLaunchDescriptorResponse;
 import net.firedevops.firemud.gamesession.service.GameAuthoredHelpReader;
 import net.firedevops.firemud.shared.v1.ErrorDetail;
@@ -64,7 +63,7 @@ public final class GameDesignClient
 
   public ResolveLaunchDescriptorResponse resolveLaunchDescriptor(
       long tenantId, long gameTemplateId, String controlPlaneRequestId) {
-    return resolveLaunchDescriptor(tenantId, gameTemplateId, controlPlaneRequestId, null, null);
+    return authoredWorldLaunchBindingRequired();
   }
 
   public ResolveLaunchDescriptorResponse resolveLaunchDescriptor(
@@ -73,18 +72,7 @@ public final class GameDesignClient
       String controlPlaneRequestId,
       Long sourceVersionId,
       Long targetVersionId) {
-    ResolveLaunchDescriptorRequest.Builder request =
-        ResolveLaunchDescriptorRequest.newBuilder()
-            .setTenantId(Long.toString(tenantId))
-            .setGameTemplateId(gameTemplateId)
-            .setControlPlaneRequestId(controlPlaneRequestId);
-    if (sourceVersionId != null) {
-      request.setSourceVersionId(sourceVersionId);
-    }
-    if (targetVersionId != null) {
-      request.setTargetVersionId(targetVersionId);
-    }
-    return callStub().resolveLaunchDescriptor(request.build());
+    return authoredWorldLaunchBindingRequired();
   }
 
   public GetPublishedReleaseBundleResponse getPublishedReleaseBundle(
@@ -191,6 +179,17 @@ public final class GameDesignClient
 
   private GameDesignServiceGrpc.GameDesignServiceBlockingStub callStub() {
     return stub().withDeadlineAfter(CALL_DEADLINE_SECONDS, TimeUnit.SECONDS);
+  }
+
+  private static ResolveLaunchDescriptorResponse authoredWorldLaunchBindingRequired() {
+    return ResolveLaunchDescriptorResponse.newBuilder()
+        .setError(
+            ErrorDetail.newBuilder()
+                .setCode("AUTHORED_WORLD_LAUNCH_BINDING_REQUIRED")
+                .setMessage(
+                    "Canonical authored-world source binding is required to resolve a launch descriptor")
+                .build())
+        .build();
   }
 
   private static GetPublishedScriptPatchVersionResponse unavailableScriptPatchVersion() {

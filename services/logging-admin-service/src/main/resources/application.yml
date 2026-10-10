@@ -72,3 +72,6 @@ firemud:
     workload-namespace: ${FIREMUD_GRPC_WORKLOAD_NAMESPACE:}
     account-reservation-evidence:
       approved-leaf-file: ${FIREMUD_GRPC_ACCOUNT_RESERVATION_EVIDENCE_APPROVED_LEAF_FILE:}
+  logging-admin:
+    start-session-operator-authorization:
+      enabled: ${FIREMUD_LOGGING_ADMIN_START_SESSION_OPERATOR_AUTHORIZATION_ENABLED:false}

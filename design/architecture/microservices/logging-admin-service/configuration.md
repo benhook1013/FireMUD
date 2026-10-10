@@ -27,6 +27,16 @@ The Logging & Admin Service does **not** connect to Redis at runtime. It consume
 | `FIREMUD_GRPC_ACCOUNT_RESERVATION_EVIDENCE_APPROVED_LEAF_FILE` | Absolute path to the protected, method-scoped Account leaf-approval file for `ReadCurrentClaimEvidence`; blank, unreadable, or invalid policy denies the method | *(none)* |
 | `FIREMUD_SERVICES_ACCOUNT_SERVICE` | gRPC endpoint (host:port) for the Account Service | *(none)* |
 | `FIREMUD_SERVICES_GAME_SESSION_SERVICE` | gRPC endpoint (host:port) for the Game Session Service | *(none)* |
+| `FIREMUD_GRPC_WORKLOAD_NAMESPACE` | Canonical workload namespace for internal gRPC identity checks | *(none)* |
+| `FIREMUD_LOGGING_ADMIN_START_SESSION_OPERATOR_AUTHORIZATION_ENABLED` | Explicitly enables the local StartSession authorization coordinator composition | `false` |
+
+## Conditional StartSession Coordinator Composition
+
+The `FIREMUD_LOGGING_ADMIN_START_SESSION_OPERATOR_AUTHORIZATION_ENABLED` opt-in defaults to `false`. When explicitly enabled, Spring composes the existing durable reservation service with `StartSessionAuthorizationCoordinator` and an Account `StartSessionOperatorAuthorizationClient`; the client is initialized and closed through the managed Spring bean lifecycle.
+
+Enabled composition requires a canonical `firemud.grpc.workload-namespace` and readable file-backed gRPC client certificate-chain, private-key, and CA inputs. These use the existing common gRPC TLS resolver and the `FIREMUD_GRPC_CERT_CHAIN_PATH`, `FIREMUD_GRPC_PRIVATE_KEY_PATH`, and `FIREMUD_GRPC_CA_CERT_PATH` inputs above. Missing, plaintext, incomplete, or non-file-backed TLS inputs fail composition rather than selecting defaults. The canonical operator contracts remain in [ADR 0047](../../decisions/adr-0047-logging-admin-as-external-operator-write-ingress.md), [ADR 0048](../../decisions/adr-0048-durable-idempotent-operator-write-execution.md), and the [StartSession reservation evidence contract](./api-contracts.md#startsession-reservation-claim-evidence).
+
+This configuration creates no external operator route, trusted caller context, reservation provider, or gameplay activation. The focused configuration test uses a controlled channel factory and test-only placeholder files; it is wiring proof only, not physical mTLS, production startup, external-ingress, Game Session launch-selection, or World activation proof.
 
 `logging_admin.v1.StartSessionReservationEvidenceService/ReadCurrentClaimEvidence` is the only method exempted from the shared Bearer-JWT interceptor. The server's required client-certificate handshake and verified TLS peer interceptor remain enabled. The receiver requires both the exact Account SPIFFE identity in `FIREMUD_GRPC_WORKLOAD_NAMESPACE` and approval of the SHA-256 fingerprint derived from the presented TLS leaf. It reads the configured file for each request; a missing path, read failure, malformed file, or unapproved leaf denies the request before reservation access. The JWT header is not an identity source for this method.
 
