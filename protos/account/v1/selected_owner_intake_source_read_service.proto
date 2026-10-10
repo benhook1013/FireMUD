@@ -1,0 +1,27 @@
+syntax = "proto3";
+
+package account.v1;
+option java_package = "net.firedevops.firemud.account.v1";
+option java_multiple_files = true;
+
+// Standalone, unregistered preliminary Entity/Automation source-scope confirmation.
+// This proof is not finalized retention authority or evidence of a complete source census.
+service AccountSelectedOwnerIntakeSourceReadService {
+  rpc ReadSourceScope(SelectedOwnerIntakeSourcePermissionRequest)
+      returns (SelectedOwnerIntakeSourcePermissionResponse);
+}
+
+message SelectedOwnerIntakeSourcePermissionRequest {
+  int32 schema_version = 1;
+  string target_namespace = 2;
+  string read_request_id = 3;
+  string intended_reader = 4;
+  string purpose = 5;
+  bytes preliminary_source_scope = 6;
+  string preliminary_scope_digest = 7;
+}
+
+message SelectedOwnerIntakeSourcePermissionResponse {
+  SelectedOwnerIntakeSourcePermissionRequest request = 1;
+  bool permitted = 2;
+}
