@@ -14,6 +14,7 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
+import java.util.function.Function;
 import java.util.regex.Pattern;
 import net.firedevops.firemud.accountservice.authordraft.AccountControlUiAuthority;
 import net.firedevops.firemud.accountservice.client.StartSessionReservationEvidenceClient;
@@ -26,15 +27,18 @@ import net.firedevops.firemud.accountservice.repository.AccountStartSessionOpera
 import net.firedevops.firemud.accountservice.repository.AccountStartSessionOperatorAuthorizationRepository.RedemptionResult;
 import net.firedevops.firemud.accountservice.repository.AccountStartSessionOperatorAuthorizationRepository.Status;
 import net.firedevops.firemud.accountservice.service.session.AccountControlUiActorService.Current;
-import net.firedevops.firemud.accountservice.service.session.AccountControlUiIssuanceRepository.OwnerLinearization;
+import net.firedevops.firemud.accountservice.service.session.AccountControlUiIssuanceRepository.Stored;
 import net.firedevops.firemud.accountservice.service.session.AccountOperatorAuthorizationReferenceFingerprint.ReferenceKind;
 import net.firedevops.firemud.accountservice.service.session.AccountResponseEnvelopeCryptography.Binding;
 import net.firedevops.firemud.accountservice.service.session.AccountResponseEnvelopeCryptography.EncryptedResponseEnvelope;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
+import net.firedevops.firemud.common.operator.StartSessionPostAuthorizationExecutionTuple;
 import net.firedevops.firemud.common.operator.StartSessionPreAuthorizationReservationTuple;
+import net.firedevops.firemud.common.security.SessionContext;
 import net.firedevops.firemud.loggingadmin.v1.ReadCurrentClaimEvidenceResponse;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.TransactionDefinition;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.transaction.support.TransactionTemplate;
 import tools.jackson.core.StreamReadFeature;
 import tools.jackson.core.type.TypeReference;
@@ -66,6 +70,7 @@ public final class AccountStartSessionOperatorAuthorizationService {
 
   private final AccountControlUiActorService actors;
   private final AccountControlUiIssuanceRepository issuanceOperations;
+  private final AccountStartSessionAuthorityCaptureRepository captureRepository;
   private final StartSessionReservationEvidenceClient reservationEvidence;
   private final AccountStartSessionOperatorAuthorizationRepository repository;
   private final AccountOperatorAuthorizationFingerprintKeyring fingerprintKeys;
@@ -77,6 +82,7 @@ public final class AccountStartSessionOperatorAuthorizationService {
   private final String loggingPeerUri;
   private final String gameSessionPeerUri;
   private final String gameDesignPeerUri;
+  private final String worldManagementPeerUri;
   private final long referenceLifetimeMillis;
   private final long responseRecoveryWindowMillis;
 
@@ -87,6 +93,7 @@ public final class AccountStartSessionOperatorAuthorizationService {
   public AccountStartSessionOperatorAuthorizationService(
       AccountControlUiActorService actors,
       AccountControlUiIssuanceRepository issuanceOperations,
+      AccountStartSessionAuthorityCaptureRepository captureRepository,
       StartSessionReservationEvidenceClient reservationEvidence,
       AccountStartSessionOperatorAuthorizationRepository repository,
       AccountOperatorAuthorizationFingerprintKeyring fingerprintKeys,
@@ -102,6 +109,9 @@ public final class AccountStartSessionOperatorAuthorizationService {
     this.actors = Objects.requireNonNull(actors, "current Account actor service is required");
     this.issuanceOperations =
         Objects.requireNonNull(issuanceOperations, "Account control-ui issuance owner is required");
+    this.captureRepository =
+        Objects.requireNonNull(
+            captureRepository, "durable Account source capture owner is required");
     this.reservationEvidence =
         Objects.requireNonNull(reservationEvidence, "Logging claim evidence client is required");
     this.repository = Objects.requireNonNull(repository, "Account owner repository is required");
@@ -118,6 +128,7 @@ public final class AccountStartSessionOperatorAuthorizationService {
     loggingPeerUri = exactPeer(exactLoggingPeerUri, "logging-admin-service");
     gameSessionPeerUri = exactPeer(exactGameSessionPeerUri, "game-session-service");
     gameDesignPeerUri = sameNamespacePeer(gameSessionPeerUri, "game-design-service");
+    worldManagementPeerUri = sameNamespacePeer(gameSessionPeerUri, "world-management-service");
     referenceLifetimeMillis = policyMillis(referenceLifetime, "reference lifetime", 5 * 60_000L);
     responseRecoveryWindowMillis =
         policyMillis(responseRecoveryWindow, "response recovery window", 60_000L);
@@ -126,7 +137,8 @@ public final class AccountStartSessionOperatorAuthorizationService {
   }
 
   /**
-   * ISSUE: current exact Logging peer, fresh original claim, current actor, one owner transaction.
+   * ISSUE: exact Logging peer and current original claim; committed capture precedes final owner
+   * issuance with current actor and capture revalidation.
    */
   public AuthorizationResponse issue(IssueRequest request) {
     requirePeer(loggingPeerUri);
@@ -149,6 +161,7 @@ public final class AccountStartSessionOperatorAuthorizationService {
         request.reservationClaimFence(),
         request.claimOwnerId(),
         request.claimFence());
+    requireFreshClaimEvidence(claim);
 
     var environment = hostedTerms.captureCurrentEnvironmentBoundary();
     IssuePreparation preparation =
@@ -157,12 +170,45 @@ public final class AccountStartSessionOperatorAuthorizationService {
             tuple.action().scope().tenantId(),
             environment,
             current -> {
+              requireFreshClaimEvidence(claim);
               IssuanceRecord existing = findRecord(tuple.controlPlaneRequestId()).orElse(null);
-              OwnerLinearization linearization =
-                  existing == null ? issuanceOperations.captureOwnerLinearization() : null;
-              return new IssuePreparation(current, existing, linearization);
+              if (existing != null) {
+                requireOriginalBinding(
+                    existing,
+                    tuple,
+                    request.canonicalTupleBytes(),
+                    request.reservationOwnerId(),
+                    request.reservationClaimFence());
+              }
+              AccountStartSessionAuthorityCapture capture =
+                  existing == null
+                      ? captureRepository.prepareOrReadExact(
+                          current,
+                          tuple,
+                          loggingPeerUri,
+                          request.reservationOwnerId(),
+                          request.reservationClaimFence())
+                      : captureRepository.lockReadExactCurrent(
+                          current,
+                          tuple,
+                          loggingPeerUri,
+                          request.reservationOwnerId(),
+                          request.reservationClaimFence());
+              if (existing != null) {
+                var originalBundle =
+                    AccountStartSessionOperatorAuthorityBundle.decode(
+                        existing.authorityEvidenceBundle());
+                var originalReference =
+                    AccountStartSessionOperatorAuthorityBundle.fromSharedReference(
+                        existing.bundleReference());
+                originalBundle.requireCaptureBinding(capture, tuple, originalReference);
+                originalBundle.requireCurrent(
+                    current.source(), current.stored(), tuple, originalReference, clock.instant());
+              }
+              return new IssuePreparation(current, capture, existing);
             });
 
+    requireFreshClaimEvidence(claim);
     if (preparation.existing() != null) {
       IssuanceRecord original = preparation.existing();
       requireOriginalBinding(
@@ -172,51 +218,80 @@ public final class AccountStartSessionOperatorAuthorizationService {
           request.reservationOwnerId(),
           request.reservationClaimFence());
       AuthorizationResponse response = openOriginalResponse(tuple, original);
-      return actors.withCurrent(
-          request.controlUiJwt(),
-          tuple.action().scope().tenantId(),
-          environment,
-          current -> {
-            requireSameCurrent(preparation.current(), current);
-            IssuanceRecord exact =
-                findRecord(tuple.controlPlaneRequestId()).orElseThrow(NotFoundException::new);
-            requireSameStoredIssuance(original, exact);
-            requireOriginalBinding(
-                exact,
-                tuple,
-                request.canonicalTupleBytes(),
-                request.reservationOwnerId(),
-                request.reservationClaimFence());
-            AccountStartSessionOperatorAuthorityBundle.decode(exact.authorityEvidenceBundle())
-                .requireCurrent(
-                    current.source(),
-                    current.stored(),
+      var finalEnvironment = hostedTerms.captureCurrentEnvironmentBoundary();
+      AuthorizationResponse currentResponse =
+          actors.withCurrentCommitted(
+              tuple.actor().accountId(),
+              tuple.action().scope().tenantId(),
+              preparation.current().stored().jti,
+              finalEnvironment,
+              current -> {
+                requireSameCurrent(preparation.current(), current);
+                IssuanceRecord exact =
+                    findRecord(tuple.controlPlaneRequestId()).orElseThrow(NotFoundException::new);
+                requireSameStoredIssuance(original, exact);
+                requireOriginalBinding(
+                    exact,
                     tuple,
+                    request.canonicalTupleBytes(),
+                    request.reservationOwnerId(),
+                    request.reservationClaimFence());
+                AccountStartSessionAuthorityCapture lockedCapture =
+                    captureRepository.lockExactCurrent(
+                        preparation.capture(),
+                        current,
+                        tuple,
+                        loggingPeerUri,
+                        request.reservationOwnerId(),
+                        request.reservationClaimFence());
+                var exactBundle =
+                    AccountStartSessionOperatorAuthorityBundle.decode(
+                        exact.authorityEvidenceBundle());
+                var originalReference =
                     AccountStartSessionOperatorAuthorityBundle.fromSharedReference(
-                        original.bundleReference()),
-                    clock.instant());
-            return response;
-          });
+                        original.bundleReference());
+                exactBundle.requireCaptureBinding(lockedCapture, tuple, originalReference);
+                exactBundle.requireCurrent(
+                    current.source(), current.stored(), tuple, originalReference, clock.instant());
+                requireFreshClaimEvidence(claim);
+                return response;
+              });
+      requireFreshClaimEvidence(claim);
+      return currentResponse;
     }
 
     PreparedIssuance candidate =
-        prepareIssuance(preparation.current(), tuple, request, preparation.linearization());
+        prepareIssuance(preparation.current().stored(), preparation.capture(), tuple, request);
+    var finalEnvironment = hostedTerms.captureCurrentEnvironmentBoundary();
     IssueOutcome outcome =
-        actors.withCurrent(
-            request.controlUiJwt(),
+        actors.withCurrentCommitted(
+            tuple.actor().accountId(),
             tuple.action().scope().tenantId(),
-            environment,
+            preparation.current().stored().jti,
+            finalEnvironment,
             current -> {
               requireSameCurrent(preparation.current(), current);
+              AccountStartSessionAuthorityCapture lockedCapture =
+                  captureRepository.lockExactCurrent(
+                      preparation.capture(),
+                      current,
+                      tuple,
+                      loggingPeerUri,
+                      request.reservationOwnerId(),
+                      request.reservationClaimFence());
+              candidate
+                  .bundle()
+                  .requireCaptureBinding(
+                      lockedCapture, tuple, candidate.bundle().referenceForCapture(lockedCapture));
               candidate
                   .bundle()
                   .requireCurrent(
                       current.source(),
                       current.stored(),
                       tuple,
-                      AccountStartSessionOperatorAuthorityBundle.fromSharedReference(
-                          candidate.candidate().bundleReference()),
+                      candidate.bundle().referenceForCapture(lockedCapture),
                       clock.instant());
+              requireFreshClaimEvidence(claim);
               var created = repository.createOrReadExact(candidate.candidate());
               requireOriginalBinding(
                   created.issuance(),
@@ -226,33 +301,62 @@ public final class AccountStartSessionOperatorAuthorizationService {
                   request.reservationClaimFence());
               if (created.created()) {
                 requireCandidateRecord(candidate.candidate(), created.issuance());
+              } else {
+                var originalBundle =
+                    AccountStartSessionOperatorAuthorityBundle.decode(
+                        created.issuance().authorityEvidenceBundle());
+                originalBundle.requireCaptureBinding(
+                    lockedCapture,
+                    tuple,
+                    AccountStartSessionOperatorAuthorityBundle.fromSharedReference(
+                        created.issuance().bundleReference()));
               }
+              requireFreshClaimEvidence(claim);
               return new IssueOutcome(created.created(), created.issuance());
             });
-    if (outcome.created()) {
-      return candidate.response();
-    }
+    if (outcome.created()) return candidate.response();
 
-    AuthorizationResponse response = openOriginalResponse(tuple, outcome.issuance());
-    return actors.withCurrent(
-        request.controlUiJwt(),
-        tuple.action().scope().tenantId(),
-        environment,
-        current -> {
-          requireSameCurrent(preparation.current(), current);
-          IssuanceRecord exact =
-              findRecord(tuple.controlPlaneRequestId()).orElseThrow(NotFoundException::new);
-          requireSameStoredIssuance(outcome.issuance(), exact);
-          AccountStartSessionOperatorAuthorityBundle.decode(exact.authorityEvidenceBundle())
-              .requireCurrent(
-                  current.source(),
-                  current.stored(),
+    AuthorizationResponse originalResponse = openOriginalResponse(tuple, outcome.issuance());
+    var winnerEnvironment = hostedTerms.captureCurrentEnvironmentBoundary();
+    AuthorizationResponse currentResponse =
+        actors.withCurrentCommitted(
+            tuple.actor().accountId(),
+            tuple.action().scope().tenantId(),
+            preparation.current().stored().jti,
+            winnerEnvironment,
+            current -> {
+              requireSameCurrent(preparation.current(), current);
+              IssuanceRecord exact =
+                  findRecord(tuple.controlPlaneRequestId()).orElseThrow(NotFoundException::new);
+              requireSameStoredIssuance(outcome.issuance(), exact);
+              requireOriginalBinding(
+                  exact,
                   tuple,
+                  request.canonicalTupleBytes(),
+                  request.reservationOwnerId(),
+                  request.reservationClaimFence());
+              AccountStartSessionAuthorityCapture lockedCapture =
+                  captureRepository.lockExactCurrent(
+                      preparation.capture(),
+                      current,
+                      tuple,
+                      loggingPeerUri,
+                      request.reservationOwnerId(),
+                      request.reservationClaimFence());
+              var exactBundle =
+                  AccountStartSessionOperatorAuthorityBundle.decode(
+                      exact.authorityEvidenceBundle());
+              var exactReference =
                   AccountStartSessionOperatorAuthorityBundle.fromSharedReference(
-                      exact.bundleReference()),
-                  clock.instant());
-          return response;
-        });
+                      exact.bundleReference());
+              exactBundle.requireCaptureBinding(lockedCapture, tuple, exactReference);
+              exactBundle.requireCurrent(
+                  current.source(), current.stored(), tuple, exactReference, clock.instant());
+              requireFreshClaimEvidence(claim);
+              return originalResponse;
+            });
+    requireFreshClaimEvidence(claim);
+    return currentResponse;
   }
 
   /**
@@ -281,6 +385,7 @@ public final class AccountStartSessionOperatorAuthorizationService {
         request.reservationClaimFence(),
         request.claimOwnerId(),
         request.claimFence());
+    requireFreshClaimEvidence(claim);
 
     IssuanceRecord observed =
         findRecord(tuple.controlPlaneRequestId()).orElseThrow(NotFoundException::new);
@@ -295,7 +400,7 @@ public final class AccountStartSessionOperatorAuthorizationService {
     bundle.requireTupleBinding(tuple);
     UUID tokenJti = bundle.controlUiTokenJti();
     var environment = hostedTerms.captureCurrentEnvironmentBoundary();
-    Current preparation =
+    IssuePreparation preparation =
         actors.withCurrentCommitted(
             tuple.actor().accountId(),
             tuple.action().scope().tenantId(),
@@ -311,35 +416,66 @@ public final class AccountStartSessionOperatorAuthorizationService {
                   request.canonicalTupleBytes(),
                   request.reservationOwnerId(),
                   request.reservationClaimFence());
-              return current;
+              AccountStartSessionAuthorityCapture capture =
+                  captureRepository.lockReadExactCurrent(
+                      current,
+                      tuple,
+                      loggingPeerUri,
+                      request.reservationOwnerId(),
+                      request.reservationClaimFence());
+              var exactBundle =
+                  AccountStartSessionOperatorAuthorityBundle.decode(
+                      exact.authorityEvidenceBundle());
+              var exactReference =
+                  AccountStartSessionOperatorAuthorityBundle.fromSharedReference(
+                      exact.bundleReference());
+              exactBundle.requireCaptureBinding(capture, tuple, exactReference);
+              exactBundle.requireCurrent(
+                  current.source(), current.stored(), tuple, exactReference, clock.instant());
+              requireFreshClaimEvidence(claim);
+              return new IssuePreparation(current, capture, exact);
             });
     AuthorizationResponse response = openOriginalResponse(tuple, observed);
-    return actors.withCurrentCommitted(
-        tuple.actor().accountId(),
-        tuple.action().scope().tenantId(),
-        tokenJti,
-        environment,
-        current -> {
-          requireSameCurrent(preparation, current);
-          IssuanceRecord exact =
-              findRecord(tuple.controlPlaneRequestId()).orElseThrow(NotFoundException::new);
-          requireSameStoredIssuance(observed, exact);
-          requireOriginalBinding(
-              exact,
-              tuple,
-              request.canonicalTupleBytes(),
-              request.reservationOwnerId(),
-              request.reservationClaimFence());
-          AccountStartSessionOperatorAuthorityBundle.decode(exact.authorityEvidenceBundle())
-              .requireCurrent(
-                  current.source(),
-                  current.stored(),
+    var finalEnvironment = hostedTerms.captureCurrentEnvironmentBoundary();
+    AuthorizationResponse currentResponse =
+        actors.withCurrentCommitted(
+            tuple.actor().accountId(),
+            tuple.action().scope().tenantId(),
+            tokenJti,
+            finalEnvironment,
+            current -> {
+              requireSameCurrent(preparation.current(), current);
+              IssuanceRecord exact =
+                  findRecord(tuple.controlPlaneRequestId()).orElseThrow(NotFoundException::new);
+              requireSameStoredIssuance(preparation.existing(), exact);
+              requireOriginalBinding(
+                  exact,
                   tuple,
+                  request.canonicalTupleBytes(),
+                  request.reservationOwnerId(),
+                  request.reservationClaimFence());
+              AccountStartSessionAuthorityCapture lockedCapture =
+                  captureRepository.lockExactCurrent(
+                      preparation.capture(),
+                      current,
+                      tuple,
+                      loggingPeerUri,
+                      request.reservationOwnerId(),
+                      request.reservationClaimFence());
+              var exactBundle =
+                  AccountStartSessionOperatorAuthorityBundle.decode(
+                      exact.authorityEvidenceBundle());
+              var exactReference =
                   AccountStartSessionOperatorAuthorityBundle.fromSharedReference(
-                      exact.bundleReference()),
-                  clock.instant());
-          return response;
-        });
+                      exact.bundleReference());
+              exactBundle.requireCaptureBinding(lockedCapture, tuple, exactReference);
+              exactBundle.requireCurrent(
+                  current.source(), current.stored(), tuple, exactReference, clock.instant());
+              requireFreshClaimEvidence(claim);
+              return response;
+            });
+    requireFreshClaimEvidence(claim);
+    return currentResponse;
   }
 
   /** REDEEM: exact Game Session peer before tuple parsing or durable reference lookup. */
@@ -457,12 +593,13 @@ public final class AccountStartSessionOperatorAuthorizationService {
 
   /**
    * Returns only the immutable original projection of an already-redeemed operation to the exact
-   * same-namespace Game Design peer. This read neither exposes a credential nor changes owner
-   * state; Account independently revalidates the original committed actor and source.
+   * same-namespace Game Design peer or the exact original Game Session redeemer. This read neither
+   * exposes a credential nor changes owner state; Account independently revalidates the original
+   * committed actor and source.
    */
   public RedeemedOperationProjection readRedeemedOperationProjection(
       ReadRedeemedOperationProjectionRequest request) {
-    requirePeer(gameDesignPeerUri);
+    requireRedeemedProjectionReadPeer();
     Objects.requireNonNull(request, "redeemed operation projection request is required");
     byte[] exactTupleBytes = request.canonicalPreAuthorizationTuple();
     StartSessionPreAuthorizationReservationTuple tuple = decodeTuple(exactTupleBytes);
@@ -519,12 +656,158 @@ public final class AccountStartSessionOperatorAuthorizationService {
         });
   }
 
+  /**
+   * Revalidates the original human StartSession authority for a package-local World participation
+   * mutation and invokes the supplied Account-local mutation callback after locking its exact
+   * durable source capture in the same Account transaction. This is only a currentness building
+   * block: it does not authenticate caller-provided Game Session evidence or constitute a complete
+   * World participation service. A future caller must obtain genuine Game Session proof before
+   * invoking it. No end-user credential is accepted on this World-only path.
+   *
+   * <p>The canonical tuple is decoded only after authenticating the exact derived same-namespace
+   * World peer. All input bytes and the actual redeemed Game Session attempt/fence are compared to
+   * Account's original issuance and redemption; this path never issues, redeems, allocates, or
+   * renews authority.
+   */
+  <T> T withCurrentWorldReceivingParticipationCurrentness(
+      byte[] exactCanonicalPostAuthorizationTuple,
+      UUID actualGameSessionOwnerAttemptId,
+      long actualGameSessionOwnerFence,
+      Function<AccountStartSessionAuthorityCapture, T> accountMutation) {
+    requirePeer(worldManagementPeerUri);
+    if (SessionContext.hasAuthenticatedCallerContext()) {
+      throw denied("World participation currentness requires no authenticated end-user context");
+    }
+    requireNoAmbientTransactionOrSynchronization();
+    return withCurrentReceivingParticipationCurrentness(
+        exactCanonicalPostAuthorizationTuple,
+        actualGameSessionOwnerAttemptId,
+        actualGameSessionOwnerFence,
+        accountMutation);
+  }
+
+  private <T> T withCurrentReceivingParticipationCurrentness(
+      byte[] exactCanonicalPostAuthorizationTuple,
+      UUID actualGameSessionOwnerAttemptId,
+      long actualGameSessionOwnerFence,
+      Function<AccountStartSessionAuthorityCapture, T> accountMutation) {
+
+    byte[] exactPostTupleBytes = copy(exactCanonicalPostAuthorizationTuple);
+    StartSessionPostAuthorizationExecutionTuple postTuple =
+        StartSessionPostAuthorizationExecutionTuple.decode(exactPostTupleBytes);
+    Objects.requireNonNull(accountMutation, "Account-local participation mutation is required");
+    StartSessionPreAuthorizationReservationTuple tuple = postTuple.preAuthorizationTuple();
+    if (!"game-session-service".equals(tuple.targetOwner())) {
+      throw denied("Original StartSession target owner must remain Game Session");
+    }
+    GrpcPeerIdentity receivingPeer = GrpcPeerIdentity.current();
+    if (receivingPeer == null
+        || !tuple.action().scope().targetNamespace().equals(receivingPeer.namespace())) {
+      throw denied("StartSession target namespace does not match the authenticated World peer");
+    }
+    if (!loggingPeerUri.equals(postTuple.authenticatedWorkloadIdentity())) {
+      throw denied("Original StartSession Logging workload identity changed");
+    }
+    requireNonNilUuid(actualGameSessionOwnerAttemptId, "actual Game Session owner attempt ID");
+    requirePositiveFence(actualGameSessionOwnerFence, "actual Game Session owner fence");
+
+    byte[] exactPreTupleBytes = tuple.canonicalJson().getBytes(StandardCharsets.UTF_8);
+    IssuanceRecord observed =
+        findRecord(tuple.controlPlaneRequestId()).orElseThrow(NotFoundException::new);
+    requireOriginalBinding(
+        observed,
+        tuple,
+        exactPreTupleBytes,
+        postTuple.reservationOwnerId(),
+        postTuple.reservationClaimFence());
+    AccountStartSessionOperatorAuthorityBundle observedBundle =
+        AccountStartSessionOperatorAuthorityBundle.decode(observed.authorityEvidenceBundle());
+    observedBundle.requireTupleBinding(tuple);
+    requireReceivingPostTupleBinding(postTuple, observed, tuple);
+    ReadRedeemedOperationProjectionRequest redemptionRequest =
+        new ReadRedeemedOperationProjectionRequest(
+            exactPreTupleBytes,
+            postTuple.authorizationReferenceFingerprint(),
+            postTuple.reservationOwnerId(),
+            postTuple.reservationClaimFence(),
+            actualGameSessionOwnerAttemptId,
+            actualGameSessionOwnerFence);
+    requireRedeemedProjectionBinding(
+        observed, tuple, redemptionRequest, observedBundle, clock.instant());
+
+    var environment = hostedTerms.captureCurrentEnvironmentBoundary();
+    return actors.withCurrentCommitted(
+        tuple.actor().accountId(),
+        tuple.action().scope().tenantId(),
+        observedBundle.controlUiTokenJti(),
+        environment,
+        current -> {
+          IssuanceRecord exact =
+              findRecord(tuple.controlPlaneRequestId()).orElseThrow(NotFoundException::new);
+          requireSameStoredRedemption(observed, exact);
+          requireOriginalBinding(
+              exact,
+              tuple,
+              exactPreTupleBytes,
+              postTuple.reservationOwnerId(),
+              postTuple.reservationClaimFence());
+          AccountStartSessionOperatorAuthorityBundle exactBundle =
+              AccountStartSessionOperatorAuthorityBundle.decode(exact.authorityEvidenceBundle());
+          exactBundle.requireTupleBinding(tuple);
+          requireReceivingPostTupleBinding(postTuple, exact, tuple);
+          requireRedeemedProjectionBinding(
+              exact, tuple, redemptionRequest, exactBundle, clock.instant());
+
+          AccountStartSessionAuthorityCapture lockedCapture =
+              captureRepository.lockReadExactCurrentFromWorldReceiving(
+                  current,
+                  tuple,
+                  loggingPeerUri,
+                  postTuple.reservationOwnerId(),
+                  postTuple.reservationClaimFence(),
+                  worldManagementPeerUri);
+          var originalReference =
+              AccountStartSessionOperatorAuthorityBundle.fromSharedReference(
+                  exact.bundleReference());
+          exactBundle.requireCaptureBinding(lockedCapture, tuple, originalReference);
+          exactBundle.requireCurrent(
+              current.source(), current.stored(), tuple, originalReference, clock.instant());
+          return accountMutation.apply(lockedCapture);
+        });
+  }
+
+  private void requireReceivingPostTupleBinding(
+      StartSessionPostAuthorizationExecutionTuple supplied,
+      IssuanceRecord original,
+      StartSessionPreAuthorizationReservationTuple tuple) {
+    StartSessionPostAuthorizationExecutionTuple expected =
+        StartSessionPostAuthorizationExecutionTuple.createHuman(
+            tuple,
+            original.issuanceWorkloadUri(),
+            original.authorizationReferenceFingerprint(),
+            original.reservationOwnerId(),
+            original.reservationClaimFence(),
+            original.authorityEvidenceBundle(),
+            original.bundleReference());
+    if (!MessageDigest.isEqual(expected.canonicalBytes(), supplied.canonicalBytes())) {
+      throw denied("World participation tuple differs from the original Account issuance");
+    }
+  }
+
+  private static void requireNoAmbientTransactionOrSynchronization() {
+    if (TransactionSynchronizationManager.isActualTransactionActive()
+        || TransactionSynchronizationManager.isSynchronizationActive()) {
+      throw denied("World currentness must begin without an ambient Account transaction");
+    }
+  }
+
   private PreparedIssuance prepareIssuance(
-      Current current,
+      Stored controlUiIssuance,
+      AccountStartSessionAuthorityCapture capture,
       StartSessionPreAuthorizationReservationTuple tuple,
-      IssueRequest request,
-      OwnerLinearization linearization) {
-    Objects.requireNonNull(linearization, "Account owner source linearization is required");
+      IssueRequest request) {
+    Objects.requireNonNull(controlUiIssuance, "original ControlUI issuance is required");
+    Objects.requireNonNull(capture, "committed Account source capture is required");
     byte[] exactTuple = request.canonicalTupleBytes();
     Instant issuedAt = Instant.ofEpochMilli(clock.millis());
     Instant referenceExpiresAt = addMillis(issuedAt, referenceLifetimeMillis);
@@ -532,14 +815,8 @@ public final class AccountStartSessionOperatorAuthorizationService {
     UUID issuanceOperationId = UUID.randomUUID();
     var bundle =
         AccountStartSessionOperatorAuthorityBundle.create(
-            tuple,
-            current.source(),
-            current.stored(),
-            issuanceOperationId,
-            linearization,
-            issuedAt,
-            referenceExpiresAt);
-    var bundleReference = bundle.referenceForSource(current.source(), linearization);
+            tuple, capture, controlUiIssuance, issuanceOperationId, issuedAt, referenceExpiresAt);
+    var bundleReference = bundle.referenceForCapture(capture);
 
     byte[] random = new byte[REFERENCE_RANDOM_BYTES];
     secureRandom.nextBytes(random);
@@ -565,7 +842,7 @@ public final class AccountStartSessionOperatorAuthorizationService {
                   tuple,
                   exactTuple,
                   loggingPeerUri,
-                  linearization.sourceFence(),
+                  bundle.issuanceFence(),
                   bundle),
               responseBytes,
               responseExpiresAt);
@@ -578,7 +855,7 @@ public final class AccountStartSessionOperatorAuthorizationService {
               request.reservationOwnerId(),
               request.reservationClaimFence(),
               issuanceOperationId,
-              linearization.sourceFence(),
+              bundle.issuanceFence(),
               AccountStartSessionOperatorAuthorityBundle.toSharedReference(bundleReference),
               bundle.canonicalBytes(),
               fingerprint,
@@ -730,10 +1007,7 @@ public final class AccountStartSessionOperatorAuthorizationService {
         || !response.bundleReference().sourceVersion().equals(bundleSourceVersion(bundle))
         || !AccountStartSessionOperatorAuthorityBundle.toSharedReference(response.bundleReference())
             .equals(record.bundleReference())
-        || !response
-            .bundleReference()
-            .sourceFence()
-            .equals(Long.toString(record.issuanceFence()))) {
+        || bundle.issuanceFence() != record.issuanceFence()) {
       throw denied("Original issuance response differs from the immutable Account record");
     }
     byte[] referenceBytes =
@@ -862,6 +1136,16 @@ public final class AccountStartSessionOperatorAuthorizationService {
         || !currentClaimOwnerId.toString().equals(evidence.getClaimOwnerId())
         || currentClaimFence != evidence.getClaimFence()) {
       throw denied("Logging/Admin current reservation claim differs from the exact request");
+    }
+  }
+
+  private void requireFreshClaimEvidence(ReadCurrentClaimEvidenceResponse evidence) {
+    Objects.requireNonNull(evidence, "Logging/Admin claim evidence is required");
+    long observedAt = evidence.getObservedAtEpochMillis();
+    long expiresAt = evidence.getClaimExpiresAtEpochMillis();
+    long now = clock.millis();
+    if (observedAt <= 0L || expiresAt <= observedAt || now < observedAt || now >= expiresAt) {
+      throw denied("Logging/Admin StartSession claim evidence is stale or contradictory");
     }
   }
 
@@ -1048,6 +1332,14 @@ public final class AccountStartSessionOperatorAuthorizationService {
     }
   }
 
+  private void requireRedeemedProjectionReadPeer() {
+    GrpcPeerIdentity peer = GrpcPeerIdentity.current();
+    if (peer == null
+        || (!gameDesignPeerUri.equals(peer.uri()) && !gameSessionPeerUri.equals(peer.uri()))) {
+      throw denied("Exact authenticated Game Design or original Game Session identity is required");
+    }
+  }
+
   private static String exactPeer(String value, String expectedService) {
     return GrpcPeerIdentity.parseUri(value)
         .map(GrpcPeerIdentity::uri)
@@ -1104,12 +1396,10 @@ public final class AccountStartSessionOperatorAuthorizationService {
   }
 
   private record IssuePreparation(
-      Current current, IssuanceRecord existing, OwnerLinearization linearization) {
+      Current current, AccountStartSessionAuthorityCapture capture, IssuanceRecord existing) {
     private IssuePreparation {
       Objects.requireNonNull(current, "current Account actor is required");
-      if ((existing == null) != (linearization != null)) {
-        throw denied("Issue preparation must contain either an original record or its fence");
-      }
+      Objects.requireNonNull(capture, "durable Account source capture is required");
     }
   }
 

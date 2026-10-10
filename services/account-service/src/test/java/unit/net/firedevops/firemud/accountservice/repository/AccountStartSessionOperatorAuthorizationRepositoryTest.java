@@ -6,11 +6,15 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import java.sql.SQLException;
 import java.time.Instant;
 import java.time.OffsetDateTime;
+import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicInteger;
+import net.firedevops.firemud.accountservice.authordraft.AccountControlUiAuthority;
 import net.firedevops.firemud.accountservice.repository.AccountStartSessionOperatorAuthorizationRepository;
 import net.firedevops.firemud.accountservice.repository.AccountStartSessionOperatorAuthorizationRepository.IssuanceCandidate;
 import net.firedevops.firemud.accountservice.repository.AccountStartSessionOperatorAuthorizationRepository.RedemptionRequest;
+import net.firedevops.firemud.common.operator.StartSessionAuthorityEvidenceBundle;
 import net.firedevops.firemud.common.operator.StartSessionAuthorityEvidenceBundle.BundleReference;
 import net.firedevops.firemud.common.operator.StartSessionOperatorAction;
 import net.firedevops.firemud.common.operator.StartSessionPreAuthorizationReservationTuple;
@@ -50,10 +54,41 @@ class AccountStartSessionOperatorAuthorizationRepositoryTest {
   }
 
   @Test
+  void timestampWritesAndExpiryPredicateUseExplicitPostgresTypes() {
+    MockStore store = new MockStore();
+    var repository = repository(store);
+    var candidate = candidate(tuple());
+    var created = inTransaction(() -> repository.createOrReadExact(candidate));
+    var redeemed =
+        inTransaction(
+            () -> repository.redeemExact(redemption(candidate, OWNER_ATTEMPT_ID, 8L, OWNER_URI)));
+
+    assertThat(created.issuance().issuedAt()).isEqualTo(candidate.issuedAt());
+    assertThat(redeemed).isNotNull();
+    assertThat(store.queries)
+        .anySatisfy(
+            sql ->
+                assertThat(sql)
+                    .contains(
+                        "cast(? as timestamptz), cast(? as timestamptz), "
+                            + "cast(? as timestamptz), 'issued'"))
+        .anySatisfy(
+            sql ->
+                assertThat(sql)
+                    .contains(
+                        "redeemed_at = cast(? as timestamptz)",
+                        "reference_expires_at > cast(? as timestamptz)"));
+  }
+
+  @Test
   void exactDuplicateReturnsOriginalOutputAndNeverReplacesIt() {
     MockStore store = new MockStore();
     AccountStartSessionOperatorAuthorizationRepository repository = repository(store);
     IssuanceCandidate first = candidate(tuple());
+    UUID changedOperationId = UUID.randomUUID();
+    long changedIssuanceFence = first.issuanceFence() + 1L;
+    long changedSourceFence = Long.parseLong(first.bundleReference().sourceFence()) + 1L;
+    BundleReference changedReference = bundleReference(changedSourceFence);
     IssuanceCandidate changedOutput =
         new IssuanceCandidate(
             first.controlPlaneRequestId(),
@@ -62,10 +97,15 @@ class AccountStartSessionOperatorAuthorizationRepositoryTest {
             first.issuanceWorkloadUri(),
             first.reservationOwnerId(),
             first.reservationClaimFence(),
-            UUID.randomUUID(),
-            first.issuanceFence() + 1,
-            bundleReference(first.issuanceFence() + 1),
-            bytes("different bundle"),
+            changedOperationId,
+            changedIssuanceFence,
+            changedReference,
+            authorityBundle(
+                tuple(),
+                changedOperationId,
+                changedIssuanceFence,
+                first.referenceExpiresAt().plusSeconds(1),
+                changedReference),
             fingerprint("e"),
             bytes("different encrypted envelope"),
             first.issuedAt().plusSeconds(1),
@@ -79,17 +119,18 @@ class AccountStartSessionOperatorAuthorizationRepositoryTest {
 
     assertThat(created.created()).isTrue();
     assertThat(duplicate.created()).isFalse();
+    assertThat(first.issuanceFence())
+        .isNotEqualTo(Long.parseLong(first.bundleReference().sourceFence()));
     assertThat(duplicate.issuance().issuanceOperationId()).isEqualTo(ISSUANCE_OPERATION_ID);
     assertThat(duplicate.issuance().issuanceFence()).isEqualTo(4L);
     assertThat(duplicate.issuance().bundleReference()).isEqualTo(first.bundleReference());
     assertThat(duplicate.issuance().authorizationReferenceFingerprint())
         .isEqualTo(fingerprint("a"));
-    assertThat(duplicate.issuance().authorityEvidenceBundle()).containsExactly(bytes("bundle-v1"));
+    assertThat(duplicate.issuance().authorityEvidenceBundle())
+        .containsExactly(first.authorityEvidenceBundle());
     assertThat(duplicate.issuance().encryptedResponseEnvelope())
         .containsExactly(bytes("ciphertext-envelope"));
     assertThat(store.insertCount.get()).isEqualTo(1);
-    assertThat(store.lastInsertSql)
-        .contains("cast(? as timestamptz), cast(? as timestamptz), cast(? as timestamptz)");
     assertThat(store.lastLockSql).contains("for update");
 
     byte[] exposedTuple = duplicate.issuance().preAuthorizationTuple();
@@ -97,7 +138,7 @@ class AccountStartSessionOperatorAuthorizationRepositoryTest {
     assertThat(duplicate.issuance().preAuthorizationTuple())
         .containsExactly(first.preAuthorizationTuple());
     assertThat(duplicate.issuance().toString())
-        .doesNotContain("tuple-v1", "bundle-v1", "ciphertext-envelope");
+        .doesNotContain("tuple-v1", "authorityEvidenceBundle/v1", "ciphertext-envelope");
   }
 
   @Test
@@ -124,7 +165,7 @@ class AccountStartSessionOperatorAuthorizationRepositoryTest {
   }
 
   @Test
-  void bundleReferenceFenceMustMatchTheDurableIssuanceFenceBeforeSql() {
+  void bundleSourceVersionMustMatchWhileSourceFenceRemainsIndependentOfIssuanceFence() {
     MockStore store = new MockStore();
     AccountStartSessionOperatorAuthorizationRepository repository = repository(store);
     IssuanceCandidate valid = candidate(tuple());
@@ -138,7 +179,11 @@ class AccountStartSessionOperatorAuthorizationRepositoryTest {
             valid.reservationClaimFence(),
             valid.issuanceOperationId(),
             valid.issuanceFence(),
-            bundleReference(valid.issuanceFence() + 1L),
+            new BundleReference(
+                valid.bundleReference().bundleVersion(),
+                "13",
+                valid.bundleReference().sourceFence(),
+                valid.bundleReference().linearization()),
             valid.authorityEvidenceBundle(),
             valid.authorizationReferenceFingerprint(),
             valid.encryptedResponseEnvelope(),
@@ -146,9 +191,11 @@ class AccountStartSessionOperatorAuthorizationRepositoryTest {
             valid.referenceExpiresAt(),
             valid.responseEnvelopeExpiresAt());
 
+    assertThat(valid.issuanceFence())
+        .isNotEqualTo(Long.parseLong(valid.bundleReference().sourceFence()));
     assertThatThrownBy(() -> inTransaction(() -> repository.createOrReadExact(mismatchedReference)))
         .isInstanceOf(IllegalArgumentException.class)
-        .hasMessageContaining("source fence");
+        .hasMessageContaining("bundle reference");
     assertThat(store.databaseCallCount.get()).isZero();
   }
 
@@ -243,8 +290,24 @@ class AccountStartSessionOperatorAuthorizationRepositoryTest {
                 "\"requestId\":\"" + boundedRequestId + "\"",
                 "\"requestId\":\"" + oversizedRequestId + "\"");
     assertThat(malformedTupleJson).contains(oversizedRequestId);
+    IssuanceCandidate boundaryCandidate = candidate(boundaryTuple, boundedRequestId);
     IssuanceCandidate oversized =
-        candidate(boundedRequestId, bytes(malformedTupleJson), boundaryTuple.mutationDigest());
+        new IssuanceCandidate(
+            boundedRequestId,
+            bytes(malformedTupleJson),
+            boundaryTuple.mutationDigest(),
+            boundaryCandidate.issuanceWorkloadUri(),
+            boundaryCandidate.reservationOwnerId(),
+            boundaryCandidate.reservationClaimFence(),
+            boundaryCandidate.issuanceOperationId(),
+            boundaryCandidate.issuanceFence(),
+            boundaryCandidate.bundleReference(),
+            boundaryCandidate.authorityEvidenceBundle(),
+            boundaryCandidate.authorizationReferenceFingerprint(),
+            boundaryCandidate.encryptedResponseEnvelope(),
+            boundaryCandidate.issuedAt(),
+            boundaryCandidate.referenceExpiresAt(),
+            boundaryCandidate.responseEnvelopeExpiresAt());
     int callsBeforeMalformedTuple = store.databaseCallCount.get();
     assertThatThrownBy(() -> inTransaction(() -> repository.createOrReadExact(oversized)))
         .isInstanceOf(IllegalArgumentException.class);
@@ -267,15 +330,12 @@ class AccountStartSessionOperatorAuthorizationRepositoryTest {
     assertThat(first.authorizationReferenceFingerprint()).isEqualTo(fingerprint("a"));
     assertThat(retry.authorizationReferenceFingerprint())
         .isEqualTo(first.authorizationReferenceFingerprint());
-    assertThat(first.authorityEvidenceBundle()).containsExactly(bytes("bundle-v1"));
+    assertThat(first.authorityEvidenceBundle())
+        .containsExactly(candidate.authorityEvidenceBundle());
     assertThat(retry.authorityEvidenceBundle()).containsExactly(first.authorityEvidenceBundle());
     assertThat(first.issuanceOperationId()).isEqualTo(ISSUANCE_OPERATION_ID);
     assertThat(store.redemptionUpdateCount.get()).isEqualTo(1);
-    assertThat(store.lastRedemptionSql)
-        .contains(
-            "redeemed_at = cast(? as timestamptz)",
-            "reference_expires_at > cast(? as timestamptz)");
-    assertThat(first.toString()).doesNotContain("bundle-v1", "ciphertext-envelope");
+    assertThat(first.toString()).doesNotContain("ciphertext-envelope");
   }
 
   @Test
@@ -413,8 +473,13 @@ class AccountStartSessionOperatorAuthorizationRepositoryTest {
         2L,
         ISSUANCE_OPERATION_ID,
         4L,
-        bundleReference(4L),
-        bytes("bundle-v1"),
+        bundleReference(31L),
+        authorityBundle(
+            tupleFromBytes(tupleBytes),
+            ISSUANCE_OPERATION_ID,
+            4L,
+            NOW.plusSeconds(180),
+            bundleReference(31L)),
         fingerprint("a"),
         bytes("ciphertext-envelope"),
         NOW,
@@ -496,6 +561,89 @@ class AccountStartSessionOperatorAuthorizationRepositoryTest {
         "authorityEvidenceBundle/v1", "12", Long.toString(sourceFence), "123456789");
   }
 
+  private static StartSessionPreAuthorizationReservationTuple tupleFromBytes(byte[] tupleBytes) {
+    return StartSessionPreAuthorizationReservationTuple.fromCanonicalJson(
+        new String(tupleBytes, java.nio.charset.StandardCharsets.UTF_8));
+  }
+
+  private static byte[] authorityBundle(
+      StartSessionPreAuthorizationReservationTuple tuple,
+      UUID operationId,
+      long issuanceFence,
+      Instant expiresAt,
+      BundleReference reference) {
+    String tenantId = tuple.action().scope().tenantId().toString();
+    String actorId = tuple.actor().accountId().toString();
+    Map<String, Object> authorityTuple =
+        Map.of(
+            "issuerAuthGeneration", 1L,
+            "accountAuthorityGeneration", 1L,
+            "tenantAuthorityGeneration", Map.of(tenantId, 1L),
+            "membershipAuthorityGeneration", Map.of(tenantId, 1L),
+            "privateRealmGrantVersions", List.of());
+    Map<String, Object> bundle =
+        Map.of(
+            "bundleVersion", StartSessionAuthorityEvidenceBundle.BUNDLE_VERSION,
+            "authorityScope",
+                Map.of(
+                    "scope",
+                    Map.of(
+                        "tenantId",
+                        tenantId,
+                        "targetNamespace",
+                        tuple.action().scope().targetNamespace()),
+                    "actionFamily",
+                    tuple.actionFamily(),
+                    "applicableAccountId",
+                    actorId,
+                    "applicableTenantId",
+                    tenantId),
+            "accountProjectionEvidence",
+                Map.of(
+                    "sourceType",
+                    "ACCOUNT",
+                    "sourceEvidenceId",
+                    "sha256:" + "a".repeat(64),
+                    "sourceEvidenceVersion",
+                    reference.sourceVersion(),
+                    "projectionStatus",
+                    "CURRENT",
+                    "evaluatedAt",
+                    NOW.toString(),
+                    "expiresAt",
+                    expiresAt.toString()),
+            "issuanceOperationIdentity",
+                Map.of(
+                    "issuanceOperationId", operationId.toString(),
+                    "controlPlaneRequestId", tuple.controlPlaneRequestId(),
+                    "actionFamilyRequestIdentity",
+                        Map.of(
+                            "requestIdentityKind",
+                            "controlPlaneRequestId",
+                            "requestId",
+                            tuple.controlPlaneRequestId()),
+                    "mutationDigest", tuple.mutationDigest()),
+            "issuanceKind", "human_operator",
+            "authorityTuple", authorityTuple,
+            "membershipVersion", Map.of(tenantId, 2L),
+            "issuanceFence", Long.toString(issuanceFence),
+            "issuanceEvidence",
+                Map.of(
+                    "evidenceType",
+                    StartSessionAuthorityEvidenceBundle.HUMAN_EVIDENCE_TYPE,
+                    "actorAccountId",
+                    actorId,
+                    "controlUiTokenJti",
+                    UUID.fromString("2e19f788-10d2-4f33-aed6-9a46db136dcc").toString(),
+                    "role",
+                    "tenantAdmin",
+                    "accountGeneration",
+                    "1",
+                    "tenantGeneration",
+                    "1"));
+    return AccountControlUiAuthority.canonical(bundle);
+  }
+
   private static <T> T inTransaction(java.util.function.Supplier<T> action) {
     TransactionSynchronizationManager.setActualTransactionActive(true);
     try {
@@ -563,8 +711,7 @@ class AccountStartSessionOperatorAuthorizationRepositoryTest {
     private final AtomicInteger databaseCallCount = new AtomicInteger();
     private final AtomicInteger insertCount = new AtomicInteger();
     private final AtomicInteger redemptionUpdateCount = new AtomicInteger();
-    private String lastInsertSql = "";
-    private String lastRedemptionSql = "";
+    private final List<String> queries = new java.util.ArrayList<>();
     private String lastLockSql = "";
     private StoredRow row;
 
@@ -572,9 +719,9 @@ class AccountStartSessionOperatorAuthorizationRepositoryTest {
     public MockResult[] execute(MockExecuteContext context) throws SQLException {
       databaseCallCount.incrementAndGet();
       String sql = context.sql().stripLeading().toLowerCase(java.util.Locale.ROOT);
+      queries.add(sql);
       Object[] bind = context.bindings();
       if (sql.startsWith("insert into account_start_session_operator_authorizations")) {
-        lastInsertSql = sql;
         if (row == null) {
           row = StoredRow.fromInsert(bind);
           insertCount.incrementAndGet();
@@ -583,7 +730,6 @@ class AccountStartSessionOperatorAuthorizationRepositoryTest {
         return new MockResult[] {new MockResult(0)};
       }
       if (sql.startsWith("update account_start_session_operator_authorizations")) {
-        lastRedemptionSql = sql;
         if (row == null || !"ISSUED".equals(row.status)) {
           return new MockResult[] {new MockResult(0)};
         }

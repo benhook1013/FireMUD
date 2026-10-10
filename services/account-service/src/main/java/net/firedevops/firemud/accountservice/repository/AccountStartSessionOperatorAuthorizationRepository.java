@@ -12,6 +12,7 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
 import java.util.regex.Pattern;
+import net.firedevops.firemud.common.operator.StartSessionAuthorityEvidenceBundle;
 import net.firedevops.firemud.common.operator.StartSessionAuthorityEvidenceBundle.BundleReference;
 import net.firedevops.firemud.common.operator.StartSessionPreAuthorizationReservationTuple;
 import org.jooq.DSLContext;
@@ -245,14 +246,19 @@ public class AccountStartSessionOperatorAuthorizationRepository {
           || !issuance.issuanceWorkloadUri().endsWith("/sa/logging-admin-service")
           || issuance.reservationClaimFence() <= 0L
           || issuance.issuanceFence() <= 0L
-          || !Long.toString(issuance.issuanceFence())
-              .equals(issuance.bundleReference().sourceFence())
           || !issuance.referenceExpiresAt().isAfter(issuance.issuedAt())
           || issuance.referenceExpiresAt().isAfter(issuance.issuedAt().plus(MAX_REFERENCE_LIFETIME))
           || !issuance.responseEnvelopeExpiresAt().isAfter(issuance.referenceExpiresAt())
           || issuance
               .responseEnvelopeExpiresAt()
               .isAfter(issuance.referenceExpiresAt().plus(MAX_RESPONSE_RECOVERY_WINDOW))) {
+        throw unavailable();
+      }
+      StartSessionAuthorityEvidenceBundle bundle =
+          StartSessionAuthorityEvidenceBundle.decode(issuance.authorityEvidenceBundle());
+      bundle.requireReferenceBinding(issuance.bundleReference());
+      if (!Long.toString(issuance.issuanceFence()).equals(bundle.issuanceFence())
+          || !issuance.bundleReference().sourceVersion().equals(bundle.sourceEvidenceVersion())) {
         throw unavailable();
       }
       if (issuance.status() == Status.REDEEMED
@@ -292,9 +298,17 @@ public class AccountStartSessionOperatorAuthorizationRepository {
     requirePositive(candidate.reservationClaimFence(), "reservationClaimFence");
     requireNonNilUuid(candidate.issuanceOperationId(), "issuanceOperationId");
     requirePositive(candidate.issuanceFence(), "issuanceFence");
-    requireBundleReference(candidate.bundleReference(), candidate.issuanceFence());
+    requireBundleReference(candidate.bundleReference());
     requireBytes(
         candidate.authorityEvidenceBundle(), MAX_AUTHORITY_BUNDLE_BYTES, "authority bundle");
+    StartSessionAuthorityEvidenceBundle bundle =
+        StartSessionAuthorityEvidenceBundle.decode(candidate.authorityEvidenceBundle());
+    bundle.requireReferenceBinding(candidate.bundleReference());
+    if (!Long.toString(candidate.issuanceFence()).equals(bundle.issuanceFence())
+        || !candidate.bundleReference().sourceVersion().equals(bundle.sourceEvidenceVersion())) {
+      throw new IllegalArgumentException(
+          "bundle reference or Account issuance fence differs from the candidate");
+    }
     requireFingerprint(candidate.authorizationReferenceFingerprint());
     requireBytes(
         candidate.encryptedResponseEnvelope(),
@@ -360,12 +374,8 @@ public class AccountStartSessionOperatorAuthorizationRepository {
         row.get("bundle_linearization", String.class));
   }
 
-  private static void requireBundleReference(BundleReference reference, long issuanceFence) {
+  private static void requireBundleReference(BundleReference reference) {
     Objects.requireNonNull(reference, "original authority bundle reference is required");
-    if (!Long.toString(issuanceFence).equals(reference.sourceFence())) {
-      throw new IllegalArgumentException(
-          "original bundle source fence must equal the Account issuance fence");
-    }
   }
 
   private static void requireSameRedemptionBinding(
@@ -683,7 +693,8 @@ public class AccountStartSessionOperatorAuthorizationRepository {
       encryptedResponseEnvelope = copy(encryptedResponseEnvelope);
       redemptionAuthorityEvidenceBundle = copy(redemptionAuthorityEvidenceBundle);
       Objects.requireNonNull(status, "status is required");
-      requireBundleReference(bundleReference, issuanceFence);
+      if (issuanceFence <= 0L) throw unavailable();
+      requireBundleReference(bundleReference);
       if (status == Status.ISSUED
           && (redemptionRedeemerWorkloadUri != null
               || redemptionOwnerAttemptId != null

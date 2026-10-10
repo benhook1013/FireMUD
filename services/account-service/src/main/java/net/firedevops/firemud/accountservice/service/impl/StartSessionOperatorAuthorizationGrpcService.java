@@ -165,11 +165,11 @@ public final class StartSessionOperatorAuthorizationGrpcService
   public void readRedeemedOperationProjection(
       ReadRedeemedOperationProjectionRequest request,
       StreamObserver<ReadRedeemedOperationProjectionResponse> responseObserver) {
-    if (!isAllowedPeer("game-design-service")) {
+    if (!isAllowedPeer("game-design-service") && !isAllowedPeer("game-session-service")) {
       fail(
           responseObserver,
           Status.PERMISSION_DENIED,
-          "Verified same-namespace Game Design workload identity is required");
+          "Verified same-namespace Game Design or Game Session workload identity is required");
       return;
     }
 
