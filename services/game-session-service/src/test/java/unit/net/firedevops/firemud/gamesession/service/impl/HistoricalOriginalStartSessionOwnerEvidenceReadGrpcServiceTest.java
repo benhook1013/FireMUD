@@ -126,7 +126,10 @@ class HistoricalOriginalStartSessionOwnerEvidenceReadGrpcServiceTest {
         new HistoricalOriginalStartSessionOwnerEvidenceReadGrpcService(repository, NAMESPACE);
 
     var missing = invokeAs(service, fixture.wireRequest(), WORLD_SERVICE);
-    assertRejected(missing, Status.Code.FAILED_PRECONDITION);
+    assertRejected(
+        missing,
+        Status.Code.FAILED_PRECONDITION,
+        "Exact historical StartSession evidence is unavailable");
 
     HistoricalOriginalStartSessionOwnerEvidence.Result malformed =
         mock(HistoricalOriginalStartSessionOwnerEvidence.Result.class);
@@ -134,7 +137,7 @@ class HistoricalOriginalStartSessionOwnerEvidenceReadGrpcServiceTest {
     when(repository.readHistoricalOriginalStartSessionOwnerEvidence(fixture.request()))
         .thenReturn(Optional.of(malformed));
     var corrupt = invokeAs(service, fixture.wireRequest(), WORLD_SERVICE);
-    assertRejected(corrupt, Status.Code.INTERNAL);
+    assertRejected(corrupt, Status.Code.INTERNAL, "Historical evidence read failed");
     verify(repository, times(2)).readHistoricalOriginalStartSessionOwnerEvidence(fixture.request());
     verifyNoMoreInteractions(repository);
   }
@@ -168,7 +171,10 @@ class HistoricalOriginalStartSessionOwnerEvidenceReadGrpcServiceTest {
 
     var observer = invokeAs(service, fixture.wireRequest(), WORLD_SERVICE);
 
-    assertRejected(observer, Status.Code.FAILED_PRECONDITION);
+    assertRejected(
+        observer,
+        Status.Code.FAILED_PRECONDITION,
+        "Exact historical StartSession evidence is unavailable");
     verify(repository).readHistoricalOriginalStartSessionOwnerEvidence(fixture.request());
     verifyNoMoreInteractions(repository);
   }
@@ -188,8 +194,14 @@ class HistoricalOriginalStartSessionOwnerEvidenceReadGrpcServiceTest {
                     .build())
             .build();
 
-    assertRejected(invokeAs(service, invalid, WORLD_SERVICE), Status.Code.INVALID_ARGUMENT);
-    assertRejected(invokeAs(service, unknown, WORLD_SERVICE), Status.Code.INVALID_ARGUMENT);
+    assertRejected(
+        invokeAs(service, invalid, WORLD_SERVICE),
+        Status.Code.INVALID_ARGUMENT,
+        "Historical evidence request is malformed");
+    assertRejected(
+        invokeAs(service, unknown, WORLD_SERVICE),
+        Status.Code.INVALID_ARGUMENT,
+        "Historical evidence request is malformed");
     verifyNoInteractions(repository);
   }
 
@@ -201,14 +213,17 @@ class HistoricalOriginalStartSessionOwnerEvidenceReadGrpcServiceTest {
         new HistoricalOriginalStartSessionOwnerEvidenceReadGrpcService(repository, NAMESPACE);
     RecordingObserver<ReadHistoricalOriginalStartSessionOwnerEvidenceResponse> noPeer =
         invoke(service, fixture.wireRequest());
-    assertRejected(noPeer, Status.Code.PERMISSION_DENIED);
+    assertRejected(
+        noPeer, Status.Code.PERMISSION_DENIED, "Historical evidence caller is not authorized");
 
     assertRejected(
         invokeAs(service, fixture.wireRequest(), NAMESPACE, "entity-management-service"),
-        Status.Code.PERMISSION_DENIED);
+        Status.Code.PERMISSION_DENIED,
+        "Historical evidence caller is not authorized");
     assertRejected(
         invokeAs(service, fixture.wireRequest(), "other", WORLD_SERVICE),
-        Status.Code.PERMISSION_DENIED);
+        Status.Code.PERMISSION_DENIED,
+        "Historical evidence caller is not authorized");
 
     AtomicReference<RecordingObserver<ReadHistoricalOriginalStartSessionOwnerEvidenceResponse>>
         userResponse = new AtomicReference<>();
@@ -218,8 +233,27 @@ class HistoricalOriginalStartSessionOwnerEvidenceReadGrpcServiceTest {
           SessionContext.setContext("42", List.of("tenantAdmin"), Map.of());
           userResponse.set(invoke(service, fixture.wireRequest()));
         });
-    assertRejected(userResponse.get(), Status.Code.PERMISSION_DENIED);
+    assertRejected(
+        userResponse.get(),
+        Status.Code.PERMISSION_DENIED,
+        "Historical evidence caller is not authorized");
     verifyNoInteractions(repository);
+  }
+
+  @Test
+  void unexpectedRepositoryStateFailsInternallyWithoutExposingStorageDetails() throws Exception {
+    Fixture fixture = fixture();
+    CanonicalGameInstanceLaunchAssociationRepository repository = mockRepository();
+    when(repository.readHistoricalOriginalStartSessionOwnerEvidence(fixture.request()))
+        .thenThrow(new IllegalStateException("private persisted-row details"));
+    var service =
+        new HistoricalOriginalStartSessionOwnerEvidenceReadGrpcService(repository, NAMESPACE);
+
+    var observer = invokeAs(service, fixture.wireRequest(), WORLD_SERVICE);
+
+    assertRejected(observer, Status.Code.INTERNAL, "Historical evidence read failed");
+    verify(repository).readHistoricalOriginalStartSessionOwnerEvidence(fixture.request());
+    verifyNoMoreInteractions(repository);
   }
 
   private static Fixture fixture() throws Exception {
@@ -690,6 +724,13 @@ class HistoricalOriginalStartSessionOwnerEvidenceReadGrpcServiceTest {
     assertThat(Status.fromThrowable(observer.error()).getCode()).isEqualTo(expectedCode);
     assertThat(observer.response()).isNull();
     assertThat(observer.completed()).isFalse();
+  }
+
+  private static void assertRejected(
+      RecordingObserver<?> observer, Status.Code expectedCode, String expectedDescription) {
+    assertRejected(observer, expectedCode);
+    assertThat(Status.fromThrowable(observer.error()).getDescription())
+        .isEqualTo(expectedDescription);
   }
 
   private static CanonicalGameInstanceLaunchAssociationRepository mockRepository() {

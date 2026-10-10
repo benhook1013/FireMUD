@@ -20,6 +20,9 @@ import net.firedevops.firemud.common.grpc.AbstractReloadingBlockingGrpcClient;
 import net.firedevops.firemud.common.grpc.BlockingGrpcStubCustomizer;
 import net.firedevops.firemud.common.grpc.CommonGrpcClientProperties;
 import net.firedevops.firemud.common.grpc.GrpcChannelFactory;
+import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
+import net.firedevops.firemud.common.grpc.GrpcServerPeerIdentityCallCredentials;
+import net.firedevops.firemud.common.grpc.GrpcServerPeerIdentityClientInterceptor;
 import net.firedevops.firemud.common.operator.StartSessionAuthorityEvidenceBundle;
 import net.firedevops.firemud.common.operator.StartSessionPostAuthorizationExecutionTuple;
 import net.firedevops.firemud.gamesession.repository.GameSessionStartSessionOperatorAttemptRepository.AccountRedemptionProjection;
@@ -47,6 +50,7 @@ public class StartSessionOperatorRedemptionClient
       Pattern.compile("[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}");
   private static final UUID NIL_UUID = new UUID(0L, 0L);
 
+  private final String workloadNamespace;
   private final Clock clock;
 
   @SuppressFBWarnings(
@@ -57,8 +61,9 @@ public class StartSessionOperatorRedemptionClient
       ServiceEndpointsProperties endpoints,
       CommonGrpcClientProperties tlsProps,
       GrpcChannelFactory channelFactory,
-      BlockingGrpcStubCustomizer stubCustomizer) {
-    this(endpoints, tlsProps, channelFactory, stubCustomizer, Clock.systemUTC());
+      BlockingGrpcStubCustomizer stubCustomizer,
+      String workloadNamespace) {
+    this(endpoints, tlsProps, channelFactory, stubCustomizer, workloadNamespace, Clock.systemUTC());
   }
 
   @SuppressFBWarnings(
@@ -70,6 +75,7 @@ public class StartSessionOperatorRedemptionClient
       CommonGrpcClientProperties tlsProps,
       GrpcChannelFactory channelFactory,
       BlockingGrpcStubCustomizer stubCustomizer,
+      String workloadNamespace,
       Clock clock) {
     super(
         endpoints,
@@ -77,6 +83,10 @@ public class StartSessionOperatorRedemptionClient
         channelFactory,
         stubCustomizer,
         StartSessionOperatorRedemptionClient.class);
+    if (!GrpcPeerIdentity.isValidNamespace(workloadNamespace)) {
+      throw new IllegalArgumentException("Workload namespace must be one canonical DNS label");
+    }
+    this.workloadNamespace = workloadNamespace;
     this.clock = Objects.requireNonNull(clock, "clock is required");
   }
 
@@ -101,9 +111,12 @@ public class StartSessionOperatorRedemptionClient
   protected StartSessionOperatorAuthorizationServiceGrpc
           .StartSessionOperatorAuthorizationServiceBlockingStub
       buildStub(ManagedChannel channel) {
+    String expectedPeerUri = "spiffe://firemud/ns/" + workloadNamespace + "/sa/account-service";
     return applyStubCustomizer(
-        StartSessionOperatorAuthorizationServiceGrpc.newBlockingStub(channel)
-            .withCompression("gzip"));
+            StartSessionOperatorAuthorizationServiceGrpc.newBlockingStub(channel)
+                .withCompression("gzip"))
+        .withCallCredentials(new GrpcServerPeerIdentityCallCredentials(expectedPeerUri))
+        .withInterceptors(new GrpcServerPeerIdentityClientInterceptor(expectedPeerUri));
   }
 
   /**
@@ -117,6 +130,7 @@ public class StartSessionOperatorRedemptionClient
     Objects.requireNonNull(tuple, "complete post-authorization tuple is required");
     Objects.requireNonNull(actualGameSessionClaim, "Game Session owner attempt claim is required");
     requireExactClaimBinding(tuple, actualGameSessionClaim);
+    requireConfiguredNamespace(tuple, actualGameSessionClaim);
     requireOpaqueReference(transientOperatorAuthorizationReference);
     requireUnexpiredTupleEvidence(tuple);
 
@@ -226,6 +240,15 @@ public class StartSessionOperatorRedemptionClient
         || claim.ownerFence() <= 0L) {
       throw new IllegalArgumentException(
           "Game Session owner attempt claim differs from the complete StartSession tuple");
+    }
+  }
+
+  private void requireConfiguredNamespace(
+      StartSessionPostAuthorizationExecutionTuple tuple, AttemptClaim claim) {
+    if (!workloadNamespace.equals(tuple.preAuthorizationTuple().action().scope().targetNamespace())
+        || !workloadNamespace.equals(claim.targetNamespace())) {
+      throw new IllegalArgumentException(
+          "Account StartSession redemption must use the configured workload namespace");
     }
   }
 

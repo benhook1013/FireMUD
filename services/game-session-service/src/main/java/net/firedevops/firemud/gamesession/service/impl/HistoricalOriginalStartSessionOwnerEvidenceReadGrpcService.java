@@ -3,6 +3,8 @@ package net.firedevops.firemud.gamesession.service.impl;
 import io.grpc.Status;
 import io.grpc.stub.StreamObserver;
 import java.util.Objects;
+import java.util.Optional;
+import net.firedevops.firemud.common.gamesession.HistoricalOriginalStartSessionOwnerEvidence;
 import net.firedevops.firemud.common.gamesession.HistoricalOriginalStartSessionOwnerEvidenceGrpcCodec;
 import net.firedevops.firemud.common.security.AdminAuthorizationException;
 import net.firedevops.firemud.gamesession.repository.CanonicalGameInstanceLaunchAssociationRepository;
@@ -33,40 +35,61 @@ public final class HistoricalOriginalStartSessionOwnerEvidenceReadGrpcService
       ReadHistoricalOriginalStartSessionOwnerEvidenceRequest request,
       StreamObserver<ReadHistoricalOriginalStartSessionOwnerEvidenceResponse> responseObserver) {
     Objects.requireNonNull(responseObserver, "responseObserver");
+    HistoricalOriginalStartSessionOwnerEvidence.Request decodedRequest;
     try {
       workloadGuard.requireHistoricalOwnerReadCaller();
-      var decodedRequest =
-          HistoricalOriginalStartSessionOwnerEvidenceGrpcCodec.fromRequest(request);
+      decodedRequest = HistoricalOriginalStartSessionOwnerEvidenceGrpcCodec.fromRequest(request);
       workloadGuard.requireConfiguredTargetNamespace(
           decodedRequest.associationSelector().targetNamespace());
-      var evidence =
-          repository
-              .readHistoricalOriginalStartSessionOwnerEvidence(decodedRequest)
-              .orElseThrow(
-                  () ->
-                      new IllegalStateException(
-                          "Exact historical StartSession evidence is unavailable"));
-      if (!decodedRequest.equals(evidence.request())) {
-        throw new IllegalStateException(
-            "Retained historical StartSession evidence changed the exact read request echo");
-      }
-      responseObserver.onNext(
-          HistoricalOriginalStartSessionOwnerEvidenceGrpcCodec.toResponse(evidence));
-      responseObserver.onCompleted();
     } catch (AdminAuthorizationException denied) {
       responseObserver.onError(
-          Status.PERMISSION_DENIED.withDescription(denied.getMessage()).asRuntimeException());
+          Status.PERMISSION_DENIED
+              .withDescription("Historical evidence caller is not authorized")
+              .asRuntimeException());
+      return;
     } catch (IllegalArgumentException invalid) {
       responseObserver.onError(
-          Status.INVALID_ARGUMENT.withDescription(invalid.getMessage()).asRuntimeException());
-    } catch (IllegalStateException unavailable) {
-      responseObserver.onError(
-          Status.FAILED_PRECONDITION
-              .withDescription(unavailable.getMessage())
+          Status.INVALID_ARGUMENT
+              .withDescription("Historical evidence request is malformed")
               .asRuntimeException());
+      return;
     } catch (RuntimeException failure) {
       responseObserver.onError(
           Status.INTERNAL.withDescription("Historical evidence read failed").asRuntimeException());
+      return;
     }
+
+    ReadHistoricalOriginalStartSessionOwnerEvidenceResponse response;
+    boolean unavailable;
+    try {
+      Optional<HistoricalOriginalStartSessionOwnerEvidence.Result> retained =
+          repository.readHistoricalOriginalStartSessionOwnerEvidence(decodedRequest);
+      unavailable = retained.isEmpty();
+      if (unavailable) {
+        response = null;
+      } else {
+        var evidence = retained.orElseThrow();
+        unavailable = !decodedRequest.equals(evidence.request());
+        response =
+            unavailable
+                ? null
+                : HistoricalOriginalStartSessionOwnerEvidenceGrpcCodec.toResponse(evidence);
+      }
+    } catch (RuntimeException failure) {
+      responseObserver.onError(
+          Status.INTERNAL.withDescription("Historical evidence read failed").asRuntimeException());
+      return;
+    }
+
+    if (unavailable) {
+      responseObserver.onError(
+          Status.FAILED_PRECONDITION
+              .withDescription("Exact historical StartSession evidence is unavailable")
+              .asRuntimeException());
+      return;
+    }
+
+    responseObserver.onNext(response);
+    responseObserver.onCompleted();
   }
 }

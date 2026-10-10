@@ -55,8 +55,6 @@ class StartSessionOperatorRedemptionClientTest {
   private static final UUID TOKEN_JTI = UUID.fromString("a681bba7-c215-4cf1-a35b-14348912cbdc");
   private static final String NAMESPACE = "world-runtime";
   private static final String REQUEST_ID = "redemption-client-request";
-  private static final String WORKLOAD =
-      "spiffe://firemud/ns/world-runtime/sa/logging-admin-service";
   private static final String FINGERPRINT = "arfp/v1/test-key/" + "b".repeat(64);
   private static final String OPAQUE_REFERENCE = "A".repeat(43);
   private static final Clock CURRENT_CLOCK =
@@ -138,6 +136,23 @@ class StartSessionOperatorRedemptionClientTest {
   }
 
   @Test
+  void rejectsTupleAndClaimOutsideConfiguredNamespaceBeforeCallingAccount() {
+    var stub =
+        mock(
+            StartSessionOperatorAuthorizationServiceGrpc
+                .StartSessionOperatorAuthorizationServiceBlockingStub.class);
+    StartSessionOperatorRedemptionClient client = newClient(stub, CURRENT_CLOCK);
+    StartSessionPostAuthorizationExecutionTuple otherNamespaceTuple = tuple(REQUEST_ID, "other");
+
+    assertThatThrownBy(
+            () -> client.redeem(otherNamespaceTuple, OPAQUE_REFERENCE, claim(REQUEST_ID, "other")))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("configured workload namespace")
+        .hasMessageNotContaining(OPAQUE_REFERENCE);
+    verifyNoInteractions(stub);
+  }
+
+  @Test
   void rejectsMalformedMissingUnknownAndSubstitutedAccountProjectionFields() throws Exception {
     StartSessionPostAuthorizationExecutionTuple tuple = tuple(REQUEST_ID);
     assertRejected(tuple, RedeemOperatorAuthorizationResponse.getDefaultInstance());
@@ -200,6 +215,7 @@ class StartSessionOperatorRedemptionClientTest {
                     plaintext,
                     mock(GrpcChannelFactory.class),
                     BlockingGrpcStubCustomizer.noop(),
+                    NAMESPACE,
                     CURRENT_CLOCK))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("mutual TLS");
@@ -213,6 +229,7 @@ class StartSessionOperatorRedemptionClientTest {
                     missingIdentity,
                     mock(GrpcChannelFactory.class),
                     BlockingGrpcStubCustomizer.noop(),
+                    NAMESPACE,
                     CURRENT_CLOCK))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("mutual TLS");
@@ -222,6 +239,18 @@ class StartSessionOperatorRedemptionClientTest {
             () -> uninitialized.redeem(tuple(REQUEST_ID), OPAQUE_REFERENCE, claim(REQUEST_ID)))
         .isInstanceOf(IllegalStateException.class)
         .hasMessageContaining("explicitly initialized");
+
+    assertThatThrownBy(
+            () ->
+                new StartSessionOperatorRedemptionClient(
+                    new ServiceEndpointsProperties(),
+                    tlsProperties(),
+                    mock(GrpcChannelFactory.class),
+                    BlockingGrpcStubCustomizer.noop(),
+                    "Invalid_Namespace",
+                    CURRENT_CLOCK))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("canonical DNS label");
   }
 
   private static void assertRejected(
@@ -254,6 +283,7 @@ class StartSessionOperatorRedemptionClientTest {
             tlsProperties(),
             mock(GrpcChannelFactory.class),
             BlockingGrpcStubCustomizer.noop(),
+            NAMESPACE,
             clock);
     if (stub != null) {
       setStub(client, stub);
@@ -285,7 +315,11 @@ class StartSessionOperatorRedemptionClientTest {
   }
 
   private static AttemptClaim claim(String requestId) {
-    return new AttemptClaim(NAMESPACE, requestId, OWNER_ATTEMPT, OWNER_MUTATION, CLAIM_OWNER, 37L);
+    return claim(requestId, NAMESPACE);
+  }
+
+  private static AttemptClaim claim(String requestId, String namespace) {
+    return new AttemptClaim(namespace, requestId, OWNER_ATTEMPT, OWNER_MUTATION, CLAIM_OWNER, 37L);
   }
 
   private static StartSessionPostAuthorizationExecutionTuple tuple(String requestId) {
@@ -294,11 +328,21 @@ class StartSessionOperatorRedemptionClientTest {
 
   private static StartSessionPostAuthorizationExecutionTuple tuple(
       String requestId, String evaluatedAt, String expiresAt) {
+    return tuple(requestId, evaluatedAt, expiresAt, NAMESPACE);
+  }
+
+  private static StartSessionPostAuthorizationExecutionTuple tuple(
+      String requestId, String namespace) {
+    return tuple(requestId, "2026-10-09T00:00:00Z", "2026-10-09T00:05:00Z", namespace);
+  }
+
+  private static StartSessionPostAuthorizationExecutionTuple tuple(
+      String requestId, String evaluatedAt, String expiresAt, String namespace) {
     StartSessionOperatorAction action =
         new StartSessionOperatorAction(
             StartSessionOperatorAction.ACTION_FAMILY_SCHEMA_ID,
             StartSessionOperatorAction.ACTION_FAMILY_SCHEMA_VERSION,
-            new StartSessionOperatorAction.Scope(TENANT, NAMESPACE),
+            new StartSessionOperatorAction.Scope(TENANT, namespace),
             new StartSessionOperatorAction.Target(91L, TARGET_OWNER),
             StartSessionOperatorAction.ExpectedVersion.ABSENT,
             new StartSessionOperatorAction.Mutation(StartSessionOperatorAction.ClientIp.absent()),
@@ -307,7 +351,7 @@ class StartSessionOperatorRedemptionClientTest {
         StartSessionPreAuthorizationReservationTuple.createHuman(requestId, ACTOR, action);
     return StartSessionPostAuthorizationExecutionTuple.createHuman(
         pre,
-        WORKLOAD,
+        "spiffe://firemud/ns/" + namespace + "/sa/logging-admin-service",
         FINGERPRINT,
         RESERVATION_OWNER,
         19L,
@@ -336,6 +380,7 @@ class StartSessionOperatorRedemptionClientTest {
       String evaluatedAt,
       String expiresAt) {
     String tenantId = TENANT.toString();
+    String namespace = tuple.action().scope().targetNamespace();
     Map<String, Object> projection =
         Map.of(
             "sourceType",
@@ -388,7 +433,7 @@ class StartSessionOperatorRedemptionClientTest {
             StartSessionAuthorityEvidenceBundle.BUNDLE_VERSION,
             "authorityScope",
             Map.of(
-                "scope", Map.of("tenantId", tenantId, "targetNamespace", NAMESPACE),
+                "scope", Map.of("tenantId", tenantId, "targetNamespace", namespace),
                 "actionFamily", tuple.actionFamily(),
                 "applicableAccountId", ACTOR.toString(),
                 "applicableTenantId", tenantId),

@@ -3,6 +3,10 @@
 -- Request storage is the bounded canonical tuple plus 1 KiB closed-request overhead. Response
 -- storage has a local 8 MiB fail-closed budget and makes no claim about gRPC transport capacity.
 -- [jooq ignore start]
+CREATE UNIQUE INDEX uq_gs_start_session_template_association_pin_binding
+    ON game_session_start_session_template_association_pin
+        (target_namespace, control_plane_request_id, owner_attempt_id, owner_fence, canonical_tenant_id);
+
 CREATE TABLE game_session_start_session_launch_descriptor_pin (
     target_namespace VARCHAR(63) NOT NULL,
     control_plane_request_id VARCHAR(128) NOT NULL,
@@ -20,9 +24,14 @@ CREATE TABLE game_session_start_session_launch_descriptor_pin (
         PRIMARY KEY (target_namespace, control_plane_request_id),
     CONSTRAINT uq_gs_start_session_launch_descriptor_attempt UNIQUE (owner_attempt_id),
     CONSTRAINT fk_gs_start_session_launch_descriptor_association
-        FOREIGN KEY (target_namespace, control_plane_request_id)
+        FOREIGN KEY (
+            target_namespace,
+            control_plane_request_id,
+            owner_attempt_id,
+            owner_fence,
+            canonical_tenant_id)
         REFERENCES game_session_start_session_template_association_pin
-            (target_namespace, control_plane_request_id),
+            (target_namespace, control_plane_request_id, owner_attempt_id, owner_fence, canonical_tenant_id),
     CONSTRAINT chk_gs_start_session_launch_descriptor_identity CHECK (
         octet_length(target_namespace) BETWEEN 1 AND 63
         AND target_namespace ~ '^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$'

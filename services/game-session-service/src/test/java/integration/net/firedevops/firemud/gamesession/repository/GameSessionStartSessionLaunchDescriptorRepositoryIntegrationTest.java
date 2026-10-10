@@ -125,6 +125,36 @@ class GameSessionStartSessionLaunchDescriptorRepositoryIntegrationTest {
   }
 
   @Test
+  void databaseRejectsDescriptorPinsWithSubstitutedAssociationOwnerTuple() {
+    Fixture fixture = fixture();
+    RetainedAssociation retained = retainAssociation(fixture, "descriptor-pin-owner-tuple");
+    var association = retained.association().result();
+    var ownerRequest = association.request();
+    UUID canonicalTenantId = association.association().canonicalTenantId();
+
+    assertDescriptorPinRejectedForOwnerTuple(
+        fixture,
+        retained,
+        UUID.randomUUID(),
+        ownerRequest.ownerAttemptId(),
+        ownerRequest.ownerFence());
+    assertDescriptorPinRejectedForOwnerTuple(
+        fixture, retained, canonicalTenantId, UUID.randomUUID(), ownerRequest.ownerFence());
+    assertDescriptorPinRejectedForOwnerTuple(
+        fixture,
+        retained,
+        canonicalTenantId,
+        ownerRequest.ownerAttemptId(),
+        ownerRequest.ownerFence() + 1);
+    assertThat(fixture.pinCount()).isZero();
+
+    PinnedLaunchDescriptorSnapshot valid =
+        fixture.pin(retained.claim(), descriptor(retained, "valid-owner-tuple-descriptor"));
+    assertThat(fixture.find(retained.claim())).contains(valid);
+    assertThat(fixture.pinCount()).isOne();
+  }
+
+  @Test
   void pinsAClosedApplicationFailureAsTheFinalDescriptorOutcome() {
     Fixture fixture = fixture();
     var retained = retainAssociation(fixture, "descriptor-pin-application-failure");
@@ -408,6 +438,40 @@ class GameSessionStartSessionLaunchDescriptorRepositoryIntegrationTest {
         GameSessionStartSessionTemplateAssociationRepositoryIntegrationTest.result(
             tuple, claim, new InitialConfigured(), UUID.randomUUID());
     return new RetainedAssociation(tuple, claim, fixture.pinAssociation(claim, initial));
+  }
+
+  private static void assertDescriptorPinRejectedForOwnerTuple(
+      Fixture fixture,
+      RetainedAssociation retained,
+      UUID canonicalTenantId,
+      UUID ownerAttemptId,
+      long ownerFence) {
+    assertThatThrownBy(
+            () ->
+                fixture.dsl.execute(
+                    "INSERT INTO game_session_start_session_launch_descriptor_pin "
+                        + "(target_namespace, control_plane_request_id, canonical_tenant_id, "
+                        + "owner_attempt_id, owner_fence, association_request_digest, "
+                        + "association_response_digest, descriptor_request_wire, "
+                        + "descriptor_response_wire, descriptor_request_digest, "
+                        + "descriptor_response_digest) "
+                        + "SELECT association.target_namespace, association.control_plane_request_id, "
+                        + "?, ?, ?, association.association_request_digest, "
+                        + "association.association_response_digest, ?, ?, ?, ? "
+                        + "FROM game_session_start_session_template_association_pin association "
+                        + "WHERE association.target_namespace = ? "
+                        + "AND association.control_plane_request_id = ?",
+                    canonicalTenantId,
+                    ownerAttemptId,
+                    ownerFence,
+                    new byte[] {1},
+                    new byte[] {1},
+                    "sha256:" + "a".repeat(64),
+                    "sha256:" + "b".repeat(64),
+                    retained.claim().targetNamespace(),
+                    retained.claim().controlPlaneRequestId()))
+        .isInstanceOf(RuntimeException.class)
+        .hasMessageContaining("fk_gs_start_session_launch_descriptor_association");
   }
 
   private static boolean continueAndPin(
