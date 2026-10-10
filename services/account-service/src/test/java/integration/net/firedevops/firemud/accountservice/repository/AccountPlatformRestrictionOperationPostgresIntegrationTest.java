@@ -128,16 +128,35 @@ class AccountPlatformRestrictionOperationPostgresIntegrationTest {
 
   @Test
   void retainedPreV137BirthDoesNotBecomeCurrentRestrictionAbsenceAfterMigration() {
-    Context context = context("134");
+    Context context = context("126");
     Account account = account();
     context
         .transaction()
         .executeWithoutResult(status -> new AccountRepository(context.dsl()).save(account));
+    assertThat(context.dsl().fetchCount(DSL.table("account_platform_restriction_births")))
+        .isEqualTo(2);
     assertThat(context.dsl().fetchCount(DSL.table("account_platform_restriction_projections")))
+        .isEqualTo(2);
+    assertThat(context.dsl().fetchCount(DSL.table("account_platform_restriction_birth_outbox")))
         .isEqualTo(2);
 
     migrate(context, null);
 
+    assertThat(context.dsl().fetchCount(DSL.table("account_platform_restriction_births")))
+        .isEqualTo(2);
+    assertThat(context.dsl().fetchCount(DSL.table("account_platform_restriction_projections")))
+        .isEqualTo(2);
+    assertThat(context.dsl().fetchCount(DSL.table("account_platform_restriction_birth_outbox")))
+        .isEqualTo(2);
+    assertThat(
+            context
+                .dsl()
+                .fetch(
+                    "SELECT restriction_state FROM account_platform_restriction_births "
+                        + "WHERE account_uuid = ? ORDER BY category",
+                    account.getAccountUuid())
+                .getValues("restriction_state", String.class))
+        .containsExactly("NONRESTRICTED", "NONRESTRICTED");
     assertThat(
             context.dsl().fetchCount(DSL.table("account_platform_restriction_current_projections")))
         .isZero();

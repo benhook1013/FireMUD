@@ -180,7 +180,7 @@ class GameSessionFreshTenantAssociationRepositoryIntegrationTest {
   void retainedSourceProvenanceCannotCreateAFreshTenantMapping() {
     Fixture fixture = fixture();
     IntakeReceipt retainedSource = fixture.registerRetainedSource(uuid(618));
-    assertThat(retainedSource.source().provenanceKind()).isEqualTo("RETAINED_GAME_V29");
+    assertThat(retainedSource.source().provenanceKind()).isEqualTo("RETAINED_GAME_V30");
 
     assertThatThrownBy(() -> fixture.associate(uuid(622), NAMESPACE, retainedSource))
         .isInstanceOf(InvalidFreshTenantSourceException.class)
@@ -389,7 +389,7 @@ class GameSessionFreshTenantAssociationRepositoryIntegrationTest {
           uuid(624),
           964L,
           "retained-world",
-          "RETAINED_GAME_V29");
+          "RETAINED_GAME_V30");
     }
 
     IntakeReceipt registerSource(
