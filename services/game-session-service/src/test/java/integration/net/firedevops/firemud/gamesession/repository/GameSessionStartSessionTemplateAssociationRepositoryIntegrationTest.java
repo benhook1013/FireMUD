@@ -348,6 +348,116 @@ class GameSessionStartSessionTemplateAssociationRepositoryIntegrationTest {
   }
 
   @Test
+  void initialAssociationInsertRejectsExpiredOriginalAuthorizationWhileOwnerClaimRemainsLive()
+      throws Exception {
+    Fixture fixture = fixture(Duration.ofSeconds(30));
+    Instant expiresAt =
+        Objects.requireNonNull(
+                Objects.requireNonNull(
+                        fixture.dsl.fetchOne("SELECT clock_timestamp() - interval '1 second'"))
+                    .get(0, java.time.OffsetDateTime.class))
+            .toInstant()
+            .truncatedTo(ChronoUnit.MILLIS);
+    StartSessionPostAuthorizationExecutionTuple tuple =
+        tupleWithAuthorizationExpiry("association-pin-expired-original-auth", expiresAt);
+    AttemptClaim claim = fixture.reserveAndAttach(tuple);
+
+    assertThat(fixture.leaseExpired(claim.controlPlaneRequestId())).isFalse();
+    assertThat(fixture.originalAuthorizationReferenceLive(expiresAt.toString())).isFalse();
+    assertThatThrownBy(
+            () ->
+                fixture.pin(
+                    claim, result(tuple, claim, new InitialConfigured(), UUID.randomUUID())))
+        .isInstanceOf(
+            GameSessionStartSessionOperatorAttemptRepository
+                .StaleStartSessionOperatorAttemptClaimException.class)
+        .hasMessageContaining("original Account authorization expired");
+    assertThat(fixture.leaseExpired(claim.controlPlaneRequestId())).isFalse();
+    assertThat(fixture.pinCount()).isZero();
+  }
+
+  @Test
+  void initialAssociationInsertRejectsOriginalAuthorizationThatExpiresWhileWriteIsBlocked()
+      throws Exception {
+    Fixture fixture = fixture(Duration.ofSeconds(45));
+    Instant expiresAt =
+        Objects.requireNonNull(
+                Objects.requireNonNull(
+                        fixture.dsl.fetchOne("SELECT clock_timestamp() + interval '8 seconds'"))
+                    .get(0, java.time.OffsetDateTime.class))
+            .toInstant()
+            .truncatedTo(ChronoUnit.MILLIS);
+    StartSessionPostAuthorizationExecutionTuple tuple =
+        tupleWithAuthorizationExpiry("association-pin-auth-expiry-during-insert", expiresAt);
+    AttemptClaim claim = fixture.reserveAndAttach(tuple);
+    Result initial = result(tuple, claim, new InitialConfigured(), UUID.randomUUID());
+    CountDownLatch blockerReady = new CountDownLatch(1);
+    CountDownLatch releaseBlocker = new CountDownLatch(1);
+    ExecutorService executor = Executors.newFixedThreadPool(2);
+    try {
+      java.util.concurrent.CompletableFuture<Integer> blockerPid =
+          new java.util.concurrent.CompletableFuture<>();
+      Future<?> blocker =
+          executor.submit(
+              () ->
+                  fixture.transactions.executeWithoutResult(
+                      status -> {
+                        int backendPid =
+                            Objects.requireNonNull(
+                                Objects.requireNonNull(
+                                        fixture.dsl.fetchOne("SELECT pg_backend_pid()"))
+                                    .get(0, Integer.class));
+                        fixture.dsl.execute(
+                            "LOCK TABLE game_session_start_session_template_association_pin "
+                                + "IN SHARE ROW EXCLUSIVE MODE");
+                        blockerPid.complete(backendPid);
+                        blockerReady.countDown();
+                        awaitLatch(releaseBlocker, "association insert lock release");
+                      }));
+      assertThat(blockerReady.await(15, TimeUnit.SECONDS)).isTrue();
+
+      java.util.concurrent.CompletableFuture<Integer> waiterPid =
+          new java.util.concurrent.CompletableFuture<>();
+      Future<RuntimeException> waiter =
+          executor.submit(
+              () ->
+                  fixture.transactions.execute(
+                      status -> {
+                        waiterPid.complete(
+                            Objects.requireNonNull(
+                                Objects.requireNonNull(
+                                        fixture.dsl.fetchOne("SELECT pg_backend_pid()"))
+                                    .get(0, Integer.class)));
+                        try {
+                          fixture.pins.pinInitialOrValidateExactReplay(claim, initial);
+                          return null;
+                        } catch (RuntimeException failure) {
+                          return failure;
+                        }
+                      }));
+      int pinBackendPid = waiterPid.get(15, TimeUnit.SECONDS);
+      int blockerBackendPid = blockerPid.get(15, TimeUnit.SECONDS);
+      awaitPostgresLockWait(fixture.dsl, pinBackendPid, blockerBackendPid);
+      awaitOriginalAuthorizationExpiry(fixture, expiresAt.toString());
+      assertThat(fixture.leaseExpired(claim.controlPlaneRequestId())).isFalse();
+      releaseBlocker.countDown();
+
+      RuntimeException failure = waiter.get(15, TimeUnit.SECONDS);
+      assertThat(failure)
+          .isInstanceOf(
+              GameSessionStartSessionOperatorAttemptRepository
+                  .StaleStartSessionOperatorAttemptClaimException.class)
+          .hasMessageContaining("original Account authorization expired");
+      blocker.get(15, TimeUnit.SECONDS);
+      assertThat(fixture.leaseExpired(claim.controlPlaneRequestId())).isFalse();
+      assertThat(fixture.pinCount()).isZero();
+    } finally {
+      releaseBlocker.countDown();
+      executor.shutdownNow();
+    }
+  }
+
+  @Test
   void initialAssociationInsertRejectsAClaimThatExpiresWhileTheInsertIsBlocked() throws Exception {
     Fixture fixture = fixture(Duration.ofSeconds(5));
     StartSessionPostAuthorizationExecutionTuple tuple =
@@ -511,6 +621,20 @@ class GameSessionStartSessionTemplateAssociationRepositoryIntegrationTest {
     assertThat(blockedByExpectedBackend)
         .as("association INSERT SELECT waits on the held PostgreSQL relation lock")
         .isTrue();
+  }
+
+  private static void awaitOriginalAuthorizationExpiry(Fixture fixture, String expiresAt)
+      throws InterruptedException {
+    long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(15);
+    while (System.nanoTime() < deadline) {
+      if (!fixture.originalAuthorizationReferenceLive(expiresAt)) {
+        return;
+      }
+      Thread.sleep(10L);
+    }
+    assertThat(fixture.originalAuthorizationReferenceLive(expiresAt))
+        .as("original Account authorization expires according to PostgreSQL time")
+        .isFalse();
   }
 
   private static void awaitLatch(CountDownLatch latch, String awaitedState) {
@@ -989,6 +1113,16 @@ class GameSessionStartSessionTemplateAssociationRepositoryIntegrationTest {
 
   private static StartSessionPostAuthorizationExecutionTuple tuple(
       String requestId, String auditReason) {
+    return tuple(requestId, auditReason, AUTHORITY_EXPIRES_AT);
+  }
+
+  private static StartSessionPostAuthorizationExecutionTuple tupleWithAuthorizationExpiry(
+      String requestId, Instant authorizationExpiresAt) {
+    return tuple(requestId, "pin one normalized template association", authorizationExpiresAt);
+  }
+
+  private static StartSessionPostAuthorizationExecutionTuple tuple(
+      String requestId, String auditReason, Instant authorizationExpiresAt) {
     StartSessionOperatorAction action =
         new StartSessionOperatorAction(
             StartSessionOperatorAction.ACTION_FAMILY_SCHEMA_ID,
@@ -1006,7 +1140,7 @@ class GameSessionStartSessionTemplateAssociationRepositoryIntegrationTest {
         FINGERPRINT,
         RESERVATION_OWNER,
         19L,
-        authorityBundle(pre),
+        authorityBundle(pre, authorizationExpiresAt),
         new StartSessionAuthorityEvidenceBundle.BundleReference(
             StartSessionAuthorityEvidenceBundle.BUNDLE_VERSION,
             "17",
@@ -1014,7 +1148,8 @@ class GameSessionStartSessionTemplateAssociationRepositoryIntegrationTest {
             "18446744073709551615"));
   }
 
-  private static byte[] authorityBundle(StartSessionPreAuthorizationReservationTuple tuple) {
+  private static byte[] authorityBundle(
+      StartSessionPreAuthorizationReservationTuple tuple, Instant authorizationExpiresAt) {
     Map<String, Object> projection =
         Map.of(
             "sourceType",
@@ -1028,7 +1163,7 @@ class GameSessionStartSessionTemplateAssociationRepositoryIntegrationTest {
             "evaluatedAt",
             AUTHORITY_EVALUATED_AT.toString(),
             "expiresAt",
-            AUTHORITY_EXPIRES_AT.toString());
+            authorizationExpiresAt.toString());
     Map<String, Object> identity =
         Map.of(
             "issuanceOperationId", ISSUANCE_ID.toString(),
@@ -1221,6 +1356,11 @@ class GameSessionStartSessionTemplateAssociationRepositoryIntegrationTest {
       }
       Boolean expired = row.get("expired", Boolean.class);
       return Boolean.TRUE.equals(expired);
+    }
+
+    boolean originalAuthorizationReferenceLive(String expiresAt) {
+      var row = dsl.fetchOne("SELECT ?::timestamptz > clock_timestamp() AS live", expiresAt);
+      return row != null && Boolean.TRUE.equals(row.get("live", Boolean.class));
     }
 
     int attemptCount() {

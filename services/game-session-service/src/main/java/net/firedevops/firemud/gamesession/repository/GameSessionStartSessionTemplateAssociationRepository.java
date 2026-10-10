@@ -15,6 +15,7 @@ import net.firedevops.firemud.common.gamedesign.StartSessionTemplateAssociationR
 import net.firedevops.firemud.common.gamedesign.StartSessionTemplateAssociationReadEvidence.Request;
 import net.firedevops.firemud.common.gamedesign.StartSessionTemplateAssociationReadEvidence.Result;
 import net.firedevops.firemud.common.gamedesign.StartSessionTemplateAssociationReadGrpcCodec;
+import net.firedevops.firemud.common.operator.StartSessionAuthorityEvidenceBundle;
 import net.firedevops.firemud.common.operator.StartSessionPostAuthorizationExecutionTuple;
 import net.firedevops.firemud.gamedesign.v1.ReadStartSessionTemplateAssociationRequest;
 import net.firedevops.firemud.gamedesign.v1.ReadStartSessionTemplateAssociationResponse;
@@ -152,10 +153,14 @@ public final class GameSessionStartSessionTemplateAssociationRepository {
     }
 
     Association association = candidate.association();
-    Record inserted = insertInitialPin(claim, attempt, association, requestWire, responseWire);
+    String originalAuthorizationExpiresAt = originalAuthorizationExpiresAt(attempt);
+    Record inserted =
+        insertInitialPin(
+            claim, attempt, association, requestWire, responseWire, originalAuthorizationExpiresAt);
     if (inserted == null) {
       throw new StaleStartSessionOperatorAttemptClaimException(
-          "Game Session owner claim expired or changed before the initial association pin");
+          "Game Session owner claim expired or changed, or the original Account authorization "
+              + "expired before the initial association pin");
     }
     return decodeStored(inserted, claim.targetNamespace(), claim.controlPlaneRequestId(), attempt);
   }
@@ -165,7 +170,8 @@ public final class GameSessionStartSessionTemplateAssociationRepository {
       GameSessionStartSessionOperatorAttemptRepository.AttemptSnapshot attempt,
       Association association,
       byte[] requestWire,
-      byte[] responseWire) {
+      byte[] responseWire,
+      String originalAuthorizationExpiresAt) {
     byte[] exactTuple = attempt.postAuthorizationExecutionTuple();
     byte[] exactProjection = attempt.accountRedemptionProjection();
     if (exactProjection == null) {
@@ -195,6 +201,7 @@ public final class GameSessionStartSessionTemplateAssociationRepository {
             + "AND attempt.account_redemption_projection IS NOT NULL "
             + "AND attempt.post_authorization_execution_tuple = ? "
             + "AND attempt.account_redemption_projection = ? "
+            + "AND ?::timestamptz > clock_timestamp() "
             + "AND attempt.lease_expires_at > clock_timestamp() "
             + "RETURNING *",
         sha256(exactTuple),
@@ -221,7 +228,17 @@ public final class GameSessionStartSessionTemplateAssociationRepository {
         claim.claimOwnerId(),
         claim.ownerFence(),
         exactTuple,
-        exactProjection);
+        exactProjection,
+        originalAuthorizationExpiresAt);
+  }
+
+  private static String originalAuthorizationExpiresAt(
+      GameSessionStartSessionOperatorAttemptRepository.AttemptSnapshot attempt) {
+    StartSessionPostAuthorizationExecutionTuple tuple =
+        StartSessionPostAuthorizationExecutionTuple.decode(
+            attempt.postAuthorizationExecutionTuple());
+    return StartSessionAuthorityEvidenceBundle.decode(tuple.authorityEvidenceBundleBytes())
+        .authorizationExpiresAt();
   }
 
   private GameSessionStartSessionOperatorAttemptRepository.AttemptSnapshot validateCurrentAttempt(
