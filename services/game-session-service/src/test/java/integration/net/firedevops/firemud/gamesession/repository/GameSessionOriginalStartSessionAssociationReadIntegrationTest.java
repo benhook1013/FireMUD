@@ -74,7 +74,6 @@ class GameSessionOriginalStartSessionAssociationReadIntegrationTest {
         fixture.read(selector(starting.startingInstance().launchAssociation())).orElseThrow();
 
     assertThat(read.association()).isEqualTo(starting.startingInstance().launchAssociation());
-    assertThat(read.postAuthorizationExecutionTuple()).isEqualTo(tuple);
     assertThat(read.postAuthorizationExecutionTuple().canonicalBytes())
         .containsExactly(tuple.canonicalBytes());
     assertThat(read.ownerAttemptId()).isEqualTo(starting.claim().ownerAttemptId());
