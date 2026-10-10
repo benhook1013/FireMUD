@@ -60,6 +60,7 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.postgresql.util.PSQLException;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.datasource.DataSourceTransactionManager;
 import org.springframework.jdbc.datasource.TransactionAwareDataSourceProxy;
@@ -361,6 +362,46 @@ class AccountJwtReadinessStoragePostgresIntegrationTest {
     assertThat(ownerEvidence.plan().planDigest()).isEqualTo(plan.planDigest());
     assertThat(ownerEvidence.entry()).isEqualTo(issuedEntry);
     assertThat(ownerEvidence.expectedPod()).isEqualTo(expectedPods.getFirst());
+    assertThatThrownBy(
+            () ->
+                inTransaction(
+                    context,
+                    () ->
+                        owner
+                            .readiness()
+                            .readCurrentProbeOwner(
+                                BINDING,
+                                owner.trust(),
+                                ownerSelector(
+                                    plan,
+                                    issuedEntry,
+                                    expectedPods.getFirst(),
+                                    issuedEntry.expectedActive(),
+                                    "inventory-r2",
+                                    "d".repeat(64)),
+                                refreshedInventory,
+                                BINDING.namespace())))
+        .isInstanceOf(AccountJwtReadinessReceiverInvocationPort.ReceiverUnavailableException.class);
+    assertThatThrownBy(
+            () ->
+                inTransaction(
+                    context,
+                    () ->
+                        owner
+                            .readiness()
+                            .readCurrentProbeOwner(
+                                BINDING,
+                                owner.trust(),
+                                ownerSelector(
+                                    plan,
+                                    issuedEntry,
+                                    expectedPods.getFirst(),
+                                    issuedEntry.expectedActive(),
+                                    "inventory-r1",
+                                    "e".repeat(64)),
+                                refreshedInventory,
+                                BINDING.namespace())))
+        .isInstanceOf(AccountJwtReadinessReceiverInvocationPort.ReceiverUnavailableException.class);
     var inventedActiveFence =
         ownerSelector(
             plan,
@@ -607,7 +648,10 @@ class AccountJwtReadinessStoragePostgresIntegrationTest {
     byte[] exactPreimage = proof.readinessEvidencePreimage();
     assertThatThrownBy(
             () -> insertDirectPromotion(context, owner, proof, "0".repeat(64), exactPreimage))
-        .isInstanceOf(RuntimeException.class);
+        .satisfies(
+            failure ->
+                assertThat(postgresConstraint(failure))
+                    .isEqualTo("account_jwt_signer_promotion_readiness_digest"));
     String changedProofText =
         new String(exactPreimage, StandardCharsets.UTF_8)
             .replace(
@@ -618,7 +662,31 @@ class AccountJwtReadinessStoragePostgresIntegrationTest {
             () ->
                 insertDirectPromotion(
                     context, owner, proof, sha256(changedPreimage), changedPreimage))
-        .isInstanceOf(RuntimeException.class);
+        .satisfies(
+            failure ->
+                assertThat(postgresConstraint(failure))
+                    .isEqualTo("account_jwt_signer_promotion_readiness_binding"));
+
+    assertThatThrownBy(
+            () ->
+                inTransaction(
+                    context,
+                    () -> {
+                      insertDirectGenerationAbortReceipt(context, owner);
+                      insertDirectPromotionInCurrentTransaction(
+                          context,
+                          owner,
+                          proof,
+                          UUID.randomUUID(),
+                          proof.readinessEvidenceDigest(),
+                          exactPreimage);
+                      return null;
+                    }))
+        .satisfies(
+            failure ->
+                assertThat(postgresConstraint(failure))
+                    .isEqualTo("account_jwt_signer_promotion_insert_binding"));
+    assertThat(count(context, "account_jwt_signer_generation_abort_receipts")).isZero();
 
     var publicationEvidence = proof.publication();
     PromotionPreparation preparation =
@@ -688,7 +756,10 @@ class AccountJwtReadinessStoragePostgresIntegrationTest {
                                     + "SET readiness_evidence_digest = ? WHERE operation_id = ?",
                                 "0".repeat(64),
                                 prepared.operationId())))
-        .isInstanceOf(RuntimeException.class);
+        .satisfies(
+            failure ->
+                assertThat(postgresConstraint(failure))
+                    .isEqualTo("account_jwt_signer_operation_immutable"));
     byte[] changedStoredPreimage = exactPreimage.clone();
     changedStoredPreimage[0] ^= 1;
     assertThatThrownBy(
@@ -703,7 +774,10 @@ class AccountJwtReadinessStoragePostgresIntegrationTest {
                                     + "SET readiness_evidence_preimage = ? WHERE operation_id = ?",
                                 changedStoredPreimage,
                                 prepared.operationId())))
-        .isInstanceOf(RuntimeException.class);
+        .satisfies(
+            failure ->
+                assertThat(postgresConstraint(failure))
+                    .isEqualTo("account_jwt_signer_promotion_immutable"));
 
     AccountJwtSignerDesiredStateRepository restartedDesired =
         new AccountJwtSignerDesiredStateRepository(context.dsl());
@@ -714,6 +788,12 @@ class AccountJwtReadinessStoragePostgresIntegrationTest {
     AccountJwtReadinessProbeRepository restartedReadiness =
         new AccountJwtReadinessProbeRepository(
             context.dsl(), restartedDesired, restartedPublication, restartedInventory);
+    assertThatThrownBy(
+            () ->
+                inTransaction(
+                    context,
+                    () -> restartedDesired.readCurrentGenerationRequest(BINDING, owner.trust())))
+        .isInstanceOf(AccountJwtSignerDesiredStateRepository.QuarantinedStateException.class);
     var restartedProof =
         inTransaction(
             context,
@@ -723,6 +803,21 @@ class AccountJwtReadinessStoragePostgresIntegrationTest {
                         BINDING, owner.trust(), owner.result().operationId(), refreshedInventory)
                     .orElseThrow());
     assertThat(restartedProof.readinessEvidencePreimage()).isEqualTo(exactPreimage);
+    var dispatchedEvidence =
+        inTransaction(
+            context,
+            () -> restartedDesired.readAndMarkPreparedPromotionDispatched(BINDING, owner.trust()));
+    assertThat(dispatchedEvidence.promotion().privatePromotionDispatched()).isTrue();
+    var dispatchedProof =
+        inTransaction(
+            context,
+            () ->
+                restartedReadiness
+                    .readPromotionProof(BINDING, owner.trust(), owner.result().operationId())
+                    .orElseThrow());
+    assertThat(dispatchedProof.readinessEvidencePreimage()).isEqualTo(exactPreimage);
+    assertThat(dispatchedProof.readinessEvidenceDigest())
+        .isEqualTo(proof.readinessEvidenceDigest());
     OwnerState restartedOwner =
         new OwnerState(
             restartedDesired,
@@ -741,7 +836,7 @@ class AccountJwtReadinessStoragePostgresIntegrationTest {
                     restartedOwner
                         .desired()
                         .prepareCurrentGeneration(
-                            BINDING, restartedOwner.trust(), preparation, restartedProof)))
+                            BINDING, restartedOwner.trust(), preparation, dispatchedProof)))
         .isEqualTo(prepared);
   }
 
@@ -846,62 +941,181 @@ class AccountJwtReadinessStoragePostgresIntegrationTest {
       AccountJwtReadinessProbeRepository.ReadinessPromotionProof proof,
       String readinessDigest,
       byte[] readinessPreimage) {
+    inTransaction(
+        context,
+        () -> {
+          insertDirectPromotionInCurrentTransaction(
+              context, owner, proof, UUID.randomUUID(), readinessDigest, readinessPreimage);
+          return null;
+        });
+  }
+
+  private static void insertDirectPromotionInCurrentTransaction(
+      TestContext context,
+      OwnerState owner,
+      AccountJwtReadinessProbeRepository.ReadinessPromotionProof proof,
+      UUID promotionOperationId,
+      String readinessDigest,
+      byte[] readinessPreimage) {
     var publication = proof.publication();
+    String activeGenerationMarker = generationMarkerUnchecked(owner.result());
     int inserted =
-        inTransaction(
-            context,
-            () ->
-                context
-                    .dsl()
-                    .execute(
-                        "INSERT INTO account_jwt_signer_promotion_operations "
-                            + "(operation_id, environment_id, cluster_id, kubernetes_namespace, custody_mode, "
-                            + "request_digest_version, request_digest, expected_record_version, "
-                            + "expected_previous_generation, expected_previous_kid, target_generation, target_kid, "
-                            + "target_algorithm, target_public_key_fingerprint, "
-                            + "expected_private_secret_resource_version, expected_public_jwks_resource_version, "
-                            + "expected_public_active_generation, expected_public_active_kid, operation_action, "
-                            + "allowed_private_slots_canonical_bytes, status, generation_operation_id, "
-                            + "expected_cluster_incarnation_uid, expected_namespace_uid, "
-                            + "materializer_trust_binding_digest, materializer_trust_config_revision, "
-                            + "api_binding_digest, api_config_revision, expected_private_secret_uid, "
-                            + "expected_public_config_map_uid, prepublication_intent_digest, "
-                            + "prepublication_receipt_digest, mounted_observation_digest, readiness_plan_digest, "
-                            + "readiness_evidence_digest, readiness_evidence_preimage, expected_public_jwks_json, "
-                            + "expected_active_generation_marker_json) "
-                            + "VALUES (?, ?, ?, ?, ?, 1, ?, ?, NULL, NULL, ?, ?, 'RS256', ?, ?, ?, "
-                            + "NULL, NULL, 'PROMOTE_PENDING', ?, 'PREPARED', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                        UUID.randomUUID(),
-                        BINDING.environmentId(),
-                        BINDING.clusterId(),
-                        BINDING.namespace(),
-                        BINDING.mode().value(),
-                        "a".repeat(64),
-                        owner.result().desiredStateVersion(),
-                        Long.parseLong(owner.result().targetGeneration()),
-                        owner.result().targetKid(),
-                        owner.result().publicKeyFingerprint(),
-                        owner.result().observedResourceVersion(),
-                        publication.receipt().observedResourceVersion(),
-                        "[\"current\",\"pending\",\"previous\"]".getBytes(StandardCharsets.UTF_8),
-                        owner.result().operationId(),
-                        UUID.fromString(owner.trust().expectedClusterIncarnationUid()),
-                        UUID.fromString(owner.trust().expectedNamespaceUid()),
-                        owner.trust().bindingDigest(),
-                        owner.trust().configRevision(),
-                        API_DIGEST,
-                        API_REVISION,
-                        UUID.fromString(owner.result().secretUid()),
-                        UUID.fromString(CONFIG_MAP_UID),
-                        publication.intent().intentDigest(),
-                        publication.receipt().receiptDigest(),
-                        publication.mountedCorrespondence().observationDigest(),
-                        proof.plan().planDigest(),
-                        readinessDigest,
-                        readinessPreimage,
-                        publication.intent().jwksJson(),
-                        "{}"));
+        context
+            .dsl()
+            .execute(
+                "INSERT INTO account_jwt_signer_promotion_operations "
+                    + "(operation_id, environment_id, cluster_id, kubernetes_namespace, custody_mode, "
+                    + "request_digest_version, request_digest, expected_record_version, "
+                    + "expected_previous_generation, expected_previous_kid, target_generation, target_kid, "
+                    + "target_algorithm, target_public_key_fingerprint, "
+                    + "expected_private_secret_resource_version, expected_public_jwks_resource_version, "
+                    + "expected_public_active_generation, expected_public_active_kid, operation_action, "
+                    + "allowed_private_slots_canonical_bytes, status, generation_operation_id, "
+                    + "expected_cluster_incarnation_uid, expected_namespace_uid, "
+                    + "materializer_trust_binding_digest, materializer_trust_config_revision, "
+                    + "api_binding_digest, api_config_revision, expected_private_secret_uid, "
+                    + "expected_public_config_map_uid, prepublication_intent_digest, "
+                    + "prepublication_receipt_digest, mounted_observation_digest, readiness_plan_digest, "
+                    + "readiness_evidence_digest, readiness_evidence_preimage, expected_public_jwks_json, "
+                    + "expected_active_generation_marker_json) "
+                    + "VALUES (?, ?, ?, ?, ?, 1, ?, ?, NULL, NULL, ?, ?, 'RS256', ?, ?, ?, "
+                    + "NULL, NULL, 'PROMOTE_PENDING', ?, 'PREPARED', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                promotionOperationId,
+                BINDING.environmentId(),
+                BINDING.clusterId(),
+                BINDING.namespace(),
+                BINDING.mode().value(),
+                directPromotionRequestDigest(owner, proof, promotionOperationId, readinessDigest),
+                owner.result().desiredStateVersion(),
+                Long.parseLong(owner.result().targetGeneration()),
+                owner.result().targetKid(),
+                owner.result().publicKeyFingerprint(),
+                owner.result().observedResourceVersion(),
+                publication.receipt().observedResourceVersion(),
+                "[\"current\",\"pending\",\"previous\"]".getBytes(StandardCharsets.UTF_8),
+                owner.result().operationId(),
+                UUID.fromString(owner.trust().expectedClusterIncarnationUid()),
+                UUID.fromString(owner.trust().expectedNamespaceUid()),
+                owner.trust().bindingDigest(),
+                owner.trust().configRevision(),
+                API_DIGEST,
+                API_REVISION,
+                UUID.fromString(owner.result().secretUid()),
+                UUID.fromString(CONFIG_MAP_UID),
+                publication.intent().intentDigest(),
+                publication.receipt().receiptDigest(),
+                publication.mountedCorrespondence().observationDigest(),
+                proof.plan().planDigest(),
+                readinessDigest,
+                readinessPreimage,
+                publication.intent().jwksJson(),
+                activeGenerationMarker);
     assertThat(inserted).isEqualTo(1);
+  }
+
+  private static void insertDirectGenerationAbortReceipt(TestContext context, OwnerState owner) {
+    int inserted =
+        context
+            .dsl()
+            .execute(
+                "INSERT INTO account_jwt_signer_generation_abort_receipts "
+                    + "(operation_id, environment_id, cluster_id, kubernetes_namespace, custody_mode, "
+                    + "operation_digest, generation_request_digest, generation_receipt_digest, "
+                    + "expected_state_version, resulting_state_version, expected_cluster_incarnation_uid, "
+                    + "expected_namespace_uid, trust_binding_digest, trust_config_revision, "
+                    + "durable_active_generation, durable_active_kid, published_active_generation, "
+                    + "published_active_kid) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, NULL)",
+                owner.result().operationId(),
+                BINDING.environmentId(),
+                BINDING.clusterId(),
+                BINDING.namespace(),
+                BINDING.mode().value(),
+                owner.result().operationDigest(),
+                owner.result().generationRequestDigest(),
+                owner.result().receiptDigest(),
+                owner.result().desiredStateVersion(),
+                owner.result().desiredStateVersion() + 1L,
+                UUID.fromString(owner.trust().expectedClusterIncarnationUid()),
+                UUID.fromString(owner.trust().expectedNamespaceUid()),
+                owner.trust().bindingDigest(),
+                owner.trust().configRevision());
+    assertThat(inserted).isEqualTo(1);
+  }
+
+  private static String directPromotionRequestDigest(
+      OwnerState owner,
+      AccountJwtReadinessProbeRepository.ReadinessPromotionProof proof,
+      UUID promotionOperationId,
+      String readinessDigest) {
+    var publication = proof.publication();
+    var result = owner.result();
+    Map<String, Object> preimage = new LinkedHashMap<>();
+    preimage.put("digestVersion", "account-jwt-signer-promotion-operation/v1");
+    preimage.put("operationId", promotionOperationId.toString());
+    preimage.put("generationOperationId", result.operationId().toString());
+    preimage.put("generationOperationDigest", result.operationDigest());
+    preimage.put("generationReceiptDigest", result.receiptDigest());
+    preimage.put("environmentId", BINDING.environmentId());
+    preimage.put("clusterId", BINDING.clusterId());
+    preimage.put("namespace", BINDING.namespace());
+    preimage.put("custodyMode", BINDING.mode().value());
+    preimage.put("expectedRecordVersion", Long.toString(result.desiredStateVersion()));
+    preimage.put("expectedPreviousActive", Map.of("present", false));
+    preimage.put("expectedPublishedActive", Map.of("present", false));
+    preimage.put("targetGeneration", result.targetGeneration());
+    preimage.put("targetKid", result.targetKid());
+    preimage.put("targetAlgorithm", "RS256");
+    preimage.put("targetPublicKeyFingerprint", result.publicKeyFingerprint());
+    preimage.put("expectedPrivateSecretUid", result.secretUid());
+    preimage.put("expectedPrivateSecretResourceVersion", result.observedResourceVersion());
+    preimage.put("expectedPublicConfigMapUid", CONFIG_MAP_UID);
+    preimage.put(
+        "expectedPublicJwksResourceVersion", publication.receipt().observedResourceVersion());
+    preimage.put("expectedClusterIncarnationUid", owner.trust().expectedClusterIncarnationUid());
+    preimage.put("expectedNamespaceUid", owner.trust().expectedNamespaceUid());
+    preimage.put("materializerTrustBindingDigest", owner.trust().bindingDigest());
+    preimage.put("materializerTrustConfigRevision", owner.trust().configRevision());
+    preimage.put("apiBindingDigest", API_DIGEST);
+    preimage.put("apiConfigRevision", API_REVISION);
+    preimage.put("prepublicationIntentDigest", publication.intent().intentDigest());
+    preimage.put("prepublicationReceiptDigest", publication.receipt().receiptDigest());
+    preimage.put(
+        "mountedObservationDigest", publication.mountedCorrespondence().observationDigest());
+    preimage.put("readinessPlanDigest", proof.plan().planDigest());
+    preimage.put("readinessEvidenceDigest", readinessDigest);
+    preimage.put(
+        "publicJwksSha256",
+        sha256(publication.intent().jwksJson().getBytes(StandardCharsets.UTF_8)));
+    preimage.put("operationAction", "PROMOTE_PENDING");
+    preimage.put("allowedPrivateSlots", List.of("current", "pending", "previous"));
+    try {
+      return sha256(Rfc8785CanonicalJson.canonicalizeUtf8(JSON.writeValueAsString(preimage)));
+    } catch (Exception failure) {
+      throw new AssertionError(
+          "Direct promotion digest fixture could not be canonicalized", failure);
+    }
+  }
+
+  private static String postgresConstraint(Throwable failure) {
+    Throwable current = failure;
+    while (current != null) {
+      if (current instanceof PSQLException postgresFailure) {
+        var serverError = postgresFailure.getServerErrorMessage();
+        if (serverError != null) {
+          return serverError.getConstraint();
+        }
+      }
+      current = current.getCause();
+    }
+    return null;
+  }
+
+  private static String generationMarkerUnchecked(GenerationResult result) {
+    try {
+      return generationMarker(result);
+    } catch (Exception failure) {
+      throw new AssertionError("Generation marker fixture could not be serialized", failure);
+    }
   }
 
   private OwnerState createOwnerState(TestContext context) throws Exception {
@@ -1098,6 +1312,16 @@ class AccountJwtReadinessStoragePostgresIntegrationTest {
       ProbeEntry entry,
       ExpectedPod expectedPod,
       Optional<AccountJwtSignerDesiredStateRepository.ActiveSigner> activeFence) {
+    return ownerSelector(plan, entry, expectedPod, activeFence, "inventory-r1", "d".repeat(64));
+  }
+
+  private static AccountJwtReadinessProbeOwnerSelector ownerSelector(
+      ReadinessProbePlan plan,
+      ProbeEntry entry,
+      ExpectedPod expectedPod,
+      Optional<AccountJwtSignerDesiredStateRepository.ActiveSigner> activeFence,
+      String sourceInventoryRevision,
+      String sourceInventoryDigest) {
     var target = expectedPod.target();
     LocalIdentity localIdentity =
         new LocalIdentity(
@@ -1110,8 +1334,8 @@ class AccountJwtReadinessStoragePostgresIntegrationTest {
             target.image(),
             target.verifierConfigSha256(),
             target.applicabilityMatrixDigest(),
-            "inventory-source-r1",
-            "9".repeat(64),
+            sourceInventoryRevision,
+            sourceInventoryDigest,
             target.podLeafSpkiSha256().orElseThrow());
     return new AccountJwtReadinessProbeOwnerSelector(
         plan.operationId(),

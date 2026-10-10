@@ -540,6 +540,16 @@ public final class AccountMountedJwtSignerBundle {
     claims.put("authorityTuple", authorityTuple);
     claims.put("membershipVersion", Map.of());
     claims.put("issuanceFence", initialCounter);
+    if (ControlUiJwtProfileValidator.PROFILE.equals(spec.tokenProfile())) {
+      ControlUiJwtProfileValidator.validateClaims(claims, 1);
+    } else if (PlayerBootstrapJwtProfileValidator.PROFILE.equals(spec.tokenProfile())) {
+      PlayerBootstrapJwtProfileValidator.validateClaims(claims);
+    } else if (REPRESENTATIVE_PROFILE.equals(spec.tokenProfile())) {
+      net.firedevops.firemud.common.security.GameSessionAccountDelegationJwtProfileValidator
+          .validateClaims(claims);
+    } else {
+      throw invalid();
+    }
     return claims;
   }
 

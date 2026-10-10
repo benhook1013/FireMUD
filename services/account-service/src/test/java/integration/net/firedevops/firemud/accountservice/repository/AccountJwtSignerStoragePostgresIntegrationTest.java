@@ -27,6 +27,7 @@ import net.firedevops.firemud.common.json.Rfc8785CanonicalJson;
 import org.flywaydb.core.Flyway;
 import org.jooq.DSLContext;
 import org.jooq.SQLDialect;
+import org.jooq.exception.DataAccessException;
 import org.jooq.impl.DSL;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.AfterEach;
@@ -307,18 +308,19 @@ class AccountJwtSignerStoragePostgresIntegrationTest {
         .isInstanceOf(AccountJwtSignerDesiredStateRepository.IdempotencyConflictException.class);
 
     assertThatThrownBy(
-        () ->
-            inTransaction(
-                context,
-                () ->
-                    context
-                        .dsl()
-                        .execute(
-                            "UPDATE account_jwt_signer_desired_states "
-                                + "SET record_version = record_version + 1, "
-                                + "generation_operation_id = NULL "
-                                + "WHERE environment_id = ?",
-                            BINDING.environmentId())));
+            () ->
+                inTransaction(
+                    context,
+                    () ->
+                        context
+                            .dsl()
+                            .execute(
+                                "UPDATE account_jwt_signer_desired_states "
+                                    + "SET record_version = record_version + 1, "
+                                    + "generation_operation_id = NULL "
+                                    + "WHERE environment_id = ?",
+                                BINDING.environmentId())))
+        .isInstanceOf(DataAccessException.class);
 
     var receipt =
         inTransaction(context, () -> desired.abortUnpreparedGeneration(BINDING, trust, result));

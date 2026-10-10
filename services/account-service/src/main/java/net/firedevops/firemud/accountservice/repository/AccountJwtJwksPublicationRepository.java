@@ -671,23 +671,6 @@ public class AccountJwtJwksPublicationRepository {
     }
   }
 
-  private static void requireExactCurrentIdentity(
-      Binding binding,
-      TrustFence trust,
-      GenerationResult result,
-      String apiBindingDigest,
-      String apiConfigRevision) {
-    if (!result.binding().equals(binding)
-        || !result.trustFence().equals(trust)
-        || !result.trustFence().bindingDigest().equals(trust.bindingDigest())
-        || !result.trustFence().configRevision().equals(trust.configRevision())) {
-      throw new AccountJwtSignerDesiredStateRepository.BindingMismatchException(
-          "Account JWT publication trust identity changed");
-    }
-    requireDigest(apiBindingDigest, "protected ConfigMap API binding digest");
-    requireRevision(apiConfigRevision, "protected ConfigMap API configuration revision");
-  }
-
   private static byte[] canonicalJson(Object value) {
     try {
       return Rfc8785CanonicalJson.canonicalizeUtf8(JSON.writeValueAsString(value));

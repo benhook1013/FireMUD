@@ -1,7 +1,13 @@
 package net.firedevops.firemud.accountservice.config;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.doAnswer;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoMoreInteractions;
 
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.net.URI;
@@ -29,6 +35,46 @@ class AccountJwtValidatorInventoryBindingTest {
   @Test
   void defaultBindingIsInactiveWithoutReadingFilesystem() {
     assertThat(new AccountJwtValidatorInventoryBinding().current()).isEmpty();
+  }
+
+  @Test
+  void acceptsProtectedDirectoryWhenTheFullAncestorChainPasses() throws Exception {
+    Path leaf = Path.of(".").toRealPath();
+    var verifier = mock(AccountJwtValidatorInventoryBinding.ProtectedDirectoryVerifier.class);
+
+    assertThatCode(
+            () -> AccountJwtValidatorInventoryBinding.verifyProtectedDirectoryChain(leaf, verifier))
+        .doesNotThrowAnyException();
+
+    for (Path current = leaf; current != null; current = current.getParent()) {
+      verify(verifier).verify(current);
+    }
+    verifyNoMoreInteractions(verifier);
+  }
+
+  @Test
+  void rejectsWritableAncestorAfterAcceptingTheProtectedLeaf() throws Exception {
+    Path leaf = Path.of(".").toRealPath();
+    Path writableAncestor = leaf.getParent();
+    var verifier = mock(AccountJwtValidatorInventoryBinding.ProtectedDirectoryVerifier.class);
+    doAnswer(
+            invocation -> {
+              Path directory = invocation.getArgument(0);
+              if (writableAncestor.equals(directory)) {
+                throw new IllegalStateException("Directory is writable by an untrusted principal");
+              }
+              return null;
+            })
+        .when(verifier)
+        .verify(any());
+
+    assertThatThrownBy(
+            () -> AccountJwtValidatorInventoryBinding.verifyProtectedDirectoryChain(leaf, verifier))
+        .isInstanceOf(IllegalStateException.class);
+
+    verify(verifier).verify(leaf);
+    verify(verifier).verify(writableAncestor);
+    verifyNoMoreInteractions(verifier);
   }
 
   @Test
