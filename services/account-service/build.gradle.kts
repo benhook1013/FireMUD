@@ -1,7 +1,17 @@
 
 import org.gradle.api.artifacts.component.ProjectComponentIdentifier
-import org.gradle.api.tasks.Sync
+import org.gradle.api.DefaultTask
+import org.gradle.api.file.ArchiveOperations
+import org.gradle.api.file.ConfigurableFileCollection
+import org.gradle.api.file.DirectoryProperty
+import org.gradle.api.file.FileSystemOperations
+import org.gradle.api.tasks.InputFiles
+import org.gradle.api.tasks.OutputDirectory
+import org.gradle.api.tasks.PathSensitive
+import org.gradle.api.tasks.PathSensitivity
+import org.gradle.api.tasks.TaskAction
 import org.gradle.api.tasks.testing.Test
+import javax.inject.Inject
 
 apply(from = "${rootDir}/gradle/proto-convention.gradle")
 
@@ -10,6 +20,33 @@ plugins {
     id("net.firedevops.firemud.secured-stateful-service-conventions")
     id("net.firedevops.firemud.aop-conventions")
     id("net.firedevops.firemud.jooq-conventions")
+}
+
+abstract class ExtractClassFilesFromArchives : DefaultTask() {
+    @get:InputFiles
+    @get:PathSensitive(PathSensitivity.RELATIVE)
+    abstract val archives: ConfigurableFileCollection
+
+    @get:OutputDirectory
+    abstract val destinationDirectory: DirectoryProperty
+
+    @get:Inject
+    abstract val archiveOperations: ArchiveOperations
+
+    @get:Inject
+    abstract val fileSystemOperations: FileSystemOperations
+
+    @TaskAction
+    fun extractClassFiles() {
+        fileSystemOperations.sync {
+            archives.forEach { archive ->
+                from(archiveOperations.zipTree(archive)) {
+                    include("**/*.class")
+                }
+            }
+            into(destinationDirectory.get().asFile)
+        }
+    }
 }
 
 firemudJooq {
@@ -69,21 +106,19 @@ val loggingAdminIntegrationTestArtifacts =
     loggingAdminProjectArtifacts("integrationTestRuntimeClasspath")
 
 val extractLoggingAdminTestClasses =
-    tasks.register<Sync>("extractLoggingAdminTestClasses") {
+    tasks.register<ExtractClassFilesFromArchives>("extractLoggingAdminTestClasses") {
         dependsOn(loggingAdminTestArtifacts.artifactFiles)
-        from({ loggingAdminTestArtifacts.artifacts.map { project.zipTree(it.file) } }) {
-            include("**/*.class")
-        }
-        into(layout.buildDirectory.dir("account-test-classpath/logging-main"))
+        archives.from(loggingAdminTestArtifacts.artifactFiles)
+        destinationDirectory.set(layout.buildDirectory.dir("account-test-classpath/logging-main"))
     }
 
 val extractLoggingAdminIntegrationTestClasses =
-    tasks.register<Sync>("extractLoggingAdminIntegrationTestClasses") {
+    tasks.register<ExtractClassFilesFromArchives>("extractLoggingAdminIntegrationTestClasses") {
         dependsOn(loggingAdminIntegrationTestArtifacts.artifactFiles)
-        from({ loggingAdminIntegrationTestArtifacts.artifacts.map { project.zipTree(it.file) } }) {
-            include("**/*.class")
-        }
-        into(layout.buildDirectory.dir("account-test-classpath/logging-integration"))
+        archives.from(loggingAdminIntegrationTestArtifacts.artifactFiles)
+        destinationDirectory.set(
+            layout.buildDirectory.dir("account-test-classpath/logging-integration")
+        )
     }
 
 tasks.named<Test>("test") {
