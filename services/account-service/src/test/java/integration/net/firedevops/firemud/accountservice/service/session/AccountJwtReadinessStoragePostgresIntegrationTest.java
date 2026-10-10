@@ -636,7 +636,7 @@ class AccountJwtReadinessStoragePostgresIntegrationTest {
     KeyPair retainedPair = generateRsa3072();
     String retainedJwk =
         publicJwk("retained-key", (RSAPublicKey) retainedPair.getPublic()).jsonWithoutKeyOps();
-    String desiredJwks = jwks(retainedJwk, targetJwk.jsonWithoutKeyOps());
+    String desiredJwks = jwks(retainedJwk, targetJwk.json());
     String marker = generationMarker(result);
     String expectedSnapshotDigest =
         AccountJwtJwksPublicationRepository.snapshotDigest(INITIAL_CONFIG_MAP_DATA);
@@ -672,6 +672,8 @@ class AccountJwtReadinessStoragePostgresIntegrationTest {
                     "42",
                     desiredJwks,
                     marker));
+    assertThat(intent.jwksJson()).isEqualTo(desiredJwks);
+    assertThat(intent.jwksJson()).contains(targetJwk.json());
     inTransaction(
         context,
         () ->
