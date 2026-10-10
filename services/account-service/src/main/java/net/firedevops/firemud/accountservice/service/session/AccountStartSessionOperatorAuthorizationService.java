@@ -14,6 +14,7 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
+import java.util.function.Function;
 import java.util.regex.Pattern;
 import net.firedevops.firemud.accountservice.authordraft.AccountControlUiAuthority;
 import net.firedevops.firemud.accountservice.client.StartSessionReservationEvidenceClient;
@@ -31,10 +32,12 @@ import net.firedevops.firemud.accountservice.service.session.AccountOperatorAuth
 import net.firedevops.firemud.accountservice.service.session.AccountResponseEnvelopeCryptography.Binding;
 import net.firedevops.firemud.accountservice.service.session.AccountResponseEnvelopeCryptography.EncryptedResponseEnvelope;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
+import net.firedevops.firemud.common.operator.StartSessionPostAuthorizationExecutionTuple;
 import net.firedevops.firemud.common.operator.StartSessionPreAuthorizationReservationTuple;
 import net.firedevops.firemud.loggingadmin.v1.ReadCurrentClaimEvidenceResponse;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.TransactionDefinition;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.transaction.support.TransactionTemplate;
 import tools.jackson.core.StreamReadFeature;
 import tools.jackson.core.type.TypeReference;
@@ -78,6 +81,7 @@ public final class AccountStartSessionOperatorAuthorizationService {
   private final String loggingPeerUri;
   private final String gameSessionPeerUri;
   private final String gameDesignPeerUri;
+  private final String worldManagementPeerUri;
   private final long referenceLifetimeMillis;
   private final long responseRecoveryWindowMillis;
 
@@ -123,6 +127,7 @@ public final class AccountStartSessionOperatorAuthorizationService {
     loggingPeerUri = exactPeer(exactLoggingPeerUri, "logging-admin-service");
     gameSessionPeerUri = exactPeer(exactGameSessionPeerUri, "game-session-service");
     gameDesignPeerUri = sameNamespacePeer(gameSessionPeerUri, "game-design-service");
+    worldManagementPeerUri = sameNamespacePeer(gameSessionPeerUri, "world-management-service");
     referenceLifetimeMillis = policyMillis(referenceLifetime, "reference lifetime", 5 * 60_000L);
     responseRecoveryWindowMillis =
         policyMillis(responseRecoveryWindow, "response recovery window", 60_000L);
@@ -648,6 +653,135 @@ public final class AccountStartSessionOperatorAuthorizationService {
               clock.instant());
           return projection(exact);
         });
+  }
+
+  /**
+   * Revalidates the original human StartSession authority for a package-local World participation
+   * mutation and invokes the supplied Account-local mutation callback after locking its exact
+   * durable source capture in the same Account transaction. This is only a currentness building
+   * block: it does not authenticate caller-provided Game Session evidence or constitute a complete
+   * World participation service. A future caller must obtain genuine Game Session proof before
+   * invoking it. No end-user credential is accepted on this World-only path.
+   *
+   * <p>The canonical tuple is decoded only after authenticating the exact derived same-namespace
+   * World peer. All input bytes and the actual redeemed Game Session attempt/fence are compared to
+   * Account's original issuance and redemption; this path never issues, redeems, allocates, or
+   * renews authority.
+   */
+  <T> T withCurrentWorldReceivingParticipationCurrentness(
+      byte[] exactCanonicalPostAuthorizationTuple,
+      UUID actualGameSessionOwnerAttemptId,
+      long actualGameSessionOwnerFence,
+      Function<AccountStartSessionAuthorityCapture, T> accountMutation) {
+    requirePeer(worldManagementPeerUri);
+    requireNoAmbientTransactionOrSynchronization();
+
+    byte[] exactPostTupleBytes = copy(exactCanonicalPostAuthorizationTuple);
+    StartSessionPostAuthorizationExecutionTuple postTuple =
+        StartSessionPostAuthorizationExecutionTuple.decode(exactPostTupleBytes);
+    Objects.requireNonNull(accountMutation, "Account-local participation mutation is required");
+    StartSessionPreAuthorizationReservationTuple tuple = postTuple.preAuthorizationTuple();
+    if (!"game-session-service".equals(tuple.targetOwner())) {
+      throw denied("Original StartSession target owner must remain Game Session");
+    }
+    GrpcPeerIdentity worldPeer = GrpcPeerIdentity.current();
+    if (worldPeer == null
+        || !tuple.action().scope().targetNamespace().equals(worldPeer.namespace())) {
+      throw denied("StartSession target namespace does not match the authenticated World peer");
+    }
+    if (!loggingPeerUri.equals(postTuple.authenticatedWorkloadIdentity())) {
+      throw denied("Original StartSession Logging workload identity changed");
+    }
+    requireNonNilUuid(actualGameSessionOwnerAttemptId, "actual Game Session owner attempt ID");
+    requirePositiveFence(actualGameSessionOwnerFence, "actual Game Session owner fence");
+
+    byte[] exactPreTupleBytes = tuple.canonicalJson().getBytes(StandardCharsets.UTF_8);
+    IssuanceRecord observed =
+        findRecord(tuple.controlPlaneRequestId()).orElseThrow(NotFoundException::new);
+    requireOriginalBinding(
+        observed,
+        tuple,
+        exactPreTupleBytes,
+        postTuple.reservationOwnerId(),
+        postTuple.reservationClaimFence());
+    AccountStartSessionOperatorAuthorityBundle observedBundle =
+        AccountStartSessionOperatorAuthorityBundle.decode(observed.authorityEvidenceBundle());
+    observedBundle.requireTupleBinding(tuple);
+    requireWorldReceivingPostTupleBinding(postTuple, observed, tuple);
+    ReadRedeemedOperationProjectionRequest redemptionRequest =
+        new ReadRedeemedOperationProjectionRequest(
+            exactPreTupleBytes,
+            postTuple.authorizationReferenceFingerprint(),
+            postTuple.reservationOwnerId(),
+            postTuple.reservationClaimFence(),
+            actualGameSessionOwnerAttemptId,
+            actualGameSessionOwnerFence);
+    requireRedeemedProjectionBinding(
+        observed, tuple, redemptionRequest, observedBundle, clock.instant());
+
+    var environment = hostedTerms.captureCurrentEnvironmentBoundary();
+    return actors.withCurrentCommitted(
+        tuple.actor().accountId(),
+        tuple.action().scope().tenantId(),
+        observedBundle.controlUiTokenJti(),
+        environment,
+        current -> {
+          IssuanceRecord exact =
+              findRecord(tuple.controlPlaneRequestId()).orElseThrow(NotFoundException::new);
+          requireSameStoredRedemption(observed, exact);
+          requireOriginalBinding(
+              exact,
+              tuple,
+              exactPreTupleBytes,
+              postTuple.reservationOwnerId(),
+              postTuple.reservationClaimFence());
+          AccountStartSessionOperatorAuthorityBundle exactBundle =
+              AccountStartSessionOperatorAuthorityBundle.decode(exact.authorityEvidenceBundle());
+          exactBundle.requireTupleBinding(tuple);
+          requireWorldReceivingPostTupleBinding(postTuple, exact, tuple);
+          requireRedeemedProjectionBinding(
+              exact, tuple, redemptionRequest, exactBundle, clock.instant());
+
+          AccountStartSessionAuthorityCapture lockedCapture =
+              captureRepository.lockReadExactCurrent(
+                  current,
+                  tuple,
+                  loggingPeerUri,
+                  postTuple.reservationOwnerId(),
+                  postTuple.reservationClaimFence());
+          var originalReference =
+              AccountStartSessionOperatorAuthorityBundle.fromSharedReference(
+                  exact.bundleReference());
+          exactBundle.requireCaptureBinding(lockedCapture, tuple, originalReference);
+          exactBundle.requireCurrent(
+              current.source(), current.stored(), tuple, originalReference, clock.instant());
+          return accountMutation.apply(lockedCapture);
+        });
+  }
+
+  private void requireWorldReceivingPostTupleBinding(
+      StartSessionPostAuthorizationExecutionTuple supplied,
+      IssuanceRecord original,
+      StartSessionPreAuthorizationReservationTuple tuple) {
+    StartSessionPostAuthorizationExecutionTuple expected =
+        StartSessionPostAuthorizationExecutionTuple.createHuman(
+            tuple,
+            original.issuanceWorkloadUri(),
+            original.authorizationReferenceFingerprint(),
+            original.reservationOwnerId(),
+            original.reservationClaimFence(),
+            original.authorityEvidenceBundle(),
+            original.bundleReference());
+    if (!MessageDigest.isEqual(expected.canonicalBytes(), supplied.canonicalBytes())) {
+      throw denied("World participation tuple differs from the original Account issuance");
+    }
+  }
+
+  private static void requireNoAmbientTransactionOrSynchronization() {
+    if (TransactionSynchronizationManager.isActualTransactionActive()
+        || TransactionSynchronizationManager.isSynchronizationActive()) {
+      throw denied("World currentness must begin without an ambient Account transaction");
+    }
   }
 
   private PreparedIssuance prepareIssuance(

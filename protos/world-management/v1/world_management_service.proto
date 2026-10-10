@@ -52,6 +52,33 @@ service WorldCanonicalInstancePreparationService {
       returns (PrepareCanonicalWorldInstanceResponse);
 }
 
+// Explicitly unwired Account-authenticated read of one original StartSession World terminal.
+service WorldStartSessionExecutionTerminalReadService {
+  rpc ReadWorldStartSessionExecutionTerminal(
+      ReadWorldStartSessionExecutionTerminalRequest)
+      returns (ReadWorldStartSessionExecutionTerminalResponse);
+}
+
+message ReadWorldStartSessionExecutionTerminalRequest {
+  // Fresh correlation identity for this read, distinct from all retained operation identities.
+  string read_request_id = 1;
+  string target_namespace = 2;
+  bytes original_post_authorization_tuple = 3;
+  string account_world_participation_id = 4;
+  int64 account_world_participation_fence = 5;
+  string game_session_owner_attempt_id = 6;
+  int64 game_session_owner_fence = 7;
+  string canonical_game_instance_id = 8;
+  // Exact original preparation input. World never reparses or normalizes it during recovery.
+  string preparation_input_json = 9;
+}
+
+message ReadWorldStartSessionExecutionTerminalResponse {
+  string read_request_id = 1;
+  // The only result is the existing closed WorldStartSessionExecutionTerminal carrier.
+  bytes canonical_terminal_bytes = 2;
+}
+
 // The exact ten-field committed Game Session launch-association selector.
 message PrepareCanonicalWorldInstanceRequest {
   string read_request_id = 1;

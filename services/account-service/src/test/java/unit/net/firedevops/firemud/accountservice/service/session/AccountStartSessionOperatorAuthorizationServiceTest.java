@@ -45,6 +45,7 @@ import net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding.So
 import net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding.SourceKind;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
 import net.firedevops.firemud.common.operator.StartSessionOperatorAction;
+import net.firedevops.firemud.common.operator.StartSessionPostAuthorizationExecutionTuple;
 import net.firedevops.firemud.common.operator.StartSessionPreAuthorizationReservationTuple;
 import net.firedevops.firemud.loggingadmin.v1.ReadCurrentClaimEvidenceResponse;
 import net.firedevops.firemud.loggingadmin.v1.StartSessionReservationEvidencePurpose;
@@ -65,6 +66,8 @@ class AccountStartSessionOperatorAuthorizationServiceTest {
   private static final String GAME_SESSION_PEER =
       "spiffe://firemud/ns/test/sa/game-session-service";
   private static final String GAME_DESIGN_PEER = "spiffe://firemud/ns/test/sa/game-design-service";
+  private static final String WORLD_MANAGEMENT_PEER =
+      "spiffe://firemud/ns/test/sa/world-management-service";
 
   @AfterEach
   void clearTransactionState() {
@@ -658,7 +661,8 @@ class AccountStartSessionOperatorAuthorizationServiceTest {
             "spiffe://firemud/ns/other/sa/game-design-service",
             "spiffe://firemud/ns/other/sa/game-session-service",
             "spiffe://firemud/ns/test/sa/account-service",
-            LOGGING_PEER)) {
+            LOGGING_PEER,
+            WORLD_MANAGEMENT_PEER)) {
       Context.current()
           .withValue(
               GrpcPeerIdentity.CONTEXT_KEY, GrpcPeerIdentity.parseUri(wrongPeerUri).orElseThrow())
@@ -871,6 +875,303 @@ class AccountStartSessionOperatorAuthorizationServiceTest {
         harness.fingerprintKeys(),
         harness.responseCrypto(),
         harness.captureRepository());
+  }
+
+  @Test
+  void worldCurrentnessAuthenticatesExactPeerBeforeParsingAndDoesNotWidenProjectionRead() {
+    ReadHarness harness = readHarness(NOW.plusSeconds(30));
+    byte[] malformed = "not a canonical tuple".getBytes(StandardCharsets.UTF_8);
+
+    for (String wrongPeerUri :
+        List.of(
+            "spiffe://firemud/ns/other/sa/world-management-service",
+            GAME_DESIGN_PEER,
+            GAME_SESSION_PEER,
+            LOGGING_PEER,
+            "spiffe://firemud/ns/test/sa/account-service")) {
+      Context.current()
+          .withValue(
+              GrpcPeerIdentity.CONTEXT_KEY, GrpcPeerIdentity.parseUri(wrongPeerUri).orElseThrow())
+          .run(
+              () ->
+                  assertThatThrownBy(
+                          () ->
+                              harness
+                                  .service()
+                                  .withCurrentWorldReceivingParticipationCurrentness(
+                                      malformed,
+                                      harness.request().ownerAttemptId(),
+                                      harness.request().ownerFence(),
+                                      ignored -> "unexpected"))
+                      .isInstanceOf(IllegalStateException.class)
+                      .hasMessageContaining("Exact authenticated internal workload identity"));
+    }
+    Context.ROOT.run(
+        () ->
+            assertThatThrownBy(
+                    () ->
+                        harness
+                            .service()
+                            .withCurrentWorldReceivingParticipationCurrentness(
+                                malformed,
+                                harness.request().ownerAttemptId(),
+                                harness.request().ownerFence(),
+                                ignored -> "unexpected"))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("Exact authenticated internal workload identity"));
+
+    worldManagementContext()
+        .run(
+            () ->
+                assertThatThrownBy(
+                        () ->
+                            harness
+                                .service()
+                                .withCurrentWorldReceivingParticipationCurrentness(
+                                    malformed,
+                                    harness.request().ownerAttemptId(),
+                                    harness.request().ownerFence(),
+                                    ignored -> "unexpected"))
+                    .isInstanceOf(IllegalArgumentException.class));
+
+    verify(harness.repository(), never()).findByControlPlaneRequestId(anyString());
+    verify(harness.actors(), never()).withCurrentCommitted(any(), any(), any(), any(), any());
+    verify(harness.hostedTerms(), never()).captureCurrentEnvironmentBoundary();
+    verifyNoInteractions(harness.captureRepository());
+  }
+
+  @Test
+  void worldCurrentnessRejectsTupleNamespaceDifferentFromAuthenticatedPeerBeforeLookup() {
+    String loggingPeer = "spiffe://firemud/ns/logging-ns/sa/logging-admin-service";
+    String gameSessionPeer = "spiffe://firemud/ns/world-ns/sa/game-session-service";
+    ReadHarness harness = readHarness(NOW.plusSeconds(30), loggingPeer, gameSessionPeer);
+    StartSessionPostAuthorizationExecutionTuple canonicalPostTuple = postTuple(harness);
+
+    assertThat(canonicalPostTuple.preAuthorizationTuple().action().scope().targetNamespace())
+        .isEqualTo("logging-ns");
+    worldManagementContext("spiffe://firemud/ns/world-ns/sa/world-management-service")
+        .run(
+            () ->
+                assertThatThrownBy(
+                        () ->
+                            harness
+                                .service()
+                                .withCurrentWorldReceivingParticipationCurrentness(
+                                    canonicalPostTuple.canonicalBytes(),
+                                    harness.request().ownerAttemptId(),
+                                    harness.request().ownerFence(),
+                                    ignored -> "unexpected"))
+                    .isInstanceOf(IllegalStateException.class)
+                    .hasMessageContaining(
+                        "StartSession target namespace does not match the authenticated World peer"));
+
+    verify(harness.repository(), never()).findByControlPlaneRequestId(anyString());
+    verify(harness.actors(), never()).withCurrentCommitted(any(), any(), any(), any(), any());
+    verify(harness.hostedTerms(), never()).captureCurrentEnvironmentBoundary();
+    verifyNoInteractions(harness.captureRepository());
+  }
+
+  @Test
+  void worldCurrentnessRejectsAmbientTransactionOrSynchronizationBeforeCurrentness() {
+    ReadHarness transactionHarness = readHarness(NOW.plusSeconds(30));
+    byte[] postTuple = postTuple(transactionHarness).canonicalBytes();
+    TransactionSynchronizationManager.setActualTransactionActive(true);
+    worldManagementContext()
+        .run(
+            () ->
+                assertThatThrownBy(
+                        () ->
+                            transactionHarness
+                                .service()
+                                .withCurrentWorldReceivingParticipationCurrentness(
+                                    postTuple,
+                                    transactionHarness.request().ownerAttemptId(),
+                                    transactionHarness.request().ownerFence(),
+                                    ignored -> "unexpected"))
+                    .isInstanceOf(IllegalStateException.class)
+                    .hasMessageContaining("without an ambient Account transaction"));
+    TransactionSynchronizationManager.clear();
+
+    ReadHarness synchronizationHarness = readHarness(NOW.plusSeconds(30));
+    byte[] synchronizedPostTuple = postTuple(synchronizationHarness).canonicalBytes();
+    TransactionSynchronizationManager.initSynchronization();
+    worldManagementContext()
+        .run(
+            () ->
+                assertThatThrownBy(
+                        () ->
+                            synchronizationHarness
+                                .service()
+                                .withCurrentWorldReceivingParticipationCurrentness(
+                                    synchronizedPostTuple,
+                                    synchronizationHarness.request().ownerAttemptId(),
+                                    synchronizationHarness.request().ownerFence(),
+                                    ignored -> "unexpected"))
+                    .isInstanceOf(IllegalStateException.class)
+                    .hasMessageContaining("without an ambient Account transaction"));
+
+    verify(transactionHarness.repository(), never()).findByControlPlaneRequestId(anyString());
+    verify(synchronizationHarness.repository(), never()).findByControlPlaneRequestId(anyString());
+    verify(transactionHarness.hostedTerms(), never()).captureCurrentEnvironmentBoundary();
+    verify(synchronizationHarness.hostedTerms(), never()).captureCurrentEnvironmentBoundary();
+    verify(transactionHarness.actors(), never())
+        .withCurrentCommitted(any(), any(), any(), any(), any());
+    verify(synchronizationHarness.actors(), never())
+        .withCurrentCommitted(any(), any(), any(), any(), any());
+  }
+
+  @Test
+  void worldCurrentnessLocksExactCaptureAndRunsOnlyAccountCallbackInSameTransaction()
+      throws Exception {
+    ReadHarness harness = readHarness(NOW.plusSeconds(30));
+    allowCurrent(harness, harness.source());
+    AtomicReference<AccountStartSessionAuthorityCapture> callbackCapture = new AtomicReference<>();
+
+    AccountStartSessionAuthorityCapture result =
+        worldManagementContext()
+            .call(
+                () ->
+                    harness
+                        .service()
+                        .withCurrentWorldReceivingParticipationCurrentness(
+                            postTuple(harness).canonicalBytes(),
+                            harness.request().ownerAttemptId(),
+                            harness.request().ownerFence(),
+                            lockedCapture -> {
+                              assertThat(
+                                      TransactionSynchronizationManager.isActualTransactionActive())
+                                  .isTrue();
+                              assertThat(lockedCapture).isEqualTo(harness.capture());
+                              callbackCapture.set(lockedCapture);
+                              return lockedCapture;
+                            }));
+
+    assertThat(result).isEqualTo(harness.capture());
+    assertThat(callbackCapture.get()).isEqualTo(harness.capture());
+    verify(harness.captureRepository())
+        .lockReadExactCurrent(
+            any(),
+            eq(harness.tuple()),
+            eq(LOGGING_PEER),
+            eq(harness.record().reservationOwnerId()),
+            eq(harness.record().reservationClaimFence()));
+    verify(harness.captureRepository(), never())
+        .prepareOrReadExact(any(), any(), anyString(), any(), anyLong());
+    verify(harness.captureRepository(), never())
+        .lockExactCurrent(any(), any(), any(), anyString(), any(), anyLong());
+    verify(harness.repository(), never()).createOrReadExact(any());
+    verify(harness.repository(), never()).redeemExact(any());
+    verifyNoInteractions(harness.claims(), harness.fingerprintKeys(), harness.responseCrypto());
+  }
+
+  @Test
+  void worldCurrentnessRejectsExpiredReferenceAndChangedCurrentSourceBeforeCallback() {
+    ReadHarness expired = readHarness(NOW.minusSeconds(10));
+    AtomicReference<Boolean> expiredCallback = new AtomicReference<>(false);
+    worldManagementContext()
+        .run(
+            () ->
+                assertThatThrownBy(
+                        () ->
+                            expired
+                                .service()
+                                .withCurrentWorldReceivingParticipationCurrentness(
+                                    postTuple(expired).canonicalBytes(),
+                                    expired.request().ownerAttemptId(),
+                                    expired.request().ownerFence(),
+                                    ignored -> {
+                                      expiredCallback.set(true);
+                                      return null;
+                                    }))
+                    .isInstanceOf(IllegalStateException.class)
+                    .hasMessageContaining("Stored redeemed operation"));
+    assertThat(expiredCallback).hasValue(false);
+    verify(expired.actors(), never()).withCurrentCommitted(any(), any(), any(), any(), any());
+    verify(expired.captureRepository(), never())
+        .lockReadExactCurrent(any(), any(), anyString(), any(), anyLong());
+
+    ReadHarness changed = readHarness(NOW.plusSeconds(30));
+    AccountControlUiAuthority.Snapshot changedSource =
+        source(changed.actorId(), changed.tenantId(), 8L, new byte[] {2});
+    allowCurrent(changed, changedSource);
+    AtomicReference<Boolean> changedCallback = new AtomicReference<>(false);
+    worldManagementContext()
+        .run(
+            () ->
+                assertThatThrownBy(
+                        () ->
+                            changed
+                                .service()
+                                .withCurrentWorldReceivingParticipationCurrentness(
+                                    postTuple(changed).canonicalBytes(),
+                                    changed.request().ownerAttemptId(),
+                                    changed.request().ownerFence(),
+                                    ignored -> {
+                                      changedCallback.set(true);
+                                      return null;
+                                    }))
+                    .isInstanceOf(IllegalArgumentException.class)
+                    .hasMessageContaining("Current Account source"));
+    assertThat(changedCallback).hasValue(false);
+    verify(changed.captureRepository())
+        .lockReadExactCurrent(any(), eq(changed.tuple()), eq(LOGGING_PEER), any(), anyLong());
+  }
+
+  @Test
+  void worldCurrentnessRejectsPostTupleFingerprintAndOwnerAttemptSubstitution() {
+    ReadHarness harness = readHarness(NOW.plusSeconds(30));
+    StartSessionPostAuthorizationExecutionTuple original = postTuple(harness);
+    StartSessionPostAuthorizationExecutionTuple substitutedFingerprint =
+        StartSessionPostAuthorizationExecutionTuple.createHuman(
+            harness.tuple(),
+            LOGGING_PEER,
+            "arfp/v1/test-key/" + "b".repeat(64),
+            harness.record().reservationOwnerId(),
+            harness.record().reservationClaimFence(),
+            harness.record().authorityEvidenceBundle(),
+            harness.record().bundleReference());
+    AtomicReference<Boolean> callback = new AtomicReference<>(false);
+
+    worldManagementContext()
+        .run(
+            () ->
+                assertThatThrownBy(
+                        () ->
+                            harness
+                                .service()
+                                .withCurrentWorldReceivingParticipationCurrentness(
+                                    substitutedFingerprint.canonicalBytes(),
+                                    harness.request().ownerAttemptId(),
+                                    harness.request().ownerFence(),
+                                    ignored -> {
+                                      callback.set(true);
+                                      return null;
+                                    }))
+                    .isInstanceOf(IllegalStateException.class)
+                    .hasMessageContaining("tuple differs from the original Account issuance"));
+
+    worldManagementContext()
+        .run(
+            () ->
+                assertThatThrownBy(
+                        () ->
+                            harness
+                                .service()
+                                .withCurrentWorldReceivingParticipationCurrentness(
+                                    original.canonicalBytes(),
+                                    UUID.randomUUID(),
+                                    harness.request().ownerFence(),
+                                    ignored -> {
+                                      callback.set(true);
+                                      return null;
+                                    }))
+                    .isInstanceOf(IllegalStateException.class)
+                    .hasMessageContaining("Stored redeemed operation"));
+
+    assertThat(callback).hasValue(false);
+    verify(harness.actors(), never()).withCurrentCommitted(any(), any(), any(), any(), any());
+    verify(harness.captureRepository(), never())
+        .lockReadExactCurrent(any(), any(), anyString(), any(), anyLong());
   }
 
   @Test
@@ -1449,20 +1750,35 @@ class AccountStartSessionOperatorAuthorizationServiceTest {
   }
 
   private static ReadHarness readHarness(Instant referenceExpiresAt) {
+    return readHarness(referenceExpiresAt, LOGGING_PEER, GAME_SESSION_PEER);
+  }
+
+  private static ReadHarness readHarness(
+      Instant referenceExpiresAt, String exactLoggingPeerUri, String exactGameSessionPeerUri) {
     UUID actorId = UUID.randomUUID();
     UUID tenantId = UUID.randomUUID();
     UUID reservationOwnerId = UUID.randomUUID();
     UUID ownerAttemptId = UUID.randomUUID();
     UUID issuanceOperationId = UUID.randomUUID();
     UUID tokenJti = UUID.randomUUID();
-    StartSessionPreAuthorizationReservationTuple tuple = tuple(actorId, tenantId);
+    String targetNamespace =
+        GrpcPeerIdentity.parseUri(exactLoggingPeerUri).orElseThrow().namespace();
+    StartSessionPreAuthorizationReservationTuple tuple = tuple(actorId, tenantId, targetNamespace);
     AccountControlUiAuthority.Snapshot source = source(actorId, tenantId, 7L, new byte[] {1});
     AccountControlUiIssuanceRepository.Stored stored =
         stored(actorId, tenantId, tokenJti, issuanceOperationId, source);
     Instant issuedAt = referenceExpiresAt.minusSeconds(50);
     Instant redeemedAt =
         referenceExpiresAt.isAfter(NOW) ? NOW.minusSeconds(1) : referenceExpiresAt.minusSeconds(1);
-    var capture = capture(tuple, source, stored, reservationOwnerId, 10L, issuedAt.minusSeconds(1));
+    var capture =
+        capture(
+            tuple,
+            source,
+            stored,
+            reservationOwnerId,
+            10L,
+            issuedAt.minusSeconds(1),
+            exactLoggingPeerUri);
     assertThat(Instant.parse(capture.capturedAt())).isBefore(issuedAt).isBefore(referenceExpiresAt);
     var bundle =
         AccountStartSessionOperatorAuthorityBundle.create(
@@ -1474,7 +1790,7 @@ class AccountStartSessionOperatorAuthorizationServiceTest {
             tuple.controlPlaneRequestId(),
             tuple.canonicalJson().getBytes(StandardCharsets.UTF_8),
             tuple.mutationDigest(),
-            LOGGING_PEER,
+            exactLoggingPeerUri,
             reservationOwnerId,
             10L,
             issuanceOperationId,
@@ -1487,7 +1803,7 @@ class AccountStartSessionOperatorAuthorizationServiceTest {
             referenceExpiresAt,
             referenceExpiresAt.plusSeconds(20),
             Status.REDEEMED,
-            GAME_SESSION_PEER,
+            exactGameSessionPeerUri,
             ownerAttemptId,
             18L,
             redeemedAt,
@@ -1510,9 +1826,24 @@ class AccountStartSessionOperatorAuthorizationServiceTest {
         org.mockito.Mockito.mock(AccountHostedTermsService.CapturedEnvironmentBoundary.class);
     when(transactions.getTransaction(any(TransactionDefinition.class)))
         .thenAnswer(ignored -> new SimpleTransactionStatus());
-    when(hostedTerms.captureCurrentEnvironmentBoundary()).thenReturn(environment);
+    when(hostedTerms.captureCurrentEnvironmentBoundary())
+        .thenAnswer(
+            ignored -> {
+              assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+              assertThat(TransactionSynchronizationManager.isSynchronizationActive()).isFalse();
+              return environment;
+            });
     when(repository.findByControlPlaneRequestId(tuple.controlPlaneRequestId()))
         .thenReturn(Optional.of(record));
+    doAnswer(
+            invocation -> {
+              assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isTrue();
+              assertThat(invocation.<Current>getArgument(0).stored()).isSameAs(stored);
+              return capture;
+            })
+        .when(captureRepository)
+        .lockReadExactCurrent(
+            any(), eq(tuple), eq(exactLoggingPeerUri), eq(reservationOwnerId), eq(10L));
     var service =
         new AccountStartSessionOperatorAuthorizationService(
             actors,
@@ -1526,8 +1857,8 @@ class AccountStartSessionOperatorAuthorizationServiceTest {
             transactions,
             Clock.fixed(NOW, ZoneOffset.UTC),
             new java.security.SecureRandom(),
-            LOGGING_PEER,
-            GAME_SESSION_PEER,
+            exactLoggingPeerUri,
+            exactGameSessionPeerUri,
             java.time.Duration.ofSeconds(60),
             java.time.Duration.ofSeconds(20));
     ReadRedeemedOperationProjectionRequest request =
@@ -1550,6 +1881,7 @@ class AccountStartSessionOperatorAuthorizationServiceTest {
         environment,
         tuple,
         source,
+        capture,
         stored,
         record,
         request,
@@ -1647,6 +1979,16 @@ class AccountStartSessionOperatorAuthorizationServiceTest {
             GrpcPeerIdentity.parseUri(GAME_SESSION_PEER).orElseThrow());
   }
 
+  private static Context worldManagementContext() {
+    return worldManagementContext(WORLD_MANAGEMENT_PEER);
+  }
+
+  private static Context worldManagementContext(String worldPeerUri) {
+    return Context.current()
+        .withValue(
+            GrpcPeerIdentity.CONTEXT_KEY, GrpcPeerIdentity.parseUri(worldPeerUri).orElseThrow());
+  }
+
   private record ReadHarness(
       AccountStartSessionOperatorAuthorizationService service,
       AccountControlUiActorService actors,
@@ -1659,6 +2001,7 @@ class AccountStartSessionOperatorAuthorizationServiceTest {
       AccountHostedTermsService.CapturedEnvironmentBoundary environment,
       StartSessionPreAuthorizationReservationTuple tuple,
       AccountControlUiAuthority.Snapshot source,
+      AccountStartSessionAuthorityCapture capture,
       AccountControlUiIssuanceRepository.Stored stored,
       IssuanceRecord record,
       ReadRedeemedOperationProjectionRequest request,
@@ -1666,12 +2009,28 @@ class AccountStartSessionOperatorAuthorizationServiceTest {
       UUID tenantId,
       UUID tokenJti) {}
 
+  private static StartSessionPostAuthorizationExecutionTuple postTuple(ReadHarness harness) {
+    return StartSessionPostAuthorizationExecutionTuple.createHuman(
+        harness.tuple(),
+        harness.record().issuanceWorkloadUri(),
+        harness.request().authorizationReferenceFingerprint(),
+        harness.request().reservationOwnerId(),
+        harness.request().reservationClaimFence(),
+        harness.record().authorityEvidenceBundle(),
+        harness.record().bundleReference());
+  }
+
   private static StartSessionPreAuthorizationReservationTuple tuple(UUID actorId, UUID tenantId) {
+    return tuple(actorId, tenantId, "test");
+  }
+
+  private static StartSessionPreAuthorizationReservationTuple tuple(
+      UUID actorId, UUID tenantId, String targetNamespace) {
     var action =
         new StartSessionOperatorAction(
             StartSessionOperatorAction.ACTION_FAMILY_SCHEMA_ID,
             StartSessionOperatorAction.ACTION_FAMILY_SCHEMA_VERSION,
-            new StartSessionOperatorAction.Scope(tenantId, "test"),
+            new StartSessionOperatorAction.Scope(tenantId, targetNamespace),
             new StartSessionOperatorAction.Target(1L, actorId),
             StartSessionOperatorAction.ExpectedVersion.ABSENT,
             new StartSessionOperatorAction.Mutation(StartSessionOperatorAction.ClientIp.absent()),
@@ -1696,6 +2055,18 @@ class AccountStartSessionOperatorAuthorizationServiceTest {
       UUID reservationOwnerId,
       long reservationClaimFence,
       Instant capturedAt) {
+    return capture(
+        tuple, source, stored, reservationOwnerId, reservationClaimFence, capturedAt, LOGGING_PEER);
+  }
+
+  private static AccountStartSessionAuthorityCapture capture(
+      StartSessionPreAuthorizationReservationTuple tuple,
+      AccountControlUiAuthority.Snapshot source,
+      AccountControlUiIssuanceRepository.Stored stored,
+      UUID reservationOwnerId,
+      long reservationClaimFence,
+      Instant capturedAt,
+      String loggingWorkloadUri) {
     byte[] signerReceipt = stored.signerReceipt.clone();
     Map<String, Object> snapshot =
         Map.ofEntries(
@@ -1709,7 +2080,7 @@ class AccountStartSessionOperatorAuthorizationServiceTest {
             Map.entry("accountId", tuple.actor().accountId().toString()),
             Map.entry("tenantId", tuple.action().scope().tenantId().toString()),
             Map.entry("targetOwner", tuple.targetOwner()),
-            Map.entry("loggingWorkloadUri", LOGGING_PEER),
+            Map.entry("loggingWorkloadUri", loggingWorkloadUri),
             Map.entry("reservationOwnerId", reservationOwnerId.toString()),
             Map.entry("reservationClaimFence", Long.toString(reservationClaimFence)),
             Map.entry("controlUiOperationId", stored.operationId.toString()),
