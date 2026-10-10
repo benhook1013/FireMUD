@@ -174,101 +174,119 @@ ON CONFLICT (key_kind, numeric_key) DO NOTHING;
 /* [jooq ignore stop] */
 
 /* [jooq ignore start] */
-CREATE FUNCTION automation_require_source_numeric_key_unreserved(
-    requested_kind TEXT, requested_key BIGINT
-) RETURNS VOID
-LANGUAGE plpgsql
-SECURITY DEFINER
-SET search_path = pg_catalog, "${serviceSchema}"
-AS $$
+DO $automation_empty_source_functions$
 DECLARE
-    retained_claim TEXT;
+    owner_schema TEXT := current_schema();
 BEGIN
-    IF current_setting('transaction_isolation') <> 'read committed' THEN
-        RAISE EXCEPTION 'Automation authored-source row writes require READ COMMITTED isolation';
+    IF owner_schema IS NULL THEN
+        RAISE EXCEPTION 'Automation empty-source functions require an explicit installation schema';
     END IF;
-    IF requested_key IS NULL OR requested_key <= 0 THEN
-        RETURN;
-    END IF;
-    SELECT claim_kind INTO retained_claim
-    FROM "${serviceSchema}".automation_empty_source_numeric_key_reservation
-    WHERE key_kind = requested_kind AND numeric_key = requested_key;
-    IF retained_claim = 'CANONICAL_EMPTY_SOURCE' THEN
-        RAISE EXCEPTION 'Automation numeric source key is reserved by an immutable empty-source receipt';
-    END IF;
-END;
-$$;
 
-CREATE FUNCTION automation_guard_authored_source_row()
-RETURNS TRIGGER
-LANGUAGE plpgsql
-SECURITY DEFINER
-SET search_path = pg_catalog, "${serviceSchema}"
-AS $$
-DECLARE
-    old_value JSONB;
-    new_value JSONB;
-    old_tenant_key BIGINT;
-    new_tenant_key BIGINT;
-    old_version_key BIGINT;
-    new_version_key BIGINT;
-BEGIN
-    IF TG_OP IN ('UPDATE', 'DELETE') THEN
-        old_value := to_jsonb(OLD);
-        old_tenant_key := automation_source_positive_numeric_key(old_value->>'tenant_id');
-        old_version_key := automation_source_positive_numeric_key(old_value->>'base_version_id');
-        PERFORM automation_require_source_numeric_key_unreserved('TENANT', old_tenant_key);
-        PERFORM automation_require_source_numeric_key_unreserved('VERSION', old_version_key);
-    END IF;
-    IF TG_OP IN ('INSERT', 'UPDATE') THEN
-        new_value := to_jsonb(NEW);
-        new_tenant_key := automation_source_positive_numeric_key(new_value->>'tenant_id');
-        new_version_key := automation_source_positive_numeric_key(new_value->>'base_version_id');
-        -- Do not mutate the allocator table from a source-row trigger. PostgreSQL has already
-        -- acquired the source table's ROW EXCLUSIVE lock before firing this trigger, while the
-        -- founding path intentionally locks allocator tables first. A read-only reservation
-        -- check keeps that global lock order acyclic; new allocations also census every source
-        -- family while holding the source locks, so unreserved legacy keys cannot be missed.
-        PERFORM automation_require_source_numeric_key_unreserved('TENANT', new_tenant_key);
-        PERFORM automation_require_source_numeric_key_unreserved('VERSION', new_version_key);
-    END IF;
-    IF TG_OP = 'DELETE' THEN
-        RETURN OLD;
-    END IF;
-    RETURN NEW;
-END;
-$$;
+    EXECUTE format($function$
+        CREATE FUNCTION %I.automation_require_source_numeric_key_unreserved(
+            requested_kind TEXT, requested_key BIGINT
+        ) RETURNS VOID
+        LANGUAGE plpgsql
+        SECURITY DEFINER
+        SET search_path = pg_catalog, %I
+        AS $body$
+        DECLARE
+            retained_claim TEXT;
+        BEGIN
+            IF current_setting('transaction_isolation') <> 'read committed' THEN
+                RAISE EXCEPTION 'Automation authored-source row writes require READ COMMITTED isolation';
+            END IF;
+            IF requested_key IS NULL OR requested_key <= 0 THEN
+                RETURN;
+            END IF;
+            SELECT claim_kind INTO retained_claim
+            FROM %I.automation_empty_source_numeric_key_reservation
+            WHERE key_kind = requested_kind AND numeric_key = requested_key;
+            IF retained_claim = 'CANONICAL_EMPTY_SOURCE' THEN
+                RAISE EXCEPTION 'Automation numeric source key is reserved by an immutable empty-source receipt';
+            END IF;
+        END;
+        $body$
+    $function$, owner_schema, owner_schema, owner_schema);
 
-CREATE FUNCTION automation_reject_authored_source_truncate()
-RETURNS TRIGGER
-LANGUAGE plpgsql
-SECURITY DEFINER
-SET search_path = pg_catalog, "${serviceSchema}"
-AS $$
-BEGIN
-    IF current_setting('transaction_isolation') <> 'read committed' THEN
-        RAISE EXCEPTION 'Automation authored-source TRUNCATE requires READ COMMITTED isolation';
-    END IF;
-    IF EXISTS (
-        SELECT 1 FROM "${serviceSchema}".automation_empty_source_numeric_key_reservation
-        WHERE claim_kind = 'CANONICAL_EMPTY_SOURCE'
-    ) THEN
-        RAISE EXCEPTION 'Automation authored source TRUNCATE is forbidden after canonical intake';
-    END IF;
-    RETURN NULL;
-END;
-$$;
+    EXECUTE format($function$
+        CREATE FUNCTION %I.automation_guard_authored_source_row()
+        RETURNS TRIGGER
+        LANGUAGE plpgsql
+        SECURITY DEFINER
+        SET search_path = pg_catalog, %I
+        AS $body$
+        DECLARE
+            old_value JSONB;
+            new_value JSONB;
+            old_tenant_key BIGINT;
+            new_tenant_key BIGINT;
+            old_version_key BIGINT;
+            new_version_key BIGINT;
+        BEGIN
+            IF TG_OP IN ('UPDATE', 'DELETE') THEN
+                old_value := to_jsonb(OLD);
+                old_tenant_key := automation_source_positive_numeric_key(old_value->>'tenant_id');
+                old_version_key := automation_source_positive_numeric_key(old_value->>'base_version_id');
+                PERFORM automation_require_source_numeric_key_unreserved('TENANT', old_tenant_key);
+                PERFORM automation_require_source_numeric_key_unreserved('VERSION', old_version_key);
+            END IF;
+            IF TG_OP IN ('INSERT', 'UPDATE') THEN
+                new_value := to_jsonb(NEW);
+                new_tenant_key := automation_source_positive_numeric_key(new_value->>'tenant_id');
+                new_version_key := automation_source_positive_numeric_key(new_value->>'base_version_id');
+                -- Do not mutate the allocator table from a source-row trigger. PostgreSQL has already
+                -- acquired the source table's ROW EXCLUSIVE lock before firing this trigger, while the
+                -- founding path intentionally locks allocator tables first. A read-only reservation
+                -- check keeps that global lock order acyclic; new allocations also census every source
+                -- family while holding the source locks, so unreserved legacy keys cannot be missed.
+                PERFORM automation_require_source_numeric_key_unreserved('TENANT', new_tenant_key);
+                PERFORM automation_require_source_numeric_key_unreserved('VERSION', new_version_key);
+            END IF;
+            IF TG_OP = 'DELETE' THEN
+                RETURN OLD;
+            END IF;
+            RETURN NEW;
+        END;
+        $body$
+    $function$, owner_schema, owner_schema);
 
-CREATE FUNCTION automation_reject_empty_source_intake_mutation()
-RETURNS TRIGGER
-LANGUAGE plpgsql
-SECURITY DEFINER
-SET search_path = pg_catalog, "${serviceSchema}"
-AS $$
-BEGIN
-    RAISE EXCEPTION 'Automation empty-source intake records are immutable';
+    EXECUTE format($function$
+        CREATE FUNCTION %I.automation_reject_authored_source_truncate()
+        RETURNS TRIGGER
+        LANGUAGE plpgsql
+        SECURITY DEFINER
+        SET search_path = pg_catalog, %I
+        AS $body$
+        BEGIN
+            IF current_setting('transaction_isolation') <> 'read committed' THEN
+                RAISE EXCEPTION 'Automation authored-source TRUNCATE requires READ COMMITTED isolation';
+            END IF;
+            IF EXISTS (
+                SELECT 1 FROM %I.automation_empty_source_numeric_key_reservation
+                WHERE claim_kind = 'CANONICAL_EMPTY_SOURCE'
+            ) THEN
+                RAISE EXCEPTION 'Automation authored source TRUNCATE is forbidden after canonical intake';
+            END IF;
+            RETURN NULL;
+        END;
+        $body$
+    $function$, owner_schema, owner_schema, owner_schema);
+
+    EXECUTE format($function$
+        CREATE FUNCTION %I.automation_reject_empty_source_intake_mutation()
+        RETURNS TRIGGER
+        LANGUAGE plpgsql
+        SECURITY DEFINER
+        SET search_path = pg_catalog, %I
+        AS $body$
+        BEGIN
+            RAISE EXCEPTION 'Automation empty-source intake records are immutable';
+        END;
+        $body$
+    $function$, owner_schema, owner_schema);
 END;
-$$;
+$automation_empty_source_functions$;
 
 REVOKE ALL ON FUNCTION automation_require_source_numeric_key_unreserved(TEXT, BIGINT) FROM PUBLIC;
 REVOKE ALL ON FUNCTION automation_guard_authored_source_row() FROM PUBLIC;

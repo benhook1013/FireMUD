@@ -8,7 +8,6 @@ import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.SQLException;
 import java.sql.Statement;
-import java.util.Map;
 import java.util.UUID;
 import net.firedevops.firemud.test.TestContainerImages;
 import org.flywaydb.core.Flyway;
@@ -48,7 +47,6 @@ class AutomationEmptySelectedSourceIntakePostgresIntegrationTest {
         .locations(MIGRATION_LOCATION)
         .schemas(schema)
         .defaultSchema(schema)
-        .placeholders(Map.of("serviceSchema", schema))
         .target("3.2")
         .load()
         .migrate();
@@ -71,7 +69,6 @@ class AutomationEmptySelectedSourceIntakePostgresIntegrationTest {
         .locations(MIGRATION_LOCATION)
         .schemas(schema)
         .defaultSchema(schema)
-        .placeholders(Map.of("serviceSchema", schema))
         .load()
         .migrate();
     dsl = DSL.using(dataSource, SQLDialect.POSTGRES);
@@ -146,6 +143,26 @@ class AutomationEmptySelectedSourceIntakePostgresIntegrationTest {
     assertRejected("TRUNCATE TABLE scripts");
     assertRejected("TRUNCATE TABLE script_event_bindings");
     assertRejected("TRUNCATE TABLE script_patch_base_bindings");
+  }
+
+  @Test
+  void securityDefinerFunctionsUseTheExactInstalledSchemaInTheirFixedSearchPath() {
+    assertThat(
+            dsl.fetchValue(
+                "SELECT COUNT(*) FROM pg_proc AS p "
+                    + "JOIN pg_namespace AS n ON n.oid = p.pronamespace "
+                    + "WHERE n.nspname = ? "
+                    + "AND p.proname IN ("
+                    + "'automation_require_source_numeric_key_unreserved', "
+                    + "'automation_guard_authored_source_row', "
+                    + "'automation_reject_authored_source_truncate', "
+                    + "'automation_reject_empty_source_intake_mutation') "
+                    + "AND p.prosecdef "
+                    + "AND p.proconfig @> ARRAY[format('search_path=pg_catalog, %I', ?)]",
+                Integer.class,
+                schema,
+                schema))
+        .isEqualTo(4);
   }
 
   @Test

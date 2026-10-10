@@ -315,7 +315,18 @@ class AccountStartSessionAdmissionProtectionPostgresIntegrationTest {
                 incomplete
                     .transaction()
                     .executeWithoutResult(status -> insertProtection(incomplete, 11L)))
-        .hasMessageContaining("incomplete or extra source children");
+        .satisfies(
+            failure ->
+                assertDatabaseGuardFailure(
+                    failure,
+                    "Admission protection has incomplete or extra source children",
+                    "23514"));
+    assertThat(
+            incomplete
+                .dsl()
+                .fetchSingle("SELECT count(*) FROM account_start_session_admission_protections")
+                .get(0, Long.class))
+        .isZero();
   }
 
   @Test
@@ -910,11 +921,47 @@ class AccountStartSessionAdmissionProtectionPostgresIntegrationTest {
   }
 
   private static Long sequenceValue(Fixture fixture) {
+    var sequence =
+        fixture
+            .dsl()
+            .fetchSingle(
+                "SELECT namespace.nspname AS schema_name, relation.relname AS sequence_name "
+                    + "FROM pg_class relation "
+                    + "JOIN pg_namespace namespace ON namespace.oid = relation.relnamespace "
+                    + "WHERE relation.oid = pg_get_serial_sequence("
+                    + "format('%I.%I', current_schema(), ?), ?)::regclass",
+                "account_start_session_admission_protections",
+                "protection_fence");
     return fixture
         .dsl()
-        .fetchSingle(
-            "SELECT last_value FROM account_start_session_admission_protections_protection_fence_seq")
-        .get(0, Long.class);
+        .select(DSL.field(DSL.name("last_value"), Long.class))
+        .from(
+            DSL.table(
+                DSL.name(
+                    sequence.get("schema_name", String.class),
+                    sequence.get("sequence_name", String.class))))
+        .fetchSingle(0, Long.class);
+  }
+
+  private static void assertDatabaseGuardFailure(
+      Throwable failure, String expectedMessage, String expectedSqlState) {
+    var visited =
+        java.util.Collections.newSetFromMap(new java.util.IdentityHashMap<Throwable, Boolean>());
+    Throwable cause = failure;
+    PSQLException databaseFailure = null;
+    while (cause != null && visited.add(cause)) {
+      if (cause instanceof PSQLException postgresFailure) {
+        databaseFailure = postgresFailure;
+        break;
+      }
+      cause = cause.getCause();
+    }
+    assertThat(databaseFailure)
+        .as("the rejected fixture write must fail at PostgreSQL's database guard")
+        .isNotNull();
+    assertThat(databaseFailure.getSQLState()).isEqualTo(expectedSqlState);
+    assertThat(databaseFailure.getServerErrorMessage()).isNotNull();
+    assertThat(databaseFailure.getServerErrorMessage().getMessage()).contains(expectedMessage);
   }
 
   private static byte[] bytes(String value) {
