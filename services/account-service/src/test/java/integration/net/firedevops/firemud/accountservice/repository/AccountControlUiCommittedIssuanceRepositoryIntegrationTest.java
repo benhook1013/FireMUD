@@ -9,6 +9,7 @@ import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.util.HashSet;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.CountDownLatch;
@@ -120,23 +121,25 @@ class AccountControlUiCommittedIssuanceRepositoryIntegrationTest {
     assertThat(
             context.inTransaction(
                 () ->
-                    context
-                        .transactionDsl
-                        .fetchOne(
-                            "SELECT encrypted_response FROM account_control_ui_response_envelopes "
-                                + "WHERE operation_id = ?",
-                            seed.operationId())
+                    Objects.requireNonNull(
+                            context.transactionDsl.fetchOne(
+                                "SELECT encrypted_response FROM account_control_ui_response_envelopes "
+                                    + "WHERE operation_id = ?",
+                                seed.operationId()),
+                            "Missing committed control-ui response envelope row for operation "
+                                + seed.operationId())
                         .get(0, byte[].class)))
         .containsExactly(seed.encryptedResponse());
     assertThat(
             context.inTransaction(
                 () ->
-                    context
-                        .transactionDsl
-                        .fetchOne(
-                            "SELECT owner_binding FROM account_control_ui_response_envelopes "
-                                + "WHERE operation_id = ?",
-                            seed.operationId())
+                    Objects.requireNonNull(
+                            context.transactionDsl.fetchOne(
+                                "SELECT owner_binding FROM account_control_ui_response_envelopes "
+                                    + "WHERE operation_id = ?",
+                                seed.operationId()),
+                            "Missing committed control-ui owner-binding row for operation "
+                                + seed.operationId())
                         .get(0, byte[].class)))
         .containsExactly(seed.ownerBinding());
 
@@ -221,12 +224,13 @@ class AccountControlUiCommittedIssuanceRepositoryIntegrationTest {
     assertThat(
             context.inTransaction(
                 () ->
-                    context
-                        .transactionDsl
-                        .fetchOne(
-                            "SELECT encrypted_response FROM account_control_ui_response_envelopes "
-                                + "WHERE operation_id = ?",
-                            seed.operationId())
+                    Objects.requireNonNull(
+                            context.transactionDsl.fetchOne(
+                                "SELECT encrypted_response FROM account_control_ui_response_envelopes "
+                                    + "WHERE operation_id = ?",
+                                seed.operationId()),
+                            "Missing retained control-ui response envelope row for operation "
+                                + seed.operationId())
                         .get(0, byte[].class)))
         .containsExactly(seed.encryptedResponse());
   }
@@ -250,9 +254,9 @@ class AccountControlUiCommittedIssuanceRepositoryIntegrationTest {
                       var evidence =
                           context.repository.readCommitted(seed.tokenHash()).orElseThrow();
                       readerPid.set(
-                          context
-                              .transactionDsl
-                              .fetchOne("SELECT pg_backend_pid()")
+                          Objects.requireNonNull(
+                                  context.transactionDsl.fetchOne("SELECT pg_backend_pid()"),
+                                  "Missing PostgreSQL backend pid row for committed-read reader")
                               .get(0, Integer.class));
                       readerHasLoadedEvidence.countDown();
                       await(releaseReaderTransaction, "reader transaction release");
@@ -267,9 +271,9 @@ class AccountControlUiCommittedIssuanceRepositoryIntegrationTest {
                   context.inTransaction(
                       () -> {
                         revokerPid.set(
-                            context
-                                .transactionDsl
-                                .fetchOne("SELECT pg_backend_pid()")
+                            Objects.requireNonNull(
+                                    context.transactionDsl.fetchOne("SELECT pg_backend_pid()"),
+                                    "Missing PostgreSQL backend pid row for concurrent revoker")
                                 .get(0, Integer.class));
                         revocationIsAboutToUpdate.countDown();
                         context.transactionDsl.execute(
@@ -312,14 +316,14 @@ class AccountControlUiCommittedIssuanceRepositoryIntegrationTest {
     long deadline = System.nanoTime() + timeoutNanos;
     while (System.nanoTime() < deadline) {
       Boolean blocked =
-          context
-              .adminDsl
-              .fetchOne(
-                  "SELECT EXISTS (SELECT 1 FROM pg_stat_activity "
-                      + "WHERE pid = ? AND wait_event_type = 'Lock' "
-                      + "AND ? = ANY(pg_blocking_pids(pid)))",
-                  waitingPid,
-                  blockingPid)
+          Objects.requireNonNull(
+                  context.adminDsl.fetchOne(
+                      "SELECT EXISTS (SELECT 1 FROM pg_stat_activity "
+                          + "WHERE pid = ? AND wait_event_type = 'Lock' "
+                          + "AND ? = ANY(pg_blocking_pids(pid)))",
+                      waitingPid,
+                      blockingPid),
+                  "Missing PostgreSQL lock-wait status readback")
               .get(0, Boolean.class);
       if (Boolean.TRUE.equals(blocked)) {
         return true;
@@ -523,10 +527,11 @@ class AccountControlUiCommittedIssuanceRepositoryIntegrationTest {
     String status(UUID requestId) {
       return inTransaction(
           () ->
-              transactionDsl
-                  .fetchOne(
-                      "SELECT status FROM account_control_ui_issuance_operations WHERE request_id = ?",
-                      requestId)
+              Objects.requireNonNull(
+                      transactionDsl.fetchOne(
+                          "SELECT status FROM account_control_ui_issuance_operations WHERE request_id = ?",
+                          requestId),
+                      "Missing Account control-ui issuance status row for request " + requestId)
                   .get(0, String.class));
     }
 

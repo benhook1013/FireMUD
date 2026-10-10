@@ -10,6 +10,7 @@ import java.time.ZoneOffset;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.CountDownLatch;
@@ -690,8 +691,10 @@ class AccountStartSessionOperatorAuthorizationRepositoryIntegrationTest {
     }
 
     int countRows() {
-      return adminDsl
-          .fetchOne("SELECT count(*) FROM account_start_session_operator_authorizations")
+      return Objects.requireNonNull(
+              adminDsl.fetchOne(
+                  "SELECT count(*) FROM account_start_session_operator_authorizations"),
+              "Missing Account StartSession authorization row-count readback")
           .get(0, Integer.class);
     }
   }
