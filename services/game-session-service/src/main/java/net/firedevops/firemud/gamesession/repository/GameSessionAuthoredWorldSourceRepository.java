@@ -337,6 +337,7 @@ public class GameSessionAuthoredWorldSourceRepository {
 
   private AuthoredWorldSourceEvidence validateSource(AuthoredWorldSourceEvidence source) {
     Objects.requireNonNull(source, "source");
+    requireCanonicalOpenWorldDisplayName(source.worldDisplayName());
     try {
       return new AuthoredWorldSourceEvidence(
           source.schemaVersion(),
@@ -355,6 +356,15 @@ public class GameSessionAuthoredWorldSourceRepository {
     } catch (IllegalArgumentException exception) {
       throw new InvalidIntakeEvidenceException(
           "Game Design authored-world source evidence is invalid", exception);
+    }
+  }
+
+  private static void requireCanonicalOpenWorldDisplayName(String worldDisplayName) {
+    if (worldDisplayName == null
+        || worldDisplayName.isBlank()
+        || !worldDisplayName.equals(worldDisplayName.trim())) {
+      throw new InvalidIntakeEvidenceException(
+          "Game Design authored-world source display name is not canonical for an OPEN pointer");
     }
   }
 
