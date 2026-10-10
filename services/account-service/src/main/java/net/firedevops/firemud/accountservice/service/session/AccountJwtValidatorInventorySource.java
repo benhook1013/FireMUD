@@ -278,6 +278,7 @@ public final class AccountJwtValidatorInventorySource {
                 || unavailableReplicas != 0))) {
       throw new InventoryUnavailableException();
     }
+    rejectSigningMaterialPodSpec(templateSpec);
     ContainerConfig container =
         findVerifiedContainer(
             templateSpec.get("containers"), expected, templateSpec.get("volumes"));
@@ -426,6 +427,7 @@ public final class AccountJwtValidatorInventorySource {
     }
     String ownerName = dnsLabel(text(owner.get("name")));
     String ownerUid = canonicalUid(text(owner.get("uid")));
+    rejectSigningMaterialPodSpec(spec);
     ContainerConfig container =
         findVerifiedContainer(spec.get("containers"), expected, spec.get("volumes"));
     if (!deployment.image().equals(container.image())
@@ -551,6 +553,7 @@ public final class AccountJwtValidatorInventorySource {
         || (requireOrdinaryReady && readyReplicas != replicas)) {
       throw new InventoryUnavailableException();
     }
+    rejectSigningMaterialPodSpec(templateSpec);
     ContainerConfig container =
         findVerifiedContainer(
             templateSpec.get("containers"), expected, templateSpec.get("volumes"));
@@ -657,6 +660,54 @@ public final class AccountJwtValidatorInventorySource {
         sha256(expected.canonicalRuntimeConfig().getBytes(StandardCharsets.UTF_8)));
   }
 
+  /** Reject private signer access anywhere in the observed PodSpec, not only the main container. */
+  static void rejectSigningMaterialPodSpec(JsonNode podSpec) {
+    if (podSpec == null || !podSpec.isObject()) {
+      throw new InventoryUnavailableException();
+    }
+    for (String field : List.of("containers", "initContainers", "ephemeralContainers")) {
+      JsonNode containers = podSpec.get(field);
+      if (containers == null || containers.isNull()) {
+        continue;
+      }
+      if (!containers.isArray() || containers.size() > 32) {
+        throw new InventoryUnavailableException();
+      }
+      for (JsonNode container : containers) {
+        if (container == null || !container.isObject()) {
+          throw new InventoryUnavailableException();
+        }
+        rejectSigningMaterialEnvironment(container.get("env"));
+        rejectSigningMaterialEnvFrom(container.get("envFrom"));
+        rejectSigningSecretMounts(container.get("volumeMounts"));
+      }
+    }
+    rejectSigningSecretVolumes(podSpec.get("volumes"));
+  }
+
+  private static void rejectSigningMaterialEnvFrom(JsonNode envFrom) {
+    if (envFrom == null || envFrom.isNull()) {
+      return;
+    }
+    if (!envFrom.isArray()) {
+      throw new InventoryUnavailableException();
+    }
+    for (JsonNode source : envFrom) {
+      if (source == null || !source.isObject()) {
+        throw new InventoryUnavailableException();
+      }
+      JsonNode secretRef = source.get("secretRef");
+      if (secretRef != null && !secretRef.isNull()) {
+        if (!secretRef.isObject()) {
+          throw new InventoryUnavailableException();
+        }
+        if ("jwt-signing-keys".equals(text(secretRef.get("name")))) {
+          throw new InventoryUnavailableException();
+        }
+      }
+    }
+  }
+
   private static void rejectSigningMaterialEnvironment(JsonNode env) {
     if (env == null || env.isNull()) {
       return;
@@ -709,6 +760,9 @@ public final class AccountJwtValidatorInventorySource {
       throw new InventoryUnavailableException();
     }
     for (JsonNode volume : volumes) {
+      if (volume == null || !volume.isObject()) {
+        throw new InventoryUnavailableException();
+      }
       String name = text(volume.get("name"));
       JsonNode secret = volume.get("secret");
       if ("jwt-signing-keys".equals(name)
@@ -716,6 +770,27 @@ public final class AccountJwtValidatorInventorySource {
               && !secret.isNull()
               && "jwt-signing-keys".equals(text(secret.get("secretName"))))) {
         throw new InventoryUnavailableException();
+      }
+      JsonNode projected = volume.get("projected");
+      if (projected != null && !projected.isNull()) {
+        JsonNode sources = projected.get("sources");
+        if (!projected.isObject() || sources == null || !sources.isArray()) {
+          throw new InventoryUnavailableException();
+        }
+        for (JsonNode source : sources) {
+          if (source == null || !source.isObject()) {
+            throw new InventoryUnavailableException();
+          }
+          JsonNode projectedSecret = source.get("secret");
+          if (projectedSecret != null && !projectedSecret.isNull()) {
+            if (!projectedSecret.isObject()) {
+              throw new InventoryUnavailableException();
+            }
+            if ("jwt-signing-keys".equals(text(projectedSecret.get("name")))) {
+              throw new InventoryUnavailableException();
+            }
+          }
+        }
       }
     }
   }

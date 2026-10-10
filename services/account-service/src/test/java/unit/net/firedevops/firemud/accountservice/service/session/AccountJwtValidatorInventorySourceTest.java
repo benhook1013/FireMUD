@@ -37,7 +37,9 @@ import net.firedevops.firemud.accountservice.service.session.AccountJwtValidator
 import net.firedevops.firemud.accountservice.service.session.AccountJwtValidatorInventorySource.ObservationContext;
 import net.firedevops.firemud.accountservice.service.session.AccountJwtValidatorInventorySource.ObservationPurpose;
 import org.junit.jupiter.api.Test;
+import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.json.JsonMapper;
+import tools.jackson.databind.node.ObjectNode;
 
 class AccountJwtValidatorInventorySourceTest {
   private static final String ENVIRONMENT = "test";
@@ -69,6 +71,68 @@ class AccountJwtValidatorInventorySourceTest {
     assertThatThrownBy(source::observe)
         .isInstanceOf(InventoryUnavailableException.class)
         .hasNoCause();
+  }
+
+  @Test
+  void rejectsPrivateSignerMaterialInInitAndEphemeralContainersAndProjectedVolumes()
+      throws Exception {
+    Fixture initContainer = new Fixture();
+    ObjectNode deployment = (ObjectNode) JSON.readTree(deploymentJson("10", 1, 1, 1, false));
+    ObjectNode deploymentSpec = (ObjectNode) deployment.path("spec").path("template").path("spec");
+    deploymentSpec.set(
+        "initContainers",
+        JSON.readTree(
+            "[{\"name\":\"setup\",\"envFrom\":[{\"secretRef\":{"
+                + "\"name\":\"jwt-signing-keys\"}}]}]"));
+    initContainer.stubDeployment(new ApiResponse(200, JSON.writeValueAsBytes(deployment)));
+    assertUnavailable(initContainer);
+
+    Fixture ephemeralContainer = new Fixture();
+    JsonNode podList = JSON.readTree(podListJson());
+    ObjectNode podSpec = (ObjectNode) podList.path("items").get(0).path("spec");
+    podSpec.set(
+        "ephemeralContainers",
+        JSON.readTree(
+            "[{\"name\":\"debug\",\"volumeMounts\":[{"
+                + "\"name\":\"jwt-signing-keys\",\"mountPath\":\"/private\"}]}]"));
+    ephemeralContainer.stubPods(new ApiResponse(200, JSON.writeValueAsBytes(podList)));
+    assertUnavailable(ephemeralContainer);
+
+    Fixture projectedSecret = new Fixture();
+    ObjectNode projectedDeployment =
+        (ObjectNode) JSON.readTree(deploymentJson("10", 1, 1, 1, false));
+    ObjectNode projectedSpec =
+        (ObjectNode) projectedDeployment.path("spec").path("template").path("spec");
+    projectedSpec.set(
+        "volumes",
+        JSON.readTree(
+            "[{\"name\":\"private-material\",\"projected\":{\"sources\":[{"
+                + "\"secret\":{\"name\":\"jwt-signing-keys\"}}]}}]"));
+    projectedSecret.stubDeployment(
+        new ApiResponse(200, JSON.writeValueAsBytes(projectedDeployment)));
+    assertUnavailable(projectedSecret);
+  }
+
+  @Test
+  void acceptsPublicJwksSecretAndProjectedSources() throws Exception {
+    Fixture fixture = new Fixture();
+    ObjectNode deployment = (ObjectNode) JSON.readTree(deploymentJson("10", 1, 1, 1, false));
+    ObjectNode podSpec = (ObjectNode) deployment.path("spec").path("template").path("spec");
+    ObjectNode container = (ObjectNode) podSpec.path("containers").get(0);
+    container.set(
+        "volumeMounts",
+        JSON.readTree(
+            "[{\"name\":\"jwt-jwks\",\"mountPath\":\"/var/run/secrets/firemud/jwks\","
+                + "\"readOnly\":true}]"));
+    podSpec.set(
+        "volumes",
+        JSON.readTree(
+            "[{\"name\":\"jwt-jwks\",\"secret\":{\"secretName\":\"jwt-jwks\"}},"
+                + "{\"name\":\"jwt-jwks-projected\",\"projected\":{\"sources\":[{"
+                + "\"secret\":{\"name\":\"jwt-jwks\"}}]}}]"));
+    fixture.stubDeployment(new ApiResponse(200, JSON.writeValueAsBytes(deployment)));
+
+    assertThat(fixture.source.observe()).isNotNull();
   }
 
   @Test
@@ -809,6 +873,11 @@ class AccountJwtValidatorInventorySourceTest {
 
     private void stubDeployment(ApiResponse response) {
       when(operation.readValidatorDeployment(same(inventory), same(validator)))
+          .thenReturn(response);
+    }
+
+    private void stubPods(ApiResponse response) {
+      when(operation.listValidatorPods(same(inventory), same(validator), isNull()))
           .thenReturn(response);
     }
 
