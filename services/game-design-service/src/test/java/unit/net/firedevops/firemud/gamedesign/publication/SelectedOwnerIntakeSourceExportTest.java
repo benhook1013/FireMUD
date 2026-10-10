@@ -13,6 +13,7 @@ import net.firedevops.firemud.common.authoring.DraftCommitBinding;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding.Owner;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding.RevisionPayload;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding.TargetProof;
+import net.firedevops.firemud.common.gamedesign.SelectedOwnerIntakeSourceContent;
 import org.junit.jupiter.api.Test;
 
 class SelectedOwnerIntakeSourceExportTest {
@@ -51,6 +52,36 @@ class SelectedOwnerIntakeSourceExportTest {
         .isEqualTo(DraftAuthorizationFenceBinding.digest(expected.toByteArray()));
     assertThat(export.sources()).isSameAs(sources);
     assertThat(export.scope()).isEqualTo(scope);
+  }
+
+  @Test
+  void sharedConsumerDecodesExactCompleteExportsForBothOwners() {
+    var selected = binding(COMMIT, "{}");
+    for (Owner owner : List.of(Owner.ENTITY_MANAGEMENT, Owner.AUTOMATION_SCRIPTING)) {
+      var scope = scope(owner, selected);
+      var sources = sources(selected, "0");
+      var exported = SelectedOwnerIntakeSourceExport.create(scope, sources);
+
+      var content =
+          SelectedOwnerIntakeSourceContent.fromStored(
+              exported.canonicalBytes(), scope, exported.digest());
+
+      assertThat(content.scope()).isEqualTo(scope);
+      assertThat(content.canonicalBytes()).isEqualTo(exported.canonicalBytes());
+      assertThat(content.digest()).isEqualTo(exported.digest());
+      assertThat(content.snapshotBytes("COMMAND")).isEqualTo(sources.command().canonicalBytes());
+      assertThat(content.snapshotBytes("REALM_POLICY"))
+          .isEqualTo(sources.policy().canonicalBytes());
+      assertThat(content.snapshotBytes("ASSET")).isEqualTo(sources.asset().canonicalBytes());
+      assertThat(content.snapshotBytes("GAMEPLAY_RULE"))
+          .isEqualTo(sources.gameplay().canonicalBytes());
+      assertThat(content.snapshotBytes("BRANDING"))
+          .isEqualTo(sources.branding().orElseThrow().canonicalBytes());
+      assertThat(content.snapshotBytes("TEMPLATE_CONFIG"))
+          .isEqualTo(sources.templateConfig().orElseThrow().canonicalBytes());
+      assertThat(content.gameplaySource().binding()).isEqualTo(selected);
+      assertThat(content.templateConfigSource().binding()).isEqualTo(selected);
+    }
   }
 
   @Test
@@ -139,7 +170,7 @@ class SelectedOwnerIntakeSourceExportTest {
         .hasMessageContaining("8 MiB");
   }
 
-  private static GameDesignSourceRepository.SynchronizedSources sources(
+  static GameDesignSourceRepository.SynchronizedSources sources(
       DraftCommitBinding binding, String commandEpoch) {
     var command =
         new CommandSnapshot(binding, commandEpoch, null, "sha256:" + "a".repeat(64), List.of());
@@ -152,13 +183,12 @@ class SelectedOwnerIntakeSourceExportTest {
         command, policy, asset, gameplay, Optional.of(branding), Optional.of(template));
   }
 
-  private static SelectedOwnerIntakeSourceReadScope scope(
-      Owner owner, DraftCommitBinding selected) {
+  static SelectedOwnerIntakeSourceReadScope scope(Owner owner, DraftCommitBinding selected) {
     return new SelectedOwnerIntakeSourceReadScope(
         owner, "test", OPERATION, FENCE, INTAKE, ACTOR, selected);
   }
 
-  private static DraftCommitBinding binding(UUID commitId, String payload) {
+  static DraftCommitBinding binding(UUID commitId, String payload) {
     return DraftCommitBinding.create(
         new TargetProof(TENANT, VERSION, 23L, "tenant", 42L, "tenant", "NEW_GAME_ROW"),
         REQUEST,
