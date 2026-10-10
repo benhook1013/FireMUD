@@ -66,7 +66,7 @@ class AccountSelectedOwnerIntakeAuthorizationReadServiceTest {
       var binding = binding(owner);
       var request = SelectedOwnerIntakeAuthorizationReadEvidence.Request.create("test", binding);
       asReader(binding, () -> service.requireHeld(request));
-      verify(repository).readFinalAuthorization(binding);
+      verify(repository).readHeldFinalAuthorization(binding);
     }
 
     var definitions = ArgumentCaptor.forClass(TransactionDefinition.class);
@@ -132,14 +132,14 @@ class AccountSelectedOwnerIntakeAuthorizationReadServiceTest {
 
     org.mockito.Mockito.doThrow(new IllegalArgumentException("not available"))
         .when(repository)
-        .readFinalAuthorization(binding);
+        .readHeldFinalAuthorization(binding);
     asReader(
         binding,
         () -> assertCode(Status.Code.FAILED_PRECONDITION, () -> service.requireHeld(request)));
 
     org.mockito.Mockito.doThrow(new IllegalStateException("storage unavailable"))
         .when(repository)
-        .readFinalAuthorization(binding);
+        .readHeldFinalAuthorization(binding);
     asReader(
         binding, () -> assertCode(Status.Code.UNAVAILABLE, () -> service.requireHeld(request)));
   }

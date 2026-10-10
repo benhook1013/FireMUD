@@ -1,5 +1,6 @@
 package net.firedevops.firemud.accountservice.service.session;
 
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import io.grpc.Status;
 import java.util.Objects;
 import net.firedevops.firemud.common.account.sourceintake.SelectedOwnerIntakeSourceReadScope;
@@ -21,6 +22,10 @@ public final class AccountSelectedOwnerIntakeSourceReadService {
   private final TransactionTemplate transaction;
   private final String namespace;
 
+  @SuppressFBWarnings(
+      value = "EI_EXPOSE_REP2",
+      justification =
+          "Injected owner repository is intentionally shared and never exposed to callers")
   public AccountSelectedOwnerIntakeSourceReadService(
       AccountSelectedOwnerIntakeSourceReservationRepository repository,
       AccountControlUiCoordination registry,

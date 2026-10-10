@@ -6,6 +6,7 @@ import net.firedevops.firemud.common.account.sourceintake.SelectedOwnerIntakeAut
 import net.firedevops.firemud.common.account.sourceintake.SelectedOwnerIntakeAuthorizationReadClient;
 import net.firedevops.firemud.common.account.sourceintake.SelectedOwnerIntakeAuthorizationReadEvidence;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding.Owner;
+import net.firedevops.firemud.common.automation.sourceintake.AutomationEmptySelectedSourceIntakeReceipt;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
 import net.firedevops.firemud.common.publication.AccountSelectedPublicationOrderCredentials;
 import net.firedevops.firemud.common.publication.SelectedOwnerWorldInventoryReadClient;

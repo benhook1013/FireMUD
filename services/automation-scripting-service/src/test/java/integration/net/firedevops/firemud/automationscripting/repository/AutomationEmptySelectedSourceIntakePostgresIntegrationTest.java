@@ -148,18 +148,19 @@ class AutomationEmptySelectedSourceIntakePostgresIntegrationTest {
   @Test
   void securityDefinerFunctionsUseTheExactInstalledSchemaInTheirFixedSearchPath() {
     assertThat(
-            dsl.fetchValue(
-                "SELECT COUNT(*) FROM pg_proc AS p "
-                    + "JOIN pg_namespace AS n ON n.oid = p.pronamespace "
-                    + "WHERE n.nspname = ? "
-                    + "AND p.proname IN ("
-                    + "'automation_require_source_numeric_key_unreserved', "
-                    + "'automation_guard_authored_source_row', "
-                    + "'automation_reject_authored_source_truncate', "
-                    + "'automation_reject_empty_source_intake_mutation') "
-                    + "AND p.prosecdef "
-                    + "AND p.proconfig @> ARRAY[format('search_path=pg_catalog, %I', ?)]",
-                Integer.class, schema, schema))
+            dsl.fetchSingle(
+                    "SELECT COUNT(*) FROM pg_proc AS p "
+                        + "JOIN pg_namespace AS n ON n.oid = p.pronamespace "
+                        + "WHERE n.nspname = ? "
+                        + "AND p.proname IN ("
+                        + "'automation_require_source_numeric_key_unreserved', "
+                        + "'automation_guard_authored_source_row', "
+                        + "'automation_reject_authored_source_truncate', "
+                        + "'automation_reject_empty_source_intake_mutation') "
+                        + "AND p.prosecdef "
+                        + "AND p.proconfig @> ARRAY[format('search_path=pg_catalog, %I', ?)]",
+                    schema, schema)
+                .get(0, Integer.class))
         .isEqualTo(4);
   }
 

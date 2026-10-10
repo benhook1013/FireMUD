@@ -6,8 +6,8 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import java.nio.file.Path;
 import java.util.Map;
 import java.util.UUID;
-import net.firedevops.firemud.automationscripting.sourceintake.AutomationEmptySelectedSourceIntakeReceipt;
 import net.firedevops.firemud.automationscripting.sourceintake.AutomationEmptySelectedSourceIntakeRepository;
+import net.firedevops.firemud.common.automation.sourceintake.AutomationEmptySelectedSourceIntakeReceipt;
 import net.firedevops.firemud.test.TestContainerImages;
 import org.flywaydb.core.Flyway;
 import org.jooq.DSLContext;
@@ -183,6 +183,10 @@ class AutomationEmptySelectedSourceIntakeRepositoryPostgresIntegrationTest {
     var readBack = repository.read(first.targetNamespace(), first.intakeRequestId()).orElseThrow();
     assertThat(readBack.canonicalBytes()).containsExactly(first.canonicalBytes());
     assertThat(readBack.receiptDigest()).isEqualTo(first.receiptDigest());
+    var terminalRead = repository.readCommittedTerminal(fixture.authorization()).orElseThrow();
+    assertThat(terminalRead.canonicalBytes()).containsExactly(first.canonicalBytes());
+    assertThat(terminalRead.authorizationBindingBytes())
+        .containsExactly(fixture.authorization().canonicalBytes());
 
     var retry =
         AutomationEmptySelectedSourceIntakePostgresFixture.withFreshWorldReadCorrelation(fixture);
@@ -199,6 +203,9 @@ class AutomationEmptySelectedSourceIntakeRepositoryPostgresIntegrationTest {
         .isEqualTo(fixture.authorization().intakeRequestId());
     assertThat(altered.authorization().canonicalBytes())
         .isNotEqualTo(fixture.authorization().canonicalBytes());
+    assertThatThrownBy(() -> repository.readCommittedTerminal(altered.authorization()))
+        .isInstanceOf(AutomationEmptySelectedSourceIntakeRepository.IntakeConflictException.class)
+        .hasMessageContaining("complete original authorization");
     String alteredDigest = requestDigest(altered);
     assertThat(alteredDigest).isNotEqualTo(requestDigest);
     assertThatThrownBy(() -> repository.retainFresh(altered.inputs(), alteredDigest))
@@ -222,6 +229,40 @@ class AutomationEmptySelectedSourceIntakeRepositoryPostgresIntegrationTest {
             first.intakeRequestId());
     assertThat(unchangedReceipt).isNotNull();
     assertThat(unchangedReceipt.get(0, byte[].class)).containsExactly(first.canonicalBytes());
+
+    assertThatThrownBy(
+            () ->
+                dsl.execute(
+                    "UPDATE automation_empty_selected_source_receipt SET receipt_bytes = ? "
+                        + "WHERE target_namespace = ? AND intake_request_id = ?",
+                    first.canonicalBytes(),
+                    first.targetNamespace(),
+                    first.intakeRequestId()))
+        .rootCause()
+        .hasMessageContaining("Automation empty-source intake records are immutable");
+
+    byte[] corruptBytes = first.canonicalBytes();
+    corruptBytes[0] ^= 1;
+    // The isolated test owner bypasses only V5's immutable receipt-row trigger to model corruption.
+    dsl.execute(
+        "ALTER TABLE automation_empty_selected_source_receipt "
+            + "DISABLE TRIGGER trg_automation_empty_source_receipt_immutable");
+    try {
+      assertThat(
+              dsl.execute(
+                  "UPDATE automation_empty_selected_source_receipt SET receipt_bytes = ? "
+                      + "WHERE target_namespace = ? AND intake_request_id = ?",
+                  corruptBytes,
+                  first.targetNamespace(),
+                  first.intakeRequestId()))
+          .isEqualTo(1);
+    } finally {
+      dsl.execute(
+          "ALTER TABLE automation_empty_selected_source_receipt "
+              + "ENABLE TRIGGER trg_automation_empty_source_receipt_immutable");
+    }
+    assertThatThrownBy(() -> repository.readCommittedTerminal(fixture.authorization()))
+        .isInstanceOf(IllegalArgumentException.class);
   }
 
   @Test

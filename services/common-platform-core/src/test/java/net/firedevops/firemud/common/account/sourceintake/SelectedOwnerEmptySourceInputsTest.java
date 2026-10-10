@@ -3,6 +3,7 @@ package net.firedevops.firemud.common.account.sourceintake;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import com.google.protobuf.ByteString;
 import java.math.BigInteger;
 import java.nio.charset.StandardCharsets;
 import java.time.OffsetDateTime;
@@ -10,6 +11,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import net.firedevops.firemud.automationscripting.v1.AutomationSelectedSourceIntakeTerminalResult;
 import net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding;
 import net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding.SourceEvidence;
 import net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding.SourceKind;
@@ -18,6 +20,9 @@ import net.firedevops.firemud.common.authoring.DraftCommitBinding.Owner;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding.RevisionPayload;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding.TargetProof;
 import net.firedevops.firemud.common.automation.AutomationAuthoredSourceInventoryDeclaration;
+import net.firedevops.firemud.common.automation.sourceintake.AutomationEmptySelectedSourceIntakeReceipt;
+import net.firedevops.firemud.common.automation.sourceintake.AutomationSelectedSourceIntakeTerminalReadEvidence;
+import net.firedevops.firemud.common.automation.sourceintake.AutomationSelectedSourceIntakeTerminalReadGrpcCodec;
 import net.firedevops.firemud.common.entity.EntityAuthoredSourceInventoryDeclaration;
 import net.firedevops.firemud.common.gamedesign.DraftSynchronizedVisibilityEvidence.AppliedEpoch;
 import net.firedevops.firemud.common.gamedesign.SelectedOwnerIntakeSourceContent;
@@ -66,6 +71,117 @@ class SelectedOwnerEmptySourceInputsTest {
           + "\"entity\":{\"items\":[],\"npcs\":[]},\"gameLogic\":{\"inputs\":[]},"
           + "\"automation\":{\"scripts\":[],\"scriptPatch\":{\"presence\":\"ABSENT\"}},"
           + "\"supportedSettings\":[]}";
+
+  @Test
+  void automationTerminalReadEchoesExactBindingAndRequiresCommittedEmptyReceipt() {
+    Fixture fixture = fixture(Owner.AUTOMATION_SCRIPTING, Options.defaults());
+    var inputs =
+        new SelectedOwnerEmptySourceInputs(
+            fixture.authorization(), fixture.worldInventoryReadEvidence());
+    var binding = fixture.authorization();
+    var receipt =
+        AutomationEmptySelectedSourceIntakeReceipt.create(
+            inputs,
+            9001L,
+            9002L,
+            AutomationEmptySelectedSourceIntakeReceipt.requestDigest(
+                "test", binding, fixture.worldInventoryReadEvidence().request().freezeEvidence()),
+            0L,
+            0L,
+            0L,
+            0L,
+            0L,
+            0L,
+            0L,
+            0L,
+            0L,
+            0L,
+            0L,
+            0L,
+            OffsetDateTime.parse("2026-10-10T00:00:00Z"));
+    var request =
+        AutomationSelectedSourceIntakeTerminalReadEvidence.Request.create("test", binding);
+    var evidence = new AutomationSelectedSourceIntakeTerminalReadEvidence(request, receipt);
+    var settlement = AccountSelectedOwnerIntakeSettlementReceipt.create(evidence);
+    assertThat(
+            AccountSelectedOwnerIntakeSettlementReceipt.fromStored(settlement.canonicalBytes())
+                .canonicalBytes())
+        .containsExactly(settlement.canonicalBytes());
+    var requestWire = AutomationSelectedSourceIntakeTerminalReadGrpcCodec.toRequest(request);
+    var response = AutomationSelectedSourceIntakeTerminalReadGrpcCodec.toResponse(evidence);
+
+    assertThat(requestWire.getOriginalIntakeAuthorizationBinding().toByteArray())
+        .containsExactly(binding.canonicalBytes());
+    assertThat(requestWire.getIntakeAuthorizationDigest()).isEqualTo(binding.digest());
+    assertThat(request.readRequestId())
+        .isNotIn(binding.operationId(), binding.fenceId(), binding.intakeRequestId());
+    assertThat(request.intendedReader()).isEqualTo("spiffe://firemud/ns/test/sa/account-service");
+    assertThat(request.terminalReadPurpose()).isEqualTo("AUTOMATION_INTAKE_TERMINAL_READ");
+    assertThat(response.getResult())
+        .isEqualTo(
+            AutomationSelectedSourceIntakeTerminalResult
+                .AUTOMATION_SELECTED_SOURCE_INTAKE_TERMINAL_RESULT_COMMITTED_EMPTY);
+    assertThat(response.getCommittedEmptyReceipt().toByteArray())
+        .containsExactly(receipt.canonicalBytes());
+    assertThat(AutomationSelectedSourceIntakeTerminalReadGrpcCodec.fromRequest(requestWire))
+        .isEqualTo(request);
+    assertThat(
+            AutomationSelectedSourceIntakeTerminalReadGrpcCodec.fromResponse(request, response)
+                .receipt()
+                .canonicalBytes())
+        .containsExactly(receipt.canonicalBytes());
+
+    var retry = AutomationSelectedSourceIntakeTerminalReadEvidence.Request.create("test", binding);
+    assertThat(retry.readRequestId()).isNotEqualTo(request.readRequestId());
+    var retryEvidence = new AutomationSelectedSourceIntakeTerminalReadEvidence(retry, receipt);
+    assertThat(settlement.sameImmutableOwnerReceipt(retryEvidence)).isTrue();
+    assertThat(
+            AutomationSelectedSourceIntakeTerminalReadGrpcCodec.toResponse(retryEvidence)
+                .getCommittedEmptyReceipt())
+        .isEqualTo(response.getCommittedEmptyReceipt());
+
+    var changedEcho =
+        response.toBuilder()
+            .setRequest(requestWire.toBuilder().setReadRequestId(UUID.randomUUID().toString()))
+            .build();
+    assertThatThrownBy(
+            () ->
+                AutomationSelectedSourceIntakeTerminalReadGrpcCodec.fromResponse(
+                    request, changedEcho))
+        .isInstanceOf(IllegalArgumentException.class);
+    assertThatThrownBy(
+            () ->
+                AutomationSelectedSourceIntakeTerminalReadGrpcCodec.fromResponse(
+                    request,
+                    response.toBuilder()
+                        .setResult(
+                            AutomationSelectedSourceIntakeTerminalResult
+                                .AUTOMATION_SELECTED_SOURCE_INTAKE_TERMINAL_RESULT_UNSPECIFIED)
+                        .build()))
+        .isInstanceOf(IllegalArgumentException.class);
+    assertThatThrownBy(
+            () ->
+                AutomationSelectedSourceIntakeTerminalReadGrpcCodec.fromResponse(
+                    request, response.toBuilder().clearCommittedEmptyReceipt().build()))
+        .isInstanceOf(IllegalArgumentException.class);
+    assertThatThrownBy(
+            () ->
+                AutomationSelectedSourceIntakeTerminalReadGrpcCodec.fromResponse(
+                    request,
+                    response.toBuilder().setReceiptDigest("sha256:" + "0".repeat(64)).build()))
+        .isInstanceOf(IllegalArgumentException.class);
+
+    byte[] changedReceipt = response.getCommittedEmptyReceipt().toByteArray();
+    changedReceipt[changedReceipt.length - 1] ^= 1;
+    assertThatThrownBy(
+            () ->
+                AutomationSelectedSourceIntakeTerminalReadGrpcCodec.fromResponse(
+                    request,
+                    response.toBuilder()
+                        .setCommittedEmptyReceipt(ByteString.copyFrom(changedReceipt))
+                        .build()))
+        .isInstanceOf(IllegalArgumentException.class);
+  }
 
   @Test
   void retainsTheExactEmptyInputsAndOriginalDeclarationForBothOwners() {

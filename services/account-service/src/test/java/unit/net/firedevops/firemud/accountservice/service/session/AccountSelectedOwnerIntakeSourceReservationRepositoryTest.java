@@ -33,6 +33,18 @@ class AccountSelectedOwnerIntakeSourceReservationRepositoryTest {
     assertThatThrownBy(() -> repository.readSourceScope(null, null))
         .isInstanceOf(IllegalStateException.class)
         .hasMessageContaining("Writable Account owner transaction");
+    assertThatThrownBy(() -> repository.readFinalAuthorization(null))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("Writable Account owner transaction");
+    assertThatThrownBy(() -> repository.readHeldFinalAuthorization(null))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("Writable Account owner transaction");
+    assertThatThrownBy(() -> repository.findSettlement(null))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("Writable Account owner transaction");
+    assertThatThrownBy(() -> repository.settleCommittedEmpty(null))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("Writable Account owner transaction");
 
     verifyNoInteractions(dsl);
   }

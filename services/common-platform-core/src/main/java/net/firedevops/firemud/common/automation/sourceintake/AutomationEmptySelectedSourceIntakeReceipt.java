@@ -1,8 +1,9 @@
-package net.firedevops.firemud.automationscripting.sourceintake;
+package net.firedevops.firemud.common.automation.sourceintake;
 
 import com.google.protobuf.InvalidProtocolBufferException;
 import java.io.ByteArrayOutputStream;
 import java.time.OffsetDateTime;
+import java.time.format.DateTimeParseException;
 import java.util.Arrays;
 import java.util.Objects;
 import java.util.UUID;
@@ -185,8 +186,8 @@ public final class AutomationEmptySelectedSourceIntakeReceipt {
     if (!this.authorizationBinding.digest().equals(this.authorizationBindingDigest)) {
       throw new IllegalArgumentException("Retained Account authorization digest differs");
     }
-    requireAuthorizationIdentity();
     this.worldInventoryReadEvidence = decodeWorldEvidence();
+    requireAuthorizationIdentity();
     this.canonicalBytes = encode();
     if (canonicalBytes.length > MAX_BYTES) {
       throw new IllegalArgumentException("Automation source receipt exceeds its size limit");
@@ -194,7 +195,7 @@ public final class AutomationEmptySelectedSourceIntakeReceipt {
     this.receiptDigest = DraftAuthorizationFenceBinding.digest(canonicalBytes);
   }
 
-  static AutomationEmptySelectedSourceIntakeReceipt create(
+  public static AutomationEmptySelectedSourceIntakeReceipt create(
       SelectedOwnerEmptySourceInputs inputs,
       long localTenantKey,
       long localVersionKey,
@@ -452,11 +453,11 @@ public final class AutomationEmptySelectedSourceIntakeReceipt {
     return "PENDING_OWNER_TERMINAL_SETTLEMENT";
   }
 
-  SelectedOwnerIntakeAuthorizationBinding authorizationBinding() {
+  public SelectedOwnerIntakeAuthorizationBinding authorizationBinding() {
     return authorizationBinding;
   }
 
-  SelectedOwnerWorldInventoryReadEvidence worldInventoryReadEvidence() {
+  public SelectedOwnerWorldInventoryReadEvidence worldInventoryReadEvidence() {
     return worldInventoryReadEvidence;
   }
 
@@ -478,7 +479,7 @@ public final class AutomationEmptySelectedSourceIntakeReceipt {
   }
 
   /** Also binds a concurrent first-write race to the exact newly read World inventory content. */
-  void requireSameInputs(SelectedOwnerEmptySourceInputs candidateInputs) {
+  public void requireSameInputs(SelectedOwnerEmptySourceInputs candidateInputs) {
     Objects.requireNonNull(candidateInputs, "validated empty-source inputs are required");
     var candidateBinding = candidateInputs.authorizationBinding();
     var candidateWorld = candidateInputs.worldInventoryReadEvidence();
@@ -702,7 +703,12 @@ public final class AutomationEmptySelectedSourceIntakeReceipt {
   }
 
   private static OffsetDateTime parseTimestamp(String value) {
-    OffsetDateTime parsed = OffsetDateTime.parse(value);
+    final OffsetDateTime parsed;
+    try {
+      parsed = OffsetDateTime.parse(value);
+    } catch (DateTimeParseException malformed) {
+      throw new IllegalArgumentException("Receipt timestamp is malformed", malformed);
+    }
     if (!parsed.toString().equals(value)) {
       throw new IllegalArgumentException("Receipt timestamp is not canonical");
     }

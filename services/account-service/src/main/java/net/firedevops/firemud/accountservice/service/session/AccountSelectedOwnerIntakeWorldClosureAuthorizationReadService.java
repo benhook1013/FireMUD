@@ -46,7 +46,7 @@ public final class AccountSelectedOwnerIntakeWorldClosureAuthorizationReadServic
     try {
       ownerTransaction.execute(
           ignored -> {
-            repository.readFinalAuthorization(request.binding());
+            repository.readHeldFinalAuthorization(request.binding());
             return null;
           });
     } catch (StatusRuntimeException failure) {

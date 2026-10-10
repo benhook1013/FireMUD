@@ -10,6 +10,7 @@ import net.firedevops.firemud.common.account.sourceintake.SelectedOwnerEmptySour
 import net.firedevops.firemud.common.account.sourceintake.SelectedOwnerIntakeAuthorizationBinding;
 import net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding.Owner;
+import net.firedevops.firemud.common.automation.sourceintake.AutomationEmptySelectedSourceIntakeReceipt;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
 import org.jooq.DSLContext;
 import org.jooq.Record;
@@ -55,6 +56,31 @@ public final class AutomationEmptySelectedSourceIntakeRepository {
     requireNoAmbientOwnerSql("Automation source receipt read");
     requireReadKey(targetNamespace, intakeRequestId);
     return readValidated(dsl, targetNamespace, intakeRequestId);
+  }
+
+  /**
+   * Reads the original committed receipt for an exact finalized Account authorization. A missing
+   * result remains absence; it is never converted into an abort or another terminal value.
+   */
+  public Optional<AutomationEmptySelectedSourceIntakeReceipt> readCommittedTerminal(
+      SelectedOwnerIntakeAuthorizationBinding originalBinding) {
+    Objects.requireNonNull(originalBinding, "original Account authorization binding is required");
+    if (originalBinding.owner() != Owner.AUTOMATION_SCRIPTING
+        || !"account-automation-intake-authorization/v1".equals(originalBinding.schema())
+        || !"AUTOMATION_INTAKE_RETENTION".equals(originalBinding.purpose())) {
+      throw new IllegalArgumentException("Exact original Automation authorization is required");
+    }
+    requireNoAmbientOwnerSql("Automation source terminal read");
+    requireReadKey(originalBinding.targetNamespace(), originalBinding.intakeRequestId());
+    var receipt =
+        readValidated(dsl, originalBinding.targetNamespace(), originalBinding.intakeRequestId());
+    if (receipt.isPresent()
+        && !Arrays.equals(
+            originalBinding.canonicalBytes(), receipt.orElseThrow().authorizationBindingBytes())) {
+      throw new IntakeConflictException(
+          "Automation committed receipt differs from the complete original authorization");
+    }
+    return receipt;
   }
 
   /**

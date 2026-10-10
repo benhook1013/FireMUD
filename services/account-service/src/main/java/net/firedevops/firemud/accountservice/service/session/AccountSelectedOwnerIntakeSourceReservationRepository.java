@@ -11,21 +11,22 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
 import net.firedevops.firemud.accountservice.authordraft.AccountControlUiAuthority;
+import net.firedevops.firemud.common.account.sourceintake.AccountSelectedOwnerIntakeSettlementReceipt;
 import net.firedevops.firemud.common.account.sourceintake.SelectedOwnerIntakeAuthorizationBinding;
 import net.firedevops.firemud.common.account.sourceintake.SelectedOwnerIntakeSourceReadScope;
 import net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding;
 import net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding.SourceEvidence;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding.Owner;
+import net.firedevops.firemud.common.automation.sourceintake.AutomationSelectedSourceIntakeTerminalReadEvidence;
 import net.firedevops.firemud.common.gamedesign.SelectedOwnerIntakeSourceContent;
 import org.jooq.DSLContext;
 import org.jooq.Record;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 /**
- * Immutable Entity/Automation preliminary reservations and distinct finalized source retention.
- * Finalization excludes preliminary abort; authenticated owner-terminal settlement is not yet
- * implemented, so finalized participation remains held.
+ * Immutable Entity/Automation preliminary reservations, finalized source retention, and exact
+ * Automation {@code COMMITTED_EMPTY} terminal settlement.
  */
 public final class AccountSelectedOwnerIntakeSourceReservationRepository {
   private static final String RESERVATIONS =
@@ -34,6 +35,7 @@ public final class AccountSelectedOwnerIntakeSourceReservationRepository {
   private static final String ABORTS = "account_selected_owner_intake_source_read_aborts";
   private static final String AUTHORIZATIONS = "account_selected_owner_intake_authorizations";
   private static final String AUTHORIZATION_SOURCES = "account_selected_owner_intake_sources";
+  private static final String SETTLEMENTS = "account_selected_owner_intake_settlements";
 
   private final DSLContext dsl;
 
@@ -293,7 +295,20 @@ public final class AccountSelectedOwnerIntakeSourceReservationRepository {
     return Optional.of(binding);
   }
 
+  /** Historical exact authorization read; settled orders remain recoverable through this path. */
   void readFinalAuthorization(SelectedOwnerIntakeAuthorizationBinding requested) {
+    readFinalAuthorization(requested, false);
+  }
+
+  /**
+   * External HELD reads deny after exact terminal settlement; historical reads remain available.
+   */
+  void readHeldFinalAuthorization(SelectedOwnerIntakeAuthorizationBinding requested) {
+    readFinalAuthorization(requested, true);
+  }
+
+  private void readFinalAuthorization(
+      SelectedOwnerIntakeAuthorizationBinding requested, boolean requireHeld) {
     requireTransaction();
     Objects.requireNonNull(requested, "requested");
     Record lookup = authorizationLookup(requested.operationId());
@@ -311,6 +326,121 @@ public final class AccountSelectedOwnerIntakeSourceReservationRepository {
     requireAuthorization(row, original);
     if (aborted(original.content().scope()))
       throw new IllegalArgumentException("Finalized owner authorization cannot be aborted");
+    if (requireHeld && settlement(original.operationId()) != null) {
+      throw new IllegalArgumentException("Settled owner authorization is no longer held");
+    }
+  }
+
+  /**
+   * Exact committed settlement recovery; callers perform this before any external terminal read.
+   */
+  Optional<AccountSelectedOwnerIntakeSettlementReceipt> findSettlement(
+      SelectedOwnerIntakeAuthorizationBinding requested) {
+    requireTransaction();
+    Objects.requireNonNull(requested, "original selected-owner authorization is required");
+    if (requested.owner() != Owner.AUTOMATION_SCRIPTING) {
+      throw new IllegalArgumentException("Automation terminal settlement required");
+    }
+    SelectedOwnerIntakeSourceReadScope scope = requested.content().scope();
+    lockReservedSources(scope);
+    requireReservation(reservation(scope), scope);
+    Record order = authorization(requested.operationId());
+    requireAuthorization(order, requested);
+    if (aborted(scope))
+      throw new IllegalArgumentException("Finalized owner authorization was aborted");
+    Record row = settlement(requested.operationId());
+    if (row == null) return Optional.empty();
+    return Optional.of(exactSettlement(row, requested, null));
+  }
+
+  /**
+   * Commits one immutable COMMITTED_EMPTY owner receipt after the authenticated owner read has
+   * completed outside SQL. The read correlation is retained on first write but is not settlement
+   * identity; a fresh correlation with identical owner receipt bytes recovers the first receipt.
+   */
+  AccountSelectedOwnerIntakeSettlementReceipt settleCommittedEmpty(
+      AutomationSelectedSourceIntakeTerminalReadEvidence evidence) {
+    requireTransaction();
+    Objects.requireNonNull(evidence, "Automation terminal evidence is required");
+    var requested = evidence.request().binding();
+    if (requested.owner() != Owner.AUTOMATION_SCRIPTING
+        || !"COMMITTED_EMPTY".equals(evidence.receipt().outcome())) {
+      throw new IllegalArgumentException("Exact Automation COMMITTED_EMPTY evidence required");
+    }
+    SelectedOwnerIntakeSourceReadScope scope = requested.content().scope();
+    lockReservedSources(scope);
+    requireReservation(reservation(scope), scope);
+    Record order = authorization(requested.operationId());
+    requireAuthorization(order, requested);
+    if (aborted(scope))
+      throw new IllegalArgumentException("Finalized owner authorization was aborted");
+
+    Record prior = settlement(requested.operationId());
+    if (prior != null) return exactSettlement(prior, requested, evidence);
+
+    AccountSelectedOwnerIntakeSettlementReceipt receipt =
+        AccountSelectedOwnerIntakeSettlementReceipt.create(evidence);
+    dsl.execute(
+        "INSERT INTO "
+            + SETTLEMENTS
+            + " (operation_id, fence_id, intake_request_id, owner, target_namespace, tenant_uuid, "
+            + "version_uuid, binding_bytes, binding_digest, terminal_read_request_id, "
+            + "terminal_receipt_bytes, terminal_receipt_digest, receipt_bytes, receipt_digest) "
+            + "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        receipt.operationId(),
+        requested.fenceId(),
+        requested.intakeRequestId(),
+        requested.owner().name(),
+        requested.targetNamespace(),
+        requested.tenantId(),
+        requested.versionId(),
+        requested.canonicalBytes(),
+        requested.digest(),
+        evidence.request().readRequestId(),
+        receipt.ownerReceiptBytes(),
+        receipt.ownerReceiptDigest(),
+        receipt.canonicalBytes(),
+        receipt.digest());
+    return exactSettlement(settlement(requested.operationId()), requested, evidence);
+  }
+
+  private AccountSelectedOwnerIntakeSettlementReceipt exactSettlement(
+      Record row,
+      SelectedOwnerIntakeAuthorizationBinding requested,
+      AutomationSelectedSourceIntakeTerminalReadEvidence retryEvidence) {
+    if (row == null) throw new IllegalStateException("Account settlement commit readback absent");
+    byte[] storedBytes = row.get("receipt_bytes", byte[].class);
+    var receipt = AccountSelectedOwnerIntakeSettlementReceipt.fromStored(storedBytes);
+    var original = receipt.authorizationBinding();
+    var request = receipt.terminalEvidence().request();
+    var ownerReceipt = receipt.terminalEvidence().receipt();
+    if (!Arrays.equals(original.canonicalBytes(), requested.canonicalBytes())
+        || !Arrays.equals(storedBytes, receipt.canonicalBytes())
+        || !receipt.digest().equals(row.get("receipt_digest", String.class))
+        || !Arrays.equals(
+            ownerReceipt.canonicalBytes(), row.get("terminal_receipt_bytes", byte[].class))
+        || !ownerReceipt.receiptDigest().equals(row.get("terminal_receipt_digest", String.class))
+        || !request.readRequestId().equals(row.get("terminal_read_request_id", UUID.class))
+        || !original.operationId().equals(row.get("operation_id", UUID.class))
+        || !original.fenceId().equals(row.get("fence_id", UUID.class))
+        || !original.intakeRequestId().equals(row.get("intake_request_id", UUID.class))
+        || !original.owner().name().equals(row.get("owner", String.class))
+        || !original.targetNamespace().equals(row.get("target_namespace", String.class))
+        || !original.tenantId().equals(row.get("tenant_uuid", UUID.class))
+        || !original.versionId().equals(row.get("version_uuid", UUID.class))
+        || !Arrays.equals(original.canonicalBytes(), row.get("binding_bytes", byte[].class))
+        || !original.digest().equals(row.get("binding_digest", String.class))) {
+      throw new IllegalArgumentException("Changed exact selected-owner terminal settlement");
+    }
+    if (retryEvidence != null && !receipt.sameImmutableOwnerReceipt(retryEvidence)) {
+      throw new IllegalArgumentException("Changed Automation owner terminal receipt");
+    }
+    return receipt;
+  }
+
+  private Record settlement(UUID operationId) {
+    return dsl.fetchOne(
+        "SELECT * FROM " + SETTLEMENTS + " WHERE operation_id = ? FOR UPDATE", operationId);
   }
 
   private Record authorization(UUID operationId) {
