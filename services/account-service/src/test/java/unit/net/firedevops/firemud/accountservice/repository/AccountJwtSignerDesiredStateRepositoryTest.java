@@ -157,6 +157,49 @@ class AccountJwtSignerDesiredStateRepositoryTest {
   }
 
   @Test
+  void preparedPromotionDispatchReturnsReadbackAndRetryDoesNotRepeatCas() throws Exception {
+    Conversation conversation = new Conversation();
+    GenerationRequest request = inWritableTransaction(conversation::ensureRequest);
+    GenerationRequest pending =
+        inWritableTransaction(
+            () ->
+                conversation.repository.recordSecretObservation(
+                    BINDING,
+                    TRUST,
+                    request.operationId(),
+                    request.operationDigest(),
+                    SECRET_UID.toString(),
+                    "12"));
+    PublicJwk jwk = publicJwk(request.targetKid());
+    GenerationResult result =
+        inWritableTransaction(
+            () ->
+                conversation.repository.recordGenerationResult(
+                    BINDING,
+                    TRUST,
+                    request.operationId(),
+                    pending.generationRequestDigest(),
+                    SECRET_UID.toString(),
+                    "12",
+                    "13",
+                    jwk.json()));
+    conversation.preparePromotionForDispatch(request, result);
+
+    var first =
+        inWritableTransaction(
+            () -> conversation.repository.readAndMarkPreparedPromotionDispatched(BINDING, TRUST));
+    assertThat(first.promotion().privatePromotionDispatched()).isTrue();
+    assertThat(conversation.promotionDispatchCasCount).isEqualTo(1);
+
+    var retry =
+        inWritableTransaction(
+            () -> conversation.repository.readAndMarkPreparedPromotionDispatched(BINDING, TRUST));
+    assertThat(retry.promotion().privatePromotionDispatched()).isTrue();
+    assertThat(retry).isEqualTo(first);
+    assertThat(conversation.promotionDispatchCasCount).isEqualTo(1);
+  }
+
+  @Test
   void accountCreatesAndReplaysOnlyItsOwnBoundGenerationRequest() {
     Conversation conversation = new Conversation();
 
@@ -512,6 +555,26 @@ class AccountJwtSignerDesiredStateRepositoryTest {
       Long publishedGeneration,
       String publishedKid,
       UUID generationOperationId) {
+    return stateRow(
+        binding,
+        version,
+        durableGeneration,
+        durableKid,
+        publishedGeneration,
+        publishedKid,
+        generationOperationId,
+        null);
+  }
+
+  private static Record stateRow(
+      Binding binding,
+      long version,
+      Long durableGeneration,
+      String durableKid,
+      Long publishedGeneration,
+      String publishedKid,
+      UUID generationOperationId,
+      UUID preparedOperationId) {
     Map<String, Object> values = new HashMap<>();
     values.put("environment_id", binding.environmentId());
     values.put("cluster_id", binding.clusterId());
@@ -527,7 +590,7 @@ class AccountJwtSignerDesiredStateRepositoryTest {
     values.put("published_active_generation", publishedGeneration);
     values.put("published_active_kid", publishedKid);
     values.put("generation_operation_id", generationOperationId);
-    values.put("prepared_operation_id", null);
+    values.put("prepared_operation_id", preparedOperationId);
     values.put(
         "enrollment_cluster_incarnation_uid",
         UUID.fromString(ENROLLMENT.expectedClusterIncarnationUid()));
@@ -622,6 +685,59 @@ class AccountJwtSignerDesiredStateRepositoryTest {
     return record(values);
   }
 
+  private static String promotionRequestDigest(
+      UUID promotionId,
+      GenerationRequest generation,
+      GenerationResult result,
+      String publicJwksJson)
+      throws Exception {
+    Map<String, Object> preimage = new HashMap<>();
+    preimage.put("digestVersion", "account-jwt-signer-promotion-operation/v1");
+    preimage.put("operationId", promotionId.toString());
+    preimage.put("generationOperationId", generation.operationId().toString());
+    preimage.put("generationOperationDigest", generation.operationDigest());
+    preimage.put("generationReceiptDigest", result.receiptDigest());
+    preimage.put("environmentId", BINDING.environmentId());
+    preimage.put("clusterId", BINDING.clusterId());
+    preimage.put("namespace", BINDING.namespace());
+    preimage.put("custodyMode", BINDING.mode().value());
+    preimage.put("expectedRecordVersion", "2");
+    preimage.put("expectedPreviousActive", Map.of("present", false));
+    preimage.put("expectedPublishedActive", Map.of("present", false));
+    preimage.put("targetGeneration", generation.targetGeneration());
+    preimage.put("targetKid", generation.targetKid());
+    preimage.put("targetAlgorithm", "RS256");
+    preimage.put("targetPublicKeyFingerprint", result.publicKeyFingerprint());
+    preimage.put("expectedPrivateSecretUid", result.secretUid());
+    preimage.put("expectedPrivateSecretResourceVersion", result.observedResourceVersion());
+    preimage.put("expectedPublicConfigMapUid", ENROLLMENT.publicConfigMapUid());
+    preimage.put("expectedPublicJwksResourceVersion", "14");
+    preimage.put("expectedClusterIncarnationUid", TRUST.expectedClusterIncarnationUid());
+    preimage.put("expectedNamespaceUid", TRUST.expectedNamespaceUid());
+    preimage.put("materializerTrustBindingDigest", TRUST.bindingDigest());
+    preimage.put("materializerTrustConfigRevision", TRUST.configRevision());
+    preimage.put("apiBindingDigest", ENROLLMENT.apiBindingDigest());
+    preimage.put("apiConfigRevision", ENROLLMENT.apiConfigRevision());
+    preimage.put("prepublicationIntentDigest", "d".repeat(64));
+    preimage.put("prepublicationReceiptDigest", "e".repeat(64));
+    preimage.put("mountedObservationDigest", "f".repeat(64));
+    preimage.put("readinessPlanDigest", "1".repeat(64));
+    preimage.put("readinessEvidenceDigest", "2".repeat(64));
+    preimage.put("publicJwksSha256", sha256(publicJwksJson));
+    preimage.put("operationAction", "PROMOTE_PENDING");
+    preimage.put("allowedPrivateSlots", List.of("current", "pending", "previous"));
+    byte[] canonical =
+        Rfc8785CanonicalJson.canonicalizeUtf8(
+            JsonMapper.builder().build().writeValueAsString(preimage));
+    return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(canonical));
+  }
+
+  private static String sha256(String value) throws Exception {
+    return HexFormat.of()
+        .formatHex(
+            MessageDigest.getInstance("SHA-256").digest(value.getBytes(StandardCharsets.UTF_8)));
+  }
+
   private static PublicJwk publicJwk(String kid) throws Exception {
     KeyPairGenerator generator = KeyPairGenerator.getInstance("RSA");
     generator.initialize(3072);
@@ -691,6 +807,9 @@ class AccountJwtSignerDesiredStateRepositoryTest {
     private Object[] observationInsert;
     private Object[] resultInsert;
     private int stateReadCount;
+    private UUID preparedPromotionId;
+    private Map<String, Object> preparedPromotionValues;
+    private int promotionDispatchCasCount;
 
     private Conversation() {
       when(dsl.execute(anyString(), any(Object[].class)))
@@ -703,6 +822,10 @@ class AccountJwtSignerDesiredStateRepositoryTest {
                         ? bindings
                         : java.util.Arrays.copyOfRange(arguments, 1, arguments.length);
                 executedStatements.add(sql);
+                if (sql.contains("UPDATE account_jwt_signer_promotion_operations")) {
+                  promotionDispatchCasCount++;
+                  preparedPromotionValues.put("private_promotion_dispatched", true);
+                }
                 if (sql.contains("account_jwt_signer_generation_operations")) {
                   operationInsert = parameters.clone();
                 } else if (sql.contains("account_jwt_signer_secret_observations")) {
@@ -716,8 +839,15 @@ class AccountJwtSignerDesiredStateRepositoryTest {
           .thenAnswer(
               invocation -> {
                 String sql = invocation.getArgument(0);
+                if (sql.contains("account_jwt_signer_promotion_operations")) {
+                  return preparedPromotionValues == null ? null : record(preparedPromotionValues);
+                }
                 if (sql.contains("account_jwt_signer_desired_states")) {
-                  return stateReadCount++ == 0
+                  stateReadCount++;
+                  if (preparedPromotionId != null) {
+                    return stateRow(BINDING, 3, null, null, null, null, null, preparedPromotionId);
+                  }
+                  return stateReadCount == 1
                       ? stateRow(BINDING, 1, null, null, null, null, null)
                       : stateRow(
                           BINDING,
@@ -743,6 +873,67 @@ class AccountJwtSignerDesiredStateRepositoryTest {
 
     private GenerationRequest ensureRequest() {
       return repository.ensureCurrentGenerationRequest(BINDING, TRUST);
+    }
+
+    private void preparePromotionForDispatch(GenerationRequest generation, GenerationResult result)
+        throws Exception {
+      preparedPromotionId = UUID.fromString("66666666-6666-4666-8666-666666666666");
+      String publicJwksJson = "{\"keys\":[" + result.publicJwkJson() + "]}";
+      String requestDigest =
+          promotionRequestDigest(preparedPromotionId, generation, result, publicJwksJson);
+      preparedPromotionValues = new HashMap<>();
+      preparedPromotionValues.put("operation_id", preparedPromotionId);
+      preparedPromotionValues.put("environment_id", BINDING.environmentId());
+      preparedPromotionValues.put("cluster_id", BINDING.clusterId());
+      preparedPromotionValues.put("kubernetes_namespace", BINDING.namespace());
+      preparedPromotionValues.put("custody_mode", BINDING.mode().value());
+      preparedPromotionValues.put("request_digest_version", (short) 1);
+      preparedPromotionValues.put("request_digest", requestDigest);
+      preparedPromotionValues.put("expected_record_version", 2L);
+      preparedPromotionValues.put("expected_previous_generation", null);
+      preparedPromotionValues.put("expected_previous_kid", null);
+      preparedPromotionValues.put("target_generation", Long.parseLong(result.targetGeneration()));
+      preparedPromotionValues.put("target_kid", result.targetKid());
+      preparedPromotionValues.put("target_algorithm", result.targetAlgorithm());
+      preparedPromotionValues.put("target_public_key_fingerprint", result.publicKeyFingerprint());
+      preparedPromotionValues.put(
+          "expected_private_secret_resource_version", result.observedResourceVersion());
+      preparedPromotionValues.put("expected_public_jwks_resource_version", "14");
+      preparedPromotionValues.put("expected_public_active_generation", null);
+      preparedPromotionValues.put("expected_public_active_kid", null);
+      preparedPromotionValues.put("operation_action", "PROMOTE_PENDING");
+      preparedPromotionValues.put(
+          "allowed_private_slots_canonical_bytes",
+          "[\"current\",\"pending\",\"previous\"]".getBytes(StandardCharsets.UTF_8));
+      preparedPromotionValues.put("status", "PREPARED");
+      preparedPromotionValues.put("generation_operation_id", generation.operationId());
+      preparedPromotionValues.put(
+          "expected_cluster_incarnation_uid",
+          UUID.fromString(TRUST.expectedClusterIncarnationUid()));
+      preparedPromotionValues.put(
+          "expected_namespace_uid", UUID.fromString(TRUST.expectedNamespaceUid()));
+      preparedPromotionValues.put("materializer_trust_binding_digest", TRUST.bindingDigest());
+      preparedPromotionValues.put("materializer_trust_config_revision", TRUST.configRevision());
+      preparedPromotionValues.put("api_binding_digest", ENROLLMENT.apiBindingDigest());
+      preparedPromotionValues.put("api_config_revision", ENROLLMENT.apiConfigRevision());
+      preparedPromotionValues.put("expected_private_secret_uid", SECRET_UID);
+      preparedPromotionValues.put(
+          "expected_public_config_map_uid", UUID.fromString(ENROLLMENT.publicConfigMapUid()));
+      preparedPromotionValues.put("prepublication_intent_digest", "d".repeat(64));
+      preparedPromotionValues.put("prepublication_receipt_digest", "e".repeat(64));
+      preparedPromotionValues.put("mounted_observation_digest", "f".repeat(64));
+      preparedPromotionValues.put("readiness_plan_digest", "1".repeat(64));
+      preparedPromotionValues.put("readiness_evidence_digest", "2".repeat(64));
+      preparedPromotionValues.put("expected_public_jwks_json", publicJwksJson);
+      preparedPromotionValues.put("expected_active_generation_marker_json", "{}");
+      preparedPromotionValues.put("private_promotion_dispatched", false);
+      preparedPromotionValues.put("private_promotion_observed_resource_version", null);
+      preparedPromotionValues.put("private_promotion_receipt_digest", null);
+      preparedPromotionValues.put("active_jwks_observed_resource_version", null);
+      preparedPromotionValues.put("active_jwks_public_data_digest", null);
+      preparedPromotionValues.put("active_jwks_receipt_digest", null);
+      preparedPromotionValues.put("generation_operation_digest", generation.operationDigest());
+      preparedPromotionValues.put("generation_receipt_digest", result.receiptDigest());
     }
   }
 }

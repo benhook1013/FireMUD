@@ -399,7 +399,8 @@ public class AccountJwtSignerDesiredStateRepository {
       throw new QuarantinedStateException(
           "Account private promotion dispatch authorization did not read back exactly");
     }
-    return evidence;
+    return new PreparedGenerationEvidence(
+        evidence.desiredState(), promotion.publicEvidence(), evidence.generationResult());
   }
 
   /**
