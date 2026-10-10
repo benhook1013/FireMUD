@@ -35,6 +35,9 @@ service GameDesignService {
       returns (CompareAndSetVersionStateResponse);
   rpc ResolveLaunchDescriptor(ResolveLaunchDescriptorRequest)
       returns (ResolveLaunchDescriptorResponse);
+  rpc GetLaunchDescriptor(GetLaunchDescriptorRequest) returns (GetLaunchDescriptorResponse);
+  rpc GetCompleteLaunchBinding(GetLaunchDescriptorRequest)
+      returns (GetCompleteLaunchBindingResponse);
   rpc CreateTemplateRemapSet(CreateTemplateRemapSetRequest)
       returns (CreateTemplateRemapSetResponse);
   rpc ApproveTemplateRemapSet(ApproveTemplateRemapSetRequest)
@@ -344,11 +347,38 @@ message ResolveLaunchDescriptorRequest {
   optional int64 source_version_id = 5;
   optional int64 target_version_id = 6;
   optional string requested_runtime_flags_json = 7;
+  string world_slug = 8;
+  string authored_world_source_operation_id = 9;
+  string expected_authored_world_source_evidence_digest = 10;
+  // Canonical source identity is distinct from the retained legacy tenant selector.
+  string canonical_tenant_id = 11;
 }
 
 message ResolveLaunchDescriptorResponse {
   LaunchDescriptor launch_descriptor = 1;
   shared.v1.ErrorDetail error = 2;
+}
+
+message GetLaunchDescriptorRequest {
+  string request_id = 1;
+  string canonical_tenant_id = 2;
+  string world_slug = 3;
+  string control_plane_request_id = 4;
+  string expected_request_digest = 5;
+  string expected_result_digest = 6;
+}
+
+message GetLaunchDescriptorResponse {
+  string request_id = 1;
+  LaunchDescriptor launch_descriptor = 2;
+  shared.v1.ErrorDetail error = 3;
+}
+
+message GetCompleteLaunchBindingResponse {
+  string request_id = 1;
+  LaunchDescriptor launch_descriptor = 2;
+  AuthoredWorldReleaseAttestationEvidence release_attestation = 3;
+  shared.v1.ErrorDetail error = 4;
 }
 
 message CreateTemplateRemapSetRequest {
@@ -491,6 +521,20 @@ message PublishedReleaseBundle {
   string workflow_status = 14;
   string workflow_family = 15;
   repeated string command_definitions = 16;
+  string published_release_bundle_ref = 17;
+  string canonical_tenant_id = 18;
+  string canonical_version_id = 19;
+  optional int32 manifest_schema_version = 20;
+  repeated PublishedArtifactDigest artifact_digests = 21;
+}
+
+message PublishedArtifactDigest {
+  string usage_key = 1;
+  string artifact_kind = 2;
+  string immutable_object_key = 3;
+  string content_digest = 4;
+  string content_type = 5;
+  int32 artifact_schema_version = 6;
 }
 
 message LaunchDescriptor {
@@ -506,6 +550,61 @@ message LaunchDescriptor {
   int64 release_bundle_id = 10;
   string published_release_bundle_ref = 11;
   string remap_set_id = 12;
+  AuthoredWorldLaunchDescriptorEvidence authored_world_binding = 13;
+  string canonical_tenant_id = 14;
+}
+
+message AuthoredWorldLaunchDescriptorEvidence {
+  int32 schema_version = 1;
+  string target_namespace = 2;
+  string control_plane_request_id = 3;
+  string canonical_tenant_id = 4;
+  string world_slug = 5;
+  string authored_world_source_operation_id = 6;
+  string authored_world_source_evidence_digest = 7;
+  int64 game_template_id = 8;
+  optional string requested_script_patch_version = 9;
+  optional int64 source_version_id = 10;
+  optional int64 target_version_id = 11;
+  optional string requested_runtime_flags_json = 12;
+  string request_digest = 13;
+  string launch_descriptor_id = 14;
+  int64 version_id = 15;
+  optional string script_patch_version = 16;
+  string runtime_flags_json = 17;
+  string generation_config_revision = 18;
+  int64 version_state_epoch = 19;
+  int64 release_bundle_id = 20;
+  string published_release_bundle_ref = 21;
+  optional string remap_set_id = 22;
+  string result_digest = 23;
+}
+
+// Separate closed evidence: never extends or reinterprets descriptor/v1.
+message AuthoredWorldReleaseAttestationEvidence {
+  int32 schema_version = 1;
+  string target_namespace = 2;
+  string descriptor_result_digest = 3;
+  string canonical_tenant_id = 4;
+  string canonical_version_id = 5;
+  string world_slug = 6;
+  string authored_world_source_operation_id = 7;
+  string authored_world_source_evidence_digest = 8;
+  string launch_descriptor_id = 9;
+  string published_release_bundle_ref = 10;
+  int64 version_state_epoch = 11;
+  string publish_workflow_id = 12;
+  string commit_id = 13;
+  repeated ParticipantDigest participant_digests = 14;
+  string manifest_hash = 15;
+  int32 manifest_schema_version = 16;
+  repeated string required_manifest_asset_keys = 17;
+  repeated PublishedArtifactDigest artifact_digests = 18;
+  repeated string command_definitions = 19;
+  string generation_config_revision = 20;
+  string evidence_digest = 21;
+  // Closed original World Account/APPLIED/receipt evidence. Absent in schema 1, required in 2/3.
+  optional bytes world_start_location_evidence = 22;
 }
 
 message TemplateRemapSet {
@@ -556,6 +655,7 @@ message ParticipantDigest {
   string applied_commit_id = 3;
   string content_digest = 4;
   int32 digest_schema_version = 5;
+  optional string ability_schema_digest = 6;
 }
 
 enum VersionLifecycleState {

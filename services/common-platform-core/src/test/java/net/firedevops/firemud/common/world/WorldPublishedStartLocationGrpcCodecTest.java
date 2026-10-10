@@ -117,7 +117,7 @@ class WorldPublishedStartLocationGrpcCodecTest {
   }
 
   @Test
-  void requestCarrierAcceptsUnboundedDraftEpochAndRejectsMalformedCounters() throws Exception {
+  void requestCarrierSupportsSchemaFourAndUnboundedCanonicalDraftEpoch() throws Exception {
     WorldPublishedStartLocationEvidence.Request base = evidence().request();
     var tuple = base.worldAffectedTuples().getFirst();
     var largeEpochTuple =
@@ -141,13 +141,14 @@ class WorldPublishedStartLocationGrpcCodecTest {
             base.publishWorkflowId(),
             base.appliedCommitId(),
             base.contentDigest(),
-            base.digestSchemaVersion(),
+            4,
             List.of(largeEpochTuple));
     var roundTrip =
         WorldPublishedStartLocationGrpcCodec.fromRequest(
             WorldPublishedStartLocationGrpcCodec.toRequest(carrierRequest));
 
     assertThat(roundTrip).isEqualTo(carrierRequest);
+    assertThat(roundTrip.digestSchemaVersion()).isEqualTo(4);
     assertThat(roundTrip.worldAffectedTuples().getFirst().expectedEpoch()).isEqualTo(LARGE_EPOCH);
 
     assertInvalidExpectedEpoch(tuple, null);
