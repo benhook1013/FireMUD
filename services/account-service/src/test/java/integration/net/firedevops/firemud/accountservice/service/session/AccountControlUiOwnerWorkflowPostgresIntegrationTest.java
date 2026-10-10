@@ -10,6 +10,7 @@ import java.util.concurrent.TimeUnit;
 import net.firedevops.firemud.accountservice.hostedterms.AccountHostedTermsService.CapturedEnvironmentBoundary;
 import net.firedevops.firemud.accountservice.hostedterms.HostedTermsEnvironmentBinding;
 import net.firedevops.firemud.accountservice.service.exception.AuthenticationException;
+import net.firedevops.firemud.test.TestContainerImages;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.testcontainers.containers.PostgreSQLContainer;
@@ -31,7 +32,8 @@ class AccountControlUiOwnerWorkflowPostgresIntegrationTest {
   static final String OTP = "test-only-original-creator-otp";
 
   @Container
-  static PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>("postgres:16-alpine");
+  static PostgreSQLContainer<?> postgres =
+      new PostgreSQLContainer<>(TestContainerImages.postgres());
 
   @TempDir Path temporary;
 
