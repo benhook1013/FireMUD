@@ -253,6 +253,11 @@ class CanonicalInitialAdmissionRepositoryIntegrationTest {
     assertThat(committed.canonicalVersionId()).isEqualTo(CANONICAL_VERSION);
     assertThat(committed.committedPointerVersion()).isEqualTo(1L);
     assertThat(committed.auditEventId()).isPositive();
+    CanonicalInitialAdmissionRepository.CurrentOpenSnapshot currentSnapshot =
+        fixture.initialAdmissionRepository.readCurrentOpenSnapshotForRealm(
+            NAMESPACE, TENANT, request.realmId());
+    assertThat(currentSnapshot.ownerProof()).isEqualTo(committed);
+    assertThat(currentSnapshot.admissionPointerSnapshotDigest()).matches("[0-9a-f]{64}");
     assertThat(
             fixture.dsl.fetchCount(
                 DSL.table(DSL.name("game_session_canonical_initial_admission_attempt"))))

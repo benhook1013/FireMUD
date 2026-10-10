@@ -412,7 +412,18 @@ public class CanonicalInitialAdmissionRepository {
       throw new CanonicalInitialAdmissionReconciliationRequiredException(
           "Current canonical OPEN pointer changed during owner readback");
     }
-    return new CurrentOpenSnapshot(proof, before.snapshotDigest(proof));
+    return new CurrentOpenSnapshot(proof, snapshotDigestOrReconciliation(before, proof));
+  }
+
+  private static String snapshotDigestOrReconciliation(
+      CurrentOpenPointer pointer, CanonicalInitialAdmissionOwnerProof proof) {
+    try {
+      return pointer.snapshotDigest(proof);
+    } catch (IllegalArgumentException | NullPointerException malformed) {
+      throw new CanonicalInitialAdmissionReconciliationRequiredException(
+          "Current canonical OPEN snapshot contains malformed persisted projection evidence",
+          malformed);
+    }
   }
 
   private CurrentOpenPointer readCurrentOpenPointer(
@@ -1495,6 +1506,11 @@ public class CanonicalInitialAdmissionRepository {
       extends IllegalStateException {
     public CanonicalInitialAdmissionReconciliationRequiredException(String message) {
       super(message);
+    }
+
+    public CanonicalInitialAdmissionReconciliationRequiredException(
+        String message, Throwable cause) {
+      super(message, cause);
     }
   }
 }

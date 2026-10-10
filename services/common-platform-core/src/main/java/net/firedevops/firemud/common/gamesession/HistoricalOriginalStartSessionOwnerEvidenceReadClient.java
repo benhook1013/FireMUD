@@ -2,8 +2,6 @@ package net.firedevops.firemud.common.gamesession;
 
 import io.grpc.ManagedChannel;
 import java.io.IOException;
-import java.nio.file.Files;
-import java.nio.file.Path;
 import java.util.Objects;
 import java.util.concurrent.TimeUnit;
 import javax.net.ssl.SSLException;
@@ -12,6 +10,7 @@ import net.firedevops.firemud.common.gamesession.HistoricalOriginalStartSessionO
 import net.firedevops.firemud.common.gamesession.HistoricalOriginalStartSessionOwnerEvidence.Result;
 import net.firedevops.firemud.common.grpc.AbstractReloadingBlockingGrpcClient;
 import net.firedevops.firemud.common.grpc.CommonGrpcClientProperties;
+import net.firedevops.firemud.common.grpc.FileBackedGrpcMtlsPolicy;
 import net.firedevops.firemud.common.grpc.GrpcChannelFactory;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
 import net.firedevops.firemud.common.grpc.GrpcServerPeerIdentityCallCredentials;
@@ -132,35 +131,10 @@ public final class HistoricalOriginalStartSessionOwnerEvidenceReadClient
 
   private static CommonGrpcClientProperties requireFileBackedMtls(
       CommonGrpcClientProperties tlsProperties) {
-    if (tlsProperties == null || tlsProperties.isPlaintext()) {
-      throw new IllegalArgumentException("Historical StartSession evidence reads require mTLS");
-    }
-    requireReadableFile(tlsProperties.getCertChain(), "certificate chain");
-    requireReadableFile(tlsProperties.getPrivateKey(), "private key");
-    requireReadableFile(tlsProperties.getCaCert(), "CA certificate");
-    return tlsProperties;
-  }
-
-  private static void requireReadableFile(String configuredPath, String label) {
-    if (configuredPath == null || configuredPath.isBlank()) {
-      throw new IllegalArgumentException(
-          "Historical StartSession evidence reads require file-backed certificate, key, and CA material");
-    }
-    String pathText = configuredPath.trim();
-    if (pathText.startsWith("classpath:")) {
-      throw new IllegalArgumentException(
-          "Historical StartSession evidence reads require file-backed certificate, key, and CA material");
-    }
-    Path path;
-    try {
-      path = Path.of(pathText);
-    } catch (RuntimeException invalid) {
-      throw new IllegalArgumentException(
-          "Historical StartSession " + label + " must be a readable file-backed path", invalid);
-    }
-    if (!Files.isRegularFile(path) || !Files.isReadable(path)) {
-      throw new IllegalArgumentException(
-          "Historical StartSession " + label + " must be an existing readable file");
-    }
+    return FileBackedGrpcMtlsPolicy.require(
+        tlsProperties,
+        "Historical StartSession evidence reads",
+        "Historical StartSession evidence reads require mTLS",
+        "Historical StartSession evidence reads require mTLS");
   }
 }
