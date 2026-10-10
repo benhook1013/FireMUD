@@ -756,6 +756,22 @@ BEGIN
     IF snapshot_json IS NULL THEN
         RAISE EXCEPTION 'Readiness V2 inventory snapshot is missing' USING ERRCODE = '23514';
     END IF;
+    IF jsonb_typeof(snapshot_json -> 'validators') IS DISTINCT FROM 'array'
+       OR jsonb_typeof(plan_row.applicability_matrix_json::jsonb -> 'validators') IS DISTINCT FROM 'array' THEN
+        RAISE EXCEPTION 'Readiness V2 inventory validator sets are malformed' USING ERRCODE = '23514';
+    END IF;
+    IF EXISTS (
+            SELECT 1
+              FROM jsonb_array_elements(snapshot_json -> 'validators') AS validator(value)
+             WHERE validator.value ->> 'validatorId' IS NULL
+                OR jsonb_typeof(validator.value -> 'profiles') IS DISTINCT FROM 'array')
+       OR EXISTS (
+            SELECT 1
+              FROM jsonb_array_elements(plan_row.applicability_matrix_json::jsonb -> 'validators') AS validator(value)
+             WHERE validator.value ->> 'validatorId' IS NULL
+                OR jsonb_typeof(validator.value -> 'applicableProfiles') IS DISTINCT FROM 'array') THEN
+        RAISE EXCEPTION 'Readiness V2 inventory profile bindings are malformed' USING ERRCODE = '23514';
+    END IF;
     SELECT count(*) * 4 INTO expected_entry_count
       FROM jsonb_array_elements(snapshot_json -> 'validators');
     SELECT count(*) INTO actual_entry_count
@@ -770,6 +786,41 @@ BEGIN
     IF actual_entry_count <> expected_entry_count
        OR actual_pod_count <> expected_pod_count
        OR actual_entry_count > 256 OR actual_pod_count > 256
+       OR EXISTS (
+            SELECT 1
+              FROM jsonb_array_elements(snapshot_json -> 'validators') AS snapshot_validator(value)
+             WHERE NOT EXISTS (
+                SELECT 1
+                  FROM jsonb_array_elements(plan_row.applicability_matrix_json::jsonb -> 'validators') AS matrix_validator(value)
+                 WHERE matrix_validator.value ->> 'validatorId' = snapshot_validator.value ->> 'validatorId'))
+       OR EXISTS (
+            SELECT 1
+              FROM jsonb_array_elements(plan_row.applicability_matrix_json::jsonb -> 'validators') AS matrix_validator(value)
+             WHERE NOT EXISTS (
+                SELECT 1
+                  FROM jsonb_array_elements(snapshot_json -> 'validators') AS snapshot_validator(value)
+                 WHERE snapshot_validator.value ->> 'validatorId' = matrix_validator.value ->> 'validatorId'))
+       OR EXISTS (
+            SELECT 1
+              FROM jsonb_array_elements(snapshot_json -> 'validators') AS snapshot_validator(value)
+              JOIN jsonb_array_elements(plan_row.applicability_matrix_json::jsonb -> 'validators') AS matrix_validator(value)
+                ON matrix_validator.value ->> 'validatorId' = snapshot_validator.value ->> 'validatorId'
+             WHERE COALESCE((
+                    SELECT jsonb_agg(
+                               jsonb_build_object(
+                                   'tokenProfile', profile.value ->> 'tokenProfile',
+                                   'audience', profile.value ->> 'audience')
+                               ORDER BY profile.value ->> 'tokenProfile', profile.value ->> 'audience')
+                      FROM jsonb_array_elements(snapshot_validator.value -> 'profiles') AS profile(value)),
+                    '[]'::jsonb)
+                   IS DISTINCT FROM COALESCE((
+                    SELECT jsonb_agg(
+                               jsonb_build_object(
+                                   'tokenProfile', profile.value ->> 'tokenProfile',
+                                   'audience', profile.value ->> 'audience')
+                               ORDER BY profile.value ->> 'tokenProfile', profile.value ->> 'audience')
+                      FROM jsonb_array_elements(matrix_validator.value -> 'applicableProfiles') AS profile(value)),
+                    '[]'::jsonb))
        OR EXISTS (
             SELECT 1
               FROM jsonb_array_elements(snapshot_json -> 'validators') AS validator(value)
