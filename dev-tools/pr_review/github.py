@@ -833,6 +833,64 @@ def fetch_required_status_checks(repo: str, branch: str) -> dict[str, Any]:
     }
 
 
+def _positive_id(value: Any) -> bool:
+    return isinstance(value, int) and not isinstance(value, bool) and value > 0
+
+
+def _actions_workflow_identities(repo: str, head_sha: str) -> dict[int, dict[str, Any]]:
+    """Associate exact check suites with stable workflows from one head inventory."""
+    pages = _fetch_api_pages(f"repos/{repo}/actions/runs?head_sha={head_sha}&per_page=100")
+    runs: list[dict[str, Any]] = []
+    totals: set[int] = set()
+    for page in pages:
+        total = page.get("total_count")
+        values = page.get("workflow_runs")
+        if (
+            isinstance(total, bool)
+            or not isinstance(total, int)
+            or total < 0
+            or not isinstance(values, list)
+            or any(not isinstance(item, dict) for item in values)
+        ):
+            raise RuntimeError("GitHub Actions inventory is malformed")
+        totals.add(total)
+        runs.extend(values)
+    # Filtered Actions inventories are capped at 1,000 results by GitHub.
+    if len(totals) != 1 or next(iter(totals)) > 1000 or len(runs) != next(iter(totals)):
+        raise RuntimeError("GitHub Actions inventory coverage is incomplete")
+    if any(not _positive_id(run.get("id")) for run in runs) or len({run["id"] for run in runs}) != len(runs):
+        raise RuntimeError("GitHub Actions inventory has ambiguous run IDs")
+    identities: dict[int, dict[str, Any]] = {}
+    blocked: set[int] = set()
+    for run in runs:
+        suite_id = run.get("check_suite_id")
+        if not _positive_id(suite_id):
+            continue
+        repository = run.get("repository")
+        if (
+            not isinstance(repository, dict)
+            or not isinstance(repository.get("full_name"), str)
+            or repository["full_name"].casefold() != repo.casefold()
+            or not _positive_id(repository.get("id"))
+            or not _positive_id(run.get("workflow_id"))
+            or not isinstance(run.get("head_sha"), str)
+            or run["head_sha"].casefold() != head_sha.casefold()
+        ):
+            blocked.add(suite_id)
+            continue
+        identity = {
+            "repository_id": repository["id"],
+            "workflow_id": run["workflow_id"],
+            "head_sha": head_sha.lower(),
+            "app_id": 15368,
+        }
+        previous = identities.get(suite_id)
+        if previous is not None and (previous["identity"] != identity or previous["run_id"] != run["id"]):
+            blocked.add(suite_id)
+        identities[suite_id] = {"identity": identity, "run_id": run["id"]}
+    return {suite_id: value for suite_id, value in identities.items() if suite_id not in blocked}
+
+
 def fetch_check_inventory(repo: str, head_sha: str) -> dict[str, Any]:
     """Fetch every check run and commit status attached to one exact head."""
 
@@ -851,10 +909,30 @@ def fetch_check_inventory(repo: str, head_sha: str) -> dict[str, Any]:
                 normalized["startedAt"] = normalized["started_at"]
             if "detailsUrl" not in normalized and "details_url" in normalized:
                 normalized["detailsUrl"] = normalized["details_url"]
-            suite = normalized.get("check_suite")
-            if isinstance(suite, dict) and isinstance(suite.get("workflow_name"), str):
-                normalized.setdefault("workflowName", suite["workflow_name"])
+            # Explicit null fences unproven native checks from name-only grouping.
+            normalized["workflowIdentity"] = None
             check_runs.append(normalized)
+    actions_checks = [
+        check
+        for check in check_runs
+        if isinstance(check.get("app"), dict)
+        and _positive_id(check["app"].get("id"))
+        and check["app"].get("id") == 15368
+        and check["app"].get("slug") == "github-actions"
+    ]
+    if actions_checks:
+        identities = _actions_workflow_identities(repo, head_sha)
+        for check in actions_checks:
+            suite = check.get("check_suite")
+            suite_id = suite.get("id") if isinstance(suite, dict) else None
+            if not _positive_id(suite_id) or not isinstance(check.get("head_sha"), str):
+                continue
+            if check["head_sha"].casefold() != head_sha.casefold():
+                continue
+            metadata = identities.get(suite_id)
+            if metadata is not None:
+                check["workflowIdentity"] = dict(metadata["identity"])
+                check["workflowRunId"] = metadata["run_id"]
     status_contexts: list[dict[str, Any]] = []
     for page in _fetch_api_pages(f"repos/{repo}/commits/{head_sha}/status?per_page=100"):
         values = page.get("statuses")
