@@ -375,7 +375,8 @@ public class PublishedReleaseBundleRepository {
         || !request.canonicalVersionId().equals(source.canonicalVersionId())
         || !request.publishWorkflowId().equals(bundle.getPublishWorkflowId())
         || ("v2".equals(bundle.getAttestationSchemaVersion()) && request.digestSchemaVersion() != 3)
-        || ("v3".equals(bundle.getAttestationSchemaVersion())
+        || (("v3".equals(bundle.getAttestationSchemaVersion())
+                || "v4".equals(bundle.getAttestationSchemaVersion()))
             && request.digestSchemaVersion() != 4)) {
       throw new IllegalArgumentException(
           "World selector differs from exact Version source/workflow");
@@ -383,7 +384,7 @@ public class PublishedReleaseBundleRepository {
   }
 
   private static boolean isSelectorSchema(String schemaVersion) {
-    return "v2".equals(schemaVersion) || "v3".equals(schemaVersion);
+    return "v2".equals(schemaVersion) || "v3".equals(schemaVersion) || "v4".equals(schemaVersion);
   }
 
   private record CanonicalSource(UUID canonicalTenantId, UUID canonicalVersionId) {}

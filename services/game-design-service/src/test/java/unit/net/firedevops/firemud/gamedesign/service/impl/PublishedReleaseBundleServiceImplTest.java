@@ -45,10 +45,10 @@ class PublishedReleaseBundleServiceImplTest {
   private PublishedReleaseBundleServiceImpl service;
 
   @Test
-  void closureSelectorV3PersistsOriginalBytesAndRetryReturnsStoredEvidenceWithoutResolvingDefaults()
+  void selectedFullV4PersistsOriginalBytesAndRetryReturnsStoredEvidenceWithoutResolvingDefaults()
       throws Exception {
     var evidence = closureSelectorEvidence();
-    var participants = PublishedWorldSelectorFixtures.participants(7L, evidence);
+    var participants = PublishedWorldSelectorFixtures.selectedFullParticipants(7L, evidence);
     // ISOLATED source-repository response; this test covers service assembly only.
     when(repository.requireSelectedCommandDefinitions(any(), any(), any(), any()))
         .thenReturn(List.of(validCommandDefinition()));
@@ -70,7 +70,7 @@ class PublishedReleaseBundleServiceImplTest {
             "genrev-1",
             participants,
             evidence);
-    assertEquals("v3", first.attestationSchemaVersion());
+    assertEquals("v4", first.attestationSchemaVersion());
     assertThat(first.worldPublishedStartLocationEvidence().canonicalBytes())
         .containsExactly(evidence.canonicalBytes());
     assertThat(first.commandDefinitions()).containsExactly(validCommandDefinition());
@@ -113,10 +113,10 @@ class PublishedReleaseBundleServiceImplTest {
   }
 
   @Test
-  void closureSelectorV3RejectsMissingEvidenceWrongWorkflowIncompleteOwnersAndChangedWorldDigest()
+  void selectedFullV4RejectsMissingEvidenceWrongWorkflowIncompleteOwnersAndChangedWorldDigest()
       throws Exception {
     var evidence = closureSelectorEvidence();
-    var participants = PublishedWorldSelectorFixtures.participants(7L, evidence);
+    var participants = PublishedWorldSelectorFixtures.selectedFullParticipants(7L, evidence);
     var obsolete = new java.util.ArrayList<>(participants);
     var gd = obsolete.getLast();
     obsolete.set(
@@ -198,7 +198,96 @@ class PublishedReleaseBundleServiceImplTest {
   }
 
   @Test
-  void closureSelectorV3RequiresSelectedSourceCaptureBeforeBundleWrite() throws Exception {
+  void selectedFullV4RejectsEveryMixedParticipantSchemaBeforeWrite() throws Exception {
+    var evidence = closureSelectorEvidence();
+    var participants = PublishedWorldSelectorFixtures.selectedFullParticipants(7L, evidence);
+    for (int index = 0; index < participants.size(); index++) {
+      var mixed = new java.util.ArrayList<>(participants);
+      var participant = mixed.get(index);
+      mixed.set(
+          index,
+          new PublishParticipantDigestDto(
+              participant.participantKey(),
+              participant.scopeValue(),
+              participant.baseVersionId(),
+              participant.appliedCommitId(),
+              participant.contentDigest(),
+              participant.digestSchemaVersion() == 1 ? 2 : participant.digestSchemaVersion() - 1,
+              participant.abilitySchemaDigest(),
+              participant.errorCode(),
+              participant.errorMessage()));
+      assertThatThrownBy(
+              () ->
+                  service.createFullVersionBundle(
+                      selectorVersion(),
+                      "publish-workflow",
+                      emptyManifest(),
+                      "genrev-1",
+                      mixed,
+                      evidence))
+          .as("mixed profile for %s", participant.participantKey())
+          .isInstanceOf(IllegalArgumentException.class);
+    }
+    org.mockito.Mockito.verify(repository, org.mockito.Mockito.never()).save(any());
+  }
+
+  @Test
+  void retainedV3ReadsAndRetriesOriginalBytesButConflictsWithSelectedFullV4() throws Exception {
+    var evidence = closureSelectorEvidence();
+    var retained = new PublishedReleaseBundle();
+    retained.setId(11L);
+    retained.setTenantId("tenant-1");
+    retained.setVersionId(7L);
+    retained.setVersionNumber(selectorVersion().versionNumber());
+    retained.setCanonicalTenantId(sourceIdentity().getCanonicalTenantId());
+    retained.setCanonicalVersionId(sourceIdentity().getCanonicalVersionId());
+    retained.setAttestationSchemaVersion("v3");
+    retained.setPublishWorkflowId("publish-workflow");
+    retained.setManifestHash(emptyManifest().manifestHash());
+    retained.setManifestSchemaVersion(emptyManifest().manifestSchemaVersion());
+    retained.setArtifactDigestsJson("[]");
+    retained.setRequiredManifestAssetKeysJson("[]");
+    retained.setGenerationConfigRevision("genrev-1");
+    retained.setCommandDefinitionsJson(
+        new ObjectMapper().writeValueAsString(List.of(validCommandDefinition())));
+    retained.setParticipantDigestsJson(
+        new ObjectMapper()
+            .writeValueAsString(PublishedWorldSelectorFixtures.participants(7L, evidence)));
+    retained.setWorldPublishedStartLocationEvidenceJson(
+        new String(evidence.canonicalBytes(), StandardCharsets.UTF_8));
+    when(repository.findByTenantIdAndVersionId("tenant-1", 7L)).thenReturn(Optional.of(retained));
+    when(repository.requireSelectedCommandDefinitions(any(), any(), any(), any()))
+        .thenReturn(List.of(validCommandDefinition()));
+    var read = service.getPublishedReleaseBundle("tenant-1", 7L);
+    assertEquals("v3", read.attestationSchemaVersion());
+    assertThat(read.worldPublishedStartLocationEvidence().canonicalBytes())
+        .containsExactly(evidence.canonicalBytes());
+    var retry =
+        service.createFullVersionBundle(
+            selectorVersion(),
+            "publish-workflow",
+            emptyManifest(),
+            "genrev-1",
+            PublishedWorldSelectorFixtures.participants(7L, evidence),
+            evidence);
+    assertThat(retry).isEqualTo(read);
+    assertThatThrownBy(
+            () ->
+                service.createFullVersionBundle(
+                    selectorVersion(),
+                    "publish-workflow",
+                    emptyManifest(),
+                    "genrev-1",
+                    PublishedWorldSelectorFixtures.selectedFullParticipants(7L, evidence),
+                    evidence))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("IDEMPOTENCY_CONFLICT");
+    assertEquals("v3", retained.getAttestationSchemaVersion());
+    org.mockito.Mockito.verify(repository, org.mockito.Mockito.never()).save(any());
+  }
+
+  @Test
+  void selectedFullV4RequiresSelectedSourceCaptureBeforeBundleWrite() throws Exception {
     var evidence = closureSelectorEvidence();
     when(repository.requireSelectedCommandDefinitions(any(), any(), any(), any()))
         .thenThrow(new IllegalStateException("SELECTED_SOURCE_CAPTURE_UNAVAILABLE"));
@@ -210,7 +299,7 @@ class PublishedReleaseBundleServiceImplTest {
                     "publish-workflow",
                     emptyManifest(),
                     "genrev-1",
-                    PublishedWorldSelectorFixtures.participants(7L, evidence),
+                    PublishedWorldSelectorFixtures.selectedFullParticipants(7L, evidence),
                     evidence))
         .isInstanceOf(IllegalStateException.class)
         .hasMessageContaining("SELECTED_SOURCE_CAPTURE_UNAVAILABLE");

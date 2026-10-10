@@ -267,7 +267,7 @@ public final class PublishGateServiceImpl implements PublishGateService {
     int selectedAttestationSchema =
         switch (worldDigests.getFirst().digestSchemaVersion()) {
           case 3 -> AuthoredWorldReleaseAttestationEvidence.SELECTOR_SCHEMA_VERSION;
-          case 4 -> AuthoredWorldReleaseAttestationEvidence.CLOSURE_SELECTOR_SCHEMA_VERSION;
+          case 4 -> AuthoredWorldReleaseAttestationEvidence.SELECTED_FULL_SCHEMA_VERSION;
           default ->
               throw new PublishGateFailureException(
                   PublishGateFailureCode.UNSUPPORTED_DIGEST_SCHEMA,

@@ -135,6 +135,7 @@ class PublishGateServiceImplTest {
     assertEquals(5, digests.size());
     assertDoesNotThrow(() -> service.assertSelectedGatePassed(version, digests));
     assertEquals(2, digests.get(4).digestSchemaVersion());
+    assertEquals(6, digests.get(3).digestSchemaVersion());
     assertEquals("b".repeat(64), digests.getFirst().contentDigest());
     assertEquals("c".repeat(64), digests.get(4).contentDigest());
     verify(selectedPublicationDigestReader).read("test", binding);
@@ -153,6 +154,37 @@ class PublishGateServiceImplTest {
     publicationOrder.verify(gameLogicClient).getDraftDesignDigestForVersion(binding, receipt);
     verify(gameLogicClient, org.mockito.Mockito.never())
         .getDraftDesignDigestForVersion(any(PublicationDigestRequestBinding.class));
+  }
+
+  @Test
+  void selectedFullGateRejectsEveryMixedParticipantProfile() {
+    var version = selectedVersion();
+    var binding = selectedBinding(version);
+    var receipt = org.mockito.Mockito.mock(SelectedDraftGameLogicReceipt.class);
+    stubSelectedParticipantDigests(version, binding, receipt);
+    var participants =
+        service.collectSelectedFullVersionParticipantDigests(
+            version, binding, binding.derivedWorkflowIdentity());
+    for (int index = 0; index < participants.size(); index++) {
+      var mixed = new java.util.ArrayList<>(participants);
+      var participant = mixed.get(index);
+      mixed.set(
+          index,
+          new PublishParticipantDigestDto(
+              participant.participantKey(),
+              participant.scopeValue(),
+              participant.baseVersionId(),
+              participant.appliedCommitId(),
+              participant.contentDigest(),
+              participant.digestSchemaVersion() == 1 ? 2 : participant.digestSchemaVersion() - 1,
+              participant.abilitySchemaDigest(),
+              participant.errorCode(),
+              participant.errorMessage()));
+      assertThrows(
+          PublishGateFailureException.class,
+          () -> service.assertSelectedGatePassed(version, mixed),
+          "mixed profile for " + participant.participantKey());
+    }
   }
 
   @Test
@@ -740,7 +772,7 @@ class PublishGateServiceImplTest {
     when(entityManagementClient.getDraftDesignDigestForVersion(binding))
         .thenReturn(
             new PublishParticipantDigestDto(
-                "ENTITY_MANAGEMENT", "7", "selected-commit", "entity-digest", 2, null, null));
+                "ENTITY_MANAGEMENT", "7", "selected-commit", "entity-digest", 3, null, null));
     when(automationScriptingClient.getDraftDesignDigestForVersion(binding))
         .thenReturn(
             new PublishParticipantDigestDto(
@@ -781,7 +813,7 @@ class PublishGateServiceImplTest {
     when(entityManagementClient.getDraftDesignDigestForVersion(binding))
         .thenReturn(
             new PublishParticipantDigestDto(
-                "ENTITY_MANAGEMENT", "7", "selected-commit", "entity-digest", 2, null, null));
+                "ENTITY_MANAGEMENT", "7", "selected-commit", "entity-digest", 3, null, null));
     when(automationScriptingClient.getDraftDesignDigestForVersion(binding))
         .thenReturn(
             new PublishParticipantDigestDto(
@@ -789,7 +821,7 @@ class PublishGateServiceImplTest {
                 "7",
                 "selected-commit",
                 "automation-digest",
-                5,
+                6,
                 null,
                 null));
   }
@@ -802,7 +834,7 @@ class PublishGateServiceImplTest {
         new DesignControlPlaneDigestDto(
             binding.tenantId(), "7", "selected-commit", "c".repeat(64), 2),
         new PublishParticipantDigestDto(
-            "WORLD_MANAGEMENT", "7", "selected-commit", "b".repeat(64), 3, null, null));
+            "WORLD_MANAGEMENT", "7", "selected-commit", "b".repeat(64), 4, null, null));
   }
 
   private static VersionDto selectedVersion() {

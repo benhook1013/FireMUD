@@ -232,7 +232,8 @@ public final class StartSessionTemplateAssociationReadService {
       if (!canonicalTenantId.equals(configuredRelease.canonicalTenantId())
           || !canonicalVersionId.equals(configuredRelease.canonicalVersionId())
           || !("v2".equals(configuredRelease.attestationSchemaVersion())
-              || "v3".equals(configuredRelease.attestationSchemaVersion()))) {
+              || "v3".equals(configuredRelease.attestationSchemaVersion())
+              || "v4".equals(configuredRelease.attestationSchemaVersion()))) {
         throw new IllegalStateException("START_SESSION_CONFIGURED_RELEASE_IDENTITY_CONFLICT");
       }
       workflowId = configuredRelease.publishWorkflowId();

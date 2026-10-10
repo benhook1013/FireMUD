@@ -3,17 +3,29 @@ package net.firedevops.firemud.automationscripting.repository;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import java.io.ByteArrayOutputStream;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
+import java.util.HexFormat;
+import java.util.Locale;
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicBoolean;
 import net.firedevops.firemud.automationscripting.sourceintake.AutomationEmptySelectedSourceIntakeRepository;
+import net.firedevops.firemud.automationscripting.sourceintake.AutomationSelectedEmptyPublicationDigestService;
 import net.firedevops.firemud.common.automation.sourceintake.AutomationEmptySelectedSourceIntakeReceipt;
+import net.firedevops.firemud.common.publication.PublicationDigestRequestBinding;
 import net.firedevops.firemud.test.TestContainerImages;
 import org.flywaydb.core.Flyway;
 import org.jooq.DSLContext;
+import org.jooq.ExecuteContext;
 import org.jooq.Record;
 import org.jooq.SQLDialect;
 import org.jooq.impl.DSL;
+import org.jooq.impl.DefaultExecuteListener;
+import org.jooq.impl.DefaultExecuteListenerProvider;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -263,6 +275,139 @@ class AutomationEmptySelectedSourceIntakeRepositoryPostgresIntegrationTest {
     }
     assertThatThrownBy(() -> repository.readCommittedTerminal(fixture.authorization()))
         .isInstanceOf(IllegalArgumentException.class);
+    assertThatThrownBy(
+            () ->
+                repository.readPublicationScope(
+                    AutomationEmptySelectedSourceIntakePostgresFixture.NAMESPACE,
+                    AutomationEmptySelectedSourceIntakePostgresFixture.TENANT,
+                    fixture.authorization().selected().target().gameDesignVersionRowId()))
+        .isInstanceOf(RuntimeException.class);
+  }
+
+  @Test
+  void selectedEmptyPublicationReaderUsesTheRetainedTargetProofAndReturnsSchemaSixDigest() {
+    AutomationEmptySelectedSourceIntakePostgresFixture.Fixture fixture =
+        AutomationEmptySelectedSourceIntakePostgresFixture.create("1");
+    AutomationEmptySelectedSourceIntakeReceipt receipt =
+        repository.retainFresh(fixture.inputs(), requestDigest(fixture));
+    long gameDesignVersionRowId =
+        fixture.authorization().selected().target().gameDesignVersionRowId();
+
+    assertThat(
+            repository
+                .readPublicationScope(
+                    AutomationEmptySelectedSourceIntakePostgresFixture.NAMESPACE,
+                    AutomationEmptySelectedSourceIntakePostgresFixture.TENANT,
+                    gameDesignVersionRowId)
+                .canonicalBytes())
+        .containsExactly(receipt.canonicalBytes());
+    assertThatThrownBy(
+            () ->
+                repository.readPublicationScope(
+                    AutomationEmptySelectedSourceIntakePostgresFixture.NAMESPACE,
+                    AutomationEmptySelectedSourceIntakePostgresFixture.TENANT,
+                    gameDesignVersionRowId + 1L))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("missing or ambiguous");
+
+    var digest =
+        new AutomationSelectedEmptyPublicationDigestService(
+                AutomationEmptySelectedSourceIntakePostgresFixture.NAMESPACE, repository)
+            .getDraftDesignDigest(
+                PublicationDigestRequestBinding.full(
+                    AutomationEmptySelectedSourceIntakePostgresFixture.TENANT.toString(),
+                    Long.toString(gameDesignVersionRowId),
+                    "publish-request-1"));
+    assertThat(digest.tenantId())
+        .isEqualTo(AutomationEmptySelectedSourceIntakePostgresFixture.TENANT.toString());
+    assertThat(digest.scopeValue()).isEqualTo(Long.toString(gameDesignVersionRowId));
+    assertThat(digest.baseVersionId()).isZero();
+    assertThat(digest.appliedCommitId()).isEqualTo(receipt.selectedCommitId().toString());
+    String canonicalInventoryJson =
+        fixture.inputs().ownerSourceInventoryDeclaration().inventory().canonicalJson();
+    assertThat(digest.contentDigest())
+        .isEqualTo(
+            expectedSelectedEmptyDigest(
+                "automation-selected-empty-publication-digest/v1",
+                "6",
+                AutomationEmptySelectedSourceIntakePostgresFixture.TENANT,
+                gameDesignVersionRowId,
+                receipt.canonicalVersionId(),
+                canonicalInventoryJson));
+    assertThat(digest.digestSchemaVersion())
+        .isEqualTo(AutomationSelectedEmptyPublicationDigestService.DIGEST_SCHEMA_VERSION);
+
+    var differentPublicationRequest =
+        new AutomationSelectedEmptyPublicationDigestService(
+                AutomationEmptySelectedSourceIntakePostgresFixture.NAMESPACE, repository)
+            .getDraftDesignDigest(
+                PublicationDigestRequestBinding.full(
+                    AutomationEmptySelectedSourceIntakePostgresFixture.TENANT.toString(),
+                    Long.toString(gameDesignVersionRowId),
+                    "publish-request-2"));
+    assertThat(differentPublicationRequest.contentDigest()).isEqualTo(digest.contentDigest());
+  }
+
+  @Test
+  void publicationScopeScanAndReceiptReadbackUseOneRepeatableReadSnapshot() {
+    AutomationEmptySelectedSourceIntakePostgresFixture.Fixture fixture =
+        AutomationEmptySelectedSourceIntakePostgresFixture.create("1");
+    AutomationEmptySelectedSourceIntakeReceipt receipt =
+        repository.retainFresh(fixture.inputs(), requestDigest(fixture));
+    byte[] concurrentlyCorruptedBytes = receipt.canonicalBytes();
+    concurrentlyCorruptedBytes[0] ^= 1;
+    AtomicBoolean concurrentMutationApplied = new AtomicBoolean();
+    dsl.configuration()
+        .set(
+            new DefaultExecuteListenerProvider(
+                new DefaultExecuteListener() {
+                  @Override
+                  public void executeEnd(ExecuteContext context) {
+                    String sql = context.sql();
+                    if (sql == null
+                        || !sql.toLowerCase(Locale.ROOT)
+                            .contains("from automation_empty_selected_source_association")
+                        || !concurrentMutationApplied.compareAndSet(false, true)) {
+                      return;
+                    }
+                    DSLContext concurrentDsl = DSL.using(dataSource(schema), SQLDialect.POSTGRES);
+                    concurrentDsl.execute(
+                        "ALTER TABLE automation_empty_selected_source_receipt "
+                            + "DISABLE TRIGGER trg_automation_empty_source_receipt_immutable");
+                    try {
+                      assertThat(
+                              concurrentDsl.execute(
+                                  "UPDATE automation_empty_selected_source_receipt "
+                                      + "SET receipt_bytes = ? WHERE target_namespace = ? "
+                                      + "AND intake_request_id = ?",
+                                  concurrentlyCorruptedBytes,
+                                  receipt.targetNamespace(),
+                                  receipt.intakeRequestId()))
+                          .isEqualTo(1);
+                    } finally {
+                      concurrentDsl.execute(
+                          "ALTER TABLE automation_empty_selected_source_receipt "
+                              + "ENABLE TRIGGER trg_automation_empty_source_receipt_immutable");
+                    }
+                  }
+                }));
+
+    AutomationEmptySelectedSourceIntakeReceipt read =
+        repository.readPublicationScope(
+            receipt.targetNamespace(),
+            receipt.canonicalTenantId(),
+            fixture.authorization().selected().target().gameDesignVersionRowId());
+
+    assertThat(read.canonicalBytes()).containsExactly(receipt.canonicalBytes());
+    assertThat(concurrentMutationApplied).isTrue();
+    Record storedReceipt =
+        dsl.fetchOne(
+            "SELECT receipt_bytes FROM automation_empty_selected_source_receipt "
+                + "WHERE target_namespace = ? AND intake_request_id = ?",
+            receipt.targetNamespace(),
+            receipt.intakeRequestId());
+    assertThat(storedReceipt).isNotNull();
+    assertThat(storedReceipt.get(0, byte[].class)).containsExactly(concurrentlyCorruptedBytes);
   }
 
   @Test
@@ -334,6 +479,35 @@ class AutomationEmptySelectedSourceIntakeRepositoryPostgresIntegrationTest {
         AutomationEmptySelectedSourceIntakePostgresFixture.NAMESPACE,
         fixture.authorization(),
         fixture.freezeEvidence());
+  }
+
+  private static String expectedSelectedEmptyDigest(
+      String domain,
+      String schemaVersion,
+      UUID canonicalTenantId,
+      long gameDesignVersionRowId,
+      UUID canonicalVersionId,
+      String canonicalInventoryJson) {
+    ByteArrayOutputStream preimage = new ByteArrayOutputStream();
+    appendDigestSegment(preimage, domain);
+    appendDigestSegment(preimage, schemaVersion);
+    appendDigestSegment(preimage, canonicalTenantId.toString());
+    appendDigestSegment(preimage, Long.toString(gameDesignVersionRowId));
+    appendDigestSegment(preimage, canonicalVersionId.toString());
+    appendDigestSegment(preimage, canonicalInventoryJson);
+    try {
+      return HexFormat.of()
+          .formatHex(MessageDigest.getInstance("SHA-256").digest(preimage.toByteArray()));
+    } catch (NoSuchAlgorithmException impossible) {
+      throw new AssertionError(impossible);
+    }
+  }
+
+  private static void appendDigestSegment(ByteArrayOutputStream output, String value) {
+    byte[] bytes = value.getBytes(StandardCharsets.UTF_8);
+    output.writeBytes(Integer.toString(bytes.length).getBytes(StandardCharsets.US_ASCII));
+    output.write(':');
+    output.writeBytes(bytes);
   }
 
   private long rowCount(String sql, Object... parameters) {

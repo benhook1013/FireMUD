@@ -152,7 +152,7 @@ public class PublishedReleaseBundleServiceImpl implements PublishedReleaseBundle
     entity.setAttestationSchemaVersion(
         worldEvidence == null
             ? PublishedReleaseBundleContract.SUPPORTED_ATTESTATION_SCHEMA_VERSION
-            : PublishedReleaseBundleContract.CLOSURE_SELECTOR_ATTESTATION_SCHEMA_VERSION);
+            : PublishedReleaseBundleContract.SELECTED_FULL_ATTESTATION_SCHEMA_VERSION);
     entity.setWorldPublishedStartLocationEvidenceJson(
         worldEvidence == null
             ? null

@@ -15,6 +15,7 @@ final class PublishedReleaseBundleContract {
   static final String SUPPORTED_ATTESTATION_SCHEMA_VERSION = "v1";
   static final String SELECTOR_ATTESTATION_SCHEMA_VERSION = "v2";
   static final String CLOSURE_SELECTOR_ATTESTATION_SCHEMA_VERSION = "v3";
+  static final String SELECTED_FULL_ATTESTATION_SCHEMA_VERSION = "v4";
   static final String SCHEMA_VERSION_UNSUPPORTED = "SCHEMA_VERSION_UNSUPPORTED";
   static final String REPAIR_ATTESTATION_MISMATCH = "REPAIR_ATTESTATION_MISMATCH";
   static final String REPAIR_ATTESTED_ASSET_KEY_MISMATCH = "REPAIR_ATTESTED_ASSET_KEY_MISMATCH";
@@ -36,6 +37,8 @@ final class PublishedReleaseBundleContract {
               AuthoredWorldReleaseAttestationEvidence.SELECTOR_SCHEMA_VERSION;
           case CLOSURE_SELECTOR_ATTESTATION_SCHEMA_VERSION ->
               AuthoredWorldReleaseAttestationEvidence.CLOSURE_SELECTOR_SCHEMA_VERSION;
+          case SELECTED_FULL_ATTESTATION_SCHEMA_VERSION ->
+              AuthoredWorldReleaseAttestationEvidence.SELECTED_FULL_SCHEMA_VERSION;
           default ->
               throw new IllegalArgumentException(
                   "World selector requires a selected publication release schema");
@@ -104,10 +107,25 @@ final class PublishedReleaseBundleContract {
           "IDEMPOTENCY_CONFLICT: historical release is selector-ineligible");
     }
     requireSelectorBinding(stored);
+    var automation =
+        participants.stream()
+            .filter(participant -> "AUTOMATION_SCRIPTING".equals(participant.participantKey()))
+            .toList();
+    if (automation.size() != 1 || automation.getFirst().digestSchemaVersion() == null) {
+      throw new IllegalStateException("IDEMPOTENCY_CONFLICT: exact Automation schema required");
+    }
+    int automationSchema = automation.getFirst().digestSchemaVersion();
     String requestedSchema =
         switch (evidence.request().digestSchemaVersion()) {
           case 3 -> SELECTOR_ATTESTATION_SCHEMA_VERSION;
-          case 4 -> CLOSURE_SELECTOR_ATTESTATION_SCHEMA_VERSION;
+          case 4 ->
+              switch (automationSchema) {
+                case 5 -> CLOSURE_SELECTOR_ATTESTATION_SCHEMA_VERSION;
+                case 6 -> SELECTED_FULL_ATTESTATION_SCHEMA_VERSION;
+                default ->
+                    throw new IllegalStateException(
+                        "IDEMPOTENCY_CONFLICT: unsupported selected Automation schema");
+              };
           default ->
               throw new IllegalStateException(
                   "IDEMPOTENCY_CONFLICT: unsupported retained World selector schema");
@@ -196,6 +214,7 @@ final class PublishedReleaseBundleContract {
 
   static boolean isSelectorSchema(String schemaVersion) {
     return SELECTOR_ATTESTATION_SCHEMA_VERSION.equals(schemaVersion)
-        || CLOSURE_SELECTOR_ATTESTATION_SCHEMA_VERSION.equals(schemaVersion);
+        || CLOSURE_SELECTOR_ATTESTATION_SCHEMA_VERSION.equals(schemaVersion)
+        || SELECTED_FULL_ATTESTATION_SCHEMA_VERSION.equals(schemaVersion);
   }
 }

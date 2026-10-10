@@ -2,6 +2,7 @@ package net.firedevops.firemud.automationscripting.sourceintake;
 
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Objects;
 import java.util.Optional;
@@ -56,6 +57,67 @@ public final class AutomationEmptySelectedSourceIntakeRepository {
     requireNoAmbientOwnerSql("Automation source receipt read");
     requireReadKey(targetNamespace, intakeRequestId);
     return readValidated(dsl, targetNamespace, intakeRequestId);
+  }
+
+  /**
+   * Resolves the one immutable selected-empty receipt for a canonical tenant and Game Design
+   * Version row. Every association in the tenant prefix is fully read back before its retained
+   * original TargetProof is considered; owner-local numeric keys are not publication identity.
+   */
+  public AutomationEmptySelectedSourceIntakeReceipt readPublicationScope(
+      String targetNamespace, UUID canonicalTenantId, long gameDesignVersionRowId) {
+    requireNoAmbientOwnerSql("Automation publication receipt read");
+    requirePublicationScopeKey(targetNamespace, canonicalTenantId, gameDesignVersionRowId);
+
+    return dsl.transactionResult(
+        configuration -> {
+          DSLContext tx = DSL.using(configuration);
+          tx.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY");
+          var associations =
+              tx.fetch(
+                  "SELECT canonical_version_id, intake_request_id FROM "
+                      + ASSOCIATION
+                      + " WHERE target_namespace = ? AND canonical_tenant_id = ? "
+                      + "ORDER BY canonical_version_id",
+                  targetNamespace,
+                  canonicalTenantId);
+          if (associations.isEmpty()) {
+            throw new IllegalStateException(
+                "Automation selected-empty publication receipt is unavailable");
+          }
+
+          var matches = new ArrayList<AutomationEmptySelectedSourceIntakeReceipt>();
+          for (Record association : associations) {
+            UUID associatedCanonicalVersionId = association.get(0, UUID.class);
+            UUID intakeRequestId = association.get(1, UUID.class);
+            if (associatedCanonicalVersionId == null || intakeRequestId == null) {
+              throw new IllegalStateException(
+                  "Automation publication association identity is corrupt");
+            }
+            AutomationEmptySelectedSourceIntakeReceipt receipt =
+                readValidated(tx, targetNamespace, intakeRequestId)
+                    .orElseThrow(
+                        () ->
+                            new IllegalStateException(
+                                "Automation publication association has no committed receipt"));
+            var target = receipt.authorizationBinding().selected().target();
+            if (!canonicalTenantId.equals(receipt.canonicalTenantId())
+                || !associatedCanonicalVersionId.equals(receipt.canonicalVersionId())
+                || !canonicalTenantId.equals(target.canonicalTenantId())
+                || !associatedCanonicalVersionId.equals(target.canonicalVersionId())) {
+              throw new IllegalStateException(
+                  "Automation publication association differs from the retained selected target");
+            }
+            if (target.gameDesignVersionRowId() == gameDesignVersionRowId) {
+              matches.add(receipt);
+            }
+          }
+          if (matches.size() != 1) {
+            throw new IllegalStateException(
+                "Automation selected-empty publication scope is missing or ambiguous");
+          }
+          return matches.get(0);
+        });
   }
 
   /**
@@ -428,6 +490,16 @@ public final class AutomationEmptySelectedSourceIntakeRepository {
       throw new IllegalArgumentException("Automation source receipt lookup identity is required");
     }
     DraftAuthorizationFenceBinding.requireUuid(requestId);
+  }
+
+  private static void requirePublicationScopeKey(
+      String namespace, UUID canonicalTenantId, long gameDesignVersionRowId) {
+    if (!GrpcPeerIdentity.isValidNamespace(namespace)
+        || canonicalTenantId == null
+        || new UUID(0L, 0L).equals(canonicalTenantId)
+        || gameDesignVersionRowId <= 0L) {
+      throw new IllegalArgumentException("Automation publication scope identity is required");
+    }
   }
 
   private static void requireNoAmbientOwnerSql(String action) {

@@ -41,6 +41,27 @@ public final class PublishedWorldSelectorFixtures {
   }
 
   public static List<net.firedevops.firemud.gamedesign.dto.PublishParticipantDigestDto>
+      selectedFullParticipants(long versionId, WorldPublishedStartLocationEvidence evidence) {
+    return participants(versionId, evidence).stream()
+        .map(
+            participant ->
+                ("AUTOMATION_SCRIPTING".equals(participant.participantKey())
+                        || "ENTITY_MANAGEMENT".equals(participant.participantKey()))
+                    ? new net.firedevops.firemud.gamedesign.dto.PublishParticipantDigestDto(
+                        participant.participantKey(),
+                        participant.scopeValue(),
+                        participant.baseVersionId(),
+                        participant.appliedCommitId(),
+                        participant.contentDigest(),
+                        "ENTITY_MANAGEMENT".equals(participant.participantKey()) ? 3 : 6,
+                        participant.abilitySchemaDigest(),
+                        participant.errorCode(),
+                        participant.errorMessage())
+                    : participant)
+        .toList();
+  }
+
+  public static List<net.firedevops.firemud.gamedesign.dto.PublishParticipantDigestDto>
       participants(long versionId, WorldPublishedStartLocationEvidence evidence) {
     return net
         .firedevops

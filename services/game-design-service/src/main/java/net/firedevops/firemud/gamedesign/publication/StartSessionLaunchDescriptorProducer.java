@@ -467,7 +467,8 @@ public final class StartSessionLaunchDescriptorProducer {
         || !Objects.equals(release.canonicalVersionId(), exact.association().canonicalVersionId())
         || !Objects.equals(release.publishWorkflowId(), exact.association().publishWorkflowId())
         || !("v2".equals(release.attestationSchemaVersion())
-            || "v3".equals(release.attestationSchemaVersion()))
+            || "v3".equals(release.attestationSchemaVersion())
+            || "v4".equals(release.attestationSchemaVersion()))
         || !Objects.equals(
             release.worldPublishedStartLocationEvidence(),
             exact.worldPublishedStartLocationEvidence())

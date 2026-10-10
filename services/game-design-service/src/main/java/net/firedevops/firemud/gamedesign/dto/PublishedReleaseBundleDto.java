@@ -38,7 +38,9 @@ public record PublishedReleaseBundleDto(
     }
     artifactDigests = artifactDigests == null ? null : List.copyOf(artifactDigests);
     boolean selectorSchema =
-        "v2".equals(attestationSchemaVersion) || "v3".equals(attestationSchemaVersion);
+        "v2".equals(attestationSchemaVersion)
+            || "v3".equals(attestationSchemaVersion)
+            || "v4".equals(attestationSchemaVersion);
     if (selectorSchema != (worldPublishedStartLocationEvidence != null)) {
       throw new IllegalArgumentException(
           "Selector evidence is mandatory for selected release schemas and forbidden historically");

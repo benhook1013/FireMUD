@@ -2,9 +2,7 @@ package net.firedevops.firemud.accountservice.service.session;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
-import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.when;
 
 import com.google.protobuf.ByteString;
 import com.google.protobuf.Timestamp;
@@ -19,6 +17,7 @@ import io.grpc.netty.shaded.io.netty.handler.ssl.ClientAuth;
 import io.grpc.stub.StreamObserver;
 import io.grpc.util.MutableHandlerRegistry;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.net.InetSocketAddress;
 import java.net.URI;
@@ -52,12 +51,15 @@ import net.firedevops.firemud.accountservice.authordraft.DraftAuthorizationFence
 import net.firedevops.firemud.automationscripting.sourceintake.AutomationEmptySelectedSourceIntakeRepository;
 import net.firedevops.firemud.automationscripting.sourceintake.AutomationEmptySelectedSourceIntakeService;
 import net.firedevops.firemud.automationscripting.sourceintake.AutomationEmptySelectedSourceIntakeTerminalReadService;
+import net.firedevops.firemud.automationscripting.sourceintake.AutomationSelectedEmptyPublicationDigestGrpcReceiver;
+import net.firedevops.firemud.automationscripting.sourceintake.AutomationSelectedEmptyPublicationDigestService;
 import net.firedevops.firemud.automationscripting.sourceintake.AutomationSelectedSourceIntakeCommandGrpcService;
 import net.firedevops.firemud.automationscripting.sourceintake.AutomationSelectedSourceIntakeTerminalReadGrpcService;
 import net.firedevops.firemud.common.account.StartSessionRedeemedOperationProjectionClient;
 import net.firedevops.firemud.common.account.sourceintake.AccountSelectedOwnerIntakeAuthorizationGrpcClient;
 import net.firedevops.firemud.common.account.sourceintake.AccountSelectedOwnerIntakeWorldClosureAuthorizationGrpcClient;
 import net.firedevops.firemud.common.account.sourceintake.GrpcSelectedOwnerIntakeSourceReadClient;
+import net.firedevops.firemud.common.account.sourceintake.SelectedOwnerEmptySourceInputs;
 import net.firedevops.firemud.common.account.sourceintake.SelectedOwnerIntakeAuthorizationProducerEvidence;
 import net.firedevops.firemud.common.account.sourceintake.SelectedOwnerIntakeAuthorizationReadEvidence;
 import net.firedevops.firemud.common.account.sourceintake.SelectedOwnerIntakeSettlementEvidence;
@@ -140,9 +142,14 @@ import net.firedevops.firemud.common.tenant.WorldAuthoredSourceIntakeGrpcCodec;
 import net.firedevops.firemud.entitymanagement.sourceintake.EntityEmptySelectedSourceIntakeRepository;
 import net.firedevops.firemud.entitymanagement.sourceintake.EntityEmptySelectedSourceIntakeService;
 import net.firedevops.firemud.entitymanagement.sourceintake.EntityEmptySelectedSourceIntakeTerminalReadService;
+import net.firedevops.firemud.entitymanagement.sourceintake.EntitySelectedEmptyPublicationDigestGrpcReceiver;
+import net.firedevops.firemud.entitymanagement.sourceintake.EntitySelectedEmptyPublicationDigestService;
 import net.firedevops.firemud.entitymanagement.sourceintake.EntitySelectedSourceIntakeCommandGrpcService;
 import net.firedevops.firemud.entitymanagement.sourceintake.EntitySelectedSourceIntakeTerminalReadGrpcService;
+import net.firedevops.firemud.gamedesign.client.AutomationScriptingClient;
+import net.firedevops.firemud.gamedesign.client.EntityManagementClient;
 import net.firedevops.firemud.gamedesign.client.GameLogicClient;
+import net.firedevops.firemud.gamedesign.client.WorldManagementClient;
 import net.firedevops.firemud.gamedesign.client.WorldPublishedStartLocationClient;
 import net.firedevops.firemud.gamedesign.config.AssetStoreProperties;
 import net.firedevops.firemud.gamedesign.draft.AuthoredDraftPublishSelection;
@@ -188,6 +195,7 @@ import net.firedevops.firemud.gamedesign.repository.LaunchDescriptorRepository;
 import net.firedevops.firemud.gamedesign.repository.PublishAttemptParticipantDigestRepository;
 import net.firedevops.firemud.gamedesign.repository.PublishAttemptRepository;
 import net.firedevops.firemud.gamedesign.repository.PublishedReleaseBundleRepository;
+import net.firedevops.firemud.gamedesign.repository.RecordedParticipantDigestRepository;
 import net.firedevops.firemud.gamedesign.repository.RevisionRepository;
 import net.firedevops.firemud.gamedesign.repository.VersionAssetArtifactRepository;
 import net.firedevops.firemud.gamedesign.repository.VersionAssetPublicationRepository;
@@ -201,8 +209,6 @@ import net.firedevops.firemud.gamedesign.service.GameAuthoredHelpTopicService;
 import net.firedevops.firemud.gamedesign.service.LaunchDescriptorService;
 import net.firedevops.firemud.gamedesign.service.PingService;
 import net.firedevops.firemud.gamedesign.service.PublishAttemptService;
-import net.firedevops.firemud.gamedesign.service.PublishGateService;
-import net.firedevops.firemud.gamedesign.service.RecordedParticipantDigestService;
 import net.firedevops.firemud.gamedesign.service.RevisionService;
 import net.firedevops.firemud.gamedesign.service.SettingsAuthorityService;
 import net.firedevops.firemud.gamedesign.service.TemplateRemapSetService;
@@ -216,7 +222,9 @@ import net.firedevops.firemud.gamedesign.service.impl.CompleteLaunchBindingServi
 import net.firedevops.firemud.gamedesign.service.impl.GameDesignGrpcService;
 import net.firedevops.firemud.gamedesign.service.impl.LaunchDescriptorServiceImpl;
 import net.firedevops.firemud.gamedesign.service.impl.PublishAttemptServiceImpl;
+import net.firedevops.firemud.gamedesign.service.impl.PublishGateServiceImpl;
 import net.firedevops.firemud.gamedesign.service.impl.PublishedReleaseBundleServiceImpl;
+import net.firedevops.firemud.gamedesign.service.impl.RecordedParticipantDigestServiceImpl;
 import net.firedevops.firemud.gamedesign.service.impl.TemplateRemapSetServiceImpl;
 import net.firedevops.firemud.gamedesign.service.impl.TemporalVersionPublishWorkflowMetadataResolver;
 import net.firedevops.firemud.gamedesign.service.impl.TenantIdentityGrpcService;
@@ -317,14 +325,15 @@ import tools.jackson.databind.ObjectMapper;
  * disclosure/abort setup uses stipulated incoming Game Design peer contexts and is not either
  * positive authorization operation. Entity retention also traverses the native Account, Game
  * Design, Entity, World and settlement boundaries over loopback mTLS, with an isolated Entity
- * PostgreSQL schema and migration path. Entity/Automation publication participant digests and the
- * StartSession Account projection remain test doubles. MinIO object-store I/O is real. The complete
- * launch-binding case wires the actual Game Design handler and World Management mTLS client on this
- * fixture's loopback server to the actual owner implementation in an explicitly established
- * read-only repeatable-read snapshot; unrelated handler dependencies are isolated. This fixture
- * does not provide production-mounted certificates or full application server wiring, production
- * ingress, Account-projection-backed StartSession admission, a complete four-owner authenticated
- * release, runtime launch, activation or registration.
+ * PostgreSQL schema and migration path. Entity and Automation publication digests use their native
+ * mTLS selected-empty owner readers and exact retained receipts; nonempty owner publication remains
+ * outside this proof. The StartSession Account projection remains a test double. MinIO object-store
+ * I/O is real. The complete launch-binding case wires the actual Game Design handler and World
+ * Management mTLS client on this fixture's loopback server to the actual owner implementation in an
+ * explicitly established read-only repeatable-read snapshot; unrelated handler dependencies are
+ * isolated. This fixture does not provide production-mounted certificates or full application
+ * server wiring, production ingress, Account-projection-backed StartSession admission, runtime
+ * launch, activation or registration.
  */
 @Testcontainers(disabledWithoutDocker = true)
 @SuppressWarnings("resource")
@@ -964,6 +973,19 @@ class GenuineSelectedPublicationExportPostgresIntegrationTest {
         register(
             entityHandlers,
             new EntitySelectedSourceIntakeCommandGrpcService(entityIntakeOwner, NAMESPACE));
+        register(
+            automationHandlers,
+            new AutomationSelectedEmptyPublicationDigestGrpcReceiver(
+                new AutomationSelectedEmptyPublicationDigestService(
+                    NAMESPACE, automationIntakeRepository),
+                NAMESPACE,
+                new SimpleMeterRegistry()));
+        register(
+            entityHandlers,
+            new EntitySelectedEmptyPublicationDigestGrpcReceiver(
+                new EntitySelectedEmptyPublicationDigestService(NAMESPACE, entityIntakeRepository),
+                NAMESPACE,
+                new SimpleMeterRegistry()));
         var selectedOwnerSettlementOwner =
             new AccountSelectedOwnerIntakeSettlementService(
                 accountSelectedOwnerSourceRepository,
@@ -2278,16 +2300,6 @@ class GenuineSelectedPublicationExportPostgresIntegrationTest {
                 exporter,
                 releaseService,
                 new ObjectMapper());
-        var participantDigests =
-            selectedSelectorParticipantDigests(
-                selectedCommit,
-                gd.target().gameDesignVersionRowId(),
-                retainedWorldDigest,
-                actualDesignDigest,
-                actualGameLogicDigest);
-        var gate = mock(PublishGateService.class);
-        when(gate.collectSelectedFullVersionParticipantDigests(any(), any(), any()))
-            .thenReturn(participantDigests);
         var controlPlaneDigests =
             new net.firedevops.firemud.gamedesign.service.impl.ControlPlaneDigestServiceImpl(
                 new net.firedevops.firemud.gamedesign.repository.GameTemplateRepository(gd.dsl()),
@@ -2310,42 +2322,286 @@ class GenuineSelectedPublicationExportPostgresIntegrationTest {
         var realAttemptPersistence =
             new PublishAttemptServiceImpl(
                 publishAttemptRepository, new PublishAttemptParticipantDigestRepository(gd.dsl()));
-        var publisher =
-            new VersionPublishCommandServiceImpl(
-                new VersionRepository(gd.dsl()),
-                new GameRepository(gd.dsl()),
-                publishAttemptRepository,
-                mapper,
-                exporter,
-                transactionBoundPublishAttempts(gd, realAttemptPersistence),
-                gate,
-                controlPlaneDigests,
-                artifactService,
-                releaseService,
-                mock(RecordedParticipantDigestService.class));
-        var published =
-            publisher.publishSelectedDraftFullVersion(
-                gd.target().gameDesignVersionTenantKey(),
+        var recordedParticipantDigests =
+            new RecordedParticipantDigestServiceImpl(
+                new RecordedParticipantDigestRepository(gd.dsl()));
+        var publicationVersion =
+            gd.transaction(
+                () ->
+                    mapper.toDto(
+                        new VersionRepository(gd.dsl())
+                            .findByTenantIdAndId(
+                                gd.target().gameDesignVersionTenantKey(),
+                                gd.target().gameDesignVersionRowId())
+                            .orElseThrow()));
+        var entityInventoryJson =
+            persistedEntityReceipt
+                .inputs()
+                .ownerSourceInventoryDeclaration()
+                .entityInventory()
+                .canonicalJson();
+        assertThat(entityInventoryJson).isEqualTo(authoredEntityInventory.canonicalJson());
+        var automationDigestInputs =
+            new SelectedOwnerEmptySourceInputs(
+                automationReceipt.authorizationBinding(),
+                automationReceipt.worldInventoryReadEvidence());
+        var automationInventoryJson =
+            automationDigestInputs.ownerSourceInventoryDeclaration().inventory().canonicalJson();
+        assertThat(automationInventoryJson).isEqualTo(authoredAutomationInventory.canonicalJson());
+        assertThat(persistedEntityReceipt.canonicalVersionId())
+            .isEqualTo(gd.target().canonicalVersionId());
+        assertThat(automationReceipt.canonicalVersionId())
+            .isEqualTo(gd.target().canonicalVersionId());
+        String expectedEntityContentDigest =
+            selectedEmptyPublicationDigest(
+                "entity-selected-empty-publication-digest/v1",
+                3,
+                gd.target().canonicalTenantId(),
                 gd.target().gameDesignVersionRowId(),
-                intent.notes(),
-                publishRequestId,
-                publicationRequest.derivedWorkflowIdentity());
-        assertThat(published.versionState()).isEqualTo(VersionLifecycleState.PUBLISHED);
-        assertThat(
-                new net.firedevops.firemud.gamedesign.repository.PublishAttemptRepository(gd.dsl())
-                    .findByPublishWorkflowId(publicationRequest.derivedWorkflowIdentity())
-                    .orElseThrow()
-                    .getStatus())
-            .isEqualTo(net.firedevops.firemud.gamedesign.model.PublishAttemptStatus.SUCCEEDED);
+                persistedEntityReceipt.canonicalVersionId(),
+                entityInventoryJson);
+        String expectedAutomationContentDigest =
+            selectedEmptyPublicationDigest(
+                "automation-selected-empty-publication-digest/v1",
+                6,
+                gd.target().canonicalTenantId(),
+                gd.target().gameDesignVersionRowId(),
+                automationReceipt.canonicalVersionId(),
+                automationInventoryJson);
+
+        List<PublishParticipantDigestDto> selectedReleaseParticipants;
+        var worldDigestClient =
+            new WorldManagementClient(
+                endpoints,
+                pki.client("game-design-service"),
+                channels,
+                BlockingGrpcStubCustomizer.noop());
+        var entityDigestClient =
+            new EntityManagementClient(
+                endpoints,
+                pki.client("game-design-service"),
+                channels,
+                BlockingGrpcStubCustomizer.noop());
+        var automationDigestClient =
+            new AutomationScriptingClient(
+                endpoints,
+                pki.client("game-design-service"),
+                channels,
+                BlockingGrpcStubCustomizer.noop());
+        var gameLogicGateClient =
+            new GameLogicClient(
+                endpoints,
+                pki.client("game-design-service"),
+                channels,
+                BlockingGrpcStubCustomizer.noop());
+        var wrongPeerEntityDigestClient =
+            new EntityManagementClient(
+                endpoints,
+                pki.client("world-management-service"),
+                channels,
+                BlockingGrpcStubCustomizer.noop());
+        var wrongPeerAutomationDigestClient =
+            new AutomationScriptingClient(
+                endpoints,
+                pki.client("world-management-service"),
+                channels,
+                BlockingGrpcStubCustomizer.noop());
+        try (worldDigestClient;
+            entityDigestClient;
+            automationDigestClient;
+            gameLogicGateClient;
+            wrongPeerEntityDigestClient;
+            wrongPeerAutomationDigestClient) {
+          ReflectionTestUtils.invokeMethod(worldDigestClient, "init");
+          ReflectionTestUtils.invokeMethod(entityDigestClient, "init");
+          ReflectionTestUtils.invokeMethod(automationDigestClient, "init");
+          ReflectionTestUtils.invokeMethod(gameLogicGateClient, "init");
+          ReflectionTestUtils.invokeMethod(wrongPeerEntityDigestClient, "init");
+          ReflectionTestUtils.invokeMethod(wrongPeerAutomationDigestClient, "init");
+
+          var entityRowsBeforeWrongPeerDigest = entitySourceRowCounts(entity.dsl());
+          var automationRowsBeforeWrongPeerDigest = automationSourceRowCounts(automation.dsl());
+          var wrongPeerEntityDigest =
+              wrongPeerEntityDigestClient.getDraftDesignDigestForVersion(publicationRequest);
+          var wrongPeerAutomationDigest =
+              wrongPeerAutomationDigestClient.getDraftDesignDigestForVersion(publicationRequest);
+          assertThat(wrongPeerEntityDigest.succeeded()).isFalse();
+          assertThat(wrongPeerEntityDigest.errorCode()).isEqualTo("PERMISSION_DENIED");
+          assertThat(wrongPeerAutomationDigest.succeeded()).isFalse();
+          assertThat(wrongPeerAutomationDigest.errorCode()).isEqualTo("PERMISSION_DENIED");
+          assertThat(entitySourceRowCounts(entity.dsl()))
+              .isEqualTo(entityRowsBeforeWrongPeerDigest);
+          assertThat(automationSourceRowCounts(automation.dsl()))
+              .isEqualTo(automationRowsBeforeWrongPeerDigest);
+
+          ReflectionTestUtils.setField(gameLogicGateClient, "workloadNamespace", NAMESPACE);
+          var gate =
+              new PublishGateServiceImpl(
+                  controlPlaneDigests,
+                  worldDigestClient,
+                  entityDigestClient,
+                  gameLogicGateClient,
+                  automationDigestClient,
+                  gd.dsl(),
+                  gd.transactions(),
+                  NAMESPACE);
+          selectedReleaseParticipants =
+              gate.collectSelectedFullVersionParticipantDigests(
+                  publicationVersion,
+                  publicationRequest,
+                  publicationRequest.derivedWorkflowIdentity());
+          gate.assertSelectedGatePassed(publicationVersion, selectedReleaseParticipants);
+          assertThat(
+                  selectedReleaseParticipants.stream()
+                      .map(PublishParticipantDigestDto::participantKey)
+                      .toList())
+              .containsExactlyElementsOf(
+                  AuthoredWorldReleaseAttestationEvidence.requiredParticipantOrder());
+
+          var entityParticipant =
+              selectedReleaseParticipants.stream()
+                  .filter(digest -> "ENTITY_MANAGEMENT".equals(digest.participantKey()))
+                  .findFirst()
+                  .orElseThrow();
+          assertThat(entityParticipant.succeeded()).isTrue();
+          assertThat(entityParticipant.scopeValue()).isEqualTo(publicationRequest.versionId());
+          assertThat(entityParticipant.baseVersionId()).isNull();
+          assertThat(entityParticipant.appliedCommitId())
+              .isEqualTo(persistedEntityReceipt.selectedCommitId().toString());
+          assertThat(entityParticipant.appliedCommitId())
+              .isEqualTo(selectedCommit.commitId().toString());
+          assertThat(entityParticipant.digestSchemaVersion()).isEqualTo(3);
+          assertThat(entityParticipant.contentDigest()).isEqualTo(expectedEntityContentDigest);
+          assertThat(entityParticipant.contentDigest())
+              .isNotEqualTo(persistedEntityReceipt.receiptDigest())
+              .isNotEqualTo(entityReceipt.selectedSourceDigest());
+
+          var automationParticipant =
+              selectedReleaseParticipants.stream()
+                  .filter(digest -> "AUTOMATION_SCRIPTING".equals(digest.participantKey()))
+                  .findFirst()
+                  .orElseThrow();
+          assertThat(automationParticipant.succeeded()).isTrue();
+          assertThat(automationParticipant.scopeValue()).isEqualTo(publicationRequest.versionId());
+          assertThat(automationParticipant.baseVersionId()).isNull();
+          assertThat(automationParticipant.appliedCommitId())
+              .isEqualTo(automationReceipt.selectedCommitId().toString());
+          assertThat(automationParticipant.appliedCommitId())
+              .isEqualTo(selectedCommit.commitId().toString());
+          assertThat(automationParticipant.digestSchemaVersion()).isEqualTo(6);
+          assertThat(automationParticipant.contentDigest())
+              .isEqualTo(expectedAutomationContentDigest);
+          assertThat(automationParticipant.contentDigest())
+              .isNotEqualTo(automationReceipt.receiptDigest())
+              .isNotEqualTo(automationReceipt.authorizationBindingDigest());
+
+          var selectedWorldParticipant =
+              selectedReleaseParticipants.stream()
+                  .filter(digest -> "WORLD_MANAGEMENT".equals(digest.participantKey()))
+                  .findFirst()
+                  .orElseThrow();
+          assertThat(selectedWorldParticipant.appliedCommitId())
+              .isEqualTo(selectedCommit.commitId().toString());
+          assertThat(selectedWorldParticipant.contentDigest())
+              .isEqualTo(retainedWorldDigest.contentDigest());
+          assertThat(selectedWorldParticipant.digestSchemaVersion()).isEqualTo(4);
+          var selectedGameLogicParticipant =
+              selectedReleaseParticipants.stream()
+                  .filter(digest -> "GAME_LOGIC".equals(digest.participantKey()))
+                  .findFirst()
+                  .orElseThrow();
+          assertThat(selectedGameLogicParticipant.appliedCommitId())
+              .isEqualTo(actualGameLogicDigest.appliedCommitId());
+          assertThat(selectedGameLogicParticipant.contentDigest())
+              .isEqualTo(actualGameLogicDigest.contentDigest());
+          assertThat(selectedGameLogicParticipant.digestSchemaVersion())
+              .isEqualTo(actualGameLogicDigest.digestSchemaVersion());
+          assertThat(selectedGameLogicParticipant.abilitySchemaDigest())
+              .isEqualTo(actualGameLogicDigest.abilitySchemaDigest());
+          var selectedControlPlaneParticipant =
+              selectedReleaseParticipants.stream()
+                  .filter(digest -> "GAME_DESIGN_CONTROL_PLANE".equals(digest.participantKey()))
+                  .findFirst()
+                  .orElseThrow();
+          assertThat(selectedControlPlaneParticipant.appliedCommitId())
+              .isEqualTo(actualDesignDigest.appliedCommitId());
+          assertThat(selectedControlPlaneParticipant.contentDigest())
+              .isEqualTo(actualDesignDigest.contentDigest());
+          assertThat(selectedControlPlaneParticipant.digestSchemaVersion()).isEqualTo(2);
+
+          var publisher =
+              new VersionPublishCommandServiceImpl(
+                  new VersionRepository(gd.dsl()),
+                  new GameRepository(gd.dsl()),
+                  publishAttemptRepository,
+                  mapper,
+                  exporter,
+                  transactionBoundPublishAttempts(gd, realAttemptPersistence),
+                  gate,
+                  controlPlaneDigests,
+                  artifactService,
+                  releaseService,
+                  recordedParticipantDigests);
+          var published =
+              publisher.publishSelectedDraftFullVersion(
+                  gd.target().gameDesignVersionTenantKey(),
+                  gd.target().gameDesignVersionRowId(),
+                  intent.notes(),
+                  publishRequestId,
+                  publicationRequest.derivedWorkflowIdentity());
+          assertThat(published.versionState()).isEqualTo(VersionLifecycleState.PUBLISHED);
+          assertThat(
+                  new net.firedevops.firemud.gamedesign.repository.PublishAttemptRepository(
+                          gd.dsl())
+                      .findByPublishWorkflowId(publicationRequest.derivedWorkflowIdentity())
+                      .orElseThrow()
+                      .getStatus())
+              .isEqualTo(net.firedevops.firemud.gamedesign.model.PublishAttemptStatus.SUCCEEDED);
+        }
         var release =
             releaseService.getPublishedReleaseBundle(
                 gd.target().gameDesignVersionTenantKey(), gd.target().gameDesignVersionRowId());
-        assertThat(release.attestationSchemaVersion()).isEqualTo("v3");
+        assertThat(release.attestationSchemaVersion()).isEqualTo("v4");
         assertThat(release.worldPublishedStartLocationEvidence())
             .isEqualTo(publicationReservation.operation().world());
         assertThat(release.worldPublishedStartLocationEvidence().request().digestSchemaVersion())
             .isEqualTo(4);
         assertThat(release.participantDigests().getFirst().digestSchemaVersion()).isEqualTo(4);
+        assertThat(
+                release.participantDigests().stream()
+                    .map(digest -> digest.participantKey())
+                    .toList())
+            .containsExactlyElementsOf(
+                AuthoredWorldReleaseAttestationEvidence.requiredParticipantOrder());
+        assertThat(
+                release.participantDigests().stream()
+                    .map(digest -> digest.digestSchemaVersion())
+                    .toList())
+            .containsExactly(4, 3, 1, 6, 2);
+        var retainedEntityParticipant =
+            release.participantDigests().stream()
+                .filter(digest -> "ENTITY_MANAGEMENT".equals(digest.participantKey()))
+                .findFirst()
+                .orElseThrow();
+        assertThat(retainedEntityParticipant.scopeValue())
+            .isEqualTo(publicationRequest.versionId());
+        assertThat(retainedEntityParticipant.appliedCommitId())
+            .isEqualTo(persistedEntityReceipt.selectedCommitId().toString());
+        assertThat(retainedEntityParticipant.contentDigest())
+            .isEqualTo(expectedEntityContentDigest);
+        assertThat(retainedEntityParticipant.digestSchemaVersion()).isEqualTo(3);
+        var retainedAutomationParticipant =
+            release.participantDigests().stream()
+                .filter(digest -> "AUTOMATION_SCRIPTING".equals(digest.participantKey()))
+                .findFirst()
+                .orElseThrow();
+        assertThat(retainedAutomationParticipant.scopeValue())
+            .isEqualTo(publicationRequest.versionId());
+        assertThat(retainedAutomationParticipant.appliedCommitId())
+            .isEqualTo(automationReceipt.selectedCommitId().toString());
+        assertThat(retainedAutomationParticipant.contentDigest())
+            .isEqualTo(expectedAutomationContentDigest);
+        assertThat(retainedAutomationParticipant.digestSchemaVersion()).isEqualTo(6);
         var retainedGameLogicParticipant =
             release.participantDigests().stream()
                 .filter(digest -> "GAME_LOGIC".equals(digest.participantKey()))
@@ -2370,8 +2626,7 @@ class GenuineSelectedPublicationExportPostgresIntegrationTest {
             .isEqualTo(actualDesignDigest.appliedCommitId());
         assertThat(retainedDesignParticipant.contentDigest())
             .isEqualTo(actualDesignDigest.contentDigest());
-        assertThat(retainedDesignParticipant.digestSchemaVersion())
-            .isEqualTo(actualDesignDigest.digestSchemaVersion());
+        assertThat(retainedDesignParticipant.digestSchemaVersion()).isEqualTo(2);
         assertThat(gd.dsl().fetchCount(DSL.table("published_release_bundle"))).isOne();
         assertThat(
                 gd.dsl()
@@ -2483,7 +2738,7 @@ class GenuineSelectedPublicationExportPostgresIntegrationTest {
                   expectedAuthoredWorldBinding.resultDigest());
           assertThat(completeBinding.descriptor()).isEqualTo(expectedAuthoredWorldBinding);
           completeBinding.releaseAttestation().requireValid(completeBinding.descriptor());
-          assertThat(completeBinding.releaseAttestation().schemaVersion()).isEqualTo(3);
+          assertThat(completeBinding.releaseAttestation().schemaVersion()).isEqualTo(4);
           assertThat(completeBinding.releaseAttestation().descriptorResultDigest())
               .isEqualTo(expectedAuthoredWorldBinding.resultDigest());
           assertThat(completeBinding.releaseAttestation().worldStartLocationEvidence())
@@ -2762,50 +3017,6 @@ class GenuineSelectedPublicationExportPostgresIntegrationTest {
       stopAll(
           automationServer, entityServer, gameLogicServer, accountServer, worldServer, gdServer);
     }
-  }
-
-  /**
-   * Entity and Automation participant digests remain stipulated test inputs. Their source receipts
-   * and Account settlements do not replace those publication participants. World freeze, inventory,
-   * selector and Game Design and Game Logic source reads come from their actual owner compositions.
-   * This does not prove complete four-owner publication or activation.
-   */
-  private static List<PublishParticipantDigestDto> selectedSelectorParticipantDigests(
-      DraftCommitBinding selectedCommit,
-      long versionRowId,
-      PublishParticipantDigestDto worldManagementDigest,
-      DesignControlPlaneDigestDto gameDesignDigest,
-      PublishParticipantDigestDto gameLogicDigest) {
-    return AuthoredWorldReleaseAttestationEvidence.requiredParticipantOrder().stream()
-        .map(
-            participant -> {
-              if ("WORLD_MANAGEMENT".equals(participant)) return worldManagementDigest;
-              if ("GAME_LOGIC".equals(participant)) return gameLogicDigest;
-              if ("GAME_DESIGN_CONTROL_PLANE".equals(participant)) {
-                return new PublishParticipantDigestDto(
-                    participant,
-                    gameDesignDigest.scopeValue(),
-                    null,
-                    gameDesignDigest.appliedCommitId(),
-                    gameDesignDigest.contentDigest(),
-                    gameDesignDigest.digestSchemaVersion(),
-                    null,
-                    null,
-                    null);
-              }
-              return new PublishParticipantDigestDto(
-                  participant,
-                  Long.toString(versionRowId),
-                  null,
-                  selectedCommit.commitId().toString(),
-                  "c".repeat(64),
-                  AuthoredWorldReleaseAttestationEvidence.supportedParticipantDigestSchema(
-                      participant, AuthoredWorldReleaseAttestationEvidence.SELECTOR_SCHEMA_VERSION),
-                  null,
-                  null,
-                  null);
-            })
-        .toList();
   }
 
   /** Uses the real owner persistence service inside the fixture's explicit READ_COMMITTED tx. */
@@ -3791,6 +4002,31 @@ class GenuineSelectedPublicationExportPostgresIntegrationTest {
     }
   }
 
+  private static String selectedEmptyPublicationDigest(
+      String domain,
+      int schemaVersion,
+      UUID canonicalTenantId,
+      long gameDesignVersionRowId,
+      UUID canonicalVersionId,
+      String canonicalInventoryJson) {
+    var preimage = new ByteArrayOutputStream();
+    appendSelectedPublicationDigestSegment(preimage, domain);
+    appendSelectedPublicationDigestSegment(preimage, Integer.toString(schemaVersion));
+    appendSelectedPublicationDigestSegment(preimage, canonicalTenantId.toString());
+    appendSelectedPublicationDigestSegment(preimage, Long.toString(gameDesignVersionRowId));
+    appendSelectedPublicationDigestSegment(preimage, canonicalVersionId.toString());
+    appendSelectedPublicationDigestSegment(preimage, canonicalInventoryJson);
+    return sha256(preimage.toByteArray());
+  }
+
+  private static void appendSelectedPublicationDigestSegment(
+      ByteArrayOutputStream preimage, String value) {
+    byte[] bytes = value.getBytes(StandardCharsets.UTF_8);
+    preimage.writeBytes(Integer.toString(bytes.length).getBytes(StandardCharsets.US_ASCII));
+    preimage.write(':');
+    preimage.writeBytes(bytes);
+  }
+
   private static String changedDigest(String digest) {
     if (digest == null || !digest.matches("sha256:[0-9a-f]{64}")) {
       throw new IllegalArgumentException("Expected a sha256-prefixed digest");
@@ -4105,7 +4341,7 @@ class GenuineSelectedPublicationExportPostgresIntegrationTest {
 
     void requireCandidateBeforeWrites(SelectedDraftAssetInventory inventory) {
       inventoryBytes = inventory.canonicalBytes();
-      operationDigest = sha256(inventory.operation().canonicalBytes());
+      operationDigest = "sha256:" + sha256(inventory.operation().canonicalBytes());
       selectedCommitDigest = inventory.selectedCommit().digest();
       inventoryDigest = inventory.digest();
       if (!objects().isEmpty()) {
@@ -4152,20 +4388,38 @@ class GenuineSelectedPublicationExportPostgresIntegrationTest {
 
     private void requireExactCandidateBeforePut() {
       var retained = candidates.readSelectedCandidate(request);
-      if (inventoryBytes == null
-          || !request.requestDigest().equals(retained.requestDigest())
-          || !Arrays.equals(request.canonicalPreimage(), retained.requestPreimage())
-          || !operationDigest.equals(retained.operationDigest())
-          || !selectedCommitDigest.equals(retained.selectedCommitDigest())
-          || !SelectedDraftAssetInventory.SCHEMA.equals(retained.inventorySchema())
-          || !inventoryDigest.equals(retained.inventoryDigest())
-          || !Arrays.equals(inventoryBytes, retained.inventoryBytes())
-          || !("sha256:" + sha256(retained.inventoryBytes())).equals(retained.inventoryDigest())
-          || !("sha256:" + sha256(retained.manifestBytes()))
-              .equals(retained.manifest().manifestHash())) {
-        throw new AssertionError(
-            "Exact durable candidate, inventory and manifest were not readable before object PUT");
-      }
+      assertThat(inventoryBytes)
+          .as("selected inventory snapshot captured before object PUT")
+          .isNotNull();
+      assertThat(retained.requestDigest())
+          .as("durable candidate request digest")
+          .isEqualTo(request.requestDigest());
+      assertThat(Arrays.equals(request.canonicalPreimage(), retained.requestPreimage()))
+          .as("durable candidate canonical request preimage")
+          .isTrue();
+      assertThat(retained.operationDigest())
+          .as("durable candidate operation digest")
+          .isEqualTo(operationDigest);
+      assertThat(retained.selectedCommitDigest())
+          .as("durable candidate selected commit digest")
+          .isEqualTo(selectedCommitDigest);
+      assertThat(retained.inventorySchema())
+          .as("durable candidate inventory schema")
+          .isEqualTo(SelectedDraftAssetInventory.SCHEMA);
+      assertThat(retained.inventoryDigest())
+          .as("durable candidate inventory digest")
+          .isEqualTo(inventoryDigest);
+      assertThat(Arrays.equals(inventoryBytes, retained.inventoryBytes()))
+          .as("durable candidate inventory bytes")
+          .isTrue();
+      assertThat(("sha256:" + sha256(retained.inventoryBytes())).equals(retained.inventoryDigest()))
+          .as("durable candidate inventory content digest")
+          .isTrue();
+      assertThat(
+              ("sha256:" + sha256(retained.manifestBytes()))
+                  .equals(retained.manifest().manifestHash()))
+          .as("durable candidate manifest content digest")
+          .isTrue();
     }
 
     private final class CandidateReadbackExecutionInterceptor implements ExecutionInterceptor {

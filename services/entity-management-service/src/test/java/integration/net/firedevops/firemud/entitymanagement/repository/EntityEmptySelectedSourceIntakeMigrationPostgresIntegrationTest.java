@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.nio.file.Path;
+import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import net.firedevops.firemud.test.TestContainerImages;
@@ -82,12 +83,23 @@ class EntityEmptySelectedSourceIntakeMigrationPostgresIntegrationTest {
 
   @Test
   void migrationSeedsActualLegacySourceAndAuditTenantVersionKeys() {
-    assertThat(
-            dsl.fetchValue(
-                "SELECT COUNT(*) FROM entity_empty_source_numeric_key_reservation "
-                    + "WHERE claim_kind = 'LEGACY_NUMERIC'",
-                Long.class))
-        .isEqualTo(5L);
+    List<ReservedNumericKey> legacyKeys =
+        dsl.fetch(
+                "SELECT key_kind, numeric_key, claim_kind "
+                    + "FROM entity_empty_source_numeric_key_reservation "
+                    + "WHERE claim_kind = 'LEGACY_NUMERIC' ORDER BY key_kind, numeric_key")
+            .map(
+                row ->
+                    new ReservedNumericKey(
+                        row.get(0, String.class),
+                        row.get(1, Long.class),
+                        row.get(2, String.class)));
+    assertThat(legacyKeys)
+        .containsExactly(
+            new ReservedNumericKey("TENANT", 31001L, "LEGACY_NUMERIC"),
+            new ReservedNumericKey("TENANT", 41001L, "LEGACY_NUMERIC"),
+            new ReservedNumericKey("TENANT", 61001L, "LEGACY_NUMERIC"),
+            new ReservedNumericKey("VERSION", 51001L, "LEGACY_NUMERIC"));
     assertLegacyKey("TENANT", 31001L);
     assertLegacyKey("TENANT", 41001L);
     assertLegacyKey("TENANT", 61001L);
@@ -151,6 +163,8 @@ class EntityEmptySelectedSourceIntakeMigrationPostgresIntegrationTest {
   private void assertRejected(String sql) {
     assertThatThrownBy(() -> dsl.execute(sql)).isInstanceOf(DataAccessException.class);
   }
+
+  private record ReservedNumericKey(String keyKind, Long numericKey, String claimKind) {}
 
   private DriverManagerDataSource dataSource(String schemaName) {
     DriverManagerDataSource dataSource = new DriverManagerDataSource();

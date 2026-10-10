@@ -573,6 +573,122 @@ class PublishedReleaseCanonicalIdentityIntegrationTest {
   }
 
   @Test
+  void v72PreservesRetainedV3TupleBytesAndExactRetryWithoutPromotion() throws Exception {
+    Fixture fixture = fixture(MigrationVersion.fromVersion("71"));
+    Game owner = saveGame(fixture, "retained-v3-profile-source");
+    Version version = saveVersion(fixture, owner);
+    var operation = closureSelectorOperation(fixture, version);
+    var retained = selectorBundle(version, operation.world());
+    retained.setAttestationSchemaVersion("v3");
+    var saved =
+        fixture
+            .transactionTemplate()
+            .execute(
+                status ->
+                    net.firedevops.firemud.gamedesign.draft.IsolatedPublicationOwnerSetup
+                        .commitStorage(
+                            fixture.dsl(),
+                            fixture.versionRepository(),
+                            operation,
+                            () -> fixture.releaseBundleRepository().save(retained)));
+    var tuple = releaseBundleTuple(fixture.dsl(), saved.getId());
+    var xmin = bundleXmin(fixture.dsl(), saved.getId());
+    migrate(fixture.dataSource(), fixture.schema(), MigrationVersion.fromVersion("72"));
+    assertThat(releaseBundleTuple(fixture.dsl(), saved.getId())).isEqualTo(tuple);
+    assertThat(bundleXmin(fixture.dsl(), saved.getId())).isEqualTo(xmin);
+    var independent =
+        new PublishedReleaseBundleRepository(fixture.dsl())
+            .findByTenantIdAndVersionId(owner.getTenantId(), version.getId())
+            .orElseThrow();
+    assertThat(independent).usingRecursiveComparison().isEqualTo(saved);
+    assertThat(
+            independent
+                .getWorldPublishedStartLocationEvidenceJson()
+                .getBytes(StandardCharsets.UTF_8))
+        .containsExactly(operation.world().canonicalBytes());
+    assertThat(fixture.releaseBundleRepository().save(retained))
+        .usingRecursiveComparison()
+        .isEqualTo(saved);
+    var changed = selectorBundle(version, operation.world());
+    changed.setAttestationSchemaVersion("v4");
+    changed.setParticipantDigestsJson(
+        new ObjectMapper()
+            .writeValueAsString(
+                PublishedWorldSelectorFixtures.selectedFullParticipants(
+                    version.getId(), operation.world())));
+    assertThatThrownBy(() -> fixture.releaseBundleRepository().save(changed))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("IDEMPOTENCY_CONFLICT");
+    assertThat(releaseBundleTuple(fixture.dsl(), saved.getId())).isEqualTo(tuple);
+    assertThat(bundleXmin(fixture.dsl(), saved.getId())).isEqualTo(xmin);
+  }
+
+  @Test
+  void selectedFullV4StorageRejectsMixedProfilesAndExactlyReplaysOriginalBytes() throws Exception {
+    Fixture fixture = fixture(null);
+    Game owner = saveGame(fixture, "selected-v4-profile-source");
+    Version version = saveVersion(fixture, owner);
+    var operation = closureSelectorOperation(fixture, version);
+    var json = new ObjectMapper();
+    var participants =
+        PublishedWorldSelectorFixtures.selectedFullParticipants(version.getId(), operation.world());
+    String original = new String(operation.world().canonicalBytes(), StandardCharsets.UTF_8);
+    for (int index = 0; index < participants.size(); index++) {
+      var mixed =
+          (tools.jackson.databind.node.ArrayNode)
+              json.readTree(json.writeValueAsString(participants));
+      var participant = participants.get(index);
+      ((tools.jackson.databind.node.ObjectNode) mixed.get(index))
+          .put(
+              "digestSchemaVersion",
+              participant.digestSchemaVersion() == 1 ? 2 : participant.digestSchemaVersion() - 1);
+      assertThatThrownBy(
+              () ->
+                  insertRawSelector(
+                      fixture, version, "v4", original, json.writeValueAsString(mixed)))
+          .as("mixed storage profile for %s", participant.participantKey())
+          .isInstanceOf(DataAccessException.class)
+          .hasMessageContaining("selected participant differs from commit/digest/schema");
+      assertThat(bundleCount(fixture.dsl())).isZero();
+    }
+    var requested = selectorBundle(version, operation.world());
+    requested.setAttestationSchemaVersion("v4");
+    requested.setParticipantDigestsJson(json.writeValueAsString(participants));
+    var saved =
+        fixture
+            .transactionTemplate()
+            .execute(
+                status ->
+                    net.firedevops.firemud.gamedesign.draft.IsolatedPublicationOwnerSetup
+                        .commitStorage(
+                            fixture.dsl(),
+                            fixture.versionRepository(),
+                            operation,
+                            () -> fixture.releaseBundleRepository().save(requested)));
+    var tuple = releaseBundleTuple(fixture.dsl(), saved.getId());
+    var xmin = bundleXmin(fixture.dsl(), saved.getId());
+    var independent =
+        new PublishedReleaseBundleRepository(fixture.dsl())
+            .findByTenantIdAndVersionId(owner.getTenantId(), version.getId())
+            .orElseThrow();
+    assertThat(independent).usingRecursiveComparison().isEqualTo(saved);
+    assertThat(independent.getWorldPublishedStartLocationEvidenceJson()).isEqualTo(original);
+    assertThat(independent.getParticipantDigestsJson())
+        .isEqualTo(json.writeValueAsString(participants));
+    assertThat(fixture.releaseBundleRepository().save(requested))
+        .usingRecursiveComparison()
+        .isEqualTo(saved);
+    var changed = selectorBundle(version, operation.world());
+    changed.setAttestationSchemaVersion("v3");
+    assertThatThrownBy(() -> fixture.releaseBundleRepository().save(changed))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("IDEMPOTENCY_CONFLICT");
+    assertThat(releaseBundleTuple(fixture.dsl(), saved.getId())).isEqualTo(tuple);
+    assertThat(bundleXmin(fixture.dsl(), saved.getId())).isEqualTo(xmin);
+    assertThat(bundleCount(fixture.dsl())).isEqualTo(1);
+  }
+
+  @Test
   void selectorV2RetainsCompleteOriginalEvidenceAndExactlyReplaysWithoutReplacingRelease()
       throws Exception {
     Fixture fixture = fixture(null);
@@ -845,6 +961,38 @@ class PublishedReleaseCanonicalIdentityIntegrationTest {
                     .isEqualTo(operation.account().input().selection().selectedCommit());
                 assertThat(capture.command().operation()).isEqualTo(operation);
                 return operation;
+              } catch (Exception failure) {
+                throw new IllegalStateException(failure);
+              }
+            });
+  }
+
+  /**
+   * Same canonical GD owner storage as the retained v2 proof, with isolated closure-qualified
+   * remote inputs.
+   */
+  private net.firedevops.firemud.gamedesign.publication.GameDesignPublicationOperation
+      closureSelectorOperation(Fixture fixture, Version version) {
+    var target =
+        new TargetProof(
+            version.getCanonicalTenantId(),
+            version.getCanonicalVersionId(),
+            version.getId(),
+            version.getTenantId(),
+            version.getIdentitySourceGameRowId(),
+            version.getIdentitySourceGameTenantKey(),
+            version.getIdentitySourceProvenanceKind());
+    return fixture
+        .transactionTemplate()
+        .execute(
+            status -> {
+              try {
+                return net.firedevops.firemud.gamedesign.draft.IsolatedPublicationOwnerSetup
+                    .retainSourceBackedClosureQualified(
+                        fixture.dsl(),
+                        target,
+                        version.getVersionStateEpoch(),
+                        "ISOLATED remote owner profile upgrade/storage proof");
               } catch (Exception failure) {
                 throw new IllegalStateException(failure);
               }
