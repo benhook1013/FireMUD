@@ -1082,7 +1082,8 @@ class GameSessionWebSocketHandlerIntegrationTest {
   }
 
   @Test
-  void websocketFirstPartyLogoutRetainsReplayStateForFreshReconnect() throws Exception {
+  void websocketFirstPartyUnexpectedDisconnectRetainsReplayStateForFreshReconnect()
+      throws Exception {
     when(screenBufferService.get(eq(22L), eq(1L), eq(123L)))
         .thenReturn(
             Optional.of(
@@ -1093,35 +1094,37 @@ class GameSessionWebSocketHandlerIntegrationTest {
                     1,
                     44L)));
 
-    GameplayWebSocketDriver.CloseEvent firstCloseEvent;
-    try (GameplayWebSocketDriver client =
-        openFirstPartyDriver("1", firstPartyClaims("demo", "production", "1", "1", "logout-1"))) {
-      client.send("LOGIN");
-      client.awaitMatching(
-          payload -> isStructuredCommand(payload, "LOGIN"), "structured LOGIN result");
-      client.send("PLAY demo Emberline");
-      client.awaitMatching(
-          payload -> isStructuredCommand(payload, "PLAY"), "structured PLAY result");
-      client.send("LOGOUT");
-      firstCloseEvent = client.awaitClosed();
-    }
+    GameplayWebSocketDriver firstClient =
+        openFirstPartyDriver("1", firstPartyClaims("demo", "production", "1", "1", "disconnect-1"));
+    firstClient.send("LOGIN");
+    firstClient.awaitMatching(
+        payload -> isStructuredCommand(payload, "LOGIN"), "structured LOGIN result");
+    firstClient.send("PLAY demo Emberline");
+    firstClient.awaitMatching(
+        payload -> isStructuredCommand(payload, "PLAY"), "structured PLAY result");
+    firstClient.abort();
 
-    assertThat(firstCloseEvent.reason()).isEqualTo("logout");
-    verify(screenBufferService, never()).clear(22L, 1L, 123L);
     GameplayAsyncAssertions.assertPresenceCountEventually(
         gameplayPresenceService, 22L, 1L, 0, java.time.Duration.ofSeconds(5));
+    assertThat(sessionContextService.findByTenantAndSessionId(22L, 1L)).isPresent();
     assertThat(accountRecentPresenceService.findByAccountIds(22L, List.of("123")))
         .containsKey("123");
 
     java.util.List<String> secondPayloads;
     try (GameplayWebSocketDriver client =
-        openFirstPartyDriver("2", firstPartyClaims("demo", "production", "1", "1", "logout-2"))) {
+        openFirstPartyDriver(
+            "2", firstPartyClaims("demo", "production", "1", "1", "disconnect-2"))) {
       client.send("LOGIN");
       client.awaitMatching(
           payload -> isStructuredCommand(payload, "LOGIN"), "structured LOGIN result");
       client.send("PLAY demo Emberline");
       client.awaitMatching(
           payload -> isStructuredCommand(payload, "PLAY"), "structured PLAY result");
+      client.awaitMatching(
+          payload ->
+              "transcript_chunk".equals(json(payload).path("eventType").asText())
+                  && payload.contains("First-party replay"),
+          "replayed first-party transcript chunk");
       secondPayloads = client.responses();
     }
 
@@ -1132,6 +1135,7 @@ class GameSessionWebSocketHandlerIntegrationTest {
             payload ->
                 "transcript_chunk".equals(json(payload).path("eventType").asText())
                     && payload.contains("First-party replay"));
+    verify(screenBufferService, never()).clear(22L, 1L, 123L);
   }
 
   @Test
