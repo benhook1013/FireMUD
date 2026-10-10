@@ -65,6 +65,8 @@ import net.firedevops.firemud.common.redis.contracts.RedisScriptDescriptor;
 import net.firedevops.firemud.common.security.SessionContext;
 import net.firedevops.firemud.loggingadmin.StartSessionReservationMutationTestFixtures;
 import net.firedevops.firemud.loggingadmin.operator.StartSessionPreAuthorizationReservationService.ClaimEvidence;
+import net.firedevops.firemud.loggingadmin.operator.StartSessionPreAuthorizationReservationService.ClaimPurpose;
+import net.firedevops.firemud.loggingadmin.operator.StartSessionPreAuthorizationReservationService.ClaimState;
 import net.firedevops.firemud.loggingadmin.operator.StartSessionPreAuthorizationReservationService.Phase;
 import net.firedevops.firemud.loggingadmin.operator.StartSessionPreAuthorizationReservationService.State;
 import net.firedevops.firemud.loggingadmin.service.impl.StartSessionReservationEvidenceGrpcService;
@@ -407,9 +409,9 @@ class AccountControlUiPositiveOwnerPostgresIntegrationTest {
           .locations("filesystem:" + loggingMigrations())
           .load()
           .migrate();
-      var reservationService =
-          StartSessionReservationMutationTestFixtures.forRunOwnedPostgres(postgres, loggingSchema)
-              .service();
+      var reservationFixture =
+          StartSessionReservationMutationTestFixtures.forRunOwnedPostgres(postgres, loggingSchema);
+      var reservationService = reservationFixture.service();
       var approvedAccountLeaf = testAccountLeafEvidence();
       Path approvedLeafFile =
           temporary.resolve("account-reservation-evidence-approved-test-leaf.txt");
@@ -539,13 +541,62 @@ class AccountControlUiPositiveOwnerPostgresIntegrationTest {
               accountTransport.logging().issueHumanOperatorAuthorizationReference(issueRequest);
           assertThat(issuedOperator.getAuthenticatedLoggingWorkloadIdentity())
               .isEqualTo(AccountControlUiOwnerWorkflowPostgresIntegrationTest.CALLER);
-          var recoverRequest =
+
+          var staleRecoveryRequest =
               RecoverOperatorAuthorizationReferenceRequest.newBuilder()
                   .setCanonicalPreAuthorizationTupleBytes(ByteString.copyFrom(tupleBytes))
                   .setReservationOwnerId(claimEvidence.reservationOwnerId().toString())
                   .setReservationClaimFence(claimEvidence.reservationClaimFence())
                   .setCurrentClaimOwnerId(claimEvidence.currentClaimOwnerId().toString())
                   .setCurrentClaimFence(claimEvidence.currentClaimFence())
+                  .build();
+
+          assertThatThrownBy(
+                  () ->
+                      accountTransport
+                          .logging()
+                          .recoverOperatorAuthorizationReference(staleRecoveryRequest))
+              .isInstanceOf(StatusRuntimeException.class)
+              .extracting(failure -> ((StatusRuntimeException) failure).getStatus().getCode())
+              .isEqualTo(Status.Code.INVALID_ARGUMENT);
+
+          long originalClaimExpiresAt = pending.snapshot().claimExpiresAtEpochMillis();
+          long remainingClaimMillis = originalClaimExpiresAt - System.currentTimeMillis();
+          if (remainingClaimMillis >= 0L) {
+            Thread.sleep(remainingClaimMillis + 5L);
+          }
+          var expiredClaim =
+              reservationService.expireClaim(
+                  claim, Phase.ACCOUNT_AUTHORIZATION, State.AUTHORIZATION_PENDING);
+          assertThat(expiredClaim.phase()).isEqualTo(Phase.ACCOUNT_AUTHORIZATION);
+          assertThat(expiredClaim.state()).isEqualTo(State.AUTHORIZATION_PENDING);
+          assertThat(expiredClaim.claimState()).isEqualTo(ClaimState.EXPIRED);
+          assertThat(expiredClaim.reservationClaimFence())
+              .isEqualTo(claimEvidence.reservationClaimFence());
+          assertThat(expiredClaim.claimFence()).isEqualTo(claimEvidence.currentClaimFence() + 1L);
+
+          var recovery =
+              reservationService.acquireAuthorizationRecoveryClaim(loggingTuple).orElseThrow();
+          var recoveryEvidence = recovery.claim().claimEvidence();
+          assertThat(recovery.snapshot().claimPurpose())
+              .isEqualTo(ClaimPurpose.AUTHORIZATION_RECOVERY);
+          assertThat(recovery.snapshot().claimState()).isEqualTo(ClaimState.ACTIVE);
+          assertThat(recoveryEvidence.reservationOwnerId())
+              .isEqualTo(claimEvidence.reservationOwnerId());
+          assertThat(recoveryEvidence.reservationClaimFence())
+              .isEqualTo(claimEvidence.reservationClaimFence());
+          assertThat(recoveryEvidence.currentClaimOwnerId())
+              .isNotEqualTo(recoveryEvidence.reservationOwnerId());
+          assertThat(recoveryEvidence.currentClaimFence())
+              .isEqualTo(expiredClaim.claimFence() + 1L);
+
+          var recoverRequest =
+              RecoverOperatorAuthorizationReferenceRequest.newBuilder()
+                  .setCanonicalPreAuthorizationTupleBytes(ByteString.copyFrom(tupleBytes))
+                  .setReservationOwnerId(recoveryEvidence.reservationOwnerId().toString())
+                  .setReservationClaimFence(recoveryEvidence.reservationClaimFence())
+                  .setCurrentClaimOwnerId(recoveryEvidence.currentClaimOwnerId().toString())
+                  .setCurrentClaimFence(recoveryEvidence.currentClaimFence())
                   .build();
           var recoveredOperator =
               accountTransport.logging().recoverOperatorAuthorizationReference(recoverRequest);

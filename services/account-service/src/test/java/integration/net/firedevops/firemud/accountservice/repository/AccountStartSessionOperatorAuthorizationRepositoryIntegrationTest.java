@@ -28,12 +28,12 @@ import net.firedevops.firemud.common.operator.StartSessionPreAuthorizationReserv
 import org.flywaydb.core.Flyway;
 import org.jooq.DSLContext;
 import org.jooq.SQLDialect;
+import org.jooq.exception.IntegrityConstraintViolationException;
 import org.jooq.impl.DSL;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
-import org.springframework.dao.DataAccessException;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.datasource.DataSourceTransactionManager;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
@@ -111,7 +111,7 @@ class AccountStartSessionOperatorAuthorizationRepositoryIntegrationTest {
                                 + "SET bundle_linearization = ? WHERE control_plane_request_id = ?",
                             "123456788",
                             REQUEST_ID)))
-        .isInstanceOf(DataAccessException.class);
+        .isInstanceOf(IntegrityConstraintViolationException.class);
     assertThat(
             context.inTransaction(
                 () ->
@@ -430,7 +430,7 @@ class AccountStartSessionOperatorAuthorizationRepositoryIntegrationTest {
                                 + "SET authority_evidence_bundle = ? WHERE control_plane_request_id = ?",
                             bytes("rewritten"),
                             REQUEST_ID)))
-        .isInstanceOf(DataAccessException.class);
+        .isInstanceOf(IntegrityConstraintViolationException.class);
     assertThatThrownBy(
             () ->
                 context.inTransactionWithoutResult(
@@ -439,14 +439,14 @@ class AccountStartSessionOperatorAuthorizationRepositoryIntegrationTest {
                             "DELETE FROM account_start_session_operator_authorizations "
                                 + "WHERE control_plane_request_id = ?",
                             REQUEST_ID)))
-        .isInstanceOf(DataAccessException.class);
+        .isInstanceOf(IntegrityConstraintViolationException.class);
     assertThatThrownBy(
             () ->
                 context.inTransactionWithoutResult(
                     () ->
                         context.transactionDsl.execute(
                             "TRUNCATE account_start_session_operator_authorizations")))
-        .isInstanceOf(DataAccessException.class);
+        .isInstanceOf(IntegrityConstraintViolationException.class);
 
     var retained =
         context.inTransaction(
