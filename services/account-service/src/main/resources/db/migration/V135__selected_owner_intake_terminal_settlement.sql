@@ -457,7 +457,12 @@ BEGIN
     END LOOP;
     SELECT convert_from(frame_value, 'UTF8'), next_position INTO ignored_text, p
         FROM account_publication_authorization_read_frame(owner_receipt, p);
-    IF ignored_text !~ '^[+-]?[0-9]{4,}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}(:[0-9]{2}([.][0-9]{0,8}[1-9])?)?Z$'
+    IF ignored_text !~ '^(?:[0-9]{4}|-[0-9]{4}|-[1-9][0-9]{4,8}|[+][1-9][0-9]{4,8})-[0-9]{2}-[0-9]{2}T(?:[01][0-9]|2[0-3]):[0-5][0-9](?::[0-5][0-9](?:[.](?:[0-9]{3}|[0-9]{6}|[0-9]{9}))?)?Z$'
+        OR ignored_text ~ '^-0000-'
+        OR ignored_text ~ 'T(?:[01][0-9]|2[0-3]):[0-5][0-9]:00Z$'
+        OR ignored_text ~ '[.]000Z$'
+        OR ignored_text ~ '[.][0-9]{3}000Z$'
+        OR ignored_text ~ '[.][0-9]{6}000Z$'
         OR p <> octet_length(owner_receipt) + 1 THEN
         RAISE EXCEPTION 'Automation terminal receipt timestamp or trailing bytes are invalid'
             USING ERRCODE = '23514';

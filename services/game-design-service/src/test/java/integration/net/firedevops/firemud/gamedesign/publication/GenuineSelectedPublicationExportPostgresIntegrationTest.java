@@ -51,6 +51,7 @@ import net.firedevops.firemud.accountservice.authordraft.DraftAuthorizationFence
 import net.firedevops.firemud.automationscripting.sourceintake.AutomationEmptySelectedSourceIntakeRepository;
 import net.firedevops.firemud.automationscripting.sourceintake.AutomationEmptySelectedSourceIntakeService;
 import net.firedevops.firemud.automationscripting.sourceintake.AutomationEmptySelectedSourceIntakeTerminalReadService;
+import net.firedevops.firemud.automationscripting.sourceintake.AutomationSelectedSourceIntakeCommandGrpcService;
 import net.firedevops.firemud.automationscripting.sourceintake.AutomationSelectedSourceIntakeTerminalReadGrpcService;
 import net.firedevops.firemud.common.account.StartSessionRedeemedOperationProjectionClient;
 import net.firedevops.firemud.common.account.sourceintake.AccountSelectedOwnerIntakeAuthorizationGrpcClient;
@@ -58,6 +59,7 @@ import net.firedevops.firemud.common.account.sourceintake.AccountSelectedOwnerIn
 import net.firedevops.firemud.common.account.sourceintake.GrpcSelectedOwnerIntakeSourceReadClient;
 import net.firedevops.firemud.common.account.sourceintake.SelectedOwnerIntakeAuthorizationProducerEvidence;
 import net.firedevops.firemud.common.account.sourceintake.SelectedOwnerIntakeAuthorizationReadEvidence;
+import net.firedevops.firemud.common.account.sourceintake.SelectedOwnerIntakeSettlementEvidence;
 import net.firedevops.firemud.common.account.sourceintake.SelectedOwnerIntakeSourceReadEvidence;
 import net.firedevops.firemud.common.account.sourceintake.SelectedOwnerIntakeSourceReadScope;
 import net.firedevops.firemud.common.authoring.AccountOriginalDraftOrderClient;
@@ -76,6 +78,7 @@ import net.firedevops.firemud.common.authoring.WorldDraftTerminalReadClient;
 import net.firedevops.firemud.common.authoring.WorldOriginalDraftGraphApplyClient;
 import net.firedevops.firemud.common.automation.AutomationAuthoredSourceInventoryDeclaration;
 import net.firedevops.firemud.common.automation.sourceintake.AutomationEmptySelectedSourceIntakeReceipt;
+import net.firedevops.firemud.common.automation.sourceintake.AutomationSelectedSourceIntakeCommandEvidence;
 import net.firedevops.firemud.common.automation.sourceintake.AutomationSelectedSourceIntakeTerminalReadClient;
 import net.firedevops.firemud.common.config.ServiceEndpointsProperties;
 import net.firedevops.firemud.common.entity.EntityAuthoredSourceInventoryDeclaration;
@@ -122,7 +125,9 @@ import net.firedevops.firemud.common.publication.WorldSelectedDraftPublicationFr
 import net.firedevops.firemud.common.publication.WorldSelectedOwnerInventoryGrpcClient;
 import net.firedevops.firemud.common.publication.WorldSelectedPublicationArtifactInventoryClient;
 import net.firedevops.firemud.common.security.PublicationReadGuard;
+import net.firedevops.firemud.common.security.sourceintake.GrpcAutomationSelectedSourceIntakeCommandClient;
 import net.firedevops.firemud.common.security.sourceintake.GrpcSelectedOwnerIntakeAuthorizationProducerClient;
+import net.firedevops.firemud.common.security.sourceintake.GrpcSelectedOwnerIntakeSettlementClient;
 import net.firedevops.firemud.common.tenant.AuthoredWorldSourceClient;
 import net.firedevops.firemud.common.tenant.WorldAuthoredSourceIntakeClient;
 import net.firedevops.firemud.common.tenant.WorldAuthoredSourceIntakeGrpcCodec;
@@ -285,21 +290,21 @@ import tools.jackson.databind.ObjectMapper;
  * loopback mTLS. World freeze, immutable inventory and published selector use their actual owner
  * services over loopback mTLS, with the canonical frozen selector captured owner-locally from the
  * committed freeze and retained APPLIED graph. Entity/Automation source disclosure uses the genuine
- * Account issuer and retained preliminary reservations (the reservation helper's incoming Game
- * Design peer is stipulated), then loopback mTLS for both the Account permission hop and the Game
- * Design source hop. Automation additionally composes real Account finalization, the actual
- * recipient-specific World closure/inventory reader, the Automation empty-source receipt owner, and
- * Account terminal settlement. Its Account authorization command traverses the native producer over
- * loopback mTLS; preliminary reservation and local Automation-retain/Account-settlement calls still
- * use stipulated Game Design peer contexts. Entity retention and Entity/Automation publication
- * participant digests, in-memory S3 and the StartSession Account projection remain test doubles.
- * The complete launch-binding case wires the actual Game Design handler and World Management mTLS
- * client on this fixture's loopback server to the actual owner implementation in an explicitly
- * established read-only repeatable-read snapshot; unrelated handler dependencies are isolated. This
- * fixture does not provide production-mounted certificates or full application server wiring,
- * authenticated Automation retention/settlement command ingress, Account-projection-backed
- * StartSession admission, a complete four-owner authenticated release, runtime launch, activation
- * or registration.
+ * Account issuer and retained preliminary reservations, then loopback mTLS for both the Account
+ * permission hop and the Game Design source hop. Automation additionally composes real Account
+ * finalization, the actual recipient-specific World closure/inventory reader, the Automation
+ * empty-source receipt owner, and Account terminal settlement. Its positive Account authorization
+ * command creates a fresh reservation through the native producer. Automation retention and Account
+ * settlement each traverse their native command receivers over loopback mTLS. The earlier
+ * disclosure/abort setup uses stipulated incoming Game Design peer contexts and is not the positive
+ * authorization operation. Entity retention and Entity/Automation publication participant digests,
+ * in-memory S3 and the StartSession Account projection remain test doubles. The complete
+ * launch-binding case wires the actual Game Design handler and World Management mTLS client on this
+ * fixture's loopback server to the actual owner implementation in an explicitly established
+ * read-only repeatable-read snapshot; unrelated handler dependencies are isolated. This fixture
+ * does not provide production-mounted certificates or full application server wiring, complete
+ * owner census or production ingress, Account-projection-backed StartSession admission, a complete
+ * four-owner authenticated release, runtime launch, activation or registration.
  */
 @Testcontainers(disabledWithoutDocker = true)
 @SuppressWarnings("resource")
@@ -475,6 +480,18 @@ class GenuineSelectedPublicationExportPostgresIntegrationTest {
           var accountToAutomationTerminal =
               new AutomationSelectedSourceIntakeTerminalReadClient(
                   endpoints, pki.client("account-service"), channels, NAMESPACE);
+          var automationSelectedSourceCommandClient =
+              new GrpcAutomationSelectedSourceIntakeCommandClient(
+                  endpoints, pki.client("game-design-service"), channels, NAMESPACE);
+          var wrongWorkloadAutomationSelectedSourceCommandClient =
+              new GrpcAutomationSelectedSourceIntakeCommandClient(
+                  endpoints, pki.client("world-management-service"), channels, NAMESPACE);
+          var selectedOwnerSettlementClient =
+              new GrpcSelectedOwnerIntakeSettlementClient(
+                  endpoints, pki.client("game-design-service"), channels, NAMESPACE);
+          var wrongWorkloadSelectedOwnerSettlementClient =
+              new GrpcSelectedOwnerIntakeSettlementClient(
+                  endpoints, pki.client("world-management-service"), channels, NAMESPACE);
           var glToAccountHeld =
               new GameLogicIntakeAuthorizationReadClient(
                   endpoints, pki.client("game-logic-service"), channels, NAMESPACE);
@@ -819,6 +836,10 @@ class GenuineSelectedPublicationExportPostgresIntegrationTest {
         automationToWorldInventory.init();
         worldToAccountClosure.init();
         accountToAutomationTerminal.init();
+        automationSelectedSourceCommandClient.init();
+        wrongWorkloadAutomationSelectedSourceCommandClient.init();
+        selectedOwnerSettlementClient.init();
+        wrongWorkloadSelectedOwnerSettlementClient.init();
         glToAccountHeld.init();
         glToGdSource.init();
         accountToGlTerminal.init();
@@ -835,6 +856,19 @@ class GenuineSelectedPublicationExportPostgresIntegrationTest {
         var automationIntakeOwner =
             new AutomationEmptySelectedSourceIntakeService(
                 automationIntakeRepository, automationToAccountHeld, automationToWorldInventory);
+        register(
+            automationHandlers,
+            new AutomationSelectedSourceIntakeCommandGrpcService(automationIntakeOwner, NAMESPACE));
+        var selectedOwnerSettlementOwner =
+            new AccountSelectedOwnerIntakeSettlementService(
+                accountSelectedOwnerSourceRepository,
+                accountToAutomationTerminal,
+                accountAccess.sources().manager,
+                NAMESPACE);
+        register(
+            accountHandlers,
+            new AccountSelectedOwnerIntakeSettlementGrpcService(
+                selectedOwnerSettlementOwner, NAMESPACE));
 
         var sourceCommit =
             new GameDesignWorldSourceCommitService(
@@ -1026,6 +1060,26 @@ class GenuineSelectedPublicationExportPostgresIntegrationTest {
                 selectedOwnerReservationSourceRows(
                     accountSourceDsl, automationSourceReservation.operationId()))
             .containsExactlyElementsOf(automationReservationSourcesBeforeAbort);
+        assertThat(
+                account
+                    .abortSelectedOwnerSourceRead(automationSourceReservation, NAMESPACE)
+                    .state())
+            .isEqualTo(AccountSelectedOwnerIntakeSourceReservationRepository.State.ABORTED);
+        assertThat(
+                account
+                    .recoverSelectedOwnerSourceRead(automationSourceReservation, NAMESPACE)
+                    .state())
+            .isEqualTo(AccountSelectedOwnerIntakeSourceReservationRepository.State.ABORTED);
+        assertThat(
+                selectedOwnerReservationSourceRows(
+                    accountSourceDsl, automationSourceReservation.operationId()))
+            .containsExactlyElementsOf(automationReservationSourcesBeforeAbort);
+        assertThat(
+                accountSourceDsl.fetchOne(
+                    "SELECT operation_id FROM account_selected_owner_intake_authorizations "
+                        + "WHERE operation_id = ?",
+                    automationSourceReservation.operationId()))
+            .isNull();
         assertThatThrownBy(
                 () ->
                     accountToGdSelectedOwnerSource.read(
@@ -1280,13 +1334,24 @@ class GenuineSelectedPublicationExportPostgresIntegrationTest {
         assertThat(retainedTemplateAssociations).hasSize(1);
         assertThat(retainedTemplateAssociations.getFirst().templateId()).isEqualTo(templateId);
 
+        UUID freshAutomationIntakeRequest = UUID.randomUUID();
+        assertThat(freshAutomationIntakeRequest)
+            .isNotEqualTo(automationSourceReservation.intakeRequestId())
+            .isNotEqualTo(entitySourceReservation.intakeRequestId());
         var automationAuthorizationRequest =
             SelectedOwnerIntakeAuthorizationProducerEvidence.Request.create(
-                NAMESPACE, automationIntakeRequest, Owner.AUTOMATION_SCRIPTING, selectedCommit);
+                NAMESPACE,
+                freshAutomationIntakeRequest,
+                Owner.AUTOMATION_SCRIPTING,
+                selectedCommit);
         var automationAuthorizationResult =
             gdToAccountSelectedOwnerAuthorizationProducer.authorize(
                 automationAuthorizationRequest, accountAccess.compact());
         var automationAuthorization = automationAuthorizationResult.binding();
+        var freshAutomationScope = automationAuthorization.content().scope();
+        var freshAutomationReservationSources =
+            selectedOwnerReservationSourceRows(
+                accountSourceDsl, freshAutomationScope.operationId());
         assertThat(automationAuthorizationResult.request())
             .isEqualTo(automationAuthorizationRequest);
         assertThat(automationAuthorizationResult.canonicalBindingBytes())
@@ -1295,13 +1360,20 @@ class GenuineSelectedPublicationExportPostgresIntegrationTest {
             .isEqualTo(automationAuthorization.digest());
         assertThat(automationAuthorization.owner()).isEqualTo(Owner.AUTOMATION_SCRIPTING);
         assertThat(automationAuthorization.intakeRequestId())
-            .isEqualTo(automationSourceReservation.intakeRequestId());
+            .isEqualTo(freshAutomationIntakeRequest);
         assertThat(automationAuthorization.operationId())
-            .isEqualTo(automationSourceReservation.operationId());
+            .isEqualTo(freshAutomationScope.operationId())
+            .isNotEqualTo(automationSourceReservation.operationId());
         assertThat(automationAuthorization.fenceId())
-            .isEqualTo(automationSourceReservation.fenceId());
+            .isEqualTo(freshAutomationScope.fenceId())
+            .isNotEqualTo(automationSourceReservation.fenceId());
+        assertThat(freshAutomationScope.owner()).isEqualTo(Owner.AUTOMATION_SCRIPTING);
+        assertThat(freshAutomationScope.targetNamespace()).isEqualTo(NAMESPACE);
+        assertThat(freshAutomationScope.intakeRequestId()).isEqualTo(freshAutomationIntakeRequest);
+        assertThat(freshAutomationScope.selected().canonicalBytes())
+            .containsExactly(selectedCommit.canonicalBytes());
         assertThat(automationAuthorization.content().scope().canonicalBytes())
-            .containsExactly(automationSourceReservation.canonicalBytes());
+            .containsExactly(freshAutomationScope.canonicalBytes());
         assertThat(automationAuthorization.content().snapshotBytes("COMMAND"))
             .containsExactly(selectedSources.command().canonicalBytes());
         assertThat(automationAuthorization.content().snapshotBytes("REALM_POLICY"))
@@ -1321,6 +1393,24 @@ class GenuineSelectedPublicationExportPostgresIntegrationTest {
         assertThat(automationAuthorization.selected().canonicalBytes())
             .containsExactly(selectedCommit.canonicalBytes());
         assertThat(accountSelectedSourceReads).hasValue(1);
+        assertThat(freshAutomationReservationSources)
+            .containsExactlyElementsOf(expectedAccountSourceEvidence);
+        assertThat(
+                accountSourceDsl.fetchOne(
+                    "SELECT operation_id FROM account_selected_owner_intake_authorizations "
+                        + "WHERE operation_id = ?",
+                    freshAutomationScope.operationId()))
+            .isNotNull();
+        assertThat(account.recoverSelectedOwnerSourceRead(freshAutomationScope, NAMESPACE).state())
+            .isEqualTo(AccountSelectedOwnerIntakeSourceReservationRepository.State.FINALIZED);
+        assertThat(
+                account.recoverSelectedOwnerSourceRead(entitySourceReservation, NAMESPACE).state())
+            .isEqualTo(AccountSelectedOwnerIntakeSourceReservationRepository.State.ABORTED);
+        assertThat(
+                account
+                    .recoverSelectedOwnerSourceRead(automationSourceReservation, NAMESPACE)
+                    .state())
+            .isEqualTo(AccountSelectedOwnerIntakeSourceReservationRepository.State.ABORTED);
         assertThat(
                 selectedOwnerReservationSourceRows(
                     accountSourceDsl, automationSourceReservation.operationId()))
@@ -1335,6 +1425,10 @@ class GenuineSelectedPublicationExportPostgresIntegrationTest {
                     assertThat(io.grpc.Status.fromThrowable(failure).getCode())
                         .isEqualTo(io.grpc.Status.Code.PERMISSION_DENIED));
         assertThat(accountSelectedSourceReads).hasValue(1);
+        assertThat(
+                selectedOwnerReservationSourceRows(
+                    accountSourceDsl, freshAutomationScope.operationId()))
+            .containsExactlyElementsOf(freshAutomationReservationSources);
         assertThat(
                 selectedOwnerReservationSourceRows(
                     accountSourceDsl, automationSourceReservation.operationId()))
@@ -1352,16 +1446,34 @@ class GenuineSelectedPublicationExportPostgresIntegrationTest {
         assertThat(accountSelectedSourceReads).hasValue(1);
         assertThat(
                 selectedOwnerReservationSourceRows(
+                    accountSourceDsl, freshAutomationScope.operationId()))
+            .containsExactlyElementsOf(freshAutomationReservationSources);
+        assertThat(
+                selectedOwnerReservationSourceRows(
                     accountSourceDsl, automationSourceReservation.operationId()))
             .containsExactlyElementsOf(automationReservationSourcesBeforeAbort);
 
         var automationRowsBeforeRetention = automationSourceRowCounts(automation.dsl());
-        var automationReceipt =
-            withGameDesignPeer(
+        var automationRetainRequest =
+            AutomationSelectedSourceIntakeCommandEvidence.Request.create(
+                NAMESPACE, automationAuthorization, actualFreeze);
+        assertThatThrownBy(
                 () ->
-                    automationIntakeOwner.retain(NAMESPACE, automationAuthorization, actualFreeze));
+                    wrongWorkloadAutomationSelectedSourceCommandClient.retain(
+                        automationRetainRequest))
+            .isInstanceOf(io.grpc.StatusRuntimeException.class)
+            .satisfies(
+                failure ->
+                    assertThat(io.grpc.Status.fromThrowable(failure).getCode())
+                        .isEqualTo(io.grpc.Status.Code.PERMISSION_DENIED));
+        assertThat(automationSourceRowCounts(automation.dsl()))
+            .isEqualTo(automationRowsBeforeRetention);
+        AutomationSelectedSourceIntakeCommandEvidence automationRetainEvidence =
+            automationSelectedSourceCommandClient.retain(automationRetainRequest);
+        assertThat(automationRetainEvidence.request()).isEqualTo(automationRetainRequest);
+        var automationReceipt = automationRetainEvidence.receipt();
         assertThat(automationReceipt.outcome()).isEqualTo("COMMITTED_EMPTY");
-        assertThat(automationReceipt.intakeRequestId()).isEqualTo(automationIntakeRequest);
+        assertThat(automationReceipt.intakeRequestId()).isEqualTo(freshAutomationIntakeRequest);
         assertThat(automationReceipt.authorizationBindingBytes())
             .containsExactly(automationAuthorization.canonicalBytes());
         assertThat(automationReceipt.authorizationBindingDigest())
@@ -1421,7 +1533,7 @@ class GenuineSelectedPublicationExportPostgresIntegrationTest {
         assertThat(automationReceipt.receiptDigest())
             .isEqualTo(DraftAuthorizationFenceBinding.digest(automationReceipt.canonicalBytes()));
         var persistedAutomationReceipt =
-            automationIntakeRepository.read(NAMESPACE, automationIntakeRequest).orElseThrow();
+            automationIntakeRepository.read(NAMESPACE, freshAutomationIntakeRequest).orElseThrow();
         assertThat(persistedAutomationReceipt.canonicalBytes())
             .containsExactly(automationReceipt.canonicalBytes());
         assertThat(persistedAutomationReceipt.receiptDigest())
@@ -1446,10 +1558,10 @@ class GenuineSelectedPublicationExportPostgresIntegrationTest {
                 automationRowsBeforeRetention.get("automation_empty_source_numeric_key_reservation")
                     + 2);
 
-        var automationReceiptRetry =
-            withGameDesignPeer(
-                () ->
-                    automationIntakeOwner.retain(NAMESPACE, automationAuthorization, actualFreeze));
+        var automationReceiptRetryEvidence =
+            automationSelectedSourceCommandClient.retain(automationRetainRequest);
+        assertThat(automationReceiptRetryEvidence.request()).isEqualTo(automationRetainRequest);
+        var automationReceiptRetry = automationReceiptRetryEvidence.receipt();
         assertThat(automationReceiptRetry.canonicalBytes())
             .containsExactly(automationReceipt.canonicalBytes());
         assertThat(automationReceiptRetry.receiptDigest())
@@ -1457,17 +1569,48 @@ class GenuineSelectedPublicationExportPostgresIntegrationTest {
         assertThat(automationSourceRowCounts(automation.dsl()))
             .isEqualTo(automationRowsAfterRetention);
 
-        var selectedOwnerSettlementOwner =
-            new AccountSelectedOwnerIntakeSettlementService(
-                accountSelectedOwnerSourceRepository,
-                accountToAutomationTerminal,
-                accountAccess.sources().manager,
-                NAMESPACE);
+        var automationRetainNewCorrelationRequest =
+            AutomationSelectedSourceIntakeCommandEvidence.Request.create(
+                NAMESPACE, automationAuthorization, actualFreeze);
+        assertThat(automationRetainNewCorrelationRequest.transportRequestId())
+            .isNotEqualTo(automationRetainRequest.transportRequestId());
+        assertThat(
+                automationRetainNewCorrelationRequest
+                    .originalAuthorizationBinding()
+                    .canonicalBytes())
+            .containsExactly(automationAuthorization.canonicalBytes());
+        assertThat(automationRetainNewCorrelationRequest.freezeEvidence()).isEqualTo(actualFreeze);
+        var automationRetainNewCorrelationEvidence =
+            automationSelectedSourceCommandClient.retain(automationRetainNewCorrelationRequest);
+        assertThat(automationRetainNewCorrelationEvidence.request())
+            .isEqualTo(automationRetainNewCorrelationRequest);
+        assertThat(automationRetainNewCorrelationEvidence.receipt().canonicalBytes())
+            .containsExactly(automationReceipt.canonicalBytes());
+        assertThat(automationRetainNewCorrelationEvidence.receipt().receiptDigest())
+            .isEqualTo(automationReceipt.receiptDigest());
+        assertThat(automationSourceRowCounts(automation.dsl()))
+            .isEqualTo(automationRowsAfterRetention);
+
         assertThat(
                 accountSourceDsl.fetchCount(DSL.table("account_selected_owner_intake_settlements")))
             .isZero();
-        var accountSettlement =
-            withGameDesignPeer(() -> selectedOwnerSettlementOwner.settle(automationAuthorization));
+        var accountSettlementRequest =
+            SelectedOwnerIntakeSettlementEvidence.Request.create(
+                NAMESPACE, automationAuthorization);
+        assertThatThrownBy(
+                () -> wrongWorkloadSelectedOwnerSettlementClient.settle(accountSettlementRequest))
+            .isInstanceOf(io.grpc.StatusRuntimeException.class)
+            .satisfies(
+                failure ->
+                    assertThat(io.grpc.Status.fromThrowable(failure).getCode())
+                        .isEqualTo(io.grpc.Status.Code.PERMISSION_DENIED));
+        assertThat(
+                accountSourceDsl.fetchCount(DSL.table("account_selected_owner_intake_settlements")))
+            .isZero();
+        var accountSettlementEvidence =
+            selectedOwnerSettlementClient.settle(accountSettlementRequest);
+        assertThat(accountSettlementEvidence.request()).isEqualTo(accountSettlementRequest);
+        var accountSettlement = accountSettlementEvidence.receipt();
         assertThat(accountSettlement.authorizationBinding().canonicalBytes())
             .containsExactly(automationAuthorization.canonicalBytes());
         assertThat(accountSettlement.ownerReceiptBytes())
@@ -1501,9 +1644,35 @@ class GenuineSelectedPublicationExportPostgresIntegrationTest {
             .isEqualTo(accountSettlement.terminalEvidence().request().readRequestId());
 
         var exactAccountSettlementRetry =
-            withGameDesignPeer(() -> selectedOwnerSettlementOwner.settle(automationAuthorization));
-        assertThat(exactAccountSettlementRetry.canonicalBytes())
+            selectedOwnerSettlementClient.settle(accountSettlementRequest);
+        assertThat(exactAccountSettlementRetry.request()).isEqualTo(accountSettlementRequest);
+        assertThat(exactAccountSettlementRetry.receipt().canonicalBytes())
             .containsExactly(accountSettlement.canonicalBytes());
+        assertThat(
+                accountSourceDsl.fetchCount(DSL.table("account_selected_owner_intake_settlements")))
+            .isOne();
+        var accountSettlementNewCorrelationRequest =
+            SelectedOwnerIntakeSettlementEvidence.Request.create(
+                NAMESPACE, automationAuthorization);
+        assertThat(accountSettlementNewCorrelationRequest.transportRequestId())
+            .isNotEqualTo(accountSettlementRequest.transportRequestId());
+        assertThat(accountSettlementNewCorrelationRequest.authorizationBindingBytes())
+            .containsExactly(automationAuthorization.canonicalBytes());
+        var accountSettlementNewCorrelationResult =
+            selectedOwnerSettlementClient.settle(accountSettlementNewCorrelationRequest);
+        assertThat(accountSettlementNewCorrelationResult.request())
+            .isEqualTo(accountSettlementNewCorrelationRequest);
+        assertThat(accountSettlementNewCorrelationResult.receipt().canonicalBytes())
+            .containsExactly(accountSettlement.canonicalBytes());
+        assertThat(accountSettlementNewCorrelationResult.receipt().digest())
+            .isEqualTo(accountSettlement.digest());
+        assertThat(
+                accountSettlementNewCorrelationResult
+                    .receipt()
+                    .terminalEvidence()
+                    .request()
+                    .readRequestId())
+            .isEqualTo(accountSettlement.terminalEvidence().request().readRequestId());
         assertThat(
                 accountSourceDsl.fetchCount(DSL.table("account_selected_owner_intake_settlements")))
             .isOne();
@@ -1514,13 +1683,18 @@ class GenuineSelectedPublicationExportPostgresIntegrationTest {
                         NAMESPACE, automationAuthorization)));
         assertThat(
                 selectedOwnerReservationSourceRows(
+                    accountSourceDsl, freshAutomationScope.operationId()))
+            .containsExactlyElementsOf(freshAutomationReservationSources);
+        assertThat(
+                selectedOwnerReservationSourceRows(
                     accountSourceDsl, automationSourceReservation.operationId()))
             .containsExactlyElementsOf(automationReservationSourcesBeforeAbort);
 
-        var automationReceiptAfterSettlement =
-            withGameDesignPeer(
-                () ->
-                    automationIntakeOwner.retain(NAMESPACE, automationAuthorization, actualFreeze));
+        var automationReceiptAfterSettlementEvidence =
+            automationSelectedSourceCommandClient.retain(automationRetainRequest);
+        assertThat(automationReceiptAfterSettlementEvidence.request())
+            .isEqualTo(automationRetainRequest);
+        var automationReceiptAfterSettlement = automationReceiptAfterSettlementEvidence.receipt();
         assertThat(automationReceiptAfterSettlement.canonicalBytes())
             .containsExactly(automationReceipt.canonicalBytes());
         assertThat(automationReceiptAfterSettlement.receiptDigest())
@@ -2540,21 +2714,6 @@ class GenuineSelectedPublicationExportPostgresIntegrationTest {
             "spiffe://firemud/ns/" + NAMESPACE + "/sa/game-session-service",
             NAMESPACE,
             "game-session-service");
-    Context context = Context.current().withValue(GrpcPeerIdentity.CONTEXT_KEY, peer);
-    Context previous = context.attach();
-    try {
-      return operation.get();
-    } finally {
-      context.detach(previous);
-    }
-  }
-
-  private static <T> T withGameDesignPeer(Supplier<T> operation) {
-    var peer =
-        new GrpcPeerIdentity(
-            "spiffe://firemud/ns/" + NAMESPACE + "/sa/game-design-service",
-            NAMESPACE,
-            "game-design-service");
     Context context = Context.current().withValue(GrpcPeerIdentity.CONTEXT_KEY, peer);
     Context previous = context.attach();
     try {

@@ -12,6 +12,7 @@ import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.UUID;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
@@ -21,6 +22,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 import net.firedevops.firemud.accountservice.authordraft.AccountControlUiAuthority;
 import net.firedevops.firemud.accountservice.authordraft.DraftAuthorizationFenceRepository;
 import net.firedevops.firemud.accountservice.service.session.AccountSelectedOwnerIntakeSourceReservationRepository.State;
+import net.firedevops.firemud.common.account.sourceintake.AccountSelectedOwnerIntakeSettlementReceipt;
 import net.firedevops.firemud.common.account.sourceintake.SelectedOwnerEmptySourceInputs;
 import net.firedevops.firemud.common.account.sourceintake.SelectedOwnerIntakeAuthorizationBinding;
 import net.firedevops.firemud.common.account.sourceintake.SelectedOwnerIntakeSourceReadScope;
@@ -550,6 +552,106 @@ class AccountSelectedOwnerIntakeAuthorizationPostgresIntegrationTest {
   }
 
   @Test
+  void postgresPreservesCanonicalAutomationTimestampBytesAndRejectsNoncanonicalFrames()
+      throws Exception {
+    try (var fixture =
+        new AccountControlUiOriginalOrderFixture(
+            postgres.getJdbcUrl(),
+            postgres.getUsername(),
+            postgres.getPassword(),
+            redis.getHost(),
+            redis.getMappedPort(6379),
+            temporary)) {
+      var issued = fixture.issueCreator();
+      var f = issued.sources();
+      var selected = selectedForSettlement(f.tenant);
+      settleOriginal(issued, selected);
+      var repository = new AccountSelectedOwnerIntakeSourceReservationRepository(f.dsl);
+      var reservationService =
+          new AccountSelectedOwnerIntakeSourceReservationService(
+              issued.actors(), f.fences, repository, f.manager, "test");
+
+      var rejectedBinding =
+          finalizeAutomationBinding(
+              issued, reservationService, repository, selected, "timestamp-invalid");
+      var validBase =
+          terminalEvidence(
+              rejectedBinding, 9301L, 9302L, OffsetDateTime.parse("2026-10-10T00:00Z"));
+      var validOwnerBytes = validBase.receipt().canonicalBytes();
+      assertThat(lastFrame(validOwnerBytes)).isEqualTo("2026-10-10T00:00Z");
+
+      for (String noncanonicalTimestamp :
+          List.of(
+              "2026-10-10T24:00Z",
+              "2026-10-10T00:00:60Z",
+              "2026-10-10T00:00:00Z",
+              "2026-10-10T00:00:00.000Z",
+              "2026-10-10T00:00:00.123450000Z",
+              "2026-10-10T00:00:00.12Z",
+              "2026-10-10T00:00:00.120000Z",
+              "2026-10-10T00:00:00+01:00")) {
+        assertRejectedSettlementByPostgres(
+            issued,
+            rejectedBinding,
+            validBase,
+            replaceLastFrame(validOwnerBytes, noncanonicalTimestamp, false),
+            "Automation terminal receipt timestamp or trailing bytes are invalid");
+      }
+      assertRejectedSettlementByPostgres(
+          issued,
+          rejectedBinding,
+          validBase,
+          replaceLastFrame(validOwnerBytes, null, true),
+          "Automation terminal receipt timestamp or trailing bytes are invalid");
+
+      var canonicalTimestamps =
+          List.of(
+              "2026-10-10T00:00Z",
+              "2026-10-10T00:00:01Z",
+              "2026-10-10T00:00:00.120Z",
+              "2026-10-10T00:00:00.123450Z",
+              "2026-10-10T00:00:00.123456780Z");
+      for (int index = 0; index < canonicalTimestamps.size(); index++) {
+        String timestamp = canonicalTimestamps.get(index);
+        var binding =
+            index == 0
+                ? rejectedBinding
+                : finalizeAutomationBinding(
+                    issued,
+                    reservationService,
+                    repository,
+                    selected,
+                    "timestamp-canonical-" + index);
+        var terminal =
+            index == 0
+                ? validBase
+                : terminalEvidence(
+                    binding, 9401L + index, 9402L + index, OffsetDateTime.parse(timestamp));
+        assertThat(lastFrame(terminal.receipt().canonicalBytes())).isEqualTo(timestamp);
+
+        var committed = f.tx(() -> repository.settleCommittedEmpty(terminal));
+        assertThat(committed.terminalEvidence().receipt().canonicalBytes())
+            .isEqualTo(terminal.receipt().canonicalBytes());
+        assertThat(
+                f.dsl
+                    .fetchSingle(
+                        "SELECT terminal_receipt_bytes FROM account_selected_owner_intake_settlements "
+                            + "WHERE operation_id = ?",
+                        binding.operationId())
+                    .get(0, byte[].class))
+            .isEqualTo(terminal.receipt().canonicalBytes());
+        assertThat(
+                f.dsl
+                    .fetchSingle(
+                        "SELECT account_selected_owner_intake_source_read_is_pending(?)",
+                        binding.operationId())
+                    .get(0, Boolean.class))
+            .isFalse();
+      }
+    }
+  }
+
+  @Test
   void postgresRejectsChangedNamespaceUnknownFamilyAndSelectedScopeEvidence() throws Exception {
     try (var fixture =
         new AccountControlUiOriginalOrderFixture(
@@ -913,8 +1015,172 @@ class AccountSelectedOwnerIntakeAuthorizationPostgresIntegrationTest {
         selected, "0", null, genesis, List.of(), List.of(declaration));
   }
 
+  private static SelectedOwnerIntakeAuthorizationBinding finalizeAutomationBinding(
+      AccountControlUiOriginalOrderFixture.IssuedCreator issued,
+      AccountSelectedOwnerIntakeSourceReservationService reservationService,
+      AccountSelectedOwnerIntakeSourceReservationRepository repository,
+      DraftCommitBinding selected,
+      String marker) {
+    var f = issued.sources();
+    var scope =
+        asGameDesign(
+            () ->
+                reservationService.reserveSourceRead(
+                    issued.compact(),
+                    UUID.randomUUID(),
+                    Owner.AUTOMATION_SCRIPTING,
+                    selected,
+                    issued.environment()));
+    var selectedContent = content(scope, marker);
+    return asGameDesign(
+        () ->
+            issued
+                .actors()
+                .withCurrent(
+                    issued.compact(),
+                    f.tenant,
+                    issued.environment(),
+                    current ->
+                        repository.finalizeSourceRead(
+                            scope,
+                            selectedContent,
+                            current,
+                            () ->
+                                f.fences.requireSelectedOwnerIntakeAdmission(
+                                    current.source().sources(), selected))));
+  }
+
+  private static void assertRejectedSettlementByPostgres(
+      AccountControlUiOriginalOrderFixture.IssuedCreator issued,
+      SelectedOwnerIntakeAuthorizationBinding binding,
+      AutomationSelectedSourceIntakeTerminalReadEvidence validEvidence,
+      byte[] changedOwnerReceiptBytes,
+      String expectedDiagnostic) {
+    var f = issued.sources();
+    assertThatThrownBy(
+            () ->
+                f.tx(
+                    () -> {
+                      insertRawSettlement(f.dsl, binding, validEvidence, changedOwnerReceiptBytes);
+                      return null;
+                    }))
+        .isInstanceOf(RuntimeException.class)
+        .satisfies(
+            failure -> {
+              Throwable root = failure;
+              while (root.getCause() != null) root = root.getCause();
+              assertThat(root)
+                  .isInstanceOfSatisfying(
+                      java.sql.SQLException.class,
+                      sql -> {
+                        assertThat(sql.getSQLState()).isEqualTo("23514");
+                        assertThat(sql.getMessage()).contains(expectedDiagnostic);
+                      });
+            });
+    assertThat(
+            f.dsl.fetchOne(
+                "SELECT operation_id FROM account_selected_owner_intake_settlements "
+                    + "WHERE operation_id = ?",
+                binding.operationId()))
+        .isNull();
+    assertThat(
+            f.dsl
+                .fetchSingle(
+                    "SELECT account_selected_owner_intake_source_read_is_pending(?)",
+                    binding.operationId())
+                .get(0, Boolean.class))
+        .isTrue();
+  }
+
+  private static void insertRawSettlement(
+      org.jooq.DSLContext dsl,
+      SelectedOwnerIntakeAuthorizationBinding binding,
+      AutomationSelectedSourceIntakeTerminalReadEvidence evidence,
+      byte[] ownerReceiptBytes) {
+    String ownerReceiptDigest = DraftAuthorizationFenceBinding.digest(ownerReceiptBytes);
+    byte[] receiptBytes =
+        settlementReceiptBytes(binding, evidence, ownerReceiptBytes, ownerReceiptDigest);
+    dsl.execute(
+        "INSERT INTO account_selected_owner_intake_settlements "
+            + "(operation_id, fence_id, intake_request_id, owner, target_namespace, tenant_uuid, "
+            + "version_uuid, binding_bytes, binding_digest, terminal_read_request_id, "
+            + "terminal_receipt_bytes, terminal_receipt_digest, receipt_bytes, receipt_digest) "
+            + "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        binding.operationId(),
+        binding.fenceId(),
+        binding.intakeRequestId(),
+        binding.owner().name(),
+        binding.targetNamespace(),
+        binding.tenantId(),
+        binding.versionId(),
+        binding.canonicalBytes(),
+        binding.digest(),
+        evidence.request().readRequestId(),
+        ownerReceiptBytes,
+        ownerReceiptDigest,
+        receiptBytes,
+        DraftAuthorizationFenceBinding.digest(receiptBytes));
+  }
+
+  private static byte[] settlementReceiptBytes(
+      SelectedOwnerIntakeAuthorizationBinding binding,
+      AutomationSelectedSourceIntakeTerminalReadEvidence evidence,
+      byte[] ownerReceiptBytes,
+      String ownerReceiptDigest) {
+    var request = evidence.request();
+    var out = new ByteArrayOutputStream();
+    DraftAuthorizationFenceBinding.frame(out, AccountSelectedOwnerIntakeSettlementReceipt.DOMAIN);
+    DraftAuthorizationFenceBinding.frame(out, "1");
+    DraftAuthorizationFenceBinding.frame(out, binding.canonicalBytes());
+    DraftAuthorizationFenceBinding.frame(out, binding.digest());
+    DraftAuthorizationFenceBinding.frame(out, Integer.toString(request.schemaVersion()));
+    DraftAuthorizationFenceBinding.frame(out, request.targetNamespace());
+    DraftAuthorizationFenceBinding.frame(out, request.readRequestId().toString());
+    DraftAuthorizationFenceBinding.frame(out, request.intendedReader());
+    DraftAuthorizationFenceBinding.frame(out, request.terminalReadPurpose());
+    DraftAuthorizationFenceBinding.frame(out, request.binding().canonicalBytes());
+    DraftAuthorizationFenceBinding.frame(out, request.binding().digest());
+    DraftAuthorizationFenceBinding.frame(out, ownerReceiptBytes);
+    DraftAuthorizationFenceBinding.frame(out, ownerReceiptDigest);
+    return out.toByteArray();
+  }
+
+  private static byte[] replaceLastFrame(
+      byte[] canonicalBytes, String replacement, boolean appendTrailingByte) {
+    var reader = new DraftAuthorizationFenceBinding.FrameReader(canonicalBytes);
+    var frames = new ArrayList<byte[]>();
+    while (reader.remaining() > 0) frames.add(reader.bytes());
+    reader.requireEnd();
+    if (replacement != null) {
+      frames.set(frames.size() - 1, replacement.getBytes(StandardCharsets.UTF_8));
+    }
+    var out = new ByteArrayOutputStream();
+    for (byte[] frame : frames) DraftAuthorizationFenceBinding.frame(out, frame);
+    if (appendTrailingByte) out.write(0x5a);
+    return out.toByteArray();
+  }
+
+  private static String lastFrame(byte[] canonicalBytes) {
+    var reader = new DraftAuthorizationFenceBinding.FrameReader(canonicalBytes);
+    byte[] last = null;
+    while (reader.remaining() > 0) last = reader.bytes();
+    reader.requireEnd();
+    byte[] timestampFrame =
+        Objects.requireNonNull(last, "Complete Automation receipt must contain a timestamp frame");
+    return new String(timestampFrame, StandardCharsets.UTF_8);
+  }
+
   private static AutomationSelectedSourceIntakeTerminalReadEvidence terminalEvidence(
       SelectedOwnerIntakeAuthorizationBinding binding, long localTenantKey, long localVersionKey) {
+    return terminalEvidence(
+        binding, localTenantKey, localVersionKey, OffsetDateTime.parse("2026-10-10T00:00:00Z"));
+  }
+
+  private static AutomationSelectedSourceIntakeTerminalReadEvidence terminalEvidence(
+      SelectedOwnerIntakeAuthorizationBinding binding,
+      long localTenantKey,
+      long localVersionKey,
+      OffsetDateTime retainedAt) {
     var freeze = freezeEvidence(binding);
     var worldRequest =
         SelectedOwnerWorldInventoryReadEvidence.create(binding.targetNamespace(), binding, freeze);
@@ -942,7 +1208,7 @@ class AccountSelectedOwnerIntakeAuthorizationPostgresIntegrationTest {
             0,
             0,
             0,
-            OffsetDateTime.parse("2026-10-10T00:00:00Z"));
+            retainedAt);
     return new AutomationSelectedSourceIntakeTerminalReadEvidence(
         AutomationSelectedSourceIntakeTerminalReadEvidence.Request.create(
             binding.targetNamespace(), binding),
