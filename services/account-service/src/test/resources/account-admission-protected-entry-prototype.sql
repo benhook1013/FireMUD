@@ -67,7 +67,15 @@ DECLARE
     flush_lsn pg_lsn;
     observed_ms BIGINT;
     observation INTEGER;
+    diagnostic_entry_insert pg_lsn;
+    diagnostic_entry_flush pg_lsn;
+    diagnostic_capture_flush pg_lsn;
+    diagnostic_pid INTEGER;
 BEGIN
+    -- Observations only: even this first statement follows function resolution/planning.
+    diagnostic_entry_insert := pg_current_wal_insert_lsn();
+    diagnostic_entry_flush := pg_current_wal_flush_lsn();
+    diagnostic_pid := pg_backend_pid();
     IF current_setting('transaction_isolation') <> 'serializable'
         OR current_setting('transaction_read_only') <> 'off'
         OR pg_is_in_recovery() OR current_setting('fsync') <> 'on' THEN
@@ -78,6 +86,7 @@ BEGIN
     fixed_snapshot := pg_current_snapshot();
     own_xid := pg_current_xact_id_if_assigned()::text;
     upper_lsn := pg_current_wal_insert_lsn();
+    diagnostic_capture_flush := pg_current_wal_flush_lsn();
     SELECT * INTO op FROM __S__.account_gameplay_admission_lease_operations WHERE request_id = p_request;
     IF NOT FOUND OR op.status <> 'COMMITTED' OR op.finalization_xid IS NULL
         OR op.evidence_sha256 IS DISTINCT FROM p_sha OR op.binding_decision_id IS DISTINCT FROM p_decision THEN
@@ -114,8 +123,9 @@ BEGIN
         EXIT WHEN upper_lsn > '0/0' AND flush_lsn >= upper_lsn;
         IF observation = 50 THEN
             RAISE EXCEPTION 'prototype WAL coverage unavailable' USING ERRCODE = '23514',
-                DETAIL = format('snapshot=%s own_xid=%s original_xid=%s upper_lsn=%s flush_lsn=%s observed_ms=%s expiry=%s',
-                    fixed_snapshot, own_xid, op.finalization_xid, upper_lsn, flush_lsn, observed_ms, op.expires_at_ms);
+                DETAIL = format('snapshot=%s own_xid=%s original_xid=%s upper_lsn=%s flush_lsn=%s observed_ms=%s expiry=%s diagnostic_pid=%s diagnostic_entry_insert=%s diagnostic_entry_flush=%s diagnostic_capture_flush=%s',
+                    fixed_snapshot, own_xid, op.finalization_xid, upper_lsn, flush_lsn, observed_ms, op.expires_at_ms,
+                    diagnostic_pid, diagnostic_entry_insert, diagnostic_entry_flush, diagnostic_capture_flush);
         END IF;
         PERFORM pg_sleep(0.01);
     END LOOP;

@@ -139,6 +139,8 @@ class AccountStartSessionAuthorityCaptureRepositoryTest {
       "spiffe://firemud/ns/gameplay/sa/logging-admin-service";
   private static final String WORLD_PEER_URI =
       "spiffe://firemud/ns/gameplay/sa/world-management-service";
+  private static final String GAME_SESSION_PEER_URI =
+      "spiffe://firemud/ns/gameplay/sa/game-session-service";
 
   @AfterEach
   void clearContext() {
@@ -164,6 +166,95 @@ class AccountStartSessionAuthorityCaptureRepositoryTest {
     CaptureFixture missingStoredUuid = fixture(ACCOUNT_ID.toString());
     missingStoredUuid.row().setValue(ACCOUNT_UUID, (UUID) null);
     assertUnavailable(missingStoredUuid.row());
+  }
+
+  @Test
+  void gameSessionAdmissionLookupReadsOriginalCaptureWithoutAllocation() {
+    WorldLookupFixture fixture = worldLookupFixture(true);
+    beginOwnerTransaction();
+    var observed =
+        withPeer(GAME_SESSION_PEER_URI, NAMESPACE, "game-session-service")
+            .call(
+                () ->
+                    fixture
+                        .repository()
+                        .lockReadExactCurrentFromGameSessionAdmission(
+                            fixture.current(),
+                            fixture.tuple(),
+                            LOGGING_PEER_URI,
+                            RESERVATION_OWNER_ID,
+                            7L,
+                            GAME_SESSION_PEER_URI));
+    assertThat(observed.sameStoredValue(fixture.capture())).isTrue();
+    verify(fixture.dsl(), times(1))
+        .fetchOne(startsWith("SELECT control_plane_request_id"), any(Object[].class));
+    verifyNoMoreInteractions(fixture.dsl());
+  }
+
+  @Test
+  void gameSessionAdmissionLookupRejectsWrongPeerNamespaceAndEndUserBeforeStorage() {
+    WorldLookupFixture fixture = worldLookupFixture(true);
+    beginOwnerTransaction();
+    for (String peer :
+        List.of(
+            WORLD_PEER_URI,
+            LOGGING_PEER_URI,
+            "spiffe://firemud/ns/other/sa/game-session-service")) {
+      var identity = GrpcPeerIdentity.parseUri(peer).orElseThrow();
+      assertUnavailable(
+          () ->
+              withPeer(peer, identity.namespace(), identity.service())
+                  .call(
+                      () ->
+                          fixture
+                              .repository()
+                              .lockReadExactCurrentFromGameSessionAdmission(
+                                  fixture.current(),
+                                  fixture.tuple(),
+                                  LOGGING_PEER_URI,
+                                  RESERVATION_OWNER_ID,
+                                  7L,
+                                  GAME_SESSION_PEER_URI)));
+    }
+    SessionContext.setContext("account-user", List.of("tenantAdmin"), Map.of());
+    assertUnavailable(
+        () ->
+            withPeer(GAME_SESSION_PEER_URI, NAMESPACE, "game-session-service")
+                .call(
+                    () ->
+                        fixture
+                            .repository()
+                            .lockReadExactCurrentFromGameSessionAdmission(
+                                fixture.current(),
+                                fixture.tuple(),
+                                LOGGING_PEER_URI,
+                                RESERVATION_OWNER_ID,
+                                7L,
+                                GAME_SESSION_PEER_URI)));
+    verifyNoInteractions(fixture.dsl());
+  }
+
+  @Test
+  void gameSessionAdmissionLookupDoesNotAllocateMissingCapture() {
+    WorldLookupFixture fixture = worldLookupFixture(false);
+    beginOwnerTransaction();
+    assertUnavailable(
+        () ->
+            withPeer(GAME_SESSION_PEER_URI, NAMESPACE, "game-session-service")
+                .call(
+                    () ->
+                        fixture
+                            .repository()
+                            .lockReadExactCurrentFromGameSessionAdmission(
+                                fixture.current(),
+                                fixture.tuple(),
+                                LOGGING_PEER_URI,
+                                RESERVATION_OWNER_ID,
+                                7L,
+                                GAME_SESSION_PEER_URI)));
+    verify(fixture.dsl(), times(1))
+        .fetchOne(startsWith("SELECT control_plane_request_id"), any(Object[].class));
+    verifyNoMoreInteractions(fixture.dsl());
   }
 
   @Test

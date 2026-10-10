@@ -1,22 +1,18 @@
 package net.firedevops.firemud.common.gamesession;
 
-import java.io.IOException;
 import java.util.Arrays;
 import java.util.HexFormat;
-import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
 import java.util.regex.Pattern;
+import net.firedevops.firemud.common.account.startsession.StartSessionAccountRedemptionProjection;
 import net.firedevops.firemud.common.gamedesign.AuthoredWorldLaunchDescriptorEvidence;
 import net.firedevops.firemud.common.gamedesign.CompleteLaunchBindingEvidence;
 import net.firedevops.firemud.common.gamedesign.StartSessionLaunchDescriptorGrpcCodec;
 import net.firedevops.firemud.common.gamedesign.StartSessionTemplateAssociationReadEvidence;
-import net.firedevops.firemud.common.json.Rfc8785CanonicalJson;
-import net.firedevops.firemud.common.operator.StartSessionAuthorityEvidenceBundle;
 import net.firedevops.firemud.common.operator.StartSessionPostAuthorizationExecutionTuple;
 import net.firedevops.firemud.common.publication.RealmEntryPolicy;
 import net.firedevops.firemud.common.tenant.AuthoredWorldSourceDigest;
-import tools.jackson.databind.json.JsonMapper;
 
 /**
  * Read-only historical evidence for one exact original StartSession attempt.
@@ -29,7 +25,6 @@ public final class HistoricalOriginalStartSessionOwnerEvidence {
   public static final int SCHEMA_VERSION = 1;
   private static final UUID NIL_UUID = new UUID(0L, 0L);
   private static final Pattern DIGEST = Pattern.compile("sha256:[0-9a-f]{64}");
-  private static final JsonMapper JSON = JsonMapper.builder().build();
 
   private HistoricalOriginalStartSessionOwnerEvidence() {}
 
@@ -214,7 +209,9 @@ public final class HistoricalOriginalStartSessionOwnerEvidence {
           || !selector.launchDescriptorId().equals(launchAssociation.launchDescriptorId())
           || !request.expectedOwnerAttemptId().equals(ownerAttemptId)
           || request.expectedOwnerFence() != ownerFence
-          || !expectedAccountProjection(originalTuple).equalsBytes(accountRedemptionProjection)) {
+          || !Arrays.equals(
+              StartSessionAccountRedemptionProjection.fromOriginalTuple(originalTuple),
+              accountRedemptionProjection)) {
         throw new IllegalArgumentException(
             "Historical StartSession tuple, projection, attempt, or association selector differs");
       }
@@ -293,49 +290,6 @@ public final class HistoricalOriginalStartSessionOwnerEvidence {
         throw new IllegalArgumentException(
             "Historical StartSession pin digests differ from their canonical retained evidence");
       }
-    }
-  }
-
-  private record ExpectedProjection(byte[] bytes) {
-    private boolean equalsBytes(byte[] candidate) {
-      return Arrays.equals(bytes, candidate);
-    }
-  }
-
-  private static ExpectedProjection expectedAccountProjection(
-      StartSessionPostAuthorizationExecutionTuple tuple) {
-    StartSessionAuthorityEvidenceBundle bundle =
-        StartSessionAuthorityEvidenceBundle.decode(tuple.authorityEvidenceBundleBytes());
-    long issuanceFence;
-    try {
-      issuanceFence = Long.parseLong(tuple.issuanceFence());
-    } catch (NumberFormatException malformed) {
-      throw new IllegalArgumentException(
-          "Historical Account issuance fence is malformed", malformed);
-    }
-    if (issuanceFence <= 0L) {
-      throw new IllegalArgumentException("Historical Account projection identity is malformed");
-    }
-    Map<String, Object> projection =
-        Map.of(
-            "projectionSchemaId",
-            "accountStartSessionRedemptionProjection",
-            "projectionSchemaVersion",
-            "1",
-            "authorizationReferenceFingerprint",
-            tuple.authorizationReferenceFingerprint(),
-            "authorityEvidenceBundle",
-            bundle.jsonValue(),
-            "issuanceOperationId",
-            bundle.issuanceOperationId().toString(),
-            "issuanceFence",
-            issuanceFence);
-    try {
-      byte[] bytes = Rfc8785CanonicalJson.canonicalizeUtf8(JSON.writeValueAsString(projection));
-      return new ExpectedProjection(bytes);
-    } catch (IOException malformed) {
-      throw new IllegalStateException(
-          "Could not encode the retained Account projection", malformed);
     }
   }
 

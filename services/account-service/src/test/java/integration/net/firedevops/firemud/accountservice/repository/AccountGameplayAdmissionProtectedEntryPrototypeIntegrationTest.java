@@ -17,6 +17,7 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.regex.Pattern;
 import net.firedevops.firemud.accountservice.entity.Account;
 import net.firedevops.firemud.common.account.admission.AccountGameplayAdmissionLeaseEvidence;
 import org.flywaydb.core.Flyway;
@@ -27,6 +28,7 @@ import org.jooq.impl.DSL;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.parallel.Execution;
 import org.junit.jupiter.api.parallel.ExecutionMode;
+import org.postgresql.util.PSQLException;
 import org.springframework.jdbc.datasource.DataSourceTransactionManager;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
 import org.springframework.jdbc.datasource.TransactionAwareDataSourceProxy;
@@ -109,6 +111,7 @@ class AccountGameplayAdmissionProtectedEntryPrototypeIntegrationTest {
   void callerCannotForgeCaptureWriteTablesInvokePrivateWriterOrEscalate() throws Exception {
     var context = context();
     var original = finalized(context, 15000);
+    String diagnosticStart = observeWal(context, "after-original-finalization");
     List<String> denied =
         List.of(
             "INSERT INTO "
@@ -156,22 +159,105 @@ class AccountGameplayAdmissionProtectedEntryPrototypeIntegrationTest {
                   assertThat(sqlState(failure))
                       .isEqualTo(sql.endsWith("'0/1'::pg_lsn)") ? "42883" : "42501"));
     }
+    observeWal(context, "after-denial-loop");
     // A hostile session search path cannot replace fully qualified owner objects.
-    JSONB created =
-        callerTransaction(
-            context,
-            connection -> {
-              DSL.using(connection).execute("SET LOCAL search_path = pg_temp, public");
-              return invoke(
-                  connection,
-                  context,
-                  "confirm",
-                  request(original),
-                  original.evidence().sha256(),
-                  original.decision());
-            });
+    JSONB created;
+    try {
+      created =
+          callerTransaction(
+              context,
+              connection -> {
+                DSL.using(connection).execute("SET LOCAL search_path = pg_temp, public");
+                // Observe from the administrator only; do not warm this new caller with SQL.
+                observeWal(context, "before-fresh-caller-confirm");
+                return invoke(
+                    connection,
+                    context,
+                    "confirm",
+                    request(original),
+                    original.evidence().sha256(),
+                    original.decision());
+              });
+    } catch (SQLException failure) {
+      retainFailureWal(context, diagnosticStart, failure);
+      throw failure;
+    }
     assertProof(context, original, created);
     assertThat(call(context, original, "read_receipt")).isEqualTo(created);
+  }
+
+  private static String observeWal(Context context, String phase) {
+    var observation =
+        context
+            .dsl()
+            .fetchSingle(
+                "SELECT pg_current_wal_insert_lsn()::text AS insert_lsn, pg_current_wal_flush_lsn()::text AS flush_lsn, ceil(extract(epoch FROM clock_timestamp()) * 1000)::bigint AS observed_ms");
+    System.out.println(
+        "Protected-entry administrator WAL observation " + phase + " " + observation);
+    return observation.get("flush_lsn", String.class);
+  }
+
+  private static void retainFailureWal(Context context, String start, SQLException failure) {
+    // Failure diagnostics must never replace the original failure or force WAL durability.
+    try {
+      if (!(failure instanceof PSQLException postgres)) {
+        System.out.println("Protected-entry WAL diagnostic unavailable: no PostgreSQL detail");
+        return;
+      }
+      var serverError = postgres.getServerErrorMessage();
+      String detail = serverError == null ? null : serverError.getDetail();
+      if (detail == null) {
+        System.out.println("Protected-entry WAL diagnostic unavailable: no PostgreSQL detail");
+        return;
+      }
+      var upper = Pattern.compile("(?:^| )upper_lsn=([0-9A-F]+/[0-9A-F]+)(?: |$)").matcher(detail);
+      if (!upper.find()) {
+        System.out.println("Protected-entry WAL diagnostic unavailable: no captured upper LSN");
+        return;
+      }
+      String end = upper.group(1);
+      var bounds =
+          context
+              .dsl()
+              .fetchSingle(
+                  "SELECT pg_wal_lsn_diff(?::pg_lsn, ?::pg_lsn)::bigint AS bytes, (pg_walfile_name_offset(?::pg_lsn)).file_offset AS start_offset, pg_size_bytes(current_setting('wal_segment_size')) AS segment_bytes",
+                  end,
+                  start,
+                  start);
+      long bytes = bounds.get("bytes", Long.class);
+      long offset = bounds.get("start_offset", Long.class);
+      long segmentBytes = bounds.get("segment_bytes", Long.class);
+      if (bytes <= 0 || bytes > 2 * segmentBytes - offset) {
+        System.out.println(
+            "Protected-entry WAL diagnostic unavailable: empty range or more than two segments "
+                + start
+                + ".."
+                + end);
+        return;
+      }
+      // This container belongs only to this test class. Retain decoded output, never an archive.
+      var dump =
+          POSTGRES.execInContainer(
+              "pg_waldump",
+              "--path=/var/lib/postgresql/data/pg_wal",
+              "--start=" + start,
+              "--end=" + end,
+              "--limit=128");
+      String output = dump.getStdout() + dump.getStderr();
+      System.out.println(
+          "Protected-entry WAL diagnostic "
+              + start
+              + ".."
+              + end
+              + " exit="
+              + dump.getExitCode()
+              + " (maximum two segments, 128 records, 16384 characters):\n"
+              + output.substring(0, Math.min(output.length(), 16384)));
+      System.out.println(
+          "Protected-entry WAL diagnostic may be partial or unreadable before ordinary flushing; no flush, checkpoint, segment switch or retry was requested. Record/character limits may truncate provenance, and WAL records alone do not identify their backend.");
+    } catch (Exception diagnosticFailure) {
+      System.out.println("Protected-entry WAL diagnostic unavailable: " + diagnosticFailure);
+    }
   }
 
   @Test

@@ -47,6 +47,7 @@ import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
 import net.firedevops.firemud.common.operator.StartSessionOperatorAction;
 import net.firedevops.firemud.common.operator.StartSessionPostAuthorizationExecutionTuple;
 import net.firedevops.firemud.common.operator.StartSessionPreAuthorizationReservationTuple;
+import net.firedevops.firemud.common.security.SessionContext;
 import net.firedevops.firemud.loggingadmin.v1.ReadCurrentClaimEvidenceResponse;
 import net.firedevops.firemud.loggingadmin.v1.StartSessionReservationEvidencePurpose;
 import org.jooq.Record;
@@ -71,6 +72,7 @@ class AccountStartSessionOperatorAuthorizationServiceTest {
 
   @AfterEach
   void clearTransactionState() {
+    SessionContext.clear();
     TransactionSynchronizationManager.clear();
   }
 
@@ -875,6 +877,200 @@ class AccountStartSessionOperatorAuthorizationServiceTest {
         harness.fingerprintKeys(),
         harness.responseCrypto(),
         harness.captureRepository());
+  }
+
+  @Test
+  void gameSessionAdmissionCurrentnessAuthenticatesBeforeDecodingOrOwnerAccess() {
+    ReadHarness harness = readHarness(NOW.plusSeconds(30));
+    byte[] malformed = "malformed".getBytes(StandardCharsets.UTF_8);
+    for (String peer :
+        List.of(
+            WORLD_MANAGEMENT_PEER,
+            LOGGING_PEER,
+            "spiffe://firemud/ns/other/sa/game-session-service")) {
+      Context.current()
+          .withValue(GrpcPeerIdentity.CONTEXT_KEY, GrpcPeerIdentity.parseUri(peer).orElseThrow())
+          .run(
+              () ->
+                  assertThatThrownBy(
+                          () ->
+                              harness
+                                  .service()
+                                  .withCurrentGameSessionAdmissionProtectionCurrentness(
+                                      malformed,
+                                      harness.request().ownerAttemptId(),
+                                      harness.request().ownerFence(),
+                                      ignored -> "unexpected"))
+                      .isInstanceOf(IllegalStateException.class)
+                      .hasMessageContaining("Exact authenticated internal workload identity"));
+    }
+    SessionContext.setContext("account-user", List.of("tenantAdmin"), Map.of());
+    gameSessionContext()
+        .run(
+            () ->
+                assertThatThrownBy(
+                        () ->
+                            harness
+                                .service()
+                                .withCurrentGameSessionAdmissionProtectionCurrentness(
+                                    malformed,
+                                    harness.request().ownerAttemptId(),
+                                    harness.request().ownerFence(),
+                                    ignored -> "unexpected"))
+                    .isInstanceOf(IllegalStateException.class)
+                    .hasMessageContaining("end-user"));
+    verifyNoInteractions(
+        harness.repository(), harness.actors(), harness.hostedTerms(), harness.captureRepository());
+  }
+
+  @Test
+  void gameSessionAdmissionCurrentnessRejectsAmbientSqlBeforeDecoding() {
+    ReadHarness harness = readHarness(NOW.plusSeconds(30));
+    for (boolean transaction : List.of(true, false)) {
+      if (transaction) TransactionSynchronizationManager.setActualTransactionActive(true);
+      else TransactionSynchronizationManager.initSynchronization();
+      try {
+        gameSessionContext()
+            .run(
+                () ->
+                    assertThatThrownBy(
+                            () ->
+                                harness
+                                    .service()
+                                    .withCurrentGameSessionAdmissionProtectionCurrentness(
+                                        new byte[] {1},
+                                        harness.request().ownerAttemptId(),
+                                        harness.request().ownerFence(),
+                                        ignored -> "unexpected"))
+                        .isInstanceOf(IllegalStateException.class)
+                        .hasMessageContaining("ambient Account transaction"));
+      } finally {
+        TransactionSynchronizationManager.clear();
+      }
+    }
+    verifyNoInteractions(
+        harness.repository(), harness.actors(), harness.hostedTerms(), harness.captureRepository());
+  }
+
+  @Test
+  void gameSessionAdmissionCurrentnessRejectsTupleNamespaceBeforeLookup() {
+    ReadHarness harness =
+        readHarness(
+            NOW.plusSeconds(30), LOGGING_PEER, "spiffe://firemud/ns/other/sa/game-session-service");
+    Context.current()
+        .withValue(
+            GrpcPeerIdentity.CONTEXT_KEY,
+            GrpcPeerIdentity.parseUri("spiffe://firemud/ns/other/sa/game-session-service")
+                .orElseThrow())
+        .run(
+            () ->
+                assertThatThrownBy(
+                        () ->
+                            harness
+                                .service()
+                                .withCurrentGameSessionAdmissionProtectionCurrentness(
+                                    postTuple(harness).canonicalBytes(),
+                                    harness.request().ownerAttemptId(),
+                                    harness.request().ownerFence(),
+                                    ignored -> "unexpected"))
+                    .isInstanceOf(IllegalStateException.class)
+                    .hasMessageContaining("target namespace"));
+    verifyNoInteractions(
+        harness.repository(), harness.actors(), harness.hostedTerms(), harness.captureRepository());
+  }
+
+  @Test
+  void gameSessionAdmissionCurrentnessLocksOriginalCaptureWithoutIssuanceOrWorldGuard()
+      throws Exception {
+    ReadHarness harness = readHarness(NOW.plusSeconds(30));
+    allowCurrent(harness, harness.source());
+    doAnswer(
+            invocation -> {
+              assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isTrue();
+              return harness.capture();
+            })
+        .when(harness.captureRepository())
+        .lockReadExactCurrentFromGameSessionAdmission(
+            any(),
+            eq(harness.tuple()),
+            eq(LOGGING_PEER),
+            eq(harness.record().reservationOwnerId()),
+            eq(harness.record().reservationClaimFence()),
+            eq(GAME_SESSION_PEER));
+    var result =
+        gameSessionContext()
+            .call(
+                () ->
+                    harness
+                        .service()
+                        .withCurrentGameSessionAdmissionProtectionCurrentness(
+                            postTuple(harness).canonicalBytes(),
+                            harness.request().ownerAttemptId(),
+                            harness.request().ownerFence(),
+                            capture -> {
+                              assertThat(
+                                      TransactionSynchronizationManager.isActualTransactionActive())
+                                  .isTrue();
+                              return capture;
+                            }));
+    assertThat(result).isEqualTo(harness.capture());
+    verify(harness.captureRepository(), never())
+        .lockReadExactCurrentFromWorldReceiving(
+            any(), any(), anyString(), any(), anyLong(), anyString());
+    verify(harness.captureRepository(), never())
+        .prepareOrReadExact(any(), any(), anyString(), any(), anyLong());
+    verify(harness.repository(), never()).createOrReadExact(any());
+    verify(harness.repository(), never()).redeemExact(any());
+    verifyNoInteractions(harness.claims(), harness.fingerprintKeys(), harness.responseCrypto());
+  }
+
+  @Test
+  void gameSessionAdmissionCurrentnessRejectsExpiredReferenceAndChangedCurrentSource() {
+    ReadHarness expired = readHarness(NOW.minusSeconds(10));
+    gameSessionContext()
+        .run(
+            () ->
+                assertThatThrownBy(
+                        () ->
+                            expired
+                                .service()
+                                .withCurrentGameSessionAdmissionProtectionCurrentness(
+                                    postTuple(expired).canonicalBytes(),
+                                    expired.request().ownerAttemptId(),
+                                    expired.request().ownerFence(),
+                                    ignored -> {
+                                      throw new AssertionError("callback ran");
+                                    }))
+                    .isInstanceOf(IllegalStateException.class)
+                    .hasMessageContaining("Stored redeemed operation"));
+    verifyNoInteractions(expired.actors(), expired.captureRepository());
+
+    ReadHarness changed = readHarness(NOW.plusSeconds(30));
+    allowCurrent(changed, source(changed.actorId(), changed.tenantId(), 8L, new byte[] {2}));
+    when(changed
+            .captureRepository()
+            .lockReadExactCurrentFromGameSessionAdmission(
+                any(), any(), anyString(), any(), anyLong(), anyString()))
+        .thenReturn(changed.capture());
+    gameSessionContext()
+        .run(
+            () ->
+                assertThatThrownBy(
+                        () ->
+                            changed
+                                .service()
+                                .withCurrentGameSessionAdmissionProtectionCurrentness(
+                                    postTuple(changed).canonicalBytes(),
+                                    changed.request().ownerAttemptId(),
+                                    changed.request().ownerFence(),
+                                    ignored -> {
+                                      throw new AssertionError("callback ran");
+                                    }))
+                    .isInstanceOf(IllegalArgumentException.class)
+                    .hasMessageContaining("Current Account source"));
+    verify(changed.captureRepository())
+        .lockReadExactCurrentFromGameSessionAdmission(
+            any(), eq(changed.tuple()), eq(LOGGING_PEER), any(), anyLong(), eq(GAME_SESSION_PEER));
   }
 
   @Test

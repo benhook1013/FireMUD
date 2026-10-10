@@ -2,7 +2,6 @@ package net.firedevops.firemud.accountservice.service.session;
 
 import io.grpc.Status;
 import io.grpc.StatusRuntimeException;
-import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
@@ -10,7 +9,6 @@ import java.util.Arrays;
 import java.util.HashSet;
 import java.util.HexFormat;
 import java.util.List;
-import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
@@ -21,6 +19,7 @@ import net.firedevops.firemud.accountservice.repository.AccountStartSessionWorld
 import net.firedevops.firemud.accountservice.repository.AccountStartSessionWorldParticipationRepository;
 import net.firedevops.firemud.accountservice.repository.AccountStartSessionWorldParticipationRepository.Candidate;
 import net.firedevops.firemud.accountservice.repository.AccountStartSessionWorldParticipationRepository.StoredParticipation;
+import net.firedevops.firemud.common.account.startsession.StartSessionAccountRedemptionProjection;
 import net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding.SourceEvidence;
 import net.firedevops.firemud.common.gamesession.OriginalStartSessionCurrentAttemptClient;
 import net.firedevops.firemud.common.gamesession.OriginalStartSessionCurrentAttemptEvidence;
@@ -28,7 +27,6 @@ import net.firedevops.firemud.common.gamesession.OriginalStartSessionCurrentAtte
 import net.firedevops.firemud.common.gamesession.OriginalStartSessionCurrentAttemptEvidence.Result;
 import net.firedevops.firemud.common.gamesession.OriginalStartSessionCurrentAttemptEvidenceGrpcCodec;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
-import net.firedevops.firemud.common.json.Rfc8785CanonicalJson;
 import net.firedevops.firemud.common.operator.StartSessionAuthorityEvidenceBundle;
 import net.firedevops.firemud.common.operator.StartSessionPostAuthorizationExecutionTuple;
 import net.firedevops.firemud.common.security.SessionContext;
@@ -205,7 +203,7 @@ public final class AccountStartSessionWorldParticipationAcquisitionService {
       if (!OriginalStartSessionCurrentAttemptEvidence.PENDING_PHASE.equals(exact.phaseState())
           || !sameRequest(expected, exact.request(), false)
           || !MessageDigest.isEqual(
-              expectedAccountRedemptionProjection(originalTuple),
+              StartSessionAccountRedemptionProjection.fromOriginalTuple(originalTuple),
               exact.accountRedemptionProjection())) {
         throw denied(
             "Current Game Session attempt or full Account redemption projection differs from the original issuer");
@@ -231,7 +229,7 @@ public final class AccountStartSessionWorldParticipationAcquisitionService {
         || !OriginalStartSessionCurrentAttemptEvidence.PENDING_PHASE.equals(
             evidence.result().phaseState())
         || !MessageDigest.isEqual(
-            expectedAccountRedemptionProjection(originalTuple),
+            StartSessionAccountRedemptionProjection.fromOriginalTuple(originalTuple),
             evidence.result().accountRedemptionProjection())
         || !evidence.originalLeaseExpiresAt().equals(evidence.result().originalLeaseExpiresAt())) {
       throw denied("Retained original Game Session attempt proof differs from the exact request");
@@ -260,39 +258,6 @@ public final class AccountStartSessionWorldParticipationAcquisitionService {
           .withDescription("Retained original Game Session response is malformed")
           .withCause(malformed)
           .asRuntimeException();
-    }
-  }
-
-  private static byte[] expectedAccountRedemptionProjection(
-      StartSessionPostAuthorizationExecutionTuple originalTuple) {
-    StartSessionAuthorityEvidenceBundle bundle =
-        StartSessionAuthorityEvidenceBundle.decode(originalTuple.authorityEvidenceBundleBytes());
-    long issuanceFence;
-    try {
-      issuanceFence = Long.parseLong(originalTuple.issuanceFence());
-    } catch (NumberFormatException malformed) {
-      throw denied("Original Account issuance fence is malformed");
-    }
-    if (issuanceFence <= 0L) throw denied("Original Account issuance fence is not positive");
-    Map<String, Object> projection =
-        Map.of(
-            "projectionSchemaId",
-            "accountStartSessionRedemptionProjection",
-            "projectionSchemaVersion",
-            "1",
-            "authorizationReferenceFingerprint",
-            originalTuple.authorizationReferenceFingerprint(),
-            "authorityEvidenceBundle",
-            bundle.jsonValue(),
-            "issuanceOperationId",
-            bundle.issuanceOperationId().toString(),
-            "issuanceFence",
-            issuanceFence);
-    try {
-      return Rfc8785CanonicalJson.canonicalizeUtf8(JSON.writeValueAsString(projection));
-    } catch (IOException malformed) {
-      throw new IllegalStateException(
-          "Could not encode the original Account redemption projection", malformed);
     }
   }
 

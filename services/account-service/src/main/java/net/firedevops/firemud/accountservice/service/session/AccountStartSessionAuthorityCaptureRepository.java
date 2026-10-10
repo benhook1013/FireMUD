@@ -123,6 +123,29 @@ public final class AccountStartSessionAuthorityCaptureRepository {
         current, tuple, loggingWorkloadUri, reservationOwnerId, reservationClaimFence, false);
   }
 
+  /**
+   * Lookup-only original capture read for the distinct authenticated Game Session admission
+   * currentness callback. The original Logging issuer remains retained evidence, not the caller.
+   * This does not allocate a capture or provide continuous owner claim protection.
+   */
+  public AccountStartSessionAuthorityCapture lockReadExactCurrentFromGameSessionAdmission(
+      AccountControlUiActorService.Current current,
+      StartSessionPreAuthorizationReservationTuple tuple,
+      String loggingWorkloadUri,
+      UUID reservationOwnerId,
+      long reservationClaimFence,
+      String gameSessionWorkloadUri) {
+    requireOwnerTransaction();
+    Objects.requireNonNull(current, "current committed ControlUI actor is required");
+    Objects.requireNonNull(tuple, "exact typed StartSession tuple is required");
+    if (!canonicalReceivingWorkload(
+        gameSessionWorkloadUri, tuple.action().scope().targetNamespace(), "game-session-service")) {
+      throw unavailable();
+    }
+    return lockReadExactCurrent(
+        current, tuple, loggingWorkloadUri, reservationOwnerId, reservationClaimFence, false);
+  }
+
   private AccountStartSessionAuthorityCapture lockReadExactCurrent(
       AccountControlUiActorService.Current current,
       StartSessionPreAuthorizationReservationTuple tuple,
@@ -496,13 +519,18 @@ public final class AccountStartSessionAuthorityCaptureRepository {
   }
 
   private static boolean canonicalWorldWorkload(String uri, String targetNamespace) {
-    String expectedUri = "spiffe://firemud/ns/" + targetNamespace + "/sa/world-management-service";
+    return canonicalReceivingWorkload(uri, targetNamespace, "world-management-service");
+  }
+
+  private static boolean canonicalReceivingWorkload(
+      String uri, String targetNamespace, String service) {
+    String expectedUri = "spiffe://firemud/ns/" + targetNamespace + "/sa/" + service;
     GrpcPeerIdentity peer = GrpcPeerIdentity.current();
     return !SessionContext.hasAuthenticatedCallerContext()
         && expectedUri.equals(uri)
         && peer != null
         && uri.equals(peer.uri())
-        && "world-management-service".equals(peer.service())
+        && service.equals(peer.service())
         && targetNamespace.equals(peer.namespace());
   }
 
