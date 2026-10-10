@@ -353,12 +353,21 @@ class GameSessionStartSessionLaunchDescriptorRepositoryIntegrationTest {
   @Test
   void liveOwnerClaimCannotCreateDescriptorPinAfterOriginalAuthorizationExpires() throws Exception {
     Fixture fixture = fixture(Duration.ofSeconds(30));
-    Instant expiredAt =
-        Instant.now().minusSeconds(1L).truncatedTo(java.time.temporal.ChronoUnit.MILLIS);
+    Instant expiresAt =
+        Objects.requireNonNull(
+                Objects.requireNonNull(
+                        fixture.dsl.fetchOne("SELECT clock_timestamp() + interval '8 seconds'"))
+                    .get(0, OffsetDateTime.class))
+            .toInstant()
+            .truncatedTo(java.time.temporal.ChronoUnit.MILLIS);
     StartSessionPostAuthorizationExecutionTuple tuple =
-        tupleWithAuthorizationExpiry("descriptor-original-authorization-expired", expiredAt);
+        tupleWithAuthorizationExpiry("descriptor-original-authorization-expired", expiresAt);
     RetainedAssociation retained = retainAssociation(fixture, tuple);
+    String originalAuthorizationExpiresAt = expiresAt.toString();
 
+    assertThat(fixture.ownerClaimLeaseLive(retained.claim().controlPlaneRequestId())).isTrue();
+    assertThat(fixture.originalAuthorizationReferenceLive(originalAuthorizationExpiresAt)).isTrue();
+    awaitOriginalAuthorizationExpiry(fixture, originalAuthorizationExpiresAt);
     assertThat(fixture.ownerClaimLeaseLive(retained.claim().controlPlaneRequestId())).isTrue();
     assertThatThrownBy(
             () ->

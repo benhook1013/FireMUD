@@ -83,7 +83,7 @@ class GameSessionStartSessionTemplateAssociationRepositoryTest {
   }
 
   @Test
-  void initialAssociationInsertSelectBindsTheExactOwnerTupleAndProjection() throws Exception {
+  void initialAssociationInsertSelectBindsTheOriginalAuthorizationExpiry() throws Exception {
     DSLContext dsl = mock(DSLContext.class);
     var repository =
         new GameSessionStartSessionTemplateAssociationRepository(
@@ -150,11 +150,20 @@ class GameSessionStartSessionTemplateAssociationRepositoryTest {
             snapshotType,
             Association.class,
             byte[].class,
-            byte[].class);
+            byte[].class,
+            String.class);
     insertInitialPin.setAccessible(true);
     byte[] requestWire = new byte[] {10, 11};
     byte[] responseWire = new byte[] {12, 13};
-    insertInitialPin.invoke(repository, claim, attempt, association, requestWire, responseWire);
+    String originalAuthorizationExpiresAt = "2026-10-10T12:00:30Z";
+    insertInitialPin.invoke(
+        repository,
+        claim,
+        attempt,
+        association,
+        requestWire,
+        responseWire,
+        originalAuthorizationExpiresAt);
 
     Invocation insertCall =
         Mockito.mockingDetails(dsl).getInvocations().stream()
@@ -180,6 +189,7 @@ class GameSessionStartSessionTemplateAssociationRepositoryTest {
         .contains("attempt.account_redemption_projection IS NOT NULL")
         .contains("attempt.post_authorization_execution_tuple = ?")
         .contains("attempt.account_redemption_projection = ?")
+        .contains("?::timestamptz > clock_timestamp()")
         .contains("attempt.lease_expires_at > clock_timestamp()");
     assertThat(Arrays.stream(sql.split("\\?", -1)).count() - 1).isEqualTo(bindings.length);
     assertThat(bindings[2]).isEqualTo(requestWire);
@@ -193,5 +203,6 @@ class GameSessionStartSessionTemplateAssociationRepositoryTest {
     assertThat(bindings[22]).isEqualTo(claim.ownerFence());
     assertThat(bindings[23]).isEqualTo(tuple);
     assertThat(bindings[24]).isEqualTo(projection);
+    assertThat(bindings[25]).isEqualTo(originalAuthorizationExpiresAt);
   }
 }
