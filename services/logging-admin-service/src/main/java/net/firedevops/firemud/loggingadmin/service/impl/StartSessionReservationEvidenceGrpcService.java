@@ -6,9 +6,12 @@ import java.nio.ByteBuffer;
 import java.nio.charset.CharacterCodingException;
 import java.nio.charset.CodingErrorAction;
 import java.nio.charset.StandardCharsets;
+import java.sql.SQLException;
+import java.sql.SQLTransientException;
 import java.util.Arrays;
 import java.util.Optional;
 import java.util.UUID;
+import net.firedevops.firemud.common.grpc.GrpcPeerCertificateEvidence;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
 import net.firedevops.firemud.common.security.SessionContext;
 import net.firedevops.firemud.loggingadmin.operator.StartSessionPreAuthorizationReservationService;
@@ -31,12 +34,15 @@ public class StartSessionReservationEvidenceGrpcService
     extends StartSessionReservationEvidenceServiceGrpc
         .StartSessionReservationEvidenceServiceImplBase {
   private final StartSessionPreAuthorizationReservationService reservationService;
+  private final StartSessionReservationEvidenceLeafApproval leafApproval;
   private final String workloadNamespace;
 
   public StartSessionReservationEvidenceGrpcService(
       StartSessionPreAuthorizationReservationService reservationService,
+      StartSessionReservationEvidenceLeafApproval leafApproval,
       @Value("${firemud.grpc.workload-namespace:}") String workloadNamespace) {
     this.reservationService = reservationService;
+    this.leafApproval = leafApproval;
     this.workloadNamespace = workloadNamespace;
   }
 
@@ -44,7 +50,9 @@ public class StartSessionReservationEvidenceGrpcService
   public void readCurrentClaimEvidence(
       ReadCurrentClaimEvidenceRequest request,
       StreamObserver<ReadCurrentClaimEvidenceResponse> responseObserver) {
-    if (SessionContext.hasAuthenticatedCallerContext() || !isAccountPeer()) {
+    if (SessionContext.hasAuthenticatedCallerContext()
+        || !isAccountPeer()
+        || !leafApproval.isApproved(GrpcPeerCertificateEvidence.current())) {
       fail(
           responseObserver,
           Status.PERMISSION_DENIED,
@@ -94,10 +102,13 @@ public class StartSessionReservationEvidenceGrpcService
           "StartSession reservation evidence is temporarily unavailable");
       return;
     } catch (DataAccessException exception) {
+      boolean unavailable = isTransientDatabaseFailure(exception);
       fail(
           responseObserver,
-          Status.UNAVAILABLE,
-          "StartSession reservation evidence is temporarily unavailable");
+          unavailable ? Status.UNAVAILABLE : Status.INTERNAL,
+          unavailable
+              ? "StartSession reservation evidence is temporarily unavailable"
+              : "StartSession reservation evidence could not be read");
       return;
     } catch (RuntimeException exception) {
       fail(
@@ -132,6 +143,21 @@ public class StartSessionReservationEvidenceGrpcService
             .build();
     responseObserver.onNext(response);
     responseObserver.onCompleted();
+  }
+
+  private static boolean isTransientDatabaseFailure(Throwable failure) {
+    for (Throwable cause = failure; cause != null; cause = cause.getCause()) {
+      if (cause instanceof SQLTransientException) {
+        return true;
+      }
+      if (cause instanceof SQLException sqlException) {
+        String sqlState = sqlException.getSQLState();
+        if (sqlState != null && sqlState.startsWith("08")) {
+          return true;
+        }
+      }
+    }
+    return false;
   }
 
   private ParsedRequest parseRequest(ReadCurrentClaimEvidenceRequest request) {

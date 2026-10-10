@@ -14,6 +14,20 @@ Use this guide when selecting or reporting formatting, checks, documentation val
 - If a required local gate cannot run, report the unrun check and why. Matching exact-head and exact-scope GitHub CI can satisfy that gate. Publish a coherent checkpoint so CI can run when local infrastructure is unavailable, subject to the active Hosted review publication fence in [PR lifecycle](./pr-lifecycle.md#change-and-merge-policy). Use alternative proof only when it materially shortens iteration; do not add a broad mandatory pre-publication proof phase. Local infrastructure unavailability does not authorize starting Docker or provisioning remote resources; follow the user's environment constraints and [remote change authorization](../../AGENTS.md#remote-environment-changes).
 - Do not fabricate, weaken, or bypass required proof. Do not claim completion or merge readiness while required proof is missing. Only work explicitly excluded from the merged scope may be deferred; record its owner, missing evidence, and reconsideration trigger.
 
+## Local Renovate Extraction
+
+When changing Renovate configuration or dependency declaration forms, optionally use the official CLI's [local platform](https://docs.renovatebot.com/modules/platform/local/) and [extract-only dry run](https://docs.renovatebot.com/self-hosted-configuration/#dryrun) alongside the repository authority checks (`bash dev-tools/tests/workflow-version-authority-contract.sh`). This temporary tool does not require a global installation, a service, or a new wrapper, and is not a required step for every PR. From the repository root, select the exact Renovate version being verified and run:
+
+```bash
+LOG_LEVEL=debug npm exec --yes \
+  --package="renovate@${FIREMUD_RENOVATE_VERSION:?select the Renovate version being verified}" \
+  -- renovate --platform=local --dry-run=extract --force-cli=true
+```
+
+Use a Node runtime supported by both the selected Renovate version and its optional RE2 dependency. RE2 must actually load for the repository's regex patterns; invoking npm exec or npx alone does not prove native optional dependencies installed successfully. If initialization skips because of the environment, report that limitation rather than treating exit zero as success.
+
+Confirm the logs show actual repository initialization and dependency extraction with the expected package names, tags, and digests and no configuration skip. Extract-only proof does not check available-release compatibility or replace required CI and container execution proof.
+
 ## Daemon JDK Artifact Maintenance
 
 [Refresh Gradle Daemon JDK](../../.github/workflows/refresh-gradle-daemon-jvm.yml) runs weekly from the default branch and can be dispatched from `develop`. Its [bounded helper](../../dev-tools/maintenance/refresh-gradle-daemon-jvm.py) invokes the repository wrapper's `updateDaemonJvm --jvm-version=21 --jvm-vendor=adoptium`. The helper reads official Adoptium Java 21 HotSpot metadata and requires one common release/build for Linux, macOS, and Windows on x64 and AArch64. It rejects malformed, duplicate, missing, or inconsistent platform metadata and download URLs outside the versioned `adoptium/temurin21-binaries` GitHub releases. It supplies those six URLs as data to Gradle's native `UpdateDaemonJvm.toolchainDownloadUrls`; Gradle generates the criteria file, and the helper verifies exact Java 21/Adoptium criteria and a one-file change boundary. Unsupported FreeBSD and generic Unix aliases are not synthesized. This maintenance path avoids Foojay's observed missing Temurin 21 metadata; the configured resolver remains available for other Gradle toolchain uses. Renovate maintains the Gradle wrapper and resolver plugin; it does not maintain the generated daemon artifact IDs. Changing `toolchainVersion` alone does not refresh JDK patch artifacts.

@@ -1,12 +1,5 @@
 package net.firedevops.firemud.accountservice.service;
 
-import com.fasterxml.jackson.core.JsonFactory;
-import com.fasterxml.jackson.core.StreamReadFeature;
-import com.fasterxml.jackson.databind.DeserializationFeature;
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.node.ObjectNode;
-import java.io.IOException;
 import java.math.BigInteger;
 import java.nio.ByteBuffer;
 import java.nio.charset.CharacterCodingException;
@@ -27,6 +20,11 @@ import net.firedevops.firemud.common.account.authority.AccountLogoutAllAuthority
 import net.firedevops.firemud.common.account.authority.AccountSecurityStateAuthorityEventV1Codec;
 import net.firedevops.firemud.common.account.authority.PasswordResetAuthorityEventV1Codec;
 import net.firedevops.firemud.common.account.authority.PasswordResetAuthorityEventV1Codec.PasswordResetAuthorityEvent;
+import tools.jackson.core.StreamReadFeature;
+import tools.jackson.databind.DeserializationFeature;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.json.JsonMapper;
+import tools.jackson.databind.node.ObjectNode;
 
 /** Closed current-snapshot projection of one durable Account account-generation source. */
 public record AccountGenerationProjection(
@@ -41,10 +39,12 @@ public record AccountGenerationProjection(
   private static final String STREAM_PREFIX = "account:auth-authority:v1:account/";
   private static final Pattern POSITIVE_DECIMAL = Pattern.compile("[1-9][0-9]*");
   private static final Pattern NON_NEGATIVE_DECIMAL = Pattern.compile("0|[1-9][0-9]*");
-  private static final ObjectMapper JSON =
-      new ObjectMapper(
-              JsonFactory.builder().enable(StreamReadFeature.STRICT_DUPLICATE_DETECTION).build())
-          .enable(DeserializationFeature.FAIL_ON_TRAILING_TOKENS);
+  private static final JsonMapper JSON =
+      JsonMapper.builder()
+          .enable(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES)
+          .enable(DeserializationFeature.FAIL_ON_TRAILING_TOKENS)
+          .enable(StreamReadFeature.STRICT_DUPLICATE_DETECTION)
+          .build();
   private static final Set<String> REQUIRED_FIELDS =
       Set.of(
           "schemaVersion",
@@ -124,7 +124,7 @@ public record AccountGenerationProjection(
     final JsonNode root;
     try {
       root = JSON.readTree(json);
-    } catch (IOException exception) {
+    } catch (tools.jackson.core.JacksonException exception) {
       throw new IllegalArgumentException(
           "Account generation projection JSON is malformed", exception);
     }
@@ -132,7 +132,7 @@ public record AccountGenerationProjection(
       throw new IllegalArgumentException("Account generation projection must be a JSON object");
     }
     Set<String> fields = new HashSet<>();
-    object.fieldNames().forEachRemaining(fields::add);
+    object.propertyNames().forEach(fields::add);
     if (!fields.contains("sourceEvent") && !fields.equals(REQUIRED_FIELDS)) {
       throw new IllegalArgumentException(
           "Account generation projection has unknown or missing fields");
@@ -178,7 +178,7 @@ public record AccountGenerationProjection(
     sourceEvent.ifPresent(value -> object.put("sourceEvent", value));
     try {
       return JSON.writeValueAsString(object);
-    } catch (IOException exception) {
+    } catch (tools.jackson.core.JacksonException exception) {
       throw new IllegalStateException(
           "Account generation projection cannot be serialized", exception);
     }
@@ -231,7 +231,7 @@ public record AccountGenerationProjection(
     final JsonNode root;
     try {
       root = JSON.readTree(eventJson);
-    } catch (IOException exception) {
+    } catch (tools.jackson.core.JacksonException exception) {
       throw new IllegalArgumentException("Account source event JSON is malformed", exception);
     }
     if (!(root instanceof ObjectNode object)) {

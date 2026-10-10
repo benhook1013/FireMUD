@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import json
 import sqlite3
 import sys
@@ -28,6 +29,421 @@ TRIGGER_AT = "2026-09-29T01:00:00Z"
 
 
 class SqliteHostedCaptureTest(unittest.TestCase):
+    @staticmethod
+    def publication_marker(ordinal: int = 1, total: int = 2) -> str:
+        return (
+            "<!-- coderabbit-review-publication v1 "
+            "publication=e481ca4b-4c4c-4c5b-89fb-a8ec99408867 "
+            f"attempt=2fb88283-8806-4645-bfcb-836652c40071 batch={ordinal}/{total} -->"
+        )
+
+    def multipart_payload(self) -> dict:
+        reviews = [
+            {
+                "databaseId": 201,
+                "author": {"login": "coderabbitai[bot]"},
+                "state": "COMMENTED",
+                "commit": {"oid": HEAD},
+                "submittedAt": "2026-09-29T01:03:00Z",
+                "body": "**Actionable comments posted: 2**\n" + self.publication_marker(),
+            },
+            {
+                "databaseId": 203,
+                "author": {"login": "coderabbitai[bot]"},
+                "state": "COMMENTED",
+                "commit": {"oid": HEAD},
+                "submittedAt": "2026-09-29T01:04:00Z",
+                "body": "**Review continued from previous batch...**\n" + self.publication_marker(2),
+            },
+        ]
+        threads = []
+        for identity, review_id, created_at in ((202, 201, "2026-09-29T01:02:00Z"), (204, 203, "2026-09-29T01:03:30Z")):
+            threads.append(
+                {
+                    "id": f"thread-{identity}",
+                    "isResolved": False,
+                    "comments": {
+                        "nodes": [
+                            {
+                                "databaseId": identity,
+                                "author": {"login": "coderabbitai[bot]"},
+                                "body": f"**Check boundary {identity}.**\nRetain the evidence.",
+                                "createdAt": created_at,
+                                "updatedAt": created_at,
+                                "pullRequestReview": {"databaseId": review_id},
+                                "originalCommit": {"oid": HEAD},
+                            }
+                        ]
+                    },
+                }
+            )
+        return self.payload(comments=[self.trigger_comment()], reviews=reviews, review_threads=threads)
+
+    def capture_old_partial_publication(self, complete: dict | None = None) -> dict:
+        payload = copy.deepcopy(complete) if complete is not None else self.multipart_payload()
+        pr = payload["data"]["repository"]["pullRequest"]
+        pr["reviews"] = {"nodes": pr["reviews"]["nodes"][:1]}
+        pr["reviewThreads"] = {
+            "nodes": [
+                thread
+                for thread in pr["reviewThreads"]["nodes"]
+                if thread["comments"]["nodes"][0]["pullRequestReview"]["databaseId"] == 201
+            ]
+        }
+        unmarked = copy.deepcopy(payload)
+        unmarked["data"]["repository"]["pullRequest"]["reviews"]["nodes"][0]["body"] = (
+            "**Actionable comments posted: 2**"
+        )
+        legacy_result = hosted.trigger_state(REPO, PR, unmarked, self.trigger_record())
+        with patch.object(hosted, "trigger_state", return_value=legacy_result):
+            sqlite_hosted_capture.record_hosted_terminal_result(
+                self.records,
+                attempt_id=self.attempt_id,
+                repo=REPO,
+                source_pr=PR,
+                trigger_record=self.trigger_record(attempt_id=self.attempt_id),
+                payload=payload,
+            )
+        return payload
+
+    def test_complete_publication_uses_one_primary_identity_and_all_owned_findings(self) -> None:
+        payload = self.multipart_payload()
+        pr = payload["data"]["repository"]["pullRequest"]
+        pr["reviews"]["nodes"].reverse()
+        unrelated = copy.deepcopy(pr["reviewThreads"]["nodes"][1])
+        unrelated["id"] = "unrelated"
+        unrelated["comments"]["nodes"][0].update(databaseId=205, pullRequestReview={"databaseId": 999})
+        pr["reviewThreads"]["nodes"].append(unrelated)
+        result = sqlite_hosted_capture.record_hosted_terminal_result(
+            self.records,
+            attempt_id=self.attempt_id,
+            repo=REPO,
+            source_pr=PR,
+            trigger_record=self.trigger_record(attempt_id=self.attempt_id),
+            payload=payload,
+        )
+        self.assertEqual(result["response_id"], 201)
+        self.assertEqual(result["counts"], {"found": 2, "accepted": 0, "routed": 0})
+        self.assertEqual(self.records.attempt(self.attempt_id)["finished_at"], "2026-09-29T01:04:00Z")
+        self.assertEqual(self.records.attempt_history(PR)[0]["duration_seconds"], 240)
+        archives = self.records.attempt_artifacts(self.attempt_id)
+        self.assertEqual(len(json.loads(archives["hosted_review"])), 2)
+        self.assertEqual(len(json.loads(archives["hosted_comments"])["review_threads"]), 2)
+        replay = sqlite_hosted_capture.record_hosted_terminal_result(
+            self.records,
+            attempt_id=self.attempt_id,
+            repo=REPO,
+            source_pr=PR,
+            trigger_record=self.trigger_record(attempt_id=self.attempt_id),
+            payload=payload,
+        )
+        self.assertTrue(replay["idempotent_replay"])
+        self.assertEqual(len(self.records.history(PR)["runs"]), 1)
+
+    def test_incomplete_publication_waits_then_completes_without_partial_import(self) -> None:
+        payload = self.multipart_payload()
+        partial = copy.deepcopy(payload)
+        partial["data"]["repository"]["pullRequest"]["reviews"]["nodes"].pop()
+        first = sqlite_hosted_capture.record_hosted_terminal_result(
+            self.records,
+            attempt_id=self.attempt_id,
+            repo=REPO,
+            source_pr=PR,
+            trigger_record=self.trigger_record(attempt_id=self.attempt_id),
+            payload=partial,
+        )
+        self.assertFalse(first["terminal"])
+        self.assertEqual(self.records.attempt(self.attempt_id)["state"], "started")
+        self.assertFalse(self.records.history(PR)["runs"])
+        result = sqlite_hosted_capture.record_hosted_terminal_result(
+            self.records,
+            attempt_id=self.attempt_id,
+            repo=REPO,
+            source_pr=PR,
+            trigger_record=self.trigger_record(attempt_id=self.attempt_id),
+            payload=payload,
+        )
+        self.assertEqual(result["counts"]["found"], 2)
+
+    def test_missing_owned_roots_or_timestamps_never_import_false_zero(self) -> None:
+        for failure in ("absent", "partial", "missing_timestamp", "invalid_timestamp", "missing_count"):
+            with self.subTest(failure=failure):
+                payload = self.multipart_payload()
+                pr = payload["data"]["repository"]["pullRequest"]
+                if failure == "absent":
+                    pr["reviewThreads"]["nodes"] = []
+                elif failure == "partial":
+                    pr["reviewThreads"]["nodes"].pop()
+                elif failure == "missing_timestamp":
+                    del pr["reviewThreads"]["nodes"][1]["comments"]["nodes"][0]["createdAt"]
+                elif failure == "invalid_timestamp":
+                    pr["reviewThreads"]["nodes"][1]["comments"]["nodes"][0]["createdAt"] = "unknown"
+                else:
+                    pr["reviews"]["nodes"][0]["body"] = pr["reviews"]["nodes"][0]["body"].replace(
+                        "**Actionable comments posted: 2**", "<!-- walkthrough_start -->"
+                    )
+                result = sqlite_hosted_capture.record_hosted_terminal_result(
+                    self.records,
+                    attempt_id=self.attempt_id,
+                    repo=REPO,
+                    source_pr=PR,
+                    trigger_record=self.trigger_record(attempt_id=self.attempt_id),
+                    payload=payload,
+                )
+                self.assertFalse(result["terminal"])
+                self.assertFalse(self.records.history(PR)["runs"])
+                self.assertEqual(self.records.attempt(self.attempt_id)["state"], "started")
+
+    def test_explicit_complete_zero_publication_can_finalize_empty_run(self) -> None:
+        payload = self.multipart_payload()
+        pr = payload["data"]["repository"]["pullRequest"]
+        pr["reviews"]["nodes"][0]["body"] = pr["reviews"]["nodes"][0]["body"].replace("posted: 2", "posted: 0")
+        pr["reviewThreads"]["nodes"] = []
+        result = sqlite_hosted_capture.record_hosted_terminal_result(
+            self.records,
+            attempt_id=self.attempt_id,
+            repo=REPO,
+            source_pr=PR,
+            trigger_record=self.trigger_record(attempt_id=self.attempt_id),
+            payload=payload,
+        )
+        self.assertTrue(result["terminal"])
+        self.assertEqual(result["counts"]["found"], 0)
+        self.assertTrue(self.records.history(PR)["runs"][0]["finalized"])
+
+    def test_publication_root_count_keeps_summary_only_findings_separate(self) -> None:
+        payload = self.multipart_payload()
+        pr = payload["data"]["repository"]["pullRequest"]
+        pr["reviews"]["nodes"][0]["body"] += (
+            "\n<summary>Outside diff range comments (1)</summary>\n<summary>Duplicate comments (1)</summary>"
+        )
+        result = sqlite_hosted_capture.record_hosted_terminal_result(
+            self.records,
+            attempt_id=self.attempt_id,
+            repo=REPO,
+            source_pr=PR,
+            trigger_record=self.trigger_record(attempt_id=self.attempt_id),
+            payload=payload,
+        )
+        self.assertEqual(result["counts"]["found"], 4)
+        keys = {finding["source_finding_key"] for finding in self.records.history(PR)["findings"]}
+        self.assertIn("hosted-summary:review:201:outside_diff:1", keys)
+        self.assertIn("hosted-summary:review:201:duplicate:1", keys)
+
+    def test_moved_comment_commit_recovery_keeps_original_review_head(self) -> None:
+        self.capture_old_partial_publication()
+        payload = self.multipart_payload()
+        pr = payload["data"]["repository"]["pullRequest"]
+        new_head = "b" * 40
+        pr["headRefOid"] = new_head
+        for thread in pr["reviewThreads"]["nodes"]:
+            thread["comments"]["nodes"][0]["commit"] = {"oid": new_head}
+        recovered = self.records.supplement_hosted_publication(
+            self.attempt_id,
+            repository=REPO,
+            trigger_record=self.trigger_record(attempt_id=self.attempt_id),
+            payload=payload,
+        )
+        self.assertEqual(recovered["counts"]["found"], 2)
+        self.assertEqual(self.records.history(PR)["runs"][0]["source_head"], HEAD)
+        replay = self.records.supplement_hosted_publication(
+            self.attempt_id,
+            repository=REPO,
+            trigger_record=self.trigger_record(attempt_id=self.attempt_id),
+            payload=payload,
+        )
+        self.assertTrue(replay["idempotent_replay"])
+
+    def test_publication_supplement_preserves_original_records_and_dispositions(self) -> None:
+        self.capture_old_partial_publication()
+        self.records.record_source_decision(
+            self.attempt_id,
+            "hosted-comment:202",
+            decision_id="accepted-old",
+            decision="accepted",
+            actor="maintainer",
+            reason="verified",
+        )
+        originals = self.records.attempt_artifacts(self.attempt_id)
+        original_attempt = self.records.attempt_history(PR)[0]
+        with sqlite3.connect(self.database) as connection:
+            original_import = connection.execute("SELECT import_payload_json FROM review_runs").fetchone()[0]
+        result = sqlite_hosted_capture.record_hosted_terminal_result(
+            self.records,
+            attempt_id=self.attempt_id,
+            repo=REPO,
+            source_pr=PR,
+            trigger_record=self.trigger_record(attempt_id=self.attempt_id),
+            payload=self.multipart_payload(),
+        )
+        self.assertEqual(result["counts"], {"found": 2, "accepted": 1, "routed": 0})
+        self.assertFalse(result["idempotent_replay"])
+        self.assertEqual(self.records.attempt_artifacts(self.attempt_id), originals)
+        self.assertEqual(self.records.attempt_history(PR)[0], original_attempt)
+        with sqlite3.connect(self.database) as connection:
+            self.assertEqual(
+                connection.execute("SELECT import_payload_json FROM review_runs").fetchone()[0], original_import
+            )
+        history = self.records.history(PR)
+        findings = {finding["source_finding_key"]: finding for finding in history["findings"]}
+        self.assertEqual(findings["hosted-comment:202"]["disposition"], "accepted")
+        self.assertEqual(findings["hosted-comment:204"]["disposition"], "unresolved")
+        self.assertEqual(findings["hosted-comment:204"]["title"], "Check boundary 204.")
+        self.assertIn("hosted_publication_supplement", history["attempts"][0])
+        replay = self.records.supplement_hosted_publication(
+            self.attempt_id,
+            repository=REPO,
+            trigger_record=self.trigger_record(attempt_id=self.attempt_id),
+            payload=self.multipart_payload(),
+        )
+        self.assertTrue(replay["idempotent_replay"])
+        self.assertEqual(len(self.records.history(PR)["runs"]), 1)
+
+    def test_thirteen_finding_partial_run_recovers_fourteenth_without_replacing_decisions(self) -> None:
+        complete = self.multipart_payload()
+        pr = complete["data"]["repository"]["pullRequest"]
+        pr["reviews"]["nodes"][0]["body"] = pr["reviews"]["nodes"][0]["body"].replace(
+            "Actionable comments posted: 2", "Actionable comments posted: 14"
+        )
+        for identity in range(210, 222):
+            thread = copy.deepcopy(pr["reviewThreads"]["nodes"][0])
+            thread["id"] = f"thread-{identity}"
+            thread["comments"]["nodes"][0].update(
+                databaseId=identity, body=f"**Check boundary {identity}.**\nRetain evidence."
+            )
+            pr["reviewThreads"]["nodes"].append(thread)
+        self.capture_old_partial_publication(complete)
+        keys = [finding["source_finding_key"] for finding in self.records.history(PR)["findings"]]
+        self.assertEqual(len(keys), 13)
+        for ordinal, key in enumerate(keys):
+            self.records.record_source_decision(
+                self.attempt_id,
+                key,
+                decision_id=f"decision-{ordinal}",
+                decision="rejected" if ordinal == 0 else "accepted",
+                actor="maintainer",
+                reason="verified",
+            )
+        before = self.records.history(PR)
+        result = self.records.supplement_hosted_publication(
+            self.attempt_id,
+            repository=REPO,
+            trigger_record=self.trigger_record(attempt_id=self.attempt_id),
+            payload=complete,
+        )
+        self.assertEqual(result["counts"], {"found": 14, "accepted": 12, "routed": 0})
+        after = self.records.history(PR)
+        self.assertEqual(after["decisions"], before["decisions"])
+        self.assertEqual(len(after["runs"]), 1)
+        new = next(finding for finding in after["findings"] if finding["source_finding_key"] == "hosted-comment:204")
+        self.assertEqual(new["disposition"], "unresolved")
+
+    def test_sync_recovers_only_incomplete_retained_publication_once(self) -> None:
+        self.capture_old_partial_publication()
+        with tempfile.TemporaryDirectory() as directory:
+            common = Path(directory)
+            self.write_trigger_record(common, self.trigger_record(attempt_id=self.attempt_id))
+            with patch.object(
+                sqlite_hosted_capture.github, "fetch_pull_request", return_value=self.multipart_payload()
+            ) as fetch:
+                synced = sqlite_hosted_capture.sync_hosted_pending(self.records, REPO, common=common, pr_number=PR)
+            fetch.assert_called_once_with(REPO, PR)
+            self.assertFalse(synced["errors"], synced)
+            self.assertEqual(synced["synced"][0]["counts"]["found"], 2)
+            with patch.object(
+                sqlite_hosted_capture.github, "fetch_pull_request", side_effect=AssertionError("already recovered")
+            ) as fetch:
+                replay = sqlite_hosted_capture.sync_hosted_pending(self.records, REPO, common=common, pr_number=PR)
+            fetch.assert_not_called()
+            self.assertFalse(replay["errors"], replay)
+
+    def test_supplement_refuses_changed_finding_and_finalized_partial_run(self) -> None:
+        self.capture_old_partial_publication()
+        changed = self.multipart_payload()
+        changed["data"]["repository"]["pullRequest"]["reviewThreads"]["nodes"][0]["comments"]["nodes"][0]["body"] += (
+            "\nChanged issue"
+        )
+        with self.assertRaises(sqlite_review_records.ReviewRecordsError):
+            self.records.supplement_hosted_publication(
+                self.attempt_id,
+                repository=REPO,
+                trigger_record=self.trigger_record(attempt_id=self.attempt_id),
+                payload=changed,
+            )
+        self.records.record_source_decision(
+            self.attempt_id,
+            "hosted-comment:202",
+            decision_id="reject-old",
+            decision="rejected",
+            actor="maintainer",
+            reason="not applicable",
+        )
+        self.records.finalize_run(self.attempt_id)
+        with self.assertRaisesRegex(sqlite_review_records.ReviewRecordsError, "finalized"):
+            self.records.supplement_hosted_publication(
+                self.attempt_id,
+                repository=REPO,
+                trigger_record=self.trigger_record(attempt_id=self.attempt_id),
+                payload=self.multipart_payload(),
+            )
+        self.assertEqual(self.records.history(PR)["runs"][0]["counts"], {"found": 1, "accepted": 0, "routed": 0})
+
+    def test_supplement_transaction_rolls_back_when_count_projection_fails(self) -> None:
+        self.capture_old_partial_publication()
+        original = self.records.attempt(self.attempt_id)
+        with (
+            patch.object(self.records, "_current_run_counts", side_effect=RuntimeError("injected count failure")),
+            self.assertRaisesRegex(RuntimeError, "injected"),
+        ):
+            self.records.supplement_hosted_publication(
+                self.attempt_id,
+                repository=REPO,
+                trigger_record=self.trigger_record(attempt_id=self.attempt_id),
+                payload=self.multipart_payload(),
+            )
+        self.assertEqual(self.records.attempt(self.attempt_id), original)
+        self.assertEqual(len(self.records.history(PR)["findings"]), 1)
+        with sqlite3.connect(self.database) as connection:
+            self.assertEqual(connection.execute("SELECT COUNT(*) FROM imported_artifacts").fetchone()[0], 0)
+
+    def test_publication_conflicts_and_missing_ownership_fail_closed(self) -> None:
+        original = self.multipart_payload()
+        for mutation in ("ordinal", "total", "attempt", "head", "id", "malformed", "ownership", "comment_head"):
+            with self.subTest(mutation=mutation):
+                payload = copy.deepcopy(original)
+                pr = payload["data"]["repository"]["pullRequest"]
+                second = pr["reviews"]["nodes"][1]
+                if mutation == "ordinal":
+                    second["body"] = second["body"].replace("batch=2/2", "batch=1/2")
+                elif mutation == "total":
+                    second["body"] = second["body"].replace("batch=2/2", "batch=2/3")
+                elif mutation == "attempt":
+                    second["body"] = second["body"].replace("2fb88283", "3fb88283")
+                elif mutation == "head":
+                    second["commit"]["oid"] = "b" * 40
+                elif mutation == "id":
+                    second["databaseId"] = 201
+                elif mutation == "malformed":
+                    second["body"] = second["body"].replace("batch=2/2", "batch=0/2")
+                elif mutation == "ownership":
+                    del pr["reviewThreads"]["nodes"][1]["comments"]["nodes"][0]["pullRequestReview"]
+                else:
+                    pr["reviewThreads"]["nodes"][1]["comments"]["nodes"][0]["originalCommit"]["oid"] = "b" * 40
+                try:
+                    result = sqlite_hosted_capture.record_hosted_terminal_result(
+                        self.records,
+                        attempt_id=self.attempt_id,
+                        repo=REPO,
+                        source_pr=PR,
+                        trigger_record=self.trigger_record(attempt_id=self.attempt_id),
+                        payload=payload,
+                    )
+                    self.assertFalse(result["terminal"])
+                except sqlite_hosted_capture.HostedCaptureError:
+                    pass
+                self.assertEqual(self.records.attempt(self.attempt_id)["state"], "started")
+                self.assertFalse(self.records.history(PR)["runs"])
+
     def setUp(self) -> None:
         self.temporary_directory = tempfile.TemporaryDirectory()
         self.addCleanup(self.temporary_directory.cleanup)
@@ -368,7 +784,9 @@ class SqliteHostedCaptureTest(unittest.TestCase):
                 )
                 finding = sqlite_hosted_capture._hosted_comment_finding_segments(4152944302, body)[0]
                 self.assertEqual(finding["title"], title)
-                self.assertEqual(finding["display_detail"], "Lines 20–25 must preserve `tenantId`.")
+                self.assertEqual(
+                    finding["display_detail"], "Lines 20–25 must preserve `tenantId`.\n\n```diff\n+noise\n```"
+                )
                 self.assertEqual(finding["display_severity"], "Major")
 
     def test_hosted_severity_reads_explicit_badges_only(self) -> None:

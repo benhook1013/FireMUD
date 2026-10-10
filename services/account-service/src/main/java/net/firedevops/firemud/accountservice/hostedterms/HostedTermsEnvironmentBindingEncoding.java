@@ -10,6 +10,8 @@ import tools.jackson.databind.json.JsonMapper;
 
 /** Closed canonical encodings for trusted environment-owner binding publications and receipts. */
 public final class HostedTermsEnvironmentBindingEncoding {
+  private static final JsonMapper JSON = JsonMapper.builder().build();
+
   private HostedTermsEnvironmentBindingEncoding() {}
 
   public static byte[] publication(
@@ -78,8 +80,7 @@ public final class HostedTermsEnvironmentBindingEncoding {
 
   private static byte[] canonical(Map<String, Object> fields) {
     try {
-      return Rfc8785CanonicalJson.canonicalizeUtf8(
-          JsonMapper.builder().build().writeValueAsString(fields));
+      return Rfc8785CanonicalJson.canonicalizeUtf8(JSON.writeValueAsString(fields));
     } catch (IOException failure) {
       throw new IllegalArgumentException("Environment-binding evidence cannot be encoded", failure);
     }

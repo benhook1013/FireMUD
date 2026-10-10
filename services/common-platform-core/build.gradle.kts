@@ -1,5 +1,6 @@
 plugins {
     `java-library`
+    `java-test-fixtures`
 }
 
 apply(from = "${rootDir}/gradle/proto-convention.gradle")
@@ -18,6 +19,7 @@ dependencies {
     implementation(libs.spring.boot.starter)
     implementation(libs.spring.boot.starter.actuator)
     implementation(libs.spring.boot.starter.validation)
+    implementation("org.springframework:spring-tx")
     compileOnly(libs.spring.boot.starter.web)
     compileOnly(libs.spring.boot.starter.webflux)
     compileOnly("com.fasterxml.jackson.core:jackson-annotations")
@@ -26,4 +28,6 @@ dependencies {
     compileOnly(libs.spotbugs.annotations)
     testImplementation(libs.grpc.spring.boot.starter)
     testImplementation(libs.spring.boot.starter.test)
+    testFixturesApi(platform(libs.spring.boot.dependencies))
+    testFixturesApi("tools.jackson.core:jackson-databind")
 }

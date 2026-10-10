@@ -69,6 +69,7 @@ public final class AccountMountedJwtSignerBundle {
   static final String READINESS_CANARY_TYPE = "account_jwt_readiness_canary";
   static final String READINESS_CANARY_AUDIENCE = "firemud-account-jwt-readiness";
   static final String READINESS_VALIDATOR_ID = "account-service";
+  static final String GAME_SESSION_VALIDATOR_ID = "game-session-service";
   static final String REPRESENTATIVE_PROFILE = GameSessionAccountDelegationProfile.PROFILE;
   static final String REPRESENTATIVE_AUDIENCE = GameSessionAccountDelegationProfile.AUDIENCE;
   private static final String ISSUER = "firemud-account-service";
@@ -1169,7 +1170,8 @@ public final class AccountMountedJwtSignerBundle {
       long expiresAtEpochSecond) {
     ReadinessProbeSigningSpec {
       if (validatorId == null
-          || !READINESS_VALIDATOR_ID.equals(validatorId)
+          || (!READINESS_VALIDATOR_ID.equals(validatorId)
+              && !GAME_SESSION_VALIDATOR_ID.equals(validatorId))
           || probeKind == null
           || jti == null
           || jti.version() != 4
@@ -1190,12 +1192,12 @@ public final class AccountMountedJwtSignerBundle {
         }
       } else {
         boolean exactProfileAudience =
-            (ControlUiJwtProfileValidator.PROFILE.equals(tokenProfile)
+            (REPRESENTATIVE_PROFILE.equals(tokenProfile)
+                    && REPRESENTATIVE_AUDIENCE.equals(audience))
+                || (ControlUiJwtProfileValidator.PROFILE.equals(tokenProfile)
                     && ControlUiJwtProfileValidator.AUDIENCE.equals(audience))
                 || (PlayerBootstrapJwtProfileValidator.PROFILE.equals(tokenProfile)
-                    && PlayerBootstrapJwtProfileValidator.AUDIENCE.equals(audience))
-                || (REPRESENTATIVE_PROFILE.equals(tokenProfile)
-                    && REPRESENTATIVE_AUDIENCE.equals(audience));
+                    && PlayerBootstrapJwtProfileValidator.AUDIENCE.equals(audience));
         if (!exactProfileAudience) {
           throw invalid();
         }

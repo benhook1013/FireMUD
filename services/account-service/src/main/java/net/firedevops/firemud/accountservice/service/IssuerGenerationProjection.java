@@ -1,12 +1,5 @@
 package net.firedevops.firemud.accountservice.service;
 
-import com.fasterxml.jackson.core.JsonFactory;
-import com.fasterxml.jackson.core.StreamReadFeature;
-import com.fasterxml.jackson.databind.DeserializationFeature;
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.node.ObjectNode;
-import java.io.IOException;
 import java.math.BigInteger;
 import java.util.HashSet;
 import java.util.Objects;
@@ -17,6 +10,11 @@ import net.firedevops.firemud.accountservice.repository.AccountAuthoritySourceEv
 import net.firedevops.firemud.common.account.authority.AccountAuthoritySourceEventV1Codec;
 import net.firedevops.firemud.common.account.authority.AccountAuthoritySourceEventV1Codec.IssuerEvent;
 import net.firedevops.firemud.common.security.GameSessionAccountDelegationProfile;
+import tools.jackson.core.StreamReadFeature;
+import tools.jackson.databind.DeserializationFeature;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.json.JsonMapper;
+import tools.jackson.databind.node.ObjectNode;
 
 /** Closed Account-owned current issuer projection; not recipient or token authorization. */
 public record IssuerGenerationProjection(
@@ -51,10 +49,12 @@ public record IssuerGenerationProjection(
           "lastAppliedSourceEventId",
           "lastAppliedSourceEventDigest",
           "sourceEvent");
-  private static final ObjectMapper JSON =
-      new ObjectMapper(
-              JsonFactory.builder().enable(StreamReadFeature.STRICT_DUPLICATE_DETECTION).build())
-          .enable(DeserializationFeature.FAIL_ON_TRAILING_TOKENS);
+  private static final JsonMapper JSON =
+      JsonMapper.builder()
+          .enable(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES)
+          .enable(DeserializationFeature.FAIL_ON_TRAILING_TOKENS)
+          .enable(StreamReadFeature.STRICT_DUPLICATE_DETECTION)
+          .build();
 
   public IssuerGenerationProjection {
     keyForIssuer(issuerId);
@@ -181,14 +181,14 @@ public record IssuerGenerationProjection(
     final JsonNode root;
     try {
       root = JSON.readTree(json);
-    } catch (IOException failure) {
+    } catch (tools.jackson.core.JacksonException failure) {
       throw new IllegalArgumentException("Issuer projection JSON is malformed", failure);
     }
     if (!(root instanceof ObjectNode object)) {
       throw new IllegalArgumentException("Issuer projection must be an object");
     }
     Set<String> fields = new HashSet<>();
-    object.fieldNames().forEachRemaining(fields::add);
+    object.propertyNames().forEach(fields::add);
     if (!fields.equals(BASE_FIELDS) && !fields.equals(EVENT_FIELDS)) {
       throw new IllegalArgumentException("Issuer projection has missing or unknown fields");
     }
@@ -226,7 +226,7 @@ public record IssuerGenerationProjection(
     sourceEvent.ifPresent(value -> object.put("sourceEvent", value));
     try {
       return JSON.writeValueAsString(object);
-    } catch (IOException failure) {
+    } catch (tools.jackson.core.JacksonException failure) {
       throw new IllegalStateException("Issuer projection cannot be serialized", failure);
     }
   }

@@ -1,8 +1,5 @@
 package net.firedevops.firemud.accountservice.dto;
 
-import com.fasterxml.jackson.core.type.TypeReference;
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
@@ -14,6 +11,11 @@ import java.util.UUID;
 import net.firedevops.firemud.common.account.authority.AccountSecurityStateAuthorityEventV1Codec;
 import net.firedevops.firemud.common.account.authority.AccountSecurityStateAuthorityEventV1Codec.AccountState;
 import net.firedevops.firemud.common.json.Rfc8785CanonicalJson;
+import tools.jackson.core.StreamReadFeature;
+import tools.jackson.core.type.TypeReference;
+import tools.jackson.databind.DeserializationFeature;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.json.JsonMapper;
 
 /** Immutable operation correlation only; this request does not establish caller authorization. */
 public record AccountSecurityStateMutationRequest(
@@ -24,7 +26,12 @@ public record AccountSecurityStateMutationRequest(
     long expectedSourceVersion,
     List<String> mutationKinds,
     AccountState desiredState) {
-  private static final ObjectMapper JSON = new ObjectMapper();
+  private static final JsonMapper JSON =
+      JsonMapper.builder()
+          .enable(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES)
+          .enable(DeserializationFeature.FAIL_ON_TRAILING_TOKENS)
+          .enable(StreamReadFeature.STRICT_DUPLICATE_DETECTION)
+          .build();
   private static final Set<String> CALLER_FIELDS =
       Set.of("schemaVersion", "actorAccountUuid", "ownerOperationId", "ownerEvidenceDigest");
 
@@ -63,7 +70,7 @@ public record AccountSecurityStateMutationRequest(
     Objects.requireNonNull(state);
     try {
       return Rfc8785CanonicalJson.canonicalizeUtf8(JSON.writeValueAsString(state));
-    } catch (IOException exception) {
+    } catch (IOException | tools.jackson.core.JacksonException exception) {
       throw new IllegalArgumentException("Account state cannot be canonicalized", exception);
     }
   }
@@ -86,7 +93,7 @@ public record AccountSecurityStateMutationRequest(
         throw new IllegalArgumentException("Stored Account state is not canonical");
       }
       return validated.accountState();
-    } catch (IOException exception) {
+    } catch (tools.jackson.core.JacksonException exception) {
       throw new IllegalArgumentException("Stored Account state is malformed", exception);
     }
   }
@@ -135,7 +142,7 @@ public record AccountSecurityStateMutationRequest(
       }
       JsonNode node = JSON.readTree(text);
       Set<String> fields = new java.util.HashSet<>();
-      node.fieldNames().forEachRemaining(fields::add);
+      node.propertyNames().forEach(fields::add);
       if (!node.isObject() || !fields.equals(CALLER_FIELDS)) {
         throw new IllegalArgumentException(
             "Caller correlation must contain exactly its identity fields");
@@ -159,7 +166,7 @@ public record AccountSecurityStateMutationRequest(
             "Original owner evidence digest correlation is required");
       }
       return bytes.clone();
-    } catch (IOException exception) {
+    } catch (IOException | tools.jackson.core.JacksonException exception) {
       throw new IllegalArgumentException("Caller/proof correlation is malformed", exception);
     }
   }

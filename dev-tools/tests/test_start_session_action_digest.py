@@ -108,8 +108,6 @@ def decimal_value(raw):
 
 
 def encoded_value(value, depth=0):
-    if depth > 8:
-        raise ValueError("composite nesting is too deep")
     if value is ABSENT:
         return segment(b"absent") + b"0" + segment(b"")
     if value is None:
@@ -122,6 +120,8 @@ def encoded_value(value, depth=0):
     if isinstance(value, bool):
         return segment(b"boolean") + b"1" + segment(b"true" if value else b"false")
     if isinstance(value, RawObject):
+        if depth >= 8:
+            raise ValueError("composite nesting is too deep")
         if len(value.members) > 16:
             raise ValueError("object exceeds its member limit")
         normalized_members = []
@@ -137,6 +137,8 @@ def encoded_value(value, depth=0):
             payload += segment(key) + encoded_value(member_value, depth + 1)
         return segment(b"object") + b"1" + segment(payload)
     if isinstance(value, list):
+        if depth >= 8:
+            raise ValueError("composite nesting is too deep")
         if len(value) > 64:
             raise ValueError("array exceeds its element limit")
         payload = segment(str(len(value)).encode("ascii"))

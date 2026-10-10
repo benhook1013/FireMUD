@@ -26,13 +26,11 @@ import net.firedevops.firemud.gamesession.dto.CanonicalRealmCatalogSnapshot;
 import net.firedevops.firemud.gamesession.dto.CreateCanonicalClosedAdmissionPointerRequest;
 import org.jooq.DSLContext;
 import org.jooq.Record;
-import org.springframework.stereotype.Repository;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 /** Owner-local persistence for one initial canonical CLOSED admission pointer per realm. */
-@Repository
 public class GameSessionCanonicalAdmissionPointerRepository {
   private static final int SCHEMA_VERSION = 1;
   private static final int CANONICAL_REPRESENTATION_VERSION = 2;

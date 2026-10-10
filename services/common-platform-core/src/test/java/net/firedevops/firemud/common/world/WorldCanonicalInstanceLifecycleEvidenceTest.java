@@ -6,12 +6,11 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import com.google.protobuf.ByteString;
 import com.google.protobuf.UnknownFieldSet;
 import java.nio.charset.StandardCharsets;
-import java.util.List;
 import java.util.Map;
 import java.util.UUID;
-import net.firedevops.firemud.common.gamedesign.AuthoredWorldLaunchDescriptorEvidence;
 import net.firedevops.firemud.common.gamedesign.AuthoredWorldReleaseAttestationEvidence;
 import net.firedevops.firemud.common.gamedesign.CompleteLaunchBindingEvidence;
+import net.firedevops.firemud.common.testing.AuthoringFixtures;
 import net.firedevops.firemud.common.world.WorldCanonicalInstanceLifecycleEvidence.Request;
 import net.firedevops.firemud.worldmanagement.v1.ReadWorldCanonicalInstanceLifecycleRequest;
 import net.firedevops.firemud.worldmanagement.v1.ReadWorldCanonicalInstanceLifecycleResponse;
@@ -333,6 +332,26 @@ class WorldCanonicalInstanceLifecycleEvidenceTest {
     var request = evidence.request();
     var descriptor = evidence.launchBinding().descriptor();
     var release = evidence.launchBinding().releaseAttestation();
+    // Independent retained-v1 fixture; its GD digest is not the selected-v2 content hash.
+    var v1Participants =
+        release.participantDigests().stream()
+            .map(
+                participant ->
+                    new AuthoredWorldReleaseAttestationEvidence.Participant(
+                        participant.participantKey(),
+                        participant.scopeValue(),
+                        participant.baseVersionIdPresent(),
+                        participant.baseVersionId(),
+                        participant.appliedCommitId(),
+                        "GAME_DESIGN_CONTROL_PLANE".equals(participant.participantKey())
+                            ? "e".repeat(64)
+                            : participant.contentDigest(),
+                        AuthoredWorldReleaseAttestationEvidence.supportedParticipantDigestSchema(
+                            participant.participantKey(),
+                            AuthoredWorldReleaseAttestationEvidence.SCHEMA_VERSION),
+                        participant.abilitySchemaDigestPresent(),
+                        participant.abilitySchemaDigest()))
+            .toList();
     var v1Release =
         AuthoredWorldReleaseAttestationEvidence.create(
             release.targetNamespace(),
@@ -347,7 +366,7 @@ class WorldCanonicalInstanceLifecycleEvidenceTest {
             release.versionStateEpoch(),
             release.publishWorkflowId(),
             release.commitId(),
-            release.participantDigests(),
+            v1Participants,
             release.manifestHash(),
             release.manifestSchemaVersion(),
             release.requiredManifestAssetKeys(),
@@ -383,7 +402,7 @@ class WorldCanonicalInstanceLifecycleEvidenceTest {
                     evidence.graphSha256(),
                     evidence.preparationInputDigest()))
         .isInstanceOf(IllegalArgumentException.class)
-        .hasMessageContaining("selector/v2");
+        .hasMessageContaining("complete selected-release selector evidence");
 
     assertInvalid(evidence, evidence.runtimeRoomInstanceId(), evidence.lifecycleEpoch(), -1);
     assertInvalid(evidence, evidence.runtimeRoomInstanceId(), 0, evidence.rowVersion());
@@ -718,111 +737,7 @@ class WorldCanonicalInstanceLifecycleEvidenceTest {
   }
 
   private static WorldCanonicalInstanceLifecycleEvidence evidence() throws Exception {
-    WorldPublishedStartLocationEvidence selector =
-        WorldPublishedStartLocationGrpcCodecTest.evidence();
-    var descriptorRequest =
-        new AuthoredWorldLaunchDescriptorEvidence.Request(
-            selector.request().targetNamespace(),
-            "world-lifecycle-control-request",
-            selector.request().canonicalTenantId(),
-            "synthetic-world",
-            uuid("dddddddd-dddd-4ddd-8ddd-dddddddddddd"),
-            "sha256:" + "a".repeat(64),
-            19L,
-            false,
-            null,
-            false,
-            null,
-            false,
-            null,
-            false,
-            null);
-    AuthoredWorldLaunchDescriptorEvidence descriptor =
-        AuthoredWorldLaunchDescriptorEvidence.create(
-            descriptorRequest,
-            "canonical-instance-launch-descriptor",
-            42L,
-            false,
-            null,
-            "{}",
-            "generation-revision",
-            9L,
-            7L,
-            "release-bundle",
-            false,
-            null);
-    List<AuthoredWorldReleaseAttestationEvidence.Participant> participants =
-        AuthoredWorldReleaseAttestationEvidence.requiredParticipantOrder().stream()
-            .map(
-                owner ->
-                    new AuthoredWorldReleaseAttestationEvidence.Participant(
-                        owner,
-                        Long.toString(descriptor.versionId()),
-                        false,
-                        null,
-                        selector.request().appliedCommitId(),
-                        selector.request().contentDigest(),
-                        AuthoredWorldReleaseAttestationEvidence.supportedParticipantDigestSchema(
-                            owner),
-                        "GAME_LOGIC".equals(owner),
-                        "GAME_LOGIC".equals(owner) ? "sha256:" + "c".repeat(64) : null))
-            .toList();
-    AuthoredWorldReleaseAttestationEvidence release =
-        AuthoredWorldReleaseAttestationEvidence.create(
-            descriptor.targetNamespace(),
-            descriptor.resultDigest(),
-            descriptor.canonicalTenantId(),
-            selector.request().canonicalVersionId(),
-            descriptor.worldSlug(),
-            descriptor.authoredWorldSourceOperationId(),
-            descriptor.authoredWorldSourceEvidenceDigest(),
-            descriptor.launchDescriptorId(),
-            descriptor.publishedReleaseBundleRef(),
-            descriptor.versionStateEpoch(),
-            selector.request().publishWorkflowId(),
-            selector.request().appliedCommitId(),
-            participants,
-            "sha256:" + "d".repeat(64),
-            1,
-            List.of(),
-            List.of(),
-            List.of(),
-            descriptor.generationConfigRevision(),
-            selector);
-    CompleteLaunchBindingEvidence binding = new CompleteLaunchBindingEvidence(descriptor, release);
-    WorldDraftStartLocationEvidence selectorReceipt =
-        WorldDraftStartLocationEvidence.fromStored(selector.selectorReceiptBytes());
-    RoomTemplateRef startLocation = selectorReceipt.startLocation();
-    Request request =
-        new Request(
-            Request.SCHEMA_VERSION,
-            uuid("eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee"),
-            descriptor.targetNamespace(),
-            descriptor.canonicalTenantId(),
-            descriptor.worldSlug(),
-            uuid("11111111-1111-4111-8111-111111111111"),
-            uuid("22222222-2222-4222-8222-222222222222"),
-            "SHARED",
-            true,
-            descriptor.controlPlaneRequestId(),
-            release.canonicalVersionId(),
-            descriptor.requestDigest(),
-            descriptor.resultDigest(),
-            release.evidenceDigest());
-    return new WorldCanonicalInstanceLifecycleEvidence(
-        request,
-        binding,
-        startLocation,
-        1042L,
-        "PREPARING",
-        3L,
-        0L,
-        uuid("33333333-3333-4333-8333-333333333333"),
-        selectorReceipt.graphDigest().substring("sha256:".length()),
-        "sha256:" + "e".repeat(64),
-        Map.of(
-            uuid("11111111-1111-4111-8111-111111111111"),
-            uuid("22222222-2222-4222-8222-222222222222")));
+    return AuthoringFixtures.lifecycleEvidence("PREPARING", 3L);
   }
 
   private static void assertInvalidStoredAssignments(

@@ -1,19 +1,14 @@
 package net.firedevops.firemud.common.account.authority;
 
-import com.fasterxml.jackson.core.JsonFactory;
-import com.fasterxml.jackson.core.StreamReadFeature;
-import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
-import java.security.NoSuchAlgorithmException;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
-import java.util.regex.Pattern;
 import net.firedevops.firemud.common.json.Rfc8785CanonicalJson;
 
 /** Strict codec for committed Account password-reset authority events. */
@@ -38,15 +33,7 @@ public final class PasswordResetAuthorityEventV1Codec {
   private static final Set<String> WIRE_FIELDS;
   private static final Set<String> ACCOUNT_CUTOFF_FIELDS =
       Set.of("accountAuthorityGeneration", "outboxStreamKey", "outboxSequence");
-  private static final Pattern UUID_PATTERN =
-      Pattern.compile("[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}");
-  private static final String NIL_UUID = "00000000-0000-0000-0000-000000000000";
-  private static final Pattern POSITIVE_DECIMAL_PATTERN = Pattern.compile("[1-9][0-9]*");
-  private static final Pattern DIGEST_PATTERN = Pattern.compile("sha256:[0-9a-f]{64}");
-  private static final ObjectMapper JSON =
-      new ObjectMapper(
-              JsonFactory.builder().enable(StreamReadFeature.STRICT_DUPLICATE_DETECTION).build())
-          .enable(DeserializationFeature.FAIL_ON_TRAILING_TOKENS);
+  private static final ObjectMapper JSON = StrictAuthorityEventSupport.strictJsonMapper();
 
   static {
     var wireFields = new java.util.HashSet<>(PREIMAGE_FIELDS);
@@ -100,7 +87,7 @@ public final class PasswordResetAuthorityEventV1Codec {
   private static PasswordResetAuthorityEvent verifyWireNode(ObjectNode wire) {
     requireExactFields(wire, WIRE_FIELDS, "event");
     String suppliedDigest = requireText(wire, "eventDigest", "event");
-    if (!DIGEST_PATTERN.matcher(suppliedDigest).matches()) {
+    if (!StrictAuthorityEventSupport.isCanonicalSha256Digest(suppliedDigest)) {
       throw invalid("eventDigest", "must be lowercase sha256: followed by 64 lowercase hex digits");
     }
     ObjectNode preimage = wire.deepCopy();
@@ -133,32 +120,20 @@ public final class PasswordResetAuthorityEventV1Codec {
         requirePositiveDecimal(event, "accountAuthorityGeneration", "event");
     requirePositiveDecimal(event, "sourceVersion", "event");
 
-    JsonNode cutoffNode = event.get("accountSecurityCutoff");
-    if (!(cutoffNode instanceof ObjectNode cutoff)) {
-      throw invalid("accountSecurityCutoff", "must be a required JSON object");
-    }
-    requireExactFields(cutoff, ACCOUNT_CUTOFF_FIELDS, "accountSecurityCutoff");
-    String cutoffGeneration =
-        requirePositiveDecimal(cutoff, "accountAuthorityGeneration", "accountSecurityCutoff");
-    String cutoffStream = requireText(cutoff, "outboxStreamKey", "accountSecurityCutoff");
-    String cutoffSequence =
-        requirePositiveDecimal(cutoff, "outboxSequence", "accountSecurityCutoff");
-    if (!accountAuthorityGeneration.equals(cutoffGeneration)) {
-      throw invalid(
-          "accountSecurityCutoff.accountAuthorityGeneration",
-          "must equal event.accountAuthorityGeneration");
-    }
-    if (!streamKey.equals(cutoffStream)) {
-      throw invalid("accountSecurityCutoff.outboxStreamKey", "must equal event.outboxStreamKey");
-    }
-    if (!outboxSequence.equals(cutoffSequence)) {
-      throw invalid("accountSecurityCutoff.outboxSequence", "must equal event.outboxSequence");
-    }
+    StrictAuthorityEventSupport.validateAccountSecurityCutoff(
+        event.get("accountSecurityCutoff"),
+        accountAuthorityGeneration,
+        streamKey,
+        outboxSequence,
+        ACCOUNT_CUTOFF_FIELDS,
+        PasswordResetAuthorityEventV1Codec::invalid);
   }
 
   private static PasswordResetAuthorityEvent toEvidence(
       ObjectNode wire, String digest, String canonicalJson) {
-    ObjectNode cutoff = (ObjectNode) wire.get("accountSecurityCutoff");
+    var cutoff =
+        StrictAuthorityEventSupport.accountSecurityCutoffFields(
+            (ObjectNode) wire.get("accountSecurityCutoff"));
     return new PasswordResetAuthorityEvent(
         wire.path("schemaVersion").textValue(),
         wire.path("eventType").textValue(),
@@ -171,92 +146,48 @@ public final class PasswordResetAuthorityEventV1Codec {
         wire.path("accountAuthorityGeneration").textValue(),
         wire.path("sourceVersion").textValue(),
         new AccountSecurityCutoff(
-            cutoff.path("accountAuthorityGeneration").textValue(),
-            cutoff.path("outboxStreamKey").textValue(),
-            cutoff.path("outboxSequence").textValue()),
+            cutoff.accountAuthorityGeneration(), cutoff.outboxStreamKey(), cutoff.outboxSequence()),
         digest,
         canonicalJson);
   }
 
   private static void requireExactFields(ObjectNode object, Set<String> required, String path) {
-    Set<String> actual = new java.util.HashSet<>();
-    object.fieldNames().forEachRemaining(actual::add);
-    if (!actual.equals(required)) {
-      Set<String> missing = new java.util.HashSet<>(required);
-      missing.removeAll(actual);
-      Set<String> unexpected = new java.util.HashSet<>(actual);
-      unexpected.removeAll(required);
-      StringBuilder message = new StringBuilder("must contain exactly the declared fields");
-      if (!missing.isEmpty()) {
-        message.append("; missing ").append(missing);
-      }
-      if (!unexpected.isEmpty()) {
-        message.append("; unexpected ").append(unexpected);
-      }
-      throw invalid(path, message.toString());
-    }
+    StrictAuthorityEventSupport.requireExactFields(
+        object, required, path, PasswordResetAuthorityEventV1Codec::invalid);
   }
 
   private static String requireExactText(
       ObjectNode object, String field, String expected, String path) {
-    String value = requireText(object, field, path);
-    if (!expected.equals(value)) {
-      throw invalid(path + "." + field, "must equal " + expected);
-    }
-    return value;
+    return StrictAuthorityEventSupport.requireExactText(
+        object, field, expected, path, PasswordResetAuthorityEventV1Codec::invalid);
   }
 
   private static String requireNonEmptyText(ObjectNode object, String field, String path) {
-    String value = requireText(object, field, path);
-    if (value.isEmpty()) {
-      throw invalid(path + "." + field, "must be nonempty");
-    }
-    return value;
+    return StrictAuthorityEventSupport.requireNonEmptyText(
+        object, field, path, PasswordResetAuthorityEventV1Codec::invalid);
   }
 
   private static String requireText(ObjectNode object, String field, String path) {
-    JsonNode value = object.get(field);
-    if (value == null || !value.isTextual()) {
-      throw invalid(path + "." + field, "must be a required string");
-    }
-    return value.textValue();
+    return StrictAuthorityEventSupport.requireText(
+        object, field, path, PasswordResetAuthorityEventV1Codec::invalid);
   }
 
   private static String requireUuid(ObjectNode object, String field, String path) {
-    String value = requireText(object, field, path);
-    if (!UUID_PATTERN.matcher(value).matches() || NIL_UUID.equals(value)) {
-      throw invalid(path + "." + field, "must be a canonical lowercase non-nil UUID");
-    }
-    return value;
+    return StrictAuthorityEventSupport.requireUuid(
+        object, field, path, PasswordResetAuthorityEventV1Codec::invalid);
   }
 
   private static String requirePositiveDecimal(ObjectNode object, String field, String path) {
-    String value = requireText(object, field, path);
-    if (!POSITIVE_DECIMAL_PATTERN.matcher(value).matches()) {
-      throw invalid(path + "." + field, "must be a positive canonical decimal string");
-    }
-    return value;
+    return StrictAuthorityEventSupport.requirePositiveDecimal(
+        object, field, path, PasswordResetAuthorityEventV1Codec::invalid);
   }
 
   private static String digest(ObjectNode preimage) {
-    try {
-      byte[] canonical = Rfc8785CanonicalJson.canonicalizeUtf8(preimage.toString());
-      byte[] hash = MessageDigest.getInstance("SHA-256").digest(canonical);
-      return "sha256:" + java.util.HexFormat.of().formatHex(hash);
-    } catch (IOException exception) {
-      throw new IllegalArgumentException("event preimage cannot be canonicalized", exception);
-    } catch (NoSuchAlgorithmException exception) {
-      throw new IllegalStateException("SHA-256 is unavailable", exception);
-    }
+    return StrictAuthorityEventSupport.digest(preimage, "event preimage cannot be canonicalized");
   }
 
   private static String canonicalJson(ObjectNode wire) {
-    try {
-      return new String(
-          Rfc8785CanonicalJson.canonicalizeUtf8(wire.toString()), StandardCharsets.UTF_8);
-    } catch (IOException exception) {
-      throw new IllegalArgumentException("event cannot be canonicalized", exception);
-    }
+    return StrictAuthorityEventSupport.canonicalJson(wire, "event cannot be canonicalized");
   }
 
   private static IllegalArgumentException invalid(String path, String message) {

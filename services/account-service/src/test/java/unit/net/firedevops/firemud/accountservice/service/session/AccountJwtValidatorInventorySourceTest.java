@@ -1,71 +1,902 @@
-package net.firedevops.firemud.accountservice.service.session;
+package net.firedevops.firemud.accountservice.config;
 
-import static org.assertj.core.api.Assertions.assertThatCode;
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.isNull;
+import static org.mockito.ArgumentMatchers.same;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
 
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
+import java.net.URI;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Path;
+import java.time.Clock;
+import java.time.Duration;
+import java.time.Instant;
+import java.time.ZoneOffset;
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
+import java.util.Optional;
+import java.util.UUID;
+import net.firedevops.firemud.accountservice.config.AccountJwtJwksApiBinding.ApiCall;
+import net.firedevops.firemud.accountservice.config.AccountJwtJwksApiBinding.ApiOperation;
+import net.firedevops.firemud.accountservice.config.AccountJwtJwksApiBinding.ApiResponse;
+import net.firedevops.firemud.accountservice.config.AccountJwtJwksApiBinding.ParsedBinding;
+import net.firedevops.firemud.accountservice.config.AccountJwtValidatorInventoryBinding.ProtectedInventory;
+import net.firedevops.firemud.accountservice.config.AccountJwtValidatorInventoryBinding.ValidatorExpectation;
+import net.firedevops.firemud.accountservice.service.session.AccountJwtValidatorInventorySource;
+import net.firedevops.firemud.accountservice.service.session.AccountJwtValidatorInventorySource.InventorySnapshot;
+import net.firedevops.firemud.accountservice.service.session.AccountJwtValidatorInventorySource.InventoryUnavailableException;
+import net.firedevops.firemud.accountservice.service.session.AccountJwtValidatorInventorySource.ObservationContext;
+import net.firedevops.firemud.accountservice.service.session.AccountJwtValidatorInventorySource.ObservationPurpose;
 import org.junit.jupiter.api.Test;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.json.JsonMapper;
+import tools.jackson.databind.node.ObjectNode;
 
 class AccountJwtValidatorInventorySourceTest {
+  private static final String ENVIRONMENT = "test";
+  private static final String CLUSTER = "cluster-test";
+  private static final String NAMESPACE = "firemud-test";
+  private static final String CLUSTER_UID = "11111111-1111-4111-8111-111111111111";
+  private static final String NAMESPACE_UID = "22222222-2222-4222-8222-222222222222";
+  private static final String DEPLOYMENT_UID = "33333333-3333-4333-8333-333333333333";
+  private static final String REPLICA_SET_UID = "44444444-4444-4444-8444-444444444444";
+  private static final String POD_UID = "55555555-5555-4555-8555-555555555555";
+  private static final String POD_IP = "10.10.0.15";
+  private static final String POD_SPKI = "e".repeat(64);
+  private static final String POD_TEMPLATE_HASH = "abcde12345";
+  private static final String API_DIGEST = "a".repeat(64);
+  private static final String IMAGE_DIGEST = "d".repeat(64);
+  private static final String IMAGE = "registry.example/firemud/player@sha256:" + IMAGE_DIGEST;
+  private static final String EXPECTED_USERNAME =
+      "system:serviceaccount:" + NAMESPACE + ":account-service";
   private static final JsonMapper JSON = JsonMapper.builder().build();
-  private static final List<String> CONTAINER_FAMILIES =
-      List.of("containers", "initContainers", "ephemeralContainers");
+  private static final Clock CLOCK =
+      Clock.fixed(Instant.parse("2026-10-05T00:00:00Z"), ZoneOffset.UTC);
 
   @Test
-  void rejectsSigningSecretEnvironmentAndMountReferencesInEveryContainerFamily() throws Exception {
-    for (String family : CONTAINER_FAMILIES) {
-      assertRejected(
-          podSpec(family, "{\"envFrom\":[{\"secretRef\":{\"name\":\"jwt-signing-keys\"}}]}"));
-      assertRejected(
-          podSpec(
-              family,
-              "{\"env\":[{\"name\":\"SIGNING_KEY\",\"valueFrom\":{"
-                  + "\"secretKeyRef\":{\"name\":\"jwt-signing-keys\",\"key\":\"key\"}}}]}"));
-      assertRejected(
-          podSpec(
-              family,
-              "{\"volumeMounts\":[{\"name\":\"jwt-signing-keys\","
-                  + "\"mountPath\":\"/private\"}]}"));
+  void defaultBindingsRemainInactiveAndUnavailable() {
+    AccountJwtValidatorInventorySource source =
+        new AccountJwtValidatorInventorySource(
+            new AccountJwtJwksApiBinding(), new AccountJwtValidatorInventoryBinding(), CLOCK);
+
+    assertThatThrownBy(source::observe)
+        .isInstanceOf(InventoryUnavailableException.class)
+        .hasNoCause();
+  }
+
+  @Test
+  void rejectsPrivateSignerMaterialInInitAndEphemeralContainersAndProjectedVolumes()
+      throws Exception {
+    Fixture initContainer = new Fixture();
+    ObjectNode deployment =
+        (ObjectNode) JSON.readTree(deploymentJson("10", 1, 1, 1, false));
+    ObjectNode deploymentSpec =
+        (ObjectNode) deployment.path("spec").path("template").path("spec");
+    deploymentSpec.set(
+        "initContainers",
+        JSON.readTree(
+            "[{\"name\":\"setup\",\"envFrom\":[{\"secretRef\":{"
+                + "\"name\":\"jwt-signing-keys\"}}]}]"));
+    initContainer.stubDeployment(
+        new ApiResponse(200, JSON.writeValueAsBytes(deployment)));
+    assertUnavailable(initContainer);
+
+    Fixture ephemeralContainer = new Fixture();
+    JsonNode podList = JSON.readTree(podListJson());
+    ObjectNode podSpec = (ObjectNode) podList.path("items").get(0).path("spec");
+    podSpec.set(
+        "ephemeralContainers",
+        JSON.readTree(
+            "[{\"name\":\"debug\",\"volumeMounts\":[{"
+                + "\"name\":\"jwt-signing-keys\",\"mountPath\":\"/private\"}]}]"));
+    ephemeralContainer.stubPods(new ApiResponse(200, JSON.writeValueAsBytes(podList)));
+    assertUnavailable(ephemeralContainer);
+
+    Fixture projectedSecret = new Fixture();
+    ObjectNode projectedDeployment =
+        (ObjectNode) JSON.readTree(deploymentJson("10", 1, 1, 1, false));
+    ObjectNode projectedSpec =
+        (ObjectNode) projectedDeployment.path("spec").path("template").path("spec");
+    projectedSpec.set(
+        "volumes",
+        JSON.readTree(
+            "[{\"name\":\"private-material\",\"projected\":{\"sources\":[{"
+                + "\"secret\":{\"name\":\"jwt-signing-keys\"}}]}}]"));
+    projectedSecret.stubDeployment(
+        new ApiResponse(200, JSON.writeValueAsBytes(projectedDeployment)));
+    assertUnavailable(projectedSecret);
+  }
+
+  @Test
+  void acceptsPublicJwksSecretAndProjectedSources() throws Exception {
+    Fixture fixture = new Fixture();
+    ObjectNode deployment =
+        (ObjectNode) JSON.readTree(deploymentJson("10", 1, 1, 1, false));
+    ObjectNode podSpec =
+        (ObjectNode) deployment.path("spec").path("template").path("spec");
+    ObjectNode container = (ObjectNode) podSpec.path("containers").get(0);
+    container.set(
+        "volumeMounts",
+        JSON.readTree(
+            "[{\"name\":\"jwt-jwks\",\"mountPath\":\"/var/run/secrets/firemud/jwks\","
+                + "\"readOnly\":true}]"));
+    podSpec.set(
+        "volumes",
+        JSON.readTree(
+            "[{\"name\":\"jwt-jwks\",\"secret\":{\"secretName\":\"jwt-jwks\"}},"
+                + "{\"name\":\"jwt-jwks-projected\",\"projected\":{\"sources\":[{"
+                + "\"secret\":{\"name\":\"jwt-jwks\"}}]}}]"));
+    fixture.stubDeployment(new ApiResponse(200, JSON.writeValueAsBytes(deployment)));
+
+    assertThat(fixture.source.observe()).isNotNull();
+  }
+
+  @Test
+  void returnsOnlyStableActualPodAndDeploymentIdentitiesAsNonAuthorizingEvidence()
+      throws Exception {
+    Fixture fixture = new Fixture();
+
+    InventorySnapshot snapshot = fixture.source.observe();
+
+    assertThat(snapshot.environmentId()).isEqualTo(ENVIRONMENT);
+    assertThat(snapshot.clusterIncarnationUid()).isEqualTo(CLUSTER_UID);
+    assertThat(snapshot.namespaceUid()).isEqualTo(NAMESPACE_UID);
+    assertThat(snapshot.validators()).hasSize(1);
+    assertThat(snapshot.validators().get(0).deploymentUid()).isEqualTo(DEPLOYMENT_UID);
+    assertThat(snapshot.validators().get(0).pods())
+        .extracting(AccountJwtValidatorInventorySource.PodObservation::uid)
+        .containsExactly(POD_UID);
+    assertThat(snapshot.validators().get(0).pods().get(0).ownerUid()).isEqualTo(REPLICA_SET_UID);
+    assertThat(snapshot.validators().get(0).pods().get(0).podIp()).isEqualTo(POD_IP);
+    assertThat(snapshot.validators().get(0).pods().get(0).endpoint())
+        .isEqualTo(URI.create("grpcs://10.10.0.15:8443"));
+    assertThat(snapshot.validators().get(0).pods().get(0).receiverServiceUri())
+        .isEqualTo("spiffe://firemud/ns/firemud-test/sa/player-service");
+    assertThat(snapshot.validators().get(0).pods().get(0).leafSpkiSha256()).isEqualTo(POD_SPKI);
+    assertThat(snapshot.validators().get(0).replicaSets())
+        .singleElement()
+        .satisfies(
+            replicaSet -> {
+              assertThat(replicaSet.ownerDeploymentName()).isEqualTo("player-service");
+              assertThat(replicaSet.ownerDeploymentUid()).isEqualTo(DEPLOYMENT_UID);
+            });
+    assertThat(snapshot.digest()).matches("[0-9a-f]{64}");
+    assertThat(new String(snapshot.canonicalBytes(), StandardCharsets.UTF_8))
+        .contains("ownerDeploymentUid", DEPLOYMENT_UID, "podTemplateHash", POD_TEMPLATE_HASH)
+        .doesNotContain("observedAt");
+  }
+
+  @Test
+  void unchangedProtectedInventoryKeepsContentDigestAcrossLaterObservation() throws Exception {
+    Fixture fixture = new Fixture();
+    InventorySnapshot first = fixture.source.observe();
+    InventorySnapshot later =
+        new AccountJwtValidatorInventorySource(
+                fixture.apiBinding,
+                fixture.inventoryBinding,
+                Clock.offset(CLOCK, Duration.ofSeconds(10)))
+            .observe();
+
+    assertThat(later.observedAt()).isAfter(first.observedAt());
+    assertThat(later.digest()).isEqualTo(first.digest());
+    assertThat(later.canonicalBytes()).containsExactly(first.canonicalBytes());
+  }
+
+  @Test
+  void initialOperationCanEnumerateExactRunningCandidatesBeforeKubernetesReadiness()
+      throws Exception {
+    Fixture fixture = new Fixture();
+    fixture.stubNotReadyCandidates();
+    ObservationContext context = initialObservationContext();
+
+    InventorySnapshot snapshot = fixture.source.observe(context);
+
+    assertThat(snapshot.observationContext()).contains(context);
+    assertThat(snapshot.validators())
+        .singleElement()
+        .satisfies(
+            validator -> {
+              assertThat(validator.pods())
+                  .extracting(AccountJwtValidatorInventorySource.PodObservation::uid)
+                  .containsExactly(POD_UID);
+              assertThat(validator.image()).isEqualTo(IMAGE);
+              assertThat(validator.verifierConfigSha256()).isNotBlank();
+            });
+    assertThat(new String(snapshot.canonicalBytes(), StandardCharsets.UTF_8))
+        .contains(
+            "INITIAL_NO_ACTIVE_SIGNER_CANDIDATES",
+            context.operationId().toString(),
+            context.operationDigest())
+        .doesNotContain("ordinaryReady");
+  }
+
+  @Test
+  void nonReadyCandidatesRemainUnavailableForNormalRotationAndUnboundObservation()
+      throws Exception {
+    Fixture fixture = new Fixture();
+    fixture.stubNotReadyCandidates();
+
+    assertUnavailable(fixture);
+    assertThatThrownBy(
+            () ->
+                fixture.source.observe(
+                    new ObservationContext(
+                        ObservationPurpose.STRICT_READY,
+                        UUID.fromString("66666666-6666-4666-8666-666666666666"),
+                        "9".repeat(64))))
+        .isInstanceOf(InventoryUnavailableException.class)
+        .hasNoCause();
+  }
+
+  @Test
+  void initialCandidateInventoryStillRejectsMissingOrSwappedPinnedPods() throws Exception {
+    ObservationContext context = initialObservationContext();
+    Fixture missing = new Fixture();
+    missing.stubNotReadyCandidates();
+    when(missing.operation.listValidatorPods(
+            same(missing.inventory), same(missing.validator), isNull()))
+        .thenReturn(
+            new ApiResponse(
+                200,
+                jsonBytes(
+                    Map.of(
+                        "apiVersion",
+                        "v1",
+                        "kind",
+                        "PodList",
+                        "metadata",
+                        Map.of("resourceVersion", "20", "continue", ""),
+                        "items",
+                        List.of()))));
+
+    Fixture swapped = new Fixture();
+    swapped.stubNotReadyCandidates();
+    when(swapped.operation.listValidatorPods(
+            same(swapped.inventory), same(swapped.validator), isNull()))
+        .thenReturn(
+            new ApiResponse(
+                200, podListJson(POD_IP, "66666666-6666-4666-8666-666666666666", false)));
+
+    assertBootstrapUnavailable(missing, context);
+    assertBootstrapUnavailable(swapped, context);
+  }
+
+  @Test
+  void deniesUnexpectedAuthenticatedPrincipalAndNamespaceIncarnation() throws Exception {
+    Fixture wrongPrincipal = new Fixture();
+    wrongPrincipal.stubSelfReview("system:serviceaccount:" + NAMESPACE + ":other");
+    assertUnavailable(wrongPrincipal);
+    verify(wrongPrincipal.operation, times(0))
+        .readValidatorDeployment(same(wrongPrincipal.inventory), same(wrongPrincipal.validator));
+
+    Fixture wrongNamespace = new Fixture();
+    wrongNamespace.stubTargetNamespace("99999999-9999-4999-8999-999999999999");
+    assertUnavailable(wrongNamespace);
+    verify(wrongNamespace.operation, times(0)).readValidatorDeployment(any(), any());
+  }
+
+  @Test
+  void deniesLegacyHmacRuntimeAndPartialDeploymentRollout() throws Exception {
+    Fixture legacy = new Fixture();
+    legacy.stubDeployment(new ApiResponse(200, deploymentJson("10", 1, 1, 1, true)));
+    assertUnavailable(legacy);
+
+    Fixture partial = new Fixture();
+    partial.stubDeployment(new ApiResponse(200, deploymentJson("10", 1, 1, 0, false)));
+    assertUnavailable(partial);
+  }
+
+  @Test
+  void rejectsNullPodListEntriesAsUnavailableInventory() throws Exception {
+    Fixture fixture = new Fixture();
+    byte[] nullPodList =
+        jsonBytes(
+            Map.of(
+                "apiVersion",
+                "v1",
+                "kind",
+                "PodList",
+                "metadata",
+                Map.of("resourceVersion", "20"),
+                "items",
+                java.util.Collections.singletonList(null)));
+    when(fixture.operation.listValidatorPods(
+            same(fixture.inventory), same(fixture.validator), isNull()))
+        .thenReturn(new ApiResponse(200, nullPodList));
+
+    assertUnavailable(fixture);
+  }
+
+  @Test
+  void deniesADeploymentThatChangesBetweenTheTwoInventoryReads() throws Exception {
+    Fixture fixture = new Fixture();
+    when(fixture.operation.readValidatorDeployment(
+            same(fixture.inventory), same(fixture.validator)))
+        .thenReturn(
+            new ApiResponse(200, deploymentJson("10", 1, 1, 1, false)),
+            new ApiResponse(200, deploymentJson("11", 2, 2, 1, false)));
+
+    assertUnavailable(fixture);
+  }
+
+  @Test
+  void deniesPodAddressThatDiffersFromTheProtectedPodBoundTlsPin() throws Exception {
+    Fixture fixture = new Fixture();
+    when(fixture.operation.listValidatorPods(
+            same(fixture.inventory), same(fixture.validator), isNull()))
+        .thenReturn(new ApiResponse(200, podListJson("10.10.0.16")));
+
+    assertUnavailable(fixture);
+  }
+
+  @Test
+  void deniesLivePodUidMissingFromTheProtectedReceiverIdentityMap() throws Exception {
+    Fixture fixture =
+        new Fixture(
+            validInventoryBytes(
+                "66666666-6666-4666-8666-666666666666",
+                POD_IP,
+                POD_SPKI,
+                IMAGE,
+                "https://account-api.test/.well-known/jwks.json",
+                "inventory-r1"));
+
+    assertUnavailable(fixture);
+  }
+
+  @Test
+  void changedProtectedPodKeyOrBindingRevisionChangesInventoryContentIdentity() throws Exception {
+    InventorySnapshot original = new Fixture().source.observe();
+    InventorySnapshot changed =
+        new Fixture(
+                validInventoryBytes(
+                    POD_UID,
+                    POD_IP,
+                    "f".repeat(64),
+                    IMAGE,
+                    "https://account-api.test/.well-known/jwks.json",
+                    "inventory-r1"))
+            .source.observe();
+    InventorySnapshot changedSourceRevision =
+        new Fixture(
+                validInventoryBytes(
+                    POD_UID,
+                    POD_IP,
+                    POD_SPKI,
+                    IMAGE,
+                    "https://account-api.test/.well-known/jwks.json",
+                    "inventory-r2"))
+            .source.observe();
+
+    assertThat(changed.digest()).isNotEqualTo(original.digest());
+    assertThat(changedSourceRevision.digest()).isNotEqualTo(original.digest());
+  }
+
+  @Test
+  void deniesLiveImageOrVerifierConfigurationThatDriftsFromProtectedInventory() throws Exception {
+    Fixture changedImage =
+        new Fixture(
+            validInventoryBytes(
+                POD_UID,
+                POD_IP,
+                POD_SPKI,
+                "registry.example/firemud/player@sha256:" + "f".repeat(64),
+                "https://account-api.test/.well-known/jwks.json",
+                "inventory-r2"));
+    Fixture changedConfig =
+        new Fixture(
+            validInventoryBytes(
+                POD_UID,
+                POD_IP,
+                POD_SPKI,
+                IMAGE,
+                "https://replacement-api.test/.well-known/jwks.json",
+                "inventory-r2"));
+
+    assertUnavailable(changedImage);
+    assertUnavailable(changedConfig);
+  }
+
+  @Test
+  void deniesReplicaSetOwnedByDifferentDeploymentEvenWhenPodOwnerMatches() throws Exception {
+    Fixture fixture = new Fixture();
+    when(fixture.operation.readValidatorReplicaSet(
+            same(fixture.inventory), same(fixture.validator), eq("player-service-abcde")))
+        .thenReturn(
+            new ApiResponse(
+                200,
+                replicaSetJson(
+                    "40",
+                    "44444444-4444-4444-8444-444444444444",
+                    "other-service",
+                    "99999999-9999-4999-8999-999999999999")));
+
+    assertUnavailable(fixture);
+  }
+
+  @Test
+  void deniesReplicaSetUidReplacementOrOwnershipChangeBetweenInventoryReads() throws Exception {
+    Fixture fixture = new Fixture();
+    when(fixture.operation.readValidatorReplicaSet(
+            same(fixture.inventory), same(fixture.validator), eq("player-service-abcde")))
+        .thenReturn(
+            new ApiResponse(
+                200, replicaSetJson("40", REPLICA_SET_UID, "player-service", DEPLOYMENT_UID)),
+            new ApiResponse(
+                200,
+                replicaSetJson(
+                    "41",
+                    "66666666-6666-4666-8666-666666666666",
+                    "player-service",
+                    DEPLOYMENT_UID)));
+
+    assertUnavailable(fixture);
+  }
+
+  @Test
+  void deniesADeploymentPodListWhosePaginationNeverCompletes() throws Exception {
+    Fixture fixture = new Fixture();
+    byte[] unfinishedPage =
+        jsonBytes(
+            Map.of(
+                "apiVersion",
+                "v1",
+                "kind",
+                "PodList",
+                "metadata",
+                Map.of("resourceVersion", "20", "continue", "next-page"),
+                "items",
+                List.of()));
+    when(fixture.operation.listValidatorPods(
+            same(fixture.inventory), same(fixture.validator), any()))
+        .thenReturn(new ApiResponse(200, unfinishedPage));
+
+    assertUnavailable(fixture);
+
+    verify(fixture.operation, times(16))
+        .listValidatorPods(same(fixture.inventory), same(fixture.validator), any());
+  }
+
+  private static void assertUnavailable(Fixture fixture) {
+    assertThatThrownBy(fixture.source::observe)
+        .isInstanceOf(InventoryUnavailableException.class)
+        .hasNoCause();
+  }
+
+  private static void assertBootstrapUnavailable(Fixture fixture, ObservationContext context) {
+    assertThatThrownBy(() -> fixture.source.observe(context))
+        .isInstanceOf(InventoryUnavailableException.class)
+        .hasNoCause();
+  }
+
+  private static ObservationContext initialObservationContext() {
+    return new ObservationContext(
+        ObservationPurpose.INITIAL_NO_ACTIVE_SIGNER_CANDIDATES,
+        UUID.fromString("66666666-6666-4666-8666-666666666666"),
+        "9".repeat(64));
+  }
+
+  private static byte[] deploymentJson(
+      String resourceVersion,
+      int generation,
+      int observedGeneration,
+      int readyReplicas,
+      boolean legacyHmac)
+      throws Exception {
+    return deploymentJson(
+        resourceVersion, generation, observedGeneration, readyReplicas, legacyHmac, false);
+  }
+
+  private static byte[] deploymentJson(
+      String resourceVersion,
+      int generation,
+      int observedGeneration,
+      int readyReplicas,
+      boolean legacyHmac,
+      boolean omitZeroReadinessCounts)
+      throws Exception {
+    List<Map<String, Object>> env = new ArrayList<>();
+    env.add(Map.of("name", "FIREMUD_JWT_VERIFIER_CONFIG", "value", runtimeConfig()));
+    if (legacyHmac) {
+      env.add(Map.of("name", "FIREMUD_AUTH_JWT_SECRET", "value", "not-retained"));
+    }
+    Map<String, Object> container =
+        Map.of("name", "player-service", "image", IMAGE, "env", env, "volumeMounts", List.of());
+    Map<String, Object> template =
+        Map.of(
+            "metadata", Map.of("labels", Map.of("app", "player-service")),
+            "spec", Map.of("containers", List.of(container), "volumes", List.of()));
+    Map<String, Object> spec =
+        Map.of(
+            "replicas",
+            1,
+            "selector",
+            Map.of("matchLabels", Map.of("app", "player-service")),
+            "template",
+            template);
+    Map<String, Object> status = new LinkedHashMap<>();
+    status.put("observedGeneration", observedGeneration);
+    if (!omitZeroReadinessCounts || readyReplicas != 0) {
+      status.put("readyReplicas", readyReplicas);
+    }
+    status.put("updatedReplicas", 1);
+    if (!omitZeroReadinessCounts || readyReplicas != 0) {
+      status.put("availableReplicas", readyReplicas);
+    }
+    return jsonBytes(
+        Map.of(
+            "apiVersion",
+            "apps/v1",
+            "kind",
+            "Deployment",
+            "metadata",
+            Map.of(
+                "name", "player-service",
+                "namespace", NAMESPACE,
+                "uid", DEPLOYMENT_UID,
+                "resourceVersion", resourceVersion,
+                "generation", generation),
+            "spec",
+            spec,
+            "status",
+            status));
+  }
+
+  private static byte[] podListJson() throws Exception {
+    return podListJson(POD_IP);
+  }
+
+  private static byte[] podListJson(String podIp) throws Exception {
+    return podListJson(podIp, POD_UID, true);
+  }
+
+  private static byte[] podListJson(String podIp, String podUid, boolean ready) throws Exception {
+    Map<String, Object> container =
+        Map.of(
+            "name",
+            "player-service",
+            "image",
+            IMAGE,
+            "env",
+            List.of(Map.of("name", "FIREMUD_JWT_VERIFIER_CONFIG", "value", runtimeConfig())),
+            "volumeMounts",
+            List.of());
+    Map<String, Object> pod =
+        Map.of(
+            "apiVersion", "v1",
+            "kind", "Pod",
+            "metadata",
+                Map.of(
+                    "name",
+                    "player-service-abcde-12345",
+                    "namespace",
+                    NAMESPACE,
+                    "uid",
+                    podUid,
+                    "resourceVersion",
+                    "30",
+                    "labels",
+                    Map.of("app", "player-service", "pod-template-hash", POD_TEMPLATE_HASH),
+                    "ownerReferences",
+                    List.of(
+                        Map.of(
+                            "apiVersion", "apps/v1",
+                            "kind", "ReplicaSet",
+                            "name", "player-service-abcde",
+                            "uid", REPLICA_SET_UID,
+                            "controller", true))),
+            "spec", Map.of("containers", List.of(container), "volumes", List.of()),
+            "status",
+                Map.of(
+                    "phase",
+                    "Running",
+                    "podIP",
+                    podIp,
+                    "conditions",
+                    List.of(Map.of("type", "Ready", "status", ready ? "True" : "False")),
+                    "containerStatuses",
+                    List.of(
+                        Map.of(
+                            "name",
+                            "player-service",
+                            "ready",
+                            ready,
+                            "imageID",
+                            "docker-pullable://registry.example/player@sha256:" + IMAGE_DIGEST))));
+    return jsonBytes(
+        Map.of(
+            "apiVersion",
+            "v1",
+            "kind",
+            "PodList",
+            "metadata",
+            Map.of("resourceVersion", "20", "continue", ""),
+            "items",
+            List.of(pod)));
+  }
+
+  private static byte[] replicaSetJson(
+      String resourceVersion, String uid, String ownerName, String ownerUid) throws Exception {
+    return replicaSetJson(resourceVersion, uid, ownerName, ownerUid, 1);
+  }
+
+  private static byte[] replicaSetJson(
+      String resourceVersion, String uid, String ownerName, String ownerUid, int readyReplicas)
+      throws Exception {
+    return replicaSetJson(resourceVersion, uid, ownerName, ownerUid, readyReplicas, false);
+  }
+
+  private static byte[] replicaSetJson(
+      String resourceVersion,
+      String uid,
+      String ownerName,
+      String ownerUid,
+      int readyReplicas,
+      boolean omitZeroReadyReplicas)
+      throws Exception {
+    Map<String, Object> container =
+        Map.of(
+            "name",
+            "player-service",
+            "image",
+            IMAGE,
+            "env",
+            List.of(Map.of("name", "FIREMUD_JWT_VERIFIER_CONFIG", "value", runtimeConfig())),
+            "volumeMounts",
+            List.of());
+    Map<String, Object> status = new LinkedHashMap<>();
+    status.put("observedGeneration", 1);
+    if (!omitZeroReadyReplicas || readyReplicas != 0) {
+      status.put("readyReplicas", readyReplicas);
+    }
+    return jsonBytes(
+        Map.of(
+            "apiVersion",
+            "apps/v1",
+            "kind",
+            "ReplicaSet",
+            "metadata",
+            Map.of(
+                "name",
+                "player-service-abcde",
+                "namespace",
+                NAMESPACE,
+                "uid",
+                uid,
+                "resourceVersion",
+                resourceVersion,
+                "generation",
+                1,
+                "ownerReferences",
+                List.of(
+                    Map.of(
+                        "apiVersion",
+                        "apps/v1",
+                        "kind",
+                        "Deployment",
+                        "name",
+                        ownerName,
+                        "uid",
+                        ownerUid,
+                        "controller",
+                        true))),
+            "spec",
+            Map.of(
+                "replicas", 1,
+                "selector",
+                    Map.of(
+                        "matchLabels",
+                        Map.of("app", "player-service", "pod-template-hash", POD_TEMPLATE_HASH)),
+                "template",
+                    Map.of(
+                        "metadata",
+                            Map.of(
+                                "labels",
+                                Map.of(
+                                    "app",
+                                    "player-service",
+                                    "pod-template-hash",
+                                    POD_TEMPLATE_HASH)),
+                        "spec", Map.of("containers", List.of(container), "volumes", List.of()))),
+            "status",
+            status));
+  }
+
+  private static String runtimeConfig() {
+    return AccountJwtValidatorInventoryBinding.parseProtectedBytes(validInventoryBytes())
+        .validators()
+        .get(0)
+        .canonicalRuntimeConfig();
+  }
+
+  private static byte[] validInventoryBytes() {
+    return validInventoryBytes(
+        POD_UID,
+        POD_IP,
+        POD_SPKI,
+        IMAGE,
+        "https://account-api.test/.well-known/jwks.json",
+        "inventory-r1");
+  }
+
+  private static byte[] validInventoryBytes(
+      String podUid,
+      String podIp,
+      String podSpki,
+      String image,
+      String jwksUri,
+      String configRevision) {
+    Map<String, Object> validator = new LinkedHashMap<>();
+    validator.put("validatorId", "player-service");
+    validator.put("deploymentName", "player-service");
+    validator.put("deploymentUid", DEPLOYMENT_UID);
+    validator.put("selector", Map.of("app", "player-service"));
+    validator.put("replicas", 1);
+    validator.put("containerName", "player-service");
+    validator.put("image", image);
+    validator.put("jwksUri", jwksUri);
+    validator.put("maxCacheAgeSeconds", 60);
+    validator.put(
+        "profiles",
+        List.of(
+            Map.of(
+                "tokenProfile", "game-session-account-delegation",
+                "audience", "account-service")));
+    validator.put("receiverServiceUri", "spiffe://firemud/ns/firemud-test/sa/player-service");
+    validator.put("receiverPort", 8443);
+    validator.put(
+        "receiverPods",
+        List.of(Map.of("podUid", podUid, "podIp", podIp, "leafSpkiSha256", podSpki)));
+    Map<String, Object> root = new LinkedHashMap<>();
+    root.put("version", "account-jwt-validator-inventory-binding/v2");
+    root.put("enabled", "true");
+    root.put("configRevision", configRevision);
+    root.put("environmentId", ENVIRONMENT);
+    root.put("clusterId", CLUSTER);
+    root.put("namespace", NAMESPACE);
+    root.put("expectedClusterIncarnationUid", CLUSTER_UID);
+    root.put("expectedNamespaceUid", NAMESPACE_UID);
+    root.put("apiBindingRevision", "api-r1");
+    root.put("apiBindingDigest", API_DIGEST);
+    root.put("validators", List.of(validator));
+    root.put("bindingDigest", "0".repeat(64));
+    try {
+      var unsigned = JSON.readTree(JSON.writeValueAsBytes(root));
+      root.put("bindingDigest", AccountJwtValidatorInventoryBinding.computeBindingDigest(unsigned));
+      return JSON.writeValueAsBytes(root);
+    } catch (Exception failure) {
+      throw new AssertionError(failure);
     }
   }
 
-  @Test
-  void rejectsSigningSecretInProjectedVolumeSources() throws Exception {
-    JsonNode podSpec =
-        JSON.readTree(
-            "{\"containers\":[{\"name\":\"jwt-validator\"}],\"volumes\":["
-                + "{\"name\":\"private-material\",\"projected\":{\"sources\":["
-                + "{\"secret\":{\"name\":\"jwt-signing-keys\"}}]}}]}");
-
-    assertRejected(podSpec);
+  @SuppressFBWarnings(
+      value = "DMI_HARDCODED_ABSOLUTE_FILENAME",
+      justification = "Canonical protected paths are fixed test binding inputs")
+  private static ParsedBinding apiBinding() {
+    return new ParsedBinding(
+        "api-r1",
+        ENVIRONMENT,
+        CLUSTER,
+        URI.create("https://kubernetes.test:6443"),
+        "kubernetes.test",
+        Path.of("/etc/firemud/account-jwt-api/serving-ca.pem"),
+        "c".repeat(64),
+        Path.of("/var/run/secrets/firemud/account-jwt-api-token/token"),
+        NAMESPACE,
+        CLUSTER_UID,
+        NAMESPACE_UID,
+        EXPECTED_USERNAME,
+        API_DIGEST);
   }
 
-  @Test
-  void acceptsPublicJwksSecretVolumesAndProjectedSources() throws Exception {
-    JsonNode podSpec =
-        JSON.readTree(
-            "{\"containers\":[{\"name\":\"jwt-validator\",\"volumeMounts\":["
-                + "{\"name\":\"jwt-jwks\",\"mountPath\":\"/var/run/secrets/firemud/jwks\","
-                + "\"readOnly\":true}]}],\"volumes\":["
-                + "{\"name\":\"jwt-jwks\",\"secret\":{\"secretName\":\"jwt-jwks\"}},"
-                + "{\"name\":\"jwt-jwks-projected\",\"projected\":{\"sources\":["
-                + "{\"secret\":{\"name\":\"jwt-jwks\"}}]}}]}");
-
-    assertThatCode(() -> AccountJwtValidatorInventorySource.rejectSigningMaterialPodSpec(podSpec))
-        .doesNotThrowAnyException();
+  private static byte[] jsonBytes(Object value) {
+    try {
+      return JSON.writeValueAsBytes(value);
+    } catch (Exception failure) {
+      throw new AssertionError(failure);
+    }
   }
 
-  private static JsonNode podSpec(String family, String container) throws Exception {
-    String regularContainers =
-        "containers".equals(family) ? "" : "\"containers\":[{\"name\":\"jwt-validator\"}],";
-    return JSON.readTree("{" + regularContainers + "\"" + family + "\":[" + container + "]}");
+  private static byte[] namespaceJson(String namespace, String uid) {
+    return jsonBytes(
+        Map.of(
+            "apiVersion",
+            "v1",
+            "kind",
+            "Namespace",
+            "metadata",
+            Map.of("name", namespace, "uid", uid),
+            "status",
+            Map.of("phase", "Active")));
   }
 
-  private static void assertRejected(JsonNode podSpec) {
-    assertThatThrownBy(
-            () -> AccountJwtValidatorInventorySource.rejectSigningMaterialPodSpec(podSpec))
-        .isInstanceOf(AccountJwtValidatorInventorySource.InventoryUnavailableException.class);
+  private static byte[] selfReviewJson(String username) {
+    return jsonBytes(
+        Map.of(
+            "apiVersion", "authentication.k8s.io/v1",
+            "kind", "SelfSubjectReview",
+            "status", Map.of("userInfo", Map.of("username", username))));
+  }
+
+  private static final class Fixture {
+    private final AccountJwtJwksApiBinding apiBinding = mock(AccountJwtJwksApiBinding.class);
+    private final AccountJwtValidatorInventoryBinding inventoryBinding =
+        mock(AccountJwtValidatorInventoryBinding.class);
+    private final ApiOperation operation = mock(ApiOperation.class);
+    private final ProtectedInventory inventory;
+    private final ValidatorExpectation validator;
+    private final AccountJwtValidatorInventorySource source;
+
+    private Fixture() throws Exception {
+      this(validInventoryBytes());
+    }
+
+    private Fixture(byte[] inventoryBytes) throws Exception {
+      inventory = AccountJwtValidatorInventoryBinding.parseProtectedBytes(inventoryBytes);
+      validator = inventory.validators().get(0);
+      when(apiBinding.beginOperation()).thenReturn(operation);
+      when(operation.binding()).thenReturn(apiBinding());
+      when(inventoryBinding.current()).thenReturn(Optional.of(inventory));
+      when(operation.send(eq(ApiCall.REVIEW_AUTHENTICATED_PRINCIPAL), any(byte[].class)))
+          .thenReturn(new ApiResponse(201, selfReviewJson(EXPECTED_USERNAME)));
+      when(operation.send(ApiCall.READ_KUBE_SYSTEM_NAMESPACE, null))
+          .thenReturn(new ApiResponse(200, namespaceJson("kube-system", CLUSTER_UID)));
+      when(operation.send(ApiCall.READ_TARGET_NAMESPACE, null))
+          .thenReturn(new ApiResponse(200, namespaceJson(NAMESPACE, NAMESPACE_UID)));
+      ApiResponse deployment = new ApiResponse(200, deploymentJson("10", 1, 1, 1, false));
+      ApiResponse pods = new ApiResponse(200, podListJson());
+      when(operation.readValidatorDeployment(same(inventory), same(validator)))
+          .thenReturn(deployment);
+      when(operation.listValidatorPods(same(inventory), same(validator), isNull()))
+          .thenReturn(pods);
+      when(operation.readValidatorReplicaSet(
+              same(inventory), same(validator), eq("player-service-abcde")))
+          .thenReturn(
+              new ApiResponse(
+                  200, replicaSetJson("40", REPLICA_SET_UID, "player-service", DEPLOYMENT_UID)));
+      source = new AccountJwtValidatorInventorySource(apiBinding, inventoryBinding, CLOCK);
+    }
+
+    private void stubSelfReview(String username) {
+      when(operation.send(eq(ApiCall.REVIEW_AUTHENTICATED_PRINCIPAL), any(byte[].class)))
+          .thenReturn(new ApiResponse(201, selfReviewJson(username)));
+    }
+
+    private void stubTargetNamespace(String uid) {
+      when(operation.send(ApiCall.READ_TARGET_NAMESPACE, null))
+          .thenReturn(new ApiResponse(200, namespaceJson(NAMESPACE, uid)));
+    }
+
+    private void stubDeployment(ApiResponse response) {
+      when(operation.readValidatorDeployment(same(inventory), same(validator)))
+          .thenReturn(response);
+    }
+
+    private void stubPods(ApiResponse response) {
+      when(operation.listValidatorPods(same(inventory), same(validator), isNull()))
+          .thenReturn(response);
+    }
+
+    private void stubNotReadyCandidates() throws Exception {
+      stubDeployment(new ApiResponse(200, deploymentJson("10", 1, 1, 0, false, true)));
+      when(operation.listValidatorPods(same(inventory), same(validator), isNull()))
+          .thenReturn(new ApiResponse(200, podListJson(POD_IP, POD_UID, false)));
+      when(operation.readValidatorReplicaSet(
+              same(inventory), same(validator), eq("player-service-abcde")))
+          .thenReturn(
+              new ApiResponse(
+                  200,
+                  replicaSetJson(
+                      "40", REPLICA_SET_UID, "player-service", DEPLOYMENT_UID, 0, true)));
+    }
   }
 }

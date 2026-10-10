@@ -17,6 +17,8 @@ import tools.jackson.databind.json.JsonMapper;
 
 /** Exact closed encodings for Account-owned hosted terms, publication requests and acceptance. */
 public final class HostedTermsEncoding {
+  private static final JsonMapper JSON = JsonMapper.builder().build();
+
   private HostedTermsEncoding() {}
 
   public static byte[] publication(
@@ -239,8 +241,7 @@ public final class HostedTermsEncoding {
 
   private static byte[] canonical(Map<String, Object> fields) {
     try {
-      return Rfc8785CanonicalJson.canonicalizeUtf8(
-          JsonMapper.builder().build().writeValueAsString(fields));
+      return Rfc8785CanonicalJson.canonicalizeUtf8(JSON.writeValueAsString(fields));
     } catch (IOException failure) {
       throw new IllegalArgumentException("Hosted-terms evidence cannot be encoded", failure);
     }

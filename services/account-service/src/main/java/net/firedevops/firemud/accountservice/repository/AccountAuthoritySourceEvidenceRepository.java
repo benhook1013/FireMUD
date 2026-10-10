@@ -299,6 +299,31 @@ public class AccountAuthoritySourceEvidenceRepository {
   }
 
   /**
+   * Reads current source evidence for one exact Account against a caller-captured owner state. The
+   * generation state is freshly locked and must still equal the supplied snapshot; this API does
+   * not initialize missing baselines or treat generic history as a closed operation receipt.
+   */
+  @Transactional(propagation = Propagation.MANDATORY)
+  public CurrentSourceEvidence readCurrentAccountSource(UUID accountUuid, ScopeState expected) {
+    if (!TransactionSynchronizationManager.isActualTransactionActive()
+        || TransactionSynchronizationManager.isCurrentTransactionReadOnly()
+        || accountUuid == null
+        || accountUuid.equals(new UUID(0L, 0L))
+        || expected == null
+        || !AuthorityScope.account(accountUuid).equals(expected.scope())
+        || expected.issuanceFence() == null
+        || !accountUuid.equals(expected.issuanceFence().accountId())) {
+      throw new SourceEvidenceUnavailableException();
+    }
+    AuthorityScope scope = AuthorityScope.account(accountUuid);
+    ScopeState current = generations.read(scope);
+    if (!expected.equals(current)) {
+      throw new SourceEvidenceUnavailableException();
+    }
+    return readCurrentSource(scope, current);
+  }
+
+  /**
    * Advances the canonical Account source head only after a closed operation's immutable owner
    * receipt and exact outbox event have been stored in this same owner transaction.
    */
@@ -562,9 +587,7 @@ public class AccountAuthoritySourceEvidenceRepository {
     if (scope.kind() == ScopeKind.ACCOUNT) {
       if (fence == null
           || positive(source, "current_issuance_fence") != fence.value()
-          || positive(source, "current_issuance_fence_source_version") != fence.sourceVersion()
-          || fence.value() != sequence + 1L
-          || fence.sourceVersion() != sequence + 1L) {
+          || positive(source, "current_issuance_fence_source_version") != fence.sourceVersion()) {
         throw new SourceEvidenceUnavailableException();
       }
     } else if (fence != null) {
@@ -675,8 +698,8 @@ public class AccountAuthoritySourceEvidenceRepository {
       ScopeState authority,
       IssuanceFence fence) {
     // V38/V40 enforce immutable events, contiguous stream advances, and committed head/history
-    // consistency. The read path therefore verifies the exact current event rather than replaying
-    // an ever-growing retained history.
+    // consistency. Issuer source reads use this exact latest-event check; Account source reads
+    // verify the retained mixed event/receipt history through verifyEventHistory instead.
     Event stored =
         outbox
             .findEvent(streamKey, sequence)
@@ -710,16 +733,21 @@ public class AccountAuthoritySourceEvidenceRepository {
             || Long.parseLong(account.outboxSequence()) != sequence
             || Long.parseLong(account.accountAuthorityGeneration()) != sequence + 1L
             || Long.parseLong(account.sourceVersion()) != sequence + 1L
-            || Long.parseLong(account.issuanceFence()) != sequence + 1L
-            || Long.parseLong(account.issuanceFenceSourceVersion()) != sequence + 1L)) {
+            || Long.parseLong(account.issuanceFence()) <= 0L
+            || Long.parseLong(account.issuanceFenceSourceVersion()) <= 0L)) {
       throw new SourceEvidenceUnavailableException();
     }
     if (authority.generation() != sequence + 1L
         || authority.sourceVersion() != sequence + 1L
         || (scope.kind() == ScopeKind.ACCOUNT
             && (fence == null
-                || fence.value() != sequence + 1L
-                || fence.sourceVersion() != sequence + 1L))) {
+                || !scope.accountId().equals(fence.accountId())
+                || fence.value() <= 0L
+                || fence.sourceVersion() <= 0L
+                || (latest instanceof AccountEvent account
+                    && (Long.parseLong(account.issuanceFence()) > fence.value()
+                        || Long.parseLong(account.issuanceFenceSourceVersion())
+                            > fence.sourceVersion()))))) {
       throw new SourceEvidenceUnavailableException();
     }
     return new VerifiedSourceHistory(stored, Optional.empty(), Optional.empty());
@@ -738,6 +766,8 @@ public class AccountAuthoritySourceEvidenceRepository {
         scope.kind() == ScopeKind.ACCOUNT
             ? readAccountIdentityForClosedReadback(scope.accountId())
             : null;
+    AccountAuthoritySourceEventReadback eventReadback =
+        scope.kind() == ScopeKind.ACCOUNT ? closedEventReadback() : null;
     for (long current = 1L; current <= sequence; current++) {
       Event stored =
           outbox
@@ -772,8 +802,11 @@ public class AccountAuthoritySourceEvidenceRepository {
             && (!account.accountId().equals(scope.accountId().toString())
                 || Long.parseLong(account.accountAuthorityGeneration()) != current + 1L
                 || Long.parseLong(account.sourceVersion()) != current + 1L
-                || Long.parseLong(account.issuanceFence()) != current + 1L
-                || Long.parseLong(account.issuanceFenceSourceVersion()) != current + 1L)) {
+                || fence == null
+                || Long.parseLong(account.issuanceFence()) <= 0L
+                || Long.parseLong(account.issuanceFenceSourceVersion()) <= 0L
+                || Long.parseLong(account.issuanceFence()) > fence.value()
+                || Long.parseLong(account.issuanceFenceSourceVersion()) > fence.sourceVersion())) {
           throw new SourceEvidenceUnavailableException();
         }
         latestLegacyAccountEvent = event instanceof AccountEvent account ? account : null;
@@ -782,8 +815,7 @@ public class AccountAuthoritySourceEvidenceRepository {
       } else if (scope.kind() == ScopeKind.ACCOUNT) {
         final RetainedEventEvidence receiptEvidence;
         try {
-          receiptEvidence =
-              closedEventReadback().requireRetainedEvent(sourceAccount, stored, authority);
+          receiptEvidence = eventReadback.requireRetainedEvent(sourceAccount, stored, authority);
         } catch (RuntimeException missingOrInvalidReceipt) {
           throw new SourceEvidenceUnavailableException();
         }
@@ -791,8 +823,11 @@ public class AccountAuthoritySourceEvidenceRepository {
             || receiptEvidence.outboxSequence() != current
             || receiptEvidence.accountAuthorityGeneration() != current + 1L
             || receiptEvidence.sourceVersion() != current + 1L
-            || receiptEvidence.issuanceFence() != current + 1L
-            || receiptEvidence.issuanceFenceSourceVersion() != current + 1L) {
+            || fence == null
+            || receiptEvidence.issuanceFence() <= 0L
+            || receiptEvidence.issuanceFenceSourceVersion() <= 0L
+            || receiptEvidence.issuanceFence() > fence.value()
+            || receiptEvidence.issuanceFenceSourceVersion() > fence.sourceVersion()) {
           throw new SourceEvidenceUnavailableException();
         }
         var typedCutoff = receiptEvidence.accountSecurityCutoff();
@@ -813,8 +848,9 @@ public class AccountAuthoritySourceEvidenceRepository {
         || authority.sourceVersion() != sequence + 1L
         || (scope.kind() == ScopeKind.ACCOUNT
             && (fence == null
-                || fence.value() != sequence + 1L
-                || fence.sourceVersion() != sequence + 1L))) {
+                || !scope.accountId().equals(fence.accountId())
+                || fence.value() <= 0L
+                || fence.sourceVersion() <= 0L))) {
       throw new SourceEvidenceUnavailableException();
     }
     return new VerifiedSourceHistory(
@@ -1285,8 +1321,6 @@ public class AccountAuthoritySourceEvidenceRepository {
             || accountRepositoryInsertTransactionId == null
             || accountRepositoryInsertTransactionId <= 0L
             || initializationTransactionId != accountRepositoryInsertTransactionId
-            || issuanceFence.value() != generation
-            || issuanceFence.sourceVersion() != sourceVersion
             || (checkpoint.sequence() == 0L && accountSecurityCutoff.isPresent())
             || (checkpoint.sequence() > 0L
                 && (accountSecurityCutoff.isEmpty()

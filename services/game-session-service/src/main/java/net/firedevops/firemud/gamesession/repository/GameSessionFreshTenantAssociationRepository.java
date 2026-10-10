@@ -11,7 +11,6 @@ import net.firedevops.firemud.gamesession.repository.GameSessionAuthoredWorldSou
 import net.firedevops.firemud.gamesession.service.FreshGameSessionTenantAssociation;
 import org.jooq.DSLContext;
 import org.jooq.Record;
-import org.springframework.stereotype.Repository;
 import org.springframework.transaction.annotation.Isolation;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
@@ -23,7 +22,6 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
  * <p>This producer consumes only a committed Game Session source-intake receipt. It does not create
  * a runtime instance, admission pointer, grant, or external authority.
  */
-@Repository
 public class GameSessionFreshTenantAssociationRepository {
   private static final UUID NIL_UUID = new UUID(0L, 0L);
   private static final String FRESH_KIND = "FRESH_SOURCE_BOUND";

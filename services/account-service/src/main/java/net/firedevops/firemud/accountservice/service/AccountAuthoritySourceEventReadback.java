@@ -1,11 +1,5 @@
 package net.firedevops.firemud.accountservice.service;
 
-import com.fasterxml.jackson.core.JsonFactory;
-import com.fasterxml.jackson.core.StreamReadFeature;
-import com.fasterxml.jackson.databind.DeserializationFeature;
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import java.io.IOException;
 import java.math.BigInteger;
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
@@ -24,6 +18,7 @@ import net.firedevops.firemud.accountservice.repository.AccountAuthorityGenerati
 import net.firedevops.firemud.accountservice.repository.AccountAuthorityOutboxRepository;
 import net.firedevops.firemud.accountservice.repository.AccountAuthorityOutboxRepository.Checkpoint;
 import net.firedevops.firemud.accountservice.repository.AccountAuthorityOutboxRepository.Event;
+import net.firedevops.firemud.accountservice.repository.AccountAuthoritySourceEvidenceRepository.SourceEvidenceUnavailableException;
 import net.firedevops.firemud.accountservice.repository.AccountLogoutAllOperationRepository;
 import net.firedevops.firemud.accountservice.repository.AccountLogoutAllOperationRepository.LogoutAllReceipt;
 import net.firedevops.firemud.accountservice.repository.AccountPasswordResetOperationRepository;
@@ -35,16 +30,22 @@ import net.firedevops.firemud.common.account.authority.AccountLogoutAllAuthority
 import net.firedevops.firemud.common.account.authority.AccountSecurityStateAuthorityEventV1Codec;
 import net.firedevops.firemud.common.account.authority.PasswordResetAuthorityEventV1Codec;
 import net.firedevops.firemud.common.account.authority.PasswordResetAuthorityEventV1Codec.PasswordResetAuthorityEvent;
+import tools.jackson.core.StreamReadFeature;
+import tools.jackson.databind.DeserializationFeature;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.json.JsonMapper;
 
 /**
  * Narrow receipt validator for the three closed Account account-scope source-event schemas. It does
  * not authenticate a caller or turn source evidence into recipient authority.
  */
 public final class AccountAuthoritySourceEventReadback {
-  private static final ObjectMapper SNAPSHOT_JSON =
-      new ObjectMapper(
-              JsonFactory.builder().enable(StreamReadFeature.STRICT_DUPLICATE_DETECTION).build())
-          .enable(DeserializationFeature.FAIL_ON_TRAILING_TOKENS);
+  private static final JsonMapper SNAPSHOT_JSON =
+      JsonMapper.builder()
+          .enable(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES)
+          .enable(DeserializationFeature.FAIL_ON_TRAILING_TOKENS)
+          .enable(StreamReadFeature.STRICT_DUPLICATE_DETECTION)
+          .build();
   private static final String STREAM_PREFIX = "account:auth-authority:v1:account/";
   private static final String PASSWORD_RESET_REQUEST_ID_PREFIX =
       "account-password-reset-request-v1:";
@@ -464,9 +465,9 @@ public final class AccountAuthoritySourceEventReadback {
               security.canonicalJsonUtf8());
           yield VerifiedSourceEvent.securityState(security);
         }
-        default -> throw new IllegalStateException("Account source event schema is unsupported");
+        default -> throw new SourceEvidenceUnavailableException();
       };
-    } catch (IOException | IllegalArgumentException invalid) {
+    } catch (tools.jackson.core.JacksonException | IllegalArgumentException invalid) {
       throw new IllegalStateException("Account source event is invalid", invalid);
     }
   }
@@ -651,8 +652,8 @@ public final class AccountAuthoritySourceEventReadback {
           || outboxSequence <= 0L
           || accountAuthorityGeneration <= 0L
           || sourceVersion <= 0L
-          || issuanceFence != accountAuthorityGeneration
-          || issuanceFenceSourceVersion != sourceVersion
+          || issuanceFence <= 0L
+          || issuanceFenceSourceVersion <= 0L
           || accountSecurityCutoff == null
           || !outboxStreamKey.equals(accountSecurityCutoff.outboxStreamKey())
           || outboxSequence != Long.parseLong(accountSecurityCutoff.outboxSequence())

@@ -64,6 +64,21 @@ public final class DraftAuthorizationFenceRepository {
     DEFINITIVE_ABORT
   }
 
+  /** A distinct source mutation cannot capture the same authority source while one is waiting. */
+  public static final class PendingSourceChangeException extends IllegalStateException {
+    private static final long serialVersionUID = 1L;
+    private final UUID sourceChangeId;
+
+    public PendingSourceChangeException(UUID sourceChangeId) {
+      super("Another authority source change is already pending for this source");
+      this.sourceChangeId = Objects.requireNonNull(sourceChangeId);
+    }
+
+    public UUID sourceChangeId() {
+      return sourceChangeId;
+    }
+  }
+
   public record FenceSnapshot(
       Ordering ordering, byte[] binding, OffsetDateTime reservedAt, OffsetDateTime orderedAt) {
     public FenceSnapshot {
@@ -398,7 +413,7 @@ public final class DraftAuthorizationFenceRepository {
       }
     } else {
       if (hasWaitingChange(change.sources())) {
-        throw new IllegalStateException("Another authority source change is already pending");
+        throw new PendingSourceChangeException(change.changeId());
       }
       dsl.execute(
           "INSERT INTO " + CHANGES + " (change_id, binding, status) VALUES (?, ?, 'WAITING')",
@@ -435,7 +450,7 @@ public final class DraftAuthorizationFenceRepository {
         && allAffectedSettled(change.sources());
   }
 
-  /** A no-mutation cancellation is safe only after every affected owner operation is settled. */
+  /** A no-mutation cancellation is safe only after every affected operation has settled. */
   public boolean sourceAbortPermitted(SourceChange change) {
     requireTransaction();
     lockSources(change.sources());
@@ -479,9 +494,9 @@ public final class DraftAuthorizationFenceRepository {
   }
 
   /**
-   * Records a terminal no-mutation result. The same ordering-aware settlement predicate used for
-   * source commit applies: revoke order requires two definitive aborts; commit order requires two
-   * exact terminal owner readbacks, including a mixed vector.
+   * Records a terminal no-mutation result after every affected operation settles under its own
+   * ordering and exact owner readbacks. Owners must agree within each operation; distinct
+   * operations may have different terminal outcomes.
    */
   public void markSourceAborted(SourceChange change, SourceChangeAbortReason reason) {
     requireTransaction();
@@ -553,13 +568,13 @@ public final class DraftAuthorizationFenceRepository {
 
   public FenceSnapshot read(DraftAuthorizationFenceBinding binding) {
     requireTransaction();
-    return snapshot(requireExact(readOperation(binding.operationId()), binding));
+    return snapshot(requireExact(inspectOperation(binding.operationId()), binding));
   }
 
   /** Derived exact settlement only; original ordering and owner readbacks remain immutable. */
   public Settlement readSettlement(DraftAuthorizationFenceBinding binding) {
     requireTransaction();
-    Record row = requireExact(readOperation(binding.operationId()), binding);
+    Record row = requireExact(inspectOperation(binding.operationId()), binding);
     return settlement(originalBinding(row), Ordering.valueOf(row.get("ordering", String.class)));
   }
 
@@ -567,7 +582,7 @@ public final class DraftAuthorizationFenceRepository {
   public Optional<DraftAuthorizationFenceBinding> readOriginalBinding(UUID operationId) {
     requireTransaction();
     DraftAuthorizationFenceBinding.requireUuid(operationId);
-    Record row = readOperation(operationId);
+    Record row = inspectOperation(operationId);
     return row == null ? Optional.empty() : Optional.of(originalBinding(row));
   }
 
@@ -583,10 +598,11 @@ public final class DraftAuthorizationFenceRepository {
       DraftAuthorizationFenceBinding binding, Ordering ordering, RecoveryCursor cursor) {}
 
   /**
-   * Bounded discovery of original unsettled operations. Resume after the last returned cursor; an
-   * empty page ends this pass. Later passes start again to revisit still-pending operations.
-   * Discovery grants no owner permission and never captures new sources or infers expiry.
-   * Participant outcomes can advance concurrently: consumers re-read settlement before acting.
+   * Bounded non-locking discovery of original unsettled operations. Resume after the last returned
+   * cursor; an empty page ends this pass. Later passes start again to revisit still-pending
+   * operations. Discovery grants no owner permission and never captures new sources or infers
+   * expiry. Participant outcomes can advance concurrently: consumers re-read settlement before
+   * acting.
    */
   public List<UnresolvedOperation> readUnresolvedOperations(RecoveryCursor after, int limit) {
     requireTransaction();
@@ -602,7 +618,7 @@ public final class DraftAuthorizationFenceRepository {
       sql += " AND (f.reserved_at, f.operation_id) > (?::timestamptz, ?::uuid)";
       parameters = new Object[] {after.reservedAt(), after.operationId(), limit};
     }
-    sql += " ORDER BY f.reserved_at, f.operation_id LIMIT ? FOR UPDATE OF f";
+    sql += " ORDER BY f.reserved_at, f.operation_id LIMIT ?";
     return dsl.fetch(sql, parameters).stream()
         .map(
             row ->
@@ -626,7 +642,7 @@ public final class DraftAuthorizationFenceRepository {
   public Optional<OwnerResultSnapshot> readOwnerResult(
       DraftAuthorizationFenceBinding binding, Owner owner) {
     requireTransaction();
-    requireExact(readOperation(binding.operationId()), binding);
+    requireExact(inspectOperation(binding.operationId()), binding);
     Record row =
         dsl.fetchOne(
             "SELECT owner, outcome, readback, recorded_at FROM "
@@ -711,7 +727,7 @@ public final class DraftAuthorizationFenceRepository {
   /**
    * Rows-first creator producer acquisition: never wait on a source-first mutation while retaining
    * Account/tenant/terms locks. Missing rows or contention must roll back the entire owner capture;
-   * neither condition is a terminal authorization outcome. V99 establishes real-source lock rows.
+   * neither condition is a terminal authorization outcome. V87 establishes real-source lock rows.
    */
   public void lockProducerSourcesNowait(List<SourceEvidence> sources) {
     requireTransaction();
@@ -799,8 +815,9 @@ public final class DraftAuthorizationFenceRepository {
   }
 
   /**
-   * Every original required owner must report one uniform exact terminal outcome. Missing or mixed
-   * evidence always remains pending.
+   * Every affected operation is checked independently through its exact owner settlement. Missing
+   * or mixed owner evidence within an operation remains pending; terminal outcomes may differ
+   * between affected operations.
    */
   private boolean allAffectedSettled(List<SourceEvidence> sources) {
     if (hasPendingPublication(sources) || hasPendingGameLogicIntake(sources)) {
@@ -857,6 +874,11 @@ public final class DraftAuthorizationFenceRepository {
   private Record readOperation(UUID operation) {
     return dsl.fetchOne(
         "SELECT * FROM " + FENCES + " WHERE operation_id = ? FOR UPDATE", operation);
+  }
+
+  /** Exact immutable inspection without acquiring the operation row lock. */
+  private Record inspectOperation(UUID operation) {
+    return dsl.fetchOne("SELECT * FROM " + FENCES + " WHERE operation_id = ?", operation);
   }
 
   private Record readChange(UUID change) {

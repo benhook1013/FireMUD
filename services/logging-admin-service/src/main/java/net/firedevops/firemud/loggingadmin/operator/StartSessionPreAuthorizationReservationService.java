@@ -524,8 +524,9 @@ public final class StartSessionPreAuthorizationReservationService {
     return purpose == ClaimPurpose.ORIGINAL || purpose == ClaimPurpose.RESERVED_RECOVERY_ISSUE;
   }
 
-  private static boolean claimPurposeAllowsRead(
+  public static boolean claimPurposeAllowsRead(
       Snapshot snapshot, ReadPurpose purpose, UUID reservationOwnerId, UUID currentClaimOwnerId) {
+    Objects.requireNonNull(purpose, "purpose is required");
     if (purpose == ReadPurpose.ISSUE) {
       return snapshot.state() == State.AUTHORIZATION_PENDING
           && ((snapshot.claimPurpose() == ClaimPurpose.ORIGINAL

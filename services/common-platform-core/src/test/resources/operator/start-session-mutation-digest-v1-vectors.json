@@ -159,6 +159,8 @@
     {"name": "unicode-key-composed", "kind": "raw", "rawValue": "{\"\\u00e9\":\"x\"}", "canonicalValueHex": "363a6f626a6563743131393a313a31323ac3a9363a737472696e6731313a78"},
     {"name": "unicode-key-decomposed", "kind": "raw", "rawValue": "{\"e\\u0301\":\"x\"}", "canonicalValueHex": "363a6f626a6563743131393a313a31323ac3a9363a737472696e6731313a78"},
     {"name": "malformed-surrogate-rejected", "kind": "reject", "rawValue": "\"\\uD800\""},
+    {"name": "eight-empty-composites-accepted", "kind": "raw", "rawValue": "[[[[[[[[]]]]]]]]", "canonicalValueHex": "353a6172726179313130303a313a31353a61727261793138363a313a31353a61727261793137323a313a31353a61727261793135383a313a31353a61727261793134343a313a31353a61727261793133303a313a31353a61727261793131363a313a31353a617272617931333a313a30"},
+    {"name": "ninth-empty-composite-rejected", "kind": "reject", "rawValue": "[[[[[[[[[]]]]]]]]]"},
     {"name": "nesting-depth-rejected", "kind": "reject", "rawValue": "[[[[[[[[[0]]]]]]]]]"},
     {"name": "duplicate-object-key-rejected", "kind": "reject", "rawValue": "{\"a\":1,\"a\":2}"},
     {"name": "normalized-object-key-collision-rejected", "kind": "reject", "rawValue": "{\"\\u00e9\":1,\"e\\u0301\":2}"},

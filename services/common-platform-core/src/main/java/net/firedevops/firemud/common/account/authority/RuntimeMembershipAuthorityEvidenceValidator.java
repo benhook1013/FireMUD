@@ -9,7 +9,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
-import java.util.regex.Pattern;
+import java.util.function.Function;
 import net.firedevops.firemud.common.account.authority.MembershipAuthorityEventV1Codec.AccountSecurityCutoff;
 import net.firedevops.firemud.common.account.authority.MembershipAuthorityEventV1Codec.AuthorityTuple;
 import net.firedevops.firemud.common.account.authority.MembershipAuthorityEventV1Codec.MembershipEvent;
@@ -27,11 +27,6 @@ import net.firedevops.firemud.common.account.authority.MembershipAuthorityEventV
 public final class RuntimeMembershipAuthorityEvidenceValidator {
   private static final String EVENT_STREAM_PREFIX =
       MembershipAuthorityEventV1Codec.EVENT_STREAM_PREFIX;
-  private static final Pattern UUID_PATTERN =
-      Pattern.compile("[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}");
-  private static final String NIL_UUID = "00000000-0000-0000-0000-000000000000";
-  private static final Pattern POSITIVE_DECIMAL = Pattern.compile("[1-9][0-9]*");
-  private static final Pattern NON_NEGATIVE_DECIMAL = Pattern.compile("(?:0|[1-9][0-9]*)");
   private static final Set<String> MEMBERSHIP_LIFECYCLES = Set.of("ACTIVE", "INACTIVE");
 
   private RuntimeMembershipAuthorityEvidenceValidator() {}
@@ -220,71 +215,27 @@ public final class RuntimeMembershipAuthorityEvidenceValidator {
       return null;
     }
 
-    AccountSource event;
-    try {
-      var verified = AccountAuthoritySourceEventV1Codec.verify(supplied.canonicalEventJson());
-      if (!(verified instanceof AccountAuthoritySourceEventV1Codec.AccountEvent account)) {
-        throw invalid("account source", "must be an Account event");
-      }
-      event =
-          new AccountSource(
-              account.eventId(),
-              account.eventDigest(),
-              account.canonicalJson(),
-              account.outboxStreamKey(),
-              account.outboxSequence(),
-              account.accountId(),
-              account.accountAuthorityGeneration(),
-              account.accountSecurityCutoff().accountAuthorityGeneration(),
-              account.accountSecurityCutoff().outboxStreamKey(),
-              account.accountSecurityCutoff().outboxSequence());
-    } catch (IllegalArgumentException currentSchemaMismatch) {
+    List<Function<String, AccountSource>> decoders =
+        List.of(
+            RuntimeMembershipAuthorityEvidenceValidator::decodeCurrentAccountSource,
+            RuntimeMembershipAuthorityEvidenceValidator::decodePasswordResetAccountSource,
+            RuntimeMembershipAuthorityEvidenceValidator::decodeLogoutAllAccountSource,
+            RuntimeMembershipAuthorityEvidenceValidator::decodeSecurityStateAccountSource);
+    List<IllegalArgumentException> failures = new ArrayList<>(decoders.size());
+    AccountSource event = null;
+    for (Function<String, AccountSource> decoder : decoders) {
       try {
-        var reset = PasswordResetAuthorityEventV1Codec.verify(supplied.canonicalEventJson());
-        event =
-            new AccountSource(
-                reset.eventId(),
-                reset.eventDigest(),
-                reset.canonicalJson(),
-                reset.outboxStreamKey(),
-                reset.outboxSequence(),
-                reset.accountId(),
-                reset.accountAuthorityGeneration(),
-                reset.accountSecurityCutoff().accountAuthorityGeneration(),
-                reset.accountSecurityCutoff().outboxStreamKey(),
-                reset.accountSecurityCutoff().outboxSequence());
-      } catch (IllegalArgumentException resetFailure) {
-        try {
-          var logout = AccountLogoutAllAuthorityEventV1Codec.verify(supplied.canonicalEventJson());
-          event =
-              new AccountSource(
-                  logout.eventId(),
-                  logout.eventDigest(),
-                  logout.canonicalJson(),
-                  logout.outboxStreamKey(),
-                  logout.outboxSequence(),
-                  logout.accountId(),
-                  logout.accountAuthorityGeneration(),
-                  logout.accountSecurityCutoff().accountAuthorityGeneration(),
-                  logout.accountSecurityCutoff().outboxStreamKey(),
-                  logout.accountSecurityCutoff().outboxSequence());
-        } catch (IllegalArgumentException logoutFailure) {
-          var security =
-              AccountSecurityStateAuthorityEventV1Codec.verify(supplied.canonicalEventJson());
-          event =
-              new AccountSource(
-                  security.eventId(),
-                  security.eventDigest(),
-                  security.canonicalJson(),
-                  security.outboxStreamKey(),
-                  security.outboxSequence(),
-                  security.accountId(),
-                  security.accountAuthorityGeneration(),
-                  security.accountSecurityCutoff().accountAuthorityGeneration(),
-                  security.accountSecurityCutoff().outboxStreamKey(),
-                  security.accountSecurityCutoff().outboxSequence());
-        }
+        event = decoder.apply(supplied.canonicalEventJson());
+        break;
+      } catch (IllegalArgumentException unsupportedSchema) {
+        failures.add(unsupportedSchema);
       }
+    }
+    if (event == null) {
+      IllegalArgumentException failure =
+          invalid("account source", "does not match any supported Account event schema");
+      failures.forEach(failure::addSuppressed);
+      throw failure;
     }
     requireSourceIdentity(
         supplied,
@@ -302,6 +253,69 @@ public final class RuntimeMembershipAuthorityEvidenceValidator {
     requireEquals(event.outboxStreamKey(), event.cutoffStream(), "account cutoff stream key");
     requireEquals(event.outboxSequence(), event.cutoffSequence(), "account cutoff sequence");
     return event;
+  }
+
+  private static AccountSource decodeCurrentAccountSource(String canonicalJson) {
+    var verified = AccountAuthoritySourceEventV1Codec.verify(canonicalJson);
+    if (!(verified instanceof AccountAuthoritySourceEventV1Codec.AccountEvent account)) {
+      throw invalid("account source", "must be an Account event");
+    }
+    return new AccountSource(
+        account.eventId(),
+        account.eventDigest(),
+        account.canonicalJson(),
+        account.outboxStreamKey(),
+        account.outboxSequence(),
+        account.accountId(),
+        account.accountAuthorityGeneration(),
+        account.accountSecurityCutoff().accountAuthorityGeneration(),
+        account.accountSecurityCutoff().outboxStreamKey(),
+        account.accountSecurityCutoff().outboxSequence());
+  }
+
+  private static AccountSource decodePasswordResetAccountSource(String canonicalJson) {
+    var reset = PasswordResetAuthorityEventV1Codec.verify(canonicalJson);
+    return new AccountSource(
+        reset.eventId(),
+        reset.eventDigest(),
+        reset.canonicalJson(),
+        reset.outboxStreamKey(),
+        reset.outboxSequence(),
+        reset.accountId(),
+        reset.accountAuthorityGeneration(),
+        reset.accountSecurityCutoff().accountAuthorityGeneration(),
+        reset.accountSecurityCutoff().outboxStreamKey(),
+        reset.accountSecurityCutoff().outboxSequence());
+  }
+
+  private static AccountSource decodeLogoutAllAccountSource(String canonicalJson) {
+    var logout = AccountLogoutAllAuthorityEventV1Codec.verify(canonicalJson);
+    return new AccountSource(
+        logout.eventId(),
+        logout.eventDigest(),
+        logout.canonicalJson(),
+        logout.outboxStreamKey(),
+        logout.outboxSequence(),
+        logout.accountId(),
+        logout.accountAuthorityGeneration(),
+        logout.accountSecurityCutoff().accountAuthorityGeneration(),
+        logout.accountSecurityCutoff().outboxStreamKey(),
+        logout.accountSecurityCutoff().outboxSequence());
+  }
+
+  private static AccountSource decodeSecurityStateAccountSource(String canonicalJson) {
+    var security = AccountSecurityStateAuthorityEventV1Codec.verify(canonicalJson);
+    return new AccountSource(
+        security.eventId(),
+        security.eventDigest(),
+        security.canonicalJson(),
+        security.outboxStreamKey(),
+        security.outboxSequence(),
+        security.accountId(),
+        security.accountAuthorityGeneration(),
+        security.accountSecurityCutoff().accountAuthorityGeneration(),
+        security.accountSecurityCutoff().outboxStreamKey(),
+        security.accountSecurityCutoff().outboxSequence());
   }
 
   private static MembershipEvent verifyMembershipSource(
@@ -552,7 +566,7 @@ public final class RuntimeMembershipAuthorityEvidenceValidator {
   }
 
   private static void requireCanonicalUuid(String value, String path) {
-    if (!UUID_PATTERN.matcher(value).matches() || NIL_UUID.equals(value)) {
+    if (!StrictAuthorityEventSupport.isCanonicalUuid(value)) {
       throw invalid(path, "must be a canonical lowercase non-nil UUID");
     }
   }
@@ -564,13 +578,13 @@ public final class RuntimeMembershipAuthorityEvidenceValidator {
   }
 
   private static void requirePositiveDecimal(String value, String path) {
-    if (!POSITIVE_DECIMAL.matcher(value).matches()) {
+    if (!StrictAuthorityEventSupport.isPositiveCanonicalDecimal(value)) {
       throw invalid(path, "must be a positive canonical decimal string");
     }
   }
 
   private static void requireNonNegativeDecimal(String value, String path) {
-    if (!NON_NEGATIVE_DECIMAL.matcher(value).matches()) {
+    if (!StrictAuthorityEventSupport.isNonNegativeCanonicalDecimal(value)) {
       throw invalid(path, "must be a non-negative canonical decimal string");
     }
   }

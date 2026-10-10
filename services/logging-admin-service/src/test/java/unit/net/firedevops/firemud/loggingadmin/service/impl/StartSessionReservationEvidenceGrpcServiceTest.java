@@ -22,12 +22,20 @@ import io.grpc.inprocess.InProcessServerBuilder;
 import io.grpc.stub.MetadataUtils;
 import io.grpc.stub.StreamObserver;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.security.MessageDigest;
+import java.security.cert.CertificateEncodingException;
+import java.security.cert.X509Certificate;
+import java.sql.SQLException;
+import java.sql.SQLTransientException;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
+import net.firedevops.firemud.common.grpc.GrpcPeerCertificateEvidence;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentityInterceptor;
 import net.firedevops.firemud.common.operator.StartSessionOperatorAction;
@@ -44,6 +52,7 @@ import net.firedevops.firemud.loggingadmin.operator.StartSessionPreAuthorization
 import net.firedevops.firemud.loggingadmin.operator.StartSessionPreAuthorizationReservationService.State;
 import net.firedevops.firemud.loggingadmin.operator.StartSessionPreAuthorizationReservationTuple;
 import net.firedevops.firemud.loggingadmin.service.impl.StartSessionReservationEvidenceGrpcService;
+import net.firedevops.firemud.loggingadmin.service.impl.StartSessionReservationEvidenceLeafApproval;
 import net.firedevops.firemud.loggingadmin.v1.LoggingAdminServiceGrpc;
 import net.firedevops.firemud.loggingadmin.v1.PingRequest;
 import net.firedevops.firemud.loggingadmin.v1.PingResponse;
@@ -51,9 +60,13 @@ import net.firedevops.firemud.loggingadmin.v1.ReadCurrentClaimEvidenceRequest;
 import net.firedevops.firemud.loggingadmin.v1.ReadCurrentClaimEvidenceResponse;
 import net.firedevops.firemud.loggingadmin.v1.StartSessionReservationEvidencePurpose;
 import net.firedevops.firemud.loggingadmin.v1.StartSessionReservationEvidenceServiceGrpc;
+import org.jooq.exception.DataAccessException;
 import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 import org.springframework.dao.DataAccessResourceFailureException;
+import org.springframework.dao.TransientDataAccessResourceException;
 
 class StartSessionReservationEvidenceGrpcServiceTest {
   private static final String ACCOUNT_URI = "spiffe://firemud/ns/test/sa/account-service";
@@ -63,10 +76,27 @@ class StartSessionReservationEvidenceGrpcServiceTest {
   private static final UUID RECOVERY_OWNER_ID =
       UUID.fromString("160c30d2-4912-4c8d-8957-0538d9462d08");
   private static final long OBSERVED_AT = 1_800_000_000_000L;
+  private static final byte[] APPROVED_LEAF_DER =
+      "test account leaf certificate".getBytes(StandardCharsets.US_ASCII);
+  private static final byte[] UNAPPROVED_LEAF_DER =
+      "other same-uri leaf certificate".getBytes(StandardCharsets.US_ASCII);
+  private static final String APPROVED_LEAF_SHA256 = sha256(APPROVED_LEAF_DER);
   private final StartSessionPreAuthorizationReservationService reservationService =
       mock(StartSessionPreAuthorizationReservationService.class);
-  private final StartSessionReservationEvidenceGrpcService service =
-      new StartSessionReservationEvidenceGrpcService(reservationService, "test");
+  @TempDir private Path temporaryDirectory;
+  private StartSessionReservationEvidenceGrpcService service;
+
+  @BeforeEach
+  void configureApprovedAccountLeaf() throws Exception {
+    Path approvalFile = temporaryDirectory.resolve("approved-leaves.txt");
+    Files.writeString(
+        approvalFile, "active=" + APPROVED_LEAF_SHA256 + "\n", StandardCharsets.US_ASCII);
+    service =
+        new StartSessionReservationEvidenceGrpcService(
+            reservationService,
+            new StartSessionReservationEvidenceLeafApproval(approvalFile.toString()),
+            "test");
+  }
 
   @AfterEach
   void clearAuthenticatedContext() {
@@ -140,8 +170,24 @@ class StartSessionReservationEvidenceGrpcServiceTest {
           .isEqualTo(Status.Code.PERMISSION_DENIED);
     }
 
+    assertThat(
+            status(
+                call(
+                    request(tuple, RESERVATION_OWNER_ID, 1L, issuePurpose()),
+                    ACCOUNT_URI,
+                    UNAPPROVED_LEAF_DER)))
+        .as("a same-URI certificate without leaf-instance approval must be denied")
+        .isEqualTo(Status.Code.PERMISSION_DENIED);
+    assertThat(
+            status(
+                callWithoutCertificateEvidence(
+                    request(tuple, RESERVATION_OWNER_ID, 1L, issuePurpose()), ACCOUNT_URI)))
+        .as("a URI principal without presented-leaf evidence must be denied")
+        .isEqualTo(Status.Code.PERMISSION_DENIED);
+
     StartSessionReservationEvidenceGrpcService unconfigured =
-        new StartSessionReservationEvidenceGrpcService(reservationService, "");
+        new StartSessionReservationEvidenceGrpcService(
+            reservationService, new StartSessionReservationEvidenceLeafApproval(""), "");
     Observer observer = new Observer();
     GrpcPeerIdentity peer = GrpcPeerIdentity.parseUri(ACCOUNT_URI).orElseThrow();
     Context.current()
@@ -151,6 +197,21 @@ class StartSessionReservationEvidenceGrpcServiceTest {
                 unconfigured.readCurrentClaimEvidence(
                     request(tuple, RESERVATION_OWNER_ID, 1L, issuePurpose()), observer));
     assertThat(status(observer)).isEqualTo(Status.Code.PERMISSION_DENIED);
+
+    StartSessionReservationEvidenceGrpcService missingApprovalFile =
+        new StartSessionReservationEvidenceGrpcService(
+            reservationService,
+            new StartSessionReservationEvidenceLeafApproval(
+                temporaryDirectory.resolve("missing-approval.txt").toString()),
+            "test");
+    assertThat(
+            status(
+                call(
+                    missingApprovalFile,
+                    request(tuple, RESERVATION_OWNER_ID, 1L, issuePurpose()),
+                    ACCOUNT_URI,
+                    APPROVED_LEAF_DER)))
+        .isEqualTo(Status.Code.PERMISSION_DENIED);
     verifyNoInteractions(reservationService);
   }
 
@@ -242,6 +303,12 @@ class StartSessionReservationEvidenceGrpcServiceTest {
     ReadCurrentClaimEvidenceRequest tupleKeyMismatch =
         request(tuple).toBuilder().setControlPlaneRequestId("start-session/evidence/other").build();
     malformed.add(tupleKeyMismatch);
+    for (String nonObjectRoot : List.of("[]", "\"tuple\"", "1", "true", "null")) {
+      malformed.add(
+          request(tuple).toBuilder()
+              .setPreAuthorizationTupleJson(ByteString.copyFromUtf8(nonObjectRoot))
+              .build());
+    }
 
     for (ReadCurrentClaimEvidenceRequest request : malformed) {
       assertThat(status(call(request, ACCOUNT_URI))).isEqualTo(Status.Code.INVALID_ARGUMENT);
@@ -263,11 +330,45 @@ class StartSessionReservationEvidenceGrpcServiceTest {
         .thenThrow(
             new StartSessionPreAuthorizationReservationService.IdempotencyConflictException(
                 REQUEST_ID))
-        .thenThrow(new DataAccessResourceFailureException("offline"));
+        .thenThrow(new DataAccessResourceFailureException("offline"))
+        .thenThrow(new TransientDataAccessResourceException("retry the read"));
 
     assertThat(status(call(request, ACCOUNT_URI))).isEqualTo(Status.Code.NOT_FOUND);
     assertThat(status(call(request, ACCOUNT_URI))).isEqualTo(Status.Code.FAILED_PRECONDITION);
     assertThat(status(call(request, ACCOUNT_URI))).isEqualTo(Status.Code.FAILED_PRECONDITION);
+    assertThat(status(call(request, ACCOUNT_URI))).isEqualTo(Status.Code.UNAVAILABLE);
+    assertThat(status(call(request, ACCOUNT_URI))).isEqualTo(Status.Code.UNAVAILABLE);
+  }
+
+  @Test
+  void mapsOnlyConnectionAndTransientSqlFailuresToUnavailable() {
+    StartSessionPreAuthorizationReservationTuple tuple = tuple(REQUEST_ID);
+    ReadCurrentClaimEvidenceRequest request = request(tuple);
+    when(reservationService.readCurrentClaimEvidence(
+            any(), any(), any(), anyLong(), any(), anyLong(), any()))
+        .thenThrow(
+            new DataAccessException("connection failure", new SQLException("offline", "08006")))
+        .thenThrow(
+            new DataAccessException(
+                "transient failure", new SQLTransientException("retry the transaction")))
+        .thenThrow(
+            new DataAccessException("syntax failure", new SQLException("syntax error", "42601")))
+        .thenThrow(
+            new DataAccessException(
+                "constraint failure", new SQLException("unique constraint", "23505")))
+        .thenThrow(
+            new DataAccessException("type failure", new SQLException("type mismatch", "42804")))
+        .thenThrow(
+            new DataAccessException(
+                "nested connection failure",
+                new IllegalStateException(
+                    "driver wrapper", new SQLException("connection reset", "08001"))));
+
+    assertThat(status(call(request, ACCOUNT_URI))).isEqualTo(Status.Code.UNAVAILABLE);
+    assertThat(status(call(request, ACCOUNT_URI))).isEqualTo(Status.Code.UNAVAILABLE);
+    assertThat(status(call(request, ACCOUNT_URI))).isEqualTo(Status.Code.INTERNAL);
+    assertThat(status(call(request, ACCOUNT_URI))).isEqualTo(Status.Code.INTERNAL);
+    assertThat(status(call(request, ACCOUNT_URI))).isEqualTo(Status.Code.INTERNAL);
     assertThat(status(call(request, ACCOUNT_URI))).isEqualTo(Status.Code.UNAVAILABLE);
   }
 
@@ -363,16 +464,61 @@ class StartSessionReservationEvidenceGrpcServiceTest {
   }
 
   private Observer call(ReadCurrentClaimEvidenceRequest request, String peerUri) {
+    return call(service, request, peerUri, APPROVED_LEAF_DER);
+  }
+
+  private Observer call(
+      ReadCurrentClaimEvidenceRequest request, String peerUri, byte[] leafCertificateDer) {
+    return call(service, request, peerUri, leafCertificateDer);
+  }
+
+  private Observer call(
+      StartSessionReservationEvidenceGrpcService receiver,
+      ReadCurrentClaimEvidenceRequest request,
+      String peerUri,
+      byte[] leafCertificateDer) {
     Observer observer = new Observer();
-    Runnable invocation = () -> service.readCurrentClaimEvidence(request, observer);
+    Runnable invocation = () -> receiver.readCurrentClaimEvidence(request, observer);
     Optional<GrpcPeerIdentity> peer =
         peerUri == null ? Optional.empty() : GrpcPeerIdentity.parseUri(peerUri);
     if (peer.isEmpty()) {
       invocation.run();
     } else {
-      Context.current().withValue(GrpcPeerIdentity.CONTEXT_KEY, peer.orElseThrow()).run(invocation);
+      Context.current()
+          .withValue(GrpcPeerIdentity.CONTEXT_KEY, peer.orElseThrow())
+          .withValue(
+              GrpcPeerCertificateEvidence.CONTEXT_KEY, certificateEvidence(leafCertificateDer))
+          .run(invocation);
     }
     return observer;
+  }
+
+  private Observer callWithoutCertificateEvidence(
+      ReadCurrentClaimEvidenceRequest request, String peerUri) {
+    Observer observer = new Observer();
+    GrpcPeerIdentity peer = GrpcPeerIdentity.parseUri(peerUri).orElseThrow();
+    Context.current()
+        .withValue(GrpcPeerIdentity.CONTEXT_KEY, peer)
+        .run(() -> service.readCurrentClaimEvidence(request, observer));
+    return observer;
+  }
+
+  private static GrpcPeerCertificateEvidence certificateEvidence(byte[] certificateDer) {
+    X509Certificate leaf = mock(X509Certificate.class);
+    try {
+      when(leaf.getEncoded()).thenReturn(certificateDer);
+    } catch (CertificateEncodingException exception) {
+      throw new AssertionError(exception);
+    }
+    return GrpcPeerCertificateEvidence.fromCertificate(leaf).orElseThrow();
+  }
+
+  private static String sha256(byte[] value) {
+    try {
+      return java.util.HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(value));
+    } catch (java.security.NoSuchAlgorithmException exception) {
+      throw new AssertionError(exception);
+    }
   }
 
   private static ReadCurrentClaimEvidenceRequest request(

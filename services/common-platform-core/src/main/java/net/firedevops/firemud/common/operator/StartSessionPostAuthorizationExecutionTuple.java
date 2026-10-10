@@ -70,7 +70,7 @@ public final class StartSessionPostAuthorizationExecutionTuple {
   private final String authorizationReferenceFingerprint;
   private final UUID reservationOwnerId;
   private final long reservationClaimFence;
-  private final byte[] authorityEvidenceBundleBytes;
+  private final StartSessionAuthorityEvidenceBundle authorityEvidenceBundle;
   private final StartSessionAuthorityEvidenceBundle.BundleReference bundleReference;
   private final byte[] canonicalBytes;
 
@@ -80,7 +80,7 @@ public final class StartSessionPostAuthorizationExecutionTuple {
       String authorizationReferenceFingerprint,
       UUID reservationOwnerId,
       long reservationClaimFence,
-      byte[] authorityEvidenceBundleBytes,
+      StartSessionAuthorityEvidenceBundle authorityEvidenceBundle,
       StartSessionAuthorityEvidenceBundle.BundleReference bundleReference,
       byte[] canonicalBytes) {
     this.preAuthorizationTuple = preAuthorizationTuple;
@@ -88,7 +88,7 @@ public final class StartSessionPostAuthorizationExecutionTuple {
     this.authorizationReferenceFingerprint = authorizationReferenceFingerprint;
     this.reservationOwnerId = reservationOwnerId;
     this.reservationClaimFence = reservationClaimFence;
-    this.authorityEvidenceBundleBytes = authorityEvidenceBundleBytes.clone();
+    this.authorityEvidenceBundle = authorityEvidenceBundle;
     this.bundleReference = bundleReference;
     this.canonicalBytes = canonicalBytes.clone();
   }
@@ -118,7 +118,6 @@ public final class StartSessionPostAuthorizationExecutionTuple {
         StartSessionAuthorityEvidenceBundle.decode(exactCanonicalAuthorityEvidenceBundle);
     bundle.requireTupleBinding(preAuthorizationTuple);
     bundle.requireReferenceBinding(bundleReference);
-    byte[] bundleBytes = bundle.canonicalBytes();
     byte[] canonical =
         encode(
             preAuthorizationTuple,
@@ -134,7 +133,7 @@ public final class StartSessionPostAuthorizationExecutionTuple {
         authorizationReferenceFingerprint,
         reservationOwnerId,
         reservationClaimFence,
-        bundleBytes,
+        bundle,
         bundleReference,
         canonical);
   }
@@ -243,21 +242,19 @@ public final class StartSessionPostAuthorizationExecutionTuple {
   }
 
   public String issuanceFence() {
-    return StartSessionAuthorityEvidenceBundle.decode(authorityEvidenceBundleBytes).issuanceFence();
+    return authorityEvidenceBundle.issuanceFence();
   }
 
   public Map<String, Object> authorityTuple() {
-    return StartSessionAuthorityEvidenceBundle.decode(authorityEvidenceBundleBytes)
-        .authorityTuple();
+    return authorityEvidenceBundle.authorityTuple();
   }
 
   public Map<String, Object> membershipVersion() {
-    return StartSessionAuthorityEvidenceBundle.decode(authorityEvidenceBundleBytes)
-        .membershipVersion();
+    return authorityEvidenceBundle.membershipVersion();
   }
 
   public byte[] authorityEvidenceBundleBytes() {
-    return authorityEvidenceBundleBytes.clone();
+    return authorityEvidenceBundle.canonicalBytes();
   }
 
   public StartSessionAuthorityEvidenceBundle.BundleReference bundleReference() {

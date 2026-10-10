@@ -134,6 +134,182 @@ public final class GameSessionStartSessionOperatorAttemptRepository {
   }
 
   /**
+   * Reads the immutable identity and attached Account projection for historical reconciliation. It
+   * does not require a live lease or reference and grants no permission to continue the mutation.
+   */
+  @Transactional(propagation = Propagation.NOT_SUPPORTED, readOnly = true)
+  public Optional<AttemptSnapshot> readHistoricalOwnerAttempt(
+      StartSessionPostAuthorizationExecutionTuple tuple,
+      UUID expectedOwnerAttemptId,
+      long expectedOwnerFence) {
+    requireOutsideOwnerTransaction();
+    Objects.requireNonNull(tuple, "complete post-authorization tuple is required");
+    requireNonNil(expectedOwnerAttemptId, "expectedOwnerAttemptId");
+    if (expectedOwnerFence <= 0L) {
+      throw new IllegalArgumentException("expectedOwnerFence must be positive");
+    }
+
+    String namespace = tuple.preAuthorizationTuple().action().scope().targetNamespace();
+    String requestId = tuple.controlPlaneRequestId();
+    Record row = selectAttempt(namespace, requestId, false);
+    if (row == null) {
+      return Optional.empty();
+    }
+
+    byte[] expectedTuple = tuple.canonicalBytes();
+    byte[] storedTuple = requiredBytes(row, "post_authorization_execution_tuple");
+    if (!Arrays.equals(storedTuple, expectedTuple)) {
+      throw new StartSessionOperatorAttemptConflictException(
+          "Historical owner read differs from the complete original StartSession tuple");
+    }
+    StartSessionPostAuthorizationExecutionTuple decodedTuple;
+    try {
+      decodedTuple = StartSessionPostAuthorizationExecutionTuple.decode(storedTuple);
+    } catch (IllegalArgumentException malformed) {
+      throw new IllegalStateException(
+          "Persisted historical StartSession owner tuple is malformed", malformed);
+    }
+    if (!Arrays.equals(decodedTuple.canonicalBytes(), storedTuple)
+        || !requiredText(row, "target_namespace").equals(namespace)
+        || !requiredText(row, "control_plane_request_id").equals(requestId)) {
+      throw new IllegalStateException(
+          "Persisted historical StartSession owner identity is not canonical");
+    }
+    requireStoredProjectionColumnsMatch(row, decodedTuple);
+    if (!expectedOwnerAttemptId.equals(requiredUuid(row, "owner_attempt_id"))
+        || expectedOwnerFence != requiredLong(row, "owner_fence")) {
+      throw new StaleStartSessionOperatorAttemptClaimException(
+          "Historical owner read does not match the original owner attempt and fence");
+    }
+
+    byte[] storedProjection = optionalBytes(row, "account_redemption_projection");
+    if (storedProjection == null) {
+      throw new StaleStartSessionOperatorAttemptClaimException(
+          "Historical StartSession owner attempt has no attached Account projection");
+    }
+    AccountRedemptionProjection expectedProjection = projectionFromTuple(decodedTuple);
+    if (!Arrays.equals(storedProjection, expectedProjection.canonicalBytes())) {
+      throw new IllegalStateException(
+          "Persisted historical Account projection differs from its complete canonical tuple");
+    }
+    requireProjectionMatches(decodedTuple, expectedProjection);
+    return Optional.of(snapshot(row));
+  }
+
+  /**
+   * Creates a narrow continuation capability for the exact existing pending attempt. This does not
+   * reconstruct or expose an {@link AttemptClaim}; every use revalidates the stored claim identity.
+   */
+  @Transactional(propagation = Propagation.MANDATORY, isolation = Isolation.READ_COMMITTED)
+  public EvidenceContinuation beginEvidenceContinuation(
+      StartSessionPostAuthorizationExecutionTuple tuple) {
+    requireWritableReadCommittedOwnerTransaction();
+    Objects.requireNonNull(tuple, "complete post-authorization tuple is required");
+    String namespace = tuple.preAuthorizationTuple().action().scope().targetNamespace();
+    Record row = selectAttempt(namespace, tuple.controlPlaneRequestId(), true);
+    if (row == null) {
+      throw new StaleStartSessionOperatorAttemptClaimException(
+          "Original StartSession owner attempt is missing and remains reconciliation-only");
+    }
+    byte[] exactTuple = tuple.canonicalBytes();
+    if (!Arrays.equals(requiredBytes(row, "post_authorization_execution_tuple"), exactTuple)) {
+      throw new StartSessionOperatorAttemptConflictException(
+          "Evidence continuation tuple differs from the original complete StartSession attempt");
+    }
+    if (!"OWNER_EXECUTION_PENDING".equals(requiredText(row, "phase_state"))) {
+      throw new StaleStartSessionOperatorAttemptClaimException(
+          "Only the original pending StartSession attempt supports evidence continuation");
+    }
+    requireStoredProjectionColumnsMatch(row, tuple);
+    requireUnexpired(row);
+    requireOriginalAuthorityUnexpired(tuple);
+    byte[] storedProjection = optionalBytes(row, "account_redemption_projection");
+    if (storedProjection == null) {
+      throw new StaleStartSessionOperatorAttemptClaimException(
+          "StartSession attempt has no attached Account projection and remains reconciliation-only");
+    }
+    AccountRedemptionProjection expectedProjection = projectionFromTuple(tuple);
+    byte[] canonicalProjection = expectedProjection.canonicalBytes();
+    if (!Arrays.equals(storedProjection, canonicalProjection)) {
+      throw new IllegalStateException(
+          "Persisted Account redemption projection differs from its complete canonical tuple");
+    }
+    requireProjectionMatches(tuple, expectedProjection);
+
+    return new EvidenceContinuation(
+        requiredText(row, "target_namespace"),
+        requiredText(row, "control_plane_request_id"),
+        requiredUuid(row, "owner_attempt_id"),
+        requiredUuid(row, "owner_mutation_id"),
+        requiredUuid(row, "claim_owner_id"),
+        requiredLong(row, "owner_fence"),
+        exactTuple,
+        storedProjection);
+  }
+
+  /**
+   * Repo-internal capability check. Callers receive only the immutable attempt snapshot, never an
+   * AttemptClaim that could be reused for redemption or a general mutation.
+   */
+  @Transactional(propagation = Propagation.MANDATORY, isolation = Isolation.READ_COMMITTED)
+  AttemptSnapshot validateEvidenceContinuation(EvidenceContinuation continuation) {
+    requireWritableReadCommittedOwnerTransaction();
+    Objects.requireNonNull(continuation, "evidence continuation is required");
+    Record row =
+        selectAttempt(continuation.targetNamespace(), continuation.controlPlaneRequestId(), true);
+    if (row == null
+        || !continuation.ownerAttemptId().equals(optionalUuid(row, "owner_attempt_id"))
+        || !continuation.ownerMutationId().equals(optionalUuid(row, "owner_mutation_id"))
+        || !continuation.claimOwnerId().equals(optionalUuid(row, "claim_owner_id"))
+        || continuation.ownerFence() != optionalLong(row, "owner_fence")) {
+      throw new StaleStartSessionOperatorAttemptClaimException(
+          "Evidence continuation no longer identifies the original stored owner claim");
+    }
+    if (!"OWNER_EXECUTION_PENDING".equals(requiredText(row, "phase_state"))) {
+      throw new StaleStartSessionOperatorAttemptClaimException(
+          "Evidence continuation requires the same pending owner attempt");
+    }
+    requireUnexpired(row);
+    byte[] currentTuple = requiredBytes(row, "post_authorization_execution_tuple");
+    if (!Arrays.equals(currentTuple, continuation.postAuthorizationExecutionTuple())) {
+      throw new StartSessionOperatorAttemptConflictException(
+          "Evidence continuation tuple or Account projection differs from the retained attempt");
+    }
+    StartSessionPostAuthorizationExecutionTuple decodedTuple =
+        StartSessionPostAuthorizationExecutionTuple.decode(currentTuple);
+    requireOriginalAuthorityUnexpired(decodedTuple);
+    byte[] currentProjection = optionalBytes(row, "account_redemption_projection");
+    if (currentProjection == null) {
+      throw new StaleStartSessionOperatorAttemptClaimException(
+          "Evidence continuation Account projection is no longer attached");
+    }
+    if (!Arrays.equals(currentProjection, continuation.accountRedemptionProjection())) {
+      throw new StartSessionOperatorAttemptConflictException(
+          "Evidence continuation tuple or Account projection differs from the retained attempt");
+    }
+    StartSessionPostAuthorizationExecutionTuple tuple = decodedTuple;
+    if (!Arrays.equals(tuple.canonicalBytes(), currentTuple)
+        || !tuple.controlPlaneRequestId().equals(continuation.controlPlaneRequestId())
+        || !tuple
+            .preAuthorizationTuple()
+            .action()
+            .scope()
+            .targetNamespace()
+            .equals(continuation.targetNamespace())) {
+      throw new IllegalStateException(
+          "Evidence continuation tuple is not the canonical original owner identity");
+    }
+    requireStoredProjectionColumnsMatch(row, tuple);
+    AccountRedemptionProjection expectedProjection = projectionFromTuple(tuple);
+    if (!Arrays.equals(currentProjection, expectedProjection.canonicalBytes())) {
+      throw new IllegalStateException(
+          "Evidence continuation Account projection is not canonical for its tuple");
+    }
+    requireProjectionMatches(tuple, expectedProjection);
+    return snapshot(row);
+  }
+
+  /**
    * Atomically attaches the exact Account redemption projection to its still-current claim. Replays
    * of the same projection return the original snapshot; any substitution conflicts.
    */
@@ -233,6 +409,17 @@ public final class GameSessionStartSessionOperatorAttemptRepository {
     }
   }
 
+  private static AccountRedemptionProjection projectionFromTuple(
+      StartSessionPostAuthorizationExecutionTuple tuple) {
+    StartSessionAuthorityEvidenceBundle authority =
+        StartSessionAuthorityEvidenceBundle.decode(tuple.authorityEvidenceBundleBytes());
+    return new AccountRedemptionProjection(
+        tuple.authorizationReferenceFingerprint(),
+        tuple.authorityEvidenceBundleBytes(),
+        authority.issuanceOperationId(),
+        parsePositiveFence(tuple.issuanceFence()));
+  }
+
   private static void requireClaimMatch(Record row, AttemptClaim claim) {
     if (row == null
         || !claim.ownerAttemptId().equals(optionalUuid(row, "owner_attempt_id"))
@@ -256,6 +443,26 @@ public final class GameSessionStartSessionOperatorAttemptRepository {
     if (validity == null || !Boolean.TRUE.equals(validity.get("unexpired", Boolean.class))) {
       throw new StaleStartSessionOperatorAttemptClaimException(
           "Game Session owner attempt claim lease is expired and remains non-replayable");
+    }
+  }
+
+  private static void requireOutsideOwnerTransaction() {
+    if (TransactionSynchronizationManager.isActualTransactionActive()) {
+      throw new IllegalStateException(
+          "Historical StartSession owner evidence requires a read outside the owner transaction");
+    }
+  }
+
+  private void requireOriginalAuthorityUnexpired(
+      StartSessionPostAuthorizationExecutionTuple tuple) {
+    String referenceExpiresAt =
+        StartSessionAuthorityEvidenceBundle.decode(tuple.authorityEvidenceBundleBytes())
+            .authorizationExpiresAt();
+    Record validity =
+        dsl.fetchOne("SELECT ?::timestamptz > clock_timestamp() AS unexpired", referenceExpiresAt);
+    if (validity == null || !Boolean.TRUE.equals(validity.get("unexpired", Boolean.class))) {
+      throw new StaleStartSessionOperatorAttemptClaimException(
+          "Original Account authorization reference expired during evidence continuation");
     }
   }
 
@@ -412,6 +619,75 @@ public final class GameSessionStartSessionOperatorAttemptRepository {
       if (ownerFence <= 0L) {
         throw new IllegalArgumentException("ownerFence must be positive");
       }
+    }
+  }
+
+  /**
+   * Narrow owner-internal continuation token. Its constructor and all claim-binding accessors are
+   * private to this repository package; it exposes no claimant credential or redemption API.
+   */
+  public static final class EvidenceContinuation {
+    private final String targetNamespace;
+    private final String controlPlaneRequestId;
+    private final UUID ownerAttemptId;
+    private final UUID ownerMutationId;
+    private final UUID claimOwnerId;
+    private final long ownerFence;
+    private final byte[] postAuthorizationExecutionTuple;
+    private final byte[] accountRedemptionProjection;
+
+    private EvidenceContinuation(
+        String targetNamespace,
+        String controlPlaneRequestId,
+        UUID ownerAttemptId,
+        UUID ownerMutationId,
+        UUID claimOwnerId,
+        long ownerFence,
+        byte[] postAuthorizationExecutionTuple,
+        byte[] accountRedemptionProjection) {
+      this.targetNamespace = Objects.requireNonNull(targetNamespace);
+      this.controlPlaneRequestId = Objects.requireNonNull(controlPlaneRequestId);
+      this.ownerAttemptId = Objects.requireNonNull(ownerAttemptId);
+      this.ownerMutationId = Objects.requireNonNull(ownerMutationId);
+      this.claimOwnerId = Objects.requireNonNull(claimOwnerId);
+      if (ownerFence <= 0L) {
+        throw new IllegalArgumentException("ownerFence must be positive");
+      }
+      this.ownerFence = ownerFence;
+      this.postAuthorizationExecutionTuple = postAuthorizationExecutionTuple.clone();
+      this.accountRedemptionProjection = accountRedemptionProjection.clone();
+    }
+
+    String targetNamespace() {
+      return targetNamespace;
+    }
+
+    String controlPlaneRequestId() {
+      return controlPlaneRequestId;
+    }
+
+    UUID ownerAttemptId() {
+      return ownerAttemptId;
+    }
+
+    UUID ownerMutationId() {
+      return ownerMutationId;
+    }
+
+    UUID claimOwnerId() {
+      return claimOwnerId;
+    }
+
+    long ownerFence() {
+      return ownerFence;
+    }
+
+    byte[] postAuthorizationExecutionTuple() {
+      return postAuthorizationExecutionTuple.clone();
+    }
+
+    byte[] accountRedemptionProjection() {
+      return accountRedemptionProjection.clone();
     }
   }
 

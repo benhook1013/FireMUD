@@ -166,4 +166,52 @@ class AccountRepositoryTest {
     verify(dsl, never()).update(Tables.ACCOUNTS);
     verifyNoInteractions(sourceEvidence);
   }
+
+  @Test
+  void freshNonActiveAccountIsRejectedBeforeInsertOrSourceInitialization() {
+    DSLContext dsl = mock(DSLContext.class);
+    AccountAuthoritySourceEvidenceRepository sourceEvidence =
+        mock(AccountAuthoritySourceEvidenceRepository.class);
+    AccountRepository repository = new AccountRepository(dsl, sourceEvidence);
+    Account account = new Account();
+    account.setEmail("inactive-fresh@example.test");
+    account.setLifecycleState(AccountLifecycleState.DEACTIVATED_PENDING_DELETE);
+
+    assertThatThrownBy(() -> repository.save(account))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessage("Fresh Accounts must be created in the ACTIVE lifecycle state");
+
+    verifyNoInteractions(dsl, sourceEvidence);
+  }
+
+  @Test
+  void findByIdForUpdateRequiresAnActiveWritableOwnerTransaction()
+      throws ReflectiveOperationException {
+    DSLContext dsl = mock(DSLContext.class);
+    AccountAuthoritySourceEvidenceRepository sourceEvidence =
+        mock(AccountAuthoritySourceEvidenceRepository.class);
+    AccountRepository repository = new AccountRepository(dsl, sourceEvidence);
+
+    assertThatThrownBy(() -> repository.findByIdForUpdate(42L))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("active writable owner transaction");
+
+    TransactionSynchronizationManager.setActualTransactionActive(true);
+    TransactionSynchronizationManager.setCurrentTransactionReadOnly(true);
+    try {
+      assertThatThrownBy(() -> repository.findByIdForUpdate(42L))
+          .isInstanceOf(IllegalStateException.class)
+          .hasMessageContaining("active writable owner transaction");
+    } finally {
+      TransactionSynchronizationManager.clear();
+    }
+
+    Transactional transactional =
+        AccountRepository.class
+            .getMethod("findByIdForUpdate", Long.class)
+            .getAnnotation(Transactional.class);
+    assertThat(transactional).isNotNull();
+    assertThat(transactional.propagation()).isEqualTo(Propagation.MANDATORY);
+    verifyNoInteractions(dsl, sourceEvidence);
+  }
 }
