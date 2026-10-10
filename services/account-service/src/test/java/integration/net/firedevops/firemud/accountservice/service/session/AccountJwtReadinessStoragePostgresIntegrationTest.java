@@ -15,6 +15,7 @@ import java.security.KeyPair;
 import java.security.KeyPairGenerator;
 import java.security.MessageDigest;
 import java.security.interfaces.RSAPublicKey;
+import java.time.Duration;
 import java.time.Instant;
 import java.util.Base64;
 import java.util.HexFormat;
@@ -34,12 +35,15 @@ import net.firedevops.firemud.accountservice.repository.AccountJwtReadinessProbe
 import net.firedevops.firemud.accountservice.repository.AccountJwtReadinessProbeRepository.ProbeState;
 import net.firedevops.firemud.accountservice.repository.AccountJwtReadinessProbeRepository.ReadinessProbePlan;
 import net.firedevops.firemud.accountservice.repository.AccountJwtSignerDesiredStateRepository;
+import net.firedevops.firemud.accountservice.repository.AccountJwtSignerDesiredStateRepository.ActiveJwksPromotionObservation;
 import net.firedevops.firemud.accountservice.repository.AccountJwtSignerDesiredStateRepository.Binding;
 import net.firedevops.firemud.accountservice.repository.AccountJwtSignerDesiredStateRepository.CustodyMode;
 import net.firedevops.firemud.accountservice.repository.AccountJwtSignerDesiredStateRepository.EnrollmentIdentity;
 import net.firedevops.firemud.accountservice.repository.AccountJwtSignerDesiredStateRepository.GenerationRequest;
 import net.firedevops.firemud.accountservice.repository.AccountJwtSignerDesiredStateRepository.GenerationResult;
+import net.firedevops.firemud.accountservice.repository.AccountJwtSignerDesiredStateRepository.PrivatePromotionObservation;
 import net.firedevops.firemud.accountservice.repository.AccountJwtSignerDesiredStateRepository.PromotionPreparation;
+import net.firedevops.firemud.accountservice.repository.AccountJwtSignerDesiredStateRepository.PublicKeyIdentity;
 import net.firedevops.firemud.accountservice.repository.AccountJwtSignerDesiredStateRepository.TrustFence;
 import net.firedevops.firemud.accountservice.repository.AccountJwtValidatorInventoryRepository;
 import net.firedevops.firemud.accountservice.service.session.AccountJwtReadinessProbeOwnerSelector.LocalIdentity;
@@ -51,6 +55,7 @@ import net.firedevops.firemud.accountservice.service.session.AccountJwtValidator
 import net.firedevops.firemud.accountservice.service.session.AccountJwtValidatorInventorySource.PodObservation;
 import net.firedevops.firemud.accountservice.service.session.AccountJwtValidatorInventorySource.ValidatorObservation;
 import net.firedevops.firemud.common.json.Rfc8785CanonicalJson;
+import org.awaitility.Awaitility;
 import org.flywaydb.core.Flyway;
 import org.jooq.DSLContext;
 import org.jooq.SQLDialect;
@@ -68,14 +73,17 @@ import org.springframework.transaction.support.TransactionTemplate;
 import tools.jackson.databind.json.JsonMapper;
 
 /**
- * Physical PostgreSQL proof for Account-owned V2 readiness inventory, signing-state, and per-Pod
- * receipt storage. The inventory and authenticated-acceptance inputs are synthetic owner values, as
- * in the retained donor proof; this does not establish live Kubernetes currentness, receiver
+ * Physical PostgreSQL proof for Account-owned V2 readiness inventory, signing-state, per-Pod
+ * receipt storage, and dispatched promotion recovery after plan expiry. The inventory,
+ * authenticated-acceptance, and resource readback inputs are synthetic owner values, as in the
+ * retained donor proof; this does not establish live Kubernetes currentness, receiver
  * authentication, readiness activation, or signer activation. The local ephemeral canary key is
  * only a real signing precondition for the storage transition.
  */
 class AccountJwtReadinessStoragePostgresIntegrationTest {
   private static final String SCHEMA_PREFIX = "jwt_readiness_owner_storage";
+  private static final int DISPATCHED_RECOVERY_HEADROOM_SECONDS = 70;
+  private static final int DISPATCHED_RECOVERY_EXPIRY_WAIT_SECONDS = 75;
   private static final AccountPostgresIntegrationFixture POSTGRES =
       new AccountPostgresIntegrationFixture();
   private static final Binding BINDING =
@@ -138,20 +146,24 @@ class AccountJwtReadinessStoragePostgresIntegrationTest {
     assertThat(observationContext.operationDigest()).isEqualTo(owner.result().operationDigest());
 
     long databaseNow = databaseNow(context);
+    long plannedAtEpochSecond =
+        databaseNow
+            - AccountJwtReadinessProbeRepository.MAX_VALIDATOR_CACHE_AGE_SECONDS
+            - AccountJwtReadinessProbeRepository.PROBE_LIFETIME_SECONDS
+            + DISPATCHED_RECOVERY_HEADROOM_SECONDS;
+    Instant planTimestamp = Instant.ofEpochSecond(plannedAtEpochSecond);
     InventorySnapshot planningInventory =
-        completeInventorySnapshot(Instant.ofEpochSecond(databaseNow - 300), observationContext);
+        completeInventorySnapshot(planTimestamp, observationContext);
     ReadinessProbePlan plan =
         inTransaction(
             context,
             () ->
                 owner
                     .readiness()
-                    .planCurrent(
-                        BINDING,
-                        owner.trust(),
-                        Instant.ofEpochSecond(databaseNow - 300),
-                        planningInventory));
+                    .planCurrent(BINDING, owner.trust(), planTimestamp, planningInventory));
     assertThat(plan.planVersion()).isEqualTo(2);
+    assertThat(plan.expiresAtEpochSecond())
+        .isEqualTo(databaseNow + DISPATCHED_RECOVERY_HEADROOM_SECONDS);
     assertThat(plan.validatorInventoryComplete()).isTrue();
     assertThat(plan.inventorySnapshotDigest()).contains(planningInventory.digest());
     assertThat(plan.trustFence()).isEqualTo(owner.trust());
@@ -805,6 +817,7 @@ class AccountJwtReadinessStoragePostgresIntegrationTest {
                         BINDING, owner.trust(), owner.result().operationId(), refreshedInventory)
                     .orElseThrow());
     assertThat(restartedProof.readinessEvidencePreimage()).isEqualTo(exactPreimage);
+    assertThat(databaseClockNow(context)).isLessThan(plan.expiresAtEpochSecond());
     var dispatchedEvidence =
         inTransaction(
             context,
@@ -840,6 +853,92 @@ class AccountJwtReadinessStoragePostgresIntegrationTest {
                         .prepareCurrentGeneration(
                             BINDING, restartedOwner.trust(), preparation, dispatchedProof)))
         .isEqualTo(prepared);
+
+    // These synthetic owner readbacks stand for the two exact external CAS receipts. They are
+    // stored before plan expiry, then the repository restarts its proof read after the deadline.
+    var dispatchedPromotion = dispatchedEvidence.promotion();
+    PrivatePromotionObservation privatePromotionObservation =
+        new PrivatePromotionObservation(
+            dispatchedPromotion.operationId(),
+            dispatchedPromotion.requestDigest(),
+            dispatchedPromotion.generationOperationId(),
+            dispatchedPromotion.generationOperationDigest(),
+            owner.result().secretUid(),
+            dispatchedPromotion.expectedPrivateResourceVersion(),
+            "14",
+            new PublicKeyIdentity(
+                dispatchedPromotion.targetGeneration(),
+                dispatchedPromotion.targetKid(),
+                dispatchedPromotion.targetPublicKeyFingerprint()),
+            Optional.empty(),
+            List.of("current"));
+    var privatePromotionReceipt =
+        inTransaction(
+            context,
+            () ->
+                restartedDesired.recordPrivatePromotionResult(
+                    BINDING, owner.trust(), privatePromotionObservation));
+    var activeJwksPromotionReceipt =
+        inTransaction(
+            context,
+            () ->
+                restartedDesired.recordActiveJwksPromotionResult(
+                    BINDING,
+                    owner.trust(),
+                    new ActiveJwksPromotionObservation(
+                        dispatchedPromotion.publicConfigMapUid(),
+                        dispatchedPromotion.expectedPublicResourceVersion(),
+                        "43",
+                        dispatchedPromotion.expectedPublicJwksJson(),
+                        dispatchedPromotion.expectedActiveMarkerJson())));
+    var receiptBoundPrepared =
+        inTransaction(
+            context,
+            () -> restartedDesired.readPreparedGenerationForRecovery(BINDING, owner.trust()));
+    assertThat(receiptBoundPrepared.promotion().privatePromotionReceiptDigest())
+        .contains(privatePromotionReceipt.receiptDigest());
+    assertThat(receiptBoundPrepared.promotion().activeJwksReceiptDigest())
+        .contains(activeJwksPromotionReceipt.receiptDigest());
+
+    awaitDatabaseClockAtOrAfter(context, plan.expiresAtEpochSecond());
+    assertThat(databaseClockNow(context)).isGreaterThanOrEqualTo(plan.expiresAtEpochSecond());
+    var expiredDispatchedProof =
+        inTransaction(
+            context,
+            () ->
+                restartedReadiness
+                    .readPromotionProof(BINDING, owner.trust(), owner.result().operationId())
+                    .orElseThrow());
+    assertThat(expiredDispatchedProof.plan().planDigest()).isEqualTo(plan.planDigest());
+    assertThat(expiredDispatchedProof.plan().expiresAtEpochSecond())
+        .isEqualTo(plan.expiresAtEpochSecond());
+    assertThat(expiredDispatchedProof.readinessEvidencePreimage()).isEqualTo(exactPreimage);
+    assertThat(expiredDispatchedProof.readinessEvidenceDigest())
+        .isEqualTo(proof.readinessEvidenceDigest());
+    assertThat(expiredDispatchedProof.verifiedProbes()).hasSize(plan.entries().size());
+    assertThat(
+            inTransaction(
+                context,
+                () ->
+                    restartedOwner
+                        .desired()
+                        .prepareCurrentGeneration(
+                            BINDING, restartedOwner.trust(), preparation, expiredDispatchedProof)))
+        .isEqualTo(prepared);
+
+    var committed =
+        inTransaction(
+            context,
+            () ->
+                restartedDesired.commitPreparedPromotion(
+                    BINDING, owner.trust(), prepared.operationId(), expiredDispatchedProof));
+    assertThat(committed.promotion().status()).isEqualTo("COMMITTED");
+    assertThat(committed.promotion().privatePromotionReceiptDigest())
+        .contains(privatePromotionReceipt.receiptDigest());
+    assertThat(committed.promotion().activeJwksReceiptDigest())
+        .contains(activeJwksPromotionReceipt.receiptDigest());
+    assertThat(committed.privateReceipt()).isEqualTo(privatePromotionReceipt);
+    assertThat(committed.publicReceipt()).isEqualTo(activeJwksPromotionReceipt);
   }
 
   private static long completeRemainingProbes(
@@ -1264,6 +1363,23 @@ class AccountJwtReadinessStoragePostgresIntegrationTest {
         context
             .dsl()
             .resultQuery("SELECT floor(extract(epoch FROM CURRENT_TIMESTAMP))::bigint")
+            .fetchOne(0, Long.class),
+        "Database clock query returned no row.");
+  }
+
+  private static void awaitDatabaseClockAtOrAfter(TestContext context, long epochSecond) {
+    Awaitility.await()
+        .alias("PostgreSQL clock reaches the immutable readiness plan expiry")
+        .pollInterval(Duration.ofMillis(100))
+        .atMost(Duration.ofSeconds(DISPATCHED_RECOVERY_EXPIRY_WAIT_SECONDS))
+        .until(() -> databaseClockNow(context) >= epochSecond);
+  }
+
+  private static long databaseClockNow(TestContext context) {
+    return java.util.Objects.requireNonNull(
+        context
+            .dsl()
+            .resultQuery("SELECT floor(extract(epoch FROM clock_timestamp()))::bigint")
             .fetchOne(0, Long.class),
         "Database clock query returned no row.");
   }

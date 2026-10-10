@@ -509,6 +509,138 @@ class AccountGameplayAdmissionProtectedEntryPrototypeIntegrationTest {
   }
 
   @Test
+  void lostOriginalCommitAcknowledgementCannotReconstructCapabilityOrRetryFinalization() {
+    var context = context();
+    var evidence = pending(context, 15000);
+    UUID decision = UUID.randomUUID();
+    var pendingOperation = operation(context, evidence);
+    var sourcesBefore = sourceSnapshot(context);
+    var physicalCommits = new java.util.concurrent.atomic.AtomicInteger();
+    var source = loseCommitAcknowledgementAfter(context.admin(), physicalCommits, 1);
+
+    assertThatThrownBy(
+            () ->
+                new AccountGameplayAdmissionOriginalCommitExecutor(source)
+                    .execute(evidence, decision))
+        .hasMessageContaining("physical COMMIT unavailable");
+
+    assertThat(physicalCommits.get()).isOne();
+    var committed = operation(context, evidence);
+    var scope = (Map<?, ?>) evidence.carrier().get("bindingScope");
+    assertThat(committed.get("request_id")).isEqualTo(request(evidence));
+    assertThat(committed.get("account_uuid"))
+        .isEqualTo(UUID.fromString((String) scope.get("accountId")));
+    assertThat(committed.get("lease_id"))
+        .isEqualTo(UUID.fromString((String) evidence.carrier().get("leaseId")));
+    assertThat(committed.get("lease_fence")).isEqualTo(evidence.leaseFence().longValueExact());
+    assertThat(committed.get("evidence_json")).isEqualTo(evidence.canonicalJson());
+    assertThat(committed.get("evidence_sha256")).isEqualTo(evidence.sha256());
+    assertThat(committed.get("expires_at_ms"))
+        .isEqualTo(Long.parseLong((String) evidence.carrier().get("expiresAt")));
+    assertThat(committed.get("status")).isEqualTo("COMMITTED");
+    assertThat(committed.get("binding_decision_id")).isEqualTo(decision);
+    assertThat((String) committed.get("finalization_xid")).matches("[1-9][0-9]{0,19}");
+    assertThat(committed).isNotEqualTo(pendingOperation);
+    assertThat(context.dsl().fetchCount(DSL.table(RECEIPTS))).isZero();
+
+    // The physical COMMIT succeeded, but its missing JDBC acknowledgement never yielded the
+    // opaque capability. A retained retry cannot stamp or reconstruct one.
+    assertThatThrownBy(
+            () ->
+                new AccountGameplayAdmissionOriginalCommitExecutor(context.admin())
+                    .execute(evidence, decision))
+        .hasMessageContaining("Fresh owned Account original COMMIT required");
+    assertThat(operation(context, evidence)).isEqualTo(committed);
+    assertThat(sourceSnapshot(context)).isEqualTo(sourcesBefore);
+    assertThat(context.dsl().fetchCount(DSL.table(RECEIPTS))).isZero();
+  }
+
+  @Test
+  void acknowledgementFromAnotherPostgresDataSourceCannotCreateReceipt() {
+    var original = context();
+    var other = context();
+    var ack = finalized(original, 15000);
+    var operationBefore = operation(original, ack.evidence());
+
+    assertThatThrownBy(
+            () ->
+                new AccountGameplayAdmissionOriginalAckReceiptCommitExecutor(other.admin())
+                    .confirm(ack))
+        .hasMessageContaining("Fresh owned Account receipt COMMIT required");
+
+    assertThat(operation(original, ack.evidence())).isEqualTo(operationBefore);
+    assertThat(original.dsl().fetchCount(DSL.table(RECEIPTS))).isZero();
+    assertThat(other.dsl().fetchCount(DSL.table(RECEIPTS))).isZero();
+    assertThat(other.dsl().fetchCount(DSL.table("account_gameplay_admission_lease_operations")))
+        .isZero();
+
+    // The exact originating DataSource still accepts the same capability after the rejection.
+    var receipt =
+        new AccountGameplayAdmissionOriginalAckReceiptCommitExecutor(original.admin()).confirm(ack);
+    assertThat(receipt.requestId()).isEqualTo(request(ack.evidence()));
+    var scope = (Map<?, ?>) ack.evidence().carrier().get("bindingScope");
+    assertThat(receipt.accountId()).isEqualTo(UUID.fromString((String) scope.get("accountId")));
+    assertThat(receipt.leaseId())
+        .isEqualTo(UUID.fromString((String) ack.evidence().carrier().get("leaseId")));
+    assertThat(receipt.leaseFence()).isEqualTo(ack.evidence().leaseFence().longValueExact());
+    assertThat(receipt.evidenceSha256()).isEqualTo(ack.evidence().sha256());
+    assertThat(receipt.bindingDecisionId()).isEqualTo(ack.decisionId());
+    assertThat(receipt.finalizationXid()).isEqualTo(ack.finalizationXid());
+    assertThat(receipt.committedBeforeMs()).isEqualTo(ack.committedBeforeMs());
+    assertThat(receipt.expiresAtMs()).isEqualTo(expiry(ack));
+    assertThat(receipt.receiptXid()).isNotEqualTo(ack.finalizationXid());
+    assertThat(other.dsl().fetchCount(DSL.table(RECEIPTS))).isZero();
+    assertThat(other.dsl().fetchCount(DSL.table("account_gameplay_admission_lease_operations")))
+        .isZero();
+  }
+
+  @Test
+  void lostReceiptCommitAcknowledgementDoesNotReconstructFreshReceiptDurability() {
+    var context = context();
+    var evidence = pending(context, 15000);
+    UUID decision = UUID.randomUUID();
+    var physicalCommits = new java.util.concurrent.atomic.AtomicInteger();
+    var source = loseCommitAcknowledgementAfter(context.admin(), physicalCommits, 2);
+    var ack =
+        new AccountGameplayAdmissionOriginalCommitExecutor(source).execute(evidence, decision);
+    var operationBefore = operation(context, evidence);
+    var sourcesBefore = sourceSnapshot(context);
+    assertThat(ack.finalizationXid()).isEqualTo(operationBefore.get("finalization_xid"));
+    assertThat(ack.committedBeforeMs()).isLessThan(expiry(ack));
+
+    // Original COMMIT acknowledgement was returned. The separate receipt COMMIT reaches
+    // PostgreSQL, then its JDBC acknowledgement is lost, so confirm must not return a receipt.
+    assertThatThrownBy(
+            () -> new AccountGameplayAdmissionOriginalAckReceiptCommitExecutor(source).confirm(ack))
+        .hasMessageContaining("physical COMMIT unavailable");
+
+    assertThat(physicalCommits.get()).isEqualTo(2);
+    var retained = receipt(context);
+    var scope = (Map<?, ?>) evidence.carrier().get("bindingScope");
+    assertThat(retained.get("request_id")).isEqualTo(request(evidence));
+    assertThat(retained.get("account_uuid"))
+        .isEqualTo(UUID.fromString((String) scope.get("accountId")));
+    assertThat(retained.get("lease_id"))
+        .isEqualTo(UUID.fromString((String) evidence.carrier().get("leaseId")));
+    assertThat(retained.get("lease_fence")).isEqualTo(evidence.leaseFence().longValueExact());
+    assertThat(retained.get("evidence_sha256")).isEqualTo(evidence.sha256());
+    assertThat(retained.get("binding_decision_id")).isEqualTo(decision);
+    assertThat(retained.get("finalization_xid")).isEqualTo(ack.finalizationXid());
+    assertThat(retained.get("committed_before_ms")).isEqualTo(ack.committedBeforeMs());
+    assertThat(retained.get("expires_at_ms")).isEqualTo(expiry(ack));
+    assertThat(retained.get("receipt_xid")).isNotEqualTo(ack.finalizationXid());
+    assertThat(operation(context, evidence)).isEqualTo(operationBefore);
+
+    // PostgreSQL 18 deliberately cannot recover a retained receipt from its retry COMMIT.
+    assertThatThrownBy(
+            () -> new AccountGameplayAdmissionOriginalAckReceiptCommitExecutor(source).confirm(ack))
+        .hasMessageContaining("Supported durable PostgreSQL 16 primary required");
+    assertThat(receipt(context)).isEqualTo(retained);
+    assertThat(operation(context, evidence)).isEqualTo(operationBefore);
+    assertThat(sourceSnapshot(context)).isEqualTo(sourcesBefore);
+  }
+
+  @Test
   void retainedCommittedRetryCannotMintFreshAckAndHistoricalReceiptRecoveryStaysDenied() {
     var context = context();
     var ack = finalized(context, 15000);
@@ -661,6 +793,35 @@ class AccountGameplayAdmissionProtectedEntryPrototypeIntegrationTest {
         admin,
         DSL.using(new TransactionAwareDataSourceProxy(admin), SQLDialect.POSTGRES),
         transaction);
+  }
+
+  private static javax.sql.DataSource loseCommitAcknowledgementAfter(
+      javax.sql.DataSource delegate,
+      java.util.concurrent.atomic.AtomicInteger physicalCommits,
+      int lostAcknowledgementCommit) {
+    return new org.springframework.jdbc.datasource.DelegatingDataSource(delegate) {
+      @Override
+      public Connection getConnection() throws SQLException {
+        Connection physical = super.getConnection();
+        return (Connection)
+            java.lang.reflect.Proxy.newProxyInstance(
+                Connection.class.getClassLoader(),
+                new Class<?>[] {Connection.class},
+                (proxy, method, arguments) -> {
+                  if (method.getName().equals("commit") && method.getParameterCount() == 0) {
+                    physical.commit();
+                    if (physicalCommits.incrementAndGet() == lostAcknowledgementCommit)
+                      throw new SQLException("COMMIT acknowledgement lost", "08006");
+                    return null;
+                  }
+                  try {
+                    return method.invoke(physical, arguments);
+                  } catch (java.lang.reflect.InvocationTargetException failure) {
+                    throw failure.getCause();
+                  }
+                });
+      }
+    };
   }
 
   private static OriginalCommitAcknowledgement finalized(Context context, long lifetime) {
