@@ -5266,9 +5266,11 @@ class ReviewController:
             if budget is not None:
                 budget.set_completed(1)
 
-        for allocation in state.allocations.values():
-            if allocation.pr in selection_prs and allocation.stop_basis is not None:
-                cache_request_history(allocation.pr, allocation.channel)
+        def cache_stopped_request_history() -> None:
+            for allocation in state.allocations.values():
+                if allocation.pr in selection_prs and allocation.stop_basis is not None:
+                    cache_request_history(allocation.pr, allocation.channel)
+
         live_identities = None
         if use_current_batch:
             identity_batch_count = (len(state.ordered_prs) + 24) // 25
@@ -5292,6 +5294,35 @@ class ReviewController:
                 raise ControllerError(
                     f"fresh live identity is incomplete for the configured {selected.value.upper()} review stack"
                 )
+            request_batch = getattr(self._evidence_provider, "request_history_batch", None)
+            merged_prs = tuple(pr for pr in selection_prs if _live(live_identities[pr], pr).merged)
+            if merged_prs and callable(request_batch):
+                if budget is not None:
+                    budget.set_phase("target_merged_request_history", total=len(merged_prs))
+                prepared = request_batch(merged_prs, live_identities)
+                expected_keys = {(pr, channel) for pr in merged_prs for channel in ("hosted", "cli")}
+                if (
+                    not isinstance(prepared, Mapping)
+                    or set(prepared) != expected_keys
+                    or any(
+                        not isinstance(values, list)
+                        or any(
+                            not isinstance(value, Mapping)
+                            or (value.get("pr") is not None and (type(value["pr"]) is not int or value["pr"] != key[0]))
+                            or any(
+                                value.get(flag) is not None and type(value[flag]) is not bool
+                                for flag in ("active_review", "active_reservation", "rate_limited", "held", "unstable")
+                            )
+                            for value in values
+                        )
+                        for key, values in prepared.items()
+                    )
+                ):
+                    raise ControllerError("merged current request history cannot be verified")
+                history_cache.update(prepared)
+                if budget is not None:
+                    budget.set_completed(len(merged_prs))
+            cache_stopped_request_history()
             if scoped_expected_cli:
                 validated_identities: dict[int, LivePullRequest] = {}
                 for pr in state.ordered_prs:
@@ -5399,6 +5430,8 @@ class ReviewController:
                     for allocation in state.allocations.values():
                         if allocation.pr in selection_prs and allocation.stop_basis is not None:
                             cache_request_history(allocation.pr, allocation.channel)
+        if not use_current_batch:
+            cache_stopped_request_history()
         if budget is not None:
             budget.set_phase("target_remote_heads", total=1)
         selection_remote_heads = self.git.remote_heads()
@@ -5973,13 +6006,18 @@ class ReviewController:
     ) -> dict[policy.Channel, dict[int, dict[str, Any]]]:
         channels = (policy.Channel.HOSTED, policy.Channel.CLI)
         allocated_prs = tuple(
-            pr for pr in state.ordered_prs
+            pr
+            for pr in state.ordered_prs
             if not live[pr].merged and any(f"{pr}:{channel.value}" in state.allocations for channel in channels)
         )
         if not concurrent_prs or len(allocated_prs) < 2:
             return {
                 channel: self._allocation_views(
-                    state, live, reconciliation, channel, histories[channel],
+                    state,
+                    live,
+                    reconciliation,
+                    channel,
+                    histories[channel],
                     stop_audit_cache=stop_audit_cache,
                     history_cache=history_cache,
                     bounded_evidence_cache=bounded_evidence_cache,
@@ -6008,8 +6046,15 @@ class ReviewController:
             audits, history, bounded = inputs[pr]
             views = {
                 channel: self._allocation_views(
-                    state, live, reconciliation, channel, histories[channel], pr_numbers=(pr,),
-                    stop_audit_cache=audits, history_cache=history, bounded_evidence_cache=bounded,
+                    state,
+                    live,
+                    reconciliation,
+                    channel,
+                    histories[channel],
+                    pr_numbers=(pr,),
+                    stop_audit_cache=audits,
+                    history_cache=history,
+                    bounded_evidence_cache=bounded,
                 )
                 for channel in channels
             }
@@ -6130,7 +6175,10 @@ class ReviewController:
             stop_audit_cache = {}
         bounded_evidence_cache: dict[tuple[int, str], Mapping[str, Any]] = {}
         allocations = self._initial_status_allocations(
-            state, live, reconciliation, histories,
+            state,
+            live,
+            reconciliation,
+            histories,
             stop_audit_cache=stop_audit_cache,
             history_cache=history_cache,
             bounded_evidence_cache=bounded_evidence_cache,
@@ -6505,9 +6553,7 @@ class ReviewController:
             # The summary still needs the complete fresh identity prefix to
             # select effective parents and validate every PR lifecycle. Only
             # selected and unmerged PRs need full conversation evidence.
-            evidence_prs = {
-                number for number, item in live_identities.items() if number == pr or not item.merged
-            }
+            evidence_prs = {number for number, item in live_identities.items() if number == pr or not item.merged}
             # Feed the validated batch back through reconciliation rather than
             # issuing per-ancestor identity reads for this smaller evidence set.
             live_identity_cache = dict(live_identities)
