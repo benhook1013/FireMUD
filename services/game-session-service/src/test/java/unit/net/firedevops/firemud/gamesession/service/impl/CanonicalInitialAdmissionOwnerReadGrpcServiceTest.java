@@ -374,8 +374,7 @@ class CanonicalInitialAdmissionOwnerReadGrpcServiceTest {
     assertEquals(REQUEST_ID, response.getInitialAdmissionRequestId());
     assertEquals(
         request.initialAdmissionRequestDigest(), response.getInitialAdmissionRequestDigest());
-    assertNotEquals(
-        "sha256:" + request.initialAdmissionRequestDigest(), identity.holdBindingDigest());
+    assertNotEquals(request.initialAdmissionRequestDigest(), identity.holdBindingDigest());
     assertEquals(TENANT.toString(), response.getCanonicalTenantId());
     assertEquals("demo-world", response.getWorldSlug());
     assertEquals(REALM.toString(), response.getRealmId());
