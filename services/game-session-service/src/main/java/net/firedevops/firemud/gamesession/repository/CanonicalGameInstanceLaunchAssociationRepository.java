@@ -17,6 +17,8 @@ import net.firedevops.firemud.common.gamedesign.StartSessionTemplateAssociationR
 import net.firedevops.firemud.common.gamedesign.StartSessionTemplateAssociationReadEvidence.Request;
 import net.firedevops.firemud.common.gamedesign.StartSessionTemplateAssociationReadEvidence.Result;
 import net.firedevops.firemud.common.gamedesign.StartSessionTemplateAssociationReadGrpcCodec;
+import net.firedevops.firemud.common.gamesession.HistoricalOriginalStartSessionOwnerEvidence;
+import net.firedevops.firemud.common.gamesession.HistoricalOriginalStartSessionOwnerEvidence.LaunchAssociation;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
 import net.firedevops.firemud.common.operator.StartSessionAuthorityEvidenceBundle;
 import net.firedevops.firemud.common.operator.StartSessionPostAuthorizationExecutionTuple;
@@ -193,6 +195,359 @@ public final class CanonicalGameInstanceLaunchAssociationRepository {
     } catch (RuntimeException malformed) {
       throw new IllegalStateException(
           "Persisted original StartSession association evidence is malformed", malformed);
+    }
+  }
+
+  /**
+   * Reads the exact retained original StartSession tuple, attached Account projection, immutable
+   * first selection, and descriptor association after owner-claim expiry. This is one SQL statement
+   * over immutable evidence and does not inspect current Game Instance state or lease expiry.
+   */
+  public Optional<HistoricalOriginalStartSessionOwnerEvidence.Result>
+      readHistoricalOriginalStartSessionOwnerEvidence(
+          HistoricalOriginalStartSessionOwnerEvidence.Request request) {
+    requireOutsideTransaction();
+    Objects.requireNonNull(request, "request");
+    var selector = request.associationSelector();
+    if (!workloadNamespace.equals(selector.targetNamespace())) {
+      throw new IllegalArgumentException(
+          "Historical StartSession selector targets another Game Session namespace");
+    }
+    Record row = findHistoricalOriginalStartSessionOwnerEvidence(request);
+    if (row == null) {
+      return Optional.empty();
+    }
+    try {
+      return Optional.of(decodeHistoricalOriginalStartSessionOwnerEvidence(request, row));
+    } catch (RuntimeException malformed) {
+      throw new IllegalStateException(
+          "Persisted historical original StartSession owner evidence is malformed", malformed);
+    }
+  }
+
+  private Record findHistoricalOriginalStartSessionOwnerEvidence(
+      HistoricalOriginalStartSessionOwnerEvidence.Request request) {
+    var selector = request.associationSelector();
+    return dsl.fetchOne(
+        "SELECT association.*, "
+            + "attempt.canonical_tenant_id AS owner_canonical_tenant_id, "
+            + "attempt.owner_attempt_id AS owner_attempt_id, "
+            + "attempt.owner_fence AS owner_fence, "
+            + "attempt.post_authorization_execution_tuple AS owner_tuple, "
+            + "attempt.mutation_digest AS owner_mutation_digest, "
+            + "attempt.authorization_reference_fingerprint AS owner_authorization_fingerprint, "
+            + "attempt.account_redemption_projection AS owner_projection, "
+            + "association_pin.canonical_tenant_id AS pin_canonical_tenant_id, "
+            + "association_pin.owner_attempt_id AS pin_owner_attempt_id, "
+            + "association_pin.owner_fence AS pin_owner_fence, "
+            + "association_pin.post_authorization_execution_tuple AS pin_owner_tuple, "
+            + "association_pin.post_authorization_tuple_digest AS pin_tuple_digest, "
+            + "association_pin.account_redemption_projection_digest AS pin_projection_digest, "
+            + "association_pin.association_request_wire AS pin_association_request_wire, "
+            + "association_pin.association_response_wire AS pin_association_response_wire, "
+            + "association_pin.association_request_digest AS pin_association_request_digest, "
+            + "association_pin.association_response_digest AS pin_association_response_digest, "
+            + "association_pin.template_id AS pin_template_id, "
+            + "association_pin.canonical_version_id AS pin_canonical_version_id, "
+            + "association_pin.selected_commit_id AS pin_selected_commit_id, "
+            + "association_pin.publish_workflow_id AS pin_publish_workflow_id, "
+            + "association_pin.publication_selection_digest AS pin_publication_selection_digest, "
+            + "association_pin.association_digest AS pin_association_digest, "
+            + "association_pin.world_intake_request_id AS pin_world_intake_request_id, "
+            + "association_pin.world_operation_id AS pin_world_operation_id, "
+            + "association_pin.source_operation_id AS pin_source_operation_id, "
+            + "association_pin.source_evidence_digest AS pin_source_evidence_digest, "
+            + "descriptor_pin.canonical_tenant_id AS descriptor_canonical_tenant_id, "
+            + "descriptor_pin.owner_attempt_id AS descriptor_owner_attempt_id, "
+            + "descriptor_pin.owner_fence AS descriptor_owner_fence, "
+            + "descriptor_pin.association_request_digest AS descriptor_association_request_digest, "
+            + "descriptor_pin.association_response_digest AS descriptor_association_response_digest, "
+            + "descriptor_pin.descriptor_request_wire AS descriptor_request_wire, "
+            + "descriptor_pin.descriptor_response_wire AS descriptor_response_wire, "
+            + "descriptor_pin.descriptor_request_digest AS descriptor_request_digest, "
+            + "descriptor_pin.descriptor_response_digest AS descriptor_response_digest "
+            + "FROM "
+            + ASSOCIATION_TABLE
+            + " association JOIN game_session_start_session_operator_attempt attempt "
+            + "ON attempt.target_namespace = association.target_namespace "
+            + "AND attempt.control_plane_request_id = association.control_plane_request_id "
+            + "AND attempt.canonical_tenant_id = association.canonical_tenant_id "
+            + "AND attempt.owner_attempt_id = ? AND attempt.owner_fence = ? "
+            + "AND attempt.account_redemption_projection IS NOT NULL "
+            + "JOIN game_session_start_session_template_association_pin association_pin "
+            + "ON association_pin.target_namespace = attempt.target_namespace "
+            + "AND association_pin.control_plane_request_id = attempt.control_plane_request_id "
+            + "AND association_pin.canonical_tenant_id = attempt.canonical_tenant_id "
+            + "AND association_pin.owner_attempt_id = attempt.owner_attempt_id "
+            + "AND association_pin.owner_fence = attempt.owner_fence "
+            + "AND association_pin.post_authorization_execution_tuple "
+            + "= attempt.post_authorization_execution_tuple "
+            + "JOIN game_session_start_session_launch_descriptor_pin descriptor_pin "
+            + "ON descriptor_pin.target_namespace = attempt.target_namespace "
+            + "AND descriptor_pin.control_plane_request_id = attempt.control_plane_request_id "
+            + "AND descriptor_pin.canonical_tenant_id = attempt.canonical_tenant_id "
+            + "AND descriptor_pin.owner_attempt_id = attempt.owner_attempt_id "
+            + "AND descriptor_pin.owner_fence = attempt.owner_fence "
+            + "AND descriptor_pin.association_request_digest "
+            + "= association_pin.association_request_digest "
+            + "AND descriptor_pin.association_response_digest "
+            + "= association_pin.association_response_digest "
+            + "WHERE association.target_namespace = ? "
+            + "AND association.canonical_tenant_id = ? "
+            + "AND association.world_slug = ? "
+            + "AND association.game_instance_uuid = ? "
+            + "AND association.control_plane_request_id = ? "
+            + "AND association.launch_descriptor_id = ?",
+        request.expectedOwnerAttemptId(),
+        request.expectedOwnerFence(),
+        selector.targetNamespace(),
+        selector.canonicalTenantId(),
+        selector.worldSlug(),
+        selector.gameInstanceUuid(),
+        selector.controlPlaneRequestId(),
+        selector.launchDescriptorId());
+  }
+
+  private HistoricalOriginalStartSessionOwnerEvidence.Result
+      decodeHistoricalOriginalStartSessionOwnerEvidence(
+          HistoricalOriginalStartSessionOwnerEvidence.Request request, Record row) {
+    var selector = request.associationSelector();
+    UUID ownerAttemptId = requiredUuid(row, "owner_attempt_id");
+    long ownerFence = requiredLong(row, "owner_fence");
+    UUID canonicalTenantId = requiredUuid(row, "owner_canonical_tenant_id");
+    byte[] ownerTupleBytes = requiredBytes(row, "owner_tuple");
+    byte[] ownerProjectionBytes = requiredBytes(row, "owner_projection");
+    StartSessionPostAuthorizationExecutionTuple tuple =
+        StartSessionPostAuthorizationExecutionTuple.decode(ownerTupleBytes);
+    if (!Arrays.equals(tuple.canonicalBytes(), ownerTupleBytes)
+        || !request.expectedOwnerAttemptId().equals(ownerAttemptId)
+        || request.expectedOwnerFence() != ownerFence
+        || !workloadNamespace.equals(
+            tuple.preAuthorizationTuple().action().scope().targetNamespace())
+        || !selector
+            .targetNamespace()
+            .equals(tuple.preAuthorizationTuple().action().scope().targetNamespace())
+        || !selector
+            .canonicalTenantId()
+            .equals(tuple.preAuthorizationTuple().action().scope().tenantId())
+        || !selector.controlPlaneRequestId().equals(tuple.controlPlaneRequestId())
+        || !canonicalTenantId.equals(tuple.preAuthorizationTuple().action().scope().tenantId())
+        || !canonicalTenantId.equals(row.get("canonical_tenant_id", UUID.class))
+        || !tuple.mutationDigest().equals(row.get("owner_mutation_digest", String.class))
+        || !tuple
+            .authorizationReferenceFingerprint()
+            .equals(row.get("owner_authorization_fingerprint", String.class))) {
+      throw new IllegalStateException(
+          "Historical StartSession tuple differs from its exact owner or launch selector");
+    }
+
+    StartSessionAuthorityEvidenceBundle authority =
+        StartSessionAuthorityEvidenceBundle.decode(tuple.authorityEvidenceBundleBytes());
+    long issuanceFence;
+    try {
+      issuanceFence = Long.parseLong(tuple.issuanceFence());
+    } catch (NumberFormatException invalid) {
+      throw new IllegalStateException("Historical Account issuance fence is malformed", invalid);
+    }
+    GameSessionStartSessionOperatorAttemptRepository.AccountRedemptionProjection
+        expectedProjection =
+            new GameSessionStartSessionOperatorAttemptRepository.AccountRedemptionProjection(
+                tuple.authorizationReferenceFingerprint(),
+                tuple.authorityEvidenceBundleBytes(),
+                authority.issuanceOperationId(),
+                issuanceFence);
+    if (!Arrays.equals(expectedProjection.canonicalBytes(), ownerProjectionBytes)) {
+      throw new IllegalStateException(
+          "Historical Account projection differs from the complete original StartSession tuple");
+    }
+
+    byte[] associationTupleBytes = requiredBytes(row, "pin_owner_tuple");
+    byte[] associationRequestWire = requiredBytes(row, "pin_association_request_wire");
+    byte[] associationResponseWire = requiredBytes(row, "pin_association_response_wire");
+    if (!Arrays.equals(ownerTupleBytes, associationTupleBytes)
+        || !ownerAttemptId.equals(row.get("pin_owner_attempt_id", UUID.class))
+        || ownerFence != requiredLong(row, "pin_owner_fence")
+        || !canonicalTenantId.equals(row.get("pin_canonical_tenant_id", UUID.class))
+        || !sha256(associationTupleBytes).equals(row.get("pin_tuple_digest", String.class))
+        || !sha256(ownerProjectionBytes).equals(row.get("pin_projection_digest", String.class))
+        || !sha256(associationRequestWire)
+            .equals(row.get("pin_association_request_digest", String.class))
+        || !sha256(associationResponseWire)
+            .equals(row.get("pin_association_response_digest", String.class))) {
+      throw new IllegalStateException(
+          "Historical StartSession association pin differs from the exact owner projection");
+    }
+    Result firstSelection =
+        decodeAssociationPin(
+            row,
+            tuple,
+            ownerAttemptId,
+            ownerFence,
+            associationRequestWire,
+            associationResponseWire);
+
+    byte[] descriptorRequestWire = requiredBytes(row, "descriptor_request_wire");
+    byte[] descriptorResponseWire = requiredBytes(row, "descriptor_response_wire");
+    if (!canonicalTenantId.equals(row.get("descriptor_canonical_tenant_id", UUID.class))
+        || !ownerAttemptId.equals(row.get("descriptor_owner_attempt_id", UUID.class))
+        || ownerFence != requiredLong(row, "descriptor_owner_fence")
+        || !row.get("pin_association_request_digest", String.class)
+            .equals(row.get("descriptor_association_request_digest", String.class))
+        || !row.get("pin_association_response_digest", String.class)
+            .equals(row.get("descriptor_association_response_digest", String.class))
+        || !sha256(descriptorRequestWire).equals(row.get("descriptor_request_digest", String.class))
+        || !sha256(descriptorResponseWire)
+            .equals(row.get("descriptor_response_digest", String.class))) {
+      throw new IllegalStateException(
+          "Historical StartSession descriptor pin differs from the exact first selection");
+    }
+    Resolved descriptorPin =
+        decodeDescriptorPin(firstSelection, descriptorRequestWire, descriptorResponseWire);
+    LaunchAssociation launchAssociation = toHistoricalLaunchAssociation(row, selector);
+    if (!(descriptorPin.outcome() instanceof DescriptorOutcome descriptorOutcome)
+        || !descriptorOutcome
+            .descriptor()
+            .equals(launchAssociation.launchBindingEvidence().descriptor())
+        || !firstSelection.association().canonicalTenantId().equals(canonicalTenantId)
+        || firstSelection.association().templateId()
+            != tuple.preAuthorizationTuple().action().target().gameTemplateId()
+        || !firstSelection.association().worldSlug().equals(launchAssociation.worldSlug())
+        || !firstSelection
+            .association()
+            .sourceOperationId()
+            .equals(
+                launchAssociation
+                    .launchBindingEvidence()
+                    .descriptor()
+                    .authoredWorldSourceOperationId())
+        || !firstSelection
+            .association()
+            .sourceEvidenceDigest()
+            .equals(
+                launchAssociation
+                    .launchBindingEvidence()
+                    .descriptor()
+                    .authoredWorldSourceEvidenceDigest())) {
+      throw new IllegalStateException(
+          "Historical descriptor pin differs from the immutable launch association");
+    }
+    requireExactHistoricalSelector(selector, launchAssociation);
+    return new HistoricalOriginalStartSessionOwnerEvidence.Result(
+        request,
+        tuple,
+        ownerAttemptId,
+        ownerFence,
+        ownerProjectionBytes,
+        firstSelection,
+        descriptorPin,
+        launchAssociation,
+        row.get("pin_association_request_digest", String.class),
+        row.get("pin_association_response_digest", String.class),
+        row.get("descriptor_request_digest", String.class),
+        row.get("descriptor_response_digest", String.class));
+  }
+
+  private LaunchAssociation toHistoricalLaunchAssociation(
+      Record row,
+      net.firedevops.firemud.common.gamesession.CanonicalGameInstanceLaunchAssociationReadEvidence
+              .Request
+          selector) {
+    try {
+      CompleteLaunchBindingEvidence evidence =
+          JSON.readValue(
+              row.get("complete_launch_binding_evidence", JSONB.class).data(),
+              CompleteLaunchBindingEvidence.class);
+      ValidatedBinding binding = validateBinding(evidence);
+      UUID canonicalTenantId = requiredUuid(row, "canonical_tenant_id");
+      UUID gameInstanceUuid = requiredUuid(row, "game_instance_uuid");
+      UUID namespaceId = requiredUuid(row, "playable_state_namespace_id");
+      RuntimeTenantIdentityEvidence source = sourceFromRow(row);
+      requireFreshSourceIdentity(
+          new FreshGameSessionTenantAssociation(
+              requiredUuid(row, "tenant_association_operation_id"),
+              requiredLong(row, "game_session_tenant_id"),
+              source),
+          source);
+      if (!workloadNamespace.equals(row.get("target_namespace", String.class))
+          || !workloadNamespace.equals(row.get("tenant_source_target_namespace", String.class))
+          || !canonicalTenantId.equals(source.canonicalTenantId())
+          || source.schemaVersion() != row.get("tenant_source_schema_version", Integer.class)
+          || !source.requestId().equals(row.get("tenant_association_request_id", UUID.class))
+          || !source.requestId().equals(row.get("tenant_source_request_id", UUID.class))
+          || !"FRESH_SOURCE_BOUND".equals(row.get("tenant_association_kind", String.class))
+          || !selector.targetNamespace().equals(row.get("target_namespace", String.class))
+          || !selector.canonicalTenantId().equals(canonicalTenantId)
+          || !selector.worldSlug().equals(row.get("world_slug", String.class))
+          || !selector.gameInstanceUuid().equals(gameInstanceUuid)
+          || !selector
+              .controlPlaneRequestId()
+              .equals(row.get("control_plane_request_id", String.class))
+          || !selector.launchDescriptorId().equals(row.get("launch_descriptor_id", String.class))
+          || !RealmEntryPolicy.StateScope.SHARED
+              .name()
+              .equals(row.get("playable_state_scope", String.class))
+          || !Boolean.TRUE.equals(row.get("public_production", Boolean.class))
+          || requiredLong(row, "captured_starting_row_version") < 0L
+          || !binding.descriptor().targetNamespace().equals(workloadNamespace)
+          || !binding
+              .descriptor()
+              .controlPlaneRequestId()
+              .equals(row.get("control_plane_request_id", String.class))
+          || !canonicalTenantId.equals(binding.descriptor().canonicalTenantId())
+          || !row.get("world_slug", String.class).equals(binding.descriptor().worldSlug())
+          || !row.get("launch_descriptor_id", String.class)
+              .equals(binding.descriptor().launchDescriptorId())
+          || row.get("game_template_id", Long.class) != binding.descriptor().gameTemplateId()
+          || row.get("version_id", Long.class) != binding.descriptor().versionId()
+          || row.get("release_bundle_id", Long.class) != binding.descriptor().releaseBundleId()
+          || !row.get("generation_config_revision", String.class)
+              .equals(binding.descriptor().generationConfigRevision())
+          || row.get("version_state_epoch", Long.class)
+              != binding.descriptor().versionStateEpoch()) {
+        throw new IllegalStateException(
+            "Historical launch association differs from its immutable descriptor binding");
+      }
+      return new LaunchAssociation(
+          workloadNamespace,
+          canonicalTenantId,
+          row.get("world_slug", String.class),
+          gameInstanceUuid,
+          row.get("control_plane_request_id", String.class),
+          row.get("launch_descriptor_id", String.class),
+          namespaceId,
+          RealmEntryPolicy.StateScope.SHARED,
+          true,
+          requiredLong(row, "captured_starting_row_version"),
+          binding.evidence());
+    } catch (RuntimeException malformed) {
+      if (malformed instanceof IllegalStateException illegalState) {
+        throw illegalState;
+      }
+      throw new IllegalStateException(
+          "Persisted historical launch association is malformed", malformed);
+    }
+  }
+
+  private static void requireExactHistoricalSelector(
+      net.firedevops.firemud.common.gamesession.CanonicalGameInstanceLaunchAssociationReadEvidence
+              .Request
+          selector,
+      LaunchAssociation association) {
+    var descriptor = association.launchBindingEvidence().descriptor();
+    var attestation = association.launchBindingEvidence().releaseAttestation();
+    if (!selector.targetNamespace().equals(association.targetNamespace())
+        || !selector.canonicalTenantId().equals(association.canonicalTenantId())
+        || !selector.worldSlug().equals(association.worldSlug())
+        || !selector.gameInstanceUuid().equals(association.gameInstanceUuid())
+        || !selector.controlPlaneRequestId().equals(association.controlPlaneRequestId())
+        || !selector.launchDescriptorId().equals(association.launchDescriptorId())
+        || !selector.expectedDescriptorRequestDigest().equals(descriptor.requestDigest())
+        || !selector.expectedDescriptorResultDigest().equals(descriptor.resultDigest())
+        || !selector
+            .expectedReleaseAttestationEvidenceDigest()
+            .equals(attestation.evidenceDigest())) {
+      throw new IllegalStateException(
+          "Historical launch association differs from its exact selector");
     }
   }
 
@@ -652,6 +1007,22 @@ public final class CanonicalGameInstanceLaunchAssociationRepository {
       throw new IllegalStateException("Persisted owner association is missing " + field);
     }
     return value.clone();
+  }
+
+  private static UUID requiredUuid(Record row, String field) {
+    UUID value = row == null ? null : row.get(field, UUID.class);
+    if (value == null || NIL_UUID.equals(value)) {
+      throw new IllegalStateException("Persisted owner association is missing " + field);
+    }
+    return value;
+  }
+
+  private static long requiredLong(Record row, String field) {
+    Long value = row == null ? null : row.get(field, Long.class);
+    if (value == null) {
+      throw new IllegalStateException("Persisted owner association is missing " + field);
+    }
+    return value;
   }
 
   private static String sha256(byte[] value) {

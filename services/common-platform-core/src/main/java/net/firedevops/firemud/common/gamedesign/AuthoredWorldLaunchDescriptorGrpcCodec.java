@@ -179,6 +179,28 @@ public final class AuthoredWorldLaunchDescriptorGrpcCodec {
     }
   }
 
+  /**
+   * Decodes an already correlated immutable descriptor/attestation pair from another owner read.
+   */
+  public static CompleteLaunchBindingEvidence fromCompleteEvidenceMessages(
+      AuthoredWorldLaunchDescriptorEvidence.Request expectedRequest,
+      LaunchDescriptor descriptor,
+      net.firedevops.firemud.gamedesign.v1.AuthoredWorldReleaseAttestationEvidence
+          releaseAttestation) {
+    Objects.requireNonNull(expectedRequest, "expectedRequest");
+    Objects.requireNonNull(descriptor, "descriptor");
+    Objects.requireNonNull(releaseAttestation, "releaseAttestation");
+    AuthoredWorldLaunchDescriptorEvidence decodedDescriptor =
+        decodeDescriptor(expectedRequest, descriptor);
+    AuthoredWorldReleaseAttestationEvidence decodedRelease =
+        decodeReleaseAttestation(releaseAttestation);
+    try {
+      return new CompleteLaunchBindingEvidence(decodedDescriptor, decodedRelease);
+    } catch (IllegalArgumentException invalid) {
+      throw new IllegalArgumentException("Complete launch binding evidence is invalid", invalid);
+    }
+  }
+
   /** Encodes and revalidates the exact immutable descriptor and release-attestation pair. */
   public static GetCompleteLaunchBindingResponse toCompleteResponse(
       GetLaunchDescriptorRequest request, CompleteLaunchBindingEvidence evidence) {

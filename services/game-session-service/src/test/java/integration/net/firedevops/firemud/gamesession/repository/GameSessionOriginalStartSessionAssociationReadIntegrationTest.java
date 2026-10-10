@@ -13,6 +13,7 @@ import net.firedevops.firemud.common.gamedesign.AuthoredWorldReleaseAttestationE
 import net.firedevops.firemud.common.gamedesign.CompleteLaunchBindingEvidence;
 import net.firedevops.firemud.common.gamedesign.StartSessionTemplateAssociationReadEvidence.InitialConfigured;
 import net.firedevops.firemud.common.gamesession.CanonicalGameInstanceLaunchAssociationReadEvidence;
+import net.firedevops.firemud.common.gamesession.HistoricalOriginalStartSessionOwnerEvidence;
 import net.firedevops.firemud.common.operator.StartSessionPostAuthorizationExecutionTuple;
 import net.firedevops.firemud.common.tenant.AuthoredWorldSourceEvidence;
 import net.firedevops.firemud.gamesession.dto.CreateCanonicalRealmCatalogRequest;
@@ -140,6 +141,179 @@ class GameSessionOriginalStartSessionAssociationReadIntegrationTest {
     assertThat(fixture.read(selector(starting.startingInstance().launchAssociation()))).isEmpty();
   }
 
+  @Test
+  void historicalReadReturnsExactEvidenceAfterLeaseExpiryWithoutWritingOwnerState()
+      throws Exception {
+    StartSessionPostAuthorizationExecutionTuple tuple =
+        GameSessionStartSessionTemplateAssociationRepositoryIntegrationTest.tuple(
+            "historical-original-association-expired");
+    Fixture fixture = fixture(tuple, Duration.ofSeconds(5));
+    OwnerBackedStarting starting = fixture.startWithOwnerPins(tuple);
+    HistoricalOriginalStartSessionOwnerEvidence.Request request = historicalRequest(starting);
+    int attemptsBefore = count(fixture, "game_session_start_session_operator_attempt");
+    int selectionPinsBefore = count(fixture, "game_session_start_session_template_association_pin");
+    int descriptorPinsBefore = count(fixture, "game_session_start_session_launch_descriptor_pin");
+    int associationsBefore = count(fixture, "game_session_canonical_instance_launch");
+    Thread.sleep(5_250L);
+
+    var evidence = fixture.historicalRead(request).orElseThrow();
+
+    assertThat(evidence.originalTuple().canonicalBytes()).containsExactly(tuple.canonicalBytes());
+    assertThat(evidence.ownerAttemptId()).isEqualTo(starting.claim().ownerAttemptId());
+    assertThat(evidence.ownerFence()).isEqualTo(starting.claim().ownerFence()).isPositive();
+    assertThat(evidence.accountRedemptionProjection())
+        .containsExactly(
+            GameSessionStartSessionTemplateAssociationRepositoryIntegrationTest.projection(tuple)
+                .canonicalBytes());
+    assertThat(evidence.firstSelection().request().selection())
+        .isInstanceOf(InitialConfigured.class);
+    assertThat(evidence.firstSelection().association().templateId())
+        .isEqualTo(tuple.preAuthorizationTuple().action().target().gameTemplateId());
+    assertThat(evidence.descriptorPin().outcome())
+        .isInstanceOf(
+            net.firedevops.firemud.common.gamedesign.StartSessionLaunchDescriptorGrpcCodec
+                .DescriptorOutcome.class);
+    assertThat(evidence.launchAssociation().gameInstanceUuid())
+        .isEqualTo(starting.startingInstance().gameInstanceUuid());
+    assertThat(evidence.launchAssociation().launchBindingEvidence())
+        .isEqualTo(starting.startingInstance().launchAssociation().launchBindingEvidence());
+    assertThat(count(fixture, "game_session_start_session_operator_attempt"))
+        .isEqualTo(attemptsBefore);
+    assertThat(count(fixture, "game_session_start_session_template_association_pin"))
+        .isEqualTo(selectionPinsBefore);
+    assertThat(count(fixture, "game_session_start_session_launch_descriptor_pin"))
+        .isEqualTo(descriptorPinsBefore);
+    assertThat(count(fixture, "game_session_canonical_instance_launch"))
+        .isEqualTo(associationsBefore);
+  }
+
+  @Test
+  void historicalReadFailsClosedForWrongAttemptFenceTupleAssociationAndMissingProjectionOrPin() {
+    StartSessionPostAuthorizationExecutionTuple tuple =
+        GameSessionStartSessionTemplateAssociationRepositoryIntegrationTest.tuple(
+            "historical-original-association-mismatch");
+    Fixture fixture = fixture(tuple, Duration.ofSeconds(30));
+    OwnerBackedStarting starting = fixture.startWithOwnerPins(tuple);
+    var exact = historicalRequest(starting);
+    var selector = exact.associationSelector();
+
+    assertThat(
+            fixture.historicalRead(
+                new HistoricalOriginalStartSessionOwnerEvidence.Request(
+                    selector, UUID.randomUUID(), exact.expectedOwnerFence())))
+        .isEmpty();
+    assertThat(
+            fixture.historicalRead(
+                new HistoricalOriginalStartSessionOwnerEvidence.Request(
+                    selector, exact.expectedOwnerAttemptId(), exact.expectedOwnerFence() + 1L)))
+        .isEmpty();
+    var wrongAssociation =
+        new CanonicalGameInstanceLaunchAssociationReadEvidence.Request(
+            selector.readRequestId(),
+            selector.targetNamespace(),
+            selector.canonicalTenantId(),
+            selector.worldSlug(),
+            UUID.randomUUID(),
+            selector.controlPlaneRequestId(),
+            selector.launchDescriptorId(),
+            selector.expectedDescriptorRequestDigest(),
+            selector.expectedDescriptorResultDigest(),
+            selector.expectedReleaseAttestationEvidenceDigest());
+    assertThat(
+            fixture.historicalRead(
+                new HistoricalOriginalStartSessionOwnerEvidence.Request(
+                    wrongAssociation, exact.expectedOwnerAttemptId(), exact.expectedOwnerFence())))
+        .isEmpty();
+
+    disableAttemptEvidenceImmutability(fixture);
+    try {
+      fixture
+          .dsl()
+          .execute(
+              "UPDATE game_session_start_session_operator_attempt "
+                  + "SET post_authorization_execution_tuple = decode('0102', 'hex') "
+                  + "WHERE target_namespace = ? AND control_plane_request_id = ?",
+              starting.startingInstance().launchAssociation().targetNamespace(),
+              starting.startingInstance().launchAssociation().controlPlaneRequestId());
+    } finally {
+      enableAttemptEvidenceImmutability(fixture);
+    }
+    assertThat(fixture.historicalRead(exact)).isEmpty();
+  }
+
+  @Test
+  void historicalReadDeniesMissingAndCorruptedAttachedAccountProjection() {
+    StartSessionPostAuthorizationExecutionTuple tuple =
+        GameSessionStartSessionTemplateAssociationRepositoryIntegrationTest.tuple(
+            "historical-original-association-projection");
+    Fixture missing = fixture(tuple, Duration.ofSeconds(30));
+    OwnerBackedStarting missingStarting = missing.startWithOwnerPins(tuple);
+    var missingRequest = historicalRequest(missingStarting);
+    disableAttemptEvidenceImmutability(missing);
+    try {
+      missing
+          .dsl()
+          .execute(
+              "UPDATE game_session_start_session_operator_attempt "
+                  + "SET account_redemption_projection = NULL "
+                  + "WHERE target_namespace = ? AND control_plane_request_id = ?",
+              missingStarting.startingInstance().launchAssociation().targetNamespace(),
+              missingStarting.startingInstance().launchAssociation().controlPlaneRequestId());
+    } finally {
+      enableAttemptEvidenceImmutability(missing);
+    }
+    assertThat(missing.historicalRead(missingRequest)).isEmpty();
+
+    Fixture corrupt = fixture(tuple, Duration.ofSeconds(30));
+    OwnerBackedStarting corruptStarting = corrupt.startWithOwnerPins(tuple);
+    var corruptRequest = historicalRequest(corruptStarting);
+    disableAttemptEvidenceImmutability(corrupt);
+    try {
+      corrupt
+          .dsl()
+          .execute(
+              "UPDATE game_session_start_session_operator_attempt "
+                  + "SET account_redemption_projection = decode('00', 'hex') "
+                  + "WHERE target_namespace = ? AND control_plane_request_id = ?",
+              corruptStarting.startingInstance().launchAssociation().targetNamespace(),
+              corruptStarting.startingInstance().launchAssociation().controlPlaneRequestId());
+    } finally {
+      enableAttemptEvidenceImmutability(corrupt);
+    }
+    assertThatThrownBy(() -> corrupt.historicalRead(corruptRequest))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("historical original StartSession owner evidence is malformed");
+  }
+
+  @Test
+  void historicalReadDeniesAnAbsentImmutableSelectionPin() {
+    StartSessionPostAuthorizationExecutionTuple tuple =
+        GameSessionStartSessionTemplateAssociationRepositoryIntegrationTest.tuple(
+            "historical-original-association-no-selection-pin");
+    Fixture fixture = fixture(tuple, Duration.ofSeconds(30));
+    OwnerBackedStarting starting = fixture.startWithOwnerAttemptWithoutPins(tuple);
+
+    assertThat(fixture.historicalRead(historicalRequest(starting))).isEmpty();
+
+    Fixture mismatched = fixture(tuple, Duration.ofSeconds(30));
+    OwnerBackedStarting mismatchedStarting = mismatched.startWithOwnerPins(tuple);
+    disableSelectionPinImmutability(mismatched);
+    try {
+      mismatched
+          .dsl()
+          .execute(
+              "UPDATE game_session_start_session_template_association_pin "
+                  + "SET association_request_digest = ? "
+                  + "WHERE target_namespace = ? AND control_plane_request_id = ?",
+              "sha256:" + "c".repeat(64),
+              mismatchedStarting.startingInstance().launchAssociation().targetNamespace(),
+              mismatchedStarting.startingInstance().launchAssociation().controlPlaneRequestId());
+    } finally {
+      enableSelectionPinImmutability(mismatched);
+    }
+    assertThat(mismatched.historicalRead(historicalRequest(mismatchedStarting))).isEmpty();
+  }
+
   private static CanonicalGameInstanceLaunchAssociationReadEvidence.Request selector(
       net.firedevops.firemud.gamesession.dto.CanonicalGameInstanceLaunchAssociation association) {
     var binding = association.launchBindingEvidence();
@@ -155,6 +329,50 @@ class GameSessionOriginalStartSessionAssociationReadIntegrationTest {
         descriptor.requestDigest(),
         descriptor.resultDigest(),
         binding.releaseAttestation().evidenceDigest());
+  }
+
+  private static HistoricalOriginalStartSessionOwnerEvidence.Request historicalRequest(
+      OwnerBackedStarting starting) {
+    return new HistoricalOriginalStartSessionOwnerEvidence.Request(
+        selector(starting.startingInstance().launchAssociation()),
+        starting.claim().ownerAttemptId(),
+        starting.claim().ownerFence());
+  }
+
+  private static int count(Fixture fixture, String tableName) {
+    return fixture.dsl().fetchCount(DSL.table(DSL.name(tableName)));
+  }
+
+  private static void disableAttemptEvidenceImmutability(Fixture fixture) {
+    fixture
+        .dsl()
+        .execute(
+            "ALTER TABLE game_session_start_session_operator_attempt "
+                + "DISABLE TRIGGER game_session_start_session_operator_attempt_immutable");
+  }
+
+  private static void enableAttemptEvidenceImmutability(Fixture fixture) {
+    fixture
+        .dsl()
+        .execute(
+            "ALTER TABLE game_session_start_session_operator_attempt "
+                + "ENABLE TRIGGER game_session_start_session_operator_attempt_immutable");
+  }
+
+  private static void disableSelectionPinImmutability(Fixture fixture) {
+    fixture
+        .dsl()
+        .execute(
+            "ALTER TABLE game_session_start_session_template_association_pin "
+                + "DISABLE TRIGGER gs_start_session_template_association_pin_immutable");
+  }
+
+  private static void enableSelectionPinImmutability(Fixture fixture) {
+    fixture
+        .dsl()
+        .execute(
+            "ALTER TABLE game_session_start_session_template_association_pin "
+                + "ENABLE TRIGGER gs_start_session_template_association_pin_immutable");
   }
 
   private static CompleteLaunchBindingEvidence completeBinding(
@@ -364,6 +582,32 @@ class GameSessionOriginalStartSessionAssociationReadIntegrationTest {
       return new OwnerBackedStarting(startingInstance, claim);
     }
 
+    OwnerBackedStarting startWithOwnerAttemptWithoutPins(
+        StartSessionPostAuthorizationExecutionTuple tuple) {
+      ReservationResult reservation =
+          Objects.requireNonNull(transactions.execute(status -> attempts.reserve(tuple)));
+      AttemptClaim claim = reservation.claim().orElseThrow();
+      transactions.executeWithoutResult(
+          status ->
+              attempts.attachAccountRedemptionProjection(
+                  claim,
+                  GameSessionStartSessionTemplateAssociationRepositoryIntegrationTest.projection(
+                      tuple)));
+      var descriptor = unpinnedDescriptor(tuple, source);
+      var binding = completeBinding(descriptor, CANONICAL_VERSION);
+      StartingInstance startingInstance =
+          Objects.requireNonNull(
+              transactions.execute(
+                  status ->
+                      starting.createStarting(
+                          tenantAssociation,
+                          binding,
+                          tuple.preAuthorizationTuple().action().target().ownerAccountId(),
+                          tuple.controlPlaneRequestId(),
+                          "f".repeat(64))));
+      return new OwnerBackedStarting(startingInstance, claim);
+    }
+
     StartingInstance startWithoutOwnerPins(StartSessionPostAuthorizationExecutionTuple tuple) {
       var descriptor = unpinnedDescriptor(tuple, source);
       var binding = completeBinding(descriptor, CANONICAL_VERSION);
@@ -381,6 +625,11 @@ class GameSessionOriginalStartSessionAssociationReadIntegrationTest {
     java.util.Optional<OriginalStartSessionAssociation> read(
         CanonicalGameInstanceLaunchAssociationReadEvidence.Request selector) {
       return reads.readOriginalStartSessionAssociation(selector);
+    }
+
+    java.util.Optional<HistoricalOriginalStartSessionOwnerEvidence.Result> historicalRead(
+        HistoricalOriginalStartSessionOwnerEvidence.Request request) {
+      return reads.readHistoricalOriginalStartSessionOwnerEvidence(request);
     }
   }
 
