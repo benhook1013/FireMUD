@@ -3871,6 +3871,102 @@ routes:
     end_user_token_required: false
     required_live_checks: [exact_attempt_tuple, committed_pointer_audit_binding, aborted_attempt_future_commit_fence]
     required_fields: [hold_id, hold_fence, tenant_id, realm_uuid, playable_state_namespace_uuid, playable_state_scope, game_instance_id, version_id, active_lifecycle_epoch, initial_admission_request_id, request_digest, expected_no_prior_pointer, expected_catalog_revision]
+  - service: account-service
+    route: GetCurrentReadinessReceiverMetadata
+    transport: grpc
+    classification: internal_workload
+    route_status: target_not_currently_routable
+    auth_path: exact_mtls_workload
+    accepted_token_profiles: []
+    token_type: none
+    token_issuer: none
+    token_audience: none
+    method_policy: exact_declared_route
+    allowed_callers:
+      any_of: [game-session-service]
+    mtls_callers:
+      any_of: ["spiffe://firemud/ns/{namespace}/sa/game-session-service"]
+    end_user_token_required: false
+  - service: account-service
+    route: GetCurrentReadinessProbeOwner
+    transport: grpc
+    classification: internal_workload
+    route_status: target_not_currently_routable
+    auth_path: exact_mtls_workload
+    accepted_token_profiles: []
+    token_type: none
+    token_issuer: none
+    token_audience: none
+    method_policy: exact_declared_route
+    allowed_callers:
+      any_of: [game-session-service]
+    mtls_callers:
+      any_of: ["spiffe://firemud/ns/{namespace}/sa/game-session-service"]
+    end_user_token_required: false
+  - service: account-service
+    route: ReceiveReadinessProbe
+    transport: grpc
+    classification: internal_workload
+    route_status: target_not_currently_routable
+    auth_path: exact_mtls_workload
+    accepted_token_profiles: []
+    token_type: none
+    token_issuer: none
+    token_audience: none
+    method_policy: exact_declared_route
+    allowed_callers:
+      any_of: [account-service]
+    mtls_callers:
+      any_of: ["spiffe://firemud/ns/{namespace}/sa/account-service"]
+    end_user_token_required: false
+  - service: account-service
+    route: IssueReadinessProbes
+    transport: grpc
+    classification: internal_workload
+    route_status: target_not_currently_routable
+    auth_path: exact_mtls_workload
+    accepted_token_profiles: []
+    token_type: none
+    token_issuer: none
+    token_audience: none
+    method_policy: exact_declared_route
+    allowed_callers:
+      any_of: [account-jwt-readiness-harness]
+    mtls_callers:
+      any_of: ["spiffe://firemud/ns/{namespace}/sa/account-jwt-readiness-harness"]
+    end_user_token_required: false
+  - service: account-service
+    route: ValidateReadinessProbe
+    transport: grpc
+    classification: internal_workload
+    route_status: target_not_currently_routable
+    auth_path: exact_mtls_workload
+    accepted_token_profiles: []
+    token_type: none
+    token_issuer: none
+    token_audience: none
+    method_policy: exact_declared_route
+    allowed_callers:
+      any_of: [account-jwt-readiness-harness]
+    mtls_callers:
+      any_of: ["spiffe://firemud/ns/{namespace}/sa/account-jwt-readiness-harness"]
+    end_user_token_required: false
+  - service: game-session-service
+    route: ReceiveReadinessProbe
+    transport: grpc
+    classification: internal_workload
+    route_status: target_not_currently_routable
+    auth_path: exact_mtls_workload
+    accepted_token_profiles: []
+    token_type: none
+    token_issuer: none
+    token_audience: none
+    method_policy: exact_declared_route
+    allowed_callers:
+      any_of: [account-service]
+    mtls_callers:
+      any_of: ["spiffe://firemud/ns/{namespace}/sa/account-service"]
+    end_user_token_required: false
   - service: world-management-service
     route: AcquireInitialAdmissionBindHold
     transport: grpc

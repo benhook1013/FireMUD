@@ -16,6 +16,7 @@ dependencies {
     implementation(libs.opentelemetry.sdk)
     implementation(libs.opentelemetry.exporter.otlp)
     implementation(libs.spring.boot.starter)
+    implementation("org.springframework:spring-tx")
     implementation(libs.spring.boot.starter.actuator)
     implementation(libs.spring.boot.starter.validation)
     compileOnly(libs.spring.boot.starter.web)
@@ -26,4 +27,5 @@ dependencies {
     compileOnly(libs.spotbugs.annotations)
     testImplementation(libs.grpc.spring.boot.starter)
     testImplementation(libs.spring.boot.starter.test)
+    testImplementation(testFixtures(project(":common-test-support")))
 }

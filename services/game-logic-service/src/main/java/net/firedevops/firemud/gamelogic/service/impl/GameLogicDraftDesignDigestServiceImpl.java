@@ -1,17 +1,35 @@
 package net.firedevops.firemud.gamelogic.service.impl;
 
+import java.util.Objects;
+import net.firedevops.firemud.common.gamelogic.GameLogicPublicationSourceReadBinding;
 import net.firedevops.firemud.gamelogic.service.GameLogicDraftDesignDigestService;
+import net.firedevops.firemud.gamelogic.sourceintake.GameLogicPublicationSourceReadService;
 import org.springframework.stereotype.Service;
 
 @Service
-public class GameLogicDraftDesignDigestServiceImpl implements GameLogicDraftDesignDigestService {
+public final class GameLogicDraftDesignDigestServiceImpl
+    implements GameLogicDraftDesignDigestService {
+  private final GameLogicPublicationSourceReadService publicationSourceReadService;
+
+  /** Spring's default owner keeps this route denied until explicit composition provides storage. */
+  public GameLogicDraftDesignDigestServiceImpl() {
+    publicationSourceReadService = null;
+  }
+
+  /** Explicit composition for owner-local proofs and tests; this constructor is not auto-wired. */
+  public GameLogicDraftDesignDigestServiceImpl(
+      GameLogicPublicationSourceReadService publicationSourceReadService) {
+    this.publicationSourceReadService =
+        Objects.requireNonNull(publicationSourceReadService, "publicationSourceReadService");
+  }
 
   @Override
-  public GameLogicDraftDesignDigest getDraftDesignDigest(String tenantId, String versionId) {
-    if (versionId == null || versionId.isBlank()) {
-      throw new IllegalArgumentException("version_id is required");
+  public GameLogicPublicationSourceReadService.Result getDraftDesignDigest(
+      GameLogicPublicationSourceReadBinding binding) {
+    if (publicationSourceReadService == null) {
+      throw new UnsupportedDigestScopeException(
+          "Game Logic retained publication source reader is not configured");
     }
-    throw new UnsupportedDigestScopeException(
-        "Game Logic owner-local manifest and provenance are unavailable");
+    return publicationSourceReadService.read(binding);
   }
 }

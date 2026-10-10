@@ -5,6 +5,7 @@ package world_management.v1;
 import "entity-management/v1/entity_management_service.proto";
 import "shared/v1/errors.proto";
 import "shared/v1/instance_refs.proto";
+import "world-management/v1/world_canonical_instance_lifecycle_read.proto";
 
 option java_package = "net.firedevops.firemud.worldmanagement.v1";
 option java_multiple_files = true;
@@ -32,6 +33,173 @@ service WorldManagementService {
       returns (ValidateWorldUpgradeMappingsResponse);
   rpc ListRoomOccupants(ListRoomOccupantsRequest) returns (ListRoomOccupantsResponse);
   rpc ApplyRoomAmbientStatePatch(ApplyRoomAmbientStatePatchRequest) returns (ApplyRoomAmbientStatePatchResponse);
+}
+
+// Explicitly unwired authenticated authored-source intake boundary. This service remains separate
+// from the runtime WorldManagementService until its caller and deployment path are authorized.
+service WorldAuthoredSourceIntakeService {
+  rpc IntakeAuthoredWorldSource(IntakeAuthoredWorldSourceRequest)
+      returns (IntakeAuthoredWorldSourceResponse);
+  rpc ReadAuthoredWorldSourceIntake(ReadAuthoredWorldSourceIntakeRequest)
+      returns (ReadAuthoredWorldSourceIntakeResponse);
+  rpc ReadAuthoredWorldSourceIntakeById(ReadAuthoredWorldSourceIntakeByIdRequest)
+      returns (ReadAuthoredWorldSourceIntakeByIdResponse);
+}
+
+// Explicitly unwired Game Session-to-World canonical launch preparation transport.
+service WorldCanonicalInstancePreparationService {
+  rpc PrepareCanonicalWorldInstance(PrepareCanonicalWorldInstanceRequest)
+      returns (PrepareCanonicalWorldInstanceResponse);
+}
+
+// Explicitly unwired Account-authenticated read of one original StartSession World terminal.
+service WorldStartSessionExecutionTerminalReadService {
+  rpc ReadWorldStartSessionExecutionTerminal(
+      ReadWorldStartSessionExecutionTerminalRequest)
+      returns (ReadWorldStartSessionExecutionTerminalResponse);
+}
+
+message ReadWorldStartSessionExecutionTerminalRequest {
+  // Fresh correlation identity for this read, distinct from all retained operation identities.
+  string read_request_id = 1;
+  string target_namespace = 2;
+  bytes original_post_authorization_tuple = 3;
+  string account_world_participation_id = 4;
+  int64 account_world_participation_fence = 5;
+  string game_session_owner_attempt_id = 6;
+  int64 game_session_owner_fence = 7;
+  string canonical_game_instance_id = 8;
+  // Exact original preparation input. World never reparses or normalizes it during recovery.
+  string preparation_input_json = 9;
+}
+
+message ReadWorldStartSessionExecutionTerminalResponse {
+  string read_request_id = 1;
+  // The only result is the existing closed WorldStartSessionExecutionTerminal carrier.
+  bytes canonical_terminal_bytes = 2;
+}
+
+// The exact ten-field committed Game Session launch-association selector.
+message PrepareCanonicalWorldInstanceRequest {
+  string read_request_id = 1;
+  string target_namespace = 2;
+  string canonical_tenant_id = 3;
+  string world_slug = 4;
+  string game_instance_uuid = 5;
+  string control_plane_request_id = 6;
+  string launch_descriptor_id = 7;
+  string expected_descriptor_request_digest = 8;
+  string expected_descriptor_result_digest = 9;
+  string expected_release_attestation_evidence_digest = 10;
+}
+
+message PrepareCanonicalWorldInstanceResponse {
+  PrepareCanonicalWorldInstanceRequest request = 1;
+  ReadWorldCanonicalInstanceLifecycleResponse lifecycle = 2;
+  shared.v1.ErrorDetail error = 3;
+}
+
+message IntakeAuthoredWorldSourceRequest {
+  int32 schema_version = 1;
+  string target_namespace = 2;
+  string intake_request_id = 3;
+  string canonical_tenant_id = 4;
+  string world_slug = 5;
+  string source_operation_id = 6;
+  string expected_source_evidence_digest = 7;
+}
+
+message IntakeAuthoredWorldSourceResponse {
+  int32 schema_version = 1;
+  string target_namespace = 2;
+  string intake_request_id = 3;
+  string canonical_tenant_id = 4;
+  string world_slug = 5;
+  string source_operation_id = 6;
+  string expected_source_evidence_digest = 7;
+  string operation_id = 8;
+  // Recomputable from the echoed intake binding using the World request digest contract.
+  string request_digest = 9;
+  // Opaque authenticated World attestation; it binds private World state and is not client-recomputable.
+  string receipt_digest = 10;
+}
+
+message ReadAuthoredWorldSourceIntakeRequest {
+  int32 schema_version = 1;
+  string target_namespace = 2;
+  // A distinct nonnil identity for this read; intake_request_id remains the stored receipt key.
+  string request_id = 3;
+  string intake_request_id = 4;
+  string canonical_tenant_id = 5;
+  string world_slug = 6;
+  string source_operation_id = 7;
+  string expected_source_evidence_digest = 8;
+}
+
+message ReadAuthoredWorldSourceIntakeResponse {
+  int32 schema_version = 1;
+  string target_namespace = 2;
+  string request_id = 3;
+  string intake_request_id = 4;
+  string canonical_tenant_id = 5;
+  string world_slug = 6;
+  string source_operation_id = 7;
+  string expected_source_evidence_digest = 8;
+  string operation_id = 9;
+  // Recomputable from the echoed intake binding using the World request digest contract.
+  string request_digest = 10;
+  // Opaque authenticated World attestation; it binds private World state and is not client-recomputable.
+  string receipt_digest = 11;
+}
+
+// Exact owner read of one retained intake, selected only by its immutable intake request ID.
+message ReadAuthoredWorldSourceIntakeByIdRequest {
+  int32 schema_version = 1;
+  string target_namespace = 2;
+  // A distinct caller-owned identity for this read; it is not the stored receipt key.
+  string read_request_id = 3;
+  string intake_request_id = 4;
+  string canonical_tenant_id = 5;
+}
+
+message AuthoredWorldSourceEvidence {
+  int32 schema_version = 1;
+  string target_namespace = 2;
+  string registration_request_id = 3;
+  string operation_id = 4;
+  string request_digest = 5;
+  string canonical_tenant_id = 6;
+  string tenant_slug = 7;
+  string world_slug = 8;
+  string world_display_name = 9;
+  int64 source_game_row_id = 10;
+  string source_game_tenant_key = 11;
+  string provenance_kind = 12;
+  string evidence_digest = 13;
+}
+
+// Public immutable receipt fields only. World-local tenant/version keys are deliberately omitted.
+message AuthoredWorldSourceIntakePublicReceipt {
+  int32 schema_version = 1;
+  string target_namespace = 2;
+  string intake_request_id = 3;
+  string operation_id = 4;
+  string canonical_tenant_id = 5;
+  string world_slug = 6;
+  string source_operation_id = 7;
+  string source_evidence_digest = 8;
+  string request_digest = 9;
+  string receipt_digest = 10;
+  AuthoredWorldSourceEvidence source = 11;
+}
+
+message ReadAuthoredWorldSourceIntakeByIdResponse {
+  int32 schema_version = 1;
+  string target_namespace = 2;
+  string read_request_id = 3;
+  string intake_request_id = 4;
+  string canonical_tenant_id = 5;
+  AuthoredWorldSourceIntakePublicReceipt receipt = 6;
 }
 
 enum WorldInstanceLifecycleStatus {
@@ -347,6 +515,53 @@ enum WorldDesignAggregateType {
   WORLD_DESIGN_AGGREGATE_TYPE_GENERATION_RULE = 5;
   WORLD_DESIGN_AGGREGATE_TYPE_WORLD_ENTITY_SPAWN_BINDING = 6;
   WORLD_DESIGN_AGGREGATE_TYPE_WORLD_GENERATION_SUBTREE = 7;
+}
+
+// Canonical authored room identity for a selected World start location. This is not a runtime
+// room instance or a private database key.
+message RoomTemplateRef {
+  string tenant_id = 1;
+  string version_id = 2;
+  string room_template_id = 3;
+}
+
+message WorldFreshGraphFamilyCount {
+  WorldDesignAggregateType family = 1;
+  // Presence is carried by this repeated entry; zero is an explicit empty-family declaration.
+  optional int32 count = 2;
+}
+
+enum WorldInboundSourceFamily {
+  WORLD_INBOUND_SOURCE_FAMILY_UNSPECIFIED = 0;
+  WORLD_INBOUND_SOURCE_FAMILY_LOOT_REFERENCE_ROOT = 1;
+  WORLD_INBOUND_SOURCE_FAMILY_LOOT_REFERENCE_ATTACHMENT = 2;
+  WORLD_INBOUND_SOURCE_FAMILY_BEHAVIOR_SELECTION = 3;
+  WORLD_INBOUND_SOURCE_FAMILY_BEHAVIOR_BINDING = 4;
+  WORLD_INBOUND_SOURCE_FAMILY_AUTOMATION_HOOK = 5;
+  WORLD_INBOUND_SOURCE_FAMILY_AUTOMATION_SCRIPT_REFERENCE = 6;
+  WORLD_INBOUND_SOURCE_FAMILY_AUTOMATION_TARGET_BINDING = 7;
+}
+
+message WorldInboundSourceFamilyCount {
+  WorldInboundSourceFamily family = 1;
+  // Presence is carried by this repeated entry; only a source-authored zero is currently supported.
+  optional int32 count = 2;
+}
+
+// Versioned, closed selected-inbound declaration. This schema defines family identities and
+// counts only; nonempty member grammar remains unsupported and must be rejected by consumers.
+message WorldInboundSourceClosureDeclaration {
+  uint32 schema_version = 1;
+  repeated WorldInboundSourceFamilyCount family_counts = 2;
+}
+
+// Complete fresh graph declaration bound into the original Game Design revision payload.
+message WorldFreshGraphDeclaration {
+  string tenant_id = 1;
+  string version_id = 2;
+  RoomTemplateRef start_location = 3;
+  repeated WorldFreshGraphFamilyCount family_counts = 4;
+  WorldInboundSourceClosureDeclaration inbound_source_closure = 5;
 }
 
 enum WorldDesignMutationResult {

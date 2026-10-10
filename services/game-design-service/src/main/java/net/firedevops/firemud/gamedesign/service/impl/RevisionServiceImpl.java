@@ -46,6 +46,10 @@ public class RevisionServiceImpl implements RevisionService {
         dto.tenantId(),
         dto.versionId(),
         dto.revisionKind());
+    if ("GAMEPLAY_RULE".equals(dto.revisionKind())) {
+      throw new IllegalArgumentException(
+          "INVALID_ARGUMENT: GAMEPLAY_RULE requires authorized coordinated source authoring");
+    }
     Game game =
         Optional.ofNullable(gameRepository.findByTenantId(dto.tenantId()))
             .orElseThrow(() -> new IllegalArgumentException("game not found"));

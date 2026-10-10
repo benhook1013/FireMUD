@@ -41,6 +41,8 @@ firemud:
     private-key: ${FIREMUD_GRPC_PRIVATE_KEY_PATH:certs/client.key}
     ca-cert: ${FIREMUD_GRPC_CA_CERT_PATH:certs/ca.crt}
   account:
+    start-session-operator-authorization:
+      enabled: ${FIREMUD_ACCOUNT_START_SESSION_OPERATOR_AUTHORIZATION_ENABLED:false}
     credentials:
       cleanup:
         batch-size: ${FIREMUD_ACCOUNT_CREDENTIAL_CLEANUP_BATCH_SIZE:100}

@@ -1,0 +1,72 @@
+syntax = "proto3";
+
+package world_management.v1;
+
+option java_package = "net.firedevops.firemud.worldmanagement.v1";
+option java_multiple_files = true;
+
+// Standalone Game Design-to-World selected-publication freeze transport. The authenticated
+// producer sends the exact Account order and immutable selection digest; World resolves the
+// retained APPLIED graph and derives its private owner binding locally.
+service WorldSelectedDraftPublicationFreezeService {
+  rpc BeginVersionPublicationFreeze(BeginVersionPublicationFreezeRequest)
+      returns (BeginVersionPublicationFreezeResponse);
+  rpc ReadSelectedPublicationArtifactInventory(
+      ReadSelectedPublicationArtifactInventoryRequest)
+      returns (ReadSelectedPublicationArtifactInventoryResponse);
+}
+
+enum WorldSelectedDraftPublicationFreezePhase {
+  WORLD_SELECTED_DRAFT_PUBLICATION_FREEZE_PHASE_UNSPECIFIED = 0;
+  WORLD_SELECTED_DRAFT_PUBLICATION_FREEZE_PHASE_FROZEN = 1;
+}
+
+message BeginVersionPublicationFreezeRequest {
+  int32 schema_version = 1;
+  string target_namespace = 2;
+  string canonical_tenant_id = 3;
+  string canonical_version_id = 4;
+  string publication_request_id = 5;
+  int64 expected_version_state_epoch = 6;
+  // The lowercase SHA-256 hex digest of the complete immutable Game Design selection.
+  string request_digest = 7;
+  // Complete canonical AccountPublicationAuthorizationBinding bytes; lookup identity only, max 1 MiB.
+  bytes account_publication_authorization_binding = 8;
+}
+
+message BeginVersionPublicationFreezeResponse {
+  // Echo every request field exactly, then return the complete committed World freeze tuple.
+  int32 schema_version = 1;
+  string target_namespace = 2;
+  string canonical_tenant_id = 3;
+  string canonical_version_id = 4;
+  string publication_request_id = 5;
+  int64 expected_version_state_epoch = 6;
+  string request_digest = 7;
+  bytes account_publication_authorization_binding = 8;
+  string publication_fence = 9;
+  WorldSelectedDraftPublicationFreezePhase owner_freeze_phase = 10;
+  string applied_commit_id = 11;
+  string content_digest = 12;
+  int32 digest_schema_version = 13;
+  // Owner-observed epoch from the committed freeze, separately bound to the request expectation.
+  int64 version_state_epoch = 14;
+  // Exact World intake correlation from the retained APPLIED owner binding; not caller input or
+  // publication authority. The later selector read validates it against that same APPLIED result.
+  string world_intake_request_id = 15;
+}
+
+message ReadSelectedPublicationArtifactInventoryRequest {
+  int32 schema_version = 1;
+  // The exact original freeze input and committed acknowledgement are lookup identity only.
+  BeginVersionPublicationFreezeRequest freeze_request = 2;
+  BeginVersionPublicationFreezeResponse freeze_acknowledgement = 3;
+}
+
+message ReadSelectedPublicationArtifactInventoryResponse {
+  int32 schema_version = 1;
+  // Canonical WorldSelectedPublicationArtifactInventoryEvidence.PublicEvidence bytes. This is
+  // the public projection only; the private owner envelope and numeric owner keys never egress.
+  bytes canonical_public_inventory = 2;
+  string public_inventory_digest = 3;
+}

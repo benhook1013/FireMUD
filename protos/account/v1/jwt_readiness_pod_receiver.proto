@@ -1,0 +1,56 @@
+syntax = "proto3";
+
+package account.v1;
+
+import "account/v1/jwt_readiness_receiver.proto";
+
+option java_package = "net.firedevops.firemud.account.v1";
+option java_multiple_files = true;
+
+// Isolated Account-Pod receiver for one exact, non-authorizing pending-key probe.
+service AccountJwtReadinessPodReceiverService {
+  rpc ReceiveReadinessProbe(ReceiveAccountJwtReadinessProbeRequest)
+      returns (ReceiveAccountJwtReadinessProbeResponse);
+}
+
+message ReceiveAccountJwtReadinessProbeRequest {
+  int32 schema_version = 1;
+  ReadinessProbeCoordinates coordinates = 2;
+  string compact_jwt = 3;
+}
+
+// Receiver-derived identity. Unlike the shared caller identity, the trust revision is opaque
+// because Account's protected JWKS binding uses a string revision.
+message AccountJwtPodReceiverIdentity {
+  string validator_id = 1;
+  string deployment_uid = 2;
+  string pod_uid = 3;
+  string pod_ip = 4;
+  string direct_pod_endpoint = 5;
+  string canonical_service_uri = 6;
+  string image = 7;
+  string verifier_config_sha256 = 8;
+  string applicability_matrix_digest = 9;
+  string source_inventory_revision = 10;
+  string source_inventory_digest = 11;
+  string server_leaf_spki_sha256 = 12;
+  AccountSourceIdentity account_jwks_source_identity = 13;
+  string jwks_trust_binding_revision = 14;
+}
+
+message ReceiveAccountJwtReadinessProbeResponse {
+  enum ObservationOutcome {
+    OBSERVATION_OUTCOME_UNSPECIFIED = 0;
+    VERIFIED = 1;
+    INAPPLICABLE_REJECT = 2;
+  }
+
+  int32 schema_version = 1;
+  ReadinessProbeCoordinates coordinates = 2;
+  string compact_token_sha256 = 3;
+  string verified_key_id = 4;
+  AccountJwtPodReceiverIdentity receiver_identity = 5;
+  AccountPodTargetBinding account_pod_target = 6;
+  int64 observed_at_epoch_seconds = 7;
+  ObservationOutcome outcome = 8;
+}

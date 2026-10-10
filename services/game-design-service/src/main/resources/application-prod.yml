@@ -51,6 +51,8 @@ firemud:
     grpc:
       public-methods:
         - gamedesign.v1.TenantIdentityService/ResolveFreshTenantCreation
+        - gamedesign.v1.GameDesignService/GetCompleteLaunchBinding
+        - gamedesign.v1.TenantIdentityService/ResolveAuthoredWorldSource
   grpc:
     workload-namespace: ${FIREMUD_GRPC_WORKLOAD_NAMESPACE:}
     cert-chain: ${FIREMUD_GRPC_CERT_CHAIN_PATH:certs/client.crt}

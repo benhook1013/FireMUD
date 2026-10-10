@@ -1,0 +1,30 @@
+syntax = "proto3";
+
+package account.v1;
+
+option java_package = "net.firedevops.firemud.account.v1";
+option java_multiple_files = true;
+
+// Standalone, unregistered command for settling one finalized Entity or Automation intake operation.
+service AccountSelectedOwnerIntakeSettlementService {
+  rpc SettleSelectedOwnerIntake(SelectedOwnerIntakeSettlementRequest)
+      returns (SelectedOwnerIntakeSettlementResponse);
+}
+
+message SelectedOwnerIntakeSettlementRequest {
+  int32 schema_version = 1;
+  string target_namespace = 2;
+  // Independent transport correlation; the retained authorization remains the settlement key.
+  string transport_request_id = 3;
+  // Complete canonical Account authorization bytes and their SHA-256 digest.
+  bytes original_intake_authorization_binding = 4;
+  string intake_authorization_digest = 5;
+}
+
+message SelectedOwnerIntakeSettlementResponse {
+  // Exact unchanged request echo.
+  SelectedOwnerIntakeSettlementRequest request = 1;
+  // Complete immutable Account settlement receipt bytes and their SHA-256 digest.
+  bytes settlement_receipt = 2;
+  string settlement_receipt_digest = 3;
+}

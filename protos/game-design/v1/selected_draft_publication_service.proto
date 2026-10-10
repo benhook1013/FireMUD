@@ -1,0 +1,38 @@
+syntax = "proto3";
+
+package game_design.v1;
+
+option java_package = "net.firedevops.firemud.gamedesign.v1";
+option java_multiple_files = true;
+
+// Standalone immutable reservation read; authenticate exact same-namespace Account or World
+// Management workload before decoding. SELECTED attests neither current DRAFT state nor actor
+// authority, a source hold, World freeze, release/settlement, or runtime admission.
+service GameDesignSelectedDraftPublicationReadService {
+  rpc ReadSelectedDraftPublication(ReadSelectedDraftPublicationRequest)
+      returns (ReadSelectedDraftPublicationResponse);
+}
+
+message ReadSelectedDraftPublicationRequest {
+  int32 schema_version = 1;
+  string target_namespace = 2;
+  string read_request_id = 3;
+  // Complete original AuthoredDraftPublishSelectionBinding canonical bytes and SHA-256 digest.
+  bytes original_selection = 4;
+  string selection_digest = 5;
+}
+
+enum SelectedDraftPublicationStatus {
+  SELECTED_DRAFT_PUBLICATION_STATUS_UNSPECIFIED = 0;
+  SELECTED_DRAFT_PUBLICATION_STATUS_SELECTED = 1;
+}
+
+message ReadSelectedDraftPublicationResponse {
+  // Echo every request field exactly. Missing/conflicting/unavailable storage is a non-OK RPC.
+  int32 schema_version = 1;
+  string target_namespace = 2;
+  string read_request_id = 3;
+  bytes original_selection = 4;
+  string selection_digest = 5;
+  SelectedDraftPublicationStatus status = 6;
+}

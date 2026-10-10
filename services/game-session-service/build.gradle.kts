@@ -93,6 +93,7 @@ dependencies {
     testFixturesCompileOnly(libs.testcontainers.postgresql)
     testFixturesCompileOnly(libs.testcontainers)
     testImplementation(libs.grpc.inprocess)
+    testImplementation(libs.bouncycastle.pkix)
     testImplementation(testFixtures(project(":game-session-service")))
     testImplementation(project(":game-logic-service"))
 }

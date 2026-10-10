@@ -11,6 +11,7 @@ import java.util.Map;
 import java.util.Optional;
 import net.firedevops.firemud.common.security.SessionContext;
 import net.firedevops.firemud.gamedesign.dto.HelpTopicDto;
+import net.firedevops.firemud.gamedesign.service.CompleteLaunchBindingService;
 import net.firedevops.firemud.gamedesign.service.GameAuthoredHelpTopicService;
 import net.firedevops.firemud.gamedesign.service.LaunchDescriptorService;
 import net.firedevops.firemud.gamedesign.service.PingService;
@@ -38,6 +39,7 @@ class GameDesignGrpcServiceHelpTopicTest {
           Mockito.mock(RevisionService.class),
           Mockito.mock(VersionService.class),
           Mockito.mock(LaunchDescriptorService.class),
+          Mockito.mock(CompleteLaunchBindingService.class),
           Mockito.mock(TemplateRemapSetService.class),
           Mockito.mock(VersionAssetArtifactService.class),
           Mockito.mock(SettingsAuthorityService.class),

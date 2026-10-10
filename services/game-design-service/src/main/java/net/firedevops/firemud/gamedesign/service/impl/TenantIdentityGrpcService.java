@@ -7,9 +7,14 @@ import java.util.Optional;
 import java.util.UUID;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
 import net.firedevops.firemud.common.security.SessionContext;
+import net.firedevops.firemud.common.tenant.AuthoredWorldSourceEvidence;
+import net.firedevops.firemud.common.tenant.AuthoredWorldSourceGrpcCodec;
 import net.firedevops.firemud.common.tenant.FreshTenantCreationEvidence;
 import net.firedevops.firemud.common.tenant.GameTenantCreationDigest;
+import net.firedevops.firemud.gamedesign.repository.GameAuthoredWorldSourceRepository;
 import net.firedevops.firemud.gamedesign.repository.GameTenantCreationRepository;
+import net.firedevops.firemud.gamedesign.v1.ResolveAuthoredWorldSourceRequest;
+import net.firedevops.firemud.gamedesign.v1.ResolveAuthoredWorldSourceResponse;
 import net.firedevops.firemud.gamedesign.v1.ResolveFreshTenantCreationRequest;
 import net.firedevops.firemud.gamedesign.v1.ResolveFreshTenantCreationResponse;
 import net.firedevops.firemud.gamedesign.v1.TenantIdentityServiceGrpc;
@@ -20,18 +25,117 @@ import org.springframework.dao.DataAccessResourceFailureException;
 import org.springframework.dao.TransientDataAccessException;
 import org.springframework.grpc.server.service.GrpcService;
 
-/** Read-only owner handoff for one exact, persisted fresh tenant creation. */
+/** Read-only owner handoffs for exact persisted tenant and authored-world source evidence. */
 @GrpcService
 public class TenantIdentityGrpcService
     extends TenantIdentityServiceGrpc.TenantIdentityServiceImplBase {
   private final GameTenantCreationRepository creationRepository;
+  private final GameAuthoredWorldSourceRepository authoredWorldSourceRepository;
   private final String workloadNamespace;
 
   public TenantIdentityGrpcService(
       GameTenantCreationRepository creationRepository,
+      GameAuthoredWorldSourceRepository authoredWorldSourceRepository,
       @Value("${firemud.grpc.workload-namespace:}") String workloadNamespace) {
     this.creationRepository = creationRepository;
+    this.authoredWorldSourceRepository = authoredWorldSourceRepository;
     this.workloadNamespace = workloadNamespace;
+  }
+
+  /** Read-only exact lookup of one Game Design-authored World source operation. */
+  @Override
+  public void resolveAuthoredWorldSource(
+      ResolveAuthoredWorldSourceRequest request,
+      StreamObserver<ResolveAuthoredWorldSourceResponse> responseObserver) {
+    if (SessionContext.hasAuthenticatedCallerContext() || !isWorldManagementPeer()) {
+      responseObserver.onError(
+          Status.PERMISSION_DENIED
+              .withDescription(
+                  "Verified same-namespace World Management workload identity without caller "
+                      + "context is required")
+              .asRuntimeException());
+      return;
+    }
+
+    final AuthoredWorldSourceGrpcCodec.ReadRequest readRequest;
+    try {
+      readRequest = AuthoredWorldSourceGrpcCodec.fromReadRequest(workloadNamespace, request);
+    } catch (IllegalArgumentException exception) {
+      responseObserver.onError(
+          Status.INVALID_ARGUMENT
+              .withDescription("Canonical exact authored-world source request is required")
+              .asRuntimeException());
+      return;
+    }
+
+    Optional<AuthoredWorldSourceEvidence> resolved;
+    try {
+      resolved =
+          authoredWorldSourceRepository.read(
+              readRequest.operationId(),
+              readRequest.canonicalTenantId(),
+              readRequest.worldSlug(),
+              workloadNamespace);
+    } catch (GameAuthoredWorldSourceRepository.InvalidSourceEvidenceException
+        | GameAuthoredWorldSourceRepository.RegistrationConflictException
+        | org.jooq.exception.TooManyRowsException exception) {
+      responseObserver.onError(
+          Status.FAILED_PRECONDITION
+              .withDescription("Authored-world source evidence is incomplete or inconsistent")
+              .asRuntimeException());
+      return;
+    } catch (DataAccessResourceFailureException
+        | TransientDataAccessException
+        | org.springframework.transaction.TransactionException exception) {
+      responseObserver.onError(
+          Status.UNAVAILABLE
+              .withDescription("Authored-world source evidence is temporarily unavailable")
+              .asRuntimeException());
+      return;
+    } catch (org.springframework.dao.DataAccessException exception) {
+      Status.Code code =
+          hasConnectionFailureSqlState(exception) ? Status.Code.UNAVAILABLE : Status.Code.INTERNAL;
+      responseObserver.onError(
+          Status.fromCode(code)
+              .withDescription(
+                  code == Status.Code.UNAVAILABLE
+                      ? "Authored-world source evidence is temporarily unavailable"
+                      : "Authored-world source evidence could not be read")
+              .asRuntimeException());
+      return;
+    } catch (org.jooq.exception.DataAccessException exception) {
+      responseObserver.onError(
+          Status.UNAVAILABLE
+              .withDescription("Authored-world source storage could not complete the read")
+              .asRuntimeException());
+      return;
+    } catch (RuntimeException exception) {
+      responseObserver.onError(
+          Status.INTERNAL
+              .withDescription("Authored-world source evidence could not be read")
+              .asRuntimeException());
+      return;
+    }
+    if (resolved.isEmpty()) {
+      responseObserver.onError(
+          Status.NOT_FOUND
+              .withDescription("No authored-world source matches the exact selector")
+              .asRuntimeException());
+      return;
+    }
+
+    final ResolveAuthoredWorldSourceResponse response;
+    try {
+      response = AuthoredWorldSourceGrpcCodec.toReadResponse(readRequest, resolved.orElseThrow());
+    } catch (IllegalArgumentException exception) {
+      responseObserver.onError(
+          Status.FAILED_PRECONDITION
+              .withDescription("Authored-world source readback does not match the exact request")
+              .asRuntimeException());
+      return;
+    }
+    responseObserver.onNext(response);
+    responseObserver.onCompleted();
   }
 
   @Override
@@ -171,6 +275,14 @@ public class TenantIdentityGrpcService
     return peer != null
         && GrpcPeerIdentity.isValidNamespace(workloadNamespace)
         && peer.uri().equals("spiffe://firemud/ns/" + workloadNamespace + "/sa/account-service");
+  }
+
+  private boolean isWorldManagementPeer() {
+    GrpcPeerIdentity peer = GrpcPeerIdentity.current();
+    return peer != null
+        && GrpcPeerIdentity.isValidNamespace(workloadNamespace)
+        && peer.uri()
+            .equals("spiffe://firemud/ns/" + workloadNamespace + "/sa/world-management-service");
   }
 
   private static UUID parseCanonicalNonNilUuid(String value) {

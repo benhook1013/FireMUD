@@ -12,6 +12,7 @@ import java.util.Optional;
 import net.firedevops.firemud.common.security.SessionContext;
 import net.firedevops.firemud.common.settings.ScopedSettingsOverrides;
 import net.firedevops.firemud.common.settings.ScopedSettingsSnapshot;
+import net.firedevops.firemud.gamedesign.service.CompleteLaunchBindingService;
 import net.firedevops.firemud.gamedesign.service.GameAuthoredHelpTopicService;
 import net.firedevops.firemud.gamedesign.service.LaunchDescriptorService;
 import net.firedevops.firemud.gamedesign.service.PingService;
@@ -59,6 +60,7 @@ class GameDesignGrpcServiceSettingsAuthorityTest {
             revisionService,
             versionService,
             launchDescriptorService,
+            Mockito.mock(CompleteLaunchBindingService.class),
             templateRemapSetService,
             versionAssetArtifactService,
             settingsAuthorityService,

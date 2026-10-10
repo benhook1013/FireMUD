@@ -6,6 +6,17 @@ import net.firedevops.firemud.gamedesign.dto.PublishedReleaseBundleDto;
 import net.firedevops.firemud.gamedesign.dto.VersionDto;
 
 public interface PublishedReleaseBundleService {
+  /**
+   * Requires evidence already obtained over the authenticated World client before this transaction.
+   */
+  PublishedReleaseBundleDto createFullVersionBundle(
+      VersionDto version,
+      String publishWorkflowId,
+      ExportedAssetManifest exportedManifest,
+      String generationConfigRevision,
+      java.util.List<PublishParticipantDigestDto> participantDigests,
+      net.firedevops.firemud.common.world.WorldPublishedStartLocationEvidence worldEvidence);
+
   PublishedReleaseBundleDto createFullVersionBundle(
       VersionDto version,
       String publishWorkflowId,

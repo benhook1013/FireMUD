@@ -1,0 +1,81 @@
+syntax = "proto3";
+
+package account.v1;
+
+option java_package = "net.firedevops.firemud.account.v1";
+option java_multiple_files = true;
+
+// Non-authorizing validation of one exact Account-owned pending-key readiness probe. This route
+// is separately mTLS-pinned and remains absent unless its explicit opt-in is enabled.
+service AccountJwtReadinessValidationService {
+  rpc IssueReadinessProbes(IssueReadinessProbesRequest)
+      returns (IssueReadinessProbesResponse);
+  rpc ValidateReadinessProbe(ValidateReadinessProbeRequest)
+      returns (ValidateReadinessProbeResponse);
+}
+
+message IssueReadinessProbesRequest {
+  int32 schema_version = 1;
+}
+
+message IssueReadinessProbesResponse {
+  message ActiveSignerFence {
+    string generation = 1;
+    string kid = 2;
+  }
+
+  message Probe {
+    string validator_id = 1;
+    string token_profile = 2;
+    string audience = 3;
+    string probe_kind = 4;
+    string jti = 5;
+    string target_generation = 6;
+    string target_kid = 7;
+    int32 registry_version = 8;
+    int64 entry_version = 9;
+    int64 issued_at_epoch_seconds = 10;
+    int64 expires_at_epoch_seconds = 11;
+    string compact_token_sha256 = 12;
+    string compact_jwt = 13;
+  }
+
+  int32 schema_version = 1;
+  string rotation_operation_id = 2;
+  string plan_digest = 3;
+  int32 plan_version = 4;
+  int64 planned_at_epoch_seconds = 5;
+  int64 not_before_epoch_seconds = 6;
+  int64 expires_at_epoch_seconds = 7;
+  string target_generation = 8;
+  string target_kid = 9;
+  ActiveSignerFence expected_active = 10;
+  repeated Probe probes = 11;
+  bool validator_inventory_complete = 12;
+}
+
+message ValidateReadinessProbeRequest {
+  int32 schema_version = 1;
+  string rotation_operation_id = 2;
+  string validator_id = 3;
+  string token_profile = 4;
+  string audience = 5;
+  string probe_kind = 6;
+  string jti = 7;
+  string compact_jwt = 8;
+}
+
+message ValidateReadinessProbeResponse {
+  enum Result {
+    RESULT_UNSPECIFIED = 0;
+    NON_AUTHORIZING_VERIFICATION_RECORDED = 1;
+  }
+
+  int32 schema_version = 1;
+  Result result = 2;
+  int32 receipt_version = 3;
+  string receipt_sha256 = 4;
+  int64 observed_at_epoch_seconds = 5;
+  string validator_id = 6;
+  string validator_instance_id = 7;
+}

@@ -4,7 +4,9 @@ import static net.firedevops.firemud.worldmanagement.jooq.tables.RegionInstance.
 
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.util.List;
+import java.util.Objects;
 import java.util.Optional;
+import java.util.UUID;
 import net.firedevops.firemud.worldmanagement.entity.RegionInstance;
 import net.firedevops.firemud.worldmanagement.jooq.tables.records.RegionInstanceRecord;
 import org.jooq.DSLContext;
@@ -59,16 +61,34 @@ public class RegionInstanceRepository {
 
   public RegionInstance save(RegionInstance entity) {
     if (entity.getId() == null) {
+      if (entity.getOperationalRegionId() != null) {
+        throw new IllegalArgumentException(
+            "operational region ID is allocated by World when a region instance is inserted");
+      }
+      UUID operationalRegionId = UUID.randomUUID();
       RegionInstanceRecord record = dsl.newRecord(REGION_INSTANCE);
       populate(record, entity);
+      record.setOperationalRegionId(operationalRegionId);
       record.store();
       return findById(record.getId()).orElseThrow();
+    }
+    RegionInstance current = findById(entity.getId()).orElse(null);
+    if (current == null) {
+      throw JooqWorldManagementRepositorySupport.staleWrite("region_instance", entity.getId());
+    }
+    Long worldInstanceId = worldInstanceId(entity);
+    if (!Objects.equals(entity.getOperationalRegionId(), current.getOperationalRegionId())
+        || (current.getOperationalRegionId() != null
+            && (!Objects.equals(entity.getTenantId(), current.getTenantId())
+                || !Objects.equals(entity.getGameInstanceId(), current.getGameInstanceId())
+                || !Objects.equals(worldInstanceId, current.getWorldInstance().getId())))) {
+      throw new IllegalStateException("operational region assignment tuple is immutable");
     }
     int updated =
         dsl.update(REGION_INSTANCE)
             .set(REGION_INSTANCE.TENANT_ID, entity.getTenantId())
             .set(REGION_INSTANCE.GAME_INSTANCE_ID, entity.getGameInstanceId())
-            .set(REGION_INSTANCE.WORLD_INSTANCE_ID, entity.getWorldInstance().getId())
+            .set(REGION_INSTANCE.WORLD_INSTANCE_ID, worldInstanceId)
             .set(REGION_INSTANCE.SHARD_ID, entity.getShardId())
             .set(REGION_INSTANCE.NAME, entity.getName())
             .set(REGION_INSTANCE.WEATHER, entity.getWeather())
@@ -89,11 +109,16 @@ public class RegionInstanceRepository {
     return findById(entity.getId()).orElseThrow();
   }
 
+  private Long worldInstanceId(RegionInstance entity) {
+    return entity.getWorldInstance() == null ? null : entity.getWorldInstance().getId();
+  }
+
   private void populate(RegionInstanceRecord record, RegionInstance entity) {
     record.setTenantId(entity.getTenantId());
     record.setGameInstanceId(entity.getGameInstanceId());
     record.setWorldInstanceId(entity.getWorldInstance().getId());
     record.setShardId(entity.getShardId());
+    record.setOperationalRegionId(entity.getOperationalRegionId());
     record.setName(entity.getName());
     record.setWeather(entity.getWeather());
     record.setGenerationSeed(entity.getGenerationSeed());
@@ -112,6 +137,7 @@ public class RegionInstanceRepository {
         JooqWorldManagementRepositorySupport.partialWorldInstance(
             record.get(REGION_INSTANCE.WORLD_INSTANCE_ID)));
     entity.setShardId(record.get(REGION_INSTANCE.SHARD_ID));
+    entity.setOperationalRegionId(record.get(REGION_INSTANCE.OPERATIONAL_REGION_ID));
     entity.setName(record.get(REGION_INSTANCE.NAME));
     entity.setWeather(record.get(REGION_INSTANCE.WEATHER));
     entity.setGenerationSeed(record.get(REGION_INSTANCE.GENERATION_SEED));

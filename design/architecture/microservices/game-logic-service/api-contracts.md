@@ -6,7 +6,7 @@ This document defines the Game Logic Service REST and gRPC surfaces, exposure cl
 
 - The current Game Logic adapters still return `shared.v1.ErrorDetail` for many failures and record `grpc.app_error`; that is implementation drift and a migration/proof gap, not a second contract.
 - Causal-read status is target-only: the complete `CausalReadFence` and participant-proof enforcement described below are not current behavior. The live `ResolveLook` request/proto and World/Entity adapters remain floor-free, so protobuf propagation, adapter evidence, and focused causal-floor proof are implementation gaps.
-- The publish-gate digest handler enforces the distinct workload/method authorization and exact Game Design publication binding implemented by `PublicationReadGuard` and `PublicationDigestRequestBinding` (tenant, version scope, stable publish request, derived workflow identity, and request digest), with focused denial and response-scope checks. For a full-version request, the owner digest fails closed because Game Logic has no owner-local manifest and provenance sufficient to attest the version's rule inputs; it does not attest those inputs as an empty manifest. End-to-end full-version publication therefore remains blocked. The target workload, tenant/scope/request/workflow/digest context, exact response identity comparison, and denial proof are canonical in [Game Design Version Control](../game-design-service/version-control.md#owner-to-owner-digest-authorization-and-tenant-identity).
+- The publish-gate digest handler enforces the distinct workload/method authorization and exact Game Design publication binding implemented by `PublicationReadGuard` and `PublicationDigestRequestBinding` (tenant, version scope, stable publish request, derived workflow identity, and request digest), with focused denial and response-scope checks. For a full-version request, the owner digest remains fail closed until the separate authenticated intake, exact terminal settlement and selected-manifest lookup are proved; it does not attest missing inputs as an empty manifest. End-to-end full-version publication therefore remains blocked. The [runtime owner](runtime-and-data.md#implementation-status) links current construction and proof limits. The target workload, tenant/scope/request/workflow/digest context, exact response identity comparison, and denial proof are canonical in [Game Design Version Control](../game-design-service/version-control.md#owner-to-owner-digest-authorization-and-tenant-identity).
 
 ### Player execution context
 
@@ -52,6 +52,12 @@ Expected response:
 ```
 
 ## gRPC
+
+### Selected-source terminal read
+
+The separate, unregistered [`ReadGameplayRuleIntakeTerminal`](../../../../protos/game-logic/v1/gameplay_rule_intake_terminal_service.proto) method accepts only verified same-namespace Account callers, authenticating before decoding source evidence. Its versioned request binds the namespace, fresh read correlation and exact original Account intake authorization bytes/digest. Its closed response echoes that tuple and returns either the original canonical terminal and digest or explicit absence; absence is not an abort. The read is allowlisted to Account and performs no source creation, retention, abort, settlement, or admission. The [Account owner contract](../account-service/api-contracts.md#grpc-apis) defines held-order fencing and exact settlement authority; the [runtime/data owner](runtime-and-data.md#selected-release-rule-inputs-and-intake) defines intake and definitive-abort semantics. The [authoring tracker](../../../project-management/implementation-tracking/game-authoring-publishing-and-activation.md#current-status) records unregistered transport, bounded-message and physical proof gates.
+
+### Gameplay methods
 
 - `Ping(PingRequest) returns (PingResponse)` is the basic connectivity check defined in [`game_logic_service.proto`](../../../../protos/game-logic/v1/game_logic_service.proto).
 - `ExecuteCommand(ExecuteCommandRequest) returns (ExecuteCommandResponse)` evaluates a parsed gameplay command and returns the outcome.

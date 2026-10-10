@@ -1,0 +1,75 @@
+{
+  "scriptId": "account-game-session-delegation-activate-committed.v1",
+  "resourcePath": "redis/lua/account-game-session-delegation-activate-committed.lua",
+  "sha256": "cb3c1ddd9ae008fa857427f721c1cabcf3d6b1502259849701baff081bc9a698",
+  "owner": "account-service",
+  "principal": "account_coord_app",
+  "role": "COORDINATION",
+  "keys": [
+    {
+      "name": "tokenRecord",
+      "ownedPrefix": "session:auth:token:",
+      "hashTagDeclaration": "NOT_REQUIRED"
+    }
+  ],
+  "arguments": [
+    {
+      "name": "exactCanonicalPendingRecordUtf8"
+    },
+    {
+      "name": "exactCanonicalActiveRecordUtf8"
+    },
+    {
+      "name": "originalAbsoluteExpiryEpochMillis"
+    }
+  ],
+  "category": "SESSION_CAS",
+  "outcomes": [
+    {
+      "code": "COMMITTED_PENDING_ACTIVATED",
+      "category": "SUCCESS",
+      "effect": "MUTATING"
+    },
+    {
+      "code": "EXACT_ACTIVE_RETRY",
+      "category": "REPLAY",
+      "effect": "NON_MUTATING"
+    },
+    {
+      "code": "CONFLICTING_REGISTRY_RECORD",
+      "category": "STALE",
+      "effect": "NON_MUTATING"
+    },
+    {
+      "code": "ABSOLUTE_EXPIRY_MISMATCH",
+      "category": "VALIDATION_FAILURE",
+      "effect": "NON_MUTATING"
+    },
+    {
+      "code": "PENDING_RECORD_MISSING",
+      "category": "STALE",
+      "effect": "NON_MUTATING"
+    },
+    {
+      "code": "INVALID_ARGUMENTS_OR_NONCANONICAL_TRANSITION",
+      "category": "VALIDATION_FAILURE",
+      "effect": "NON_MUTATING"
+    },
+    {
+      "code": "CONDITIONAL_ACTIVE_STORE_FAILED",
+      "category": "CONTENTION",
+      "effect": "NON_MUTATING"
+    }
+  ],
+  "resetSensitivity": "CLUSTER",
+  "lossClass": "SESSION_LEASE_CACHE_OR_WAKE_UP",
+  "tailLossBehavior": "A missing, stale, or unacknowledged Account registry transition denies token use; only exact durable Account issuance owner evidence can support a retry.",
+  "compatibilityLevel": "REQUIRES_CLUSTER_RESET",
+  "supportedCoexistence": [
+    {
+      "callerVersion": "v1",
+      "payloadVersion": "v1"
+    }
+  ],
+  "legacyPayloadShape": null
+}

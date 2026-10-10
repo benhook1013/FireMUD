@@ -1,0 +1,31 @@
+syntax = "proto3";
+
+package account.v1;
+
+option java_package = "net.firedevops.firemud.account.v1";
+option java_multiple_files = true;
+
+// Standalone, unregistered source-protection acquisition for the original StartSession.
+// It does not admit gameplay or settle/release the retained protection.
+service AccountStartSessionAdmissionProtectionAcquisitionService {
+  rpc AcquireOriginalStartSessionAdmissionProtection(
+      AcquireOriginalStartSessionAdmissionProtectionRequest)
+      returns (AcquireOriginalStartSessionAdmissionProtectionResponse);
+}
+
+message AcquireOriginalStartSessionAdmissionProtectionRequest {
+  int32 schema_version = 1;
+  string target_namespace = 2;
+  // The five caller-supplied fields of the owner AcquisitionRequest; Account resolves retained
+  // participation coordinates and sources the original lease/projection from fresh currentness.
+  bytes original_post_authorization_tuple = 3;
+  string game_session_owner_mutation_id = 4;
+  string game_session_owner_attempt_id = 5;
+  int64 game_session_owner_fence = 6;
+  bytes world_hold_identity = 7;
+}
+
+message AcquireOriginalStartSessionAdmissionProtectionResponse {
+  // Complete canonical AccountStartSessionAdmissionProtectionEvidence bytes.
+  bytes evidence_canonical_bytes = 1;
+}

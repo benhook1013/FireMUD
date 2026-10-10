@@ -1,0 +1,67 @@
+syntax = "proto3";
+
+package world_management.v1;
+
+import "game-design/v1/game_design_service.proto";
+import "shared/v1/errors.proto";
+import "world-management/v1/world_management_service.proto";
+
+option java_package = "net.firedevops.firemud.worldmanagement.v1";
+option java_multiple_files = true;
+
+// Exact immutable source read for the verified same-namespace Entity workload.
+service WorldPublishedSpawnRequirementsReadService {
+  rpc ReadWorldPublishedSpawnRequirements(ReadWorldPublishedSpawnRequirementsRequest)
+      returns (ReadWorldPublishedSpawnRequirementsResponse);
+}
+
+message ReadWorldPublishedSpawnRequirementsRequest {
+  int32 schema_version = 1;
+  string target_namespace = 2;
+  string read_request_id = 3;
+  gamedesign.v1.GetLaunchDescriptorRequest launch_binding_request = 4;
+  string expected_release_attestation_digest = 5;
+}
+
+message WorldPublishedSpawnRequirementsFamilyCount {
+  WorldDesignAggregateType family = 1;
+  optional int32 count = 2;
+}
+
+message WorldPublishedSpawnRequirementsEntityTemplateReference {
+  EntityTemplateReferenceType kind = 1;
+  string tenant_id = 2;
+  string version_id = 3;
+  string template_id = 4;
+}
+
+message WorldPublishedSpawnRequirement {
+  string revision_order = 1;
+  string revision_id = 2;
+  string spawn_binding_id = 3;
+  RoomTemplateRef room_template = 4;
+  WorldPublishedSpawnRequirementsEntityTemplateReference entity_template = 5;
+  int32 spawn_count = 6;
+  int32 respawn_delay_seconds = 7;
+}
+
+message WorldPublishedGenerationRequirement {
+  string revision_order = 1;
+  string revision_id = 2;
+  string rule_template_id = 3;
+  WorldDesignAggregateType scope_family = 4;
+  string scope_id = 5;
+  string name = 6;
+  string value = 7;
+}
+
+message ReadWorldPublishedSpawnRequirementsResponse {
+  ReadWorldPublishedSpawnRequirementsRequest request = 1;
+  gamedesign.v1.GetCompleteLaunchBindingResponse complete_launch_binding = 2;
+  string capture_id = 3;
+  string graph_digest = 4;
+  repeated WorldPublishedSpawnRequirementsFamilyCount family_counts = 5;
+  repeated WorldPublishedSpawnRequirement spawn_requirements = 6;
+  repeated WorldPublishedGenerationRequirement generation_requirements = 7;
+  shared.v1.ErrorDetail error = 8;
+}

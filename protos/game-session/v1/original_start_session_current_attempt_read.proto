@@ -1,0 +1,62 @@
+syntax = "proto3";
+
+package game_session.v1;
+
+import "google/protobuf/timestamp.proto";
+
+option java_package = "net.firedevops.firemud.gamesession.v1";
+option java_multiple_files = true;
+
+// Unregistered, observation-only read of one exact live original StartSession owner attempt.
+// It exposes no claimant credential and grants no mutation, renewal, redemption, or admission authority.
+service OriginalStartSessionCurrentAttemptReadService {
+  rpc ReadOriginalStartSessionCurrentAttempt(
+      ReadOriginalStartSessionCurrentAttemptRequest)
+      returns (ReadOriginalStartSessionCurrentAttemptResponse);
+}
+
+// Unregistered Account-facing read of the durable terminal result for original-admission
+// protection. This method is distinct from both the observation-only current-attempt read and the
+// World-facing initial-admission proof service.
+service OriginalStartSessionAdmissionTerminalReadService {
+  // Read the exact terminal result for Account's distinct original-admission protection.
+  rpc ReadOriginalStartSessionAdmissionTerminal(
+      ReadOriginalStartSessionAdmissionTerminalRequest)
+      returns (ReadOriginalStartSessionAdmissionTerminalResponse);
+}
+
+message ReadOriginalStartSessionCurrentAttemptRequest {
+  int32 schema_version = 1;
+  // Fresh correlation UUID for this observation; it is not a durable mutation identity.
+  string read_request_id = 2;
+  string target_namespace = 3;
+  bytes canonical_post_authorization_tuple = 4;
+  string expected_owner_attempt_id = 5;
+  string expected_owner_mutation_id = 6;
+  int64 expected_owner_fence = 7;
+}
+
+message ReadOriginalStartSessionCurrentAttemptResponse {
+  ReadOriginalStartSessionCurrentAttemptRequest request = 1;
+  string phase_state = 2;
+  google.protobuf.Timestamp original_lease_expires_at = 3;
+  bytes account_redemption_projection = 4;
+  // Raw lowercase SHA-256 of account_redemption_projection.
+  string account_redemption_projection_digest = 5;
+}
+
+// Account supplies its complete canonical protection evidence, including the exact original
+// request, protection identity/fence, source-capture reference, and source-evidence vector.
+// Decoding this read selector grants no authority and does not release Account protection.
+message ReadOriginalStartSessionAdmissionTerminalRequest {
+  int32 schema_version = 1;
+  bytes canonical_account_protection_evidence = 2;
+}
+
+// The unchanged complete Account protection request is echoed. The owner proof bytes use the
+// existing GameSessionCanonicalInitialAdmissionOwnerProof canonical representation; only exact
+// COMMITTED or definitive durable ABORTED results are returned as a successful domain result.
+message ReadOriginalStartSessionAdmissionTerminalResponse {
+  ReadOriginalStartSessionAdmissionTerminalRequest request = 1;
+  bytes canonical_game_session_owner_proof = 2;
+}

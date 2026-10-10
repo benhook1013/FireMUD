@@ -7,6 +7,9 @@ option java_multiple_files = true;
 
 // Read-only exact Account/Game Session workload handoff for owner-created tenant evidence.
 service TenantIdentityService {
+  // Unregistered authored-world source read; no creation or admission permission.
+  rpc ResolveAuthoredWorldSource(ResolveAuthoredWorldSourceRequest)
+      returns (ResolveAuthoredWorldSourceResponse);
   rpc ResolveFreshTenantCreation(ResolveFreshTenantCreationRequest)
       returns (ResolveFreshTenantCreationResponse);
 }
@@ -27,4 +30,28 @@ message ResolveFreshTenantCreationResponse {
   string source_game_tenant_key = 8;
   string provenance_kind = 9;
   string evidence_digest = 10;
+}
+
+message ResolveAuthoredWorldSourceRequest {
+  string request_id = 1;
+  string operation_id = 2;
+  string canonical_tenant_id = 3;
+  string world_slug = 4;
+}
+
+message ResolveAuthoredWorldSourceResponse {
+  int32 schema_version = 1;
+  string target_namespace = 2;
+  string request_id = 3;
+  string registration_request_id = 4;
+  string operation_id = 5;
+  string request_digest = 6;
+  string canonical_tenant_id = 7;
+  string tenant_slug = 8;
+  string world_slug = 9;
+  string world_display_name = 10;
+  int64 source_game_row_id = 11;
+  string source_game_tenant_key = 12;
+  string provenance_kind = 13;
+  string evidence_digest = 14;
 }

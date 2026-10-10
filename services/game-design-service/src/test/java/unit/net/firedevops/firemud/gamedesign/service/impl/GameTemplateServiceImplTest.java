@@ -1,6 +1,8 @@
 package net.firedevops.firemud.gamedesign.service.impl;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import java.util.List;
@@ -15,6 +17,22 @@ import org.springframework.data.domain.PageImpl;
 import org.springframework.data.domain.PageRequest;
 
 class GameTemplateServiceImplTest {
+  @Test
+  void createTemplateRejectsCallerSuppliedIdBeforeRepositoryOrMapper() {
+    GameTemplateRepository repo = Mockito.mock(GameTemplateRepository.class);
+    GameTemplateMapper mapper = Mockito.mock(GameTemplateMapper.class);
+    GameTemplateServiceImpl service = new GameTemplateServiceImpl(repo, mapper);
+    GameTemplateDto dto =
+        new GameTemplateDto(17L, "tenant-1", "Realm", null, "{}", null, null, "{}", null, null);
+
+    IllegalArgumentException exception =
+        assertThrows(IllegalArgumentException.class, () -> service.createTemplate(dto));
+
+    assertEquals(
+        "INVALID_ARGUMENT: template id must not be supplied on create", exception.getMessage());
+    verifyNoInteractions(repo, mapper);
+  }
+
   @Test
   void listTemplatesReturnsPage() {
     GameTemplateRepository repo = Mockito.mock(GameTemplateRepository.class);

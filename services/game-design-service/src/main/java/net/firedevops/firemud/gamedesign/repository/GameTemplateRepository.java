@@ -122,18 +122,21 @@ public class GameTemplateRepository {
               .fetchOne(ID);
       return findByTenantIdAndId(template.getTenantId(), generatedId).orElseThrow();
     }
-    dsl.update(TABLE_REF)
-        .set(TENANT_ID, template.getTenantId())
-        .set(NAME, template.getName())
-        .set(DESCRIPTION, template.getDescription())
-        .set(CONFIG, jsonbParam(template.getConfig()))
-        .set(DEFAULT_VERSION_ID, template.getDefaultVersionId())
-        .set(DEFAULT_SCRIPT_PATCH_VERSION, template.getDefaultScriptPatchVersion())
-        .set(DEFAULT_RUNTIME_FLAGS_JSON, template.getDefaultRuntimeFlagsJson())
-        .set(TEMPLATE_REFERENCE_PHASE, template.getTemplateReferencePhase().name())
-        .set(CREATED_AT, Timestamp.valueOf(createdAt))
-        .where(ID.eq(template.getId()))
-        .execute();
+    int updatedRows =
+        dsl.update(TABLE_REF)
+            .set(NAME, template.getName())
+            .set(DESCRIPTION, template.getDescription())
+            .set(CONFIG, jsonbParam(template.getConfig()))
+            .set(DEFAULT_VERSION_ID, template.getDefaultVersionId())
+            .set(DEFAULT_SCRIPT_PATCH_VERSION, template.getDefaultScriptPatchVersion())
+            .set(DEFAULT_RUNTIME_FLAGS_JSON, template.getDefaultRuntimeFlagsJson())
+            .set(TEMPLATE_REFERENCE_PHASE, template.getTemplateReferencePhase().name())
+            .set(CREATED_AT, Timestamp.valueOf(createdAt))
+            .where(ID.eq(template.getId()).and(TENANT_ID.eq(template.getTenantId())))
+            .execute();
+    if (updatedRows != 1) {
+      throw new IllegalArgumentException("game template not found for tenant");
+    }
     return findByTenantIdAndId(template.getTenantId(), template.getId()).orElseThrow();
   }
 

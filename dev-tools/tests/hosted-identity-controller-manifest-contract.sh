@@ -3965,6 +3965,31 @@ def service_consumer_documents():
                     {"key": "ca.crt", "path": "ca.crt"},
                 ]
             volumes.append({"name": name, kind: projection})
+        if service in {"account-service", "game-session-service"}:
+            mounts.append(
+                {
+                    "name": "pod-identity",
+                    "mountPath": "/var/run/secrets/firemud/pod-identity",
+                    "readOnly": True,
+                }
+            )
+            volumes.append(
+                {
+                    "name": "pod-identity",
+                    "downwardAPI": {
+                        "defaultMode": 0o444,
+                        "items": [
+                            {
+                                "path": "uid",
+                                "fieldRef": {
+                                    "apiVersion": "v1",
+                                    "fieldPath": "metadata.uid",
+                                },
+                            }
+                        ],
+                    },
+                }
+            )
         container = {
             "name": service,
             "volumeMounts": mounts,
@@ -4023,6 +4048,88 @@ def service_consumer_documents():
 
 valid_consumers = service_consumer_documents()
 validator.validate_service_consumers(valid_consumers, "pr-42", "standalone", "public")
+
+for service in ("account-service", "game-session-service"):
+    missing_pod_identity_projection = copy.deepcopy(valid_consumers)
+    identity_deployment = next(
+        document
+        for document in missing_pod_identity_projection
+        if document["metadata"]["name"] == service
+    )
+    identity_pod = identity_deployment["spec"]["template"]["spec"]
+    identity_pod["volumes"] = [
+        volume
+        for volume in identity_pod["volumes"]
+        if volume["name"] != "pod-identity"
+    ]
+    assert_rejected(
+        lambda documents=missing_pod_identity_projection: validator.validate_service_consumers(
+            documents, "pr-42", "standalone", "public"
+        ),
+        f"Deployment/{service} has duplicate or unexpected identity consumers",
+    )
+
+    writable_pod_identity_projection = copy.deepcopy(valid_consumers)
+    identity_deployment = next(
+        document
+        for document in writable_pod_identity_projection
+        if document["metadata"]["name"] == service
+    )
+    identity_volume = next(
+        volume
+        for volume in identity_deployment["spec"]["template"]["spec"]["volumes"]
+        if volume["name"] == "pod-identity"
+    )
+    identity_volume["downwardAPI"]["defaultMode"] = 0o644
+    assert_rejected(
+        lambda documents=writable_pod_identity_projection: validator.validate_service_consumers(
+            documents, "pr-42", "standalone", "public"
+        ),
+        f"Deployment/{service} has an unsafe pod-identity projection",
+    )
+
+    substituted_pod_identity_projection = copy.deepcopy(valid_consumers)
+    identity_deployment = next(
+        document
+        for document in substituted_pod_identity_projection
+        if document["metadata"]["name"] == service
+    )
+    identity_volume = next(
+        volume
+        for volume in identity_deployment["spec"]["template"]["spec"]["volumes"]
+        if volume["name"] == "pod-identity"
+    )
+    identity_volume["downwardAPI"]["items"][0]["fieldRef"]["fieldPath"] = (
+        "metadata.name"
+    )
+    assert_rejected(
+        lambda documents=substituted_pod_identity_projection: validator.validate_service_consumers(
+            documents, "pr-42", "standalone", "public"
+        ),
+        f"Deployment/{service} has an unsafe pod-identity projection",
+    )
+
+    duplicate_pod_identity_mount = copy.deepcopy(valid_consumers)
+    identity_deployment = next(
+        document
+        for document in duplicate_pod_identity_mount
+        if document["metadata"]["name"] == service
+    )
+    identity_container = identity_deployment["spec"]["template"]["spec"][
+        "containers"
+    ][0]
+    identity_mount = next(
+        mount
+        for mount in identity_container["volumeMounts"]
+        if mount["name"] == "pod-identity"
+    )
+    identity_container["volumeMounts"].append(copy.deepcopy(identity_mount))
+    assert_rejected(
+        lambda documents=duplicate_pod_identity_mount: validator.validate_service_consumers(
+            documents, "pr-42", "standalone", "public"
+        ),
+        f"Deployment/{service} has duplicate or unexpected identity consumers",
+    )
 
 missing_publication_trust_mount = copy.deepcopy(valid_consumers)
 publication_deployment = next(
