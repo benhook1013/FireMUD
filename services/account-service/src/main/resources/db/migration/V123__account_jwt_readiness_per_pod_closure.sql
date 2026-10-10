@@ -280,13 +280,13 @@ BEGIN
         IF NEW.validator_inventory_complete
            OR matrix ->> 'inventoryStatus' IS DISTINCT FROM 'PARTIAL_UNCONFIRMED'
            OR matrix ->> 'schemaVersion' IS DISTINCT FROM '1'
-           OR CASE WHEN jsonb_typeof(matrix -> 'validators') = 'array'
+           OR (CASE WHEN jsonb_typeof(matrix -> 'validators') = 'array'
                 THEN jsonb_array_length(matrix -> 'validators') <> 1
-                ELSE TRUE END
+                ELSE TRUE END)
            OR matrix #>> '{validators,0,validatorId}' IS DISTINCT FROM 'account-service'
-           OR CASE WHEN jsonb_typeof(matrix #> '{validators,0,applicableProfiles}') = 'array'
+           OR (CASE WHEN jsonb_typeof(matrix #> '{validators,0,applicableProfiles}') = 'array'
                 THEN jsonb_array_length(matrix #> '{validators,0,applicableProfiles}') <> 3
-                ELSE TRUE END
+                ELSE TRUE END)
            OR NOT (matrix #> '{validators,0,applicableProfiles}' @>
               '[{"tokenProfile":"control-ui","audience":"control-ui"}]'::jsonb)
            OR NOT (matrix #> '{validators,0,applicableProfiles}' @>
@@ -303,12 +303,12 @@ BEGIN
        OR NEW.inventory_snapshot_digest IS NULL
        OR matrix ->> 'schemaVersion' IS DISTINCT FROM '2'
        OR matrix ->> 'inventorySnapshotDigest' IS DISTINCT FROM NEW.inventory_snapshot_digest
-       OR CASE WHEN jsonb_typeof(matrix -> 'validators') = 'array'
+       OR (CASE WHEN jsonb_typeof(matrix -> 'validators') = 'array'
             THEN jsonb_array_length(matrix -> 'validators') NOT BETWEEN 1 AND 32
-            ELSE TRUE END
-       OR CASE WHEN jsonb_typeof(matrix -> 'productionProfiles') = 'array'
+            ELSE TRUE END)
+       OR (CASE WHEN jsonb_typeof(matrix -> 'productionProfiles') = 'array'
             THEN jsonb_array_length(matrix -> 'productionProfiles') <> 3
-            ELSE TRUE END
+            ELSE TRUE END)
        OR EXISTS (
             SELECT 1
               FROM jsonb_array_elements(
@@ -328,20 +328,20 @@ BEGIN
           FROM jsonb_array_elements(matrix -> 'validators') AS validator(value)
          WHERE value ->> 'validatorId' = 'game-session-service';
         IF matrix ->> 'inventoryStatus' IS DISTINCT FROM 'PROTECTED_LIVE_COMPLETE'
-           OR CASE WHEN jsonb_typeof(matrix -> 'validators') = 'array'
+           OR (CASE WHEN jsonb_typeof(matrix -> 'validators') = 'array'
                 THEN jsonb_array_length(matrix -> 'validators') <> 2
-                ELSE TRUE END
+                ELSE TRUE END)
            OR account_profiles IS NULL
-           OR CASE WHEN jsonb_typeof(account_profiles) = 'array'
+           OR (CASE WHEN jsonb_typeof(account_profiles) = 'array'
                 THEN jsonb_array_length(account_profiles) <> 3
-                ELSE TRUE END
+                ELSE TRUE END)
            OR NOT (account_profiles @> '[{"tokenProfile":"control-ui","audience":"control-ui"}]'::jsonb)
            OR NOT (account_profiles @> '[{"tokenProfile":"player-bootstrap","audience":"player-bootstrap"}]'::jsonb)
            OR NOT (account_profiles @> '[{"tokenProfile":"game-session-account-delegation","audience":"account-service"}]'::jsonb)
            OR game_session_profiles IS NULL
-           OR CASE WHEN jsonb_typeof(game_session_profiles) = 'array'
+           OR (CASE WHEN jsonb_typeof(game_session_profiles) = 'array'
                 THEN jsonb_array_length(game_session_profiles) <> 1
-                ELSE TRUE END
+                ELSE TRUE END)
            OR NOT (game_session_profiles @> '[{"tokenProfile":"game-session-account-delegation","audience":"account-service"}]'::jsonb) THEN
             RAISE EXCEPTION 'Readiness V2 completion requires exact Account and Game Session profile inventory'
                 USING ERRCODE = '23514';
