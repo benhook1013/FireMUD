@@ -102,6 +102,12 @@ Entry format:
   - Expected pattern: require complete immutable publication membership before completion, and recover verified older partial unfinalized runs additively without replacing dispositions or inventing another round. Retain original and supplemental evidence together.
   - Current status: the bounded controller repair passes focused local regression proof; trusted promotion and canonical live recovery remain separate steps, so the live missing finding is not yet confirmed recovered.
 
+- `2026-10-11`: Concurrent CI watchers can exhaust shared GitHub API quota
+  - Context: six native `gh run watch` processes in the Gameplay lane encountered the same REST rate limit while waiting for one candidate's checks.
+  - Observation: separate low-cost-looking watchers share one credential's API budget; multiplying short-interval reads can block artifact inspection and other workers' CI evidence collection.
+  - Expected pattern: use one quota-aware observation owner with bounded low-frequency consolidated reads across relevant exact heads, and back off until the reported reset. One helper launching six independent pollers is still prohibited fanout, not a single observer. Stop redundant local watchers without cancelling GitHub runs; continue safe local implementation and validation.
+  - Current status: the six distinct workflow watchers are stopped and the correction is recorded in the SQL job brief. Exact artifact qualification and CI completion remain separate evidence, not inferred from historical green runs.
+
 - `2026-10-12`: Retrospective evidence needs source-clock provenance
   - Context: a curated import of an independently completed review retained unknown review clocks but displayed generated recording timestamps as its start and finish.
   - Observation: a storage default can create false chronology even when the immutable evidence accurately discloses missing clocks.
