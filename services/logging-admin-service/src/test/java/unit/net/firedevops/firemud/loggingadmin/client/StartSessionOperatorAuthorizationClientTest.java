@@ -220,10 +220,25 @@ class StartSessionOperatorAuthorizationClientTest {
                     .setUnknownFields(unknownFields())
                     .build())
             .build());
+    IssueHumanOperatorAuthorizationReferenceResponse distinctSourceAndIssuanceFences =
+        valid.toBuilder()
+            .setBundleReference(valid.getBundleReference().toBuilder().setSourceFence("24").build())
+            .build();
+    StartSessionOperatorAuthorizationClient.AuthorizationReference accepted =
+        assertAccepted(tuple, distinctSourceAndIssuanceFences);
+    assertThat(accepted.bundleReference().sourceFence()).isEqualTo("24");
+    assertThat(accepted.decodedBundle().issuanceFence()).isEqualTo("23");
     assertRejected(
         tuple,
         valid.toBuilder()
-            .setBundleReference(valid.getBundleReference().toBuilder().setSourceFence("24").build())
+            .setBundleReference(
+                valid.getBundleReference().toBuilder().setSourceVersion("18").build())
+            .build());
+    assertRejected(
+        tuple,
+        valid.toBuilder()
+            .setBundleReference(
+                valid.getBundleReference().toBuilder().setBundleVersion("unsupported").build())
             .build());
     assertRejected(
         tuple,
@@ -358,6 +373,21 @@ class StartSessionOperatorAuthorizationClientTest {
                   client.issueHuman(
                       tuple, CONTROL_UI_TOKEN, RESERVATION_OWNER, 9L, CLAIM_OWNER, 11L))
           .isInstanceOf(IllegalStateException.class);
+    }
+  }
+
+  private StartSessionOperatorAuthorizationClient.AuthorizationReference assertAccepted(
+      StartSessionPreAuthorizationReservationTuple tuple,
+      IssueHumanOperatorAuthorizationReferenceResponse response)
+      throws Exception {
+    var stub =
+        mock(
+            StartSessionOperatorAuthorizationServiceGrpc
+                .StartSessionOperatorAuthorizationServiceBlockingStub.class);
+    when(stub.withDeadlineAfter(5L, TimeUnit.SECONDS)).thenReturn(stub);
+    when(stub.issueHumanOperatorAuthorizationReference(any())).thenReturn(response);
+    try (TestClient client = new TestClient(stub, fileBackedTlsProperties())) {
+      return client.issueHuman(tuple, CONTROL_UI_TOKEN, RESERVATION_OWNER, 9L, CLAIM_OWNER, 11L);
     }
   }
 
