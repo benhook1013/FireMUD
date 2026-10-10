@@ -44,6 +44,19 @@ class GameSessionStartSessionOperatorAttemptRepositoryTest {
   }
 
   @Test
+  void currentOriginalAttemptReadRequiresTheCallerOwnedReadCommittedTransaction() {
+    DSLContext dsl = mock(DSLContext.class);
+    GameSessionStartSessionOperatorAttemptRepository repository =
+        new GameSessionStartSessionOperatorAttemptRepository(dsl, java.time.Duration.ofSeconds(30));
+
+    assertThatThrownBy(() -> repository.readCurrentOriginalAttempt(null))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("writable READ COMMITTED");
+
+    verifyNoInteractions(dsl);
+  }
+
+  @Test
   void requiresAnExplicitlyBoundedClaimLease() {
     DSLContext dsl = mock(DSLContext.class);
 
