@@ -1,5 +1,6 @@
 plugins {
     `java-library`
+    `java-test-fixtures`
 }
 
 apply(from = "${rootDir}/gradle/proto-convention.gradle")
@@ -26,4 +27,6 @@ dependencies {
     compileOnly(libs.spotbugs.annotations)
     testImplementation(libs.grpc.spring.boot.starter)
     testImplementation(libs.spring.boot.starter.test)
+    testFixturesApi(platform(libs.spring.boot.dependencies))
+    testFixturesApi("tools.jackson.core:jackson-databind")
 }
