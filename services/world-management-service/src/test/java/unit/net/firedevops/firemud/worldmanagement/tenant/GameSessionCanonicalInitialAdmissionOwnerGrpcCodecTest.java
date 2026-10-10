@@ -117,6 +117,61 @@ class GameSessionCanonicalInitialAdmissionOwnerGrpcCodecTest {
   }
 
   @Test
+  void decodesExactPendingObservationWithoutTerminalFields() {
+    HoldIdentity identity = identity(InitialAdmissionOrigin.NO_PRIOR_POINTER, null);
+    var response =
+        terminalResponse(
+                identity,
+                CanonicalInitialAdmissionOwnerProofOutcome
+                    .CANONICAL_INITIAL_ADMISSION_OWNER_PROOF_OUTCOME_PENDING)
+            .clearTerminalAt()
+            .build();
+
+    var proof = GameSessionCanonicalInitialAdmissionOwnerGrpcCodec.fromResponse(identity, response);
+
+    assertEquals(identity, proof.holdIdentity());
+    assertEquals(GameSessionCanonicalInitialAdmissionOwnerProof.Outcome.PENDING, proof.outcome());
+    assertNull(proof.committedPointerVersion());
+    assertNull(proof.auditEventId());
+    assertNull(proof.proofDigest());
+    assertNull(proof.terminalAt());
+    assertFalse(proof.positiveDurableAbort());
+    assertThrows(
+        IllegalArgumentException.class,
+        () ->
+            GameSessionCanonicalInitialAdmissionOwnerGrpcCodec.fromResponse(
+                identity,
+                GameSessionCanonicalInitialAdmissionOwnerProof.Outcome.COMMITTED,
+                response));
+  }
+
+  @Test
+  void rejectsTerminalFieldsOnPendingObservation() {
+    HoldIdentity identity = identity(InitialAdmissionOrigin.NO_PRIOR_POINTER, null);
+    var pending =
+        terminalResponse(
+            identity,
+            CanonicalInitialAdmissionOwnerProofOutcome
+                .CANONICAL_INITIAL_ADMISSION_OWNER_PROOF_OUTCOME_PENDING);
+
+    assertThrows(
+        IllegalArgumentException.class,
+        () ->
+            GameSessionCanonicalInitialAdmissionOwnerGrpcCodec.fromResponse(
+                identity, pending.build()));
+    assertThrows(
+        IllegalArgumentException.class,
+        () ->
+            GameSessionCanonicalInitialAdmissionOwnerGrpcCodec.fromResponse(
+                identity, pending.clearTerminalAt().setProofDigest(PROOF_DIGEST).build()));
+    assertThrows(
+        IllegalArgumentException.class,
+        () ->
+            GameSessionCanonicalInitialAdmissionOwnerGrpcCodec.fromResponse(
+                identity, pending.clearTerminalAt().setAuditEventId(31L).build()));
+  }
+
+  @Test
   void rejectsChangedOrMissingIdentityEchoAndWrongOptionalPresence() {
     HoldIdentity identity = identity(InitialAdmissionOrigin.NO_PRIOR_POINTER, null);
     var outcome =

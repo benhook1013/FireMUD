@@ -85,6 +85,7 @@ import net.firedevops.firemud.common.world.WorldCanonicalInitialAdmissionHold;
 import net.firedevops.firemud.common.world.WorldCanonicalInitialAdmissionHold.HoldIdentity;
 import net.firedevops.firemud.common.world.WorldCanonicalInitialAdmissionHold.InitialAdmissionOrigin;
 import net.firedevops.firemud.common.world.WorldCanonicalInitialAdmissionHold.Request;
+import net.firedevops.firemud.common.world.WorldCanonicalInitialAdmissionHoldState;
 import net.firedevops.firemud.common.world.WorldCanonicalInitialPlayerLocation;
 import net.firedevops.firemud.common.world.WorldCanonicalInstanceActivation;
 import net.firedevops.firemud.common.world.WorldCanonicalInstanceLifecycleEvidence;
@@ -2336,6 +2337,147 @@ class WorldDraftGraphApplicationPostgresIntegrationTest {
                 .hasNonterminalForRealm(privateKeys.privateTenantKey(), realmId.toString()))
         .isTrue();
     assertOrigin();
+  }
+
+  @Test
+  void canonicalHoldReconciliationUsesTypedBoundedPagesAndLegacyFinderExcludesTypedRows() {
+    PreparedLifecycleFixture fixture = materializedLifecycleFixture();
+    // World lifecycle/association and hold storage are real; activation authority is stipulated.
+    var activation =
+        canonicalActivationService(fixture, ignored -> stipulatedActivationAuthority())
+            .activate(
+                new WorldCanonicalInstanceActivation.Request(
+                    UUID.randomUUID(), fixture.preparing()));
+    assertThat(activation.outcome()).isEqualTo(WorldCanonicalInstanceActivation.Outcome.COMMITTED);
+    var active =
+        fixture
+            .lifecycleRepository()
+            .read(lifecycleRequestWithFreshReadId(activation.lifecycleEvidence().request()))
+            .orElseThrow();
+
+    Request firstRequest =
+        canonicalReconciliationHoldRequest(
+            active, "canonical-reconcile-first-" + UUID.randomUUID(), "c".repeat(64));
+    Request secondRequest =
+        canonicalReconciliationHoldRequest(
+            active, "canonical-reconcile-second-" + UUID.randomUUID(), "d".repeat(64));
+    var repository =
+        new WorldCanonicalInitialAdmissionHoldRepository(
+            dsl, manager, associationRepository(), fixture.lifecycleRepository());
+    HoldIdentity first = repository.acquire(firstRequest, active.request());
+    HoldIdentity second = repository.acquire(secondRequest, active.request());
+
+    // A different valid namespace sees no rows from this real canonical namespace.
+    assertThat(repository.findReconciliationCandidates("otherworld", null, 8)).isEmpty();
+
+    var legacyRows = new InitialAdmissionBindHoldRepository(dsl).findNonterminal(256);
+    assertThat(legacyRows).hasSizeLessThan(256);
+    assertThat(legacyRows.stream().map(row -> row.holdId()).toList())
+        .doesNotContain(first.holdId().toString(), second.holdId().toString());
+
+    List<UUID> foundTypedHolds = new ArrayList<>();
+    WorldCanonicalInitialAdmissionHoldRepository.ReconciliationCursor after = null;
+    for (int pageNumber = 0; pageNumber < 256 && foundTypedHolds.size() < 2; pageNumber++) {
+      var page =
+          repository.findReconciliationCandidates(active.request().targetNamespace(), after, 1);
+      assertThat(page).hasSizeLessThanOrEqualTo(1);
+      if (page.isEmpty()) break;
+
+      var reference = page.getFirst();
+      after = reference.cursor();
+      if (!reference.holdId().equals(first.holdId())
+          && !reference.holdId().equals(second.holdId())) {
+        continue;
+      }
+      var exact =
+          repository
+              .readReconciliationCandidate(active.request().targetNamespace(), reference.holdId())
+              .orElseThrow();
+      assertThat(exact.status())
+          .isIn(
+              WorldCanonicalInitialAdmissionHoldState.HoldStatus.PENDING,
+              WorldCanonicalInitialAdmissionHoldState.HoldStatus.RECONCILIATION_REQUIRED);
+      if (reference.holdId().equals(first.holdId())) {
+        assertThat(exact.identity().canonicalBytes()).containsExactly(first.canonicalBytes());
+        assertThat(exact.status())
+            .isEqualTo(WorldCanonicalInitialAdmissionHoldState.HoldStatus.PENDING);
+        foundTypedHolds.add(reference.holdId());
+      } else if (reference.holdId().equals(second.holdId())) {
+        assertThat(exact.identity().canonicalBytes()).containsExactly(second.canonicalBytes());
+        assertThat(exact.status())
+            .isEqualTo(WorldCanonicalInitialAdmissionHoldState.HoldStatus.PENDING);
+        foundTypedHolds.add(reference.holdId());
+      }
+    }
+    assertThat(foundTypedHolds).contains(first.holdId(), second.holdId());
+
+    // This uses the existing serialized terminal path with a stipulated GS proof, not live GS auth.
+    var stipulatedCommittedProof =
+        new GameSessionCanonicalInitialAdmissionOwnerProof(
+            first,
+            GameSessionCanonicalInitialAdmissionOwnerProof.Outcome.COMMITTED,
+            1L,
+            41L,
+            "sha256:" + "e".repeat(64),
+            false,
+            Instant.parse("2026-10-07T01:02:03.123456Z"));
+    var finalizer =
+        new WorldCanonicalInitialAdmissionHoldFinalizationService(
+            new WorldCanonicalInitialAdmissionHoldFinalizationRepository(
+                dsl, manager, associationRepository(), fixture.lifecycleRepository()),
+            stipulatedCanonicalGameSessionOwnerProofVerifier(stipulatedCommittedProof));
+    assertThat(
+            finalizer.finalizeHold(
+                first, GameSessionCanonicalInitialAdmissionOwnerProof.Outcome.COMMITTED))
+        .isEqualTo(stipulatedCommittedProof);
+    assertThat(
+            repository.readReconciliationCandidate(
+                active.request().targetNamespace(), first.holdId()))
+        .isEmpty();
+
+    List<UUID> remainingTypedHolds = new ArrayList<>();
+    after = null;
+    for (int pageNumber = 0; pageNumber < 256; pageNumber++) {
+      var page =
+          repository.findReconciliationCandidates(active.request().targetNamespace(), after, 1);
+      assertThat(page).hasSizeLessThanOrEqualTo(1);
+      if (page.isEmpty()) break;
+      var reference = page.getFirst();
+      after = reference.cursor();
+      if (reference.holdId().equals(first.holdId())) {
+        remainingTypedHolds.add(reference.holdId());
+      } else if (reference.holdId().equals(second.holdId())) {
+        var exact =
+            repository
+                .readReconciliationCandidate(active.request().targetNamespace(), reference.holdId())
+                .orElseThrow();
+        assertThat(exact.identity().canonicalBytes()).containsExactly(second.canonicalBytes());
+        assertThat(exact.status())
+            .isEqualTo(WorldCanonicalInitialAdmissionHoldState.HoldStatus.PENDING);
+        remainingTypedHolds.add(reference.holdId());
+      }
+    }
+    assertThat(remainingTypedHolds).contains(second.holdId()).doesNotContain(first.holdId());
+    assertOrigin();
+  }
+
+  private static Request canonicalReconciliationHoldRequest(
+      WorldCanonicalInstanceLifecycleEvidence active, String requestId, String requestDigest) {
+    return new Request(
+        active.request().targetNamespace(),
+        active.request().canonicalTenantId(),
+        active.request().worldSlug(),
+        UUID.randomUUID(),
+        active.request().playableStateNamespaceId(),
+        active.request().playableStateScope(),
+        active.request().canonicalGameInstanceId(),
+        active.request().canonicalVersionId(),
+        active.lifecycleEpoch(),
+        requestId,
+        requestDigest,
+        InitialAdmissionOrigin.NO_PRIOR_POINTER,
+        1L,
+        null);
   }
 
   @Test

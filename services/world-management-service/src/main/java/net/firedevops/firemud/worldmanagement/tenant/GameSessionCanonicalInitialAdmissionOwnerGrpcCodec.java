@@ -54,10 +54,21 @@ public final class GameSessionCanonicalInitialAdmissionOwnerGrpcCodec {
       GetCanonicalInitialAdmissionOwnerProofResponse response) {
     Objects.requireNonNull(expectedIdentity, "expectedIdentity");
     Objects.requireNonNull(expectedOutcome, "expectedOutcome");
-    Objects.requireNonNull(response, "response");
     if (expectedOutcome == GameSessionCanonicalInitialAdmissionOwnerProof.Outcome.PENDING) {
       throw invalid("PENDING is not a terminal owner-proof selection");
     }
+    GameSessionCanonicalInitialAdmissionOwnerProof proof = fromResponse(expectedIdentity, response);
+    if (proof.outcome() != expectedOutcome) {
+      throw invalid("Game Session returned no proof for the exact requested terminal outcome");
+    }
+    return proof;
+  }
+
+  /** Decodes the actual producer outcome, including an exact nonterminal PENDING observation. */
+  public static GameSessionCanonicalInitialAdmissionOwnerProof fromResponse(
+      HoldIdentity expectedIdentity, GetCanonicalInitialAdmissionOwnerProofResponse response) {
+    Objects.requireNonNull(expectedIdentity, "expectedIdentity");
+    Objects.requireNonNull(response, "response");
     if (!response.getUnknownFields().asMap().isEmpty()) {
       throw invalid("Game Session owner proof response contains unknown fields");
     }
@@ -65,15 +76,22 @@ public final class GameSessionCanonicalInitialAdmissionOwnerGrpcCodec {
     requireExactIdentityEcho(expectedIdentity, response);
     GameSessionCanonicalInitialAdmissionOwnerProof.Outcome outcome =
         fromWireOutcome(response.getOutcome());
-    if (outcome == GameSessionCanonicalInitialAdmissionOwnerProof.Outcome.PENDING
-        || outcome != expectedOutcome) {
-      throw invalid("Game Session returned no proof for the exact requested terminal outcome");
-    }
 
     Long committedPointerVersion =
         response.hasCommittedPointerVersion() ? response.getCommittedPointerVersion() : null;
     Long auditEventId = response.hasAuditEventId() ? response.getAuditEventId() : null;
-    if (outcome == GameSessionCanonicalInitialAdmissionOwnerProof.Outcome.COMMITTED) {
+    Instant terminalAt = null;
+    String proofDigest = response.getProofDigest().isEmpty() ? null : response.getProofDigest();
+    if (outcome == GameSessionCanonicalInitialAdmissionOwnerProof.Outcome.PENDING) {
+      if (committedPointerVersion != null
+          || auditEventId != null
+          || proofDigest != null
+          || response.getPositiveDurableAbort()
+          || response.hasTerminalAt()) {
+        throw invalid("PENDING owner observation cannot carry terminal proof fields");
+      }
+      terminalAt = null;
+    } else if (outcome == GameSessionCanonicalInitialAdmissionOwnerProof.Outcome.COMMITTED) {
       if (committedPointerVersion == null || auditEventId == null) {
         throw invalid("COMMITTED owner proof requires pointer and audit fields");
       }
@@ -87,7 +105,9 @@ public final class GameSessionCanonicalInitialAdmissionOwnerGrpcCodec {
       throw invalid("ABORTED owner proof requires positive fencing without commit fields");
     }
 
-    Instant terminalAt = toInstant(response);
+    if (outcome != GameSessionCanonicalInitialAdmissionOwnerProof.Outcome.PENDING) {
+      terminalAt = toInstant(response);
+    }
     try {
       GameSessionCanonicalInitialAdmissionOwnerProof proof =
           new GameSessionCanonicalInitialAdmissionOwnerProof(
@@ -95,7 +115,7 @@ public final class GameSessionCanonicalInitialAdmissionOwnerGrpcCodec {
               outcome,
               committedPointerVersion,
               auditEventId,
-              response.getProofDigest(),
+              proofDigest,
               response.getPositiveDurableAbort(),
               terminalAt);
       return GameSessionCanonicalInitialAdmissionOwnerProofCodec.fromStored(

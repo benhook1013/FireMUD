@@ -83,6 +83,24 @@ public final class GameSessionCanonicalInitialAdmissionOwnerClient
     if (expectedOutcome == GameSessionCanonicalInitialAdmissionOwnerProof.Outcome.PENDING) {
       throw denied("PENDING is not a terminal owner-proof selection");
     }
+    HeldOwnerProof held = verifyAndHoldObserved(expectedIdentity);
+    try {
+      if (held.proof().outcome() != expectedOutcome) {
+        throw denied("Game Session returned no proof for the exact requested terminal outcome");
+      }
+      held.requireHeld();
+      return held;
+    } catch (RuntimeException mismatch) {
+      held.close();
+      throw mismatch;
+    }
+  }
+
+  /** Reads the actual persisted state for the explicit bounded World restart reconciler. */
+  @Override
+  public HeldOwnerProof verifyAndHoldObserved(HoldIdentity expectedIdentity) {
+    Objects.requireNonNull(expectedIdentity, "expectedIdentity");
+    requireNoAmbientTransaction();
     if (!workloadNamespace.equals(expectedIdentity.request().targetNamespace())) {
       throw denied("Canonical Game Session owner read must use the configured workload namespace");
     }
@@ -100,7 +118,7 @@ public final class GameSessionCanonicalInitialAdmissionOwnerClient
     try {
       proof =
           GameSessionCanonicalInitialAdmissionOwnerGrpcCodec.fromResponse(
-              expectedIdentity, expectedOutcome, response);
+              expectedIdentity, response);
     } catch (IllegalArgumentException invalid) {
       throw denied("Game Session returned invalid canonical initial-admission owner proof");
     }

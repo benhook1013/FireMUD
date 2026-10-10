@@ -71,6 +71,8 @@ class GameSessionCanonicalInitialAdmissionOwnerClientTest {
             () ->
                 client.verifyAndHold(
                     identity, GameSessionCanonicalInitialAdmissionOwnerProof.Outcome.COMMITTED));
+        assertThrows(
+            FinalizationDeniedException.class, () -> client.verifyAndHoldObserved(identity));
       } finally {
         TransactionSynchronizationManager.setActualTransactionActive(false);
       }
@@ -82,6 +84,8 @@ class GameSessionCanonicalInitialAdmissionOwnerClientTest {
             () ->
                 client.verifyAndHold(
                     identity, GameSessionCanonicalInitialAdmissionOwnerProof.Outcome.COMMITTED));
+        assertThrows(
+            FinalizationDeniedException.class, () -> client.verifyAndHoldObserved(identity));
       } finally {
         TransactionSynchronizationManager.clearSynchronization();
       }

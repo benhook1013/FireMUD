@@ -12,6 +12,9 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
+import java.time.Instant;
+import java.time.LocalDateTime;
+import java.time.ZoneOffset;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -27,6 +30,7 @@ import net.firedevops.firemud.worldmanagement.tenant.WorldCanonicalInstanceAssoc
 import net.firedevops.firemud.worldmanagement.tenant.WorldCanonicalInstanceAssociation.WorldPrepareFields;
 import org.jooq.DSLContext;
 import org.jooq.Record;
+import org.jooq.Result;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
@@ -377,6 +381,66 @@ class WorldCanonicalInitialAdmissionHoldRepositoryTest {
     TransactionSynchronizationManager.setActualTransactionActive(false);
     verifyNoInteractions(fixture.dsl, fixture.associations, fixture.lifecycle);
     assertThat(fixture.manager.startedWith).isNull();
+  }
+
+  @Test
+  void reconciliationScanUsesNamespaceTypedKeysetAndBoundedLimitWithoutExpiry() {
+    Request request = noPriorRequest();
+    Fixture fixture = fixture(request, activeLifecycle("ACTIVE", 7L), null);
+    Result<Record> rows = Mockito.mock(Result.class);
+    LocalDateTime updatedAt = LocalDateTime.parse("2026-10-08T12:13:14.123456");
+    Record candidate = row(Map.of("hold_id", HOLD_ID, "updated_at", updatedAt));
+    when(fixture.dsl.fetch(anyString(), any(Object[].class))).thenReturn(rows);
+    when(rows.size()).thenReturn(1);
+    when(rows.iterator()).thenReturn(List.of(candidate).iterator());
+    var after =
+        new WorldCanonicalInitialAdmissionHoldRepository.ReconciliationCursor(
+            Instant.parse("2026-10-08T12:00:00Z"), READ_ID);
+
+    var found = fixture.repository.findReconciliationCandidates("prod", after, 900);
+
+    assertThat(found)
+        .containsExactly(
+            new WorldCanonicalInitialAdmissionHoldRepository.ReconciliationCandidateReference(
+                HOLD_ID,
+                new WorldCanonicalInitialAdmissionHoldRepository.ReconciliationCursor(
+                    updatedAt.toInstant(ZoneOffset.UTC), HOLD_ID)));
+    ArgumentCaptor<String> sql = ArgumentCaptor.forClass(String.class);
+    ArgumentCaptor<Object[]> bindings = ArgumentCaptor.forClass(Object[].class);
+    verify(fixture.dsl).fetch(sql.capture(), bindings.capture());
+    assertThat(sql.getValue())
+        .contains("canonical_request_bytes IS NOT NULL")
+        .contains("canonical_target_namespace = ?")
+        .contains("status IN ('PENDING', 'RECONCILIATION_REQUIRED')")
+        .contains("(updated_at, hold_id) > (?::timestamp, ?::uuid)")
+        .contains("ORDER BY updated_at, hold_id LIMIT ?")
+        .doesNotContain("diagnostic_expires_at");
+    assertThat(bindings.getValue())
+        .containsExactly(
+            "prod", LocalDateTime.ofInstant(after.updatedAt(), ZoneOffset.UTC), READ_ID, 256);
+    assertThat(fixture.manager.startedWith.getIsolationLevel())
+        .isEqualTo(TransactionDefinition.ISOLATION_REPEATABLE_READ);
+    assertThat(fixture.manager.startedWith.isReadOnly()).isTrue();
+  }
+
+  @Test
+  void reconciliationCandidateRereadVerifiesTypedIdentityAndOwnerAssociation() {
+    Request request = noPriorRequest();
+    Fixture fixture =
+        fixture(request, activeLifecycle("ACTIVE", 7L), storedRow(request, HOLD_ID, HOLD_FENCE));
+
+    var candidate = fixture.repository.readReconciliationCandidate("prod", HOLD_ID).orElseThrow();
+
+    assertThat(candidate.identity()).isEqualTo(new HoldIdentity(request, HOLD_ID, HOLD_FENCE));
+    assertThat(candidate.status())
+        .isEqualTo(WorldCanonicalInitialAdmissionHoldState.HoldStatus.PENDING);
+    verify(fixture.associations).readOwnerAssociationInOwnerTransaction(CANONICAL_INSTANCE);
+    ArgumentCaptor<String> sql = ArgumentCaptor.forClass(String.class);
+    verify(fixture.dsl).fetchOne(sql.capture(), any(Object[].class));
+    assertThat(sql.getValue())
+        .contains("canonical_target_namespace = ?")
+        .contains("canonical_request_bytes IS NOT NULL")
+        .contains("status IN ('PENDING', 'RECONCILIATION_REQUIRED')");
   }
 
   private static void assertStoredRowDenied(Request request, Record storedRow) {

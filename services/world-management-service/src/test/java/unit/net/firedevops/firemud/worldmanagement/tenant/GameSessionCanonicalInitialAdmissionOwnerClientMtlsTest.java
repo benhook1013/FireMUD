@@ -187,6 +187,29 @@ class GameSessionCanonicalInitialAdmissionOwnerClientMtlsTest {
   }
 
   @Test
+  void observedReadAcceptsExactPendingWithoutTerminalFieldsFromTheAuthenticatedPeer()
+      throws Exception {
+    startServer(pki.gameSessionServer(), ResponseMode.PENDING);
+    client = newClient(server);
+    client.init();
+    HoldIdentity identity = identity(InitialAdmissionOrigin.NO_PRIOR_POINTER);
+
+    var held = client.verifyAndHoldObserved(identity);
+    try {
+      held.requireHeld();
+      assertThat(held.proof().holdIdentity()).isEqualTo(identity);
+      assertThat(held.proof().outcome())
+          .isEqualTo(GameSessionCanonicalInitialAdmissionOwnerProof.Outcome.PENDING);
+      assertThat(held.proof().terminalAt()).isNull();
+      assertThat(held.proof().proofDigest()).isNull();
+    } finally {
+      held.close();
+    }
+    assertThat(metadataCalls).hasValue(1);
+    assertThat(bodyCalls).hasValue(1);
+  }
+
+  @Test
   void changedResponseIdentityAndChangedOutcomeAreRejected() throws Exception {
     startServer(pki.gameSessionServer(), ResponseMode.SUBSTITUTED_REALM);
     client = newClient(server);
@@ -261,6 +284,7 @@ class GameSessionCanonicalInitialAdmissionOwnerClientMtlsTest {
   }
 
   private enum ResponseMode {
+    PENDING,
     COMMITTED,
     ABORTED,
     SUBSTITUTED_REALM
@@ -340,23 +364,29 @@ class GameSessionCanonicalInitialAdmissionOwnerClientMtlsTest {
             .setOrigin(request.getOrigin())
             .setHoldId(request.getHoldId())
             .setHoldFence(request.getHoldFence())
-            .setHoldBindingDigest(request.getHoldBindingDigest())
-            .setProofDigest("sha256:" + "b".repeat(64))
-            .setTerminalAt(Timestamp.newBuilder().setSeconds(1_791_331_200L));
+            .setHoldBindingDigest(request.getHoldBindingDigest());
     if (request.hasExpectedPriorPointerVersion()) {
       builder.setExpectedPriorPointerVersion(request.getExpectedPriorPointerVersion());
     }
-    if (mode == ResponseMode.ABORTED) {
+    if (mode == ResponseMode.PENDING) {
+      builder.setOutcome(
+          CanonicalInitialAdmissionOwnerProofOutcome
+              .CANONICAL_INITIAL_ADMISSION_OWNER_PROOF_OUTCOME_PENDING);
+    } else if (mode == ResponseMode.ABORTED) {
       builder
           .setOutcome(
               CanonicalInitialAdmissionOwnerProofOutcome
                   .CANONICAL_INITIAL_ADMISSION_OWNER_PROOF_OUTCOME_ABORTED)
+          .setProofDigest("sha256:" + "b".repeat(64))
+          .setTerminalAt(Timestamp.newBuilder().setSeconds(1_791_331_200L))
           .setPositiveDurableAbort(true);
     } else {
       builder
           .setOutcome(
               CanonicalInitialAdmissionOwnerProofOutcome
                   .CANONICAL_INITIAL_ADMISSION_OWNER_PROOF_OUTCOME_COMMITTED)
+          .setProofDigest("sha256:" + "b".repeat(64))
+          .setTerminalAt(Timestamp.newBuilder().setSeconds(1_791_331_200L))
           .setCommittedPointerVersion(
               request.getOrigin()
                       == CanonicalInitialAdmissionOrigin

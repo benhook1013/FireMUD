@@ -1,6 +1,7 @@
 package net.firedevops.firemud.worldmanagement.tenant;
 
 import java.util.Objects;
+import java.util.Optional;
 import net.firedevops.firemud.common.world.GameSessionCanonicalInitialAdmissionOwnerProof;
 import net.firedevops.firemud.common.world.WorldCanonicalInitialAdmissionHold.HoldIdentity;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
@@ -50,6 +51,41 @@ public final class WorldCanonicalInitialAdmissionHoldFinalizationService {
           repository.finalizeTerminal(expectedIdentity, proof, held);
       held.requireHeld();
       return stored;
+    } finally {
+      held.close();
+    }
+  }
+
+  /**
+   * Reads the actual exact Game Session outcome for restart reconciliation. PENDING is a successful
+   * read but leaves World unchanged; only authenticated terminal proof reaches the existing
+   * serialized finalizer.
+   */
+  public Optional<GameSessionCanonicalInitialAdmissionOwnerProof> observeAndFinalizeHold(
+      HoldIdentity expectedIdentity) {
+    Objects.requireNonNull(expectedIdentity, "expectedIdentity");
+    requireNoAmbientTransaction();
+
+    HeldOwnerProof held =
+        Objects.requireNonNull(
+            verifier.verifyAndHoldObserved(expectedIdentity),
+            "Game Session owner proof verifier returned no held proof");
+    try {
+      GameSessionCanonicalInitialAdmissionOwnerProof proof =
+          Objects.requireNonNull(held.proof(), "held owner proof");
+      held.requireHeld();
+      if (!expectedIdentity.equals(proof.holdIdentity())) {
+        throw denied("Game Session owner proof differs from the exact requested hold");
+      }
+      if (proof.outcome() == GameSessionCanonicalInitialAdmissionOwnerProof.Outcome.PENDING) {
+        return Optional.empty();
+      }
+
+      requireExactProof(expectedIdentity, proof.outcome(), proof);
+      GameSessionCanonicalInitialAdmissionOwnerProof stored =
+          repository.finalizeTerminal(expectedIdentity, proof, held);
+      held.requireHeld();
+      return Optional.of(stored);
     } finally {
       held.close();
     }
@@ -114,6 +150,12 @@ public final class WorldCanonicalInitialAdmissionHoldFinalizationService {
     HeldOwnerProof verifyAndHold(
         HoldIdentity expectedIdentity,
         GameSessionCanonicalInitialAdmissionOwnerProof.Outcome expectedOutcome);
+
+    /** Actual-outcome lookup used only by the explicit World restart reconciler. */
+    default HeldOwnerProof verifyAndHoldObserved(HoldIdentity expectedIdentity) {
+      throw denied(
+          "Authenticated Game Session canonical initial-admission outcome read is unavailable");
+    }
   }
 
   /** A verified exact owner outcome held valid until the enclosing World commit returns. */

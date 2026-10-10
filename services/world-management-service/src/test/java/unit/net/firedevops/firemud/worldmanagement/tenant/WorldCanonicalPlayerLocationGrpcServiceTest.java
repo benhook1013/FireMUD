@@ -1161,8 +1161,7 @@ class WorldCanonicalPlayerLocationGrpcServiceTest {
             uuid("22222222-2222-4222-8222-222222222222")));
   }
 
-  private static WorldPublishedStartLocationEvidence publishedSelector(String namespace)
-      throws Exception {
+  static WorldPublishedStartLocationEvidence publishedSelector(String namespace) throws Exception {
     DraftCommitBinding draft = freshGraphBinding();
     byte[] accountBytes = accountBinding(draft);
     var terminalRequest =

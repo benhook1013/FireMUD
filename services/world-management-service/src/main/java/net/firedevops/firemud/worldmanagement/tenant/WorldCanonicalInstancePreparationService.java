@@ -10,12 +10,14 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
 /**
  * Unregistered, default-denied owner operation for a canonical generation-free world instance.
  *
- * <p>No production verifier is supplied in this slice. A future authenticated integration must
- * verify the same-namespace Game Session producer and exact current Game Design release/terminal
- * source before the World transaction begins. The original Account-authorized APPLIED result is
- * immutable input evidence; preparation must not reauthorize the creator or reuse Draft/publication
+ * <p>No fresh-execution verifier is wired in this slice. An authenticated integration must verify
+ * the same-namespace Game Session producer and exact current Game Design release/terminal source
+ * before the World transaction begins. The original Account-authorized APPLIED result is immutable
+ * input evidence; preparation must not reauthorize the creator or reuse Draft/publication
  * permission. Its held producer evidence must remain valid through commit. This class is
- * deliberately not a Spring component and adds no RPC or public activation path.
+ * deliberately not a Spring component and adds no RPC or public activation path. The separate
+ * explicitly supplied historical recovery verifier reads retained Account and Game Session
+ * evidence; it supplies no held authority for another execution.
  */
 public final class WorldCanonicalInstancePreparationService {
   private final WorldCanonicalInstancePreparationRepository repository;
@@ -39,7 +41,7 @@ public final class WorldCanonicalInstancePreparationService {
 
   /**
    * Constructor for explicit fresh-execution and original-operation recovery verifiers. No
-   * production verifier is supplied in this slice.
+   * constructor registers or enables a runtime path.
    */
   public WorldCanonicalInstancePreparationService(
       WorldCanonicalInstancePreparationRepository repository,

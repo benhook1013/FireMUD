@@ -145,10 +145,10 @@ BEGIN
     END IF;
     SELECT convert_from(frame_value, 'UTF8'), next_position INTO purpose_value, p
         FROM account_publication_authorization_read_frame(NEW.scope_bytes, p);
-    IF purpose_value IS DISTINCT FROM CASE NEW.owner
+    IF purpose_value IS DISTINCT FROM (CASE NEW.owner
         WHEN 'ENTITY_MANAGEMENT' THEN 'ENTITY_INTAKE_SOURCE'
         WHEN 'AUTOMATION_SCRIPTING' THEN 'AUTOMATION_INTAKE_SOURCE'
-        ELSE NULL END
+        ELSE NULL END)
         OR p <> octet_length(NEW.scope_bytes) + 1 THEN
         RAISE EXCEPTION 'Invalid preliminary owner purpose or trailing scope bytes' USING ERRCODE = '23514';
     END IF;

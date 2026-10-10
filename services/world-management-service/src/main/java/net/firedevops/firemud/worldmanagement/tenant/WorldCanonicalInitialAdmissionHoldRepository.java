@@ -1,10 +1,16 @@
 package net.firedevops.firemud.worldmanagement.tenant;
 
 import java.sql.Connection;
+import java.time.Instant;
+import java.time.LocalDateTime;
+import java.time.ZoneOffset;
+import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
+import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
 import net.firedevops.firemud.common.world.WorldCanonicalInitialAdmissionHold.HoldIdentity;
 import net.firedevops.firemud.common.world.WorldCanonicalInitialAdmissionHold.InitialAdmissionOrigin;
 import net.firedevops.firemud.common.world.WorldCanonicalInitialAdmissionHold.Request;
@@ -12,6 +18,7 @@ import net.firedevops.firemud.common.world.WorldCanonicalInitialAdmissionHoldSta
 import net.firedevops.firemud.common.world.WorldCanonicalInstanceLifecycleEvidence;
 import org.jooq.DSLContext;
 import org.jooq.Record;
+import org.jooq.Result;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
@@ -253,6 +260,118 @@ public final class WorldCanonicalInitialAdmissionHoldRepository {
             }));
   }
 
+  /**
+   * Finds a bounded keyset page of typed nonterminal holds for one namespace. This is only a
+   * candidate scan: callers must independently re-read each candidate before contacting its Game
+   * Session owner. Diagnostic expiry is deliberately not part of the predicate.
+   */
+  public List<ReconciliationCandidateReference> findReconciliationCandidates(
+      String targetNamespace, ReconciliationCursor after, int limit) {
+    requireNamespace(targetNamespace);
+    requireNoAmbientTransaction("World canonical initial-admission reconciliation scan");
+    int boundedLimit = Math.max(1, Math.min(limit, 256));
+    return readTransaction.execute(
+        status -> {
+          requireReadOnlyRepeatableReadTransaction();
+          String query =
+              "SELECT hold_id, updated_at FROM initial_admission_bind_hold "
+                  + "WHERE canonical_request_bytes IS NOT NULL "
+                  + "AND canonical_target_namespace = ? "
+                  + "AND status IN ('PENDING', 'RECONCILIATION_REQUIRED') ";
+          Result<Record> rows;
+          if (after == null) {
+            rows =
+                dsl.fetch(
+                    query + "ORDER BY updated_at, hold_id LIMIT ?", targetNamespace, boundedLimit);
+          } else {
+            rows =
+                dsl.fetch(
+                    query
+                        + "AND (updated_at, hold_id) > (?::timestamp, ?::uuid) "
+                        + "ORDER BY updated_at, hold_id LIMIT ?",
+                    targetNamespace,
+                    LocalDateTime.ofInstant(after.updatedAt(), ZoneOffset.UTC),
+                    after.holdId(),
+                    boundedLimit);
+          }
+          List<ReconciliationCandidateReference> candidates = new ArrayList<>(rows.size());
+          for (Record row : rows) {
+            UUID holdId = required(row, "hold_id", UUID.class);
+            LocalDateTime updatedAt = required(row, "updated_at", LocalDateTime.class);
+            candidates.add(
+                new ReconciliationCandidateReference(
+                    holdId, new ReconciliationCursor(updatedAt.toInstant(ZoneOffset.UTC), holdId)));
+          }
+          return List.copyOf(candidates);
+        });
+  }
+
+  /**
+   * Re-reads one scanned hold and verifies its complete immutable typed identity against the
+   * persisted owner association in a separate read-only snapshot. A concurrent terminalization
+   * makes the candidate empty; malformed or detached typed evidence fails closed for that row.
+   */
+  public Optional<ReconciliationCandidate> readReconciliationCandidate(
+      String targetNamespace, UUID holdId) {
+    requireNamespace(targetNamespace);
+    Objects.requireNonNull(holdId, "holdId");
+    requireNoAmbientTransaction("World canonical initial-admission reconciliation candidate read");
+    return Optional.ofNullable(
+        readTransaction.execute(
+            status -> {
+              requireReadOnlyRepeatableReadTransaction();
+              Record row =
+                  dsl.fetchOne(
+                      HOLD_STATE_SELECT
+                          + "WHERE hold_id = ?::uuid AND canonical_target_namespace = ? "
+                          + "AND canonical_request_bytes IS NOT NULL "
+                          + "AND status IN ('PENDING', 'RECONCILIATION_REQUIRED')",
+                      holdId,
+                      targetNamespace);
+              if (row == null) return null;
+
+              Request request = readRequest(row);
+              if (!targetNamespace.equals(request.targetNamespace())) {
+                throw new InvalidHoldIdentityException(
+                    "Canonical World hold candidate differs from the scanned namespace");
+              }
+              WorldCanonicalInstanceAssociation association;
+              try {
+                association =
+                    associationRepository
+                        .readOwnerAssociationInOwnerTransaction(request.canonicalGameInstanceId())
+                        .orElseThrow(
+                            () ->
+                                new InvalidHoldIdentityException(
+                                    "Canonical World hold exists without its required persisted association"));
+                requireAssociationMatchesRequest(request, association);
+              } catch (
+                  WorldCanonicalInstanceAssociationRepository.InvalidAssociationEvidenceException
+                      inconsistent) {
+                throw new InvalidHoldIdentityException(
+                    "Canonical World hold association is incomplete or inconsistent", inconsistent);
+              }
+              HoldIdentity identity = verifyStoredIdentity(row, request, association);
+              WorldCanonicalInitialAdmissionHoldState.HoldStatus holdStatus;
+              try {
+                holdStatus =
+                    WorldCanonicalInitialAdmissionHoldState.HoldStatus.valueOf(
+                        required(row, "status", String.class));
+              } catch (RuntimeException invalid) {
+                throw new InvalidHoldIdentityException(
+                    "Persisted canonical World initial-admission hold status is missing or invalid",
+                    invalid);
+              }
+              return new ReconciliationCandidate(identity, holdStatus);
+            }));
+  }
+
+  private static void requireNamespace(String namespace) {
+    if (!GrpcPeerIdentity.isValidNamespace(namespace)) {
+      throw new IllegalArgumentException("Target namespace must be one canonical DNS label");
+    }
+  }
+
   private int insert(
       Request request,
       WorldCanonicalInstanceAssociation.WorldPrepareFields privateKeys,
@@ -299,6 +418,15 @@ public final class WorldCanonicalInitialAdmissionHoldRepository {
           "Canonical World initial-admission hold insert returned an invalid row count");
     }
     return inserted;
+  }
+
+  private static Request readRequest(Record row) {
+    try {
+      return Request.fromStored(required(row, "canonical_request_bytes", byte[].class));
+    } catch (RuntimeException invalid) {
+      throw new InvalidHoldIdentityException(
+          "Persisted canonical World initial-admission request is incomplete or invalid", invalid);
+    }
   }
 
   private Record readByOwnerRequest(long privateTenantKey, Request request) {
@@ -481,6 +609,36 @@ public final class WorldCanonicalInitialAdmissionHoldRepository {
 
   private static <T> T required(Record row, String column, Class<T> type) {
     return Objects.requireNonNull(row.get(column, type), "Persisted " + column + " is null");
+  }
+
+  /** Keyset cursor ordered by the persisted reconciliation index. */
+  public record ReconciliationCursor(Instant updatedAt, UUID holdId) {
+    public ReconciliationCursor {
+      Objects.requireNonNull(updatedAt, "updatedAt");
+      Objects.requireNonNull(holdId, "holdId");
+    }
+  }
+
+  /**
+   * Candidate scan result; it carries no authority beyond the immutable row key and sort cursor.
+   */
+  public record ReconciliationCandidateReference(UUID holdId, ReconciliationCursor cursor) {
+    public ReconciliationCandidateReference {
+      Objects.requireNonNull(holdId, "holdId");
+      Objects.requireNonNull(cursor, "cursor");
+      if (!holdId.equals(cursor.holdId())) {
+        throw new IllegalArgumentException("Candidate key differs from its reconciliation cursor");
+      }
+    }
+  }
+
+  /** Exact immutable candidate re-read, including its current stored status. */
+  public record ReconciliationCandidate(
+      HoldIdentity identity, WorldCanonicalInitialAdmissionHoldState.HoldStatus status) {
+    public ReconciliationCandidate {
+      Objects.requireNonNull(identity, "identity");
+      Objects.requireNonNull(status, "status");
+    }
   }
 
   public static final class HoldConflictException extends IllegalStateException {

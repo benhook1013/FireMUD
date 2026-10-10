@@ -155,6 +155,101 @@ class WorldCanonicalInitialAdmissionHoldFinalizationServiceTest {
     verifyNoInteractions(repository);
   }
 
+  @Test
+  void observedPendingDoesNotReachTheWorldFinalizerAndClosesItsHeldObservation() {
+    HoldIdentity identity = identity(request(InitialAdmissionOrigin.NO_PRIOR_POINTER, null));
+    var pending =
+        new GameSessionCanonicalInitialAdmissionOwnerProof(
+            identity,
+            GameSessionCanonicalInitialAdmissionOwnerProof.Outcome.PENDING,
+            null,
+            null,
+            null,
+            false,
+            null);
+    var repository = Mockito.mock(WorldCanonicalInitialAdmissionHoldFinalizationRepository.class);
+    AtomicBoolean closed = new AtomicBoolean();
+    var service =
+        new WorldCanonicalInitialAdmissionHoldFinalizationService(
+            repository, observedVerifier(pending, closed));
+
+    assertThat(service.observeAndFinalizeHold(identity)).isEmpty();
+    assertThat(closed).isTrue();
+    verifyNoInteractions(repository);
+  }
+
+  @Test
+  void observedTerminalOutcomesUseTheExistingFinalizerAndRejectSubstitutedIdentity() {
+    HoldIdentity identity = identity(request(InitialAdmissionOrigin.NO_PRIOR_POINTER, null));
+    var repository = Mockito.mock(WorldCanonicalInitialAdmissionHoldFinalizationRepository.class);
+    var committed = committed(identity, 1L);
+    when(repository.finalizeTerminal(Mockito.eq(identity), Mockito.eq(committed), Mockito.any()))
+        .thenReturn(committed);
+    AtomicBoolean closed = new AtomicBoolean();
+    var service =
+        new WorldCanonicalInitialAdmissionHoldFinalizationService(
+            repository, observedVerifier(committed, closed));
+
+    assertThat(service.observeAndFinalizeHold(identity)).contains(committed);
+    assertThat(closed).isTrue();
+    verify(repository).finalizeTerminal(Mockito.eq(identity), Mockito.eq(committed), Mockito.any());
+
+    HoldIdentity substituted =
+        new HoldIdentity(
+            identity.request(), uuid("cccccccc-cccc-4ccc-8ccc-cccccccccccc"), identity.holdFence());
+    var mismatchService =
+        new WorldCanonicalInitialAdmissionHoldFinalizationService(
+            repository, observedVerifier(committed(substituted, 1L), new AtomicBoolean()));
+    assertThatThrownBy(() -> mismatchService.observeAndFinalizeHold(identity))
+        .isInstanceOf(
+            WorldCanonicalInitialAdmissionHoldFinalizationService.FinalizationDeniedException.class)
+        .hasMessageContaining("exact requested hold");
+    verify(repository, Mockito.times(1))
+        .finalizeTerminal(Mockito.eq(identity), Mockito.eq(committed), Mockito.any());
+
+    var aborted =
+        new GameSessionCanonicalInitialAdmissionOwnerProof(
+            identity,
+            GameSessionCanonicalInitialAdmissionOwnerProof.Outcome.ABORTED,
+            null,
+            null,
+            "sha256:" + "d".repeat(64),
+            true,
+            Instant.parse("2026-10-08T01:02:03.123456Z"));
+    when(repository.finalizeTerminal(Mockito.eq(identity), Mockito.eq(aborted), Mockito.any()))
+        .thenReturn(aborted);
+    var abortService =
+        new WorldCanonicalInitialAdmissionHoldFinalizationService(
+            repository, observedVerifier(aborted, new AtomicBoolean()));
+    assertThat(abortService.observeAndFinalizeHold(identity)).contains(aborted);
+    verify(repository).finalizeTerminal(Mockito.eq(identity), Mockito.eq(aborted), Mockito.any());
+  }
+
+  @Test
+  void observedOwnerReadRejectsAmbientTransactionAndSynchronizationBeforeVerification() {
+    HoldIdentity identity = identity(request(InitialAdmissionOrigin.NO_PRIOR_POINTER, null));
+    var repository = Mockito.mock(WorldCanonicalInitialAdmissionHoldFinalizationRepository.class);
+    var verifier =
+        Mockito.mock(
+            WorldCanonicalInitialAdmissionHoldFinalizationService.OwnerProofVerifier.class);
+    var service = new WorldCanonicalInitialAdmissionHoldFinalizationService(repository, verifier);
+
+    TransactionSynchronizationManager.setActualTransactionActive(true);
+    assertThatThrownBy(() -> service.observeAndFinalizeHold(identity))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("outside an ambient transaction");
+    TransactionSynchronizationManager.setActualTransactionActive(false);
+
+    TransactionSynchronizationManager.initSynchronization();
+    assertThatThrownBy(() -> service.observeAndFinalizeHold(identity))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("outside an ambient transaction");
+    TransactionSynchronizationManager.clearSynchronization();
+
+    verify(verifier, never()).verifyAndHoldObserved(Mockito.any());
+    verifyNoInteractions(repository);
+  }
+
   private static WorldCanonicalInitialAdmissionHoldFinalizationService.OwnerProofVerifier verifier(
       GameSessionCanonicalInitialAdmissionOwnerProof proof, AtomicBoolean closed) {
     return (identity, outcome) ->
@@ -174,6 +269,38 @@ class WorldCanonicalInitialAdmissionHoldFinalizationServiceTest {
             closed.set(true);
           }
         };
+  }
+
+  private static WorldCanonicalInitialAdmissionHoldFinalizationService.OwnerProofVerifier
+      observedVerifier(GameSessionCanonicalInitialAdmissionOwnerProof proof, AtomicBoolean closed) {
+    return new WorldCanonicalInitialAdmissionHoldFinalizationService.OwnerProofVerifier() {
+      @Override
+      public WorldCanonicalInitialAdmissionHoldFinalizationService.HeldOwnerProof verifyAndHold(
+          HoldIdentity identity, GameSessionCanonicalInitialAdmissionOwnerProof.Outcome outcome) {
+        throw new AssertionError("Observed verification must not select an expected outcome");
+      }
+
+      @Override
+      public WorldCanonicalInitialAdmissionHoldFinalizationService.HeldOwnerProof
+          verifyAndHoldObserved(HoldIdentity identity) {
+        return new WorldCanonicalInitialAdmissionHoldFinalizationService.HeldOwnerProof() {
+          @Override
+          public GameSessionCanonicalInitialAdmissionOwnerProof proof() {
+            return proof;
+          }
+
+          @Override
+          public void requireHeld() {
+            if (closed.get()) throw new IllegalStateException("held proof already closed");
+          }
+
+          @Override
+          public void close() {
+            closed.set(true);
+          }
+        };
+      }
+    };
   }
 
   private static GameSessionCanonicalInitialAdmissionOwnerProof committed(
