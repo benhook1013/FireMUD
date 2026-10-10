@@ -542,7 +542,8 @@ class AccountControlUiCommittedIssuanceRepositoryIntegrationTest {
               + "caller_context_id, request_mac_key_id, request_digest, claims_payload, "
               + "source_payload, bundle_payload, signer_receipt, issued_at_epoch_second, "
               + "expires_at_epoch_second, recovery_expires_at, status) "
-              + "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'PREPARED')",
+              + "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?::timestamptz, "
+              + "'PREPARED')",
           seed.requestId(),
           seed.operationId(),
           seed.tokenJti(),

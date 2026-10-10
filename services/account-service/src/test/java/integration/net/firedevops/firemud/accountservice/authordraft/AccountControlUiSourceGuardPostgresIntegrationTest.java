@@ -68,7 +68,7 @@ class AccountControlUiSourceGuardPostgresIntegrationTest {
             "account_hosted_terms_environment_binding_heads",
             "account_hosted_terms_environment_bindings",
             "account_hosted_terms_environment_binding_publications")) {
-      assertThat(c.dsl.fetchValue("SELECT to_regclass(?)::TEXT", String.class, relation))
+      assertThat(c.dsl.fetchOne("SELECT to_regclass(?)::TEXT", relation).get(0, String.class))
           .as("migrated relation %s", relation)
           .isNotNull();
     }
@@ -79,7 +79,7 @@ class AccountControlUiSourceGuardPostgresIntegrationTest {
             "account_publication_authorization_source_sort_key(text)",
             "account_control_ui_source_keys(text,jsonb)",
             "account_control_ui_required_source_guard()")) {
-      assertThat(c.dsl.fetchValue("SELECT to_regprocedure(?)::TEXT", String.class, function))
+      assertThat(c.dsl.fetchOne("SELECT to_regprocedure(?)::TEXT", function).get(0, String.class))
           .as("migrated function %s", function)
           .isNotNull();
     }
