@@ -3,6 +3,7 @@ package net.firedevops.firemud.accountservice.repository;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import integration.net.firedevops.firemud.accountservice.repository.AccountPostgresIntegrationFixture;
 import java.sql.Connection;
 import java.sql.SQLException;
@@ -641,6 +642,18 @@ class AccountGameplayAdmissionProtectedEntryPrototypeIntegrationTest {
   }
 
   @Test
+  void returnedCommitFaultConnectionClosesItsPhysicalConnection() throws SQLException {
+    var physicalCommits = new java.util.concurrent.atomic.AtomicInteger();
+    var source = loseCommitAcknowledgementAfter(POSTGRES.dataSource(), physicalCommits, 1);
+    Connection returned = source.getConnection();
+    try (returned) {
+      assertThat(returned.isClosed()).isFalse();
+    }
+    assertThat(returned.isClosed()).isTrue();
+    assertThat(physicalCommits.get()).isZero();
+  }
+
+  @Test
   void retainedCommittedRetryCannotMintFreshAckAndHistoricalReceiptRecoveryStaysDenied() {
     var context = context();
     var ack = finalized(context, 15000);
@@ -800,26 +813,45 @@ class AccountGameplayAdmissionProtectedEntryPrototypeIntegrationTest {
       java.util.concurrent.atomic.AtomicInteger physicalCommits,
       int lostAcknowledgementCommit) {
     return new org.springframework.jdbc.datasource.DelegatingDataSource(delegate) {
+      @SuppressFBWarnings(
+          value = "ODR_OPEN_DATABASE_RESOURCE",
+          justification =
+              "The returned proxy owns this physical connection and explicitly delegates close; "
+                  + "construction failure closes the connection before rethrowing.")
       @Override
       public Connection getConnection() throws SQLException {
         Connection physical = super.getConnection();
-        return (Connection)
-            java.lang.reflect.Proxy.newProxyInstance(
-                Connection.class.getClassLoader(),
-                new Class<?>[] {Connection.class},
-                (proxy, method, arguments) -> {
-                  if (method.getName().equals("commit") && method.getParameterCount() == 0) {
-                    physical.commit();
-                    if (physicalCommits.incrementAndGet() == lostAcknowledgementCommit)
-                      throw new SQLException("COMMIT acknowledgement lost", "08006");
-                    return null;
-                  }
-                  try {
-                    return method.invoke(physical, arguments);
-                  } catch (java.lang.reflect.InvocationTargetException failure) {
-                    throw failure.getCause();
-                  }
-                });
+        try {
+          // Ownership transfers to this proxy; its close path below closes the physical handle.
+          return (Connection)
+              java.lang.reflect.Proxy.newProxyInstance(
+                  Connection.class.getClassLoader(),
+                  new Class<?>[] {Connection.class},
+                  (proxy, method, arguments) -> {
+                    if (method.getName().equals("close") && method.getParameterCount() == 0) {
+                      physical.close();
+                      return null;
+                    }
+                    if (method.getName().equals("commit") && method.getParameterCount() == 0) {
+                      physical.commit();
+                      if (physicalCommits.incrementAndGet() == lostAcknowledgementCommit)
+                        throw new SQLException("COMMIT acknowledgement lost", "08006");
+                      return null;
+                    }
+                    try {
+                      return method.invoke(physical, arguments);
+                    } catch (java.lang.reflect.InvocationTargetException failure) {
+                      throw failure.getCause();
+                    }
+                  });
+        } catch (RuntimeException | Error constructionFailure) {
+          try {
+            physical.close();
+          } catch (SQLException closeFailure) {
+            constructionFailure.addSuppressed(closeFailure);
+          }
+          throw constructionFailure;
+        }
       }
     };
   }
