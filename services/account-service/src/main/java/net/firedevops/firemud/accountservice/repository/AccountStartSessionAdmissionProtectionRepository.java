@@ -24,9 +24,11 @@ import java.util.UUID;
 import net.firedevops.firemud.accountservice.service.session.AccountStartSessionAuthorityCapture;
 import net.firedevops.firemud.common.account.startsession.AccountStartSessionAdmissionProtectionEvidence;
 import net.firedevops.firemud.common.account.startsession.AccountStartSessionAdmissionProtectionRequest;
+import net.firedevops.firemud.common.account.startsession.AccountStartSessionAdmissionProtectionSettlement;
 import net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding.SourceEvidence;
 import net.firedevops.firemud.common.operator.StartSessionAuthorityEvidenceBundle;
 import net.firedevops.firemud.common.operator.StartSessionPostAuthorizationExecutionTuple;
+import net.firedevops.firemud.common.world.GameSessionCanonicalInitialAdmissionOwnerProof;
 import org.jooq.DSLContext;
 import org.jooq.Record;
 import org.springframework.stereotype.Repository;
@@ -50,6 +52,8 @@ import tools.jackson.databind.json.JsonMapper;
 public class AccountStartSessionAdmissionProtectionRepository {
   private static final String PROTECTIONS = "account_start_session_admission_protections";
   private static final String SOURCES = "account_start_session_admission_protection_sources";
+  private static final String SETTLEMENTS =
+      "account_start_session_admission_protection_settlements";
   private static final String CAPTURES = "account_start_session_authority_captures";
   private static final UUID NIL_UUID = new UUID(0L, 0L);
   private static final Set<String> PROTECTION_COLUMNS =
@@ -87,6 +91,8 @@ public class AccountStartSessionAdmissionProtectionRepository {
           "canonical_sha256",
           "canonical_capture_bytes",
           "canonical_snapshot_bytes");
+  private static final Set<String> SETTLEMENT_COLUMNS =
+      Set.of("protection_id", "outcome", "terminal_bytes", "terminal_digest", "settled_at");
   private static final Set<String> CAPTURE_SNAPSHOT_FIELDS =
       Set.of(
           "schema",
@@ -245,6 +251,190 @@ public class AccountStartSessionAdmissionProtectionRepository {
     List<SourceEvidence> expectedSources =
         sourceVector(capture.snapshotBytes(), request.originalTuple());
     return Optional.of(decodeAndRequireExact(row, request, capture, expectedSources));
+  }
+
+  /**
+   * Inserts an exact terminal settlement or returns the immutable winner on an exact retry.
+   *
+   * <p>This runs only after the authenticated owner terminal read has completed outside SQL. It
+   * locks the original canonical source-lock rows before the immutable protection row, compares the
+   * complete historical Account evidence without consulting live expiry, and writes the outcome
+   * derived from the typed owner proof. The database trigger repeats the closed structural binding
+   * checks; neither layer authenticates the remote producer.
+   */
+  @Transactional(propagation = Propagation.MANDATORY)
+  public StoredSettlement settleExact(AccountStartSessionAdmissionProtectionSettlement settlement) {
+    requireWritableReadCommittedTransaction();
+    Objects.requireNonNull(settlement, "exact admission protection settlement is required");
+    AccountStartSessionAdmissionProtectionEvidence expectedEvidence =
+        settlement.protectionEvidence();
+    UUID protectionId = expectedEvidence.accountProtectionId();
+    long protectionFence = expectedEvidence.accountProtectionFence();
+
+    lockOriginalSourceRows(expectedEvidence);
+    Record locked = selectById(protectionId, true);
+    if (locked == null
+        || !protectionId.equals(requiredUuid(locked, "protection_id"))
+        || protectionFence != positive(requiredLong(locked, "protection_fence"))) {
+      throw unavailable();
+    }
+    AccountStartSessionAdmissionProtectionEvidence retainedEvidence =
+        findHistoricalExact(protectionId, protectionFence)
+            .orElseThrow(AccountStartSessionAdmissionProtectionRepository::unavailable);
+    requireSameEvidence(expectedEvidence, retainedEvidence);
+
+    byte[] terminalBytes = settlement.canonicalBytes();
+    dsl.execute(
+        "INSERT INTO "
+            + SETTLEMENTS
+            + " (protection_id, outcome, terminal_bytes, terminal_digest) VALUES (?, ?, ?, ?) "
+            + "ON CONFLICT (protection_id) DO NOTHING",
+        protectionId,
+        settlement.outcome().name(),
+        terminalBytes,
+        settlement.digest());
+    StoredSettlement stored =
+        readSettlementExact(protectionId, protectionFence, retainedEvidence)
+            .orElseThrow(AccountStartSessionAdmissionProtectionRepository::unavailable);
+    AccountStartSessionAdmissionProtectionSettlement storedSettlement = stored.settlement();
+    if (!Arrays.equals(terminalBytes, storedSettlement.canonicalBytes())
+        || !settlement.digest().equals(storedSettlement.digest())
+        || settlement.outcome() != stored.outcome()) {
+      throw conflict();
+    }
+    return stored;
+  }
+
+  /**
+   * Lookup-only historical settlement read. It validates the full retained protection and
+   * settlement binding but never checks current authority or either original expiry.
+   */
+  @Transactional(propagation = Propagation.MANDATORY)
+  public Optional<StoredSettlement> findSettlementExact(UUID protectionId, long protectionFence) {
+    requireWritableReadCommittedTransaction();
+    if (protectionId == null || NIL_UUID.equals(protectionId) || protectionFence <= 0L) {
+      throw unavailable();
+    }
+    Optional<AccountStartSessionAdmissionProtectionEvidence> evidence =
+        findHistoricalExact(protectionId, protectionFence);
+    if (evidence.isEmpty()) return Optional.empty();
+    return readSettlementExact(protectionId, protectionFence, evidence.get());
+  }
+
+  private void lockOriginalSourceRows(
+      AccountStartSessionAdmissionProtectionEvidence expectedEvidence) {
+    UUID protectionId = expectedEvidence.accountProtectionId();
+    long protectionFence = expectedEvidence.accountProtectionFence();
+    Record observed = selectById(protectionId, false);
+    if (observed == null
+        || !protectionId.equals(requiredUuid(observed, "protection_id"))
+        || protectionFence != positive(requiredLong(observed, "protection_fence"))) {
+      throw unavailable();
+    }
+
+    AccountStartSessionAdmissionProtectionRequest retainedRequest;
+    try {
+      retainedRequest =
+          AccountStartSessionAdmissionProtectionRequest.decode(
+              requiredBytes(observed, "request_binding_bytes"));
+    } catch (RuntimeException malformed) {
+      throw unavailable();
+    }
+    if (!MessageDigest.isEqual(
+        retainedRequest.canonicalBytes(), expectedEvidence.request().canonicalBytes())) {
+      throw conflict();
+    }
+    Record captureRow = selectCaptureForOriginalTuple(retainedRequest.originalTuple(), false);
+    if (captureRow == null) throw unavailable();
+    CaptureValue capture = captureFromRow(captureRow);
+    List<SourceEvidence> expectedSources =
+        sourceVector(capture.snapshotBytes(), retainedRequest.originalTuple());
+    requireExactSources(expectedSources, expectedEvidence.sourceEvidenceVector());
+
+    // The captured vector is already in canonical Java string order. Lock one existing source
+    // lock row at a time in that order, matching the V129 owner-before-protection lock discipline.
+    for (SourceEvidence source : expectedSources) {
+      Record sourceLock =
+          dsl.fetchOne(
+              "SELECT source_key FROM account_draft_authorization_source_locks "
+                  + "WHERE source_key = ? FOR UPDATE NOWAIT",
+              source.key());
+      if (sourceLock == null || !source.key().equals(requiredString(sourceLock, "source_key"))) {
+        throw unavailable();
+      }
+    }
+  }
+
+  private Optional<StoredSettlement> readSettlementExact(
+      UUID protectionId,
+      long protectionFence,
+      AccountStartSessionAdmissionProtectionEvidence expectedEvidence) {
+    Record row =
+        dsl.fetchOne("SELECT * FROM " + SETTLEMENTS + " WHERE protection_id = ?", protectionId);
+    if (row == null) return Optional.empty();
+    try {
+      requireColumns(row, SETTLEMENT_COLUMNS, "admission protection settlement");
+      if (!protectionId.equals(requiredUuid(row, "protection_id"))) throw unavailable();
+      String outcome = requiredString(row, "outcome");
+      byte[] terminalBytes = requiredBytes(row, "terminal_bytes");
+      String terminalDigest = requiredString(row, "terminal_digest");
+      Instant settledAt = requiredTimestamp(row, "settled_at").toInstant();
+      if (!terminalDigest.equals(digestPrefixed(terminalBytes))) throw unavailable();
+
+      AccountStartSessionAdmissionProtectionSettlement settlement;
+      try {
+        settlement = AccountStartSessionAdmissionProtectionSettlement.decode(terminalBytes);
+      } catch (RuntimeException malformed) {
+        throw unavailable();
+      }
+      AccountStartSessionAdmissionProtectionEvidence retainedEvidence =
+          settlement.protectionEvidence();
+      if (!Arrays.equals(terminalBytes, settlement.canonicalBytes())
+          || !terminalDigest.equals(settlement.digest())
+          || !outcome.equals(settlement.outcome().name())
+          || !protectionId.equals(retainedEvidence.accountProtectionId())
+          || protectionFence != retainedEvidence.accountProtectionFence()) {
+        throw conflict();
+      }
+      requireSameEvidence(expectedEvidence, retainedEvidence);
+      return Optional.of(new StoredSettlement(settlement, settledAt));
+    } catch (RuntimeException malformed) {
+      if (malformed instanceof IllegalStateException state
+          && ("StartSession admission protection is unavailable".equals(state.getMessage())
+              || "StartSession admission protection conflicts with its immutable binding"
+                  .equals(state.getMessage()))) {
+        throw state;
+      }
+      throw unavailable();
+    }
+  }
+
+  private static void requireSameEvidence(
+      AccountStartSessionAdmissionProtectionEvidence expected,
+      AccountStartSessionAdmissionProtectionEvidence actual) {
+    if (!MessageDigest.isEqual(expected.canonicalBytes(), actual.canonicalBytes()))
+      throw conflict();
+  }
+
+  /** Immutable database receipt for one exact original Game Session terminal value. */
+  public record StoredSettlement(
+      AccountStartSessionAdmissionProtectionSettlement settlement, Instant settledAt) {
+    public StoredSettlement {
+      Objects.requireNonNull(settlement, "settlement is required");
+      Objects.requireNonNull(settledAt, "settledAt is required");
+    }
+
+    public UUID protectionId() {
+      return settlement.protectionEvidence().accountProtectionId();
+    }
+
+    public long protectionFence() {
+      return settlement.protectionEvidence().accountProtectionFence();
+    }
+
+    public GameSessionCanonicalInitialAdmissionOwnerProof.Outcome outcome() {
+      return settlement.outcome();
+    }
   }
 
   private int insert(

@@ -192,3 +192,9 @@ Entry format:
   - Observation: Bare `CASE` expressions inside a PL/pgSQL `IF` boolean chain repeat the earlier source-guard parse hazard. A successful simulator run cannot prove that PostgreSQL accepts the procedural function or executes its constraints.
   - Expected pattern: Parenthesize `CASE` expression operands in procedural conditions and retain physical Flyway startup plus positive and negative owner cases as a separate proof gate. Report startup cascades separately from actual owner assertion failures.
   - Current status: The two expression operands are parenthesized without changing their mappings or rejection guards; physical PostgreSQL re-execution remains required.
+
+- `2026-10-10`: Native TLS-denial probes must target the bound loopback address
+  - Context: PR #3105's missing-client-certificate test passed locally but failed twice in GitHub CI before the Account PostgreSQL stage.
+  - Observation: Originating XML finally showed an IPv6 `localhost` connection refusal while the test server listened only on IPv4. A failed connection and zero handler calls do not establish TLS rejection, and reporting only a boolean matcher initially concealed the transport cause.
+  - Expected pattern: Match the client endpoint to the server's explicit loopback bind and certificate SAN, retain bounded cause-chain diagnostics, and check certificate rejection separately from absence of application calls. Never broaden a TLS matcher to accept generic connection failure.
+  - Current status: Both test clients use the existing `127.0.0.1` bind/SAN, the strict matcher and required client certificate are unchanged, and grouped assertions retain all denial evidence. All four native acquisition mTLS cases pass locally; corrected CI execution remains required.

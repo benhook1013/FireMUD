@@ -17,6 +17,7 @@ import java.sql.Connection;
 import java.sql.SQLException;
 import java.util.List;
 import java.util.UUID;
+import net.firedevops.firemud.common.account.startsession.AccountStartSessionAdmissionProtectionSettlement;
 import net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding.SourceEvidence;
 import net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding.SourceKind;
 import org.jooq.ConnectionRunnable;
@@ -96,6 +97,60 @@ class AccountStartSessionAdmissionProtectionRepositoryTest {
         .hasMessageContaining("READ_COMMITTED");
 
     verifyNoInteractions(dsl);
+  }
+
+  @Test
+  void settlementLookupRequiresWritableReadCommittedTransactionBeforeDatabaseAccess() {
+    DSLContext dsl = mock(DSLContext.class);
+    AccountStartSessionAdmissionProtectionRepository repository =
+        new AccountStartSessionAdmissionProtectionRepository(dsl);
+
+    assertThatThrownBy(() -> repository.findSettlementExact(PROTECTION_ID, PROTECTION_FENCE))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("READ_COMMITTED");
+
+    verifyNoInteractions(dsl);
+  }
+
+  @Test
+  void settlementWriteChecksTransactionBeforeInspectingTypedCarrier() {
+    DSLContext dsl = mock(DSLContext.class);
+    AccountStartSessionAdmissionProtectionRepository repository =
+        new AccountStartSessionAdmissionProtectionRepository(dsl);
+    AccountStartSessionAdmissionProtectionSettlement settlement =
+        mock(AccountStartSessionAdmissionProtectionSettlement.class);
+
+    assertThatThrownBy(() -> repository.settleExact(settlement))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("READ_COMMITTED");
+
+    verifyNoInteractions(dsl, settlement);
+  }
+
+  @Test
+  void settlementLookupRejectsMismatchedRetainedFenceBeforeCaptureOrReceiptRead()
+      throws SQLException {
+    DSLContext dsl = writableDsl();
+    Record row = mock(Record.class);
+    when(row.get("protection_id", UUID.class)).thenReturn(PROTECTION_ID);
+    when(row.get("protection_fence", Long.class)).thenReturn(PROTECTION_FENCE + 1L);
+    when(dsl.fetchOne(anyString(), any(Object[].class))).thenReturn(row);
+    AccountStartSessionAdmissionProtectionRepository repository =
+        new AccountStartSessionAdmissionProtectionRepository(dsl);
+    beginWritableReadCommittedTransaction();
+
+    assertThatThrownBy(() -> repository.findSettlementExact(PROTECTION_ID, PROTECTION_FENCE))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("unavailable");
+
+    ArgumentCaptor<Object[]> arguments = ArgumentCaptor.forClass(Object[].class);
+    verify(dsl, times(1)).fetchOne(contains("WHERE protection_id = ?"), arguments.capture());
+    assertThat(arguments.getValue()).containsExactly(PROTECTION_ID);
+    verify(dsl, times(0)).fetch(anyString(), any(Object[].class));
+    verify(dsl, times(0))
+        .fetchOne(
+            contains("account_start_session_admission_protection_settlements"),
+            any(Object[].class));
   }
 
   @Test

@@ -2,6 +2,7 @@ package unit.net.firedevops.firemud.accountservice.service.session;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.junit.jupiter.api.Assertions.assertAll;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
@@ -33,6 +34,7 @@ import java.security.cert.CertificateFactory;
 import java.security.cert.X509Certificate;
 import java.util.ArrayList;
 import java.util.Base64;
+import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -178,12 +180,14 @@ class AccountStartSessionAdmissionProtectionAcquisitionGrpcMtlsTest {
           .isInstanceOf(StatusRuntimeException.class)
           .satisfies(
               failure ->
-                  assertThat(TlsTestSupport.isTlsHandshakeRejection(failure))
-                      .as("TLS rejection: %s; immediate cause: %s", failure, failure.getCause())
-                      .isTrue());
-
-      assertThat(server.handlerCalls()).hasValue(0);
-      verifyNoInteractions(owner);
+                  assertAll(
+                      "missing client certificate is rejected before application handling",
+                      () ->
+                          assertThat(TlsTestSupport.isTlsHandshakeRejection(failure))
+                              .as("TLS rejection cause chain: %s", describeCauseChain(failure))
+                              .isTrue(),
+                      () -> assertThat(server.handlerCalls()).hasValue(0),
+                      () -> verifyNoInteractions(owner)));
     }
   }
 
@@ -266,7 +270,7 @@ class AccountStartSessionAdmissionProtectionAcquisitionGrpcMtlsTest {
   private static AccountStartSessionAdmissionProtectionAcquisitionGrpcClient newClient(
       int port, TestIdentity identity) throws Exception {
     var endpoints = new ServiceEndpointsProperties();
-    endpoints.setAccountService("localhost:" + port);
+    endpoints.setAccountService("127.0.0.1:" + port);
     return new AccountStartSessionAdmissionProtectionAcquisitionGrpcClient(
         endpoints,
         pki.clientProperties(temporaryDirectory, identity),
@@ -279,7 +283,7 @@ class AccountStartSessionAdmissionProtectionAcquisitionGrpcMtlsTest {
     tls.setPlaintext(false);
     tls.setCaCert(pki.caCertificatePem().toString());
     ManagedChannel channel =
-        new GrpcChannelFactory().buildChannel("localhost:" + port, 6565, tls, false);
+        new GrpcChannelFactory().buildChannel("127.0.0.1:" + port, 6565, tls, false);
     return new ClientTransport(channel);
   }
 
@@ -287,6 +291,34 @@ class AccountStartSessionAdmissionProtectionAcquisitionGrpcMtlsTest {
     var tuple = originalTuple();
     return new AccountStartSessionAdmissionProtectionAcquisitionInput(
         tuple.canonicalBytes(), MUTATION, ATTEMPT, 21L, hold(tuple));
+  }
+
+  private static String describeCauseChain(Throwable failure) {
+    final int maxCauses = 12;
+    final int maxMessageLength = 240;
+    var seen = new IdentityHashMap<Throwable, Boolean>();
+    var description = new StringBuilder();
+    Throwable current = failure;
+    int causeCount = 0;
+    while (current != null && causeCount < maxCauses && seen.put(current, Boolean.TRUE) == null) {
+      if (causeCount > 0) description.append(" <- ");
+      description.append(current.getClass().getName());
+      String message = current.getMessage();
+      if (message != null && !message.isEmpty()) {
+        description.append(": ");
+        description.append(
+            message.length() <= maxMessageLength
+                ? message
+                : message.substring(0, maxMessageLength) + "…[truncated]");
+      }
+      causeCount++;
+      current = current.getCause();
+    }
+    if (current != null) {
+      description.append(
+          seen.containsKey(current) ? " <- [cause cycle]" : " <- [cause chain truncated]");
+    }
+    return description.toString();
   }
 
   private static AccountStartSessionAdmissionProtectionEvidence evidence(

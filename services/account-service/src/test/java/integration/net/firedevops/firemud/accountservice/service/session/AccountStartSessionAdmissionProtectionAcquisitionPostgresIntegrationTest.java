@@ -8,6 +8,7 @@ import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import java.io.ByteArrayOutputStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -46,15 +47,21 @@ import net.firedevops.firemud.accountservice.service.session.AccountOperatorAuth
 import net.firedevops.firemud.accountservice.service.session.AccountOperatorAuthorizationFingerprintKeyring.Snapshot;
 import net.firedevops.firemud.common.account.startsession.AccountStartSessionAdmissionProtectionEvidence;
 import net.firedevops.firemud.common.account.startsession.AccountStartSessionAdmissionProtectionRequest;
+import net.firedevops.firemud.common.account.startsession.AccountStartSessionAdmissionProtectionSettlement;
 import net.firedevops.firemud.common.account.startsession.StartSessionAccountRedemptionProjection;
+import net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding;
 import net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding.SourceEvidence;
+import net.firedevops.firemud.common.gamesession.OriginalStartSessionAdmissionTerminalRequest;
+import net.firedevops.firemud.common.gamesession.OriginalStartSessionAdmissionTerminalResult;
 import net.firedevops.firemud.common.gamesession.OriginalStartSessionCurrentAttemptClient;
 import net.firedevops.firemud.common.gamesession.OriginalStartSessionCurrentAttemptEvidence.Request;
 import net.firedevops.firemud.common.gamesession.OriginalStartSessionCurrentAttemptEvidence.Result;
+import net.firedevops.firemud.common.json.Rfc8785CanonicalJson;
 import net.firedevops.firemud.common.operator.StartSessionAuthorityEvidenceBundle.BundleReference;
 import net.firedevops.firemud.common.operator.StartSessionOperatorAction;
 import net.firedevops.firemud.common.operator.StartSessionPostAuthorizationExecutionTuple;
 import net.firedevops.firemud.common.operator.StartSessionPreAuthorizationReservationTuple;
+import net.firedevops.firemud.common.world.GameSessionCanonicalInitialAdmissionOwnerProof;
 import net.firedevops.firemud.common.world.WorldCanonicalInitialAdmissionHold;
 import net.firedevops.firemud.common.world.WorldStartSessionExecutionTerminal;
 import net.firedevops.firemud.loggingadmin.v1.ReadCurrentClaimEvidenceResponse;
@@ -79,10 +86,11 @@ import tools.jackson.databind.json.JsonMapper;
 
 /**
  * PostgreSQL proof that the real Account issuer, signed actor, original capture, redemption,
- * currentness callback, World participation and V133 producer compose into admission protection.
- * Logging claim evidence, the Game Session current-attempt client, and World hold/terminal values
- * are stipulated test collaborators. This proves no genuine upstream producer, authenticated
- * cross-service transport, Game Session terminal settlement, runtime registration, or activation.
+ * currentness callback, World participation and V134 storage compose into admission protection and
+ * exact terminal settlement. Logging claim evidence, the Game Session current-attempt client, and
+ * World/Game Session hold/terminal values are stipulated test collaborators. This proves no genuine
+ * upstream producer, authenticated cross-service transport, Game Session terminal owner
+ * transaction, runtime registration, or activation.
  */
 @Testcontainers(disabledWithoutDocker = true)
 @SuppressWarnings("resource")
@@ -342,6 +350,236 @@ class AccountStartSessionAdmissionProtectionAcquisitionPostgresIntegrationTest {
               rowCount(
                   prepared.account.dsl, "account_start_session_admission_protection_settlements"))
           .isZero();
+    }
+  }
+
+  @Test
+  void exactHistoricalSettlementAfterExpiryReleasesSourcesOnlyAfterCommit() throws Exception {
+    try (Prepared prepared = prepare(Duration.ofSeconds(10))) {
+      AccountStartSessionAdmissionProtectionEvidence protection =
+          prepared.acquire(prepared.acquisitionService(prepared.account.manager));
+      prepared.settleWorldWithStipulatedTerminal();
+      Instant expiry = protection.request().originalLeaseExpiresAt();
+      awaitDatabaseTime(prepared.account.dsl, expiry.plusMillis(100), Duration.ofSeconds(15));
+
+      var repository = new AccountStartSessionAdmissionProtectionRepository(prepared.account.dsl);
+      var settlement =
+          terminalSettlement(
+              protection,
+              GameSessionCanonicalInitialAdmissionOwnerProof.Outcome.COMMITTED,
+              Instant.parse("2026-10-10T04:05:06.123456789Z"));
+      CountDownLatch receiptInserted = new CountDownLatch(1);
+      CountDownLatch allowCommit = new CountDownLatch(1);
+      var executor = Executors.newFixedThreadPool(2);
+      try {
+        var settling =
+            executor.submit(
+                () ->
+                    prepared.account.transactions.execute(
+                        ignored -> {
+                          repository.settleExact(settlement);
+                          receiptInserted.countDown();
+                          awaitLatch(allowCommit);
+                          return null;
+                        }));
+        assertThat(receiptInserted.await(10, TimeUnit.SECONDS)).isTrue();
+        assertThat(
+                rowCount(
+                    prepared.account.dsl, "account_start_session_admission_protection_settlements"))
+            .isZero();
+
+        var blockedWriter =
+            executor.submit(
+                () -> {
+                  try {
+                    return prepared.account.tx(prepared.account::changeRoleToAdmin);
+                  } catch (RuntimeException failure) {
+                    return failure;
+                  }
+                });
+        Object beforeCommitResult = blockedWriter.get(20, TimeUnit.SECONDS);
+        assertThat(beforeCommitResult).isInstanceOf(RuntimeException.class);
+        assertPostgresSqlState((RuntimeException) beforeCommitResult, "55P03");
+        assertThat(
+                prepared
+                    .account
+                    .accounts
+                    .findById(prepared.account.account.getId())
+                    .orElseThrow()
+                    .getRole())
+            .isEqualTo(prepared.account.account.getRole());
+
+        allowCommit.countDown();
+        settling.get(20, TimeUnit.SECONDS);
+      } finally {
+        allowCommit.countDown();
+        executor.shutdownNow();
+        assertThat(executor.awaitTermination(10, TimeUnit.SECONDS)).isTrue();
+      }
+
+      var stored =
+          prepared.account.tx(
+              () ->
+                  repository
+                      .findSettlementExact(
+                          protection.accountProtectionId(), protection.accountProtectionFence())
+                      .orElseThrow());
+      assertThat(stored.settlement().canonicalBytes()).containsExactly(settlement.canonicalBytes());
+      assertThat(stored.settlement().protectionEvidence().canonicalBytes())
+          .containsExactly(protection.canonicalBytes());
+      assertThat(stored.outcome())
+          .isEqualTo(GameSessionCanonicalInitialAdmissionOwnerProof.Outcome.COMMITTED);
+      assertThat(stored.settledAt()).isNotNull();
+
+      Account changed = prepared.account.tx(prepared.account::changeRoleToAdmin);
+      assertThat(changed.getRole()).isEqualTo("admin");
+      assertThat(
+              rowCount(
+                  prepared.account.dsl, "account_start_session_admission_protection_settlements"))
+          .isEqualTo(1L);
+    }
+  }
+
+  @Test
+  void settlementInsertGuardRejectsMalformedBindingDigestPendingAndNoncanonicalInstant()
+      throws Exception {
+    try (Prepared prepared = prepare(Duration.ofSeconds(90))) {
+      AccountStartSessionAdmissionProtectionEvidence protection =
+          prepared.acquire(prepared.acquisitionService(prepared.account.manager));
+      var committed =
+          terminalSettlement(
+              protection,
+              GameSessionCanonicalInitialAdmissionOwnerProof.Outcome.COMMITTED,
+              Instant.parse("2026-10-10T04:05:06.123456789Z"));
+      byte[] exactProofBytes = committed.result().canonicalBytes();
+
+      assertRawSettlementRejected(
+          prepared,
+          "COMMITTED",
+          settlementEnvelope(
+              protection.canonicalBytes(),
+              exactProofBytes,
+              "account-start-session-admission-protection-settlement/v2"),
+          settlementDigest(
+              settlementEnvelope(
+                  protection.canonicalBytes(),
+                  exactProofBytes,
+                  "account-start-session-admission-protection-settlement/v2")));
+
+      byte[] changedEvidence = protection.canonicalBytes();
+      String changedEvidenceJson =
+          new String(changedEvidence, StandardCharsets.UTF_8)
+              .replace(
+                  "\"accountProtectionFence\":\"" + protection.accountProtectionFence() + "\"",
+                  "\"accountProtectionFence\":\""
+                      + (protection.accountProtectionFence() + 1)
+                      + "\"");
+      byte[] changedEvidenceBytes = Rfc8785CanonicalJson.canonicalizeUtf8(changedEvidenceJson);
+      assertThat(changedEvidenceBytes).isNotEqualTo(protection.canonicalBytes());
+      byte[] changedBindingEnvelope = settlementEnvelope(changedEvidenceBytes, exactProofBytes);
+      assertRawSettlementRejected(
+          prepared, "COMMITTED", changedBindingEnvelope, settlementDigest(changedBindingEnvelope));
+
+      byte[] validEnvelope = committed.canonicalBytes();
+      assertRawSettlementRejected(prepared, "COMMITTED", validEnvelope, "sha256:" + "0".repeat(64));
+
+      byte[] pendingProof =
+          ownerProofBytes(
+              protection,
+              GameSessionCanonicalInitialAdmissionOwnerProof.Outcome.PENDING,
+              null,
+              null,
+              null,
+              false,
+              null);
+      byte[] pendingEnvelope = settlementEnvelope(protection.canonicalBytes(), pendingProof);
+      assertRawSettlementRejected(
+          prepared, "COMMITTED", pendingEnvelope, settlementDigest(pendingEnvelope));
+
+      byte[] noncanonicalTimestampProof =
+          ownerProofBytesWithTerminalText(
+              protection,
+              GameSessionCanonicalInitialAdmissionOwnerProof.Outcome.COMMITTED,
+              "2026-10-10T04:05:06.123000Z");
+      byte[] noncanonicalTimestampEnvelope =
+          settlementEnvelope(protection.canonicalBytes(), noncanonicalTimestampProof);
+      assertRawSettlementRejected(
+          prepared,
+          "COMMITTED",
+          noncanonicalTimestampEnvelope,
+          settlementDigest(noncanonicalTimestampEnvelope));
+
+      var stored =
+          prepared.account.tx(
+              () ->
+                  new AccountStartSessionAdmissionProtectionRepository(prepared.account.dsl)
+                      .settleExact(committed));
+      assertThat(stored.settlement().canonicalBytes()).containsExactly(committed.canonicalBytes());
+
+      var aborted =
+          terminalSettlement(
+              protection,
+              GameSessionCanonicalInitialAdmissionOwnerProof.Outcome.ABORTED,
+              Instant.parse("2026-10-10T04:05:07.123456789Z"));
+      byte[] conflictingEnvelope = aborted.canonicalBytes();
+      assertRawSettlementRejected(
+          prepared, "ABORTED", conflictingEnvelope, settlementDigest(conflictingEnvelope));
+      var exactRetry =
+          prepared.account.tx(
+              () ->
+                  new AccountStartSessionAdmissionProtectionRepository(prepared.account.dsl)
+                      .findSettlementExact(
+                          protection.accountProtectionId(), protection.accountProtectionFence())
+                      .orElseThrow());
+      assertThat(exactRetry.settlement().canonicalBytes())
+          .containsExactly(committed.canonicalBytes());
+      assertThat(
+              rowCount(
+                  prepared.account.dsl, "account_start_session_admission_protection_settlements"))
+          .isEqualTo(1L);
+    }
+  }
+
+  @Test
+  void exactAbortedSettlementRetryAndReadbackPreserveTheFirstReceipt() throws Exception {
+    try (Prepared prepared = prepare(Duration.ofSeconds(90))) {
+      AccountStartSessionAdmissionProtectionEvidence protection =
+          prepared.acquire(prepared.acquisitionService(prepared.account.manager));
+      var repository = new AccountStartSessionAdmissionProtectionRepository(prepared.account.dsl);
+      var settlement =
+          terminalSettlement(
+              protection,
+              GameSessionCanonicalInitialAdmissionOwnerProof.Outcome.ABORTED,
+              Instant.parse("2026-10-10T04:05:08.123456789Z"));
+
+      var first = prepared.account.tx(() -> repository.settleExact(settlement));
+      var exactRetry = prepared.account.tx(() -> repository.settleExact(settlement));
+      var historicalReadback =
+          prepared.account.tx(
+              () ->
+                  repository
+                      .findSettlementExact(
+                          protection.accountProtectionId(), protection.accountProtectionFence())
+                      .orElseThrow());
+
+      assertThat(first.settlement().canonicalBytes()).containsExactly(settlement.canonicalBytes());
+      assertThat(exactRetry.settlement().canonicalBytes())
+          .containsExactly(settlement.canonicalBytes());
+      assertThat(historicalReadback.settlement().canonicalBytes())
+          .containsExactly(settlement.canonicalBytes());
+      assertThat(historicalReadback.settlement().digest()).isEqualTo(settlement.digest());
+      assertThat(historicalReadback.protectionId()).isEqualTo(protection.accountProtectionId());
+      assertThat(historicalReadback.protectionFence())
+          .isEqualTo(protection.accountProtectionFence());
+      assertThat(historicalReadback.outcome())
+          .isEqualTo(GameSessionCanonicalInitialAdmissionOwnerProof.Outcome.ABORTED);
+      assertThat(historicalReadback.settlement().protectionEvidence().canonicalBytes())
+          .containsExactly(protection.canonicalBytes());
+      assertProtectionRow(prepared, protection);
+      assertThat(
+              rowCount(
+                  prepared.account.dsl, "account_start_session_admission_protection_settlements"))
+          .isEqualTo(1L);
     }
   }
 
@@ -755,6 +993,122 @@ class AccountStartSessionAdmissionProtectionAcquisitionPostgresIntegrationTest {
                 .findCurrentExact(request)
                 .orElseThrow(
                     () -> new IllegalStateException("Committed protection readback missing")));
+  }
+
+  private static AccountStartSessionAdmissionProtectionSettlement terminalSettlement(
+      AccountStartSessionAdmissionProtectionEvidence protection,
+      GameSessionCanonicalInitialAdmissionOwnerProof.Outcome outcome,
+      Instant terminalAt) {
+    var hold = protection.request().worldAdmissionHoldIdentity();
+    var proof =
+        switch (outcome) {
+          case COMMITTED ->
+              new GameSessionCanonicalInitialAdmissionOwnerProof(
+                  hold, outcome, 1L, 23L, "sha256:" + "d".repeat(64), false, terminalAt);
+          case ABORTED ->
+              new GameSessionCanonicalInitialAdmissionOwnerProof(
+                  hold, outcome, null, null, "sha256:" + "d".repeat(64), true, terminalAt);
+          case PENDING -> throw new IllegalArgumentException("Pending is not terminal evidence");
+        };
+    var result =
+        new OriginalStartSessionAdmissionTerminalResult(
+            new OriginalStartSessionAdmissionTerminalRequest(protection.canonicalBytes()), proof);
+    return AccountStartSessionAdmissionProtectionSettlement.create(result);
+  }
+
+  private static byte[] ownerProofBytes(
+      AccountStartSessionAdmissionProtectionEvidence protection,
+      GameSessionCanonicalInitialAdmissionOwnerProof.Outcome outcome,
+      String pointerVersion,
+      String auditEventId,
+      String proofDigest,
+      boolean positiveDurableAbort,
+      String terminalAt) {
+    ByteArrayOutputStream output = new ByteArrayOutputStream();
+    DraftAuthorizationFenceBinding.frame(
+        output, "game-session-canonical-initial-admission-owner-proof/v1");
+    DraftAuthorizationFenceBinding.frame(
+        output, protection.request().worldAdmissionHoldIdentity().canonicalBytes());
+    DraftAuthorizationFenceBinding.frame(output, outcome.name());
+    frameOptional(output, pointerVersion);
+    frameOptional(output, auditEventId);
+    frameOptional(output, proofDigest);
+    DraftAuthorizationFenceBinding.frame(output, positiveDurableAbort ? "true" : "false");
+    frameOptional(output, terminalAt);
+    return output.toByteArray();
+  }
+
+  private static byte[] ownerProofBytesWithTerminalText(
+      AccountStartSessionAdmissionProtectionEvidence protection,
+      GameSessionCanonicalInitialAdmissionOwnerProof.Outcome outcome,
+      String terminalAt) {
+    return ownerProofBytes(
+        protection, outcome, "1", "23", "sha256:" + "d".repeat(64), false, terminalAt);
+  }
+
+  private static void frameOptional(ByteArrayOutputStream output, String value) {
+    if (value == null) {
+      DraftAuthorizationFenceBinding.frame(output, "ABSENT");
+    } else {
+      DraftAuthorizationFenceBinding.frame(output, "PRESENT");
+      DraftAuthorizationFenceBinding.frame(output, value);
+    }
+  }
+
+  private static byte[] settlementEnvelope(byte[] evidence, byte[] ownerProof) {
+    return settlementEnvelope(
+        evidence, ownerProof, "account-start-session-admission-protection-settlement/v1");
+  }
+
+  private static byte[] settlementEnvelope(byte[] evidence, byte[] ownerProof, String schema) {
+    String canonical =
+        "{\"canonicalAccountProtectionEvidenceBytesBase64\":\""
+            + Base64.getEncoder().encodeToString(evidence)
+            + "\",\"canonicalGameSessionOwnerProofBytesBase64\":\""
+            + Base64.getEncoder().encodeToString(ownerProof)
+            + "\",\"schema\":\""
+            + schema
+            + "\"}";
+    return canonical.getBytes(StandardCharsets.UTF_8);
+  }
+
+  private static String settlementDigest(byte[] bytes) {
+    return "sha256:" + sha256Hex(bytes);
+  }
+
+  private static void assertRawSettlementRejected(
+      Prepared prepared, String outcome, byte[] bytes, String digest) {
+    long settlementCountBefore =
+        rowCount(prepared.account.dsl, "account_start_session_admission_protection_settlements");
+    assertThatThrownBy(
+            () ->
+                prepared.account.tx(
+                    () -> {
+                      prepared.account.dsl.execute(
+                          "INSERT INTO account_start_session_admission_protection_settlements "
+                              + "(protection_id, outcome, terminal_bytes, terminal_digest) "
+                              + "VALUES (?, ?, ?, ?)",
+                          protectionRow(prepared).get("protection_id", UUID.class),
+                          outcome,
+                          bytes,
+                          digest);
+                      return null;
+                    }))
+        .isInstanceOf(RuntimeException.class)
+        .satisfies(failure -> assertPostgresSqlState((RuntimeException) failure, "23514"));
+    assertThat(
+            rowCount(
+                prepared.account.dsl, "account_start_session_admission_protection_settlements"))
+        .isEqualTo(settlementCountBefore);
+  }
+
+  private static void assertPostgresSqlState(RuntimeException failure, String expectedState) {
+    Throwable rootCause = failure;
+    while (rootCause.getCause() != null) rootCause = rootCause.getCause();
+    assertThat(rootCause)
+        .isInstanceOfSatisfying(
+            org.postgresql.util.PSQLException.class,
+            postgresFailure -> assertThat(postgresFailure.getSQLState()).isEqualTo(expectedState));
   }
 
   private static long rowCount(DSLContext dsl, String table) {

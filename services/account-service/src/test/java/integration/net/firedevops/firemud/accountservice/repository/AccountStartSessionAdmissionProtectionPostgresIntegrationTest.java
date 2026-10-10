@@ -343,9 +343,9 @@ class AccountStartSessionAdmissionProtectionPostgresIntegrationTest {
                     .execute(
                         "INSERT INTO account_start_session_admission_protection_settlements (protection_id, outcome, terminal_bytes, terminal_digest) VALUES (?, 'ABORTED', ?, ?)",
                         fixture.protectionId(),
-                        bytes("unproved"),
-                        "sha256:" + hash(bytes("unproved"))))
-        .hasMessageContaining("append-only");
+                        malformedSettlementBytes(),
+                        "sha256:" + hash(malformedSettlementBytes())))
+        .hasMessageContaining("not the closed envelope");
     assertThat(
             fixture
                 .dsl()
@@ -877,6 +877,13 @@ class AccountStartSessionAdmissionProtectionPostgresIntegrationTest {
 
   private static byte[] bytes(String value) {
     return value.getBytes(StandardCharsets.UTF_8);
+  }
+
+  private static byte[] malformedSettlementBytes() {
+    return bytes(
+        "{\"canonicalAccountProtectionEvidenceBytesBase64\":\"\","
+            + "\"canonicalGameSessionOwnerProofBytesBase64\":\"\","
+            + "\"schema\":\"account-start-session-admission-protection-settlement/v2\"}");
   }
 
   private static byte[] json(Map<String, Object> value) {
