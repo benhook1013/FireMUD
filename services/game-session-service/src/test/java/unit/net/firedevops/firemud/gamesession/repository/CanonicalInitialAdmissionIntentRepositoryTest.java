@@ -1,13 +1,16 @@
 package unit.net.firedevops.firemud.gamesession.repository;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verifyNoInteractions;
 
 import java.util.UUID;
 import net.firedevops.firemud.common.world.WorldCanonicalInitialAdmissionHold;
+import net.firedevops.firemud.common.world.WorldCanonicalInitialAdmissionHold.HoldIdentity;
 import net.firedevops.firemud.common.world.WorldCanonicalInitialAdmissionHold.InitialAdmissionOrigin;
 import net.firedevops.firemud.common.world.WorldCanonicalInstanceLifecycleEvidence;
+import net.firedevops.firemud.gamesession.dto.CanonicalInitialAdmissionIntentSnapshot.SourceBinding;
 import net.firedevops.firemud.gamesession.dto.CanonicalInitialAdmissionRequest;
 import net.firedevops.firemud.gamesession.repository.CanonicalGameInstanceLaunchAssociationRepository;
 import net.firedevops.firemud.gamesession.repository.CanonicalInitialAdmissionIntentRepository;
@@ -53,7 +56,12 @@ class CanonicalInitialAdmissionIntentRepositoryTest {
     var launch = mock(CanonicalGameInstanceLaunchAssociationRepository.class);
     var repository = new CanonicalInitialAdmissionIntentRepository(dsl, catalog, launch);
 
-    assertThatThrownBy(() -> repository.reserve(holdRequest("request-1"), lifecycleRequest()))
+    WorldCanonicalInitialAdmissionHold.Request request = holdRequest("request-1");
+    assertThatThrownBy(() -> repository.reserve(request, lifecycleRequest()))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("writable owner transaction");
+    assertThatThrownBy(
+            () -> repository.attach(request, new HoldIdentity(request, uuid(7), uuid(8))))
         .isInstanceOf(IllegalStateException.class)
         .hasMessageContaining("writable owner transaction");
 
@@ -73,6 +81,40 @@ class CanonicalInitialAdmissionIntentRepositoryTest {
         .hasMessageContaining("committed owner read");
 
     verifyNoInteractions(dsl, catalog, launch);
+  }
+
+  @Test
+  void retryBindingAllowsOnlyMonotonicRuntimeRowVersionChanges() {
+    SourceBinding retained = sourceBinding(1, 72, "descriptor-1", 1, 5, SHA256);
+
+    assertThat(
+            CanonicalInitialAdmissionIntentRepository.matchesRetainedSourceBinding(
+                retained, sourceBinding(1, 72, "descriptor-1", 1, 8, SHA256)))
+        .isTrue();
+    assertThat(
+            CanonicalInitialAdmissionIntentRepository.matchesRetainedSourceBinding(
+                retained, sourceBinding(1, 72, "descriptor-1", 1, 4, SHA256)))
+        .isFalse();
+    assertThat(
+            CanonicalInitialAdmissionIntentRepository.matchesRetainedSourceBinding(
+                retained, sourceBinding(1, 73, "descriptor-1", 1, 8, SHA256)))
+        .isFalse();
+    assertThat(
+            CanonicalInitialAdmissionIntentRepository.matchesRetainedSourceBinding(
+                retained, sourceBinding(1, 72, "descriptor-2", 1, 8, SHA256)))
+        .isFalse();
+    assertThat(
+            CanonicalInitialAdmissionIntentRepository.matchesRetainedSourceBinding(
+                retained, sourceBinding(2, 72, "descriptor-1", 1, 8, SHA256)))
+        .isFalse();
+    assertThat(
+            CanonicalInitialAdmissionIntentRepository.matchesRetainedSourceBinding(
+                retained, sourceBinding(1, 72, "descriptor-1", 2, 8, SHA256)))
+        .isFalse();
+    assertThat(
+            CanonicalInitialAdmissionIntentRepository.matchesRetainedSourceBinding(
+                retained, sourceBinding(1, 72, "descriptor-1", 1, 8, "sha256:" + "b".repeat(64))))
+        .isFalse();
   }
 
   private static WorldCanonicalInitialAdmissionHold.Request holdRequest(String requestId) {
@@ -123,6 +165,41 @@ class CanonicalInitialAdmissionIntentRepositoryTest {
         VERSION,
         SHA256,
         SHA256,
+        SHA256);
+  }
+
+  private static SourceBinding sourceBinding(
+      long catalogRevision,
+      long runtimeVersionId,
+      String launchDescriptorId,
+      long capturedStartingRowVersion,
+      long currentRowVersion,
+      String descriptorResultDigest) {
+    return new SourceBinding(
+        NAMESPACE,
+        TENANT,
+        "world",
+        REALM,
+        PLAYABLE_NAMESPACE,
+        "SHARED",
+        true,
+        true,
+        catalogRevision,
+        uuid(8),
+        SHA256,
+        SHA256,
+        uuid(9),
+        10,
+        INSTANCE,
+        11,
+        VERSION,
+        runtimeVersionId,
+        "control-request-1",
+        launchDescriptorId,
+        capturedStartingRowVersion,
+        currentRowVersion,
+        SHA256,
+        descriptorResultDigest,
         SHA256);
   }
 
