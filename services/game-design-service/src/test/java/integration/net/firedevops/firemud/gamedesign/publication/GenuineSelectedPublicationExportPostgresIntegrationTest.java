@@ -4,9 +4,11 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.mock;
 
+import com.google.protobuf.ByteString;
 import com.google.protobuf.util.JsonFormat;
 import io.grpc.BindableService;
 import io.grpc.Context;
+import io.grpc.ManagedChannel;
 import io.grpc.Server;
 import io.grpc.ServerInterceptors;
 import io.grpc.netty.shaded.io.grpc.netty.GrpcSslContexts;
@@ -112,6 +114,8 @@ import net.firedevops.firemud.common.grpc.CommonGrpcClientProperties;
 import net.firedevops.firemud.common.grpc.GrpcChannelFactory;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentityInterceptor;
+import net.firedevops.firemud.common.grpc.GrpcServerPeerIdentityCallCredentials;
+import net.firedevops.firemud.common.grpc.GrpcServerPeerIdentityClientInterceptor;
 import net.firedevops.firemud.common.json.Rfc8785CanonicalJson;
 import net.firedevops.firemud.common.operator.StartSessionAuthorityEvidenceBundle;
 import net.firedevops.firemud.common.operator.StartSessionOperatorAction;
@@ -138,6 +142,7 @@ import net.firedevops.firemud.common.tenant.AuthoredWorldSourceClient;
 import net.firedevops.firemud.common.tenant.WorldAuthoredSourceIntakeClient;
 import net.firedevops.firemud.common.tenant.WorldAuthoredSourceIntakeGrpcCodec;
 import net.firedevops.firemud.common.world.CanonicalWorldInstancePreparationClient;
+import net.firedevops.firemud.common.world.WorldCanonicalInstanceActivation;
 import net.firedevops.firemud.common.world.WorldCanonicalInstanceLifecycleEvidence;
 import net.firedevops.firemud.common.world.WorldDraftStartLocationEvidence;
 import net.firedevops.firemud.entitymanagement.sourceintake.EntityEmptySelectedSourceIntakeRepository;
@@ -250,6 +255,9 @@ import net.firedevops.firemud.worldmanagement.tenant.WorldAuthoredSourceIntakeSe
 import net.firedevops.firemud.worldmanagement.tenant.WorldAuthoredVersionIdentityGrpcService;
 import net.firedevops.firemud.worldmanagement.tenant.WorldAuthoredVersionIdentityRepository;
 import net.firedevops.firemud.worldmanagement.tenant.WorldAuthoredVersionIdentityService;
+import net.firedevops.firemud.worldmanagement.tenant.WorldCanonicalInstanceActivationGrpcService;
+import net.firedevops.firemud.worldmanagement.tenant.WorldCanonicalInstanceActivationRepository;
+import net.firedevops.firemud.worldmanagement.tenant.WorldCanonicalInstanceActivationService;
 import net.firedevops.firemud.worldmanagement.tenant.WorldCanonicalInstanceAssociationRepository;
 import net.firedevops.firemud.worldmanagement.tenant.WorldCanonicalInstanceExecutionIdentity;
 import net.firedevops.firemud.worldmanagement.tenant.WorldCanonicalInstanceLifecycleReadRepository;
@@ -269,8 +277,11 @@ import net.firedevops.firemud.worldmanagement.tenant.WorldDraftTerminalReadGrpcS
 import net.firedevops.firemud.worldmanagement.tenant.WorldOriginalDraftGraphApplicationService;
 import net.firedevops.firemud.worldmanagement.tenant.WorldOriginalDraftGraphApplyGrpcService;
 import net.firedevops.firemud.worldmanagement.tenant.WorldSelectedOwnerInventoryReadProofFixture;
+import net.firedevops.firemud.worldmanagement.v1.ActivateCanonicalWorldInstanceRequest;
+import net.firedevops.firemud.worldmanagement.v1.ActivateCanonicalWorldInstanceResponse;
 import net.firedevops.firemud.worldmanagement.v1.RegionDesignMutation;
 import net.firedevops.firemud.worldmanagement.v1.RoomDesignMutation;
+import net.firedevops.firemud.worldmanagement.v1.WorldCanonicalInstanceActivationServiceGrpc;
 import net.firedevops.firemud.worldmanagement.v1.WorldDesignAggregateType;
 import net.firedevops.firemud.worldmanagement.v1.WorldDesignMutationOperation;
 import net.firedevops.firemud.worldmanagement.v1.WorldDesignScopeType;
@@ -3376,6 +3387,365 @@ class GenuineSelectedPublicationExportPostgresIntegrationTest {
             } finally {
               stopAll(defaultDeniedServer);
             }
+
+            // The actual PREPARING lifecycle read above passed World's v4 -> World/4 -> graph/3
+            // profile checks against the same retained frozen topology and materialization.
+            var selectedRelease = preparedLifecycle.launchBinding().releaseAttestation();
+            assertThat(selectedRelease.schemaVersion()).isEqualTo(4);
+            assertThat(
+                    selectedRelease.participantDigests().stream()
+                        .map(participant -> participant.digestSchemaVersion())
+                        .toList())
+                .containsExactly(4, 3, 1, 6, 2);
+            assertThat(completeWorldSelector.request().digestSchemaVersion()).isEqualTo(4);
+            assertThat(preparedLifecycle.lifecycleStatus()).isEqualTo("PREPARING");
+            assertThat(preparedLifecycle.startLocation())
+                .isEqualTo(selectedReleasedStart.startLocation());
+
+            var activationRepository =
+                new WorldCanonicalInstanceActivationRepository(
+                    world.dsl(), world.transactions(), lifecycleRepository);
+            UUID activationRequestId = UUID.randomUUID();
+            var activationRequest =
+                new WorldCanonicalInstanceActivation.Request(
+                    activationRequestId, preparedLifecycle);
+            var alternateCorrelationEvidence =
+                lifecycleRepository
+                    .read(lifecycleRequestWithFreshReadId(expectedLifecycleRequest))
+                    .orElseThrow();
+            assertThat(alternateCorrelationEvidence.lifecycleStatus()).isEqualTo("PREPARING");
+            var alternateCorrelationRetry =
+                new WorldCanonicalInstanceActivation.Request(
+                    activationRequestId, alternateCorrelationEvidence);
+            assertThat(alternateCorrelationRetry.canonicalRequestBytes())
+                .containsExactly(activationRequest.canonicalRequestBytes());
+            assertThat(
+                    Arrays.equals(
+                        alternateCorrelationRetry.preparingEvidenceBytes(),
+                        activationRequest.preparingEvidenceBytes()))
+                .isFalse();
+
+            var stipulatedGameSessionStartEvidence =
+                assembledPreparationInput.gameSessionReadEvidence();
+            AtomicInteger activationAuthorityChecks = new AtomicInteger();
+            AtomicInteger heldActivationChecks = new AtomicInteger();
+            AtomicInteger heldActivationCloses = new AtomicInteger();
+            var stipulatedActivationVerifier =
+                (WorldCanonicalInstanceActivationService.ActivationAuthorityVerifier)
+                    candidate -> {
+                      activationAuthorityChecks.incrementAndGet();
+                      if (!Arrays.equals(
+                              candidate.canonicalRequestBytes(),
+                              activationRequest.canonicalRequestBytes())
+                          || !"STARTING"
+                              .equals(stipulatedGameSessionStartEvidence.currentGameSessionStatus())
+                          || !candidate
+                              .preparing()
+                              .launchBinding()
+                              .equals(
+                                  new CompleteLaunchBindingEvidence(
+                                      stipulatedGameSessionStartEvidence.descriptor(),
+                                      stipulatedGameSessionStartEvidence.releaseAttestation()))) {
+                        throw new SecurityException(
+                            "Stipulated activation fixture differs from the exact PREPARING "
+                                + "binding");
+                      }
+                      return new WorldCanonicalInstanceActivationService.HeldActivationAuthority() {
+                        private boolean held = true;
+
+                        @Override
+                        public void requireHeld() {
+                          if (!held
+                              || !candidate.activationRequestId().equals(activationRequestId)
+                              || !candidate
+                                  .requestDigest()
+                                  .equals(activationRequest.requestDigest())) {
+                            throw new SecurityException(
+                                "Stipulated activation authority no longer holds for this "
+                                    + "operation");
+                          }
+                          heldActivationChecks.incrementAndGet();
+                        }
+
+                        @Override
+                        public void close() {
+                          held = false;
+                          heldActivationCloses.incrementAndGet();
+                        }
+                      };
+                    };
+            var activationService =
+                new WorldCanonicalInstanceActivationService(
+                    activationRepository, stipulatedActivationVerifier);
+            register(
+                worldHandlers,
+                new WorldCanonicalInstanceActivationGrpcService(activationService, NAMESPACE));
+
+            long activationOperationCountBefore = canonicalActivationOperationCount(world.dsl());
+            var preparationRowsBeforeActivation = canonicalPreparationRowCounts(world.dsl());
+            var retainedEvidenceBeforeActivation =
+                retainedWorldPreparationEvidence(
+                    world,
+                    worldIntakeReceipt.intakeRequestId(),
+                    worldIdentityReceipt.operationId(),
+                    gd.target().canonicalTenantId(),
+                    controlPlaneRequestId,
+                    canonicalGameInstanceId,
+                    completeWorldSelector.request().publicationFence());
+            assertThat(activationOperationCountBefore).isZero();
+            assertThat(lifecycleRepository.read(expectedLifecycleRequest).orElseThrow())
+                .isEqualTo(preparedLifecycle);
+
+            try (var wrongWorkloadActivationClient =
+                canonicalActivationClient(worldServer, pki.client("account-service"), channels)) {
+              assertThatThrownBy(
+                      () ->
+                          wrongWorkloadActivationClient.activate(
+                              canonicalActivationTransportRequest(activationRequest)))
+                  .isInstanceOf(io.grpc.StatusRuntimeException.class)
+                  .satisfies(
+                      failure ->
+                          assertThat(io.grpc.Status.fromThrowable(failure).getCode())
+                              .isEqualTo(io.grpc.Status.Code.PERMISSION_DENIED));
+            }
+            assertThat(activationAuthorityChecks).hasValue(0);
+            assertThat(canonicalActivationOperationCount(world.dsl()))
+                .isEqualTo(activationOperationCountBefore);
+            assertThat(canonicalPreparationRowCounts(world.dsl()))
+                .isEqualTo(preparationRowsBeforeActivation);
+            assertThat(lifecycleRepository.read(expectedLifecycleRequest).orElseThrow())
+                .isEqualTo(preparedLifecycle);
+            assertThat(
+                    retainedWorldPreparationEvidence(
+                        world,
+                        worldIntakeReceipt.intakeRequestId(),
+                        worldIdentityReceipt.operationId(),
+                        gd.target().canonicalTenantId(),
+                        controlPlaneRequestId,
+                        canonicalGameInstanceId,
+                        completeWorldSelector.request().publicationFence()))
+                .isEqualTo(retainedEvidenceBeforeActivation);
+
+            MutableHandlerRegistry defaultDeniedActivationHandlers = new MutableHandlerRegistry();
+            register(
+                defaultDeniedActivationHandlers,
+                new WorldCanonicalInstanceActivationGrpcService(
+                    new WorldCanonicalInstanceActivationService(activationRepository), NAMESPACE));
+            Server defaultDeniedActivationServer =
+                startServer(pki, "world-management-service", defaultDeniedActivationHandlers);
+            try {
+              try (var defaultDeniedActivationClient =
+                  canonicalActivationClient(
+                      defaultDeniedActivationServer,
+                      pki.client("game-session-service"),
+                      channels)) {
+                assertThatThrownBy(
+                        () ->
+                            defaultDeniedActivationClient.activate(
+                                canonicalActivationTransportRequest(activationRequest)))
+                    .isInstanceOf(io.grpc.StatusRuntimeException.class)
+                    .satisfies(
+                        failure ->
+                            assertThat(io.grpc.Status.fromThrowable(failure).getCode())
+                                .isEqualTo(io.grpc.Status.Code.PERMISSION_DENIED));
+              }
+            } finally {
+              stopAll(defaultDeniedActivationServer);
+            }
+            assertThat(activationAuthorityChecks).hasValue(0);
+            assertThat(canonicalActivationOperationCount(world.dsl()))
+                .isEqualTo(activationOperationCountBefore);
+            assertThat(canonicalPreparationRowCounts(world.dsl()))
+                .isEqualTo(preparationRowsBeforeActivation);
+            assertThat(lifecycleRepository.read(expectedLifecycleRequest).orElseThrow())
+                .isEqualTo(preparedLifecycle);
+            assertThat(
+                    retainedWorldPreparationEvidence(
+                        world,
+                        worldIntakeReceipt.intakeRequestId(),
+                        worldIdentityReceipt.operationId(),
+                        gd.target().canonicalTenantId(),
+                        controlPlaneRequestId,
+                        canonicalGameInstanceId,
+                        completeWorldSelector.request().publicationFence()))
+                .isEqualTo(retainedEvidenceBeforeActivation);
+
+            // This explicitly stipulates current producer authority and its operation-specific
+            // held handle. The fixture's STARTING evidence is the existing mocked Game Session
+            // association, not a current owner read or continuous Account/GS protection.
+            try (var gameSessionActivationClient =
+                canonicalActivationClient(
+                    worldServer, pki.client("game-session-service"), channels)) {
+              var firstActivationResponse =
+                  gameSessionActivationClient.activate(
+                      canonicalActivationTransportRequest(activationRequest));
+              assertThat(firstActivationResponse.getActivationRequestId())
+                  .isEqualTo(activationRequestId.toString());
+              byte[] committedActivationBytes =
+                  firstActivationResponse.getCanonicalResultBytes().toByteArray();
+              var committedActivation =
+                  WorldCanonicalInstanceActivation.Result.fromStored(committedActivationBytes);
+              assertThat(committedActivation.outcome())
+                  .isEqualTo(WorldCanonicalInstanceActivation.Outcome.COMMITTED);
+              assertThat(committedActivation.request().canonicalRequestBytes())
+                  .containsExactly(activationRequest.canonicalRequestBytes());
+              assertThat(committedActivation.request().preparingEvidenceBytes())
+                  .containsExactly(activationRequest.preparingEvidenceBytes());
+              assertThat(committedActivation.lifecycleEvidence().lifecycleStatus())
+                  .isEqualTo("ACTIVE");
+              assertThat(committedActivation.lifecycleEvidence().lifecycleEpoch())
+                  .isEqualTo(preparedLifecycle.lifecycleEpoch() + 1L);
+              assertThat(committedActivation.lifecycleEvidence().rowVersion())
+                  .isEqualTo(preparedLifecycle.rowVersion() + 1L);
+              assertThat(committedActivation.lifecycleEvidence().launchBinding())
+                  .isEqualTo(completeLaunchEvidence);
+              assertThat(committedActivation.lifecycleEvidence().startLocation())
+                  .isEqualTo(selectedReleasedStart.startLocation());
+              assertThat(committedActivation.lifecycleEvidence().runtimeRoomInstanceId())
+                  .isEqualTo(preparedLifecycle.runtimeRoomInstanceId());
+              assertThat(committedActivation.lifecycleEvidence().captureId())
+                  .isEqualTo(preparedLifecycle.captureId());
+              assertThat(committedActivation.lifecycleEvidence().graphSha256())
+                  .isEqualTo(preparedLifecycle.graphSha256());
+              assertThat(committedActivation.lifecycleEvidence().preparationInputDigest())
+                  .isEqualTo(preparedLifecycle.preparationInputDigest());
+              assertThat(committedActivation.lifecycleEvidence().operationalRegionAssignments())
+                  .containsExactlyInAnyOrderEntriesOf(
+                      preparedLifecycle.operationalRegionAssignments());
+              assertThat(activationAuthorityChecks).hasValue(1);
+              assertThat(heldActivationChecks.get()).isGreaterThanOrEqualTo(2);
+              assertThat(heldActivationCloses).hasValue(1);
+              assertThat(canonicalActivationOperationCount(world.dsl()))
+                  .isEqualTo(activationOperationCountBefore + 1L);
+              var preparationRowsAfterActivation = canonicalPreparationRowCounts(world.dsl());
+              assertThat(preparationRowsAfterActivation).isEqualTo(preparationRowsBeforeActivation);
+
+              var storedActivation =
+                  activationRepository.readResult(activationRequest).orElseThrow();
+              assertThat(storedActivation.canonicalBytes())
+                  .containsExactly(committedActivationBytes);
+              var independentActiveRead =
+                  lifecycleRepository
+                      .read(lifecycleRequestWithFreshReadId(expectedLifecycleRequest))
+                      .orElseThrow();
+              assertThat(independentActiveRead.lifecycleStatus()).isEqualTo("ACTIVE");
+              assertThat(independentActiveRead.lifecycleEpoch())
+                  .isEqualTo(committedActivation.lifecycleEvidence().lifecycleEpoch());
+              assertThat(independentActiveRead.rowVersion())
+                  .isEqualTo(committedActivation.lifecycleEvidence().rowVersion());
+              assertThat(independentActiveRead.launchBinding()).isEqualTo(completeLaunchEvidence);
+              assertThat(independentActiveRead.startLocation())
+                  .isEqualTo(selectedReleasedStart.startLocation());
+              assertThat(independentActiveRead.captureId())
+                  .isEqualTo(preparedLifecycle.captureId());
+              assertThat(independentActiveRead.graphSha256())
+                  .isEqualTo(preparedLifecycle.graphSha256());
+              assertThat(independentActiveRead.preparationInputDigest())
+                  .isEqualTo(preparedLifecycle.preparationInputDigest());
+
+              assertThat(
+                      gameSessionActivationClient
+                          .activate(canonicalActivationTransportRequest(activationRequest))
+                          .getCanonicalResultBytes()
+                          .toByteArray())
+                  .containsExactly(committedActivationBytes);
+              assertThat(
+                      gameSessionActivationClient
+                          .activate(canonicalActivationTransportRequest(alternateCorrelationRetry))
+                          .getCanonicalResultBytes()
+                          .toByteArray())
+                  .containsExactly(committedActivationBytes);
+              assertThat(activationAuthorityChecks).hasValue(1);
+              assertThat(heldActivationCloses).hasValue(1);
+              assertThat(canonicalActivationOperationCount(world.dsl()))
+                  .isEqualTo(activationOperationCountBefore + 1L);
+              assertThat(canonicalPreparationRowCounts(world.dsl()))
+                  .isEqualTo(preparationRowsAfterActivation);
+
+              var changedEvidence =
+                  new WorldCanonicalInstanceLifecycleEvidence(
+                      preparedLifecycle.request(),
+                      preparedLifecycle.launchBinding(),
+                      preparedLifecycle.startLocation(),
+                      preparedLifecycle.runtimeRoomInstanceId(),
+                      preparedLifecycle.lifecycleStatus(),
+                      preparedLifecycle.lifecycleEpoch(),
+                      preparedLifecycle.rowVersion() + 1L,
+                      preparedLifecycle.captureId(),
+                      preparedLifecycle.graphSha256(),
+                      preparedLifecycle.preparationInputDigest(),
+                      preparedLifecycle.operationalRegionAssignments());
+              var changedEvidenceRetry =
+                  new WorldCanonicalInstanceActivation.Request(
+                      activationRequestId, changedEvidence);
+              assertThat(changedEvidenceRetry.activationRequestId())
+                  .isEqualTo(activationRequest.activationRequestId());
+              assertThat(
+                      Arrays.equals(
+                          changedEvidenceRetry.canonicalRequestBytes(),
+                          activationRequest.canonicalRequestBytes()))
+                  .isFalse();
+              assertThatThrownBy(
+                      () ->
+                          gameSessionActivationClient.activate(
+                              canonicalActivationTransportRequest(changedEvidenceRetry)))
+                  .isInstanceOf(io.grpc.StatusRuntimeException.class)
+                  .satisfies(
+                      failure ->
+                          assertThat(io.grpc.Status.fromThrowable(failure).getCode())
+                              .isEqualTo(io.grpc.Status.Code.ALREADY_EXISTS));
+              assertThat(activationAuthorityChecks).hasValue(1);
+              assertThat(canonicalActivationOperationCount(world.dsl()))
+                  .isEqualTo(activationOperationCountBefore + 1L);
+              assertThat(canonicalPreparationRowCounts(world.dsl()))
+                  .isEqualTo(preparationRowsAfterActivation);
+              var activeReadAfterConflict =
+                  lifecycleRepository
+                      .read(lifecycleRequestWithFreshReadId(expectedLifecycleRequest))
+                      .orElseThrow();
+              assertThat(activeReadAfterConflict.lifecycleStatus()).isEqualTo("ACTIVE");
+              assertThat(activeReadAfterConflict.lifecycleEpoch())
+                  .isEqualTo(independentActiveRead.lifecycleEpoch());
+              assertThat(activeReadAfterConflict.rowVersion())
+                  .isEqualTo(independentActiveRead.rowVersion());
+              assertThat(activeReadAfterConflict.launchBinding())
+                  .isEqualTo(independentActiveRead.launchBinding());
+              assertThat(activeReadAfterConflict.startLocation())
+                  .isEqualTo(independentActiveRead.startLocation());
+            }
+
+            var retainedOwnerEvidenceAfterActivation =
+                retainedWorldPreparationEvidence(
+                    world,
+                    worldIntakeReceipt.intakeRequestId(),
+                    worldIdentityReceipt.operationId(),
+                    gd.target().canonicalTenantId(),
+                    controlPlaneRequestId,
+                    canonicalGameInstanceId,
+                    completeWorldSelector.request().publicationFence());
+            assertThat(retainedOwnerEvidenceAfterActivation)
+                .containsEntry(
+                    "worldSourceIntake",
+                    retainedOwnerEvidenceAfterPreparation.get("worldSourceIntake"))
+                .containsEntry(
+                    "worldVersionIdentity",
+                    retainedOwnerEvidenceAfterPreparation.get("worldVersionIdentity"))
+                .containsEntry(
+                    "worldFrozenCapture",
+                    retainedOwnerEvidenceAfterPreparation.get("worldFrozenCapture"))
+                .containsEntry(
+                    "completeLaunchBinding",
+                    retainedOwnerEvidenceAfterPreparation.get("completeLaunchBinding"));
+            assertThat(
+                    completeBindingOwnerRowVersions(
+                        gd.dsl(),
+                        persistedLaunchDescriptor.getId(),
+                        release.id(),
+                        gd.target().gameDesignVersionRowId(),
+                        worldSource.operationId(),
+                        gd.target().canonicalTenantId(),
+                        controlPlaneRequestId))
+                .containsExactlyElementsOf(completeBindingOwnerRowsBefore);
           }
 
           var replay =
@@ -3567,6 +3937,47 @@ class GenuineSelectedPublicationExportPostgresIntegrationTest {
         release.evidenceDigest());
   }
 
+  private static WorldCanonicalInstanceLifecycleEvidence.Request lifecycleRequestWithFreshReadId(
+      WorldCanonicalInstanceLifecycleEvidence.Request request) {
+    return new WorldCanonicalInstanceLifecycleEvidence.Request(
+        request.schemaVersion(),
+        UUID.randomUUID(),
+        request.targetNamespace(),
+        request.canonicalTenantId(),
+        request.worldSlug(),
+        request.canonicalGameInstanceId(),
+        request.playableStateNamespaceId(),
+        request.playableStateScope(),
+        request.publicProduction(),
+        request.controlPlaneRequestId(),
+        request.canonicalVersionId(),
+        request.expectedDescriptorRequestDigest(),
+        request.expectedDescriptorResultDigest(),
+        request.expectedReleaseAttestationDigest());
+  }
+
+  private static ActivateCanonicalWorldInstanceRequest canonicalActivationTransportRequest(
+      WorldCanonicalInstanceActivation.Request request) {
+    return ActivateCanonicalWorldInstanceRequest.newBuilder()
+        .setActivationRequestId(request.activationRequestId().toString())
+        .setPreparingLifecycleEvidenceBytes(ByteString.copyFrom(request.preparingEvidenceBytes()))
+        .build();
+  }
+
+  private static CanonicalActivationTransportClient canonicalActivationClient(
+      Server server, CommonGrpcClientProperties tlsProperties, GrpcChannelFactory channels)
+      throws Exception {
+    ManagedChannel channel =
+        channels.buildChannel(loopback(server), server.getPort(), tlsProperties, false);
+    String expectedWorldPeerUri =
+        "spiffe://firemud/ns/" + NAMESPACE + "/sa/world-management-service";
+    var stub =
+        WorldCanonicalInstanceActivationServiceGrpc.newBlockingStub(channel)
+            .withCallCredentials(new GrpcServerPeerIdentityCallCredentials(expectedWorldPeerUri))
+            .withInterceptors(new GrpcServerPeerIdentityClientInterceptor(expectedWorldPeerUri));
+    return new CanonicalActivationTransportClient(channel, stub);
+  }
+
   private static String canonicalPreparationInputJson(WorldCanonicalInstancePreparation.Input input)
       throws ReflectiveOperationException {
     Method serializer =
@@ -3594,6 +4005,11 @@ class GenuineSelectedPublicationExportPostgresIntegrationTest {
       counts.put(table, Objects.requireNonNull(row).get(0, Long.class));
     }
     return counts;
+  }
+
+  private static long canonicalActivationOperationCount(DSLContext dsl) {
+    var row = dsl.fetchOne("SELECT count(*) FROM world_canonical_instance_activation_operation");
+    return Objects.requireNonNull(row).get(0, Long.class);
   }
 
   private static Map<String, String> retainedWorldPreparationEvidence(
@@ -4465,6 +4881,25 @@ class GenuineSelectedPublicationExportPostgresIntegrationTest {
         .setOperation(WorldDesignMutationOperation.WORLD_DESIGN_MUTATION_OPERATION_UPSERT)
         .setScopeType(WorldDesignScopeType.WORLD_DESIGN_SCOPE_TYPE_REGION_SUBTREE)
         .setScopeId(region.toString());
+  }
+
+  private record CanonicalActivationTransportClient(
+      ManagedChannel channel,
+      WorldCanonicalInstanceActivationServiceGrpc
+              .WorldCanonicalInstanceActivationServiceBlockingStub
+          stub)
+      implements AutoCloseable {
+    ActivateCanonicalWorldInstanceResponse activate(ActivateCanonicalWorldInstanceRequest request) {
+      return stub.withDeadlineAfter(5L, TimeUnit.SECONDS).activateCanonicalWorldInstance(request);
+    }
+
+    @Override
+    public void close() throws InterruptedException {
+      channel.shutdownNow();
+      if (!channel.awaitTermination(5, TimeUnit.SECONDS)) {
+        throw new AssertionError("Canonical activation test client did not terminate");
+      }
+    }
   }
 
   private static Server startServer(TestPki pki, String service, MutableHandlerRegistry handlers)

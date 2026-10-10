@@ -28,19 +28,24 @@ import java.util.concurrent.Callable;
 import javax.crypto.spec.SecretKeySpec;
 import net.firedevops.firemud.accountservice.client.StartSessionReservationEvidenceClient;
 import net.firedevops.firemud.accountservice.repository.AccountStartSessionOperatorAuthorizationRepository;
+import net.firedevops.firemud.accountservice.repository.AccountStartSessionWorldOriginalAttemptEvidenceRepository;
+import net.firedevops.firemud.accountservice.repository.AccountStartSessionWorldParticipationRepository;
 import net.firedevops.firemud.accountservice.service.impl.StartSessionOperatorAuthorizationGrpcService;
+import net.firedevops.firemud.common.gamesession.OriginalStartSessionCurrentAttemptClient;
 import net.firedevops.firemud.common.operator.StartSessionAuthorityEvidenceBundle;
 import net.firedevops.firemud.common.operator.StartSessionOperatorAction;
 import net.firedevops.firemud.common.operator.StartSessionPostAuthorizationExecutionTuple;
 import net.firedevops.firemud.common.operator.StartSessionPreAuthorizationReservationTuple;
 import net.firedevops.firemud.loggingadmin.v1.ReadCurrentClaimEvidenceResponse;
 import net.firedevops.firemud.loggingadmin.v1.StartSessionReservationEvidencePurpose;
+import org.jooq.DSLContext;
 import org.jooq.Record;
 import tools.jackson.core.type.TypeReference;
 import tools.jackson.databind.json.JsonMapper;
 
 /**
- * Test-only proof fixture for Account's original human StartSession issuer and one-time redemption.
+ * Test-only proof fixture for Account's original human StartSession issuer, one-time redemption,
+ * and real World participation acquisition composition.
  *
  * <p>Logging's current-claim read response and the supplied Game Session attempt/fence remain
  * stipulated inputs. The Account actor, source capture, issuance, reference custody, redemption,
@@ -215,7 +220,28 @@ public final class AccountOriginalStartSessionAuthorizationProofFixture {
         gameSessionOwnerAttemptId,
         gameSessionOwnerFence,
         retained.issuanceOperationId(),
-        retained.issuanceFence());
+        retained.issuanceFence(),
+        retained.referenceExpiresAt());
+  }
+
+  /** Creates the actual Account acquisition owner over this fixture's existing issuer and SQL. */
+  public AccountStartSessionWorldParticipationAcquisitionService
+      worldParticipationAcquisitionService(
+          OriginalStartSessionCurrentAttemptClient gameSessionClient) {
+    Objects.requireNonNull(
+        gameSessionClient, "stipulated Game Session observation client required");
+    return new AccountStartSessionWorldParticipationAcquisitionService(
+        authorizationService,
+        new AccountStartSessionWorldParticipationRepository(accountSources.dsl),
+        new AccountStartSessionWorldOriginalAttemptEvidenceRepository(accountSources.dsl),
+        gameSessionClient,
+        accountSources.manager,
+        namespace);
+  }
+
+  /** Existing fixture SQL context for independent test-only retained-row inspection. */
+  public DSLContext sourceDsl() {
+    return accountSources.dsl;
   }
 
   /** The real Account receiver for the retained redeemed-operation projection. */
@@ -477,7 +503,8 @@ public final class AccountOriginalStartSessionAuthorizationProofFixture {
       UUID gameSessionOwnerAttemptId,
       long gameSessionOwnerFence,
       UUID issuanceOperationId,
-      long issuanceFence) {
+      long issuanceFence,
+      Instant accountReferenceExpiresAt) {
     public OriginalStartSession {
       Objects.requireNonNull(preAuthorizationTuple, "original pre-authorization tuple required");
       Objects.requireNonNull(originalTuple, "original post-authorization tuple required");
@@ -487,6 +514,8 @@ public final class AccountOriginalStartSessionAuthorizationProofFixture {
       requirePositive(gameSessionOwnerFence, "gameSessionOwnerFence");
       requireOwner(issuanceOperationId, "issuanceOperationId");
       requirePositive(issuanceFence, "issuanceFence");
+      Objects.requireNonNull(
+          accountReferenceExpiresAt, "original Account reference expiry required");
     }
 
     @Override

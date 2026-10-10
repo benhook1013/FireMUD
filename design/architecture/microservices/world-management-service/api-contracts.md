@@ -343,7 +343,7 @@ Termination owner-set and registry-revision snapshot semantics are defined by [I
 
 Current implementation notes:
 
-- The first canonical activation seam is now live for the `StartSession` path.
+- The live `StartSession` path still uses the legacy numeric `ActivatePreparedWorldInstance` lifecycle transition. The separate canonical UUID activation ledger, service and gRPC adapter are unregistered and default-denied without an explicit held-authority verifier; legacy activation is not proof of that canonical commit boundary. The [World implementation tracker](../../../project-management/implementation-tracking/world-runtime-and-movement.md) records the remaining genuine producer and activation proof.
 - World Management persists `world_instance`, `region_instance`, `zone_instance`, `room_instance`, and `room_instance_exit` rows keyed by `(tenantId, gameInstanceId)` and uses `lifecycle_epoch` as the current fence token for prepare/activate/fail/terminate transitions.
 - `world_event` is now runtime-owned and keyed by `(tenantId, gameInstanceId)` via `region_instance`, rather than hanging off template `region` rows.
 - `stopSession` now consumes `GetWorldInstanceLifecycle` + `TerminateWorldInstance` rather than the old ping-only shutdown path; Entity Management cleanup runs through `CleanupRuntimeInstance`, and World hard-deletes its own runtime rows (`world_event`, room exits, rooms, zones, regions) before reporting `TERMINATED`.
