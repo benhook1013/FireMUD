@@ -310,9 +310,15 @@ module_checks_step = find_step(
 )
 require_equal(
     module_checks_step,
+    ("env", "GRADLE_MAX_WORKERS"),
+    "${{ matrix.module == 'tcp-proxy-service' && '2' || '4' }}",
+    "ci workflow",
+)
+require_equal(
+    module_checks_step,
     ("run",),
     "echo \"::group::Run Module Validation\"\n"
-    "./gradlew --refresh-dependencies :${{ matrix.module }}:check -PfullCheck\n"
+    "./gradlew --max-workers=\"$GRADLE_MAX_WORKERS\" --refresh-dependencies :${{ matrix.module }}:check -PfullCheck\n"
     "echo \"::endgroup::\"\n",
     "ci workflow",
 )
