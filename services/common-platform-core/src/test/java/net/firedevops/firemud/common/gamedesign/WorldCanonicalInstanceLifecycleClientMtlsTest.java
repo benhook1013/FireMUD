@@ -2,8 +2,12 @@ package net.firedevops.firemud.common.gamedesign;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.Mockito.doAnswer;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
 
 import com.google.protobuf.ByteString;
+import io.grpc.ManagedChannel;
 import io.grpc.Metadata;
 import io.grpc.Server;
 import io.grpc.ServerCall;
@@ -18,6 +22,7 @@ import io.grpc.netty.shaded.io.netty.handler.ssl.ClientAuth;
 import io.grpc.netty.shaded.io.netty.handler.ssl.SslContextBuilder;
 import io.grpc.stub.StreamObserver;
 import java.io.IOException;
+import java.lang.reflect.Field;
 import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -30,14 +35,19 @@ import java.security.cert.X509Certificate;
 import java.util.Base64;
 import java.util.List;
 import java.util.UUID;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
+import javax.net.ssl.SSLException;
 import net.firedevops.firemud.common.config.ServiceEndpointsProperties;
+import net.firedevops.firemud.common.grpc.AbstractReloadingBlockingGrpcClient;
 import net.firedevops.firemud.common.grpc.CommonGrpcClientProperties;
 import net.firedevops.firemud.common.grpc.GrpcChannelFactory;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentityInterceptor;
+import net.firedevops.firemud.common.grpc.TlsCertificateWatcher;
 import net.firedevops.firemud.common.world.RoomTemplateRef;
 import net.firedevops.firemud.common.world.WorldCanonicalInstanceLifecycleClient;
 import net.firedevops.firemud.common.world.WorldCanonicalInstanceLifecycleEvidence;
@@ -195,6 +205,74 @@ class WorldCanonicalInstanceLifecycleClientMtlsTest {
     assertThat(applicationCalls).hasValue(0);
   }
 
+  @Test
+  void closeReleasesClientMonitorBeforeClosingCertificateWatcher() throws Exception {
+    String previousReloadPolicy = System.getProperty("firemud.grpc.tls-reload.enabled");
+    System.setProperty("firemud.grpc.tls-reload.enabled", "false");
+    try {
+      CountingChannelFactory channelFactory = new CountingChannelFactory();
+      client =
+          new WorldCanonicalInstanceLifecycleClient(
+              new ServiceEndpointsProperties(),
+              pki.clientProperties(tempDirectory),
+              channelFactory,
+              NAMESPACE);
+      client.init();
+
+      TlsCertificateWatcher watcher = mock(TlsCertificateWatcher.class);
+      CountDownLatch callbackFinished = new CountDownLatch(1);
+      AtomicBoolean callbackAcquiredMonitor = new AtomicBoolean();
+      AtomicReference<Throwable> callbackFailure = new AtomicReference<>();
+      doAnswer(
+              invocation -> {
+                assertThat(Thread.holdsLock(client)).isFalse();
+                Thread callback =
+                    new Thread(
+                        () -> {
+                          try {
+                            synchronized (client) {
+                              callbackAcquiredMonitor.set(true);
+                            }
+                          } catch (Throwable failure) {
+                            callbackFailure.set(failure);
+                          } finally {
+                            callbackFinished.countDown();
+                          }
+                        },
+                        "world-canonical-lifecycle-client-test-callback");
+                callback.start();
+                if (!callbackFinished.await(1, TimeUnit.SECONDS)) {
+                  callback.interrupt();
+                  callback.join(TimeUnit.SECONDS.toMillis(1));
+                  throw new AssertionError("Watcher callback could not acquire the client monitor");
+                }
+                callback.join(TimeUnit.SECONDS.toMillis(1));
+                assertThat(callback.isAlive()).isFalse();
+                assertThat(callbackAcquiredMonitor.get()).isTrue();
+                assertThat(callbackFailure.get()).isNull();
+                return null;
+              })
+          .when(watcher)
+          .close();
+      setWatcher(client, watcher);
+
+      client.close();
+
+      verify(watcher).close();
+      assertThat(channelFactory.buildAttempts.get()).isEqualTo(1);
+      assertThatThrownBy(client::init)
+          .isInstanceOf(IllegalStateException.class)
+          .hasMessage("World canonical lifecycle client is closed");
+      assertThat(channelFactory.buildAttempts.get()).isEqualTo(1);
+    } finally {
+      if (previousReloadPolicy == null) {
+        System.clearProperty("firemud.grpc.tls-reload.enabled");
+      } else {
+        System.setProperty("firemud.grpc.tls-reload.enabled", previousReloadPolicy);
+      }
+    }
+  }
+
   private void startServer(
       TestIdentity identity,
       ResponseMode responseMode,
@@ -350,6 +428,26 @@ class WorldCanonicalInstanceLifecycleClientMtlsTest {
 
   private static UUID uuid(String value) {
     return UUID.fromString(value);
+  }
+
+  private static void setWatcher(
+      WorldCanonicalInstanceLifecycleClient client, TlsCertificateWatcher watcher)
+      throws ReflectiveOperationException {
+    Field watcherField = AbstractReloadingBlockingGrpcClient.class.getDeclaredField("watcher");
+    watcherField.setAccessible(true);
+    watcherField.set(client, watcher);
+  }
+
+  private static final class CountingChannelFactory extends GrpcChannelFactory {
+    private final AtomicInteger buildAttempts = new AtomicInteger();
+
+    @Override
+    public ManagedChannel buildChannel(
+        String target, int defaultPort, CommonGrpcClientProperties properties, boolean keepAlive)
+        throws SSLException {
+      buildAttempts.incrementAndGet();
+      return mock(ManagedChannel.class);
+    }
   }
 
   private enum ResponseMode {
