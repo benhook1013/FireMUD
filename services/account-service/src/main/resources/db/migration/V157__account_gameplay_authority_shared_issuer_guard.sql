@@ -61,17 +61,22 @@ BEGIN
         AND account_uuid IS NULL
         AND outbox_stream_key = 'account:auth-authority:v1:issuer/firemud-account-service'
       FOR SHARE;
-    SELECT outbox_stream_key, current_generation, current_source_version, last_outbox_sequence,
-           current_issuance_fence, current_issuance_fence_source_version,
-           cutoff_generation, cutoff_stream_key, cutoff_sequence
+    SELECT source_record.outbox_stream_key, source_record.current_generation,
+           source_record.current_source_version, source_record.last_outbox_sequence,
+           source_record.current_issuance_fence,
+           source_record.current_issuance_fence_source_version,
+           source_record.cutoff_generation, source_record.cutoff_stream_key,
+           source_record.cutoff_sequence
       INTO current_account_stream, source_account_generation, source_account_source_version,
            current_account_sequence, source_account_issuance_fence,
            source_account_fence_source_version, current_account_cutoff_generation,
            current_account_cutoff_stream, current_account_cutoff_sequence
-      FROM account_authority_source_records
-      WHERE scope_kind = 'ACCOUNT' AND account_uuid = NEW.account_uuid
-        AND issuer_id IS NULL
-        AND outbox_stream_key = 'account:auth-authority:v1:account/' || NEW.account_uuid::TEXT
+      FROM account_authority_source_records AS source_record
+      WHERE source_record.scope_kind = 'ACCOUNT'
+        AND source_record.account_uuid = NEW.account_uuid
+        AND source_record.issuer_id IS NULL
+        AND source_record.outbox_stream_key =
+            'account:auth-authority:v1:account/' || NEW.account_uuid::TEXT
       FOR UPDATE;
 
     IF current_account_sequence = 0
