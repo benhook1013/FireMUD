@@ -760,6 +760,23 @@ class AccountGameplayDelegationIssuancePersistenceIntegrationTest {
                     secondIntent.requestId()))
         .isInstanceOf(DataAccessException.class)
         .hasMessageContaining("authority snapshot is stale or missing");
+    assertThatThrownBy(
+            () ->
+                dsl.execute(
+                    "UPDATE account_gameplay_delegation_issuance_operations "
+                        + "SET issuance_fence = issuance_fence + 1 WHERE request_id = ?",
+                    secondIntent.requestId()))
+        .isInstanceOf(DataAccessException.class)
+        .hasMessageContaining("authority snapshot is stale or missing");
+    assertThatThrownBy(
+            () ->
+                dsl.execute(
+                    "UPDATE account_gameplay_delegation_issuance_operations "
+                        + "SET issuance_fence_source_version = issuance_fence_source_version + 1 "
+                        + "WHERE request_id = ?",
+                    secondIntent.requestId()))
+        .isInstanceOf(DataAccessException.class)
+        .hasMessageContaining("authority snapshot is stale or missing");
     assertThat(readCandidate(dsl, secondIntent.requestId()).authorityTupleBytes())
         .containsExactly(advancedAuthorityTuple);
     String advancedJwt = compactCandidate(secondIntent);
