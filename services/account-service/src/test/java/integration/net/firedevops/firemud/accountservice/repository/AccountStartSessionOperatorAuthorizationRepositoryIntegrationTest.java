@@ -124,6 +124,43 @@ class AccountStartSessionOperatorAuthorizationRepositoryIntegrationTest {
   }
 
   @Test
+  void realPostgresAllowsEqualIssueAndRedemptionTimestampsAtMillisecondPrecision() {
+    Context context = context();
+    IssuanceCandidate candidate = candidate(tuple());
+    context.inTransaction(() -> context.repository.createOrReadExact(candidate));
+
+    RedemptionRequest request = redemption(candidate, OWNER_ATTEMPT_ID, 11L, candidate.issuedAt());
+    var redeemed = context.inTransaction(() -> context.repository.redeemExact(request));
+
+    assertThat(redeemed.replay()).isFalse();
+    var persisted =
+        context.inTransaction(
+            () -> context.repository.findByControlPlaneRequestId(REQUEST_ID).orElseThrow());
+    assertThat(persisted.redeemedAt()).isEqualTo(candidate.issuedAt());
+    assertThat(persisted.status())
+        .isEqualTo(AccountStartSessionOperatorAuthorizationRepository.Status.REDEEMED);
+  }
+
+  @Test
+  void realPostgresRejectsRedemptionTimestampEarlierThanIssuance() {
+    Context context = context();
+    IssuanceCandidate candidate = candidate(tuple());
+    context.inTransaction(() -> context.repository.createOrReadExact(candidate));
+
+    RedemptionRequest request =
+        redemption(candidate, OWNER_ATTEMPT_ID, 11L, candidate.issuedAt().minusMillis(1));
+    assertThatThrownBy(() -> context.inTransaction(() -> context.repository.redeemExact(request)))
+        .isInstanceOf(IntegrityConstraintViolationException.class);
+
+    var persisted =
+        context.inTransaction(
+            () -> context.repository.findByControlPlaneRequestId(REQUEST_ID).orElseThrow());
+    assertThat(persisted.status())
+        .isEqualTo(AccountStartSessionOperatorAuthorizationRepository.Status.ISSUED);
+    assertThat(persisted.redeemedAt()).isNull();
+  }
+
+  @Test
   void realPostgresAcceptsCanonicalNfcRequestIdAt128Utf8BytesAndRejectsOversizeBeforeInsert() {
     Context context = context();
     String boundedRequestId = "é".repeat(64);
@@ -600,6 +637,11 @@ class AccountStartSessionOperatorAuthorizationRepositoryIntegrationTest {
 
   private static RedemptionRequest redemption(
       IssuanceCandidate candidate, UUID ownerAttemptId, long ownerFence) {
+    return redemption(candidate, ownerAttemptId, ownerFence, Instant.parse("2026-10-09T00:00:01Z"));
+  }
+
+  private static RedemptionRequest redemption(
+      IssuanceCandidate candidate, UUID ownerAttemptId, long ownerFence, Instant now) {
     return new RedemptionRequest(
         candidate.controlPlaneRequestId(),
         candidate.preAuthorizationTuple(),
@@ -610,7 +652,7 @@ class AccountStartSessionOperatorAuthorizationRepositoryIntegrationTest {
         ownerAttemptId,
         ownerFence,
         candidate.authorityEvidenceBundle(),
-        Instant.parse("2026-10-09T00:00:01Z"));
+        now);
   }
 
   private static StartSessionPreAuthorizationReservationTuple tuple() {
