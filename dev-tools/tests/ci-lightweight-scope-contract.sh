@@ -335,7 +335,7 @@ require_equal(
 require_equal(
     junit_results_step,
     ("with", "name"),
-    "junit-${{ matrix.module }}-results-${{ github.sha }}",
+    "junit-${{ matrix.module }}-results-${{ github.sha }}-attempt-${{ github.run_attempt }}",
     "ci workflow",
 )
 require_equal(
