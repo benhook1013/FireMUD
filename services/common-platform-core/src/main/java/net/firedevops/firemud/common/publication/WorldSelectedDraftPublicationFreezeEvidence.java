@@ -27,6 +27,18 @@ public final class WorldSelectedDraftPublicationFreezeEvidence {
     return acknowledgement;
   }
 
+  @Override
+  public boolean equals(Object other) {
+    return other instanceof WorldSelectedDraftPublicationFreezeEvidence that
+        && request.equals(that.request)
+        && acknowledgement.equals(that.acknowledgement);
+  }
+
+  @Override
+  public int hashCode() {
+    return Objects.hash(request, acknowledgement);
+  }
+
   /** Complete exact request from Game Design; its Account bytes are correlation, not authority. */
   public record Request(
       int schemaVersion,

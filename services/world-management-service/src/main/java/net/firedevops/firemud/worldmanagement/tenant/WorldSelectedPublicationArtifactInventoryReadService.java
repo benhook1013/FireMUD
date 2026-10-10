@@ -38,6 +38,12 @@ final class WorldSelectedPublicationArtifactInventoryReadService {
   WorldSelectedPublicationArtifactInventoryEvidence read(
       WorldSelectedDraftPublicationFreezeEvidence freezeEvidence) {
     requireAuthenticatedGameDesignCaller();
+    return readRetained(freezeEvidence);
+  }
+
+  /** Storage-only retained read for a separately authenticated recipient-specific boundary. */
+  WorldSelectedPublicationArtifactInventoryEvidence readRetained(
+      WorldSelectedDraftPublicationFreezeEvidence freezeEvidence) {
     requireNoAmbientTransaction();
     Objects.requireNonNull(freezeEvidence, "freezeEvidence");
 

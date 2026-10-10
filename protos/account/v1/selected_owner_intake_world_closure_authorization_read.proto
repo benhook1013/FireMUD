@@ -1,0 +1,35 @@
+syntax = "proto3";
+
+package account.v1;
+
+option java_package = "net.firedevops.firemud.account.v1";
+option java_multiple_files = true;
+
+// Standalone World read of a finalized Entity or Automation intake authorization. This samples
+// the original Account authorization and source participation at read time; it does not prove
+// continuous commit protection, complete World inventory, or terminal settlement.
+service AccountSelectedOwnerIntakeWorldClosureAuthorizationReadService {
+  rpc ReadHeldSelectedOwnerWorldClosureAuthorization(
+      ReadHeldSelectedOwnerWorldClosureAuthorizationRequest)
+      returns (ReadHeldSelectedOwnerWorldClosureAuthorizationResponse);
+}
+
+message ReadHeldSelectedOwnerWorldClosureAuthorizationRequest {
+  int32 schema_version = 1;
+  string target_namespace = 2;
+  string read_request_id = 3;
+  // Always the exact same-namespace World Management workload.
+  string intended_reader = 4;
+  // ENTITY_INTAKE_WORLD_CLOSURE_READ or AUTOMATION_INTAKE_WORLD_CLOSURE_READ, derived from the
+  // original binding's owner.
+  string closure_read_purpose = 5;
+  // Complete canonical original SelectedOwnerIntakeAuthorizationBinding bytes and SHA-256 digest.
+  bytes original_intake_authorization_binding = 6;
+  string intake_authorization_digest = 7;
+}
+
+message ReadHeldSelectedOwnerWorldClosureAuthorizationResponse {
+  // Echo the complete request unchanged. Only held=true is a successful result.
+  ReadHeldSelectedOwnerWorldClosureAuthorizationRequest request = 1;
+  bool held = 2;
+}
