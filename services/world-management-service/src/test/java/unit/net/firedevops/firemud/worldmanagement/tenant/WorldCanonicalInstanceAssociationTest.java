@@ -87,8 +87,45 @@ class WorldCanonicalInstanceAssociationTest {
                     UUID.randomUUID(),
                     "SHARED",
                     false,
+                    UUID.randomUUID(),
+                    1L,
                     "synthetic-control-request"))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("explicit public-production evidence");
+  }
+
+  @Test
+  void canonicalIdentityRequiresLaunchCapturedRealmAndPositiveCatalogRevision() {
+    assertThatThrownBy(
+            () ->
+                new WorldCanonicalInstanceAssociation.CanonicalIdentity(
+                    UUID.randomUUID(),
+                    "firemud",
+                    UUID.randomUUID(),
+                    "fixture-world",
+                    UUID.randomUUID(),
+                    "SHARED",
+                    true,
+                    new UUID(0L, 0L),
+                    1L,
+                    "synthetic-control-request"))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("canonicalRealmId");
+
+    assertThatThrownBy(
+            () ->
+                new WorldCanonicalInstanceAssociation.CanonicalIdentity(
+                    UUID.randomUUID(),
+                    "firemud",
+                    UUID.randomUUID(),
+                    "fixture-world",
+                    UUID.randomUUID(),
+                    "SHARED",
+                    true,
+                    UUID.randomUUID(),
+                    0L,
+                    "synthetic-control-request"))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("catalogRevision");
   }
 }

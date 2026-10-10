@@ -560,6 +560,8 @@ public final class WorldCanonicalInitialAdmissionHoldRepository {
         && request.playableStateNamespaceId().equals(identity.playableStateNamespaceId())
         && request.playableStateScope().equals(identity.playableStateScope())
         && request.canonicalGameInstanceId().equals(identity.canonicalGameInstanceId())
+        && request.realmId().equals(identity.canonicalRealmId())
+        && request.expectedCatalogRevision() == identity.catalogRevision()
         && request.canonicalVersionId().equals(association.canonicalVersionId());
   }
 

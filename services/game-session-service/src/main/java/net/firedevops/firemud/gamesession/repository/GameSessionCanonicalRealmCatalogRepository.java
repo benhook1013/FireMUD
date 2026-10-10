@@ -123,6 +123,14 @@ public final class GameSessionCanonicalRealmCatalogRepository {
     return Objects.requireNonNull(result, "Game Session canonical catalog read returned no result");
   }
 
+  /** Reads complete stored catalog evidence inside another Game Session owner transaction. */
+  Optional<CanonicalRealmCatalog> readByCanonicalTenantIdInOwnerTransaction(
+      UUID canonicalTenantId) {
+    requireOwnerTransaction();
+    requireNonNil(canonicalTenantId, "canonicalTenantId");
+    return readByCanonicalTenantIdInTransaction(canonicalTenantId);
+  }
+
   private CanonicalRealmCatalog establishInTransaction(PreparedInput input) {
     requireOwnerTransaction();
     lockIdentity(input);

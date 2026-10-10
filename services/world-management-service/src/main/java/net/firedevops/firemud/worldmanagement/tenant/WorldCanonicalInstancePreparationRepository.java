@@ -1018,7 +1018,7 @@ public final class WorldCanonicalInstancePreparationRepository {
     Map<String, Object> root =
         object(
             "schemaVersion",
-                launch.evidence().releaseAttestation().worldStartLocationEvidence() == null ? 1 : 2,
+                launch.evidence().releaseAttestation().worldStartLocationEvidence() == null ? 3 : 4,
             "identity",
                 object(
                     "canonicalGameInstanceId", evidence.canonicalGameInstanceId().toString(),
@@ -1028,6 +1028,8 @@ public final class WorldCanonicalInstancePreparationRepository {
                     "playableStateNamespaceId", evidence.playableStateNamespaceId().toString(),
                     "playableStateScope", evidence.playableStateScope(),
                     "publicProduction", evidence.publicProduction(),
+                    "canonicalRealmId", evidence.canonicalRealmId().toString(),
+                    "catalogRevision", evidence.catalogRevision(),
                     "controlPlaneRequestId", evidence.controlPlaneRequestId()),
             "gameSessionReadRequest",
                 object(
@@ -1055,6 +1057,8 @@ public final class WorldCanonicalInstancePreparationRepository {
                     "playableStateNamespaceId", evidence.playableStateNamespaceId().toString(),
                     "playableStateScope", evidence.playableStateScope(),
                     "publicProduction", evidence.publicProduction(),
+                    "canonicalRealmId", evidence.canonicalRealmId().toString(),
+                    "catalogRevision", evidence.catalogRevision(),
                     "descriptorJson", evidenceJson(evidence.descriptor()),
                     "releaseAttestationJson", evidenceJson(evidence.releaseAttestation())),
             "launchBinding",

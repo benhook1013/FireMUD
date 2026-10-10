@@ -267,11 +267,13 @@ import net.firedevops.firemud.gamelogic.sourceintake.GameLogicGameplayRuleIntake
 import net.firedevops.firemud.gamelogic.sourceintake.GameLogicPublicationSourceReadService;
 import net.firedevops.firemud.gamesession.client.GameDesignFreshTenantCreationClient;
 import net.firedevops.firemud.gamesession.client.GameDesignPublishedRealmPolicyClient;
+import net.firedevops.firemud.gamesession.repository.GameSessionCanonicalInstanceLaunchRepository;
 import net.firedevops.firemud.gamesession.repository.GameSessionCanonicalRealmCatalogRepository;
 import net.firedevops.firemud.gamesession.repository.GameSessionFreshTenantAssociationRepository;
 import net.firedevops.firemud.gamesession.repository.GameSessionStartSessionOperatorAttemptRepository;
 import net.firedevops.firemud.gamesession.repository.GameSessionStartSessionOperatorAttemptRepository.AccountRedemptionProjection;
 import net.firedevops.firemud.gamesession.repository.GameSessionStartSessionOperatorAttemptRepository.AttemptClaim;
+import net.firedevops.firemud.gamesession.service.impl.CanonicalGameInstanceLaunchAssociationReadGrpcService;
 import net.firedevops.firemud.gamesession.service.impl.OriginalStartSessionCurrentAttemptReadGrpcService;
 import net.firedevops.firemud.loggingadmin.StartSessionReservationMutationTestFixtures;
 import net.firedevops.firemud.loggingadmin.operator.StartSessionPreAuthorizationReservationService;
@@ -340,7 +342,6 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.mapstruct.factory.Mappers;
-import org.mockito.Mockito;
 import org.springframework.boot.jooq.autoconfigure.SpringTransactionProvider;
 import org.springframework.jdbc.datasource.DataSourceTransactionManager;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
@@ -405,11 +406,13 @@ import tools.jackson.databind.ObjectMapper;
  * receivers. Game Session also resolves the actual fresh Game Design tenant receipt over mTLS,
  * stores and independently reads its numeric tenant association, then reads the actual
  * Account-confirmed source and published policy set over mTLS and stores and independently reads
- * its canonical public-realm catalog. Game Session launch association remains mocked, and Account
- * participation is point-in-time evidence, not a continuous cross-service lock. This does not
- * establish production certificate custody, full application server wiring, production ingress,
- * runtime launch, activation or registration. The Logging evidence is point-in-time and does not
- * lock later Account or Game Session commits.
+ * its canonical public-realm catalog. Game Session creates and independently reads the exact
+ * STARTING runtime/launch association with its captured catalog revision, and World consumes that
+ * evidence through the native exact-peer Game Session reader. Account participation is
+ * point-in-time evidence, not a continuous cross-service lock. Activation authority remains an
+ * explicit fixture stipulation. This does not establish production certificate custody, full
+ * application server wiring, production ingress, runtime launch, activation or registration. The
+ * Logging evidence is point-in-time and does not lock later Account or Game Session commits.
  */
 @Testcontainers(disabledWithoutDocker = true)
 @SuppressWarnings("resource")
@@ -616,6 +619,15 @@ class GenuineSelectedPublicationExportPostgresIntegrationTest {
         var gameSessionPublishedRealmPolicyClient =
             new GameDesignPublishedRealmPolicyClient(
                 endpoints, pki.client("game-session-service"), channels, NAMESPACE);
+        var worldToGameSessionLaunchClient =
+            new CanonicalGameInstanceLaunchAssociationClient(
+                endpoints, pki.client("world-management-service"), channels, NAMESPACE);
+        var wrongWorkloadLaunchClient =
+            new CanonicalGameInstanceLaunchAssociationClient(
+                endpoints, pki.client("account-service"), channels, NAMESPACE);
+        var worldToGameDesignPreparationClient =
+            new AuthoredWorldLaunchDescriptorClient(
+                endpoints, pki.client("world-management-service"), channels, NAMESPACE);
         var wrongWorkloadActivationClient =
             canonicalActivationClient(worldServer, pki.client("account-service"), channels);
         var gameSessionActivationClient =
@@ -629,6 +641,9 @@ class GenuineSelectedPublicationExportPostgresIntegrationTest {
       gameSessionPreparationRetryClient.init();
       gameSessionFreshTenantCreationClient.init();
       gameSessionPublishedRealmPolicyClient.init();
+      worldToGameSessionLaunchClient.init();
+      wrongWorkloadLaunchClient.init();
+      worldToGameDesignPreparationClient.init();
       var automationIntakeRepository =
           new AutomationEmptySelectedSourceIntakeRepository(automation.dsl());
       var entityIntakeRepository = new EntityEmptySelectedSourceIntakeRepository(entity.dsl());
@@ -3394,16 +3409,44 @@ class GenuineSelectedPublicationExportPostgresIntegrationTest {
           // public-realm catalog above use the actual owners. The original StartSession tuple is
           // issued/redeemed by Account after the actual native Logging claim read, under the
           // fixture's stipulated Account peer contexts. Game Session reserves the exact tuple and
-          // attaches
-          // Account's redeemed projection in its isolated V35 repository; Account's current
+          // attaches Account's redeemed projection in its isolated V35 repository; Account's
+          // current
           // attempt observation and World participation acquisition then traverse native
-          // same-namespace mTLS receivers. Launch association below remains mocked, and retained
+          // same-namespace mTLS receivers. The launch below is produced and independently read by
+          // Game Session, then consumed through its exact-peer native reader. Retained Account
           // participation is point-in-time evidence, not a continuous remote lock.
           CompleteLaunchBindingEvidence completeLaunchEvidence =
               new CompleteLaunchBindingEvidence(
                   completeBinding.descriptor(), completeBinding.releaseAttestation());
-          UUID canonicalGameInstanceId = UUID.randomUUID();
-          UUID playableStateNamespaceId = UUID.randomUUID();
+          var canonicalLaunchRepository =
+              new GameSessionCanonicalInstanceLaunchRepository(
+                  gameSessionAttempts.dsl(),
+                  gameSessionAttempts.transactionManager(),
+                  NAMESPACE,
+                  canonicalRealmCatalogRepository);
+          var canonicalLaunch =
+              canonicalLaunchRepository.createStartingLaunch(
+                  startSessionTuple, completeLaunchEvidence, canonicalRealmCatalog);
+          var canonicalLaunchRetry =
+              canonicalLaunchRepository.createStartingLaunch(
+                  startSessionTuple, completeLaunchEvidence, canonicalRealmCatalog);
+          UUID canonicalGameInstanceId = canonicalLaunch.gameInstanceUuid();
+          UUID playableStateNamespaceId = canonicalLaunch.playableStateNamespaceId();
+          assertThat(canonicalLaunchRetry.gameInstanceUuid()).isEqualTo(canonicalGameInstanceId);
+          assertThat(canonicalLaunchRetry.gameInstanceId())
+              .isEqualTo(canonicalLaunch.gameInstanceId());
+          assertThat(canonicalLaunch.originalStartSessionTuple())
+              .containsExactly(startSessionTuple.canonicalBytes());
+          assertThat(canonicalLaunch.launchBindingEvidence()).isEqualTo(completeLaunchEvidence);
+          assertThat(canonicalLaunch.canonicalRealmId()).isEqualTo(canonicalRealmCatalog.realmId());
+          assertThat(canonicalLaunch.catalogRevision())
+              .isEqualTo(canonicalRealmCatalog.catalogRevision());
+          assertThat(playableStateNamespaceId)
+              .isEqualTo(canonicalRealmCatalog.playableStateNamespaceId());
+          register(
+              gameSessionHandlers,
+              new CanonicalGameInstanceLaunchAssociationReadGrpcService(
+                  canonicalLaunchRepository, NAMESPACE));
           var preparationAssociationRequest =
               new CanonicalGameInstanceLaunchAssociationReadEvidence.Request(
                   UUID.randomUUID(),
@@ -3416,24 +3459,37 @@ class GenuineSelectedPublicationExportPostgresIntegrationTest {
                   completeLaunchEvidence.descriptor().requestDigest(),
                   completeLaunchEvidence.descriptor().resultDigest(),
                   completeLaunchEvidence.releaseAttestation().evidenceDigest());
-          var stipulatedGameSessionReader =
-              Mockito.mock(CanonicalGameInstanceLaunchAssociationClient.class);
-          Mockito.when(stipulatedGameSessionReader.read(Mockito.any()))
-              .thenAnswer(
-                  invocation -> {
-                    var request =
-                        invocation.getArgument(
-                            0, CanonicalGameInstanceLaunchAssociationReadEvidence.Request.class);
-                    return new CanonicalGameInstanceLaunchAssociationReadEvidence.Result(
-                        request,
-                        playableStateNamespaceId,
-                        RealmEntryPolicy.StateScope.SHARED,
-                        true,
-                        CanonicalGameInstanceLaunchAssociationReadEvidence.CurrentGameInstanceStatus
-                            .STARTING,
-                        1L,
-                        completeLaunchEvidence);
-                  });
+          var independentCanonicalLaunch =
+              canonicalLaunchRepository
+                  .readByLaunchIdentity(preparationAssociationRequest)
+                  .orElseThrow();
+          assertThat(independentCanonicalLaunch.gameInstanceUuid())
+              .isEqualTo(canonicalGameInstanceId);
+          assertThat(independentCanonicalLaunch.canonicalRealmId())
+              .isEqualTo(canonicalRealmCatalog.realmId());
+          assertThat(independentCanonicalLaunch.catalogRevision())
+              .isEqualTo(canonicalRealmCatalog.catalogRevision());
+          assertThat(independentCanonicalLaunch.originalStartSessionTuple())
+              .containsExactly(canonicalLaunch.originalStartSessionTuple());
+          assertThatThrownBy(() -> wrongWorkloadLaunchClient.read(preparationAssociationRequest))
+              .isInstanceOf(io.grpc.StatusRuntimeException.class)
+              .satisfies(
+                  failure ->
+                      assertThat(io.grpc.Status.fromThrowable(failure).getCode())
+                          .isEqualTo(io.grpc.Status.Code.PERMISSION_DENIED));
+          var nativeLaunchRead = worldToGameSessionLaunchClient.read(preparationAssociationRequest);
+          assertThat(nativeLaunchRead.request()).isEqualTo(preparationAssociationRequest);
+          assertThat(nativeLaunchRead.canonicalRealmId())
+              .isEqualTo(canonicalRealmCatalog.realmId());
+          assertThat(nativeLaunchRead.catalogRevision())
+              .isEqualTo(canonicalRealmCatalog.catalogRevision());
+          assertThat(nativeLaunchRead.playableStateNamespaceId())
+              .isEqualTo(playableStateNamespaceId);
+          assertThat(nativeLaunchRead.launchBindingEvidence()).isEqualTo(completeLaunchEvidence);
+          assertThat(nativeLaunchRead.currentGameInstanceStatus())
+              .isEqualTo(
+                  CanonicalGameInstanceLaunchAssociationReadEvidence.CurrentGameInstanceStatus
+                      .STARTING);
 
           var completeBindingRepository = new WorldCompleteLaunchBindingRepository(world.dsl());
           var canonicalAssociationRepository =
@@ -3449,10 +3505,7 @@ class GenuineSelectedPublicationExportPostgresIntegrationTest {
           var lifecycleRepository =
               new WorldCanonicalInstanceLifecycleReadRepository(
                   world.dsl(), world.transactions(), canonicalAssociationRepository);
-          try (var worldToGameDesignPreparationClient =
-              new AuthoredWorldLaunchDescriptorClient(
-                  endpoints, pki.client("world-management-service"), channels, NAMESPACE)) {
-            worldToGameDesignPreparationClient.init();
+          {
             var completeBindingService =
                 new WorldCompleteLaunchBindingService(
                     worldToGameDesignPreparationClient,
@@ -3461,7 +3514,7 @@ class GenuineSelectedPublicationExportPostgresIntegrationTest {
                     world.transactions(),
                     NAMESPACE,
                     null,
-                    stipulatedGameSessionReader);
+                    worldToGameSessionLaunchClient);
             var preparationAssembly =
                 new WorldCanonicalInstancePreparationAssemblyService(
                     NAMESPACE,
@@ -3469,7 +3522,7 @@ class GenuineSelectedPublicationExportPostgresIntegrationTest {
                     worldIntakes,
                     worldIdentities,
                     worldPublicationProof.frozenTopologies(),
-                    stipulatedGameSessionReader,
+                    worldToGameSessionLaunchClient,
                     worldToGameDesignPreparationClient);
             var preparationService =
                 new WorldCanonicalInstancePreparationService(
@@ -3542,7 +3595,7 @@ class GenuineSelectedPublicationExportPostgresIntegrationTest {
                         controlPlaneRequestId));
             var preparationResult =
                 preparationRepository.readOwnerPreparation(assembledPreparationInput).orElseThrow();
-            var stipulatedGameSessionEvidence = assembledPreparationInput.gameSessionReadEvidence();
+            var retainedGameSessionEvidence = assembledPreparationInput.gameSessionReadEvidence();
             var independentLifecycleRead =
                 lifecycleRepository.read(expectedLifecycleRequest).orElseThrow();
             var selectedReleasedStart =
@@ -3556,14 +3609,23 @@ class GenuineSelectedPublicationExportPostgresIntegrationTest {
             assertThat(preparedLifecycle.lifecycleStatus()).isEqualTo("PREPARING");
             assertThat(preparedLifecycle.lifecycleEpoch()).isEqualTo(1L);
             assertThat(preparedLifecycle.launchBinding()).isEqualTo(completeLaunchEvidence);
-            assertThat(stipulatedGameSessionEvidence.currentGameSessionStatus())
+            assertThat(retainedGameSessionEvidence.currentGameSessionStatus())
                 .isEqualTo("STARTING");
-            assertThat(stipulatedGameSessionEvidence.currentGameSessionRowVersion()).isEqualTo(1L);
-            assertThat(stipulatedGameSessionEvidence.playableStateScope()).isEqualTo("SHARED");
-            assertThat(stipulatedGameSessionEvidence.publicProduction()).isTrue();
-            assertThat(stipulatedGameSessionEvidence.descriptor())
+            assertThat(retainedGameSessionEvidence.currentGameSessionRowVersion())
+                .isEqualTo(canonicalLaunch.currentRowVersion());
+            assertThat(retainedGameSessionEvidence.canonicalRealmId())
+                .isEqualTo(canonicalRealmCatalog.realmId());
+            assertThat(retainedGameSessionEvidence.catalogRevision())
+                .isEqualTo(canonicalRealmCatalog.catalogRevision());
+            assertThat(preparationResult.association().identity().canonicalRealmId())
+                .isEqualTo(canonicalRealmCatalog.realmId());
+            assertThat(preparationResult.association().identity().catalogRevision())
+                .isEqualTo(canonicalRealmCatalog.catalogRevision());
+            assertThat(retainedGameSessionEvidence.playableStateScope()).isEqualTo("SHARED");
+            assertThat(retainedGameSessionEvidence.publicProduction()).isTrue();
+            assertThat(retainedGameSessionEvidence.descriptor())
                 .isEqualTo(completeLaunchEvidence.descriptor());
-            assertThat(stipulatedGameSessionEvidence.releaseAttestation())
+            assertThat(retainedGameSessionEvidence.releaseAttestation())
                 .isEqualTo(completeLaunchEvidence.releaseAttestation());
             assertThat(preparedLifecycle.captureId())
                 .isEqualTo(assembledPreparationInput.captureId());
@@ -3762,7 +3824,7 @@ class GenuineSelectedPublicationExportPostgresIntegrationTest {
                         activationRequest.preparingEvidenceBytes()))
                 .isFalse();
 
-            var stipulatedGameSessionStartEvidence =
+            var retainedGameSessionStartEvidence =
                 assembledPreparationInput.gameSessionReadEvidence();
             AtomicInteger activationAuthorityChecks = new AtomicInteger();
             AtomicInteger heldActivationChecks = new AtomicInteger();
@@ -3775,14 +3837,14 @@ class GenuineSelectedPublicationExportPostgresIntegrationTest {
                               candidate.canonicalRequestBytes(),
                               activationRequest.canonicalRequestBytes())
                           || !"STARTING"
-                              .equals(stipulatedGameSessionStartEvidence.currentGameSessionStatus())
+                              .equals(retainedGameSessionStartEvidence.currentGameSessionStatus())
                           || !candidate
                               .preparing()
                               .launchBinding()
                               .equals(
                                   new CompleteLaunchBindingEvidence(
-                                      stipulatedGameSessionStartEvidence.descriptor(),
-                                      stipulatedGameSessionStartEvidence.releaseAttestation()))) {
+                                      retainedGameSessionStartEvidence.descriptor(),
+                                      retainedGameSessionStartEvidence.releaseAttestation()))) {
                         throw new SecurityException(
                             "Stipulated activation fixture differs from the exact PREPARING "
                                 + "binding");

@@ -43,7 +43,7 @@ import tools.jackson.databind.json.JsonMapper;
  * admission permission.
  */
 public final class WorldCanonicalInstanceLifecycleReadRepository {
-  private static final Set<String> INPUT_FIELDS =
+  private static final Set<String> INPUT_FIELDS_WITHOUT_START_LOCATION =
       Set.of(
           "schemaVersion",
           "identity",
@@ -52,8 +52,12 @@ public final class WorldCanonicalInstanceLifecycleReadRepository {
           "launchBinding",
           "versionIdentity",
           "sourceIntake",
-          "topology",
-          "worldStartLocationEvidenceBase64");
+          "topology");
+  private static final Set<String> INPUT_FIELDS_WITH_START_LOCATION =
+      java.util.stream.Stream.concat(
+              INPUT_FIELDS_WITHOUT_START_LOCATION.stream(),
+              java.util.stream.Stream.of("worldStartLocationEvidenceBase64"))
+          .collect(java.util.stream.Collectors.toUnmodifiableSet());
   private static final JsonMapper CLOSED_JSON =
       JsonMapper.builder()
           .enable(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES)
@@ -248,6 +252,8 @@ public final class WorldCanonicalInstanceLifecycleReadRepository {
         identity, "playableStateNamespaceId", request.playableStateNamespaceId().toString());
     requireText(identity, "playableStateScope", request.playableStateScope());
     requireBoolean(identity, "publicProduction", request.publicProduction());
+    requireText(identity, "canonicalRealmId", association.identity().canonicalRealmId().toString());
+    requireInteger(identity, "catalogRevision", association.identity().catalogRevision());
     requireText(identity, "controlPlaneRequestId", request.controlPlaneRequestId());
 
     JsonNode gsRequest = requiredObject(input, "gameSessionReadRequest");
@@ -278,6 +284,9 @@ public final class WorldCanonicalInstanceLifecycleReadRepository {
         gsEvidence, "playableStateNamespaceId", request.playableStateNamespaceId().toString());
     requireText(gsEvidence, "playableStateScope", request.playableStateScope());
     requireBoolean(gsEvidence, "publicProduction", request.publicProduction());
+    requireText(
+        gsEvidence, "canonicalRealmId", association.identity().canonicalRealmId().toString());
+    requireInteger(gsEvidence, "catalogRevision", association.identity().catalogRevision());
     requireText(gsEvidence, "descriptorRequestDigest", request.expectedDescriptorRequestDigest());
     requireText(gsEvidence, "descriptorResultDigest", request.expectedDescriptorResultDigest());
     requireText(
@@ -730,6 +739,11 @@ public final class WorldCanonicalInstanceLifecycleReadRepository {
         || !request
             .playableStateNamespaceId()
             .equals(required(row, "playable_state_namespace_id", UUID.class))
+        || !association
+            .identity()
+            .canonicalRealmId()
+            .equals(required(row, "canonical_realm_id", UUID.class))
+        || association.identity().catalogRevision() != required(row, "catalog_revision", Long.class)
         || !request.playableStateScope().equals(required(row, "playable_state_scope", String.class))
         || request.publicProduction() != required(row, "public_production", Boolean.class)
         || !request
@@ -778,9 +792,22 @@ public final class WorldCanonicalInstanceLifecycleReadRepository {
   private static JsonNode parseInput(String inputJson) {
     try {
       JsonNode input = CLOSED_JSON.readTree(inputJson);
-      requireFields(input, INPUT_FIELDS, "Retained World preparation input");
-      if (intValue(input, "schemaVersion") != 2) {
-        throw invalid("Receipt-less retained V1 preparation cannot produce lifecycle evidence");
+      if (input == null || !input.isObject()) {
+        throw invalid("Retained World preparation input must be an object");
+      }
+      int schemaVersion = intValue(input, "schemaVersion");
+      if (schemaVersion != 3 && schemaVersion != 4) {
+        throw invalid(
+            "Historical preparation input without launch-captured catalog identity cannot produce lifecycle evidence");
+      }
+      requireFields(
+          input,
+          schemaVersion == 4
+              ? INPUT_FIELDS_WITH_START_LOCATION
+              : INPUT_FIELDS_WITHOUT_START_LOCATION,
+          "Retained World preparation input");
+      if (schemaVersion == 3 && input.has("worldStartLocationEvidenceBase64")) {
+        throw invalid("Schema-3 preparation cannot contain start-location evidence");
       }
       if (!CLOSED_JSON.writeValueAsString(input).equals(inputJson)) {
         throw invalid("Retained World preparation input is not in its original closed form");

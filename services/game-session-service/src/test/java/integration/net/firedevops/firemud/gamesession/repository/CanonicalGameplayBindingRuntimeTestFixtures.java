@@ -265,22 +265,34 @@ public final class CanonicalGameplayBindingRuntimeTestFixtures {
   }
 
   private static void seedStartingRuntimeAndLaunch(DSLContext tx, RuntimeTarget target) {
+    GameSessionCanonicalRealmCatalogProofFixtures.Proof catalogProof =
+        GameSessionCanonicalRealmCatalogProofFixtures.forRuntimeTarget(target);
+    GameSessionCanonicalInstanceLaunchProofFixtures.SyntheticLaunchProof launchProof =
+        GameSessionCanonicalInstanceLaunchProofFixtures.forRuntimeTarget(
+            target, catalogProof.source());
+    var descriptor = launchProof.completeLaunchBindingEvidence().descriptor();
+
     tx.execute(
         "INSERT INTO game_instances"
-            + " (id, tenant_id, runtime_version, owner_account_id, status, row_version,"
+            + " (id, tenant_id, runtime_version, owner_account_id, owner_account_uuid, status, row_version,"
             + " game_instance_uuid, game_template_id, launch_descriptor_id, version_id,"
             + " release_bundle_id, generation_config_revision, version_state_epoch,"
             + " run_owned_start_request_id, run_owned_start_request_digest,"
             + " run_owned_start_published_release_bundle_ref, run_owned_start_preparing_epoch,"
             + " run_owned_start_active_epoch)"
-            + " VALUES (?, ?, 'fixture-runtime', 99, 'STARTING', 1, ?, 1, ?, 1, 1, ?, 1, ?, ?, ?, 1, 2)",
+            + " VALUES (?, ?, ?, NULL, ?, 'STARTING', 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL)",
         target.gameInstanceId(),
         target.gameSessionTenantId(),
+        Long.toString(descriptor.versionId()),
+        launchProof.originalTuple().preAuthorizationTuple().action().target().ownerAccountId(),
         target.gameInstanceUuid(),
+        descriptor.gameTemplateId(),
         target.launchDescriptorId(),
+        descriptor.versionId(),
+        descriptor.releaseBundleId(),
         target.generationConfigRevision(),
         target.controlPlaneRequestId(),
-        RAW_SHA256,
+        launchProof.originalTuple().mutationDigest(),
         target.publishedReleaseBundleRef());
 
     tx.execute(
@@ -294,15 +306,11 @@ public final class CanonicalGameplayBindingRuntimeTestFixtures {
             + " playable_state_namespace_id, playable_state_scope, public_production,"
             + " captured_starting_row_version, game_template_id, launch_descriptor_id, version_id,"
             + " release_bundle_id, generation_config_revision, version_state_epoch,"
-            + " complete_launch_binding_evidence)"
+            + " complete_launch_binding_evidence, original_start_session_tuple,"
+            + " catalog_creation_request_id, catalog_revision, catalog_source_intake_operation_id,"
+            + " catalog_source_intake_request_id)"
             + " VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, 'NEW_GAME_ROW', 'FRESH_SOURCE_BOUND',"
-            + " ?, ?, ?, ?, ?, 'SHARED', TRUE, 1, 1, ?, 1, 1, ?, 1,"
-            + " jsonb_build_object('descriptor', jsonb_build_object('targetNamespace', ?,"
-            + " 'controlPlaneRequestId', ?, 'canonicalTenantId', ?, 'worldSlug', ?,"
-            + " 'gameTemplateId', '1', 'launchDescriptorId', ?, 'versionId', '1',"
-            + " 'releaseBundleId', '1', 'generationConfigRevision', ?, 'versionStateEpoch', '1',"
-            + " 'publishedReleaseBundleRef', ?), 'releaseAttestation',"
-            + " jsonb_build_object('canonicalVersionId', ?)))",
+            + " ?, ?, ?, ?, ?, 'SHARED', TRUE, 1, ?, ?, ?, ?, ?, ?, ?::jsonb, ?, ?, ?, ?, ?)",
         target.targetNamespace(),
         target.controlPlaneRequestId(),
         target.gameSessionTenantId(),
@@ -319,16 +327,19 @@ public final class CanonicalGameplayBindingRuntimeTestFixtures {
         target.realmId(),
         target.worldSlug(),
         target.playableStateNamespaceId(),
-        target.launchDescriptorId(),
-        target.generationConfigRevision(),
-        target.targetNamespace(),
-        target.controlPlaneRequestId(),
-        target.canonicalTenantId().toString(),
-        target.worldSlug(),
-        target.launchDescriptorId(),
-        target.generationConfigRevision(),
-        target.publishedReleaseBundleRef(),
-        target.canonicalVersionId().toString());
+        descriptor.gameTemplateId(),
+        descriptor.launchDescriptorId(),
+        descriptor.versionId(),
+        descriptor.releaseBundleId(),
+        descriptor.generationConfigRevision(),
+        descriptor.versionStateEpoch(),
+        GameSessionCanonicalInstanceLaunchProofFixtures.completeLaunchBindingJson(
+            launchProof.completeLaunchBindingEvidence()),
+        launchProof.originalTuple().canonicalBytes(),
+        target.catalogCreationRequestId(),
+        target.catalogRevision(),
+        target.sourceIntakeOperationId(),
+        target.sourceIntakeRequestId());
   }
 
   public record RuntimeTarget(

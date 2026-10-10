@@ -960,6 +960,8 @@ class WorldCompleteLaunchBindingServiceTest {
             UUID.fromString("abababab-abab-4bab-8bab-abababababab"),
             RealmEntryPolicy.StateScope.SHARED,
             true,
+            UUID.fromString("cdcdcdcd-cdcd-4dcd-8dcd-cdcdcdcdcdcd"),
+            7L,
             CurrentGameInstanceStatus.RUNNING,
             7L,
             pair);

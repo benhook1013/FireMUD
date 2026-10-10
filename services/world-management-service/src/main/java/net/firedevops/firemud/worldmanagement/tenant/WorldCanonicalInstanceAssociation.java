@@ -62,6 +62,8 @@ public record WorldCanonicalInstanceAssociation(
       UUID playableStateNamespaceId,
       String playableStateScope,
       boolean publicProduction,
+      UUID canonicalRealmId,
+      long catalogRevision,
       String controlPlaneRequestId) {
     public CanonicalIdentity {
       requireNonNil(canonicalGameInstanceId, "canonicalGameInstanceId");
@@ -72,6 +74,8 @@ public record WorldCanonicalInstanceAssociation(
       Objects.requireNonNull(worldSlug, "worldSlug");
       AuthoredWorldSourceDigest.validateReadSelector(targetNamespace, canonicalTenantId, worldSlug);
       requireNonNil(playableStateNamespaceId, "playableStateNamespaceId");
+      requireNonNil(canonicalRealmId, "canonicalRealmId");
+      requirePositive(catalogRevision, "catalogRevision");
       if (!"SHARED".equals(playableStateScope)) {
         throw new IllegalArgumentException(
             "This association slice accepts SHARED only; ISOLATED/playtest identity requires the missing lifecycle/generation carrier");
@@ -135,6 +139,8 @@ public record WorldCanonicalInstanceAssociation(
       UUID playableStateNamespaceId,
       String playableStateScope,
       boolean publicProduction,
+      UUID canonicalRealmId,
+      long catalogRevision,
       String currentGameSessionStatus,
       long currentGameSessionRowVersion,
       AuthoredWorldLaunchDescriptorEvidence descriptor,
@@ -144,6 +150,8 @@ public record WorldCanonicalInstanceAssociation(
       AuthoredWorldSourceDigest.validateReadSelector(targetNamespace, canonicalTenantId, worldSlug);
       requireNonNil(canonicalGameInstanceId, "canonicalGameInstanceId");
       requireNonNil(playableStateNamespaceId, "playableStateNamespaceId");
+      requireNonNil(canonicalRealmId, "canonicalRealmId");
+      requirePositive(catalogRevision, "catalogRevision");
       requireText(controlPlaneRequestId, "controlPlaneRequestId", 128);
       requireText(launchDescriptorId, "launchDescriptorId", 64);
       requireDigest(descriptorRequestDigest, "descriptorRequestDigest");
@@ -185,6 +193,8 @@ public record WorldCanonicalInstanceAssociation(
           playableStateNamespaceId,
           playableStateScope,
           publicProduction,
+          canonicalRealmId,
+          catalogRevision,
           controlPlaneRequestId);
     }
   }

@@ -60,4 +60,19 @@ class GameSessionCanonicalRealmCatalogRepositoryTest {
 
     verifyNoInteractions(dsl, transactionManager);
   }
+
+  @Test
+  void ownerTransactionCatalogReadRejectsMissingOwnerTransactionBeforeStorage() {
+    DSLContext dsl = mock(DSLContext.class);
+    PlatformTransactionManager transactionManager = mock(PlatformTransactionManager.class);
+    var repository =
+        new GameSessionCanonicalRealmCatalogRepository(dsl, transactionManager, "test");
+
+    assertThatThrownBy(
+            () -> repository.readByCanonicalTenantIdInOwnerTransaction(UUID.randomUUID()))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("requires an active owner transaction");
+
+    verifyNoInteractions(dsl, transactionManager);
+  }
 }

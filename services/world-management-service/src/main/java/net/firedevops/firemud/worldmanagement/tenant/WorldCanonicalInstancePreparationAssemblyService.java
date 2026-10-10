@@ -282,6 +282,8 @@ public final class WorldCanonicalInstancePreparationAssemblyService {
         result.playableStateNamespaceId(),
         result.playableStateScope().name(),
         result.publicProduction(),
+        result.canonicalRealmId(),
+        result.catalogRevision(),
         result.currentGameInstanceStatus().name(),
         result.currentRowVersion(),
         pair.descriptor(),

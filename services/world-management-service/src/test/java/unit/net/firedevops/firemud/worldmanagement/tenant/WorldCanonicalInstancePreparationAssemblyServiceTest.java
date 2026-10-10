@@ -213,6 +213,8 @@ class WorldCanonicalInstancePreparationAssemblyServiceTest {
     assertThat(worldEvidence.canonicalGameInstanceId()).isEqualTo(INSTANCE_ID);
     assertThat(worldEvidence.playableStateScope()).isEqualTo("SHARED");
     assertThat(worldEvidence.publicProduction()).isTrue();
+    assertThat(worldEvidence.canonicalRealmId()).isEqualTo(matching.canonicalRealmId());
+    assertThat(worldEvidence.catalogRevision()).isEqualTo(matching.catalogRevision());
 
     var changedInstanceRequest = gameSessionRequest(stored, UUID.randomUUID());
     var changedInstanceResult = gameSessionResult(changedInstanceRequest, stored);
@@ -304,6 +306,8 @@ class WorldCanonicalInstancePreparationAssemblyServiceTest {
         UUID.randomUUID(),
         RealmEntryPolicy.StateScope.SHARED,
         true,
+        UUID.randomUUID(),
+        1L,
         CurrentGameInstanceStatus.RUNNING,
         17L,
         binding);

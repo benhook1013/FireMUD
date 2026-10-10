@@ -286,6 +286,8 @@ public final class WorldCanonicalInitialAdmissionHoldFinalizationRepository {
           || !request.playableStateNamespaceId().equals(canonical.playableStateNamespaceId())
           || !request.playableStateScope().equals(canonical.playableStateScope())
           || !request.canonicalGameInstanceId().equals(canonical.canonicalGameInstanceId())
+          || !request.realmId().equals(canonical.canonicalRealmId())
+          || request.expectedCatalogRevision() != canonical.catalogRevision()
           || !request.canonicalVersionId().equals(association.canonicalVersionId())
           || required(row, "tenant_id", Long.class) != privateKeys.privateTenantKey()
           || required(row, "game_instance_id", Long.class) != privateKeys.privateGameInstanceKey()

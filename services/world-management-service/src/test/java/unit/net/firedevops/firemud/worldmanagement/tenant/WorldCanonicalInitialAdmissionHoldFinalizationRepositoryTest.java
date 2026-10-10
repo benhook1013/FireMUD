@@ -234,6 +234,8 @@ class WorldCanonicalInitialAdmissionHoldFinalizationRepositoryTest {
             PLAYABLE_NAMESPACE,
             "SHARED",
             true,
+            REALM,
+            12L,
             "control-request");
     var prepare =
         new WorldCanonicalInstanceAssociation.WorldPrepareFields(

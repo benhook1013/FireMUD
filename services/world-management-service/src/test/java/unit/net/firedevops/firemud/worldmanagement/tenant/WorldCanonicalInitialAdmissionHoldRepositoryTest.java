@@ -117,6 +117,17 @@ class WorldCanonicalInitialAdmissionHoldRepositoryTest {
   }
 
   @Test
+  void suppliedCatalogRevisionMustEqualLaunchCapturedAssociationRevision() {
+    Request request = request(REQUEST_DIGEST, InitialAdmissionOrigin.NO_PRIOR_POINTER, null, 13L);
+    Fixture fixture = fixture(request, activeLifecycle("ACTIVE", 7L), null);
+
+    assertThatThrownBy(() -> fixture.repository.acquire(request, selector(request)))
+        .isInstanceOf(WorldCanonicalInitialAdmissionHoldRepository.HoldConflictException.class)
+        .hasMessageContaining("persisted association");
+    verify(fixture.dsl, never()).execute(anyString(), any(Object[].class));
+  }
+
+  @Test
   void incompleteMetadataBadBindingDigestAndSubstitutedScopeAreDenied() {
     Request request = noPriorRequest();
 
@@ -503,6 +514,8 @@ class WorldCanonicalInitialAdmissionHoldRepositoryTest {
             PLAYABLE_NAMESPACE,
             "SHARED",
             true,
+            REALM,
+            12L,
             "control-request");
     WorldPrepareFields prepareFields =
         new WorldPrepareFields(
@@ -566,6 +579,14 @@ class WorldCanonicalInitialAdmissionHoldRepositoryTest {
 
   private static Request request(
       String digest, InitialAdmissionOrigin origin, Long priorPointerVersion) {
+    return request(digest, origin, priorPointerVersion, 12L);
+  }
+
+  private static Request request(
+      String digest,
+      InitialAdmissionOrigin origin,
+      Long priorPointerVersion,
+      long expectedCatalogRevision) {
     return new Request(
         "prod",
         TENANT,
@@ -579,7 +600,7 @@ class WorldCanonicalInitialAdmissionHoldRepositoryTest {
         REQUEST_ID,
         digest,
         origin,
-        12L,
+        expectedCatalogRevision,
         priorPointerVersion);
   }
 

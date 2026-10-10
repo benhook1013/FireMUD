@@ -49,6 +49,7 @@ class WorldCanonicalInstanceOriginalOperationRecoveryVerifierTest {
   private static final UUID TENANT = uuid("11111111-1111-4111-8111-111111111111");
   private static final UUID GAME_INSTANCE = uuid("23232323-2323-4323-8323-232323232323");
   private static final UUID PLAYABLE_NAMESPACE = uuid("33333333-3333-4333-8333-333333333333");
+  private static final UUID CANONICAL_REALM = uuid("88888888-8888-4888-8888-888888888888");
   private static final UUID PARTICIPATION_ID = uuid("13131313-1313-4313-8313-131313131313");
   private static final UUID ATTEMPT_ID = uuid("12121212-1212-4121-8121-121212121212");
   private static final UUID VERSION_ID = uuid("22222222-2222-4222-8222-222222222222");
@@ -73,6 +74,27 @@ class WorldCanonicalInstanceOriginalOperationRecoveryVerifierTest {
   @Test
   void acceptsSerializerShapedSchemaTwoHistoricalEvidence() {
     acceptsExactHistoricalOwnerEvidenceAndUsesFreshReadCorrelations(fixture(false, true));
+  }
+
+  @Test
+  void newSchemaRequiresIdentityAndGameSessionEvidenceToRetainTheSameCatalogRevision()
+      throws Exception {
+    Fixture fixture = fixture(false);
+    assertThat(fixture.preparationInputJson()).contains("\"schemaVersion\":3");
+    var changed =
+        (tools.jackson.databind.node.ObjectNode) JSON.readTree(fixture.preparationInputJson());
+    ((tools.jackson.databind.node.ObjectNode) changed.get("gameSessionReadEvidence"))
+        .put("catalogRevision", 10L);
+    String changedInput = json(changed);
+    when(fixture.identity().preparationInputJson()).thenReturn(changedInput);
+    when(fixture.identity().preparationInputDigest())
+        .thenReturn(sha256(changedInput.getBytes(StandardCharsets.UTF_8)));
+
+    var account = mock(AccountStartSessionWorldParticipationHistoricalReadClient.class);
+    var gameSession = mock(HistoricalOriginalStartSessionOwnerEvidenceReadClient.class);
+
+    assertDenied(verifier(account, gameSession), fixture.identity());
+    verifyNoInteractions(account, gameSession);
   }
 
   private void acceptsExactHistoricalOwnerEvidenceAndUsesFreshReadCorrelations(Fixture fixture) {
@@ -308,16 +330,21 @@ class WorldCanonicalInstanceOriginalOperationRecoveryVerifierTest {
   }
 
   private static Fixture fixture(boolean alternateDescriptor) {
-    return fixture(alternateDescriptor, false);
+    return fixture(alternateDescriptor, false, true);
   }
 
   private static Fixture fixture(boolean alternateDescriptor, boolean selectedSchema) {
+    return fixture(alternateDescriptor, selectedSchema, false);
+  }
+
+  private static Fixture fixture(
+      boolean alternateDescriptor, boolean selectedSchema, boolean capturedCatalog) {
     WorldPublishedStartLocationEvidence selector = selectedSchema ? retainedWorldSelector() : null;
     WorldAuthoredSourceIntakeReceipt source =
         sourceReceipt(false, selector == null ? null : selector.request().intakeRequestId());
     AuthoredWorldLaunchDescriptorEvidence descriptor = descriptor(source, alternateDescriptor);
     AuthoredWorldReleaseAttestationEvidence release = release(descriptor, selector);
-    return fixture(source, descriptor, release, selector);
+    return fixture(source, descriptor, release, selector, capturedCatalog);
   }
 
   private static WorldPublishedStartLocationEvidence retainedWorldSelector() {
@@ -334,22 +361,16 @@ class WorldCanonicalInstanceOriginalOperationRecoveryVerifierTest {
     AuthoredWorldLaunchDescriptorEvidence descriptor = descriptor(originalSource, false);
     AuthoredWorldReleaseAttestationEvidence release = release(descriptor);
     WorldAuthoredSourceIntakeReceipt substitutedSource = sourceReceipt(true);
-    return fixture(substitutedSource, descriptor, release);
-  }
-
-  private static Fixture fixture(
-      WorldAuthoredSourceIntakeReceipt retainedSource,
-      AuthoredWorldLaunchDescriptorEvidence descriptor,
-      AuthoredWorldReleaseAttestationEvidence release) {
-    return fixture(retainedSource, descriptor, release, null);
+    return fixture(substitutedSource, descriptor, release, null, true);
   }
 
   private static Fixture fixture(
       WorldAuthoredSourceIntakeReceipt retainedSource,
       AuthoredWorldLaunchDescriptorEvidence descriptor,
       AuthoredWorldReleaseAttestationEvidence release,
-      WorldPublishedStartLocationEvidence selector) {
-    String input = preparationInput(descriptor, release, retainedSource, selector);
+      WorldPublishedStartLocationEvidence selector,
+      boolean capturedCatalog) {
+    String input = preparationInput(descriptor, release, retainedSource, selector, capturedCatalog);
     WorldCanonicalInstanceExecutionIdentity identity =
         mock(WorldCanonicalInstanceExecutionIdentity.class);
     when(identity.originalPostAuthorizationTuple()).thenReturn(ORIGINAL_TUPLE.clone());
@@ -557,7 +578,8 @@ class WorldCanonicalInstanceOriginalOperationRecoveryVerifierTest {
       AuthoredWorldLaunchDescriptorEvidence descriptor,
       AuthoredWorldReleaseAttestationEvidence release,
       WorldAuthoredSourceIntakeReceipt source,
-      WorldPublishedStartLocationEvidence selector) {
+      WorldPublishedStartLocationEvidence selector,
+      boolean capturedCatalog) {
     Map<String, Object> identity =
         map(
             "canonicalGameInstanceId",
@@ -576,6 +598,10 @@ class WorldCanonicalInstanceOriginalOperationRecoveryVerifierTest {
             true,
             "controlPlaneRequestId",
             "start-session-control-request");
+    if (capturedCatalog) {
+      identity.put("canonicalRealmId", CANONICAL_REALM.toString());
+      identity.put("catalogRevision", 9L);
+    }
     Map<String, Object> readRequest =
         map(
             "targetNamespace", NAMESPACE,
@@ -603,6 +629,10 @@ class WorldCanonicalInstanceOriginalOperationRecoveryVerifierTest {
             "publicProduction", true,
             "descriptorJson", json(descriptor),
             "releaseAttestationJson", json(release));
+    if (capturedCatalog) {
+      readEvidence.put("canonicalRealmId", CANONICAL_REALM.toString());
+      readEvidence.put("catalogRevision", 9L);
+    }
     Map<String, Object> launch =
         map(
             "schemaVersion", 1,
@@ -718,14 +748,22 @@ class WorldCanonicalInstanceOriginalOperationRecoveryVerifierTest {
             0);
     Map<String, Object> root =
         map(
-            "schemaVersion", selector == null ? 1 : 2,
-            "identity", identity,
-            "gameSessionReadRequest", readRequest,
-            "gameSessionReadEvidence", readEvidence,
-            "launchBinding", launch,
-            "versionIdentity", versionIdentity,
-            "sourceIntake", sourceIntake,
-            "topology", topology);
+            "schemaVersion",
+            capturedCatalog ? (selector == null ? 3 : 4) : (selector == null ? 1 : 2),
+            "identity",
+            identity,
+            "gameSessionReadRequest",
+            readRequest,
+            "gameSessionReadEvidence",
+            readEvidence,
+            "launchBinding",
+            launch,
+            "versionIdentity",
+            versionIdentity,
+            "sourceIntake",
+            sourceIntake,
+            "topology",
+            topology);
     if (selector != null) {
       root.put(
           "worldStartLocationEvidenceBase64",

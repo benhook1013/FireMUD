@@ -116,6 +116,7 @@ import tools.jackson.databind.ObjectMapper;
 class WorldCanonicalInstanceAssociationPostgresIntegrationTest {
   private static final String NAMESPACE = "firemud";
   private static final long VERSION_EPOCH = 7L;
+  private static final long FIXTURE_CATALOG_REVISION = 1L;
 
   @Container
   static PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>("postgres:16-alpine");
@@ -252,6 +253,12 @@ class WorldCanonicalInstanceAssociationPostgresIntegrationTest {
   @Test
   void retainsFullCanonicalAssociationAndReadsItAfterTheOwnerCommit() {
     Fixture fixture = fixture();
+    var selectedFullRelease = fixture.binding().evidence().releaseAttestation();
+    assertThat(selectedFullRelease.schemaVersion())
+        .isEqualTo(AuthoredWorldReleaseAttestationEvidence.SELECTED_FULL_SCHEMA_VERSION);
+    assertThat(selectedFullRelease.participantDigests())
+        .extracting(AuthoredWorldReleaseAttestationEvidence.Participant::digestSchemaVersion)
+        .containsExactly(4, 3, 1, 6, 2);
     UUID canonicalGameInstanceId = UUID.randomUUID();
     UUID playableStateNamespaceId = UUID.randomUUID();
     WorldCanonicalInstancePreparation.Result preparation =
@@ -300,7 +307,7 @@ class WorldCanonicalInstanceAssociationPostgresIntegrationTest {
             dsl.fetchOne(
                 "SELECT canonical_game_instance_id, canonical_target_namespace, canonical_tenant_id, "
                     + "canonical_world_slug, playable_state_namespace_id, playable_state_scope, "
-                    + "public_production, "
+                    + "public_production, canonical_realm_id, catalog_revision, schema_version, "
                     + "playtest_lifecycle_id, playtest_state_generation, control_plane_request_id, "
                     + "world_instance_id, local_tenant_key, local_version_key, "
                     + "canonical_launch_binding_operation_id, version_identity_operation_id, "
@@ -320,6 +327,11 @@ class WorldCanonicalInstanceAssociationPostgresIntegrationTest {
         .isEqualTo(playableStateNamespaceId);
     assertThat(row.get("playable_state_scope", String.class)).isEqualTo("SHARED");
     assertThat(row.get("public_production", Boolean.class)).isTrue();
+    assertThat(row.get("canonical_realm_id", UUID.class))
+        .isEqualTo(stored.identity().canonicalRealmId());
+    assertThat(row.get("catalog_revision", Long.class))
+        .isEqualTo(stored.identity().catalogRevision());
+    assertThat(row.get("schema_version", Short.class)).isEqualTo((short) 2);
     assertThat(row.get("playtest_lifecycle_id", UUID.class)).isNull();
     assertThat(row.get("playtest_state_generation", Long.class)).isNull();
     assertThat(row.get("world_instance_id", Long.class)).isEqualTo(worldInstanceId);
@@ -344,9 +356,14 @@ class WorldCanonicalInstanceAssociationPostgresIntegrationTest {
     Record worldRow =
         Objects.requireNonNull(
             dsl.fetchOne(
-                "SELECT public_production FROM world_instance WHERE id = ?", worldInstanceId),
+                "SELECT public_production, canonical_realm_id, catalog_revision FROM world_instance WHERE id = ?",
+                worldInstanceId),
             "canonical World instance row missing after committed readback");
     assertThat(worldRow.get("public_production", Boolean.class)).isTrue();
+    assertThat(worldRow.get("canonical_realm_id", UUID.class))
+        .isEqualTo(stored.identity().canonicalRealmId());
+    assertThat(worldRow.get("catalog_revision", Long.class))
+        .isEqualTo(stored.identity().catalogRevision());
     long privateGameInstanceKey =
         Objects.requireNonNull(
                 dsl.fetchOne(
@@ -522,6 +539,34 @@ class WorldCanonicalInstanceAssociationPostgresIntegrationTest {
     ownerTransaction()
         .executeWithoutResult(status -> associationRepository.retainClaimInOwnerTransaction(retry));
 
+    WorldCanonicalInstanceAssociation.Claim changedRealm =
+        claimWithCatalogIdentity(
+            retry,
+            UUID.fromString("a6b99113-8bc9-4de3-a620-ec5648c92f80"),
+            retry.gameSessionRead().catalogRevision());
+    assertThatThrownBy(
+            () ->
+                ownerTransaction()
+                    .executeWithoutResult(
+                        status ->
+                            associationRepository.retainClaimInOwnerTransaction(changedRealm)))
+        .isInstanceOf(
+            WorldCanonicalInstanceAssociationRepository.InvalidAssociationEvidenceException.class);
+    WorldCanonicalInstanceAssociation.Claim changedCatalogRevision =
+        claimWithCatalogIdentity(
+            retry,
+            retry.gameSessionRead().canonicalRealmId(),
+            retry.gameSessionRead().catalogRevision() + 1L);
+    assertThatThrownBy(
+            () ->
+                ownerTransaction()
+                    .executeWithoutResult(
+                        status ->
+                            associationRepository.retainClaimInOwnerTransaction(
+                                changedCatalogRevision)))
+        .isInstanceOf(
+            WorldCanonicalInstanceAssociationRepository.InvalidAssociationEvidenceException.class);
+
     assertThat(associationRepository.readOwnerAssociation(canonicalGameInstanceId))
         .contains(original);
     assertThat(associationCount(canonicalGameInstanceId)).isEqualTo(1L);
@@ -537,6 +582,34 @@ class WorldCanonicalInstanceAssociationPostgresIntegrationTest {
     assertThat(retry.gameSessionRead().readRequestId())
         .isNotEqualTo(originalClaim.gameSessionRead().readRequestId());
     assertThat(retry.gameSessionRead().currentGameSessionStatus()).isEqualTo("GS_RETRIED_FIXTURE");
+  }
+
+  @Test
+  void selectedFullReleaseRejectsMixedWorldParticipantSchema() {
+    Fixture fixture = fixture();
+    var release = fixture.binding().evidence().releaseAttestation();
+    assertThat(release.schemaVersion())
+        .isEqualTo(AuthoredWorldReleaseAttestationEvidence.SELECTED_FULL_SCHEMA_VERSION);
+    var mixedParticipants =
+        release.participantDigests().stream()
+            .map(
+                participant ->
+                    "WORLD_MANAGEMENT".equals(participant.participantKey())
+                        ? new AuthoredWorldReleaseAttestationEvidence.Participant(
+                            participant.participantKey(),
+                            participant.scopeValue(),
+                            participant.baseVersionIdPresent(),
+                            participant.baseVersionId(),
+                            participant.appliedCommitId(),
+                            participant.contentDigest(),
+                            3,
+                            participant.abilitySchemaDigestPresent(),
+                            participant.abilitySchemaDigest())
+                        : participant)
+            .toList();
+
+    assertThatThrownBy(() -> selectedFullWithParticipants(release, mixedParticipants))
+        .isInstanceOf(IllegalArgumentException.class);
   }
 
   @Test
@@ -654,6 +727,8 @@ class WorldCanonicalInstanceAssociationPostgresIntegrationTest {
             UUID.randomUUID(),
             "SHARED",
             true,
+            response.canonicalRealmId(),
+            response.catalogRevision(),
             response.currentGameSessionStatus(),
             response.currentGameSessionRowVersion(),
             response.descriptor(),
@@ -681,6 +756,8 @@ class WorldCanonicalInstanceAssociationPostgresIntegrationTest {
                     response.playableStateNamespaceId(),
                     "ISOLATED",
                     true,
+                    UUID.randomUUID(),
+                    1L,
                     response.currentGameSessionStatus(),
                     response.currentGameSessionRowVersion(),
                     response.descriptor(),
@@ -738,6 +815,8 @@ class WorldCanonicalInstanceAssociationPostgresIntegrationTest {
                     playableStateNamespaceId,
                     "ISOLATED",
                     true,
+                    UUID.randomUUID(),
+                    1L,
                     "GS_FIXTURE",
                     1L,
                     fixture.binding().descriptor(),
@@ -2451,6 +2530,7 @@ class WorldCanonicalInstanceAssociationPostgresIntegrationTest {
         switch (release.schemaVersion()) {
           case AuthoredWorldReleaseAttestationEvidence.SELECTOR_SCHEMA_VERSION -> "v2";
           case AuthoredWorldReleaseAttestationEvidence.CLOSURE_SELECTOR_SCHEMA_VERSION -> "v3";
+          case AuthoredWorldReleaseAttestationEvidence.SELECTED_FULL_SCHEMA_VERSION -> "v4";
           default ->
               throw new IllegalStateException(
                   "Selected World fixture has no matching release-content schema");
@@ -2911,10 +2991,58 @@ class WorldCanonicalInstanceAssociationPostgresIntegrationTest {
         playableStateNamespaceId,
         "SHARED",
         publicProduction,
+        syntheticCanonicalRealmId(evidence),
+        FIXTURE_CATALOG_REVISION,
         status,
         rowVersion,
         descriptor,
         release);
+  }
+
+  private static UUID syntheticCanonicalRealmId(CompleteLaunchBindingEvidence evidence) {
+    var descriptor = evidence.descriptor();
+    String stableFixtureIdentity =
+        "world-canonical-realm-fixture/v1/"
+            + descriptor.targetNamespace()
+            + "/"
+            + descriptor.canonicalTenantId()
+            + "/"
+            + descriptor.worldSlug();
+    return UUID.nameUUIDFromBytes(stableFixtureIdentity.getBytes(StandardCharsets.UTF_8));
+  }
+
+  private static WorldCanonicalInstanceAssociation.Claim claimWithCatalogIdentity(
+      WorldCanonicalInstanceAssociation.Claim original,
+      UUID canonicalRealmId,
+      long catalogRevision) {
+    var evidence = original.gameSessionRead();
+    var changedEvidence =
+        new WorldCanonicalInstanceAssociation.GameSessionReadEvidence(
+            evidence.readRequestId(),
+            evidence.targetNamespace(),
+            evidence.canonicalTenantId(),
+            evidence.worldSlug(),
+            evidence.canonicalGameInstanceId(),
+            evidence.controlPlaneRequestId(),
+            evidence.launchDescriptorId(),
+            evidence.descriptorRequestDigest(),
+            evidence.descriptorResultDigest(),
+            evidence.releaseAttestationEvidenceDigest(),
+            evidence.playableStateNamespaceId(),
+            evidence.playableStateScope(),
+            evidence.publicProduction(),
+            canonicalRealmId,
+            catalogRevision,
+            evidence.currentGameSessionStatus(),
+            evidence.currentGameSessionRowVersion(),
+            evidence.descriptor(),
+            evidence.releaseAttestation());
+    return new WorldCanonicalInstanceAssociation.Claim(
+        original.gameSessionRequest(),
+        changedEvidence,
+        original.worldInstanceId(),
+        original.completeLaunchBinding(),
+        original.versionIdentity());
   }
 
   private long associationCount(UUID canonicalGameInstanceId) {
@@ -3000,7 +3128,7 @@ class WorldCanonicalInstanceAssociationPostgresIntegrationTest {
             ? AuthoredWorldReleaseAttestationEvidence.SCHEMA_VERSION
             : switch (selector.request().digestSchemaVersion()) {
               case 3 -> AuthoredWorldReleaseAttestationEvidence.SELECTOR_SCHEMA_VERSION;
-              case 4 -> AuthoredWorldReleaseAttestationEvidence.CLOSURE_SELECTOR_SCHEMA_VERSION;
+              case 4 -> AuthoredWorldReleaseAttestationEvidence.SELECTED_FULL_SCHEMA_VERSION;
               default ->
                   throw new IllegalArgumentException(
                       "World selector has no paired release-attestation profile");
@@ -3021,9 +3149,23 @@ class WorldCanonicalInstanceAssociationPostgresIntegrationTest {
     List<AuthoredWorldReleaseAttestationEvidence.Participant> participants =
         List.of(
             worldParticipant,
-            participant("ENTITY_MANAGEMENT", 2, "b", false, descriptor.versionId(), commit),
+            participant(
+                "ENTITY_MANAGEMENT",
+                AuthoredWorldReleaseAttestationEvidence.supportedParticipantDigestSchema(
+                    "ENTITY_MANAGEMENT", attestationSchemaVersion),
+                "b",
+                false,
+                descriptor.versionId(),
+                commit),
             participant("GAME_LOGIC", 1, "c", true, descriptor.versionId(), commit),
-            participant("AUTOMATION_SCRIPTING", 5, "d", false, descriptor.versionId(), commit),
+            participant(
+                "AUTOMATION_SCRIPTING",
+                AuthoredWorldReleaseAttestationEvidence.supportedParticipantDigestSchema(
+                    "AUTOMATION_SCRIPTING", attestationSchemaVersion),
+                "d",
+                false,
+                descriptor.versionId(),
+                commit),
             participant(
                 "GAME_DESIGN_CONTROL_PLANE",
                 AuthoredWorldReleaseAttestationEvidence.supportedParticipantDigestSchema(
@@ -3057,6 +3199,30 @@ class WorldCanonicalInstanceAssociationPostgresIntegrationTest {
     if (attestationSchemaVersion
         == AuthoredWorldReleaseAttestationEvidence.CLOSURE_SELECTOR_SCHEMA_VERSION) {
       return AuthoredWorldReleaseAttestationEvidence.createClosureSelector(
+          NAMESPACE,
+          descriptor.resultDigest(),
+          source.canonicalTenantId(),
+          canonicalVersionId,
+          source.worldSlug(),
+          source.operationId(),
+          source.evidenceDigest(),
+          descriptor.launchDescriptorId(),
+          descriptor.publishedReleaseBundleRef(),
+          descriptor.versionStateEpoch(),
+          selector.request().publishWorkflowId(),
+          selector.request().appliedCommitId(),
+          participants,
+          digest(manifestHashDigit),
+          1,
+          List.of(),
+          List.of(),
+          List.of("look"),
+          descriptor.generationConfigRevision(),
+          selector);
+    }
+    if (attestationSchemaVersion
+        == AuthoredWorldReleaseAttestationEvidence.SELECTED_FULL_SCHEMA_VERSION) {
+      return AuthoredWorldReleaseAttestationEvidence.createSelectedFull(
           NAMESPACE,
           descriptor.resultDigest(),
           source.canonicalTenantId(),
@@ -3168,6 +3334,30 @@ class WorldCanonicalInstanceAssociationPostgresIntegrationTest {
           release.generationConfigRevision(),
           release.worldStartLocationEvidence());
     }
+    if (release.schemaVersion()
+        == AuthoredWorldReleaseAttestationEvidence.SELECTED_FULL_SCHEMA_VERSION) {
+      return AuthoredWorldReleaseAttestationEvidence.createSelectedFull(
+          release.targetNamespace(),
+          release.descriptorResultDigest(),
+          release.canonicalTenantId(),
+          release.canonicalVersionId(),
+          release.worldSlug(),
+          release.authoredWorldSourceOperationId(),
+          release.authoredWorldSourceEvidenceDigest(),
+          release.launchDescriptorId(),
+          release.publishedReleaseBundleRef(),
+          release.versionStateEpoch(),
+          checkpoint.publishWorkflowId(),
+          checkpoint.appliedCommitId(),
+          participants,
+          release.manifestHash(),
+          release.manifestSchemaVersion(),
+          release.requiredManifestAssetKeys(),
+          release.artifactDigests(),
+          release.commandDefinitions(),
+          release.generationConfigRevision(),
+          release.worldStartLocationEvidence());
+    }
     return AuthoredWorldReleaseAttestationEvidence.create(
         release.targetNamespace(),
         release.descriptorResultDigest(),
@@ -3181,6 +3371,32 @@ class WorldCanonicalInstanceAssociationPostgresIntegrationTest {
         release.versionStateEpoch(),
         checkpoint.publishWorkflowId(),
         checkpoint.appliedCommitId(),
+        participants,
+        release.manifestHash(),
+        release.manifestSchemaVersion(),
+        release.requiredManifestAssetKeys(),
+        release.artifactDigests(),
+        release.commandDefinitions(),
+        release.generationConfigRevision(),
+        release.worldStartLocationEvidence());
+  }
+
+  private static AuthoredWorldReleaseAttestationEvidence selectedFullWithParticipants(
+      AuthoredWorldReleaseAttestationEvidence release,
+      List<AuthoredWorldReleaseAttestationEvidence.Participant> participants) {
+    return AuthoredWorldReleaseAttestationEvidence.createSelectedFull(
+        release.targetNamespace(),
+        release.descriptorResultDigest(),
+        release.canonicalTenantId(),
+        release.canonicalVersionId(),
+        release.worldSlug(),
+        release.authoredWorldSourceOperationId(),
+        release.authoredWorldSourceEvidenceDigest(),
+        release.launchDescriptorId(),
+        release.publishedReleaseBundleRef(),
+        release.versionStateEpoch(),
+        release.publishWorkflowId(),
+        release.commitId(),
         participants,
         release.manifestHash(),
         release.manifestSchemaVersion(),

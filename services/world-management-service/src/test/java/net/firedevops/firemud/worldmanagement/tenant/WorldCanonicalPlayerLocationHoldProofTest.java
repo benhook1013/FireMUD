@@ -157,6 +157,8 @@ class WorldCanonicalPlayerLocationHoldProofTest {
                 namespace,
                 "SHARED",
                 true,
+                realm,
+                3L,
                 "launch-request"));
     var request = mock(WorldCanonicalInitialPlayerLocation.Request.class);
     when(request.initialAdmissionOrigin())

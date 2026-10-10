@@ -333,10 +333,10 @@ public final class WorldCanonicalInstanceOriginalOperationRecoveryVerifier
         throw denied("Exact retained World preparation input must be an object");
       }
       int schemaVersion = Math.toIntExact(number(root, "schemaVersion", true));
-      if (schemaVersion != 1 && schemaVersion != 2) {
+      if (schemaVersion < 1 || schemaVersion > 4) {
         throw denied("Unsupported retained World preparation input schema");
       }
-      if (schemaVersion == 1) {
+      if (schemaVersion == 1 || schemaVersion == 3) {
         fields(
             root,
             "root",
@@ -363,7 +363,7 @@ public final class WorldCanonicalInstanceOriginalOperationRecoveryVerifier
             "worldStartLocationEvidenceBase64");
       }
       String selector = null;
-      if (schemaVersion == 2) {
+      if (schemaVersion == 2 || schemaVersion == 4) {
         if (root.size() != 9 || !root.has("worldStartLocationEvidenceBase64")) {
           throw denied("Schema-2 World preparation input requires its start-location evidence");
         }
@@ -378,21 +378,39 @@ public final class WorldCanonicalInstanceOriginalOperationRecoveryVerifier
           throw denied("Retained World start-location evidence is malformed", malformed);
         }
       } else if (root.size() != 8) {
-        throw denied("Schema-1 World preparation input has an unsupported root shape");
+        throw denied("World preparation input has an unsupported root shape");
       }
 
       JsonNode identity = root.get("identity");
-      fields(
-          identity,
-          "identity",
-          "canonicalGameInstanceId",
-          "targetNamespace",
-          "canonicalTenantId",
-          "worldSlug",
-          "playableStateNamespaceId",
-          "playableStateScope",
-          "publicProduction",
-          "controlPlaneRequestId");
+      if (schemaVersion <= 2) {
+        fields(
+            identity,
+            "identity",
+            "canonicalGameInstanceId",
+            "targetNamespace",
+            "canonicalTenantId",
+            "worldSlug",
+            "playableStateNamespaceId",
+            "playableStateScope",
+            "publicProduction",
+            "controlPlaneRequestId");
+      } else {
+        fields(
+            identity,
+            "identity",
+            "canonicalGameInstanceId",
+            "targetNamespace",
+            "canonicalTenantId",
+            "worldSlug",
+            "playableStateNamespaceId",
+            "playableStateScope",
+            "publicProduction",
+            "canonicalRealmId",
+            "catalogRevision",
+            "controlPlaneRequestId");
+        uuid(identity, "canonicalRealmId");
+        number(identity, "catalogRevision", true);
+      }
       uuid(identity, "canonicalGameInstanceId");
       uuid(identity, "canonicalTenantId");
       uuid(identity, "playableStateNamespaceId");
@@ -416,23 +434,47 @@ public final class WorldCanonicalInstanceOriginalOperationRecoveryVerifier
           "expectedDescriptorResultDigest",
           "expectedReleaseAttestationEvidenceDigest");
       JsonNode evidence = root.get("gameSessionReadEvidence");
-      fields(
-          evidence,
-          "gameSessionReadEvidence",
-          "targetNamespace",
-          "canonicalTenantId",
-          "worldSlug",
-          "canonicalGameInstanceId",
-          "controlPlaneRequestId",
-          "launchDescriptorId",
-          "descriptorRequestDigest",
-          "descriptorResultDigest",
-          "releaseAttestationEvidenceDigest",
-          "playableStateNamespaceId",
-          "playableStateScope",
-          "publicProduction",
-          "descriptorJson",
-          "releaseAttestationJson");
+      if (schemaVersion <= 2) {
+        fields(
+            evidence,
+            "gameSessionReadEvidence",
+            "targetNamespace",
+            "canonicalTenantId",
+            "worldSlug",
+            "canonicalGameInstanceId",
+            "controlPlaneRequestId",
+            "launchDescriptorId",
+            "descriptorRequestDigest",
+            "descriptorResultDigest",
+            "releaseAttestationEvidenceDigest",
+            "playableStateNamespaceId",
+            "playableStateScope",
+            "publicProduction",
+            "descriptorJson",
+            "releaseAttestationJson");
+      } else {
+        fields(
+            evidence,
+            "gameSessionReadEvidence",
+            "targetNamespace",
+            "canonicalTenantId",
+            "worldSlug",
+            "canonicalGameInstanceId",
+            "controlPlaneRequestId",
+            "launchDescriptorId",
+            "descriptorRequestDigest",
+            "descriptorResultDigest",
+            "releaseAttestationEvidenceDigest",
+            "playableStateNamespaceId",
+            "playableStateScope",
+            "publicProduction",
+            "canonicalRealmId",
+            "catalogRevision",
+            "descriptorJson",
+            "releaseAttestationJson");
+        uuid(evidence, "canonicalRealmId");
+        number(evidence, "catalogRevision", true);
+      }
       for (String field : new String[] {"canonicalTenantId", "canonicalGameInstanceId"}) {
         uuid(request, field);
         uuid(evidence, field);
@@ -743,6 +785,14 @@ public final class WorldCanonicalInstanceOriginalOperationRecoveryVerifier
           || bool(this.identity, "publicProduction")
               != bool(gameSessionReadEvidence, "publicProduction")) {
         throw denied("Retained World state namespace differs from Game Session evidence");
+      }
+      if (schemaVersion >= 3
+          && (!uuid(this.identity, "canonicalRealmId")
+                  .equals(uuid(gameSessionReadEvidence, "canonicalRealmId"))
+              || number(this.identity, "catalogRevision", true)
+                  != number(gameSessionReadEvidence, "catalogRevision", true))) {
+        throw denied(
+            "Retained World launch-captured catalog identity differs between identity and Game Session evidence");
       }
 
       if (number(launchBinding, "schemaVersion", true) != 1L

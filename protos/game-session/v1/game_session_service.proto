@@ -638,6 +638,10 @@ message GetCanonicalGameInstanceLaunchAssociationResponse {
   gamedesign.v1.AuthoredWorldReleaseAttestationEvidence release_attestation = 16;
   shared.v1.ErrorDetail error = 17;
   bool public_production = 18;
+  // Non-nil realm identity captured with this immutable launch association.
+  string canonical_realm_id = 19;
+  // Positive catalog revision captured with that same launch association.
+  int64 catalog_revision = 20;
 }
 
 message GetGameplayCommandStatusRequest {

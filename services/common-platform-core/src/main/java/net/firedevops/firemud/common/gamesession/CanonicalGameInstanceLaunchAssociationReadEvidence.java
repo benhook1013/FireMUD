@@ -61,6 +61,8 @@ public final class CanonicalGameInstanceLaunchAssociationReadEvidence {
       UUID playableStateNamespaceId,
       RealmEntryPolicy.StateScope playableStateScope,
       boolean publicProduction,
+      UUID canonicalRealmId,
+      long catalogRevision,
       CurrentGameInstanceStatus currentGameInstanceStatus,
       long currentRowVersion,
       CompleteLaunchBindingEvidence launchBindingEvidence) {
@@ -73,6 +75,10 @@ public final class CanonicalGameInstanceLaunchAssociationReadEvidence {
       }
       if (!publicProduction) {
         throw new IllegalArgumentException("Launch association read requires public production");
+      }
+      requireNonNil(canonicalRealmId, "canonicalRealmId");
+      if (catalogRevision <= 0) {
+        throw new IllegalArgumentException("catalogRevision must be positive");
       }
       Objects.requireNonNull(currentGameInstanceStatus, "currentGameInstanceStatus");
       if (currentRowVersion < 0) {

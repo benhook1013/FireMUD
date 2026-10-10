@@ -52,6 +52,8 @@ public final class WorldCanonicalInstanceAssociationRepository {
   private static final Field<String> PLAYABLE_STATE_SCOPE =
       field("playable_state_scope", String.class);
   private static final Field<Boolean> PUBLIC_PRODUCTION = field("public_production", Boolean.class);
+  private static final Field<UUID> CANONICAL_REALM_ID = field("canonical_realm_id", UUID.class);
+  private static final Field<Long> CATALOG_REVISION = field("catalog_revision", Long.class);
   private static final Field<UUID> PLAYTEST_LIFECYCLE_ID =
       field("playtest_lifecycle_id", UUID.class);
   private static final Field<Long> PLAYTEST_STATE_GENERATION =
@@ -135,6 +137,10 @@ public final class WorldCanonicalInstanceAssociationRepository {
       field("playable_state_scope", String.class);
   private static final Field<Boolean> INSTANCE_PUBLIC_PRODUCTION =
       field("public_production", Boolean.class);
+  private static final Field<UUID> INSTANCE_CANONICAL_REALM_ID =
+      field("canonical_realm_id", UUID.class);
+  private static final Field<Long> INSTANCE_CATALOG_REVISION =
+      field("catalog_revision", Long.class);
   private static final Field<UUID> INSTANCE_PLAYTEST_LIFECYCLE_ID =
       field("playtest_lifecycle_id", UUID.class);
   private static final Field<Long> INSTANCE_PLAYTEST_STATE_GENERATION =
@@ -294,7 +300,7 @@ public final class WorldCanonicalInstanceAssociationRepository {
 
     int inserted =
         dsl.insertInto(ASSOCIATION)
-            .set(SCHEMA_VERSION, (short) 1)
+            .set(SCHEMA_VERSION, (short) 2)
             .set(CANONICAL_GAME_INSTANCE_ID, claim.canonicalGameInstanceId())
             .set(CANONICAL_TARGET_NAMESPACE, claim.targetNamespace())
             .set(CANONICAL_TENANT_ID, claim.canonicalTenantId())
@@ -302,6 +308,8 @@ public final class WorldCanonicalInstanceAssociationRepository {
             .set(PLAYABLE_STATE_NAMESPACE_ID, claim.playableStateNamespaceId())
             .set(PLAYABLE_STATE_SCOPE, claim.playableStateScope())
             .set(PUBLIC_PRODUCTION, claim.identity().publicProduction())
+            .set(CANONICAL_REALM_ID, claim.identity().canonicalRealmId())
+            .set(CATALOG_REVISION, claim.identity().catalogRevision())
             .set(PLAYTEST_LIFECYCLE_ID, (UUID) null)
             .set(PLAYTEST_STATE_GENERATION, (Long) null)
             .set(CONTROL_PLANE_REQUEST_ID, claim.controlPlaneRequestId())
@@ -405,9 +413,9 @@ public final class WorldCanonicalInstanceAssociationRepository {
       Record row, boolean inOwnerSnapshot, boolean inActivationTransaction) {
     try {
       short schemaVersion = required(row, SCHEMA_VERSION);
-      if (schemaVersion != 1) {
+      if (schemaVersion != 2) {
         throw new IllegalArgumentException(
-            "Unsupported World canonical instance association schema");
+            "Historical World canonical instance association lacks launch-captured catalog identity");
       }
       String namespace = required(row, CANONICAL_TARGET_NAMESPACE);
       UUID tenantId = required(row, CANONICAL_TENANT_ID);
@@ -469,6 +477,8 @@ public final class WorldCanonicalInstanceAssociationRepository {
               required(row, PLAYABLE_STATE_NAMESPACE_ID),
               required(row, PLAYABLE_STATE_SCOPE),
               required(row, PUBLIC_PRODUCTION),
+              required(row, CANONICAL_REALM_ID),
+              required(row, CATALOG_REVISION),
               controlRequestId);
       if (row.get(PLAYTEST_LIFECYCLE_ID) != null || row.get(PLAYTEST_STATE_GENERATION) != null) {
         throw new InvalidAssociationEvidenceException(
@@ -671,7 +681,7 @@ public final class WorldCanonicalInstanceAssociationRepository {
     var source = completeLaunchBinding.sourceIntakeReceipt();
     var descriptor = completeLaunchBinding.descriptor();
     var release = completeLaunchBinding.evidence().releaseAttestation();
-    if (required(row, SCHEMA_VERSION) != 1
+    if (required(row, SCHEMA_VERSION) != 2
         || !Objects.equals(
             required(row, CANONICAL_GAME_INSTANCE_ID), identity.canonicalGameInstanceId())
         || !Objects.equals(required(row, CANONICAL_TARGET_NAMESPACE), identity.targetNamespace())
@@ -681,6 +691,8 @@ public final class WorldCanonicalInstanceAssociationRepository {
             required(row, PLAYABLE_STATE_NAMESPACE_ID), identity.playableStateNamespaceId())
         || !Objects.equals(required(row, PLAYABLE_STATE_SCOPE), identity.playableStateScope())
         || !Objects.equals(required(row, PUBLIC_PRODUCTION), identity.publicProduction())
+        || !Objects.equals(required(row, CANONICAL_REALM_ID), identity.canonicalRealmId())
+        || !Objects.equals(required(row, CATALOG_REVISION), identity.catalogRevision())
         || row.get(PLAYTEST_LIFECYCLE_ID) != null
         || row.get(PLAYTEST_STATE_GENERATION) != null
         || !Objects.equals(
@@ -739,6 +751,8 @@ public final class WorldCanonicalInstanceAssociationRepository {
             row.get(INSTANCE_PLAYABLE_STATE_NAMESPACE_ID), identity.playableStateNamespaceId())
         || !Objects.equals(row.get(INSTANCE_PLAYABLE_STATE_SCOPE), identity.playableStateScope())
         || !Objects.equals(row.get(INSTANCE_PUBLIC_PRODUCTION), identity.publicProduction())
+        || !Objects.equals(row.get(INSTANCE_CANONICAL_REALM_ID), identity.canonicalRealmId())
+        || !Objects.equals(row.get(INSTANCE_CATALOG_REVISION), identity.catalogRevision())
         || row.get(INSTANCE_PLAYTEST_LIFECYCLE_ID) != null
         || row.get(INSTANCE_PLAYTEST_STATE_GENERATION) != null
         || !Objects.equals(

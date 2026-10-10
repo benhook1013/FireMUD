@@ -39,18 +39,21 @@ import org.testcontainers.junit.jupiter.Testcontainers;
     properties = "spring.grpc.server.port=0")
 class WorldCanonicalInstancePreparationPostgresIntegrationTest {
   @Test
-  void selectorGuardPreservesInertV1ShapeAndDeniesPromotionOrMissingV2BeforeAllocation() {
+  void selectorGuardAcceptsStructuralV3NoSelectorAndDeniesV1OrIncompleteV2BeforeAllocation() {
     long before =
         Objects.requireNonNull(dsl.fetchOne("SELECT count(*) FROM world_instance"))
             .get(0, Long.class);
     UUID absentCapture = UUID.randomUUID();
+    // V64 keeps schema 3 as the structural no-selector form. This helper-level shape does not
+    // qualify the complete fresh lifecycle path or prove a receipt-less release is admissible.
     dsl.fetchOne(
         "SELECT world_require_preparation_start_location(?::jsonb,?::jsonb,?)",
-        "{\"schemaVersion\":1}",
+        "{\"schemaVersion\":3}",
         "{\"schemaVersion\":1}",
         absentCapture);
     for (String input :
         java.util.List.of(
+            "{\"schemaVersion\":1}",
             "{\"schemaVersion\":2}",
             "{\"schemaVersion\":1,\"worldStartLocationEvidenceBase64\":\"e30=\"}")) {
       assertThatThrownBy(
