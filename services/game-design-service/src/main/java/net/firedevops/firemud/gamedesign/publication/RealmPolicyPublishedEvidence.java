@@ -11,6 +11,7 @@ import java.util.Objects;
 import java.util.UUID;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding;
 import net.firedevops.firemud.common.gamedesign.GameDesignPublicationTerminalEvidence;
+import net.firedevops.firemud.common.gamedesign.RealmPolicySource;
 
 /** Immutable internal evidence associating a frozen source set with its actual sealed release. */
 public final class RealmPolicyPublishedEvidence {

@@ -20,6 +20,10 @@ import java.util.UUID;
 import net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding.TargetProof;
+import net.firedevops.firemud.common.gamedesign.AssetSource;
+import net.firedevops.firemud.common.gamedesign.BrandingSource;
+import net.firedevops.firemud.common.gamedesign.CommandSource;
+import net.firedevops.firemud.common.gamedesign.RealmPolicySource;
 import net.firedevops.firemud.common.gamelogic.AccountGameLogicIntakeSettlementEvidence;
 import net.firedevops.firemud.common.gamelogic.GameLogicGameplayRuleIntakeOperation;
 import net.firedevops.firemud.common.gamelogic.GameLogicGameplayRuleIntakeTerminal;
@@ -469,7 +473,7 @@ class SelectedDraftAssetInventoryReadServiceTest {
             "0",
             ordinarySource.revisions().getFirst().revisionId());
     var ordinaryItem =
-        new AssetSnapshot.Item(
+        new net.firedevops.firemud.common.gamedesign.AssetSnapshot.Item(
             ordinaryReference,
             "application/octet-stream",
             CommandSource.sha256(ordinaryBytes),
@@ -494,7 +498,7 @@ class SelectedDraftAssetInventoryReadServiceTest {
             "0",
             brandingSource.revisions().getFirst().revisionId());
     var brandingItem =
-        new BrandingSourceSnapshot.Item(
+        new net.firedevops.firemud.common.gamedesign.BrandingSourceSnapshot.Item(
             brandingReference,
             "image/png",
             CommandSource.sha256(brandingBytes),

@@ -14,6 +14,8 @@ import net.firedevops.firemud.common.authoring.DraftCommitBinding.AffectedUnit;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding.Owner;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding.RevisionPayload;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding.TargetProof;
+import net.firedevops.firemud.common.gamedesign.BrandingSource;
+import net.firedevops.firemud.common.gamedesign.RealmPolicySource;
 import org.junit.jupiter.api.Test;
 
 class RealmPolicyApplicationTest {

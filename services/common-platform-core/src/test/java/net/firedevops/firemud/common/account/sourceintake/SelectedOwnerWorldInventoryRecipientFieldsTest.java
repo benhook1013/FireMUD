@@ -19,6 +19,7 @@ import net.firedevops.firemud.common.authoring.DraftCommitBinding.RevisionPayloa
 import net.firedevops.firemud.common.authoring.DraftCommitBinding.TargetProof;
 import net.firedevops.firemud.common.gamedesign.DraftSynchronizedVisibilityEvidence.AppliedEpoch;
 import net.firedevops.firemud.common.gamedesign.SelectedOwnerIntakeSourceContent;
+import net.firedevops.firemud.common.gamedesign.SelectedOwnerIntakeSourceTestFixtures;
 import net.firedevops.firemud.common.gamedesign.TemplateConfigSourceSnapshot;
 import net.firedevops.firemud.common.gamelogic.GameplayRuleManifest;
 import net.firedevops.firemud.common.gamelogic.GameplayRuleSelectedSource;
@@ -325,17 +326,7 @@ class SelectedOwnerWorldInventoryRecipientFieldsTest {
               selected, "0", null, id("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"), List.of())
           .canonicalBytes();
     }
-    return GameplayRuleManifest.canonical(
-            Map.of(
-                "schema",
-                "synthetic-test-only/v1",
-                "bindingJson",
-                selected.canonicalJson(),
-                "bindingDigest",
-                selected.digest(),
-                "family",
-                family))
-        .getBytes(StandardCharsets.UTF_8);
+    return SelectedOwnerIntakeSourceTestFixtures.snapshot(family, selected);
   }
 
   private static PublicEvidence publicInventory(

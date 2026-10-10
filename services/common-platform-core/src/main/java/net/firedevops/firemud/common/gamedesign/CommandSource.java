@@ -1,4 +1,4 @@
-package net.firedevops.firemud.gamedesign.publication;
+package net.firedevops.firemud.common.gamedesign;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
@@ -26,9 +26,8 @@ public final class CommandSource {
   public static final String SCOPE_ID = "effective";
   public static final String SNAPSHOT_SCHEMA = "game-design-command-source-snapshot/v1";
   public static final String APPLICATION_SCHEMA = "game-design-command-source-application/v1";
-  public static final String REALM_POLICY_REVISION_KIND = "REALM_ENTRY_POLICY";
 
-  private static final String REVISION_KIND = "COMMAND_DEFINITION";
+  public static final String REVISION_KIND = "COMMAND_DEFINITION";
   private static final int SCHEMA_VERSION = 1;
   private static final UUID NIL_UUID = new UUID(0, 0);
   private static final ObjectMapper JSON = new ObjectMapper();
@@ -155,11 +154,11 @@ public final class CommandSource {
         throw new IllegalArgumentException("Closed Game Design owner revision kind is required");
       }
       String revisionKind = payload.path("revisionKind").asText();
-      if (REALM_POLICY_REVISION_KIND.equals(revisionKind)
+      if (RealmPolicySource.REVISION_KIND.equals(revisionKind)
           || AssetSource.REVISION_KIND.equals(revisionKind)
           || GameplayRuleSource.REVISION_KIND.equals(revisionKind)
           || BrandingSource.REVISION_KIND.equals(revisionKind)
-          || TemplateConfigSource.REVISION_KIND.equals(revisionKind)) continue;
+          || TemplateConfigSourceValues.REVISION_KIND.equals(revisionKind)) continue;
       if (!REVISION_KIND.equals(revisionKind)) {
         throw new IllegalArgumentException("Unsupported Game Design command source revision kind");
       }
@@ -206,13 +205,13 @@ public final class CommandSource {
         throw new IllegalArgumentException("Closed Game Design owner revision kind is required");
       }
       String revisionKind = payload.path("revisionKind").asText();
-      if (REALM_POLICY_REVISION_KIND.equals(revisionKind)) {
+      if (RealmPolicySource.REVISION_KIND.equals(revisionKind)) {
         found = true;
       } else if (!REVISION_KIND.equals(revisionKind)
           && !AssetSource.REVISION_KIND.equals(revisionKind)
           && !GameplayRuleSource.REVISION_KIND.equals(revisionKind)
           && !BrandingSource.REVISION_KIND.equals(revisionKind)
-          && !TemplateConfigSource.REVISION_KIND.equals(revisionKind)) {
+          && !TemplateConfigSourceValues.REVISION_KIND.equals(revisionKind)) {
         throw new IllegalArgumentException("Unsupported Game Design command source revision kind");
       }
     }
@@ -323,11 +322,11 @@ public final class CommandSource {
     return List.copyOf(result);
   }
 
-  static String mutationsJson(List<Mutation> mutations) {
+  public static String mutationsJson(List<Mutation> mutations) {
     return canonical(mutations.stream().map(Mutation::canonicalObject).toList());
   }
 
-  static List<Mutation> mutationsFromStored(String json) {
+  public static List<Mutation> mutationsFromStored(String json) {
     JsonNode root = tree(json);
     if (!root.isArray())
       throw new IllegalArgumentException("Complete command operation list is required");
@@ -405,7 +404,7 @@ public final class CommandSource {
     return requiredText(node, field);
   }
 
-  static String canonical(Object value) {
+  public static String canonical(Object value) {
     try {
       return new String(
           Rfc8785CanonicalJson.canonicalizeUtf8(JSON.writeValueAsString(value)),
@@ -415,7 +414,7 @@ public final class CommandSource {
     }
   }
 
-  static JsonNode tree(String json) {
+  public static JsonNode tree(String json) {
     try {
       return JSON.readTree(Rfc8785CanonicalJson.canonicalizeUtf8(json));
     } catch (IOException | RuntimeException failure) {
@@ -427,7 +426,7 @@ public final class CommandSource {
     return json.getBytes(StandardCharsets.UTF_8);
   }
 
-  static String sha256(byte[] bytes) {
+  public static String sha256(byte[] bytes) {
     try {
       return "sha256:"
           + java.util.HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(bytes));
@@ -436,7 +435,7 @@ public final class CommandSource {
     }
   }
 
-  static Map<String, Object> targetObject(DraftCommitBinding.TargetProof target) {
+  public static Map<String, Object> targetObject(DraftCommitBinding.TargetProof target) {
     Map<String, Object> result = new LinkedHashMap<>();
     result.put("canonicalTenantId", target.canonicalTenantId().toString());
     result.put("canonicalVersionId", target.canonicalVersionId().toString());

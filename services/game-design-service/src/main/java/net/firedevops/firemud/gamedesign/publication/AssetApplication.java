@@ -4,6 +4,7 @@ import java.math.BigInteger;
 import java.util.Objects;
 import net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding;
+import net.firedevops.firemud.common.gamedesign.AssetSource;
 import net.firedevops.firemud.gamedesign.draft.DraftCommitCoordinatorRepository.AppliedEpoch;
 
 /** Exact ordinary-source application evidence, composed into one control-plane owner result. */

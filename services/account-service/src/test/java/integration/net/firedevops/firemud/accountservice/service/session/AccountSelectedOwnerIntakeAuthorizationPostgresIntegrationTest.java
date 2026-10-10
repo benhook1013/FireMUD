@@ -18,6 +18,11 @@ import net.firedevops.firemud.common.account.sourceintake.SelectedOwnerIntakeSou
 import net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding.Owner;
+import net.firedevops.firemud.common.gamedesign.AssetSnapshot;
+import net.firedevops.firemud.common.gamedesign.BrandingSourceSnapshot;
+import net.firedevops.firemud.common.gamedesign.CommandSnapshot;
+import net.firedevops.firemud.common.gamedesign.CommandSource;
+import net.firedevops.firemud.common.gamedesign.RealmPolicySnapshot;
 import net.firedevops.firemud.common.gamedesign.SelectedOwnerIntakeSourceContent;
 import net.firedevops.firemud.common.gamedesign.TemplateConfigSourceSnapshot;
 import net.firedevops.firemud.common.gamelogic.GameplayRuleManifest;
@@ -510,7 +515,8 @@ class AccountSelectedOwnerIntakeAuthorizationPostgresIntegrationTest {
   private static SelectedOwnerIntakeSourceContent content(
       SelectedOwnerIntakeSourceReadScope scope, String marker) {
     var selected = scope.selected();
-    UUID genesis = UUID.randomUUID();
+    UUID genesis = UUID.nameUUIDFromBytes(marker.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+    String markerEpoch = Integer.toUnsignedString(marker.hashCode());
     var gameplay =
         new GameplayRuleSelectedSource(
             GameplayRuleManifest.canonical(
@@ -527,16 +533,20 @@ class AccountSelectedOwnerIntakeAuthorizationPostgresIntegrationTest {
     var snapshots =
         Map.of(
             "COMMAND",
-            opaqueSnapshot("game-design-command-source-snapshot/v1", "COMMAND", selected, marker),
+            new CommandSnapshot(
+                    selected,
+                    "0",
+                    null,
+                    DraftAuthorizationFenceBinding.digest(
+                        marker.getBytes(java.nio.charset.StandardCharsets.UTF_8)),
+                    List.of())
+                .canonicalBytes(),
             "REALM_POLICY",
-            opaqueSnapshot(
-                "game-design-realm-policy-snapshot/v1", "REALM_POLICY", selected, marker),
+            new RealmPolicySnapshot(selected, markerEpoch, List.of()).canonicalBytes(),
             "ASSET",
-            opaqueSnapshot(
-                "game-design-ordinary-asset-source-snapshot/v1", "ASSET", selected, marker),
+            new AssetSnapshot(selected, "0", null, genesis, List.of()).canonicalBytes(),
             "BRANDING",
-            opaqueSnapshot(
-                "game-design-branding-asset-source-snapshot/v1", "BRANDING", selected, marker));
+            new BrandingSourceSnapshot(selected, "0", null, genesis, List.of()).canonicalBytes());
     var out = new ByteArrayOutputStream();
     DraftAuthorizationFenceBinding.frame(out, SelectedOwnerIntakeSourceContent.DOMAIN);
     DraftAuthorizationFenceBinding.frame(out, scope.canonicalBytes());
@@ -559,18 +569,6 @@ class AccountSelectedOwnerIntakeAuthorizationPostgresIntegrationTest {
         bytes, scope, DraftAuthorizationFenceBinding.digest(bytes));
   }
 
-  private static byte[] opaqueSnapshot(
-      String schema, String family, DraftCommitBinding selected, String marker) {
-    return GameplayRuleManifest.canonical(
-            Map.of(
-                "schema", schema,
-                "bindingJson", selected.canonicalJson(),
-                "bindingDigest", selected.digest(),
-                "family", family,
-                "marker", marker))
-        .getBytes(java.nio.charset.StandardCharsets.UTF_8);
-  }
-
   private static DraftCommitBinding selected(UUID tenant) {
     var target =
         new DraftCommitBinding.TargetProof(
@@ -585,7 +583,7 @@ class AccountSelectedOwnerIntakeAuthorizationPostgresIntegrationTest {
                 "0",
                 UUID.randomUUID(),
                 Owner.GAME_DESIGN_CONTROL_PLANE,
-                GameplayRuleManifest.canonical(Map.of("schema", "test/v1")))),
+                CommandSource.deletePayload("synthetic-fixture-command"))),
         List.of(
             new DraftCommitBinding.AffectedUnit(
                 Owner.GAME_DESIGN_CONTROL_PLANE,

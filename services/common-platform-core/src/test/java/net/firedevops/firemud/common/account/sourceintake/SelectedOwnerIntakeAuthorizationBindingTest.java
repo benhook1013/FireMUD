@@ -17,6 +17,7 @@ import net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding.So
 import net.firedevops.firemud.common.authoring.DraftCommitBinding;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding.Owner;
 import net.firedevops.firemud.common.gamedesign.SelectedOwnerIntakeSourceContent;
+import net.firedevops.firemud.common.gamedesign.SelectedOwnerIntakeSourceTestFixtures;
 import net.firedevops.firemud.common.gamedesign.TemplateConfigSourceSnapshot;
 import net.firedevops.firemud.common.gamelogic.GameplayRuleManifest;
 import net.firedevops.firemud.common.gamelogic.GameplayRuleSelectedSource;
@@ -315,27 +316,11 @@ class SelectedOwnerIntakeAuthorizationBindingTest {
           switch (family) {
             case "GAMEPLAY_RULE" -> gameplay.canonicalBytes();
             case "TEMPLATE_CONFIG" -> template.canonicalBytes();
-            default -> opaqueSnapshot(family, selected, "synthetic-" + family);
+            default -> SelectedOwnerIntakeSourceTestFixtures.snapshot(family, selected);
           };
       result.add(new FamilySnapshot(family, bytes));
     }
     return result;
-  }
-
-  private static byte[] opaqueSnapshot(String family, DraftCommitBinding selected, String marker) {
-    return GameplayRuleManifest.canonical(
-            Map.of(
-                "schema",
-                "synthetic-test-only/v1",
-                "bindingJson",
-                selected.canonicalJson(),
-                "bindingDigest",
-                selected.digest(),
-                "family",
-                family,
-                "marker",
-                marker))
-        .getBytes(StandardCharsets.UTF_8);
   }
 
   private static byte[] encodeContent(
@@ -402,7 +387,10 @@ class SelectedOwnerIntakeAuthorizationBindingTest {
         "base-commit-0",
         List.of(
             new DraftCommitBinding.RevisionPayload(
-                "0", REVISION, Owner.GAME_DESIGN_CONTROL_PLANE, "{}")),
+                "0",
+                REVISION,
+                Owner.GAME_DESIGN_CONTROL_PLANE,
+                SelectedOwnerIntakeSourceTestFixtures.selectedRevisionPayload())),
         List.of(
             new DraftCommitBinding.AffectedUnit(
                 Owner.GAME_DESIGN_CONTROL_PLANE,

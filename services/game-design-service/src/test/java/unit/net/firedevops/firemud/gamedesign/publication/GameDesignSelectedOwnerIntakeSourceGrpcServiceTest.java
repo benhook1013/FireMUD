@@ -15,6 +15,7 @@ import io.grpc.stub.StreamObserver;
 import java.util.List;
 import net.firedevops.firemud.common.account.sourceintake.SelectedOwnerIntakeSourceReadEvidence;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding.Owner;
+import net.firedevops.firemud.common.gamedesign.CommandSource;
 import net.firedevops.firemud.common.gamedesign.SelectedOwnerIntakeSourceProtoCodec;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
 import net.firedevops.firemud.common.security.SessionContext;
@@ -106,7 +107,8 @@ class GameDesignSelectedOwnerIntakeSourceGrpcServiceTest {
   void returnsExactEchoAndActualCompleteExportForBothOwnerScopes() {
     var selected =
         SelectedOwnerIntakeSourceExportTest.binding(
-            java.util.UUID.fromString("44444444-4444-4444-8444-444444444444"), "{}");
+            java.util.UUID.fromString("44444444-4444-4444-8444-444444444444"),
+            CommandSource.deletePayload("absent-command"));
     for (Owner ownerType : List.of(Owner.ENTITY_MANAGEMENT, Owner.AUTOMATION_SCRIPTING)) {
       var scope = SelectedOwnerIntakeSourceExportTest.scope(ownerType, selected);
       var export =
@@ -139,7 +141,8 @@ class GameDesignSelectedOwnerIntakeSourceGrpcServiceTest {
         SelectedOwnerIntakeSourceExportTest.scope(
             Owner.ENTITY_MANAGEMENT,
             SelectedOwnerIntakeSourceExportTest.binding(
-                java.util.UUID.fromString("44444444-4444-4444-8444-444444444444"), "{}"));
+                java.util.UUID.fromString("44444444-4444-4444-8444-444444444444"),
+                CommandSource.deletePayload("absent-command")));
     var request = request(scope);
 
     var missingOwner = mock(GameDesignSelectedOwnerIntakeSourceReadService.class);
@@ -150,7 +153,8 @@ class GameDesignSelectedOwnerIntakeSourceGrpcServiceTest {
         SelectedOwnerIntakeSourceExportTest.scope(
             Owner.ENTITY_MANAGEMENT,
             SelectedOwnerIntakeSourceExportTest.binding(
-                java.util.UUID.fromString("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"), "{}"));
+                java.util.UUID.fromString("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"),
+                CommandSource.deletePayload("absent-command")));
     var differentExport =
         SelectedOwnerIntakeSourceExport.create(
             differentScope,
@@ -189,7 +193,8 @@ class GameDesignSelectedOwnerIntakeSourceGrpcServiceTest {
   private static SelectedOwnerIntakeSourceRequest request(Owner owner) {
     var selected =
         SelectedOwnerIntakeSourceExportTest.binding(
-            java.util.UUID.fromString("44444444-4444-4444-8444-444444444444"), "{}");
+            java.util.UUID.fromString("44444444-4444-4444-8444-444444444444"),
+            CommandSource.deletePayload("absent-command"));
     return request(SelectedOwnerIntakeSourceExportTest.scope(owner, selected));
   }
 

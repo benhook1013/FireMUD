@@ -1,4 +1,4 @@
-package net.firedevops.firemud.gamedesign.publication;
+package net.firedevops.firemud.common.gamedesign;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
@@ -19,6 +19,7 @@ import tools.jackson.databind.ObjectMapper;
 public final class RealmPolicySource {
   private static final ObjectMapper JSON = new ObjectMapper();
   public static final String SCOPE = "REALM_ENTRY_POLICY_SET";
+  public static final String REVISION_KIND = RealmEntryPolicy.REVISION_KIND;
   public static final int MAX_POLICIES = 128;
 
   private RealmPolicySource() {}
@@ -43,11 +44,11 @@ public final class RealmPolicySource {
   public static boolean isPolicyRevision(DraftCommitBinding.RevisionPayload input) {
     var kind = text(tree(input.payload()), "revisionKind");
     if (RealmEntryPolicy.REVISION_KIND.equals(kind)) return true;
-    if ("COMMAND_DEFINITION".equals(kind)
+    if (CommandSource.REVISION_KIND.equals(kind)
         || AssetSource.REVISION_KIND.equals(kind)
         || GameplayRuleSource.REVISION_KIND.equals(kind)
         || BrandingSource.REVISION_KIND.equals(kind)
-        || TemplateConfigSource.REVISION_KIND.equals(kind)) return false;
+        || TemplateConfigSourceValues.REVISION_KIND.equals(kind)) return false;
     throw new IllegalArgumentException("Unsupported Game Design owner revision kind");
   }
 
@@ -153,7 +154,7 @@ public final class RealmPolicySource {
     return result;
   }
 
-  static String canonical(Object value) {
+  public static String canonical(Object value) {
     try {
       return new String(
           Rfc8785CanonicalJson.canonicalizeUtf8(JSON.writeValueAsString(value)),
@@ -163,7 +164,7 @@ public final class RealmPolicySource {
     }
   }
 
-  static JsonNode tree(String value) {
+  public static JsonNode tree(String value) {
     try {
       return JSON.readTree(Rfc8785CanonicalJson.canonicalizeUtf8(value));
     } catch (IOException | RuntimeException failure) {

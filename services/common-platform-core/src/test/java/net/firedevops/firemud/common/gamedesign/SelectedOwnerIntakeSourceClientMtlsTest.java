@@ -102,7 +102,8 @@ class SelectedOwnerIntakeSourceClientMtlsTest {
     try (var client = newClient(pki.gameDesignClient())) {
       client.init();
       for (Owner owner : List.of(Owner.ENTITY_MANAGEMENT, Owner.AUTOMATION_SCRIPTING)) {
-        var request = request(owner, "{}");
+        var request =
+            request(owner, SelectedOwnerIntakeSourceTestFixtures.selectedRevisionPayload());
         assertThat(client.read(request).scope()).isEqualTo(request.scope());
       }
       assertThat(calls).hasValue(2);
@@ -114,7 +115,12 @@ class SelectedOwnerIntakeSourceClientMtlsTest {
     start(pki.wrongServer());
     try (var client = newClient(pki.gameDesignClient())) {
       client.init();
-      assertThatThrownBy(() -> client.read(request(Owner.ENTITY_MANAGEMENT, "{}")))
+      assertThatThrownBy(
+              () ->
+                  client.read(
+                      request(
+                          Owner.ENTITY_MANAGEMENT,
+                          SelectedOwnerIntakeSourceTestFixtures.selectedRevisionPayload())))
           .isInstanceOf(StatusRuntimeException.class)
           .satisfies(
               error ->
@@ -128,7 +134,10 @@ class SelectedOwnerIntakeSourceClientMtlsTest {
   void transportsLargeCompleteContentWithinExplicitWireBudget() throws Exception {
     largeResponse = true;
     start(pki.gameDesignServer());
-    var request = request(Owner.AUTOMATION_SCRIPTING, "{}");
+    var request =
+        request(
+            Owner.AUTOMATION_SCRIPTING,
+            SelectedOwnerIntakeSourceTestFixtures.selectedRevisionPayload());
     try (var client = newClient(pki.gameDesignClient())) {
       client.init();
       var content = client.read(request);
@@ -147,7 +156,12 @@ class SelectedOwnerIntakeSourceClientMtlsTest {
     start(pki.gameDesignServer());
     try (var client = newClient(pki.wrongClient())) {
       client.init();
-      assertThatThrownBy(() -> client.read(request(Owner.ENTITY_MANAGEMENT, "{}")))
+      assertThatThrownBy(
+              () ->
+                  client.read(
+                      request(
+                          Owner.ENTITY_MANAGEMENT,
+                          SelectedOwnerIntakeSourceTestFixtures.selectedRevisionPayload())))
           .isInstanceOf(StatusRuntimeException.class)
           .satisfies(
               error ->
@@ -162,7 +176,12 @@ class SelectedOwnerIntakeSourceClientMtlsTest {
     start(pki.expiredGameDesignServer());
     try (var client = newClient(pki.gameDesignClient())) {
       client.init();
-      assertThatThrownBy(() -> client.read(request(Owner.ENTITY_MANAGEMENT, "{}")))
+      assertThatThrownBy(
+              () ->
+                  client.read(
+                      request(
+                          Owner.ENTITY_MANAGEMENT,
+                          SelectedOwnerIntakeSourceTestFixtures.selectedRevisionPayload())))
           .isInstanceOf(StatusRuntimeException.class);
       assertThat(calls).hasValue(1);
     }
@@ -173,7 +192,12 @@ class SelectedOwnerIntakeSourceClientMtlsTest {
     start(pki.gameDesignServer());
     try (var client = newClient(pki.expiredGameDesignClient())) {
       client.init();
-      assertThatThrownBy(() -> client.read(request(Owner.ENTITY_MANAGEMENT, "{}")))
+      assertThatThrownBy(
+              () ->
+                  client.read(
+                      request(
+                          Owner.ENTITY_MANAGEMENT,
+                          SelectedOwnerIntakeSourceTestFixtures.selectedRevisionPayload())))
           .isInstanceOf(StatusRuntimeException.class);
       assertThat(calls).hasValue(1);
     }
@@ -184,11 +208,18 @@ class SelectedOwnerIntakeSourceClientMtlsTest {
     start(pki.gameDesignServer());
     try (var client = newClient(pki.gameDesignClient())) {
       client.init();
-      var otherNamespace = request(Owner.ENTITY_MANAGEMENT, "{}", "other");
+      var otherNamespace =
+          request(
+              Owner.ENTITY_MANAGEMENT,
+              SelectedOwnerIntakeSourceTestFixtures.selectedRevisionPayload(),
+              "other");
       assertThatThrownBy(() -> client.read(otherNamespace))
           .isInstanceOf(IllegalArgumentException.class);
 
-      var request = request(Owner.ENTITY_MANAGEMENT, "{}");
+      var request =
+          request(
+              Owner.ENTITY_MANAGEMENT,
+              SelectedOwnerIntakeSourceTestFixtures.selectedRevisionPayload());
       TransactionSynchronizationManager.setActualTransactionActive(true);
       try {
         assertThatThrownBy(() -> client.read(request)).isInstanceOf(IllegalStateException.class);
@@ -215,7 +246,12 @@ class SelectedOwnerIntakeSourceClientMtlsTest {
     start(pki.gameDesignServer());
     try (var client = newClient(pki.gameDesignClient())) {
       client.init();
-      assertThatThrownBy(() -> client.read(request(Owner.AUTOMATION_SCRIPTING, "{}")))
+      assertThatThrownBy(
+              () ->
+                  client.read(
+                      request(
+                          Owner.AUTOMATION_SCRIPTING,
+                          SelectedOwnerIntakeSourceTestFixtures.selectedRevisionPayload())))
           .isInstanceOf(StatusRuntimeException.class)
           .satisfies(
               error ->
@@ -344,12 +380,8 @@ class SelectedOwnerIntakeSourceClientMtlsTest {
             case "GAMEPLAY_RULE" -> gameplay.canonicalBytes();
             case "TEMPLATE_CONFIG" -> template.canonicalBytes();
             default ->
-                opaqueSnapshot(
-                    family,
-                    selected,
-                    family.equals("COMMAND")
-                        ? "x".repeat(largeCommandMarkerSize)
-                        : "synthetic-" + family);
+                SelectedOwnerIntakeSourceTestFixtures.snapshot(
+                    family, selected, family.equals("COMMAND") ? largeCommandMarkerSize : 0);
           };
       frame(out, family);
       frame(out, snapshot);
@@ -358,22 +390,6 @@ class SelectedOwnerIntakeSourceClientMtlsTest {
     byte[] encoded = out.toByteArray();
     return SelectedOwnerIntakeSourceContent.fromStored(
         encoded, scope, DraftAuthorizationFenceBinding.digest(encoded));
-  }
-
-  private static byte[] opaqueSnapshot(String family, DraftCommitBinding selected, String marker) {
-    return GameplayRuleManifest.canonical(
-            Map.of(
-                "schema",
-                "synthetic-test-only/v1",
-                "bindingJson",
-                selected.canonicalJson(),
-                "bindingDigest",
-                selected.digest(),
-                "family",
-                family,
-                "marker",
-                marker))
-        .getBytes(StandardCharsets.UTF_8);
   }
 
   private static DraftCommitBinding binding(UUID commitId, String payload) {

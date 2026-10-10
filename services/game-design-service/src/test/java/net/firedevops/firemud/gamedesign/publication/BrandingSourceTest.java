@@ -8,6 +8,10 @@ import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding;
+import net.firedevops.firemud.common.gamedesign.AssetSource;
+import net.firedevops.firemud.common.gamedesign.BrandingSource;
+import net.firedevops.firemud.common.gamedesign.CommandSource;
+import net.firedevops.firemud.common.gamedesign.GameplayRuleSource;
 import org.junit.jupiter.api.Test;
 
 class BrandingSourceTest {
@@ -49,7 +53,9 @@ class BrandingSourceTest {
     var items =
         replay.references().stream()
             .map(
-                r -> new BrandingSourceSnapshot.Item(r, "image/png", "sha256:" + "a".repeat(64), 1))
+                r ->
+                    new net.firedevops.firemud.common.gamedesign.BrandingSourceSnapshot.Item(
+                        r, "image/png", "sha256:" + "a".repeat(64), 1))
             .toList();
     var snapshot =
         new BrandingSourceSnapshot(changed, "2", original.commitId(), UUID.randomUUID(), items);

@@ -10,6 +10,7 @@ import java.util.UUID;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding.Owner;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding.TargetProof;
+import net.firedevops.firemud.common.gamedesign.CommandSource;
 import net.firedevops.firemud.gamedesign.draft.DraftCommitCoordinatorRepository;
 import org.jooq.DSLContext;
 import org.jooq.Record;

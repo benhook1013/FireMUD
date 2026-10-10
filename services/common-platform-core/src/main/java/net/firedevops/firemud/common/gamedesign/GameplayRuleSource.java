@@ -1,4 +1,4 @@
-package net.firedevops.firemud.gamedesign.publication;
+package net.firedevops.firemud.common.gamedesign;
 
 import java.util.ArrayList;
 import java.util.EnumMap;
@@ -111,11 +111,11 @@ public final class GameplayRuleSource {
       var node = GameplayRuleManifest.tree(revision.payload());
       String kind = text(node, "revisionKind");
       if (Set.of(
-              "COMMAND_DEFINITION",
-              "REALM_ENTRY_POLICY",
-              "ASSET_REFERENCE",
+              CommandSource.REVISION_KIND,
+              RealmPolicySource.REVISION_KIND,
+              AssetSource.REVISION_KIND,
               BrandingSource.REVISION_KIND,
-              TemplateConfigSource.REVISION_KIND)
+              TemplateConfigSourceValues.REVISION_KIND)
           .contains(kind)) continue;
       if (!REVISION_KIND.equals(kind))
         throw new IllegalArgumentException("Unknown Game Design revision kind");
@@ -209,7 +209,7 @@ public final class GameplayRuleSource {
         && SCOPE_ID.equals(unit.scopeId());
   }
 
-  static String text(tools.jackson.databind.JsonNode node, String key) {
+  public static String text(tools.jackson.databind.JsonNode node, String key) {
     if (!node.path(key).isTextual() || node.path(key).textValue().isBlank())
       throw new IllegalArgumentException("Required rule-source field missing: " + key);
     return node.path(key).textValue();

@@ -10,6 +10,8 @@ import java.util.UUID;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding.Owner;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding.TargetProof;
+import net.firedevops.firemud.common.gamedesign.AssetSource;
+import net.firedevops.firemud.common.gamedesign.CommandSource;
 import net.firedevops.firemud.gamedesign.draft.DraftCommitCoordinatorRepository;
 import org.jooq.DSLContext;
 import org.jooq.Record;
@@ -116,7 +118,7 @@ public final class AssetSourceRepository {
       throw new IllegalStateException("ASSET_SOURCE_EPOCH_CONFLICT");
     UUID inherited = head.get("visible_commit_id", UUID.class);
     requirePreviousFence(binding.target(), inherited);
-    List<AssetSnapshot.Item> previous =
+    List<net.firedevops.firemud.common.gamedesign.AssetSnapshot.Item> previous =
         inherited == null
             ? List.of()
             : readSnapshot(binding.target(), inherited).orElseThrow().items();
@@ -137,7 +139,7 @@ public final class AssetSourceRepository {
                   == null) throw new IllegalStateException("ASSET_SOURCE_ROW_UNAVAILABLE");
             });
     for (var mutation : mutations) {
-      AssetSnapshot.Item item =
+      net.firedevops.firemud.common.gamedesign.AssetSnapshot.Item item =
           mutation.operation() == AssetSource.OperationKind.UPSERT
               ? qualify(
                   new AssetSource.Reference(
@@ -168,7 +170,11 @@ public final class AssetSourceRepository {
           item == null ? null : item.byteSize());
     }
     var references =
-        AssetSource.replay(previous.stream().map(AssetSnapshot.Item::reference).toList(), binding)
+        AssetSource.replay(
+                previous.stream()
+                    .map(net.firedevops.firemud.common.gamedesign.AssetSnapshot.Item::reference)
+                    .toList(),
+                binding)
             .references();
     var snapshot =
         new AssetSnapshot(
@@ -227,7 +233,7 @@ public final class AssetSourceRepository {
     } else {
       var items =
           inherited == null
-              ? List.<AssetSnapshot.Item>of()
+              ? List.<net.firedevops.firemud.common.gamedesign.AssetSnapshot.Item>of()
               : readSnapshot(binding.target(), inherited).orElseThrow().items();
       snapshot =
           new AssetSnapshot(
@@ -428,7 +434,8 @@ public final class AssetSourceRepository {
     return Optional.of(result);
   }
 
-  private AssetSnapshot.Item qualify(AssetSource.Reference reference, boolean lock) {
+  private net.firedevops.firemud.common.gamedesign.AssetSnapshot.Item qualify(
+      AssetSource.Reference reference, boolean lock) {
     var target = reference.sourceBinding().target();
     var row =
         dsl.fetchOne(
@@ -441,7 +448,7 @@ public final class AssetSourceRepository {
         || row.get("data", byte[].class) == null)
       throw new IllegalStateException("ASSET_SOURCE_EXACT_BYTES_UNAVAILABLE");
     byte[] bytes = row.get("data", byte[].class);
-    return new AssetSnapshot.Item(
+    return new net.firedevops.firemud.common.gamedesign.AssetSnapshot.Item(
         reference,
         row.get("content_type", String.class),
         CommandSource.sha256(bytes),

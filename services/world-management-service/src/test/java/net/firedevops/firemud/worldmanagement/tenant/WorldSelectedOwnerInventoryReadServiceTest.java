@@ -31,6 +31,11 @@ import net.firedevops.firemud.common.authoring.DraftCommitBinding;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding.Owner;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding.RevisionPayload;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding.TargetProof;
+import net.firedevops.firemud.common.gamedesign.AssetSnapshot;
+import net.firedevops.firemud.common.gamedesign.BrandingSourceSnapshot;
+import net.firedevops.firemud.common.gamedesign.CommandSnapshot;
+import net.firedevops.firemud.common.gamedesign.CommandSource;
+import net.firedevops.firemud.common.gamedesign.RealmPolicySnapshot;
 import net.firedevops.firemud.common.gamedesign.SelectedOwnerIntakeSourceContent;
 import net.firedevops.firemud.common.gamedesign.TemplateConfigSourceSnapshot;
 import net.firedevops.firemud.common.gamelogic.GameplayRuleManifest;
@@ -266,7 +271,7 @@ class WorldSelectedOwnerInventoryReadServiceTest {
                     "0",
                     id("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaab"),
                     Owner.GAME_DESIGN_CONTROL_PLANE,
-                    "{}")),
+                    CommandSource.deletePayload("synthetic-fixture-command"))),
             List.of(
                 new DraftCommitBinding.AffectedUnit(
                     Owner.GAME_DESIGN_CONTROL_PLANE,
@@ -370,44 +375,47 @@ class WorldSelectedOwnerInventoryReadServiceTest {
   }
 
   private static byte[] sourceSnapshot(String family, DraftCommitBinding selected) {
-    if ("GAMEPLAY_RULE".equals(family)) {
-      return new GameplayRuleSelectedSource(
-              GameplayRuleManifest.canonical(
-                  Map.of(
-                      "schema",
-                      "game-design-gameplay-rule-source-snapshot/v1",
-                      "bindingJson",
-                      selected.canonicalJson(),
-                      "bindingDigest",
-                      selected.digest(),
-                      "sourceEpoch",
-                      "0",
-                      "inheritedCommitId",
-                      "",
-                      "genesisReceiptId",
-                      "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
-                      "manifestJson",
-                      GameplayRuleManifest.explicitEmpty().canonicalJson(),
-                      "entries",
-                      List.of())))
-          .canonicalBytes();
-    }
-    if ("TEMPLATE_CONFIG".equals(family)) {
-      return new TemplateConfigSourceSnapshot(
-              selected, "0", null, id("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"), List.of())
-          .canonicalBytes();
-    }
-    return GameplayRuleManifest.canonical(
-            Map.of(
-                "schema",
-                "synthetic-test-only/v1",
-                "bindingJson",
-                selected.canonicalJson(),
-                "bindingDigest",
-                selected.digest(),
-                "family",
-                family))
-        .getBytes(StandardCharsets.UTF_8);
+    UUID genesis = id("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa");
+    return switch (family) {
+      case "COMMAND" ->
+          new CommandSnapshot(
+                  selected,
+                  "0",
+                  null,
+                  DraftAuthorizationFenceBinding.digest(
+                      "synthetic-world-fixture".getBytes(StandardCharsets.UTF_8)),
+                  List.of())
+              .canonicalBytes();
+      case "REALM_POLICY" -> new RealmPolicySnapshot(selected, "0", List.of()).canonicalBytes();
+      case "ASSET" -> new AssetSnapshot(selected, "0", null, genesis, List.of()).canonicalBytes();
+      case "GAMEPLAY_RULE" ->
+          new GameplayRuleSelectedSource(
+                  GameplayRuleManifest.canonical(
+                      Map.of(
+                          "schema",
+                          "game-design-gameplay-rule-source-snapshot/v1",
+                          "bindingJson",
+                          selected.canonicalJson(),
+                          "bindingDigest",
+                          selected.digest(),
+                          "sourceEpoch",
+                          "0",
+                          "inheritedCommitId",
+                          "",
+                          "genesisReceiptId",
+                          genesis.toString(),
+                          "manifestJson",
+                          GameplayRuleManifest.explicitEmpty().canonicalJson(),
+                          "entries",
+                          List.of())))
+              .canonicalBytes();
+      case "BRANDING" ->
+          new BrandingSourceSnapshot(selected, "0", null, genesis, List.of()).canonicalBytes();
+      case "TEMPLATE_CONFIG" ->
+          new TemplateConfigSourceSnapshot(selected, "0", null, genesis, List.of())
+              .canonicalBytes();
+      default -> throw new IllegalArgumentException("Unsupported selected source fixture family");
+    };
   }
 
   private static SourceEvidence source(SourceKind kind, String scope, String marker) {

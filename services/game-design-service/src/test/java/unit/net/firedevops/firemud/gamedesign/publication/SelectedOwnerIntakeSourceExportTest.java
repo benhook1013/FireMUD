@@ -13,6 +13,7 @@ import net.firedevops.firemud.common.authoring.DraftCommitBinding;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding.Owner;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding.RevisionPayload;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding.TargetProof;
+import net.firedevops.firemud.common.gamedesign.CommandSource;
 import net.firedevops.firemud.common.gamedesign.SelectedOwnerIntakeSourceContent;
 import org.junit.jupiter.api.Test;
 
@@ -30,7 +31,7 @@ class SelectedOwnerIntakeSourceExportTest {
 
   @Test
   void framesTheScopeAndAllSixFamiliesInFixedOrder() {
-    var selected = binding(COMMIT, "{}");
+    var selected = binding(COMMIT, CommandSource.deletePayload("absent-command"));
     var scope = scope(Owner.ENTITY_MANAGEMENT, selected);
     var sources = sources(selected, "0");
     var export = SelectedOwnerIntakeSourceExport.create(scope, sources);
@@ -56,7 +57,7 @@ class SelectedOwnerIntakeSourceExportTest {
 
   @Test
   void sharedConsumerDecodesExactCompleteExportsForBothOwners() {
-    var selected = binding(COMMIT, "{}");
+    var selected = binding(COMMIT, CommandSource.deletePayload("absent-command"));
     for (Owner owner : List.of(Owner.ENTITY_MANAGEMENT, Owner.AUTOMATION_SCRIPTING)) {
       var scope = scope(owner, selected);
       var sources = sources(selected, "0");
@@ -86,7 +87,7 @@ class SelectedOwnerIntakeSourceExportTest {
 
   @Test
   void contentIsDeterministicAndCanonicalBytesAreDefensivelyExposed() {
-    var selected = binding(COMMIT, "{}");
+    var selected = binding(COMMIT, CommandSource.deletePayload("absent-command"));
     var first =
         SelectedOwnerIntakeSourceExport.create(
             scope(Owner.AUTOMATION_SCRIPTING, selected), sources(selected, "0"));
@@ -102,14 +103,16 @@ class SelectedOwnerIntakeSourceExportTest {
 
   @Test
   void rejectsDifferentSelectedBindingAndChangedFamilyContent() {
-    var selected = binding(COMMIT, "{}");
+    var selected = binding(COMMIT, CommandSource.deletePayload("absent-command"));
     var sources = sources(selected, "0");
     assertThatThrownBy(
             () ->
                 SelectedOwnerIntakeSourceExport.create(
                     scope(
                         Owner.ENTITY_MANAGEMENT,
-                        binding(id("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"), "{}")),
+                        binding(
+                            id("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"),
+                            CommandSource.deletePayload("absent-command"))),
                     sources))
         .isInstanceOf(IllegalStateException.class)
         .hasMessageContaining("COMMAND");
@@ -125,7 +128,7 @@ class SelectedOwnerIntakeSourceExportTest {
 
   @Test
   void missingBrandingOrTemplateSourceIsNotAnEmptyFamily() {
-    var selected = binding(COMMIT, "{}");
+    var selected = binding(COMMIT, CommandSource.deletePayload("absent-command"));
     var complete = sources(selected, "0");
     var missingBranding =
         new GameDesignSourceRepository.SynchronizedSources(

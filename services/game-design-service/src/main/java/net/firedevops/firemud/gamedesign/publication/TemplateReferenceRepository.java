@@ -13,6 +13,7 @@ import java.util.TreeMap;
 import java.util.UUID;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding.TargetProof;
+import net.firedevops.firemud.common.gamedesign.CommandSource;
 import net.firedevops.firemud.common.tenant.FreshTenantCreationEvidence;
 import org.jooq.DSLContext;
 import org.jooq.Record;

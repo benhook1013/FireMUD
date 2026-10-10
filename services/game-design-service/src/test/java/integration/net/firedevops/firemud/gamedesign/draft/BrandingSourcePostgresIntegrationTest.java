@@ -10,17 +10,17 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding;
+import net.firedevops.firemud.common.gamedesign.AssetSource;
+import net.firedevops.firemud.common.gamedesign.BrandingSource;
+import net.firedevops.firemud.common.gamedesign.CommandSource;
+import net.firedevops.firemud.common.gamedesign.GameplayRuleSource;
 import net.firedevops.firemud.common.gamelogic.GameplayRuleManifest;
 import net.firedevops.firemud.gamedesign.entity.Game;
 import net.firedevops.firemud.gamedesign.entity.GameAsset;
 import net.firedevops.firemud.gamedesign.entity.Version;
 import net.firedevops.firemud.gamedesign.model.VersionLifecycleState;
-import net.firedevops.firemud.gamedesign.publication.AssetSource;
-import net.firedevops.firemud.gamedesign.publication.BrandingSource;
 import net.firedevops.firemud.gamedesign.publication.BrandingSourceRepository;
-import net.firedevops.firemud.gamedesign.publication.CommandSource;
 import net.firedevops.firemud.gamedesign.publication.GameDesignSourceRepository;
-import net.firedevops.firemud.gamedesign.publication.GameplayRuleSource;
 import net.firedevops.firemud.gamedesign.repository.GameAssetRepository;
 import net.firedevops.firemud.gamedesign.repository.GameRepository;
 import net.firedevops.firemud.gamedesign.repository.VersionRepository;
@@ -326,7 +326,7 @@ class BrandingSourcePostgresIntegrationTest {
       if (payloads[i].contains("\"revisionKind\":\"COMMAND_DEFINITION\""))
         scopes.add(CommandSource.SCOPE);
       if (payloads[i].contains("\"revisionKind\":\"REALM_ENTRY_POLICY\""))
-        scopes.add(net.firedevops.firemud.gamedesign.publication.RealmPolicySource.SCOPE);
+        scopes.add(net.firedevops.firemud.common.gamedesign.RealmPolicySource.SCOPE);
     }
     var units =
         scopes.stream()

@@ -198,3 +198,9 @@ Entry format:
   - Observation: Originating XML finally showed an IPv6 `localhost` connection refusal while the test server listened only on IPv4. A failed connection and zero handler calls do not establish TLS rejection, and reporting only a boolean matcher initially concealed the transport cause.
   - Expected pattern: Match the client endpoint to the server's explicit loopback bind and certificate SAN, retain bounded cause-chain diagnostics, and check certificate rejection separately from absence of application calls. Never broaden a TLS matcher to accept generic connection failure.
   - Current status: Both test clients use the existing `127.0.0.1` bind/SAN, the strict matcher and required client certificate are unchanged, and grouped assertions retain all denial evidence. All four native acquisition mTLS cases pass locally; corrected CI execution remains required.
+
+- `2026-10-11`: Publication can interrupt the physical proof it was meant to obtain
+  - Context: PR #3105's Account database job repeatedly stopped before PostgreSQL assertion evidence was available.
+  - Observation: The next source publication started a same-PR Validation run fourteen seconds before the preceding Account checks were canceled. The workflow's per-PR concurrency group uses `cancel-in-progress: true`; local green checks and canceled remote unit artifacts did not establish database proof.
+  - Expected pattern: Batch a corrected proof checkpoint, then hold further branch publications until its required database job completes while continuing implementation locally. Attribute artifacts to their originating checkout and distinguish interruption from a database assertion failure.
+  - Current status: The cancellation cause is strongly supported by workflow configuration and run timing. The next corrected source checkpoint will have an uninterrupted Account proof window; physical proof remains open until the resulting artifacts establish execution.

@@ -6,7 +6,6 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import com.google.protobuf.ByteString;
 import com.google.protobuf.UnknownFieldSet;
 import java.io.ByteArrayOutputStream;
-import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -40,7 +39,8 @@ class SelectedOwnerIntakeSourceProtoCodecTest {
 
   @Test
   void roundTripsBothOwnerRequestsAndCompleteSourceContent() {
-    DraftCommitBinding selected = binding(COMMIT, "{}");
+    DraftCommitBinding selected =
+        binding(COMMIT, SelectedOwnerIntakeSourceTestFixtures.selectedRevisionPayload());
     for (Owner owner : List.of(Owner.ENTITY_MANAGEMENT, Owner.AUTOMATION_SCRIPTING)) {
       var request = request(owner, selected);
       var wireRequest = SelectedOwnerIntakeSourceProtoCodec.toRequest(request);
@@ -59,7 +59,10 @@ class SelectedOwnerIntakeSourceProtoCodecTest {
 
   @Test
   void rejectsChangedSchemaNamespaceCorrelationReaderPurposeScopeAndDigest() {
-    var request = request(Owner.ENTITY_MANAGEMENT, binding(COMMIT, "{}"));
+    var request =
+        request(
+            Owner.ENTITY_MANAGEMENT,
+            binding(COMMIT, SelectedOwnerIntakeSourceTestFixtures.selectedRevisionPayload()));
     var wire = SelectedOwnerIntakeSourceProtoCodec.toRequest(request);
 
     assertInvalidRequest(wire.toBuilder().setSchemaVersion(2).build());
@@ -74,7 +77,10 @@ class SelectedOwnerIntakeSourceProtoCodecTest {
 
   @Test
   void requiresTheFullUnchangedRequestEchoBeforeInspectingContent() {
-    var request = request(Owner.AUTOMATION_SCRIPTING, binding(COMMIT, "{}"));
+    var request =
+        request(
+            Owner.AUTOMATION_SCRIPTING,
+            binding(COMMIT, SelectedOwnerIntakeSourceTestFixtures.selectedRevisionPayload()));
     var content = content(request.scope(), 0);
     var response = SelectedOwnerIntakeSourceProtoCodec.toResponse(request, content);
     List<UnaryOperator<SelectedOwnerIntakeSourceRequest.Builder>> substitutions =
@@ -104,7 +110,10 @@ class SelectedOwnerIntakeSourceProtoCodecTest {
 
   @Test
   void rejectsUnknownOuterAndNestedFields() {
-    var request = request(Owner.ENTITY_MANAGEMENT, binding(COMMIT, "{}"));
+    var request =
+        request(
+            Owner.ENTITY_MANAGEMENT,
+            binding(COMMIT, SelectedOwnerIntakeSourceTestFixtures.selectedRevisionPayload()));
     var wireRequest = SelectedOwnerIntakeSourceProtoCodec.toRequest(request);
     var response =
         SelectedOwnerIntakeSourceProtoCodec.toResponse(request, content(request.scope(), 0));
@@ -132,7 +141,10 @@ class SelectedOwnerIntakeSourceProtoCodecTest {
 
   @Test
   void rejectsContentDigestAndScopeSubstitution() {
-    var request = request(Owner.ENTITY_MANAGEMENT, binding(COMMIT, "{}"));
+    var request =
+        request(
+            Owner.ENTITY_MANAGEMENT,
+            binding(COMMIT, SelectedOwnerIntakeSourceTestFixtures.selectedRevisionPayload()));
     var original = content(request.scope(), 0);
     var response = SelectedOwnerIntakeSourceProtoCodec.toResponse(request, original);
 
@@ -172,7 +184,10 @@ class SelectedOwnerIntakeSourceProtoCodecTest {
 
   @Test
   void admitsContentAboveDefaultGrpcMessageSizeAndRejectsOversizedWireEnvelopes() {
-    var request = request(Owner.AUTOMATION_SCRIPTING, binding(COMMIT, "{}"));
+    var request =
+        request(
+            Owner.AUTOMATION_SCRIPTING,
+            binding(COMMIT, SelectedOwnerIntakeSourceTestFixtures.selectedRevisionPayload()));
     var largeContent = content(request.scope(), 6_500_000);
     var response = SelectedOwnerIntakeSourceProtoCodec.toResponse(request, largeContent);
     assertThat(response.getSerializedSize()).isGreaterThan(4 * 1024 * 1024);
@@ -234,12 +249,8 @@ class SelectedOwnerIntakeSourceProtoCodecTest {
             case "GAMEPLAY_RULE" -> gameplay.canonicalBytes();
             case "TEMPLATE_CONFIG" -> template.canonicalBytes();
             default ->
-                opaqueSnapshot(
-                    family,
-                    selected,
-                    family.equals("COMMAND")
-                        ? "x".repeat(largeCommandMarkerSize)
-                        : "synthetic-" + family);
+                SelectedOwnerIntakeSourceTestFixtures.snapshot(
+                    family, selected, family.equals("COMMAND") ? largeCommandMarkerSize : 0);
           };
       frame(out, family);
       frame(out, snapshot);
@@ -248,22 +259,6 @@ class SelectedOwnerIntakeSourceProtoCodecTest {
     byte[] encoded = out.toByteArray();
     return SelectedOwnerIntakeSourceContent.fromStored(
         encoded, scope, DraftAuthorizationFenceBinding.digest(encoded));
-  }
-
-  private static byte[] opaqueSnapshot(String family, DraftCommitBinding selected, String marker) {
-    return GameplayRuleManifest.canonical(
-            Map.of(
-                "schema",
-                "synthetic-test-only/v1",
-                "bindingJson",
-                selected.canonicalJson(),
-                "bindingDigest",
-                selected.digest(),
-                "family",
-                family,
-                "marker",
-                marker))
-        .getBytes(StandardCharsets.UTF_8);
   }
 
   private static DraftCommitBinding binding(UUID commitId, String payload) {

@@ -10,6 +10,8 @@ import java.util.UUID;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding.Owner;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding.TargetProof;
+import net.firedevops.firemud.common.gamedesign.BrandingSource;
+import net.firedevops.firemud.common.gamedesign.CommandSource;
 import net.firedevops.firemud.gamedesign.draft.DraftCommitCoordinatorRepository;
 import org.jooq.DSLContext;
 import org.jooq.Record;
@@ -120,7 +122,7 @@ public final class BrandingSourceRepository {
       throw new IllegalStateException("BRANDING_SOURCE_EPOCH_CONFLICT");
     UUID inherited = head.get("visible_commit_id", UUID.class);
     requirePreviousFence(binding.target(), inherited);
-    List<BrandingSourceSnapshot.Item> previous =
+    List<net.firedevops.firemud.common.gamedesign.BrandingSourceSnapshot.Item> previous =
         inherited == null
             ? List.of()
             : readSnapshot(binding.target(), inherited).orElseThrow().items();
@@ -141,7 +143,7 @@ public final class BrandingSourceRepository {
                   == null) throw new IllegalStateException("BRANDING_SOURCE_ROW_UNAVAILABLE");
             });
     for (var mutation : mutations) {
-      BrandingSourceSnapshot.Item item =
+      net.firedevops.firemud.common.gamedesign.BrandingSourceSnapshot.Item item =
           mutation.operation() == BrandingSource.OperationKind.UPSERT
               ? qualify(
                   new BrandingSource.Reference(
@@ -175,7 +177,12 @@ public final class BrandingSourceRepository {
     }
     var references =
         BrandingSource.replay(
-                previous.stream().map(BrandingSourceSnapshot.Item::reference).toList(), binding)
+                previous.stream()
+                    .map(
+                        net.firedevops.firemud.common.gamedesign.BrandingSourceSnapshot.Item
+                            ::reference)
+                    .toList(),
+                binding)
             .references();
     var snapshot =
         new BrandingSourceSnapshot(
@@ -234,7 +241,7 @@ public final class BrandingSourceRepository {
     } else {
       var items =
           inherited == null
-              ? List.<BrandingSourceSnapshot.Item>of()
+              ? List.<net.firedevops.firemud.common.gamedesign.BrandingSourceSnapshot.Item>of()
               : readSnapshot(binding.target(), inherited).orElseThrow().items();
       snapshot =
           new BrandingSourceSnapshot(
@@ -372,7 +379,8 @@ public final class BrandingSourceRepository {
     return Optional.of(result);
   }
 
-  private BrandingSourceSnapshot.Item qualify(BrandingSource.Reference reference, boolean lock) {
+  private net.firedevops.firemud.common.gamedesign.BrandingSourceSnapshot.Item qualify(
+      BrandingSource.Reference reference, boolean lock) {
     var target = reference.sourceBinding().target();
     var row =
         dsl.fetchOne(
@@ -385,7 +393,7 @@ public final class BrandingSourceRepository {
         || row.get("data", byte[].class) == null)
       throw new IllegalStateException("BRANDING_SOURCE_EXACT_BYTES_UNAVAILABLE");
     byte[] bytes = row.get("data", byte[].class);
-    return new BrandingSourceSnapshot.Item(
+    return new net.firedevops.firemud.common.gamedesign.BrandingSourceSnapshot.Item(
         reference,
         row.get("content_type", String.class),
         CommandSource.sha256(bytes),

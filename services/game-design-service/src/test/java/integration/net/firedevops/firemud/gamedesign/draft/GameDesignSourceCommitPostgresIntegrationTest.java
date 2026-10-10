@@ -30,6 +30,7 @@ import net.firedevops.firemud.common.authoring.AccountOriginalDraftOrderGrpcCode
 import net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding;
 import net.firedevops.firemud.common.config.ServiceEndpointsProperties;
+import net.firedevops.firemud.common.gamedesign.GameplayRuleSource;
 import net.firedevops.firemud.common.gamelogic.GameplayRuleManifest;
 import net.firedevops.firemud.common.grpc.CommonGrpcClientProperties;
 import net.firedevops.firemud.common.grpc.GrpcChannelFactory;
@@ -38,7 +39,6 @@ import net.firedevops.firemud.gamedesign.entity.Game;
 import net.firedevops.firemud.gamedesign.entity.Version;
 import net.firedevops.firemud.gamedesign.model.VersionLifecycleState;
 import net.firedevops.firemud.gamedesign.publication.GameDesignSourceRepository;
-import net.firedevops.firemud.gamedesign.publication.GameplayRuleSource;
 import net.firedevops.firemud.gamedesign.repository.GameRepository;
 import net.firedevops.firemud.gamedesign.repository.VersionRepository;
 import net.firedevops.firemud.test.TestContainerImages;
@@ -1163,7 +1163,7 @@ class GameDesignSourceCommitPostgresIntegrationTest {
                           .recordFreshGenesis(historicalTarget);
                   new net.firedevops.firemud.gamedesign.publication.CommandSourceRepository(dsl)
                       .enrollNewDraftGenesis(
-                          new net.firedevops.firemud.gamedesign.publication.CommandSource
+                          new net.firedevops.firemud.common.gamedesign.CommandSource
                               .NewDraftGenesisReceipt(
                               historicalTarget,
                               policy.receiptId(),

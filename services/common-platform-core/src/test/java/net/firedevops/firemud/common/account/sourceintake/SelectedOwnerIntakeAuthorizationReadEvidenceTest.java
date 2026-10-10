@@ -16,6 +16,7 @@ import net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding.So
 import net.firedevops.firemud.common.authoring.DraftCommitBinding;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding.Owner;
 import net.firedevops.firemud.common.gamedesign.SelectedOwnerIntakeSourceContent;
+import net.firedevops.firemud.common.gamedesign.SelectedOwnerIntakeSourceTestFixtures;
 import net.firedevops.firemud.common.gamedesign.TemplateConfigSourceSnapshot;
 import net.firedevops.firemud.common.gamelogic.GameplayRuleManifest;
 import net.firedevops.firemud.common.gamelogic.GameplayRuleSelectedSource;
@@ -122,17 +123,7 @@ class SelectedOwnerIntakeAuthorizationReadEvidenceTest {
       return new TemplateConfigSourceSnapshot(
               selected, "0", null, id("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"), List.of())
           .canonicalBytes();
-    return GameplayRuleManifest.canonical(
-            Map.of(
-                "schema",
-                "synthetic-test-only/v1",
-                "bindingJson",
-                selected.canonicalJson(),
-                "bindingDigest",
-                selected.digest(),
-                "family",
-                family))
-        .getBytes(StandardCharsets.UTF_8);
+    return SelectedOwnerIntakeSourceTestFixtures.snapshot(family, selected);
   }
 
   private static List<SourceEvidence> sources(UUID actor, UUID tenant) {
@@ -161,7 +152,7 @@ class SelectedOwnerIntakeAuthorizationReadEvidenceTest {
                 "0",
                 id("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaab"),
                 Owner.GAME_DESIGN_CONTROL_PLANE,
-                "{}")),
+                SelectedOwnerIntakeSourceTestFixtures.selectedRevisionPayload())),
         List.of(
             new DraftCommitBinding.AffectedUnit(
                 Owner.GAME_DESIGN_CONTROL_PLANE,

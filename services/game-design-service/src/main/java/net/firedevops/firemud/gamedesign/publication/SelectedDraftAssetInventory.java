@@ -11,6 +11,9 @@ import java.util.TreeMap;
 import java.util.UUID;
 import net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding;
+import net.firedevops.firemud.common.gamedesign.AssetSource;
+import net.firedevops.firemud.common.gamedesign.BrandingSource;
+import net.firedevops.firemud.common.gamedesign.CommandSource;
 import net.firedevops.firemud.common.publication.PublicationDigestRequestBinding;
 
 /** Closed exact Game Design source inventory; it does not export or attest release objects. */

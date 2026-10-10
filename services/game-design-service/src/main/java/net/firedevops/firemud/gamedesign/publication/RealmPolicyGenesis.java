@@ -4,6 +4,7 @@ import java.nio.charset.StandardCharsets;
 import java.util.Map;
 import java.util.UUID;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding.TargetProof;
+import net.firedevops.firemud.common.gamedesign.RealmPolicySource;
 
 /** Empty new-Draft baseline receipt, distinct from every actual authored commit. */
 public record RealmPolicyGenesis(TargetProof target, UUID receiptId, String creationTransactionId) {

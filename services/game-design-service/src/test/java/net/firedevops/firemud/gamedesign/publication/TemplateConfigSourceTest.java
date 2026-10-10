@@ -10,6 +10,10 @@ import java.util.UUID;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding;
 import net.firedevops.firemud.common.automation.AutomationAuthoredSourceInventoryDeclaration;
 import net.firedevops.firemud.common.entity.EntityAuthoredSourceInventoryDeclaration;
+import net.firedevops.firemud.common.gamedesign.AssetSource;
+import net.firedevops.firemud.common.gamedesign.BrandingSource;
+import net.firedevops.firemud.common.gamedesign.CommandSource;
+import net.firedevops.firemud.common.gamedesign.GameplayRuleSource;
 import org.junit.jupiter.api.Test;
 
 class TemplateConfigSourceTest {

@@ -4,6 +4,7 @@ import java.math.BigInteger;
 import java.util.Objects;
 import net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding;
+import net.firedevops.firemud.common.gamedesign.BrandingSource;
 import net.firedevops.firemud.gamedesign.draft.DraftCommitCoordinatorRepository.AppliedEpoch;
 
 /** Exact branding-source application evidence, composed into one control-plane owner result. */

@@ -12,6 +12,10 @@ import java.util.Set;
 import java.util.UUID;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding.TargetProof;
+import net.firedevops.firemud.common.gamedesign.AssetSource;
+import net.firedevops.firemud.common.gamedesign.BrandingSource;
+import net.firedevops.firemud.common.gamedesign.CommandSource;
+import net.firedevops.firemud.common.gamedesign.GameplayRuleSource;
 import net.firedevops.firemud.common.publication.PublicationDigestRequestBinding;
 import org.jooq.DSLContext;
 import org.jooq.Record;
@@ -204,7 +208,8 @@ public final class SelectedDraftAssetInventoryReadService {
       TargetProof selectedTarget, GameDesignSourceRepository.SynchronizedSources sources) {
     var pending = new ArrayList<PendingAsset>();
     var usageKeys = new HashSet<String>();
-    for (AssetSnapshot.Item item : sources.asset().items()) {
+    for (net.firedevops.firemud.common.gamedesign.AssetSnapshot.Item item :
+        sources.asset().items()) {
       var reference = item.reference();
       requireAssetReference(selectedTarget, reference.sourceBinding(), reference.usageKey());
       if (reference.requiredness() != AssetSource.Requiredness.REQUIRED
@@ -226,7 +231,8 @@ public final class SelectedDraftAssetInventoryReadService {
               item.byteSize()));
     }
     BrandingSourceSnapshot branding = sources.branding().orElseThrow();
-    for (BrandingSourceSnapshot.Item item : branding.items()) {
+    for (net.firedevops.firemud.common.gamedesign.BrandingSourceSnapshot.Item item :
+        branding.items()) {
       var reference = item.reference();
       requireAssetReference(selectedTarget, reference.sourceBinding(), reference.usageKey());
       if (reference.requiredness() != BrandingSource.Requiredness.REQUIRED

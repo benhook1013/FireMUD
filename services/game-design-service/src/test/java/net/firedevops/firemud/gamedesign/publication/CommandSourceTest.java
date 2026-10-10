@@ -3,6 +3,7 @@ package net.firedevops.firemud.gamedesign.publication;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import net.firedevops.firemud.common.gamedesign.CommandSource;
 import org.junit.jupiter.api.Test;
 
 class CommandSourceTest {

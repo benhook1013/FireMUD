@@ -37,6 +37,11 @@ import net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding.So
 import net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding.SourceKind;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding.Owner;
+import net.firedevops.firemud.common.gamedesign.AssetSnapshot;
+import net.firedevops.firemud.common.gamedesign.BrandingSourceSnapshot;
+import net.firedevops.firemud.common.gamedesign.CommandSnapshot;
+import net.firedevops.firemud.common.gamedesign.CommandSource;
+import net.firedevops.firemud.common.gamedesign.RealmPolicySnapshot;
 import net.firedevops.firemud.common.gamedesign.SelectedOwnerIntakeSourceClient;
 import net.firedevops.firemud.common.gamedesign.SelectedOwnerIntakeSourceContent;
 import net.firedevops.firemud.common.gamedesign.TemplateConfigSourceSnapshot;
@@ -61,7 +66,6 @@ class AccountSelectedOwnerIntakeAuthorizationServiceTest {
   private static final UUID VERSION = UUID.fromString("ffffffff-ffff-4fff-8fff-ffffffffffff");
   private static final UUID OPERATION = UUID.fromString("55555555-5555-4555-8555-555555555555");
   private static final UUID FENCE = UUID.fromString("66666666-6666-4666-8666-666666666666");
-  private static final UUID GENESIS = UUID.fromString("33333333-3333-4333-8333-333333333333");
 
   private final AccountControlUiActorService actors = mock(AccountControlUiActorService.class);
   private final DraftAuthorizationFenceRepository fences =
@@ -563,7 +567,7 @@ class AccountSelectedOwnerIntakeAuthorizationServiceTest {
                 "0",
                 UUID.fromString("33333333-3333-4333-8333-333333333333"),
                 Owner.GAME_DESIGN_CONTROL_PLANE,
-                "{}")),
+                CommandSource.deletePayload("synthetic-fixture-command"))),
         List.of(
             new DraftCommitBinding.AffectedUnit(
                 Owner.GAME_DESIGN_CONTROL_PLANE,
@@ -583,6 +587,8 @@ class AccountSelectedOwnerIntakeAuthorizationServiceTest {
   private static SelectedOwnerIntakeSourceContent content(
       SelectedOwnerIntakeSourceReadScope scope, String marker) {
     var selected = scope.selected();
+    UUID markerGenesis = UUID.nameUUIDFromBytes(marker.getBytes(StandardCharsets.UTF_8));
+    String markerEpoch = Integer.toUnsignedString(marker.hashCode());
     var gameplay =
         new GameplayRuleSelectedSource(
             GameplayRuleManifest.canonical(
@@ -592,16 +598,27 @@ class AccountSelectedOwnerIntakeAuthorizationServiceTest {
                     "bindingDigest", selected.digest(),
                     "sourceEpoch", "0",
                     "inheritedCommitId", "",
-                    "genesisReceiptId", GENESIS.toString(),
+                    "genesisReceiptId", markerGenesis.toString(),
                     "manifestJson", GameplayRuleManifest.explicitEmpty().canonicalJson(),
                     "entries", List.of())));
-    var template = new TemplateConfigSourceSnapshot(selected, "0", null, GENESIS, List.of());
-    Map<String, byte[]> opaque =
+    var template = new TemplateConfigSourceSnapshot(selected, "0", null, markerGenesis, List.of());
+    Map<String, byte[]> snapshots =
         Map.of(
-            "COMMAND", opaqueSnapshot("COMMAND", selected, marker),
-            "REALM_POLICY", opaqueSnapshot("REALM_POLICY", selected, marker),
-            "ASSET", opaqueSnapshot("ASSET", selected, marker),
-            "BRANDING", opaqueSnapshot("BRANDING", selected, marker));
+            "COMMAND",
+            new CommandSnapshot(
+                    selected,
+                    "0",
+                    null,
+                    DraftAuthorizationFenceBinding.digest(marker.getBytes(StandardCharsets.UTF_8)),
+                    List.of())
+                .canonicalBytes(),
+            "REALM_POLICY",
+            new RealmPolicySnapshot(selected, markerEpoch, List.of()).canonicalBytes(),
+            "ASSET",
+            new AssetSnapshot(selected, "0", null, markerGenesis, List.of()).canonicalBytes(),
+            "BRANDING",
+            new BrandingSourceSnapshot(selected, "0", null, markerGenesis, List.of())
+                .canonicalBytes());
     var out = new ByteArrayOutputStream();
     DraftAuthorizationFenceBinding.frame(out, SelectedOwnerIntakeSourceContent.DOMAIN);
     DraftAuthorizationFenceBinding.frame(out, scope.canonicalBytes());
@@ -613,7 +630,7 @@ class AccountSelectedOwnerIntakeAuthorizationServiceTest {
           switch (family) {
             case "GAMEPLAY_RULE" -> gameplay.canonicalBytes();
             case "TEMPLATE_CONFIG" -> template.canonicalBytes();
-            default -> opaque.get(family);
+            default -> snapshots.get(family);
           };
       DraftAuthorizationFenceBinding.frame(out, family);
       DraftAuthorizationFenceBinding.frame(out, snapshot);
@@ -622,22 +639,6 @@ class AccountSelectedOwnerIntakeAuthorizationServiceTest {
     byte[] bytes = out.toByteArray();
     return SelectedOwnerIntakeSourceContent.fromStored(
         bytes, scope, DraftAuthorizationFenceBinding.digest(bytes));
-  }
-
-  private static byte[] opaqueSnapshot(String family, DraftCommitBinding selected, String marker) {
-    return GameplayRuleManifest.canonical(
-            Map.of(
-                "schema",
-                "synthetic-test-only/v1",
-                "bindingJson",
-                selected.canonicalJson(),
-                "bindingDigest",
-                selected.digest(),
-                "family",
-                family,
-                "marker",
-                marker))
-        .getBytes(StandardCharsets.UTF_8);
   }
 
   private static String tokenHash(String value) {

@@ -1,4 +1,4 @@
-package net.firedevops.firemud.gamedesign.publication;
+package net.firedevops.firemud.common.gamedesign;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
@@ -20,21 +20,15 @@ import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.json.JsonMapper;
 
 /**
- * Closed branding asset-reference source operations for the existing Draft coordinator. This codec
+ * Closed ordinary asset-reference source operations for the existing Draft coordinator. This codec
  * does not qualify asset rows, authenticate an operation, establish genesis or attest completeness.
  */
-public final class BrandingSource {
-  public static final String SCOPE = "BRANDING_ASSET_REFERENCE_SET";
+public final class AssetSource {
+  public static final String SCOPE = "ASSET_REFERENCE_SET";
   public static final String SCOPE_ID = "effective";
-  public static final String REVISION_KIND = "BRANDING_ASSET_REFERENCE";
-  public static final String FAMILY = "BRANDING";
-
-  public enum Role {
-    RESOURCE,
-    LOGO,
-    FAVICON,
-    THEME
-  }
+  public static final String REVISION_KIND = "ASSET_REFERENCE";
+  public static final String FAMILY = "ORDINARY";
+  public static final String ROLE = "RESOURCE";
 
   private static final JsonMapper JSON =
       JsonMapper.builder()
@@ -42,11 +36,7 @@ public final class BrandingSource {
           .enable(DeserializationFeature.FAIL_ON_TRAILING_TOKENS)
           .build();
 
-  private BrandingSource() {}
-
-  public static Map<String, String> emptyRoleDeclarations() {
-    return Map.of("RESOURCE", "EMPTY", "LOGO", "EMPTY", "FAVICON", "EMPTY", "THEME", "EMPTY");
-  }
+  private AssetSource() {}
 
   public enum OperationKind {
     UPSERT,
@@ -66,13 +56,11 @@ public final class BrandingSource {
       OperationKind operation,
       String usageKey,
       String assetRowId,
-      Role role,
       Requiredness requiredness) {
     public Mutation {
       Objects.requireNonNull(binding, "binding");
       Objects.requireNonNull(operation, "operation");
       requireUsageKey(usageKey);
-      Objects.requireNonNull(role, "role");
       var revision =
           binding.revisions().stream()
               .filter(value -> value.revisionId().equals(revisionId))
@@ -83,12 +71,12 @@ public final class BrandingSource {
                   () -> new IllegalArgumentException("Asset revision is not in its exact binding"));
       String expectedPayload;
       if (operation == OperationKind.UPSERT) {
-        expectedPayload = upsertPayload(assetRowId, usageKey, role, requiredness);
+        expectedPayload = upsertPayload(assetRowId, usageKey, requiredness);
       } else {
         if (assetRowId != null || requiredness != null) {
           throw new IllegalArgumentException("Asset DELETE cannot carry UPSERT fields");
         }
-        expectedPayload = deletePayload(usageKey, role);
+        expectedPayload = deletePayload(usageKey);
       }
       // Parse before canonicalization so duplicate fields or trailing JSON can never collapse.
       JsonNode actual = tree(revision.payload());
@@ -118,7 +106,6 @@ public final class BrandingSource {
   public record Reference(
       String usageKey,
       String assetRowId,
-      Role role,
       Requiredness requiredness,
       DraftCommitBinding sourceBinding,
       String revisionOrder,
@@ -132,12 +119,15 @@ public final class BrandingSource {
           OperationKind.UPSERT,
           usageKey,
           assetRowId,
-          role,
           requiredness);
     }
 
     public String family() {
       return FAMILY;
+    }
+
+    public String role() {
+      return ROLE;
     }
   }
 
@@ -162,11 +152,11 @@ public final class BrandingSource {
       if (revision.owner() != Owner.GAME_DESIGN_CONTROL_PLANE) continue;
       JsonNode payload = tree(revision.payload());
       String kind = text(payload, "revisionKind");
-      if ("COMMAND_DEFINITION".equals(kind)
-          || "REALM_ENTRY_POLICY".equals(kind)
-          || TemplateConfigSource.REVISION_KIND.equals(kind)
+      if (CommandSource.REVISION_KIND.equals(kind)
+          || RealmPolicySource.REVISION_KIND.equals(kind)
+          || TemplateConfigSourceValues.REVISION_KIND.equals(kind)
           || GameplayRuleSource.REVISION_KIND.equals(kind)
-          || AssetSource.REVISION_KIND.equals(kind)) continue;
+          || BrandingSource.REVISION_KIND.equals(kind)) continue;
       if (!REVISION_KIND.equals(kind)) {
         throw new IllegalArgumentException("Unsupported Game Design asset source revision kind");
       }
@@ -182,7 +172,6 @@ public final class BrandingSource {
               operation,
               text(payload, "usageKey"),
               operation == OperationKind.UPSERT ? text(payload, "assetRowId") : null,
-              Role.valueOf(text(payload, "role")),
               operation == OperationKind.UPSERT
                   ? Requiredness.valueOf(text(payload, "requiredness"))
                   : null));
@@ -191,12 +180,11 @@ public final class BrandingSource {
   }
 
   public static String upsertPayload(
-      String assetRowId, String usageKey, Role role, Requiredness requiredness) {
+      String assetRowId, String usageKey, Requiredness requiredness) {
     requireAssetRowId(assetRowId);
-    Objects.requireNonNull(role, "role");
     requireUsageKey(usageKey);
     if (requiredness != Requiredness.REQUIRED) {
-      throw new IllegalArgumentException("Branding RESOURCE requires REQUIRED owner policy");
+      throw new IllegalArgumentException("Ordinary RESOURCE requires REQUIRED owner policy");
     }
     return canonical(
         Map.of(
@@ -207,7 +195,7 @@ public final class BrandingSource {
             "family",
             FAMILY,
             "role",
-            role.name(),
+            ROLE,
             "operation",
             "UPSERT",
             "assetRowId",
@@ -218,8 +206,7 @@ public final class BrandingSource {
             requiredness.name()));
   }
 
-  public static String deletePayload(String usageKey, Role role) {
-    Objects.requireNonNull(role, "role");
+  public static String deletePayload(String usageKey) {
     requireUsageKey(usageKey);
     return canonical(
         Map.of(
@@ -230,7 +217,7 @@ public final class BrandingSource {
             "family",
             FAMILY,
             "role",
-            role.name(),
+            ROLE,
             "operation",
             "DELETE",
             "usageKey",
@@ -251,7 +238,6 @@ public final class BrandingSource {
             new Reference(
                 mutation.usageKey(),
                 mutation.assetRowId(),
-                mutation.role(),
                 mutation.requiredness(),
                 binding,
                 mutation.revisionOrder(),
@@ -269,7 +255,7 @@ public final class BrandingSource {
     return new Snapshot(
         binding,
         effective.values().stream()
-            .sorted(Comparator.comparing(Reference::usageKey, BrandingSource::compareUtf8))
+            .sorted(Comparator.comparing(Reference::usageKey, AssetSource::compareUtf8))
             .toList());
   }
 

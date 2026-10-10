@@ -21,6 +21,7 @@ import net.firedevops.firemud.common.automation.AutomationAuthoredSourceInventor
 import net.firedevops.firemud.common.entity.EntityAuthoredSourceInventoryDeclaration;
 import net.firedevops.firemud.common.gamedesign.DraftSynchronizedVisibilityEvidence.AppliedEpoch;
 import net.firedevops.firemud.common.gamedesign.SelectedOwnerIntakeSourceContent;
+import net.firedevops.firemud.common.gamedesign.SelectedOwnerIntakeSourceTestFixtures;
 import net.firedevops.firemud.common.gamedesign.TemplateConfigOwnerSourceInventoryDeclaration;
 import net.firedevops.firemud.common.gamedesign.TemplateConfigSourceSnapshot;
 import net.firedevops.firemud.common.gamedesign.TemplateConfigSourceValues;
@@ -257,7 +258,8 @@ class SelectedOwnerEmptySourceInputsTest {
       payloads.add(
           TemplateConfigSourceValues.createPayload("entry-" + index, options.entries().get(index)));
     }
-    if (payloads.isEmpty()) payloads.add("{\"revisionKind\":\"COMMAND_DEFINITION\"}");
+    if (payloads.isEmpty())
+      payloads.add(SelectedOwnerIntakeSourceTestFixtures.selectedRevisionPayload());
 
     DraftCommitBinding authored = authoredBinding(payloads);
     var mutations = TemplateConfigSourceValues.mutations(authored);
@@ -360,17 +362,7 @@ class SelectedOwnerEmptySourceInputsTest {
                       List.of())))
           .canonicalBytes();
     }
-    return GameplayRuleManifest.canonical(
-            Map.of(
-                "schema",
-                "synthetic-test-only/v1",
-                "bindingJson",
-                selected.canonicalJson(),
-                "bindingDigest",
-                selected.digest(),
-                "family",
-                family))
-        .getBytes(StandardCharsets.UTF_8);
+    return SelectedOwnerIntakeSourceTestFixtures.snapshot(family, selected);
   }
 
   private static List<SourceEvidence> accountSources() {

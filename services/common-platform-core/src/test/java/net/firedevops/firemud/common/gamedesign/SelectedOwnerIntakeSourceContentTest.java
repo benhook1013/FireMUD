@@ -57,6 +57,26 @@ class SelectedOwnerIntakeSourceContentTest {
       assertThat(content.canonicalBytes()).isNotEqualTo(exposedContent);
       assertThat(content.digest()).isEqualTo(digest(encode(scope, snapshots)));
       assertThat(content.snapshotBytes("COMMAND")).isEqualTo(expected);
+      assertThat(content.commandSource().binding()).isEqualTo(selected);
+      assertThat(content.commandSource().definitions()).isEmpty();
+      assertThat(content.commandSource().canonicalBytes())
+          .containsExactly(content.snapshotBytes("COMMAND"));
+      assertThat(content.realmPolicySource().binding()).isEqualTo(selected);
+      assertThat(content.realmPolicySource().policies()).isEmpty();
+      assertThat(content.realmPolicySource().canonicalBytes())
+          .containsExactly(content.snapshotBytes("REALM_POLICY"));
+      assertThat(content.assetSource().binding()).isEqualTo(selected);
+      assertThat(content.assetSource().inheritedCommitId()).isNull();
+      assertThat(content.assetSource().genesisReceiptId()).isEqualTo(GENESIS);
+      assertThat(content.assetSource().items()).isEmpty();
+      assertThat(content.assetSource().canonicalBytes())
+          .containsExactly(content.snapshotBytes("ASSET"));
+      assertThat(content.brandingSource().binding()).isEqualTo(selected);
+      assertThat(content.brandingSource().inheritedCommitId()).isNull();
+      assertThat(content.brandingSource().genesisReceiptId()).isEqualTo(GENESIS);
+      assertThat(content.brandingSource().items()).isEmpty();
+      assertThat(content.brandingSource().canonicalBytes())
+          .containsExactly(content.snapshotBytes("BRANDING"));
       assertThat(content.gameplaySource().binding()).isEqualTo(selected);
       assertThat(content.templateConfigSource().binding()).isEqualTo(selected);
       assertThatThrownBy(() -> content.snapshotBytes("UNKNOWN"))
@@ -103,7 +123,9 @@ class SelectedOwnerIntakeSourceContentTest {
     var scope = scope(Owner.AUTOMATION_SCRIPTING, selected, INTAKE);
     List<FamilySnapshot> altered = snapshots(selected);
     altered.set(
-        0, new FamilySnapshot("COMMAND", opaqueSnapshot("COMMAND", substituted, "changed")));
+        0,
+        new FamilySnapshot(
+            "COMMAND", SelectedOwnerIntakeSourceTestFixtures.snapshot("COMMAND", substituted)));
     byte[] forged = encode(scope, altered);
 
     assertInvalid(forged, scope, digest(forged));
@@ -115,7 +137,10 @@ class SelectedOwnerIntakeSourceContentTest {
     var scope = scope(Owner.ENTITY_MANAGEMENT, selected, INTAKE);
     byte[] original = encode(scope, snapshots(selected));
     List<FamilySnapshot> altered = snapshots(selected);
-    altered.set(0, new FamilySnapshot("COMMAND", opaqueSnapshot("COMMAND", selected, "changed")));
+    altered.set(
+        0,
+        new FamilySnapshot(
+            "COMMAND", SelectedOwnerIntakeSourceTestFixtures.snapshot("COMMAND", selected, 1)));
     byte[] changed = encode(scope, altered);
 
     assertInvalid(changed, scope, digest(original));
@@ -202,6 +227,50 @@ class SelectedOwnerIntakeSourceContentTest {
   }
 
   @Test
+  void rejectsMalformedTypedCommandPolicyAssetAndBrandingSnapshots() {
+    DraftCommitBinding selected = binding(COMMIT);
+    var scope = scope(Owner.ENTITY_MANAGEMENT, selected, INTAKE);
+    for (int index : List.of(0, 1, 2, 4)) {
+      List<FamilySnapshot> invalid = new ArrayList<>(snapshots(selected));
+      FamilySnapshot original = invalid.get(index);
+      String field = index == 0 ? "definitions" : index == 1 ? "policies" : "items";
+      String malformed =
+          new String(original.bytes(), StandardCharsets.UTF_8)
+              .replaceFirst("\"" + field + "\":\\[\\]", "\"" + field + "\":{}");
+      invalid.set(
+          index, new FamilySnapshot(original.family(), malformed.getBytes(StandardCharsets.UTF_8)));
+      assertInvalid(encode(scope, invalid), scope, null);
+    }
+  }
+
+  @Test
+  void rejectsChangedTypedSourceBindingWhenEnvelopeDigestsAreRecomputed() {
+    DraftCommitBinding selected = binding(COMMIT);
+    DraftCommitBinding substituted = binding(id("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"));
+    var scope = scope(Owner.AUTOMATION_SCRIPTING, selected, INTAKE);
+    for (int index : List.of(0, 1, 2, 4)) {
+      List<FamilySnapshot> altered = new ArrayList<>(snapshots(selected));
+      FamilySnapshot original = altered.get(index);
+      String changed =
+          new String(original.bytes(), StandardCharsets.UTF_8)
+              .replace(escaped(selected.canonicalJson()), escaped(substituted.canonicalJson()))
+              .replace(selected.digest(), substituted.digest());
+      altered.set(
+          index, new FamilySnapshot(original.family(), changed.getBytes(StandardCharsets.UTF_8)));
+      assertInvalid(encode(scope, altered), scope, null);
+    }
+  }
+
+  @Test
+  void rejectsOpaqueSelectedGameDesignRevisionWithOtherwiseTypedSnapshotEnvelope() {
+    DraftCommitBinding selected = binding(COMMIT, "{\"source\":1}");
+    var scope = scope(Owner.ENTITY_MANAGEMENT, selected, INTAKE);
+    List<FamilySnapshot> typedSnapshots = snapshots(selected);
+
+    assertInvalid(encode(scope, typedSnapshots), scope, null);
+  }
+
+  @Test
   void rejectsUnknownOrderDuplicateMissingTruncatedTrailingAndOversizedFrames() {
     DraftCommitBinding selected = binding(COMMIT);
     var scope = scope(Owner.AUTOMATION_SCRIPTING, selected, INTAKE);
@@ -253,7 +322,7 @@ class SelectedOwnerIntakeSourceContentTest {
           switch (family) {
             case "GAMEPLAY_RULE" -> gameplay.canonicalBytes();
             case "TEMPLATE_CONFIG" -> template.canonicalBytes();
-            default -> opaqueSnapshot(family, selected, "synthetic-" + family);
+            default -> SelectedOwnerIntakeSourceTestFixtures.snapshot(family, selected);
           };
       result.add(new FamilySnapshot(family, bytes));
     }
@@ -274,6 +343,10 @@ class SelectedOwnerIntakeSourceContentTest {
                 "marker",
                 marker))
         .getBytes(StandardCharsets.UTF_8);
+  }
+
+  private static String escaped(String value) {
+    return value.replace("\\", "\\\\").replace("\"", "\\\"");
   }
 
   private static byte[] encode(
@@ -315,6 +388,10 @@ class SelectedOwnerIntakeSourceContentTest {
   }
 
   private static DraftCommitBinding binding(UUID commitId) {
+    return binding(commitId, SelectedOwnerIntakeSourceTestFixtures.selectedRevisionPayload());
+  }
+
+  private static DraftCommitBinding binding(UUID commitId, String revisionPayload) {
     return DraftCommitBinding.create(
         new DraftCommitBinding.TargetProof(
             TENANT, VERSION, 23L, "tenant", 42L, "tenant", "NEW_GAME_ROW"),
@@ -323,7 +400,7 @@ class SelectedOwnerIntakeSourceContentTest {
         "base-commit-0",
         List.of(
             new DraftCommitBinding.RevisionPayload(
-                "0", REVISION, Owner.GAME_DESIGN_CONTROL_PLANE, "{}")),
+                "0", REVISION, Owner.GAME_DESIGN_CONTROL_PLANE, revisionPayload)),
         List.of(
             new DraftCommitBinding.AffectedUnit(
                 Owner.GAME_DESIGN_CONTROL_PLANE,

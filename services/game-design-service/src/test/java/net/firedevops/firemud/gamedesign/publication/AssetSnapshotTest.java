@@ -7,6 +7,8 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding;
+import net.firedevops.firemud.common.gamedesign.AssetSource;
+import net.firedevops.firemud.common.gamedesign.CommandSource;
 import org.junit.jupiter.api.Test;
 
 class AssetSnapshotTest {
@@ -15,7 +17,8 @@ class AssetSnapshotTest {
     var binding = binding();
     var reference = AssetSource.replay(List.of(), binding).references().getFirst();
     var item =
-        new AssetSnapshot.Item(reference, "image/png", CommandSource.sha256(new byte[] {1, 2}), 2);
+        new net.firedevops.firemud.common.gamedesign.AssetSnapshot.Item(
+            reference, "image/png", CommandSource.sha256(new byte[] {1, 2}), 2);
     var mutable = new ArrayList<>(List.of(item));
     var snapshot = new AssetSnapshot(binding, "1", null, UUID.randomUUID(), mutable);
     mutable.clear();
@@ -42,7 +45,7 @@ class AssetSnapshotTest {
             null,
             UUID.randomUUID(),
             List.of(
-                new AssetSnapshot.Item(
+                new net.firedevops.firemud.common.gamedesign.AssetSnapshot.Item(
                     reference, "image/png", CommandSource.sha256(new byte[0]), 0)));
     String json = snapshot.canonicalJson();
     for (String invalid :
@@ -55,13 +58,18 @@ class AssetSnapshotTest {
           .isInstanceOf(IllegalArgumentException.class);
     }
     assertThatThrownBy(
-            () -> new AssetSnapshot.Item(reference, "", CommandSource.sha256(new byte[0]), 0))
-        .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(() -> new AssetSnapshot.Item(reference, "image/png", "sha256:00", 0))
+            () ->
+                new net.firedevops.firemud.common.gamedesign.AssetSnapshot.Item(
+                    reference, "", CommandSource.sha256(new byte[0]), 0))
         .isInstanceOf(IllegalArgumentException.class);
     assertThatThrownBy(
             () ->
-                new AssetSnapshot.Item(
+                new net.firedevops.firemud.common.gamedesign.AssetSnapshot.Item(
+                    reference, "image/png", "sha256:00", 0))
+        .isInstanceOf(IllegalArgumentException.class);
+    assertThatThrownBy(
+            () ->
+                new net.firedevops.firemud.common.gamedesign.AssetSnapshot.Item(
                     reference, "image/png", CommandSource.sha256(new byte[0]), -1))
         .isInstanceOf(IllegalArgumentException.class);
   }

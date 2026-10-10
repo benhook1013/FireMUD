@@ -1,6 +1,5 @@
 package net.firedevops.firemud.automationscripting.sourceintake;
 
-import java.util.List;
 import java.util.Objects;
 import net.firedevops.firemud.common.account.sourceintake.SelectedOwnerEmptySourceInputs;
 import net.firedevops.firemud.common.account.sourceintake.SelectedOwnerIntakeAuthorizationBinding;
@@ -21,9 +20,10 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
  * <p>Account's HELD reads are point-in-time samples. They do not extend through Automation's local
  * commit and do not settle the original Account source participation.
  *
- * <p>The current shared six-family selected-source envelope leaves COMMAND, REALM_POLICY, ASSET,
- * and BRANDING opaque to Automation. This service therefore fails closed before local retention;
- * typed validation of those family references is still required for a successful fresh receipt.
+ * <p>The shared selected-source value checks exact canonical bytes and typed snapshots for all six
+ * existing Game Design source families. Authenticated Account and World clients establish the
+ * remote read identities and HELD/inventory results; typed integrity alone does not authenticate
+ * either producer or establish continuous source-writer protection.
  */
 public final class AutomationEmptySelectedSourceIntakeService {
   private final AutomationEmptySelectedSourceIntakeRepository repository;
@@ -43,9 +43,8 @@ public final class AutomationEmptySelectedSourceIntakeService {
 
   /**
    * Returns an exact prior receipt for a lost-response retry, or prepares a fresh retention
-   * attempt. Fresh acceptance currently fails closed because four selected source families remain
-   * opaque to Automation. This operation does not create scripts, bindings, runtime markers, or
-   * activation state.
+   * attempt. This operation does not create scripts, bindings, runtime markers, or activation
+   * state.
    */
   public AutomationEmptySelectedSourceIntakeReceipt retain(
       String targetNamespace,
@@ -90,11 +89,11 @@ public final class AutomationEmptySelectedSourceIntakeService {
     // the value itself—supply producer identity and HELD authorization.
     SelectedOwnerEmptySourceInputs inputs =
         new SelectedOwnerEmptySourceInputs(originalBinding, worldEvidence);
-    requireSupportedSelectedSourceClosure(inputs);
 
     // Re-sample HELD after the remote World read to reduce the gap before local commit. This is
-    // still not continuous protection; Account's source participation remains pending for a
-    // future exact terminal settlement protocol.
+    // only a point-in-time observation: finalized pending Account source participation remains
+    // under its source-writer exclusion guards. This preparation neither extends nor settles or
+    // releases them; exact Automation terminal settlement is not implemented.
     SelectedOwnerIntakeAuthorizationReadEvidence.Request finalAuthorizationReadRequest =
         SelectedOwnerIntakeAuthorizationReadEvidence.Request.create(
             targetNamespace, originalBinding);
@@ -108,19 +107,6 @@ public final class AutomationEmptySelectedSourceIntakeService {
         repository.retainFresh(inputs, requestDigest);
     receipt.requireSameRequest(targetNamespace, originalBinding, exactFreeze);
     return receipt;
-  }
-
-  private static void requireSupportedSelectedSourceClosure(SelectedOwnerEmptySourceInputs inputs) {
-    List<String> opaqueFamilies = List.of("COMMAND", "REALM_POLICY", "ASSET", "BRANDING");
-    for (String family : opaqueFamilies) {
-      // The current integrity envelope retains these exact bytes but does not expose a typed
-      // reference validator. Nonempty bytes or a declaration saying [] cannot prove that an
-      // opaque selected source contains no inbound script or hook references.
-      if (inputs.sourceContent().snapshotBytes(family).length > 0) {
-        throw new IllegalArgumentException(
-            "Automation selected-source closure is unsupported for opaque " + family + " content");
-      }
-    }
   }
 
   private static void requireAuthenticatedGameDesignCaller(String targetNamespace) {

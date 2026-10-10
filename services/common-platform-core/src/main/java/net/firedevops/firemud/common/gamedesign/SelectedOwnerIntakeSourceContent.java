@@ -18,11 +18,11 @@ import net.firedevops.firemud.common.json.Rfc8785CanonicalJson;
 /**
  * Exact six-family Game Design source content bound to one selected-owner preliminary scope.
  *
- * <p>Decoding checks framing, hashes, canonical JSON bindings and the existing typed gameplay-rule
- * and template-config sources. It does not authenticate disclosure, grant finalization or retention
- * authority, prove an owner inventory complete or empty, or create an owner receipt. Template
- * snapshot v1/v2 parsing retains the stored grammar but does not prove a fresh authored inventory.
- * Four source families remain opaque beyond their canonical JSON binding to the selected Draft.
+ * <p>Decoding checks framing, hashes, canonical JSON bindings and each existing typed source
+ * snapshot. It does not authenticate disclosure, grant finalization or retention authority, prove
+ * an owner inventory complete or empty, or create an owner receipt. Template snapshot v1/v2 parsing
+ * retains the stored grammar but does not prove a fresh authored inventory. Typed snapshot
+ * integrity is not independent proof that all owner references are resolved.
  */
 public final class SelectedOwnerIntakeSourceContent {
   public static final String DOMAIN = "game-design-selected-owner-intake-source/v1";
@@ -36,6 +36,10 @@ public final class SelectedOwnerIntakeSourceContent {
   private final byte[] canonicalBytes;
   private final String digest;
   private final Map<String, byte[]> snapshots;
+  private final CommandSnapshot commandSource;
+  private final RealmPolicySnapshot realmPolicySource;
+  private final AssetSnapshot assetSource;
+  private final BrandingSourceSnapshot brandingSource;
   private final GameplayRuleSelectedSource gameplaySource;
   private final TemplateConfigSourceSnapshot templateConfigSource;
 
@@ -44,6 +48,10 @@ public final class SelectedOwnerIntakeSourceContent {
       byte[] canonicalBytes,
       String digest,
       Map<String, byte[]> snapshots,
+      CommandSnapshot commandSource,
+      RealmPolicySnapshot realmPolicySource,
+      AssetSnapshot assetSource,
+      BrandingSourceSnapshot brandingSource,
       GameplayRuleSelectedSource gameplaySource,
       TemplateConfigSourceSnapshot templateConfigSource) {
     this.scope = scope;
@@ -52,6 +60,10 @@ public final class SelectedOwnerIntakeSourceContent {
     var copiedSnapshots = new LinkedHashMap<String, byte[]>();
     for (String family : FAMILIES) copiedSnapshots.put(family, snapshots.get(family).clone());
     this.snapshots = Map.copyOf(copiedSnapshots);
+    this.commandSource = commandSource;
+    this.realmPolicySource = realmPolicySource;
+    this.assetSource = assetSource;
+    this.brandingSource = brandingSource;
     this.gameplaySource = gameplaySource;
     this.templateConfigSource = templateConfigSource;
   }
@@ -103,6 +115,15 @@ public final class SelectedOwnerIntakeSourceContent {
     }
     reader.requireEnd();
 
+    CommandSnapshot commandSource =
+        CommandSnapshot.fromStored(utf8(snapshots.get("COMMAND"), "COMMAND"));
+    RealmPolicySnapshot realmPolicySource =
+        RealmPolicySnapshot.fromStored(utf8(snapshots.get("REALM_POLICY"), "REALM_POLICY"));
+    AssetSnapshot assetSource = AssetSnapshot.fromStored(utf8(snapshots.get("ASSET"), "ASSET"));
+    BrandingSourceSnapshot brandingSource =
+        BrandingSourceSnapshot.fromStored(utf8(snapshots.get("BRANDING"), "BRANDING"));
+    requireClosedGameDesignRevisions(decodedScope.selected());
+
     GameplayRuleSelectedSource gameplaySource =
         new GameplayRuleSelectedSource(utf8(snapshots.get("GAMEPLAY_RULE"), "GAMEPLAY_RULE"));
     if (!decodedScope.selected().equals(gameplaySource.binding()))
@@ -115,7 +136,16 @@ public final class SelectedOwnerIntakeSourceContent {
       throw new IllegalArgumentException("Selected template config binding differs");
 
     return new SelectedOwnerIntakeSourceContent(
-        decodedScope, stored, actualDigest, snapshots, gameplaySource, templateConfigSource);
+        decodedScope,
+        stored,
+        actualDigest,
+        snapshots,
+        commandSource,
+        realmPolicySource,
+        assetSource,
+        brandingSource,
+        gameplaySource,
+        templateConfigSource);
   }
 
   public SelectedOwnerIntakeSourceReadScope scope() {
@@ -144,8 +174,40 @@ public final class SelectedOwnerIntakeSourceContent {
     return gameplaySource;
   }
 
+  public CommandSnapshot commandSource() {
+    return commandSource;
+  }
+
+  public RealmPolicySnapshot realmPolicySource() {
+    return realmPolicySource;
+  }
+
+  public AssetSnapshot assetSource() {
+    return assetSource;
+  }
+
+  public BrandingSourceSnapshot brandingSource() {
+    return brandingSource;
+  }
+
   public TemplateConfigSourceSnapshot templateConfigSource() {
     return templateConfigSource;
+  }
+
+  private static void requireClosedGameDesignRevisions(DraftCommitBinding binding) {
+    // Each actual owner grammar validates its family and rejects unrecognized Game Design kinds.
+    // Other owners' payloads are not interpreted as Game Design sources or silently reconstructed.
+    CommandSource.mutations(binding);
+    AssetSource.mutations(binding);
+    BrandingSource.mutations(binding);
+    GameplayRuleSource.mutations(binding);
+    TemplateConfigSourceValues.mutations(binding);
+    for (var revision : binding.revisions()) {
+      if (revision.owner() == DraftCommitBinding.Owner.GAME_DESIGN_CONTROL_PLANE
+          && RealmPolicySource.isPolicyRevision(revision)) {
+        RealmPolicySource.revision(binding, revision);
+      }
+    }
   }
 
   private static void requireSelectedBinding(
