@@ -793,7 +793,9 @@ class AccountJwtReadinessStoragePostgresIntegrationTest {
                 inTransaction(
                     context,
                     () -> restartedDesired.readCurrentGenerationRequest(BINDING, owner.trust())))
-        .isInstanceOf(AccountJwtSignerDesiredStateRepository.QuarantinedStateException.class);
+        .isInstanceOf(
+            AccountJwtSignerDesiredStateRepository.PromotionPrerequisitesIncompleteException.class)
+        .hasMessage("Existing PREPARED signer state requires unavailable lifecycle evidence");
     var restartedProof =
         inTransaction(
             context,
