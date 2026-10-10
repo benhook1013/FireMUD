@@ -152,46 +152,76 @@ public final class GameSessionStartSessionTemplateAssociationRepository {
     }
 
     Association association = candidate.association();
-    Record inserted =
-        dsl.fetchOne(
-            "INSERT INTO "
-                + TABLE
-                + " (target_namespace, control_plane_request_id, canonical_tenant_id, "
-                + "owner_attempt_id, owner_fence, post_authorization_execution_tuple, "
-                + "post_authorization_tuple_digest, account_redemption_projection_digest, "
-                + "association_request_wire, association_response_wire, association_request_digest, "
-                + "association_response_digest, template_id, canonical_version_id, selected_commit_id, "
-                + "publish_workflow_id, publication_selection_digest, association_digest, "
-                + "world_intake_request_id, world_operation_id, source_operation_id, "
-                + "source_evidence_digest) "
-                + "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
-                + "RETURNING *",
-            attempt.targetNamespace(),
-            attempt.controlPlaneRequestId(),
-            attempt.canonicalTenantId(),
-            attempt.ownerAttemptId(),
-            attempt.ownerFence(),
-            attempt.postAuthorizationExecutionTuple(),
-            sha256(attempt.postAuthorizationExecutionTuple()),
-            sha256(attempt.accountRedemptionProjection()),
-            requestWire,
-            responseWire,
-            sha256(requestWire),
-            sha256(responseWire),
-            association.templateId(),
-            association.canonicalVersionId(),
-            association.selectedCommitId(),
-            association.publishWorkflowId(),
-            association.publicationSelectionDigest(),
-            association.associationDigest(),
-            association.intakeRequestId(),
-            association.worldOperationId(),
-            association.sourceOperationId(),
-            association.sourceEvidenceDigest());
+    Record inserted = insertInitialPin(claim, attempt, association, requestWire, responseWire);
     if (inserted == null) {
-      throw new IllegalStateException("Game Session association pin insert returned no row");
+      throw new StaleStartSessionOperatorAttemptClaimException(
+          "Game Session owner claim expired or changed before the initial association pin");
     }
     return decodeStored(inserted, claim.targetNamespace(), claim.controlPlaneRequestId(), attempt);
+  }
+
+  private Record insertInitialPin(
+      GameSessionStartSessionOperatorAttemptRepository.AttemptClaim claim,
+      GameSessionStartSessionOperatorAttemptRepository.AttemptSnapshot attempt,
+      Association association,
+      byte[] requestWire,
+      byte[] responseWire) {
+    byte[] exactTuple = attempt.postAuthorizationExecutionTuple();
+    byte[] exactProjection = attempt.accountRedemptionProjection();
+    if (exactProjection == null) {
+      throw new StaleStartSessionOperatorAttemptClaimException(
+          "Template association pin requires the original attached Account projection");
+    }
+    return dsl.fetchOne(
+        "INSERT INTO "
+            + TABLE
+            + " (target_namespace, control_plane_request_id, canonical_tenant_id, "
+            + "owner_attempt_id, owner_fence, post_authorization_execution_tuple, "
+            + "post_authorization_tuple_digest, account_redemption_projection_digest, "
+            + "association_request_wire, association_response_wire, association_request_digest, "
+            + "association_response_digest, template_id, canonical_version_id, selected_commit_id, "
+            + "publish_workflow_id, publication_selection_digest, association_digest, "
+            + "world_intake_request_id, world_operation_id, source_operation_id, "
+            + "source_evidence_digest) "
+            + "SELECT attempt.target_namespace, attempt.control_plane_request_id, "
+            + "attempt.canonical_tenant_id, attempt.owner_attempt_id, attempt.owner_fence, "
+            + "attempt.post_authorization_execution_tuple, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ? "
+            + "FROM game_session_start_session_operator_attempt attempt "
+            + "WHERE attempt.target_namespace = ? AND attempt.control_plane_request_id = ? "
+            + "AND attempt.canonical_tenant_id = ? "
+            + "AND attempt.owner_attempt_id = ? AND attempt.owner_mutation_id = ? "
+            + "AND attempt.claim_owner_id = ? AND attempt.owner_fence = ? "
+            + "AND attempt.phase_state = 'OWNER_EXECUTION_PENDING' "
+            + "AND attempt.account_redemption_projection IS NOT NULL "
+            + "AND attempt.post_authorization_execution_tuple = ? "
+            + "AND attempt.account_redemption_projection = ? "
+            + "AND attempt.lease_expires_at > clock_timestamp() "
+            + "RETURNING *",
+        sha256(exactTuple),
+        sha256(exactProjection),
+        requestWire,
+        responseWire,
+        sha256(requestWire),
+        sha256(responseWire),
+        association.templateId(),
+        association.canonicalVersionId(),
+        association.selectedCommitId(),
+        association.publishWorkflowId(),
+        association.publicationSelectionDigest(),
+        association.associationDigest(),
+        association.intakeRequestId(),
+        association.worldOperationId(),
+        association.sourceOperationId(),
+        association.sourceEvidenceDigest(),
+        claim.targetNamespace(),
+        claim.controlPlaneRequestId(),
+        attempt.canonicalTenantId(),
+        claim.ownerAttemptId(),
+        claim.ownerMutationId(),
+        claim.claimOwnerId(),
+        claim.ownerFence(),
+        exactTuple,
+        exactProjection);
   }
 
   private GameSessionStartSessionOperatorAttemptRepository.AttemptSnapshot validateCurrentAttempt(

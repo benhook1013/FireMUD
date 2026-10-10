@@ -14,7 +14,9 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.time.Instant;
+import java.time.OffsetDateTime;
 import java.util.List;
+import java.util.Objects;
 import java.util.UUID;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
@@ -32,6 +34,7 @@ import net.firedevops.firemud.common.gamedesign.StartSessionTemplateAssociationR
 import net.firedevops.firemud.common.gamedesign.StartSessionTemplateAssociationReadEvidence.InitialConfigured;
 import net.firedevops.firemud.common.gamedesign.StartSessionTemplateAssociationReadEvidence.Request;
 import net.firedevops.firemud.common.gamedesign.StartSessionTemplateAssociationReadEvidence.Result;
+import net.firedevops.firemud.common.json.Rfc8785CanonicalJson;
 import net.firedevops.firemud.common.operator.StartSessionAuthorityEvidenceBundle;
 import net.firedevops.firemud.common.operator.StartSessionPostAuthorizationExecutionTuple;
 import net.firedevops.firemud.gamedesign.v1.PublishedReleaseBundle;
@@ -273,6 +276,189 @@ class GameSessionStartSessionLaunchDescriptorRepositoryIntegrationTest {
   }
 
   @Test
+  void continuationReplayRejectsAClaimThatExpiresWhileTheDescriptorReadWaits() throws Exception {
+    Fixture fixture = fixture(Duration.ofSeconds(5));
+    RetainedAssociation retained =
+        retainAssociation(fixture, "descriptor-continuation-read-expiry");
+    fixture.pin(retained.claim(), descriptor(retained, "descriptor-read-expiry"));
+    EvidenceContinuation continuation = fixture.continueEvidence(retained.tuple());
+    CountDownLatch blockerReady = new CountDownLatch(1);
+    CountDownLatch releaseBlocker = new CountDownLatch(1);
+    ExecutorService executor = Executors.newFixedThreadPool(2);
+    try {
+      java.util.concurrent.CompletableFuture<Integer> blockerPid =
+          new java.util.concurrent.CompletableFuture<>();
+      Future<?> blocker =
+          executor.submit(
+              () ->
+                  fixture.transactions.executeWithoutResult(
+                      status -> {
+                        int backendPid =
+                            Objects.requireNonNull(
+                                Objects.requireNonNull(
+                                        fixture.dsl.fetchOne("SELECT pg_backend_pid()"))
+                                    .get(0, Integer.class));
+                        fixture.dsl.fetchOne(
+                            "SELECT 1 FROM game_session_start_session_launch_descriptor_pin "
+                                + "WHERE target_namespace = ? AND control_plane_request_id = ? "
+                                + "FOR UPDATE",
+                            retained.claim().targetNamespace(),
+                            retained.claim().controlPlaneRequestId());
+                        blockerPid.complete(backendPid);
+                        blockerReady.countDown();
+                        awaitLatch(releaseBlocker, "descriptor read lock release");
+                      }));
+      assertThat(blockerReady.await(15, TimeUnit.SECONDS)).isTrue();
+
+      java.util.concurrent.CompletableFuture<Integer> waiterPid =
+          new java.util.concurrent.CompletableFuture<>();
+      Future<RuntimeException> waiter =
+          executor.submit(
+              () ->
+                  fixture.transactions.execute(
+                      status -> {
+                        waiterPid.complete(
+                            Objects.requireNonNull(
+                                Objects.requireNonNull(
+                                        fixture.dsl.fetchOne("SELECT pg_backend_pid()"))
+                                    .get(0, Integer.class)));
+                        try {
+                          fixture.descriptors.findPinned(continuation);
+                          return null;
+                        } catch (RuntimeException failure) {
+                          return failure;
+                        }
+                      }));
+      int readBackendPid = waiterPid.get(15, TimeUnit.SECONDS);
+      int blockerBackendPid = blockerPid.get(15, TimeUnit.SECONDS);
+      awaitPostgresLockWait(fixture.dsl, readBackendPid, blockerBackendPid);
+      Thread.sleep(5_250L);
+      assertThat(fixture.ownerClaimLeaseLive(retained.claim().controlPlaneRequestId())).isFalse();
+      releaseBlocker.countDown();
+
+      RuntimeException failure = waiter.get(15, TimeUnit.SECONDS);
+      assertThat(failure)
+          .isInstanceOf(
+              GameSessionStartSessionOperatorAttemptRepository
+                  .StaleStartSessionOperatorAttemptClaimException.class)
+          .hasMessageContaining("expired");
+      blocker.get(15, TimeUnit.SECONDS);
+      assertThat(fixture.pinCount()).isOne();
+    } finally {
+      releaseBlocker.countDown();
+      executor.shutdownNow();
+    }
+  }
+
+  @Test
+  void liveOwnerClaimCannotCreateDescriptorPinAfterOriginalAuthorizationExpires() throws Exception {
+    Fixture fixture = fixture(Duration.ofSeconds(30));
+    Instant expiredAt =
+        Instant.now().minusSeconds(1L).truncatedTo(java.time.temporal.ChronoUnit.MILLIS);
+    StartSessionPostAuthorizationExecutionTuple tuple =
+        tupleWithAuthorizationExpiry("descriptor-original-authorization-expired", expiredAt);
+    RetainedAssociation retained = retainAssociation(fixture, tuple);
+
+    assertThat(fixture.ownerClaimLeaseLive(retained.claim().controlPlaneRequestId())).isTrue();
+    assertThatThrownBy(
+            () ->
+                fixture.pin(
+                    retained.claim(), descriptor(retained, "expired-original-auth-descriptor")))
+        .isInstanceOf(
+            GameSessionStartSessionOperatorAttemptRepository
+                .StaleStartSessionOperatorAttemptClaimException.class)
+        .hasMessageContaining("stale");
+    assertThat(fixture.pinCount()).isZero();
+  }
+
+  @Test
+  void continuationReplayRejectsOriginalReferenceThatExpiresWhileDescriptorReadWaits()
+      throws Exception {
+    Fixture fixture = fixture(Duration.ofSeconds(45));
+    Instant expiresAt =
+        Objects.requireNonNull(
+                Objects.requireNonNull(
+                        fixture.dsl.fetchOne("SELECT clock_timestamp() + interval '8 seconds'"))
+                    .get(0, OffsetDateTime.class))
+            .toInstant()
+            .truncatedTo(java.time.temporal.ChronoUnit.MILLIS);
+    String originalAuthorizationExpiresAt = expiresAt.toString();
+    StartSessionPostAuthorizationExecutionTuple tuple =
+        tupleWithAuthorizationExpiry("descriptor-reference-expiry-during-read", expiresAt);
+    RetainedAssociation retained = retainAssociation(fixture, tuple);
+    fixture.pin(retained.claim(), descriptor(retained, "reference-expiry-descriptor"));
+    EvidenceContinuation continuation = fixture.continueEvidence(retained.tuple());
+    assertThat(fixture.originalAuthorizationReferenceLive(originalAuthorizationExpiresAt)).isTrue();
+
+    CountDownLatch blockerReady = new CountDownLatch(1);
+    CountDownLatch releaseBlocker = new CountDownLatch(1);
+    ExecutorService executor = Executors.newFixedThreadPool(2);
+    try {
+      java.util.concurrent.CompletableFuture<Integer> blockerPid =
+          new java.util.concurrent.CompletableFuture<>();
+      Future<?> blocker =
+          executor.submit(
+              () ->
+                  fixture.transactions.executeWithoutResult(
+                      status -> {
+                        int backendPid =
+                            Objects.requireNonNull(
+                                Objects.requireNonNull(
+                                        fixture.dsl.fetchOne("SELECT pg_backend_pid()"))
+                                    .get(0, Integer.class));
+                        fixture.dsl.fetchOne(
+                            "SELECT 1 FROM game_session_start_session_launch_descriptor_pin "
+                                + "WHERE target_namespace = ? AND control_plane_request_id = ? "
+                                + "FOR UPDATE",
+                            retained.claim().targetNamespace(),
+                            retained.claim().controlPlaneRequestId());
+                        blockerPid.complete(backendPid);
+                        blockerReady.countDown();
+                        awaitLatch(releaseBlocker, "descriptor read lock release");
+                      }));
+      assertThat(blockerReady.await(15, TimeUnit.SECONDS)).isTrue();
+
+      java.util.concurrent.CompletableFuture<Integer> waiterPid =
+          new java.util.concurrent.CompletableFuture<>();
+      Future<RuntimeException> waiter =
+          executor.submit(
+              () ->
+                  fixture.transactions.execute(
+                      status -> {
+                        waiterPid.complete(
+                            Objects.requireNonNull(
+                                Objects.requireNonNull(
+                                        fixture.dsl.fetchOne("SELECT pg_backend_pid()"))
+                                    .get(0, Integer.class)));
+                        try {
+                          fixture.descriptors.findPinned(continuation);
+                          return null;
+                        } catch (RuntimeException failure) {
+                          return failure;
+                        }
+                      }));
+      int readBackendPid = waiterPid.get(15, TimeUnit.SECONDS);
+      int blockerBackendPid = blockerPid.get(15, TimeUnit.SECONDS);
+      awaitPostgresLockWait(fixture.dsl, readBackendPid, blockerBackendPid);
+      awaitOriginalAuthorizationExpiry(fixture, originalAuthorizationExpiresAt);
+      assertThat(fixture.ownerClaimLeaseLive(retained.claim().controlPlaneRequestId())).isTrue();
+      releaseBlocker.countDown();
+
+      RuntimeException failure = waiter.get(15, TimeUnit.SECONDS);
+      assertThat(failure)
+          .isInstanceOf(
+              GameSessionStartSessionOperatorAttemptRepository
+                  .StaleStartSessionOperatorAttemptClaimException.class)
+          .hasMessageContaining("authorization reference expired during descriptor read");
+      blocker.get(15, TimeUnit.SECONDS);
+      assertThat(fixture.pinCount()).isOne();
+    } finally {
+      releaseBlocker.countDown();
+      executor.shutdownNow();
+    }
+  }
+
+  @Test
   void concurrentContinuationOutcomesConvergeOnOneImmutableDescriptorOrConflict() throws Exception {
     Fixture fixture = fixture();
     RetainedAssociation retained = retainAssociation(fixture, "descriptor-continuation-race");
@@ -433,6 +619,11 @@ class GameSessionStartSessionLaunchDescriptorRepositoryIntegrationTest {
   private static RetainedAssociation retainAssociation(Fixture fixture, String requestId) {
     StartSessionPostAuthorizationExecutionTuple tuple =
         GameSessionStartSessionTemplateAssociationRepositoryIntegrationTest.tuple(requestId);
+    return retainAssociation(fixture, tuple);
+  }
+
+  private static RetainedAssociation retainAssociation(
+      Fixture fixture, StartSessionPostAuthorizationExecutionTuple tuple) {
     ReservationResult reservation = fixture.reserve(tuple);
     AttemptClaim claim = reservation.claim().orElseThrow();
     AccountRedemptionProjection projection =
@@ -442,6 +633,30 @@ class GameSessionStartSessionLaunchDescriptorRepositoryIntegrationTest {
         GameSessionStartSessionTemplateAssociationRepositoryIntegrationTest.result(
             tuple, claim, new InitialConfigured(), UUID.randomUUID());
     return new RetainedAssociation(tuple, claim, fixture.pinAssociation(claim, initial));
+  }
+
+  private static StartSessionPostAuthorizationExecutionTuple tupleWithAuthorizationExpiry(
+      String requestId, Instant expiresAt) throws java.io.IOException {
+    StartSessionPostAuthorizationExecutionTuple original =
+        GameSessionStartSessionTemplateAssociationRepositoryIntegrationTest.tuple(requestId);
+    byte[] originalBundle = original.authorityEvidenceBundleBytes();
+    String originalExpiry =
+        StartSessionAuthorityEvidenceBundle.decode(originalBundle).authorizationExpiresAt();
+    String bundleJson = new String(originalBundle, StandardCharsets.UTF_8);
+    String replacedBundleJson =
+        bundleJson.replace("\"" + originalExpiry + "\"", "\"" + expiresAt + "\"");
+    if (bundleJson.equals(replacedBundleJson)) {
+      throw new IllegalStateException("Could not replace original authorization expiry fixture");
+    }
+    byte[] expiredBundle = Rfc8785CanonicalJson.canonicalizeUtf8(replacedBundleJson);
+    return StartSessionPostAuthorizationExecutionTuple.createHuman(
+        original.preAuthorizationTuple(),
+        original.authenticatedWorkloadIdentity(),
+        original.authorizationReferenceFingerprint(),
+        original.reservationOwnerId(),
+        original.reservationClaimFence(),
+        expiredBundle,
+        original.bundleReference());
   }
 
   private static void assertDescriptorPinRejectedForOwnerTuple(
@@ -498,6 +713,57 @@ class GameSessionStartSessionLaunchDescriptorRepositoryIntegrationTest {
                 .StartSessionLaunchDescriptorConflictException
             conflict) {
       return false;
+    }
+  }
+
+  private static void awaitPostgresLockWait(DSLContext observer, int waiterPid, int blockerPid)
+      throws InterruptedException {
+    long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
+    boolean blockedByExpectedBackend = false;
+    while (System.nanoTime() < deadline) {
+      Boolean blocked =
+          Objects.requireNonNull(
+                  observer.fetchOne(
+                      "SELECT EXISTS (SELECT 1 FROM pg_stat_activity WHERE pid = ? "
+                          + "AND wait_event_type = 'Lock' "
+                          + "AND query ILIKE '%SELECT descriptor_pin.* FROM "
+                          + "game_session_start_session_launch_descriptor_pin%' "
+                          + "AND ? = ANY(pg_blocking_pids(pid)))",
+                      waiterPid, blockerPid))
+              .get(0, Boolean.class);
+      if (Boolean.TRUE.equals(blocked)) {
+        blockedByExpectedBackend = true;
+        break;
+      }
+      Thread.sleep(10L);
+    }
+    assertThat(blockedByExpectedBackend)
+        .as("descriptor replay SELECT waits on the held PostgreSQL row lock")
+        .isTrue();
+  }
+
+  private static void awaitOriginalAuthorizationExpiry(Fixture fixture, String expiresAt)
+      throws InterruptedException {
+    long deadline = System.nanoTime() + Duration.ofSeconds(15).toNanos();
+    while (System.nanoTime() < deadline) {
+      if (!fixture.originalAuthorizationReferenceLive(expiresAt)) {
+        return;
+      }
+      Thread.sleep(10L);
+    }
+    assertThat(fixture.originalAuthorizationReferenceLive(expiresAt))
+        .as("original Account authorization reference expires according to PostgreSQL time")
+        .isFalse();
+  }
+
+  private static void awaitLatch(CountDownLatch latch, String awaitedState) {
+    try {
+      if (!latch.await(15, TimeUnit.SECONDS)) {
+        throw new IllegalStateException("Timed out waiting for " + awaitedState);
+      }
+    } catch (InterruptedException interrupted) {
+      Thread.currentThread().interrupt();
+      throw new IllegalStateException("Interrupted while waiting for " + awaitedState, interrupted);
     }
   }
 
@@ -634,6 +900,21 @@ class GameSessionStartSessionLaunchDescriptorRepositoryIntegrationTest {
     void attach(AttemptClaim claim, AccountRedemptionProjection projection) {
       transactions.executeWithoutResult(
           status -> attempts.attachAccountRedemptionProjection(claim, projection));
+    }
+
+    boolean ownerClaimLeaseLive(String requestId) {
+      return Boolean.TRUE.equals(
+          dsl.fetchValue(
+              "SELECT lease_expires_at > clock_timestamp() FROM "
+                  + "game_session_start_session_operator_attempt "
+                  + "WHERE control_plane_request_id = ?",
+              Boolean.class,
+              requestId));
+    }
+
+    boolean originalAuthorizationReferenceLive(String expiresAt) {
+      return Boolean.TRUE.equals(
+          dsl.fetchValue("SELECT ?::timestamptz > clock_timestamp()", Boolean.class, expiresAt));
     }
 
     PinnedAssociationSnapshot pinAssociation(AttemptClaim claim, Result result) {

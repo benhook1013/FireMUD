@@ -348,6 +348,78 @@ class GameSessionStartSessionTemplateAssociationRepositoryIntegrationTest {
   }
 
   @Test
+  void initialAssociationInsertRejectsAClaimThatExpiresWhileTheInsertIsBlocked() throws Exception {
+    Fixture fixture = fixture(Duration.ofSeconds(5));
+    StartSessionPostAuthorizationExecutionTuple tuple =
+        tuple("association-pin-expiry-during-insert");
+    AttemptClaim claim = fixture.reserveAndAttach(tuple);
+    Result initial = result(tuple, claim, new InitialConfigured(), UUID.randomUUID());
+    CountDownLatch blockerReady = new CountDownLatch(1);
+    CountDownLatch releaseBlocker = new CountDownLatch(1);
+    ExecutorService executor = Executors.newFixedThreadPool(2);
+    try {
+      java.util.concurrent.CompletableFuture<Integer> blockerPid =
+          new java.util.concurrent.CompletableFuture<>();
+      Future<?> blocker =
+          executor.submit(
+              () ->
+                  fixture.transactions.executeWithoutResult(
+                      status -> {
+                        int backendPid =
+                            Objects.requireNonNull(
+                                Objects.requireNonNull(
+                                        fixture.dsl.fetchOne("SELECT pg_backend_pid()"))
+                                    .get(0, Integer.class));
+                        fixture.dsl.execute(
+                            "LOCK TABLE game_session_start_session_template_association_pin "
+                                + "IN SHARE ROW EXCLUSIVE MODE");
+                        blockerPid.complete(backendPid);
+                        blockerReady.countDown();
+                        awaitLatch(releaseBlocker, "association insert lock release");
+                      }));
+      assertThat(blockerReady.await(15, TimeUnit.SECONDS)).isTrue();
+
+      java.util.concurrent.CompletableFuture<Integer> waiterPid =
+          new java.util.concurrent.CompletableFuture<>();
+      Future<RuntimeException> waiter =
+          executor.submit(
+              () ->
+                  fixture.transactions.execute(
+                      status -> {
+                        waiterPid.complete(
+                            Objects.requireNonNull(
+                                Objects.requireNonNull(
+                                        fixture.dsl.fetchOne("SELECT pg_backend_pid()"))
+                                    .get(0, Integer.class)));
+                        try {
+                          fixture.pins.pinInitialOrValidateExactReplay(claim, initial);
+                          return null;
+                        } catch (RuntimeException failure) {
+                          return failure;
+                        }
+                      }));
+      int pinBackendPid = waiterPid.get(15, TimeUnit.SECONDS);
+      int blockerBackendPid = blockerPid.get(15, TimeUnit.SECONDS);
+      awaitPostgresLockWait(fixture.dsl, pinBackendPid, blockerBackendPid);
+      Thread.sleep(5_250L);
+      assertThat(fixture.leaseExpired(tuple.controlPlaneRequestId())).isTrue();
+      releaseBlocker.countDown();
+
+      RuntimeException failure = waiter.get(15, TimeUnit.SECONDS);
+      assertThat(failure)
+          .isInstanceOf(
+              GameSessionStartSessionOperatorAttemptRepository
+                  .StaleStartSessionOperatorAttemptClaimException.class)
+          .hasMessageContaining("expired or changed");
+      blocker.get(15, TimeUnit.SECONDS);
+      assertThat(fixture.pinCount()).isZero();
+    } finally {
+      releaseBlocker.countDown();
+      executor.shutdownNow();
+    }
+  }
+
+  @Test
   void claimWithoutAccountProjectionCannotReadOrCreateASelectionPin() {
     Fixture fixture = fixture();
     StartSessionPostAuthorizationExecutionTuple tuple = tuple("association-pin-no-account");
@@ -412,6 +484,43 @@ class GameSessionStartSessionTemplateAssociationRepositoryIntegrationTest {
                 .StartSessionTemplateAssociationConflictException
             expected) {
       return new PinOutcome(false, null);
+    }
+  }
+
+  private static void awaitPostgresLockWait(DSLContext observer, int waiterPid, int blockerPid)
+      throws InterruptedException {
+    long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
+    boolean blockedByExpectedBackend = false;
+    while (System.nanoTime() < deadline) {
+      Boolean blocked =
+          Objects.requireNonNull(
+                  observer.fetchOne(
+                      "SELECT EXISTS (SELECT 1 FROM pg_stat_activity WHERE pid = ? "
+                          + "AND wait_event_type = 'Lock' "
+                          + "AND query ILIKE '%INSERT INTO "
+                          + "game_session_start_session_template_association_pin%' "
+                          + "AND ? = ANY(pg_blocking_pids(pid)))",
+                      waiterPid, blockerPid))
+              .get(0, Boolean.class);
+      if (Boolean.TRUE.equals(blocked)) {
+        blockedByExpectedBackend = true;
+        break;
+      }
+      Thread.sleep(10L);
+    }
+    assertThat(blockedByExpectedBackend)
+        .as("association INSERT SELECT waits on the held PostgreSQL relation lock")
+        .isTrue();
+  }
+
+  private static void awaitLatch(CountDownLatch latch, String awaitedState) {
+    try {
+      if (!latch.await(15, TimeUnit.SECONDS)) {
+        throw new IllegalStateException("Timed out waiting for " + awaitedState);
+      }
+    } catch (InterruptedException interrupted) {
+      Thread.currentThread().interrupt();
+      throw new IllegalStateException("Interrupted while waiting for " + awaitedState, interrupted);
     }
   }
 

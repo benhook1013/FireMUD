@@ -57,6 +57,7 @@ public final class GameSessionStartSessionLaunchDescriptorRepository {
     Optional<GameSessionStartSessionTemplateAssociationRepository.PinnedAssociationSnapshot>
         association = associationRepository.findPinned(claim);
     Record row = selectPin(claim.targetNamespace(), claim.controlPlaneRequestId(), true);
+    association = revalidateAssociationAfterDescriptorRead(claim, association);
     if (row == null) {
       return Optional.empty();
     }
@@ -82,6 +83,7 @@ public final class GameSessionStartSessionLaunchDescriptorRepository {
     Optional<GameSessionStartSessionTemplateAssociationRepository.PinnedAssociationSnapshot>
         association = associationRepository.findPinned(continuation);
     Record row = selectPin(continuation, true);
+    association = revalidateAssociationAfterDescriptorRead(continuation, association);
     if (row == null) {
       return Optional.empty();
     }
@@ -118,6 +120,8 @@ public final class GameSessionStartSessionLaunchDescriptorRepository {
     PreparedCandidate prepared = prepareCandidate(association, candidate);
     Record existing = selectPin(claim.targetNamespace(), claim.controlPlaneRequestId(), true);
     if (existing != null) {
+      association =
+          revalidateAssociationAfterDescriptorRead(claim, Optional.of(association)).orElseThrow();
       PinnedLaunchDescriptorSnapshot retained =
           decodeStored(
               existing,
@@ -138,44 +142,11 @@ public final class GameSessionStartSessionLaunchDescriptorRepository {
     }
 
     Record inserted =
-        dsl.fetchOne(
-            "INSERT INTO "
-                + TABLE
-                + " (target_namespace, control_plane_request_id, canonical_tenant_id, "
-                + "owner_attempt_id, owner_fence, association_request_digest, "
-                + "association_response_digest, descriptor_request_wire, descriptor_response_wire, "
-                + "descriptor_request_digest, descriptor_response_digest) "
-                + "SELECT attempt.target_namespace, attempt.control_plane_request_id, "
-                + "attempt.canonical_tenant_id, attempt.owner_attempt_id, attempt.owner_fence, "
-                + "association.association_request_digest, association.association_response_digest, "
-                + "?, ?, ?, ? "
-                + "FROM game_session_start_session_operator_attempt attempt "
-                + "JOIN game_session_start_session_template_association_pin association "
-                + "ON association.target_namespace = attempt.target_namespace "
-                + "AND association.control_plane_request_id = attempt.control_plane_request_id "
-                + "AND association.canonical_tenant_id = attempt.canonical_tenant_id "
-                + "AND association.owner_attempt_id = attempt.owner_attempt_id "
-                + "AND association.owner_fence = attempt.owner_fence "
-                + "AND association.post_authorization_execution_tuple "
-                + "= attempt.post_authorization_execution_tuple "
-                + "WHERE attempt.target_namespace = ? "
-                + "AND attempt.control_plane_request_id = ? "
-                + "AND attempt.owner_attempt_id = ? AND attempt.owner_mutation_id = ? "
-                + "AND attempt.claim_owner_id = ? AND attempt.owner_fence = ? "
-                + "AND attempt.phase_state = 'OWNER_EXECUTION_PENDING' "
-                + "AND attempt.account_redemption_projection IS NOT NULL "
-                + "AND attempt.lease_expires_at > clock_timestamp() "
-                + "RETURNING *",
-            prepared.requestWire(),
-            prepared.responseWire(),
-            sha256(prepared.requestWire()),
-            sha256(prepared.responseWire()),
-            claim.targetNamespace(),
-            claim.controlPlaneRequestId(),
-            claim.ownerAttemptId(),
-            claim.ownerMutationId(),
-            claim.claimOwnerId(),
-            claim.ownerFence());
+        insertClaimPin(
+            claim,
+            prepared,
+            originalAuthorizationExpiresAt(
+                association.result().request().canonicalPostAuthorizationTuple()));
     if (inserted == null) {
       throw new StaleStartSessionOperatorAttemptClaimException(
           "Game Session owner claim is stale or its attached association changed "
@@ -188,6 +159,52 @@ public final class GameSessionStartSessionLaunchDescriptorRepository {
         claim.ownerAttemptId(),
         claim.ownerFence(),
         association);
+  }
+
+  private Record insertClaimPin(
+      GameSessionStartSessionOperatorAttemptRepository.AttemptClaim claim,
+      PreparedCandidate prepared,
+      String originalAuthorizationExpiresAt) {
+    return dsl.fetchOne(
+        "INSERT INTO "
+            + TABLE
+            + " (target_namespace, control_plane_request_id, canonical_tenant_id, "
+            + "owner_attempt_id, owner_fence, association_request_digest, "
+            + "association_response_digest, descriptor_request_wire, descriptor_response_wire, "
+            + "descriptor_request_digest, descriptor_response_digest) "
+            + "SELECT attempt.target_namespace, attempt.control_plane_request_id, "
+            + "attempt.canonical_tenant_id, attempt.owner_attempt_id, attempt.owner_fence, "
+            + "association.association_request_digest, association.association_response_digest, "
+            + "?, ?, ?, ? "
+            + "FROM game_session_start_session_operator_attempt attempt "
+            + "JOIN game_session_start_session_template_association_pin association "
+            + "ON association.target_namespace = attempt.target_namespace "
+            + "AND association.control_plane_request_id = attempt.control_plane_request_id "
+            + "AND association.canonical_tenant_id = attempt.canonical_tenant_id "
+            + "AND association.owner_attempt_id = attempt.owner_attempt_id "
+            + "AND association.owner_fence = attempt.owner_fence "
+            + "AND association.post_authorization_execution_tuple "
+            + "= attempt.post_authorization_execution_tuple "
+            + "WHERE attempt.target_namespace = ? "
+            + "AND attempt.control_plane_request_id = ? "
+            + "AND attempt.owner_attempt_id = ? AND attempt.owner_mutation_id = ? "
+            + "AND attempt.claim_owner_id = ? AND attempt.owner_fence = ? "
+            + "AND attempt.phase_state = 'OWNER_EXECUTION_PENDING' "
+            + "AND attempt.account_redemption_projection IS NOT NULL "
+            + "AND attempt.lease_expires_at > clock_timestamp() "
+            + "AND ?::timestamptz > clock_timestamp() "
+            + "RETURNING *",
+        prepared.requestWire(),
+        prepared.responseWire(),
+        sha256(prepared.requestWire()),
+        sha256(prepared.responseWire()),
+        claim.targetNamespace(),
+        claim.controlPlaneRequestId(),
+        claim.ownerAttemptId(),
+        claim.ownerMutationId(),
+        claim.claimOwnerId(),
+        claim.ownerFence(),
+        originalAuthorizationExpiresAt);
   }
 
   /**
@@ -210,6 +227,9 @@ public final class GameSessionStartSessionLaunchDescriptorRepository {
                         "An existing template association pin is required before descriptor continuation"));
     PreparedCandidate prepared = prepareCandidate(association, candidate);
     Record existing = selectPin(continuation, true);
+    association =
+        revalidateAssociationAfterDescriptorRead(continuation, Optional.of(association))
+            .orElseThrow();
     if (existing != null) {
       PinnedLaunchDescriptorSnapshot retained =
           decodeStored(
@@ -454,20 +474,108 @@ public final class GameSessionStartSessionLaunchDescriptorRepository {
   private Record selectPin(
       GameSessionStartSessionOperatorAttemptRepository.EvidenceContinuation continuation,
       boolean forUpdate) {
+    return selectPin(continuation, forUpdate, originalAuthorizationExpiresAt(continuation));
+  }
+
+  private Record selectPin(
+      GameSessionStartSessionOperatorAttemptRepository.EvidenceContinuation continuation,
+      boolean forUpdate,
+      String originalAuthorizationExpiresAt) {
     return dsl.fetchOne(
-        "SELECT * FROM "
+        "SELECT descriptor_pin.* FROM "
             + TABLE
-            + " WHERE target_namespace = ? AND control_plane_request_id = ? "
+            + " descriptor_pin WHERE descriptor_pin.target_namespace = ? "
+            + "AND descriptor_pin.control_plane_request_id = ? "
+            + "AND EXISTS (SELECT 1 FROM game_session_start_session_operator_attempt attempt "
+            + "WHERE attempt.target_namespace = descriptor_pin.target_namespace "
+            + "AND attempt.control_plane_request_id = descriptor_pin.control_plane_request_id "
+            + "AND attempt.owner_attempt_id = ? AND attempt.owner_mutation_id = ? "
+            + "AND attempt.claim_owner_id = ? AND attempt.owner_fence = ? "
+            + "AND attempt.phase_state = 'OWNER_EXECUTION_PENDING' "
+            + "AND attempt.account_redemption_projection IS NOT NULL "
+            + "AND attempt.post_authorization_execution_tuple = ? "
+            + "AND attempt.account_redemption_projection = ? "
+            + "AND attempt.lease_expires_at > clock_timestamp()) "
             + "AND ?::timestamptz > clock_timestamp()"
-            + (forUpdate ? " FOR UPDATE" : ""),
+            + (forUpdate ? " FOR UPDATE OF descriptor_pin" : ""),
         continuation.targetNamespace(),
         continuation.controlPlaneRequestId(),
-        originalAuthorizationExpiresAt(continuation));
+        continuation.ownerAttemptId(),
+        continuation.ownerMutationId(),
+        continuation.claimOwnerId(),
+        continuation.ownerFence(),
+        continuation.postAuthorizationExecutionTuple(),
+        continuation.accountRedemptionProjection(),
+        originalAuthorizationExpiresAt);
+  }
+
+  private Optional<GameSessionStartSessionTemplateAssociationRepository.PinnedAssociationSnapshot>
+      revalidateAssociationAfterDescriptorRead(
+          GameSessionStartSessionOperatorAttemptRepository.AttemptClaim claim,
+          Optional<GameSessionStartSessionTemplateAssociationRepository.PinnedAssociationSnapshot>
+              expected) {
+    // The descriptor SELECT can wait on its row lock after checking the database-clock lease.
+    Optional<GameSessionStartSessionTemplateAssociationRepository.PinnedAssociationSnapshot>
+        current = associationRepository.findPinned(claim);
+    requireSameAssociationPin(expected, current);
+    return current;
+  }
+
+  private Optional<GameSessionStartSessionTemplateAssociationRepository.PinnedAssociationSnapshot>
+      revalidateAssociationAfterDescriptorRead(
+          GameSessionStartSessionOperatorAttemptRepository.EvidenceContinuation continuation,
+          Optional<GameSessionStartSessionTemplateAssociationRepository.PinnedAssociationSnapshot>
+              expected) {
+    Optional<GameSessionStartSessionTemplateAssociationRepository.PinnedAssociationSnapshot>
+        current = associationRepository.findPinned(continuation);
+    requireSameAssociationPin(expected, current);
+    if (!isOriginalAuthorizationReferenceUnexpired(originalAuthorizationExpiresAt(continuation))) {
+      throw new StaleStartSessionOperatorAttemptClaimException(
+          "Original Account authorization reference expired during descriptor read");
+    }
+    return current;
+  }
+
+  private boolean isOriginalAuthorizationReferenceUnexpired(String originalAuthorizationExpiresAt) {
+    Record validity =
+        dsl.fetchOne(
+            "SELECT ?::timestamptz > clock_timestamp() AS unexpired",
+            originalAuthorizationExpiresAt);
+    return validity != null && Boolean.TRUE.equals(validity.get("unexpired", Boolean.class));
+  }
+
+  private static void requireSameAssociationPin(
+      Optional<GameSessionStartSessionTemplateAssociationRepository.PinnedAssociationSnapshot>
+          expected,
+      Optional<GameSessionStartSessionTemplateAssociationRepository.PinnedAssociationSnapshot>
+          current) {
+    if (expected.isPresent() != current.isPresent()) {
+      throw new GameSessionStartSessionOperatorAttemptRepository
+          .StaleStartSessionOperatorAttemptClaimException(
+          "Original StartSession association changed during descriptor read");
+    }
+    if (expected.isPresent()) {
+      var expectedPin = expected.orElseThrow();
+      var currentPin = current.orElseThrow();
+      if (!expectedPin.requestDigest().equals(currentPin.requestDigest())
+          || !expectedPin.responseDigest().equals(currentPin.responseDigest())
+          || !Arrays.equals(
+              StartSessionTemplateAssociationReadGrpcCodec.toResponse(expectedPin.result())
+                  .toByteArray(),
+              StartSessionTemplateAssociationReadGrpcCodec.toResponse(currentPin.result())
+                  .toByteArray())) {
+        throw new StartSessionLaunchDescriptorConflictException(
+            "Original StartSession association changed during descriptor read");
+      }
+    }
   }
 
   private static String originalAuthorizationExpiresAt(
       GameSessionStartSessionOperatorAttemptRepository.EvidenceContinuation continuation) {
-    byte[] exactTuple = continuation.postAuthorizationExecutionTuple();
+    return originalAuthorizationExpiresAt(continuation.postAuthorizationExecutionTuple());
+  }
+
+  private static String originalAuthorizationExpiresAt(byte[] exactTuple) {
     StartSessionPostAuthorizationExecutionTuple tuple =
         StartSessionPostAuthorizationExecutionTuple.decode(exactTuple);
     if (!Arrays.equals(tuple.canonicalBytes(), exactTuple)) {

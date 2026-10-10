@@ -95,7 +95,10 @@ public final class GameSessionStartSessionOperatorAuthorizationCoordinator {
     RedemptionResult redemption;
     try {
       redemption = redemptionClient.redeem(tuple, transientOperatorAuthorizationReference, claim);
-    } catch (StatusRuntimeException ambiguousTransportOutcome) {
+    } catch (StatusRuntimeException transportOutcome) {
+      if (!isAmbiguousTransportOutcome(transportOutcome)) {
+        throw transportOutcome;
+      }
       return new AuthorizationResult(
           reservation.snapshot(), Optional.of(claim), Progress.ACCOUNT_OUTCOME_AMBIGUOUS);
     }
@@ -122,6 +125,13 @@ public final class GameSessionStartSessionOperatorAuthorizationCoordinator {
     }
     return new AuthorizationResult(
         attached, Optional.of(claim), Progress.ACCOUNT_PROJECTION_ATTACHED);
+  }
+
+  private static boolean isAmbiguousTransportOutcome(StatusRuntimeException exception) {
+    return switch (exception.getStatus().getCode()) {
+      case DEADLINE_EXCEEDED, UNAVAILABLE, CANCELLED, UNKNOWN, INTERNAL -> true;
+      default -> false;
+    };
   }
 
   private void requireAuthenticatedLoggingPeer(StartSessionPostAuthorizationExecutionTuple tuple) {

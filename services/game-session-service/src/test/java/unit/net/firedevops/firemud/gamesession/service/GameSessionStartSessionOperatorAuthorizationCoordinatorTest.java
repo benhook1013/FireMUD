@@ -219,40 +219,62 @@ class GameSessionStartSessionOperatorAuthorizationCoordinatorTest {
   }
 
   @Test
-  void ambiguousAccountTransportLeavesCommittedClaimPendingWithoutRetryOrAttachment()
-      throws Exception {
-    StartSessionPostAuthorizationExecutionTuple tuple = tuple(REQUEST_ID);
-    AttemptClaim claim = claim(REQUEST_ID);
-    AttemptSnapshot pending = snapshot(tuple, claim, null);
-    GameSessionStartSessionOperatorAttemptRepository repository = mockRepository();
-    StartSessionOperatorRedemptionClient redemptionClient = mockRedemptionClient();
-    RecordingTransactionManager transactions = new RecordingTransactionManager();
-    when(repository.reserve(tuple))
-        .thenReturn(
-            new ReservationResult(
-                ReservationDisposition.CLAIM_CREATED, pending, Optional.of(claim)));
-    when(redemptionClient.redeem(tuple, OPAQUE_REFERENCE, claim))
-        .thenThrow(new StatusRuntimeException(Status.DEADLINE_EXCEEDED));
+  void classifiesEveryGrpcStatusWithoutRetryingOrAttachingThePendingClaim() throws Exception {
+    for (Status.Code code : Status.Code.values()) {
+      StartSessionPostAuthorizationExecutionTuple tuple = tuple(REQUEST_ID + "-" + code);
+      AttemptClaim claim = claim(tuple.controlPlaneRequestId());
+      AttemptSnapshot pending = snapshot(tuple, claim, null);
+      GameSessionStartSessionOperatorAttemptRepository repository = mockRepository();
+      StartSessionOperatorRedemptionClient redemptionClient = mockRedemptionClient();
+      RecordingTransactionManager transactions = new RecordingTransactionManager();
+      StatusRuntimeException failure = new StatusRuntimeException(Status.fromCode(code));
+      when(repository.reserve(tuple))
+          .thenReturn(
+              new ReservationResult(
+                  ReservationDisposition.CLAIM_CREATED, pending, Optional.of(claim)));
+      when(redemptionClient.redeem(tuple, OPAQUE_REFERENCE, claim)).thenThrow(failure);
 
-    var result =
-        withPeer(
-            peer(WORKLOAD),
-            () ->
-                coordinator(repository, redemptionClient, transactions)
-                    .authorize(tuple, OPAQUE_REFERENCE));
+      if (isAmbiguousTransportStatus(code)) {
+        var result =
+            withPeer(
+                peer(WORKLOAD),
+                () ->
+                    coordinator(repository, redemptionClient, transactions)
+                        .authorize(tuple, OPAQUE_REFERENCE));
 
-    assertThat(result.progress())
-        .isEqualTo(
-            GameSessionStartSessionOperatorAuthorizationCoordinator.Progress
-                .ACCOUNT_OUTCOME_AMBIGUOUS);
-    assertThat(result.snapshot()).isSameAs(pending);
-    assertThat(result.claim()).contains(claim);
-    assertThat(result.toString()).doesNotContain(OPAQUE_REFERENCE);
-    assertThat(transactions.commitCount).isEqualTo(1);
-    assertThat(transactions.rollbackCount).isZero();
-    verify(redemptionClient).redeem(tuple, OPAQUE_REFERENCE, claim);
-    verify(repository, never()).validateCurrentClaim(any());
-    verify(repository, never()).attachAccountRedemptionProjection(any(), any());
+        assertThat(result.progress())
+            .as("status %s", code)
+            .isEqualTo(
+                GameSessionStartSessionOperatorAuthorizationCoordinator.Progress
+                    .ACCOUNT_OUTCOME_AMBIGUOUS);
+        assertThat(result.snapshot()).isSameAs(pending);
+        assertThat(result.claim()).contains(claim);
+        assertThat(result.toString()).doesNotContain(OPAQUE_REFERENCE);
+      } else {
+        assertThatThrownBy(
+                () ->
+                    withPeer(
+                        peer(WORKLOAD),
+                        () ->
+                            coordinator(repository, redemptionClient, transactions)
+                                .authorize(tuple, OPAQUE_REFERENCE)))
+            .as("status %s", code)
+            .isSameAs(failure);
+      }
+
+      assertThat(transactions.commitCount).as("status %s", code).isEqualTo(1);
+      assertThat(transactions.rollbackCount).as("status %s", code).isZero();
+      verify(redemptionClient).redeem(tuple, OPAQUE_REFERENCE, claim);
+      verify(repository, never()).validateCurrentClaim(any());
+      verify(repository, never()).attachAccountRedemptionProjection(any(), any());
+    }
+  }
+
+  private static boolean isAmbiguousTransportStatus(Status.Code code) {
+    return switch (code) {
+      case DEADLINE_EXCEEDED, UNAVAILABLE, CANCELLED, UNKNOWN, INTERNAL -> true;
+      default -> false;
+    };
   }
 
   @Test
