@@ -83,7 +83,12 @@ public record AuthoredWorldReleaseAttestationEvidence(
     return PARTICIPANT_ORDER;
   }
 
-  /** Returns the one supported digest schema for a required participant owner. */
+  /**
+   * Returns the retained-v1 digest schema for a required participant owner.
+   *
+   * @deprecated Use the overload with an explicit attestation schema version.
+   */
+  @Deprecated
   public static int supportedParticipantDigestSchema(String participantKey) {
     return supportedParticipantDigestSchema(participantKey, SCHEMA_VERSION);
   }
