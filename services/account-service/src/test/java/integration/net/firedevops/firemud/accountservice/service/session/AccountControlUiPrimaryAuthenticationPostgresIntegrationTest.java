@@ -2,6 +2,7 @@ package net.firedevops.firemud.accountservice.service.session;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.Mockito.mock;
 
 import de.mkammerer.argon2.Argon2Factory;
 import java.time.LocalDateTime;
@@ -18,8 +19,18 @@ import net.firedevops.firemud.accountservice.entity.Account;
 import net.firedevops.firemud.accountservice.entity.AccountEmailLoginChallenge;
 import net.firedevops.firemud.accountservice.entity.AccountLifecycleState;
 import net.firedevops.firemud.accountservice.mapper.AccountMapper;
+import net.firedevops.firemud.accountservice.repository.AccountAuditOutboxRepository;
+import net.firedevops.firemud.accountservice.repository.AccountAuthorityGenerationRepository;
+import net.firedevops.firemud.accountservice.repository.AccountAuthorityOutboxRepository;
+import net.firedevops.firemud.accountservice.repository.AccountAuthoritySourceEvidenceRepository;
+import net.firedevops.firemud.accountservice.repository.AccountConnectScopeRepository;
 import net.firedevops.firemud.accountservice.repository.AccountEmailLoginChallengeRepository;
+import net.firedevops.firemud.accountservice.repository.AccountJoinOperationRepository;
+import net.firedevops.firemud.accountservice.repository.AccountLogoutAllOperationRepository;
+import net.firedevops.firemud.accountservice.repository.AccountPasswordResetOperationRepository;
 import net.firedevops.firemud.accountservice.repository.AccountRepository;
+import net.firedevops.firemud.accountservice.repository.AccountSecurityStateOperationRepository;
+import net.firedevops.firemud.accountservice.service.AccountPasswordResetDraftSourceChangeRepository;
 import net.firedevops.firemud.accountservice.service.exception.AuthenticationException;
 import net.firedevops.firemud.accountservice.service.impl.AccountServiceImpl;
 import org.flywaydb.core.Flyway;
@@ -38,10 +49,11 @@ import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
 /**
- * Actual primary authentication, persisted canonical identity mapping, OTP repositories and
- * PostgreSQL transactions/locks. Unused AccountService collaborators are absent, following the
- * existing owner integration construction pattern. Secrets and Accounts are test-only fixtures;
- * this is not creator-source, signer, protected caller, original Draft or runtime issuance proof.
+ * Actual primary authentication, persisted canonical identity and source mapping, OTP repositories,
+ * and PostgreSQL transactions/locks. Unused required owner collaborators are unstubbed mocks with
+ * no positive authority behavior; unrelated optional collaborators remain absent. Secrets and
+ * Accounts are test-only fixtures; this is not creator-source, signer, protected caller, original
+ * Draft or runtime issuance proof.
  */
 @Testcontainers(disabledWithoutDocker = true)
 class AccountControlUiPrimaryAuthenticationPostgresIntegrationTest {
@@ -239,34 +251,44 @@ class AccountControlUiPrimaryAuthenticationPostgresIntegrationTest {
     var manager = new DataSourceTransactionManager(source);
     var transaction = new TransactionTemplate(manager);
     transaction.setIsolationLevel(TransactionDefinition.ISOLATION_READ_COMMITTED);
-    var accounts = new AccountRepository(dsl);
+    var generations = new AccountAuthorityGenerationRepository(dsl);
+    var outbox = new AccountAuthorityOutboxRepository(dsl);
+    var sourceEvidence = new AccountAuthoritySourceEvidenceRepository(dsl, generations, outbox);
+    var accounts = new AccountRepository(dsl, sourceEvidence);
     var challenges = new AccountEmailLoginChallengeRepository(dsl);
     var primary =
         new AccountServiceImpl(
             accounts,
-            null,
-            null,
-            null,
+            generations,
+            sourceEvidence,
+            outbox,
+            mock(AccountPasswordResetOperationRepository.class),
+            mock(AccountLogoutAllOperationRepository.class),
+            mock(AccountSecurityStateOperationRepository.class),
+            mock(AccountPasswordResetDraftSourceChangeRepository.class),
+            mock(AccountAuditOutboxRepository.class),
+            mock(AccountConnectScopeRepository.class),
+            mock(AccountJoinOperationRepository.class),
             challenges,
-            null,
-            null,
+            null, // Realm grants are not used by primary authentication.
+            null, // Tenant memberships are not used by primary authentication.
             Mappers.getMapper(AccountMapper.class),
-            null,
-            null,
-            null,
-            null,
-            null,
-            null,
-            null,
-            null,
-            null,
-            null,
-            null,
-            null,
-            null,
-            null,
-            null,
-            null,
+            null, // Profiles are not used by primary authentication.
+            null, // Profile mapper is not used by primary authentication.
+            null, // Payment transactions are not used by primary authentication.
+            null, // Subscriptions are not used by primary authentication.
+            null, // External identities are not used by primary authentication.
+            null, // Password reset tokens are not used by primary authentication.
+            null, // Email verification tokens are not used by primary authentication.
+            null, // Notifications are not used by primary authentication.
+            null, // Email delivery is not used by primary authentication.
+            null, // Mail properties are not used by primary authentication.
+            null, // Token properties are not used by primary authentication.
+            null, // JWT auth properties are not used by primary authentication.
+            null, // Game Session client is not used by primary authentication.
+            null, // Entity Management client is not used by primary authentication.
+            null, // JWT utility is not used by primary authentication.
+            null, // Session service is not used by primary authentication.
             manager);
     return new Context(dsl, accounts, challenges, primary, transaction);
   }

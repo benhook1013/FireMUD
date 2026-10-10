@@ -1,6 +1,7 @@
 package net.firedevops.firemud.accountservice.service.session;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.Mockito.mock;
 
 import de.mkammerer.argon2.Argon2Factory;
 import io.grpc.Context;
@@ -296,29 +297,46 @@ final class AccountControlUiOwnerSourcesFixture {
     var primaryTarget =
         new AccountServiceImpl(
             accounts,
-            null,
-            null,
-            null,
+            generations,
+            sourceEvidence,
+            outbox,
+            mock(
+                net.firedevops.firemud.accountservice.repository
+                    .AccountPasswordResetOperationRepository.class),
+            mock(
+                net.firedevops.firemud.accountservice.repository.AccountLogoutAllOperationRepository
+                    .class),
+            mock(
+                net.firedevops.firemud.accountservice.repository
+                    .AccountSecurityStateOperationRepository.class),
+            mock(
+                net.firedevops.firemud.accountservice.service
+                    .AccountPasswordResetDraftSourceChangeRepository.class),
+            mock(AccountAuditOutboxRepository.class),
+            mock(
+                net.firedevops.firemud.accountservice.repository.AccountConnectScopeRepository
+                    .class),
+            mock(AccountJoinOperationRepository.class),
             challenges,
-            null,
-            null,
+            null, // Realm grants are not used by primary authentication.
+            null, // Tenant memberships are not used by primary authentication.
             Mappers.getMapper(AccountMapper.class),
-            null,
-            null,
-            null,
-            null,
-            null,
-            null,
-            null,
-            null,
-            null,
-            null,
-            null,
-            null,
-            null,
-            null,
-            null,
-            null,
+            null, // Profiles are not used by primary authentication.
+            null, // Profile mapper is not used by primary authentication.
+            null, // Payment transactions are not used by primary authentication.
+            null, // Subscriptions are not used by primary authentication.
+            null, // External identities are not used by primary authentication.
+            null, // Password reset tokens are not used by primary authentication.
+            null, // Email verification tokens are not used by primary authentication.
+            null, // Notifications are not used by primary authentication.
+            null, // Email delivery is not used by primary authentication.
+            null, // Mail properties are not used by primary authentication.
+            null, // Token properties are not used by primary authentication.
+            null, // JWT auth properties are not used by primary authentication.
+            null, // Game Session client is not used by primary authentication.
+            null, // Entity Management client is not used by primary authentication.
+            null, // JWT utility is not used by primary authentication.
+            null, // Session service is not used by primary authentication.
             manager);
     // Exercise the real MANDATORY interceptor: noRollbackFor must not poison the owner callback.
     var primaryProxy = new ProxyFactory(primaryTarget);

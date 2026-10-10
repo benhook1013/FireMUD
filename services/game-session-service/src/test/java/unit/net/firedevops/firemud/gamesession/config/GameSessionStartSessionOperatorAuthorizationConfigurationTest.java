@@ -15,6 +15,7 @@ import net.firedevops.firemud.gamesession.repository.GameSessionStartSessionOper
 import net.firedevops.firemud.gamesession.service.GameSessionStartSessionOperatorAuthorizationCoordinator;
 import org.jooq.DSLContext;
 import org.junit.jupiter.api.Test;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.boot.convert.ApplicationConversionService;
 import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.boot.test.context.runner.ApplicationContextRunner;
@@ -96,6 +97,19 @@ class GameSessionStartSessionOperatorAuthorizationConfigurationTest {
                 .withUserConfiguration(
                     GameSessionStartSessionOperatorAuthorizationConfiguration.class)
                 .withPropertyValues(completeOwnerProperties())
+                .run(context -> assertThat(context).hasFailed()));
+  }
+
+  @Test
+  void enabledCompositionRequiresItsTransactionManager() {
+    withTlsReloadDisabled(
+        () ->
+            new ApplicationContextRunner()
+                .withUserConfiguration(
+                    GameSessionStartSessionOperatorAuthorizationConfiguration.class,
+                    Dependencies.class)
+                .withPropertyValues(completeOwnerProperties())
+                .withPropertyValues("test.start-session.transaction-manager-enabled=false")
                 .run(context -> assertThat(context).hasFailed()));
   }
 
@@ -184,6 +198,10 @@ class GameSessionStartSessionOperatorAuthorizationConfigurationTest {
     }
 
     @Bean
+    @ConditionalOnProperty(
+        name = "test.start-session.transaction-manager-enabled",
+        havingValue = "true",
+        matchIfMissing = true)
     PlatformTransactionManager startSessionOwnerTransactionManager() {
       return mock(PlatformTransactionManager.class);
     }

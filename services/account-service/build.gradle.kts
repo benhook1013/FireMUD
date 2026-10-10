@@ -44,4 +44,5 @@ dependencies {
     testCompileOnly(libs.spotbugs.annotations)
     add("integrationTestCompileOnly", libs.spotbugs.annotations)
     integrationTestImplementation(testFixtures(project(":account-service")))
+    integrationTestImplementation(testFixtures(project(":logging-admin-service")))
 }

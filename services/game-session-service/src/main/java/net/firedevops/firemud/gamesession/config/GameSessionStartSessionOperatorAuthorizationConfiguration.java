@@ -35,9 +35,10 @@ public class GameSessionStartSessionOperatorAuthorizationConfiguration {
       ServiceEndpointsProperties endpoints,
       CommonGrpcClientProperties tlsProperties,
       GrpcChannelFactory channelFactory,
-      BlockingGrpcStubCustomizer stubCustomizer) {
+      BlockingGrpcStubCustomizer stubCustomizer,
+      @Value("${firemud.grpc.workload-namespace}") String workloadNamespace) {
     return new StartSessionOperatorRedemptionClient(
-        endpoints, tlsProperties, channelFactory, stubCustomizer);
+        endpoints, tlsProperties, channelFactory, stubCustomizer, workloadNamespace);
   }
 
   @Bean

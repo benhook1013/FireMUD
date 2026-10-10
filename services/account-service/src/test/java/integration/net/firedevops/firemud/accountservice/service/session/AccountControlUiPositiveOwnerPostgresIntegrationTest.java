@@ -2,6 +2,8 @@ package net.firedevops.firemud.accountservice.service.session;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
 import com.google.protobuf.ByteString;
 import io.grpc.Context;
@@ -24,6 +26,8 @@ import io.lettuce.core.codec.ByteArrayCodec;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.security.cert.CertificateEncodingException;
+import java.security.cert.X509Certificate;
 import java.time.Clock;
 import java.time.Instant;
 import java.util.ArrayList;
@@ -51,6 +55,7 @@ import net.firedevops.firemud.common.config.ServiceEndpointsProperties;
 import net.firedevops.firemud.common.grpc.BlockingGrpcStubCustomizer;
 import net.firedevops.firemud.common.grpc.CommonGrpcClientProperties;
 import net.firedevops.firemud.common.grpc.GrpcChannelFactory;
+import net.firedevops.firemud.common.grpc.GrpcPeerCertificateEvidence;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
 import net.firedevops.firemud.common.operator.StartSessionOperatorAction;
 import net.firedevops.firemud.common.operator.StartSessionPreAuthorizationReservationTuple;
@@ -58,19 +63,18 @@ import net.firedevops.firemud.common.redis.contracts.RedisScriptCatalog;
 import net.firedevops.firemud.common.redis.contracts.RedisScriptContribution;
 import net.firedevops.firemud.common.redis.contracts.RedisScriptDescriptor;
 import net.firedevops.firemud.common.security.SessionContext;
-import net.firedevops.firemud.loggingadmin.operator.StartSessionPreAuthorizationReservationService;
+import net.firedevops.firemud.loggingadmin.StartSessionReservationMutationTestFixtures;
 import net.firedevops.firemud.loggingadmin.operator.StartSessionPreAuthorizationReservationService.ClaimEvidence;
 import net.firedevops.firemud.loggingadmin.operator.StartSessionPreAuthorizationReservationService.Phase;
 import net.firedevops.firemud.loggingadmin.operator.StartSessionPreAuthorizationReservationService.State;
-import net.firedevops.firemud.loggingadmin.repository.StartSessionPreAuthorizationReservationRepository;
 import net.firedevops.firemud.loggingadmin.service.impl.StartSessionReservationEvidenceGrpcService;
+import net.firedevops.firemud.loggingadmin.service.impl.StartSessionReservationEvidenceLeafApproval;
 import net.firedevops.firemud.loggingadmin.v1.ReadCurrentClaimEvidenceRequest;
 import net.firedevops.firemud.loggingadmin.v1.ReadCurrentClaimEvidenceResponse;
 import net.firedevops.firemud.loggingadmin.v1.StartSessionReservationEvidencePurpose;
 import net.firedevops.firemud.loggingadmin.v1.StartSessionReservationEvidenceServiceGrpc;
 import net.firedevops.firemud.test.TestContainerImages;
 import org.flywaydb.core.Flyway;
-import org.jooq.SQLDialect;
 import org.jooq.impl.DSL;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
@@ -404,14 +408,23 @@ class AccountControlUiPositiveOwnerPostgresIntegrationTest {
           .load()
           .migrate();
       var reservationService =
-          new StartSessionPreAuthorizationReservationService(
-              new StartSessionPreAuthorizationReservationRepository(
-                  DSL.using(loggingDataSource, SQLDialect.POSTGRES)));
+          StartSessionReservationMutationTestFixtures.forRunOwnedPostgres(postgres, loggingSchema)
+              .service();
+      var approvedAccountLeaf = testAccountLeafEvidence();
+      Path approvedLeafFile =
+          temporary.resolve("account-reservation-evidence-approved-test-leaf.txt");
+      Files.writeString(
+          approvedLeafFile,
+          "active=" + approvedAccountLeaf.leafSha256() + "\n",
+          StandardCharsets.US_ASCII);
       loggingTransport =
           inProcessLoggingTransport(
               new StartSessionReservationEvidenceGrpcService(
-                  reservationService, "control-ui-owner-proof"),
-              "spiffe://firemud/ns/control-ui-owner-proof/sa/account-service");
+                  reservationService,
+                  new StartSessionReservationEvidenceLeafApproval(approvedLeafFile.toString()),
+                  "control-ui-owner-proof"),
+              "spiffe://firemud/ns/control-ui-owner-proof/sa/account-service",
+              approvedAccountLeaf);
 
       var acquisition = reservationService.acquire(loggingTuple);
       assertThat(acquisition.newlyAcquired()).isTrue();
@@ -792,8 +805,15 @@ class AccountControlUiPositiveOwnerPostgresIntegrationTest {
     throw new IllegalStateException("Exact Logging/Admin migration directory is required");
   }
 
+  /**
+   * Test-only in-process composition supplies the Account URI and a run-owned approved leaf; it
+   * exercises receiver authorization, not a TLS handshake or mTLS certificate binding.
+   */
   private static InProcessLoggingTransport inProcessLoggingTransport(
-      StartSessionReservationEvidenceGrpcService receiver, String accountPeerUri) throws Exception {
+      StartSessionReservationEvidenceGrpcService receiver,
+      String accountPeerUri,
+      GrpcPeerCertificateEvidence accountLeafEvidence)
+      throws Exception {
     String serverName = InProcessServerBuilder.generateName();
     var peer = GrpcPeerIdentity.parseUri(accountPeerUri).orElseThrow();
     Server server =
@@ -809,7 +829,10 @@ class AccountControlUiPositiveOwnerPostgresIntegrationTest {
                           Metadata headers,
                           ServerCallHandler<RequestT, ResponseT> next) {
                         Context peerContext =
-                            Context.current().withValue(GrpcPeerIdentity.CONTEXT_KEY, peer);
+                            Context.current()
+                                .withValue(GrpcPeerIdentity.CONTEXT_KEY, peer)
+                                .withValue(
+                                    GrpcPeerCertificateEvidence.CONTEXT_KEY, accountLeafEvidence);
                         return Contexts.interceptCall(peerContext, call, headers, next);
                       }
                     }))
@@ -852,6 +875,18 @@ class AccountControlUiPositiveOwnerPostgresIntegrationTest {
       server.shutdownNow();
       throw failure;
     }
+  }
+
+  private static GrpcPeerCertificateEvidence testAccountLeafEvidence() {
+    X509Certificate leaf = mock(X509Certificate.class);
+    try {
+      when(leaf.getEncoded())
+          .thenReturn(
+              "run-owned Account test leaf certificate".getBytes(StandardCharsets.US_ASCII));
+    } catch (CertificateEncodingException exception) {
+      throw new AssertionError(exception);
+    }
+    return GrpcPeerCertificateEvidence.fromCertificate(leaf).orElseThrow();
   }
 
   private static InProcessAccountTransport inProcessAccountTransport(
