@@ -11,20 +11,29 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
 import net.firedevops.firemud.accountservice.authordraft.AccountControlUiAuthority;
+import net.firedevops.firemud.common.account.sourceintake.SelectedOwnerIntakeAuthorizationBinding;
 import net.firedevops.firemud.common.account.sourceintake.SelectedOwnerIntakeSourceReadScope;
 import net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding;
+import net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding.SourceEvidence;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding.Owner;
+import net.firedevops.firemud.common.gamedesign.SelectedOwnerIntakeSourceContent;
 import org.jooq.DSLContext;
 import org.jooq.Record;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 
-/** Immutable preliminary Entity/Automation source-read reservations and their own abort marker. */
+/**
+ * Immutable Entity/Automation preliminary reservations and distinct finalized source retention.
+ * Finalization excludes preliminary abort; authenticated owner-terminal settlement is not yet
+ * implemented, so finalized participation remains held.
+ */
 public final class AccountSelectedOwnerIntakeSourceReservationRepository {
   private static final String RESERVATIONS =
       "account_selected_owner_intake_source_read_reservations";
   private static final String SOURCES = "account_selected_owner_intake_source_read_sources";
   private static final String ABORTS = "account_selected_owner_intake_source_read_aborts";
+  private static final String AUTHORIZATIONS = "account_selected_owner_intake_authorizations";
+  private static final String AUTHORIZATION_SOURCES = "account_selected_owner_intake_sources";
 
   private final DSLContext dsl;
 
@@ -34,6 +43,7 @@ public final class AccountSelectedOwnerIntakeSourceReservationRepository {
 
   public enum State {
     RESERVED,
+    FINALIZED,
     ABORTED
   }
 
@@ -171,7 +181,14 @@ public final class AccountSelectedOwnerIntakeSourceReservationRepository {
     lockReservedSources(scope);
     Record row = reservation(scope);
     requireReservation(row, scope);
-    return new Recovery(scope, aborted(scope) ? State.ABORTED : State.RESERVED);
+    if (aborted(scope)) return new Recovery(scope, State.ABORTED);
+    var authorization = authorization(scope.operationId());
+    if (authorization == null) return new Recovery(scope, State.RESERVED);
+    var binding =
+        SelectedOwnerIntakeAuthorizationBinding.fromStored(
+            authorization.get("binding_bytes", byte[].class));
+    requireAuthorization(authorization, binding);
+    return new Recovery(scope, State.FINALIZED);
   }
 
   Recovery abortSourceRead(SelectedOwnerIntakeSourceReadScope scope) {
@@ -179,10 +196,189 @@ public final class AccountSelectedOwnerIntakeSourceReservationRepository {
     lockReservedSources(scope);
     Record row = reservation(scope);
     requireReservation(row, scope);
+    if (authorization(scope.operationId()) != null) {
+      throw new IllegalStateException("Finalized owner intake cannot be preliminarily aborted");
+    }
     if (!aborted(scope)) {
       dsl.execute("INSERT INTO " + ABORTS + " (operation_id) VALUES (?)", scope.operationId());
     }
     return new Recovery(scope, State.ABORTED);
+  }
+
+  SelectedOwnerIntakeAuthorizationBinding finalizeSourceRead(
+      SelectedOwnerIntakeSourceReadScope scope,
+      SelectedOwnerIntakeSourceContent content,
+      AccountControlUiActorService.Current current,
+      Runnable admission) {
+    requireTransaction();
+    Objects.requireNonNull(content, "content");
+    Objects.requireNonNull(current, "current");
+    Objects.requireNonNull(admission, "admission");
+    lockReservedSources(scope);
+    Record reserved = reservation(scope);
+    requireReservation(reserved, scope);
+    requireCurrentReservation(reserved, current);
+    if (!scope.equals(content.scope()))
+      throw new IllegalArgumentException("Selected content differs from original source scope");
+    if (aborted(scope)) throw new IllegalStateException("Original source-read scope aborted");
+
+    Record row = authorization(scope.operationId());
+    if (row != null) {
+      var original =
+          SelectedOwnerIntakeAuthorizationBinding.fromStored(
+              row.get("binding_bytes", byte[].class));
+      if (!Arrays.equals(original.content().canonicalBytes(), content.canonicalBytes()))
+        throw new IllegalArgumentException(
+            "Intake request identity conflicts with original selected content");
+      requireAuthorization(row, original);
+      return original;
+    }
+
+    List<SourceEvidence> sourceVector = current.source().sources();
+    var binding = new SelectedOwnerIntakeAuthorizationBinding(content, sourceVector);
+    admission.run();
+    dsl.execute(
+        "INSERT INTO "
+            + AUTHORIZATIONS
+            + " (operation_id, fence_id, intake_request_id, owner, target_namespace, actor_account_uuid, "
+            + "tenant_uuid, version_uuid, content_bytes, content_digest, binding_bytes, binding_digest, "
+            + "issuance_operation_id, issuance_fence, source_payload, issuance_bundle, outbox_checkpoints) "
+            + "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        binding.operationId(),
+        binding.fenceId(),
+        binding.intakeRequestId(),
+        binding.owner().name(),
+        binding.targetNamespace(),
+        binding.actorAccountId(),
+        binding.tenantId(),
+        binding.versionId(),
+        binding.content().canonicalBytes(),
+        binding.content().digest(),
+        binding.canonicalBytes(),
+        binding.digest(),
+        current.stored().operationId,
+        current.source().issuanceFence(),
+        current.stored().sources,
+        current.stored().bundle,
+        AccountControlUiAuthority.canonical(current.source().outboxCheckpoints()));
+    for (SourceEvidence source : binding.sources()) {
+      dsl.execute(
+          "INSERT INTO "
+              + AUTHORIZATION_SOURCES
+              + " (operation_id, source_key, source_evidence) VALUES (?, ?, ?)",
+          binding.operationId(),
+          source.key(),
+          source.canonicalBytes());
+    }
+    requireAuthorization(
+        dsl.fetchOne(
+            "SELECT * FROM " + AUTHORIZATIONS + " WHERE operation_id = ? FOR UPDATE",
+            binding.operationId()),
+        binding);
+    return binding;
+  }
+
+  Optional<SelectedOwnerIntakeAuthorizationBinding> findFinalAuthorization(
+      SelectedOwnerIntakeSourceReadScope scope) {
+    requireTransaction();
+    lockReservedSources(scope);
+    requireReservation(reservation(scope), scope);
+    Record row = authorization(scope.operationId());
+    if (row == null) return Optional.empty();
+    var binding =
+        SelectedOwnerIntakeAuthorizationBinding.fromStored(row.get("binding_bytes", byte[].class));
+    requireAuthorization(row, binding);
+    if (!scope.equals(binding.content().scope()))
+      throw new IllegalArgumentException("Finalized authorization differs from original scope");
+    return Optional.of(binding);
+  }
+
+  void readFinalAuthorization(SelectedOwnerIntakeAuthorizationBinding requested) {
+    requireTransaction();
+    Objects.requireNonNull(requested, "requested");
+    Record lookup = authorizationLookup(requested.operationId());
+    if (lookup == null
+        || !Arrays.equals(requested.canonicalBytes(), lookup.get("binding_bytes", byte[].class)))
+      throw new IllegalArgumentException(
+          "Original finalized owner authorization absent or changed");
+    var original =
+        SelectedOwnerIntakeAuthorizationBinding.fromStored(
+            lookup.get("binding_bytes", byte[].class));
+    SelectedOwnerIntakeSourceReadScope scope = original.content().scope();
+    lockReservedSources(scope);
+    requireReservation(reservation(scope), scope);
+    Record row = authorization(original.operationId());
+    requireAuthorization(row, original);
+    if (aborted(original.content().scope()))
+      throw new IllegalArgumentException("Finalized owner authorization cannot be aborted");
+  }
+
+  private Record authorization(UUID operationId) {
+    return dsl.fetchOne(
+        "SELECT * FROM " + AUTHORIZATIONS + " WHERE operation_id = ? FOR UPDATE", operationId);
+  }
+
+  private Record authorizationLookup(UUID operationId) {
+    return dsl.fetchOne("SELECT * FROM " + AUTHORIZATIONS + " WHERE operation_id = ?", operationId);
+  }
+
+  private void requireAuthorization(Record row, SelectedOwnerIntakeAuthorizationBinding binding) {
+    if (row == null
+        || !Arrays.equals(binding.canonicalBytes(), row.get("binding_bytes", byte[].class))
+        || !binding.digest().equals(row.get("binding_digest", String.class))
+        || !Arrays.equals(
+            binding.content().canonicalBytes(), row.get("content_bytes", byte[].class))
+        || !binding.content().digest().equals(row.get("content_digest", String.class))
+        || !binding.operationId().equals(row.get("operation_id", UUID.class))
+        || !binding.fenceId().equals(row.get("fence_id", UUID.class))
+        || !binding.intakeRequestId().equals(row.get("intake_request_id", UUID.class))
+        || !binding.owner().name().equals(row.get("owner", String.class))
+        || !binding.targetNamespace().equals(row.get("target_namespace", String.class))
+        || !binding.actorAccountId().equals(row.get("actor_account_uuid", UUID.class))
+        || !binding.tenantId().equals(row.get("tenant_uuid", UUID.class))
+        || !binding.versionId().equals(row.get("version_uuid", UUID.class))) {
+      throw new IllegalArgumentException(
+          "Original finalized owner authorization absent or changed");
+    }
+    Record reserved = reservation(binding.content().scope());
+    requireReservation(reserved, binding.content().scope());
+    if (!binding.operationId().equals(reserved.get("operation_id", UUID.class))
+        || !binding.fenceId().equals(reserved.get("fence_id", UUID.class))
+        || !binding.intakeRequestId().equals(reserved.get("intake_request_id", UUID.class))
+        || !binding.owner().name().equals(reserved.get("owner", String.class))
+        || !binding.actorAccountId().equals(reserved.get("actor_account_uuid", UUID.class))
+        || !binding.tenantId().equals(reserved.get("tenant_uuid", UUID.class))
+        || !binding.versionId().equals(reserved.get("version_uuid", UUID.class))) {
+      throw new IllegalArgumentException(
+          "Finalized authorization differs from original reservation");
+    }
+    var issuer = issuer(reserved.get("issuance_operation_id", UUID.class));
+    if (!issuer.operationId.equals(row.get("issuance_operation_id", UUID.class))
+        || !Objects.equals(
+            reserved.get("issuance_fence", Long.class), row.get("issuance_fence", Long.class))
+        || !Arrays.equals(issuer.sources, row.get("source_payload", byte[].class))
+        || !Arrays.equals(issuer.bundle, row.get("issuance_bundle", byte[].class))
+        || !Arrays.equals(
+            reserved.get("outbox_checkpoints", byte[].class),
+            row.get("outbox_checkpoints", byte[].class))) {
+      throw new IllegalArgumentException("Changed finalized creator evidence");
+    }
+    List<Record> sources =
+        dsl.fetch(
+            "SELECT source_key, source_evidence FROM "
+                + AUTHORIZATION_SOURCES
+                + " WHERE operation_id = ? ORDER BY account_publication_authorization_source_sort_key(source_key)",
+            binding.operationId());
+    if (sources.size() != binding.sources().size())
+      throw new IllegalArgumentException("Incomplete finalized source participation");
+    for (int index = 0; index < sources.size(); index++) {
+      SourceEvidence source = binding.sources().get(index);
+      if (!source.key().equals(sources.get(index).get("source_key", String.class))
+          || !Arrays.equals(
+              source.canonicalBytes(), sources.get(index).get("source_evidence", byte[].class))) {
+        throw new IllegalArgumentException("Changed finalized source participation");
+      }
+    }
   }
 
   SourceReadCurrentness sourceReadCurrentness(SelectedOwnerIntakeSourceReadScope scope) {
@@ -190,6 +386,8 @@ public final class AccountSelectedOwnerIntakeSourceReservationRepository {
     Record row = reservation(scope);
     requireReservation(row, scope);
     if (aborted(scope)) throw new IllegalStateException("Original source-read scope aborted");
+    if (authorization(scope.operationId()) != null)
+      throw new IllegalStateException("Finalized owner intake is not a preliminary source read");
     var original = issuer(row.get("issuance_operation_id", UUID.class));
     if (!"COMMITTED".equals(original.status))
       throw new IllegalStateException("Original creator issuance is no longer committed");
@@ -202,6 +400,8 @@ public final class AccountSelectedOwnerIntakeSourceReservationRepository {
     Record row = reservation(scope);
     requireReservation(row, scope);
     if (aborted(scope)) throw new IllegalStateException("Original source-read scope aborted");
+    if (authorization(scope.operationId()) != null)
+      throw new IllegalStateException("Finalized owner intake is not a preliminary source read");
     var original = issuer(row.get("issuance_operation_id", UUID.class));
     if (!"COMMITTED".equals(original.status) || !currentness(row, original).equals(expected)) {
       throw new IllegalStateException("Exact current pending source-read scope required");
@@ -405,12 +605,31 @@ public final class AccountSelectedOwnerIntakeSourceReservationRepository {
     var original = issuer(row.get("issuance_operation_id", UUID.class));
     if (!"COMMITTED".equals(original.status)
         || !original.operationId.equals(current.stored().operationId)
+        || !original.accountId.equals(current.stored().accountId)
+        || !original.tenantId.equals(current.stored().tenantId)
+        || !original.tokenHash.equals(current.stored().tokenHash)
         || !Arrays.equals(current.stored().sources, row.get("source_payload", byte[].class))
         || !Arrays.equals(current.stored().bundle, row.get("issuance_bundle", byte[].class))
         || !Arrays.equals(
             AccountControlUiAuthority.canonical(current.source().outboxCheckpoints()),
             row.get("outbox_checkpoints", byte[].class))) {
       throw new IllegalArgumentException("Changed original intake creator authority");
+    }
+    List<SourceEvidence> currentSources = current.source().sources();
+    List<Record> heldSources =
+        dsl.fetch(
+            "SELECT source_key, source_evidence FROM "
+                + SOURCES
+                + " WHERE operation_id = ? ORDER BY account_publication_authorization_source_sort_key(source_key)",
+            row.get("operation_id", UUID.class));
+    if (currentSources.size() != heldSources.size())
+      throw new IllegalArgumentException("Changed original intake source vector");
+    for (int index = 0; index < currentSources.size(); index++) {
+      SourceEvidence source = currentSources.get(index);
+      Record held = heldSources.get(index);
+      if (!source.key().equals(held.get("source_key", String.class))
+          || !Arrays.equals(source.canonicalBytes(), held.get("source_evidence", byte[].class)))
+        throw new IllegalArgumentException("Changed original intake source vector");
     }
   }
 
