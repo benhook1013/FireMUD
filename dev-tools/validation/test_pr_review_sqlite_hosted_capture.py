@@ -784,7 +784,9 @@ class SqliteHostedCaptureTest(unittest.TestCase):
                 )
                 finding = sqlite_hosted_capture._hosted_comment_finding_segments(4152944302, body)[0]
                 self.assertEqual(finding["title"], title)
-                self.assertEqual(finding["display_detail"], "Lines 20–25 must preserve `tenantId`.")
+                self.assertEqual(
+                    finding["display_detail"], "Lines 20–25 must preserve `tenantId`.\n\n```diff\n+noise\n```"
+                )
                 self.assertEqual(finding["display_severity"], "Major")
 
     def test_hosted_severity_reads_explicit_badges_only(self) -> None:
