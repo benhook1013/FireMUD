@@ -270,6 +270,50 @@ public class AccountStartSessionWorldParticipationRepository {
   }
 
   /**
+   * Resolves the retained World participation for the exact original StartSession tuple.
+   *
+   * <p>The canonical tuple's stable request identity is only a unique historical lookup key. The
+   * complete tuple is compared with the retained parent, and the historical Account capture and
+   * every source child are verified before its participation identity and fence are returned. This
+   * supplies coordinates only; callers must independently establish fresh Account currentness
+   * before using the result.
+   */
+  @Transactional(propagation = Propagation.MANDATORY)
+  public java.util.Optional<StoredParticipation> findHistoricalForOriginalTuple(
+      byte[] originalPostAuthorizationTuple) {
+    requireWritableReadCommittedTransaction();
+    if (originalPostAuthorizationTuple == null || originalPostAuthorizationTuple.length == 0) {
+      throw unavailable();
+    }
+
+    StartSessionPostAuthorizationExecutionTuple expectedTuple;
+    try {
+      expectedTuple =
+          StartSessionPostAuthorizationExecutionTuple.decode(originalPostAuthorizationTuple);
+    } catch (RuntimeException malformed) {
+      throw unavailable();
+    }
+    if (!Arrays.equals(originalPostAuthorizationTuple, expectedTuple.canonicalBytes())) {
+      throw unavailable();
+    }
+
+    String requestId = expectedTuple.controlPlaneRequestId();
+    Record row = selectByRequestId(requestId, false);
+    if (row == null) return java.util.Optional.empty();
+
+    StoredParticipation parent = decodeParticipation(row, List.of());
+    if (!MessageDigest.isEqual(
+        originalPostAuthorizationTuple, parent.originalPostAuthorizationTuple())) {
+      throw unavailable();
+    }
+    List<SourceEvidence> capturedSources =
+        decodeHistoricalCapture(selectCapture(requestId, false), parent);
+    List<SourceEvidence> children = readSources(parent.participationId());
+    requireExactSources(capturedSources, children);
+    return java.util.Optional.of(withSources(parent, children));
+  }
+
+  /**
    * Lookup-only post-commit readback of an immutable terminal receipt for exact historical
    * participation identity.
    *

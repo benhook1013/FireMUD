@@ -325,6 +325,87 @@ class AccountStartSessionWorldParticipationRepositoryTest {
   }
 
   @Test
+  void findHistoricalForOriginalTupleResolvesTheRetainedIdentityAndVerifiesItsSources()
+      throws Exception {
+    Fixture fixture = fixture();
+    List<String> reads = new java.util.ArrayList<>();
+    AtomicReference<Object[]> writes = new AtomicReference<>();
+    AccountStartSessionWorldParticipationRepository repository =
+        mockedRepository(fixture, reads, writes, null);
+    beginWritableTransaction();
+
+    var found =
+        repository.findHistoricalForOriginalTuple(
+            fixture.candidate().originalPostAuthorizationTuple());
+
+    assertThat(found).isPresent();
+    assertThat(found.orElseThrow().participationId()).isEqualTo(PARTICIPATION_ID);
+    assertThat(found.orElseThrow().participationFence()).isEqualTo(41L);
+    assertThat(found.orElseThrow().originalPostAuthorizationTuple())
+        .containsExactly(fixture.candidate().originalPostAuthorizationTuple());
+    assertThat(found.orElseThrow().sources()).hasSize(1);
+    assertThat(found.orElseThrow().sources().get(0).canonicalBytes())
+        .containsExactly(fixture.source().canonicalBytes());
+    assertThat(reads)
+        .anyMatch(sql -> sql.contains("WHERE control_plane_request_id = ?"))
+        .anyMatch(sql -> sql.contains("account_start_session_authority_captures"))
+        .anyMatch(sql -> sql.contains("account_start_session_world_participation_sources"));
+    assertThat(reads)
+        .allMatch(sql -> !sql.toLowerCase(java.util.Locale.ROOT).contains("for update"));
+    assertThat(writes.get()).isNull();
+  }
+
+  @Test
+  void findHistoricalForOriginalTupleRejectsSameRequestIdWithChangedCompleteTuple()
+      throws Exception {
+    Fixture fixture = fixture();
+    StartSessionPostAuthorizationExecutionTuple retained = fixture.candidate().originalTuple();
+    byte[] changedTuple =
+        StartSessionPostAuthorizationExecutionTuple.createHuman(
+                retained.preAuthorizationTuple(),
+                retained.authenticatedWorkloadIdentity(),
+                retained.authorizationReferenceFingerprint(),
+                retained.reservationOwnerId(),
+                retained.reservationClaimFence() + 1L,
+                retained.authorityEvidenceBundleBytes(),
+                retained.bundleReference())
+            .canonicalBytes();
+    List<String> reads = new java.util.ArrayList<>();
+    AtomicReference<Object[]> writes = new AtomicReference<>();
+    AccountStartSessionWorldParticipationRepository repository =
+        mockedRepository(fixture, reads, writes, null);
+    beginWritableTransaction();
+
+    assertThatThrownBy(() -> repository.findHistoricalForOriginalTuple(changedTuple))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("unavailable");
+
+    assertThat(reads).hasSize(1);
+    assertThat(reads.get(0)).contains("WHERE control_plane_request_id = ?");
+    assertThat(writes.get()).isNull();
+  }
+
+  @Test
+  void findHistoricalForOriginalTupleReturnsEmptyWhenRequestIdentityHasNoRetainedRow()
+      throws Exception {
+    Fixture fixture = fixture();
+    List<String> reads = new java.util.ArrayList<>();
+    AtomicReference<Object[]> writes = new AtomicReference<>();
+    AccountStartSessionWorldParticipationRepository repository =
+        mockedRepository(fixture, reads, writes, null, true);
+    beginWritableTransaction();
+
+    var found =
+        repository.findHistoricalForOriginalTuple(
+            fixture.candidate().originalPostAuthorizationTuple());
+
+    assertThat(found).isEmpty();
+    assertThat(reads).hasSize(1);
+    assertThat(reads.get(0)).contains("WHERE control_plane_request_id = ?");
+    assertThat(writes.get()).isNull();
+  }
+
+  @Test
   void settleExactInsertsAndReadsBackTheSameTypedTerminalAfterHistoricalIdentityCheck()
       throws Exception {
     Fixture fixture = fixture();

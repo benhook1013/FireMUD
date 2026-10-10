@@ -4,8 +4,15 @@ import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 import java.math.BigInteger;
 import java.net.URI;
+import java.sql.Connection;
+import java.sql.PreparedStatement;
+import java.sql.ResultSet;
+import java.util.LinkedHashMap;
+import java.util.Map;
 import java.util.Properties;
+import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import javax.sql.DataSource;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
 import org.testcontainers.DockerClientFactory;
@@ -22,6 +29,14 @@ public final class AccountPostgresIntegrationFixture {
 
   private static final BigInteger MAX_UINT64 =
       BigInteger.ONE.shiftLeft(64).subtract(BigInteger.ONE);
+  private static final BigInteger MAX_UINT32 =
+      BigInteger.ONE.shiftLeft(32).subtract(BigInteger.ONE);
+  private static final int MAX_RELATION_LOCATOR_OCCURRENCES = 256;
+  private static final int MAX_DISTINCT_RELATION_LOCATORS = 32;
+  private static final int MAX_WAL_DUMP_OUTPUT_CHARS = 16_384;
+  private static final int MAX_COMBINED_WAL_DUMP_OUTPUT_CHARS = MAX_WAL_DUMP_OUTPUT_CHARS * 3 + 256;
+  private static final Pattern WAL_RELATION_LOCATOR =
+      Pattern.compile("\\bblkref #\\d+: rel ([0-9]{1,10})/([0-9]{1,10})/([0-9]{1,10})\\b");
   private static final Pattern WAL_FAILURE_DETAIL =
       Pattern.compile(
           "(?:phase=(?:create|receipt-read) )?snapshot=[0-9:,]+ own_xid_if_assigned=([0-9]*)"
@@ -32,7 +47,9 @@ public final class AccountPostgresIntegrationFixture {
               + "(?: observed_db_ms=([1-9][0-9]{0,18}))?"
               + " unchanged_expiry_ms=([1-9][0-9]{0,18})");
 
-  /** Failure-only observation; never opens a database connection or changes database settings. */
+  /**
+   * Failure-only observation; WAL capture and locator lookup use the run-owned fixture database.
+   */
   public String describeWalCoverageFailure(String detail) throws Exception {
     if (detail == null || detail.length() > 1024) {
       return "WAL diagnostic unavailable: missing or oversized server DETAIL";
@@ -85,8 +102,9 @@ public final class AccountPostgresIntegrationFixture {
     String start =
         formatLsn(finalFlush.subtract(BigInteger.valueOf(1_048_576)).max(BigInteger.ZERO));
     StringBuilder result = new StringBuilder("WAL failure DETAIL: ").append(detail);
+    StringBuilder walOutput = new StringBuilder();
     result.append("\nUnflushed interval (up to 256 records):\n");
-    result.append(dumpWal(fields.group(6), fields.group(4), null));
+    appendWalDump(result, walOutput, dumpWal(fields.group(6), fields.group(4), null));
     for (int group : new int[] {2, 3}) {
       String xid = fields.group(group);
       if (xid.isEmpty()) continue;
@@ -103,8 +121,11 @@ public final class AccountPostgresIntegrationFixture {
           .append("..")
           .append(fields.group(4))
           .append(":\n");
-      result.append(dumpWal(start, fields.group(4), walXid));
+      appendWalDump(result, walOutput, dumpWal(start, fields.group(4), walXid));
     }
+    result
+        .append('\n')
+        .append(mapWalRelationLocatorsAfterFailure(walOutput.toString(), dataSource()));
     return result
         .append(
             "\nLimits: each dump <=6s, <=16KiB, <=256 matching records; output may be truncated. "
@@ -113,6 +134,162 @@ public final class AccountPostgresIntegrationFixture {
                 + "and length, not an independently measured COMMIT end/flush bound.")
         .toString();
   }
+
+  private static void appendWalDump(StringBuilder result, StringBuilder walOutput, String dump) {
+    result.append(dump);
+    walOutput.append(dump).append('\n');
+  }
+
+  /**
+   * Maps bounded WAL relation locators against the current catalog after failure-only WAL capture.
+   * Results are current observations only; they do not establish historical identity, backend, or
+   * causation for a record.
+   */
+  public static String mapWalRelationLocatorsAfterFailure(
+      String walOutput, DataSource sameDatabase) {
+    if (walOutput == null || walOutput.length() > MAX_COMBINED_WAL_DUMP_OUTPUT_CHARS) {
+      return "WAL relation mapping unavailable: missing or oversized bounded dump output";
+    }
+
+    Map<String, RelationLocator> locators = new LinkedHashMap<>();
+    Matcher matcher = WAL_RELATION_LOCATOR.matcher(walOutput);
+    int occurrences = 0;
+    int invalidLocators = 0;
+    boolean occurrenceLimitReached = false;
+    boolean distinctLimitReached = false;
+    while (matcher.find()) {
+      if (++occurrences > MAX_RELATION_LOCATOR_OCCURRENCES) {
+        occurrenceLimitReached = true;
+        break;
+      }
+      String tablespace = matcher.group(1);
+      String database = matcher.group(2);
+      String relfilenode = matcher.group(3);
+      if (!validOid(tablespace) || !validOid(database) || !validOid(relfilenode)) {
+        invalidLocators++;
+        continue;
+      }
+      String key = tablespace + "/" + database + "/" + relfilenode;
+      if (!locators.containsKey(key)) {
+        if (locators.size() == MAX_DISTINCT_RELATION_LOCATORS) {
+          distinctLimitReached = true;
+          continue;
+        }
+        locators.put(key, new RelationLocator(tablespace, database, relfilenode));
+      }
+    }
+    if (locators.isEmpty()) {
+      return "WAL relation mapping inconclusive: no valid relation locators in captured records"
+          + locatorLimitNote(occurrenceLimitReached, distinctLimitReached, invalidLocators);
+    }
+
+    StringBuilder mapping =
+        new StringBuilder("WAL relation mappings (post-failure current catalog only):");
+    try (Connection connection = sameDatabase.getConnection()) {
+      String currentDatabase = null;
+      String currentDatabaseOid = null;
+      StringBuilder values = new StringBuilder();
+      for (int index = 0; index < locators.size(); index++) {
+        if (index > 0) values.append(',');
+        values.append("(?::oid, ?::oid, ?::oid)");
+      }
+      String sql =
+          "WITH locator_input(tablespace_oid, database_oid, relfilenode) AS (VALUES "
+              + values
+              + "), current_database_row AS ("
+              + "SELECT oid FROM pg_database WHERE datname = current_database()"
+              + "), resolved AS ("
+              + "SELECT l.*, d.oid AS current_database_oid, "
+              + "CASE WHEN l.database_oid = d.oid "
+              + "THEN pg_filenode_relation(l.tablespace_oid, l.relfilenode) END AS relation_oid "
+              + "FROM locator_input l CROSS JOIN current_database_row d) "
+              + "SELECT current_database(), r.current_database_oid::text, "
+              + "r.tablespace_oid::text, r.database_oid::text, r.relfilenode::text, "
+              + "r.relation_oid::oid::text, n.nspname, c.relname, c.relkind::text, "
+              + "c.reltablespace::text, pg_relation_filenode(c.oid)::text "
+              + "FROM resolved r LEFT JOIN pg_class c ON c.oid = r.relation_oid "
+              + "LEFT JOIN pg_namespace n ON n.oid = c.relnamespace "
+              + "ORDER BY r.tablespace_oid, r.database_oid, r.relfilenode";
+      try (PreparedStatement statement = connection.prepareStatement(sql)) {
+        statement.setQueryTimeout(5);
+        int parameter = 1;
+        for (RelationLocator locator : locators.values()) {
+          statement.setString(parameter++, locator.tablespaceOid());
+          statement.setString(parameter++, locator.databaseOid());
+          statement.setString(parameter++, locator.relfilenode());
+        }
+        try (ResultSet rows = statement.executeQuery()) {
+          while (rows.next()) {
+            currentDatabase = rows.getString(1);
+            currentDatabaseOid = rows.getString(2);
+            String locator = rows.getString(3) + "/" + rows.getString(4) + "/" + rows.getString(5);
+            String relationOid = rows.getString(6);
+            String schema = rows.getString(7);
+            String relation = rows.getString(8);
+            String relationKind = rows.getString(9);
+            String relationTablespace = rows.getString(10);
+            String currentRelfilenode = rows.getString(11);
+            mapping.append("\n  ").append(locator).append(" -> ");
+            if (!rows.getString(4).equals(currentDatabaseOid)) {
+              mapping.append("different database; not looked up (inconclusive)");
+            } else if (relationOid == null || schema == null || relation == null) {
+              mapping.append("no current mapping (missing/reused locator; inconclusive)");
+            } else if (!rows.getString(5).equals(currentRelfilenode)) {
+              mapping
+                  .append("catalog mapping changed during lookup to ")
+                  .append(schema)
+                  .append('.')
+                  .append(relation)
+                  .append("; locator identity inconclusive");
+            } else {
+              mapping
+                  .append(schema)
+                  .append('.')
+                  .append(relation)
+                  .append(" relation_oid=")
+                  .append(relationOid)
+                  .append(" relkind=")
+                  .append(relationKind)
+                  .append(" reltablespace=")
+                  .append(relationTablespace)
+                  .append(" (current mapping only; reuse and causation not excluded)");
+            }
+          }
+        }
+      }
+      if (currentDatabase == null || currentDatabaseOid == null) {
+        return "WAL relation mapping inconclusive: current database catalog identity unavailable";
+      }
+      mapping
+          .append("\n  current database: ")
+          .append(currentDatabase)
+          .append(" oid=")
+          .append(currentDatabaseOid);
+    } catch (Exception lookupFailure) {
+      return "WAL relation mapping unavailable: " + lookupFailure.getClass().getSimpleName();
+    }
+    return mapping
+        .append(locatorLimitNote(occurrenceLimitReached, distinctLimitReached, invalidLocators))
+        .toString();
+  }
+
+  private static String locatorLimitNote(
+      boolean occurrenceLimitReached, boolean distinctLimitReached, int invalidLocators) {
+    if (!occurrenceLimitReached && !distinctLimitReached && invalidLocators == 0) return "";
+    return "\n  mapping coverage is incomplete:"
+        + (occurrenceLimitReached ? " occurrence limit reached;" : "")
+        + (distinctLimitReached ? " distinct-locator limit reached;" : "")
+        + (invalidLocators == 0 ? "" : " invalid locator count=" + invalidLocators + ";")
+        + " omitted or invalid locators are inconclusive";
+  }
+
+  private static boolean validOid(String oid) {
+    if (!oid.matches("[0-9]{1,10}")) return false;
+    BigInteger value = new BigInteger(oid);
+    return value.compareTo(MAX_UINT32) <= 0;
+  }
+
+  private record RelationLocator(String tablespaceOid, String databaseOid, String relfilenode) {}
 
   private String dumpWal(String start, String end, String xid) throws Exception {
     // The shell program is constant; validated values travel only as positional arguments.

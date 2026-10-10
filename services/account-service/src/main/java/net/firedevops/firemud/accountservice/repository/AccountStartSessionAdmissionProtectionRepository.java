@@ -40,11 +40,11 @@ import tools.jackson.databind.json.JsonMapper;
 /**
  * Immutable Account storage for the original StartSession admission source protection.
  *
- * <p>Every operation requires the producer's writable READ COMMITTED Account transaction. The
- * producer authenticates Game Session and establishes original actor/JTI/reference currentness
- * before using this repository. SQL revalidates the full retained source, World participation,
- * owner observation, lease and request bindings; this repository is not an authenticator or a
- * terminal settlement path.
+ * <p>Every operation requires a writable READ COMMITTED Account transaction. The producer
+ * authenticates Game Session and establishes original actor/JTI/reference currentness before
+ * acquisition; SQL revalidates the full retained source, World participation, owner observation,
+ * lease and request bindings. Historical lookup is integrity-only and does not authenticate a
+ * caller, establish currentness, release protection, or settle a terminal outcome.
  */
 @Repository
 public class AccountStartSessionAdmissionProtectionRepository {
@@ -200,6 +200,51 @@ public class AccountStartSessionAdmissionProtectionRepository {
     Record locked = selectById(protectionId, true);
     if (locked == null) throw unavailable();
     return Optional.of(decodeAndRequireExact(locked, request, capture, expectedSources));
+  }
+
+  /**
+   * Lookup-only read of one immutable protection for later independently authenticated terminal
+   * verification.
+   *
+   * <p>This method validates the retained identity, canonical request, capture and complete source
+   * vector, but performs no authentication or currentness check. It does not consult lease expiry,
+   * lock or renew the protection, insert a settlement, or release source protection.
+   */
+  @Transactional(propagation = Propagation.MANDATORY)
+  public Optional<AccountStartSessionAdmissionProtectionEvidence> findHistoricalExact(
+      UUID protectionId, long protectionFence) {
+    requireWritableReadCommittedTransaction();
+    if (protectionId == null || NIL_UUID.equals(protectionId) || protectionFence <= 0L) {
+      throw unavailable();
+    }
+
+    Record row = selectById(protectionId, false);
+    if (row == null) return Optional.empty();
+
+    UUID retainedId = requiredUuid(row, "protection_id");
+    long retainedFence = positive(requiredLong(row, "protection_fence"));
+    if (!protectionId.equals(retainedId) || protectionFence != retainedFence) {
+      throw unavailable();
+    }
+
+    AccountStartSessionAdmissionProtectionRequest request;
+    try {
+      request =
+          AccountStartSessionAdmissionProtectionRequest.decode(
+              requiredBytes(row, "request_binding_bytes"));
+    } catch (RuntimeException malformed) {
+      throw unavailable();
+    }
+
+    Record captureRow = selectCaptureForOriginalTuple(request.originalTuple(), false);
+    if (captureRow == null) throw unavailable();
+    CaptureValue capture = captureFromRow(captureRow);
+    if (!request.originalTuple().controlPlaneRequestId().equals(capture.controlPlaneRequestId())) {
+      throw unavailable();
+    }
+    List<SourceEvidence> expectedSources =
+        sourceVector(capture.snapshotBytes(), request.originalTuple());
+    return Optional.of(decodeAndRequireExact(row, request, capture, expectedSources));
   }
 
   private int insert(

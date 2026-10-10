@@ -12,8 +12,6 @@ public record AccountStartSessionAdmissionProtectionAcquisitionInput(
     UUID gameSessionOwnerMutationId,
     UUID gameSessionOwnerAttemptId,
     long gameSessionOwnerFence,
-    UUID accountWorldParticipationId,
-    long accountWorldParticipationFence,
     WorldCanonicalInitialAdmissionHold.HoldIdentity worldHoldIdentity) {
   private static final UUID NIL_UUID = new UUID(0L, 0L);
 
@@ -39,11 +37,6 @@ public record AccountStartSessionAdmissionProtectionAcquisitionInput(
     gameSessionOwnerAttemptId = requireNonNil(gameSessionOwnerAttemptId, "Game Session attempt ID");
     if (gameSessionOwnerFence <= 0L) {
       throw new IllegalArgumentException("Game Session owner fence must be positive");
-    }
-    accountWorldParticipationId =
-        requireNonNil(accountWorldParticipationId, "Account World participation ID");
-    if (accountWorldParticipationFence <= 0L) {
-      throw new IllegalArgumentException("Account World participation fence must be positive");
     }
     Objects.requireNonNull(worldHoldIdentity, "complete World hold identity is required");
     byte[] holdBytes = worldHoldIdentity.canonicalBytes();

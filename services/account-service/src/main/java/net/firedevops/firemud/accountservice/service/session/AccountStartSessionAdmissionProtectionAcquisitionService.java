@@ -121,9 +121,7 @@ public final class AccountStartSessionAdmissionProtectionAcquisitionService {
             capture -> {
               StoredParticipation historicalParticipation =
                   participationRepository
-                      .findHistoricalExact(
-                          request.accountWorldParticipationId(),
-                          request.accountWorldParticipationFence())
+                      .findHistoricalForOriginalTuple(tupleBytes)
                       .orElseThrow(
                           () -> denied("Exact original World participation is unavailable"));
               requireParticipationBinding(request, tuple, historicalParticipation);
@@ -245,9 +243,7 @@ public final class AccountStartSessionAdmissionProtectionAcquisitionService {
       AcquisitionRequest request,
       StartSessionPostAuthorizationExecutionTuple tuple,
       StoredParticipation participation) {
-    if (!request.accountWorldParticipationId().equals(participation.participationId())
-        || request.accountWorldParticipationFence() != participation.participationFence()
-        || !tuple.controlPlaneRequestId().equals(participation.controlPlaneRequestId())
+    if (!tuple.controlPlaneRequestId().equals(participation.controlPlaneRequestId())
         || !MessageDigest.isEqual(
             tuple.canonicalBytes(), participation.originalPostAuthorizationTuple())
         || !request
@@ -290,8 +286,6 @@ public final class AccountStartSessionAdmissionProtectionAcquisitionService {
     requireNonnil(request.gameSessionOwnerMutationId(), "Game Session owner mutation ID");
     requireNonnil(request.gameSessionOwnerAttemptId(), "Game Session owner attempt ID");
     requirePositive(request.gameSessionOwnerFence(), "Game Session owner fence");
-    requireNonnil(request.accountWorldParticipationId(), "Account World participation ID");
-    requirePositive(request.accountWorldParticipationFence(), "Account World participation fence");
   }
 
   private static StartSessionPostAuthorizationExecutionTuple decodeOriginalTuple(
@@ -344,7 +338,6 @@ public final class AccountStartSessionAdmissionProtectionAcquisitionService {
             tuple.preAuthorizationTuple().action().scope().tenantId(),
             request.gameSessionOwnerMutationId(),
             request.gameSessionOwnerAttemptId(),
-            request.accountWorldParticipationId(),
             request.worldHoldIdentity().holdId(),
             StartSessionAuthorityEvidenceBundle.decode(tuple.authorityEvidenceBundleBytes())
                 .issuanceOperationId()));
@@ -403,8 +396,6 @@ public final class AccountStartSessionAdmissionProtectionAcquisitionService {
       UUID gameSessionOwnerMutationId,
       UUID gameSessionOwnerAttemptId,
       long gameSessionOwnerFence,
-      UUID accountWorldParticipationId,
-      long accountWorldParticipationFence,
       WorldCanonicalInitialAdmissionHold.HoldIdentity worldHoldIdentity) {
     public AcquisitionRequest {
       originalPostAuthorizationTuple =

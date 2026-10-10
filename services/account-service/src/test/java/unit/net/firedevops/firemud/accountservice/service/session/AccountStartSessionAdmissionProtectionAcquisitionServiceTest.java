@@ -135,6 +135,7 @@ class AccountStartSessionAdmissionProtectionAcquisitionServiceTest {
     assertThat(acquired.accountProtectionId()).isEqualTo(PROTECTION_ID);
     assertThat(acquired.accountProtectionFence()).isEqualTo(PROTECTION_FENCE);
     assertThat(acquired.request().accountWorldParticipationId()).isEqualTo(PARTICIPATION_ID);
+    assertThat(acquired.request().accountWorldParticipationFence()).isEqualTo(PARTICIPATION_FENCE);
     assertThat(acquired.request().gameSessionOwnerMutationId()).isEqualTo(GAME_SESSION_MUTATION_ID);
     assertThat(harness.steps)
         .containsExactly(
@@ -152,11 +153,29 @@ class AccountStartSessionAdmissionProtectionAcquisitionServiceTest {
             eq(GAME_SESSION_ATTEMPT_ID),
             eq(GAME_SESSION_FENCE),
             any());
-    verify(harness.participationRepository)
-        .findHistoricalExact(PARTICIPATION_ID, PARTICIPATION_FENCE);
+    ArgumentCaptor<byte[]> tupleBytes = ArgumentCaptor.forClass(byte[].class);
+    verify(harness.participationRepository).findHistoricalForOriginalTuple(tupleBytes.capture());
+    assertThat(tupleBytes.getValue()).containsExactly(harness.tuple.canonicalBytes());
     verify(harness.attemptEvidenceRepository)
         .findHistoricalExact(any(StoredParticipation.class), any(Request.class));
     verify(harness.participationRepository, times(0)).findCurrentExact(any());
+  }
+
+  @Test
+  void missingTupleResolvedWorldParticipationDeniesBeforeHistoricalObservationOrProtection() {
+    Harness harness = new Harness();
+    harness.configureSuccess();
+    harness.worldParticipationMissing = true;
+
+    assertCode(
+        Status.Code.FAILED_PRECONDITION,
+        () -> authorized(() -> harness.service.acquire(harness.request)));
+
+    assertThat(harness.steps).containsExactly("remote-read", "issuer-currentness", "world-history");
+    verify(harness.attemptEvidenceRepository, times(0))
+        .findHistoricalExact(any(StoredParticipation.class), any(Request.class));
+    verifyNoInteractions(harness.protectionRepository);
+    assertThat(harness.readbackTransactions.begins).isZero();
   }
 
   @Test
@@ -637,8 +656,6 @@ class AccountStartSessionAdmissionProtectionAcquisitionServiceTest {
             GAME_SESSION_MUTATION_ID,
             GAME_SESSION_ATTEMPT_ID,
             GAME_SESSION_FENCE,
-            PARTICIPATION_ID,
-            PARTICIPATION_FENCE,
             hold);
     final AccountStartSessionAdmissionProtectionAcquisitionService service =
         new AccountStartSessionAdmissionProtectionAcquisitionService(
@@ -652,6 +669,7 @@ class AccountStartSessionAdmissionProtectionAcquisitionServiceTest {
     boolean protectionMissingOnReadback;
     int missingReadbacksRemaining;
     boolean changedReadbackIdentity;
+    boolean worldParticipationMissing;
 
     void configureSuccess() {
       configureClientResult(projection(tuple), ORIGINAL_LEASE_EXPIRY);
@@ -676,12 +694,14 @@ class AccountStartSessionAdmissionProtectionAcquisitionServiceTest {
           .when(issuer)
           .withCurrentGameSessionAdmissionProtectionCurrentness(
               any(byte[].class), eq(GAME_SESSION_ATTEMPT_ID), eq(GAME_SESSION_FENCE), any());
-      when(participationRepository.findHistoricalExact(PARTICIPATION_ID, PARTICIPATION_FENCE))
+      when(participationRepository.findHistoricalForOriginalTuple(any(byte[].class)))
           .thenAnswer(
               ignored -> {
                 assertWritableReadCommittedTransaction();
                 steps.add("world-history");
-                return Optional.of(worldParticipation);
+                return worldParticipationMissing
+                    ? Optional.empty()
+                    : Optional.of(worldParticipation);
               });
       when(attemptEvidenceRepository.findHistoricalExact(
               any(StoredParticipation.class), any(Request.class)))

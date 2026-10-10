@@ -43,7 +43,6 @@ class AccountStartSessionAdmissionProtectionAcquisitionGrpcClientTest {
   private static final UUID TARGET_OWNER = uuid("36aa9ce5-0ebc-4c14-9f6b-d160edc6059a");
   private static final UUID MUTATION = uuid("f1a3ab1e-9147-4667-b6c4-6eb5119e8a31");
   private static final UUID ATTEMPT = uuid("ec13cc04-ec15-4eb8-a018-c2c5e8da65f8");
-  private static final UUID PARTICIPATION = uuid("47b3be7f-a32f-4e19-8916-8c3b8da07a82");
   private static final UUID HOLD_ID = uuid("0db7344a-1e67-4b95-905a-83dc9c472f0c");
   private static final UUID HOLD_FENCE = uuid("52a14272-f9e4-4f67-97c9-62247b5fbcc1");
   private static final JsonMapper JSON = JsonMapper.builder().build();
@@ -226,7 +225,7 @@ class AccountStartSessionAdmissionProtectionAcquisitionGrpcClientTest {
             HOLD_ID,
             HOLD_FENCE);
     return new AccountStartSessionAdmissionProtectionAcquisitionInput(
-        tuple.canonicalBytes(), MUTATION, ATTEMPT, 21L, PARTICIPATION, 22L, hold);
+        tuple.canonicalBytes(), MUTATION, ATTEMPT, 21L, hold);
   }
 
   private static byte[] authorityBundle(StartSessionPreAuthorizationReservationTuple tuple) {

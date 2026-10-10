@@ -155,6 +155,10 @@ class AccountStartSessionAdmissionProtectionAcquisitionPostgresIntegrationTest {
       assertThat(first.accountProtectionFence()).isPositive();
       assertThat(first.request().originalLeaseExpiresAt())
           .isEqualTo(prepared.originalObservation.originalLeaseExpiresAt());
+      assertThat(first.request().accountWorldParticipationId())
+          .isEqualTo(prepared.participation.participationId());
+      assertThat(first.request().accountWorldParticipationFence())
+          .isEqualTo(prepared.participation.participationFence());
       assertThat(first.originalSourceCaptureReferenceBytes())
           .containsExactly(prepared.capture.canonicalBytes());
       assertThat(first.originalSourceCaptureReferenceSha256())
@@ -271,6 +275,26 @@ class AccountStartSessionAdmissionProtectionAcquisitionPostgresIntegrationTest {
       awaitDatabaseTime(
           prepared.account.dsl, originalLeaseExpiry.plusMillis(100), Duration.ofSeconds(15));
       assertThat(databaseNow(prepared.account.dsl)).isAfter(originalLeaseExpiry);
+
+      var historicalProtectionRepository =
+          new AccountStartSessionAdmissionProtectionRepository(prepared.account.dsl);
+      AccountStartSessionAdmissionProtectionEvidence historical =
+          prepared.account.tx(
+              () ->
+                  historicalProtectionRepository
+                      .findHistoricalExact(
+                          protection.accountProtectionId(), protection.accountProtectionFence())
+                      .orElseThrow());
+      assertThat(historical.canonicalBytes()).containsExactly(protection.canonicalBytes());
+      assertThat(historical.accountProtectionId()).isEqualTo(protection.accountProtectionId());
+      assertThat(historical.accountProtectionFence())
+          .isEqualTo(protection.accountProtectionFence());
+      assertThat(historical.request().canonicalBytes())
+          .containsExactly(protection.request().canonicalBytes());
+      assertThat(historical.originalSourceCaptureReferenceBytes())
+          .containsExactly(protection.originalSourceCaptureReferenceBytes());
+      assertThat(encoded(historical.sourceEvidenceVector()))
+          .containsExactlyElementsOf(encoded(protection.sourceEvidenceVector()));
 
       String roleBefore =
           prepared
@@ -608,8 +632,6 @@ class AccountStartSessionAdmissionProtectionAcquisitionPostgresIntegrationTest {
               gameSessionMutationId,
               gameSessionAttemptId,
               GAME_SESSION_OWNER_FENCE,
-              participation.participationId(),
-              participation.participationFence(),
               holdIdentity);
 
       var gameSessionClient = mock(OriginalStartSessionCurrentAttemptClient.class);

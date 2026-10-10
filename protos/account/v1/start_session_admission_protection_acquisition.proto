@@ -16,14 +16,13 @@ service AccountStartSessionAdmissionProtectionAcquisitionService {
 message AcquireOriginalStartSessionAdmissionProtectionRequest {
   int32 schema_version = 1;
   string target_namespace = 2;
-  // Exact fields of AccountStartSessionAdmissionProtectionAcquisitionService.AcquisitionRequest.
+  // The five caller-supplied fields of the owner AcquisitionRequest; Account resolves retained
+  // participation coordinates and sources the original lease/projection from fresh currentness.
   bytes original_post_authorization_tuple = 3;
   string game_session_owner_mutation_id = 4;
   string game_session_owner_attempt_id = 5;
   int64 game_session_owner_fence = 6;
-  string account_world_participation_id = 7;
-  int64 account_world_participation_fence = 8;
-  bytes world_hold_identity = 9;
+  bytes world_hold_identity = 7;
 }
 
 message AcquireOriginalStartSessionAdmissionProtectionResponse {

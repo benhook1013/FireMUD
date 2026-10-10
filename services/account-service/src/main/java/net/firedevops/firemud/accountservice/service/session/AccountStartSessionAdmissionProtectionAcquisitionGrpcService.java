@@ -77,8 +77,6 @@ public final class AccountStartSessionAdmissionProtectionAcquisitionGrpcService
                   input.gameSessionOwnerMutationId(),
                   input.gameSessionOwnerAttemptId(),
                   input.gameSessionOwnerFence(),
-                  input.accountWorldParticipationId(),
-                  input.accountWorldParticipationFence(),
                   input.worldHoldIdentity()));
       var response =
           AccountStartSessionAdmissionProtectionAcquisitionGrpcCodec.toResponse(

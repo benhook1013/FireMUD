@@ -15,6 +15,16 @@ service OriginalStartSessionCurrentAttemptReadService {
       returns (ReadOriginalStartSessionCurrentAttemptResponse);
 }
 
+// Unregistered Account-facing read of the durable terminal result for original-admission
+// protection. This method is distinct from both the observation-only current-attempt read and the
+// World-facing initial-admission proof service.
+service OriginalStartSessionAdmissionTerminalReadService {
+  // Read the exact terminal result for Account's distinct original-admission protection.
+  rpc ReadOriginalStartSessionAdmissionTerminal(
+      ReadOriginalStartSessionAdmissionTerminalRequest)
+      returns (ReadOriginalStartSessionAdmissionTerminalResponse);
+}
+
 message ReadOriginalStartSessionCurrentAttemptRequest {
   int32 schema_version = 1;
   // Fresh correlation UUID for this observation; it is not a durable mutation identity.
@@ -33,4 +43,20 @@ message ReadOriginalStartSessionCurrentAttemptResponse {
   bytes account_redemption_projection = 4;
   // Raw lowercase SHA-256 of account_redemption_projection.
   string account_redemption_projection_digest = 5;
+}
+
+// Account supplies its complete canonical protection evidence, including the exact original
+// request, protection identity/fence, source-capture reference, and source-evidence vector.
+// Decoding this read selector grants no authority and does not release Account protection.
+message ReadOriginalStartSessionAdmissionTerminalRequest {
+  int32 schema_version = 1;
+  bytes canonical_account_protection_evidence = 2;
+}
+
+// The unchanged complete Account protection request is echoed. The owner proof bytes use the
+// existing GameSessionCanonicalInitialAdmissionOwnerProof canonical representation; only exact
+// COMMITTED or definitive durable ABORTED results are returned as a successful domain result.
+message ReadOriginalStartSessionAdmissionTerminalResponse {
+  ReadOriginalStartSessionAdmissionTerminalRequest request = 1;
+  bytes canonical_game_session_owner_proof = 2;
 }

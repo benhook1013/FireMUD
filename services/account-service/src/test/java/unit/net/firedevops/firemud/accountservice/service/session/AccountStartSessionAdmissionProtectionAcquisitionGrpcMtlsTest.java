@@ -138,10 +138,6 @@ class AccountStartSessionAdmissionProtectionAcquisitionGrpcMtlsTest {
           .isEqualTo(input.gameSessionOwnerAttemptId());
       assertThat(captured.getValue().gameSessionOwnerFence())
           .isEqualTo(input.gameSessionOwnerFence());
-      assertThat(captured.getValue().accountWorldParticipationId())
-          .isEqualTo(input.accountWorldParticipationId());
-      assertThat(captured.getValue().accountWorldParticipationFence())
-          .isEqualTo(input.accountWorldParticipationFence());
       assertThat(captured.getValue().worldHoldIdentity().canonicalBytes())
           .containsExactly(input.worldHoldIdentity().canonicalBytes());
     }
@@ -181,7 +177,10 @@ class AccountStartSessionAdmissionProtectionAcquisitionGrpcMtlsTest {
                           input(), NAMESPACE)))
           .isInstanceOf(StatusRuntimeException.class)
           .satisfies(
-              failure -> assertThat(TlsTestSupport.isTlsHandshakeRejection(failure)).isTrue());
+              failure ->
+                  assertThat(TlsTestSupport.isTlsHandshakeRejection(failure))
+                      .as("TLS rejection: %s; immediate cause: %s", failure, failure.getCause())
+                      .isTrue());
 
       assertThat(server.handlerCalls()).hasValue(0);
       verifyNoInteractions(owner);
@@ -287,7 +286,7 @@ class AccountStartSessionAdmissionProtectionAcquisitionGrpcMtlsTest {
   private static AccountStartSessionAdmissionProtectionAcquisitionInput input() {
     var tuple = originalTuple();
     return new AccountStartSessionAdmissionProtectionAcquisitionInput(
-        tuple.canonicalBytes(), MUTATION, ATTEMPT, 21L, PARTICIPATION, 22L, hold(tuple));
+        tuple.canonicalBytes(), MUTATION, ATTEMPT, 21L, hold(tuple));
   }
 
   private static AccountStartSessionAdmissionProtectionEvidence evidence(
@@ -302,8 +301,8 @@ class AccountStartSessionAdmissionProtectionAcquisitionGrpcMtlsTest {
             input.gameSessionOwnerAttemptId(),
             input.gameSessionOwnerFence(),
             java.time.Instant.parse("2026-10-09T10:20:30.456Z"),
-            input.accountWorldParticipationId(),
-            input.accountWorldParticipationFence(),
+            PARTICIPATION,
+            22L,
             input.worldHoldIdentity());
     byte[] capture =
         canonical(

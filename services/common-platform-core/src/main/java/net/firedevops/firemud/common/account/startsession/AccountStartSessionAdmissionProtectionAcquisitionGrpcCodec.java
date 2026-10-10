@@ -37,8 +37,6 @@ public final class AccountStartSessionAdmissionProtectionAcquisitionGrpcCodec {
             .setGameSessionOwnerMutationId(input.gameSessionOwnerMutationId().toString())
             .setGameSessionOwnerAttemptId(input.gameSessionOwnerAttemptId().toString())
             .setGameSessionOwnerFence(input.gameSessionOwnerFence())
-            .setAccountWorldParticipationId(input.accountWorldParticipationId().toString())
-            .setAccountWorldParticipationFence(input.accountWorldParticipationFence())
             .setWorldHoldIdentity(ByteString.copyFrom(input.worldHoldIdentity().canonicalBytes()))
             .build();
     requireRequestBudget(result);
@@ -72,8 +70,6 @@ public final class AccountStartSessionAdmissionProtectionAcquisitionGrpcCodec {
             canonicalUuid(request.getGameSessionOwnerMutationId(), "gameSessionOwnerMutationId"),
             canonicalUuid(request.getGameSessionOwnerAttemptId(), "gameSessionOwnerAttemptId"),
             request.getGameSessionOwnerFence(),
-            canonicalUuid(request.getAccountWorldParticipationId(), "accountWorldParticipationId"),
-            request.getAccountWorldParticipationFence(),
             WorldCanonicalInitialAdmissionHold.HoldIdentity.fromStored(holdBytes));
     input.requireTargetNamespace(expectedNamespace);
     if (!toRequest(input, expectedNamespace).equals(request)) {
@@ -126,8 +122,6 @@ public final class AccountStartSessionAdmissionProtectionAcquisitionGrpcCodec {
         || !input.gameSessionOwnerMutationId().equals(retained.gameSessionOwnerMutationId())
         || !input.gameSessionOwnerAttemptId().equals(retained.gameSessionOwnerAttemptId())
         || input.gameSessionOwnerFence() != retained.gameSessionOwnerFence()
-        || !input.accountWorldParticipationId().equals(retained.accountWorldParticipationId())
-        || input.accountWorldParticipationFence() != retained.accountWorldParticipationFence()
         || !MessageDigest.isEqual(
             input.worldHoldIdentity().canonicalBytes(), retained.worldAdmissionHoldIdentityBytes())
         || !retained

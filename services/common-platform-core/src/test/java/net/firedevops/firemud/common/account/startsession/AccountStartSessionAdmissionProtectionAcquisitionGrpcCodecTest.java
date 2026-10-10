@@ -36,7 +36,7 @@ class AccountStartSessionAdmissionProtectionAcquisitionGrpcCodecTest {
   private static final JsonMapper JSON = JsonMapper.builder().build();
 
   @Test
-  void roundTripsExactSevenFieldRequestAndCanonicalEvidence() {
+  void roundTripsExactFiveFieldRequestAndCanonicalEvidence() {
     var input = input();
     var evidence = evidence(input);
     var wireRequest =
@@ -49,7 +49,7 @@ class AccountStartSessionAdmissionProtectionAcquisitionGrpcCodecTest {
         .containsExactly(input.originalPostAuthorizationTuple());
     assertThat(decodedInput.gameSessionOwnerMutationId()).isEqualTo(MUTATION);
     assertThat(decodedInput.gameSessionOwnerAttemptId()).isEqualTo(ATTEMPT);
-    assertThat(decodedInput.accountWorldParticipationId()).isEqualTo(PARTICIPATION);
+    assertThat(decodedInput.gameSessionOwnerFence()).isEqualTo(21L);
     assertThat(decodedInput.worldHoldIdentity().canonicalBytes())
         .containsExactly(input.worldHoldIdentity().canonicalBytes());
 
@@ -60,6 +60,8 @@ class AccountStartSessionAdmissionProtectionAcquisitionGrpcCodecTest {
         AccountStartSessionAdmissionProtectionAcquisitionGrpcCodec.fromResponse(
             input, NAMESPACE, wireResponse);
     assertThat(decodedEvidence.canonicalBytes()).containsExactly(evidence.canonicalBytes());
+    assertThat(decodedEvidence.request().accountWorldParticipationId()).isEqualTo(PARTICIPATION);
+    assertThat(decodedEvidence.request().accountWorldParticipationFence()).isEqualTo(22L);
   }
 
   @Test
@@ -116,7 +118,7 @@ class AccountStartSessionAdmissionProtectionAcquisitionGrpcCodecTest {
     byte[] supplied = tuple.canonicalBytes();
     var input =
         new AccountStartSessionAdmissionProtectionAcquisitionInput(
-            supplied, MUTATION, ATTEMPT, 21L, PARTICIPATION, 22L, hold(tuple));
+            supplied, MUTATION, ATTEMPT, 21L, hold(tuple));
     supplied[0] ^= 1;
     assertThat(input.originalPostAuthorizationTuple()).containsExactly(tuple.canonicalBytes());
     byte[] returned = input.originalPostAuthorizationTuple();
@@ -134,16 +136,16 @@ class AccountStartSessionAdmissionProtectionAcquisitionGrpcCodecTest {
   static AccountStartSessionAdmissionProtectionAcquisitionInput input() {
     var tuple = originalTuple();
     return new AccountStartSessionAdmissionProtectionAcquisitionInput(
-        tuple.canonicalBytes(), MUTATION, ATTEMPT, 21L, PARTICIPATION, 22L, hold(tuple));
+        tuple.canonicalBytes(), MUTATION, ATTEMPT, 21L, hold(tuple));
   }
 
   private static AccountStartSessionAdmissionProtectionAcquisitionInput copyInput(UUID attempt) {
     var tuple = originalTuple();
     return new AccountStartSessionAdmissionProtectionAcquisitionInput(
-        tuple.canonicalBytes(), MUTATION, attempt, 21L, PARTICIPATION, 22L, hold(tuple));
+        tuple.canonicalBytes(), MUTATION, attempt, 21L, hold(tuple));
   }
 
-  private static AccountStartSessionAdmissionProtectionEvidence evidence(
+  static AccountStartSessionAdmissionProtectionEvidence evidence(
       AccountStartSessionAdmissionProtectionAcquisitionInput input) {
     var tuple =
         StartSessionPostAuthorizationExecutionTuple.decode(input.originalPostAuthorizationTuple());
@@ -155,8 +157,8 @@ class AccountStartSessionAdmissionProtectionAcquisitionGrpcCodecTest {
             input.gameSessionOwnerAttemptId(),
             input.gameSessionOwnerFence(),
             Instant.parse("2026-10-09T10:20:30.456Z"),
-            input.accountWorldParticipationId(),
-            input.accountWorldParticipationFence(),
+            PARTICIPATION,
+            22L,
             input.worldHoldIdentity());
     byte[] capture =
         canonical(

@@ -3,6 +3,7 @@ package net.firedevops.firemud.accountservice.repository;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import integration.net.firedevops.firemud.accountservice.repository.AccountPostgresIntegrationFixture;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.sql.Connection;
@@ -244,6 +245,7 @@ class AccountGameplayAdmissionProtectedEntryPrototypeIntegrationTest {
               "--end=" + end,
               "--limit=128");
       String output = dump.getStdout() + dump.getStderr();
+      String retainedOutput = output.substring(0, Math.min(output.length(), 16384));
       System.out.println(
           "Protected-entry WAL diagnostic "
               + start
@@ -252,7 +254,10 @@ class AccountGameplayAdmissionProtectedEntryPrototypeIntegrationTest {
               + " exit="
               + dump.getExitCode()
               + " (maximum two segments, 128 records, 16384 characters):\n"
-              + output.substring(0, Math.min(output.length(), 16384)));
+              + retainedOutput);
+      System.out.println(
+          AccountPostgresIntegrationFixture.mapWalRelationLocatorsAfterFailure(
+              retainedOutput, context.admin()));
       System.out.println(
           "Protected-entry WAL diagnostic may be partial or unreadable before ordinary flushing; no flush, checkpoint, segment switch or retry was requested. Record/character limits may truncate provenance, and WAL records alone do not identify their backend.");
     } catch (Exception diagnosticFailure) {

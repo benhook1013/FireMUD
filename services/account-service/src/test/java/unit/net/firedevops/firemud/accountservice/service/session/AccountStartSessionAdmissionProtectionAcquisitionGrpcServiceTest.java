@@ -150,8 +150,6 @@ class AccountStartSessionAdmissionProtectionAcquisitionGrpcServiceTest {
     assertThat(actual.gameSessionOwnerMutationId()).isEqualTo(MUTATION);
     assertThat(actual.gameSessionOwnerAttemptId()).isEqualTo(ATTEMPT);
     assertThat(actual.gameSessionOwnerFence()).isEqualTo(21L);
-    assertThat(actual.accountWorldParticipationId()).isEqualTo(PARTICIPATION);
-    assertThat(actual.accountWorldParticipationFence()).isEqualTo(22L);
     assertThat(actual.worldHoldIdentity().canonicalBytes())
         .containsExactly(input.worldHoldIdentity().canonicalBytes());
   }
@@ -168,8 +166,6 @@ class AccountStartSessionAdmissionProtectionAcquisitionGrpcServiceTest {
             MUTATION,
             uuid("5bc4c35d-eac4-4f9e-a8fc-7ac79aebee23"),
             21L,
-            PARTICIPATION,
-            22L,
             input.worldHoldIdentity());
     when(owner.acquire(any())).thenReturn(evidence(changedInput));
     var substituted =
@@ -220,7 +216,7 @@ class AccountStartSessionAdmissionProtectionAcquisitionGrpcServiceTest {
   private static AccountStartSessionAdmissionProtectionAcquisitionInput input() {
     var tuple = originalTuple();
     return new AccountStartSessionAdmissionProtectionAcquisitionInput(
-        tuple.canonicalBytes(), MUTATION, ATTEMPT, 21L, PARTICIPATION, 22L, hold(tuple));
+        tuple.canonicalBytes(), MUTATION, ATTEMPT, 21L, hold(tuple));
   }
 
   private static AccountStartSessionAdmissionProtectionEvidence evidence(
@@ -235,8 +231,8 @@ class AccountStartSessionAdmissionProtectionAcquisitionGrpcServiceTest {
             input.gameSessionOwnerAttemptId(),
             input.gameSessionOwnerFence(),
             Instant.parse("2026-10-09T10:20:30.456Z"),
-            input.accountWorldParticipationId(),
-            input.accountWorldParticipationFence(),
+            PARTICIPATION,
+            22L,
             input.worldHoldIdentity());
     byte[] capture =
         canonical(
