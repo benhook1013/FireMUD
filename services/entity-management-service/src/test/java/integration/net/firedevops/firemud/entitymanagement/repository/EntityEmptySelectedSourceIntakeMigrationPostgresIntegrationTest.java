@@ -105,11 +105,11 @@ class EntityEmptySelectedSourceIntakeMigrationPostgresIntegrationTest {
     assertLegacyKey("TENANT", 61001L);
     assertLegacyKey("VERSION", 51001L);
     assertThat(
-            dsl.fetchValue(
-                "SELECT COUNT(*) FROM entity_empty_source_numeric_key_reservation "
-                    + "WHERE key_kind = 'VERSION' AND numeric_key = 51001 "
-                    + "AND claim_kind = 'LEGACY_NUMERIC'",
-                Long.class))
+            dsl.fetchSingle(
+                    "SELECT COUNT(*) FROM entity_empty_source_numeric_key_reservation "
+                        + "WHERE key_kind = 'VERSION' AND numeric_key = 51001 "
+                        + "AND claim_kind = 'LEGACY_NUMERIC'")
+                .get(0, Long.class))
         .isEqualTo(1L);
   }
 
@@ -142,21 +142,24 @@ class EntityEmptySelectedSourceIntakeMigrationPostgresIntegrationTest {
         "INSERT INTO characters (account_id, name, tenant_id) "
             + "VALUES (3, 'unassociated legacy character', 72001)");
 
-    assertThat(dsl.fetchValue("SELECT COUNT(*) FROM items WHERE tenant_id = 71001", Long.class))
+    assertThat(
+            dsl.fetchSingle("SELECT COUNT(*) FROM items WHERE tenant_id = 71001")
+                .get(0, Long.class))
         .isEqualTo(1L);
     assertThat(
-            dsl.fetchValue("SELECT COUNT(*) FROM characters WHERE tenant_id = 72001", Long.class))
+            dsl.fetchSingle("SELECT COUNT(*) FROM characters WHERE tenant_id = 72001")
+                .get(0, Long.class))
         .isEqualTo(1L);
   }
 
   private void assertLegacyKey(String kind, long key) {
     assertThat(
-            dsl.fetchValue(
-                "SELECT claim_kind FROM entity_empty_source_numeric_key_reservation "
-                    + "WHERE key_kind = ? AND numeric_key = ?",
-                String.class,
-                kind,
-                key))
+            dsl.fetchSingle(
+                    "SELECT claim_kind FROM entity_empty_source_numeric_key_reservation "
+                        + "WHERE key_kind = ? AND numeric_key = ?",
+                    kind,
+                    key)
+                .get(0, String.class))
         .isEqualTo("LEGACY_NUMERIC");
   }
 

@@ -4,8 +4,6 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.mock;
 
-import com.google.protobuf.ByteString;
-import com.google.protobuf.Timestamp;
 import com.google.protobuf.util.JsonFormat;
 import io.grpc.BindableService;
 import io.grpc.Context;
@@ -14,11 +12,11 @@ import io.grpc.ServerInterceptors;
 import io.grpc.netty.shaded.io.grpc.netty.GrpcSslContexts;
 import io.grpc.netty.shaded.io.grpc.netty.NettyServerBuilder;
 import io.grpc.netty.shaded.io.netty.handler.ssl.ClientAuth;
-import io.grpc.stub.StreamObserver;
 import io.grpc.util.MutableHandlerRegistry;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
+import java.lang.reflect.Method;
 import java.net.InetSocketAddress;
 import java.net.URI;
 import java.nio.charset.StandardCharsets;
@@ -27,6 +25,7 @@ import java.nio.file.Path;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.time.Clock;
+import java.time.Duration;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
@@ -39,13 +38,10 @@ import java.util.TreeMap;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Supplier;
-import net.firedevops.firemud.account.v1.AuthorityEvidenceBundleReference;
-import net.firedevops.firemud.account.v1.ReadRedeemedOperationProjectionRequest;
-import net.firedevops.firemud.account.v1.ReadRedeemedOperationProjectionResponse;
-import net.firedevops.firemud.account.v1.StartSessionOperatorAuthorizationServiceGrpc;
 import net.firedevops.firemud.accountservice.authordraft.AccountDraftCommitOrderReadGrpcService;
 import net.firedevops.firemud.accountservice.authordraft.DraftAuthorizationFenceRepository;
 import net.firedevops.firemud.automationscripting.sourceintake.AutomationEmptySelectedSourceIntakeRepository;
@@ -109,6 +105,8 @@ import net.firedevops.firemud.common.gamelogic.GrpcAccountGameLogicIntakeSettlem
 import net.firedevops.firemud.common.gamelogic.GrpcGameLogicIntakeAuthorizationClient;
 import net.firedevops.firemud.common.gamelogic.GrpcGameLogicIntakeRetainClient;
 import net.firedevops.firemud.common.gamelogic.GrpcGameLogicIntakeSourceReadClient;
+import net.firedevops.firemud.common.gamesession.CanonicalGameInstanceLaunchAssociationClient;
+import net.firedevops.firemud.common.gamesession.CanonicalGameInstanceLaunchAssociationReadEvidence;
 import net.firedevops.firemud.common.grpc.BlockingGrpcStubCustomizer;
 import net.firedevops.firemud.common.grpc.CommonGrpcClientProperties;
 import net.firedevops.firemud.common.grpc.GrpcChannelFactory;
@@ -139,6 +137,9 @@ import net.firedevops.firemud.common.security.sourceintake.GrpcSelectedOwnerInta
 import net.firedevops.firemud.common.tenant.AuthoredWorldSourceClient;
 import net.firedevops.firemud.common.tenant.WorldAuthoredSourceIntakeClient;
 import net.firedevops.firemud.common.tenant.WorldAuthoredSourceIntakeGrpcCodec;
+import net.firedevops.firemud.common.world.CanonicalWorldInstancePreparationClient;
+import net.firedevops.firemud.common.world.WorldCanonicalInstanceLifecycleEvidence;
+import net.firedevops.firemud.common.world.WorldDraftStartLocationEvidence;
 import net.firedevops.firemud.entitymanagement.sourceintake.EntityEmptySelectedSourceIntakeRepository;
 import net.firedevops.firemud.entitymanagement.sourceintake.EntityEmptySelectedSourceIntakeService;
 import net.firedevops.firemud.entitymanagement.sourceintake.EntityEmptySelectedSourceIntakeTerminalReadService;
@@ -249,6 +250,16 @@ import net.firedevops.firemud.worldmanagement.tenant.WorldAuthoredSourceIntakeSe
 import net.firedevops.firemud.worldmanagement.tenant.WorldAuthoredVersionIdentityGrpcService;
 import net.firedevops.firemud.worldmanagement.tenant.WorldAuthoredVersionIdentityRepository;
 import net.firedevops.firemud.worldmanagement.tenant.WorldAuthoredVersionIdentityService;
+import net.firedevops.firemud.worldmanagement.tenant.WorldCanonicalInstanceAssociationRepository;
+import net.firedevops.firemud.worldmanagement.tenant.WorldCanonicalInstanceExecutionIdentity;
+import net.firedevops.firemud.worldmanagement.tenant.WorldCanonicalInstanceLifecycleReadRepository;
+import net.firedevops.firemud.worldmanagement.tenant.WorldCanonicalInstancePreparation;
+import net.firedevops.firemud.worldmanagement.tenant.WorldCanonicalInstancePreparationAssemblyService;
+import net.firedevops.firemud.worldmanagement.tenant.WorldCanonicalInstancePreparationGrpcService;
+import net.firedevops.firemud.worldmanagement.tenant.WorldCanonicalInstancePreparationRepository;
+import net.firedevops.firemud.worldmanagement.tenant.WorldCanonicalInstancePreparationService;
+import net.firedevops.firemud.worldmanagement.tenant.WorldCompleteLaunchBindingRepository;
+import net.firedevops.firemud.worldmanagement.tenant.WorldCompleteLaunchBindingService;
 import net.firedevops.firemud.worldmanagement.tenant.WorldDesignPublicationFenceRepository;
 import net.firedevops.firemud.worldmanagement.tenant.WorldDraftCommitOrderVerifier;
 import net.firedevops.firemud.worldmanagement.tenant.WorldDraftGraphApplicationRepository;
@@ -279,6 +290,7 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.mapstruct.factory.Mappers;
+import org.mockito.Mockito;
 import org.springframework.boot.jooq.autoconfigure.SpringTransactionProvider;
 import org.springframework.jdbc.datasource.DataSourceTransactionManager;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
@@ -327,13 +339,19 @@ import tools.jackson.databind.ObjectMapper;
  * Design, Entity, World and settlement boundaries over loopback mTLS, with an isolated Entity
  * PostgreSQL schema and migration path. Entity and Automation publication digests use their native
  * mTLS selected-empty owner readers and exact retained receipts; nonempty owner publication remains
- * outside this proof. The StartSession Account projection remains a test double. MinIO object-store
- * I/O is real. The complete launch-binding case wires the actual Game Design handler and World
+ * outside this proof. StartSession issuance and redemption use the real Account owner and retained
+ * rows under stipulated Logging current-claim evidence and issuer/redeemer peer contexts; the
+ * read-only projection uses the real Account receiver over Game Design mTLS. MinIO object-store I/O
+ * is real. The complete launch-binding case wires the actual Game Design handler and World
  * Management mTLS client on this fixture's loopback server to the actual owner implementation in an
  * explicitly established read-only repeatable-read snapshot; unrelated handler dependencies are
- * isolated. This fixture does not provide production-mounted certificates or full application
- * server wiring, production ingress, Account-projection-backed StartSession admission, runtime
- * launch, activation or registration.
+ * isolated. The World preparation composition reuses the genuine persisted source, frozen graph,
+ * and complete released pair through actual World owner services and Game Session mTLS, but its
+ * Game Session launch association and continuous held-Account/Game-Session commit authority are
+ * explicitly stipulated; the supplied Game Session attempt/fence is not independently proven. This
+ * does not establish production-authenticated Logging claims, Game Session admission, or launch
+ * authorization. The fixture does not provide production-mounted certificates or full application
+ * server wiring, production ingress, runtime launch, activation or registration.
  */
 @Testcontainers(disabledWithoutDocker = true)
 @SuppressWarnings("resource")
@@ -458,7 +476,6 @@ class GenuineSelectedPublicationExportPostgresIntegrationTest {
     var gameLogicHandlers = new MutableHandlerRegistry();
     var automationHandlers = new MutableHandlerRegistry();
     var entityHandlers = new MutableHandlerRegistry();
-    Map<String, StartSessionProjectionBinding> startSessionProjections = new ConcurrentHashMap<>();
 
     Server gdServer = startServer(pki, "game-design-service", gdHandlers);
     Server worldServer = startServer(pki, "world-management-service", worldHandlers);
@@ -901,7 +918,10 @@ class GenuineSelectedPublicationExportPostgresIntegrationTest {
             new AccountGameLogicIntakeAuthorizationReadGrpcService(
                 accountHeldAuthorizationOwner, NAMESPACE),
             new AccountGameLogicIntakeSettlementGrpcService(accountSettlementOwner, NAMESPACE));
-        register(accountHandlers, accountProjectionDouble(startSessionProjections));
+        var startSessionAuthorizationProof =
+            new AccountOriginalStartSessionAuthorizationProofFixture(
+                account, temporary.resolve("account-start-session-authorization-proof"), NAMESPACE);
+        register(accountHandlers, startSessionAuthorizationProof.grpcService());
 
         var glOwner =
             new GameLogicGameplayRuleIntakeService(
@@ -2642,20 +2662,69 @@ class GenuineSelectedPublicationExportPostgresIntegrationTest {
                 association.digest());
         String controlPlaneRequestId = "genuine-start-session-" + UUID.randomUUID();
         UUID ownerAttemptId = UUID.randomUUID();
-        long ownerFence = 19L;
-        var startSessionTuple =
-            startSessionTuple(
-                controlPlaneRequestId,
-                gd.target().canonicalTenantId(),
-                templateId,
+        long ownerFence = ThreadLocalRandom.current().nextLong(1L, Long.MAX_VALUE);
+        UUID reservationOwnerId = UUID.randomUUID();
+        long reservationClaimFence = ThreadLocalRandom.current().nextLong(1L, Long.MAX_VALUE);
+        var originalStartSessionAction =
+            new StartSessionOperatorAction(
+                StartSessionOperatorAction.ACTION_FAMILY_SCHEMA_ID,
+                StartSessionOperatorAction.ACTION_FAMILY_SCHEMA_VERSION,
+                new StartSessionOperatorAction.Scope(gd.target().canonicalTenantId(), NAMESPACE),
+                new StartSessionOperatorAction.Target(
+                    templateId, startSessionAuthorizationProof.creatorAccountId()),
+                StartSessionOperatorAction.ExpectedVersion.ABSENT,
+                new StartSessionOperatorAction.Mutation(
+                    StartSessionOperatorAction.ClientIp.absent()),
                 "Genuine selected descriptor storage proof");
-        startSessionProjections.put(
-            controlPlaneRequestId,
-            new StartSessionProjectionBinding(startSessionTuple, ownerAttemptId, ownerFence));
+        var originalStartSession =
+            startSessionAuthorizationProof.issueAndRedeemOriginal(
+                controlPlaneRequestId,
+                originalStartSessionAction,
+                reservationOwnerId,
+                reservationClaimFence,
+                ownerAttemptId,
+                ownerFence);
+        var startSessionTuple = originalStartSession.originalTuple();
         try (var projectionClient =
             new StartSessionRedeemedOperationProjectionClient(
                 endpoints, pki.client("game-design-service"), channels, NAMESPACE)) {
           projectionClient.init();
+          var accountProjection =
+              projectionClient.read(startSessionTuple, ownerAttemptId, ownerFence);
+          assertThat(accountProjection.getControlPlaneRequestId()).isEqualTo(controlPlaneRequestId);
+          assertThat(accountProjection.getCanonicalPreAuthorizationTupleBytes().toByteArray())
+              .containsExactly(
+                  startSessionTuple
+                      .preAuthorizationTuple()
+                      .canonicalJson()
+                      .getBytes(StandardCharsets.UTF_8));
+          assertThat(accountProjection.getMutationDigest())
+              .isEqualTo(startSessionTuple.preAuthorizationTuple().mutationDigest());
+          assertThat(accountProjection.getAuthorizationReferenceFingerprint())
+              .isEqualTo(startSessionTuple.authorizationReferenceFingerprint());
+          assertThat(accountProjection.getReservationOwnerId())
+              .isEqualTo(reservationOwnerId.toString());
+          assertThat(accountProjection.getReservationClaimFence()).isEqualTo(reservationClaimFence);
+          assertThat(accountProjection.getAuthenticatedRedeemerWorkloadIdentity())
+              .isEqualTo("spiffe://firemud/ns/" + NAMESPACE + "/sa/game-session-service");
+          assertThat(accountProjection.getOwnerAttemptId()).isEqualTo(ownerAttemptId.toString());
+          assertThat(accountProjection.getOwnerFence()).isEqualTo(ownerFence);
+          assertThat(accountProjection.getIssuanceOperationId())
+              .isEqualTo(originalStartSession.issuanceOperationId().toString());
+          assertThat(accountProjection.getIssuanceFence())
+              .isEqualTo(originalStartSession.issuanceFence());
+          assertThat(accountProjection.getBundleReference().getBundleVersion())
+              .isEqualTo(startSessionTuple.bundleReference().bundleVersion());
+          assertThat(accountProjection.getBundleReference().getSourceVersion())
+              .isEqualTo(startSessionTuple.bundleReference().sourceVersion());
+          assertThat(accountProjection.getBundleReference().getSourceFence())
+              .isEqualTo(startSessionTuple.bundleReference().sourceFence());
+          assertThat(accountProjection.getBundleReference().getLinearization())
+              .isEqualTo(startSessionTuple.bundleReference().linearization());
+          assertThat(accountProjection.getAuthorityEvidenceBundle().toByteArray())
+              .containsExactly(startSessionTuple.authorityEvidenceBundleBytes());
+          assertThat(projectionClient.read(startSessionTuple, ownerAttemptId, ownerFence))
+              .isEqualTo(accountProjection);
           var associationReader =
               new StartSessionTemplateAssociationReadService(
                   gd.dsl(), gd.transactions(), NAMESPACE, projectionClient, releaseService);
@@ -2927,6 +2996,388 @@ class GenuineSelectedPublicationExportPostgresIntegrationTest {
                       controlPlaneRequestId))
               .containsExactlyElementsOf(completeBindingOwnerRowsBefore);
 
+          // This is a composed World materialization proof over the exact source, frozen graph,
+          // and complete released pair already retained above. Only the Game Session launch-row
+          // read and the original Account/continuously-held Game Session authorization are
+          // stipulated here; this fixture does not claim those authorities were genuine.
+          CompleteLaunchBindingEvidence completeLaunchEvidence =
+              new CompleteLaunchBindingEvidence(
+                  completeBinding.descriptor(), completeBinding.releaseAttestation());
+          UUID canonicalGameInstanceId = UUID.randomUUID();
+          UUID playableStateNamespaceId = UUID.randomUUID();
+          var preparationAssociationRequest =
+              new CanonicalGameInstanceLaunchAssociationReadEvidence.Request(
+                  UUID.randomUUID(),
+                  NAMESPACE,
+                  gd.target().canonicalTenantId(),
+                  worldSource.worldSlug(),
+                  canonicalGameInstanceId,
+                  controlPlaneRequestId,
+                  completeLaunchEvidence.descriptor().launchDescriptorId(),
+                  completeLaunchEvidence.descriptor().requestDigest(),
+                  completeLaunchEvidence.descriptor().resultDigest(),
+                  completeLaunchEvidence.releaseAttestation().evidenceDigest());
+          var stipulatedGameSessionReader =
+              Mockito.mock(CanonicalGameInstanceLaunchAssociationClient.class);
+          Mockito.when(stipulatedGameSessionReader.read(Mockito.any()))
+              .thenAnswer(
+                  invocation -> {
+                    var request =
+                        invocation.getArgument(
+                            0, CanonicalGameInstanceLaunchAssociationReadEvidence.Request.class);
+                    return new CanonicalGameInstanceLaunchAssociationReadEvidence.Result(
+                        request,
+                        playableStateNamespaceId,
+                        RealmEntryPolicy.StateScope.SHARED,
+                        true,
+                        CanonicalGameInstanceLaunchAssociationReadEvidence.CurrentGameInstanceStatus
+                            .STARTING,
+                        1L,
+                        completeLaunchEvidence);
+                  });
+
+          var completeBindingRepository = new WorldCompleteLaunchBindingRepository(world.dsl());
+          var canonicalAssociationRepository =
+              new WorldCanonicalInstanceAssociationRepository(
+                  world.dsl(), completeBindingRepository, worldIntakes, worldIdentities);
+          var preparationRepository =
+              new WorldCanonicalInstancePreparationRepository(
+                  world.dsl(),
+                  world.transactions(),
+                  canonicalAssociationRepository,
+                  worldPublicationProof.frozenTopologies(),
+                  Duration.ofSeconds(30));
+          var lifecycleRepository =
+              new WorldCanonicalInstanceLifecycleReadRepository(
+                  world.dsl(), world.transactions(), canonicalAssociationRepository);
+          try (var worldToGameDesignPreparationClient =
+              new AuthoredWorldLaunchDescriptorClient(
+                  endpoints, pki.client("world-management-service"), channels, NAMESPACE)) {
+            worldToGameDesignPreparationClient.init();
+            var completeBindingService =
+                new WorldCompleteLaunchBindingService(
+                    worldToGameDesignPreparationClient,
+                    completeBindingRepository,
+                    worldIntakes,
+                    world.transactions(),
+                    NAMESPACE,
+                    null,
+                    stipulatedGameSessionReader);
+            var preparationAssembly =
+                new WorldCanonicalInstancePreparationAssemblyService(
+                    NAMESPACE,
+                    completeBindingRepository,
+                    worldIntakes,
+                    worldIdentities,
+                    worldPublicationProof.frozenTopologies(),
+                    stipulatedGameSessionReader,
+                    worldToGameDesignPreparationClient);
+            // The exact StartSession tuple and existing GS attempt/fence are preserved dynamically.
+            // Only Account participation/fence and the continuously held authority behavior are
+            // synthetic evidence shape; this does not authenticate either producer.
+            var syntheticIdentities =
+                new ConcurrentHashMap<String, WorldCanonicalInstanceExecutionIdentity>();
+            var stipulatedHeldAuthority =
+                (WorldCanonicalInstancePreparationService.CommitAuthorityVerifier)
+                    input -> {
+                      String exactInputJson;
+                      try {
+                        exactInputJson = canonicalPreparationInputJson(input);
+                      } catch (ReflectiveOperationException failure) {
+                        throw new IllegalStateException(
+                            "Could not reuse the canonical World preparation input serializer",
+                            failure);
+                      }
+                      WorldCanonicalInstanceExecutionIdentity identity =
+                          syntheticIdentities.computeIfAbsent(
+                              exactInputJson,
+                              ignored ->
+                                  new WorldCanonicalInstanceExecutionIdentity(
+                                      startSessionTuple.canonicalBytes(),
+                                      UUID.randomUUID(),
+                                      ThreadLocalRandom.current().nextLong(1L, Long.MAX_VALUE),
+                                      ownerAttemptId,
+                                      ownerFence,
+                                      input.canonicalGameInstanceId(),
+                                      exactInputJson));
+                      return new WorldCanonicalInstancePreparationService.HeldCommitAuthority() {
+                        private boolean held = true;
+
+                        @Override
+                        public void requireHeld() {
+                          if (!held) {
+                            throw new SecurityException(
+                                "Synthetic StartSession proof handle was released");
+                          }
+                        }
+
+                        @Override
+                        public WorldCanonicalInstanceExecutionIdentity executionIdentity() {
+                          return identity;
+                        }
+
+                        @Override
+                        public void close() {
+                          held = false;
+                        }
+                      };
+                    };
+            var preparationService =
+                new WorldCanonicalInstancePreparationService(
+                    preparationRepository, stipulatedHeldAuthority);
+            register(
+                worldHandlers,
+                new WorldCanonicalInstancePreparationGrpcService(
+                    completeBindingService,
+                    preparationAssembly,
+                    preparationService,
+                    preparationRepository,
+                    lifecycleRepository,
+                    NAMESPACE));
+
+            var expectedLifecycleRequest =
+                lifecycleRequest(
+                    preparationAssociationRequest,
+                    completeLaunchEvidence,
+                    playableStateNamespaceId);
+            var sourceRowsBeforePreparation =
+                retainedWorldPreparationEvidence(
+                    world,
+                    worldIntakeReceipt.intakeRequestId(),
+                    worldIdentityReceipt.operationId(),
+                    gd.target().canonicalTenantId(),
+                    controlPlaneRequestId,
+                    canonicalGameInstanceId,
+                    completeWorldSelector.request().publicationFence());
+            var rowsBeforeWrongPeer = canonicalPreparationRowCounts(world.dsl());
+            try (var wrongWorkloadPreparationClient =
+                new CanonicalWorldInstancePreparationClient(
+                    endpoints, pki.client("account-service"), channels, NAMESPACE)) {
+              wrongWorkloadPreparationClient.init();
+              assertThatThrownBy(
+                      () ->
+                          wrongWorkloadPreparationClient.prepare(
+                              preparationAssociationRequest, expectedLifecycleRequest))
+                  .isInstanceOf(io.grpc.StatusRuntimeException.class)
+                  .satisfies(
+                      failure ->
+                          assertThat(
+                                  ((io.grpc.StatusRuntimeException) failure).getStatus().getCode())
+                              .isEqualTo(io.grpc.Status.Code.PERMISSION_DENIED));
+            }
+            assertThat(canonicalPreparationRowCounts(world.dsl())).isEqualTo(rowsBeforeWrongPeer);
+            assertThat(
+                    retainedWorldPreparationEvidence(
+                        world,
+                        worldIntakeReceipt.intakeRequestId(),
+                        worldIdentityReceipt.operationId(),
+                        gd.target().canonicalTenantId(),
+                        controlPlaneRequestId,
+                        canonicalGameInstanceId,
+                        completeWorldSelector.request().publicationFence()))
+                .isEqualTo(sourceRowsBeforePreparation);
+
+            WorldCanonicalInstanceLifecycleEvidence preparedLifecycle;
+            try (var gameSessionPreparationClient =
+                new CanonicalWorldInstancePreparationClient(
+                    endpoints, pki.client("game-session-service"), channels, NAMESPACE)) {
+              gameSessionPreparationClient.init();
+              preparedLifecycle =
+                  gameSessionPreparationClient.prepare(
+                      preparationAssociationRequest, expectedLifecycleRequest);
+            }
+
+            var assembledPreparationInput =
+                preparationAssembly.assemble(
+                    new WorldCanonicalInstancePreparationAssemblyService.Selector(
+                        gd.target().canonicalTenantId(),
+                        canonicalGameInstanceId,
+                        controlPlaneRequestId));
+            var preparationResult =
+                preparationRepository.readOwnerPreparation(assembledPreparationInput).orElseThrow();
+            var stipulatedGameSessionEvidence = assembledPreparationInput.gameSessionReadEvidence();
+            var independentLifecycleRead =
+                lifecycleRepository.read(expectedLifecycleRequest).orElseThrow();
+            var selectedReleasedStart =
+                WorldDraftStartLocationEvidence.fromStored(
+                    completeLaunchEvidence
+                        .releaseAttestation()
+                        .worldStartLocationEvidence()
+                        .selectorReceiptBytes());
+            assertThat(preparedLifecycle).isEqualTo(independentLifecycleRead);
+            assertThat(preparedLifecycle.request()).isEqualTo(expectedLifecycleRequest);
+            assertThat(preparedLifecycle.lifecycleStatus()).isEqualTo("PREPARING");
+            assertThat(preparedLifecycle.lifecycleEpoch()).isEqualTo(1L);
+            assertThat(preparedLifecycle.launchBinding()).isEqualTo(completeLaunchEvidence);
+            assertThat(stipulatedGameSessionEvidence.currentGameSessionStatus())
+                .isEqualTo("STARTING");
+            assertThat(stipulatedGameSessionEvidence.currentGameSessionRowVersion()).isEqualTo(1L);
+            assertThat(stipulatedGameSessionEvidence.playableStateScope()).isEqualTo("SHARED");
+            assertThat(stipulatedGameSessionEvidence.publicProduction()).isTrue();
+            assertThat(stipulatedGameSessionEvidence.descriptor())
+                .isEqualTo(completeLaunchEvidence.descriptor());
+            assertThat(stipulatedGameSessionEvidence.releaseAttestation())
+                .isEqualTo(completeLaunchEvidence.releaseAttestation());
+            assertThat(preparedLifecycle.captureId())
+                .isEqualTo(assembledPreparationInput.captureId());
+            assertThat(preparedLifecycle.graphSha256()).isEqualTo(preparationResult.graphSha256());
+            assertThat(preparedLifecycle.preparationInputDigest())
+                .isEqualTo(preparationResult.inputDigest());
+            assertThat(preparationResult.storageStatus()).isEqualTo("MATERIALIZED_UNVERIFIED");
+            assertThat(preparedLifecycle.startLocation())
+                .isEqualTo(selectedReleasedStart.startLocation());
+            assertThat(preparedLifecycle.startLocation().tenantId())
+                .isEqualTo(gd.target().canonicalTenantId());
+            assertThat(preparedLifecycle.startLocation().versionId())
+                .isEqualTo(gd.target().canonicalVersionId());
+            assertThat(
+                    assembledPreparationInput.topologyPlan().rooms().stream()
+                        .map(room -> room.identity().templateId()))
+                .contains(preparedLifecycle.startLocation().roomTemplateId());
+            assertThat(preparationResult.startLocation())
+                .isEqualTo(preparedLifecycle.startLocation());
+            assertThat(preparationResult.runtimeRoomInstanceId())
+                .isEqualTo(preparedLifecycle.runtimeRoomInstanceId());
+
+            var rowsAfterFirstPreparation = canonicalPreparationRowCounts(world.dsl());
+            assertThat(rowsAfterFirstPreparation.get("world_instance"))
+                .isGreaterThan(rowsBeforeWrongPeer.get("world_instance"));
+            assertThat(rowsAfterFirstPreparation.get("world_canonical_instance_preparation"))
+                .isGreaterThan(rowsBeforeWrongPeer.get("world_canonical_instance_preparation"));
+            assertThat(rowsAfterFirstPreparation.get("world_canonical_instance_execution"))
+                .isGreaterThan(rowsBeforeWrongPeer.get("world_canonical_instance_execution"));
+            var retainedOwnerEvidenceAfterPreparation =
+                retainedWorldPreparationEvidence(
+                    world,
+                    worldIntakeReceipt.intakeRequestId(),
+                    worldIdentityReceipt.operationId(),
+                    gd.target().canonicalTenantId(),
+                    controlPlaneRequestId,
+                    canonicalGameInstanceId,
+                    completeWorldSelector.request().publicationFence());
+            assertThat(retainedOwnerEvidenceAfterPreparation)
+                .containsEntry(
+                    "worldSourceIntake", sourceRowsBeforePreparation.get("worldSourceIntake"))
+                .containsEntry(
+                    "worldVersionIdentity", sourceRowsBeforePreparation.get("worldVersionIdentity"))
+                .containsEntry(
+                    "worldFrozenCapture", sourceRowsBeforePreparation.get("worldFrozenCapture"));
+            assertThat(retainedOwnerEvidenceAfterPreparation.get("completeLaunchBinding"))
+                .isNotNull();
+            assertThat(retainedOwnerEvidenceAfterPreparation.get("canonicalInstanceAssociation"))
+                .isNotNull();
+            assertThat(retainedOwnerEvidenceAfterPreparation.get("canonicalInstancePreparation"))
+                .isNotNull();
+            assertThat(retainedOwnerEvidenceAfterPreparation.get("canonicalTopologyIdentities"))
+                .isNotEqualTo("[]");
+            assertThat(retainedOwnerEvidenceAfterPreparation.get("canonicalStartLocation"))
+                .isNotNull();
+            assertThat(retainedOwnerEvidenceAfterPreparation.get("worldInstance")).isNotNull();
+
+            try (var gameSessionPreparationRetryClient =
+                new CanonicalWorldInstancePreparationClient(
+                    endpoints, pki.client("game-session-service"), channels, NAMESPACE)) {
+              gameSessionPreparationRetryClient.init();
+              assertThat(
+                      gameSessionPreparationRetryClient.prepare(
+                          preparationAssociationRequest, expectedLifecycleRequest))
+                  .isEqualTo(preparedLifecycle);
+            }
+            var retryInput =
+                preparationAssembly.assemble(
+                    new WorldCanonicalInstancePreparationAssemblyService.Selector(
+                        gd.target().canonicalTenantId(),
+                        canonicalGameInstanceId,
+                        controlPlaneRequestId));
+            assertThat(preparationRepository.readOwnerPreparation(retryInput))
+                .contains(preparationResult);
+            assertThat(lifecycleRepository.read(expectedLifecycleRequest))
+                .contains(preparedLifecycle);
+            assertThat(canonicalPreparationRowCounts(world.dsl()))
+                .isEqualTo(rowsAfterFirstPreparation);
+            assertThat(
+                    retainedWorldPreparationEvidence(
+                        world,
+                        worldIntakeReceipt.intakeRequestId(),
+                        worldIdentityReceipt.operationId(),
+                        gd.target().canonicalTenantId(),
+                        controlPlaneRequestId,
+                        canonicalGameInstanceId,
+                        completeWorldSelector.request().publicationFence()))
+                .isEqualTo(retainedOwnerEvidenceAfterPreparation);
+            assertThat(
+                    completeBindingOwnerRowVersions(
+                        gd.dsl(),
+                        persistedLaunchDescriptor.getId(),
+                        release.id(),
+                        gd.target().gameDesignVersionRowId(),
+                        worldSource.operationId(),
+                        gd.target().canonicalTenantId(),
+                        controlPlaneRequestId))
+                .containsExactlyElementsOf(completeBindingOwnerRowsBefore);
+
+            MutableHandlerRegistry defaultDeniedHandlers = new MutableHandlerRegistry();
+            register(
+                defaultDeniedHandlers,
+                new WorldCanonicalInstancePreparationGrpcService(
+                    completeBindingService,
+                    preparationAssembly,
+                    new WorldCanonicalInstancePreparationService(preparationRepository),
+                    preparationRepository,
+                    lifecycleRepository,
+                    NAMESPACE));
+            Server defaultDeniedServer =
+                startServer(pki, "world-management-service", defaultDeniedHandlers);
+            try {
+              var defaultDeniedEndpoints = new ServiceEndpointsProperties();
+              defaultDeniedEndpoints.setWorldManagementService(loopback(defaultDeniedServer));
+              var countsBeforeDefaultDenied = canonicalPreparationRowCounts(world.dsl());
+              var evidenceBeforeDefaultDenied =
+                  retainedWorldPreparationEvidence(
+                      world,
+                      worldIntakeReceipt.intakeRequestId(),
+                      worldIdentityReceipt.operationId(),
+                      gd.target().canonicalTenantId(),
+                      controlPlaneRequestId,
+                      canonicalGameInstanceId,
+                      completeWorldSelector.request().publicationFence());
+              try (var defaultDeniedClient =
+                  new CanonicalWorldInstancePreparationClient(
+                      defaultDeniedEndpoints,
+                      pki.client("game-session-service"),
+                      channels,
+                      NAMESPACE)) {
+                defaultDeniedClient.init();
+                assertThatThrownBy(
+                        () ->
+                            defaultDeniedClient.prepare(
+                                preparationAssociationRequest, expectedLifecycleRequest))
+                    .isInstanceOf(io.grpc.StatusRuntimeException.class)
+                    .satisfies(
+                        failure ->
+                            assertThat(
+                                    ((io.grpc.StatusRuntimeException) failure)
+                                        .getStatus()
+                                        .getCode())
+                                .isEqualTo(io.grpc.Status.Code.PERMISSION_DENIED));
+              }
+              assertThat(canonicalPreparationRowCounts(world.dsl()))
+                  .isEqualTo(countsBeforeDefaultDenied);
+              assertThat(
+                      retainedWorldPreparationEvidence(
+                          world,
+                          worldIntakeReceipt.intakeRequestId(),
+                          worldIdentityReceipt.operationId(),
+                          gd.target().canonicalTenantId(),
+                          controlPlaneRequestId,
+                          canonicalGameInstanceId,
+                          completeWorldSelector.request().publicationFence()))
+                  .isEqualTo(evidenceBeforeDefaultDenied);
+            } finally {
+              stopAll(defaultDeniedServer);
+            }
+          }
+
           var replay =
               withGameSessionPeer(
                   () ->
@@ -2941,15 +3392,16 @@ class GenuineSelectedPublicationExportPostgresIntegrationTest {
           assertThat(replay.associationRead().request().readRequestId())
               .isNotEqualTo(firstDescriptorBinding.associationRead().request().readRequestId());
 
+          // This deliberately synthetic tuple is only a negative mismatch probe; unlike the
+          // positive path it is not issued by Account and is expected to be rejected by the real
+          // durable projection receiver.
           var changedTuple =
               startSessionTuple(
                   controlPlaneRequestId,
                   gd.target().canonicalTenantId(),
                   templateId,
                   "Changed original StartSession tuple");
-          // The fixed Account projection double returns the original operation; these altered
-          // tuple/attempt/fence requests are rejected before Game Design opens its SQL snapshot.
-          assertProjectionUnavailable(
+          assertProjectionRejected(
               "original operation tuple",
               () ->
                   withGameSessionPeer(
@@ -2962,7 +3414,7 @@ class GenuineSelectedPublicationExportPostgresIntegrationTest {
                                   pinnedSelection,
                                   UUID.randomUUID()))));
 
-          assertProjectionUnavailable(
+          assertProjectionRejected(
               "owner attempt",
               () ->
                   withGameSessionPeer(
@@ -2970,11 +3422,13 @@ class GenuineSelectedPublicationExportPostgresIntegrationTest {
                           descriptorProducer.resolve(
                               startSessionReadRequest(
                                   startSessionTuple,
-                                  UUID.randomUUID(),
+                                  new UUID(
+                                      ownerAttemptId.getMostSignificantBits() ^ 1L,
+                                      ownerAttemptId.getLeastSignificantBits()),
                                   ownerFence,
                                   pinnedSelection,
                                   UUID.randomUUID()))));
-          assertProjectionUnavailable(
+          assertProjectionRejected(
               "owner fence",
               () ->
                   withGameSessionPeer(
@@ -3090,64 +3544,137 @@ class GenuineSelectedPublicationExportPostgresIntegrationTest {
     };
   }
 
-  /** Test-only Account projection responder that replays a fixed original tuple and fence. */
-  private static BindableService accountProjectionDouble(
-      Map<String, StartSessionProjectionBinding> projections) {
-    return new StartSessionOperatorAuthorizationServiceGrpc
-        .StartSessionOperatorAuthorizationServiceImplBase() {
-      @Override
-      public void readRedeemedOperationProjection(
-          ReadRedeemedOperationProjectionRequest request,
-          StreamObserver<ReadRedeemedOperationProjectionResponse> responseObserver) {
-        try {
-          var requestedPreTuple =
-              StartSessionPreAuthorizationReservationTuple.fromCanonicalJson(
-                  request
-                      .getCanonicalPreAuthorizationTupleBytes()
-                      .toString(StandardCharsets.UTF_8));
-          var original =
-              Objects.requireNonNull(
-                  projections.get(requestedPreTuple.controlPlaneRequestId()),
-                  "No stipulated Account projection was registered for this logical operation");
-          var tuple = original.tuple();
-          var preTuple = tuple.preAuthorizationTuple();
-          var bundle =
-              StartSessionAuthorityEvidenceBundle.decode(tuple.authorityEvidenceBundleBytes());
-          var reference = tuple.bundleReference();
-          Instant redeemedAt = Instant.now().truncatedTo(ChronoUnit.MILLIS);
-          var response =
-              ReadRedeemedOperationProjectionResponse.newBuilder()
-                  .setControlPlaneRequestId(preTuple.controlPlaneRequestId())
-                  .setCanonicalPreAuthorizationTupleBytes(
-                      ByteString.copyFrom(preTuple.canonicalJson(), StandardCharsets.UTF_8))
-                  .setMutationDigest(preTuple.mutationDigest())
-                  .setAuthorizationReferenceFingerprint(tuple.authorizationReferenceFingerprint())
-                  .setReservationOwnerId(tuple.reservationOwnerId().toString())
-                  .setReservationClaimFence(tuple.reservationClaimFence())
-                  .setAuthenticatedRedeemerWorkloadIdentity(
-                      "spiffe://firemud/ns/" + NAMESPACE + "/sa/game-session-service")
-                  .setOwnerAttemptId(original.ownerAttemptId().toString())
-                  .setOwnerFence(original.ownerFence())
-                  .setReferenceExpiresAt(timestamp(Instant.parse(bundle.authorizationExpiresAt())))
-                  .setRedeemedAt(timestamp(redeemedAt))
-                  .setIssuanceOperationId(bundle.issuanceOperationId().toString())
-                  .setIssuanceFence(Long.parseLong(bundle.issuanceFence()))
-                  .setBundleReference(
-                      AuthorityEvidenceBundleReference.newBuilder()
-                          .setBundleVersion(reference.bundleVersion())
-                          .setSourceVersion(reference.sourceVersion())
-                          .setSourceFence(reference.sourceFence())
-                          .setLinearization(reference.linearization()))
-                  .setAuthorityEvidenceBundle(
-                      ByteString.copyFrom(tuple.authorityEvidenceBundleBytes()))
-                  .build();
-          responseObserver.onNext(response);
-          responseObserver.onCompleted();
-        } catch (RuntimeException invalid) {
-          responseObserver.onError(invalid);
-        }
-      }
-    };
+  private static WorldCanonicalInstanceLifecycleEvidence.Request lifecycleRequest(
+      CanonicalGameInstanceLaunchAssociationReadEvidence.Request selector,
+      CompleteLaunchBindingEvidence completeBinding,
+      UUID playableStateNamespaceId) {
+    var descriptor = completeBinding.descriptor();
+    var release = completeBinding.releaseAttestation();
+    return new WorldCanonicalInstanceLifecycleEvidence.Request(
+        WorldCanonicalInstanceLifecycleEvidence.Request.SCHEMA_VERSION,
+        selector.readRequestId(),
+        selector.targetNamespace(),
+        selector.canonicalTenantId(),
+        selector.worldSlug(),
+        selector.gameInstanceUuid(),
+        playableStateNamespaceId,
+        RealmEntryPolicy.StateScope.SHARED.name(),
+        true,
+        selector.controlPlaneRequestId(),
+        release.canonicalVersionId(),
+        descriptor.requestDigest(),
+        descriptor.resultDigest(),
+        release.evidenceDigest());
+  }
+
+  private static String canonicalPreparationInputJson(WorldCanonicalInstancePreparation.Input input)
+      throws ReflectiveOperationException {
+    Method serializer =
+        WorldCanonicalInstancePreparationRepository.class.getDeclaredMethod(
+            "inputJson", WorldCanonicalInstancePreparation.Input.class);
+    serializer.setAccessible(true);
+    return (String) serializer.invoke(null, input);
+  }
+
+  private static Map<String, Long> canonicalPreparationRowCounts(DSLContext dsl) {
+    Map<String, Long> counts = new TreeMap<>();
+    for (String table :
+        List.of(
+            "world_instance",
+            "region_instance",
+            "zone_instance",
+            "room_instance",
+            "room_instance_exit",
+            "world_canonical_instance_association",
+            "world_canonical_instance_preparation",
+            "world_canonical_instance_topology_identity",
+            "world_canonical_preparation_start_location",
+            "world_canonical_instance_execution")) {
+      var row = dsl.fetchOne("SELECT count(*) FROM " + table);
+      counts.put(table, Objects.requireNonNull(row).get(0, Long.class));
+    }
+    return counts;
+  }
+
+  private static Map<String, String> retainedWorldPreparationEvidence(
+      Store world,
+      UUID intakeRequestId,
+      UUID versionIdentityOperationId,
+      UUID canonicalTenantId,
+      String controlPlaneRequestId,
+      UUID canonicalGameInstanceId,
+      UUID publicationFence) {
+    Map<String, String> evidence = new TreeMap<>();
+    evidence.put(
+        "worldSourceIntake",
+        nullableRetainedJson(
+            world.dsl(),
+            "SELECT to_jsonb(i)::text FROM world_authored_source_intake i WHERE intake_request_id=?",
+            intakeRequestId));
+    evidence.put(
+        "worldVersionIdentity",
+        nullableRetainedJson(
+            world.dsl(),
+            "SELECT to_jsonb(v)::text FROM world_authored_version_identity v WHERE operation_id=?",
+            versionIdentityOperationId));
+    evidence.put(
+        "worldFrozenCapture",
+        nullableRetainedJson(
+            world.dsl(),
+            "SELECT to_jsonb(c)::text FROM world_canonical_frozen_topology c WHERE publication_fence=?",
+            publicationFence));
+    evidence.put(
+        "completeLaunchBinding",
+        nullableRetainedJson(
+            world.dsl(),
+            "SELECT to_jsonb(b)::text FROM world_complete_launch_binding b WHERE target_namespace=? AND canonical_tenant_id=? AND control_plane_request_id=?",
+            NAMESPACE,
+            canonicalTenantId,
+            controlPlaneRequestId));
+    evidence.put(
+        "canonicalInstanceAssociation",
+        nullableRetainedJson(
+            world.dsl(),
+            "SELECT to_jsonb(a)::text FROM world_canonical_instance_association a WHERE canonical_game_instance_id=?",
+            canonicalGameInstanceId));
+    evidence.put(
+        "canonicalInstancePreparation",
+        nullableRetainedJson(
+            world.dsl(),
+            "SELECT to_jsonb(p)::text FROM world_canonical_instance_preparation p WHERE canonical_game_instance_id=?",
+            canonicalGameInstanceId));
+    evidence.put(
+        "canonicalTopologyIdentities",
+        nullableRetainedJson(
+            world.dsl(),
+            "SELECT coalesce(jsonb_agg(to_jsonb(t) ORDER BY family, template_id), '[]'::jsonb)::text FROM world_canonical_instance_topology_identity t WHERE canonical_game_instance_id=?",
+            canonicalGameInstanceId));
+    evidence.put(
+        "canonicalStartLocation",
+        nullableRetainedJson(
+            world.dsl(),
+            "SELECT to_jsonb(s)::text FROM world_canonical_preparation_start_location s WHERE canonical_game_instance_id=?",
+            canonicalGameInstanceId));
+    evidence.put(
+        "worldInstance",
+        nullableRetainedJson(
+            world.dsl(),
+            "SELECT to_jsonb(w)::text FROM world_instance w WHERE canonical_game_instance_id=?",
+            canonicalGameInstanceId));
+    evidence.put(
+        "canonicalExecution",
+        nullableRetainedJson(
+            world.dsl(),
+            "SELECT to_jsonb(e)::text FROM world_canonical_instance_execution e WHERE target_namespace=? AND canonical_tenant_id=? AND control_plane_request_id=?",
+            NAMESPACE,
+            canonicalTenantId,
+            controlPlaneRequestId));
+    return evidence;
+  }
+
+  private static String nullableRetainedJson(DSLContext dsl, String sql, Object... bindings) {
+    var row = dsl.resultQuery(sql, bindings).fetchOne();
+    return row == null ? null : row.get(0, String.class);
   }
 
   private static StartSessionPostAuthorizationExecutionTuple startSessionTuple(
@@ -3274,13 +3801,6 @@ class GenuineSelectedPublicationExportPostgresIntegrationTest {
         selection);
   }
 
-  private static Timestamp timestamp(Instant value) {
-    return Timestamp.newBuilder()
-        .setSeconds(value.getEpochSecond())
-        .setNanos(value.getNano())
-        .build();
-  }
-
   private static <T> T withGameSessionPeer(Supplier<T> operation) {
     var peer =
         new GrpcPeerIdentity(
@@ -3305,18 +3825,18 @@ class GenuineSelectedPublicationExportPostgresIntegrationTest {
                     .isEqualTo(io.grpc.Status.Code.FAILED_PRECONDITION));
   }
 
-  private static void assertProjectionUnavailable(String rejectedEvidence, Runnable operation) {
+  private static void assertProjectionRejected(String rejectedEvidence, Runnable operation) {
     assertThatThrownBy(operation::run)
         .as(
-            "Account projection rejects changed %s before the Game Design SQL snapshot",
+            "Account's durable projection rejects changed %s before the Game Design SQL snapshot",
             rejectedEvidence)
         .isInstanceOf(io.grpc.StatusRuntimeException.class)
         .satisfies(
             failure -> {
               var status = ((io.grpc.StatusRuntimeException) failure).getStatus();
-              assertThat(status.getCode()).isEqualTo(io.grpc.Status.Code.UNAVAILABLE);
+              assertThat(status.getCode()).isEqualTo(io.grpc.Status.Code.FAILED_PRECONDITION);
               assertThat(status.getDescription())
-                  .isEqualTo("Exact redeemed StartSession projection unavailable");
+                  .isEqualTo("Current Account authorization evidence is unavailable");
             });
   }
 
@@ -4162,9 +4682,6 @@ class GenuineSelectedPublicationExportPostgresIntegrationTest {
     }
   }
 
-  private record StartSessionProjectionBinding(
-      StartSessionPostAuthorizationExecutionTuple tuple, UUID ownerAttemptId, long ownerFence) {}
-
   /** Ephemeral same-namespace mTLS identities for the native owner-service proof fixture. */
   private static final class TestPki {
     private final Path ca;
@@ -4204,6 +4721,7 @@ class GenuineSelectedPublicationExportPostgresIntegrationTest {
       for (String service :
           List.of(
               "account-service",
+              "game-session-service",
               "game-design-service",
               "world-management-service",
               "game-logic-service",

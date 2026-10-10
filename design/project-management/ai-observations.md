@@ -216,3 +216,9 @@ Entry format:
   - Observation: The helper identified JavaScript replacement-string dollar expansion while preparing the patch. The resulting SQL block is excluded from the schema simulator, so successful schema generation would not establish its correctness.
   - Expected pattern: Preserve literal replacement content with a replacement callback, inspect the resulting complete procedural block, and require actual PostgreSQL migration and negative-case execution separately from generated metadata.
   - Current status: The helper corrected the literals and new inline `CASE` operands before validation or publication. Physical PostgreSQL parsing and assertion proof remain pending.
+
+- `2026-10-11`: A compiled jOOQ scalar-read assertion can accidentally bind its result type
+  - Context: The corrected Entity occupied-key migration fixture compiled and its PostgreSQL cases skipped locally, but exact-source CI failed when its parameterized `fetchValue(sql, String.class, kind, key)` call treated `String.class` as a SQL bind value.
+  - Observation: A Java `Class` argument is not a typed-result parameter for this string-SQL overload. Compilation and skipped integration tests concealed the mistake; CI failed before the intended assertion rather than disproving the migration.
+  - Expected pattern: For raw SQL, use an exact `fetchSingle(sql, bindings).get(0, ResultType.class)` read and preserve the complete value assertions. Confirm the case actually executed before granting database proof.
+  - Current status: The scoped fixture reads are corrected without changing production SQL, the expected typed key set or writer guards. Corrected physical execution remains pending; the controller records the exact failed source and next proof gate.

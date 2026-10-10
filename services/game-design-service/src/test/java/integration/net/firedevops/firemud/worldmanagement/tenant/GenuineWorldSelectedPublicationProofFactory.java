@@ -22,6 +22,7 @@ import tools.jackson.databind.ObjectMapper;
 public final class GenuineWorldSelectedPublicationProofFactory {
   private final BindableService freezeAndInventoryService;
   private final BindableService publishedStartLocationReadService;
+  private final WorldCanonicalFrozenTopologyRepository frozenTopologies;
 
   public GenuineWorldSelectedPublicationProofFactory(
       String workloadNamespace,
@@ -46,11 +47,11 @@ public final class GenuineWorldSelectedPublicationProofFactory {
 
     var topology = new WorldDraftTopologyCommitRepository(dsl, fence, objectMapper);
     var digestService = createDigestService(dsl, objectMapper);
-    var frozenTopologyRepository =
+    frozenTopologies =
         new WorldCanonicalFrozenTopologyRepository(
             dsl, new WorldAuthoredGraphSnapshotRepository(dsl), topology, digestService);
     var canonicalFrozenTopology =
-        new WorldCanonicalFrozenTopologyService(frozenTopologyRepository, transactionManager);
+        new WorldCanonicalFrozenTopologyService(frozenTopologies, transactionManager);
     var selectorCapture =
         new WorldSelectedPublicationSelectorCapture(workloadNamespace, canonicalFrozenTopology);
     var authorizationRepository = new WorldSelectedDraftPublicationAuthorizationRepository(dsl);
@@ -77,7 +78,7 @@ public final class GenuineWorldSelectedPublicationProofFactory {
         new WorldSelectedDraftPublicationFreezeGrpcService(
             freezeService, inventoryReadService, workloadNamespace);
     var publishedSelectorRepository =
-        new WorldPublishedStartLocationRepository(dsl, frozenTopologyRepository, graphApplications);
+        new WorldPublishedStartLocationRepository(dsl, frozenTopologies, graphApplications);
     publishedStartLocationReadService =
         new WorldPublishedStartLocationReadGrpcService(
             publishedSelectorRepository, workloadNamespace);
@@ -89,6 +90,10 @@ public final class GenuineWorldSelectedPublicationProofFactory {
 
   public BindableService publishedStartLocationReadService() {
     return publishedStartLocationReadService;
+  }
+
+  public WorldCanonicalFrozenTopologyRepository frozenTopologies() {
+    return frozenTopologies;
   }
 
   private static WorldDraftDesignDigestService createDigestService(
