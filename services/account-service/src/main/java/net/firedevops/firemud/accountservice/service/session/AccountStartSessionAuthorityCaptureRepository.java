@@ -267,19 +267,21 @@ public final class AccountStartSessionAuthorityCaptureRepository {
         || !capture.capturedAt().equals(reference.get("capturedAt"))
         || !capture.capturedAt().equals(row.get("captured_at", String.class))
         || !capture.snapshotSha256().equals(row.get("snapshot_sha256", String.class))
-        || !Objects.equals(snapshot.get("accountId"), uuid(row, "account_uuid"))
-        || !Objects.equals(snapshot.get("tenantId"), uuid(row, "tenant_uuid"))
+        || !Objects.equals(snapshot.get("accountId"), canonicalUuid(row, "account_uuid"))
+        || !Objects.equals(snapshot.get("tenantId"), canonicalUuid(row, "tenant_uuid"))
         || !Objects.equals(snapshot.get("targetOwner"), row.get("target_owner", String.class))
         || !Objects.equals(
             snapshot.get("loggingWorkloadUri"), row.get("logging_workload_uri", String.class))
-        || !Objects.equals(snapshot.get("reservationOwnerId"), uuid(row, "reservation_owner_id"))
+        || !Objects.equals(
+            snapshot.get("reservationOwnerId"), canonicalUuid(row, "reservation_owner_id"))
         || !Objects.equals(
             snapshot.get("reservationClaimFence"),
             Long.toString(number(row, "reservation_claim_fence")))
         || !Objects.equals(snapshot.get("mutationDigest"), row.get("mutation_digest", String.class))
         || !Objects.equals(
-            snapshot.get("controlUiOperationId"), uuid(row, "control_ui_operation_id"))
-        || !Objects.equals(snapshot.get("controlUiTokenJti"), uuid(row, "control_ui_token_jti"))
+            snapshot.get("controlUiOperationId"), canonicalUuid(row, "control_ui_operation_id"))
+        || !Objects.equals(
+            snapshot.get("controlUiTokenJti"), canonicalUuid(row, "control_ui_token_jti"))
         || !Objects.equals(
             snapshot.get("controlUiTokenHash"), row.get("control_ui_token_hash", String.class))
         || !Objects.equals(
@@ -450,9 +452,9 @@ public final class AccountStartSessionAuthorityCaptureRepository {
     }
   }
 
-  private static UUID uuid(Record row, String field) {
+  private static String canonicalUuid(Record row, String field) {
     UUID value = row.get(field, UUID.class);
-    return value == null ? null : value;
+    return value == null ? null : value.toString();
   }
 
   private static long number(Record row, String field) {

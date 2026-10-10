@@ -149,7 +149,7 @@ public final class HostedTermsDisclosureHandoffRepository {
   public DispatchPermit authorizeDispatch(HostedTermsDisclosureHandoff handoff) {
     requireWriteTransaction();
     Objects.requireNonNull(handoff);
-    fenceRepository.lockDisclosureSources(handoff.sources());
+    fenceRepository.requireWorldParticipationDisclosureAdmission(handoff.sources());
     Record row = requireExactRow(handoff);
     Status status = Status.valueOf(row.get("status", String.class));
     boolean newlyAuthorized = false;

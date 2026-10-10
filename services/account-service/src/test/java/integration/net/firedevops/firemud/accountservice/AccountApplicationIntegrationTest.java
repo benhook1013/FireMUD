@@ -10,6 +10,7 @@ import java.util.UUID;
 import net.firedevops.firemud.accountservice.client.EntityManagementClient;
 import net.firedevops.firemud.accountservice.client.GameSessionClient;
 import net.firedevops.firemud.accountservice.client.LoggingAdminClient;
+import net.firedevops.firemud.accountservice.client.StartSessionReservationEvidenceClient;
 import net.firedevops.firemud.accountservice.service.AccountService;
 import net.firedevops.firemud.common.security.JwtUtil;
 import net.firedevops.firemud.test.GatewayTestProperties;
@@ -70,6 +71,7 @@ class AccountApplicationIntegrationTest {
   @MockitoBean private EntityManagementClient entityManagementClient;
   @MockitoBean private GameSessionClient gameSessionClient;
   @MockitoBean private LoggingAdminClient loggingAdminClient;
+  @MockitoBean private StartSessionReservationEvidenceClient startSessionReservationEvidenceClient;
   @MockitoBean private JavaMailSender mailSender;
 
   @Test

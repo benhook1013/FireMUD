@@ -2,8 +2,6 @@ package net.firedevops.firemud.worldmanagement.tenant;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
-import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.when;
 
 import com.google.protobuf.InvalidProtocolBufferException;
 import com.google.protobuf.util.JsonFormat;
@@ -84,6 +82,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.grpc.server.lifecycle.GrpcServerLifecycle;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
@@ -172,19 +171,22 @@ class WorldCanonicalInstanceAssociationPostgresIntegrationTest {
   }
 
   @Test
-  void changedReleaseCommitFailsJavaAndDatabaseBeforeAllocation() {
+  void changedReleaseCommitFailsCodecBeforeAllocation() {
     assertReleaseCheckpointSubstitutionDenied(true);
   }
 
   @Test
-  void changedWorldContentDigestFailsJavaAndDatabaseBeforeAllocation() {
+  void changedWorldContentDigestFailsCodecBeforeAllocation() {
     assertReleaseCheckpointSubstitutionDenied(false);
   }
 
   private void assertReleaseCheckpointSubstitutionDenied(boolean changeCommit) {
     Fixture original = fixture();
-    var topology = frozenPlan(original);
-    var checkpoint = topology.sourceBinding().freeze();
+    var checkpoint = frozenPlan(original).sourceBinding().freeze();
+    var selector =
+        Objects.requireNonNull(
+            original.binding().evidence().releaseAttestation().worldStartLocationEvidence(),
+            "retained World selector is required for the original release profile");
     var changedCheckpoint =
         new CaptureRequest(
             checkpoint.targetNamespace(),
@@ -203,59 +205,29 @@ class WorldCanonicalInstanceAssociationPostgresIntegrationTest {
                     + checkpoint.contentDigest().substring(1),
             checkpoint.digestSchemaVersion(),
             checkpoint.suppliedOwnedAffectedTuples());
+    String candidateControlRequest = controlRequest();
     var descriptorEvidence =
         completeEvidence(
             original.source().source(),
-            controlRequest(),
+            candidateControlRequest,
             original.versionIdentity().gameDesignVersionId(),
             original.versionIdentity().canonicalVersionId(),
             VERSION_EPOCH,
             "changed-checkpoint-descriptor",
-            changedCheckpoint.appliedCommitId());
-    var evidence =
-        new CompleteLaunchBindingEvidence(
-            descriptorEvidence.descriptor(),
-            releaseWithWorldCheckpoint(descriptorEvidence.releaseAttestation(), changedCheckpoint));
-    // This is a complete, digest-valid five-owner pair for the same Version. Pair retention alone
-    // must not make its different commit or World content eligible for local materialization.
-    var changedBinding =
-        Objects.requireNonNull(
-            ownerTransaction()
-                .execute(
-                    status ->
-                        launchBindingRepository.acceptFresh(
-                            NAMESPACE, original.source().receipt(), evidence)));
-    UUID instance = UUID.randomUUID();
-    UUID playableNamespace = UUID.randomUUID();
-    var request = requestFor(evidence, instance, UUID.randomUUID());
-    var response =
-        responseFor(
-            evidence, instance, playableNamespace, request.readRequestId(), "GS_FIXTURE", 1L);
+            selector.request().appliedCommitId(),
+            selector);
+    // Keep the actual retained selector/profile intact. A substituted participant commit or
+    // World digest cannot be made eligible by constructing a second, mismatched release graph.
+    // This proves immutable codec rejection only; independent SQL substitution coverage remains
+    // an open proof obligation because these cases intentionally stop before SQL.
     assertThatThrownBy(
             () ->
-                new WorldCanonicalInstancePreparation.Input(
-                    request, response, changedBinding, original.versionIdentity(), topology))
-        .isInstanceOf(IllegalArgumentException.class);
+                releaseWithWorldCheckpoint(
+                    descriptorEvidence.releaseAttestation(), changedCheckpoint))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("World selector differs from the exact attested release checkpoint");
 
-    // Deliberately bypass the Java constructor to exercise the database owner's independent gate.
-    var rawInput = mock(WorldCanonicalInstancePreparation.Input.class);
-    when(rawInput.gameSessionReadRequest()).thenReturn(request);
-    when(rawInput.gameSessionReadEvidence()).thenReturn(response);
-    when(rawInput.completeLaunchBinding()).thenReturn(changedBinding);
-    when(rawInput.versionIdentity()).thenReturn(original.versionIdentity());
-    when(rawInput.topologyPlan()).thenReturn(topology);
-    String inputJson = WorldCanonicalInstancePreparationRepository.inputJson(rawInput);
-    assertThatThrownBy(
-            () ->
-                ownerTransaction()
-                    .execute(
-                        status ->
-                            dsl.fetch(
-                                "SELECT * FROM world_prepare_canonical_instance(?, 'sha256:' || encode(sha256(convert_to(?, 'UTF8')), 'hex'))",
-                                inputJson,
-                                inputJson)))
-        .rootCause()
-        .hasMessageContaining("release differs from the exact selected frozen World graph");
+    UUID instance = UUID.randomUUID();
     assertThat(preparationCount(instance)).isZero();
     assertThat(associationCount(instance)).isZero();
     assertThat(
@@ -263,19 +235,18 @@ class WorldCanonicalInstanceAssociationPostgresIntegrationTest {
                 "SELECT id FROM world_instance WHERE canonical_game_instance_id = ?", instance))
         .isNull();
     assertThat(
-            dsl.fetchOne(
-                "SELECT id FROM world_instance WHERE canonical_launch_binding_operation_id = ?",
-                changedBinding.operationId()))
-        .isNull();
+            launchBindingRepository.read(
+                NAMESPACE, original.source().source().canonicalTenantId(), candidateControlRequest))
+        .isEmpty();
     assertThat(
             launchBindingRepository
                 .read(
                     NAMESPACE,
-                    changedBinding.canonicalTenantId(),
-                    changedBinding.controlPlaneRequestId())
+                    original.binding().canonicalTenantId(),
+                    original.binding().controlPlaneRequestId())
                 .orElseThrow()
                 .evidence())
-        .isEqualTo(evidence);
+        .isEqualTo(original.binding().evidence());
   }
 
   @Test
@@ -839,6 +810,9 @@ class WorldCanonicalInstanceAssociationPostgresIntegrationTest {
             "synthetic-second-binding");
     Fixture changedBindingFixture =
         new Fixture(original.source(), secondBinding.binding(), secondBinding.versionIdentity());
+    // The historical row now hits V62's target-wide missing-execution-identity gate first, so
+    // this call does not prove the Java changed-binding comparison. The owner-side claim check
+    // below remains a separate association-evidence rejection proof.
     assertThatThrownBy(
             () ->
                 prepareCanonicalWorldRow(
@@ -847,8 +821,9 @@ class WorldCanonicalInstanceAssociationPostgresIntegrationTest {
                     playableStateNamespaceId,
                     "GS_FIXTURE",
                     1L))
-        .isInstanceOf(
-            WorldCanonicalInstancePreparationRepository.ConflictingPreparationException.class);
+        .isInstanceOf(DataIntegrityViolationException.class)
+        .rootCause()
+        .hasMessageContaining("Historical World materialization has no exact execution identity");
     WorldCanonicalInstanceAssociation.Claim changedBindingClaim =
         claim(
             secondBinding,
@@ -1169,10 +1144,18 @@ class WorldCanonicalInstanceAssociationPostgresIntegrationTest {
   @Test
   void worldExecutionFenceIsMonotonicAndDistinctFromSyntheticSourceFences() {
     Fixture fixture = fixture();
+    SeededPair secondPair =
+        seedPair(
+            fixture.source(),
+            fixture.versionIdentity(),
+            controlRequest(),
+            "synthetic-second-execution-fence");
+    Fixture secondFixture =
+        new Fixture(fixture.source(), secondPair.binding(), secondPair.versionIdentity());
     WorldCanonicalInstancePreparation.Input firstInput =
         preparationInput(fixture, UUID.randomUUID(), UUID.randomUUID(), "GS_FENCE_ONE", 1L);
     WorldCanonicalInstancePreparation.Input secondInput =
-        preparationInput(fixture, UUID.randomUUID(), UUID.randomUUID(), "GS_FENCE_TWO", 1L);
+        preparationInput(secondFixture, UUID.randomUUID(), UUID.randomUUID(), "GS_FENCE_TWO", 1L);
     WorldCanonicalInstanceExecutionIdentity firstIdentity =
         withLargeSyntheticSourceFences(
             WorldCanonicalInstanceExecutionTestFixtures.identity(firstInput));
@@ -1231,12 +1214,12 @@ class WorldCanonicalInstanceAssociationPostgresIntegrationTest {
             () ->
                 dsl.fetchOne(
                     "SELECT * FROM world_prepare_canonical_instance(?, ?)", inputJson, inputDigest))
-        .isInstanceOf(DataAccessException.class)
+        .isInstanceOf(DataIntegrityViolationException.class)
         .rootCause()
         .hasMessageContaining("exact current World execution identity and fence");
     assertThatThrownBy(
             () -> dsl.execute("INSERT INTO world_canonical_instance_association DEFAULT VALUES"))
-        .isInstanceOf(DataAccessException.class)
+        .isInstanceOf(DataIntegrityViolationException.class)
         .rootCause()
         .hasMessageContaining("exact active World execution identity and fence");
     assertThat(preparationCount(canonicalGameInstanceId)).isZero();
@@ -1266,7 +1249,7 @@ class WorldCanonicalInstanceAssociationPostgresIntegrationTest {
             () ->
                 dsl.fetchOne(
                     "SELECT * FROM world_prepare_canonical_instance(?, ?)", inputJson, inputDigest))
-        .isInstanceOf(DataAccessException.class)
+        .isInstanceOf(DataIntegrityViolationException.class)
         .rootCause()
         .hasMessageContaining("exact current World execution identity and fence");
 
@@ -1324,7 +1307,7 @@ class WorldCanonicalInstanceAssociationPostgresIntegrationTest {
                               inputJson,
                               inputDigest);
                         }))
-        .isInstanceOf(DataAccessException.class)
+        .isInstanceOf(DataIntegrityViolationException.class)
         .rootCause()
         .hasMessageContaining("exact current World execution identity and fence");
     assertThat(preparationCount(identity.canonicalGameInstanceId())).isZero();
@@ -1462,7 +1445,7 @@ class WorldCanonicalInstanceAssociationPostgresIntegrationTest {
                                 fixture.source().receipt().localTenantKey(),
                                 fixture.versionIdentity().localVersionKey());
                             ownerRowLocked.countDown();
-                            await(releaseOwnerRow);
+                            await(releaseOwnerRow, 30, TimeUnit.SECONDS);
                             return null;
                           }));
       assertThat(ownerRowLocked.await(10, TimeUnit.SECONDS)).isTrue();
@@ -1611,8 +1594,7 @@ class WorldCanonicalInstanceAssociationPostgresIntegrationTest {
   }
 
   @Test
-  void concurrentExactPreparationsForTheSameCanonicalGameInstanceRetainOneOwnerResult()
-      throws Exception {
+  void concurrentExactPreparationDeniesPendingDuplicateAndRetainsOneOwnerResult() throws Exception {
     Fixture fixture = fixture();
     UUID canonicalGameInstanceId = UUID.randomUUID();
     UUID playableStateNamespaceId = UUID.randomUUID();
@@ -1621,35 +1603,59 @@ class WorldCanonicalInstanceAssociationPostgresIntegrationTest {
             fixture, canonicalGameInstanceId, playableStateNamespaceId, "GS_FIXTURE", 1L);
     WorldCanonicalInstanceExecutionIdentity exactIdentity =
         WorldCanonicalInstanceExecutionTestFixtures.identity(exactInput);
+    AtomicInteger heldChecks = new AtomicInteger();
+    CountDownLatch associationRetained = new CountDownLatch(1);
+    CountDownLatch releaseOriginalExecution = new CountDownLatch(1);
     WorldCanonicalInstancePreparationService firstService =
-        preparationService(() -> {}, ignored -> exactIdentity);
+        preparationService(
+            () -> {
+              if (heldChecks.incrementAndGet() == 8) {
+                associationRetained.countDown();
+                await(releaseOriginalExecution);
+              }
+            },
+            ignored -> exactIdentity);
     WorldCanonicalInstancePreparationService secondService =
         preparationService(() -> {}, ignored -> exactIdentity);
-    CountDownLatch ready = new CountDownLatch(2);
-    CountDownLatch start = new CountDownLatch(1);
 
     try (ExecutorService executor = Executors.newFixedThreadPool(2)) {
       Future<WorldCanonicalInstancePreparation.Result> first =
-          executor.submit(
-              () -> {
-                ready.countDown();
-                await(start);
-                return firstService.prepare(exactInput);
+          executor.submit(() -> firstService.prepare(exactInput));
+      try {
+        assertThat(associationRetained.await(10, TimeUnit.SECONDS)).isTrue();
+        Future<WorldCanonicalInstancePreparation.Result> duplicate =
+            executor.submit(() -> secondService.prepare(exactInput));
+        assertThatThrownBy(() -> duplicate.get(10, TimeUnit.SECONDS))
+            .isInstanceOfSatisfying(
+                java.util.concurrent.ExecutionException.class,
+                failure ->
+                    assertThat(failure.getCause())
+                        .isInstanceOfSatisfying(
+                            WorldCanonicalInstancePreparationRepository
+                                .ConflictingPreparationException.class,
+                            pending ->
+                                assertThat(pending)
+                                    .hasMessage(
+                                        "Exact original World execution has a retained PENDING intent; "
+                                            + "only serialized ABORTED recovery may resolve it")));
+      } finally {
+        releaseOriginalExecution.countDown();
+      }
+
+      WorldCanonicalInstancePreparation.Result originalResult = first.get(25, TimeUnit.SECONDS);
+      assertThat(originalResult.association().identity().canonicalGameInstanceId())
+          .isEqualTo(canonicalGameInstanceId);
+      assertThat(
+              preparationRepository().readExactExecution(exactIdentity).operation().orElseThrow())
+          .satisfies(
+              operation -> {
+                assertThat(operation.state())
+                    .isEqualTo(
+                        WorldCanonicalInstancePreparationRepository.ExecutionState.COMMITTED);
+                assertThat(operation.worldInstanceId())
+                    .isEqualTo(originalResult.association().worldInstanceId());
               });
-      Future<WorldCanonicalInstancePreparation.Result> second =
-          executor.submit(
-              () -> {
-                ready.countDown();
-                await(start);
-                return secondService.prepare(exactInput);
-              });
-      assertThat(ready.await(10, TimeUnit.SECONDS)).isTrue();
-      start.countDown();
-      WorldCanonicalInstancePreparation.Result firstResult = first.get(25, TimeUnit.SECONDS);
-      WorldCanonicalInstancePreparation.Result secondResult = second.get(25, TimeUnit.SECONDS);
-      assertThat(firstResult.association().worldInstanceId())
-          .isEqualTo(secondResult.association().worldInstanceId());
-      assertThat(firstResult.inputDigest()).isEqualTo(secondResult.inputDigest());
+      assertThat(preparationRepository().readOwnerPreparation(exactInput)).contains(originalResult);
     }
 
     assertThat(associationCount(canonicalGameInstanceId)).isEqualTo(1L);
@@ -2887,25 +2893,6 @@ class WorldCanonicalInstanceAssociationPostgresIntegrationTest {
       UUID canonicalVersionId,
       long epoch,
       String launchDescriptorId,
-      String attestationCommit) {
-    return completeEvidence(
-        source,
-        controlPlaneRequestId,
-        gameDesignVersionId,
-        canonicalVersionId,
-        epoch,
-        launchDescriptorId,
-        attestationCommit,
-        null);
-  }
-
-  private static CompleteLaunchBindingEvidence completeEvidence(
-      AuthoredWorldSourceEvidence source,
-      String controlPlaneRequestId,
-      long gameDesignVersionId,
-      UUID canonicalVersionId,
-      long epoch,
-      String launchDescriptorId,
       String attestationCommit,
       WorldPublishedStartLocationEvidence selector) {
     AuthoredWorldLaunchDescriptorEvidence.Request request =
@@ -3231,8 +3218,12 @@ class WorldCanonicalInstanceAssociationPostgresIntegrationTest {
   }
 
   private static void await(CountDownLatch latch) {
+    await(latch, 10, TimeUnit.SECONDS);
+  }
+
+  private static void await(CountDownLatch latch, long timeout, TimeUnit unit) {
     try {
-      if (!latch.await(10, TimeUnit.SECONDS)) {
+      if (!latch.await(timeout, unit)) {
         throw new IllegalStateException("Concurrent canonical association barrier timed out");
       }
     } catch (InterruptedException exception) {

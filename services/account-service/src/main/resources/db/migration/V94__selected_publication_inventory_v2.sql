@@ -275,7 +275,7 @@ BEGIN
                 OR NOT (entry ?& ARRAY['family', 'rowCount'])
                 OR jsonb_typeof(entry->'rowCount') IS DISTINCT FROM 'number'
                 OR (entry->>'rowCount')::NUMERIC < 0)
-        OR (SELECT jsonb_agg(entry ORDER BY entry->>'regionTemplateId') FROM
+        OR (SELECT coalesce(jsonb_agg(entry ORDER BY entry->>'regionTemplateId'), '[]'::JSONB) FROM
             jsonb_array_elements(model->'regionGeneratorInputs') entry)
             IS DISTINCT FROM model->'regionGeneratorInputs'
         OR EXISTS (SELECT 1 FROM jsonb_array_elements(model->'regionGeneratorInputs') entry
@@ -284,7 +284,7 @@ BEGIN
                 OR NOT (entry ?& ARRAY['regionTemplateId', 'generatorType', 'generatorParams'])
                 OR entry->>'generatorType' IS DISTINCT FROM ''
                 OR entry->>'generatorParams' IS DISTINCT FROM '')
-        OR (SELECT jsonb_agg(entry ORDER BY entry->>'bindingTemplateId') FROM
+        OR (SELECT coalesce(jsonb_agg(entry ORDER BY entry->>'bindingTemplateId'), '[]'::JSONB) FROM
             jsonb_array_elements(model->'spawnBindingInputs') entry)
             IS DISTINCT FROM model->'spawnBindingInputs'
         OR EXISTS (SELECT 1 FROM jsonb_array_elements(model->'spawnBindingInputs') entry
