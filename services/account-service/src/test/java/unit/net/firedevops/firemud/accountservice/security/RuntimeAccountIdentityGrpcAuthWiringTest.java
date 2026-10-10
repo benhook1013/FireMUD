@@ -47,6 +47,14 @@ import org.springframework.core.io.FileSystemResource;
 class RuntimeAccountIdentityGrpcAuthWiringTest {
   private static final String IDENTITY_METHOD =
       "account.v1.RuntimeAccountIdentityService/ResolveRuntimeAccountIdentity";
+  private static final String START_SESSION_ISSUE_METHOD =
+      "account.v1.StartSessionOperatorAuthorizationService/IssueHumanOperatorAuthorizationReference";
+  private static final String START_SESSION_RECOVER_METHOD =
+      "account.v1.StartSessionOperatorAuthorizationService/RecoverOperatorAuthorizationReference";
+  private static final String START_SESSION_REDEEM_METHOD =
+      "account.v1.StartSessionOperatorAuthorizationService/RedeemOperatorAuthorization";
+  private static final String READ_REDEEMED_OPERATION_PROJECTION_METHOD =
+      "account.v1.StartSessionOperatorAuthorizationService/ReadRedeemedOperationProjection";
   private static final String NONPUBLIC_METHOD = "account.v1.AccountService/GetProfile";
   private static final String ACCOUNT_UUID = "87426bb3-a733-43f0-9c8e-2e379cbdf7ec";
   private static final String REQUEST_UUID = "11111111-1111-4111-8111-111111111111";
@@ -272,6 +280,12 @@ class RuntimeAccountIdentityGrpcAuthWiringTest {
               assertThat(context).hasSingleBean(AuthTokenInterceptor.class);
               assertThat(context.getBean(GrpcAuthProperties.class).getPublicMethods())
                   .contains(IDENTITY_METHOD)
+                  .contains(
+                      START_SESSION_ISSUE_METHOD,
+                      START_SESSION_RECOVER_METHOD,
+                      START_SESSION_REDEEM_METHOD,
+                      READ_REDEEMED_OPERATION_PROJECTION_METHOD)
+                  .doesNotContain("account.v1.StartSessionOperatorAuthorizationService/*")
                   .doesNotContain(NONPUBLIC_METHOD);
               action.accept(
                   context.getBean(AuthTokenInterceptor.class), context.getBean(JwtUtil.class));
