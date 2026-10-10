@@ -1651,12 +1651,35 @@ class AccountJwtReadinessStoragePostgresIntegrationTest {
       ExpectedPod expectedPod,
       AuthenticatedAcceptance acceptance) {
     Map<String, Object> digestFields = new LinkedHashMap<>();
+    digestFields.put("domain", "account-jwt-readiness-per-pod-receipt/v1");
+    digestFields.put("rotationOperationId", entry.rotationOperationId().toString());
+    digestFields.put("planDigest", entry.planDigest());
+    digestFields.put("validatorId", entry.validatorId());
+    digestFields.put("tokenProfile", entry.tokenProfile());
+    digestFields.put("audience", entry.audience());
+    digestFields.put("probeKind", entry.probeKind().name());
+    digestFields.put("podUid", expectedPod.target().podUid());
+    digestFields.put("jti", entry.jti().toString());
+    digestFields.put("sourceEntryVersion", entry.entryVersion());
+    digestFields.put("compactTokenSha256", entry.compactTokenSha256().orElseThrow());
+    digestFields.put("targetGeneration", entry.targetGeneration());
+    digestFields.put("targetKid", entry.targetKid());
+    Map<String, Object> expectedActive = new LinkedHashMap<>();
+    expectedActive.put("present", entry.expectedActive().isPresent());
+    entry
+        .expectedActive()
+        .ifPresent(
+            active -> {
+              expectedActive.put("generation", active.generation());
+              expectedActive.put("kid", active.kid());
+            });
+    digestFields.put("expectedActive", expectedActive);
     digestFields.put("outcome", acceptance.result().name());
     digestFields.put("observedPodUid", acceptance.podUid());
     digestFields.put("image", acceptance.image());
     digestFields.put("verifierConfigSha256", acceptance.verifierConfigSha256());
     digestFields.put("verifiedKid", acceptance.verifiedKid());
-    digestFields.put("receiverEndpoint", acceptance.actualPodEndpoint());
+    digestFields.put("receiverEndpoint", URI.create(acceptance.actualPodEndpoint()).toString());
     digestFields.put("receiverServiceUri", acceptance.actualServiceUri());
     digestFields.put("receiverPeerSpkiSha256", acceptance.actualPeerSpkiSha256());
     digestFields.put("observedAtEpochSecond", acceptance.observedAtEpochSecond());
