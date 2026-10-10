@@ -35,6 +35,7 @@ import net.firedevops.firemud.gamedesign.repository.PluginVersionStatusEventRepo
 import net.firedevops.firemud.gamedesign.repository.PublishedPluginVersionRepository;
 import net.firedevops.firemud.gamedesign.repository.VersionRepository;
 import net.firedevops.firemud.gamedesign.service.ControlPlaneDigestService;
+import net.firedevops.firemud.gamedesign.service.MutationOwnerProofUnavailableException;
 import net.firedevops.firemud.gamedesign.service.ParsedPluginBundle;
 import net.firedevops.firemud.gamedesign.service.PluginBundleIntakeService;
 import net.firedevops.firemud.gamedesign.service.PluginBundleStorageService;
@@ -397,13 +398,21 @@ public class VersionServiceImpl implements VersionService {
       return new ScriptPatchFinalization(
           attempt.getStatus(), null, attempt.getFailureCode(), attempt.getFailureMessage());
     }
-    Optional<Version> draft =
-        versionRepository.findByTenantIdAndId(patchBinding.tenantId(), attempt.getVersionId());
-    if (draft.isPresent() && draft.get().getVersionState() != VersionLifecycleState.DRAFT) {
+    Version draft =
+        versionRepository
+            .findByTenantIdAndIdForUpdate(patchBinding.tenantId(), attempt.getVersionId())
+            .orElseThrow(
+                () ->
+                    new IllegalStateException(
+                        "PUBLISH_ATTEMPT_INCONSISTENT: pending attempt references a missing version"));
+    if (draft.getVersionState() != VersionLifecycleState.DRAFT) {
       throw new IllegalStateException(
           "PUBLISH_ATTEMPT_INCONSISTENT: pending attempt references a non-draft version");
     }
-    draft.ifPresent(versionRepository::delete);
+    draft.setVersionState(VersionLifecycleState.FAILED);
+    draft.setVersionStateEpoch(Math.addExact(draft.getVersionStateEpoch(), 1L));
+    draft.setUpdatedAt(LocalDateTime.now());
+    versionRepository.save(draft);
     publishAttemptService.markScriptPatchFailed(
         reservation.publishWorkflowId(), failureCode, failureMessage);
     return new ScriptPatchFinalization(
@@ -855,18 +864,11 @@ public class VersionServiceImpl implements VersionService {
     if (version.getVersionState() == newState) {
       return toVersionStateDto(version);
     }
-    version.setVersionState(newState);
-    version.setVersionStateEpoch(version.getVersionStateEpoch() + 1L);
-    version.setUpdatedAt(LocalDateTime.now());
-    Version saved = versionRepository.save(version);
-    logger.info(
-        "Updated version state tenant={} version={} state={} epoch={} reason={}",
-        tenantId,
-        versionId,
-        newState,
-        saved.getVersionStateEpoch(),
-        reason == null ? "" : reason);
-    return toVersionStateDto(saved);
+    return CreatorMutationOwnerProofGuard.denyUntilAccountCommitBoundProof(
+        () ->
+            new MutationOwnerProofUnavailableException(
+                "VERSION_STATE_MUTATION_UNAVAILABLE",
+                "Canonical lifecycle transition and owner proof are unavailable"));
   }
 
   private int calculateNextNumber(String tenantId) {

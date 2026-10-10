@@ -2,7 +2,14 @@ package net.firedevops.firemud.gamedesign.service.impl;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
+import static org.mockito.Mockito.when;
 
+import io.temporal.client.WorkflowClient;
+import net.firedevops.firemud.common.temporal.TemporalTaskQueueResolver;
 import net.firedevops.firemud.gamedesign.model.PublishGateFailureCode;
 import net.firedevops.firemud.gamedesign.service.PublishAttemptPendingReconciliationException;
 import net.firedevops.firemud.gamedesign.service.PublishGateFailureException;
@@ -10,6 +17,25 @@ import org.junit.jupiter.api.Test;
 
 class TemporalVersionPublishOrchestratorTest {
   private static final String WORKFLOW_ID = "publish:tenant-1:publish-request:request-1";
+
+  @Test
+  void freshOrPendingPublicationIsDeniedBeforeTemporalWorkflowStart() {
+    WorkflowClient workflowClient = mock(WorkflowClient.class);
+    TemporalTaskQueueResolver taskQueues = mock(TemporalTaskQueueResolver.class);
+    VersionPublishCommandServiceImpl commandService = mock(VersionPublishCommandServiceImpl.class);
+    when(commandService.publishFullVersion("tenant-1", "notes", "request-1", WORKFLOW_ID))
+        .thenThrow(
+            new VersionPublishCommandServiceImpl.FullVersionPublicationUnavailableException());
+    TemporalVersionPublishOrchestrator orchestrator =
+        new TemporalVersionPublishOrchestrator(workflowClient, taskQueues, commandService);
+
+    assertThrows(
+        VersionPublishCommandServiceImpl.FullVersionPublicationUnavailableException.class,
+        () -> orchestrator.publishFullVersion("tenant-1", "notes", "request-1"));
+
+    verify(commandService).publishFullVersion("tenant-1", "notes", "request-1", WORKFLOW_ID);
+    verifyNoInteractions(workflowClient, taskQueues);
+  }
 
   @Test
   void timeoutPreservesPendingReconciliationCodeFromLastSnapshot() {
