@@ -40,8 +40,8 @@ import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
 /**
- * Game Design responses are explicit mocks here; authentication is covered by the client unit
- * tests.
+ * Game Design responses are explicit mocks here. Client unit tests prove configured peer pinning
+ * and unauthenticated-response rejection, not a genuine authenticated Game Design-to-SQL flow.
  */
 @Testcontainers(disabledWithoutDocker = true)
 @SuppressWarnings("resource")

@@ -10,7 +10,11 @@ import net.firedevops.firemud.gamesession.dto.CanonicalPlayableTarget;
 import org.jooq.DSLContext;
 import org.jooq.impl.DSL;
 
-/** Shared PostgreSQL fixtures for lease-bound binding tests that require a real launch target. */
+/**
+ * Shared PostgreSQL storage fixtures for lease-bound binding tests that require a real launch
+ * target. Upstream Game Design source, authorization, and publication authority are synthetic test
+ * stipulations; these seeded rows do not prove authenticated Game Design owner transport.
+ */
 public final class CanonicalGameplayBindingRuntimeTestFixtures {
   private static final String SHA256 = "sha256:" + "a".repeat(64);
   private static final String RAW_SHA256 = "a".repeat(64);
@@ -81,15 +85,20 @@ public final class CanonicalGameplayBindingRuntimeTestFixtures {
   }
 
   private static void seedSourceAndCatalog(DSLContext tx, RuntimeTarget target) {
+    GameSessionCanonicalRealmCatalogProofFixtures.Proof proof =
+        GameSessionCanonicalRealmCatalogProofFixtures.forRuntimeTarget(target);
+    var source = proof.source();
+    var publishedPolicy = proof.publishedSet().policies().getFirst().source().policy();
+
     tx.execute(
         "INSERT INTO game_session_authored_world_tenant_source_binding"
             + " (target_namespace, canonical_tenant_id, tenant_slug, source_game_row_id,"
             + " source_game_tenant_key, provenance_kind) VALUES (?, ?, ?, ?, ?, 'NEW_GAME_ROW')",
         target.targetNamespace(),
-        target.canonicalTenantId(),
-        target.tenantSlug(),
-        target.sourceGameRowId(),
-        target.sourceGameTenantKey());
+        source.canonicalTenantId(),
+        source.tenantSlug(),
+        source.sourceGameRowId(),
+        source.sourceGameTenantKey());
 
     tx.execute(
         "INSERT INTO game_session_authored_world_source_intake"
@@ -103,16 +112,16 @@ public final class CanonicalGameplayBindingRuntimeTestFixtures {
         target.targetNamespace(),
         target.sourceIntakeRequestId(),
         SHA256,
-        target.sourceRegistrationRequestId(),
-        target.sourceOperationId(),
-        SHA256,
-        target.canonicalTenantId(),
-        target.tenantSlug(),
-        target.worldSlug(),
-        target.worldDisplayName(),
-        target.sourceGameRowId(),
-        target.sourceGameTenantKey(),
-        SHA256,
+        source.registrationRequestId(),
+        source.operationId(),
+        source.requestDigest(),
+        source.canonicalTenantId(),
+        source.tenantSlug(),
+        source.worldSlug(),
+        source.worldDisplayName(),
+        source.sourceGameRowId(),
+        source.sourceGameTenantKey(),
+        source.evidenceDigest(),
         SHA256);
 
     tx.execute(
@@ -131,12 +140,12 @@ public final class CanonicalGameplayBindingRuntimeTestFixtures {
         target.sourceIntakeRequestId(),
         SHA256,
         SHA256,
-        target.sourceRegistrationRequestId(),
-        target.sourceOperationId(),
-        SHA256,
-        target.sourceGameRowId(),
-        target.sourceGameTenantKey(),
-        SHA256);
+        source.registrationRequestId(),
+        source.operationId(),
+        source.requestDigest(),
+        source.sourceGameRowId(),
+        source.sourceGameTenantKey(),
+        source.evidenceDigest());
 
     tx.execute(
         "INSERT INTO game_session_canonical_realm_catalog"
@@ -147,16 +156,18 @@ public final class CanonicalGameplayBindingRuntimeTestFixtures {
             + " source_intake_schema_version, source_intake_request_id, source_intake_request_digest,"
             + " source_intake_receipt_digest, source_schema_version, source_registration_request_id,"
             + " source_operation_id, source_request_digest, source_world_display_name,"
-            + " source_game_row_id, source_game_tenant_key, source_provenance_kind, source_evidence_digest)"
-            + " VALUES (?, ?, ?, ?, ?, ?, ?, TRUE, TRUE, 'SHARED', ?, 'PLAYER_CHOICE', 1, ?, ?, ?, ?, 1, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, 'NEW_GAME_ROW', ?)",
+            + " source_game_row_id, source_game_tenant_key, source_provenance_kind, source_evidence_digest,"
+            + " complete_policy_set_evidence)"
+            + " VALUES (?, ?, ?, ?, ?, ?, ?, TRUE, TRUE, 'SHARED', ?, ?, 1, ?, ?, ?, ?, 1, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?)",
         target.targetNamespace(),
         target.canonicalTenantId(),
         target.tenantSlug(),
         target.worldSlug(),
         target.realmId(),
-        target.realmSlug(),
-        target.realmDisplayName(),
+        publishedPolicy.realmSlug(),
+        publishedPolicy.realmDisplayName(),
         target.playableStateNamespaceId(),
+        publishedPolicy.entryPolicy().name(),
         target.catalogCreationRequestId(),
         SHA256,
         SHA256,
@@ -164,13 +175,15 @@ public final class CanonicalGameplayBindingRuntimeTestFixtures {
         target.sourceIntakeRequestId(),
         SHA256,
         SHA256,
-        target.sourceRegistrationRequestId(),
-        target.sourceOperationId(),
-        SHA256,
-        target.worldDisplayName(),
-        target.sourceGameRowId(),
-        target.sourceGameTenantKey(),
-        SHA256);
+        source.registrationRequestId(),
+        source.operationId(),
+        source.requestDigest(),
+        source.worldDisplayName(),
+        source.sourceGameRowId(),
+        source.sourceGameTenantKey(),
+        source.provenanceKind(),
+        source.evidenceDigest(),
+        proof.completePolicySetBytes());
   }
 
   private static void seedFreshTenantAssociation(DSLContext tx, RuntimeTarget target) {
@@ -437,7 +450,7 @@ public final class CanonicalGameplayBindingRuntimeTestFixtures {
           1L,
           SHA256,
           terminalAt,
-          "PLAYER_CHOICE",
+          "PRESEEDED_ONLY",
           gameInstanceId + 50_000L,
           "source-" + shortToken,
           UUID.randomUUID(),

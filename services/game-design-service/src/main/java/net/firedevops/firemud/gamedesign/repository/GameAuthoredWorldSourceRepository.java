@@ -264,6 +264,51 @@ public class GameAuthoredWorldSourceRepository {
   }
 
   /**
+   * Reads one exact source receipt from the caller's independent read-only REPEATABLE_READ
+   * snapshot. Unlike {@link #read}, this method does not suspend that snapshot or read a committed
+   * outcome from outside it.
+   */
+  @Transactional(propagation = Propagation.MANDATORY, readOnly = true)
+  public Optional<AuthoredWorldSourceEvidence> readExactSourceSnapshot(
+      String targetNamespace,
+      UUID operationId,
+      UUID canonicalTenantId,
+      String worldSlug,
+      String expectedEvidenceDigest) {
+    requireOwnerSnapshot();
+    AuthoredWorldSourceDigest.validateReadSelector(targetNamespace, canonicalTenantId, worldSlug);
+    requireNonNil(operationId, "operationId");
+    if (!GameTenantCreationDigest.isDigest(expectedEvidenceDigest)) {
+      throw new IllegalArgumentException("Expected source evidence digest is not canonical");
+    }
+
+    Record record = dsl.selectFrom(OPERATION).where(OPERATION_ID.eq(operationId)).fetchOne();
+    if (record == null) {
+      return Optional.empty();
+    }
+    AuthoredWorldSourceEvidence receipt = toEvidence(record);
+    if (!targetNamespace.equals(receipt.targetNamespace())
+        || !operationId.equals(receipt.operationId())
+        || !canonicalTenantId.equals(receipt.canonicalTenantId())
+        || !worldSlug.equals(receipt.worldSlug())) {
+      throw new InvalidSourceEvidenceException(
+          "Authored-world source operation does not match the exact requested scope");
+    }
+    if (!expectedEvidenceDigest.equals(receipt.evidenceDigest())) {
+      throw new InvalidSourceEvidenceException(
+          "Authored-world source evidence digest no longer matches the requested binding");
+    }
+    GameSource source = findGameSourceByRow(receipt.sourceGameRowId());
+    if (source == null) {
+      throw new InvalidSourceEvidenceException("Authored-world source game row is missing");
+    }
+    requireConsistentGameSource(source);
+    requireReceiptSource(receipt, source);
+    requireTenantBinding(receipt);
+    return Optional.of(receipt);
+  }
+
+  /**
    * Reads the exact source receipt and its source-owned version from the caller's owner snapshot.
    *
    * <p>This method is intentionally separate from {@link #read}: the latter suspends any ambient

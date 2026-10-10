@@ -23,8 +23,29 @@ testing {
     }
 }
 
+// Narrow classes-only proof artifact for Game Session repository tests. It contains no GD
+// application resources or migrations and is built without running GD test or integration tasks.
+val gameDesignCanonicalPublicationFixtureProofJar by tasks.registering(Jar::class) {
+    archiveClassifier.set("canonical-publication-fixture-proof")
+    dependsOn(tasks.named("compileTestJava"))
+    from(sourceSets.main.get().output.classesDirs) {
+        include("net/firedevops/firemud/gamedesign/publication/GameDesignPublicationOperation.class")
+    }
+    from(sourceSets.test.get().output.classesDirs) {
+        include("net/firedevops/firemud/gamedesign/publication/IsolatedPublicationOperationFixtures*.class")
+        include("net/firedevops/firemud/gamedesign/service/impl/PublishedWorldSelectorFixtures*.class")
+    }
+}
+
+val gameDesignCanonicalPublicationFixtureProof by configurations.creating {
+    isCanBeConsumed = true
+    isCanBeResolved = false
+    outgoing.artifact(gameDesignCanonicalPublicationFixtureProofJar)
+}
+
 dependencies {
     integrationTestImplementation(project(mapOf("path" to ":account-service", "configuration" to "accountOriginalOrderProof")))
+    integrationTestImplementation(project(mapOf("path" to ":logging-admin-service", "configuration" to "loggingStartSessionClaimProof")))
     integrationTestImplementation(project(mapOf("path" to ":game-logic-service", "configuration" to "gameLogicClassesProof")))
     integrationTestImplementation(
         project(

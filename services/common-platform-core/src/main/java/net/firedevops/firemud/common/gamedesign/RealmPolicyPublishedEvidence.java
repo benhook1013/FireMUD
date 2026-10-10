@@ -1,4 +1,4 @@
-package net.firedevops.firemud.gamedesign.publication;
+package net.firedevops.firemud.common.gamedesign;
 
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
@@ -9,9 +9,9 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
+import net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding;
-import net.firedevops.firemud.common.gamedesign.GameDesignPublicationTerminalEvidence;
-import net.firedevops.firemud.common.gamedesign.RealmPolicySource;
+import net.firedevops.firemud.common.publication.GameDesignPublicationOperationBinding;
 
 /** Immutable internal evidence associating a frozen source set with its actual sealed release. */
 public final class RealmPolicyPublishedEvidence {
@@ -73,17 +73,38 @@ public final class RealmPolicyPublishedEvidence {
           || !digest(policySetDigest)) {
         throw new IllegalArgumentException("Complete bounded policy-set evidence required");
       }
-      RealmPolicySource.ordered(policies.stream().map(Policy::source).toList());
-      var operation = GameDesignPublicationOperation.fromStored(operationBytes);
+      var sources = policies.stream().map(Policy::source).toList();
+      if (!RealmPolicySource.ordered(sources).equals(sources)) {
+        throw new IllegalArgumentException("Canonical published policy source order required");
+      }
+      var operation = GameDesignPublicationOperationBinding.fromStored(operationBytes);
       if (!operation.account().input().selection().target().equals(target)
-          || !operation.workflowId().equals(publishWorkflowId)) {
+          || !operation.world().request().publishWorkflowId().equals(publishWorkflowId)) {
         throw new IllegalArgumentException("Publication evidence differs from exact TargetProof");
       }
+      var capture = new DraftAuthorizationFenceBinding.FrameReader(captureBytes);
+      capture.expect("game-design-realm-policy-source-capture/v1");
+      byte[] capturedOperationBytes = capture.bytes();
+      String snapshotJson = capture.text();
+      capture.requireEnd();
+      if (!Arrays.equals(capturedOperationBytes, operationBytes)) {
+        throw new IllegalArgumentException("Policy capture differs from exact operation bytes");
+      }
+      var snapshot = RealmPolicySnapshot.fromStored(snapshotJson);
+      var selectedCommit = operation.account().input().selection().selectedCommit();
+      if (!snapshot.binding().equals(selectedCommit)
+          || !snapshot.binding().target().equals(target)
+          || !snapshot.binding().commitId().equals(sourceCommitId)
+          || !snapshot.sourceEpoch().equals(sourceEpoch)) {
+        throw new IllegalArgumentException("Policy capture differs from complete published source");
+      }
       var terminal = GameDesignPublicationTerminalEvidence.fromStored(terminalEvidenceBytes);
-      var release = terminal.releaseContent();
       if (terminal.outcome() != GameDesignPublicationTerminalEvidence.Outcome.PUBLISHED
-          || !Arrays.equals(terminal.operationBytes(), operationBytes)
-          || !release.canonicalTenantId().equals(target.canonicalTenantId())
+          || !Arrays.equals(terminal.operationBytes(), operationBytes)) {
+        throw new IllegalArgumentException("Terminal release evidence differs from policy set");
+      }
+      var release = terminal.releaseContent();
+      if (!release.canonicalTenantId().equals(target.canonicalTenantId())
           || !release.canonicalVersionId().equals(target.canonicalVersionId())
           || release.versionNumber() != versionNumber
           || !release.publishedReleaseBundleRef().equals(publishedReleaseBundleRef)
@@ -92,6 +113,23 @@ public final class RealmPolicyPublishedEvidence {
           || !release.manifestHash().equals(manifestHash)
           || terminal.publicationVersionStateEpoch() != publicationVersionStateEpoch) {
         throw new IllegalArgumentException("Terminal release evidence differs from policy set");
+      }
+      for (Policy policy : policies) {
+        if (!policyDigest(
+                policy.policyId(),
+                target,
+                versionNumber,
+                publishedReleaseBundleRef,
+                publishedReleaseBundleDigest,
+                publishWorkflowId,
+                manifestHash,
+                policy.source())
+            .equals(policy.policyDigest())) {
+          throw new IllegalArgumentException("Published policy digest differs from full policy");
+        }
+      }
+      if (!snapshot.policies().equals(sources)) {
+        throw new IllegalArgumentException("Policy capture differs from complete published source");
       }
       if (!computePolicySetDigest(
               target,

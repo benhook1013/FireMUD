@@ -73,6 +73,22 @@ dependencies {
     runtimeOnly(libs.junixsocket.native.common)
     runtimeOnly(libs.jjwt.impl)
     runtimeOnly(libs.jjwt.jackson)
+    testImplementation(
+        project(
+            mapOf(
+                "path" to ":game-design-service",
+                "configuration" to "gameDesignCanonicalPublicationFixtureProof"
+            )
+        )
+    )
+    integrationTestImplementation(
+        project(
+            mapOf(
+                "path" to ":game-design-service",
+                "configuration" to "gameDesignCanonicalPublicationFixtureProof"
+            )
+        )
+    )
     testFixturesImplementation(project(":entity-management-service"))
     testFixturesImplementation(project(":game-logic-service"))
     testFixturesImplementation(project(":social-groups-service"))

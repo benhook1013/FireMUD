@@ -27,7 +27,7 @@ import net.firedevops.firemud.gamedesign.v1.StartSessionLaunchDescriptorApplicat
 import org.junit.jupiter.api.Test;
 import tools.jackson.databind.json.JsonMapper;
 
-class StartSessionLaunchDescriptorGrpcCodecTest {
+public class StartSessionLaunchDescriptorGrpcCodecTest {
   private static final UUID TENANT = uuid("11111111-1111-4111-8111-111111111111");
   private static final UUID ACTOR = uuid("a4f5f4eb-8243-4d42-903a-33495456a622");
   private static final UUID TARGET_OWNER = uuid("36aa9ce5-0ebc-4c14-9f6b-d160edc6059a");
@@ -275,7 +275,7 @@ class StartSessionLaunchDescriptorGrpcCodecTest {
         .isInstanceOf(IllegalArgumentException.class);
   }
 
-  private static Fixture fixture() throws Exception {
+  public static Fixture fixture() throws Exception {
     var worldEvidence = AuthoredWorldReleaseAttestationSelectorTest.selectorEvidence();
     UUID canonicalVersion = worldEvidence.request().canonicalVersionId();
     UUID selectedCommit = uuid(worldEvidence.request().appliedCommitId());
@@ -522,6 +522,6 @@ class StartSessionLaunchDescriptorGrpcCodecTest {
     return UUID.fromString(value);
   }
 
-  private record Fixture(
+  public record Fixture(
       Request request, Result associationRead, AuthoredWorldLaunchDescriptorEvidence descriptor) {}
 }

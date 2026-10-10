@@ -14,6 +14,7 @@ import io.grpc.ServerInterceptors;
 import io.grpc.netty.shaded.io.grpc.netty.GrpcSslContexts;
 import io.grpc.netty.shaded.io.grpc.netty.NettyServerBuilder;
 import io.grpc.netty.shaded.io.netty.handler.ssl.ClientAuth;
+import io.grpc.stub.StreamObserver;
 import io.grpc.util.MutableHandlerRegistry;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.io.ByteArrayOutputStream;
@@ -25,6 +26,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
+import java.security.cert.CertificateFactory;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
@@ -35,17 +37,18 @@ import java.util.HexFormat;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 import java.util.TreeMap;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
-import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Supplier;
 import net.firedevops.firemud.accountservice.authordraft.AccountDraftCommitOrderReadGrpcService;
 import net.firedevops.firemud.accountservice.authordraft.DraftAuthorizationFenceRepository;
+import net.firedevops.firemud.accountservice.client.StartSessionReservationEvidenceClient;
 import net.firedevops.firemud.accountservice.service.session.AccountOriginalStartSessionAuthorizationProofFixture.OwnerAttemptLifecycle;
 import net.firedevops.firemud.accountservice.service.session.AccountOriginalStartSessionAuthorizationProofFixture.OwnerClaim;
 import net.firedevops.firemud.automationscripting.sourceintake.AutomationEmptySelectedSourceIntakeRepository;
@@ -96,8 +99,10 @@ import net.firedevops.firemud.common.gamedesign.AuthoredWorldReleaseAttestationE
 import net.firedevops.firemud.common.gamedesign.CompleteLaunchBindingEvidence;
 import net.firedevops.firemud.common.gamedesign.GameplayRuleSource;
 import net.firedevops.firemud.common.gamedesign.GrpcSelectedOwnerIntakeSourceClient;
+import net.firedevops.firemud.common.gamedesign.RealmPolicyPublishedEvidenceCodec;
 import net.firedevops.firemud.common.gamedesign.RealmPolicySource;
 import net.firedevops.firemud.common.gamedesign.SelectedOwnerIntakeSourceContent;
+import net.firedevops.firemud.common.gamedesign.StartSessionPublishedRealmPolicyReadGrpcCodec;
 import net.firedevops.firemud.common.gamedesign.StartSessionTemplateAssociationReadEvidence;
 import net.firedevops.firemud.common.gamelogic.GameLogicGameplayRuleIntakeTerminal;
 import net.firedevops.firemud.common.gamelogic.GameLogicIntakeAuthorizationEvidence;
@@ -137,13 +142,17 @@ import net.firedevops.firemud.common.publication.WorldSelectedDraftPublicationFr
 import net.firedevops.firemud.common.publication.WorldSelectedDraftPublicationFreezeGrpcCodec;
 import net.firedevops.firemud.common.publication.WorldSelectedOwnerInventoryGrpcClient;
 import net.firedevops.firemud.common.publication.WorldSelectedPublicationArtifactInventoryClient;
+import net.firedevops.firemud.common.security.AuthTokenInterceptor;
+import net.firedevops.firemud.common.security.JwtUtil;
 import net.firedevops.firemud.common.security.PublicationReadGuard;
+import net.firedevops.firemud.common.security.SessionContext;
 import net.firedevops.firemud.common.security.sourceintake.GrpcAutomationSelectedSourceIntakeCommandClient;
 import net.firedevops.firemud.common.security.sourceintake.GrpcEntitySelectedSourceIntakeCommandClient;
 import net.firedevops.firemud.common.security.sourceintake.GrpcEntitySelectedSourceIntakeTerminalReadClient;
 import net.firedevops.firemud.common.security.sourceintake.GrpcSelectedOwnerIntakeAuthorizationProducerClient;
 import net.firedevops.firemud.common.security.sourceintake.GrpcSelectedOwnerIntakeSettlementClient;
 import net.firedevops.firemud.common.tenant.AuthoredWorldSourceClient;
+import net.firedevops.firemud.common.tenant.FreshTenantCreationEvidence;
 import net.firedevops.firemud.common.tenant.WorldAuthoredSourceIntakeClient;
 import net.firedevops.firemud.common.tenant.WorldAuthoredSourceIntakeGrpcCodec;
 import net.firedevops.firemud.common.world.CanonicalWorldInstancePreparationClient;
@@ -170,6 +179,7 @@ import net.firedevops.firemud.gamedesign.draft.DraftCommitCoordinatorRepository;
 import net.firedevops.firemud.gamedesign.draft.GameDesignDraftTerminalOutcomeRepository;
 import net.firedevops.firemud.gamedesign.draft.GameDesignDraftTerminalReadGrpcService;
 import net.firedevops.firemud.gamedesign.draft.GameDesignSelectedDraftPublicationReadGrpcService;
+import net.firedevops.firemud.gamedesign.draft.GameDesignStartSessionPublishedRealmPolicyReadGrpcService;
 import net.firedevops.firemud.gamedesign.draft.GameDesignWorldSourceCommitService;
 import net.firedevops.firemud.gamedesign.dto.CompleteLaunchBindingDto;
 import net.firedevops.firemud.gamedesign.dto.DesignControlPlaneDigestDto;
@@ -183,6 +193,7 @@ import net.firedevops.firemud.gamedesign.publication.GameDesignGameplayRuleSourc
 import net.firedevops.firemud.gamedesign.publication.GameDesignSelectedOwnerIntakeSourceGrpcService;
 import net.firedevops.firemud.gamedesign.publication.GameDesignSelectedOwnerIntakeSourceReadService;
 import net.firedevops.firemud.gamedesign.publication.GameDesignSourceRepository;
+import net.firedevops.firemud.gamedesign.publication.RealmPolicyPublicationRepository;
 import net.firedevops.firemud.gamedesign.publication.SelectedDraftAssetInventory;
 import net.firedevops.firemud.gamedesign.publication.SelectedDraftAssetInventoryReadService;
 import net.firedevops.firemud.gamedesign.publication.SelectedDraftControlPlaneDigest;
@@ -193,6 +204,7 @@ import net.firedevops.firemud.gamedesign.publication.SelectedDraftPublicationAdm
 import net.firedevops.firemud.gamedesign.publication.SelectedDraftPublicationDigestReadService;
 import net.firedevops.firemud.gamedesign.publication.SelectedDraftTemplateWorldSourceAssociationRepository;
 import net.firedevops.firemud.gamedesign.publication.StartSessionLaunchDescriptorProducer;
+import net.firedevops.firemud.gamedesign.publication.StartSessionPublishedRealmPolicyReadService;
 import net.firedevops.firemud.gamedesign.publication.StartSessionTemplateAssociationReadService;
 import net.firedevops.firemud.gamedesign.publication.TemplateConfigSource;
 import net.firedevops.firemud.gamedesign.publication.TemplateConfigSourceRepository;
@@ -253,10 +265,27 @@ import net.firedevops.firemud.gamelogic.sourceintake.GameLogicGameplayRuleIntake
 import net.firedevops.firemud.gamelogic.sourceintake.GameLogicGameplayRuleIntakeTerminalReadGrpcService;
 import net.firedevops.firemud.gamelogic.sourceintake.GameLogicGameplayRuleIntakeTerminalReadService;
 import net.firedevops.firemud.gamelogic.sourceintake.GameLogicPublicationSourceReadService;
+import net.firedevops.firemud.gamesession.client.GameDesignFreshTenantCreationClient;
+import net.firedevops.firemud.gamesession.client.GameDesignPublishedRealmPolicyClient;
+import net.firedevops.firemud.gamesession.repository.GameSessionCanonicalRealmCatalogRepository;
+import net.firedevops.firemud.gamesession.repository.GameSessionFreshTenantAssociationRepository;
 import net.firedevops.firemud.gamesession.repository.GameSessionStartSessionOperatorAttemptRepository;
 import net.firedevops.firemud.gamesession.repository.GameSessionStartSessionOperatorAttemptRepository.AccountRedemptionProjection;
 import net.firedevops.firemud.gamesession.repository.GameSessionStartSessionOperatorAttemptRepository.AttemptClaim;
 import net.firedevops.firemud.gamesession.service.impl.OriginalStartSessionCurrentAttemptReadGrpcService;
+import net.firedevops.firemud.loggingadmin.StartSessionReservationMutationTestFixtures;
+import net.firedevops.firemud.loggingadmin.operator.StartSessionPreAuthorizationReservationService;
+import net.firedevops.firemud.loggingadmin.operator.StartSessionPreAuthorizationReservationService.ClaimEvidence;
+import net.firedevops.firemud.loggingadmin.operator.StartSessionPreAuthorizationReservationService.ClaimPurpose;
+import net.firedevops.firemud.loggingadmin.operator.StartSessionPreAuthorizationReservationService.ClaimState;
+import net.firedevops.firemud.loggingadmin.operator.StartSessionPreAuthorizationReservationService.Phase;
+import net.firedevops.firemud.loggingadmin.operator.StartSessionPreAuthorizationReservationService.State;
+import net.firedevops.firemud.loggingadmin.repository.StartSessionPreAuthorizationReservationRepository;
+import net.firedevops.firemud.loggingadmin.service.impl.StartSessionReservationEvidenceGrpcService;
+import net.firedevops.firemud.loggingadmin.service.impl.StartSessionReservationEvidenceLeafApproval;
+import net.firedevops.firemud.loggingadmin.v1.ReadCurrentClaimEvidenceRequest;
+import net.firedevops.firemud.loggingadmin.v1.ReadCurrentClaimEvidenceResponse;
+import net.firedevops.firemud.loggingadmin.v1.StartSessionReservationEvidencePurpose;
 import net.firedevops.firemud.test.TestContainerImages;
 import net.firedevops.firemud.worldmanagement.tenant.GenuineWorldSelectedPublicationProofFactory;
 import net.firedevops.firemud.worldmanagement.tenant.WorldAuthoredSourceIntakeGrpcService;
@@ -301,6 +330,7 @@ import net.firedevops.firemud.worldmanagement.v1.WorldInboundSourceFamily;
 import net.firedevops.firemud.worldmanagement.v1.WorldInboundSourceFamilyCount;
 import net.firedevops.firemud.worldmanagement.v1.ZoneDesignMutation;
 import org.flywaydb.core.Flyway;
+import org.flywaydb.core.api.MigrationVersion;
 import org.jooq.DSLContext;
 import org.jooq.SQLDialect;
 import org.jooq.impl.DSL;
@@ -360,20 +390,26 @@ import tools.jackson.databind.ObjectMapper;
  * PostgreSQL schema and migration path. Entity and Automation publication digests use their native
  * mTLS selected-empty owner readers and exact retained receipts; nonempty owner publication remains
  * outside this proof. StartSession issuance and redemption use the real Account owner and retained
- * rows under stipulated Logging current-claim evidence and issuer/redeemer peer contexts; the
- * read-only projection uses the real Account receiver over Game Design mTLS. MinIO object-store I/O
- * is real. The complete launch-binding case wires the actual Game Design handler and World
- * Management mTLS client on this fixture's loopback server to the actual owner implementation in an
- * explicitly established read-only repeatable-read snapshot; unrelated handler dependencies are
- * isolated. The World preparation composition reuses the genuine persisted source, frozen graph,
- * and complete released pair through actual World owner services. Its original Account tuple is
- * issued and redeemed by the real Account owner under stipulated Logging claim and peer contexts;
- * Game Session reserves that exact tuple in an isolated V35 store and attaches the exact redeemed
- * projection. Account's current-attempt observation and World participation acquisition use their
- * native same-namespace mTLS clients and receivers. Game Session launch association remains mocked,
- * and Account participation is point-in-time evidence, not a continuous cross-service lock. This
- * does not establish production-authenticated Logging claims, full application server wiring,
- * production ingress, runtime launch, activation or registration.
+ * rows under the genuine Logging PostgreSQL reservation owner and its native file-backed mTLS
+ * current-claim reader; Account issuer/redeemer peer contexts remain stipulated. The read-only
+ * projection uses the real Account receiver over Game Design mTLS. MinIO object-store I/O is real.
+ * The complete launch-binding case wires the actual Game Design handler and World Management mTLS
+ * client on this fixture's loopback server to the actual owner implementation in an explicitly
+ * established read-only repeatable-read snapshot; unrelated handler dependencies are isolated. The
+ * World preparation composition reuses the genuine persisted source, frozen graph, and complete
+ * released pair through actual World owner services. Its original Account tuple is issued and
+ * redeemed by the real Account owner after the native Logging current-claim read and under
+ * stipulated Account issuer/redeemer peer contexts; Game Session reserves that exact tuple in an
+ * isolated V35 store and attaches the exact redeemed projection. Account's current-attempt
+ * observation and World participation acquisition use their native same-namespace mTLS clients and
+ * receivers. Game Session also resolves the actual fresh Game Design tenant receipt over mTLS,
+ * stores and independently reads its numeric tenant association, then reads the actual
+ * Account-confirmed source and published policy set over mTLS and stores and independently reads
+ * its canonical public-realm catalog. Game Session launch association remains mocked, and Account
+ * participation is point-in-time evidence, not a continuous cross-service lock. This does not
+ * establish production certificate custody, full application server wiring, production ingress,
+ * runtime launch, activation or registration. The Logging evidence is point-in-time and does not
+ * lock later Account or Game Session commits.
  */
 @Testcontainers(disabledWithoutDocker = true)
 @SuppressWarnings("resource")
@@ -441,6 +477,10 @@ class GenuineSelectedPublicationExportPostgresIntegrationTest {
       new PostgreSQLContainer<>(TestContainerImages.postgres());
 
   @Container
+  private static final PostgreSQLContainer<?> LOGGING_POSTGRES =
+      new PostgreSQLContainer<>(TestContainerImages.postgres());
+
+  @Container
   private static final GenericContainer<?> REDIS =
       new GenericContainer<>(TestContainerImages.redis())
           .withNetwork(NETWORK)
@@ -493,6 +533,7 @@ class GenuineSelectedPublicationExportPostgresIntegrationTest {
     var gd = gameDesignStore();
     var world = serviceStore(WORLD_POSTGRES, "world-management");
     var gameSessionAttempts = gameSessionAttemptStore();
+    var loggingStore = loggingReservationStore();
     var gameLogic = serviceStore(GAME_LOGIC_POSTGRES, "game-logic");
     var automation = serviceStore(GAME_LOGIC_POSTGRES, "automation-scripting");
     var entity = serviceStore(ENTITY_POSTGRES, "entity-management");
@@ -504,6 +545,14 @@ class GenuineSelectedPublicationExportPostgresIntegrationTest {
     var gameLogicHandlers = new MutableHandlerRegistry();
     var automationHandlers = new MutableHandlerRegistry();
     var entityHandlers = new MutableHandlerRegistry();
+    var loggingReadRequests = new CopyOnWriteArrayList<ReadCurrentClaimEvidenceRequest>();
+    var loggingReadResponses = new CopyOnWriteArrayList<ReadCurrentClaimEvidenceResponse>();
+
+    Path approvedAccountLeaves = temporary.resolve("test-only-approved-account-leaves.txt");
+    Files.writeString(
+        approvedAccountLeaves,
+        "active=" + certificateSha256(pki.clientCertificate("account-service")) + "\n",
+        StandardCharsets.US_ASCII);
 
     register(
         gameSessionHandlers,
@@ -517,6 +566,13 @@ class GenuineSelectedPublicationExportPostgresIntegrationTest {
     Server gameLogicServer = startServer(pki, "game-logic-service", gameLogicHandlers);
     Server automationServer = startServer(pki, "automation-scripting-service", automationHandlers);
     Server entityServer = startServer(pki, "entity-management-service", entityHandlers);
+    Server loggingServer =
+        loggingClaimServer(
+            pki,
+            loggingStore.service(),
+            approvedAccountLeaves,
+            loggingReadRequests,
+            loggingReadResponses);
     var endpoints = new ServiceEndpointsProperties();
     endpoints.setAccountService(loopback(accountServer));
     endpoints.setGameDesignService(loopback(gdServer));
@@ -526,7 +582,8 @@ class GenuineSelectedPublicationExportPostgresIntegrationTest {
     endpoints.setAutomationScriptingService(loopback(automationServer));
     endpoints.setEntityManagementService(loopback(entityServer));
     var channels = new GrpcChannelFactory();
-    try (var account =
+    try (var loggingClaimClient = currentClaimGrpcClient(loggingServer.getPort(), pki);
+        var account =
             new AccountControlUiOriginalOrderFixture(
                 ACCOUNT_POSTGRES.getJdbcUrl(),
                 ACCOUNT_POSTGRES.getUsername(),
@@ -553,16 +610,25 @@ class GenuineSelectedPublicationExportPostgresIntegrationTest {
         var gameSessionPreparationRetryClient =
             new CanonicalWorldInstancePreparationClient(
                 endpoints, pki.client("game-session-service"), channels, NAMESPACE);
+        var gameSessionFreshTenantCreationClient =
+            new GameDesignFreshTenantCreationClient(
+                endpoints, pki.client("game-session-service"), channels, NAMESPACE);
+        var gameSessionPublishedRealmPolicyClient =
+            new GameDesignPublishedRealmPolicyClient(
+                endpoints, pki.client("game-session-service"), channels, NAMESPACE);
         var wrongWorkloadActivationClient =
             canonicalActivationClient(worldServer, pki.client("account-service"), channels);
         var gameSessionActivationClient =
             canonicalActivationClient(worldServer, pki.client("game-session-service"), channels)) {
+      ReflectionTestUtils.invokeMethod(loggingClaimClient, "init");
       accountToGameSessionCurrentAttemptClient.init();
       worldToAccountParticipationClient.init();
       projectionClient.init();
       wrongWorkloadPreparationClient.init();
       gameSessionPreparationClient.init();
       gameSessionPreparationRetryClient.init();
+      gameSessionFreshTenantCreationClient.init();
+      gameSessionPublishedRealmPolicyClient.init();
       var automationIntakeRepository =
           new AutomationEmptySelectedSourceIntakeRepository(automation.dsl());
       var entityIntakeRepository = new EntityEmptySelectedSourceIntakeRepository(entity.dsl());
@@ -587,6 +653,21 @@ class GenuineSelectedPublicationExportPostgresIntegrationTest {
           new AuthoredWorldVersionStateGrpcService(
               new AuthoredWorldVersionStateService(gd.transactions(), sourceRepository),
               NAMESPACE));
+      var freshTenantAssociationRepository =
+          new GameSessionFreshTenantAssociationRepository(
+              gameSessionAttempts.dsl(),
+              gameSessionAttempts.transactionManager(),
+              gameSessionFreshTenantCreationClient,
+              NAMESPACE);
+      FreshTenantCreationEvidence creationEvidence = gd.freshTenantCreationEvidence();
+      var freshTenantAssociation =
+          freshTenantAssociationRepository.associateFreshTenant(
+              creationEvidence.creationRequestId(), creationEvidence.requestDigest());
+      assertThat(freshTenantAssociation.sourceEvidence()).isEqualTo(creationEvidence);
+      assertThat(
+              freshTenantAssociationRepository.readByCanonicalTenantId(
+                  creationEvidence.canonicalTenantId()))
+          .contains(freshTenantAssociation);
 
       var worldIntakes = new WorldAuthoredSourceIntakeRepository(world.dsl());
       var worldIdentities = new WorldAuthoredVersionIdentityRepository(world.dsl());
@@ -983,7 +1064,10 @@ class GenuineSelectedPublicationExportPostgresIntegrationTest {
             new AccountGameLogicIntakeSettlementGrpcService(accountSettlementOwner, NAMESPACE));
         var startSessionAuthorizationProof =
             new AccountOriginalStartSessionAuthorizationProofFixture(
-                account, temporary.resolve("account-start-session-authorization-proof"), NAMESPACE);
+                account,
+                temporary.resolve("account-start-session-authorization-proof"),
+                NAMESPACE,
+                loggingClaimClient);
         register(accountHandlers, startSessionAuthorizationProof.grpcService());
         var accountWorldParticipationAcquisitionService =
             startSessionAuthorizationProof.worldParticipationAcquisitionService(
@@ -2382,6 +2466,18 @@ class GenuineSelectedPublicationExportPostgresIntegrationTest {
                 new RevisionRepository(gd.dsl()),
                 new VersionRepository(gd.dsl()),
                 new ObjectMapper());
+        var startSessionAssociationReader =
+            new StartSessionTemplateAssociationReadService(
+                gd.dsl(), gd.transactions(), NAMESPACE, projectionClient, releaseService);
+        var startSessionPublishedPolicyReader =
+            new StartSessionPublishedRealmPolicyReadService(
+                sourceRepository,
+                new RealmPolicyPublicationRepository(gd.dsl()),
+                gd.transactions());
+        register(
+            gdHandlers,
+            new GameDesignStartSessionPublishedRealmPolicyReadGrpcService(
+                startSessionAssociationReader, startSessionPublishedPolicyReader, NAMESPACE));
         var artifactService =
             new VersionAssetArtifactServiceImpl(
                 new VersionAssetArtifactRepository(gd.dsl()),
@@ -2734,8 +2830,6 @@ class GenuineSelectedPublicationExportPostgresIntegrationTest {
                 publicationRequest.derivedWorkflowIdentity(),
                 association.digest());
         String controlPlaneRequestId = "genuine-start-session-" + UUID.randomUUID();
-        UUID reservationOwnerId = UUID.randomUUID();
-        long reservationClaimFence = ThreadLocalRandom.current().nextLong(1L, Long.MAX_VALUE);
         var originalStartSessionAction =
             new StartSessionOperatorAction(
                 StartSessionOperatorAction.ACTION_FAMILY_SCHEMA_ID,
@@ -2747,6 +2841,72 @@ class GenuineSelectedPublicationExportPostgresIntegrationTest {
                 new StartSessionOperatorAction.Mutation(
                     StartSessionOperatorAction.ClientIp.absent()),
                 "Genuine selected descriptor storage proof");
+        net.firedevops.firemud.loggingadmin.operator.StartSessionPreAuthorizationReservationTuple
+            loggingTuple;
+        UUID creatorAccountId = startSessionAuthorizationProof.creatorAccountId();
+        SessionContext.setContext(
+            creatorAccountId.toString(),
+            List.of(),
+            Map.of(gd.target().canonicalTenantId().toString(), List.of("tenantAdmin")),
+            false,
+            null,
+            null);
+        try {
+          loggingTuple =
+              net.firedevops.firemud.loggingadmin.operator
+                  .StartSessionPreAuthorizationReservationTuple.fromCurrentTenantAdmin(
+                  controlPlaneRequestId, originalStartSessionAction);
+        } finally {
+          SessionContext.clear();
+        }
+        assertThat(loggingTuple.isAuthorityDerived()).isTrue();
+        assertThat(loggingTuple.actor().accountId()).isEqualTo(creatorAccountId);
+
+        var defaultLoggingRepository =
+            new StartSessionPreAuthorizationReservationRepository(loggingStore.dsl());
+        var defaultLoggingService =
+            new StartSessionPreAuthorizationReservationService(defaultLoggingRepository);
+        assertThatThrownBy(() -> defaultLoggingService.acquire(loggingTuple))
+            .isInstanceOf(UnsupportedOperationException.class)
+            .hasMessageContaining("mutations are disabled for production construction");
+        assertThatThrownBy(
+                () ->
+                    defaultLoggingRepository.acquire(
+                        loggingTuple,
+                        UUID.randomUUID(),
+                        System.currentTimeMillis(),
+                        System.currentTimeMillis()
+                            + StartSessionPreAuthorizationReservationService.CLAIM_TTL.toMillis()))
+            .isInstanceOf(UnsupportedOperationException.class);
+
+        var loggingAcquisition = loggingStore.service().acquire(loggingTuple);
+        assertThat(loggingAcquisition.newlyAcquired()).isTrue();
+        assertThat(loggingAcquisition.claim()).isNotNull();
+        assertThat(loggingAcquisition.snapshot().state()).isEqualTo(State.RESERVED);
+        assertThat(loggingAcquisition.snapshot().phase()).isEqualTo(Phase.ACCOUNT_AUTHORIZATION);
+        ClaimEvidence loggingClaim = loggingAcquisition.claim().claimEvidence();
+        assertThat(loggingClaim.reservationOwnerId()).isEqualTo(loggingClaim.currentClaimOwnerId());
+        assertThat(loggingClaim.reservationClaimFence()).isEqualTo(1L);
+        assertThat(loggingClaim.currentClaimFence()).isEqualTo(1L);
+        var authorizationPending =
+            loggingStore.service().markAuthorizationPending(loggingAcquisition.claim());
+        assertThat(authorizationPending.mayDispatchAccountAuthorization()).isTrue();
+        assertThat(authorizationPending.snapshot().phase()).isEqualTo(Phase.ACCOUNT_AUTHORIZATION);
+        assertThat(authorizationPending.snapshot().state()).isEqualTo(State.AUTHORIZATION_PENDING);
+        assertThat(authorizationPending.snapshot().claimState()).isEqualTo(ClaimState.ACTIVE);
+        assertThat(authorizationPending.snapshot().claimPurpose()).isEqualTo(ClaimPurpose.ORIGINAL);
+        assertThat(authorizationPending.snapshot().reservationClaimFence())
+            .isEqualTo(loggingClaim.reservationClaimFence());
+        assertThat(authorizationPending.snapshot().claimFence())
+            .isEqualTo(loggingClaim.currentClaimFence());
+        assertThat(authorizationPending.snapshot().claimExpiresAtEpochMillis())
+            .isGreaterThan(System.currentTimeMillis());
+        var pendingLoggingReservation =
+            loggingStore.service().findExact(loggingTuple).orElseThrow();
+        assertThat(pendingLoggingReservation).isEqualTo(authorizationPending.snapshot());
+
+        UUID reservationOwnerId = loggingClaim.reservationOwnerId();
+        long reservationClaimFence = loggingClaim.reservationClaimFence();
         AtomicReference<AttemptClaim> reservedOwnerAttempt = new AtomicReference<>();
         AtomicReference<byte[]> reservedTupleBytes = new AtomicReference<>();
         var originalStartSession =
@@ -2793,6 +2953,48 @@ class GenuineSelectedPublicationExportPostgresIntegrationTest {
                         .containsExactly(projection.canonicalBytes());
                   }
                 });
+        assertThat(originalStartSession.originalTuple().preAuthorizationTuple().canonicalJson())
+            .isEqualTo(loggingTuple.canonicalJson());
+        assertThat(loggingReadRequests).hasSize(1);
+        assertThat(loggingReadResponses).hasSize(1);
+        ReadCurrentClaimEvidenceRequest loggingReadRequest = loggingReadRequests.getFirst();
+        ReadCurrentClaimEvidenceResponse loggingReadResponse = loggingReadResponses.getFirst();
+        assertThat(loggingReadRequest.getControlPlaneRequestId()).isEqualTo(controlPlaneRequestId);
+        assertThat(loggingReadRequest.getPreAuthorizationTupleJson().toByteArray())
+            .containsExactly(loggingTuple.canonicalJson().getBytes(StandardCharsets.UTF_8));
+        assertThat(loggingReadRequest.getReservationOwnerId())
+            .isEqualTo(loggingClaim.reservationOwnerId().toString());
+        assertThat(loggingReadRequest.getReservationClaimFence())
+            .isEqualTo(loggingClaim.reservationClaimFence());
+        assertThat(loggingReadRequest.getClaimOwnerId())
+            .isEqualTo(loggingClaim.currentClaimOwnerId().toString());
+        assertThat(loggingReadRequest.getClaimFence()).isEqualTo(loggingClaim.currentClaimFence());
+        assertThat(loggingReadRequest.getPurpose())
+            .isEqualTo(
+                StartSessionReservationEvidencePurpose
+                    .START_SESSION_RESERVATION_EVIDENCE_PURPOSE_ISSUE);
+        assertThat(loggingReadResponse.getControlPlaneRequestId()).isEqualTo(controlPlaneRequestId);
+        assertThat(loggingReadResponse.getPreAuthorizationTupleJson().toByteArray())
+            .containsExactly(loggingTuple.canonicalJson().getBytes(StandardCharsets.UTF_8));
+        assertThat(loggingReadResponse.getMutationDigest())
+            .isEqualTo(loggingTuple.mutationDigest());
+        assertThat(loggingReadResponse.getReservationOwnerId())
+            .isEqualTo(loggingClaim.reservationOwnerId().toString());
+        assertThat(loggingReadResponse.getReservationClaimFence())
+            .isEqualTo(loggingClaim.reservationClaimFence());
+        assertThat(loggingReadResponse.getClaimOwnerId())
+            .isEqualTo(loggingClaim.currentClaimOwnerId().toString());
+        assertThat(loggingReadResponse.getClaimFence()).isEqualTo(loggingClaim.currentClaimFence());
+        assertThat(loggingReadResponse.getPurpose())
+            .isEqualTo(
+                StartSessionReservationEvidencePurpose
+                    .START_SESSION_RESERVATION_EVIDENCE_PURPOSE_ISSUE);
+        assertThat(loggingReadResponse.getClaimExpiresAtEpochMillis())
+            .isEqualTo(authorizationPending.snapshot().claimExpiresAtEpochMillis());
+        assertThat(loggingReadResponse.getObservedAtEpochMillis())
+            .isLessThan(loggingReadResponse.getClaimExpiresAtEpochMillis());
+        assertThat(loggingStore.service().findExact(loggingTuple))
+            .contains(pendingLoggingReservation);
         var startSessionTuple = originalStartSession.originalTuple();
         AttemptClaim ownerAttemptClaim =
             Objects.requireNonNull(reservedOwnerAttempt.get(), "Actual Game Session owner claim");
@@ -2842,15 +3044,12 @@ class GenuineSelectedPublicationExportPostgresIntegrationTest {
               .containsExactly(startSessionTuple.authorityEvidenceBundleBytes());
           assertThat(projectionClient.read(startSessionTuple, ownerAttemptId, ownerFence))
               .isEqualTo(accountProjection);
-          var associationReader =
-              new StartSessionTemplateAssociationReadService(
-                  gd.dsl(), gd.transactions(), NAMESPACE, projectionClient, releaseService);
           var descriptorProducer =
               new StartSessionLaunchDescriptorProducer(
                   gd.dsl(),
                   gd.transactions(),
                   NAMESPACE,
-                  associationReader,
+                  startSessionAssociationReader,
                   releaseService,
                   new ObjectMapper());
           var firstDescriptorBinding =
@@ -2968,6 +3167,84 @@ class GenuineSelectedPublicationExportPostgresIntegrationTest {
               .isEqualTo(actualGameLogicDigest.digestSchemaVersion());
           assertThat(completeGameLogicParticipant.abilitySchemaDigest())
               .isEqualTo(actualGameLogicDigest.abilitySchemaDigest());
+
+          var publishedPolicyReadRequest =
+              new StartSessionPublishedRealmPolicyReadGrpcCodec.ReadRequest(
+                  NAMESPACE,
+                  UUID.randomUUID(),
+                  startSessionReadRequest(
+                      startSessionTuple,
+                      ownerAttemptId,
+                      ownerFence,
+                      pinnedSelection,
+                      UUID.randomUUID()),
+                  completeBinding.descriptor(),
+                  completeBinding.releaseAttestation(),
+                  gd.target());
+          var publishedPolicyRead =
+              gameSessionPublishedRealmPolicyClient.read(publishedPolicyReadRequest);
+          assertThat(publishedPolicyRead.request()).isEqualTo(publishedPolicyReadRequest);
+          assertThat(publishedPolicyRead.authorizationResult().request())
+              .isEqualTo(publishedPolicyReadRequest.authorizationRequest());
+          assertThat(publishedPolicyRead.authorizationResult().association().associationDigest())
+              .isEqualTo(association.digest());
+          assertThat(publishedPolicyRead.sourceEvidence()).isEqualTo(worldSource);
+          assertThat(publishedPolicyRead.publishedSet().target()).isEqualTo(gd.target());
+          var actualPublishedPolicy =
+              publishedPolicyRead.publishedSet().policies().getFirst().source().policy();
+          assertThat(actualPublishedPolicy.worldSlug()).isEqualTo(worldSource.worldSlug());
+          assertThat(actualPublishedPolicy.worldDisplayName())
+              .isEqualTo(worldSource.worldDisplayName());
+          assertThat(actualPublishedPolicy.visible()).isTrue();
+          assertThat(actualPublishedPolicy.publicProduction()).isTrue();
+          assertThat(actualPublishedPolicy.stateScope())
+              .isEqualTo(RealmEntryPolicy.StateScope.SHARED);
+          assertThat(actualPublishedPolicy.entryPolicy())
+              .isEqualTo(RealmEntryPolicy.EntryPolicy.PRESEEDED_ONLY);
+
+          var canonicalRealmCatalogRepository =
+              new GameSessionCanonicalRealmCatalogRepository(
+                  gameSessionAttempts.dsl(), gameSessionAttempts.transactionManager(), NAMESPACE);
+          var canonicalRealmCatalog =
+              canonicalRealmCatalogRepository.establishFreshPublicRealm(
+                  freshTenantAssociation,
+                  publishedPolicyRead.sourceEvidence(),
+                  publishedPolicyRead.publishedSet(),
+                  UUID.randomUUID(),
+                  UUID.randomUUID());
+          assertThat(canonicalRealmCatalog.sourceEvidence()).isEqualTo(worldSource);
+          assertThat(canonicalRealmCatalog.associationSourceEvidence()).isEqualTo(creationEvidence);
+          assertThat(canonicalRealmCatalog.canonicalTenantId())
+              .isEqualTo(gd.target().canonicalTenantId());
+          assertThat(canonicalRealmCatalog.gameSessionTenantId())
+              .isEqualTo(freshTenantAssociation.gameSessionTenantId());
+          assertThat(canonicalRealmCatalog.worldSlug()).isEqualTo(worldSource.worldSlug());
+          assertThat(canonicalRealmCatalog.sourceWorldDisplayName())
+              .isEqualTo(worldSource.worldDisplayName());
+          assertThat(canonicalRealmCatalog.entryPolicy()).isEqualTo("PRESEEDED_ONLY");
+          assertThat(canonicalRealmCatalog.catalogRevision()).isPositive();
+          assertThat(canonicalRealmCatalog.completePolicySetEvidence())
+              .containsExactly(
+                  RealmPolicyPublishedEvidenceCodec.encode(publishedPolicyRead.publishedSet()));
+
+          var independentCanonicalRealmCatalogReadback =
+              canonicalRealmCatalogRepository
+                  .readByCanonicalTenantId(gd.target().canonicalTenantId())
+                  .orElseThrow();
+          assertThat(independentCanonicalRealmCatalogReadback.realmId())
+              .isEqualTo(canonicalRealmCatalog.realmId());
+          assertThat(independentCanonicalRealmCatalogReadback.playableStateNamespaceId())
+              .isEqualTo(canonicalRealmCatalog.playableStateNamespaceId());
+          assertThat(independentCanonicalRealmCatalogReadback.catalogRevision())
+              .isEqualTo(canonicalRealmCatalog.catalogRevision());
+          assertThat(independentCanonicalRealmCatalogReadback.sourceEvidence())
+              .isEqualTo(worldSource);
+          assertThat(independentCanonicalRealmCatalogReadback.associationSourceEvidence())
+              .isEqualTo(creationEvidence);
+          assertThat(independentCanonicalRealmCatalogReadback.completePolicySetEvidence())
+              .containsExactly(canonicalRealmCatalog.completePolicySetEvidence());
+          assertThat(independentCanonicalRealmCatalogReadback.publishedSet().policySetDigest())
+              .isEqualTo(publishedPolicyRead.publishedSet().policySetDigest());
 
           var completeBindingRpcRequest =
               GetLaunchDescriptorRequest.newBuilder()
@@ -3113,9 +3390,10 @@ class GenuineSelectedPublicationExportPostgresIntegrationTest {
                       controlPlaneRequestId))
               .containsExactlyElementsOf(completeBindingOwnerRowsBefore);
 
-          // World source, publication and released-pair proof above is genuine. The original
-          // StartSession tuple is issued/redempted by Account under the fixture's stipulated
-          // Logging claim and peer contexts. Game Session reserves the exact tuple and attaches
+          // World source, publication, released-pair proof, fresh tenant association and
+          // public-realm catalog above use the actual owners. The original StartSession tuple is
+          // issued/redeemed by Account after the actual native Logging claim read, under the
+          // fixture's stipulated Account peer contexts. Game Session reserves the exact tuple and attaches
           // Account's redeemed projection in its isolated V35 repository; Account's current
           // attempt observation and World participation acquisition then traverse native
           // same-namespace mTLS receivers. Launch association below remains mocked, and retained
@@ -3900,7 +4178,8 @@ class GenuineSelectedPublicationExportPostgresIntegrationTest {
           gameSessionServer,
           accountServer,
           worldServer,
-          gdServer);
+          gdServer,
+          loggingServer);
     }
   }
 
@@ -4351,7 +4630,7 @@ class GenuineSelectedPublicationExportPostgresIntegrationTest {
             savedVersion.getIdentitySourceGameTenantKey(),
             savedVersion.getIdentitySourceProvenanceKind());
     assertThat(new GameDesignSourceRepository(store.dsl()).readGenesis(target)).isPresent();
-    return store.withIdentity(target, savedVersion);
+    return store.withIdentity(target, savedVersion, creation);
   }
 
   private static SelectedOwnerIntakeSourceReadScope selectedOwnerSourceScope(
@@ -4628,6 +4907,37 @@ class GenuineSelectedPublicationExportPostgresIntegrationTest {
         new GameSessionStartSessionOperatorAttemptRepository(dsl, Duration.ofSeconds(30)));
   }
 
+  private static LoggingReservationStore loggingReservationStore() {
+    String schema = "genuine_selected_logging_" + UUID.randomUUID().toString().replace("-", "");
+    DriverManagerDataSource dataSource = new DriverManagerDataSource();
+    dataSource.setDriverClassName("org.postgresql.Driver");
+    dataSource.setUrl(LOGGING_POSTGRES.getJdbcUrl());
+    dataSource.setUsername(LOGGING_POSTGRES.getUsername());
+    dataSource.setPassword(LOGGING_POSTGRES.getPassword());
+    dataSource.setSchema(schema);
+    Flyway.configure()
+        .dataSource(dataSource)
+        .schemas(schema)
+        .defaultSchema(schema)
+        .table("flyway_schema_history")
+        .locations(migrationLocation("logging-admin"))
+        .target(MigrationVersion.fromVersion("4"))
+        .load()
+        .migrate();
+
+    DSLContext dsl =
+        DSL.using(new TransactionAwareDataSourceProxy(dataSource), SQLDialect.POSTGRES);
+    assertThat(
+            dsl.fetch(
+                    "SELECT version FROM flyway_schema_history WHERE success "
+                        + "ORDER BY installed_rank")
+                .getValues("version", String.class))
+        .containsExactly("1", "2", "3", "4");
+    var mutationScope =
+        StartSessionReservationMutationTestFixtures.forRunOwnedPostgres(LOGGING_POSTGRES, schema);
+    return new LoggingReservationStore(dsl, mutationScope.service());
+  }
+
   private static Store serviceStore(PostgreSQLContainer<?> postgres, String service) {
     var schema = service.replace('-', '_') + "_" + UUID.randomUUID().toString().replace("-", "");
     var data =
@@ -4648,7 +4958,7 @@ class GenuineSelectedPublicationExportPostgresIntegrationTest {
     configuration.set(SQLDialect.POSTGRES);
     configuration.set(new DataSourceConnectionProvider(new TransactionAwareDataSourceProxy(data)));
     configuration.set(new SpringTransactionProvider(transactions));
-    return new Store(DSL.using(configuration), transactions, null, null);
+    return new Store(DSL.using(configuration), transactions, null, null, null);
   }
 
   private static String migrationLocation(String service) {
@@ -5013,6 +5323,84 @@ class GenuineSelectedPublicationExportPostgresIntegrationTest {
     return "127.0.0.1:" + server.getPort();
   }
 
+  private static Server loggingClaimServer(
+      TestPki pki,
+      StartSessionPreAuthorizationReservationService reservationService,
+      Path approvedAccountLeaves,
+      List<ReadCurrentClaimEvidenceRequest> requests,
+      List<ReadCurrentClaimEvidenceResponse> responses)
+      throws Exception {
+    StartSessionReservationEvidenceGrpcService receiver =
+        new StartSessionReservationEvidenceGrpcService(
+            reservationService,
+            new StartSessionReservationEvidenceLeafApproval(approvedAccountLeaves.toString()),
+            NAMESPACE) {
+          @Override
+          public void readCurrentClaimEvidence(
+              ReadCurrentClaimEvidenceRequest request,
+              StreamObserver<ReadCurrentClaimEvidenceResponse> responseObserver) {
+            requests.add(request);
+            super.readCurrentClaimEvidence(
+                request,
+                new StreamObserver<>() {
+                  @Override
+                  public void onNext(ReadCurrentClaimEvidenceResponse response) {
+                    responses.add(response);
+                    responseObserver.onNext(response);
+                  }
+
+                  @Override
+                  public void onError(Throwable failure) {
+                    responseObserver.onError(failure);
+                  }
+
+                  @Override
+                  public void onCompleted() {
+                    responseObserver.onCompleted();
+                  }
+                });
+          }
+        };
+    return NettyServerBuilder.forAddress(new InetSocketAddress("127.0.0.1", 0))
+        .sslContext(
+            GrpcSslContexts.forServer(
+                    pki.server("logging-admin-service").certificate().toFile(),
+                    pki.server("logging-admin-service").key().toFile())
+                .trustManager(pki.ca().toFile())
+                .clientAuth(ClientAuth.REQUIRE)
+                .build())
+        .addService(
+            ServerInterceptors.intercept(
+                receiver,
+                new AuthTokenInterceptor(
+                    new JwtUtil("a".repeat(64), 3_600_000L),
+                    Set.of(
+                        "logging_admin.v1.StartSessionReservationEvidenceService/"
+                            + "ReadCurrentClaimEvidence")),
+                new GrpcPeerIdentityInterceptor()))
+        .build()
+        .start();
+  }
+
+  private static StartSessionReservationEvidenceClient currentClaimGrpcClient(
+      int port, TestPki pki) {
+    var endpoints = new ServiceEndpointsProperties();
+    endpoints.setLoggingAdminService("127.0.0.1:" + port);
+    return new StartSessionReservationEvidenceClient(
+        endpoints,
+        pki.client("account-service"),
+        new GrpcChannelFactory(),
+        BlockingGrpcStubCustomizer.noop());
+  }
+
+  private static String certificateSha256(Path certificate) throws Exception {
+    try (var input = Files.newInputStream(certificate)) {
+      var parsed = CertificateFactory.getInstance("X.509").generateCertificate(input);
+      return HexFormat.of()
+          .formatHex(MessageDigest.getInstance("SHA-256").digest(parsed.getEncoded()));
+    }
+  }
+
   private static void stopAll(Server... servers) throws InterruptedException {
     for (var server : servers) if (server != null) server.shutdownNow();
     var terminated = true;
@@ -5208,17 +5596,24 @@ class GenuineSelectedPublicationExportPostgresIntegrationTest {
       DSLContext dsl,
       DataSourceTransactionManager transactions,
       TargetProof target,
-      Version version) {
+      Version version,
+      FreshTenantCreationEvidence freshTenantCreationEvidence) {
     <T> T transaction(Supplier<T> operation) {
       var transaction = new TransactionTemplate(transactions);
       transaction.setIsolationLevel(TransactionDefinition.ISOLATION_READ_COMMITTED);
       return transaction.execute(ignored -> operation.get());
     }
 
-    Store withIdentity(TargetProof target, Version version) {
-      return new Store(dsl, transactions, target, version);
+    Store withIdentity(
+        TargetProof target,
+        Version version,
+        FreshTenantCreationEvidence freshTenantCreationEvidence) {
+      return new Store(dsl, transactions, target, version, freshTenantCreationEvidence);
     }
   }
+
+  private record LoggingReservationStore(
+      DSLContext dsl, StartSessionPreAuthorizationReservationService service) {}
 
   private record TestIdentity(Path certificate, Path key) {
     CommonGrpcClientProperties properties(Path ca) {
@@ -5270,6 +5665,7 @@ class GenuineSelectedPublicationExportPostgresIntegrationTest {
       for (String service :
           List.of(
               "account-service",
+              "logging-admin-service",
               "game-session-service",
               "game-design-service",
               "world-management-service",
@@ -5292,6 +5688,11 @@ class GenuineSelectedPublicationExportPostgresIntegrationTest {
     CommonGrpcClientProperties client(String service) {
       return Objects.requireNonNull(clients.get(service), "unknown test client identity")
           .properties(ca);
+    }
+
+    Path clientCertificate(String service) {
+      return Objects.requireNonNull(clients.get(service), "unknown test client identity")
+          .certificate();
     }
 
     private static TestIdentity issue(
