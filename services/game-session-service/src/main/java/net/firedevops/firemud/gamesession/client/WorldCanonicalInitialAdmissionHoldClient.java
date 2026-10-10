@@ -78,7 +78,8 @@ public final class WorldCanonicalInitialAdmissionHoldClient
       Request holdRequest, WorldCanonicalInstanceLifecycleEvidence.Request lifecycleRequest) {
     requireNoAmbientOwnerTransaction();
     requireConfiguredNamespace(holdRequest);
-    requireLifecycleRequestMatches(holdRequest, lifecycleRequest);
+    requireLifecycleRequestMatches(
+        holdRequest, lifecycleRequest, LifecycleRequestOperation.ACQUISITION);
 
     var response =
         requireStub()
@@ -144,7 +145,8 @@ public final class WorldCanonicalInitialAdmissionHoldClient
     Objects.requireNonNull(holdIdentity, "holdIdentity");
     Request holdRequest = holdIdentity.request();
     requireConfiguredNamespace(holdRequest);
-    requireLifecycleStateReadRequestMatches(holdRequest, lifecycleRequest);
+    requireLifecycleRequestMatches(
+        holdRequest, lifecycleRequest, LifecycleRequestOperation.STATE_READ);
 
     UUID readRequestId = lifecycleRequest.readRequestId();
     var response =
@@ -230,11 +232,12 @@ public final class WorldCanonicalInitialAdmissionHoldClient
   }
 
   private void requireLifecycleRequestMatches(
-      Request holdRequest, WorldCanonicalInstanceLifecycleEvidence.Request lifecycleRequest) {
+      Request holdRequest,
+      WorldCanonicalInstanceLifecycleEvidence.Request lifecycleRequest,
+      LifecycleRequestOperation operation) {
     Objects.requireNonNull(lifecycleRequest, "lifecycleRequest");
     if (!lifecycleRequest.publicProduction()) {
-      throw new IllegalArgumentException(
-          "World initial-admission hold acquisition requires public-production lifecycle evidence");
+      throw new IllegalArgumentException(operation.publicProductionError());
     }
     if (!workloadNamespace.equals(lifecycleRequest.targetNamespace())
         || !holdRequest.canonicalTenantId().equals(lifecycleRequest.canonicalTenantId())
@@ -250,24 +253,20 @@ public final class WorldCanonicalInitialAdmissionHoldClient
     }
   }
 
-  private void requireLifecycleStateReadRequestMatches(
-      Request holdRequest, WorldCanonicalInstanceLifecycleEvidence.Request lifecycleRequest) {
-    Objects.requireNonNull(lifecycleRequest, "lifecycleRequest");
-    if (!lifecycleRequest.publicProduction()) {
-      throw new IllegalArgumentException(
-          "World initial-admission hold-state reads require public-production lifecycle evidence");
+  private enum LifecycleRequestOperation {
+    ACQUISITION(
+        "World initial-admission hold acquisition requires public-production lifecycle evidence"),
+    STATE_READ(
+        "World initial-admission hold-state reads require public-production lifecycle evidence");
+
+    private final String publicProductionError;
+
+    LifecycleRequestOperation(String publicProductionError) {
+      this.publicProductionError = publicProductionError;
     }
-    if (!workloadNamespace.equals(lifecycleRequest.targetNamespace())
-        || !holdRequest.canonicalTenantId().equals(lifecycleRequest.canonicalTenantId())
-        || !holdRequest.worldSlug().equals(lifecycleRequest.worldSlug())
-        || !holdRequest.canonicalGameInstanceId().equals(lifecycleRequest.canonicalGameInstanceId())
-        || !holdRequest
-            .playableStateNamespaceId()
-            .equals(lifecycleRequest.playableStateNamespaceId())
-        || !holdRequest.playableStateScope().equals(lifecycleRequest.playableStateScope())
-        || !holdRequest.canonicalVersionId().equals(lifecycleRequest.canonicalVersionId())) {
-      throw new IllegalArgumentException(
-          "World lifecycle request must bind the exact initial-admission target");
+
+    String publicProductionError() {
+      return publicProductionError;
     }
   }
 
