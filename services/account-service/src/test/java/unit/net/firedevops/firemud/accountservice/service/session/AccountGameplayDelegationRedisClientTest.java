@@ -428,6 +428,43 @@ class AccountGameplayDelegationRedisClientTest {
   }
 
   @Test
+  void pendingRegistrationDescriptorAndLuaPinConditionalAbsoluteExpiry() throws Exception {
+    RedisScriptDescriptor descriptor =
+        new AccountGameplayDelegationRedisScriptContribution()
+            .descriptors().stream()
+                .filter(
+                    item -> AccountGameplayDelegationRedisClient.SCRIPT_ID.equals(item.scriptId()))
+                .findFirst()
+                .orElseThrow();
+    assertThat(descriptor.owner()).isEqualTo("account-service");
+    assertThat(descriptor.role()).isEqualTo(RedisScriptDescriptor.RedisRole.COORDINATION);
+    assertThat(descriptor.category()).isEqualTo(RedisScriptDescriptor.ScriptCategory.SESSION_CAS);
+    assertThat(descriptor.resourcePath())
+        .isEqualTo("redis/lua/account-game-session-delegation-pending-register.lua");
+    assertThat(descriptor.keys()).hasSize(1);
+    assertThat(descriptor.keys().getFirst().name()).isEqualTo("tokenRecord");
+    assertThat(descriptor.keys().getFirst().ownedPrefix())
+        .isEqualTo(AccountGameplayDelegationRedisClient.TOKEN_KEY_PREFIX);
+    assertThat(
+            descriptor.arguments().stream().map(RedisScriptDescriptor.ArgumentSpec::name).toList())
+        .containsExactly("canonicalPendingRecordUtf8", "absoluteExpiryEpochMillis");
+
+    byte[] source;
+    try (var input = getClass().getClassLoader().getResourceAsStream(descriptor.resourcePath())) {
+      assertThat(input).isNotNull();
+      source = input.readAllBytes();
+    }
+    String lua = new String(source, StandardCharsets.UTF_8);
+    assertThat(sha256(source)).isEqualTo(descriptor.sha256());
+    assertThat(lua)
+        .contains("if current ~= record then")
+        .contains("if currentExpiry ~= targetExpiry then")
+        .contains("redis.call('SET', key, record, 'PXAT', ARGV[2], 'NX')")
+        .contains("if type(stored) ~= 'table' or stored.ok ~= 'OK' then")
+        .doesNotContain("stored ~= 'OK'");
+  }
+
+  @Test
   void committedActivationDescriptorAndLuaPinOnlyExactLifecycleByteChange() throws Exception {
     RedisScriptDescriptor descriptor =
         new AccountGameplayDelegationRedisScriptContribution()
