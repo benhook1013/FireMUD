@@ -26,7 +26,22 @@ testing {
 dependencies {
     integrationTestImplementation(project(mapOf("path" to ":account-service", "configuration" to "accountOriginalOrderProof")))
     integrationTestImplementation(project(mapOf("path" to ":game-logic-service", "configuration" to "gameLogicClassesProof")))
-    integrationTestImplementation(project(mapOf("path" to ":world-management-service", "configuration" to "worldClassesProof")))
+    integrationTestImplementation(
+        project(
+            mapOf(
+                "path" to ":world-management-service",
+                "configuration" to "worldSelectedOwnerInventoryProof"
+            )
+        )
+    )
+    integrationTestImplementation(
+        project(
+            mapOf(
+                "path" to ":automation-scripting-service",
+                "configuration" to "automationClassesProof"
+            )
+        )
+    )
     integrationTestImplementation("io.grpc:grpc-util:${libs.versions.grpc.get()}")
     compileOnly(libs.spotbugs.annotations)
     testCompileOnly(libs.spotbugs.annotations)

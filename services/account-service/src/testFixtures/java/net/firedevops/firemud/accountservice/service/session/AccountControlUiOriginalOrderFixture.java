@@ -22,6 +22,7 @@ import net.firedevops.firemud.common.account.sourceintake.SelectedOwnerIntakeSou
 import net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding.Owner;
+import net.firedevops.firemud.common.gamedesign.SelectedOwnerIntakeSourceClient;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
 import net.firedevops.firemud.common.publication.AccountPublicationAuthorizationBinding;
 import net.firedevops.firemud.common.publication.AuthoredDraftPublishSelectionBinding;
@@ -256,6 +257,21 @@ public final class AccountControlUiOriginalOrderFixture implements AutoCloseable
       SelectedOwnerIntakeSourceReadScope scope, String namespace) {
     var service = selectedOwnerSourceReservationService(namespace);
     return asStipulatedGameDesignPeer(namespace, () -> service.abortSourceRead(scope));
+  }
+
+  /** Real unregistered producer; callers must authenticate the Game Design peer over transport. */
+  public io.grpc.BindableService selectedOwnerIntakeAuthorizationProducerReceiver(
+      SelectedOwnerIntakeSourceClient sources, String namespace) {
+    var owner =
+        new AccountSelectedOwnerIntakeAuthorizationService(
+            actors,
+            f.fences,
+            new AccountSelectedOwnerIntakeSourceReservationRepository(f.dsl),
+            sources,
+            f.manager,
+            namespace);
+    return new AccountSelectedOwnerIntakeAuthorizationProducerGrpcService(
+        owner, f.terms, namespace);
   }
 
   private AccountSelectedOwnerIntakeSourceReservationService selectedOwnerSourceReservationService(
