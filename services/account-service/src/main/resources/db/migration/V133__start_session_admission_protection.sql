@@ -47,12 +47,6 @@ CREATE TABLE account_start_session_admission_protection_settlements (
 );
 
 -- [jooq ignore start]
--- PostgreSQL enforces exact retained millisecond precision; jOOQ's DDL simulator
--- does not evaluate this date_trunc part. Keep the column and table visible.
-ALTER TABLE account_start_session_admission_protections
-    ADD CONSTRAINT account_ss_admission_original_lease_millis
-        CHECK (original_lease_expires_at = date_trunc('milliseconds', original_lease_expires_at));
-
 CREATE FUNCTION account_ss_admission_is_settled(protection_value UUID)
 RETURNS BOOLEAN LANGUAGE SQL STABLE STRICT AS $$
     SELECT EXISTS (SELECT 1 FROM account_start_session_admission_protection_settlements
@@ -184,7 +178,7 @@ BEGIN
         OR request_value->>'gameSessionOwnerAttemptId' IS DISTINCT FROM original.game_session_owner_attempt_id::TEXT
         OR request_value->>'gameSessionOwnerFence' IS DISTINCT FROM original.game_session_owner_fence::TEXT
         OR request_value->>'originalLeaseExpiresAt' IS DISTINCT FROM
-            to_char(original.original_lease_expires_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')
+            to_char(original.original_lease_expires_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')
         OR request_value->>'accountWorldParticipationId' IS DISTINCT FROM original.account_world_participation_id::TEXT
         OR request_value->>'accountWorldParticipationFence' IS DISTINCT FROM original.account_world_participation_fence::TEXT
         OR request_value->>'worldAdmissionHoldIdentityBytesBase64' IS DISTINCT FROM regexp_replace(encode(original.world_admission_hold_identity_bytes, 'base64'), E'[\n\r]', '', 'g') THEN
@@ -198,7 +192,7 @@ BEGIN
         OR EXISTS (SELECT 1 FROM jsonb_each(hold_value) field WHERE jsonb_typeof(field.value) <> 'string')
         OR (hold_value->>'holdId')::UUID = '00000000-0000-0000-0000-000000000000'::UUID
         OR (hold_value->>'holdFence')::UUID = '00000000-0000-0000-0000-000000000000'::UUID
-        OR hold_value->>'holdBindingDigest' IS DISTINCT FROM encode(sha256(decode(hold_value->>'requestBytesBase64', 'base64')), 'hex')
+        OR hold_value->>'holdBindingDigest' IS DISTINCT FROM 'sha256:' || encode(sha256(decode(hold_value->>'requestBytesBase64', 'base64')), 'hex')
         OR hold_request->>'schema' IS DISTINCT FROM 'world-canonical-initial-admission-hold-request/v1'
         OR hold_request->'request'->>'targetNamespace' IS DISTINCT FROM original.target_namespace
         OR hold_request->'request'->>'canonicalTenantId' IS DISTINCT FROM original.canonical_tenant_id::TEXT

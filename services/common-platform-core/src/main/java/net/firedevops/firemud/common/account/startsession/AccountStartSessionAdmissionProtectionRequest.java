@@ -43,10 +43,10 @@ public final class AccountStartSessionAdmissionProtectionRequest {
 
   private static final UUID NIL_UUID = new UUID(0L, 0L);
   private static final Pattern POSITIVE_LONG = Pattern.compile("[1-9][0-9]{0,18}");
-  private static final Pattern MILLIS_UTC =
-      Pattern.compile("[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\\.[0-9]{3}Z");
-  private static final DateTimeFormatter MILLIS_FORMAT =
-      DateTimeFormatter.ofPattern("uuuu-MM-dd'T'HH:mm:ss.SSS'Z'").withZone(ZoneOffset.UTC);
+  private static final Pattern MICROS_UTC =
+      Pattern.compile("[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\\.[0-9]{6}Z");
+  private static final DateTimeFormatter MICROS_FORMAT =
+      DateTimeFormatter.ofPattern("uuuu-MM-dd'T'HH:mm:ss.SSSSSS'Z'").withZone(ZoneOffset.UTC);
   private static final Set<String> ROOT_FIELDS =
       Set.of(
           "schema",
@@ -344,24 +344,24 @@ public final class AccountStartSessionAdmissionProtectionRequest {
   }
 
   private static String canonicalExpiry(Instant value) {
-    if (value.getNano() % 1_000_000 != 0) {
-      throw invalid("originalLeaseExpiresAt must use exact millisecond precision");
+    if (value.getNano() % 1_000 != 0) {
+      throw invalid("originalLeaseExpiresAt must use exact microsecond precision");
     }
-    String text = MILLIS_FORMAT.format(value);
-    if (!MILLIS_UTC.matcher(text).matches()) {
-      throw invalid("originalLeaseExpiresAt must use canonical UTC millisecond text");
+    String text = MICROS_FORMAT.format(value);
+    if (!MICROS_UTC.matcher(text).matches()) {
+      throw invalid("originalLeaseExpiresAt must use canonical UTC microsecond text");
     }
     return text;
   }
 
   private static Instant parseExpiry(String value) {
-    if (!MILLIS_UTC.matcher(value).matches()) {
-      throw invalid("originalLeaseExpiresAt must use canonical UTC millisecond text");
+    if (!MICROS_UTC.matcher(value).matches()) {
+      throw invalid("originalLeaseExpiresAt must use canonical UTC microsecond text");
     }
     try {
       Instant parsed = Instant.parse(value);
-      if (!MILLIS_FORMAT.format(parsed).equals(value)) {
-        throw invalid("originalLeaseExpiresAt must use canonical UTC millisecond text");
+      if (!MICROS_FORMAT.format(parsed).equals(value)) {
+        throw invalid("originalLeaseExpiresAt must use canonical UTC microsecond text");
       }
       return parsed;
     } catch (RuntimeException malformed) {

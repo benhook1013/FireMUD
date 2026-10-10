@@ -608,6 +608,46 @@ require_contains(
     "ci workflow",
 )
 
+junit_results_step = find_step(
+    ci, "build-and-test", "Upload JUnit Test Results", "ci workflow"
+)
+require_equal(
+    junit_results_step,
+    ("if",),
+    "always()",
+    "ci workflow",
+)
+require_equal(
+    junit_results_step,
+    ("uses",),
+    "actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9",
+    "ci workflow",
+)
+require_equal(
+    junit_results_step,
+    ("with", "name"),
+    "junit-${{ matrix.module }}-results-${{ github.sha }}-attempt-${{ github.run_attempt }}",
+    "ci workflow",
+)
+require_equal(
+    junit_results_step,
+    ("with", "path"),
+    "${{ matrix.module == 'load-testing' && 'dev-tools/load-testing/build/test-results/**/*.xml' || format('services/{0}/build/test-results/**/*.xml', matrix.module) }}",
+    "ci workflow",
+)
+require_equal(
+    junit_results_step,
+    ("with", "if-no-files-found"),
+    "warn",
+    "ci workflow",
+)
+require_equal(
+    junit_results_step,
+    ("with", "retention-days"),
+    "14",
+    "ci workflow",
+)
+
 require_equal(
     security,
     ("jobs", "changes", "permissions", "pull-requests"),

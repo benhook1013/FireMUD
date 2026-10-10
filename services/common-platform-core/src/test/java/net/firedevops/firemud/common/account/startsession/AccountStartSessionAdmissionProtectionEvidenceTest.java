@@ -34,7 +34,7 @@ class AccountStartSessionAdmissionProtectionEvidenceTest {
   private static final UUID WORLD_HOLD = uuid("0db7344a-1e67-4b95-905a-83dc9c472f0c");
   private static final UUID WORLD_HOLD_FENCE = uuid("52a14272-f9e4-4f67-97c9-62247b5fbcc1");
   private static final UUID ACCOUNT_PROTECTION = uuid("6b763f1d-c5bc-4080-b499-d29debc0a7b8");
-  private static final Instant ORIGINAL_LEASE_EXPIRY = Instant.parse("2026-10-09T10:20:30.456Z");
+  private static final Instant ORIGINAL_LEASE_EXPIRY = Instant.parse("2026-10-09T10:20:30.456789Z");
   private static final JsonMapper JSON = JsonMapper.builder().build();
 
   @Test
@@ -145,7 +145,24 @@ class AccountStartSessionAdmissionProtectionEvidenceTest {
                     2L,
                     hold(tuple)))
         .isInstanceOf(IllegalArgumentException.class)
-        .hasMessageContaining("millisecond");
+        .hasMessageContaining("microsecond");
+
+    Map<String, Object> finerPrecision = readObject(request(tuple).canonicalBytes());
+    finerPrecision.put("originalLeaseExpiresAt", "2026-10-09T10:20:30.456789001Z");
+    assertThatThrownBy(
+            () -> AccountStartSessionAdmissionProtectionRequest.decode(canonical(finerPrecision)))
+        .isInstanceOf(IllegalArgumentException.class);
+    Map<String, Object> alternateFraction = readObject(request(tuple).canonicalBytes());
+    alternateFraction.put("originalLeaseExpiresAt", "2026-10-09T10:20:30.45678Z");
+    assertThatThrownBy(
+            () ->
+                AccountStartSessionAdmissionProtectionRequest.decode(canonical(alternateFraction)))
+        .isInstanceOf(IllegalArgumentException.class);
+    Map<String, Object> alternateOffset = readObject(request(tuple).canonicalBytes());
+    alternateOffset.put("originalLeaseExpiresAt", "2026-10-09T10:20:30.456789+00:00");
+    assertThatThrownBy(
+            () -> AccountStartSessionAdmissionProtectionRequest.decode(canonical(alternateOffset)))
+        .isInstanceOf(IllegalArgumentException.class);
 
     WorldCanonicalInitialAdmissionHold.HoldIdentity wrongNamespace =
         hold(tuple, TENANT, "another-world-runtime");

@@ -1,0 +1,32 @@
+syntax = "proto3";
+
+package account.v1;
+
+option java_package = "net.firedevops.firemud.account.v1";
+option java_multiple_files = true;
+
+// Standalone, unregistered source-protection acquisition for the original StartSession.
+// It does not admit gameplay or settle/release the retained protection.
+service AccountStartSessionAdmissionProtectionAcquisitionService {
+  rpc AcquireOriginalStartSessionAdmissionProtection(
+      AcquireOriginalStartSessionAdmissionProtectionRequest)
+      returns (AcquireOriginalStartSessionAdmissionProtectionResponse);
+}
+
+message AcquireOriginalStartSessionAdmissionProtectionRequest {
+  int32 schema_version = 1;
+  string target_namespace = 2;
+  // Exact fields of AccountStartSessionAdmissionProtectionAcquisitionService.AcquisitionRequest.
+  bytes original_post_authorization_tuple = 3;
+  string game_session_owner_mutation_id = 4;
+  string game_session_owner_attempt_id = 5;
+  int64 game_session_owner_fence = 6;
+  string account_world_participation_id = 7;
+  int64 account_world_participation_fence = 8;
+  bytes world_hold_identity = 9;
+}
+
+message AcquireOriginalStartSessionAdmissionProtectionResponse {
+  // Complete canonical AccountStartSessionAdmissionProtectionEvidence bytes.
+  bytes evidence_canonical_bytes = 1;
+}

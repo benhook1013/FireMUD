@@ -9,7 +9,6 @@ import java.sql.Connection;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
-import java.time.temporal.ChronoUnit;
 import java.util.Base64;
 import java.util.HexFormat;
 import java.util.LinkedHashMap;
@@ -88,6 +87,7 @@ class AccountStartSessionAdmissionProtectionPostgresIntegrationTest {
   @Test
   void exactCurrentReadPreservesIdentityWithoutAllocatingAndWorldCommitCannotReleaseIt() {
     Fixture fixture = fixture();
+    assertThat(fixture.expiry().getNano() % 1_000_000).isNotZero();
     acquire(fixture);
     Long sequence = sequenceValue(fixture);
     for (int retry = 0; retry < 2; retry++) {
@@ -106,6 +106,10 @@ class AccountStartSessionAdmissionProtectionPostgresIntegrationTest {
       assertThat(current.get("protection_id", UUID.class)).isEqualTo(fixture.protectionId());
       assertThat(current.get("request_binding_bytes", byte[].class))
           .containsExactly(fixture.request());
+      OffsetDateTime retainedExpiry =
+          current.get("original_lease_expires_at", OffsetDateTime.class);
+      assertThat(retainedExpiry).isNotNull();
+      assertThat(retainedExpiry.toInstant()).isEqualTo(fixture.expiry().toInstant());
     }
     assertThat(sequenceValue(fixture)).isEqualTo(sequence);
     assertThat(
@@ -128,6 +132,89 @@ class AccountStartSessionAdmissionProtectionPostgresIntegrationTest {
                                     "SELECT account_control_ui_hold_required_sources(ARRAY[?]::text[])",
                                     fixture.source().key())))
         .hasMessageContaining("Original StartSession admission protection remains pending");
+  }
+
+  @Test
+  void changedSubmillisecondOriginalExpiryCannotRecoverRetainedProtection() {
+    Fixture fixture = fixture();
+    acquire(fixture);
+    var storedRowBefore =
+        fixture
+            .dsl()
+            .fetchSingle(
+                "SELECT * FROM account_start_session_admission_protections WHERE protection_id = ?",
+                fixture.protectionId());
+    DateTimeFormatter expiryFormat =
+        DateTimeFormatter.ofPattern("uuuu-MM-dd'T'HH:mm:ss.SSSSSS'Z'").withZone(ZoneOffset.UTC);
+    String originalExpiryText = expiryFormat.format(fixture.expiry().toInstant());
+    String changedExpiryText = expiryFormat.format(fixture.expiry().plusNanos(1_000).toInstant());
+    byte[] changedRequest =
+        new String(fixture.request(), StandardCharsets.UTF_8)
+            .replace(originalExpiryText, changedExpiryText)
+            .getBytes(StandardCharsets.UTF_8);
+    assertThat(changedRequest).isNotEqualTo(fixture.request());
+
+    assertThatThrownBy(
+            () ->
+                fixture
+                    .transaction()
+                    .executeWithoutResult(
+                        status ->
+                            fixture
+                                .dsl()
+                                .execute(
+                                    "SELECT * FROM account_ss_admission_read_current_exact(?, ?, ?)",
+                                    fixture.protectionId(),
+                                    1L,
+                                    changedRequest)))
+        .hasMessageContaining("Original admission recovery binding differs");
+    var storedRowAfter =
+        fixture
+            .dsl()
+            .fetchSingle(
+                "SELECT * FROM account_start_session_admission_protections WHERE protection_id = ?",
+                fixture.protectionId());
+    assertThat(storedRowAfter).isEqualTo(storedRowBefore);
+    assertThat(
+            fixture
+                .dsl()
+                .fetchSingle("SELECT account_ss_admission_is_settled(?)", fixture.protectionId())
+                .get(0, Boolean.class))
+        .isFalse();
+  }
+
+  @Test
+  void forgedWorldHoldDigestWithoutCanonicalPrefixCannotBecomeProtection() {
+    Fixture fixture = fixture();
+    String holdText = new String(fixture.hold(), StandardCharsets.UTF_8);
+    String digestMarker = "\"holdBindingDigest\":\"";
+    int digestStart = holdText.indexOf(digestMarker) + digestMarker.length();
+    int digestEnd = holdText.indexOf('"', digestStart);
+    String validDigest = holdText.substring(digestStart, digestEnd);
+    assertThat(validDigest).startsWith("sha256:");
+    String forgedHoldText =
+        holdText.substring(0, digestStart)
+            + validDigest.substring("sha256:".length())
+            + holdText.substring(digestEnd);
+    byte[] forgedHold = forgedHoldText.getBytes(StandardCharsets.UTF_8);
+    byte[] forgedRequest =
+        new String(fixture.request(), StandardCharsets.UTF_8)
+            .replace(base64(fixture.hold()), base64(forgedHold))
+            .getBytes(StandardCharsets.UTF_8);
+
+    assertThatThrownBy(
+            () ->
+                fixture
+                    .transaction()
+                    .executeWithoutResult(
+                        status -> insertProtection(fixture, 11L, forgedHold, forgedRequest)))
+        .hasMessageContaining("Admission hold identity differs from original instance and request");
+    assertThat(
+            fixture
+                .dsl()
+                .fetchSingle("SELECT count(*) FROM account_start_session_admission_protections")
+                .get(0, Long.class))
+        .isZero();
   }
 
   @Test
@@ -397,6 +484,11 @@ class AccountStartSessionAdmissionProtectionPostgresIntegrationTest {
   }
 
   private static void insertProtection(Fixture fixture, long version) {
+    insertProtection(fixture, version, fixture.hold(), fixture.request());
+  }
+
+  private static void insertProtection(
+      Fixture fixture, long version, byte[] holdIdentity, byte[] request) {
     insert(
         fixture.dsl(),
         "account_start_session_admission_protections",
@@ -433,11 +525,11 @@ class AccountStartSessionAdmissionProtectionPostgresIntegrationTest {
         "capture_sha256",
         hash(bytes("{}")),
         "world_admission_hold_identity_bytes",
-        fixture.hold(),
+        holdIdentity,
         "request_binding_bytes",
-        fixture.request(),
+        request,
         "request_binding_digest",
-        "sha256:" + hash(fixture.request()));
+        "sha256:" + hash(request));
   }
 
   private static Fixture fixture() {
@@ -463,9 +555,9 @@ class AccountStartSessionAdmissionProtectionPostgresIntegrationTest {
         new TransactionTemplate(new DataSourceTransactionManager(source));
     transaction.setIsolationLevel(TransactionDefinition.ISOLATION_READ_COMMITTED);
     OffsetDateTime now =
-        dsl.fetchSingle("SELECT clock_timestamp()")
-            .get(0, OffsetDateTime.class)
-            .truncatedTo(ChronoUnit.MILLIS);
+        dsl.fetchSingle(
+                "SELECT date_trunc('milliseconds', clock_timestamp()) + INTERVAL '123 microseconds'")
+            .get(0, OffsetDateTime.class);
     UUID tenant = UUID.randomUUID();
     UUID instance = UUID.randomUUID();
     UUID actor = UUID.randomUUID();
@@ -540,7 +632,7 @@ class AccountStartSessionAdmissionProtectionPostgresIntegrationTest {
                 "gameSessionOwnerFence",
                 "47",
                 "originalLeaseExpiresAt",
-                DateTimeFormatter.ofPattern("uuuu-MM-dd'T'HH:mm:ss.SSS'Z'")
+                DateTimeFormatter.ofPattern("uuuu-MM-dd'T'HH:mm:ss.SSSSSS'Z'")
                     .withZone(ZoneOffset.UTC)
                     .format(expiry.toInstant()),
                 "accountWorldParticipationId",
