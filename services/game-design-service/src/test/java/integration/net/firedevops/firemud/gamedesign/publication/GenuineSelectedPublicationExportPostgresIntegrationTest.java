@@ -3393,7 +3393,8 @@ class GenuineSelectedPublicationExportPostgresIntegrationTest {
           // World source, publication, released-pair proof, fresh tenant association and
           // public-realm catalog above use the actual owners. The original StartSession tuple is
           // issued/redeemed by Account after the actual native Logging claim read, under the
-          // fixture's stipulated Account peer contexts. Game Session reserves the exact tuple and attaches
+          // fixture's stipulated Account peer contexts. Game Session reserves the exact tuple and
+          // attaches
           // Account's redeemed projection in its isolated V35 repository; Account's current
           // attempt observation and World participation acquisition then traverse native
           // same-namespace mTLS receivers. Launch association below remains mocked, and retained
