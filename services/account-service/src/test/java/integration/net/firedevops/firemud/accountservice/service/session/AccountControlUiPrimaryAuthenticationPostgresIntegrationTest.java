@@ -102,11 +102,11 @@ class AccountControlUiPrimaryAuthenticationPostgresIntegrationTest {
         .hasMessage("Fresh Accounts must be created in the ACTIVE lifecycle state");
 
     UUID accountUuid = lockedAccount.getAccountUuid();
-    assertThat(accountUuid).isNotNull();
-    assertThat(c.accountRowCount(accountUuid)).isZero();
-    assertThat(c.accountSourceRowCount(accountUuid)).isZero();
-    assertThat(c.accountGenerationRowCount(accountUuid)).isZero();
-    assertThat(c.restrictionBirthRowCount(accountUuid)).isZero();
+    assertThat(accountUuid).isNull();
+    assertThat(c.accountRowCount()).isZero();
+    assertThat(c.accountSourceRowCount()).isZero();
+    assertThat(c.accountGenerationRowCount()).isZero();
+    assertThat(c.restrictionBirthRowCount()).isZero();
   }
 
   @Test
@@ -322,31 +322,25 @@ class AccountControlUiPrimaryAuthenticationPostgresIntegrationTest {
       return account;
     }
 
-    long accountRowCount(UUID accountUuid) {
-      return count("SELECT COUNT(*) FROM accounts WHERE account_uuid = ?", accountUuid);
+    long accountRowCount() {
+      return count("SELECT COUNT(*) FROM accounts");
     }
 
-    long accountSourceRowCount(UUID accountUuid) {
+    long accountSourceRowCount() {
+      return count("SELECT COUNT(*) FROM account_authority_source_records");
+    }
+
+    long accountGenerationRowCount() {
       return count(
-          "SELECT COUNT(*) FROM account_authority_source_records WHERE account_uuid = ?",
-          accountUuid);
+          "SELECT COUNT(*) FROM account_authority_generations " + "WHERE scope_kind = 'ACCOUNT'");
     }
 
-    long accountGenerationRowCount(UUID accountUuid) {
-      return count(
-          "SELECT COUNT(*) FROM account_authority_generations "
-              + "WHERE scope_kind = 'ACCOUNT' AND account_uuid = ?",
-          accountUuid);
+    long restrictionBirthRowCount() {
+      return count("SELECT COUNT(*) FROM account_platform_restriction_births");
     }
 
-    long restrictionBirthRowCount(UUID accountUuid) {
-      return count(
-          "SELECT COUNT(*) FROM account_platform_restriction_births WHERE account_uuid = ?",
-          accountUuid);
-    }
-
-    private long count(String query, UUID accountUuid) {
-      return Objects.requireNonNull(dsl.fetchOne(query, accountUuid)).get(0, Long.class);
+    private long count(String query) {
+      return Objects.requireNonNull(dsl.fetchOne(query)).get(0, Long.class);
     }
 
     AccountEmailLoginChallenge challenge(Account account) {

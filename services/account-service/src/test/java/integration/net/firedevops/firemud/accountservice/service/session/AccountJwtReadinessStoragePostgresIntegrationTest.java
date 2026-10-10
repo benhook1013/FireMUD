@@ -582,8 +582,11 @@ class AccountJwtReadinessStoragePostgresIntegrationTest {
     assertThat(restartedPlan.expectedFence().publishedActive()).isEmpty();
     assertThat(count(context, "account_jwt_readiness_pod_receipts")).isEqualTo(2L);
 
-    completeRemainingProbes(
-        context, owner, plan, refreshedInventory, privateMount, publicMount, expectedIdentity);
+    long remainingExpectedPodReceipts =
+        completeRemainingProbes(
+            context, owner, plan, refreshedInventory, privateMount, publicMount, expectedIdentity);
+    long expectedPodReceiptCount = expectedPods.size() + remainingExpectedPodReceipts;
+    assertThat(expectedPodReceiptCount).isEqualTo(12L);
     var proof =
         inTransaction(
             context,
@@ -660,7 +663,7 @@ class AccountJwtReadinessStoragePostgresIntegrationTest {
         .isEqualTo(prepared);
     assertThat(count(context, "account_jwt_signer_promotion_operations")).isEqualTo(1L);
     assertThat(count(context, "account_jwt_readiness_pod_receipts"))
-        .isEqualTo(plan.entries().stream().mapToLong(entry -> 2L).sum());
+        .isEqualTo(expectedPodReceiptCount);
 
     byte[] persistedPreimage =
         java.util.Objects.requireNonNull(
@@ -742,7 +745,7 @@ class AccountJwtReadinessStoragePostgresIntegrationTest {
         .isEqualTo(prepared);
   }
 
-  private static void completeRemainingProbes(
+  private static long completeRemainingProbes(
       TestContext context,
       OwnerState owner,
       ReadinessProbePlan plan,
@@ -751,6 +754,7 @@ class AccountJwtReadinessStoragePostgresIntegrationTest {
       Path publicMount,
       AccountMountedJwtSignerBundle.ExpectedIdentity expectedIdentity)
       throws Exception {
+    long expectedPodReceiptCount = 0;
     for (ProbeEntry planned : plan.entries()) {
       ProbeEntry current =
           inTransaction(
@@ -818,6 +822,7 @@ class AccountJwtReadinessStoragePostgresIntegrationTest {
                       .readiness()
                       .readCurrentExpectedPods(
                           BINDING, owner.trust(), issuedForInventory, inventory));
+      expectedPodReceiptCount += pods.size();
       for (ExpectedPod pod : pods) {
         ProbeEntry currentEvidence = issued;
         var acceptance = testAcceptance(currentEvidence, pod, databaseNow(context));
@@ -832,6 +837,7 @@ class AccountJwtReadinessStoragePostgresIntegrationTest {
       }
       assertThat(issued.state()).isEqualTo(ProbeState.VERIFIED);
     }
+    return expectedPodReceiptCount;
   }
 
   private static void insertDirectPromotion(
