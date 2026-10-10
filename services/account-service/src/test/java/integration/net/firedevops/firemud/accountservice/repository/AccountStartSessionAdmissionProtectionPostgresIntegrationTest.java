@@ -956,7 +956,7 @@ class AccountStartSessionAdmissionProtectionPostgresIntegrationTest {
       }
       cause = cause.getCause();
     }
-    assertThat(databaseFailure)
+    assertThat((Throwable) databaseFailure)
         .as("the rejected fixture write must fail at PostgreSQL's database guard")
         .isNotNull();
     assertThat(databaseFailure.getSQLState()).isEqualTo(expectedSqlState);
