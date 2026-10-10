@@ -16,7 +16,9 @@ class RedisScriptDescriptorTest {
     assertThat(descriptor.keys())
         .containsExactly(
             new RedisScriptDescriptor.KeySpec(
-                "record", "session:control:", RedisScriptDescriptor.HashTagDeclaration.NOT_REQUIRED));
+                "record",
+                "session:control:",
+                RedisScriptDescriptor.HashTagDeclaration.NOT_REQUIRED));
     assertThat(descriptor.arguments())
         .containsExactly(new RedisScriptDescriptor.ArgumentSpec("requestId"));
     assertThat(descriptor.outcomes()).hasSize(2);
@@ -29,7 +31,8 @@ class RedisScriptDescriptorTest {
     assertThatThrownBy(() -> descriptor("account/control-ui.lua", "a".repeat(64), null, null, null))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("resourcePath");
-    assertThatThrownBy(() -> descriptor("redis/account/control-ui.lua", "A".repeat(64), null, null, null))
+    assertThatThrownBy(
+            () -> descriptor("redis/account/control-ui.lua", "A".repeat(64), null, null, null))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("sha256");
   }
@@ -43,7 +46,9 @@ class RedisScriptDescriptorTest {
                     null,
                     List.of(
                         new RedisScriptDescriptor.KeySpec(
-                            "1record", "session:control:", RedisScriptDescriptor.HashTagDeclaration.NOT_REQUIRED)),
+                            "1record",
+                            "session:control:",
+                            RedisScriptDescriptor.HashTagDeclaration.NOT_REQUIRED)),
                     null,
                     null))
         .isInstanceOf(IllegalArgumentException.class)
@@ -55,7 +60,9 @@ class RedisScriptDescriptorTest {
                     null,
                     List.of(
                         new RedisScriptDescriptor.KeySpec(
-                            "record", "session/control", RedisScriptDescriptor.HashTagDeclaration.NOT_REQUIRED)),
+                            "record",
+                            "session/control",
+                            RedisScriptDescriptor.HashTagDeclaration.NOT_REQUIRED)),
                     null,
                     null))
         .isInstanceOf(IllegalArgumentException.class)
@@ -81,8 +88,7 @@ class RedisScriptDescriptorTest {
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("ARGV name");
     var argument = new RedisScriptDescriptor.ArgumentSpec("requestId");
-    assertThatThrownBy(
-            () -> descriptor(null, null, null, List.of(argument, argument), null))
+    assertThatThrownBy(() -> descriptor(null, null, null, List.of(argument, argument), null))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("duplicate ARGV");
 
@@ -95,13 +101,15 @@ class RedisScriptDescriptorTest {
                     null,
                     List.of(
                         new RedisScriptDescriptor.OutcomeSpec(
-                            "created", RedisScriptDescriptor.OutcomeCategory.SUCCESS,
+                            "created",
+                            RedisScriptDescriptor.OutcomeCategory.SUCCESS,
                             RedisScriptDescriptor.MutationEffect.MUTATING))))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("outcome code");
     var outcome =
         new RedisScriptDescriptor.OutcomeSpec(
-            "OK", RedisScriptDescriptor.OutcomeCategory.SUCCESS,
+            "OK",
+            RedisScriptDescriptor.OutcomeCategory.SUCCESS,
             RedisScriptDescriptor.MutationEffect.MUTATING);
     assertThatThrownBy(() -> descriptor(null, null, null, null, List.of(outcome, outcome)))
         .isInstanceOf(IllegalArgumentException.class)
@@ -128,17 +136,23 @@ class RedisScriptDescriptorTest {
         keys == null
             ? List.of(
                 new RedisScriptDescriptor.KeySpec(
-                    "record", "session:control:", RedisScriptDescriptor.HashTagDeclaration.NOT_REQUIRED))
+                    "record",
+                    "session:control:",
+                    RedisScriptDescriptor.HashTagDeclaration.NOT_REQUIRED))
             : keys,
-        arguments == null ? List.of(new RedisScriptDescriptor.ArgumentSpec("requestId")) : arguments,
+        arguments == null
+            ? List.of(new RedisScriptDescriptor.ArgumentSpec("requestId"))
+            : arguments,
         RedisScriptDescriptor.ScriptCategory.SESSION_CAS,
         outcomes == null
             ? List.of(
                 new RedisScriptDescriptor.OutcomeSpec(
-                    "OK", RedisScriptDescriptor.OutcomeCategory.SUCCESS,
+                    "OK",
+                    RedisScriptDescriptor.OutcomeCategory.SUCCESS,
                     RedisScriptDescriptor.MutationEffect.MUTATING),
                 new RedisScriptDescriptor.OutcomeSpec(
-                    "CONFLICT", RedisScriptDescriptor.OutcomeCategory.VALIDATION_FAILURE,
+                    "CONFLICT",
+                    RedisScriptDescriptor.OutcomeCategory.VALIDATION_FAILURE,
                     RedisScriptDescriptor.MutationEffect.NON_MUTATING))
             : outcomes,
         RedisScriptDescriptor.ResetSensitivity.CLUSTER,

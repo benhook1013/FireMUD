@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.mock;
 
 import java.util.List;
+import java.util.Map;
 import javax.crypto.spec.SecretKeySpec;
 import net.firedevops.firemud.accountservice.client.StartSessionReservationEvidenceClient;
 import net.firedevops.firemud.accountservice.config.AccountStartSessionOperatorAuthorizationConfiguration;
@@ -23,7 +24,10 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.convert.ApplicationConversionService;
 import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.boot.test.context.runner.ApplicationContextRunner;
+import org.springframework.context.annotation.AnnotatedBeanDefinitionReader;
+import org.springframework.context.annotation.AnnotationConfigApplicationContext;
 import org.springframework.context.annotation.Bean;
+import org.springframework.core.env.MapPropertySource;
 import org.springframework.test.util.ReflectionTestUtils;
 import org.springframework.transaction.PlatformTransactionManager;
 
@@ -33,6 +37,8 @@ import org.springframework.transaction.PlatformTransactionManager;
 class AccountStartSessionOperatorAuthorizationConfigurationTest {
   private static final String OPT_IN =
       "firemud.account.start-session-operator-authorization.enabled";
+  private static final String RESERVATION_EVIDENCE_CLIENT_BEAN =
+      "startSessionReservationEvidenceClient";
   private static final String OPERATOR_KEYRING_PATH =
       "firemud.account.start-session-operator-authorization.response-envelope.keyring-path";
   private static final String GENERAL_KEYRING_PATH =
@@ -67,6 +73,27 @@ class AccountStartSessionOperatorAuthorizationConfigurationTest {
               assertThat(context)
                   .doesNotHaveBean(AccountStartSessionOperatorAuthorizationService.class);
             });
+  }
+
+  @Test
+  void reservationEvidenceClientBeanDefinitionRequiresExplicitOptIn() {
+    assertThat(reservationEvidenceClientBeanDefinition(null)).isFalse();
+    assertThat(reservationEvidenceClientBeanDefinition("false")).isFalse();
+    assertThat(reservationEvidenceClientBeanDefinition("true")).isTrue();
+  }
+
+  private static boolean reservationEvidenceClientBeanDefinition(String enabled) {
+    try (AnnotationConfigApplicationContext context = new AnnotationConfigApplicationContext()) {
+      if (enabled != null) {
+        context
+            .getEnvironment()
+            .getPropertySources()
+            .addFirst(new MapPropertySource("test", Map.of(OPT_IN, enabled)));
+      }
+      new AnnotatedBeanDefinitionReader(context)
+          .register(StartSessionReservationEvidenceClient.class);
+      return context.getBeanFactory().containsBeanDefinition(RESERVATION_EVIDENCE_CLIENT_BEAN);
+    }
   }
 
   @Test

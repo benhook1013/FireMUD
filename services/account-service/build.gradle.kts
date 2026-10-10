@@ -1,4 +1,8 @@
 
+import org.gradle.api.artifacts.component.ProjectComponentIdentifier
+import org.gradle.api.tasks.Sync
+import org.gradle.api.tasks.testing.Test
+
 apply(from = "${rootDir}/gradle/proto-convention.gradle")
 
 plugins {
@@ -45,4 +49,49 @@ dependencies {
     add("integrationTestCompileOnly", libs.spotbugs.annotations)
     integrationTestImplementation(testFixtures(project(":account-service")))
     integrationTestImplementation(testFixtures(project(":logging-admin-service")))
+}
+
+val loggingAdminProjectArtifacts = { configurationName: String ->
+    configurations
+        .getByName(configurationName)
+        .incoming
+        .artifactView {
+            componentFilter { componentId ->
+                componentId is ProjectComponentIdentifier
+                    && componentId.projectPath == ":logging-admin-service"
+            }
+        }
+        .artifacts
+}
+
+val loggingAdminTestArtifacts = loggingAdminProjectArtifacts("testRuntimeClasspath")
+val loggingAdminIntegrationTestArtifacts =
+    loggingAdminProjectArtifacts("integrationTestRuntimeClasspath")
+
+val extractLoggingAdminTestClasses =
+    tasks.register<Sync>("extractLoggingAdminTestClasses") {
+        dependsOn(loggingAdminTestArtifacts.artifactFiles)
+        from({ loggingAdminTestArtifacts.artifacts.map { project.zipTree(it.file) } }) {
+            include("**/*.class")
+        }
+        into(layout.buildDirectory.dir("account-test-classpath/logging-main"))
+    }
+
+val extractLoggingAdminIntegrationTestClasses =
+    tasks.register<Sync>("extractLoggingAdminIntegrationTestClasses") {
+        dependsOn(loggingAdminIntegrationTestArtifacts.artifactFiles)
+        from({ loggingAdminIntegrationTestArtifacts.artifacts.map { project.zipTree(it.file) } }) {
+            include("**/*.class")
+        }
+        into(layout.buildDirectory.dir("account-test-classpath/logging-integration"))
+    }
+
+tasks.named<Test>("test") {
+    val loggingArtifacts = loggingAdminTestArtifacts.artifactFiles
+    classpath = classpath.filter { it !in loggingArtifacts } + files(extractLoggingAdminTestClasses)
+}
+
+tasks.named<Test>("integrationTest") {
+    val loggingArtifacts = loggingAdminIntegrationTestArtifacts.artifactFiles
+    classpath = classpath.filter { it !in loggingArtifacts } + files(extractLoggingAdminIntegrationTestClasses)
 }
