@@ -427,18 +427,38 @@ class CanonicalInitialAdmissionIntentRepositoryIntegrationTest {
       var lifecycle = target.lifecycleRequest(uuid(424));
       CanonicalInitialAdmissionIntentSnapshot reserved =
           harness.transactions.execute(status -> target.intents().reserve(request, lifecycle));
-      harness.transactions.execute(
-          status -> {
-            harness.dsl.execute(updateSql, target.gameSessionTenantId(), target.gameInstanceId());
-            return null;
-          });
+      Record originalRuntimeSource =
+          Objects.requireNonNull(
+              harness.dsl.fetchOne(
+                  "SELECT version_id, launch_descriptor_id, row_version FROM game_instances "
+                      + "WHERE tenant_id = ? AND id = ?",
+                  target.gameSessionTenantId(),
+                  target.gameInstanceId()));
 
       assertThatThrownBy(
               () ->
                   harness.transactions.execute(
-                      status -> target.intents().reserve(request, lifecycle)))
+                      status -> {
+                        harness.dsl.execute(
+                            updateSql, target.gameSessionTenantId(), target.gameInstanceId());
+                        target.intents().reserve(request, lifecycle);
+                        return null;
+                      }))
           .isInstanceOf(IllegalStateException.class)
           .hasMessageContaining("complete launch binding");
+      Record runtimeSourceAfterRollback =
+          Objects.requireNonNull(
+              harness.dsl.fetchOne(
+                  "SELECT version_id, launch_descriptor_id, row_version FROM game_instances "
+                      + "WHERE tenant_id = ? AND id = ?",
+                  target.gameSessionTenantId(),
+                  target.gameInstanceId()));
+      assertThat(runtimeSourceAfterRollback.get("version_id", Long.class))
+          .isEqualTo(originalRuntimeSource.get("version_id", Long.class));
+      assertThat(runtimeSourceAfterRollback.get("launch_descriptor_id", String.class))
+          .isEqualTo(originalRuntimeSource.get("launch_descriptor_id", String.class));
+      assertThat(runtimeSourceAfterRollback.get("row_version", Long.class))
+          .isEqualTo(originalRuntimeSource.get("row_version", Long.class));
       assertThat(
               target.intents().read(target.targetNamespace(), request.initialAdmissionRequestId()))
           .contains(reserved);
