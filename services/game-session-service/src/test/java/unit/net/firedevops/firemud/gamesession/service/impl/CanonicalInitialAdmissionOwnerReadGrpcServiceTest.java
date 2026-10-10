@@ -1,4 +1,4 @@
-package net.firedevops.firemud.gamesession.service.impl;
+package unit.net.firedevops.firemud.gamesession.service.impl;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -28,7 +28,11 @@ import net.firedevops.firemud.gamesession.dto.CanonicalInitialAdmissionOwnerProo
 import net.firedevops.firemud.gamesession.dto.CanonicalInitialAdmissionRequest.OriginKind;
 import net.firedevops.firemud.gamesession.repository.CanonicalInitialAdmissionRepository;
 import net.firedevops.firemud.gamesession.repository.CanonicalInitialAdmissionRepository.CanonicalInitialAdmissionReconciliationRequiredException;
+import net.firedevops.firemud.gamesession.service.impl.CanonicalInitialAdmissionOwnerReadGrpcService;
+import net.firedevops.firemud.gamesession.service.impl.CanonicalInitialAdmissionOwnerReadWorkloadGuard;
 import net.firedevops.firemud.gamesession.v1.CanonicalInitialAdmissionOwnerProofOutcome;
+import net.firedevops.firemud.gamesession.v1.CanonicalInitialAdmissionOwnerProofReadServiceGrpc;
+import net.firedevops.firemud.gamesession.v1.GameSessionControlPlaneServiceGrpc;
 import net.firedevops.firemud.gamesession.v1.GetCanonicalInitialAdmissionOwnerProofRequest;
 import net.firedevops.firemud.gamesession.v1.GetCanonicalInitialAdmissionOwnerProofResponse;
 import org.junit.jupiter.api.AfterEach;
@@ -49,6 +53,24 @@ class CanonicalInitialAdmissionOwnerReadGrpcServiceTest {
   @AfterEach
   void clearContext() {
     SessionContext.clear();
+  }
+
+  @Test
+  void ownerProofReadUsesDedicatedServiceIdentityOutsideControlPlane() {
+    String methodName =
+        CanonicalInitialAdmissionOwnerProofReadServiceGrpc
+            .getGetCanonicalInitialAdmissionOwnerProofMethod()
+            .getFullMethodName();
+
+    assertEquals(
+        "game_session.v1.CanonicalInitialAdmissionOwnerProofReadService",
+        CanonicalInitialAdmissionOwnerProofReadServiceGrpc.getServiceDescriptor().getName());
+    assertEquals(
+        "game_session.v1.CanonicalInitialAdmissionOwnerProofReadService/GetCanonicalInitialAdmissionOwnerProof",
+        methodName);
+    assertNotEquals(
+        GameSessionControlPlaneServiceGrpc.getServiceDescriptor().getName(),
+        CanonicalInitialAdmissionOwnerProofReadServiceGrpc.getServiceDescriptor().getName());
   }
 
   @Test
