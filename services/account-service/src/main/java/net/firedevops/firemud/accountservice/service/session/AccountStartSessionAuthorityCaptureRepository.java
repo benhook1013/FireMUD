@@ -16,6 +16,7 @@ import net.firedevops.firemud.accountservice.authordraft.AccountControlUiAuthori
 import net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding.SourceEvidence;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
 import net.firedevops.firemud.common.operator.StartSessionPreAuthorizationReservationTuple;
+import net.firedevops.firemud.common.security.SessionContext;
 import org.jooq.DSLContext;
 import org.jooq.Record;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
@@ -95,11 +96,50 @@ public final class AccountStartSessionAuthorityCaptureRepository {
       String loggingWorkloadUri,
       UUID reservationOwnerId,
       long reservationClaimFence) {
+    return lockReadExactCurrent(
+        current, tuple, loggingWorkloadUri, reservationOwnerId, reservationClaimFence, true);
+  }
+
+  /**
+   * Locks and reads the original capture for the authenticated same-namespace World receiver. The
+   * original Logging identity is checked as retained issuance evidence; it is not the current
+   * caller on this receiver path.
+   */
+  public AccountStartSessionAuthorityCapture lockReadExactCurrentFromWorldReceiving(
+      AccountControlUiActorService.Current current,
+      StartSessionPreAuthorizationReservationTuple tuple,
+      String loggingWorkloadUri,
+      UUID reservationOwnerId,
+      long reservationClaimFence,
+      String worldManagementWorkloadUri) {
+    requireOwnerTransaction();
+    Objects.requireNonNull(current, "current committed ControlUI actor is required");
+    Objects.requireNonNull(tuple, "exact typed StartSession tuple is required");
+    if (!canonicalWorldWorkload(
+        worldManagementWorkloadUri, tuple.action().scope().targetNamespace())) {
+      throw unavailable();
+    }
+    return lockReadExactCurrent(
+        current, tuple, loggingWorkloadUri, reservationOwnerId, reservationClaimFence, false);
+  }
+
+  private AccountStartSessionAuthorityCapture lockReadExactCurrent(
+      AccountControlUiActorService.Current current,
+      StartSessionPreAuthorizationReservationTuple tuple,
+      String loggingWorkloadUri,
+      UUID reservationOwnerId,
+      long reservationClaimFence,
+      boolean requireLoggingPeer) {
     requireOwnerTransaction();
     Objects.requireNonNull(current, "current committed ControlUI actor is required");
     RequestSnapshot observed =
         requestSnapshot(
-            current, tuple, loggingWorkloadUri, reservationOwnerId, reservationClaimFence);
+            current,
+            tuple,
+            loggingWorkloadUri,
+            reservationOwnerId,
+            reservationClaimFence,
+            requireLoggingPeer);
     Record row = lockByRequestId(observed.requestId());
     if (row == null) throw unavailable();
     AccountStartSessionAuthorityCapture stored = decode(row);
@@ -302,6 +342,17 @@ public final class AccountStartSessionAuthorityCaptureRepository {
       String loggingWorkloadUri,
       UUID reservationOwnerId,
       long reservationClaimFence) {
+    return requestSnapshot(
+        current, tuple, loggingWorkloadUri, reservationOwnerId, reservationClaimFence, true);
+  }
+
+  private static RequestSnapshot requestSnapshot(
+      AccountControlUiActorService.Current current,
+      StartSessionPreAuthorizationReservationTuple tuple,
+      String loggingWorkloadUri,
+      UUID reservationOwnerId,
+      long reservationClaimFence,
+      boolean requireLoggingPeer) {
     Objects.requireNonNull(tuple, "exact typed StartSession tuple is required");
     Objects.requireNonNull(current.stored(), "original committed ControlUI issuance is required");
     Snapshot source =
@@ -315,7 +366,10 @@ public final class AccountStartSessionAuthorityCaptureRepository {
         || !"game-session-service".equals(tuple.targetOwner())
         || !"COMMITTED".equals(stored.status)
         || !canonicalTuple(tupleBytes, tuple)
-        || !canonicalLoggingWorkload(loggingWorkloadUri, tuple.action().scope().targetNamespace())
+        || !(requireLoggingPeer
+            ? canonicalLoggingWorkload(loggingWorkloadUri, tuple.action().scope().targetNamespace())
+            : canonicalLoggingWorkloadUri(
+                loggingWorkloadUri, tuple.action().scope().targetNamespace()))
         || reservationOwnerId == null
         || reservationOwnerId.equals(new UUID(0L, 0L))
         || reservationClaimFence <= 0L
@@ -427,13 +481,28 @@ public final class AccountStartSessionAuthorityCaptureRepository {
   }
 
   private static boolean canonicalLoggingWorkload(String uri, String targetNamespace) {
-    if (uri == null) return false;
-    var match = LOGGING_WORKLOAD.matcher(uri);
-    if (!match.matches() || !match.group(1).equals(targetNamespace)) return false;
+    if (!canonicalLoggingWorkloadUri(uri, targetNamespace)) return false;
     GrpcPeerIdentity peer = GrpcPeerIdentity.current();
     return peer != null
         && uri.equals(peer.uri())
         && "logging-admin-service".equals(peer.service())
+        && targetNamespace.equals(peer.namespace());
+  }
+
+  private static boolean canonicalLoggingWorkloadUri(String uri, String targetNamespace) {
+    if (uri == null) return false;
+    var match = LOGGING_WORKLOAD.matcher(uri);
+    return match.matches() && match.group(1).equals(targetNamespace);
+  }
+
+  private static boolean canonicalWorldWorkload(String uri, String targetNamespace) {
+    String expectedUri = "spiffe://firemud/ns/" + targetNamespace + "/sa/world-management-service";
+    GrpcPeerIdentity peer = GrpcPeerIdentity.current();
+    return !SessionContext.hasAuthenticatedCallerContext()
+        && expectedUri.equals(uri)
+        && peer != null
+        && uri.equals(peer.uri())
+        && "world-management-service".equals(peer.service())
         && targetNamespace.equals(peer.namespace());
   }
 

@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.nio.charset.StandardCharsets;
+import java.sql.SQLException;
 import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
@@ -27,15 +28,16 @@ import net.firedevops.firemud.common.operator.StartSessionAuthorityEvidenceBundl
 import net.firedevops.firemud.common.operator.StartSessionAuthorityEvidenceBundle.BundleReference;
 import net.firedevops.firemud.common.operator.StartSessionOperatorAction;
 import net.firedevops.firemud.common.operator.StartSessionPreAuthorizationReservationTuple;
+import org.assertj.core.api.ThrowableAssert.ThrowingCallable;
 import org.flywaydb.core.Flyway;
 import org.jooq.DSLContext;
 import org.jooq.SQLDialect;
+import org.jooq.exception.IntegrityConstraintViolationException;
 import org.jooq.impl.DSL;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
-import org.springframework.dao.DataAccessException;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.datasource.DataSourceTransactionManager;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
@@ -107,16 +109,16 @@ class AccountStartSessionOperatorAuthorizationRepositoryIntegrationTest {
             () -> context.repository.findByControlPlaneRequestId(REQUEST_ID).orElseThrow());
     assertThat(retainedAfterRedemption.bundleReference()).isEqualTo(candidate.bundleReference());
     assertThat(retainedAfterRedemption.bundleReference().linearization()).isEqualTo("123456789");
-    assertThatThrownBy(
-            () ->
-                context.inTransactionWithoutResult(
-                    () ->
-                        context.transactionDsl.execute(
-                            "UPDATE account_start_session_operator_authorizations "
-                                + "SET bundle_linearization = ? WHERE control_plane_request_id = ?",
-                            "123456788",
-                            REQUEST_ID)))
-        .isInstanceOf(DataAccessException.class);
+    assertImmutableGuardRejected(
+        () ->
+            context.inTransactionWithoutResult(
+                () ->
+                    context.transactionDsl.execute(
+                        "UPDATE account_start_session_operator_authorizations "
+                            + "SET bundle_linearization = ? WHERE control_plane_request_id = ?",
+                        "123456788",
+                        REQUEST_ID)),
+        "StartSession authorization evidence is immutable except one exact redemption");
     assertThat(
             context.inTransaction(
                 () ->
@@ -442,32 +444,32 @@ class AccountStartSessionOperatorAuthorizationRepositoryIntegrationTest {
         .isInstanceOf(
             AccountStartSessionOperatorAuthorizationRepository.ReferenceExpiredException.class);
 
-    assertThatThrownBy(
-            () ->
-                context.inTransactionWithoutResult(
-                    () ->
-                        context.transactionDsl.execute(
-                            "UPDATE account_start_session_operator_authorizations "
-                                + "SET authority_evidence_bundle = ? WHERE control_plane_request_id = ?",
-                            bytes("rewritten"),
-                            REQUEST_ID)))
-        .isInstanceOf(DataAccessException.class);
-    assertThatThrownBy(
-            () ->
-                context.inTransactionWithoutResult(
-                    () ->
-                        context.transactionDsl.execute(
-                            "DELETE FROM account_start_session_operator_authorizations "
-                                + "WHERE control_plane_request_id = ?",
-                            REQUEST_ID)))
-        .isInstanceOf(DataAccessException.class);
-    assertThatThrownBy(
-            () ->
-                context.inTransactionWithoutResult(
-                    () ->
-                        context.transactionDsl.execute(
-                            "TRUNCATE account_start_session_operator_authorizations")))
-        .isInstanceOf(DataAccessException.class);
+    assertImmutableGuardRejected(
+        () ->
+            context.inTransactionWithoutResult(
+                () ->
+                    context.transactionDsl.execute(
+                        "UPDATE account_start_session_operator_authorizations "
+                            + "SET authority_evidence_bundle = ? WHERE control_plane_request_id = ?",
+                        bytes("rewritten"),
+                        REQUEST_ID)),
+        "StartSession authorization evidence is immutable except one exact redemption");
+    assertImmutableGuardRejected(
+        () ->
+            context.inTransactionWithoutResult(
+                () ->
+                    context.transactionDsl.execute(
+                        "DELETE FROM account_start_session_operator_authorizations "
+                            + "WHERE control_plane_request_id = ?",
+                        REQUEST_ID)),
+        "StartSession operator authorization evidence cannot be deleted");
+    assertImmutableGuardRejected(
+        () ->
+            context.inTransactionWithoutResult(
+                () ->
+                    context.transactionDsl.execute(
+                        "TRUNCATE account_start_session_operator_authorizations")),
+        "StartSession operator authorization evidence cannot be truncated");
 
     var retained =
         context.inTransaction(
@@ -765,6 +767,31 @@ class AccountStartSessionOperatorAuthorizationRepositoryIntegrationTest {
                     "tenantGeneration",
                     "1"));
     return AccountControlUiAuthority.canonical(bundle);
+  }
+
+  private static void assertImmutableGuardRejected(
+      ThrowingCallable action, String expectedDiagnostic) {
+    assertThatThrownBy(action)
+        .isInstanceOf(IntegrityConstraintViolationException.class)
+        .satisfies(
+            failure -> {
+              SQLException sqlFailure = findSqlException(failure);
+              assertThat(sqlFailure.getSQLState()).isEqualTo("23514");
+              if (!(sqlFailure instanceof org.postgresql.util.PSQLException postgresFailure)) {
+                throw new AssertionError(
+                    "Immutable guard rejection must be a PostgreSQL exception", sqlFailure);
+              }
+              var serverError = postgresFailure.getServerErrorMessage();
+              assertThat(serverError).isNotNull();
+              assertThat(serverError.getMessage()).isEqualTo(expectedDiagnostic);
+            });
+  }
+
+  private static SQLException findSqlException(Throwable failure) {
+    for (Throwable cause = failure; cause != null; cause = cause.getCause()) {
+      if (cause instanceof SQLException sqlFailure) return sqlFailure;
+    }
+    throw new AssertionError("Immutable guard rejection did not retain its SQLException", failure);
   }
 
   private static final UUID TENANT_ID = UUID.fromString("6d1e5ce5-6127-4d35-88b8-7a6f40692038");

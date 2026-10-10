@@ -743,12 +743,13 @@ public final class AccountStartSessionOperatorAuthorizationService {
               exact, tuple, redemptionRequest, exactBundle, clock.instant());
 
           AccountStartSessionAuthorityCapture lockedCapture =
-              captureRepository.lockReadExactCurrent(
+              captureRepository.lockReadExactCurrentFromWorldReceiving(
                   current,
                   tuple,
                   loggingPeerUri,
                   postTuple.reservationOwnerId(),
-                  postTuple.reservationClaimFence());
+                  postTuple.reservationClaimFence(),
+                  worldManagementPeerUri);
           var originalReference =
               AccountStartSessionOperatorAuthorityBundle.fromSharedReference(
                   exact.bundleReference());

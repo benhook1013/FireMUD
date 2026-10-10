@@ -180,3 +180,15 @@ Entry format:
   - Observation: Exception types and SQLSTATE alone could not distinguish several integrity checks. Guessing a cause would risk changing a valid guard, while logging full SQL exception text could disclose row or authorization data.
   - Expected pattern: Preserve bounded, allowlisted constraint identifiers and PL/pgSQL routine/line metadata alongside existing status, never raw messages, SQL, row values or full server context. Keep unknown root causes explicit until attributable evidence exists.
   - Current status: The existing publication diagnostic and focused secret-exclusion tests pass the affected full checks. Corrected PostgreSQL execution remains pending, and no publication integrity guard is changed.
+
+- `2026-10-10`: Cross-owner PostgreSQL fixtures must preserve the application's transaction provider
+  - Context: PR #3105's genuine selected-export fixture reached the real release repository but failed the deferred common-commit guard while its publication operation was still pending.
+  - Observation: Its jOOQ context used Spring's transaction-aware data source without Spring's transaction provider. A nested jOOQ transaction could therefore commit the bound connection after inserting the release, before the outer finalizer retained its terminal outcome. Production's auto-configuration and the existing canonical release fixture supply both components.
+  - Expected pattern: Construct cross-owner fixtures with the same connection and transaction providers as the owning service. Do not weaken deferred atomicity guards or mistake an unintended fixture commit for missing authorization evidence.
+  - Current status: The single fixture's provider wiring is corrected; physical PostgreSQL re-execution remains required. No production transaction boundary, migration or integrity guard changes.
+
+- `2026-10-10`: Schema generation does not establish PostgreSQL procedural parsing
+  - Context: PR #3105's V132 generated jOOQ metadata locally, but exact-head PostgreSQL CI rejected its complete-authorization trigger with SQLSTATE `42601` before owner assertions could run.
+  - Observation: Bare `CASE` expressions inside a PL/pgSQL `IF` boolean chain repeat the earlier source-guard parse hazard. A successful simulator run cannot prove that PostgreSQL accepts the procedural function or executes its constraints.
+  - Expected pattern: Parenthesize `CASE` expression operands in procedural conditions and retain physical Flyway startup plus positive and negative owner cases as a separate proof gate. Report startup cascades separately from actual owner assertion failures.
+  - Current status: The two expression operands are parenthesized without changing their mappings or rejection guards; physical PostgreSQL re-execution remains required.

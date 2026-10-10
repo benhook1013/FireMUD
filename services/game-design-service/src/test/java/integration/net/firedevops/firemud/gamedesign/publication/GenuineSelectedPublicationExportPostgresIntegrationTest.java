@@ -231,9 +231,12 @@ import org.flywaydb.core.Flyway;
 import org.jooq.DSLContext;
 import org.jooq.SQLDialect;
 import org.jooq.impl.DSL;
+import org.jooq.impl.DataSourceConnectionProvider;
+import org.jooq.impl.DefaultConfiguration;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.mapstruct.factory.Mappers;
+import org.springframework.boot.jooq.autoconfigure.SpringTransactionProvider;
 import org.springframework.jdbc.datasource.DataSourceTransactionManager;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
 import org.springframework.jdbc.datasource.TransactionAwareDataSourceProxy;
@@ -2284,11 +2287,12 @@ class GenuineSelectedPublicationExportPostgresIntegrationTest {
         .locations(migrationLocation(service))
         .load()
         .migrate();
-    return new Store(
-        DSL.using(new TransactionAwareDataSourceProxy(data), SQLDialect.POSTGRES),
-        new DataSourceTransactionManager(data),
-        null,
-        null);
+    var transactions = new DataSourceTransactionManager(data);
+    var configuration = new DefaultConfiguration();
+    configuration.set(SQLDialect.POSTGRES);
+    configuration.set(new DataSourceConnectionProvider(new TransactionAwareDataSourceProxy(data)));
+    configuration.set(new SpringTransactionProvider(transactions));
+    return new Store(DSL.using(configuration), transactions, null, null);
   }
 
   private static String migrationLocation(String service) {

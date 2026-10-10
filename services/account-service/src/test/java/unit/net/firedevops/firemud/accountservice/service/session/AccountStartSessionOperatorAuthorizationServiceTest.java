@@ -1049,12 +1049,13 @@ class AccountStartSessionOperatorAuthorizationServiceTest {
     assertThat(result).isEqualTo(harness.capture());
     assertThat(callbackCapture.get()).isEqualTo(harness.capture());
     verify(harness.captureRepository())
-        .lockReadExactCurrent(
+        .lockReadExactCurrentFromWorldReceiving(
             any(),
             eq(harness.tuple()),
             eq(LOGGING_PEER),
             eq(harness.record().reservationOwnerId()),
-            eq(harness.record().reservationClaimFence()));
+            eq(harness.record().reservationClaimFence()),
+            eq(WORLD_MANAGEMENT_PEER));
     verify(harness.captureRepository(), never())
         .prepareOrReadExact(any(), any(), anyString(), any(), anyLong());
     verify(harness.captureRepository(), never())
@@ -1088,7 +1089,8 @@ class AccountStartSessionOperatorAuthorizationServiceTest {
     assertThat(expiredCallback).hasValue(false);
     verify(expired.actors(), never()).withCurrentCommitted(any(), any(), any(), any(), any());
     verify(expired.captureRepository(), never())
-        .lockReadExactCurrent(any(), any(), anyString(), any(), anyLong());
+        .lockReadExactCurrentFromWorldReceiving(
+            any(), any(), anyString(), any(), anyLong(), anyString());
 
     ReadHarness changed = readHarness(NOW.plusSeconds(30));
     AccountControlUiAuthority.Snapshot changedSource =
@@ -1114,7 +1116,13 @@ class AccountStartSessionOperatorAuthorizationServiceTest {
                     .hasMessageContaining("Current Account source"));
     assertThat(changedCallback).hasValue(false);
     verify(changed.captureRepository())
-        .lockReadExactCurrent(any(), eq(changed.tuple()), eq(LOGGING_PEER), any(), anyLong());
+        .lockReadExactCurrentFromWorldReceiving(
+            any(),
+            eq(changed.tuple()),
+            eq(LOGGING_PEER),
+            any(),
+            anyLong(),
+            eq(WORLD_MANAGEMENT_PEER));
   }
 
   @Test
@@ -1171,7 +1179,8 @@ class AccountStartSessionOperatorAuthorizationServiceTest {
     assertThat(callback).hasValue(false);
     verify(harness.actors(), never()).withCurrentCommitted(any(), any(), any(), any(), any());
     verify(harness.captureRepository(), never())
-        .lockReadExactCurrent(any(), any(), anyString(), any(), anyLong());
+        .lockReadExactCurrentFromWorldReceiving(
+            any(), any(), anyString(), any(), anyLong(), anyString());
   }
 
   @Test
@@ -1835,6 +1844,10 @@ class AccountStartSessionOperatorAuthorizationServiceTest {
             });
     when(repository.findByControlPlaneRequestId(tuple.controlPlaneRequestId()))
         .thenReturn(Optional.of(record));
+    String exactWorldManagementPeerUri =
+        "spiffe://firemud/ns/"
+            + GrpcPeerIdentity.parseUri(exactGameSessionPeerUri).orElseThrow().namespace()
+            + "/sa/world-management-service";
     doAnswer(
             invocation -> {
               assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isTrue();
@@ -1844,6 +1857,22 @@ class AccountStartSessionOperatorAuthorizationServiceTest {
         .when(captureRepository)
         .lockReadExactCurrent(
             any(), eq(tuple), eq(exactLoggingPeerUri), eq(reservationOwnerId), eq(10L));
+    doAnswer(
+            invocation -> {
+              assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isTrue();
+              assertThat(invocation.<Current>getArgument(0).stored()).isSameAs(stored);
+              assertThat(invocation.<String>getArgument(2)).isEqualTo(exactLoggingPeerUri);
+              assertThat(invocation.<String>getArgument(5)).isEqualTo(exactWorldManagementPeerUri);
+              return capture;
+            })
+        .when(captureRepository)
+        .lockReadExactCurrentFromWorldReceiving(
+            any(),
+            eq(tuple),
+            eq(exactLoggingPeerUri),
+            eq(reservationOwnerId),
+            eq(10L),
+            eq(exactWorldManagementPeerUri));
     var service =
         new AccountStartSessionOperatorAuthorizationService(
             actors,

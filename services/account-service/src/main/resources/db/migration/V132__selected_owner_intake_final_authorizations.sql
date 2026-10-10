@@ -322,12 +322,12 @@ BEGIN
         FROM account_publication_authorization_read_frame(NEW.binding_bytes, p);
     IF binding_schema IS DISTINCT FROM expected_binding_schema
         OR recipient_value IS DISTINCT FROM
-            CASE scope_owner WHEN 'ENTITY_MANAGEMENT'
+            (CASE scope_owner WHEN 'ENTITY_MANAGEMENT'
                 THEN 'spiffe://firemud/ns/' || namespace_value || '/sa/entity-management-service'
-                ELSE 'spiffe://firemud/ns/' || namespace_value || '/sa/automation-scripting-service' END
+                ELSE 'spiffe://firemud/ns/' || namespace_value || '/sa/automation-scripting-service' END)
         OR purpose_value IS DISTINCT FROM
-            CASE scope_owner WHEN 'ENTITY_MANAGEMENT' THEN 'ENTITY_INTAKE_RETENTION'
-                ELSE 'AUTOMATION_INTAKE_RETENTION' END
+            (CASE scope_owner WHEN 'ENTITY_MANAGEMENT' THEN 'ENTITY_INTAKE_RETENTION'
+                ELSE 'AUTOMATION_INTAKE_RETENTION' END)
         OR count_text !~ '^[1-9][0-9]*$' THEN
         RAISE EXCEPTION 'Finalized authorization schema, reader, purpose, or source count is invalid'
             USING ERRCODE = '23514';
