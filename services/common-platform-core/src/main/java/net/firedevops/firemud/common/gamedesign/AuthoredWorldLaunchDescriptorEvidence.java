@@ -118,8 +118,8 @@ public record AuthoredWorldLaunchDescriptorEvidence(
             targetVersionId,
             requestedRuntimeFlagsJsonPresent,
             requestedRuntimeFlagsJson);
-    requireOptional(scriptPatchVersionPresent, scriptPatchVersion, "scriptPatchVersion");
-    requireOptional(remapSetIdPresent, remapSetId, "remapSetId");
+    requireOptionalIdentifier(scriptPatchVersionPresent, scriptPatchVersion, "scriptPatchVersion");
+    requireOptionalIdentifier(remapSetIdPresent, remapSetId, "remapSetId");
     requireText(launchDescriptorId, "launchDescriptorId");
     requirePositive(versionId, "versionId");
     if (targetVersionIdPresent && targetVersionId.longValue() != versionId) {
@@ -383,7 +383,7 @@ public record AuthoredWorldLaunchDescriptorEvidence(
     requireNonNil(sourceOperationId, "authoredWorldSourceOperationId");
     requireDigest(sourceEvidenceDigest, "authoredWorldSourceEvidenceDigest");
     requirePositive(gameTemplateId, "gameTemplateId");
-    requireOptional(requestedPatchPresent, requestedPatch, "requestedScriptPatchVersion");
+    requireOptionalIdentifier(requestedPatchPresent, requestedPatch, "requestedScriptPatchVersion");
     requireOptional(sourceVersionPresent, sourceVersion, "sourceVersionId");
     if (sourceVersionPresent) {
       requirePositive(sourceVersion, "sourceVersionId");
@@ -460,6 +460,13 @@ public record AuthoredWorldLaunchDescriptorEvidence(
     }
     if (value instanceof String text) {
       strictUtf8(text);
+    }
+  }
+
+  private static void requireOptionalIdentifier(boolean present, String value, String name) {
+    requireOptional(present, value, name);
+    if (present && value.isBlank()) {
+      throw new IllegalArgumentException(name + " must not be blank when present");
     }
   }
 
