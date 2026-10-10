@@ -14,7 +14,6 @@ import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
 import java.time.Instant;
-import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -22,22 +21,14 @@ import java.util.Objects;
 import java.util.UUID;
 import java.util.concurrent.Callable;
 import java.util.concurrent.CountDownLatch;
-import java.util.concurrent.ExecutionException;
-import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
-import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
-import java.util.concurrent.atomic.AtomicReference;
-import java.util.function.Function;
 import java.util.function.Supplier;
 import javax.sql.DataSource;
 import net.firedevops.firemud.account.v1.AbortGameplayAdmissionLeaseRequest;
-import net.firedevops.firemud.account.v1.FinalizeGameplayAdmissionLeaseRequest;
 import net.firedevops.firemud.account.v1.ReadGameplayAdmissionLeaseRequest;
-import net.firedevops.firemud.accountservice.dto.AccountGameplayAdmissionCommitConfirmation;
 import net.firedevops.firemud.accountservice.dto.AccountGameplayAdmissionLeaseOperation;
 import net.firedevops.firemud.accountservice.dto.AccountGameplayAdmissionLeaseOperation.State;
 import net.firedevops.firemud.accountservice.dto.AccountGameplayAdmissionOriginalAckReceipt;
@@ -76,32 +67,13 @@ class AccountGameplayAdmissionLeasePersistenceIntegrationTest {
       (context, failure) -> {
         // Only unexpected test failures reach this hook; expected assertThrows cases do not.
         try {
-          String testName = context.getRequiredTestMethod().getName();
-          boolean confirmationCase =
-              "staleSerializableConfirmationInsertRetriesInsteadOfLeakingUniqueViolation"
-                      .equals(testName)
-                  || "idlePrimaryConfirmationCapturesBeforeLocksAndIndependentlyReadsExactReceipt"
-                      .equals(testName);
           Throwable cause = failure;
-          var causeTypes = new ArrayList<String>();
           var visited =
               java.util.Collections.newSetFromMap(
                   new java.util.IdentityHashMap<Throwable, Boolean>());
           while (cause != null && visited.add(cause)) {
-            causeTypes.add(cause.getClass().getSimpleName());
             if (cause instanceof PSQLException postgresFailure) {
               var error = postgresFailure.getServerErrorMessage();
-              if (confirmationCase) {
-                System.err.printf(
-                    "Account admission confirmation failure for %s: causeTypes=%s "
-                        + "SQLSTATE=%s constraint=%s%n",
-                    testName,
-                    causeTypes,
-                    postgresFailure.getSQLState(),
-                    error == null
-                        ? "<unavailable>"
-                        : Objects.toString(error.getConstraint(), "<none>"));
-              }
               if ("23514".equals(postgresFailure.getSQLState())
                   && error != null
                   && ("account_admission_confirmation_wal_coverage".equals(error.getConstraint())
@@ -128,8 +100,6 @@ class AccountGameplayAdmissionLeasePersistenceIntegrationTest {
 
   private static final String TENANT = "22222222-2222-4222-8222-222222222222";
   private static final String OTHER = "33333333-3333-4333-8333-333333333333";
-  private static final long V120_WAL_COORDINATOR_TIMEOUT_SECONDS = 3;
-  private static final String V120_WAL_MARKER_TABLE = "account_v120_wal_coverage_markers";
 
   @BeforeAll
   static void start() {
@@ -1065,585 +1035,107 @@ class AccountGameplayAdmissionLeasePersistenceIntegrationTest {
   }
 
   @Test
-  void durableConfirmationStoresOriginalCommitProofAndRecoversLostResponseAfterExpiry()
-      throws Exception {
-    var context = context(null);
-    UUID account = account(context);
-    var original = pending(context, account);
-    var repository = new AccountGameplayAdmissionLeaseRepository(context.dsl());
+  void retainedUnstampedPreV120CommitCannotInventGenuineOriginalAcknowledgement() {
+    var context = context("119");
+    var original = pending(context, account(context));
     UUID decision = UUID.randomUUID();
-    tx(context, () -> repository.recordCommitted(original, decision));
-    var unchanged = storageSnapshot(context);
-    var transactionManager = new DataSourceTransactionManager(context.dataSource());
-    var confirmationOwner =
-        new AccountGameplayAdmissionCommitConfirmationOwner(context.dataSource(), "test");
-    var request =
-        FinalizeGameplayAdmissionLeaseRequest.newBuilder()
-            .setLease(AccountGameplayAdmissionLeaseWireCodec.encodeReference(original))
-            .setBindingDecisionId(decision.toString())
-            .build();
-
-    // The loopback peer, carrier and decision are synthetic upstream fixtures. The real Java
-    // owner creates and independently reads Account SQL proof; this does not prove mTLS.
-    syntheticReadPeer().call(() -> confirmationOwner.confirm(request)); // Discard the response.
-    // Inspect stored fields separately; this visible row alone is not durable readback proof.
-    var receipt =
-        Objects.requireNonNull(
+    tx(
+        context,
+        () ->
+            new AccountGameplayAdmissionLeaseRepository(context.dsl())
+                .recordCommitted(original, decision));
+    var before = operation(context, original).intoMap();
+    migrate(context, null);
+    var after = operation(context, original).intoMap();
+    for (var entry : before.entrySet())
+      assertThat(after).containsEntry(entry.getKey(), entry.getValue());
+    assertThat(after.get("finalization_xid")).isNull();
+    assertThatThrownBy(
+            () ->
+                new AccountGameplayAdmissionOriginalCommitExecutor(context.dataSource())
+                    .execute(original, decision))
+        .hasMessageContaining("Fresh owned Account original COMMIT required");
+    assertThatThrownBy(
+            () ->
+                new AccountGameplayAdmissionOriginalAckReceiptCommitExecutor(context.dataSource())
+                    .read(original, decision))
+        .hasMessageContaining("Exact durable original Account acknowledgement receipt required");
+    assertThat(operation(context, original).intoMap()).isEqualTo(after);
+    assertThat(
             context
                 .dsl()
-                .fetchOne(
-                    "SELECT * FROM account_gameplay_admission_commit_confirmations WHERE request_id = ?",
-                    requestId(original)));
-    assertThat(receipt.get("confirmation_version", Short.class)).isEqualTo((short) 1);
-    assertThat(receipt.get("request_id", UUID.class)).isEqualTo(requestId(original));
-    assertThat(receipt.get("account_uuid", UUID.class)).isEqualTo(account);
-    assertThat(receipt.get("lease_id", UUID.class))
-        .isEqualTo(UUID.fromString((String) original.carrier().get("leaseId")));
-    assertThat(receipt.get("lease_fence", Long.class))
-        .isEqualTo(original.leaseFence().longValueExact());
-    assertThat(receipt.get("evidence_sha256", String.class)).isEqualTo(original.sha256());
-    assertThat(receipt.get("binding_decision_id", UUID.class)).isEqualTo(decision);
-    assertThat(receipt.get("expires_at_ms", Long.class)).isEqualTo(expiresAt(original));
-    assertThat(receipt.get("committed_before_ms", Long.class))
-        .isPositive()
-        .isLessThan(expiresAt(original));
-    assertThat(receipt.get("finalization_xid", String.class))
-        .isEqualTo(operation(context, original).get("finalization_xid", String.class));
-    assertThat(receipt.get("confirmation_xid", String.class))
-        .isNotEqualTo(receipt.get("finalization_xid", String.class));
-    assertThat(
-            Objects.requireNonNull(
-                    context
-                        .dsl()
-                        .fetchOne(
-                            "SELECT ?::pg_lsn >= ?::pg_lsn AS covered",
-                            receipt.get("wal_flush_lsn", String.class),
-                            receipt.get("wal_insert_lsn", String.class)))
-                .get("covered", Boolean.class))
-        .isTrue();
-    // Recovery opens the real owner's fresh transaction and covers the independently committed
-    // receipt's WAL before returning the immutable DTO, without reconstructing any proof fields.
-    var recovered = syntheticReadPeer().call(() -> confirmationOwner.read(request));
-    assertThat(recovered.operation().state()).isEqualTo(State.COMMITTED);
-    assertThat(recovered.operation().evidence().canonicalJson())
-        .isEqualTo(original.canonicalJson());
-    assertThat(recovered.operation().evidence().sha256()).isEqualTo(original.sha256());
-    assertThat(recovered.operation().bindingDecisionId()).isEqualTo(decision);
-    assertThat(recovered.requestId()).isEqualTo(receipt.get("request_id", UUID.class));
-    assertThat(recovered.accountId()).isEqualTo(receipt.get("account_uuid", UUID.class));
-    assertThat(recovered.leaseId()).isEqualTo(receipt.get("lease_id", UUID.class));
-    assertThat(recovered.leaseFence()).isEqualTo(receipt.get("lease_fence", Long.class));
-    assertThat(recovered.confirmationVersion())
-        .isEqualTo(receipt.get("confirmation_version", Short.class));
-    assertThat(recovered.evidenceSha256()).isEqualTo(receipt.get("evidence_sha256", String.class));
-    assertThat(recovered.bindingDecisionId())
-        .isEqualTo(receipt.get("binding_decision_id", UUID.class));
-    assertThat(recovered.expiresAtMs()).isEqualTo(receipt.get("expires_at_ms", Long.class));
-    assertThat(recovered.committedBeforeMs())
-        .isEqualTo(receipt.get("committed_before_ms", Long.class));
-    assertThat(recovered.finalizationXid())
-        .isEqualTo(receipt.get("finalization_xid", String.class));
-    assertThat(recovered.confirmationXid())
-        .isEqualTo(receipt.get("confirmation_xid", String.class));
-    assertThat(recovered.walInsertLsn()).isEqualTo(receipt.get("wal_insert_lsn", String.class));
-    assertThat(recovered.walFlushLsn()).isEqualTo(receipt.get("wal_flush_lsn", String.class));
-    waitPastDeadline(context, original);
-    assertThat(tx(context, () -> confirm(context, original, decision))).isEqualTo(receipt);
-    assertThat(syntheticReadPeer().call(() -> confirmationOwner.read(request)))
-        .isEqualTo(recovered);
-    assertThat(storageSnapshot(context)).isEqualTo(unchanged);
-    var readOwner = new AccountGameplayAdmissionReadOwner(repository, transactionManager, "test");
-    assertFailedExactRead(readOwner, original);
-  }
-
-  @Test
-  void receiptPhysicalCommitPrecedesIndependentV120ReadOnAnotherConnection() throws Exception {
-    var context = context(null);
-    var original = pending(context, account(context));
-    UUID decision = UUID.randomUUID();
-    new AccountGameplayAdmissionOriginalCommitExecutor(context.dataSource())
-        .execute(original, decision);
-    createV120WalCoverageMarkerTable(context);
-    String applicationName = v120ApplicationName();
-    var trace = new ReceiptCommitTrace();
-    var owner =
-        new AccountGameplayAdmissionCommitConfirmationOwner(
-            receiptCommitDataSource(
-                applicationNamedDataSource(context.dataSource(), applicationName),
-                ReceiptCommitFault.NONE,
-                trace),
-            "test");
-
-    var receipt =
-        withV120WalCoverageCoordinator(
-            context,
-            applicationName,
-            () ->
-                callWithSyntheticReadPeer(
-                    () -> owner.confirm(confirmationRequest(original, decision))),
-            AccountGameplayAdmissionCommitConfirmation::walInsertLsn);
-
-    assertThat(trace.count("physical-commit")).isEqualTo(2);
-    assertThat(trace.count("v120-read")).isEqualTo(1);
-    var receiptCommit = firstEvent(trace, "physical-commit");
-    var independentRead = firstEvent(trace, "v120-read");
-    assertThat(trace.events().indexOf(receiptCommit))
-        .isLessThan(trace.events().indexOf(independentRead));
-    assertThat(independentRead.connectionId()).isNotEqualTo(receiptCommit.connectionId());
-    assertThat(receipt.operation().evidence().canonicalJson()).isEqualTo(original.canonicalJson());
-    assertThat(receipt.operation().evidence().sha256()).isEqualTo(original.sha256());
-    assertThat(receipt.bindingDecisionId()).isEqualTo(decision);
-    assertThat(receipt.expiresAtMs()).isEqualTo(expiresAt(original));
-    assertThat(receipt.committedBeforeMs()).isPositive().isLessThan(expiresAt(original));
-    assertThat(receipt.confirmationXid()).isNotEqualTo(receipt.finalizationXid());
-    assertThat(operation(context, original).get("finalization_xid", String.class))
-        .isEqualTo(receipt.finalizationXid());
-    assertThat(
-            context.dsl().fetchCount(DSL.table("account_gameplay_admission_commit_confirmations")))
-        .isEqualTo(1);
-  }
-
-  @Test
-  void lostReceiptCommitAcknowledgementDeniesThenRecoversOnlyThroughIndependentV120Read()
-      throws Exception {
-    var context = context(null);
-    var original = pending(context, account(context));
-    UUID decision = UUID.randomUUID();
-    new AccountGameplayAdmissionOriginalCommitExecutor(context.dataSource())
-        .execute(original, decision);
-    var trace = new ReceiptCommitTrace();
-    var owner =
-        new AccountGameplayAdmissionCommitConfirmationOwner(
-            receiptCommitDataSource(
-                context.dataSource(), ReceiptCommitFault.AFTER_FIRST_COMMIT, trace),
-            "test");
-    var request = confirmationRequest(original, decision);
-
-    assertThatThrownBy(() -> syntheticReadPeer().call(() -> owner.confirm(request)))
-        .isInstanceOf(StatusRuntimeException.class)
-        .satisfies(
-            failure -> {
-              if (trace.count("physical-commit") != 1) describeLostReceiptCommitFailure(failure);
-              assertThat(Status.fromThrowable(failure).getCode())
-                  .isEqualTo(Status.Code.UNAVAILABLE);
-            });
-    assertThat(trace.count("physical-commit")).isEqualTo(1);
-    assertThat(trace.count("v120-read")).isZero();
-
-    var retainedRow = confirmationRow(context, original);
-    assertThat(retainedRow.get("request_id", UUID.class)).isEqualTo(requestId(original));
-    assertThat(retainedRow.get("evidence_sha256", String.class)).isEqualTo(original.sha256());
-    assertThat(retainedRow.get("binding_decision_id", UUID.class)).isEqualTo(decision);
-    assertThat(retainedRow.get("expires_at_ms", Long.class)).isEqualTo(expiresAt(original));
-    assertThat(retainedRow.get("committed_before_ms", Long.class))
-        .isPositive()
-        .isLessThan(expiresAt(original));
-    assertThat(retainedRow.get("finalization_xid", String.class))
-        .isEqualTo(operation(context, original).get("finalization_xid", String.class));
-    assertThat(retainedRow.get("confirmation_xid", String.class))
-        .isNotEqualTo(retainedRow.get("finalization_xid", String.class));
-
-    // Recovery is an explicit fresh owner read, which invokes the existing V120 independent WAL
-    // coverage observer. No confirm retry can mint or acknowledge the lost receipt COMMIT.
-    var recovered = syntheticReadPeer().call(() -> owner.read(request));
-    assertThat(trace.count("v120-read")).isEqualTo(1);
-    var lostAckCommit = firstEvent(trace, "physical-commit");
-    var independentRead = firstEvent(trace, "v120-read");
-    assertThat(trace.events().indexOf(lostAckCommit))
-        .isLessThan(trace.events().indexOf(independentRead));
-    assertThat(independentRead.connectionId()).isNotEqualTo(lostAckCommit.connectionId());
-    assertThat(recovered.requestId()).isEqualTo(retainedRow.get("request_id", UUID.class));
-    assertThat(recovered.evidenceSha256())
-        .isEqualTo(retainedRow.get("evidence_sha256", String.class));
-    assertThat(recovered.bindingDecisionId())
-        .isEqualTo(retainedRow.get("binding_decision_id", UUID.class));
-    assertThat(recovered.expiresAtMs()).isEqualTo(retainedRow.get("expires_at_ms", Long.class));
-    assertThat(recovered.committedBeforeMs())
-        .isEqualTo(retainedRow.get("committed_before_ms", Long.class));
-    assertThat(recovered.finalizationXid())
-        .isEqualTo(retainedRow.get("finalization_xid", String.class));
-    assertThat(recovered.confirmationXid())
-        .isEqualTo(retainedRow.get("confirmation_xid", String.class));
-    assertThat(confirmationRow(context, original).intoMap()).isEqualTo(retainedRow.intoMap());
-  }
-
-  @Test
-  void receiptCommitFailureOrPriorWalDenialRollsBackWithoutReceiptOrIndependentRead() {
-    var context = context(null);
-    var original = pending(context, account(context));
-    UUID decision = UUID.randomUUID();
-    new AccountGameplayAdmissionOriginalCommitExecutor(context.dataSource())
-        .execute(original, decision);
-    var committedOperation = operation(context, original).intoMap();
-    var unchanged = storageSnapshot(context);
-    var trace = new ReceiptCommitTrace();
-    var owner =
-        new AccountGameplayAdmissionCommitConfirmationOwner(
-            receiptCommitDataSource(
-                context.dataSource(), ReceiptCommitFault.BEFORE_FIRST_COMMIT, trace),
-            "test");
-
-    assertThatThrownBy(
-            () ->
-                syntheticReadPeer()
-                    .call(() -> owner.confirm(confirmationRequest(original, decision))))
-        .isInstanceOf(StatusRuntimeException.class)
-        .satisfies(
-            failure -> {
-              assertThat(Status.fromThrowable(failure).getCode())
-                  .isEqualTo(Status.Code.UNAVAILABLE);
-              int commitAttempts = trace.count("commit-attempt");
-              assertThat(commitAttempts).isBetween(0, 1);
-              if (commitAttempts == 0) assertGlobalWalCoverageFailure(failure);
-              else
-                assertCauseChainContainsMessage(
-                    failure, "Test failed before physical receipt COMMIT");
-            });
-    assertThat(trace.count("physical-commit")).isZero();
-    assertThat(trace.count("v120-read")).isZero();
-    assertThat(
-            context.dsl().fetchCount(DSL.table("account_gameplay_admission_commit_confirmations")))
+                .fetchCount(DSL.table("account_gameplay_admission_original_commit_ack_receipts")))
         .isZero();
-    assertThat(operation(context, original).intoMap()).isEqualTo(committedOperation);
-    assertThat(storageSnapshot(context)).isEqualTo(unchanged);
   }
 
   @Test
-  void idlePrimaryConfirmationCapturesBeforeLocksAndIndependentlyReadsExactReceipt() {
-    var context = context(null);
+  void syntheticHistoricalV120RowSurvivesRetirementWithoutClaimingDurability() {
+    var context = context("135");
     var original = pending(context, account(context));
-    var repository = new AccountGameplayAdmissionLeaseRepository(context.dsl());
     UUID decision = UUID.randomUUID();
-    tx(context, () -> repository.recordCommitted(original, decision));
-    var unchanged = storageSnapshot(context);
-
-    String finalizationXid = operation(context, original).get("finalization_xid", String.class);
-    // No marker, forced flush or unrelated writer is used to make proof succeed. Establish a
-    // fixed snapshot before the call and prove the original finalizer is independently visible.
-    // Background WAL may advance, so a pre-call global LSN need not equal the stored fence.
-    var receipt =
-        tx(
-            context,
-            () -> {
-              assertThat(
-                      Objects.requireNonNull(
-                              context
-                                  .dsl()
-                                  .fetchOne(
-                                      "SELECT pg_visible_in_snapshot(?::xid8, pg_current_snapshot()) "
-                                          + "AND pg_current_xact_id_if_assigned() IS NULL AS independent",
-                                      finalizationXid))
-                          .get("independent", Boolean.class))
-                  .isTrue();
-              String beforeHeapReads =
-                  Objects.requireNonNull(
-                          context.dsl().fetchOne("SELECT pg_current_wal_insert_lsn()::text AS lsn"))
-                      .get("lsn", String.class);
-              var created = confirm(context, original, decision);
-              assertThat(
-                      Objects.requireNonNull(
-                              context
-                                  .dsl()
-                                  .fetchOne(
-                                      "SELECT ?::pg_lsn >= ?::pg_lsn "
-                                          + "AND ?::pg_lsn >= ?::pg_lsn AS snapshot_fence_covered",
-                                      created.get("wal_insert_lsn", String.class),
-                                      beforeHeapReads,
-                                      created.get("wal_flush_lsn", String.class),
-                                      created.get("wal_insert_lsn", String.class)))
-                          .get("snapshot_fence_covered", Boolean.class))
-                  .isTrue();
-              return created;
-            });
-
+    var ack =
+        new AccountGameplayAdmissionOriginalCommitExecutor(context.dataSource())
+            .execute(original, decision);
+    var beforeSources = storageSnapshot(context);
+    var beforeChecksums = flywayChecksums(context);
+    var beforeDefinitions = retainedAdmissionDefinitions(context);
+    // Explicit synthetic history fixture only: this bypass cannot prove temporal or WAL durability.
+    // Restore the existing guard in this same transaction before any upgrade or genuine proof.
     tx(
         context,
         () -> {
-          assertThat(
-                  Objects.requireNonNull(
-                          context
-                              .dsl()
-                              .fetchOne(
-                                  "SELECT pg_visible_in_snapshot(?::xid8, pg_current_snapshot()) "
-                                      + "AND pg_current_xact_id_if_assigned() IS NULL AS independent",
-                                  receipt.get("confirmation_xid", String.class)))
-                      .get("independent", Boolean.class))
-              .isTrue();
-          assertThat(readConfirmation(context, original, decision)).isEqualTo(receipt);
+          context
+              .dsl()
+              .execute(
+                  "ALTER TABLE account_gameplay_admission_commit_confirmations DISABLE TRIGGER account_admission_confirmation_guard");
+          context
+              .dsl()
+              .execute(
+                  "INSERT INTO account_gameplay_admission_commit_confirmations(confirmation_version, request_id, account_uuid, lease_id, lease_fence, evidence_sha256, binding_decision_id, expires_at_ms, finalization_xid, wal_insert_lsn, wal_flush_lsn, committed_before_ms, confirmation_xid) SELECT 1, request_id, account_uuid, lease_id, lease_fence, evidence_sha256, binding_decision_id, expires_at_ms, finalization_xid, '0/1', '0/1', ?, pg_current_xact_id()::text FROM account_gameplay_admission_lease_operations WHERE request_id = ?",
+                  ack.committedBeforeMs(),
+                  requestId(original));
+          context
+              .dsl()
+              .execute(
+                  "ALTER TABLE account_gameplay_admission_commit_confirmations ENABLE TRIGGER account_admission_confirmation_guard");
+          // A visible synthetic row in its own transaction remains unusable as independent proof.
+          context.dsl().execute("SAVEPOINT synthetic_history_read");
+          assertThatThrownBy(
+                  () ->
+                      context
+                          .dsl()
+                          .fetch(
+                              "SELECT * FROM account_gameplay_admission_read_commit_confirmation(?, ?, ?)",
+                              requestId(original),
+                              original.sha256(),
+                              decision))
+              .hasMessageContaining("requires independent receipt commit");
+          context.dsl().execute("ROLLBACK TO SAVEPOINT synthetic_history_read");
+          context.dsl().execute("RELEASE SAVEPOINT synthetic_history_read");
           return null;
         });
-    assertThat(storageSnapshot(context)).isEqualTo(unchanged);
-  }
-
-  @Test
-  void staleSerializableConfirmationInsertRetriesInsteadOfLeakingUniqueViolation()
-      throws Exception {
-    var context = context(null);
-    var original = pending(context, account(context));
-    var repository = new AccountGameplayAdmissionLeaseRepository(context.dsl());
-    UUID decision = UUID.randomUUID();
-    tx(context, () -> repository.recordCommitted(original, decision));
-    var unchanged = storageSnapshot(context);
-    var snapshotReady = new CountDownLatch(1);
-    var winnerCommitted = new CountDownLatch(1);
-    try (var executor = Executors.newSingleThreadExecutor()) {
-      var stale =
-          executor.submit(
-              () ->
-                  tx(
-                      context,
-                      () -> {
-                        assertThat(
-                                context
-                                    .dsl()
-                                    .fetchCount(
-                                        DSL.table(
-                                            "account_gameplay_admission_commit_confirmations")))
-                            .isZero();
-                        snapshotReady.countDown();
-                        try {
-                          if (!winnerCommitted.await(10, TimeUnit.SECONDS))
-                            throw new IllegalStateException("winner commit timeout");
-                        } catch (InterruptedException interrupted) {
-                          Thread.currentThread().interrupt();
-                          throw new IllegalStateException(interrupted);
-                        }
-                        return confirm(context, original, decision);
-                      }));
-      Record retained;
-      try {
-        assertThat(snapshotReady.await(10, TimeUnit.SECONDS)).isTrue();
-        retained = tx(context, () -> confirm(context, original, decision));
-      } finally {
-        winnerCommitted.countDown();
-      }
-      assertThatThrownBy(() -> stale.get(30, TimeUnit.SECONDS))
-          .satisfies(
-              failure -> {
-                Throwable cause = failure;
-                while (cause != null && !(cause instanceof java.sql.SQLException))
-                  cause = cause.getCause();
-                assertThat(cause).isInstanceOf(java.sql.SQLException.class);
-                assertThat(((java.sql.SQLException) cause).getSQLState()).isEqualTo("40001");
-              });
-      assertThat(tx(context, () -> confirm(context, original, decision))).isEqualTo(retained);
-      // This case proves serialization and exact retained storage, not the distinct V120 WAL
-      // durability observation. Dedicated independent-read/receipt-COMMIT cases cover that gate;
-      // a global insert-frontier denial remains an open durability limitation, never a bypass.
-      assertThat(tx(context, () -> confirmationRow(context, original)).intoMap())
-          .isEqualTo(retained.intoMap());
-    }
-    assertThat(
-            context.dsl().fetchCount(DSL.table("account_gameplay_admission_commit_confirmations")))
-        .isEqualTo(1);
-    assertThat(storageSnapshot(context)).isEqualTo(unchanged);
-  }
-
-  @Test
-  void updateBeforeExpiryButPhysicalCommitAfterExpiryCannotCreateConfirmation() {
-    var context = context(null);
-    var original = pending(context, account(context), 1000);
-    var repository = new AccountGameplayAdmissionLeaseRepository(context.dsl());
-    UUID decision = UUID.randomUUID();
-    tx(
-        context,
-        () -> {
-          repository.recordCommitted(original, decision);
-          assertThat(databaseNow(context)).isLessThan(expiresAt(original));
-          waitPastDeadline(context, original);
-          return null;
-        });
-    assertThat(operation(context, original).get("status", String.class)).isEqualTo("COMMITTED");
-    assertThat(operation(context, original).get("finalization_xid", String.class)).isNotNull();
-    var unchanged = storageSnapshot(context);
-    assertThatThrownBy(() -> tx(context, () -> confirm(context, original, decision)))
-        .hasMessageContaining("original deadline expired");
-    assertThatThrownBy(() -> tx(context, () -> readConfirmation(context, original, decision)))
-        .hasMessageContaining("exact durable receipt required");
-    assertThat(
-            context.dsl().fetchCount(DSL.table("account_gameplay_admission_commit_confirmations")))
-        .isZero();
-    assertThat(storageSnapshot(context)).isEqualTo(unchanged);
-  }
-
-  @Test
-  void sameTransactionAndReleasedSubtransactionCannotConfirmOriginalFinalization() {
-    var context = context(null);
-    UUID account = account(context);
-    var repository = new AccountGameplayAdmissionLeaseRepository(context.dsl());
-    for (boolean subtransaction : List.of(false, true)) {
-      var original = pending(context, account);
-      UUID decision = UUID.randomUUID();
-      tx(
-          context,
-          () -> {
-            if (subtransaction) context.dsl().execute("SAVEPOINT original_finalization");
-            repository.recordCommitted(original, decision);
-            if (subtransaction) context.dsl().execute("RELEASE SAVEPOINT original_finalization");
-            var stamp = operation(context, original).get("finalization_xid", String.class);
-            assertThat(stamp)
-                .isEqualTo(
-                    Objects.requireNonNull(
-                            context.dsl().fetchOne("SELECT pg_current_xact_id()::text AS xid"))
-                        .get("xid", String.class));
-            assertDeniedInSavepoint(
-                context,
-                () -> confirm(context, original, decision),
-                "requires independent finalization commit");
-            assertDeniedInSavepoint(
-                context,
-                () ->
-                    context
-                        .dsl()
-                        .execute(
-                            "INSERT INTO account_gameplay_admission_commit_confirmations(request_id, evidence_sha256, binding_decision_id) VALUES (?, ?, ?)",
-                            requestId(original),
-                            original.sha256(),
-                            decision),
-                "requires independent finalization commit");
-            return null;
-          });
-    }
-    assertThat(
-            context.dsl().fetchCount(DSL.table("account_gameplay_admission_commit_confirmations")))
-        .isZero();
-  }
-
-  @Test
-  void missingPendingRolledBackAbortedAndRetainedUnstampedCommitsStayUnproved() {
-    var context = context("119");
-    UUID account = account(context);
-    var repository = new AccountGameplayAdmissionLeaseRepository(context.dsl());
-    var retained = pending(context, account);
-    UUID decision = UUID.randomUUID();
-    tx(context, () -> repository.recordCommitted(retained, decision));
-    var retainedPending = pending(context, account);
-    var aborted = pending(context, account);
-    tx(context, () -> repository.recordAborted(aborted, null, UUID.randomUUID()));
+    var retained =
+        context
+            .dsl()
+            .fetchSingle("SELECT * FROM account_gameplay_admission_commit_confirmations")
+            .intoMap();
     migrate(context, null);
-    assertThat(operation(context, retained).get("finalization_xid", String.class)).isNull();
-    assertThat(operation(context, retainedPending).get("finalization_xid", String.class)).isNull();
-    assertThat(operation(context, aborted).get("finalization_xid", String.class)).isNull();
-    var rolledBack = pending(context, account);
-    assertThatThrownBy(
-            () ->
-                tx(
-                    context,
-                    () -> {
-                      repository.recordCommitted(rolledBack, decision);
-                      throw new IllegalStateException("roll back physical finalization");
-                    }))
-        .hasMessageContaining("roll back physical finalization");
-    assertThat(operation(context, rolledBack).get("status", String.class)).isEqualTo("PENDING");
-    assertThat(operation(context, rolledBack).get("finalization_xid", String.class)).isNull();
-    var unchanged = storageSnapshot(context);
-    for (var unproved : List.of(retained, retainedPending, aborted, rolledBack)) {
-      assertThatThrownBy(() -> tx(context, () -> confirm(context, unproved, decision)))
-          .hasMessageContaining("exact committed binding required");
-      assertThatThrownBy(() -> tx(context, () -> readConfirmation(context, unproved, decision)))
-          .hasMessageContaining("exact durable receipt required");
-    }
-    assertThatThrownBy(
-            () ->
-                tx(
-                    context,
-                    () ->
-                        context
-                            .dsl()
-                            .fetchOne(
-                                "SELECT * FROM account_gameplay_admission_confirm_committed(?, ?, ?)",
-                                UUID.randomUUID(),
-                                retained.sha256(),
-                                decision)))
-        .hasMessageContaining("operation missing");
     assertThat(
-            context.dsl().fetchCount(DSL.table("account_gameplay_admission_commit_confirmations")))
-        .isZero();
-    assertThat(storageSnapshot(context)).isEqualTo(unchanged);
-  }
-
-  @Test
-  void confirmationRejectsChangedBindingsAndCallerProofAndRemainsImmutable() {
-    var context = context(null);
-    UUID account = account(context);
-    var original = pending(context, account);
-    var repository = new AccountGameplayAdmissionLeaseRepository(context.dsl());
-    UUID decision = UUID.randomUUID();
-    UUID request = requestId(original);
-    assertThatThrownBy(
-            () ->
-                tx(
-                    context,
-                    () ->
-                        context
-                            .dsl()
-                            .execute(
-                                "UPDATE account_gameplay_admission_lease_operations SET status = 'COMMITTED', binding_decision_id = ?, finalization_xid = '1' WHERE request_id = ?",
-                                decision,
-                                request)))
-        .hasMessageContaining("finalization transaction is database stamped");
-    tx(context, () -> repository.recordCommitted(original, decision));
-    var unchanged = storageSnapshot(context);
-    // SQL owns the transaction prerequisite even for callers bypassing the Java owner.
-    for (int isolation :
+            context
+                .dsl()
+                .fetchSingle("SELECT * FROM account_gameplay_admission_commit_confirmations")
+                .intoMap())
+        .isEqualTo(retained);
+    assertThat(storageSnapshot(context)).isEqualTo(beforeSources);
+    assertThat(retainedAdmissionDefinitions(context)).isEqualTo(beforeDefinitions);
+    for (var entry : beforeChecksums.entrySet())
+      assertThat(flywayChecksums(context)).containsEntry(entry.getKey(), entry.getValue());
+    assertThat(flywayChecksums(context)).containsKey("136");
+    for (String sql :
         List.of(
-            TransactionDefinition.ISOLATION_READ_COMMITTED,
-            TransactionDefinition.ISOLATION_REPEATABLE_READ)) {
-      var unsupported =
-          new TransactionTemplate(new DataSourceTransactionManager(context.dataSource()));
-      unsupported.setIsolationLevel(isolation);
-      for (Supplier<?> action :
-          List.<Supplier<?>>of(
-              () -> confirm(context, original, decision),
-              () -> readConfirmation(context, original, decision),
-              () ->
-                  context
-                      .dsl()
-                      .execute(
-                          "INSERT INTO account_gameplay_admission_commit_confirmations(request_id, evidence_sha256, binding_decision_id) VALUES (?, ?, ?)",
-                          request,
-                          original.sha256(),
-                          decision))) {
-        assertThatThrownBy(() -> unsupported.execute(status -> action.get()))
-            .hasMessageContaining("writable SERIALIZABLE transaction required");
-      }
-    }
-    var readOnly = new TransactionTemplate(new DataSourceTransactionManager(context.dataSource()));
-    readOnly.setIsolationLevel(TransactionDefinition.ISOLATION_SERIALIZABLE);
-    readOnly.setReadOnly(true);
-    assertThatThrownBy(
-            () -> readOnly.execute(status -> readConfirmation(context, original, decision)))
-        .hasMessageContaining("writable SERIALIZABLE transaction required");
-    assertThatThrownBy(() -> readOnly.execute(status -> confirm(context, original, decision)))
-        .hasMessageContaining("read-only transaction");
-    assertThatThrownBy(
-            () ->
-                tx(
-                    context,
-                    () ->
-                        context
-                            .dsl()
-                            .fetchOne(
-                                "SELECT * FROM account_gameplay_admission_confirm_committed(?, ?, ?)",
-                                request,
-                                "b".repeat(64),
-                                decision)))
-        .hasMessageContaining("exact committed binding required");
-    assertThatThrownBy(() -> tx(context, () -> confirm(context, original, UUID.randomUUID())))
-        .hasMessageContaining("exact committed binding required");
-    // Every proof/identity field is database-derived even if supplied values look plausible.
-    for (String assignment :
-        List.of(
-            "account_uuid = '" + account + "'::uuid",
-            "lease_id = '" + original.carrier().get("leaseId") + "'::uuid",
-            "lease_fence = 1",
-            "expires_at_ms = " + expiresAt(original),
-            "finalization_xid = '1'",
-            "wal_insert_lsn = '0/1'",
-            "wal_flush_lsn = '0/1'",
-            "committed_before_ms = 1",
-            "confirmation_xid = '1'")) {
-      String[] fieldAndValue = assignment.split(" = ", 2);
+            "SELECT * FROM account_gameplay_admission_confirm_committed(?, ?, ?)",
+            "INSERT INTO account_gameplay_admission_commit_confirmations(request_id, evidence_sha256, binding_decision_id) VALUES (?, ?, ?)",
+            "INSERT INTO account_gameplay_admission_commit_confirmations(request_id, evidence_sha256, binding_decision_id) VALUES (?, ?, ?) ON CONFLICT (request_id) DO NOTHING")) {
       assertThatThrownBy(
               () ->
                   tx(
@@ -1651,33 +1143,18 @@ class AccountGameplayAdmissionLeasePersistenceIntegrationTest {
                       () ->
                           context
                               .dsl()
-                              .execute(
-                                  "INSERT INTO account_gameplay_admission_commit_confirmations(request_id, evidence_sha256, binding_decision_id, "
-                                      + fieldAndValue[0]
-                                      + ") VALUES (?, ?, ?, "
-                                      + fieldAndValue[1]
-                                      + ")",
-                                  request,
-                                  original.sha256(),
-                                  decision)))
-          .hasMessageContaining("proof is database derived");
+                              .execute(sql, requestId(original), original.sha256(), decision)))
+          .hasMessageContaining("confirmation writes are retired");
     }
-    var receipt = tx(context, () -> confirm(context, original, decision));
     for (String mutation :
         List.of(
             "UPDATE account_gameplay_admission_commit_confirmations SET committed_before_ms = 1",
-            "UPDATE account_gameplay_admission_commit_confirmations SET expires_at_ms = expires_at_ms + 1",
-            "UPDATE account_gameplay_admission_commit_confirmations SET evidence_sha256 = '"
-                + "b".repeat(64)
-                + "'",
             "DELETE FROM account_gameplay_admission_commit_confirmations",
             "TRUNCATE account_gameplay_admission_commit_confirmations")) {
       assertThatThrownBy(() -> tx(context, () -> context.dsl().execute(mutation)))
           .hasMessageContaining("confirmation is immutable");
     }
-    assertThatThrownBy(
-            () -> tx(context, () -> readConfirmation(context, original, UUID.randomUUID())))
-        .hasMessageContaining("exact durable receipt required");
+    // Historical lookup remains present and still rejects an unverifiable exact binding.
     assertThatThrownBy(
             () ->
                 tx(
@@ -1685,124 +1162,51 @@ class AccountGameplayAdmissionLeasePersistenceIntegrationTest {
                     () ->
                         context
                             .dsl()
-                            .execute(
-                                "UPDATE account_gameplay_admission_lease_operations SET finalization_xid = '1' WHERE request_id = ?",
-                                request)))
-        .hasMessageContaining("finalization transaction is database stamped");
-    assertThat(tx(context, () -> readConfirmation(context, original, decision))).isEqualTo(receipt);
-    assertThat(storageSnapshot(context)).isEqualTo(unchanged);
-  }
-
-  @Test
-  void sameTransactionReceiptReadAndRolledBackConfirmationCannotProveDurability() {
-    var context = context(null);
-    var original = pending(context, account(context));
-    var repository = new AccountGameplayAdmissionLeaseRepository(context.dsl());
-    UUID decision = UUID.randomUUID();
-    tx(context, () -> repository.recordCommitted(original, decision));
-    createV120WalCoverageMarkerTable(context);
-    for (boolean subtransaction : List.of(false, true)) {
-      assertThatThrownBy(
-              () ->
-                  tx(
-                      context,
-                      () -> {
-                        if (subtransaction) context.dsl().execute("SAVEPOINT receipt_creation");
-                        String applicationName = v120ApplicationName();
-                        var receipt =
-                            withV120WalCoverageCoordinator(
-                                context,
-                                applicationName,
-                                () -> {
-                                  setLocalApplicationName(context.dsl(), applicationName);
-                                  return confirm(context, original, decision);
-                                },
-                                row -> row.get("wal_insert_lsn", String.class));
-                        assertThat(receipt.get("committed_before_ms", Long.class))
-                            .isPositive()
-                            .isLessThan(expiresAt(original));
-                        assertThat(receipt.get("expires_at_ms", Long.class))
-                            .isEqualTo(expiresAt(original));
-                        if (subtransaction)
-                          context.dsl().execute("RELEASE SAVEPOINT receipt_creation");
-                        assertDeniedInSavepoint(
-                            context,
-                            () -> readConfirmation(context, original, decision),
-                            "requires independent receipt commit");
-                        throw new IllegalStateException("roll back confirmation commit");
-                      }))
-          .hasMessageContaining("roll back confirmation commit");
-    }
-    assertThat(
-            context.dsl().fetchCount(DSL.table("account_gameplay_admission_commit_confirmations")))
-        .isZero();
-    assertThatThrownBy(() -> tx(context, () -> readConfirmation(context, original, decision)))
+                            .fetch(
+                                "SELECT * FROM account_gameplay_admission_read_commit_confirmation(?, ?, ?)",
+                                requestId(original),
+                                "b".repeat(64),
+                                decision)))
         .hasMessageContaining("exact durable receipt required");
-    var receipt =
-        tx(
-            context,
-            () -> {
-              String applicationName = v120ApplicationName();
-              return withV120WalCoverageCoordinator(
-                  context,
-                  applicationName,
-                  () -> {
-                    setLocalApplicationName(context.dsl(), applicationName);
-                    return confirm(context, original, decision);
-                  },
-                  row -> row.get("wal_insert_lsn", String.class));
-            });
-    assertThat(tx(context, () -> readConfirmation(context, original, decision))).isEqualTo(receipt);
+    assertThat(
+            context
+                .dsl()
+                .fetchSingle("SELECT * FROM account_gameplay_admission_commit_confirmations")
+                .intoMap())
+        .isEqualTo(retained);
   }
 
-  @Test
-  void concurrentConfirmationsRetainOneOriginalReceiptWithoutAdvancingSources() throws Exception {
-    var context = context(null);
-    var original = pending(context, account(context));
-    var repository = new AccountGameplayAdmissionLeaseRepository(context.dsl());
-    UUID decision = UUID.randomUUID();
-    tx(context, () -> repository.recordCommitted(original, decision));
-    var unchanged = storageSnapshot(context);
-    var start = new CountDownLatch(1);
-    Callable<Record> duplicate =
-        () -> {
-          if (!start.await(10, TimeUnit.SECONDS)) throw new IllegalStateException("start timeout");
-          return retrySerialization(() -> tx(context, () -> confirm(context, original, decision)));
-        };
-    try (var executor = Executors.newFixedThreadPool(2)) {
-      var left = executor.submit(duplicate);
-      var right = executor.submit(duplicate);
-      start.countDown();
-      assertThat(left.get(30, TimeUnit.SECONDS)).isEqualTo(right.get(30, TimeUnit.SECONDS));
+  private static Map<String, String> retainedAdmissionDefinitions(Context context) {
+    Map<String, String> definitions = new LinkedHashMap<>();
+    for (String signature :
+        List.of(
+            "account_gameplay_admission_storage_guard()",
+            "account_gameplay_admission_confirmation_guard()",
+            "account_gameplay_admission_read_commit_confirmation(uuid,text,uuid)",
+            "account_gameplay_admission_original_ack_receipt_guard()",
+            "account_gameplay_admission_read_original_ack_receipt_durably(uuid,text,uuid)")) {
+      definitions.put(
+          signature,
+          context
+              .dsl()
+              .fetchSingle(
+                  "SELECT pg_get_functiondef(?::regprocedure)", context.schema() + "." + signature)
+              .get(0, String.class));
     }
-    assertThat(
-            context.dsl().fetchCount(DSL.table("account_gameplay_admission_commit_confirmations")))
-        .isEqualTo(1);
-    var retained = tx(context, () -> confirm(context, original, decision));
-    waitPastDeadline(context, original);
-    assertThat(
-            tx(
-                context,
-                () ->
-                    context
-                        .dsl()
-                        .execute(
-                            "INSERT INTO account_gameplay_admission_commit_confirmations(request_id, evidence_sha256, binding_decision_id) VALUES (?, ?, ?) ON CONFLICT (request_id) DO NOTHING",
-                            requestId(original),
-                            original.sha256(),
-                            decision)))
-        .isZero();
-    // Both duplicates enter the INSERT guard but replay the expired retained receipt without
-    // taking fresh temporal proof, restamping its bound or allocating replacement evidence.
-    try (var executor = Executors.newFixedThreadPool(2)) {
-      var left = executor.submit(duplicate);
-      var right = executor.submit(duplicate);
-      assertThat(left.get(30, TimeUnit.SECONDS)).isEqualTo(retained);
-      assertThat(right.get(30, TimeUnit.SECONDS)).isEqualTo(retained);
-    }
-    assertThat(tx(context, () -> readConfirmation(context, original, decision)))
-        .isEqualTo(retained);
-    assertThat(storageSnapshot(context)).isEqualTo(unchanged);
+    definitions.put(
+        "triggers",
+        context
+            .dsl()
+            .fetch(
+                "SELECT tgname, tgenabled, pg_get_triggerdef(oid) FROM pg_trigger WHERE tgrelid IN ('"
+                    + context.schema()
+                    + ".account_gameplay_admission_commit_confirmations'::regclass, '"
+                    + context.schema()
+                    + ".account_gameplay_admission_lease_operations'::regclass, '"
+                    + context.schema()
+                    + ".account_gameplay_admission_original_commit_ack_receipts'::regclass) AND NOT tgisinternal AND tgname <> 'account_admission_confirmation_00_retired_insert' ORDER BY tgname")
+            .formatJSON());
+    return definitions;
   }
 
   @Test
@@ -2367,429 +1771,6 @@ class AccountGameplayAdmissionLeasePersistenceIntegrationTest {
     assertThat(storageSnapshot(context)).isEqualTo(sourcesBeforeRecovery);
   }
 
-  private static Record confirm(
-      Context context, AccountGameplayAdmissionLeaseEvidence original, UUID decision) {
-    return Objects.requireNonNull(
-        context
-            .dsl()
-            .fetchOne(
-                "SELECT * FROM account_gameplay_admission_confirm_committed(?, ?, ?)",
-                requestId(original),
-                original.sha256(),
-                decision));
-  }
-
-  private static <T> T withV120WalCoverageCoordinator(
-      Context context,
-      String applicationName,
-      Supplier<T> confirmation,
-      Function<T, String> insertFence) {
-    var actionFinished = new AtomicBoolean();
-    var coordinatorLock = new Object();
-    var monitorReady = new CountDownLatch(1);
-    var coordinatorConnection = new AtomicReference<Connection>();
-    ExecutorService executor =
-        Executors.newSingleThreadExecutor(
-            task -> {
-              Thread thread = new Thread(task, "account-v120-wal-coordinator-" + applicationName);
-              thread.setDaemon(true);
-              return thread;
-            });
-    Future<V120WalCoverageObservation> future =
-        executor.submit(
-            () ->
-                observeV120WalCoverage(
-                    context,
-                    applicationName,
-                    actionFinished,
-                    coordinatorLock,
-                    monitorReady,
-                    coordinatorConnection));
-
-    T result = null;
-    Throwable actionFailure = null;
-    try {
-      if (!monitorReady.await(2, TimeUnit.SECONDS)) {
-        actionFailure =
-            new IllegalStateException(
-                "Account V120 WAL coverage coordinator could not open its observation connection");
-      } else {
-        result = confirmation.get();
-      }
-    } catch (InterruptedException failure) {
-      Thread.currentThread().interrupt();
-      actionFailure = new IllegalStateException("Interrupted before Account confirmation", failure);
-    } catch (RuntimeException | Error failure) {
-      actionFailure = failure;
-    } finally {
-      synchronized (coordinatorLock) {
-        actionFinished.set(true);
-      }
-    }
-
-    executor.shutdown();
-    V120WalCoverageObservation observation = null;
-    Throwable coordinatorFailure = null;
-    try {
-      observation = future.get(2, TimeUnit.SECONDS);
-    } catch (ExecutionException failure) {
-      coordinatorFailure = failure.getCause();
-    } catch (TimeoutException failure) {
-      coordinatorFailure = failure;
-      future.cancel(true);
-      executor.shutdownNow();
-      closeCoordinatorConnection(coordinatorConnection, coordinatorFailure);
-    } catch (InterruptedException failure) {
-      Thread.currentThread().interrupt();
-      coordinatorFailure = failure;
-      future.cancel(true);
-      executor.shutdownNow();
-      closeCoordinatorConnection(coordinatorConnection, coordinatorFailure);
-    }
-
-    try {
-      if (!executor.awaitTermination(2, TimeUnit.SECONDS)) {
-        executor.shutdownNow();
-        var cleanupFailure =
-            new IllegalStateException("Account V120 WAL coverage coordinator did not terminate");
-        closeCoordinatorConnection(coordinatorConnection, cleanupFailure);
-        if (!executor.awaitTermination(2, TimeUnit.SECONDS)) {
-          if (coordinatorFailure == null) coordinatorFailure = cleanupFailure;
-          else coordinatorFailure.addSuppressed(cleanupFailure);
-        }
-      }
-    } catch (InterruptedException failure) {
-      Thread.currentThread().interrupt();
-      executor.shutdownNow();
-      if (coordinatorFailure == null) coordinatorFailure = failure;
-      else coordinatorFailure.addSuppressed(failure);
-      closeCoordinatorConnection(coordinatorConnection, coordinatorFailure);
-    }
-
-    if (actionFailure != null) {
-      if (coordinatorFailure != null) actionFailure.addSuppressed(coordinatorFailure);
-      actionFailure.addSuppressed(
-          new IllegalStateException(
-              describeV120WalCoordinatorOutcome(applicationName, observation)));
-      if (actionFailure instanceof RuntimeException runtimeFailure) throw runtimeFailure;
-      throw (Error) actionFailure;
-    }
-
-    if (coordinatorFailure != null) {
-      throw new IllegalStateException(
-          "Account V120 confirmation succeeded, but its bounded WAL coordinator failed",
-          coordinatorFailure);
-    }
-    if (observation != null && observation.marker() != null) {
-      String fence = Objects.requireNonNull(insertFence.apply(result));
-      Boolean covered =
-          Objects.requireNonNull(
-                  context
-                      .dsl()
-                      .fetchOne(
-                          "SELECT ?::pg_lsn >= ?::pg_lsn AS covered",
-                          observation.marker().flushLsn(),
-                          fence))
-              .get("covered", Boolean.class);
-      assertThat(covered)
-          .as(
-              "independent marker COMMIT flush covers V120 fence %s from backend %s",
-              fence, observation.backendPid())
-          .isTrue();
-    }
-    return result;
-  }
-
-  private static V120WalCoverageObservation observeV120WalCoverage(
-      Context context,
-      String applicationName,
-      AtomicBoolean actionFinished,
-      Object coordinatorLock,
-      CountDownLatch monitorReady,
-      AtomicReference<Connection> coordinatorConnection)
-      throws SQLException {
-    Integer backendPid = null;
-    String lastWaitEventType = null;
-    String lastWaitEvent = null;
-    long deadline =
-        System.nanoTime() + TimeUnit.SECONDS.toNanos(V120_WAL_COORDINATOR_TIMEOUT_SECONDS);
-    try (Connection connection = context.dataSource().getConnection();
-        PreparedStatement activity =
-            connection.prepareStatement(
-                "SELECT pid, wait_event_type, wait_event FROM pg_stat_activity "
-                    + "WHERE application_name = ? AND state = 'active' "
-                    + "AND strpos(query, 'account_gameplay_admission_confirm_committed') > 0 "
-                    + "AND (?::integer IS NULL OR pid = ?)")) {
-      coordinatorConnection.set(connection);
-      activity.setQueryTimeout(1);
-      monitorReady.countDown();
-      while (System.nanoTime() < deadline) {
-        activity.setString(1, applicationName);
-        if (backendPid == null) {
-          activity.setNull(2, java.sql.Types.INTEGER);
-          activity.setNull(3, java.sql.Types.INTEGER);
-        } else {
-          activity.setInt(2, backendPid);
-          activity.setInt(3, backendPid);
-        }
-        try (ResultSet rows = activity.executeQuery()) {
-          if (rows.next()) {
-            int currentPid = rows.getInt("pid");
-            if (backendPid != null && backendPid != currentPid) {
-              throw new SQLException(
-                  "Account V120 confirmation backend changed during WAL coordination");
-            }
-            backendPid = currentPid;
-            lastWaitEventType = rows.getString("wait_event_type");
-            lastWaitEvent = rows.getString("wait_event");
-            if (rows.next()) {
-              throw new SQLException(
-                  "Multiple Account V120 confirmation backends matched unique application name");
-            }
-            if ("Timeout".equals(lastWaitEventType) && "PgSleep".equals(lastWaitEvent)) {
-              synchronized (coordinatorLock) {
-                if (actionFinished.get()) {
-                  return new V120WalCoverageObservation(
-                      backendPid, lastWaitEventType, lastWaitEvent, null, false);
-                }
-                connection.close();
-                coordinatorConnection.compareAndSet(connection, null);
-                V120WalCoverageMarker marker =
-                    commitV120WalCoverageMarker(context, coordinatorConnection);
-                return new V120WalCoverageObservation(
-                    backendPid, lastWaitEventType, lastWaitEvent, marker, false);
-              }
-            }
-          }
-        }
-        synchronized (coordinatorLock) {
-          if (actionFinished.get()) {
-            return new V120WalCoverageObservation(
-                backendPid, lastWaitEventType, lastWaitEvent, null, false);
-          }
-        }
-        Thread.yield();
-      }
-      return new V120WalCoverageObservation(
-          backendPid, lastWaitEventType, lastWaitEvent, null, true);
-    } finally {
-      monitorReady.countDown();
-    }
-  }
-
-  private static V120WalCoverageMarker commitV120WalCoverageMarker(
-      Context context, AtomicReference<Connection> coordinatorConnection) throws SQLException {
-    UUID markerId = UUID.randomUUID();
-    String markerValue = UUID.randomUUID().toString();
-    int writerBackendPid;
-    try (Connection writer = context.dataSource().getConnection()) {
-      coordinatorConnection.set(writer);
-      writer.setAutoCommit(false);
-      try {
-        try (Statement statement = writer.createStatement()) {
-          statement.setQueryTimeout(1);
-          statement.execute("SET LOCAL synchronous_commit = on");
-          try (ResultSet settings =
-              statement.executeQuery(
-                  "SELECT pg_backend_pid(), current_setting('synchronous_commit')")) {
-            if (!settings.next() || !"on".equals(settings.getString(2))) {
-              throw new SQLException(
-                  "Account V120 marker writer did not retain synchronous COMMIT");
-            }
-            writerBackendPid = settings.getInt(1);
-            if (settings.next()) {
-              throw new SQLException(
-                  "Account V120 marker writer settings query returned multiple rows");
-            }
-          }
-        }
-        try (PreparedStatement insert =
-            writer.prepareStatement(
-                "INSERT INTO "
-                    + V120_WAL_MARKER_TABLE
-                    + " (marker_id, marker_value) VALUES (?, ?)")) {
-          insert.setQueryTimeout(1);
-          insert.setObject(1, markerId);
-          insert.setString(2, markerValue);
-          if (insert.executeUpdate() != 1) {
-            throw new SQLException("Account V120 marker INSERT did not write exactly one row");
-          }
-        }
-        writer.commit();
-      } catch (SQLException | RuntimeException | Error failure) {
-        try {
-          writer.rollback();
-        } catch (SQLException rollbackFailure) {
-          failure.addSuppressed(rollbackFailure);
-        }
-        throw failure;
-      } finally {
-        coordinatorConnection.compareAndSet(writer, null);
-      }
-    }
-
-    int readerBackendPid;
-    try (Connection reader = context.dataSource().getConnection();
-        PreparedStatement readback =
-            reader.prepareStatement(
-                "SELECT marker_value, pg_backend_pid() FROM "
-                    + V120_WAL_MARKER_TABLE
-                    + " WHERE marker_id = ?")) {
-      coordinatorConnection.set(reader);
-      readback.setQueryTimeout(1);
-      readback.setObject(1, markerId);
-      try (ResultSet row = readback.executeQuery()) {
-        if (!row.next() || !markerValue.equals(row.getString(1))) {
-          throw new SQLException(
-              "Committed Account V120 WAL marker was not independently readable");
-        }
-        readerBackendPid = row.getInt(2);
-        if (readerBackendPid == writerBackendPid || row.next()) {
-          throw new SQLException("Account V120 WAL marker readback was not exact and independent");
-        }
-      }
-      String flushLsn;
-      try (Statement statement = reader.createStatement()) {
-        statement.setQueryTimeout(1);
-        try (ResultSet result = statement.executeQuery("SELECT pg_current_wal_flush_lsn()::text")) {
-          if (!result.next())
-            throw new SQLException("Account V120 marker flush location unavailable");
-          flushLsn = result.getString(1);
-        }
-      }
-      return new V120WalCoverageMarker(flushLsn);
-    } finally {
-      coordinatorConnection.set(null);
-    }
-  }
-
-  private static void createV120WalCoverageMarkerTable(Context context) {
-    context
-        .dsl()
-        .execute(
-            "CREATE TABLE "
-                + V120_WAL_MARKER_TABLE
-                + " (marker_id UUID PRIMARY KEY, marker_value TEXT NOT NULL)");
-  }
-
-  private static DataSource applicationNamedDataSource(DataSource source, String applicationName) {
-    return new DelegatingDataSource(source) {
-      @Override
-      public Connection getConnection() throws SQLException {
-        return setApplicationName(super.getConnection(), applicationName);
-      }
-
-      @Override
-      public Connection getConnection(String username, String password) throws SQLException {
-        return setApplicationName(super.getConnection(username, password), applicationName);
-      }
-    };
-  }
-
-  private static Connection setApplicationName(Connection connection, String applicationName)
-      throws SQLException {
-    try (PreparedStatement statement =
-        connection.prepareStatement("SELECT set_config('application_name', ?, false)")) {
-      statement.setString(1, applicationName);
-      try (ResultSet result = statement.executeQuery()) {
-        if (!result.next() || !applicationName.equals(result.getString(1)) || result.next()) {
-          throw new SQLException("Account V120 application name could not be verified");
-        }
-        return connection;
-      }
-    } catch (SQLException failure) {
-      try {
-        connection.close();
-      } catch (SQLException closeFailure) {
-        failure.addSuppressed(closeFailure);
-      }
-      throw failure;
-    }
-  }
-
-  private static void setLocalApplicationName(DSLContext dsl, String applicationName) {
-    String configured =
-        Objects.requireNonNull(
-                dsl.fetchOne(
-                    "SELECT set_config('application_name', ?, true) AS application_name",
-                    applicationName))
-            .get("application_name", String.class);
-    assertThat(configured).isEqualTo(applicationName);
-  }
-
-  private static String v120ApplicationName() {
-    return "account-v120-" + UUID.randomUUID().toString().replace("-", "");
-  }
-
-  private static <T> T callWithSyntheticReadPeer(Callable<T> action) {
-    try {
-      return syntheticReadPeer().call(action);
-    } catch (RuntimeException | Error failure) {
-      throw failure;
-    } catch (Exception failure) {
-      throw new IllegalStateException("Synthetic Account confirmation call failed", failure);
-    }
-  }
-
-  private static String describeV120WalCoordinatorOutcome(
-      String applicationName, V120WalCoverageObservation observation) {
-    if (observation == null) {
-      return "Account V120 coordinator produced no observation for application_name="
-          + applicationName;
-    }
-    return "Account V120 coordinator outcome"
-        + ": application_name="
-        + applicationName
-        + " backend_pid="
-        + observation.backendPid()
-        + " last_wait_event_type="
-        + observation.waitEventType()
-        + " last_wait_event="
-        + observation.waitEvent()
-        + " timed_out="
-        + observation.timedOut()
-        + " marker_independently_read="
-        + (observation.marker() != null);
-  }
-
-  private static void closeCoordinatorConnection(
-      AtomicReference<Connection> connectionReference, Throwable failure) {
-    Connection connection = connectionReference.getAndSet(null);
-    if (connection == null) return;
-    try {
-      connection.close();
-    } catch (SQLException closeFailure) {
-      failure.addSuppressed(closeFailure);
-    }
-  }
-
-  private record V120WalCoverageMarker(String flushLsn) {}
-
-  private record V120WalCoverageObservation(
-      Integer backendPid,
-      String waitEventType,
-      String waitEvent,
-      V120WalCoverageMarker marker,
-      boolean timedOut) {}
-
-  private static FinalizeGameplayAdmissionLeaseRequest confirmationRequest(
-      AccountGameplayAdmissionLeaseEvidence evidence, UUID decision) {
-    return FinalizeGameplayAdmissionLeaseRequest.newBuilder()
-        .setLease(AccountGameplayAdmissionLeaseWireCodec.encodeReference(evidence))
-        .setBindingDecisionId(decision.toString())
-        .build();
-  }
-
-  private static Record confirmationRow(
-      Context context, AccountGameplayAdmissionLeaseEvidence original) {
-    return Objects.requireNonNull(
-        context
-            .dsl()
-            .fetchOne(
-                "SELECT * FROM account_gameplay_admission_commit_confirmations WHERE request_id = ?",
-                requestId(original)));
-  }
-
   private static Record originalAckReceiptRow(
       Context context, AccountGameplayAdmissionLeaseEvidence original) {
     return Objects.requireNonNull(
@@ -2825,59 +1806,6 @@ class AccountGameplayAdmissionLeasePersistenceIntegrationTest {
     private synchronized List<ReceiptCommitEvent> events() {
       return List.copyOf(events);
     }
-  }
-
-  /** Traces only JDBC work performed by the real receipt owner over the supplied PostgreSQL DS. */
-  private static DataSource receiptCommitDataSource(
-      DataSource source, ReceiptCommitFault fault, ReceiptCommitTrace trace) {
-    return new DelegatingDataSource(source) {
-      @Override
-      public Connection getConnection() throws SQLException {
-        return tracedConnection(super.getConnection());
-      }
-
-      @Override
-      public Connection getConnection(String username, String password) throws SQLException {
-        return tracedConnection(super.getConnection(username, password));
-      }
-
-      private Connection tracedConnection(Connection physical) {
-        int connectionId = trace.connectionIds.incrementAndGet();
-        return (Connection)
-            Proxy.newProxyInstance(
-                Connection.class.getClassLoader(),
-                new Class<?>[] {Connection.class},
-                (proxy, method, arguments) -> {
-                  if (method.getName().equals("commit") && method.getParameterCount() == 0) {
-                    int attempt = trace.commitAttempts.incrementAndGet();
-                    if (attempt == 1 && fault == ReceiptCommitFault.BEFORE_FIRST_COMMIT) {
-                      trace.record("commit-attempt", connectionId);
-                      throw new SQLException("Test failed before physical receipt COMMIT", "08006");
-                    }
-                    physical.commit();
-                    trace.record("physical-commit", connectionId);
-                    if (attempt == 1 && fault == ReceiptCommitFault.AFTER_FIRST_COMMIT)
-                      throw new SQLException("Test lost physical receipt COMMIT response", "08006");
-                    return null;
-                  }
-                  try {
-                    Object result = method.invoke(physical, arguments);
-                    if (result instanceof PreparedStatement statement) {
-                      String sql = "";
-                      if (arguments != null
-                          && arguments.length > 0
-                          && arguments[0] instanceof String statementSql) {
-                        sql = statementSql;
-                      }
-                      return tracedStatement(statement, sql, connectionId, trace);
-                    }
-                    return result;
-                  } catch (InvocationTargetException failure) {
-                    throw failure.getCause();
-                  }
-                });
-      }
-    };
   }
 
   /**
@@ -2994,85 +1922,11 @@ class AccountGameplayAdmissionLeasePersistenceIntegrationTest {
             });
   }
 
-  private static PreparedStatement tracedStatement(
-      PreparedStatement physical, String sql, int connectionId, ReceiptCommitTrace trace) {
-    return (PreparedStatement)
-        Proxy.newProxyInstance(
-            PreparedStatement.class.getClassLoader(),
-            new Class<?>[] {PreparedStatement.class},
-            (proxy, method, arguments) -> {
-              if (method.getName().startsWith("execute") && isV120IndependentRead(sql))
-                trace.record("v120-read", connectionId);
-              try {
-                return method.invoke(physical, arguments);
-              } catch (InvocationTargetException failure) {
-                throw failure.getCause();
-              }
-            });
-  }
-
-  private static boolean isV120IndependentRead(String sql) {
-    return sql.toLowerCase(java.util.Locale.ROOT)
-        .contains("account_gameplay_admission_read_commit_confirmation");
-  }
-
   private static ReceiptCommitEvent firstEvent(ReceiptCommitTrace trace, String kind) {
     return trace.events().stream()
         .filter(event -> event.kind().equals(kind))
         .findFirst()
         .orElseThrow(() -> new AssertionError("Missing receipt JDBC event: " + kind));
-  }
-
-  private static void describeLostReceiptCommitFailure(Throwable failure) {
-    try {
-      var causeTypes = new ArrayList<String>();
-      var postgresDetails = new ArrayList<String>();
-      var visited =
-          java.util.Collections.newSetFromMap(new java.util.IdentityHashMap<Throwable, Boolean>());
-      Throwable cause = failure;
-      while (cause != null && visited.add(cause) && causeTypes.size() < 12) {
-        causeTypes.add(cause.getClass().getSimpleName());
-        if (cause instanceof PSQLException postgresFailure) {
-          var error = postgresFailure.getServerErrorMessage();
-          postgresDetails.add(
-              "SQLSTATE="
-                  + postgresFailure.getSQLState()
-                  + " constraint="
-                  + (error == null
-                      ? "<unavailable>"
-                      : Objects.toString(error.getConstraint(), "<none>")));
-        }
-        cause = cause.getCause();
-      }
-      System.err.printf(
-          "Lost receipt COMMIT diagnostic: causeTypes=%s postgres=%s%n",
-          causeTypes, postgresDetails);
-    } catch (Throwable diagnosticFailure) {
-      System.err.println(
-          "Lost receipt COMMIT diagnostic unavailable: "
-              + diagnosticFailure.getClass().getSimpleName());
-    }
-  }
-
-  private static void assertGlobalWalCoverageFailure(Throwable failure) {
-    Throwable cause = failure;
-    while (cause != null) {
-      var serverError =
-          cause instanceof PSQLException postgresFailure
-              ? postgresFailure.getServerErrorMessage()
-              : null;
-      if (cause instanceof PSQLException postgresFailure
-          && serverError != null
-          && "account_admission_confirmation_wal_coverage".equals(serverError.getConstraint())) {
-        assertThat(postgresFailure.getSQLState()).isEqualTo("23514");
-        assertThat(postgresFailure.getMessage())
-            .contains("Account admission confirmation WAL coverage unavailable");
-        return;
-      }
-      cause = cause.getCause();
-    }
-    throw new AssertionError(
-        "Expected the retained Account admission confirmation WAL coverage failure", failure);
   }
 
   private static void assertCauseChainContainsMessage(Throwable failure, String expectedMessage) {
@@ -3082,38 +1936,6 @@ class AccountGameplayAdmissionLeasePersistenceIntegrationTest {
       cause = cause.getCause();
     }
     throw new AssertionError("Expected cause chain to contain: " + expectedMessage, failure);
-  }
-
-  private static Record readConfirmation(
-      Context context, AccountGameplayAdmissionLeaseEvidence original, UUID decision) {
-    return Objects.requireNonNull(
-        context
-            .dsl()
-            .fetchOne(
-                "SELECT * FROM account_gameplay_admission_read_commit_confirmation(?, ?, ?)",
-                requestId(original),
-                original.sha256(),
-                decision));
-  }
-
-  private static void assertDeniedInSavepoint(
-      Context context, Supplier<?> action, String expectedMessage) {
-    context.dsl().execute("SAVEPOINT denied_confirmation");
-    try {
-      assertThatThrownBy(action::get)
-          .hasMessageContaining(expectedMessage)
-          .satisfies(
-              failure -> {
-                Throwable cause = failure;
-                while (cause != null && !(cause instanceof java.sql.SQLException))
-                  cause = cause.getCause();
-                assertThat(cause).isInstanceOf(java.sql.SQLException.class);
-                assertThat(((java.sql.SQLException) cause).getSQLState()).isEqualTo("23514");
-              });
-    } finally {
-      context.dsl().execute("ROLLBACK TO SAVEPOINT denied_confirmation");
-      context.dsl().execute("RELEASE SAVEPOINT denied_confirmation");
-    }
   }
 
   private static Record operation(Context context, AccountGameplayAdmissionLeaseEvidence original) {

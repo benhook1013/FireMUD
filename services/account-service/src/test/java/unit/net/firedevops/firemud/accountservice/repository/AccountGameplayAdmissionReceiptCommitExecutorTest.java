@@ -2,7 +2,6 @@ package net.firedevops.firemud.accountservice.repository;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
-import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.Mockito.doAnswer;
@@ -10,7 +9,6 @@ import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.mockConstruction;
-import static org.mockito.Mockito.mockingDetails;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
@@ -48,132 +46,49 @@ class AccountGameplayAdmissionReceiptCommitExecutorTest {
   }
 
   @Test
-  void physicalReceiptCommitPrecedesNewConnectionAndExactHistoricalRead() throws Exception {
-    var fixture = new Fixture();
-    try (var repositories = fixture.repositories()) {
-      assertThat(fixture.executor.confirm(fixture.evidence, fixture.decision))
-          .isSameAs(fixture.receipt);
-      assertThat(repositories.constructed()).hasSize(2);
-      var order =
-          inOrder(
-              fixture.first.connection,
-              fixture.second.connection,
-              repositories.constructed().get(0),
-              repositories.constructed().get(1));
-      order
-          .verify(repositories.constructed().get(0))
-          .confirmCommitted(fixture.evidence, fixture.decision);
-      order.verify(fixture.first.connection).commit();
-      order.verify(fixture.first.connection).close();
-      order
-          .verify(repositories.constructed().get(1))
-          .readCommitConfirmation(fixture.evidence, fixture.decision);
-      order.verify(fixture.second.connection).commit();
-      assertIndependentAcquisition(fixture, repositories.constructed().get(1));
-      // This is a historical receipt: receipt persistence does not restamp original expiry.
-      assertThat(fixture.receipt.expiresAtMs()).isLessThan(System.currentTimeMillis());
-      verify(fixture.first.statement).execute("SET LOCAL synchronous_commit = on");
-      verify(fixture.second.statement).execute("SET LOCAL synchronous_commit = on");
-    }
-  }
-
-  @Test
-  void uncertainPhysicalReceiptCommitNeverStartsIndependentRead() throws Exception {
-    var fixture = new Fixture();
-    doThrow(new SQLException("COMMIT acknowledgement lost", "08006"))
-        .when(fixture.first.connection)
-        .commit();
-    try (var repositories = fixture.repositories()) {
-      assertThatThrownBy(() -> fixture.executor.confirm(fixture.evidence, fixture.decision))
-          .hasMessageContaining("physical COMMIT unavailable");
-      assertThat(repositories.constructed()).hasSize(1);
-      verify(fixture.first.connection).rollback();
-      verifyNoInteractions(fixture.second.connection);
-    }
-  }
-
-  @ParameterizedTest
-  @ValueSource(strings = {"failure", "null", "decision", "evidence"})
-  void unavailableOrNonExactCreationNeverCommitsOrReads(String fault) throws Exception {
-    var fixture = new Fixture();
-    try (var repositories = fixture.repositories()) {
-      fixture.creationFault = fault;
-      assertThatThrownBy(() -> fixture.executor.confirm(fixture.evidence, fixture.decision))
-          .isInstanceOf(RuntimeException.class);
-      assertThat(repositories.constructed()).hasSize(1);
-      verify(fixture.first.connection, never()).commit();
-      verify(fixture.first.connection).rollback();
-      verifyNoInteractions(fixture.second.connection);
-    }
-  }
-
-  @ParameterizedTest
-  @ValueSource(strings = {"different", "failure", "commit-failure"})
-  void readMismatchOrFailureDoesNotExposeCreatedReceipt(String fault) throws Exception {
-    var fixture = new Fixture();
-    if (fault.equals("different")) {
-      var r = fixture.receipt;
-      fixture.readReceipt =
-          new AccountGameplayAdmissionCommitConfirmation(
-              r.operation(),
-              r.confirmationVersion(),
-              r.requestId(),
-              r.accountId(),
-              r.leaseId(),
-              r.leaseFence(),
-              r.evidenceSha256(),
-              r.bindingDecisionId(),
-              r.expiresAtMs(),
-              r.finalizationXid(),
-              r.walInsertLsn(),
-              r.walFlushLsn(),
-              r.committedBeforeMs(),
-              "123458");
-    }
-    fixture.failRead = fault.equals("failure");
-    if (fault.equals("commit-failure")) {
-      doThrow(new SQLException("read commit lost")).when(fixture.second.connection).commit();
-    }
-    try (var repositories = fixture.repositories()) {
-      assertThatThrownBy(() -> fixture.executor.confirm(fixture.evidence, fixture.decision))
-          .isInstanceOf(RuntimeException.class);
-      verify(fixture.first.connection).commit();
-      assertThat(repositories.constructed()).hasSize(2);
-    }
-  }
-
-  @Test
-  void poolMayReuseConnectionAfterCompletedCommitAndCleanup() throws Exception {
-    var fixture = new Fixture();
-    when(fixture.source.getConnection()).thenReturn(fixture.first.connection);
-    fixture.readConnection = fixture.first.connection;
-    try (var repositories = fixture.repositories()) {
-      assertThat(fixture.executor.confirm(fixture.evidence, fixture.decision))
-          .isSameAs(fixture.receipt);
-      assertThat(repositories.constructed()).hasSize(2);
-      var order = inOrder(fixture.first.connection, repositories.constructed().get(1));
-      order.verify(fixture.first.connection).commit();
-      order.verify(fixture.first.connection).close();
-      order
-          .verify(repositories.constructed().get(1))
-          .readCommitConfirmation(fixture.evidence, fixture.decision);
-      order.verify(fixture.first.connection).commit();
-      assertIndependentAcquisition(fixture, repositories.constructed().get(1));
-      verify(fixture.first.connection, never()).rollback();
-    }
-  }
-
-  @Test
   void readOnlyValidatesExistingReceipt() throws Exception {
     var fixture = new Fixture();
     try (var repositories = fixture.repositories()) {
       assertThat(fixture.executor.read(fixture.evidence, fixture.decision))
           .isSameAs(fixture.receipt);
-      verify(repositories.constructed().getFirst(), never()).confirmCommitted(any(), any());
       verify(repositories.constructed().getFirst())
           .readCommitConfirmation(fixture.evidence, fixture.decision);
       verify(fixture.first.connection).commit();
       verifyNoInteractions(fixture.second.connection);
+    }
+  }
+
+  @ParameterizedTest
+  @ValueSource(strings = {"null", "failure", "decision", "evidence", "commit-failure"})
+  void unavailableOrNonExactHistoricalReadNeverReturnsProof(String fault) throws Exception {
+    var fixture = new Fixture();
+    switch (fault) {
+      case "null" -> fixture.readReceipt = null;
+      case "failure" -> fixture.failRead = true;
+      case "decision" ->
+          fixture.readReceipt =
+              AccountGameplayAdmissionCommitConfirmationOwnerTest.receipt(
+                  fixture.evidence, UUID.randomUUID());
+      case "evidence" -> {
+        var carrier = new java.util.LinkedHashMap<>(fixture.evidence.carrier());
+        carrier.put("requestId", UUID.randomUUID().toString());
+        fixture.readReceipt =
+            AccountGameplayAdmissionCommitConfirmationOwnerTest.receipt(
+                AccountGameplayAdmissionLeaseEvidence.fromCarrier(carrier), fixture.decision);
+      }
+      case "commit-failure" ->
+          doThrow(new SQLException("historical read COMMIT unavailable"))
+              .when(fixture.first.connection)
+              .commit();
+      default -> throw new IllegalArgumentException(fault);
+    }
+    try (var repositories = fixture.repositories()) {
+      assertThatThrownBy(() -> fixture.executor.read(fixture.evidence, fixture.decision))
+          .isInstanceOf(RuntimeException.class);
+      assertThat(repositories.constructed()).hasSize(1);
+      verify(fixture.first.connection).rollback();
+      verifyNoInteractions(fixture.second.connection);
+      if (!fault.equals("commit-failure")) verify(fixture.first.connection, never()).commit();
     }
   }
 
@@ -189,8 +104,6 @@ class AccountGameplayAdmissionReceiptCommitExecutorTest {
               fixture.source, new ConnectionHolder(fixture.first.connection));
       default -> throw new IllegalArgumentException(ambient);
     }
-    assertThatThrownBy(() -> fixture.executor.confirm(fixture.evidence, fixture.decision))
-        .hasMessageContaining("Fresh owned");
     assertThatThrownBy(() -> fixture.executor.read(fixture.evidence, fixture.decision))
         .hasMessageContaining("Fresh owned");
     verifyNoInteractions(fixture.source, fixture.first.connection);
@@ -232,7 +145,7 @@ class AccountGameplayAdmissionReceiptCommitExecutorTest {
       default -> throw new IllegalArgumentException(fault);
     }
     try (var repositories = fixture.repositories()) {
-      assertThatThrownBy(() -> fixture.executor.confirm(fixture.evidence, fixture.decision))
+      assertThatThrownBy(() -> fixture.executor.read(fixture.evidence, fixture.decision))
           .isInstanceOf(RuntimeException.class);
       verify(jdbc.connection, never()).commit();
       var order = inOrder(jdbc.connection);
@@ -241,29 +154,6 @@ class AccountGameplayAdmissionReceiptCommitExecutorTest {
       assertThat(repositories.constructed()).hasSize(1);
       verifyNoInteractions(fixture.second.connection);
     }
-  }
-
-  private static void assertIndependentAcquisition(
-      Fixture fixture, AccountGameplayAdmissionCommitConfirmationRepository readRepository) {
-    int[] acquisitions = invocationSequences(fixture.source, "getConnection");
-    int[] commits = invocationSequences(fixture.first.connection, "commit");
-    int[] closes = invocationSequences(fixture.first.connection, "close");
-    int[] reads = invocationSequences(readRepository, "readCommitConfirmation");
-    assertThat(acquisitions).hasSize(2);
-    assertThat(reads).hasSize(1);
-    assertThat(commits).isNotEmpty();
-    assertThat(closes).isNotEmpty();
-    assertThat(acquisitions[0]).isLessThan(commits[0]);
-    assertThat(commits[0]).isLessThan(closes[0]);
-    assertThat(closes[0]).isLessThan(acquisitions[1]);
-    assertThat(acquisitions[1]).isLessThan(reads[0]);
-  }
-
-  private static int[] invocationSequences(Object mock, String method) {
-    return mockingDetails(mock).getInvocations().stream()
-        .filter(invocation -> invocation.getMethod().getName().equals(method))
-        .mapToInt(invocation -> invocation.getSequenceNumber())
-        .toArray();
   }
 
   private static final class Fixture {
@@ -278,7 +168,6 @@ class AccountGameplayAdmissionReceiptCommitExecutorTest {
         AccountGameplayAdmissionCommitConfirmationOwnerTest.receipt(evidence, decision);
     private AccountGameplayAdmissionCommitConfirmation readReceipt = receipt;
     private boolean failRead;
-    private String creationFault;
     private final AccountGameplayAdmissionReceiptCommitExecutor executor =
         new AccountGameplayAdmissionReceiptCommitExecutor(source);
 
@@ -299,25 +188,6 @@ class AccountGameplayAdmissionReceiptCommitExecutorTest {
             assertThat(TransactionSynchronizationManager.isCurrentTransactionReadOnly()).isFalse();
             assertThat(TransactionSynchronizationManager.getCurrentTransactionIsolationLevel())
                 .isEqualTo(Connection.TRANSACTION_SERIALIZABLE);
-            when(repository.confirmCommitted(evidence, decision))
-                .thenAnswer(
-                    ignored -> {
-                      if (creationFault == null) return receipt;
-                      return switch (creationFault) {
-                        case "failure" -> throw new IllegalStateException("creation unavailable");
-                        case "null" -> null;
-                        case "decision" ->
-                            AccountGameplayAdmissionCommitConfirmationOwnerTest.receipt(
-                                evidence, UUID.randomUUID());
-                        case "evidence" -> {
-                          var carrier = new java.util.LinkedHashMap<>(evidence.carrier());
-                          carrier.put("requestId", UUID.randomUUID().toString());
-                          yield AccountGameplayAdmissionCommitConfirmationOwnerTest.receipt(
-                              AccountGameplayAdmissionLeaseEvidence.fromCarrier(carrier), decision);
-                        }
-                        default -> throw new IllegalArgumentException(creationFault);
-                      };
-                    });
             when(repository.readCommitConfirmation(evidence, decision))
                 .thenAnswer(
                     ignored -> {

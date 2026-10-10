@@ -19,7 +19,10 @@ import org.springframework.transaction.support.DefaultTransactionStatus;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.transaction.support.TransactionTemplate;
 
-/** Unregistered receipt persistence executor; supplies no admission or original clock authority. */
+/**
+ * Unregistered retained historical receipt read executor; supplies no admission or original clock
+ * authority.
+ */
 final class AccountGameplayAdmissionReceiptCommitExecutor {
   private final DataSource dataSource;
 
@@ -27,29 +30,16 @@ final class AccountGameplayAdmissionReceiptCommitExecutor {
     this.dataSource = Objects.requireNonNull(dataSource);
   }
 
-  AccountGameplayAdmissionCommitConfirmation confirm(
-      AccountGameplayAdmissionLeaseEvidence evidence, UUID decisionId) {
-    rejectAmbient();
-    var creation = new ReceiptTransactionManager(dataSource);
-    var created = execute(creation, evidence, decisionId, true);
-    // execute returns only after this manager observed the concrete JDBC COMMIT successfully.
-    rejectAmbient();
-    var read = execute(new ReceiptTransactionManager(dataSource), evidence, decisionId, false);
-    if (!created.equals(read)) throw denied();
-    return read;
-  }
-
   AccountGameplayAdmissionCommitConfirmation read(
       AccountGameplayAdmissionLeaseEvidence evidence, UUID decisionId) {
     rejectAmbient();
-    return execute(new ReceiptTransactionManager(dataSource), evidence, decisionId, false);
+    return execute(new ReceiptTransactionManager(dataSource), evidence, decisionId);
   }
 
   private static AccountGameplayAdmissionCommitConfirmation execute(
       ReceiptTransactionManager manager,
       AccountGameplayAdmissionLeaseEvidence evidence,
-      UUID decisionId,
-      boolean create) {
+      UUID decisionId) {
     Objects.requireNonNull(evidence);
     Objects.requireNonNull(decisionId);
     var transaction = new TransactionTemplate(manager);
@@ -66,10 +56,7 @@ final class AccountGameplayAdmissionReceiptCommitExecutor {
                   new AccountGameplayAdmissionCommitConfirmationRepository(
                       dsl, new AccountGameplayAdmissionLeaseRepository(dsl));
               var receipt =
-                  Objects.requireNonNull(
-                      create
-                          ? repository.confirmCommitted(evidence, decisionId)
-                          : repository.readCommitConfirmation(evidence, decisionId));
+                  Objects.requireNonNull(repository.readCommitConfirmation(evidence, decisionId));
               if (!receipt.operation().evidence().canonicalJson().equals(evidence.canonicalJson())
                   || !receipt.operation().evidence().sha256().equals(evidence.sha256())
                   || !receipt.bindingDecisionId().equals(decisionId)) throw denied();

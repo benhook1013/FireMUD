@@ -15,8 +15,9 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
 /**
  * Unregistered, non-admitting storage confirmation for an already retained COMMITTED lease.
  *
- * <p>The database functions alone create or independently read a durability receipt. A raw
- * operation state, timestamp, visible receipt row, or returned Java clock value is insufficient.
+ * <p>The retained historical database function alone independently reads a durability receipt. A
+ * raw operation state, timestamp, visible receipt row, or returned Java clock value is
+ * insufficient.
  */
 public final class AccountGameplayAdmissionCommitConfirmationRepository {
   private final DSLContext dsl;
@@ -29,21 +30,6 @@ public final class AccountGameplayAdmissionCommitConfirmationRepository {
       DSLContext dsl, AccountGameplayAdmissionLeaseRepository leaseRepository) {
     this.dsl = Objects.requireNonNull(dsl);
     this.leaseRepository = Objects.requireNonNull(leaseRepository);
-  }
-
-  /** Creates or exactly replays a database-stamped receipt for the original proven COMMIT. */
-  AccountGameplayAdmissionCommitConfirmation confirmCommitted(
-      AccountGameplayAdmissionLeaseEvidence evidence, UUID bindingDecisionId) {
-    UUID requestId = validateRequest(evidence, bindingDecisionId);
-    Record row =
-        dsl.fetchOne(
-            "SELECT * FROM account_gameplay_admission_confirm_committed(?, ?, ?)",
-            requestId,
-            evidence.sha256(),
-            bindingDecisionId);
-    if (row == null) throw unavailable();
-    AccountGameplayAdmissionLeaseOperation operation = exactCommitted(evidence, bindingDecisionId);
-    return confirmation(row, operation);
   }
 
   /** Reads only a committed, independently durable receipt; this path never creates one. */

@@ -11,8 +11,9 @@ import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 /**
- * Unregistered, non-admitting owner for database proof that an original lease COMMIT preceded its
- * unchanged expiry. It evaluates no current source authority and does not finalize or admit.
+ * Unregistered, non-admitting historical reader for database proof that an original lease COMMIT
+ * preceded its unchanged expiry. It evaluates no current source authority and does not finalize or
+ * admit.
  */
 public final class AccountGameplayAdmissionCommitConfirmationOwner {
   private final DataSource dataSource;
@@ -30,21 +31,6 @@ public final class AccountGameplayAdmissionCommitConfirmationOwner {
     this.dataSource = Objects.requireNonNull(dataSource);
     this.executor = Objects.requireNonNull(executor);
     this.namespace = namespace;
-  }
-
-  /**
-   * Creates/replays the temporal receipt, waits for that transaction to commit, then independently
-   * reads the durable receipt in a fresh transaction before returning it.
-   */
-  public AccountGameplayAdmissionCommitConfirmation confirm(
-      FinalizeGameplayAdmissionLeaseRequest request) {
-    RequestIdentity identity = authenticateAndParse(request);
-    rejectAmbientTransaction();
-    try {
-      return Objects.requireNonNull(executor.confirm(identity.evidence(), identity.decisionId()));
-    } catch (RuntimeException failure) {
-      throw unavailable(failure);
-    }
   }
 
   /** Reads an existing proof only; it never creates or repairs a receipt. */

@@ -2,9 +2,7 @@ package net.firedevops.firemud.accountservice.repository;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
-import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
@@ -48,17 +46,6 @@ class AccountGameplayAdmissionCommitConfirmationOwnerTest {
   }
 
   @Test
-  void authenticatedConfirmationDelegatesOnlyToPhysicalReceiptExecutor() throws Exception {
-    var evidence = AccountGameplayAdmissionAbortOwnerTest.fixture();
-    UUID decision = UUID.randomUUID();
-    var receipt = receipt(evidence, decision);
-    when(executor.confirm(evidence, decision)).thenReturn(receipt);
-    assertThat(peer().call(() -> owner.confirm(request(evidence, decision)))).isSameAs(receipt);
-    verify(executor).confirm(evidence, decision);
-    verify(executor, never()).read(any(), any());
-  }
-
-  @Test
   void dependencyFailureRetainsLocalCauseWithBoundedOwnerStatusAndNoTrailers() {
     var evidence = AccountGameplayAdmissionAbortOwnerTest.fixture();
     UUID decision = UUID.randomUUID();
@@ -70,13 +57,6 @@ class AccountGameplayAdmissionCommitConfirmationOwnerTest {
         Status.UNAVAILABLE
             .withDescription("private dependency description")
             .asRuntimeException(trailers);
-    when(executor.confirm(evidence, decision)).thenThrow(dependencyFailure);
-
-    assertUnavailableIsRedacted(
-        () -> peer().call(() -> owner.confirm(request(evidence, decision))), dependencyFailure);
-
-    TransactionSynchronizationManager.clear();
-    org.mockito.Mockito.reset(executor);
     when(executor.read(evidence, decision)).thenThrow(dependencyFailure);
     assertUnavailableIsRedacted(
         () -> peer().call(() -> owner.read(request(evidence, decision))), dependencyFailure);
@@ -96,14 +76,13 @@ class AccountGameplayAdmissionCommitConfirmationOwnerTest {
     assertThat(returned.expiresAtMs()).isEqualTo(1_015_000L);
     assertThat(returned.committedBeforeMs()).isLessThan(returned.expiresAtMs());
     verify(executor).read(evidence, decision);
-    verify(executor, never()).confirm(any(), any());
   }
 
   @Test
   void rejectsMissingWrongPeerAndNamespaceBeforeRequestParsingOrTransaction() {
     var evidence = AccountGameplayAdmissionAbortOwnerTest.fixture();
     var malformed = FinalizeGameplayAdmissionLeaseRequest.getDefaultInstance();
-    assertStatus(Status.Code.UNAUTHENTICATED, () -> owner.confirm(malformed));
+    assertStatus(Status.Code.UNAUTHENTICATED, () -> owner.read(malformed));
     for (String uri :
         List.of(
             "spiffe://firemud/ns/test/sa/account-service",
@@ -142,7 +121,7 @@ class AccountGameplayAdmissionCommitConfirmationOwnerTest {
             request(evidence, decision).toBuilder()
                 .setBindingDecisionId(decision.toString().toUpperCase())
                 .build())) {
-      assertStatus(Status.Code.INVALID_ARGUMENT, () -> peer().call(() -> owner.confirm(request)));
+      assertStatus(Status.Code.INVALID_ARGUMENT, () -> peer().call(() -> owner.read(request)));
     }
     var changedCarrier = new LinkedHashMap<>(evidence.carrier());
     changedCarrier.put("targetNamespace", "other");
@@ -161,7 +140,7 @@ class AccountGameplayAdmissionCommitConfirmationOwnerTest {
     TransactionSynchronizationManager.setActualTransactionActive(true);
     assertStatus(
         Status.Code.FAILED_PRECONDITION,
-        () -> peer().call(() -> owner.confirm(request(evidence, decision))));
+        () -> peer().call(() -> owner.read(request(evidence, decision))));
     TransactionSynchronizationManager.clear();
     TransactionSynchronizationManager.initSynchronization();
     assertStatus(
@@ -172,7 +151,7 @@ class AccountGameplayAdmissionCommitConfirmationOwnerTest {
         source, new ConnectionHolder(mock(java.sql.Connection.class)));
     assertStatus(
         Status.Code.FAILED_PRECONDITION,
-        () -> peer().call(() -> owner.confirm(request(evidence, decision))));
+        () -> peer().call(() -> owner.read(request(evidence, decision))));
     verifyNoInteractions(executor, source);
   }
 

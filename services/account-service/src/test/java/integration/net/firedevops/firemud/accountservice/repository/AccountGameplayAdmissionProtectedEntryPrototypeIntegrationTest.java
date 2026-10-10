@@ -3,33 +3,26 @@ package net.firedevops.firemud.accountservice.repository;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
-import integration.net.firedevops.firemud.accountservice.repository.AccountPostgresIntegrationFixture;
-import java.io.IOException;
-import java.nio.charset.StandardCharsets;
 import java.sql.Connection;
 import java.sql.SQLException;
 import java.time.Instant;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Objects;
 import java.util.UUID;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicInteger;
-import java.util.regex.Pattern;
 import net.firedevops.firemud.accountservice.entity.Account;
+import net.firedevops.firemud.accountservice.repository.AccountGameplayAdmissionOriginalCommitExecutor.OriginalCommitAcknowledgement;
 import net.firedevops.firemud.common.account.admission.AccountGameplayAdmissionLeaseEvidence;
 import org.flywaydb.core.Flyway;
 import org.jooq.DSLContext;
-import org.jooq.JSONB;
 import org.jooq.SQLDialect;
 import org.jooq.impl.DSL;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.parallel.Execution;
 import org.junit.jupiter.api.parallel.ExecutionMode;
-import org.postgresql.util.PSQLException;
 import org.springframework.jdbc.datasource.DataSourceTransactionManager;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
 import org.springframework.jdbc.datasource.TransactionAwareDataSourceProxy;
@@ -40,18 +33,19 @@ import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
 /**
- * Test-only protected-entry feasibility, never production privilege adoption or admission proof.
+ * Genuine V122 proof transferred from the retired test-only protected-entry feasibility fixture.
  *
- * <p>The original operation is finalized in unchanged Flyway storage. Upstream carrier fields are
- * shape fixtures only. Quiet cold/warm successes are requirements, not assumptions: catalog WAL
- * preventing coverage fails visibly without a marker, forced flush, retry warming or deadline
- * extension. Async-original unflushed-COMMIT and guaranteed catalog-PRUNE provenance are not
- * claimed by this fixture; establishing those exact conditions needs separate physical evidence.
+ * <p>Upstream carrier fields are shape fixtures only. Recovery requires exact independent
+ * durability evidence; a quiet primary does not guarantee that evidence, and unavailable coverage
+ * must deny without a marker, forced flush, retry warming or deadline extension. Async-original
+ * unflushed-COMMIT and guaranteed catalog-PRUNE provenance are not claimed by this fixture. SQL
+ * checks binding and shape; only the trusted JVM physical-COMMIT path supplies the opaque ACK.
+ * Neither this receipt nor the restricted test role establishes production privilege adoption or
+ * gameplay admission.
  */
 @Testcontainers(disabledWithoutDocker = true)
 @Execution(ExecutionMode.SAME_THREAD)
 class AccountGameplayAdmissionProtectedEntryPrototypeIntegrationTest {
-  // Never consumes the shared fixture's external database override.
   @Container
   static final PostgreSQLContainer<?> POSTGRES =
       new PostgreSQLContainer<>("postgres:16-alpine")
@@ -59,210 +53,135 @@ class AccountGameplayAdmissionProtectedEntryPrototypeIntegrationTest {
 
   private static final String TENANT = "22222222-2222-4222-8222-222222222222";
   private static final String OTHER = "33333333-3333-4333-8333-333333333333";
+  private static final String RECEIPTS = "account_gameplay_admission_original_commit_ack_receipts";
 
   @Test
-  void coldQuietEntryProvesExactOriginalThenIndependentReceiptWithoutAuxiliaryWrites()
-      throws Exception {
+  void coldGenuineAcknowledgedFinalizationPersistsExactProofWithoutAuxiliaryWrites() {
     var context = context();
-    var original = finalized(context, 15000);
-    JSONB created = call(context, original, "confirm");
-    assertProof(context, original, created);
-    assertThat(call(context, original, "read_receipt")).isEqualTo(created);
-    assertProductionReceiptTablesEmpty(context);
+    var ack = finalized(context, 15000);
+    var receipt =
+        new AccountGameplayAdmissionOriginalAckReceiptCommitExecutor(context.admin()).confirm(ack);
+    assertThat(receipt.finalizationXid()).isEqualTo(ack.finalizationXid());
+    assertThat(receipt.committedBeforeMs()).isEqualTo(ack.committedBeforeMs());
+    assertThat(receipt.expiresAtMs()).isEqualTo(expiry(ack));
+    assertThat(receipt.receiptXid()).isNotEqualTo(ack.finalizationXid());
+    assertThat(receipt.operation().evidence()).isEqualTo(ack.evidence());
+    assertThat(context.dsl().fetchCount(DSL.table(RECEIPTS))).isOne();
+    assertThat(
+            context.dsl().fetchCount(DSL.table("account_gameplay_admission_commit_confirmations")))
+        .isZero();
   }
 
   @Test
-  void warmedEntryStillRequiresQuietCoverageAndLostResponseRecoveryPreservesExpiry()
-      throws Exception {
+  void catalogChurnBeforeOriginalCommitPreservesGenuineAcknowledgedFinalization() {
     var context = context();
-    // Warm entry/catalog resolution on the SAME backend before original finalization. The
-    // missing-operation branch does not claim to warm every lazily planned PL/pgSQL statement.
-    try (var warm = context.caller().getConnection()) {
-      warm.setAutoCommit(false);
-      warm.setTransactionIsolation(Connection.TRANSACTION_SERIALIZABLE);
-      assertThatThrownBy(
+    for (int index = 0; index < 30; index++) {
+      context.dsl().execute("CREATE TABLE retired_entry_catalog_" + index + "(id integer)");
+      context.dsl().execute("DROP TABLE retired_entry_catalog_" + index);
+    }
+    var ack = finalized(context, 15000);
+    var receipt =
+        new AccountGameplayAdmissionOriginalAckReceiptCommitExecutor(context.admin()).confirm(ack);
+    assertThat(receipt.finalizationXid()).isEqualTo(ack.finalizationXid());
+    assertThat(receipt.committedBeforeMs()).isEqualTo(ack.committedBeforeMs());
+    assertThat(receipt.expiresAtMs()).isEqualTo(expiry(ack));
+  }
+
+  @Test
+  void concurrentGenuineAckCreatorsRetainOneExactWinnerWithoutRestamping() throws Exception {
+    var context = context();
+    var ack = finalized(context, 15000);
+    var original = operation(context, ack.evidence());
+    var sources = sourceSnapshot(context);
+    var start = new CountDownLatch(1);
+    java.util.concurrent.Callable<Object> duplicate =
+        () -> {
+          if (!start.await(10, TimeUnit.SECONDS)) throw new IllegalStateException("start timeout");
+          return retrySerialization(
               () ->
-                  invoke(
-                      warm,
-                      context,
-                      "confirm",
-                      UUID.randomUUID(),
-                      "a".repeat(64),
-                      UUID.randomUUID()))
-          .hasMessageContaining("prototype exact original required");
-      warm.rollback();
-      var original = finalized(context, 1500);
-      JSONB discardedResponse =
-          invoke(
-              warm,
-              context,
-              "confirm",
-              request(original),
-              original.evidence().sha256(),
-              original.decision());
-      warm.commit();
-      waitPastExpiry(context, original);
-      assertThat(call(context, original, "read_receipt")).isEqualTo(discardedResponse);
-      assertThat(call(context, original, "confirm")).isEqualTo(discardedResponse);
-      assertProof(context, original, discardedResponse);
+                  context
+                      .transaction()
+                      .execute(status -> repository(context).create(ack).receipt()));
+        };
+    try (var executor = Executors.newFixedThreadPool(2)) {
+      var left = executor.submit(duplicate);
+      var right = executor.submit(duplicate);
+      start.countDown();
+      assertThat(left.get(30, TimeUnit.SECONDS)).isEqualTo(right.get(30, TimeUnit.SECONDS));
+    }
+    assertThat(context.dsl().fetchCount(DSL.table(RECEIPTS))).isOne();
+    assertThat(operation(context, ack.evidence())).isEqualTo(original);
+    assertThat(sourceSnapshot(context)).isEqualTo(sources);
+    var before = receipt(context);
+    waitPastExpiry(context, ack);
+    var replay = context.transaction().execute(status -> repository(context).create(ack));
+    assertThat(replay.inserted()).isFalse();
+    assertThat(replay.receipt().committedBeforeMs()).isEqualTo(ack.committedBeforeMs());
+    assertThat(receipt(context)).isEqualTo(before);
+    // This asserts exact storage replay. A retry COMMIT is not historical durability proof.
+  }
+
+  @Test
+  void staleSerializableGenuineAckCreatorRetriesAndRetainsOneExactWinner() throws Exception {
+    var context = context();
+    var ack = finalized(context, 15000);
+    try (var stale = context.admin().getConnection()) {
+      stale.setAutoCommit(false);
+      stale.setTransactionIsolation(Connection.TRANSACTION_SERIALIZABLE);
+      DSL.using(stale).fetchSingle("SELECT pg_current_snapshot()");
+      var winner =
+          context.transaction().execute(status -> repository(context).create(ack).receipt());
+      assertThatThrownBy(() -> insertAck(DSL.using(stale), ack))
+          .satisfies(failure -> assertThat(sqlState(failure)).isEqualTo("40001"));
+      stale.rollback();
+      var retry = context.transaction().execute(status -> repository(context).create(ack));
+      assertThat(retry.inserted()).isFalse();
+      assertThat(retry.receipt()).isEqualTo(winner);
+      assertThat(context.dsl().fetchCount(DSL.table(RECEIPTS))).isOne();
     }
   }
 
   @Test
-  void callerCannotForgeCaptureWriteTablesInvokePrivateWriterOrEscalate() throws Exception {
+  void restrictedCallerCannotForgeProofWriteTablesInvokeGuardOrEscalate() throws Exception {
     var context = context();
-    var original = finalized(context, 15000);
-    String diagnosticStart = observeWal(context, "after-original-finalization");
-    List<String> denied =
+    var ack = finalized(context, 15000);
+    String role = context.schema() + "_caller";
+    context
+        .dsl()
+        .execute(
+            "CREATE ROLE "
+                + role
+                + " LOGIN PASSWORD 'isolated-retirement-only' NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION");
+    context.dsl().execute("GRANT USAGE ON SCHEMA " + context.schema() + " TO " + role);
+    var caller = source(context.schema(), role, "isolated-retirement-only");
+    var denied =
         List.of(
-            "INSERT INTO "
-                + context.proofSchema()
-                + ".receipts(request_id) VALUES ('"
-                + request(original)
+            "INSERT INTO " + RECEIPTS + "(request_id) VALUES ('" + request(ack.evidence()) + "')",
+            "UPDATE " + RECEIPTS + " SET committed_before_ms = 1",
+            "DELETE FROM " + RECEIPTS,
+            "TRUNCATE " + RECEIPTS,
+            "INSERT INTO account_gameplay_admission_commit_confirmations(request_id) VALUES ('"
+                + request(ack.evidence())
                 + "')",
-            "UPDATE " + context.proofSchema() + ".receipts SET committed_before_ms = 1",
-            "DELETE FROM " + context.proofSchema() + ".receipts",
-            "TRUNCATE " + context.proofSchema() + ".receipts",
-            "SELECT "
-                + context.proofSchema()
-                + ".write_receipt(NULL::"
-                + context.proofSchema()
-                + ".receipts)",
-            "SELECT " + context.proofSchema() + ".immutable()",
-            "SET ROLE " + context.proofSchema() + "_owner",
-            "ALTER FUNCTION " + context.proofSchema() + ".confirm(uuid,text,uuid) RESET ALL",
-            "ALTER TABLE " + context.proofSchema() + ".receipts DISABLE TRIGGER ALL",
-            "CREATE TABLE " + context.proofSchema() + ".shadow(id integer)",
-            "SET session_replication_role = replica",
-            "SELECT "
-                + context.proofSchema()
-                + ".confirm('"
-                + request(original)
-                + "'::uuid, '"
-                + original.evidence().sha256()
-                + "', '"
-                + original.decision()
-                + "'::uuid, '0/1'::pg_lsn)");
+            "SELECT account_gameplay_admission_original_ack_receipt_guard()",
+            "SELECT account_gameplay_admission_confirmation_guard()",
+            "SET ROLE " + POSTGRES.getUsername(),
+            "ALTER FUNCTION account_gameplay_admission_original_ack_receipt_guard() RESET ALL",
+            "ALTER TABLE " + RECEIPTS + " DISABLE TRIGGER ALL",
+            "CREATE TABLE " + context.schema() + ".shadow(id integer)",
+            "SET session_replication_role = replica");
     for (String sql : denied) {
-      assertThatThrownBy(
-              () ->
-                  callerTransaction(
-                      context,
-                      connection -> {
-                        try (var statement = connection.createStatement()) {
-                          return statement.execute(sql);
-                        }
-                      }))
-          .as(sql)
-          .isInstanceOf(SQLException.class)
-          .satisfies(
-              failure ->
-                  assertThat(sqlState(failure))
-                      .isEqualTo(sql.endsWith("'0/1'::pg_lsn)") ? "42883" : "42501"));
+      try (var connection = caller.getConnection()) {
+        assertThatThrownBy(() -> DSL.using(connection).execute(sql))
+            .isInstanceOf(RuntimeException.class);
+      }
     }
-    observeWal(context, "after-denial-loop");
-    // A hostile session search path cannot replace fully qualified owner objects.
-    JSONB created;
-    try {
-      created =
-          callerTransaction(
-              context,
-              connection -> {
-                DSL.using(connection).execute("SET LOCAL search_path = pg_temp, public");
-                // Observe from the administrator only; do not warm this new caller with SQL.
-                observeWal(context, "before-fresh-caller-confirm");
-                return invoke(
-                    connection,
-                    context,
-                    "confirm",
-                    request(original),
-                    original.evidence().sha256(),
-                    original.decision());
-              });
-    } catch (SQLException failure) {
-      retainFailureWal(context, diagnosticStart, failure);
-      throw failure;
-    }
-    assertProof(context, original, created);
-    assertThat(call(context, original, "read_receipt")).isEqualTo(created);
-  }
-
-  private static String observeWal(Context context, String phase) {
-    var observation =
-        context
-            .dsl()
-            .fetchSingle(
-                "SELECT pg_current_wal_insert_lsn()::text AS insert_lsn, pg_current_wal_flush_lsn()::text AS flush_lsn, ceil(extract(epoch FROM clock_timestamp()) * 1000)::bigint AS observed_ms");
-    System.out.println(
-        "Protected-entry administrator WAL observation " + phase + " " + observation);
-    return observation.get("flush_lsn", String.class);
-  }
-
-  private static void retainFailureWal(Context context, String start, SQLException failure) {
-    // Failure diagnostics must never replace the original failure or force WAL durability.
-    try {
-      if (!(failure instanceof PSQLException postgres)) {
-        System.out.println("Protected-entry WAL diagnostic unavailable: no PostgreSQL detail");
-        return;
-      }
-      var serverError = postgres.getServerErrorMessage();
-      String detail = serverError == null ? null : serverError.getDetail();
-      if (detail == null) {
-        System.out.println("Protected-entry WAL diagnostic unavailable: no PostgreSQL detail");
-        return;
-      }
-      var upper = Pattern.compile("(?:^| )upper_lsn=([0-9A-F]+/[0-9A-F]+)(?: |$)").matcher(detail);
-      if (!upper.find()) {
-        System.out.println("Protected-entry WAL diagnostic unavailable: no captured upper LSN");
-        return;
-      }
-      String end = upper.group(1);
-      var bounds =
-          context
-              .dsl()
-              .fetchSingle(
-                  "SELECT pg_wal_lsn_diff(?::pg_lsn, ?::pg_lsn)::bigint AS bytes, (pg_walfile_name_offset(?::pg_lsn)).file_offset AS start_offset, pg_size_bytes(current_setting('wal_segment_size')) AS segment_bytes",
-                  end,
-                  start,
-                  start);
-      long bytes = bounds.get("bytes", Long.class);
-      long offset = bounds.get("start_offset", Long.class);
-      long segmentBytes = bounds.get("segment_bytes", Long.class);
-      if (bytes <= 0 || bytes > 2 * segmentBytes - offset) {
-        System.out.println(
-            "Protected-entry WAL diagnostic unavailable: empty range or more than two segments "
-                + start
-                + ".."
-                + end);
-        return;
-      }
-      // This container belongs only to this test class. Retain decoded output, never an archive.
-      var dump =
-          POSTGRES.execInContainer(
-              "pg_waldump",
-              "--path=/var/lib/postgresql/data/pg_wal",
-              "--start=" + start,
-              "--end=" + end,
-              "--limit=128");
-      String output = dump.getStdout() + dump.getStderr();
-      String retainedOutput = output.substring(0, Math.min(output.length(), 16384));
-      System.out.println(
-          "Protected-entry WAL diagnostic "
-              + start
-              + ".."
-              + end
-              + " exit="
-              + dump.getExitCode()
-              + " (maximum two segments, 128 records, 16384 characters):\n"
-              + retainedOutput);
-      System.out.println(
-          AccountPostgresIntegrationFixture.mapWalRelationLocatorsAfterFailure(
-              retainedOutput, context.admin()));
-      System.out.println(
-          "Protected-entry WAL diagnostic may be partial or unreadable before ordinary flushing; no flush, checkpoint, segment switch or retry was requested. Record/character limits may truncate provenance, and WAL records alone do not identify their backend.");
-    } catch (Exception diagnosticFailure) {
-      System.out.println("Protected-entry WAL diagnostic unavailable: " + diagnosticFailure);
-    }
+    // The genuine trusted owner remains usable after all denied caller attempts.
+    var receipt =
+        new AccountGameplayAdmissionOriginalAckReceiptCommitExecutor(context.admin()).confirm(ack);
+    assertThat(receipt.finalizationXid()).isEqualTo(ack.finalizationXid());
+    assertThat(receipt.committedBeforeMs()).isEqualTo(ack.committedBeforeMs());
+    assertThat(context.dsl().fetchCount(DSL.table(RECEIPTS))).isOne();
   }
 
   @Test
@@ -285,221 +204,367 @@ class AccountGameplayAdmissionProtectedEntryPrototypeIntegrationTest {
                               context.dsl().execute("RELEASE SAVEPOINT original_finalization");
                             context
                                 .dsl()
-                                .fetchSingle(
-                                    "SELECT " + context.proofSchema() + ".confirm(?, ?, ?)",
+                                .execute(
+                                    "INSERT INTO "
+                                        + RECEIPTS
+                                        + "(request_id, evidence_sha256, binding_decision_id, finalization_xid, committed_before_ms) VALUES (?, ?, ?, pg_current_xact_id()::text, ?)",
                                     request(evidence),
                                     evidence.sha256(),
-                                    decision);
+                                    decision,
+                                    Long.parseLong((String) evidence.carrier().get("evaluatedAt")));
                           }))
-          .hasMessageContaining("prototype independent original required");
-      assertThat(context.dsl().fetchCount(DSL.table(context.proofSchema() + ".receipts"))).isZero();
+          .hasMessageContaining("requires independent transaction");
+      assertThat(context.dsl().fetchCount(DSL.table(RECEIPTS))).isZero();
     }
   }
 
   @Test
-  void receiptCreatedInCurrentTransactionIsNotIndependentRecovery() throws Exception {
-    var context = context();
-    var original = finalized(context, 15000);
-    assertThatThrownBy(
-            () ->
-                callerTransaction(
-                    context,
-                    connection -> {
-                      invoke(
-                          connection,
-                          context,
-                          "confirm",
-                          request(original),
-                          original.evidence().sha256(),
-                          original.decision());
-                      return invoke(
-                          connection,
-                          context,
-                          "read_receipt",
-                          request(original),
-                          original.evidence().sha256(),
-                          original.decision());
-                    }))
-        .hasMessageContaining("prototype independent receipt required");
-    assertThat(context.dsl().fetchCount(DSL.table(context.proofSchema() + ".receipts"))).isZero();
-  }
-
-  @Test
-  void lateAndChangedOriginalDenyWithoutReceiptOrDeadlineMutation() throws Exception {
-    var context = context();
-    var original = finalized(context, 1200);
-    assertThatThrownBy(
-            () ->
-                callerTransaction(
-                    context,
-                    connection ->
-                        invoke(
-                            connection,
-                            context,
-                            "confirm",
-                            request(original),
-                            "b".repeat(64),
-                            original.decision())))
-        .hasMessageContaining("prototype exact original required");
-    assertThatThrownBy(
-            () ->
-                callerTransaction(
-                    context,
-                    connection ->
-                        invoke(
-                            connection,
-                            context,
-                            "confirm",
-                            request(original),
-                            original.evidence().sha256(),
-                            UUID.randomUUID())))
-        .hasMessageContaining("prototype exact original required");
-    waitPastExpiry(context, original);
-    assertThatThrownBy(() -> call(context, original, "confirm"))
-        .hasMessageContaining("prototype unchanged deadline expired");
-    assertThat(context.dsl().fetchCount(DSL.table(context.proofSchema() + ".receipts"))).isZero();
-    assertThat(
-            context
-                .dsl()
-                .fetchSingle(
-                    "SELECT expires_at_ms FROM account_gameplay_admission_lease_operations WHERE request_id = ?",
-                    request(original))
-                .get(0, Long.class))
-        .isEqualTo(expiry(original));
-  }
-
-  @Test
-  void staleSerializableCreatorMustRetryAndRecoverOneExactWinner() throws Exception {
-    var context = context();
-    var original = finalized(context, 15000);
-    try (var stale = context.caller().getConnection()) {
-      stale.setAutoCommit(false);
-      stale.setTransactionIsolation(Connection.TRANSACTION_SERIALIZABLE);
-      DSL.using(stale).fetchSingle("SELECT pg_current_snapshot()");
-      JSONB winner = call(context, original, "confirm");
+  void receiptInCurrentTransactionAndReleasedSubtransactionCannotProveDurability() {
+    for (boolean subtransaction : List.of(false, true)) {
+      var context = context();
+      var ack = finalized(context, 15000);
       assertThatThrownBy(
               () ->
-                  invoke(
-                      stale,
-                      context,
-                      "confirm",
-                      request(original),
-                      original.evidence().sha256(),
-                      original.decision()))
-          .satisfies(failure -> assertThat(sqlState(failure)).isEqualTo("40001"));
-      stale.rollback();
-      assertThat(call(context, original, "read_receipt")).isEqualTo(winner);
-      assertThat(context.dsl().fetchCount(DSL.table(context.proofSchema() + ".receipts"))).isOne();
+                  context
+                      .transaction()
+                      .executeWithoutResult(
+                          status -> {
+                            if (subtransaction) context.dsl().execute("SAVEPOINT receipt_creation");
+                            repository(context).create(ack);
+                            if (subtransaction)
+                              context.dsl().execute("RELEASE SAVEPOINT receipt_creation");
+                            repository(context).readDurably(ack.evidence(), ack.decisionId());
+                          }))
+          .hasMessageContaining("requires independent commit");
+      assertThat(context.dsl().fetchCount(DSL.table(RECEIPTS))).isZero();
     }
   }
 
   @Test
-  void snapshotBeforeIndependentFinalizationCannotSeeItsLaterCommit() throws Exception {
+  void staleSnapshotBeforeOriginalCommitCannotCreateAcknowledgementReceipt() throws Exception {
     var context = context();
     var evidence = pending(context, 15000);
-    UUID decision = UUID.randomUUID();
-    try (var stale = context.caller().getConnection()) {
+    try (var stale = context.admin().getConnection()) {
       stale.setAutoCommit(false);
       stale.setTransactionIsolation(Connection.TRANSACTION_SERIALIZABLE);
       DSL.using(stale).fetchSingle("SELECT pg_current_snapshot()");
-      new AccountGameplayAdmissionOriginalCommitExecutor(context.admin())
-          .execute(evidence, decision);
-      assertThatThrownBy(
-              () ->
-                  invoke(stale, context, "confirm", request(evidence), evidence.sha256(), decision))
-          .hasMessageContaining("prototype exact original required");
+      var ack =
+          new AccountGameplayAdmissionOriginalCommitExecutor(context.admin())
+              .execute(evidence, UUID.randomUUID());
+      assertThatThrownBy(() -> insertAck(DSL.using(stale), ack))
+          .satisfies(failure -> assertThat(sqlState(failure)).isIn("23514", "40001"));
       stale.rollback();
     }
-    assertThat(context.dsl().fetchCount(DSL.table(context.proofSchema() + ".receipts"))).isZero();
+    assertThat(context.dsl().fetchCount(DSL.table(RECEIPTS))).isZero();
   }
 
   @Test
-  void lockWaitPastOriginalExpiryDeniesWithoutReceipt() throws Exception {
+  void changedCallerProofAndBindingsDenyAndRetainedReceiptRemainsImmutable() {
     var context = context();
-    var original = finalized(context, 1800);
+    var ack = finalized(context, 15000);
+    for (String field :
+        List.of("account_uuid", "lease_id", "lease_fence", "expires_at_ms", "receipt_xid")) {
+      String value =
+          switch (field) {
+            case "account_uuid", "lease_id" -> "'" + UUID.randomUUID() + "'::uuid";
+            case "receipt_xid" -> "'1'";
+            default -> "1";
+          };
+      assertThatThrownBy(
+              () ->
+                  context
+                      .transaction()
+                      .executeWithoutResult(
+                          status ->
+                              context
+                                  .dsl()
+                                  .execute(
+                                      "INSERT INTO "
+                                          + RECEIPTS
+                                          + "(request_id, evidence_sha256, binding_decision_id, finalization_xid, committed_before_ms, "
+                                          + field
+                                          + ") VALUES (?, ?, ?, ?, ?, "
+                                          + value
+                                          + ")",
+                                      request(ack.evidence()),
+                                      ack.evidence().sha256(),
+                                      ack.decisionId(),
+                                      ack.finalizationXid(),
+                                      ack.committedBeforeMs())))
+          .hasMessageContaining("binding is database derived");
+    }
+    for (String changed : List.of("digest", "decision", "xid", "bound")) {
+      assertThatThrownBy(
+              () ->
+                  context
+                      .transaction()
+                      .executeWithoutResult(
+                          status ->
+                              context
+                                  .dsl()
+                                  .execute(
+                                      "INSERT INTO "
+                                          + RECEIPTS
+                                          + "(request_id, evidence_sha256, binding_decision_id, finalization_xid, committed_before_ms) VALUES (?, ?, ?, ?, ?)",
+                                      request(ack.evidence()),
+                                      changed.equals("digest")
+                                          ? "b".repeat(64)
+                                          : ack.evidence().sha256(),
+                                      changed.equals("decision")
+                                          ? UUID.randomUUID()
+                                          : ack.decisionId(),
+                                      changed.equals("xid") ? "1" : ack.finalizationXid(),
+                                      changed.equals("bound")
+                                          ? expiry(ack)
+                                          : ack.committedBeforeMs())))
+          .hasMessageContaining("Exact original Account COMMIT acknowledgement required");
+    }
+    var receipt =
+        new AccountGameplayAdmissionOriginalAckReceiptCommitExecutor(context.admin()).confirm(ack);
+    var before = receipt(context);
+    for (String mutation :
+        List.of(
+            "UPDATE " + RECEIPTS + " SET committed_before_ms = committed_before_ms + 1",
+            "UPDATE " + RECEIPTS + " SET expires_at_ms = expires_at_ms + 1",
+            "UPDATE " + RECEIPTS + " SET evidence_sha256 = '" + "b".repeat(64) + "'",
+            "DELETE FROM " + RECEIPTS,
+            "TRUNCATE " + RECEIPTS)) {
+      assertThatThrownBy(
+              () ->
+                  context
+                      .transaction()
+                      .executeWithoutResult(status -> context.dsl().execute(mutation)))
+          .hasMessageContaining("receipt is immutable");
+    }
+    assertThat(receipt(context)).isEqualTo(before);
+    assertThat(receipt.committedBeforeMs()).isEqualTo(ack.committedBeforeMs());
+  }
+
+  @Test
+  void originalLockWaitPastExpiryCannotMintAcknowledgementOrReceipt() throws Exception {
+    var context = context();
+    var evidence = pending(context, 1800);
     try (var lock = context.admin().getConnection();
         var executor = Executors.newSingleThreadExecutor()) {
       lock.setAutoCommit(false);
-      UUID account =
+      var owner =
           DSL.using(lock)
               .fetchSingle(
                   "SELECT account_uuid FROM account_gameplay_admission_lease_operations WHERE request_id = ?",
-                  request(original))
+                  request(evidence))
               .get(0, UUID.class);
       DSL.using(lock)
           .fetchSingle(
-              "SELECT account_uuid FROM accounts WHERE account_uuid = ? FOR UPDATE", account);
-      var entered = new CountDownLatch(1);
-      var pid = new AtomicInteger();
+              "SELECT account_uuid FROM accounts WHERE account_uuid = ? FOR UPDATE", owner);
+      var started = new CountDownLatch(1);
+      var backendPid = new java.util.concurrent.atomic.AtomicInteger();
+      var waitingSource =
+          new org.springframework.jdbc.datasource.DelegatingDataSource(context.admin()) {
+            @Override
+            public Connection getConnection() throws SQLException {
+              Connection connection = super.getConnection();
+              try {
+                backendPid.set(
+                    DSL.using(connection)
+                        .fetchSingle("SELECT pg_backend_pid()")
+                        .get(0, Integer.class));
+                started.countDown();
+                return connection;
+              } catch (RuntimeException | Error failure) {
+                try {
+                  connection.close();
+                } catch (SQLException closeFailure) {
+                  failure.addSuppressed(closeFailure);
+                }
+                throw failure;
+              }
+            }
+          };
       var attempt =
           executor.submit(
               () ->
-                  callerTransaction(
-                      context,
-                      connection -> {
-                        pid.set(
-                            DSL.using(connection)
-                                .fetchSingle("SELECT pg_backend_pid()")
-                                .get(0, Integer.class));
-                        entered.countDown();
-                        return invoke(
-                            connection,
-                            context,
-                            "confirm",
-                            request(original),
-                            original.evidence().sha256(),
-                            original.decision());
-                      }));
-      assertThat(entered.await(5, TimeUnit.SECONDS)).isTrue();
-      // Establish actual lock waiting, rather than assuming a thread-start latch proves it.
+                  new AccountGameplayAdmissionOriginalCommitExecutor(waitingSource)
+                      .execute(evidence, UUID.randomUUID()));
+      assertThat(started.await(5, TimeUnit.SECONDS)).isTrue();
+      // Verify an actual independent lock wait before the original expiry is allowed to pass.
       boolean waiting = false;
       long until = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
       while (!waiting && System.nanoTime() < until) {
         waiting =
-            Boolean.TRUE.equals(
-                context
-                    .dsl()
-                    .fetchSingle(
-                        "SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE pid = ? AND wait_event_type = 'Lock')",
-                        pid.get())
-                    .get(0, Boolean.class));
+            context
+                .dsl()
+                .fetchSingle(
+                    "SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE pid = ? AND wait_event_type = 'Lock')",
+                    backendPid.get())
+                .get(0, Boolean.class);
         if (!waiting) Thread.sleep(10);
       }
       assertThat(waiting).isTrue();
-      waitPastExpiry(context, original);
+      context
+          .dsl()
+          .fetchSingle(
+              "SELECT pg_sleep(GREATEST(0, (? - ceil(extract(epoch FROM clock_timestamp()) * 1000) + 50) / 1000.0))",
+              Long.parseLong((String) evidence.carrier().get("expiresAt")));
       lock.rollback();
       assertThatThrownBy(() -> attempt.get(5, TimeUnit.SECONDS))
-          .satisfies(
-              failure -> {
-                assertThat(sqlState(failure)).isEqualTo("23514");
-                assertThat(failure.getCause())
-                    .hasMessageContaining("prototype unchanged deadline expired");
-              });
+          .isInstanceOf(java.util.concurrent.ExecutionException.class);
     }
-    assertThat(context.dsl().fetchCount(DSL.table(context.proofSchema() + ".receipts"))).isZero();
+    assertThat(operation(context, evidence).get("status")).isEqualTo("PENDING");
+    assertThat(context.dsl().fetchCount(DSL.table(RECEIPTS))).isZero();
   }
 
   @Test
-  void catalogChurnBeforeFinalizationDoesNotPermitWarmingAwayColdCoverageFailure()
-      throws Exception {
+  void originalUpdateBeforeExpiryButPhysicalCommitAfterExpiryCannotMintReceipt() {
     var context = context();
-    // Real catalog churn creates dead catalog tuples. It does not prove PostgreSQL will prune a
-    // specific pg_class/pg_attribute page at function entry; exact PRUNE coverage remains unproved.
-    for (int index = 0; index < 30; index++) {
-      context
-          .dsl()
-          .execute("CREATE TABLE prototype_catalog_" + index + "(id integer, payload text)");
-      context.dsl().execute("DROP TABLE prototype_catalog_" + index);
+    var evidence = pending(context, 1000);
+    var physicalCommits = new java.util.concurrent.atomic.AtomicInteger();
+    var delayed =
+        new org.springframework.jdbc.datasource.DelegatingDataSource(context.admin()) {
+          @Override
+          public Connection getConnection() throws SQLException {
+            return delayedCommitConnection(super.getConnection());
+          }
+
+          private Connection delayedCommitConnection(Connection physical) {
+            try {
+              return (Connection)
+                  java.lang.reflect.Proxy.newProxyInstance(
+                      Connection.class.getClassLoader(),
+                      new Class<?>[] {Connection.class},
+                      (proxy, method, arguments) -> {
+                        if (method.getName().equals("commit") && method.getParameterCount() == 0) {
+                          DSL.using(physical)
+                              .fetchSingle(
+                                  "SELECT pg_sleep(GREATEST(0, (? - ceil(extract(epoch FROM clock_timestamp()) * 1000) + 50) / 1000.0))",
+                                  Long.parseLong((String) evidence.carrier().get("expiresAt")));
+                          physical.commit();
+                          physicalCommits.incrementAndGet();
+                          return null;
+                        }
+                        try {
+                          return method.invoke(physical, arguments);
+                        } catch (java.lang.reflect.InvocationTargetException failure) {
+                          throw failure.getCause();
+                        }
+                      });
+            } catch (RuntimeException | Error failure) {
+              try {
+                physical.close();
+              } catch (SQLException closeFailure) {
+                failure.addSuppressed(closeFailure);
+              }
+              throw failure;
+            }
+          }
+        };
+    assertThatThrownBy(
+            () ->
+                new AccountGameplayAdmissionOriginalCommitExecutor(delayed)
+                    .execute(evidence, UUID.randomUUID()))
+        .hasMessageContaining("post-COMMIT clock bound unavailable");
+    assertThat(physicalCommits.get()).isOne();
+    assertThat(operation(context, evidence).get("status")).isEqualTo("COMMITTED");
+    assertThat(context.dsl().fetchCount(DSL.table(RECEIPTS))).isZero();
+  }
+
+  @Test
+  void missingPendingRolledBackAndAbortedOriginalRemainUnproved() {
+    var context = context();
+    var evidence = pending(context, 15000);
+    UUID decision = UUID.randomUUID();
+    var original = operation(context, evidence);
+    var executor = new AccountGameplayAdmissionOriginalAckReceiptCommitExecutor(context.admin());
+    assertThatThrownBy(() -> executor.read(evidence, decision))
+        .hasMessageContaining("Exact durable original Account acknowledgement receipt required");
+    assertThatThrownBy(
+            () ->
+                context
+                    .transaction()
+                    .executeWithoutResult(
+                        status -> {
+                          new AccountGameplayAdmissionLeaseRepository(context.dsl())
+                              .recordCommitted(evidence, decision);
+                          throw new IllegalStateException("rollback original");
+                        }))
+        .hasMessageContaining("rollback original");
+    assertThat(operation(context, evidence)).isEqualTo(original);
+    assertThatThrownBy(() -> executor.read(evidence, decision))
+        .hasMessageContaining("Exact durable original Account acknowledgement receipt required");
+    context
+        .transaction()
+        .executeWithoutResult(
+            status ->
+                new AccountGameplayAdmissionLeaseRepository(context.dsl())
+                    .recordAborted(evidence, null, UUID.randomUUID()));
+    assertThatThrownBy(() -> executor.read(evidence, decision))
+        .hasMessageContaining("Exact durable original Account acknowledgement receipt required");
+    var missing = new LinkedHashMap<>(evidence.carrier());
+    missing.put("requestId", UUID.randomUUID().toString());
+    assertThatThrownBy(
+            () ->
+                executor.read(AccountGameplayAdmissionLeaseEvidence.fromCarrier(missing), decision))
+        .isInstanceOf(RuntimeException.class);
+    assertThat(context.dsl().fetchCount(DSL.table(RECEIPTS))).isZero();
+  }
+
+  @Test
+  void genuineAckSqlEntryRequiresWritableSerializableTransactionAndKeepsFinalizerStamp() {
+    var context = context();
+    var ack = finalized(context, 15000);
+    for (int isolation :
+        List.of(
+            TransactionDefinition.ISOLATION_READ_COMMITTED,
+            TransactionDefinition.ISOLATION_REPEATABLE_READ)) {
+      var unsupported = new TransactionTemplate(new DataSourceTransactionManager(context.admin()));
+      unsupported.setIsolationLevel(isolation);
+      assertThatThrownBy(
+              () -> unsupported.executeWithoutResult(status -> insertAck(context.dsl(), ack)))
+          .hasMessageContaining("Writable SERIALIZABLE");
+      assertThatThrownBy(
+              () ->
+                  unsupported.executeWithoutResult(
+                      status ->
+                          context
+                              .dsl()
+                              .fetch(
+                                  "SELECT * FROM account_gameplay_admission_read_original_ack_receipt_durably(?, ?, ?)",
+                                  request(ack.evidence()),
+                                  ack.evidence().sha256(),
+                                  ack.decisionId())))
+          .hasMessageContaining("Writable SERIALIZABLE");
     }
-    var original = finalized(context, 15000);
-    JSONB created = call(context, original, "confirm");
-    assertProof(context, original, created);
-    assertThat(call(context, original, "read_receipt")).isEqualTo(created);
+    var readOnly = new TransactionTemplate(new DataSourceTransactionManager(context.admin()));
+    readOnly.setIsolationLevel(TransactionDefinition.ISOLATION_SERIALIZABLE);
+    readOnly.setReadOnly(true);
+    assertThatThrownBy(
+            () ->
+                readOnly.executeWithoutResult(
+                    status ->
+                        context
+                            .dsl()
+                            .fetch(
+                                "SELECT * FROM account_gameplay_admission_read_original_ack_receipt_durably(?, ?, ?)",
+                                request(ack.evidence()),
+                                ack.evidence().sha256(),
+                                ack.decisionId())))
+        .hasMessageContaining("Writable SERIALIZABLE");
+    assertThatThrownBy(
+            () ->
+                context
+                    .transaction()
+                    .executeWithoutResult(
+                        status ->
+                            context
+                                .dsl()
+                                .execute(
+                                    "UPDATE account_gameplay_admission_lease_operations SET finalization_xid = '1' WHERE request_id = ?",
+                                    request(ack.evidence()))))
+        .hasMessageContaining("finalization transaction is database stamped");
+    assertThat(context.dsl().fetchCount(DSL.table(RECEIPTS))).isZero();
   }
 
   private static Context context() {
     String schema = "protected_" + UUID.randomUUID().toString().replace("-", "");
-    String proof = schema + "_proof";
     var admin = source(schema, POSTGRES.getUsername(), POSTGRES.getPassword());
     Flyway.configure()
         .dataSource(admin)
@@ -511,43 +576,28 @@ class AccountGameplayAdmissionProtectedEntryPrototypeIntegrationTest {
         .migrate();
     var transaction = new TransactionTemplate(new DataSourceTransactionManager(admin));
     transaction.setIsolationLevel(TransactionDefinition.ISOLATION_SERIALIZABLE);
-    var dsl = DSL.using(new TransactionAwareDataSourceProxy(admin), SQLDialect.POSTGRES);
-    try (var resource =
-        Objects.requireNonNull(
-            AccountGameplayAdmissionProtectedEntryPrototypeIntegrationTest.class
-                .getResourceAsStream("/account-admission-protected-entry-prototype.sql"))) {
-      dsl.execute(
-          new String(resource.readAllBytes(), StandardCharsets.UTF_8)
-              .replace("__S__", schema)
-              .replace("__P__", proof));
-    } catch (IOException failure) {
-      throw new IllegalStateException("Test-only protected entry fixture unavailable", failure);
-    }
-    assertThat(
-            dsl.fetchSingle("SELECT current_setting('server_version_num')::integer")
-                .get(0, Integer.class))
-        .isBetween(160000, 169999);
     return new Context(
-        proof, admin, source(null, proof + "_caller", "isolated-prototype-only"), dsl, transaction);
+        schema,
+        admin,
+        DSL.using(new TransactionAwareDataSourceProxy(admin), SQLDialect.POSTGRES),
+        transaction);
   }
 
   private static DriverManagerDataSource source(String schema, String username, String password) {
     var source = new DriverManagerDataSource();
     source.setUrl(
         POSTGRES.getJdbcUrl()
-            + (schema == null
-                ? ""
-                : (POSTGRES.getJdbcUrl().contains("?") ? "&" : "?") + "currentSchema=" + schema));
+            + (POSTGRES.getJdbcUrl().contains("?") ? "&" : "?")
+            + "currentSchema="
+            + schema);
     source.setUsername(username);
     source.setPassword(password);
     return source;
   }
 
-  private static Original finalized(Context context, long lifetime) {
-    var evidence = pending(context, lifetime);
-    UUID decision = UUID.randomUUID();
-    new AccountGameplayAdmissionOriginalCommitExecutor(context.admin()).execute(evidence, decision);
-    return new Original(evidence, decision);
+  private static OriginalCommitAcknowledgement finalized(Context context, long lifetime) {
+    return new AccountGameplayAdmissionOriginalCommitExecutor(context.admin())
+        .execute(pending(context, lifetime), UUID.randomUUID());
   }
 
   private static AccountGameplayAdmissionLeaseEvidence pending(Context context, long lifetime) {
@@ -666,85 +716,78 @@ class AccountGameplayAdmissionProtectedEntryPrototypeIntegrationTest {
     return AccountGameplayAdmissionLeaseEvidence.fromCarrier(carrier);
   }
 
-  private static JSONB call(Context context, Original original, String entry) throws SQLException {
-    return callerTransaction(
-        context,
-        connection ->
-            invoke(
-                connection,
-                context,
-                entry,
-                request(original),
-                original.evidence().sha256(),
-                original.decision()));
+  private static AccountGameplayAdmissionOriginalAckReceiptRepository repository(Context context) {
+    return new AccountGameplayAdmissionOriginalAckReceiptRepository(
+        context.dsl(), new AccountGameplayAdmissionLeaseRepository(context.dsl()));
   }
 
-  private static JSONB invoke(
-      Connection connection, Context context, String entry, UUID request, String sha, UUID decision)
-      throws SQLException {
-    try (var statement =
-        connection.prepareStatement(
-            "SELECT " + context.proofSchema() + "." + entry + "(?, ?, ?)")) {
-      statement.setObject(1, request);
-      statement.setString(2, sha);
-      statement.setObject(3, decision);
-      try (var result = statement.executeQuery()) {
-        assertThat(result.next()).isTrue();
-        JSONB receipt = JSONB.valueOf(result.getString(1));
-        assertThat(result.next()).isFalse();
-        return receipt;
-      }
+  private static void insertAck(DSLContext dsl, OriginalCommitAcknowledgement ack) {
+    dsl.execute(
+        "INSERT INTO "
+            + RECEIPTS
+            + "(request_id, evidence_sha256, binding_decision_id, finalization_xid, committed_before_ms) VALUES (?, ?, ?, ?, ?) ON CONFLICT (request_id) DO NOTHING",
+        request(ack.evidence()),
+        ack.evidence().sha256(),
+        ack.decisionId(),
+        ack.finalizationXid(),
+        ack.committedBeforeMs());
+  }
+
+  private static Map<String, Object> operation(
+      Context context, AccountGameplayAdmissionLeaseEvidence evidence) {
+    return context
+        .dsl()
+        .fetchSingle(
+            "SELECT * FROM account_gameplay_admission_lease_operations WHERE request_id = ?",
+            request(evidence))
+        .intoMap();
+  }
+
+  private static Map<String, Object> sourceSnapshot(Context context) {
+    Map<String, Object> snapshot = new LinkedHashMap<>();
+    for (String table :
+        List.of(
+            "accounts",
+            "account_gameplay_admission_lease_fences",
+            "account_gameplay_admission_lease_allocations",
+            "account_authority_generations",
+            "account_authority_issuance_fences",
+            "account_authority_source_records",
+            "account_authority_outbox_streams",
+            "account_authority_outbox_events")) {
+      snapshot.put(table, context.dsl().fetch("SELECT * FROM " + table + " ORDER BY 1").intoMaps());
     }
+    return snapshot;
   }
 
-  private static <T> T callerTransaction(Context context, SqlAction<T> action) throws SQLException {
-    try (var connection = context.caller().getConnection()) {
-      connection.setAutoCommit(false);
-      connection.setTransactionIsolation(Connection.TRANSACTION_SERIALIZABLE);
+  private static Map<String, Object> receipt(Context context) {
+    return context.dsl().fetchSingle("SELECT * FROM " + RECEIPTS).intoMap();
+  }
+
+  private static <T> T retrySerialization(java.util.function.Supplier<T> action) {
+    for (int attempt = 0; ; attempt++) {
       try {
-        T result = action.execute(connection);
-        connection.commit();
-        return result;
-      } catch (Exception failure) {
-        connection.rollback();
-        if (failure instanceof SQLException sql) throw sql;
-        if (failure instanceof RuntimeException runtime) throw runtime;
-        throw new IllegalStateException(failure);
+        return action.get();
+      } catch (RuntimeException failure) {
+        if (!"40001".equals(sqlState(failure)) || attempt >= 4) throw failure;
       }
     }
   }
 
-  private static void assertProof(Context context, Original original, JSONB receipt) {
-    assertThat(
-            context
-                .dsl()
-                .fetchSingle(
-                    "SELECT (r.original_operation = to_jsonb(o)) AND r.finalization_xid = o.finalization_xid AND r.confirmation_xid <> o.finalization_xid AND pg_visible_in_snapshot(o.finalization_xid::xid8, r.snapshot::pg_snapshot) AND r.flush_lsn >= r.insert_lsn AND r.committed_before_ms < o.expires_at_ms AND r.expires_at_ms = o.expires_at_ms AND to_jsonb(r) = ?::jsonb FROM "
-                        + context.proofSchema()
-                        + ".receipts r JOIN account_gameplay_admission_lease_operations o USING(request_id) WHERE r.request_id = ?",
-                    receipt.data(),
-                    request(original))
-                .get(0, Boolean.class))
-        .isTrue();
-  }
-
-  private static void assertProductionReceiptTablesEmpty(Context context) {
-    assertThat(
-            context.dsl().fetchCount(DSL.table("account_gameplay_admission_commit_confirmations")))
-        .isZero();
-    assertThat(
-            context
-                .dsl()
-                .fetchCount(DSL.table("account_gameplay_admission_original_commit_ack_receipts")))
-        .isZero();
-  }
-
-  private static void waitPastExpiry(Context context, Original original) {
+  private static void waitPastExpiry(Context context, OriginalCommitAcknowledgement ack) {
     context
         .dsl()
         .fetchSingle(
             "SELECT pg_sleep(GREATEST(0, (? - ceil(extract(epoch FROM clock_timestamp()) * 1000) + 50) / 1000.0))",
-            expiry(original));
+            expiry(ack));
+  }
+
+  private static long expiry(OriginalCommitAcknowledgement ack) {
+    return Long.parseLong((String) ack.evidence().carrier().get("expiresAt"));
+  }
+
+  private static UUID request(AccountGameplayAdmissionLeaseEvidence evidence) {
+    return UUID.fromString((String) evidence.carrier().get("requestId"));
   }
 
   private static String sqlState(Throwable failure) {
@@ -753,29 +796,9 @@ class AccountGameplayAdmissionProtectedEntryPrototypeIntegrationTest {
     return null;
   }
 
-  private static UUID request(Original original) {
-    return request(original.evidence());
-  }
-
-  private static UUID request(AccountGameplayAdmissionLeaseEvidence evidence) {
-    return UUID.fromString((String) evidence.carrier().get("requestId"));
-  }
-
-  private static long expiry(Original original) {
-    return Long.parseLong((String) original.evidence().carrier().get("expiresAt"));
-  }
-
-  @FunctionalInterface
-  private interface SqlAction<T> {
-    T execute(Connection connection) throws SQLException;
-  }
-
-  private record Original(AccountGameplayAdmissionLeaseEvidence evidence, UUID decision) {}
-
   private record Context(
-      String proofSchema,
+      String schema,
       DriverManagerDataSource admin,
-      DriverManagerDataSource caller,
       DSLContext dsl,
       TransactionTemplate transaction) {}
 }

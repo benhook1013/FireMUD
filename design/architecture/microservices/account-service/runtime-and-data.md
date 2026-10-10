@@ -160,6 +160,14 @@ Token refresh, replacement, generation, revocation, fencing, and logout are cano
 
 Game Session orchestrates binding-refresh installation and reconciliation through Account-owned operations; it never writes Account-owned registry or authority state. Current runtime still uses the legacy Account session keys rather than the target issued-token registry, so the target refresh, replacement, fencing, and logout proof remains unavailable.
 
+### Original Gameplay Admission COMMIT Acknowledgement
+
+The original lease finalizer owns a fresh writable SERIALIZABLE PostgreSQL 16 transaction, its enlisted physical connection, synchronous COMMIT acknowledgement and subsequent database-clock upper bound strictly before the unchanged original expiry. Only that successful physical path constructs the immutable in-process acknowledgement; a retained `COMMITTED` row, caller clock or receipt lookup cannot reconstruct it. Missing original acknowledgement, an unavailable or late clock bound, unsupported durability settings and ambiguous COMMIT outcomes deny without reminting the original proof.
+
+V122 stores that exact trusted-JVM acknowledgement in an independent receipt transaction. SQL validates its complete original binding, independent finalization XID and shape; it does not authenticate the opaque JVM capability or derive its original clock bound. A fresh receipt insert returns only after the actual synchronous receipt COMMIT and an independent exact read. An existing receipt, including recovery after lost receipt acknowledgement or original expiry, additionally requires the unchanged historical independent durability reader. Missing or unverifiable historical coverage denies; quiet-primary success is not guaranteed. Neither receipt nor recovery renews expiry or supplies current source authority, gameplay admission or runtime activation. Detailed implementation and executed proof belong in the [authoring tracker](../../../project-management/implementation-tracking/game-authoring-publishing-and-activation.md#current-status).
+
+Retained experimental confirmation evidence and its historical independent reader remain immutable; new experimental confirmation writes are unavailable. Original-finalization XID/binding stamps and pending source fences remain part of the genuine acknowledgement boundary. This does not authorize gameplay admission or production privilege adoption; the [authoring tracker](../../../project-management/implementation-tracking/game-authoring-publishing-and-activation.md#current-status) records migration, fixture convergence and executed proof.
+
 ## Membership and Entitlement Authority
 
 Billing-safe mutation authority contract:
