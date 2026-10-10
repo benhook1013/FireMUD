@@ -4,12 +4,20 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
+import integration.net.firedevops.firemud.accountservice.repository.AccountPostgresIntegrationFixture;
+import io.lettuce.core.AclSetuserArgs;
 import io.lettuce.core.ClientOptions;
 import io.lettuce.core.RedisClient;
 import io.lettuce.core.RedisURI;
 import io.lettuce.core.api.StatefulRedisConnection;
 import io.lettuce.core.api.sync.RedisCommands;
 import io.lettuce.core.codec.ByteArrayCodec;
+import io.lettuce.core.output.ArrayOutput;
+import io.lettuce.core.output.StatusOutput;
+import io.lettuce.core.protocol.CommandArgs;
+import io.lettuce.core.protocol.CommandKeyword;
+import io.lettuce.core.protocol.CommandType;
+import io.lettuce.core.protocol.ProtocolKeyword;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 import java.lang.reflect.Proxy;
@@ -28,7 +36,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
-import java.util.Properties;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -71,60 +78,169 @@ import net.firedevops.firemud.common.security.GameSessionAccountDelegationRegist
 import net.firedevops.firemud.common.security.GameSessionAccountDelegationRegistryRecord.AccountAuthoritySnapshot;
 import net.firedevops.firemud.common.security.GameSessionAccountDelegationRegistryRecord.EvidenceBundleReference;
 import net.firedevops.firemud.common.security.GameSessionAccountDelegationRegistryRecord.IssuanceBinding;
+import net.firedevops.firemud.test.TestContainerImages;
 import org.flywaydb.core.Flyway;
 import org.jooq.DSLContext;
 import org.jooq.SQLDialect;
 import org.jooq.impl.DSL;
+import org.junit.jupiter.api.AfterAll;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.datasource.DataSourceTransactionManager;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
 import org.springframework.jdbc.datasource.TransactionAwareDataSourceProxy;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
+import org.testcontainers.DockerClientFactory;
+import org.testcontainers.containers.GenericContainer;
+import org.testcontainers.containers.Network;
 import tools.jackson.databind.json.JsonMapper;
 
 /**
- * Exercises Account's registered Coordination Redis scripts against explicitly supplied isolated
- * loopback Redis and PostgreSQL fixtures. This test does not provision either service or establish
- * deployed ACL/TLS custody.
+ * Exercises Account's registered Coordination Redis scripts against isolated test-owned physical
+ * Redis and PostgreSQL fixtures. An explicitly supplied isolated loopback Redis pair remains
+ * supported. This test does not establish deployed ACL/TLS custody.
  */
 class AccountGameplayDelegationRedisIntegrationTest {
   private static final String REDIS_URI_ENV = "FIREMUD_ACCOUNT_REDIS_INTEGRATION_URI";
   private static final String FIXTURE_ADMIN_URI_ENV = "FIREMUD_ACCOUNT_REDIS_FIXTURE_ADMIN_URI";
+  private static final String ACCOUNT_IDENTITY = "account_coord_app";
   private static final String FIXTURE_ADMIN_IDENTITY = "account_proof_fixture_admin";
-  private static final String POSTGRES_URL_ENV = "FIREMUD_ACCOUNT_SIGNER_TEST_POSTGRES_URL";
+  private static final String FIXTURE_ADMIN_PASSWORD =
+      UUID.randomUUID().toString().replace("-", "");
+  private static final String ACCOUNT_PASSWORD = UUID.randomUUID().toString().replace("-", "");
   private static final String ACCOUNT_ISSUER = "firemud-account-service";
+  private static final int REDIS_PORT = 6379;
+  private static final String SCHEMA_PREFIX = "acct_gameplay_active_";
   private static final String CALLER_WORKLOAD = "spiffe://firemud/ns/test/sa/game-session-service";
   private static final long PROJECTION_BYTES =
       AccountGameplayDelegationAuthorityProjection.MAX_PROJECTION_BYTES;
   private static final int REGISTRY_BYTES =
       GameSessionAccountDelegationProfile.MAX_REGISTRY_RECORD_BYTES;
   private static final JsonMapper JSON = JsonMapper.builder().build();
+  private static final Network REDIS_NETWORK = Network.newNetwork();
+  private static final GenericContainer<?> REDIS_PRIMARY =
+      new GenericContainer<>(TestContainerImages.redis())
+          .withNetwork(REDIS_NETWORK)
+          .withNetworkAliases("account-gameplay-delegation-primary")
+          .withExposedPorts(REDIS_PORT)
+          .withCommand(
+              "redis-server",
+              "--bind",
+              "0.0.0.0",
+              "--protected-mode",
+              "no",
+              "--appendonly",
+              "yes",
+              "--appendfsync",
+              "always");
+  private static final GenericContainer<?> REDIS_REPLICA =
+      new GenericContainer<>(TestContainerImages.redis())
+          .withNetwork(REDIS_NETWORK)
+          .dependsOn(REDIS_PRIMARY)
+          .withCommand(
+              "redis-server",
+              "--bind",
+              "0.0.0.0",
+              "--protected-mode",
+              "no",
+              "--appendonly",
+              "yes",
+              "--appendfsync",
+              "always",
+              "--replicaof",
+              "account-gameplay-delegation-primary",
+              Integer.toString(REDIS_PORT));
+  private static final AccountPostgresIntegrationFixture POSTGRES =
+      new AccountPostgresIntegrationFixture(true);
+  private static RedisURI writerUri;
+  private static RedisURI fixtureAdminUri;
+  private static RedisClient redisBootstrapClient;
+  private static boolean ownsRedisFixture;
+  private String ownedPostgresSchema;
 
   @TempDir Path temporaryDirectory;
+
+  @BeforeAll
+  static void startPhysicalFixtures() throws InterruptedException {
+    String configuredWriter = System.getenv(REDIS_URI_ENV);
+    String configuredAdmin = System.getenv(FIXTURE_ADMIN_URI_ENV);
+    boolean writerConfigured = configuredWriter != null && !configuredWriter.isBlank();
+    boolean adminConfigured = configuredAdmin != null && !configuredAdmin.isBlank();
+    if (writerConfigured != adminConfigured) {
+      throw new IllegalStateException(
+          REDIS_URI_ENV + " and " + FIXTURE_ADMIN_URI_ENV + " must be configured together");
+    }
+
+    if (writerConfigured) {
+      writerUri = requireLoopbackUri(configuredWriter, ACCOUNT_IDENTITY);
+      fixtureAdminUri = requireLoopbackUri(configuredAdmin, FIXTURE_ADMIN_IDENTITY);
+      if (writerUri.getPort() != fixtureAdminUri.getPort()) {
+        throw new IllegalArgumentException(
+            "The Account writer and fixture administrator must address the same Redis primary");
+      }
+    } else {
+      assumeTrue(
+          DockerClientFactory.instance().isDockerAvailable(),
+          "Docker is unavailable; physical Account Redis proof is skipped");
+      ownsRedisFixture = true;
+      REDIS_PRIMARY.start();
+      REDIS_REPLICA.start();
+      int primaryPort = REDIS_PRIMARY.getMappedPort(REDIS_PORT);
+      redisBootstrapClient = redisClient("127.0.0.1", primaryPort, null, null);
+      try (var connection = redisBootstrapClient.connect(ByteArrayCodec.INSTANCE)) {
+        RedisCommands<byte[], byte[]> commands = connection.sync();
+        configureAccountUser(commands);
+        configureFixtureAdmin(commands);
+        awaitLocalAndReplicaAof(commands);
+      }
+      writerUri = authenticatedUri(primaryPort, ACCOUNT_IDENTITY, ACCOUNT_PASSWORD);
+      fixtureAdminUri =
+          authenticatedUri(primaryPort, FIXTURE_ADMIN_IDENTITY, FIXTURE_ADMIN_PASSWORD);
+    }
+
+    POSTGRES.start();
+  }
+
+  @AfterAll
+  static void stopPhysicalFixtures() {
+    POSTGRES.stop();
+    if (redisBootstrapClient != null) {
+      redisBootstrapClient.shutdown(Duration.ZERO, Duration.ofSeconds(2));
+    }
+    if (ownsRedisFixture) {
+      if (REDIS_REPLICA.isRunning()) REDIS_REPLICA.stop();
+      if (REDIS_PRIMARY.isRunning()) REDIS_PRIMARY.stop();
+      REDIS_NETWORK.close();
+    }
+  }
+
+  @AfterEach
+  void dropOwnedPostgresSchema() {
+    if (ownedPostgresSchema == null) return;
+    if (!ownedPostgresSchema.startsWith(SCHEMA_PREFIX)
+        || !ownedPostgresSchema.matches("[a-z][a-z0-9_]{0,62}")) {
+      throw new IllegalStateException("Refusing to clean an unowned Account proof schema");
+    }
+    try {
+      new JdbcTemplate(POSTGRES.dataSource())
+          .execute("DROP SCHEMA IF EXISTS \"" + ownedPostgresSchema + "\" CASCADE");
+    } finally {
+      ownedPostgresSchema = null;
+    }
+  }
 
   @ParameterizedTest
   @ValueSource(booleans = {false, true})
   void pinnedRedisHelperRegistersPendingAndProjectsExactOwnerValues(boolean tenantBound)
       throws Exception {
-    String writerUriText = System.getenv(REDIS_URI_ENV);
-    String adminUriText = System.getenv(FIXTURE_ADMIN_URI_ENV);
-    assumeTrue(
-        writerUriText != null && !writerUriText.isBlank(),
-        REDIS_URI_ENV
-            + " must name an externally provisioned loopback fixture; no Redis is started");
-    assumeTrue(
-        adminUriText != null && !adminUriText.isBlank(),
-        FIXTURE_ADMIN_URI_ENV
-            + " must name the isolated fixture administrator; no Redis is started");
-
-    RedisURI writerUri = requireLoopbackUri(writerUriText, "account_coord_app");
-    RedisURI adminUri = requireLoopbackUri(adminUriText, FIXTURE_ADMIN_IDENTITY);
     RedisClient writer = redisClient(writerUri);
-    RedisClient fixtureAdmin = redisClient(adminUri);
+    RedisClient fixtureAdmin = redisClient(fixtureAdminUri);
     StatefulRedisConnection<byte[], byte[]> adminConnection = null;
     Set<String> ownedKeys = new LinkedHashSet<>();
     try {
@@ -439,27 +555,12 @@ class AccountGameplayDelegationRedisIntegrationTest {
   }
 
   private void exerciseActiveTransition() throws Exception {
-    String writerUriText = System.getenv(REDIS_URI_ENV);
-    String adminUriText = System.getenv(FIXTURE_ADMIN_URI_ENV);
-    String postgresUrl = System.getenv(POSTGRES_URL_ENV);
-    assumeTrue(
-        writerUriText != null && !writerUriText.isBlank(),
-        REDIS_URI_ENV + " is required for the physical activation proof");
-    assumeTrue(
-        adminUriText != null && !adminUriText.isBlank(),
-        FIXTURE_ADMIN_URI_ENV + " is required for isolated physical readback");
-    assumeTrue(
-        postgresUrl != null && !postgresUrl.isBlank(),
-        POSTGRES_URL_ENV + " is required for the actual Account COMMITTED owner fixture");
-
-    RedisURI writerUri = requireLoopbackUri(writerUriText, "account_coord_app");
-    RedisURI adminUri = requireLoopbackUri(adminUriText, FIXTURE_ADMIN_IDENTITY);
     RedisClient writer = redisClient(writerUri);
-    RedisClient fixtureAdmin = redisClient(adminUri);
+    RedisClient fixtureAdmin = redisClient(fixtureAdminUri);
     StatefulRedisConnection<byte[], byte[]> adminConnection = null;
     Set<String> ownedKeys = new LinkedHashSet<>();
     try {
-      TestContext database = newPostgresContext(postgresUrl);
+      TestContext database = newPostgresContext();
       DSLContext dsl = database.dsl();
       AccountAuthorityGenerationRepository authorities =
           new AccountAuthorityGenerationRepository(dsl);
@@ -706,27 +807,12 @@ class AccountGameplayDelegationRedisIntegrationTest {
   @Test
   void physicalCommittedResponseRecoverySurvivesOrdinarySignerRotationAndReturnsSameCredential()
       throws Exception {
-    String writerUriText = System.getenv(REDIS_URI_ENV);
-    String adminUriText = System.getenv(FIXTURE_ADMIN_URI_ENV);
-    String postgresUrl = System.getenv(POSTGRES_URL_ENV);
-    assumeTrue(
-        writerUriText != null && !writerUriText.isBlank(),
-        REDIS_URI_ENV + " is required for physical response-recovery proof");
-    assumeTrue(
-        adminUriText != null && !adminUriText.isBlank(),
-        FIXTURE_ADMIN_URI_ENV + " is required for isolated registry readback");
-    assumeTrue(
-        postgresUrl != null && !postgresUrl.isBlank(),
-        POSTGRES_URL_ENV + " is required for physical Account response-recovery proof");
-
-    RedisURI writerUri = requireLoopbackUri(writerUriText, "account_coord_app");
-    RedisURI adminUri = requireLoopbackUri(adminUriText, FIXTURE_ADMIN_IDENTITY);
     RedisClient writer = redisClient(writerUri);
-    RedisClient fixtureAdmin = redisClient(adminUri);
+    RedisClient fixtureAdmin = redisClient(fixtureAdminUri);
     StatefulRedisConnection<byte[], byte[]> adminConnection = null;
     Set<String> ownedKeys = new LinkedHashSet<>();
     try {
-      TestContext database = newPostgresContext(postgresUrl);
+      TestContext database = newPostgresContext();
       DSLContext dsl = database.dsl();
       AccountAuthorityGenerationRepository authorities =
           new AccountAuthorityGenerationRepository(dsl);
@@ -1049,6 +1135,122 @@ class AccountGameplayDelegationRedisIntegrationTest {
     return client;
   }
 
+  private static RedisClient redisClient(String host, int port, String username, String password) {
+    RedisURI.Builder uri = RedisURI.Builder.redis(host, port);
+    if (username != null) uri.withAuthentication(username, password);
+    RedisURI redisUri = uri.build();
+    redisUri.setTimeout(Duration.ofSeconds(5));
+    return redisClient(redisUri);
+  }
+
+  private static RedisURI authenticatedUri(int port, String username, String password) {
+    RedisURI uri =
+        RedisURI.Builder.redis("127.0.0.1", port).withAuthentication(username, password).build();
+    uri.setTimeout(Duration.ofSeconds(5));
+    return uri;
+  }
+
+  private static void configureAccountUser(RedisCommands<byte[], byte[]> commands) {
+    commands.aclSetuser(
+        ACCOUNT_IDENTITY,
+        new AclSetuserArgs()
+            .reset()
+            .on()
+            .addPassword(ACCOUNT_PASSWORD)
+            .keyPattern("session:auth:token:*")
+            .keyPattern("session:auth:generation:issuer:*")
+            .keyPattern("session:auth:generation:account:*")
+            .keyPattern("session:auth:generation:tenant:*")
+            .keyPattern("session:auth:generation:membership:*")
+            .addCommand(CommandType.HELLO)
+            .addCommand(CommandType.PING)
+            .addCommand(CommandType.CLIENT, CommandKeyword.SETINFO)
+            .addCommand(CommandType.ACL, CommandKeyword.WHOAMI)
+            .addCommand(CommandType.SCRIPT, CommandKeyword.LOAD)
+            .addCommand(CommandType.EVALSHA)
+            .addCommand(CommandType.GET)
+            .addCommand(CommandType.SET)
+            .addCommand(CommandType.PEXPIRETIME)
+            .addCommand(CommandType.PTTL)
+            .addCommand(CommandType.TYPE));
+    commands.dispatch(
+        TestAclSetuser.INSTANCE,
+        new StatusOutput<>(ByteArrayCodec.INSTANCE),
+        new CommandArgs<>(ByteArrayCodec.INSTANCE)
+            .add("SETUSER")
+            .add(ACCOUNT_IDENTITY)
+            .add("+waitaof"));
+  }
+
+  private static void configureFixtureAdmin(RedisCommands<byte[], byte[]> commands) {
+    commands.aclSetuser(
+        FIXTURE_ADMIN_IDENTITY,
+        new AclSetuserArgs()
+            .reset()
+            .on()
+            .addPassword(FIXTURE_ADMIN_PASSWORD)
+            .keyPattern("*")
+            .addCommand(CommandType.HELLO)
+            .addCommand(CommandType.PING)
+            .addCommand(CommandType.CLIENT, CommandKeyword.SETINFO)
+            .addCommand(CommandType.ACL, CommandKeyword.WHOAMI)
+            .addCommand(CommandType.GET)
+            .addCommand(CommandType.SET)
+            .addCommand(CommandType.DEL)
+            .addCommand(CommandType.PEXPIRE)
+            .addCommand(CommandType.PEXPIREAT)
+            .addCommand(CommandType.PEXPIRETIME)
+            .addCommand(CommandType.PTTL));
+  }
+
+  private static void awaitLocalAndReplicaAof(RedisCommands<byte[], byte[]> commands)
+      throws InterruptedException {
+    byte[] probeKey = ascii("test-only:account-gameplay-delegation-aof-probe:" + UUID.randomUUID());
+    commands.set(probeKey, ascii("test-only-replication-probe"));
+    long deadline = System.nanoTime() + Duration.ofSeconds(30).toNanos();
+    try {
+      while (System.nanoTime() < deadline) {
+        List<Object> counts =
+            commands.dispatch(
+                TestWaitAof.INSTANCE,
+                new ArrayOutput<>(ByteArrayCodec.INSTANCE),
+                new CommandArgs<>(ByteArrayCodec.INSTANCE).add(1).add(1).add(500));
+        if (hasAofCounts(counts, 1, 1)) return;
+        Thread.sleep(50);
+      }
+      throw new IllegalStateException("Test Coordination Redis replica did not acknowledge AOF");
+    } finally {
+      commands.del(List.of(probeKey).toArray(byte[][]::new));
+    }
+  }
+
+  private static boolean hasAofCounts(List<Object> counts, long local, long replicas) {
+    return counts != null
+        && counts.size() == 2
+        && counts.get(0) instanceof Long observedLocal
+        && observedLocal >= local
+        && counts.get(1) instanceof Long observedReplicas
+        && observedReplicas >= replicas;
+  }
+
+  private enum TestWaitAof implements ProtocolKeyword {
+    INSTANCE;
+
+    @Override
+    public byte[] getBytes() {
+      return "WAITAOF".getBytes(StandardCharsets.US_ASCII);
+    }
+  }
+
+  private enum TestAclSetuser implements ProtocolKeyword {
+    INSTANCE;
+
+    @Override
+    public byte[] getBytes() {
+      return "ACL".getBytes(StandardCharsets.US_ASCII);
+    }
+  }
+
   /**
    * Real Account/Redis component composition; external workload and Game Design origins are
    * stipulated.
@@ -1184,22 +1386,11 @@ class AccountGameplayDelegationRedisIntegrationTest {
     }
   }
 
-  private static TestContext newPostgresContext(String postgresUrl) {
-    String jdbcUrl = requireLoopbackPostgresUrl(postgresUrl);
-    String schema = "acct_gameplay_active_" + UUID.randomUUID().toString().replace("-", "");
+  private TestContext newPostgresContext() {
+    String schema = SCHEMA_PREFIX + UUID.randomUUID().toString().replace("-", "");
     assertThat(schema.length()).isLessThanOrEqualTo(63);
-    DriverManagerDataSource dataSource = new DriverManagerDataSource();
-    dataSource.setUrl(jdbcUrl + "?currentSchema=" + schema);
-    dataSource.setUsername("postgres");
-    dataSource.setPassword("");
-    Properties properties = new Properties();
-    properties.setProperty("connectTimeout", "10");
-    properties.setProperty("socketTimeout", "60");
-    // This strictly validated loopback URL uses the disposable PostgreSQL SSH/Unix-socket tunnel.
-    properties.setProperty("sslmode", "disable");
-    properties.setProperty("gssEncMode", "disable");
-    properties.setProperty("options", "-c lock_timeout=60000 -c statement_timeout=90000");
-    dataSource.setConnectionProperties(properties);
+    ownedPostgresSchema = schema;
+    DriverManagerDataSource dataSource = POSTGRES.dataSource(schema);
     Flyway.configure()
         .dataSource(dataSource)
         .schemas(schema)
@@ -1212,27 +1403,6 @@ class AccountGameplayDelegationRedisIntegrationTest {
         DSL.using(new TransactionAwareDataSourceProxy(dataSource), SQLDialect.POSTGRES);
     DataSourceTransactionManager manager = new DataSourceTransactionManager(dataSource);
     return new TestContext(dsl, manager, new TransactionTemplate(manager));
-  }
-
-  private static String requireLoopbackPostgresUrl(String raw) {
-    final URI parsed;
-    try {
-      if (!raw.startsWith("jdbc:")) throw new IllegalArgumentException("not a JDBC URL");
-      parsed = URI.create(raw.substring("jdbc:".length()));
-    } catch (RuntimeException rejected) {
-      throw new IllegalArgumentException("Account proof database URL is malformed");
-    }
-    if (!"postgresql".equals(parsed.getScheme())
-        || !"127.0.0.1".equals(parsed.getHost())
-        || parsed.getPort() <= 0
-        || !"/postgres".equals(parsed.getPath())
-        || parsed.getRawUserInfo() != null
-        || parsed.getRawQuery() != null
-        || parsed.getRawFragment() != null) {
-      throw new IllegalArgumentException(
-          "Account proof database must be an exact loopback PostgreSQL URL");
-    }
-    return raw;
   }
 
   private static UUID createFreshAccount(
