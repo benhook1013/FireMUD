@@ -186,6 +186,7 @@ class AuthoredWorldLaunchDescriptorClientTest {
         false,
         null);
   }
+
   @Test
   void closeReleasesClientMonitorBeforeClosingCertificateWatcher(@TempDir Path directory)
       throws Exception {
