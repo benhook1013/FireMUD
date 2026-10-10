@@ -1,7 +1,7 @@
 {
   "scriptId": "account.game-session-delegation-activate-committed.v1",
   "resourcePath": "redis/lua/account-game-session-delegation-activate-committed.lua",
-  "sha256": "cb3c1ddd9ae008fa857427f721c1cabcf3d6b1502259849701baff081bc9a698",
+  "sha256": "3f60abccf2920b300940f757e9e746012232beeda1d20446020d62072312cd7a",
   "owner": "account-service",
   "principal": "account_coord_app",
   "role": "COORDINATION",
