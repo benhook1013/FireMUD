@@ -88,7 +88,7 @@ class AccountControlUiPrimaryAuthenticationPostgresIntegrationTest {
   }
 
   @Test
-  void freshSecurityLockedAccountCannotCompleteOwnerBirthAndLeavesNoRows() {
+  void freshAccountCannotBeCreatedInSecurityLockedStateAndLeavesNoRows() {
     Context c = context();
     Account lockedAccount = c.accountCandidate("PASSWORD", AccountLifecycleState.SECURITY_LOCKED);
     assertThatThrownBy(
@@ -98,9 +98,8 @@ class AccountControlUiPrimaryAuthenticationPostgresIntegrationTest {
                       c.accounts.save(lockedAccount);
                       return null;
                     }))
-        .isInstanceOf(
-            net.firedevops.firemud.accountservice.repository
-                .AccountPlatformRestrictionBirthRepository.BirthSourceUnavailableException.class);
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessage("Fresh Accounts must be created in the ACTIVE lifecycle state");
 
     UUID accountUuid = lockedAccount.getAccountUuid();
     assertThat(accountUuid).isNotNull();

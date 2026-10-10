@@ -60,7 +60,7 @@ class AccountStartSessionOperatorAuthorizationRepositoryIntegrationTest {
   void dropTestOwnedSchemas() {
     JdbcTemplate jdbc = new JdbcTemplate(POSTGRES.dataSource());
     for (String schema : schemas) {
-      if (!schema.matches("account_start_session_authorization_[a-f0-9]{32}")) {
+      if (!schema.matches("account_start_session_auth_[a-f0-9]{32}")) {
         throw new IllegalStateException("Refusing to dispose an unowned PostgreSQL schema");
       }
       jdbc.execute("DROP SCHEMA IF EXISTS \"" + schema + "\" CASCADE");
@@ -458,8 +458,7 @@ class AccountStartSessionOperatorAuthorizationRepositoryIntegrationTest {
   }
 
   private Context context() {
-    String schema =
-        "account_start_session_authorization_" + UUID.randomUUID().toString().replace("-", "");
+    String schema = "account_start_session_auth_" + UUID.randomUUID().toString().replace("-", "");
     schemas.add(schema);
     DriverManagerDataSource dataSource = POSTGRES.dataSource(schema);
     Flyway.configure()
