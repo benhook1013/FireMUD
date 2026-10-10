@@ -15,8 +15,12 @@ import net.firedevops.firemud.accountservice.entity.Account;
 import net.firedevops.firemud.accountservice.entity.AccountEmailLoginChallenge;
 import net.firedevops.firemud.accountservice.entity.AccountLifecycleState;
 import net.firedevops.firemud.accountservice.mapper.AccountMapper;
+import net.firedevops.firemud.accountservice.repository.AccountAuthorityOutboxRepository;
 import net.firedevops.firemud.accountservice.repository.AccountEmailLoginChallengeRepository;
+import net.firedevops.firemud.accountservice.repository.AccountLogoutAllOperationRepository;
+import net.firedevops.firemud.accountservice.repository.AccountPasswordResetOperationRepository;
 import net.firedevops.firemud.accountservice.repository.AccountRepository;
+import net.firedevops.firemud.accountservice.repository.AccountSecurityStateOperationRepository;
 import net.firedevops.firemud.accountservice.service.impl.AccountServiceImpl;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -34,6 +38,10 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
 @ExtendWith(MockitoExtension.class)
 class AccountControlUiPrimaryAuthenticationTest {
   @Mock AccountRepository accounts;
+  @Mock AccountAuthorityOutboxRepository authorityOutbox;
+  @Mock AccountPasswordResetOperationRepository passwordResetOperations;
+  @Mock AccountLogoutAllOperationRepository logoutAllOperations;
+  @Mock AccountSecurityStateOperationRepository securityStateOperations;
   @Mock AccountEmailLoginChallengeRepository challenges;
   @Mock AccountMapper mapper;
   @Mock PlatformTransactionManager transactions;

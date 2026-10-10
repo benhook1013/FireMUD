@@ -336,8 +336,7 @@ class AuthoredWorldLaunchDescriptorGrpcCodecTest {
     var descriptor = AuthoredWorldReleaseAttestationSelectorTest.descriptor(selector);
     var release = AuthoredWorldReleaseAttestationSelectorTest.release(descriptor, selector);
     var binding = new CompleteLaunchBindingEvidence(descriptor, release);
-    var request =
-        AuthoredWorldLaunchDescriptorGrpcCodec.toGetRequest(getRequest(descriptor));
+    var request = AuthoredWorldLaunchDescriptorGrpcCodec.toGetRequest(getRequest(descriptor));
     var response = completeResponse(request, binding);
 
     assertThat(AuthoredWorldLaunchDescriptorGrpcCodec.fromCompleteResponse(request, response))

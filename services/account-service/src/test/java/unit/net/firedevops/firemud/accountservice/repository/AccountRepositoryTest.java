@@ -75,13 +75,13 @@ class AccountRepositoryTest {
       TransactionSynchronizationManager.setCurrentTransactionReadOnly(false);
       assertThatThrownBy(() -> repository.findByAccountUuidForUpdate(accountUuid))
           .isInstanceOf(IllegalStateException.class)
-          .hasMessage("Account UUID lock requires an active writable owner transaction");
+          .hasMessage("Account authority mutation requires an active writable owner transaction");
 
       TransactionSynchronizationManager.setActualTransactionActive(true);
       TransactionSynchronizationManager.setCurrentTransactionReadOnly(true);
       assertThatThrownBy(() -> repository.findByAccountUuidForUpdate(accountUuid))
           .isInstanceOf(IllegalStateException.class)
-          .hasMessage("Account UUID lock requires an active writable owner transaction");
+          .hasMessage("Account authority mutation requires an active writable owner transaction");
     } finally {
       TransactionSynchronizationManager.setCurrentTransactionReadOnly(priorReadOnly);
       TransactionSynchronizationManager.setActualTransactionActive(priorActive);

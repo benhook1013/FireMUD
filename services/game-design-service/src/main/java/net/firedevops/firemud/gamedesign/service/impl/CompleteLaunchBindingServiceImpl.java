@@ -349,11 +349,20 @@ public class CompleteLaunchBindingServiceImpl implements CompleteLaunchBindingSe
         new ArrayList<>(requiredParticipantOrder.size());
     String expectedScope = Long.toString(versionId);
     String appliedCommitId = null;
+    int attestationSchemaVersion =
+        switch (bundle.attestationSchemaVersion()) {
+          case "v1" -> AuthoredWorldReleaseAttestationEvidence.SCHEMA_VERSION;
+          case "v2" -> AuthoredWorldReleaseAttestationEvidence.SELECTOR_SCHEMA_VERSION;
+          default ->
+              throw deny(
+                  "RELEASE_ATTESTATION_SCHEMA_UNSUPPORTED",
+                  "the release-attestation schema is unsupported");
+        };
     for (int index = 0; index < requiredParticipantOrder.size(); index++) {
       String expectedParticipantKey = requiredParticipantOrder.get(index);
       int supportedDigestSchemaVersion =
           AuthoredWorldReleaseAttestationEvidence.supportedParticipantDigestSchema(
-              expectedParticipantKey);
+              expectedParticipantKey, attestationSchemaVersion);
       PublishParticipantDigestDto digest = observed.get(index);
       if (digest == null
           || !expectedParticipantKey.equals(digest.participantKey())

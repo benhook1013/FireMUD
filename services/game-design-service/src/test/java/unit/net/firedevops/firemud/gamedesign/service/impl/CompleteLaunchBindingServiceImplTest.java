@@ -14,8 +14,10 @@ import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 import net.firedevops.firemud.common.gamedesign.AuthoredWorldLaunchDescriptorEvidence;
+import net.firedevops.firemud.common.gamedesign.AuthoredWorldReleaseAttestationEvidence;
 import net.firedevops.firemud.common.tenant.AuthoredWorldSourceDigest;
 import net.firedevops.firemud.common.tenant.AuthoredWorldSourceEvidence;
+import net.firedevops.firemud.common.world.WorldPublishedStartLocationEvidence;
 import net.firedevops.firemud.gamedesign.dto.PublishParticipantDigestDto;
 import net.firedevops.firemud.gamedesign.dto.PublishedReleaseBundleDto;
 import net.firedevops.firemud.gamedesign.dto.ResolvedLaunchDescriptorDto;
@@ -38,39 +40,8 @@ class CompleteLaunchBindingServiceImplTest {
   @Test
   void selectorReleaseIsAssembledFromImmutableLocalBundleWithoutMutableOwnerReads()
       throws Exception {
-    var selector =
-        PublishedWorldSelectorFixtures.evidence(
-            new net.firedevops.firemud.common.authoring.DraftCommitBinding.TargetProof(
-                CANONICAL_TENANT_ID,
-                CANONICAL_VERSION_ID,
-                VERSION_ID,
-                PRIVATE_TENANT_KEY,
-                source.sourceGameRowId(),
-                source.sourceGameTenantKey(),
-                source.provenanceKind()));
-    var selected =
-        new PublishedReleaseBundleDto(
-            bundle.id(),
-            bundle.tenantId(),
-            bundle.versionId(),
-            bundle.versionNumber(),
-            "v2",
-            selector.request().publishWorkflowId(),
-            bundle.manifestHash(),
-            bundle.requiredManifestAssetKeys(),
-            PublishedWorldSelectorFixtures.participants(VERSION_ID, selector),
-            bundle.commandDefinitions(),
-            bundle.generationConfigRevision(),
-            bundle.scriptOnly(),
-            bundle.scriptPatchVersion(),
-            bundle.publishedAt(),
-            bundle.canonicalTenantId(),
-            bundle.canonicalVersionId(),
-            bundle.publishedReleaseBundleRef(),
-            bundle.manifestSchemaVersion(),
-            bundle.artifactDigests(),
-            selector);
-    givenBundle(selected);
+    var selector = selectorEvidence();
+    givenBundle(selectorBundle(selector, selectorParticipants(selector)));
     var result =
         service.getCompleteLaunchBinding(
             READ_REQUEST_ID,
@@ -82,6 +53,30 @@ class CompleteLaunchBindingServiceImplTest {
     assertEquals(2, result.releaseAttestation().schemaVersion());
     assertEquals(selector, result.releaseAttestation().worldStartLocationEvidence());
     result.releaseAttestation().requireValid(descriptor);
+    verifyReadOnlyCallsOnly();
+  }
+
+  @Test
+  void selectorV2RejectsLegacyGameDesignControlPlaneParticipantSchema() throws Exception {
+    var selector = selectorEvidence();
+    givenBundle(
+        selectorBundle(
+            selector, PublishedWorldSelectorFixtures.participants(VERSION_ID, selector)));
+
+    IllegalArgumentException denied =
+        assertThrows(
+            IllegalArgumentException.class,
+            () ->
+                service.getCompleteLaunchBinding(
+                    READ_REQUEST_ID,
+                    CANONICAL_TENANT_ID,
+                    WORLD_SLUG,
+                    CONTROL_PLANE_REQUEST_ID,
+                    descriptor.requestDigest(),
+                    descriptor.resultDigest()));
+
+    assertTrue(
+        denied.getMessage().startsWith("COMPLETE_LAUNCH_BINDING_PARTICIPANT_EVIDENCE_INVALID"));
     verifyReadOnlyCallsOnly();
   }
 
@@ -940,6 +935,68 @@ class CompleteLaunchBindingServiceImplTest {
         participant(PublishParticipantKey.GAME_LOGIC.name(), 1, ABILITY_SCHEMA_DIGEST),
         participant(PublishParticipantKey.AUTOMATION_SCRIPTING.name(), 5, null),
         participant(PublishParticipantKey.GAME_DESIGN_CONTROL_PLANE.name(), 1, null));
+  }
+
+  private WorldPublishedStartLocationEvidence selectorEvidence() throws Exception {
+    return PublishedWorldSelectorFixtures.evidence(
+        new net.firedevops.firemud.common.authoring.DraftCommitBinding.TargetProof(
+            CANONICAL_TENANT_ID,
+            CANONICAL_VERSION_ID,
+            VERSION_ID,
+            PRIVATE_TENANT_KEY,
+            source.sourceGameRowId(),
+            source.sourceGameTenantKey(),
+            source.provenanceKind()));
+  }
+
+  private PublishedReleaseBundleDto selectorBundle(
+      WorldPublishedStartLocationEvidence selector,
+      List<PublishParticipantDigestDto> participants) {
+    return new PublishedReleaseBundleDto(
+        bundle.id(),
+        bundle.tenantId(),
+        bundle.versionId(),
+        bundle.versionNumber(),
+        "v2",
+        selector.request().publishWorkflowId(),
+        bundle.manifestHash(),
+        bundle.requiredManifestAssetKeys(),
+        participants,
+        bundle.commandDefinitions(),
+        bundle.generationConfigRevision(),
+        bundle.scriptOnly(),
+        bundle.scriptPatchVersion(),
+        bundle.publishedAt(),
+        bundle.canonicalTenantId(),
+        bundle.canonicalVersionId(),
+        bundle.publishedReleaseBundleRef(),
+        bundle.manifestSchemaVersion(),
+        bundle.artifactDigests(),
+        selector);
+  }
+
+  private List<PublishParticipantDigestDto> selectorParticipants(
+      WorldPublishedStartLocationEvidence selector) {
+    return PublishedWorldSelectorFixtures.participants(VERSION_ID, selector).stream()
+        .map(
+            participant ->
+                PublishParticipantKey.GAME_DESIGN_CONTROL_PLANE
+                        .name()
+                        .equals(participant.participantKey())
+                    ? new PublishParticipantDigestDto(
+                        participant.participantKey(),
+                        participant.scopeValue(),
+                        participant.baseVersionId(),
+                        participant.appliedCommitId(),
+                        participant.contentDigest(),
+                        AuthoredWorldReleaseAttestationEvidence.supportedParticipantDigestSchema(
+                            participant.participantKey(),
+                            AuthoredWorldReleaseAttestationEvidence.SELECTOR_SCHEMA_VERSION),
+                        participant.abilitySchemaDigest(),
+                        participant.errorCode(),
+                        participant.errorMessage())
+                    : participant)
+        .toList();
   }
 
   private PublishParticipantDigestDto participant(
