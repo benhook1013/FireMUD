@@ -1,5 +1,6 @@
 package net.firedevops.firemud.gamedesign.publication;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verifyNoInteractions;
@@ -9,12 +10,25 @@ import io.grpc.Context;
 import io.grpc.Status;
 import io.grpc.StatusRuntimeException;
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import net.firedevops.firemud.common.authoring.DraftCommitBinding;
+import net.firedevops.firemud.common.authoring.DraftCommitBinding.AffectedUnit;
+import net.firedevops.firemud.common.authoring.DraftCommitBinding.Owner;
+import net.firedevops.firemud.common.authoring.DraftCommitBinding.RevisionPayload;
+import net.firedevops.firemud.common.authoring.DraftCommitBinding.TargetProof;
+import net.firedevops.firemud.common.gamedesign.GameplayRuleSource;
+import net.firedevops.firemud.common.gamedesign.RealmPolicySource;
 import net.firedevops.firemud.common.gamedesign.StartSessionTemplateAssociationReadEvidence;
 import net.firedevops.firemud.common.gamedesign.StartSessionTemplateAssociationReadEvidence.ExactReplay;
 import net.firedevops.firemud.common.gamedesign.StartSessionTemplateAssociationReadEvidence.InitialConfigured;
+import net.firedevops.firemud.common.gamelogic.GameplayRuleManifest.Audience;
+import net.firedevops.firemud.common.gamelogic.GameplayRuleManifest.Disposition;
+import net.firedevops.firemud.common.gamelogic.GameplayRuleManifest.Feedback;
+import net.firedevops.firemud.common.gamelogic.GameplayRuleManifest.ReplayPolicy;
+import net.firedevops.firemud.common.gamelogic.GameplayRuleManifest.Visibility;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
 import net.firedevops.firemud.common.json.Rfc8785CanonicalJson;
 import net.firedevops.firemud.common.operator.StartSessionAuthorityEvidenceBundle;
@@ -106,6 +120,165 @@ class StartSessionLaunchDescriptorProducerTest {
         .isEqualTo(Status.Code.UNAVAILABLE);
     verifyNoInteractions(transactions);
   }
+
+  @Test
+  void selectedSchema3ActorCoreIsResolvedFromExactOwnerSnapshots() {
+    var fixture = selectedActorCoreSource();
+    var resolved =
+        StartSessionLaunchDescriptorProducer.resolveSelectedAuthoredInitialActorCoreSources(
+            uuid("66666666-6666-4666-8666-666666666666"),
+            digest('a'),
+            "world",
+            "selected-workflow",
+            bytes("selected publication operation"),
+            bytes("selected publication terminal evidence"),
+            fixture.binding(),
+            fixture.policySnapshot(),
+            fixture.gameplayRules());
+
+    assertThat(resolved).hasSize(1);
+    assertThat(resolved.getFirst().core().displayName()).isEqualTo("Wayfarer");
+    assertThat(resolved.getFirst().disposition().dispositionKey()).isEqualTo("newcomer");
+    assertThat(resolved.getFirst().safeFeedback().feedbackKey()).isEqualTo("welcome");
+    assertThat(resolved.getFirst().selectedCommit()).isEqualTo(fixture.binding());
+    assertThat(resolved.getFirst().expectedWorldSlug()).isEqualTo("world");
+
+    assertThat(
+            StartSessionLaunchDescriptorProducer.resolveSelectedAuthoredInitialActorCoreSources(
+                uuid("66666666-6666-4666-8666-666666666666"),
+                digest('a'),
+                "different-world",
+                "selected-workflow",
+                bytes("selected publication operation"),
+                bytes("selected publication terminal evidence"),
+                fixture.binding(),
+                fixture.policySnapshot(),
+                fixture.gameplayRules()))
+        .isEmpty();
+
+    DraftCommitBinding otherCommit =
+        DraftCommitBinding.create(
+            fixture.binding().target(),
+            uuid("99999999-9999-4999-8999-999999999999"),
+            uuid("88888888-8888-4888-8888-888888888888"),
+            "base-commit-0",
+            fixture.binding().revisions(),
+            fixture.binding().affectedUnits());
+    var changedPolicySnapshot =
+        new net.firedevops.firemud.common.gamedesign.RealmPolicySnapshot(
+            otherCommit, "1", fixture.policySnapshot().policies());
+
+    assertThatThrownBy(
+            () ->
+                StartSessionLaunchDescriptorProducer.resolveSelectedAuthoredInitialActorCoreSources(
+                    uuid("66666666-6666-4666-8666-666666666666"),
+                    digest('a'),
+                    "world",
+                    "selected-workflow",
+                    bytes("selected publication operation"),
+                    bytes("selected publication terminal evidence"),
+                    fixture.binding(),
+                    changedPolicySnapshot,
+                    fixture.gameplayRules()))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("selected authored commit");
+  }
+
+  private static SelectedActorCoreFixture selectedActorCoreSource() {
+    var target =
+        new TargetProof(
+            TENANT, VERSION, 23L, "private-owner-key", 42L, "private-owner-key", "NEW_GAME_ROW");
+    String policyJson =
+        "{\"schemaVersion\":3,\"worldSlug\":\"world\",\"worldDisplayName\":\"World\","
+            + "\"realmSlug\":\"realm\",\"realmDisplayName\":\"Realm\",\"visible\":true,"
+            + "\"publicProduction\":true,\"stateScope\":\"SHARED\",\"entryPolicy\":\"PLAYER_CREATED\","
+            + "\"creationDescriptor\":{\"schemaVersion\":1,\"descriptorId\":\"11111111-1111-4111-8111-111111111111\","
+            + "\"descriptorRevisionId\":\"22222222-2222-4222-8222-222222222222\","
+            + "\"inputKind\":\"EMPTY_OBJECT\",\"dependencies\":[]},"
+            + "\"initialActorCore\":{\"displayName\":\"Wayfarer\",\"dispositionKey\":\"newcomer\"}}";
+    String policyPayload =
+        RealmPolicySource.canonical(
+            Map.of(
+                "revisionKind",
+                RealmPolicySource.REVISION_KIND,
+                "logicalRevisionId",
+                "selected-policy-r3",
+                "policy",
+                RealmPolicySource.tree(policyJson)));
+    var disposition = new Disposition("newcomer", List.of(), "welcome");
+    var feedback =
+        new Feedback(
+            "welcome",
+            "actor.created",
+            Audience.SOURCE_ACTOR,
+            "actor.created",
+            "Welcome, traveler.",
+            List.of(),
+            Visibility.PUBLIC,
+            ReplayPolicy.EFFECT_IDEMPOTENT);
+    List<RevisionPayload> revisions =
+        List.of(
+            new RevisionPayload(
+                "0",
+                uuid("55555555-5555-4555-8555-555555555555"),
+                Owner.GAME_DESIGN_CONTROL_PLANE,
+                policyPayload),
+            new RevisionPayload(
+                "1",
+                uuid("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"),
+                Owner.GAME_DESIGN_CONTROL_PLANE,
+                GameplayRuleSource.upsertPayload(disposition)),
+            new RevisionPayload(
+                "2",
+                uuid("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"),
+                Owner.GAME_DESIGN_CONTROL_PLANE,
+                GameplayRuleSource.upsertPayload(feedback)));
+    List<AffectedUnit> affectedUnits =
+        List.of(
+            new AffectedUnit(
+                Owner.GAME_DESIGN_CONTROL_PLANE,
+                RealmPolicySource.SCOPE,
+                VERSION.toString(),
+                RealmPolicySource.SCOPE,
+                "effective",
+                "0"),
+            new AffectedUnit(
+                Owner.GAME_DESIGN_CONTROL_PLANE,
+                GameplayRuleSource.SCOPE,
+                VERSION.toString(),
+                GameplayRuleSource.SCOPE,
+                GameplayRuleSource.SCOPE_ID,
+                "0"));
+    DraftCommitBinding binding =
+        DraftCommitBinding.create(
+            target,
+            uuid("77777777-7777-4777-8777-777777777777"),
+            COMMIT,
+            "base-commit-0",
+            revisions,
+            affectedUnits);
+    var policySource = RealmPolicySource.revision(binding, revisions.getFirst());
+    var policySnapshot =
+        new net.firedevops.firemud.common.gamedesign.RealmPolicySnapshot(
+            binding, "1", List.of(policySource));
+    var rulesSnapshot =
+        new GameplayRuleSnapshot(
+            binding,
+            "1",
+            null,
+            uuid("cccccccc-cccc-4ccc-8ccc-cccccccccccc"),
+            GameplayRuleSource.replay(List.of(), binding));
+    return new SelectedActorCoreFixture(binding, policySnapshot, rulesSnapshot);
+  }
+
+  private static byte[] bytes(String value) {
+    return value.getBytes(StandardCharsets.UTF_8);
+  }
+
+  private record SelectedActorCoreFixture(
+      DraftCommitBinding binding,
+      net.firedevops.firemud.common.gamedesign.RealmPolicySnapshot policySnapshot,
+      GameplayRuleSnapshot gameplayRules) {}
 
   private static void withPeer(Runnable action, String workload) {
     var peer =

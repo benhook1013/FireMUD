@@ -1,8 +1,11 @@
 package net.firedevops.firemud.worldmanagement.tenant;
 
+import java.util.Arrays;
 import java.util.Objects;
 import java.util.UUID;
 import net.firedevops.firemud.common.gamedesign.AuthoredWorldReleaseAttestationEvidence;
+import net.firedevops.firemud.common.operator.StartSessionOperatorAction;
+import net.firedevops.firemud.common.operator.StartSessionPostAuthorizationExecutionTuple;
 import net.firedevops.firemud.common.world.RoomTemplateRef;
 import net.firedevops.firemud.common.world.WorldDraftStartLocationEvidence;
 import net.firedevops.firemud.common.world.WorldPublishedStartLocationEvidence;
@@ -17,6 +20,98 @@ import net.firedevops.firemud.common.world.WorldPublishedStartLocationEvidence;
  */
 public final class WorldCanonicalInstancePreparation {
   private WorldCanonicalInstancePreparation() {}
+
+  /**
+   * Original Game Session owner-operation input, deliberately separate from assembly selectors. It
+   * contains no caller-supplied Account participation coordinates or currentness evidence; Account
+   * returns those only after authenticating and freezing the exact original sources.
+   */
+  public static final class OriginalStartSessionOperationInput {
+    private final byte[] originalPostAuthorizationTuple;
+    private final StartSessionPostAuthorizationExecutionTuple decodedTuple;
+    private final UUID gameSessionOwnerMutationId;
+    private final UUID gameSessionOwnerAttemptId;
+    private final long gameSessionOwnerFence;
+
+    public OriginalStartSessionOperationInput(
+        byte[] originalPostAuthorizationTuple,
+        UUID gameSessionOwnerMutationId,
+        UUID gameSessionOwnerAttemptId,
+        long gameSessionOwnerFence) {
+      if (originalPostAuthorizationTuple == null
+          || originalPostAuthorizationTuple.length == 0
+          || originalPostAuthorizationTuple.length
+              > StartSessionPostAuthorizationExecutionTuple.MAX_CANONICAL_TUPLE_BYTES) {
+        throw new IllegalArgumentException("Exact original StartSession tuple is required");
+      }
+      this.originalPostAuthorizationTuple = originalPostAuthorizationTuple.clone();
+      this.decodedTuple =
+          StartSessionPostAuthorizationExecutionTuple.decode(this.originalPostAuthorizationTuple);
+      if (!Arrays.equals(this.originalPostAuthorizationTuple, decodedTuple.canonicalBytes())) {
+        throw new IllegalArgumentException("Original StartSession tuple must be canonical");
+      }
+      this.gameSessionOwnerMutationId =
+          requireNonNil(gameSessionOwnerMutationId, "ownerMutationId");
+      this.gameSessionOwnerAttemptId = requireNonNil(gameSessionOwnerAttemptId, "ownerAttemptId");
+      if (gameSessionOwnerFence <= 0L) {
+        throw new IllegalArgumentException("Game Session owner fence must be positive");
+      }
+      this.gameSessionOwnerFence = gameSessionOwnerFence;
+      var original = decodedTuple.preAuthorizationTuple();
+      if (!StartSessionOperatorAction.ACTION_FAMILY.equals(original.actionFamily())
+          || !StartSessionOperatorAction.OWNER_SERVICE.equals(original.targetOwner())) {
+        throw new IllegalArgumentException(
+            "Original operation must be the human Game Session StartSession tuple");
+      }
+    }
+
+    public byte[] originalPostAuthorizationTuple() {
+      return originalPostAuthorizationTuple.clone();
+    }
+
+    public StartSessionPostAuthorizationExecutionTuple decodedTuple() {
+      return decodedTuple;
+    }
+
+    public UUID gameSessionOwnerMutationId() {
+      return gameSessionOwnerMutationId;
+    }
+
+    public UUID gameSessionOwnerAttemptId() {
+      return gameSessionOwnerAttemptId;
+    }
+
+    public long gameSessionOwnerFence() {
+      return gameSessionOwnerFence;
+    }
+
+    /** Binds the original tuple and owner attempt to the separately assembled immutable target. */
+    public void requireMatches(Input input, String targetNamespace) {
+      Objects.requireNonNull(input, "input");
+      Objects.requireNonNull(targetNamespace, "targetNamespace");
+      var original = decodedTuple.preAuthorizationTuple();
+      var action = original.action();
+      var descriptor = input.completeLaunchBinding().evidence().descriptor();
+      var world = input.gameSessionReadEvidence();
+      if (!targetNamespace.equals(action.scope().targetNamespace())
+          || !targetNamespace.equals(world.targetNamespace())
+          || !action.scope().tenantId().equals(world.canonicalTenantId())
+          || !decodedTuple.controlPlaneRequestId().equals(world.controlPlaneRequestId())
+          || !original.controlPlaneRequestId().equals(world.controlPlaneRequestId())
+          || action.target().gameTemplateId() != descriptor.gameTemplateId()) {
+        throw new IllegalArgumentException(
+            "Original StartSession tuple differs from the exact assembled World operation");
+      }
+    }
+
+    private static UUID requireNonNil(UUID value, String label) {
+      Objects.requireNonNull(value, label);
+      if (value.equals(new UUID(0L, 0L))) {
+        throw new IllegalArgumentException(label + " must be a non-nil UUID");
+      }
+      return value;
+    }
+  }
 
   /** Complete immutable request to materialize one generation-free selected canonical graph. */
   public record Input(

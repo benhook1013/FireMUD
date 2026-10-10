@@ -47,11 +47,14 @@ import tools.jackson.databind.json.JsonMapper;
  * Test-only proof fixture for Account's original human StartSession issuer, one-time redemption,
  * and real World participation acquisition composition.
  *
- * <p>Logging's current-claim read response and the supplied Game Session attempt/fence remain
- * stipulated inputs. The Account actor, source capture, issuance, reference custody, redemption,
- * and later projection read use the real Account owners and retained PostgreSQL rows. The peer
- * scopes around issue and redemption are in-process test stipulations, not authenticated producer
- * or mTLS proof.
+ * <p>Logging's current-claim read response remains stipulated in the default constructor; a
+ * composed proof may inject its actual authenticated claim reader explicitly. The Account actor,
+ * source capture, issuance, reference custody, redemption, and later projection read use the real
+ * Account owners and retained PostgreSQL rows. A test may supply a Game Session owner-attempt
+ * lifecycle so it can reserve the exact issued tuple before redemption and attach the redeemed
+ * projection after redemption, without introducing Game Session classes into this fixture artifact.
+ * The peer scopes around issue and redemption are in-process test stipulations, not authenticated
+ * producer or mTLS proof.
  */
 public final class AccountOriginalStartSessionAuthorizationProofFixture {
   private static final Duration REFERENCE_LIFETIME = Duration.ofMinutes(5);
@@ -74,6 +77,19 @@ public final class AccountOriginalStartSessionAuthorizationProofFixture {
   public AccountOriginalStartSessionAuthorizationProofFixture(
       AccountControlUiOriginalOrderFixture controlUi, Path temporary, String namespace)
       throws Exception {
+    this(controlUi, temporary, namespace, stipulatedLoggingClaimClient());
+  }
+
+  /**
+   * Supplies the actual authenticated Logging claim reader for a composed owner proof. Existing
+   * callers retain their explicitly stipulated default; this overload adds no production bypass.
+   */
+  public AccountOriginalStartSessionAuthorizationProofFixture(
+      AccountControlUiOriginalOrderFixture controlUi,
+      Path temporary,
+      String namespace,
+      StartSessionReservationEvidenceClient claimClient)
+      throws Exception {
     Objects.requireNonNull(controlUi, "Account control-ui fixture is required");
     Objects.requireNonNull(temporary, "temporary test directory is required");
     this.namespace = requireNamespace(namespace);
@@ -82,7 +98,7 @@ public final class AccountOriginalStartSessionAuthorizationProofFixture {
 
     loggingPeerUri = peerUri(namespace, LOGGING_SERVICE);
     gameSessionPeerUri = peerUri(namespace, GAME_SESSION_SERVICE);
-    var claimClient = stipulatedLoggingClaimClient();
+    Objects.requireNonNull(claimClient, "exact Logging claim client is required");
     repository = new AccountStartSessionOperatorAuthorizationRepository(accountSources.dsl);
     captureRepository = new AccountStartSessionAuthorityCaptureRepository(accountSources.dsl);
     authorizationService =
@@ -121,12 +137,48 @@ public final class AccountOriginalStartSessionAuthorizationProofFixture {
       long reservationClaimFence,
       UUID gameSessionOwnerAttemptId,
       long gameSessionOwnerFence) {
+    requireOwner(gameSessionOwnerAttemptId, "gameSessionOwnerAttemptId");
+    requirePositive(gameSessionOwnerFence, "gameSessionOwnerFence");
+    return issueAndRedeemOriginal(
+        controlPlaneRequestId,
+        action,
+        reservationOwnerId,
+        reservationClaimFence,
+        new OwnerAttemptLifecycle() {
+          @Override
+          public OwnerClaim reserve(StartSessionPostAuthorizationExecutionTuple originalTuple) {
+            return new OwnerClaim(
+                gameSessionOwnerAttemptId, UUID.randomUUID(), gameSessionOwnerFence);
+          }
+
+          @Override
+          public void attachAccountRedemptionProjection(
+              OwnerClaim ownerClaim, StartSessionPostAuthorizationExecutionTuple originalTuple) {
+            // Existing callers may continue to use this fixture with a stipulated owner attempt.
+          }
+        });
+  }
+
+  /**
+   * Performs real Account issue and redemption around a test-supplied Game Session owner attempt.
+   *
+   * <p>The callback reserves the exact post-authorization tuple after issue and before Account
+   * redemption. Once redemption succeeds, the callback receives that same claim and tuple so the
+   * owning Game Session repository can attach the exact Account projection. Logging claim evidence
+   * remains stipulated unless the actual reader is injected; the issue/redemption peer identities
+   * remain stipulated by this Account fixture.
+   */
+  public synchronized OriginalStartSession issueAndRedeemOriginal(
+      String controlPlaneRequestId,
+      StartSessionOperatorAction action,
+      UUID reservationOwnerId,
+      long reservationClaimFence,
+      OwnerAttemptLifecycle ownerAttemptLifecycle) {
     Objects.requireNonNull(action, "canonical StartSession action is required");
+    Objects.requireNonNull(ownerAttemptLifecycle, "Game Session owner attempt lifecycle required");
     requireActionBinding(action);
     requireOwner(reservationOwnerId, "reservationOwnerId");
     requirePositive(reservationClaimFence, "reservationClaimFence");
-    requireOwner(gameSessionOwnerAttemptId, "gameSessionOwnerAttemptId");
-    requirePositive(gameSessionOwnerFence, "gameSessionOwnerFence");
 
     var preTuple =
         StartSessionPreAuthorizationReservationTuple.createHuman(
@@ -165,6 +217,11 @@ public final class AccountOriginalStartSessionAuthorizationProofFixture {
             authorization.authorityEvidenceBundle(),
             sharedReference);
 
+    OwnerClaim ownerClaim =
+        Objects.requireNonNull(
+            ownerAttemptLifecycle.reserve(originalTuple),
+            "Game Session owner attempt reservation returned no claim");
+
     var redemption =
         withPeer(
             gameSessionPeerUri,
@@ -176,9 +233,10 @@ public final class AccountOriginalStartSessionAuthorizationProofFixture {
                         authorization.authorizationReferenceFingerprint(),
                         reservationOwnerId,
                         reservationClaimFence,
-                        gameSessionOwnerAttemptId,
-                        gameSessionOwnerFence)));
+                        ownerClaim.ownerAttemptId(),
+                        ownerClaim.ownerFence())));
     assertThat(redemption.replay()).isFalse();
+    ownerAttemptLifecycle.attachAccountRedemptionProjection(ownerClaim, originalTuple);
 
     var retained =
         accountSources.tx(
@@ -189,8 +247,8 @@ public final class AccountOriginalStartSessionAuthorizationProofFixture {
     assertThat(retained.reservationOwnerId()).isEqualTo(reservationOwnerId);
     assertThat(retained.reservationClaimFence()).isEqualTo(reservationClaimFence);
     assertThat(retained.redemptionRedeemerWorkloadUri()).isEqualTo(gameSessionPeerUri);
-    assertThat(retained.redemptionOwnerAttemptId()).isEqualTo(gameSessionOwnerAttemptId);
-    assertThat(retained.redemptionOwnerFence()).isEqualTo(gameSessionOwnerFence);
+    assertThat(retained.redemptionOwnerAttemptId()).isEqualTo(ownerClaim.ownerAttemptId());
+    assertThat(retained.redemptionOwnerFence()).isEqualTo(ownerClaim.ownerFence());
     assertThat(retained.redemptionReferenceFingerprint())
         .isEqualTo(authorization.authorizationReferenceFingerprint());
     assertThat(retained.issuanceOperationId()).isNotNull();
@@ -217,8 +275,8 @@ public final class AccountOriginalStartSessionAuthorizationProofFixture {
         originalTuple,
         reservationOwnerId,
         reservationClaimFence,
-        gameSessionOwnerAttemptId,
-        gameSessionOwnerFence,
+        ownerClaim.ownerAttemptId(),
+        ownerClaim.ownerFence(),
         retained.issuanceOperationId(),
         retained.issuanceFence(),
         retained.referenceExpiresAt());
@@ -229,7 +287,7 @@ public final class AccountOriginalStartSessionAuthorizationProofFixture {
       worldParticipationAcquisitionService(
           OriginalStartSessionCurrentAttemptClient gameSessionClient) {
     Objects.requireNonNull(
-        gameSessionClient, "stipulated Game Session observation client required");
+        gameSessionClient, "Game Session current-attempt observation client required");
     return new AccountStartSessionWorldParticipationAcquisitionService(
         authorizationService,
         new AccountStartSessionWorldParticipationRepository(accountSources.dsl),
@@ -252,6 +310,23 @@ public final class AccountOriginalStartSessionAuthorizationProofFixture {
   /** The actual Account UUID for the prepared creator used by this fixture. */
   public UUID creatorAccountId() {
     return accountSources.account.getAccountUuid();
+  }
+
+  /** Test-only lifecycle for an owner attempt without a dependency on the Game Session artifact. */
+  public interface OwnerAttemptLifecycle {
+    OwnerClaim reserve(StartSessionPostAuthorizationExecutionTuple originalTuple);
+
+    void attachAccountRedemptionProjection(
+        OwnerClaim ownerClaim, StartSessionPostAuthorizationExecutionTuple originalTuple);
+  }
+
+  /** Non-secret owner identities needed by Account redemption and acquisition. */
+  public record OwnerClaim(UUID ownerAttemptId, UUID ownerMutationId, long ownerFence) {
+    public OwnerClaim {
+      requireOwner(ownerAttemptId, "ownerAttemptId");
+      requireOwner(ownerMutationId, "ownerMutationId");
+      requirePositive(ownerFence, "ownerFence");
+    }
   }
 
   private void assertPersistedCapture(
@@ -374,7 +449,7 @@ public final class AccountOriginalStartSessionAuthorizationProofFixture {
     }
   }
 
-  private StartSessionReservationEvidenceClient stipulatedLoggingClaimClient() {
+  private static StartSessionReservationEvidenceClient stipulatedLoggingClaimClient() {
     var client = mock(StartSessionReservationEvidenceClient.class);
     when(client.readCurrentClaimEvidence(
             any(StartSessionPreAuthorizationReservationTuple.class),

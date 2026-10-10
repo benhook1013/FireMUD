@@ -10,33 +10,44 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
 /**
  * Unregistered, default-denied owner operation for a canonical generation-free world instance.
  *
- * <p>No fresh-execution verifier is wired in this slice. An authenticated integration must verify
- * the same-namespace Game Session producer and exact current Game Design release/terminal source
- * before the World transaction begins. The original Account-authorized APPLIED result is immutable
- * input evidence; preparation must not reauthorize the creator or reuse Draft/publication
- * permission. Its held producer evidence must remain valid through commit. This class is
- * deliberately not a Spring component and adds no RPC or public activation path. The separate
- * explicitly supplied historical recovery verifier reads retained Account and Game Session
- * evidence; it supplies no held authority for another execution.
+ * <p>No fresh-execution verifier is supplied by default. An explicitly supplied integration must
+ * authenticate the same-namespace Game Session peer, acquire Account's exact original
+ * participation, and bind its retained first owner-attempt observation before the World transaction
+ * begins. The original Account-authorized APPLIED result is immutable input evidence; preparation
+ * must not reauthorize the creator or reuse Draft/publication permission. Account's pending
+ * participation protects its exact source vector through terminal settlement; the unchanged Game
+ * Session lease is checked at actual World admission and is not treated as a continuous remote
+ * lock. This class is deliberately not a Spring component and adds no RPC or public activation
+ * path. The separate explicitly supplied historical recovery verifier reads retained Account and
+ * Game Session evidence; it supplies no held authority for another execution.
  */
 public final class WorldCanonicalInstancePreparationService {
   private final WorldCanonicalInstancePreparationRepository repository;
-  private final CommitAuthorityVerifier verifier;
+  private final OriginalOperationCommitAuthorityVerifier originalOperationVerifier;
   private final OriginalOperationRecoveryVerifier recoveryVerifier;
 
   /** Constructs the production-safe default: all attempts fail closed. */
   public WorldCanonicalInstancePreparationService(
       WorldCanonicalInstancePreparationRepository repository) {
-    this(
-        repository,
-        WorldCanonicalInstancePreparationService::denyByDefault,
-        WorldCanonicalInstancePreparationService::denyRecoveryByDefault);
+    this(repository, null, WorldCanonicalInstancePreparationService::denyRecoveryByDefault, true);
   }
 
-  /** Constructor for an explicitly supplied owner verifier, including labeled synthetic tests. */
+  /** Retained legacy constructor; an untyped verifier cannot authorize a fresh execution. */
   public WorldCanonicalInstancePreparationService(
       WorldCanonicalInstancePreparationRepository repository, CommitAuthorityVerifier verifier) {
-    this(repository, verifier, WorldCanonicalInstancePreparationService::denyRecoveryByDefault);
+    this(repository, null, WorldCanonicalInstancePreparationService::denyRecoveryByDefault, true);
+    Objects.requireNonNull(verifier, "verifier");
+  }
+
+  /** Constructor for an explicitly supplied verifier of the typed original owner operation. */
+  public WorldCanonicalInstancePreparationService(
+      WorldCanonicalInstancePreparationRepository repository,
+      OriginalOperationCommitAuthorityVerifier verifier) {
+    this(
+        repository,
+        Objects.requireNonNull(verifier, "verifier"),
+        WorldCanonicalInstancePreparationService::denyRecoveryByDefault,
+        true);
   }
 
   /**
@@ -47,8 +58,27 @@ public final class WorldCanonicalInstancePreparationService {
       WorldCanonicalInstancePreparationRepository repository,
       CommitAuthorityVerifier verifier,
       OriginalOperationRecoveryVerifier recoveryVerifier) {
+    this(repository, null, recoveryVerifier, true);
+    Objects.requireNonNull(verifier, "verifier");
+  }
+
+  /** Constructor for explicit fresh original-owner and recovery verifiers. */
+  public WorldCanonicalInstancePreparationService(
+      WorldCanonicalInstancePreparationRepository repository,
+      OriginalOperationCommitAuthorityVerifier verifier,
+      OriginalOperationRecoveryVerifier recoveryVerifier) {
+    this(repository, Objects.requireNonNull(verifier, "verifier"), recoveryVerifier, true);
+  }
+
+  private WorldCanonicalInstancePreparationService(
+      WorldCanonicalInstancePreparationRepository repository,
+      OriginalOperationCommitAuthorityVerifier originalOperationVerifier,
+      OriginalOperationRecoveryVerifier recoveryVerifier,
+      boolean ownerTypedConstructor) {
     this.repository = Objects.requireNonNull(repository, "repository");
-    this.verifier = Objects.requireNonNull(verifier, "verifier");
+    if (!ownerTypedConstructor)
+      throw new IllegalArgumentException("Constructor marker is required");
+    this.originalOperationVerifier = originalOperationVerifier;
     this.recoveryVerifier = Objects.requireNonNull(recoveryVerifier, "recoveryVerifier");
   }
 
@@ -63,14 +93,58 @@ public final class WorldCanonicalInstancePreparationService {
       throw new IllegalStateException(
           "Canonical World preparation must verify outside an ambient transaction");
     }
+    throw new PreparationDeniedException(
+        "Fresh canonical World preparation requires the exact original Game Session owner operation");
+  }
+
+  /**
+   * Decodes the closed transport input before Account acquisition and delegates to the owner path.
+   */
+  public Result prepare(
+      Input input,
+      net.firedevops.firemud.common.world.CanonicalWorldInstancePreparationGrpcCodec
+              .OriginalOperationInput
+          wireOperationInput) {
+    Objects.requireNonNull(wireOperationInput, "wireOperationInput");
+    return prepare(
+        input,
+        new WorldCanonicalInstancePreparation.OriginalStartSessionOperationInput(
+            wireOperationInput.originalPostAuthorizationTuple(),
+            wireOperationInput.gameSessionOwnerMutationId(),
+            wireOperationInput.gameSessionOwnerAttemptId(),
+            wireOperationInput.gameSessionOwnerFence()));
+  }
+
+  /**
+   * Acquires Account's original participation outside World SQL, then admits only the exact
+   * owner-observation-bound World execution identity.
+   */
+  public Result prepare(
+      Input input,
+      WorldCanonicalInstancePreparation.OriginalStartSessionOperationInput operationInput) {
+    Objects.requireNonNull(input, "input");
+    Objects.requireNonNull(operationInput, "operationInput");
+    if (TransactionSynchronizationManager.isActualTransactionActive()
+        || TransactionSynchronizationManager.isSynchronizationActive()) {
+      throw new IllegalStateException(
+          "Canonical World preparation must verify outside an ambient transaction");
+    }
     WorldCanonicalInstancePreparation.requireGenerationFree(input.topologyPlan());
 
+    if (originalOperationVerifier == null) {
+      throw new PreparationDeniedException(
+          "Canonical World preparation has no authenticated Account participation verifier");
+    }
+    operationInput.requireMatches(input, input.gameSessionReadEvidence().targetNamespace());
     HeldCommitAuthority held =
         Objects.requireNonNull(
-            verifier.verifyAndHold(input),
+            originalOperationVerifier.verifyAndHold(input, operationInput),
             "Canonical preparation verifier returned no held commit authority");
     try (held) {
       held.requireHeld();
+      held.executionIdentity()
+          .requireMatches(
+              input, operationInput, WorldCanonicalInstancePreparationRepository.inputJson(input));
       return repository.materialize(input, held);
     }
   }
@@ -130,20 +204,23 @@ public final class WorldCanonicalInstancePreparationService {
                         : WorldStartSessionExecutionTerminal.Outcome.ABORTED));
   }
 
-  private static HeldCommitAuthority denyByDefault(Input input) {
-    throw new PreparationDeniedException(
-        "Canonical World preparation has no authenticated source/release terminal verifier");
-  }
-
   private static void denyRecoveryByDefault(WorldCanonicalInstanceExecutionIdentity identity) {
     throw new PreparationDeniedException(
         "Canonical World execution recovery has no authenticated original-operation verifier");
   }
 
-  /** Performs authenticated producer checks before returning a continuously held local fence. */
+  /** Legacy untyped verifier contract; it is not used to admit fresh World materialization. */
   @FunctionalInterface
   public interface CommitAuthorityVerifier {
     HeldCommitAuthority verifyAndHold(Input input);
+  }
+
+  /** Authenticates the typed original tuple and owner attempt before Account acquisition. */
+  @FunctionalInterface
+  public interface OriginalOperationCommitAuthorityVerifier {
+    HeldCommitAuthority verifyAndHold(
+        Input input,
+        WorldCanonicalInstancePreparation.OriginalStartSessionOperationInput operationInput);
   }
 
   /**
@@ -160,18 +237,20 @@ public final class WorldCanonicalInstancePreparationService {
   }
 
   /**
-   * A verifier-owned, continuously held producer-evidence handle. It stays open throughout the
-   * World transaction and its commit; implementations must fail closed from {@link #requireHeld()}
-   * if the source participation/fence they verified is no longer continuously held.
+   * A verifier-owned handle for the exact Account pending participation and owner observation. It
+   * stays open through the World transaction and its commit. The Account participation is the
+   * durable source-protection evidence; the Game Session observation is only an immutable sample,
+   * and its unchanged lease is independently checked by World SQL at actual admission.
    * Remote/current-state checks happen before the World transaction; {@code requireHeld()} is a
-   * local fence/effective-state assertion and must never perform RPC while World holds database
-   * locks. It must not reapply the original ingress-authority expiry after the V35 SQL admission
-   * check: an uninterrupted admitted transaction may finish after that bound while the source
-   * participation remains protected through exact World COMMITTED or durable ABORTED settlement.
-   * {@link #close()} may release only local resources; it must never release durable Account
-   * participation merely because this call returned, timed out, or has an uncertain outcome. That
-   * participation remains protected until an authenticated exact World COMMITTED result or fenced
-   * durable ABORTED settlement is known. It is not a new Account creator permission.
+   * local handle assertion and must never perform RPC while World holds database locks. It must not
+   * reapply the original authorization or Game Session lease expiry after the V35 SQL admission
+   * check: an uninterrupted admitted transaction may finish after those ingress bounds while the
+   * Account participation remains protected through exact World COMMITTED or durable ABORTED
+   * settlement. {@link #close()} may release only local resources; it must never release durable
+   * Account participation merely because this call returned, timed out, or has an uncertain
+   * outcome. That participation remains protected until an authenticated exact World COMMITTED
+   * result or fenced durable ABORTED settlement is known. It is not a new Account creator
+   * permission.
    */
   public interface HeldCommitAuthority extends AutoCloseable {
     void requireHeld();

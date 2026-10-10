@@ -21,15 +21,28 @@ class CanonicalWorldInstancePreparationGrpcCodecTest {
   void roundTripsV2LaunchBindingAndPreservesLargeLifecycleCounters() throws Exception {
     WorldCanonicalInstanceLifecycleEvidence evidence = evidence();
     Request request = request(evidence);
+    var originalOperation = originalOperation();
 
-    var wireRequest = CanonicalWorldInstancePreparationGrpcCodec.toRequest(request);
+    var wireRequest =
+        CanonicalWorldInstancePreparationGrpcCodec.toRequest(request, originalOperation);
     assertThat(CanonicalWorldInstancePreparationGrpcCodec.fromRequest(wireRequest))
         .isEqualTo(request);
+    var decodedOperation =
+        CanonicalWorldInstancePreparationGrpcCodec.fromOriginalOperationRequest(wireRequest);
+    assertThat(decodedOperation.originalPostAuthorizationTuple())
+        .containsExactly((byte) 1, (byte) 2, (byte) 3);
+    assertThat(decodedOperation.gameSessionOwnerMutationId())
+        .isEqualTo(originalOperation.gameSessionOwnerMutationId());
+    assertThat(decodedOperation.gameSessionOwnerAttemptId())
+        .isEqualTo(originalOperation.gameSessionOwnerAttemptId());
+    assertThat(decodedOperation.gameSessionOwnerFence())
+        .isEqualTo(originalOperation.gameSessionOwnerFence());
 
-    var response = CanonicalWorldInstancePreparationGrpcCodec.toResponse(request, evidence);
+    var response =
+        CanonicalWorldInstancePreparationGrpcCodec.toResponse(request, originalOperation, evidence);
     var decoded =
         CanonicalWorldInstancePreparationGrpcCodec.fromResponse(
-            request, evidence.request(), response);
+            request, originalOperation, evidence.request(), response);
     assertThat(decoded).isEqualTo(evidence);
     assertThat(decoded.launchBinding().releaseAttestation().schemaVersion())
         .isEqualTo(AuthoredWorldReleaseAttestationEvidence.SELECTOR_SCHEMA_VERSION);
@@ -193,6 +206,47 @@ class CanonicalWorldInstancePreparationGrpcCodecTest {
                     valid.toBuilder().setExpectedDescriptorResultDigest("not-a-digest").build()))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("expectedDescriptorResultDigest");
+  }
+
+  @Test
+  void originalOperationIsRequiredAndEchoedExactlyForOwnerPreparation() throws Exception {
+    WorldCanonicalInstanceLifecycleEvidence lifecycle = evidence();
+    Request request = request(lifecycle);
+    var operation = originalOperation();
+    var wire = CanonicalWorldInstancePreparationGrpcCodec.toRequest(request, operation);
+    assertThatThrownBy(
+            () ->
+                CanonicalWorldInstancePreparationGrpcCodec.fromOriginalOperationRequest(
+                    CanonicalWorldInstancePreparationGrpcCodec.toRequest(request)))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("original StartSession owner operation");
+
+    var changedOperation =
+        wire.toBuilder()
+            .setOriginalStartSessionOperation(
+                wire.getOriginalStartSessionOperation().toBuilder()
+                    .setGameSessionOwnerFence(operation.gameSessionOwnerFence() + 1))
+            .build();
+    var changedResponse =
+        CanonicalWorldInstancePreparationGrpcCodec.toResponse(request, operation, lifecycle)
+            .toBuilder()
+            .setRequest(changedOperation)
+            .build();
+    assertThatThrownBy(
+            () ->
+                CanonicalWorldInstancePreparationGrpcCodec.fromResponse(
+                    request, operation, lifecycle.request(), changedResponse))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("owner operation");
+  }
+
+  private static CanonicalWorldInstancePreparationGrpcCodec.OriginalOperationInput
+      originalOperation() {
+    return new CanonicalWorldInstancePreparationGrpcCodec.OriginalOperationInput(
+        new byte[] {1, 2, 3},
+        uuid("66666666-6666-4666-8666-666666666666"),
+        uuid("77777777-7777-4777-8777-777777777777"),
+        31L);
   }
 
   private static Request request(WorldCanonicalInstanceLifecycleEvidence evidence) {

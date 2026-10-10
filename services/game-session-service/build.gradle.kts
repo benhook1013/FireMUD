@@ -22,6 +22,20 @@ abstract class CreateDirectoriesTask : DefaultTask() {
 
 val gameSessionProto = rootDir.resolve("protos/game-session/v1/game_session_service.proto")
 
+// Opt-in cross-owner proof artifact: never place Game Session application/migrations on Account's classpath.
+val gameSessionClassesProofJar by tasks.registering(Jar::class) {
+    archiveClassifier.set("classes-proof")
+    dependsOn(tasks.named("classes"))
+    from(sourceSets.main.get().output.classesDirs)
+}
+
+val gameSessionClassesProof by configurations.creating {
+    isCanBeConsumed = true
+    isCanBeResolved = false
+    extendsFrom(configurations.implementation.get())
+    outgoing.artifact(gameSessionClassesProofJar)
+}
+
 apply(from = "${rootDir}/gradle/proto-convention.gradle")
 
 tasks.named("generateProto") {

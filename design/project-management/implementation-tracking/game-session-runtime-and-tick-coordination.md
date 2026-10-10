@@ -6,6 +6,8 @@ This is a non-normative implementation tracker for Game Session runtime and tick
 
 ## Current Status
 
+The construction branch is consuming the Account-only original current-attempt reader from published source `e9a29f43ae47598fdc2cacd8f65cf784ed96e0ea` ([#3153](https://github.com/benhook1013/FireMUD/pull/3153)). Its prerequisite owner-attempt repository and additive V35 are separate from existing canonical runtime admission. Existing Common contracts and the additional admission-terminal proto definitions are preserved. The reader remains unregistered; its exact tuple/projection, database-clock expiry, no-mutation and peer-identity definitions do not prove original production attempt creation, continuous Account protection, admission or activation. Source-local Common/Game Session checks passed, while PostgreSQL cases skipped; receiving-tree validation and physical composed acquisition remain pending. The broader donor template/launch-association integration suite is not part of this bounded reader intake or its proof claim.
+
 This tracker consolidates the live Game Session execution substrate by capability. The recorded boundaries describe current implementation status and bounded follow-up work.
 
 Gameplay-session context remains on the implementation-local `sessionctx:*` keys and per-instance binding identity. The target authenticated `session:game:{tenantGameplayTag}:...` family, persisted tenant-tag allocation, and namespace-qualified controller uniqueness are not implemented or end-to-end proved; the canonical tenancy and focused-isolation requirements remain in [Multi-Tenancy](../../architecture/system-architecture-multi-tenancy.md#data-separation-per-service).

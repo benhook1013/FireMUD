@@ -40,6 +40,7 @@ import net.firedevops.firemud.common.grpc.CommonGrpcClientProperties;
 import net.firedevops.firemud.common.grpc.GrpcChannelFactory;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentityInterceptor;
+import net.firedevops.firemud.common.world.CanonicalWorldInstancePreparationGrpcCodec.OriginalOperationInput;
 import net.firedevops.firemud.worldmanagement.v1.PrepareCanonicalWorldInstanceRequest;
 import net.firedevops.firemud.worldmanagement.v1.PrepareCanonicalWorldInstanceResponse;
 import net.firedevops.firemud.worldmanagement.v1.WorldCanonicalInstancePreparationServiceGrpc;
@@ -47,6 +48,7 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 /** Physical socket proof with a transport-only World double, not owner/database proof. */
 class CanonicalWorldInstancePreparationClientMtlsTest {
@@ -90,17 +92,33 @@ class CanonicalWorldInstancePreparationClientMtlsTest {
   void exactWorldPeerReturnsCompleteV2LifecycleReadback() throws Exception {
     WorldCanonicalInstanceLifecycleEvidence evidence = evidence();
     Request request = request(evidence);
-    startServer(pki.worldManagementServer(), request, response(request, evidence));
+    var operationInput = originalOperationInput();
+    startServer(
+        pki.worldManagementServer(),
+        request,
+        operationInput,
+        response(request, operationInput, evidence));
     client = newClient(server);
 
-    assertThatThrownBy(() -> client.prepare(request, evidence.request()))
+    assertThatThrownBy(() -> client.prepare(request, operationInput, evidence.request()))
         .isInstanceOf(IllegalStateException.class)
         .hasMessageContaining("not initialized");
     assertThat(headers).hasValue(0);
     assertThat(bodies).hasValue(0);
 
     client.init();
-    var prepared = client.prepare(request, evidence.request());
+    TransactionSynchronizationManager.initSynchronization();
+    try {
+      assertThatThrownBy(() -> client.prepare(request, operationInput, evidence.request()))
+          .isInstanceOf(IllegalStateException.class)
+          .hasMessageContaining("outside SQL");
+    } finally {
+      TransactionSynchronizationManager.clearSynchronization();
+    }
+    assertThat(headers).hasValue(0);
+    assertThat(bodies).hasValue(0);
+
+    var prepared = client.prepare(request, operationInput, evidence.request());
     assertThat(prepared).isEqualTo(evidence);
     assertThat(prepared.launchBinding().releaseAttestation().schemaVersion())
         .isEqualTo(AuthoredWorldReleaseAttestationEvidence.SELECTOR_SCHEMA_VERSION);
@@ -111,7 +129,7 @@ class CanonicalWorldInstancePreparationClientMtlsTest {
     assertThat(bodies).hasValue(1);
 
     client.close();
-    assertThatThrownBy(() -> client.prepare(request, evidence.request()))
+    assertThatThrownBy(() -> client.prepare(request, operationInput, evidence.request()))
         .isInstanceOf(IllegalStateException.class)
         .hasMessageContaining("not initialized");
     assertThat(headers).hasValue(1);
@@ -122,11 +140,12 @@ class CanonicalWorldInstancePreparationClientMtlsTest {
   void trustedWrongWorkloadOrNamespaceReleasesNoRequestHeadersOrBody() throws Exception {
     WorldCanonicalInstanceLifecycleEvidence evidence = evidence();
     Request request = request(evidence);
+    var operationInput = originalOperationInput();
     for (TestIdentity identity : List.of(pki.wrongWorkloadServer(), pki.otherNamespaceServer())) {
-      startServer(identity, request, response(request, evidence));
+      startServer(identity, request, operationInput, response(request, operationInput, evidence));
       client = newClient(server);
       client.init();
-      assertThatThrownBy(() -> client.prepare(request, evidence.request()))
+      assertThatThrownBy(() -> client.prepare(request, operationInput, evidence.request()))
           .isInstanceOf(StatusRuntimeException.class)
           .satisfies(
               exception ->
@@ -142,7 +161,8 @@ class CanonicalWorldInstancePreparationClientMtlsTest {
   void rejectsChangedOuterAndInnerReadbackOverTheSocket() throws Exception {
     WorldCanonicalInstanceLifecycleEvidence evidence = evidence();
     Request request = request(evidence);
-    PrepareCanonicalWorldInstanceResponse valid = response(request, evidence);
+    var operationInput = originalOperationInput();
+    PrepareCanonicalWorldInstanceResponse valid = response(request, operationInput, evidence);
     List<PrepareCanonicalWorldInstanceResponse> changedResponses =
         List.of(
             valid.toBuilder()
@@ -160,10 +180,10 @@ class CanonicalWorldInstancePreparationClientMtlsTest {
                 .build());
 
     for (PrepareCanonicalWorldInstanceResponse changedResponse : changedResponses) {
-      startServer(pki.worldManagementServer(), request, changedResponse);
+      startServer(pki.worldManagementServer(), request, operationInput, changedResponse);
       client = newClient(server);
       client.init();
-      assertThatThrownBy(() -> client.prepare(request, evidence.request()))
+      assertThatThrownBy(() -> client.prepare(request, operationInput, evidence.request()))
           .isInstanceOf(IllegalStateException.class)
           .hasRootCauseInstanceOf(IllegalArgumentException.class);
       assertThat(headers).hasValue(1);
@@ -177,7 +197,12 @@ class CanonicalWorldInstancePreparationClientMtlsTest {
       throws Exception {
     WorldCanonicalInstanceLifecycleEvidence evidence = evidence();
     Request request = request(evidence);
-    startServer(pki.worldManagementServer(), request, response(request, evidence));
+    var operationInput = originalOperationInput();
+    startServer(
+        pki.worldManagementServer(),
+        request,
+        operationInput,
+        response(request, operationInput, evidence));
 
     var plaintext = pki.clientProperties(directory);
     plaintext.setPlaintext(true);
@@ -216,26 +241,27 @@ class CanonicalWorldInstancePreparationClientMtlsTest {
         .hasMessageContaining("existing readable file");
 
     client = newClient(server);
-    assertThatThrownBy(() -> client.prepare(request, evidence.request()))
+    assertThatThrownBy(() -> client.prepare(request, operationInput, evidence.request()))
         .isInstanceOf(IllegalStateException.class)
         .hasMessageContaining("not initialized");
     client.init();
 
     Request otherNamespaceRequest = copyAssociationRequest(request, "other-test");
-    assertThatThrownBy(() -> client.prepare(otherNamespaceRequest, evidence.request()))
+    assertThatThrownBy(
+            () -> client.prepare(otherNamespaceRequest, operationInput, evidence.request()))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("configured workload namespace");
 
     var differentLifecycleRequest =
         copyLifecycleRequest(evidence.request(), uuid("99999999-9999-4999-8999-999999999999"));
-    assertThatThrownBy(() -> client.prepare(request, differentLifecycleRequest))
+    assertThatThrownBy(() -> client.prepare(request, operationInput, differentLifecycleRequest))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("expected World lifecycle request");
     assertThat(headers).hasValue(0);
     assertThat(bodies).hasValue(0);
 
     client.close();
-    assertThatThrownBy(() -> client.prepare(request, evidence.request()))
+    assertThatThrownBy(() -> client.prepare(request, operationInput, evidence.request()))
         .isInstanceOf(IllegalStateException.class)
         .hasMessageContaining("not initialized");
     assertThat(headers).hasValue(0);
@@ -245,6 +271,7 @@ class CanonicalWorldInstancePreparationClientMtlsTest {
   private void startServer(
       TestIdentity identity,
       Request expectedRequest,
+      OriginalOperationInput expectedOperationInput,
       PrepareCanonicalWorldInstanceResponse response)
       throws Exception {
     headers = new AtomicInteger();
@@ -260,6 +287,16 @@ class CanonicalWorldInstancePreparationClientMtlsTest {
             assertThat(GrpcPeerIdentity.current().uri()).isEqualTo(GAME_SESSION_CLIENT_URI);
             assertThat(CanonicalWorldInstancePreparationGrpcCodec.fromRequest(wire))
                 .isEqualTo(expectedRequest);
+            OriginalOperationInput receivedOperationInput =
+                CanonicalWorldInstancePreparationGrpcCodec.fromOriginalOperationRequest(wire);
+            assertThat(receivedOperationInput.originalPostAuthorizationTuple())
+                .containsExactly(expectedOperationInput.originalPostAuthorizationTuple());
+            assertThat(receivedOperationInput.gameSessionOwnerMutationId())
+                .isEqualTo(expectedOperationInput.gameSessionOwnerMutationId());
+            assertThat(receivedOperationInput.gameSessionOwnerAttemptId())
+                .isEqualTo(expectedOperationInput.gameSessionOwnerAttemptId());
+            assertThat(receivedOperationInput.gameSessionOwnerFence())
+                .isEqualTo(expectedOperationInput.gameSessionOwnerFence());
             observer.onNext(response);
             observer.onCompleted();
           }
@@ -298,8 +335,18 @@ class CanonicalWorldInstancePreparationClientMtlsTest {
   }
 
   private static PrepareCanonicalWorldInstanceResponse response(
-      Request request, WorldCanonicalInstanceLifecycleEvidence evidence) {
-    return CanonicalWorldInstancePreparationGrpcCodec.toResponse(request, evidence);
+      Request request,
+      OriginalOperationInput operationInput,
+      WorldCanonicalInstanceLifecycleEvidence evidence) {
+    return CanonicalWorldInstancePreparationGrpcCodec.toResponse(request, operationInput, evidence);
+  }
+
+  private static OriginalOperationInput originalOperationInput() {
+    return new OriginalOperationInput(
+        "synthetic original StartSession tuple".getBytes(StandardCharsets.UTF_8),
+        uuid("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"),
+        uuid("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"),
+        17L);
   }
 
   private static Request request(WorldCanonicalInstanceLifecycleEvidence evidence) {

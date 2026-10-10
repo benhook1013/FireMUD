@@ -162,14 +162,258 @@ class WorldCanonicalInstancePreparationPostgresIntegrationTest {
                             + "AND p.proname IN ('world_prepare_canonical_instance', "
                             + "'world_prepare_canonical_instance_v61_impl', "
                             + "'world_persist_canonical_instance_execution_intent', "
+                            + "'world_persist_canonical_instance_execution_intent_with_original_attempt', "
                             + "'world_claim_canonical_instance_execution', "
+                            + "'world_claim_canonical_instance_execution_with_original_attempt', "
                             + "'world_begin_canonical_instance_execution', "
+                            + "'world_begin_canonical_instance_execution_with_original_attempt', "
                             + "'world_commit_canonical_instance_execution', "
-                            + "'world_abort_canonical_instance_execution') "
+                            + "'world_abort_canonical_instance_execution', "
+                            + "'world_abort_canonical_instance_execution_with_original_attempt', "
+                            + "'world_require_active_canonical_instance_execution') "
                             + "AND acl.grantee = 0 AND acl.privilege_type = 'EXECUTE')"),
                     "Prepare-function access query returned no result")
                 .get(0, Boolean.class))
         .isFalse();
+  }
+
+  @Test
+  void freshWorldIntentCannotBeCreatedWithoutTheAccountOwnerObservation() {
+    UUID tenant = UUID.randomUUID();
+    UUID instance = UUID.randomUUID();
+    UUID participation = UUID.randomUUID();
+    UUID attempt = UUID.randomUUID();
+    String request = "missing-owner-observation-" + UUID.randomUUID();
+
+    assertThatThrownBy(
+            () ->
+                dsl.fetchOne(
+                    "INSERT INTO world_canonical_instance_execution ("
+                        + "target_namespace,canonical_tenant_id,control_plane_request_id,"
+                        + "canonical_game_instance_id,canonical_world_slug,game_template_id,"
+                        + "original_post_authorization_tuple,original_post_authorization_tuple_sha256,"
+                        + "account_world_participation_id,account_world_participation_fence,"
+                        + "game_session_owner_attempt_id,game_session_owner_fence,"
+                        + "preparation_input_digest,preparation_input_json,world_execution_fence,operation_state) "
+                        + "VALUES (?, ?, ?, ?, 'test-world', 1, ?, encode(sha256(?), 'hex'), ?, 1, ?, 1, "
+                        + "'sha256:' || encode(sha256(convert_to('{}','UTF8')), 'hex'), '{}', "
+                        + "nextval('world_canonical_instance_execution_fence_seq'), 'PENDING')",
+                    NAMESPACE,
+                    tenant,
+                    request,
+                    instance,
+                    new byte[] {1},
+                    new byte[] {1},
+                    participation,
+                    attempt))
+        .isInstanceOf(DataIntegrityViolationException.class)
+        .rootCause()
+        .isInstanceOf(PSQLException.class)
+        .hasMessageContaining("exact Account owner observation");
+  }
+
+  @Test
+  void legacyTerminalFenceCannotAbortAnIntentWithAccountOwnerObservation() {
+    UUID tenant = UUID.randomUUID();
+    UUID instance = UUID.randomUUID();
+    UUID participation = UUID.randomUUID();
+    UUID attempt = UUID.randomUUID();
+    UUID mutation = UUID.randomUUID();
+    UUID observationRead = UUID.randomUUID();
+    String request = "legacy-abort-owner-observation-" + UUID.randomUUID();
+    byte[] tuple = new byte[] {1};
+    byte[] observation = new byte[] {7, 8, 9};
+    String inputJson = "{}";
+    String inputDigest = "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a";
+    dsl.fetchOne(
+        "INSERT INTO world_canonical_instance_execution ("
+            + "target_namespace,canonical_tenant_id,control_plane_request_id,"
+            + "canonical_game_instance_id,canonical_world_slug,game_template_id,"
+            + "original_post_authorization_tuple,original_post_authorization_tuple_sha256,"
+            + "account_world_participation_id,account_world_participation_fence,"
+            + "game_session_owner_attempt_id,game_session_owner_fence,"
+            + "game_session_owner_mutation_id,original_attempt_read_request_id,"
+            + "original_game_session_lease_expires_at,original_attempt_evidence_bytes,"
+            + "original_attempt_evidence_sha256,preparation_input_digest,"
+            + "preparation_input_json,world_execution_fence,operation_state) "
+            + "VALUES (?, ?, ?, ?, 'test-world', 1, ?, encode(sha256(?), 'hex'), ?, 1, ?, 1, ?, ?, "
+            + "clock_timestamp() + interval '1 minute', ?, 'sha256:' || encode(sha256(?), 'hex'), ?, ?, "
+            + "nextval('world_canonical_instance_execution_fence_seq'), 'PENDING')",
+        NAMESPACE,
+        tenant,
+        request,
+        instance,
+        tuple,
+        tuple,
+        participation,
+        attempt,
+        mutation,
+        observationRead,
+        observation,
+        observation,
+        inputDigest,
+        inputJson);
+
+    assertThatThrownBy(
+            () ->
+                ownerTransaction()
+                    .execute(
+                        status -> {
+                          dsl.fetchOne(
+                              "SELECT set_config('world.canonical_abort_namespace', ?, TRUE)",
+                              NAMESPACE);
+                          dsl.fetchOne(
+                              "SELECT set_config('world.canonical_abort_tenant', ?, TRUE)",
+                              tenant.toString());
+                          dsl.fetchOne(
+                              "SELECT set_config('world.canonical_abort_request', ?, TRUE)",
+                              request);
+                          dsl.fetchOne(
+                              "SELECT set_config('world.canonical_abort_target', ?, TRUE)",
+                              instance.toString());
+                          dsl.execute(
+                              "UPDATE world_canonical_instance_execution "
+                                  + "SET operation_state='ABORTED', terminal_at=clock_timestamp() "
+                                  + "WHERE target_namespace=? AND canonical_tenant_id=? "
+                                  + "AND control_plane_request_id=?",
+                              NAMESPACE,
+                              tenant,
+                              request);
+                          return null;
+                        }))
+        .isInstanceOf(DataIntegrityViolationException.class)
+        .rootCause()
+        .isInstanceOf(PSQLException.class)
+        .hasMessageContaining("World ABORTED state requires its exact serialized terminal fence");
+
+    assertThat(
+            dsl.fetchValue(
+                "SELECT operation_state FROM world_canonical_instance_execution "
+                    + "WHERE target_namespace=? AND canonical_tenant_id=? AND control_plane_request_id=?",
+                NAMESPACE,
+                tenant,
+                request))
+        .isEqualTo("PENDING");
+  }
+
+  @Test
+  void originalOwnerLeaseIsRecheckedAgainstDatabaseClockAtWorldAdmission() {
+    UUID tenant = UUID.randomUUID();
+    UUID instance = UUID.randomUUID();
+    UUID participation = UUID.randomUUID();
+    UUID attempt = UUID.randomUUID();
+    UUID mutation = UUID.randomUUID();
+    UUID observationRead = UUID.randomUUID();
+    String request = "lease-expiry-admission-" + UUID.randomUUID();
+    String inputJson = "{}";
+    String inputDigest = "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a";
+    byte[] tuple =
+        ("{\"authorityEvidenceBundle\":{\"accountProjectionEvidence\":{"
+                + "\"expiresAt\":\"2035-01-01T00:00:00Z\"}}}")
+            .getBytes(java.nio.charset.StandardCharsets.UTF_8);
+    byte[] observation = new byte[] {7, 8, 9};
+
+    assertThatThrownBy(
+            () ->
+                ownerTransaction()
+                    .execute(
+                        status -> {
+                          dsl.fetchOne(
+                              "INSERT INTO world_canonical_instance_execution ("
+                                  + "target_namespace,canonical_tenant_id,control_plane_request_id,"
+                                  + "canonical_game_instance_id,canonical_world_slug,game_template_id,"
+                                  + "original_post_authorization_tuple,original_post_authorization_tuple_sha256,"
+                                  + "account_world_participation_id,account_world_participation_fence,"
+                                  + "game_session_owner_attempt_id,game_session_owner_fence,"
+                                  + "game_session_owner_mutation_id,original_attempt_read_request_id,"
+                                  + "original_game_session_lease_expires_at,original_attempt_evidence_bytes,"
+                                  + "original_attempt_evidence_sha256,preparation_input_digest,"
+                                  + "preparation_input_json,world_execution_fence,operation_state) "
+                                  + "VALUES (?, ?, ?, ?, 'test-world', 1, ?, encode(sha256(?), 'hex'), "
+                                  + "?, 1, ?, 1, ?, ?, clock_timestamp() + interval '50 milliseconds', "
+                                  + "?, 'sha256:' || encode(sha256(?), 'hex'), ?, ?, "
+                                  + "nextval('world_canonical_instance_execution_fence_seq'), 'PENDING')",
+                              NAMESPACE,
+                              tenant,
+                              request,
+                              instance,
+                              tuple,
+                              tuple,
+                              participation,
+                              attempt,
+                              mutation,
+                              observationRead,
+                              observation,
+                              observation,
+                              inputDigest,
+                              inputJson);
+                          dsl.fetchOne(
+                              "SELECT set_config('world.canonical_claim_namespace', ?, TRUE)",
+                              NAMESPACE);
+                          dsl.fetchOne(
+                              "SELECT set_config('world.canonical_claim_tenant', ?, TRUE)",
+                              tenant.toString());
+                          dsl.fetchOne(
+                              "SELECT set_config('world.canonical_claim_request', ?, TRUE)",
+                              request);
+                          dsl.fetchOne(
+                              "SELECT set_config('world.canonical_claim_target', ?, TRUE)",
+                              instance.toString());
+                          dsl.fetchOne(
+                              "SELECT set_config('world.canonical_claim_fence', ?, TRUE)",
+                              Objects.requireNonNull(
+                                      dsl.fetchValue(
+                                          "SELECT world_execution_fence FROM world_canonical_instance_execution WHERE target_namespace=? AND canonical_tenant_id=? AND control_plane_request_id=?",
+                                          NAMESPACE,
+                                          tenant,
+                                          request),
+                                      "world_execution_fence must exist for the exact preparation attempt")
+                                  .toString());
+                          dsl.execute(
+                              "UPDATE world_canonical_instance_execution SET execution_claimed=TRUE "
+                                  + "WHERE target_namespace=? AND canonical_tenant_id=? AND control_plane_request_id=?",
+                              NAMESPACE,
+                              tenant,
+                              request);
+                          for (String[] setting :
+                              new String[][] {
+                                {"world.canonical_execution_namespace", NAMESPACE},
+                                {"world.canonical_execution_tenant", tenant.toString()},
+                                {"world.canonical_execution_request", request},
+                                {"world.canonical_execution_target", instance.toString()},
+                                {
+                                  "world.canonical_execution_fence",
+                                  Objects.requireNonNull(
+                                          dsl.fetchValue(
+                                              "SELECT world_execution_fence FROM world_canonical_instance_execution WHERE target_namespace=? AND canonical_tenant_id=? AND control_plane_request_id=?",
+                                              NAMESPACE,
+                                              tenant,
+                                              request),
+                                          "world_execution_fence must exist for the exact preparation attempt")
+                                      .toString()
+                                },
+                                {"world.canonical_execution_input_digest", inputDigest}
+                              }) {
+                            dsl.fetchOne("SELECT set_config(?, ?, TRUE)", setting[0], setting[1]);
+                          }
+                          dsl.execute(
+                              "UPDATE world_canonical_instance_execution "
+                                  + "SET operation_state='EXECUTING', active_transaction_id=txid_current() "
+                                  + "WHERE target_namespace=? AND canonical_tenant_id=? AND control_plane_request_id=?",
+                              NAMESPACE,
+                              tenant,
+                              request);
+                          dsl.fetchOne("SELECT pg_sleep(0.1)");
+                          dsl.fetchOne(
+                              "SELECT world_require_active_canonical_instance_execution(?, ?)",
+                              inputJson,
+                              inputDigest);
+                          return null;
+                        }))
+        .isInstanceOf(DataIntegrityViolationException.class)
+        .rootCause()
+        .isInstanceOf(PSQLException.class)
+        .hasMessageContaining("Game Session lease expired before World execution admission");
   }
 
   private void insertInReservedCanonicalTenant(long tenantKey) {

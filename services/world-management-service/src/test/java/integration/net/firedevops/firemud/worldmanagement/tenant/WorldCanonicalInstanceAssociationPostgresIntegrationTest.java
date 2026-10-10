@@ -483,8 +483,12 @@ class WorldCanonicalInstanceAssociationPostgresIntegrationTest {
     WorldCanonicalInstancePreparation.Input originalInput =
         preparationInput(
             fixture, canonicalGameInstanceId, playableStateNamespaceId, "GS_FIXTURE", 1L);
+    WorldCanonicalInstanceExecutionIdentity originalIdentity = executionIdentity(originalInput);
     WorldCanonicalInstancePreparation.Result originalPreparation =
-        preparationService(() -> {}).prepare(originalInput);
+        preparationService(() -> {})
+            .prepare(
+                originalInput,
+                WorldCanonicalInstanceExecutionTestFixtures.operationInput(originalIdentity));
     long worldInstanceId = originalPreparation.association().worldInstanceId();
     WorldCanonicalInstanceAssociation.Claim originalClaim =
         claim(
@@ -991,6 +995,8 @@ class WorldCanonicalInstanceAssociationPostgresIntegrationTest {
     AtomicInteger heldChecks = new AtomicInteger();
     AtomicReference<WorldCanonicalInstanceExecutionIdentity> executionIdentity =
         new AtomicReference<>();
+    WorldCanonicalInstanceExecutionIdentity syntheticIdentity =
+        WorldCanonicalInstanceExecutionTestFixtures.identity(input);
     WorldCanonicalInstancePreparationService service =
         preparationService(
             () -> {
@@ -999,13 +1005,11 @@ class WorldCanonicalInstanceAssociationPostgresIntegrationTest {
               }
             },
             exactInput -> {
-              WorldCanonicalInstanceExecutionIdentity created =
-                  WorldCanonicalInstanceExecutionTestFixtures.identity(exactInput);
-              executionIdentity.set(created);
-              return created;
+              executionIdentity.set(syntheticIdentity);
+              return syntheticIdentity;
             });
 
-    assertThatThrownBy(() -> service.prepare(input))
+    assertThatThrownBy(() -> prepareSynthetic(service, input, syntheticIdentity))
         .isInstanceOf(IllegalStateException.class)
         .hasMessageContaining("synthetic held authority lost before commit");
 
@@ -1028,7 +1032,11 @@ class WorldCanonicalInstanceAssociationPostgresIntegrationTest {
 
     WorldCanonicalInstanceExecutionIdentity retainedIdentity = executionIdentity.get();
     assertThatThrownBy(
-            () -> preparationService(() -> {}, ignored -> retainedIdentity).prepare(input))
+            () ->
+                prepareSynthetic(
+                    preparationService(() -> {}, ignored -> retainedIdentity),
+                    input,
+                    retainedIdentity))
         .isInstanceOf(
             WorldCanonicalInstancePreparationRepository.ConflictingPreparationException.class)
         .hasMessageContaining("PENDING");
@@ -1042,7 +1050,11 @@ class WorldCanonicalInstanceAssociationPostgresIntegrationTest {
                 assertThat(operation.state())
                     .isEqualTo(WorldCanonicalInstancePreparationRepository.ExecutionState.ABORTED));
     assertThatThrownBy(
-            () -> preparationService(() -> {}, ignored -> retainedIdentity).prepare(input))
+            () ->
+                prepareSynthetic(
+                    preparationService(() -> {}, ignored -> retainedIdentity),
+                    input,
+                    retainedIdentity))
         .isInstanceOf(
             WorldCanonicalInstancePreparationRepository.ConflictingPreparationException.class)
         .hasMessageContaining("ABORTED");
@@ -1057,82 +1069,73 @@ class WorldCanonicalInstanceAssociationPostgresIntegrationTest {
     WorldCanonicalInstanceExecutionIdentity exactIdentity =
         WorldCanonicalInstanceExecutionTestFixtures.identity(input);
     WorldCanonicalInstancePreparation.Result committed =
-        preparationService(() -> {}, ignored -> exactIdentity).prepare(input);
+        prepareSynthetic(
+            preparationService(() -> {}, ignored -> exactIdentity), input, exactIdentity);
 
     WorldCanonicalInstanceExecutionIdentity substitutedIdentity =
-        new WorldCanonicalInstanceExecutionIdentity(
-            exactIdentity.originalPostAuthorizationTuple(),
-            UUID.randomUUID(),
-            exactIdentity.accountWorldParticipationFence(),
-            exactIdentity.gameSessionOwnerAttemptId(),
-            exactIdentity.gameSessionOwnerFence(),
-            exactIdentity.canonicalGameInstanceId(),
-            exactIdentity.preparationInputJson());
+        WorldCanonicalInstanceExecutionTestFixtures.withParticipationId(
+            exactIdentity, UUID.randomUUID());
+    SeededPair changedTuplePair =
+        seedPair(
+            fixture.source(),
+            fixture.versionIdentity(),
+            controlRequest(),
+            "synthetic-changed-original-start-session-tuple");
+    Fixture changedTupleFixture =
+        new Fixture(
+            fixture.source(), changedTuplePair.binding(), changedTuplePair.versionIdentity());
+    WorldCanonicalInstancePreparation.Input changedTupleInput =
+        preparationInput(
+            changedTupleFixture, canonicalGameInstanceId, UUID.randomUUID(), "GS_FIXTURE", 1L);
     WorldCanonicalInstanceExecutionIdentity changedTupleIdentity =
-        new WorldCanonicalInstanceExecutionIdentity(
-            WorldCanonicalInstanceExecutionTestFixtures.identity(input)
-                .originalPostAuthorizationTuple(),
-            exactIdentity.accountWorldParticipationId(),
-            exactIdentity.accountWorldParticipationFence(),
-            exactIdentity.gameSessionOwnerAttemptId(),
-            exactIdentity.gameSessionOwnerFence(),
-            exactIdentity.canonicalGameInstanceId(),
-            exactIdentity.preparationInputJson());
+        WorldCanonicalInstanceExecutionTestFixtures.identity(changedTupleInput);
     WorldCanonicalInstanceExecutionIdentity changedAccountFence =
-        new WorldCanonicalInstanceExecutionIdentity(
-            exactIdentity.originalPostAuthorizationTuple(),
-            exactIdentity.accountWorldParticipationId(),
+        WorldCanonicalInstanceExecutionTestFixtures.withFences(
+            exactIdentity,
             exactIdentity.accountWorldParticipationFence() + 1L,
-            exactIdentity.gameSessionOwnerAttemptId(),
-            exactIdentity.gameSessionOwnerFence(),
-            exactIdentity.canonicalGameInstanceId(),
-            exactIdentity.preparationInputJson());
+            exactIdentity.gameSessionOwnerFence());
     WorldCanonicalInstanceExecutionIdentity changedGameSessionAttempt =
-        new WorldCanonicalInstanceExecutionIdentity(
-            exactIdentity.originalPostAuthorizationTuple(),
-            exactIdentity.accountWorldParticipationId(),
-            exactIdentity.accountWorldParticipationFence(),
-            UUID.randomUUID(),
-            exactIdentity.gameSessionOwnerFence(),
-            exactIdentity.canonicalGameInstanceId(),
-            exactIdentity.preparationInputJson());
+        WorldCanonicalInstanceExecutionTestFixtures.withOwnerAttemptId(
+            exactIdentity, UUID.randomUUID());
     WorldCanonicalInstanceExecutionIdentity changedGameSessionFence =
-        new WorldCanonicalInstanceExecutionIdentity(
-            exactIdentity.originalPostAuthorizationTuple(),
-            exactIdentity.accountWorldParticipationId(),
+        WorldCanonicalInstanceExecutionTestFixtures.withFences(
+            exactIdentity,
             exactIdentity.accountWorldParticipationFence(),
-            exactIdentity.gameSessionOwnerAttemptId(),
-            exactIdentity.gameSessionOwnerFence() + 1L,
-            exactIdentity.canonicalGameInstanceId(),
-            exactIdentity.preparationInputJson());
+            exactIdentity.gameSessionOwnerFence() + 1L);
     for (WorldCanonicalInstanceExecutionIdentity substituted :
         List.of(
             substitutedIdentity,
-            changedTupleIdentity,
             changedAccountFence,
             changedGameSessionAttempt,
             changedGameSessionFence)) {
-      assertThatThrownBy(() -> preparationService(() -> {}, ignored -> substituted).prepare(input))
+      assertThatThrownBy(
+              () ->
+                  prepareSynthetic(
+                      preparationService(() -> {}, ignored -> substituted), input, substituted))
           .isInstanceOf(
               WorldCanonicalInstancePreparationRepository.ConflictingPreparationException.class)
           .hasMessageContaining("full identity");
     }
 
+    assertThatThrownBy(
+            () ->
+                prepareSynthetic(
+                    preparationService(() -> {}, ignored -> changedTupleIdentity),
+                    input,
+                    changedTupleIdentity))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("differs from the exact original StartSession tuple");
+
     WorldCanonicalInstancePreparation.Input substitutedInput =
         preparationInput(fixture, canonicalGameInstanceId, UUID.randomUUID(), "GS_FIXTURE", 1L);
     WorldCanonicalInstanceExecutionIdentity substitutedInputIdentity =
-        new WorldCanonicalInstanceExecutionIdentity(
-            exactIdentity.originalPostAuthorizationTuple(),
-            exactIdentity.accountWorldParticipationId(),
-            exactIdentity.accountWorldParticipationFence(),
-            exactIdentity.gameSessionOwnerAttemptId(),
-            exactIdentity.gameSessionOwnerFence(),
-            exactIdentity.canonicalGameInstanceId(),
-            WorldCanonicalInstancePreparationRepository.inputJson(substitutedInput));
+        WorldCanonicalInstanceExecutionTestFixtures.identity(substitutedInput);
     assertThatThrownBy(
             () ->
-                preparationService(() -> {}, ignored -> substitutedInputIdentity)
-                    .prepare(substitutedInput))
+                prepareSynthetic(
+                    preparationService(() -> {}, ignored -> substitutedInputIdentity),
+                    substitutedInput,
+                    substitutedInputIdentity))
         .isInstanceOf(
             WorldCanonicalInstancePreparationRepository.ConflictingPreparationException.class)
         .hasMessageContaining("full identity");
@@ -1163,8 +1166,10 @@ class WorldCanonicalInstanceAssociationPostgresIntegrationTest {
         withLargeSyntheticSourceFences(
             WorldCanonicalInstanceExecutionTestFixtures.identity(secondInput));
 
-    preparationService(() -> {}, ignored -> firstIdentity).prepare(firstInput);
-    preparationService(() -> {}, ignored -> secondIdentity).prepare(secondInput);
+    prepareSynthetic(
+        preparationService(() -> {}, ignored -> firstIdentity), firstInput, firstIdentity);
+    prepareSynthetic(
+        preparationService(() -> {}, ignored -> secondIdentity), secondInput, secondIdentity);
     long firstWorldFence =
         preparationRepository()
             .readExactExecution(firstIdentity)
@@ -1199,7 +1204,10 @@ class WorldCanonicalInstanceAssociationPostgresIntegrationTest {
 
     assertThat(preparationRepository().recordDurableAbort(identity).state())
         .isEqualTo(WorldCanonicalInstancePreparationRepository.ExecutionState.ABORTED);
-    assertThatThrownBy(() -> preparationService(() -> {}, ignored -> identity).prepare(input))
+    assertThatThrownBy(
+            () ->
+                prepareSynthetic(
+                    preparationService(() -> {}, ignored -> identity), input, identity))
         .isInstanceOf(
             WorldCanonicalInstancePreparationRepository.ConflictingPreparationException.class)
         .hasMessageContaining("ABORTED");
@@ -1260,32 +1268,7 @@ class WorldCanonicalInstanceAssociationPostgresIntegrationTest {
                         status -> {
                           Record intentRow =
                               dsl.fetchOne(
-                                  "SELECT world_persist_canonical_instance_execution_intent(?, ?, ?, ?, ?, ?, ?, ?)",
-                                  inputJson,
-                                  inputDigest,
-                                  identity.originalPostAuthorizationTuple(),
-                                  identity.accountWorldParticipationId(),
-                                  identity.accountWorldParticipationFence(),
-                                  identity.gameSessionOwnerAttemptId(),
-                                  identity.gameSessionOwnerFence(),
-                                  identity.canonicalGameInstanceId());
-                          Long intentFence =
-                              intentRow == null ? null : intentRow.get(0, Long.class);
-                          Record claimRow =
-                              dsl.fetchOne(
-                                  "SELECT world_claim_canonical_instance_execution(?, ?, ?, ?, ?, ?, ?, ?)",
-                                  inputJson,
-                                  inputDigest,
-                                  identity.originalPostAuthorizationTuple(),
-                                  identity.accountWorldParticipationId(),
-                                  identity.accountWorldParticipationFence(),
-                                  identity.gameSessionOwnerAttemptId(),
-                                  identity.gameSessionOwnerFence(),
-                                  identity.canonicalGameInstanceId());
-                          Long claimFence = claimRow == null ? null : claimRow.get(0, Long.class);
-                          Record executionRow =
-                              dsl.fetchOne(
-                                  "SELECT world_begin_canonical_instance_execution(?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                                  "SELECT world_persist_canonical_instance_execution_intent_with_original_attempt(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                                   inputJson,
                                   inputDigest,
                                   identity.originalPostAuthorizationTuple(),
@@ -1294,7 +1277,47 @@ class WorldCanonicalInstanceAssociationPostgresIntegrationTest {
                                   identity.gameSessionOwnerAttemptId(),
                                   identity.gameSessionOwnerFence(),
                                   identity.canonicalGameInstanceId(),
-                                  intentFence);
+                                  identity.gameSessionOwnerMutationId(),
+                                  identity.originalAttemptReadRequestId(),
+                                  identity.originalGameSessionLeaseExpiresAt(),
+                                  identity.originalAttemptEvidenceBytes(),
+                                  identity.originalAttemptEvidenceDigest());
+                          Long intentFence =
+                              intentRow == null ? null : intentRow.get(0, Long.class);
+                          Record claimRow =
+                              dsl.fetchOne(
+                                  "SELECT world_claim_canonical_instance_execution_with_original_attempt(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                                  inputJson,
+                                  inputDigest,
+                                  identity.originalPostAuthorizationTuple(),
+                                  identity.accountWorldParticipationId(),
+                                  identity.accountWorldParticipationFence(),
+                                  identity.gameSessionOwnerAttemptId(),
+                                  identity.gameSessionOwnerFence(),
+                                  identity.canonicalGameInstanceId(),
+                                  identity.gameSessionOwnerMutationId(),
+                                  identity.originalAttemptReadRequestId(),
+                                  identity.originalGameSessionLeaseExpiresAt(),
+                                  identity.originalAttemptEvidenceBytes(),
+                                  identity.originalAttemptEvidenceDigest());
+                          Long claimFence = claimRow == null ? null : claimRow.get(0, Long.class);
+                          Record executionRow =
+                              dsl.fetchOne(
+                                  "SELECT world_begin_canonical_instance_execution_with_original_attempt(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                                  inputJson,
+                                  inputDigest,
+                                  identity.originalPostAuthorizationTuple(),
+                                  identity.accountWorldParticipationId(),
+                                  identity.accountWorldParticipationFence(),
+                                  identity.gameSessionOwnerAttemptId(),
+                                  identity.gameSessionOwnerFence(),
+                                  identity.canonicalGameInstanceId(),
+                                  intentFence,
+                                  identity.gameSessionOwnerMutationId(),
+                                  identity.originalAttemptReadRequestId(),
+                                  identity.originalGameSessionLeaseExpiresAt(),
+                                  identity.originalAttemptEvidenceBytes(),
+                                  identity.originalAttemptEvidenceDigest());
                           Long executionFence =
                               executionRow == null ? null : executionRow.get(0, Long.class);
                           assertThat(claimFence).isEqualTo(intentFence);
@@ -1384,7 +1407,7 @@ class WorldCanonicalInstanceAssociationPostgresIntegrationTest {
             },
             ignored -> identity);
 
-    WorldCanonicalInstancePreparation.Result committed = service.prepare(input);
+    WorldCanonicalInstancePreparation.Result committed = prepareSynthetic(service, input, identity);
 
     assertThat(Instant.now()).isAfter(originalExpiry);
     assertThat(committed.association().identity().canonicalGameInstanceId())
@@ -1452,8 +1475,10 @@ class WorldCanonicalInstanceAssociationPostgresIntegrationTest {
       Future<WorldCanonicalInstancePreparation.Result> attempt =
           executor.submit(
               () ->
-                  preparationService(Duration.ofSeconds(30), () -> {}, ignored -> identity)
-                      .prepare(input));
+                  prepareSynthetic(
+                      preparationService(Duration.ofSeconds(30), () -> {}, ignored -> identity),
+                      input,
+                      identity));
       awaitWorldPreparationLockWait();
       awaitInstant(originalExpiry.plusMillis(100));
       releaseOwnerRow.countDown();
@@ -1512,8 +1537,10 @@ class WorldCanonicalInstanceAssociationPostgresIntegrationTest {
       Future<WorldCanonicalInstancePreparation.Result> attempt =
           executor.submit(
               () ->
-                  preparationService(Duration.ofSeconds(2), () -> {}, ignored -> identity)
-                      .prepare(input));
+                  prepareSynthetic(
+                      preparationService(Duration.ofSeconds(2), () -> {}, ignored -> identity),
+                      input,
+                      identity));
       awaitWorldPreparationLockWait();
       assertThatThrownBy(attempt::get)
           .satisfies(
@@ -1565,7 +1592,7 @@ class WorldCanonicalInstanceAssociationPostgresIntegrationTest {
 
     try (ExecutorService executor = Executors.newFixedThreadPool(2)) {
       Future<WorldCanonicalInstancePreparation.Result> execution =
-          executor.submit(() -> service.prepare(input));
+          executor.submit(() -> prepareSynthetic(service, input, identity));
       assertThat(associated.await(10, TimeUnit.SECONDS)).isTrue();
       CountDownLatch abortStarted = new CountDownLatch(1);
       Future<WorldCanonicalInstancePreparationRepository.ExecutionOperation> abort =
@@ -1620,11 +1647,11 @@ class WorldCanonicalInstanceAssociationPostgresIntegrationTest {
 
     try (ExecutorService executor = Executors.newFixedThreadPool(2)) {
       Future<WorldCanonicalInstancePreparation.Result> first =
-          executor.submit(() -> firstService.prepare(exactInput));
+          executor.submit(() -> prepareSynthetic(firstService, exactInput, exactIdentity));
       try {
         assertThat(associationRetained.await(10, TimeUnit.SECONDS)).isTrue();
         Future<WorldCanonicalInstancePreparation.Result> duplicate =
-            executor.submit(() -> secondService.prepare(exactInput));
+            executor.submit(() -> prepareSynthetic(secondService, exactInput, exactIdentity));
         assertThatThrownBy(() -> duplicate.get(10, TimeUnit.SECONDS))
             .isInstanceOfSatisfying(
                 java.util.concurrent.ExecutionException.class,
@@ -1906,14 +1933,14 @@ class WorldCanonicalInstanceAssociationPostgresIntegrationTest {
       UUID playableStateNamespaceId,
       String observedGameSessionStatus,
       long observedGameSessionRowVersion) {
-    return preparationService(() -> {})
-        .prepare(
-            preparationInput(
-                fixture,
-                canonicalGameInstanceId,
-                playableStateNamespaceId,
-                observedGameSessionStatus,
-                observedGameSessionRowVersion));
+    WorldCanonicalInstancePreparation.Input input =
+        preparationInput(
+            fixture,
+            canonicalGameInstanceId,
+            playableStateNamespaceId,
+            observedGameSessionStatus,
+            observedGameSessionRowVersion);
+    return prepareSynthetic(preparationService(() -> {}), input, executionIdentity(input));
   }
 
   private WorldCanonicalInstancePreparation.Input preparationInput(
@@ -1960,16 +1987,18 @@ class WorldCanonicalInstanceAssociationPostgresIntegrationTest {
         ignored -> WorldCanonicalInstanceExecutionTestFixtures.identity(input));
   }
 
+  private WorldCanonicalInstancePreparation.Result prepareSynthetic(
+      WorldCanonicalInstancePreparationService service,
+      WorldCanonicalInstancePreparation.Input input,
+      WorldCanonicalInstanceExecutionIdentity identity) {
+    return service.prepare(
+        input, WorldCanonicalInstanceExecutionTestFixtures.operationInput(identity));
+  }
+
   private WorldCanonicalInstanceExecutionIdentity withLargeSyntheticSourceFences(
       WorldCanonicalInstanceExecutionIdentity identity) {
-    return new WorldCanonicalInstanceExecutionIdentity(
-        identity.originalPostAuthorizationTuple(),
-        identity.accountWorldParticipationId(),
-        Long.MAX_VALUE - 2,
-        identity.gameSessionOwnerAttemptId(),
-        Long.MAX_VALUE - 1,
-        identity.canonicalGameInstanceId(),
-        identity.preparationInputJson());
+    return WorldCanonicalInstanceExecutionTestFixtures.withFences(
+        identity, Long.MAX_VALUE - 2, Long.MAX_VALUE - 1);
   }
 
   private WorldCanonicalInstancePreparationService preparationService(
@@ -1979,25 +2008,29 @@ class WorldCanonicalInstanceAssociationPostgresIntegrationTest {
           identityFactory) {
     WorldCanonicalInstancePreparationRepository preparationRepository =
         preparationRepository(transactionTimeout);
-    // Synthetic fixture handle only. This does not authenticate GS/GD source or delivery, prove
-    // APPLIED/IN_SYNC, or supply Account authority.
+    // Synthetic Account/GS observation and handle only. This proves World storage mechanics, not
+    // genuine participation acquisition, owner currentness, or continuous remote protection.
     return new WorldCanonicalInstancePreparationService(
         preparationRepository,
-        input ->
-            new WorldCanonicalInstancePreparationService.HeldCommitAuthority() {
-              @Override
-              public WorldCanonicalInstanceExecutionIdentity executionIdentity() {
-                return identityFactory.apply(input);
-              }
+        (input, operationInput) -> {
+          WorldCanonicalInstanceExecutionIdentity identity = identityFactory.apply(input);
+          identity.requireMatches(
+              input, operationInput, WorldCanonicalInstancePreparationRepository.inputJson(input));
+          return new WorldCanonicalInstancePreparationService.HeldCommitAuthority() {
+            @Override
+            public WorldCanonicalInstanceExecutionIdentity executionIdentity() {
+              return identity;
+            }
 
-              @Override
-              public void requireHeld() {
-                heldCheck.run();
-              }
+            @Override
+            public void requireHeld() {
+              heldCheck.run();
+            }
 
-              @Override
-              public void close() {}
-            });
+            @Override
+            public void close() {}
+          };
+        });
   }
 
   private WorldCanonicalInstancePreparationRepository preparationRepository() {
@@ -2012,7 +2045,7 @@ class WorldCanonicalInstanceAssociationPostgresIntegrationTest {
                 status -> {
                   Record intentRow =
                       dsl.fetchOne(
-                          "SELECT world_persist_canonical_instance_execution_intent(?, ?, ?, ?, ?, ?, ?, ?)",
+                          "SELECT world_persist_canonical_instance_execution_intent_with_original_attempt(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                           inputJson,
                           inputDigest,
                           identity.originalPostAuthorizationTuple(),
@@ -2020,11 +2053,16 @@ class WorldCanonicalInstanceAssociationPostgresIntegrationTest {
                           identity.accountWorldParticipationFence(),
                           identity.gameSessionOwnerAttemptId(),
                           identity.gameSessionOwnerFence(),
-                          identity.canonicalGameInstanceId());
+                          identity.canonicalGameInstanceId(),
+                          identity.gameSessionOwnerMutationId(),
+                          identity.originalAttemptReadRequestId(),
+                          identity.originalGameSessionLeaseExpiresAt(),
+                          identity.originalAttemptEvidenceBytes(),
+                          identity.originalAttemptEvidenceDigest());
                   Long retainedFence = intentRow == null ? null : intentRow.get(0, Long.class);
                   Record claimRow =
                       dsl.fetchOne(
-                          "SELECT world_claim_canonical_instance_execution(?, ?, ?, ?, ?, ?, ?, ?)",
+                          "SELECT world_claim_canonical_instance_execution_with_original_attempt(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                           inputJson,
                           inputDigest,
                           identity.originalPostAuthorizationTuple(),
@@ -2032,7 +2070,12 @@ class WorldCanonicalInstanceAssociationPostgresIntegrationTest {
                           identity.accountWorldParticipationFence(),
                           identity.gameSessionOwnerAttemptId(),
                           identity.gameSessionOwnerFence(),
-                          identity.canonicalGameInstanceId());
+                          identity.canonicalGameInstanceId(),
+                          identity.gameSessionOwnerMutationId(),
+                          identity.originalAttemptReadRequestId(),
+                          identity.originalGameSessionLeaseExpiresAt(),
+                          identity.originalAttemptEvidenceBytes(),
+                          identity.originalAttemptEvidenceDigest());
                   Long claimedFence = claimRow == null ? null : claimRow.get(0, Long.class);
                   assertThat(claimedFence).isEqualTo(retainedFence);
                   return retainedFence;
@@ -2047,7 +2090,7 @@ class WorldCanonicalInstanceAssociationPostgresIntegrationTest {
       long executionFence) {
     Record begunRow =
         dsl.fetchOne(
-            "SELECT world_begin_canonical_instance_execution(?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "SELECT world_begin_canonical_instance_execution_with_original_attempt(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             inputJson,
             inputDigest,
             identity.originalPostAuthorizationTuple(),
@@ -2056,7 +2099,12 @@ class WorldCanonicalInstanceAssociationPostgresIntegrationTest {
             identity.gameSessionOwnerAttemptId(),
             identity.gameSessionOwnerFence(),
             identity.canonicalGameInstanceId(),
-            executionFence);
+            executionFence,
+            identity.gameSessionOwnerMutationId(),
+            identity.originalAttemptReadRequestId(),
+            identity.originalGameSessionLeaseExpiresAt(),
+            identity.originalAttemptEvidenceBytes(),
+            identity.originalAttemptEvidenceDigest());
     Long begunFence = begunRow == null ? null : begunRow.get(0, Long.class);
     assertThat(begunFence).isEqualTo(executionFence);
   }

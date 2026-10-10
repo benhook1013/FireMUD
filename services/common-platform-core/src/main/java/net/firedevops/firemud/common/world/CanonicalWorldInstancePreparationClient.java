@@ -15,7 +15,9 @@ import net.firedevops.firemud.common.grpc.GrpcChannelFactory;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
 import net.firedevops.firemud.common.grpc.GrpcServerPeerIdentityCallCredentials;
 import net.firedevops.firemud.common.grpc.GrpcServerPeerIdentityClientInterceptor;
+import net.firedevops.firemud.common.world.CanonicalWorldInstancePreparationGrpcCodec.OriginalOperationInput;
 import net.firedevops.firemud.worldmanagement.v1.WorldCanonicalInstancePreparationServiceGrpc;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 /** Explicit file-backed mTLS client for the unregistered canonical World preparation RPC. */
 public final class CanonicalWorldInstancePreparationClient
@@ -59,13 +61,19 @@ public final class CanonicalWorldInstancePreparationClient
     initialized = true;
   }
 
-  /**
-   * Sends the exact committed association selector and validates World-owned lifecycle readback.
-   */
+  /** Sends the exact owner operation outside SQL and validates the full request/readback echo. */
   public WorldCanonicalInstanceLifecycleEvidence prepare(
-      Request request, WorldCanonicalInstanceLifecycleEvidence.Request expectedLifecycleRequest) {
+      Request request,
+      OriginalOperationInput operationInput,
+      WorldCanonicalInstanceLifecycleEvidence.Request expectedLifecycleRequest) {
     Objects.requireNonNull(request, "request");
+    Objects.requireNonNull(operationInput, "operationInput");
     Objects.requireNonNull(expectedLifecycleRequest, "expectedLifecycleRequest");
+    if (TransactionSynchronizationManager.isActualTransactionActive()
+        || TransactionSynchronizationManager.isSynchronizationActive()) {
+      throw new IllegalStateException(
+          "Canonical World preparation must acquire Account participation outside SQL");
+    }
     if (!workloadNamespace.equals(request.targetNamespace())
         || !workloadNamespace.equals(expectedLifecycleRequest.targetNamespace())) {
       throw new IllegalArgumentException(
@@ -77,10 +85,10 @@ public final class CanonicalWorldInstancePreparationClient
         requireStub()
             .withDeadlineAfter(CALL_DEADLINE_SECONDS, TimeUnit.SECONDS)
             .prepareCanonicalWorldInstance(
-                CanonicalWorldInstancePreparationGrpcCodec.toRequest(request));
+                CanonicalWorldInstancePreparationGrpcCodec.toRequest(request, operationInput));
     try {
       return CanonicalWorldInstancePreparationGrpcCodec.fromResponse(
-          request, expectedLifecycleRequest, response);
+          request, operationInput, expectedLifecycleRequest, response);
     } catch (IllegalArgumentException invalid) {
       throw new IllegalStateException(
           "World returned invalid canonical instance preparation evidence", invalid);

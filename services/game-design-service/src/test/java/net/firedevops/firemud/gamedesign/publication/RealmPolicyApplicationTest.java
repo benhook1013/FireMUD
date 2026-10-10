@@ -8,6 +8,7 @@ import java.io.DataOutputStream;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding.AffectedUnit;
@@ -64,6 +65,55 @@ class RealmPolicyApplicationTest {
             application.snapshot().canonicalBytes());
 
     assertThat(application.canonicalBytes()).isEqualTo(expected);
+  }
+
+  @Test
+  void schema3ActorCoreAndOriginalPolicyProvenanceSurviveOwnerApplication() {
+    String policyJson =
+        "{\"schemaVersion\":3,\"worldSlug\":\"world\",\"worldDisplayName\":\"World\","
+            + "\"realmSlug\":\"realm\",\"realmDisplayName\":\"Realm\",\"visible\":true,"
+            + "\"publicProduction\":true,\"stateScope\":\"SHARED\",\"entryPolicy\":\"PLAYER_CREATED\","
+            + "\"creationDescriptor\":{\"schemaVersion\":1,\"descriptorId\":\"11111111-1111-4111-8111-111111111111\","
+            + "\"descriptorRevisionId\":\"22222222-2222-4222-8222-222222222222\","
+            + "\"inputKind\":\"EMPTY_OBJECT\",\"dependencies\":[]},"
+            + "\"initialActorCore\":{\"displayName\":\"Wayfarer\",\"dispositionKey\":\"newcomer\"}}";
+    String payload =
+        RealmPolicySource.canonical(
+            Map.of(
+                "revisionKind",
+                RealmPolicySource.REVISION_KIND,
+                "logicalRevisionId",
+                "policy-logical-r3",
+                "policy",
+                RealmPolicySource.tree(policyJson)));
+    DraftCommitBinding binding =
+        DraftCommitBinding.create(
+            target(),
+            REQUEST_ID,
+            COMMIT_ID,
+            "base-commit-0",
+            List.of(
+                new RevisionPayload("0", REVISION_ID, Owner.GAME_DESIGN_CONTROL_PLANE, payload)),
+            List.of(
+                new AffectedUnit(
+                    Owner.GAME_DESIGN_CONTROL_PLANE,
+                    RealmPolicySource.SCOPE,
+                    VERSION_ID.toString(),
+                    RealmPolicySource.SCOPE,
+                    "effective",
+                    "0")));
+    var policy = RealmPolicySource.revision(binding, binding.revisions().getFirst());
+    var snapshot = new RealmPolicySnapshot(binding, "1", List.of(policy));
+    var application = new RealmPolicyApplication(freshGenesis(), null, "0", snapshot);
+    var retained = RealmPolicySnapshot.fromStored(application.snapshot().canonicalJson());
+    var retainedPolicy = retained.policies().getFirst();
+
+    assertThat(retainedPolicy.commitId()).isEqualTo(COMMIT_ID);
+    assertThat(retainedPolicy.revisionId()).isEqualTo(REVISION_ID);
+    assertThat(retainedPolicy.logicalRevisionId()).isEqualTo("policy-logical-r3");
+    assertThat(retainedPolicy.policy().initialActorCore().displayName()).isEqualTo("Wayfarer");
+    assertThat(retainedPolicy.policy().initialActorCore().dispositionKey()).isEqualTo("newcomer");
+    assertThat(application.canonicalBytes()).containsSequence(retained.canonicalBytes());
   }
 
   @Test

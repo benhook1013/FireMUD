@@ -58,6 +58,8 @@ Game Session does not persist or allocate the primary actor. It resolves the rea
 
 The local runtime stores only active attachment, protocol state, presence, and controller-fence data. A playtest copy is selected by its new fork-local `characterId`; `sourceCharacterId` is not used as authority. Current per-instance lookup, unresolved-character fallback, and complete cross-service proof remain gaps.
 
+An Entity-allocated durable actor does not establish a Game Session attachment or presence projection. Before authenticated attachment, no live projection exists; the immutable authored release must not carry a guessed presence value, and a consumer must not fabricate `OFFLINE`/`PRESENT` or reuse `ACTIVE`/`AFK` as a bootstrap substitute. A complete runtime-core aggregate requiring presence must fail closed until Game Session's authenticated lifecycle supplies that projection. Entity owns the separate authored display-name/disposition provenance and durable identity, while World independently owns placement and occupancy; see [Entity's runtime actor boundary](../entity-management-service/runtime-and-data.md#runtime-actor-identity).
+
 ## Owner-Local Gameplay Restrictions
 
 Game Session is the sole runtime enforcement owner for `gameplay_ban`, while Logging & Admin owns fixed-category policy intent, cases, appeals, and audit. The complete category and command contract is [Moderation Policies](../logging-admin-service/moderation-policies.md); this section records Game Session's local state and decision consequences.

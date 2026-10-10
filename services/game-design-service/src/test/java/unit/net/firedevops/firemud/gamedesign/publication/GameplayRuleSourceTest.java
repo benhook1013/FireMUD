@@ -130,6 +130,41 @@ class GameplayRuleSourceTest {
   }
 
   @Test
+  void authoredDispositionAndRequiredFeedbackRetainTypedSelectedRevisionProvenance() {
+    var disposition = new Disposition("newcomer", List.of(), "welcome");
+    var feedback =
+        new Feedback(
+            "welcome",
+            "actor.created",
+            Audience.SOURCE_ACTOR,
+            "actor.created",
+            "Welcome, traveler.",
+            List.of(),
+            Visibility.PUBLIC,
+            ReplayPolicy.EFFECT_IDEMPOTENT);
+    var selected =
+        binding(
+            List.of(
+                GameplayRuleSource.upsertPayload(disposition),
+                GameplayRuleSource.upsertPayload(feedback)));
+    var entries = GameplayRuleSource.replay(List.of(), selected);
+    var manifest = GameplayRuleSource.manifest(entries);
+
+    assertThat(manifest.families().keySet()).containsExactlyInAnyOrder(Family.values());
+    for (Family family : Family.values()) {
+      if (family != Family.DISPOSITIONS && family != Family.FEEDBACK) {
+        assertThat(manifest.families().get(family)).isEmpty();
+      }
+    }
+    assertThat(manifest.families().get(Family.DISPOSITIONS)).containsExactly(disposition);
+    assertThat(manifest.families().get(Family.FEEDBACK)).containsExactly(feedback);
+    assertThat(entries).extracting(GameplayRuleSource.Entry::sourceBinding).containsOnly(selected);
+    assertThat(entries)
+        .extracting(GameplayRuleSource.Entry::revisionOrder)
+        .containsExactly("0", "1");
+  }
+
+  @Test
   void incompleteInventoryAndUnresolvedReferencesDenyInsteadOfBecomingEmpty() {
     var families =
         new EnumMap<Family, List<Definition>>(GameplayRuleManifest.explicitEmpty().families());

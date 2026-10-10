@@ -132,6 +132,24 @@ class WorldCanonicalInstancePreparationServiceTest {
   }
 
   @Test
+  void freshPreparationWithoutTypedOriginalOwnerInputDeniesEvenWithLegacyVerifier() {
+    var repository = mock(WorldCanonicalInstancePreparationRepository.class);
+    var commitVerifier =
+        mock(WorldCanonicalInstancePreparationService.CommitAuthorityVerifier.class);
+    var input =
+        mock(
+            net.firedevops.firemud.worldmanagement.tenant.WorldCanonicalInstancePreparation.Input
+                .class);
+    var service = new WorldCanonicalInstancePreparationService(repository, commitVerifier);
+
+    assertThatThrownBy(() -> service.prepare(input))
+        .isInstanceOf(WorldCanonicalInstancePreparationService.PreparationDeniedException.class)
+        .hasMessageContaining("exact original Game Session owner operation");
+
+    verifyNoInteractions(repository, commitVerifier, input);
+  }
+
+  @Test
   void exactRecoveryAuthenticatesThenReturnsTheUnchangedReadOnlyLookup() {
     var repository = mock(WorldCanonicalInstancePreparationRepository.class);
     var recoveryVerifier =

@@ -79,7 +79,16 @@ message ReadWorldStartSessionExecutionTerminalResponse {
   bytes canonical_terminal_bytes = 2;
 }
 
-// The exact ten-field committed Game Session launch-association selector.
+// Exact original Game Session StartSession owner operation. Account participation identity,
+// currentness, lease observation and source projection are returned only by Account.
+message OriginalStartSessionOperationInput {
+  bytes original_post_authorization_tuple = 1;
+  string game_session_owner_mutation_id = 2;
+  string game_session_owner_attempt_id = 3;
+  int64 game_session_owner_fence = 4;
+}
+
+// The committed Game Session launch-association selector and separate original operation input.
 message PrepareCanonicalWorldInstanceRequest {
   string read_request_id = 1;
   string target_namespace = 2;
@@ -91,6 +100,7 @@ message PrepareCanonicalWorldInstanceRequest {
   string expected_descriptor_request_digest = 8;
   string expected_descriptor_result_digest = 9;
   string expected_release_attestation_evidence_digest = 10;
+  OriginalStartSessionOperationInput original_start_session_operation = 11;
 }
 
 message PrepareCanonicalWorldInstanceResponse {

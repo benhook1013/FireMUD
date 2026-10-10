@@ -4,6 +4,8 @@ import com.google.protobuf.ByteString;
 import jakarta.annotation.PostConstruct;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.time.Clock;
 import java.util.Arrays;
 import java.util.Objects;
@@ -15,6 +17,11 @@ import net.firedevops.firemud.common.grpc.AbstractReloadingBlockingGrpcClient;
 import net.firedevops.firemud.common.grpc.BlockingGrpcStubCustomizer;
 import net.firedevops.firemud.common.grpc.CommonGrpcClientProperties;
 import net.firedevops.firemud.common.grpc.GrpcChannelFactory;
+import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
+import net.firedevops.firemud.common.grpc.GrpcServerPeerIdentityCallCredentials;
+import net.firedevops.firemud.common.grpc.GrpcServerPeerIdentityClientInterceptor;
+import net.firedevops.firemud.common.grpc.GrpcTlsMaterialResolver;
+import net.firedevops.firemud.common.grpc.ResolvedGrpcTlsMaterial;
 import net.firedevops.firemud.common.operator.StartSessionPreAuthorizationReservationTuple;
 import net.firedevops.firemud.loggingadmin.v1.ReadCurrentClaimEvidenceRequest;
 import net.firedevops.firemud.loggingadmin.v1.ReadCurrentClaimEvidenceResponse;
@@ -22,6 +29,7 @@ import net.firedevops.firemud.loggingadmin.v1.StartSessionReservationEvidencePur
 import net.firedevops.firemud.loggingadmin.v1.StartSessionReservationEvidenceServiceGrpc;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 /**
  * Reads and validates Logging/Admin's current StartSession reservation claim snapshot.
@@ -38,6 +46,7 @@ public final class StartSessionReservationEvidenceClient
   private static final UUID NIL_UUID = new UUID(0L, 0L);
 
   private final Clock clock;
+  private final CommonGrpcClientProperties transportTlsProperties;
 
   @Autowired
   public StartSessionReservationEvidenceClient(
@@ -61,6 +70,8 @@ public final class StartSessionReservationEvidenceClient
         stubCustomizer,
         StartSessionReservationEvidenceClient.class);
     this.clock = Objects.requireNonNull(clock, "clock is required");
+    this.transportTlsProperties =
+        Objects.requireNonNull(tlsProperties, "TLS properties are required").copy();
   }
 
   @PostConstruct
@@ -95,6 +106,7 @@ public final class StartSessionReservationEvidenceClient
       UUID currentClaimOwnerId,
       long currentClaimFence,
       Purpose purpose) {
+    requireNoAmbientSqlOrSynchronization();
     Objects.requireNonNull(tuple, "reservation tuple is required");
     requireNonNilUuid(reservationOwnerId, "reservationOwnerId");
     requireNonNilUuid(currentClaimOwnerId, "currentClaimOwnerId");
@@ -117,10 +129,7 @@ public final class StartSessionReservationEvidenceClient
             .setPurpose(toWirePurpose(purpose))
             .build();
 
-    var currentStub = stub();
-    if (currentStub == null) {
-      throw new IllegalStateException("Logging/Admin reservation evidence client is unavailable");
-    }
+    var currentStub = requirePinnedLoggingAdminStub(tuple.action().scope().targetNamespace());
     ReadCurrentClaimEvidenceResponse response =
         currentStub
             .withDeadlineAfter(CALL_DEADLINE_SECONDS, TimeUnit.SECONDS)
@@ -135,6 +144,60 @@ public final class StartSessionReservationEvidenceClient
         currentClaimFence,
         purpose);
     return response;
+  }
+
+  private StartSessionReservationEvidenceServiceGrpc
+          .StartSessionReservationEvidenceServiceBlockingStub
+      requirePinnedLoggingAdminStub(String targetNamespace) {
+    String expectedServerUri = loggingAdminServerUri(targetNamespace);
+    requireFileBackedMtls();
+    var currentStub = stub();
+    if (currentStub == null) {
+      throw new IllegalStateException("Logging/Admin reservation evidence client is unavailable");
+    }
+    return currentStub
+        .withCallCredentials(new GrpcServerPeerIdentityCallCredentials(expectedServerUri))
+        .withInterceptors(new GrpcServerPeerIdentityClientInterceptor(expectedServerUri));
+  }
+
+  static String loggingAdminServerUri(String targetNamespace) {
+    if (!GrpcPeerIdentity.isValidNamespace(targetNamespace)) {
+      throw new IllegalArgumentException("StartSession target namespace is invalid");
+    }
+    return "spiffe://firemud/ns/" + targetNamespace + "/sa/logging-admin-service";
+  }
+
+  private void requireFileBackedMtls() {
+    if (transportTlsProperties.isPlaintext()) {
+      throw new IllegalStateException("Logging/Admin reservation evidence requires workload mTLS");
+    }
+    ResolvedGrpcTlsMaterial material;
+    try {
+      material = new GrpcTlsMaterialResolver().resolve(transportTlsProperties);
+    } catch (IOException | RuntimeException ignored) {
+      throw new IllegalStateException(
+          "Logging/Admin reservation evidence requires readable file-backed workload mTLS");
+    }
+    if (material == null
+        || !isReadableFile(material.certChain())
+        || !isReadableFile(material.privateKey())
+        || !isReadableFile(material.caCert())) {
+      throw new IllegalStateException(
+          "Logging/Admin reservation evidence requires readable file-backed workload mTLS");
+    }
+  }
+
+  private static boolean isReadableFile(ResolvedGrpcTlsMaterial.TlsResource resource) {
+    Path path = resource == null ? null : resource.watchPath();
+    return path != null && Files.isRegularFile(path) && Files.isReadable(path);
+  }
+
+  private static void requireNoAmbientSqlOrSynchronization() {
+    if (TransactionSynchronizationManager.isActualTransactionActive()
+        || TransactionSynchronizationManager.isSynchronizationActive()) {
+      throw new IllegalStateException(
+          "Logging/Admin reservation evidence requires no ambient SQL or synchronization");
+    }
   }
 
   private void validateResponse(

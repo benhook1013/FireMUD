@@ -78,6 +78,7 @@ import net.firedevops.firemud.common.tenant.AuthoredWorldSourceDigest;
 import net.firedevops.firemud.common.tenant.AuthoredWorldSourceEvidence;
 import net.firedevops.firemud.common.world.CanonicalWorldInstancePreparationClient;
 import net.firedevops.firemud.common.world.CanonicalWorldInstancePreparationGrpcCodec;
+import net.firedevops.firemud.common.world.CanonicalWorldInstancePreparationGrpcCodec.OriginalOperationInput;
 import net.firedevops.firemud.common.world.GameSessionCanonicalInitialAdmissionOwnerProof;
 import net.firedevops.firemud.common.world.GameSessionCanonicalInitialAdmissionOwnerProofCodec;
 import net.firedevops.firemud.common.world.RoomTemplateRef;
@@ -312,7 +313,7 @@ class WorldDraftGraphApplicationPostgresIntegrationTest {
 
     var repository = preparationRepository();
     var service = preparationComponentWithRetainedTerminal(repository, originalTerminal);
-    var result = service.prepare(input);
+    var result = prepareSynthetic(service, input);
     assertThat(result.startLocation().roomTemplateId()).isEqualTo(lastRoom);
     assertThat(result.runtimeRoomInstanceId()).isPositive();
     assertThat(result.storageStatus()).isEqualTo("MATERIALIZED_UNVERIFIED");
@@ -331,7 +332,7 @@ class WorldDraftGraphApplicationPostgresIntegrationTest {
     var reassembled = assembly.service().assemble(stableSelector);
     assertThat(WorldCanonicalInstancePreparationRepository.inputJson(reassembled))
         .isEqualTo(WorldCanonicalInstancePreparationRepository.inputJson(input));
-    assertThat(service.prepare(reassembled)).isEqualTo(result);
+    assertThat(prepareSynthetic(service, reassembled)).isEqualTo(result);
     assertThat(repository.readOwnerPreparation(reassembled)).contains(result);
     assertThat(preparationRows(input.canonicalGameInstanceId())).containsExactly(before);
     assertThat(retainedPreparationSourceRows(f, seedInput, frozen)).isEqualTo(sourceRowsBefore);
@@ -381,6 +382,8 @@ class WorldDraftGraphApplicationPostgresIntegrationTest {
     var launchFixture = preparationLaunchFixture(f, frozen, selector, 2L, List.of("LOOK"));
     var evidence = launchFixture.evidence();
     var ownerRequest = launchFixture.ownerRequest();
+    OriginalOperationInput syntheticOwnerOperation =
+        syntheticOwnerOperation(ownerRequest, evidence.descriptor().gameTemplateId());
     byte[] originalAppliedRows = retainedApplicationBytes(application);
     byte[] originalSelectorBytes = selector.canonicalBytes();
     var stableSelector =
@@ -449,7 +452,9 @@ class WorldDraftGraphApplicationPostgresIntegrationTest {
           preparationClient(transport, preparationPki.clientProperties(WRONG_WORKLOAD_URI))) {
         wrongPeerClient.init();
         assertThatThrownBy(
-                () -> wrongPeerClient.prepare(ownerRequest, expectedFirstLifecycleRequest))
+                () ->
+                    wrongPeerClient.prepare(
+                        ownerRequest, syntheticOwnerOperation, expectedFirstLifecycleRequest))
             .isInstanceOf(StatusRuntimeException.class)
             .satisfies(
                 failure ->
@@ -469,7 +474,8 @@ class WorldDraftGraphApplicationPostgresIntegrationTest {
           preparationClient(
               transport, preparationPki.clientProperties(GAME_SESSION_WORKLOAD_URI))) {
         client.init();
-        var firstLifecycle = client.prepare(ownerRequest, expectedFirstLifecycleRequest);
+        var firstLifecycle =
+            client.prepare(ownerRequest, syntheticOwnerOperation, expectedFirstLifecycleRequest);
         assertThat(
                 completeLaunchBindingCount(
                     ownerRequest.targetNamespace(),
@@ -570,7 +576,8 @@ class WorldDraftGraphApplicationPostgresIntegrationTest {
                 ownerRequest.expectedReleaseAttestationEvidenceDigest());
         var expectedRetryLifecycleRequest =
             lifecycleReadRequest(retryRequest, evidence, isolatedOwners.playableStateNamespaceId());
-        var retryLifecycle = client.prepare(retryRequest, expectedRetryLifecycleRequest);
+        var retryLifecycle =
+            client.prepare(retryRequest, syntheticOwnerOperation, expectedRetryLifecycleRequest);
         var retryInput = isolatedOwners.service().assemble(stableSelector);
         var retryLifecycleRequest =
             lifecycleReadRequest(
@@ -686,17 +693,17 @@ class WorldDraftGraphApplicationPostgresIntegrationTest {
 
     var repository = preparationRepository();
     var service = preparationComponentWithRetainedTerminal(repository, originalTerminal);
-    assertThatThrownBy(() -> service.prepare(staleInput))
+    assertThatThrownBy(() -> prepareSynthetic(service, staleInput))
         .isInstanceOf(
             WorldCanonicalInstancePreparationRepository.InvalidPreparationEvidenceException.class)
         .hasMessageContaining("ReleaseContent differs");
-    assertThatThrownBy(() -> service.prepare(changedReleaseInput))
+    assertThatThrownBy(() -> prepareSynthetic(service, changedReleaseInput))
         .isInstanceOf(
             WorldCanonicalInstancePreparationRepository.InvalidPreparationEvidenceException.class)
         .hasMessageContaining("ReleaseContent differs");
     assertThat(count(f, "world_instance")).isZero();
 
-    var prepared = service.prepare(laterInput);
+    var prepared = prepareSynthetic(service, laterInput);
     assertThat(prepared.startLocation().roomTemplateId()).isEqualTo(selectedRoom);
     assertThat(repository.readOwnerPreparation(laterInput)).contains(prepared);
     assertThat(publicationOwnerPhase(fence)).isEqualTo("PUBLISHED");
@@ -1503,7 +1510,7 @@ class WorldDraftGraphApplicationPostgresIntegrationTest {
             publishedSelectors().readCommitted(frozen.request().freeze()).orElseThrow());
     var input = preparationInput(f, frozen, selector);
     var preparation = preparationComponent(preparationRepository());
-    var materialized = preparation.prepare(input);
+    var materialized = prepareSynthetic(preparation, input);
     var associationRepository = associationRepository();
     var lifecycleRepository =
         new WorldCanonicalInstanceLifecycleReadRepository(dsl, manager, associationRepository);
@@ -1663,7 +1670,7 @@ class WorldDraftGraphApplicationPostgresIntegrationTest {
     assertThat(afterDeniedFailure).isEqualTo(preparing);
 
     // The real V35 retry preserves immutable preparation history and does not rewrite lifecycle.
-    assertThat(preparation.prepare(input)).isEqualTo(materialized);
+    assertThat(prepareSynthetic(preparation, input)).isEqualTo(materialized);
     var afterRetry = lifecycleRepository.read(request).orElseThrow();
     assertThat(afterRetry).isEqualTo(preparing);
 
@@ -3761,7 +3768,7 @@ class WorldDraftGraphApplicationPostgresIntegrationTest {
     var component =
         new WorldCanonicalInstancePreparationService(
             preparationRepository(),
-            ignored ->
+            (ignored, operationInput) ->
                 new WorldCanonicalInstancePreparationService.HeldCommitAuthority() {
                   public void requireHeld() {
                     if (!TransactionSynchronizationManager.isActualTransactionActive()) {
@@ -3827,7 +3834,11 @@ class WorldDraftGraphApplicationPostgresIntegrationTest {
 
                   public void close() {}
                 });
-    assertThatThrownBy(() -> component.prepare(input))
+    assertThatThrownBy(
+            () ->
+                component.prepare(
+                    input,
+                    WorldCanonicalInstanceExecutionTestFixtures.operationInput(executionIdentity)))
         .hasMessageContaining("late Account fence loss");
     assertThat(initialPreallocationAccepted.get()).isTrue();
     for (String table :
@@ -4018,15 +4029,8 @@ class WorldDraftGraphApplicationPostgresIntegrationTest {
 
   private WorldCanonicalInstanceExecutionIdentity syntheticExecutionWithInput(
       WorldCanonicalInstancePreparation.Input input, String exactInputJson) {
-    var fixture = WorldCanonicalInstanceExecutionTestFixtures.identity(input);
-    return new WorldCanonicalInstanceExecutionIdentity(
-        fixture.originalPostAuthorizationTuple(),
-        fixture.accountWorldParticipationId(),
-        fixture.accountWorldParticipationFence(),
-        fixture.gameSessionOwnerAttemptId(),
-        fixture.gameSessionOwnerFence(),
-        fixture.canonicalGameInstanceId(),
-        exactInputJson);
+    return WorldCanonicalInstanceExecutionTestFixtures.withPreparationInputJson(
+        WorldCanonicalInstanceExecutionTestFixtures.identity(input), exactInputJson);
   }
 
   private long beginSyntheticExecution(WorldCanonicalInstanceExecutionIdentity identity) {
@@ -4034,40 +4038,7 @@ class WorldDraftGraphApplicationPostgresIntegrationTest {
     Record persisted =
         Objects.requireNonNull(
             dsl.fetchOne(
-                "SELECT world_persist_canonical_instance_execution_intent(?,?,?,?,?,?,?,?) "
-                    + "AS world_execution_fence",
-                identity.preparationInputJson(),
-                identity.preparationInputDigest(),
-                identity.originalPostAuthorizationTuple(),
-                identity.accountWorldParticipationId(),
-                identity.accountWorldParticipationFence(),
-                identity.gameSessionOwnerAttemptId(),
-                identity.gameSessionOwnerFence(),
-                identity.canonicalGameInstanceId()),
-            "Synthetic World execution intent returned no fence");
-    Long retainedFence =
-        Objects.requireNonNull(
-            persisted.get("world_execution_fence", Long.class),
-            "Synthetic World execution intent omitted its fence");
-    Record claimed =
-        Objects.requireNonNull(
-            dsl.fetchOne(
-                "SELECT world_claim_canonical_instance_execution(?,?,?,?,?,?,?,?) "
-                    + "AS world_execution_fence",
-                identity.preparationInputJson(),
-                identity.preparationInputDigest(),
-                identity.originalPostAuthorizationTuple(),
-                identity.accountWorldParticipationId(),
-                identity.accountWorldParticipationFence(),
-                identity.gameSessionOwnerAttemptId(),
-                identity.gameSessionOwnerFence(),
-                identity.canonicalGameInstanceId()),
-            "Synthetic World execution claim returned no fence");
-    assertThat(claimed.get("world_execution_fence", Long.class)).isEqualTo(retainedFence);
-    Record begun =
-        Objects.requireNonNull(
-            dsl.fetchOne(
-                "SELECT world_begin_canonical_instance_execution(?,?,?,?,?,?,?,?,?) "
+                "SELECT world_persist_canonical_instance_execution_intent_with_original_attempt(?,?,?,?,?,?,?,?,?,?,?,?,?) "
                     + "AS world_execution_fence",
                 identity.preparationInputJson(),
                 identity.preparationInputDigest(),
@@ -4077,7 +4048,55 @@ class WorldDraftGraphApplicationPostgresIntegrationTest {
                 identity.gameSessionOwnerAttemptId(),
                 identity.gameSessionOwnerFence(),
                 identity.canonicalGameInstanceId(),
-                retainedFence),
+                identity.gameSessionOwnerMutationId(),
+                identity.originalAttemptReadRequestId(),
+                identity.originalGameSessionLeaseExpiresAt(),
+                identity.originalAttemptEvidenceBytes(),
+                identity.originalAttemptEvidenceDigest()),
+            "Synthetic World execution intent returned no fence");
+    Long retainedFence =
+        Objects.requireNonNull(
+            persisted.get("world_execution_fence", Long.class),
+            "Synthetic World execution intent omitted its fence");
+    Record claimed =
+        Objects.requireNonNull(
+            dsl.fetchOne(
+                "SELECT world_claim_canonical_instance_execution_with_original_attempt(?,?,?,?,?,?,?,?,?,?,?,?,?) "
+                    + "AS world_execution_fence",
+                identity.preparationInputJson(),
+                identity.preparationInputDigest(),
+                identity.originalPostAuthorizationTuple(),
+                identity.accountWorldParticipationId(),
+                identity.accountWorldParticipationFence(),
+                identity.gameSessionOwnerAttemptId(),
+                identity.gameSessionOwnerFence(),
+                identity.canonicalGameInstanceId(),
+                identity.gameSessionOwnerMutationId(),
+                identity.originalAttemptReadRequestId(),
+                identity.originalGameSessionLeaseExpiresAt(),
+                identity.originalAttemptEvidenceBytes(),
+                identity.originalAttemptEvidenceDigest()),
+            "Synthetic World execution claim returned no fence");
+    assertThat(claimed.get("world_execution_fence", Long.class)).isEqualTo(retainedFence);
+    Record begun =
+        Objects.requireNonNull(
+            dsl.fetchOne(
+                "SELECT world_begin_canonical_instance_execution_with_original_attempt(?,?,?,?,?,?,?,?,?,?,?,?,?,?) "
+                    + "AS world_execution_fence",
+                identity.preparationInputJson(),
+                identity.preparationInputDigest(),
+                identity.originalPostAuthorizationTuple(),
+                identity.accountWorldParticipationId(),
+                identity.accountWorldParticipationFence(),
+                identity.gameSessionOwnerAttemptId(),
+                identity.gameSessionOwnerFence(),
+                identity.canonicalGameInstanceId(),
+                retainedFence,
+                identity.gameSessionOwnerMutationId(),
+                identity.originalAttemptReadRequestId(),
+                identity.originalGameSessionLeaseExpiresAt(),
+                identity.originalAttemptEvidenceBytes(),
+                identity.originalAttemptEvidenceDigest()),
             "Synthetic World execution begin returned no fence");
     return Objects.requireNonNull(
         begun.get("world_execution_fence", Long.class),
@@ -4197,6 +4216,29 @@ class WorldDraftGraphApplicationPostgresIntegrationTest {
       WorldCanonicalFrozenTopology frozen,
       WorldPublishedStartLocationEvidence selector) {
     return preparationInput(f, frozen, selector, 2L, List.of("LOOK"));
+  }
+
+  private static OriginalOperationInput syntheticOwnerOperation(
+      CanonicalGameInstanceLaunchAssociationReadEvidence.Request request, long gameTemplateId) {
+    var worldRequest =
+        new WorldCanonicalInstanceAssociation.GameSessionReadRequest(
+            request.readRequestId(),
+            request.targetNamespace(),
+            request.canonicalTenantId(),
+            request.worldSlug(),
+            request.gameInstanceUuid(),
+            request.controlPlaneRequestId(),
+            request.launchDescriptorId(),
+            request.expectedDescriptorRequestDigest(),
+            request.expectedDescriptorResultDigest(),
+            request.expectedReleaseAttestationEvidenceDigest());
+    var synthetic =
+        WorldCanonicalInstanceExecutionTestFixtures.operationInput(worldRequest, gameTemplateId);
+    return new OriginalOperationInput(
+        synthetic.originalPostAuthorizationTuple(),
+        synthetic.gameSessionOwnerMutationId(),
+        synthetic.gameSessionOwnerAttemptId(),
+        synthetic.gameSessionOwnerFence());
   }
 
   private WorldCanonicalInstancePreparation.Input preparationInput(
@@ -4756,13 +4798,15 @@ class WorldDraftGraphApplicationPostgresIntegrationTest {
         new LinkedHashMap<>();
     return new WorldCanonicalInstancePreparationService(
         repository,
-        input -> {
+        (input, operationInput) -> {
           completeIsolatedPublicationTerminal(input);
           String inputJson = WorldCanonicalInstancePreparationRepository.inputJson(input);
           var executionIdentity =
               executionIdentities.computeIfAbsent(
                   inputJson,
-                  ignored -> WorldCanonicalInstanceExecutionTestFixtures.identity(input));
+                  ignored ->
+                      WorldCanonicalInstanceExecutionTestFixtures.identity(input, operationInput));
+          executionIdentity.requireMatches(input, operationInput, inputJson);
           return new WorldCanonicalInstancePreparationService.HeldCommitAuthority() {
             private boolean open = true;
 
@@ -4780,6 +4824,14 @@ class WorldDraftGraphApplicationPostgresIntegrationTest {
             }
           };
         });
+  }
+
+  private WorldCanonicalInstancePreparation.Result prepareSynthetic(
+      WorldCanonicalInstancePreparationService service,
+      WorldCanonicalInstancePreparation.Input input) {
+    var identity = WorldCanonicalInstanceExecutionTestFixtures.identity(input);
+    return service.prepare(
+        input, WorldCanonicalInstanceExecutionTestFixtures.operationInput(identity));
   }
 
   /**
@@ -4802,7 +4854,7 @@ class WorldDraftGraphApplicationPostgresIntegrationTest {
         new LinkedHashMap<>();
     return new WorldCanonicalInstancePreparationService(
         repository,
-        input -> {
+        (input, operationInput) -> {
           if (verifierInvocations != null) {
             verifierInvocations.incrementAndGet();
           }
@@ -4821,7 +4873,9 @@ class WorldDraftGraphApplicationPostgresIntegrationTest {
           var executionIdentity =
               executionIdentities.computeIfAbsent(
                   inputJson,
-                  ignored -> WorldCanonicalInstanceExecutionTestFixtures.identity(input));
+                  ignored ->
+                      WorldCanonicalInstanceExecutionTestFixtures.identity(input, operationInput));
+          executionIdentity.requireMatches(input, operationInput, inputJson);
           return new WorldCanonicalInstancePreparationService.HeldCommitAuthority() {
             private boolean open = true;
 
@@ -5046,7 +5100,7 @@ class WorldDraftGraphApplicationPostgresIntegrationTest {
         publishedEvidence(
             publishedSelectors().readCommitted(frozen.request().freeze()).orElseThrow());
     var input = preparationInput(f, frozen, selector);
-    var materialized = preparationComponent(preparationRepository()).prepare(input);
+    var materialized = prepareSynthetic(preparationComponent(preparationRepository()), input);
     var lifecycleRepository =
         new WorldCanonicalInstanceLifecycleReadRepository(dsl, manager, associationRepository());
     var readRequest = lifecycleReadRequest(input);

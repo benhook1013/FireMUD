@@ -377,7 +377,7 @@ public final class StartSessionLaunchDescriptorProducer {
     if (entries.size() != 1) {
       throw conflict("Exact selected template is missing or duplicated in the committed capture");
     }
-    GameLogicReceiptBinding gameLogicReceipt = requireSelectedGameLogicReceipt(operation);
+    SelectedGameplayRules selectedGameplayRules = requireSelectedGameLogicReceipt(operation);
     TemplateConfigSource.Entry entry = entries.getFirst();
     if (!entry.config().baseVersionId().equals(exact.association().canonicalVersionId())) {
       throw conflict("Original captured template base differs from the pinned selected Version");
@@ -417,13 +417,60 @@ public final class StartSessionLaunchDescriptorProducer {
         || !row.worldSlug().equals(publicAssociation.worldSlug())) {
       throw conflict("Retained association row differs from the public pinned association");
     }
-    return new CapturedTemplate(unsupported, gameLogicReceipt);
+    CapturedTemplate capturedTemplate =
+        new CapturedTemplate(
+            unsupported,
+            selectedGameplayRules.receiptBinding(),
+            selection.selectedCommit(),
+            capture.policy().snapshot().shared(),
+            selectedGameplayRules.snapshot(),
+            operation.workflowId(),
+            operation.canonicalBytes(),
+            readback.terminalEvidenceBytes());
+    try {
+      resolveSelectedAuthoredInitialActorCoreSources(
+          exact.association().sourceOperationId(),
+          exact.association().sourceEvidenceDigest(),
+          exact.association().worldSlug(),
+          capturedTemplate.publicationWorkflowId(),
+          capturedTemplate.publicationOperationBytes(),
+          capturedTemplate.publicationTerminalEvidenceBytes(),
+          capturedTemplate.selectedCommit(),
+          capturedTemplate.policySnapshot(),
+          capturedTemplate.gameplayRules());
+    } catch (IllegalArgumentException invalidActorCoreSource) {
+      throw conflict("Selected authored initial actor core differs from exact published source");
+    }
+    return capturedTemplate;
+  }
+
+  static List<AuthoredInitialActorCoreSourceBinding> resolveSelectedAuthoredInitialActorCoreSources(
+      UUID worldSourceOperationId,
+      String worldSourceEvidenceDigest,
+      String expectedWorldSlug,
+      String publicationWorkflowId,
+      byte[] publicationOperationBytes,
+      byte[] publicationTerminalEvidenceBytes,
+      net.firedevops.firemud.common.authoring.DraftCommitBinding selectedCommit,
+      net.firedevops.firemud.common.gamedesign.RealmPolicySnapshot policySnapshot,
+      GameplayRuleSnapshot gameplayRules) {
+    Objects.requireNonNull(gameplayRules, "gameplayRules");
+    return AuthoredInitialActorCoreSourceBinding.resolveAll(
+        worldSourceOperationId,
+        worldSourceEvidenceDigest,
+        expectedWorldSlug,
+        publicationWorkflowId,
+        publicationOperationBytes,
+        publicationTerminalEvidenceBytes,
+        selectedCommit,
+        policySnapshot,
+        gameplayRules);
   }
 
   /**
    * Exact Game Logic receipt/source join already required by the selected-publication inventory.
    */
-  private GameLogicReceiptBinding requireSelectedGameLogicReceipt(
+  private SelectedGameplayRules requireSelectedGameLogicReceipt(
       GameDesignPublicationOperation operation) {
     var selection = operation.account().input().selection();
     var target = selection.target();
@@ -447,11 +494,13 @@ public final class StartSessionLaunchDescriptorProducer {
             selectedRules.canonicalBytes(), receipt.authorization().source().canonicalBytes())) {
       throw conflict("Retained Game Logic receipt differs from the exact selected source");
     }
-    return new GameLogicReceiptBinding(
-        selection.intent().publishRequestId(),
-        selection.digest(),
-        receipt.authorization().digest(),
-        receipt.receipt().digest());
+    return new SelectedGameplayRules(
+        selectedRules,
+        new GameLogicReceiptBinding(
+            selection.intent().publishRequestId(),
+            selection.digest(),
+            receipt.authorization().digest(),
+            receipt.receipt().digest()));
   }
 
   private void requireReleaseMatches(
@@ -1077,9 +1126,49 @@ public final class StartSessionLaunchDescriptorProducer {
     }
   }
 
-  private record CapturedTemplate(String failureMessage, GameLogicReceiptBinding gameLogicReceipt) {
+  private record CapturedTemplate(
+      String failureMessage,
+      GameLogicReceiptBinding gameLogicReceipt,
+      net.firedevops.firemud.common.authoring.DraftCommitBinding selectedCommit,
+      net.firedevops.firemud.common.gamedesign.RealmPolicySnapshot policySnapshot,
+      GameplayRuleSnapshot gameplayRules,
+      String publicationWorkflowId,
+      byte[] publicationOperationBytes,
+      byte[] publicationTerminalEvidenceBytes) {
     private CapturedTemplate {
       Objects.requireNonNull(gameLogicReceipt, "gameLogicReceipt");
+      Objects.requireNonNull(selectedCommit, "selectedCommit");
+      Objects.requireNonNull(policySnapshot, "policySnapshot");
+      Objects.requireNonNull(gameplayRules, "gameplayRules");
+      Objects.requireNonNull(publicationWorkflowId, "publicationWorkflowId");
+      publicationOperationBytes =
+          Objects.requireNonNull(publicationOperationBytes, "publicationOperationBytes").clone();
+      publicationTerminalEvidenceBytes =
+          Objects.requireNonNull(
+                  publicationTerminalEvidenceBytes, "publicationTerminalEvidenceBytes")
+              .clone();
+      if (!selectedCommit.equals(policySnapshot.binding())
+          || !selectedCommit.equals(gameplayRules.binding())) {
+        throw new IllegalArgumentException("Captured source differs from selected commit");
+      }
+    }
+
+    @Override
+    public byte[] publicationOperationBytes() {
+      return publicationOperationBytes.clone();
+    }
+
+    @Override
+    public byte[] publicationTerminalEvidenceBytes() {
+      return publicationTerminalEvidenceBytes.clone();
+    }
+  }
+
+  private record SelectedGameplayRules(
+      GameplayRuleSnapshot snapshot, GameLogicReceiptBinding receiptBinding) {
+    private SelectedGameplayRules {
+      Objects.requireNonNull(snapshot, "snapshot");
+      Objects.requireNonNull(receiptBinding, "receiptBinding");
     }
   }
 

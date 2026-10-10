@@ -23,3 +23,18 @@ dependencies {
     testFixturesImplementation(libs.spring.boot.starter.test)
     testFixturesImplementation(libs.testcontainers.postgresql)
 }
+
+// Opt-in cross-owner proof: exclude Logging application and migration resources from Account.
+val loggingStartSessionClaimProofJar by tasks.registering(Jar::class) {
+    archiveClassifier.set("start-session-claim-proof")
+    dependsOn(tasks.named("classes"), tasks.named("testFixturesClasses"))
+    from(sourceSets.main.get().output.classesDirs)
+    from(sourceSets["testFixtures"].output.classesDirs)
+}
+
+val loggingStartSessionClaimProof by configurations.creating {
+    isCanBeConsumed = true
+    isCanBeResolved = false
+    extendsFrom(configurations.implementation.get())
+    outgoing.artifact(loggingStartSessionClaimProofJar)
+}

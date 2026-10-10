@@ -46,6 +46,8 @@ dependencies {
     testImplementation(libs.grpc.inprocess)
     testImplementation(testFixtures(project(":account-service")))
     integrationTestImplementation(testFixtures(project(":account-service")))
+    integrationTestImplementation(project(mapOf("path" to ":game-session-service", "configuration" to "gameSessionClassesProof")))
+    integrationTestImplementation(project(mapOf("path" to ":logging-admin-service", "configuration" to "loggingStartSessionClaimProof")))
 }
 
 // Opt-in proof artifact: never expose Account migrations/application resources to World's tests.

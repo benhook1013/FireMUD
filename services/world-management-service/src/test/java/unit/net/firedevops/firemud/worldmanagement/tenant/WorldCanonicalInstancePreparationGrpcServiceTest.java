@@ -1,6 +1,8 @@
 package unit.net.firedevops.firemud.worldmanagement.tenant;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
@@ -10,6 +12,8 @@ import static org.mockito.Mockito.when;
 import io.grpc.Context;
 import io.grpc.Status;
 import io.grpc.stub.StreamObserver;
+import java.io.IOException;
+import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -19,6 +23,11 @@ import net.firedevops.firemud.common.gamedesign.AuthoredWorldReleaseAttestationE
 import net.firedevops.firemud.common.gamedesign.CompleteLaunchBindingEvidence;
 import net.firedevops.firemud.common.gamesession.CanonicalGameInstanceLaunchAssociationReadEvidence;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
+import net.firedevops.firemud.common.json.Rfc8785CanonicalJson;
+import net.firedevops.firemud.common.operator.StartSessionAuthorityEvidenceBundle;
+import net.firedevops.firemud.common.operator.StartSessionOperatorAction;
+import net.firedevops.firemud.common.operator.StartSessionPostAuthorizationExecutionTuple;
+import net.firedevops.firemud.common.operator.StartSessionPreAuthorizationReservationTuple;
 import net.firedevops.firemud.common.security.SessionContext;
 import net.firedevops.firemud.common.world.CanonicalWorldInstancePreparationGrpcCodec;
 import net.firedevops.firemud.common.world.RoomTemplateRef;
@@ -45,9 +54,11 @@ import net.firedevops.firemud.worldmanagement.v1.PrepareCanonicalWorldInstanceRe
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
+import tools.jackson.databind.json.JsonMapper;
 
 /** Component-only adapter tests; mocked producer and storage results are not PostgreSQL proof. */
 class WorldCanonicalInstancePreparationGrpcServiceTest {
+  private static final JsonMapper JSON = JsonMapper.builder().build();
   private static final String NAMESPACE = "test";
   private static final UUID TENANT_ID = uuid("22222222-2222-4222-8222-222222222222");
   private static final UUID INSTANCE_ID = uuid("33333333-3333-4333-8333-333333333333");
@@ -232,7 +243,9 @@ class WorldCanonicalInstancePreparationGrpcServiceTest {
     Harness retry = new Harness("RUNNING");
     when(retry.preparationRepository.readOwnerPreparation(retry.input))
         .thenReturn(Optional.of(retry.prepared));
-    when(retry.preparation.prepare(retry.input))
+    when(retry.preparation.prepare(
+            eq(retry.input),
+            any(CanonicalWorldInstancePreparationGrpcCodec.OriginalOperationInput.class)))
         .thenThrow(
             new WorldCanonicalInstancePreparationService.PreparationDeniedException(
                 "held proof denied"));
@@ -241,7 +254,10 @@ class WorldCanonicalInstancePreparationGrpcServiceTest {
         call(retry.service, request(retry.selector), peer("game-session-service", NAMESPACE));
 
     assertThat(retryResult.error).isEqualTo(Status.Code.PERMISSION_DENIED);
-    verify(retry.preparation).prepare(retry.input);
+    verify(retry.preparation)
+        .prepare(
+            eq(retry.input),
+            any(CanonicalWorldInstancePreparationGrpcCodec.OriginalOperationInput.class));
     verifyNoInteractions(retry.lifecycleRepository);
   }
 
@@ -263,13 +279,19 @@ class WorldCanonicalInstancePreparationGrpcServiceTest {
     verifyNoInteractions(defaultDenied.lifecycleRepository);
 
     Harness noResult = new Harness("STARTING");
-    when(noResult.preparation.prepare(noResult.input)).thenReturn(null);
+    when(noResult.preparation.prepare(
+            eq(noResult.input),
+            any(CanonicalWorldInstancePreparationGrpcCodec.OriginalOperationInput.class)))
+        .thenReturn(null);
 
     Collector absent =
         call(noResult.service, request(noResult.selector), peer("game-session-service", NAMESPACE));
 
     assertThat(absent.error).isEqualTo(Status.Code.FAILED_PRECONDITION);
-    verify(noResult.preparation).prepare(noResult.input);
+    verify(noResult.preparation)
+        .prepare(
+            eq(noResult.input),
+            any(CanonicalWorldInstancePreparationGrpcCodec.OriginalOperationInput.class));
     verifyNoInteractions(noResult.lifecycleRepository);
   }
 
@@ -302,7 +324,10 @@ class WorldCanonicalInstancePreparationGrpcServiceTest {
             new WorldCanonicalInstancePreparationAssemblyService.Selector(
                 TENANT_ID, INSTANCE_ID, CONTROL_REQUEST_ID));
     verify(harness.preparationRepository).readOwnerPreparation(harness.input);
-    verify(harness.preparation).prepare(harness.input);
+    verify(harness.preparation)
+        .prepare(
+            eq(harness.input),
+            any(CanonicalWorldInstancePreparationGrpcCodec.OriginalOperationInput.class));
     verify(harness.lifecycleRepository).read(harness.lifecycleRequest);
   }
 
@@ -322,13 +347,154 @@ class WorldCanonicalInstancePreparationGrpcServiceTest {
             request(inconsistent.selector),
             peer("game-session-service", NAMESPACE));
     assertThat(inconsistentResult.error).isEqualTo(Status.Code.FAILED_PRECONDITION);
-    verify(missing.preparation).prepare(missing.input);
-    verify(inconsistent.preparation).prepare(inconsistent.input);
+    verify(missing.preparation)
+        .prepare(
+            eq(missing.input),
+            any(CanonicalWorldInstancePreparationGrpcCodec.OriginalOperationInput.class));
+    verify(inconsistent.preparation)
+        .prepare(
+            eq(inconsistent.input),
+            any(CanonicalWorldInstancePreparationGrpcCodec.OriginalOperationInput.class));
   }
 
   private static PrepareCanonicalWorldInstanceRequest request(
       CanonicalGameInstanceLaunchAssociationReadEvidence.Request selector) {
-    return CanonicalWorldInstancePreparationGrpcCodec.toRequest(selector);
+    return CanonicalWorldInstancePreparationGrpcCodec.toRequest(
+        selector,
+        new CanonicalWorldInstancePreparationGrpcCodec.OriginalOperationInput(
+            originalTuple(selector),
+            uuid("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"),
+            uuid("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"),
+            37L));
+  }
+
+  private static byte[] originalTuple(
+      CanonicalGameInstanceLaunchAssociationReadEvidence.Request selector) {
+    UUID actor = uuid("cccccccc-cccc-4ccc-8ccc-cccccccccccc");
+    StartSessionOperatorAction action =
+        new StartSessionOperatorAction(
+            StartSessionOperatorAction.ACTION_FAMILY_SCHEMA_ID,
+            StartSessionOperatorAction.ACTION_FAMILY_SCHEMA_VERSION,
+            new StartSessionOperatorAction.Scope(
+                selector.canonicalTenantId(), selector.targetNamespace()),
+            new StartSessionOperatorAction.Target(91L, actor),
+            StartSessionOperatorAction.ExpectedVersion.ABSENT,
+            new StartSessionOperatorAction.Mutation(StartSessionOperatorAction.ClientIp.absent()),
+            "synthetic gRPC preparation request");
+    StartSessionPreAuthorizationReservationTuple preTuple =
+        StartSessionPreAuthorizationReservationTuple.createHuman(
+            selector.controlPlaneRequestId(), actor, action);
+    return StartSessionPostAuthorizationExecutionTuple.createHuman(
+            preTuple,
+            "spiffe://firemud/ns/" + selector.targetNamespace() + "/sa/logging-admin-service",
+            "arfp/v1/test-key/" + "d".repeat(64),
+            uuid("dddddddd-dddd-4ddd-8ddd-dddddddddddd"),
+            19L,
+            authorityEvidenceBundle(preTuple, actor, Instant.parse("2030-01-01T00:05:00Z")),
+            new StartSessionAuthorityEvidenceBundle.BundleReference(
+                StartSessionAuthorityEvidenceBundle.BUNDLE_VERSION,
+                "17",
+                "23",
+                "18446744073709551615"))
+        .canonicalBytes();
+  }
+
+  private static byte[] authorityEvidenceBundle(
+      StartSessionPreAuthorizationReservationTuple tuple, UUID actor, Instant expiresAt) {
+    String tenant = tuple.action().scope().tenantId().toString();
+    Instant now = expiresAt.minusSeconds(60);
+    Map<String, Object> projection =
+        Map.of(
+            "sourceType",
+            "ACCOUNT",
+            "sourceEvidenceId",
+            "sha256:" + "a".repeat(64),
+            "sourceEvidenceVersion",
+            "17",
+            "projectionStatus",
+            "CURRENT",
+            "evaluatedAt",
+            canonicalTimestamp(now.minusSeconds(30)),
+            "expiresAt",
+            canonicalTimestamp(expiresAt));
+    Map<String, Object> operationIdentity =
+        Map.of(
+            "issuanceOperationId", uuid("eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee").toString(),
+            "controlPlaneRequestId", tuple.controlPlaneRequestId(),
+            "actionFamilyRequestIdentity",
+                Map.of(
+                    "requestIdentityKind",
+                    "controlPlaneRequestId",
+                    "requestId",
+                    tuple.controlPlaneRequestId()),
+            "mutationDigest", tuple.mutationDigest());
+    Map<String, Object> authorityTuple =
+        Map.of(
+            "issuerAuthGeneration",
+            1L,
+            "accountAuthorityGeneration",
+            2L,
+            "tenantAuthorityGeneration",
+            Map.of(tenant, 3L),
+            "membershipAuthorityGeneration",
+            Map.of(tenant, 4L),
+            "privateRealmGrantVersions",
+            List.of());
+    Map<String, Object> issuanceEvidence =
+        Map.of(
+            "evidenceType",
+            StartSessionAuthorityEvidenceBundle.HUMAN_EVIDENCE_TYPE,
+            "actorAccountId",
+            actor.toString(),
+            "controlUiTokenJti",
+            uuid("ffffffff-ffff-4fff-8fff-ffffffffffff").toString(),
+            "role",
+            "tenantAdmin",
+            "accountGeneration",
+            "2",
+            "tenantGeneration",
+            "3");
+    Map<String, Object> bundle =
+        Map.of(
+            "bundleVersion",
+            StartSessionAuthorityEvidenceBundle.BUNDLE_VERSION,
+            "authorityScope",
+            Map.of(
+                "scope",
+                Map.of(
+                    "tenantId",
+                    tenant,
+                    "targetNamespace",
+                    tuple.action().scope().targetNamespace()),
+                "actionFamily",
+                tuple.actionFamily(),
+                "applicableAccountId",
+                actor.toString(),
+                "applicableTenantId",
+                tenant),
+            "accountProjectionEvidence",
+            projection,
+            "issuanceOperationIdentity",
+            operationIdentity,
+            "issuanceKind",
+            "human_operator",
+            "authorityTuple",
+            authorityTuple,
+            "membershipVersion",
+            Map.of(tenant, 5L),
+            "issuanceFence",
+            "23",
+            "issuanceEvidence",
+            issuanceEvidence);
+    try {
+      return Rfc8785CanonicalJson.canonicalizeUtf8(JSON.writeValueAsString(bundle));
+    } catch (IOException exception) {
+      throw new IllegalStateException("Could not encode the synthetic owner tuple", exception);
+    }
+  }
+
+  private static String canonicalTimestamp(Instant instant) {
+    return Instant.ofEpochMilli(instant.toEpochMilli()).toString();
   }
 
   private static Collector call(
@@ -430,6 +596,7 @@ class WorldCanonicalInstancePreparationGrpcServiceTest {
       when(descriptor.launchDescriptorId()).thenReturn(DESCRIPTOR_ID);
       when(descriptor.requestDigest()).thenReturn(REQUEST_DIGEST);
       when(descriptor.resultDigest()).thenReturn(RESULT_DIGEST);
+      when(descriptor.gameTemplateId()).thenReturn(91L);
       when(release.targetNamespace()).thenReturn(NAMESPACE);
       when(release.descriptorResultDigest()).thenReturn(RESULT_DIGEST);
       when(release.canonicalTenantId()).thenReturn(TENANT_ID);
@@ -492,7 +659,10 @@ class WorldCanonicalInstancePreparationGrpcServiceTest {
       when(association.completeLaunchBinding()).thenReturn(binding);
       when(association.versionIdentity()).thenReturn(versionIdentity);
       when(preparationRepository.readOwnerPreparation(input)).thenReturn(Optional.empty());
-      when(preparation.prepare(input)).thenReturn(prepared);
+      when(preparation.prepare(
+              eq(input),
+              any(CanonicalWorldInstancePreparationGrpcCodec.OriginalOperationInput.class)))
+          .thenReturn(prepared);
 
       lifecycleRequest =
           new Request(

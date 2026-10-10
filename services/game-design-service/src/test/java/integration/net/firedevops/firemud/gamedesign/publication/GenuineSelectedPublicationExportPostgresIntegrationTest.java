@@ -63,6 +63,7 @@ import net.firedevops.firemud.common.account.sourceintake.SelectedOwnerIntakeAut
 import net.firedevops.firemud.common.account.sourceintake.SelectedOwnerIntakeSettlementEvidence;
 import net.firedevops.firemud.common.account.sourceintake.SelectedOwnerIntakeSourceReadEvidence;
 import net.firedevops.firemud.common.account.sourceintake.SelectedOwnerIntakeSourceReadScope;
+import net.firedevops.firemud.common.account.startsession.StartSessionAccountRedemptionProjection;
 import net.firedevops.firemud.common.authoring.AccountOriginalDraftOrderClient;
 import net.firedevops.firemud.common.authoring.AccountOriginalDraftOrderGrpcCodec;
 import net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding;
@@ -109,6 +110,8 @@ import net.firedevops.firemud.common.gamelogic.GrpcGameLogicIntakeRetainClient;
 import net.firedevops.firemud.common.gamelogic.GrpcGameLogicIntakeSourceReadClient;
 import net.firedevops.firemud.common.gamesession.CanonicalGameInstanceLaunchAssociationClient;
 import net.firedevops.firemud.common.gamesession.CanonicalGameInstanceLaunchAssociationReadEvidence;
+import net.firedevops.firemud.common.gamesession.OriginalStartSessionCurrentAttemptEvidence;
+import net.firedevops.firemud.common.gamesession.OriginalStartSessionCurrentAttemptEvidenceGrpcCodec;
 import net.firedevops.firemud.common.grpc.BlockingGrpcStubCustomizer;
 import net.firedevops.firemud.common.grpc.CommonGrpcClientProperties;
 import net.firedevops.firemud.common.grpc.GrpcChannelFactory;
@@ -142,6 +145,7 @@ import net.firedevops.firemud.common.tenant.AuthoredWorldSourceClient;
 import net.firedevops.firemud.common.tenant.WorldAuthoredSourceIntakeClient;
 import net.firedevops.firemud.common.tenant.WorldAuthoredSourceIntakeGrpcCodec;
 import net.firedevops.firemud.common.world.CanonicalWorldInstancePreparationClient;
+import net.firedevops.firemud.common.world.CanonicalWorldInstancePreparationGrpcCodec.OriginalOperationInput;
 import net.firedevops.firemud.common.world.WorldCanonicalInstanceActivation;
 import net.firedevops.firemud.common.world.WorldCanonicalInstanceLifecycleEvidence;
 import net.firedevops.firemud.common.world.WorldDraftStartLocationEvidence;
@@ -2696,6 +2700,15 @@ class GenuineSelectedPublicationExportPostgresIntegrationTest {
                 ownerAttemptId,
                 ownerFence);
         var startSessionTuple = originalStartSession.originalTuple();
+        UUID stipulatedOwnerMutationId = UUID.randomUUID();
+        UUID stipulatedOwnerReadRequestId = UUID.randomUUID();
+        Instant stipulatedOwnerLeaseExpiry = Instant.now().plusSeconds(900L);
+        OriginalOperationInput stipulatedOwnerOperation =
+            new OriginalOperationInput(
+                startSessionTuple.canonicalBytes(),
+                stipulatedOwnerMutationId,
+                ownerAttemptId,
+                ownerFence);
         try (var projectionClient =
             new StartSessionRedeemedOperationProjectionClient(
                 endpoints, pki.client("game-design-service"), channels, NAMESPACE)) {
@@ -3007,10 +3020,11 @@ class GenuineSelectedPublicationExportPostgresIntegrationTest {
                       controlPlaneRequestId))
               .containsExactlyElementsOf(completeBindingOwnerRowsBefore);
 
-          // This is a composed World materialization proof over the exact source, frozen graph,
-          // and complete released pair already retained above. Only the Game Session launch-row
-          // read and the original Account/continuously-held Game Session authorization are
-          // stipulated here; this fixture does not claim those authorities were genuine.
+          // World source, publication and released-pair proof above is genuine. The original
+          // StartSession tuple and issued owner attempt/fence below are genuine Account
+          // issue/redemption evidence; the later exact Game Session mutation observation and
+          // Account participation are stipulated and do not prove acquisition or a continuous
+          // remote lock.
           CompleteLaunchBindingEvidence completeLaunchEvidence =
               new CompleteLaunchBindingEvidence(
                   completeBinding.descriptor(), completeBinding.releaseAttestation());
@@ -3083,14 +3097,28 @@ class GenuineSelectedPublicationExportPostgresIntegrationTest {
                     worldPublicationProof.frozenTopologies(),
                     stipulatedGameSessionReader,
                     worldToGameDesignPreparationClient);
-            // The exact StartSession tuple and existing GS attempt/fence are preserved dynamically.
-            // Only Account participation/fence and the continuously held authority behavior are
-            // synthetic evidence shape; this does not authenticate either producer.
+            // Preserve the exact original tuple and issued Game Session attempt/fence. The owner
+            // mutation/current-attempt observation and Account participation are explicit
+            // synthetic downstream evidence; this remains a genuine publication/source/release
+            // proof, not genuine Account participation acquisition or continuous owner protection.
             var syntheticIdentities =
                 new ConcurrentHashMap<String, WorldCanonicalInstanceExecutionIdentity>();
+            UUID stipulatedParticipationId = UUID.randomUUID();
+            long stipulatedParticipationFence =
+                ThreadLocalRandom.current().nextLong(1L, Long.MAX_VALUE);
             var stipulatedHeldAuthority =
-                (WorldCanonicalInstancePreparationService.CommitAuthorityVerifier)
-                    input -> {
+                (WorldCanonicalInstancePreparationService.OriginalOperationCommitAuthorityVerifier)
+                    (input, operationInput) -> {
+                      if (!MessageDigest.isEqual(
+                              startSessionTuple.canonicalBytes(),
+                              operationInput.originalPostAuthorizationTuple())
+                          || !stipulatedOwnerMutationId.equals(
+                              operationInput.gameSessionOwnerMutationId())
+                          || !ownerAttemptId.equals(operationInput.gameSessionOwnerAttemptId())
+                          || ownerFence != operationInput.gameSessionOwnerFence()) {
+                        throw new SecurityException(
+                            "Synthetic downstream operation differs from genuine issued StartSession evidence");
+                      }
                       String exactInputJson;
                       try {
                         exactInputJson = canonicalPreparationInputJson(input);
@@ -3102,15 +3130,38 @@ class GenuineSelectedPublicationExportPostgresIntegrationTest {
                       WorldCanonicalInstanceExecutionIdentity identity =
                           syntheticIdentities.computeIfAbsent(
                               exactInputJson,
-                              ignored ->
-                                  new WorldCanonicalInstanceExecutionIdentity(
-                                      startSessionTuple.canonicalBytes(),
-                                      UUID.randomUUID(),
-                                      ThreadLocalRandom.current().nextLong(1L, Long.MAX_VALUE),
-                                      ownerAttemptId,
-                                      ownerFence,
-                                      input.canonicalGameInstanceId(),
-                                      exactInputJson));
+                              ignored -> {
+                                var observationRequest =
+                                    new OriginalStartSessionCurrentAttemptEvidence.Request(
+                                        stipulatedOwnerReadRequestId,
+                                        NAMESPACE,
+                                        startSessionTuple.canonicalBytes(),
+                                        ownerAttemptId,
+                                        stipulatedOwnerMutationId,
+                                        ownerFence);
+                                var observation =
+                                    new OriginalStartSessionCurrentAttemptEvidence.Result(
+                                        observationRequest,
+                                        stipulatedOwnerLeaseExpiry,
+                                        StartSessionAccountRedemptionProjection.fromOriginalTuple(
+                                            startSessionTuple));
+                                byte[] observationBytes =
+                                    OriginalStartSessionCurrentAttemptEvidenceGrpcCodec.toResponse(
+                                            observation)
+                                        .toByteArray();
+                                return new WorldCanonicalInstanceExecutionIdentity(
+                                    startSessionTuple.canonicalBytes(),
+                                    stipulatedParticipationId,
+                                    stipulatedParticipationFence,
+                                    stipulatedOwnerMutationId,
+                                    ownerAttemptId,
+                                    ownerFence,
+                                    observation,
+                                    input.canonicalGameInstanceId(),
+                                    exactInputJson,
+                                    observationBytes);
+                              });
+                      identity.requireMatches(input, operationInput, exactInputJson);
                       return new WorldCanonicalInstancePreparationService.HeldCommitAuthority() {
                         private boolean held = true;
 
@@ -3168,7 +3219,9 @@ class GenuineSelectedPublicationExportPostgresIntegrationTest {
               assertThatThrownBy(
                       () ->
                           wrongWorkloadPreparationClient.prepare(
-                              preparationAssociationRequest, expectedLifecycleRequest))
+                              preparationAssociationRequest,
+                              stipulatedOwnerOperation,
+                              expectedLifecycleRequest))
                   .isInstanceOf(io.grpc.StatusRuntimeException.class)
                   .satisfies(
                       failure ->
@@ -3195,7 +3248,9 @@ class GenuineSelectedPublicationExportPostgresIntegrationTest {
               gameSessionPreparationClient.init();
               preparedLifecycle =
                   gameSessionPreparationClient.prepare(
-                      preparationAssociationRequest, expectedLifecycleRequest);
+                      preparationAssociationRequest,
+                      stipulatedOwnerOperation,
+                      expectedLifecycleRequest);
             }
 
             var assembledPreparationInput =
@@ -3291,7 +3346,9 @@ class GenuineSelectedPublicationExportPostgresIntegrationTest {
               gameSessionPreparationRetryClient.init();
               assertThat(
                       gameSessionPreparationRetryClient.prepare(
-                          preparationAssociationRequest, expectedLifecycleRequest))
+                          preparationAssociationRequest,
+                          stipulatedOwnerOperation,
+                          expectedLifecycleRequest))
                   .isEqualTo(preparedLifecycle);
             }
             var retryInput =
@@ -3362,7 +3419,9 @@ class GenuineSelectedPublicationExportPostgresIntegrationTest {
                 assertThatThrownBy(
                         () ->
                             defaultDeniedClient.prepare(
-                                preparationAssociationRequest, expectedLifecycleRequest))
+                                preparationAssociationRequest,
+                                stipulatedOwnerOperation,
+                                expectedLifecycleRequest))
                     .isInstanceOf(io.grpc.StatusRuntimeException.class)
                     .satisfies(
                         failure ->

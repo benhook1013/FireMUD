@@ -255,17 +255,13 @@ class WorldCanonicalInstancePreparationTest {
         mock(WorldCanonicalInstancePreparationRepository.class);
     WorldCanonicalInstancePreparation.Input input =
         mock(WorldCanonicalInstancePreparation.Input.class);
-    WorldCanonicalInstanceTopologyPlan plan = mock(WorldCanonicalInstanceTopologyPlan.class);
-    when(input.topologyPlan()).thenReturn(plan);
-    when(plan.generationRules()).thenReturn(List.of());
-    when(plan.spawnBindings()).thenReturn(List.of());
 
     assertThatThrownBy(
             () -> new WorldCanonicalInstancePreparationService(repository).prepare(input))
         .isInstanceOf(WorldCanonicalInstancePreparationService.PreparationDeniedException.class)
-        .hasMessageContaining("no authenticated source/release terminal verifier");
+        .hasMessageContaining("exact original Game Session owner operation");
 
-    verifyNoInteractions(repository);
+    verifyNoInteractions(input, repository);
   }
 
   private static DuplicateKeyException duplicateKeyFailure(String sqlState, String message) {

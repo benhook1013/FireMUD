@@ -65,8 +65,11 @@ public final class WorldCanonicalInstancePreparationGrpcService
     }
 
     CanonicalGameInstanceLaunchAssociationReadEvidence.Request selector;
+    CanonicalWorldInstancePreparationGrpcCodec.OriginalOperationInput operationInput;
     try {
       selector = CanonicalWorldInstancePreparationGrpcCodec.fromRequest(request);
+      operationInput =
+          CanonicalWorldInstancePreparationGrpcCodec.fromOriginalOperationRequest(request);
     } catch (IllegalArgumentException invalid) {
       fail(
           responseObserver,
@@ -103,7 +106,7 @@ public final class WorldCanonicalInstancePreparationGrpcService
 
       // Exact retries deliberately re-enter prepare so its current source verifier and continuously
       // held commit authority remain mandatory through the real owner transaction.
-      Result prepared = preparationService.prepare(input);
+      Result prepared = preparationService.prepare(input, operationInput);
       if (prepared == null) {
         throw new PreparationPreconditionException(
             "Canonical World preparation returned no committed materialization result");
@@ -121,7 +124,8 @@ public final class WorldCanonicalInstancePreparationGrpcService
       requireLifecycleMatchesPreparation(lifecycleRequest, input, prepared, lifecycle);
 
       PrepareCanonicalWorldInstanceResponse response =
-          CanonicalWorldInstancePreparationGrpcCodec.toResponse(selector, lifecycle);
+          CanonicalWorldInstancePreparationGrpcCodec.toResponse(
+              selector, operationInput, lifecycle);
       responseObserver.onNext(response);
       responseObserver.onCompleted();
     } catch (SecurityException denied) {

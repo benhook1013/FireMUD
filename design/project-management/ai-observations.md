@@ -222,3 +222,9 @@ Entry format:
   - Observation: A Java `Class` argument is not a typed-result parameter for this string-SQL overload. Compilation and skipped integration tests concealed the mistake; CI failed before the intended assertion rather than disproving the migration.
   - Expected pattern: For raw SQL, use an exact `fetchSingle(sql, bindings).get(0, ResultType.class)` read and preserve the complete value assertions. Confirm the case actually executed before granting database proof.
   - Current status: The scoped fixture reads are corrected without changing production SQL, the expected typed key set or writer guards. Corrected physical execution remains pending; the controller records the exact failed source and next proof gate.
+
+- `2026-10-11`: Guarded brief replacement still needs content readback
+  - Context: A revision-guarded controller brief update combined an indexed historical tail with a new checkpoint prefix; readback found the retained standing-decision heading missing its two leading heading characters.
+  - Observation: Revision protection prevented concurrent overwrite but did not prove preservation of the supplied text. A minimal `a—## h` example reproduces the local jq behavior: `index("##")` returns byte offset 4, while slicing from 4 uses character positions and drops both heading characters. The decision paragraph and historical tail remained present.
+  - Expected pattern: Prefer exact string replacement or splitting at a verified delimiter, then read back both the new checkpoint and retained standing instructions rather than relying on the revision guard alone.
+  - Current status: The heading was repaired through a second guarded revision and verified present. No standing decision or implementation authorization changed.
