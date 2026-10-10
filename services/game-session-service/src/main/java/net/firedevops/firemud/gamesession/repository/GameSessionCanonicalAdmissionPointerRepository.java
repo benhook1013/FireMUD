@@ -404,6 +404,74 @@ public class GameSessionCanonicalAdmissionPointerRepository {
     return new ExpectedClosedEvidence(lockedOrigin);
   }
 
+  /**
+   * Resolves and locks the exact current original CLOSED origin in the caller's writable owner
+   * transaction, without relying on a separate committed-read preparation transaction.
+   */
+  @Transactional(propagation = Propagation.MANDATORY)
+  public ExpectedClosedEvidence lockExpectedClosedForRealm(
+      String targetNamespace,
+      UUID canonicalTenantId,
+      UUID realmId,
+      long expectedPointerVersion,
+      long expectedCatalogRevision) {
+    requireReadSelector(targetNamespace, canonicalTenantId);
+    requireReadSelector(targetNamespace, realmId);
+    requirePositive(expectedPointerVersion, "expectedPointerVersion");
+    requirePositive(expectedCatalogRevision, "expectedCatalogRevision");
+    requireWritableOwnerTransaction();
+
+    var outcomes =
+        dsl.fetch(
+            "SELECT request_id FROM game_session_canonical_closed_admission_pointer_request "
+                + "WHERE target_namespace = ? AND canonical_tenant_id = ? AND realm_id = ? "
+                + "ORDER BY request_id LIMIT 2",
+            targetNamespace,
+            canonicalTenantId,
+            realmId);
+    if (outcomes.size() != 1) {
+      throw new InvalidCanonicalClosedPointerEvidenceException(
+          "Realm does not have one exact original canonical CLOSED request outcome");
+    }
+    UUID originalRequestId = required(outcomes.getFirst(), "request_id", UUID.class);
+    Record outcome = findRequest(targetNamespace, originalRequestId);
+    if (outcome == null) {
+      throw new InvalidCanonicalClosedPointerEvidenceException(
+          "Exact original canonical CLOSED request outcome is missing");
+    }
+    CreateCanonicalClosedAdmissionPointerRequest originRequest = requestFromOutcome(outcome);
+    if (!targetNamespace.equals(originRequest.targetNamespace())
+        || !canonicalTenantId.equals(originRequest.canonicalTenantId())
+        || !realmId.equals(originRequest.realmId())) {
+      throw new InvalidCanonicalClosedPointerEvidenceException(
+          "Exact original canonical CLOSED request does not match the requested realm");
+    }
+
+    CanonicalRealmCatalogSnapshot lockedCatalog =
+        catalogRepository.lockExactInitialPublicProduction(
+            targetNamespace,
+            canonicalTenantId,
+            realmId,
+            originRequest.catalogCreationRequestId(),
+            expectedCatalogRevision);
+    Record lockedPointer = lockCanonicalPointer(originRequest);
+    if (lockedPointer == null) {
+      throw new InvalidCanonicalClosedPointerEvidenceException(
+          "Exact original canonical CLOSED pointer row is missing");
+    }
+    Record lockedOutcome = findRequest(targetNamespace, originalRequestId);
+    if (lockedOutcome == null) {
+      throw new InvalidCanonicalClosedPointerEvidenceException(
+          "Exact original canonical CLOSED request outcome is missing");
+    }
+
+    CanonicalClosedAdmissionPointerSnapshot lockedOrigin =
+        verifyOrigin(
+            targetNamespace, originalRequestId, lockedOutcome, lockedCatalog, lockedPointer);
+    requireExpectedVersions(lockedOrigin, expectedPointerVersion, expectedCatalogRevision);
+    return new ExpectedClosedEvidence(lockedOrigin);
+  }
+
   /** Reads and verifies the immutable request outcome from committed owner rows. */
   @Transactional(propagation = Propagation.NOT_SUPPORTED, readOnly = true)
   public Optional<CanonicalClosedAdmissionPointerSnapshot> readByRequest(

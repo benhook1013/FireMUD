@@ -24,6 +24,7 @@ import net.firedevops.firemud.gamesession.dto.CanonicalInitialAdmissionRequest;
 import net.firedevops.firemud.gamesession.dto.CanonicalInitialAdmissionWorldProof;
 import net.firedevops.firemud.gamesession.dto.CanonicalLaunchPreparationSnapshot;
 import net.firedevops.firemud.gamesession.dto.CanonicalRealmCatalogSnapshot;
+import net.firedevops.firemud.gamesession.dto.CreateCanonicalClosedAdmissionPointerRequest;
 import net.firedevops.firemud.gamesession.dto.CreateCanonicalLaunchPreparationRequest;
 import net.firedevops.firemud.gamesession.dto.CreateCanonicalRealmCatalogRequest;
 import net.firedevops.firemud.gamesession.repository.CanonicalGameInstanceLaunchAssociationRepository;
@@ -116,6 +117,19 @@ class CanonicalInitialAdmissionRepositoryIntegrationTest {
           fixture.initialAdmissionRepository.reserve(request);
           return null;
         });
+    fixture.transactions.execute(
+        status -> {
+          fixture.initialAdmissionRepository.reserve(request);
+          return null;
+        });
+    assertThat(
+            fixture.initialAdmissionRepository.read(NAMESPACE, request.initialAdmissionRequestId()))
+        .map(CanonicalInitialAdmissionOwnerProof::outcome)
+        .contains(CanonicalInitialAdmissionOwnerProof.Outcome.PENDING);
+    assertThat(
+            fixture.dsl.fetchCount(
+                DSL.table(DSL.name("game_session_canonical_initial_admission_attempt"))))
+        .isEqualTo(1);
 
     CanonicalInitialAdmissionWorldProof changedProof =
         new CanonicalInitialAdmissionWorldProof(
@@ -428,6 +442,159 @@ class CanonicalInitialAdmissionRepositoryIntegrationTest {
                 DSL.table(DSL.name("gameplay_admission_pointer")),
                 DSL.field(DSL.name("canonical_tenant_id"), UUID.class).eq(mismatchedTenant)))
         .isZero();
+  }
+
+  @Test
+  void newNoPriorPointerReservationRejectsAnAlreadyOpenRealmWithoutLeavingPendingAttempt() {
+    Fixture fixture = fixture();
+    PreparedAdmission preparedAdmission = prepareAdmission(fixture);
+    CanonicalRealmCatalogSnapshot catalog = preparedAdmission.catalog();
+    CompleteLaunchBindingEvidence binding = preparedAdmission.binding();
+    CanonicalInitialAdmissionRequest firstRequest = initialAdmissionRequest(catalog, binding);
+
+    fixture.transactions.execute(
+        status -> {
+          fixture.initialAdmissionRepository.reserve(firstRequest);
+          return null;
+        });
+    fixture.transactions.execute(
+        status -> {
+          fixture.initialAdmissionRepository.commit(
+              firstRequest, testWorldProof(firstRequest), null);
+          return null;
+        });
+    assertThat(
+            fixture.initialAdmissionRepository.read(
+                NAMESPACE, firstRequest.initialAdmissionRequestId()))
+        .map(CanonicalInitialAdmissionOwnerProof::outcome)
+        .contains(CanonicalInitialAdmissionOwnerProof.Outcome.COMMITTED);
+
+    CanonicalInitialAdmissionRequest staleRequest =
+        initialAdmissionRequest(
+            catalog,
+            binding,
+            "canonical-stale-no-prior-" + catalog.realmId(),
+            CanonicalInitialAdmissionRequest.OriginKind.NO_PRIOR_POINTER,
+            null,
+            uuid(117),
+            uuid(118));
+    assertThatThrownBy(
+            () ->
+                fixture.transactions.execute(
+                    status -> {
+                      fixture.initialAdmissionRepository.reserve(staleRequest);
+                      return null;
+                    }))
+        .isInstanceOf(
+            GameSessionCanonicalAdmissionPointerRepository.CanonicalClosedPointerConflictException
+                .class)
+        .hasMessageContaining("already names this target");
+
+    assertNoAttemptAndNoPending(fixture, staleRequest);
+  }
+
+  @Test
+  void expectedClosedReservationRequiresExactCurrentOriginalClosedEvidence() {
+    Fixture fixture = fixture();
+    PreparedAdmission preparedAdmission = prepareAdmission(fixture);
+    CanonicalRealmCatalogSnapshot catalog = preparedAdmission.catalog();
+    CompleteLaunchBindingEvidence binding = preparedAdmission.binding();
+    CreateCanonicalClosedAdmissionPointerRequest closeRequest =
+        new CreateCanonicalClosedAdmissionPointerRequest(
+            uuid(115),
+            NAMESPACE,
+            TENANT,
+            catalog.realmId(),
+            CATALOG_REQUEST,
+            catalog.catalogRevision(),
+            "canonical-initial-admission-test",
+            "Create exact CLOSED origin");
+    var preparedClosed = fixture.pointerRepository.prepareInitialClosed(closeRequest);
+    fixture.transactions.execute(
+        status -> {
+          fixture.pointerRepository.createInitialClosed(preparedClosed);
+          return null;
+        });
+
+    CanonicalInitialAdmissionRequest unsupportedPriorVersion =
+        initialAdmissionRequest(
+            catalog,
+            binding,
+            "canonical-expected-closed-v129-" + catalog.realmId(),
+            CanonicalInitialAdmissionRequest.OriginKind.EXPECT_CLOSED,
+            129L,
+            uuid(119),
+            uuid(120));
+    assertThatThrownBy(
+            () ->
+                fixture.transactions.execute(
+                    status -> {
+                      fixture.initialAdmissionRepository.reserve(unsupportedPriorVersion);
+                      return null;
+                    }))
+        .isInstanceOf(
+            GameSessionCanonicalAdmissionPointerRepository
+                .InvalidCanonicalClosedPointerEvidenceException.class)
+        .hasMessageContaining("versions do not match");
+    assertNoAttemptAndNoPending(fixture, unsupportedPriorVersion);
+
+    CanonicalInitialAdmissionRequest firstOpenRequest =
+        initialAdmissionRequest(
+            catalog,
+            binding,
+            "canonical-expected-closed-v1-" + catalog.realmId(),
+            CanonicalInitialAdmissionRequest.OriginKind.EXPECT_CLOSED,
+            1L,
+            uuid(121),
+            uuid(122));
+    fixture.transactions.execute(
+        status -> {
+          fixture.initialAdmissionRepository.reserve(firstOpenRequest);
+          return null;
+        });
+    assertThat(
+            fixture.initialAdmissionRepository.read(
+                NAMESPACE, firstOpenRequest.initialAdmissionRequestId()))
+        .map(CanonicalInitialAdmissionOwnerProof::outcome)
+        .contains(CanonicalInitialAdmissionOwnerProof.Outcome.PENDING);
+    var preparedExpectedClosed =
+        fixture.pointerRepository.prepareExpectedClosedForRealm(
+            NAMESPACE, TENANT, catalog.realmId(), 1L, catalog.catalogRevision());
+    fixture.transactions.execute(
+        status -> {
+          fixture.initialAdmissionRepository.commit(
+              firstOpenRequest, testWorldProof(firstOpenRequest), preparedExpectedClosed);
+          return null;
+        });
+    CanonicalInitialAdmissionOwnerProof committed =
+        fixture
+            .initialAdmissionRepository
+            .read(NAMESPACE, firstOpenRequest.initialAdmissionRequestId())
+            .orElseThrow();
+    assertThat(committed.provesCommit()).isTrue();
+    assertThat(committed.committedPointerVersion()).isEqualTo(2L);
+
+    CanonicalInitialAdmissionRequest staleRequest =
+        initialAdmissionRequest(
+            catalog,
+            binding,
+            "canonical-stale-expected-closed-" + catalog.realmId(),
+            CanonicalInitialAdmissionRequest.OriginKind.EXPECT_CLOSED,
+            1L,
+            uuid(123),
+            uuid(124));
+    assertThatThrownBy(
+            () ->
+                fixture.transactions.execute(
+                    status -> {
+                      fixture.initialAdmissionRepository.reserve(staleRequest);
+                      return null;
+                    }))
+        .isInstanceOf(
+            GameSessionCanonicalAdmissionPointerRepository
+                .InvalidCanonicalClosedPointerEvidenceException.class);
+
+    assertNoAttemptAndNoPending(fixture, staleRequest);
   }
 
   @Test
@@ -757,11 +924,26 @@ class CanonicalInitialAdmissionRepositoryIntegrationTest {
 
   private static CanonicalInitialAdmissionRequest initialAdmissionRequest(
       CanonicalRealmCatalogSnapshot catalog, CompleteLaunchBindingEvidence binding) {
-    String requestId = "canonical-first-open-" + catalog.realmId();
+    return initialAdmissionRequest(
+        catalog,
+        binding,
+        "canonical-first-open-" + catalog.realmId(),
+        CanonicalInitialAdmissionRequest.OriginKind.NO_PRIOR_POINTER,
+        null,
+        uuid(113),
+        uuid(114));
+  }
+
+  private static CanonicalInitialAdmissionRequest initialAdmissionRequest(
+      CanonicalRealmCatalogSnapshot catalog,
+      CompleteLaunchBindingEvidence binding,
+      String requestId,
+      CanonicalInitialAdmissionRequest.OriginKind origin,
+      Long expectedPriorPointerVersion,
+      UUID holdId,
+      UUID holdFence) {
     long activeEpoch = 2L;
     UUID canonicalVersionId = binding.releaseAttestation().canonicalVersionId();
-    CanonicalInitialAdmissionRequest.OriginKind origin =
-        CanonicalInitialAdmissionRequest.OriginKind.NO_PRIOR_POINTER;
     String requestDigest =
         CanonicalInitialAdmissionRequest.computeRequestDigest(
             NAMESPACE,
@@ -775,7 +957,7 @@ class CanonicalInitialAdmissionRepositoryIntegrationTest {
             activeEpoch,
             catalog.catalogRevision(),
             origin,
-            null,
+            expectedPriorPointerVersion,
             requestId);
     return new CanonicalInitialAdmissionRequest(
         NAMESPACE,
@@ -789,12 +971,48 @@ class CanonicalInitialAdmissionRepositoryIntegrationTest {
         activeEpoch,
         catalog.catalogRevision(),
         origin,
-        null,
+        expectedPriorPointerVersion,
         requestId,
         requestDigest,
-        uuid(113),
-        uuid(114),
+        holdId,
+        holdFence,
         digest("e"));
+  }
+
+  private static void assertNoAttemptAndNoPending(
+      Fixture fixture, CanonicalInitialAdmissionRequest request) {
+    assertThat(
+            fixture.dsl.fetchCount(
+                DSL.table(DSL.name("game_session_canonical_initial_admission_attempt")),
+                DSL.field(DSL.name("initial_admission_request_id"), String.class)
+                    .eq(request.initialAdmissionRequestId())))
+        .isZero();
+    assertThat(
+            fixture.dsl.fetchCount(
+                DSL.table(DSL.name("game_session_canonical_initial_admission_attempt")),
+                DSL.field(DSL.name("status"), String.class).eq("PENDING")))
+        .isZero();
+  }
+
+  private static PreparedAdmission prepareAdmission(Fixture fixture) {
+    IntakeReceipt source = fixture.registerSource();
+    CanonicalRealmCatalogSnapshot catalog = fixture.createCatalog(source);
+    CreateCanonicalLaunchPreparationRequest preparationRequest =
+        preparationRequest(source, catalog);
+    AuthoredWorldLaunchDescriptorClient syntheticGameDesign =
+        syntheticGameDesignClient(preparationRequest, catalog, source);
+    GameSessionCanonicalLaunchPreparationService preparationService =
+        new GameSessionCanonicalLaunchPreparationService(
+            syntheticGameDesign,
+            fixture.catalogRepository,
+            fixture.sourceRepository,
+            fixture.preparationRepository,
+            fixture.transactionManager,
+            NAMESPACE);
+    CanonicalLaunchPreparationSnapshot preparation = preparationService.prepare(preparationRequest);
+    CompleteLaunchBindingEvidence binding = preparationService.readCompleteBinding(preparation);
+    fixture.createTestOnlyFreshMappingAndRunningLaunch(source, binding);
+    return new PreparedAdmission(catalog, binding);
   }
 
   private static CanonicalInitialAdmissionWorldProof testWorldProof(
@@ -843,6 +1061,9 @@ class CanonicalInitialAdmissionRepositoryIntegrationTest {
   private static UUID uuid(int value) {
     return UUID.fromString(String.format("%08d-1111-4111-8111-111111111111", value));
   }
+
+  private record PreparedAdmission(
+      CanonicalRealmCatalogSnapshot catalog, CompleteLaunchBindingEvidence binding) {}
 
   private record Fixture(
       DSLContext dsl,
