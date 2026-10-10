@@ -307,6 +307,12 @@ def _inventory_entries(raw: list[Any], current_head: str) -> list[dict[str, Any]
             raise StatusError(f"GitHub status check {index} has an invalid head SHA")
         timestamp, parsed_timestamp = _check_timestamp(value, index)
         app = _app_identity(value)
+        workflow_identity = _workflow_check_identity(value, name) if "workflowIdentity" in value else None
+        started = value.get("startedAt", value.get("started_at"))
+        try:
+            parsed_start = _timestamp(started, "CheckRun startedAt")
+        except StatusError:
+            parsed_start = None
         entry = {
             "name": name,
             "kind": value.get("__typename", "CheckRun" if "conclusion" in value else "StatusContext"),
@@ -322,7 +328,11 @@ def _inventory_entries(raw: list[Any], current_head: str) -> list[dict[str, Any]
             ),
             "_timestamp": parsed_timestamp,
             "_index": index,
+            "_workflow_identity": workflow_identity,
+            "_started_at": parsed_start,
         }
+        if workflow_identity is not None:
+            entry["workflowIdentity"] = dict(value["workflowIdentity"])
         entry["exact_head"] = isinstance(head, str) and head.casefold() == current_head.casefold()
         entries.append(entry)
     return entries
@@ -456,22 +466,43 @@ def _required_results(authority: dict[str, Any], inventory: dict[str, Any]) -> d
         matching = [entry for entry in entries if entry["name"] == context]
         exact = [entry for entry in matching if entry["exact_head"]]
 
-        def newest(values: list[dict[str, Any]]) -> dict[str, Any] | None:
-            values.sort(
-                key=lambda item: (
-                    item["_timestamp"] is not None,
-                    item["_timestamp"] or datetime.min.replace(tzinfo=timezone.utc),
-                    item["_index"],
-                )
+        def decisive(values: list[dict[str, Any]]) -> dict[str, Any] | None:
+            # Protection selects a context/app, not a workflow. Only proven
+            # retries of one workflow may supersede conflicting observations.
+            groups: defaultdict[tuple[Any, ...], list[dict[str, Any]]] = defaultdict(list)
+            effective = []
+            for entry in values:
+                identity = entry.get("_workflow_identity")
+                if identity is None:
+                    effective.append(entry)
+                else:
+                    groups[identity].append(entry)
+            for attempts in groups.values():
+                starts = [entry["_started_at"] for entry in attempts]
+                if all(start is not None for start in starts):
+                    latest = max(starts)
+                    selected = [entry for entry in attempts if entry["_started_at"] == latest]
+                    if len(selected) == 1:
+                        effective.extend(selected)
+                        continue
+                effective.extend(attempts)
+            if not effective:
+                return None
+            priority = {"FAILURE": 3, "PENDING": 2, "UNKNOWN": 1, "SUCCESS": 0}
+            return max(
+                effective,
+                key=lambda entry: (
+                    priority.get(entry["outcome"], 1),
+                    entry["_timestamp"] or datetime.min.replace(tzinfo=timezone.utc),
+                ),
             )
-            return values[-1] if values else None
 
         app_id = expected["expected_app"].get("id")
         app_matches = (
             [entry for entry in exact if (entry["app"] or {}).get("id") == app_id] if app_id is not None else exact
         )
-        result = newest(app_matches)
-        wrong_app_result = newest(exact) if exact else None
+        result = decisive(app_matches)
+        wrong_app_result = decisive(exact) if exact else None
         wrong_app_results = [
             {key: value for key, value in entry.items() if not key.startswith("_")}
             for entry in exact

@@ -1338,6 +1338,68 @@ class StatusTest(unittest.TestCase):
         for key, value in check.items():
             self.assertEqual(inventory["check_runs"][0][key], value)
 
+    def native_required_report(self, checks: list[dict], runs: list[dict], *, any_app: bool = False) -> dict:
+        checks = [{**check, "name": "Validation Gate"} for check in checks]
+        inventory = self.native_inventory(checks, runs)
+        payload = github_payload()
+        payload["data"]["repository"]["pullRequest"]["reviewThreads"] = {"nodes": []}
+        return self._ready_report(
+            payload,
+            check_inventory_payload=inventory,
+            required_status_checks_payload={
+                "available": True,
+                "contexts": ["Validation Gate"],
+                "checks": [] if any_app else [{"context": "Validation Gate", "app_id": 15368}],
+            },
+        )
+
+    def test_required_distinct_or_unproven_workflows_never_hide_failure_by_api_order(self) -> None:
+        for missing_identity in (False, True):
+            for started in (None, "2026-09-23T00:00:00Z", "2026-09-23T00:01:00Z"):
+                for reverse in (False, True):
+                    for any_app in (False, True):
+                        with self.subTest(
+                            identity_missing=missing_identity, start=started, reverse=reverse, any_app=any_app
+                        ):
+                            checks = [
+                                self.native_check(1, "failure", started),
+                                self.native_check(2, "success", "2026-09-23T00:01:00Z"),
+                            ]
+                            runs = [self.native_run(1, 10), self.native_run(2, 20)]
+                            if missing_identity:
+                                runs[0].pop("workflow_id")
+                            report = self.native_required_report(
+                                list(reversed(checks)) if reverse else checks, runs, any_app=any_app
+                            )
+                            self.assertFalse(report["ready"])
+                            self.assertEqual(report["verdict"], "NOT READY")
+                            self.assertEqual(report["ci"]["required"]["status"], "failed")
+                            self.assertEqual(report["ci"]["required"]["contexts"][0]["status"], "failed")
+                            self.assertEqual(report["ci"]["required"]["contexts"][0]["result"]["outcome"], "FAILURE")
+
+    def test_required_proven_workflow_retries_use_only_unambiguous_latest_start(self) -> None:
+        for old_start in (None, "2026-09-23T00:00:00Z", "2026-09-23T00:01:00Z"):
+            for reverse in (False, True):
+                for latest_failure in (False, True):
+                    with self.subTest(start=old_start, reverse=reverse, latest_failure=latest_failure):
+                        checks = [
+                            self.native_check(1, "success" if latest_failure else "failure", old_start),
+                            self.native_check(2, "failure" if latest_failure else "success", "2026-09-23T00:01:00Z"),
+                        ]
+                        report = self.native_required_report(
+                            list(reversed(checks)) if reverse else checks, [self.native_run(1), self.native_run(2)]
+                        )
+                        expected_ready = old_start == "2026-09-23T00:00:00Z" and not latest_failure
+                        self.assertEqual(report["ready"], expected_ready)
+                        self.assertEqual(report["ci"]["required"]["status"], "passed" if expected_ready else "failed")
+                        result = report["ci"]["required"]["contexts"][0]["result"]
+                        self.assertEqual(result["workflowIdentity"]["workflow_id"], 10)
+        with self.assertRaises(status.StatusError):
+            self.native_required_report(
+                [self.native_check(1, "failure", "malformed"), self.native_check(2, "success", "2026-09-23T00:01:00Z")],
+                [self.native_run(1), self.native_run(2)],
+            )
+
     def test_malformed_check_fails_closed(self) -> None:
         with self.assertRaises(status.StatusError):
             status.build_report(
