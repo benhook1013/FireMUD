@@ -39,6 +39,7 @@ import net.firedevops.firemud.accountservice.service.session.AccountJwtValidator
 import org.junit.jupiter.api.Test;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.json.JsonMapper;
+import tools.jackson.databind.node.ArrayNode;
 import tools.jackson.databind.node.ObjectNode;
 
 class AccountJwtValidatorInventorySourceTest {
@@ -111,6 +112,54 @@ class AccountJwtValidatorInventorySourceTest {
     projectedSecret.stubDeployment(
         new ApiResponse(200, JSON.writeValueAsBytes(projectedDeployment)));
     assertUnavailable(projectedSecret);
+  }
+
+  @Test
+  void rejectsSelectedValidatorEnvFromConfigMapAndSecretReferencesAndMalformedValues()
+      throws Exception {
+    for (String envFrom :
+        List.of(
+            "[{\"configMapRef\":{\"name\":\"runtime-config\"}}]",
+            "[{\"secretRef\":{\"name\":\"runtime-secrets\"}}]",
+            "{\"secretRef\":{\"name\":\"runtime-secrets\"}}",
+            "[null]")) {
+      Fixture fixture = new Fixture();
+      ObjectNode deployment = (ObjectNode) JSON.readTree(deploymentJson("10", 1, 1, 1, false));
+      ((ObjectNode) deployment.path("spec").path("template").path("spec").path("containers").get(0))
+          .set("envFrom", JSON.readTree(envFrom));
+      fixture.stubDeployment(new ApiResponse(200, JSON.writeValueAsBytes(deployment)));
+      assertUnavailable(fixture);
+    }
+  }
+
+  @Test
+  void acceptsSelectedValidatorWithoutEnvFromOrWithNullOrEmptyEnvFrom() throws Exception {
+    for (String envFrom : List.of("null", "[]")) {
+      Fixture fixture = new Fixture();
+      ObjectNode deployment = (ObjectNode) JSON.readTree(deploymentJson("10", 1, 1, 1, false));
+      ((ObjectNode) deployment.path("spec").path("template").path("spec").path("containers").get(0))
+          .set("envFrom", JSON.readTree(envFrom));
+      fixture.stubDeployment(new ApiResponse(200, JSON.writeValueAsBytes(deployment)));
+
+      assertThat(fixture.source.observe()).isNotNull();
+    }
+    assertThat(new Fixture().source.observe()).isNotNull();
+  }
+
+  @Test
+  void allowsNonSigningEnvFromOnAnAuxiliaryContainer() throws Exception {
+    Fixture fixture = new Fixture();
+    ObjectNode deployment = (ObjectNode) JSON.readTree(deploymentJson("10", 1, 1, 1, false));
+    ArrayNode containers =
+        (ArrayNode) deployment.path("spec").path("template").path("spec").path("containers");
+    containers.add(
+        JSON.readTree(
+            "{\"name\":\"metrics-sidecar\",\"image\":\"metrics:1\","
+                + "\"envFrom\":[{\"configMapRef\":{\"name\":\"metrics-config\"}},"
+                + "{\"secretRef\":{\"name\":\"metrics-secrets\"}}]}"));
+    fixture.stubDeployment(new ApiResponse(200, JSON.writeValueAsBytes(deployment)));
+
+    assertThat(fixture.source.observe()).isNotNull();
   }
 
   @Test

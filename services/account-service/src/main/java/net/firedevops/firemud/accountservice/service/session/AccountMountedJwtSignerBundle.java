@@ -209,7 +209,11 @@ public final class AccountMountedJwtSignerBundle {
         throw invalid();
       }
       deliveryBytes = compactBytes.clone();
-      deliveryConsumer.persistAttemptAndDeliver(result, deliveryBytes);
+      try {
+        deliveryConsumer.persistAttemptAndDeliver(result, deliveryBytes);
+      } catch (RuntimeException failure) {
+        throw invalid();
+      }
       if (!sha256(deliveryBytes).equals(result.compactTokenSha256())) {
         throw invalid();
       }

@@ -74,7 +74,7 @@ public class AccountJwtJwksPublicationRepository {
    */
   @Transactional(propagation = Propagation.MANDATORY)
   public Optional<PrepublicationIntent> readCurrentIntent(Binding binding, TrustFence trust) {
-    requireAccountTransaction();
+    requireWritableAccountTransaction();
     GenerationResult result = readAndLockCurrentResult(binding, trust);
     GenerationRequest request = desiredStateRepository.readCurrentGenerationRequest(binding, trust);
     PrepublicationIntent intent = selectIntent(result.operationId(), true);
@@ -152,7 +152,7 @@ public class AccountJwtJwksPublicationRepository {
   /** Returns the current operation's persisted intent and optional exact API readback receipt. */
   @Transactional(propagation = Propagation.MANDATORY)
   public Optional<PublicationEvidence> readCurrentPublication(Binding binding, TrustFence trust) {
-    requireAccountTransaction();
+    requireWritableAccountTransaction();
     GenerationResult result = readAndLockCurrentResult(binding, trust);
     GenerationRequest request = desiredStateRepository.readCurrentGenerationRequest(binding, trust);
     PrepublicationIntent intent = selectIntent(result.operationId(), true);
@@ -180,10 +180,10 @@ public class AccountJwtJwksPublicationRepository {
    * Recovery-only read of the immutable publication that authorized the exact PREPARED source
    * generation. Ordinary current-publication reads remain unavailable while PREPARED.
    */
-  @Transactional(propagation = Propagation.MANDATORY, readOnly = true)
+  @Transactional(propagation = Propagation.MANDATORY)
   public PromotionPublicationEvidence readPreparedPublicationForRecovery(
       Binding binding, TrustFence trust) {
-    requireAccountTransaction();
+    requireWritableAccountTransaction();
     PreparedGenerationEvidence prepared =
         desiredStateRepository.readPreparedGenerationForRecovery(binding, trust);
     GenerationResult result = prepared.generationResult();

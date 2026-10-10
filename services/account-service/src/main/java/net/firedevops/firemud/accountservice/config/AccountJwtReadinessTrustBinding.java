@@ -231,7 +231,7 @@ public final class AccountJwtReadinessTrustBinding {
         || !(directoryOwner instanceof Number directoryUid)
         || directoryUid.longValue() != 0L
         || writable(fileMode)
-        || writable(directoryMode)) {
+        || writableByUntrusted(directoryMode)) {
       throw new IOException("Protected readiness binding ownership is invalid");
     }
   }
@@ -239,6 +239,11 @@ public final class AccountJwtReadinessTrustBinding {
   private static boolean writable(Set<PosixFilePermission> permissions) {
     return permissions.contains(PosixFilePermission.OWNER_WRITE)
         || permissions.contains(PosixFilePermission.GROUP_WRITE)
+        || permissions.contains(PosixFilePermission.OTHERS_WRITE);
+  }
+
+  private static boolean writableByUntrusted(Set<PosixFilePermission> permissions) {
+    return permissions.contains(PosixFilePermission.GROUP_WRITE)
         || permissions.contains(PosixFilePermission.OTHERS_WRITE);
   }
 

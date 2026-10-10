@@ -3,9 +3,6 @@ package net.firedevops.firemud.gamesession.repository;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
-import java.lang.reflect.Constructor;
-import java.lang.reflect.InvocationTargetException;
-import java.lang.reflect.Method;
 import java.time.Instant;
 import java.util.HashMap;
 import java.util.Map;
@@ -41,62 +38,46 @@ class CanonicalInitialAdmissionRepositoryTest {
   @Test
   void malformedPersistedOpenProjectionRequiresReconciliationAtSnapshotBoundary() {
     CanonicalInitialAdmissionOwnerProof proof = committedProof();
-    Object validPointer = currentOpenPointer(validOpenFields());
+    CanonicalInitialAdmissionRepository.CurrentOpenPointer validPointer =
+        new CanonicalInitialAdmissionRepository.CurrentOpenPointer(validOpenFields());
 
-    assertThat(snapshotDigest(validPointer, proof)).matches("[0-9a-f]{64}");
+    assertThat(
+            CanonicalInitialAdmissionRepository.snapshotDigestOrReconciliation(validPointer, proof))
+        .matches("[0-9a-f]{64}");
 
     Map<String, Object> paddedName = validOpenFields();
     paddedName.put("world_display_name", " Demo World ");
     assertMalformedProjection(
-        currentOpenPointer(paddedName), proof, IllegalArgumentException.class);
+        new CanonicalInitialAdmissionRepository.CurrentOpenPointer(paddedName),
+        proof,
+        IllegalArgumentException.class);
 
     Map<String, Object> invalidOrigin = validOpenFields();
     invalidOrigin.put("initial_admission_origin_kind", "UNKNOWN_ORIGIN");
     assertMalformedProjection(
-        currentOpenPointer(invalidOrigin), proof, IllegalArgumentException.class);
+        new CanonicalInitialAdmissionRepository.CurrentOpenPointer(invalidOrigin),
+        proof,
+        IllegalArgumentException.class);
 
     Map<String, Object> nullOrigin = validOpenFields();
     nullOrigin.put("initial_admission_origin_kind", null);
-    assertMalformedProjection(currentOpenPointer(nullOrigin), proof, NullPointerException.class);
+    assertMalformedProjection(
+        new CanonicalInitialAdmissionRepository.CurrentOpenPointer(nullOrigin),
+        proof,
+        NullPointerException.class);
   }
 
   private static void assertMalformedProjection(
-      Object pointer, CanonicalInitialAdmissionOwnerProof proof, Class<? extends Throwable> cause) {
-    assertThatThrownBy(() -> snapshotDigest(pointer, proof))
+      CanonicalInitialAdmissionRepository.CurrentOpenPointer pointer,
+      CanonicalInitialAdmissionOwnerProof proof,
+      Class<? extends Throwable> cause) {
+    assertThatThrownBy(
+            () ->
+                CanonicalInitialAdmissionRepository.snapshotDigestOrReconciliation(pointer, proof))
         .isInstanceOf(
             CanonicalInitialAdmissionRepository
                 .CanonicalInitialAdmissionReconciliationRequiredException.class)
         .hasCauseInstanceOf(cause);
-  }
-
-  private static String snapshotDigest(Object pointer, CanonicalInitialAdmissionOwnerProof proof) {
-    try {
-      Method method =
-          CanonicalInitialAdmissionRepository.class.getDeclaredMethod(
-              "snapshotDigestOrReconciliation", pointer.getClass(), proof.getClass());
-      method.setAccessible(true);
-      return (String) method.invoke(null, pointer, proof);
-    } catch (InvocationTargetException invocation) {
-      if (invocation.getCause() instanceof RuntimeException cause) {
-        throw cause;
-      }
-      throw new AssertionError(invocation.getCause());
-    } catch (ReflectiveOperationException reflectionFailure) {
-      throw new AssertionError(reflectionFailure);
-    }
-  }
-
-  private static Object currentOpenPointer(Map<String, Object> fields) {
-    try {
-      Class<?> pointerType =
-          Class.forName(
-              CanonicalInitialAdmissionRepository.class.getName() + "$CurrentOpenPointer");
-      Constructor<?> constructor = pointerType.getDeclaredConstructor(Map.class);
-      constructor.setAccessible(true);
-      return constructor.newInstance(fields);
-    } catch (ReflectiveOperationException reflectionFailure) {
-      throw new AssertionError(reflectionFailure);
-    }
   }
 
   private static Map<String, Object> validOpenFields() {

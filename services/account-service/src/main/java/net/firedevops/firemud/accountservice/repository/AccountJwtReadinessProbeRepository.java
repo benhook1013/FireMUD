@@ -3087,7 +3087,7 @@ public class AccountJwtReadinessProbeRepository {
     }
   }
 
-  private static String readinessPromotionDigest(
+  private static Map<String, Object> readinessPromotionPreimage(
       ReadinessProbePlan plan,
       GenerationResult generation,
       AccountJwtJwksPublicationRepository.PromotionPublicationEvidence publication,
@@ -3107,7 +3107,19 @@ public class AccountJwtReadinessProbeRepository {
         verifiedProbes.stream()
             .map(AccountJwtReadinessProbeRepository::verifiedProbeEvidenceMap)
             .toList());
-    return digest(preimage);
+    return preimage;
+  }
+
+  private static byte[] readinessPromotionPreimageBytes(Map<String, Object> preimage) {
+    try {
+      return Rfc8785CanonicalJson.canonicalizeUtf8(JSON.writeValueAsString(preimage));
+    } catch (IOException ex) {
+      throw new StorageUnavailableException("Readiness evidence cannot be canonicalized");
+    }
+  }
+
+  private static String readinessPromotionDigest(byte[] preimage) {
+    return sha256(preimage);
   }
 
   private static Map<String, Object> generationEvidenceMap(GenerationResult result) {
@@ -3840,6 +3852,7 @@ public class AccountJwtReadinessProbeRepository {
     private final String inventoryEvidenceReference;
     private final String inventoryEvidenceDigest;
     private final List<VerifiedProbeEvidence> verifiedProbes;
+    private final byte[] readinessEvidencePreimage;
     private final String readinessEvidenceDigest;
 
     private ReadinessPromotionProof(
@@ -3881,14 +3894,16 @@ public class AccountJwtReadinessProbeRepository {
             "Readiness proof differs from exact generation and verified probe evidence");
       }
       this.verifiedProbes = List.copyOf(verifiedProbes);
-      this.readinessEvidenceDigest =
-          readinessPromotionDigest(
-              plan,
-              generationResult,
-              publication,
-              inventoryEvidenceReference,
-              inventoryEvidenceDigest,
-              this.verifiedProbes);
+      this.readinessEvidencePreimage =
+          readinessPromotionPreimageBytes(
+              readinessPromotionPreimage(
+                  plan,
+                  generationResult,
+                  publication,
+                  inventoryEvidenceReference,
+                  inventoryEvidenceDigest,
+                  this.verifiedProbes));
+      this.readinessEvidenceDigest = readinessPromotionDigest(this.readinessEvidencePreimage);
     }
 
     public ReadinessProbePlan plan() {
@@ -3918,6 +3933,11 @@ public class AccountJwtReadinessProbeRepository {
     /** Digest computed by Account over all canonical proof fields except this digest itself. */
     public String readinessEvidenceDigest() {
       return readinessEvidenceDigest;
+    }
+
+    /** Exact non-secret RFC 8785 preimage bytes hashed for {@link #readinessEvidenceDigest()}. */
+    public byte[] readinessEvidencePreimage() {
+      return readinessEvidencePreimage.clone();
     }
   }
 
