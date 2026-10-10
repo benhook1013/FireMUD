@@ -31,7 +31,20 @@ class PlayerBootstrapJwtProfileValidatorTest {
 
     Map<String, Object> billing = validClaims();
     Map<String, Object> tuple = object(billing.get("authorityTuple"));
-    tuple.put("tenantBillingCutoff", Map.of("22222222-2222-4222-8222-222222222222", Map.of()));
+    String tenant = "22222222-2222-4222-8222-222222222222";
+    tuple.put(
+        "tenantBillingCutoff",
+        Map.of(
+            tenant,
+            Map.of(
+                "tenantAuthorityGeneration",
+                2L,
+                "tenantBillingSequence",
+                3L,
+                "outboxStreamKey",
+                "account:tenant-billing:v1:tenant/" + tenant,
+                "outboxSequence",
+                4L)));
     billing.put("authorityTuple", tuple);
     assertInvalid(billing);
 

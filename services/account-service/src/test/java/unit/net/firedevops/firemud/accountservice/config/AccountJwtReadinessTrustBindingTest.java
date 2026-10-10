@@ -4,12 +4,22 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.attribute.PosixFilePermission;
 import java.time.Clock;
+import java.time.Instant;
+import java.time.ZoneOffset;
 import java.util.List;
+import java.util.Set;
+import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
 class AccountJwtReadinessTrustBindingTest {
   private static final long NOW = 1_800_000_000L;
+
+  @TempDir Path tempDirectory;
 
   @Test
   void missingOrDisabledConfigurationNeverCreatesReadinessTrust() {
@@ -71,6 +81,74 @@ class AccountJwtReadinessTrustBindingTest {
                     valid.replace("enabled=true", "enabled=false").getBytes(StandardCharsets.UTF_8),
                     NOW))
         .isInstanceOf(IllegalArgumentException.class);
+  }
+
+  @Test
+  void acceptsRootOwnedOwnerWritableDirectoryButRejectsWritableProtectedFile() throws Exception {
+    Path directory = Files.createDirectory(tempDirectory.resolve("protected"));
+    Path binding = directory.resolve("binding.conf");
+    Files.writeString(binding, protectedConfig(NOW + 60), StandardCharsets.UTF_8);
+    Assumptions.assumeTrue(((Number) Files.getAttribute(directory, "unix:uid")).longValue() == 0L);
+    Assumptions.assumeTrue(((Number) Files.getAttribute(binding, "unix:uid")).longValue() == 0L);
+    Files.setPosixFilePermissions(
+        directory,
+        Set.of(
+            PosixFilePermission.OWNER_READ,
+            PosixFilePermission.OWNER_WRITE,
+            PosixFilePermission.OWNER_EXECUTE,
+            PosixFilePermission.GROUP_READ,
+            PosixFilePermission.GROUP_EXECUTE,
+            PosixFilePermission.OTHERS_READ,
+            PosixFilePermission.OTHERS_EXECUTE));
+    Files.setPosixFilePermissions(
+        binding, Set.of(PosixFilePermission.OWNER_READ, PosixFilePermission.GROUP_READ));
+
+    assertThat(
+            new AccountJwtReadinessTrustBinding(
+                    true,
+                    binding.toString(),
+                    Clock.fixed(Instant.ofEpochSecond(NOW), ZoneOffset.UTC))
+                .current())
+        .isPresent();
+
+    Files.setPosixFilePermissions(
+        directory,
+        Set.of(
+            PosixFilePermission.OWNER_READ,
+            PosixFilePermission.OWNER_WRITE,
+            PosixFilePermission.OWNER_EXECUTE,
+            PosixFilePermission.GROUP_READ,
+            PosixFilePermission.GROUP_WRITE,
+            PosixFilePermission.GROUP_EXECUTE,
+            PosixFilePermission.OTHERS_READ,
+            PosixFilePermission.OTHERS_EXECUTE));
+    assertThat(
+            new AccountJwtReadinessTrustBinding(
+                    true,
+                    binding.toString(),
+                    Clock.fixed(Instant.ofEpochSecond(NOW), ZoneOffset.UTC))
+                .current())
+        .isEmpty();
+    Files.setPosixFilePermissions(
+        directory,
+        Set.of(
+            PosixFilePermission.OWNER_READ,
+            PosixFilePermission.OWNER_WRITE,
+            PosixFilePermission.OWNER_EXECUTE,
+            PosixFilePermission.GROUP_READ,
+            PosixFilePermission.GROUP_EXECUTE,
+            PosixFilePermission.OTHERS_READ,
+            PosixFilePermission.OTHERS_EXECUTE));
+
+    Files.setPosixFilePermissions(
+        binding, Set.of(PosixFilePermission.OWNER_READ, PosixFilePermission.OWNER_WRITE));
+    assertThat(
+            new AccountJwtReadinessTrustBinding(
+                    true,
+                    binding.toString(),
+                    Clock.fixed(Instant.ofEpochSecond(NOW), ZoneOffset.UTC))
+                .current())
+        .isEmpty();
   }
 
   private static String protectedConfig(long validUntil) {

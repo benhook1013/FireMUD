@@ -3,7 +3,6 @@ package integration.net.firedevops.firemud.accountservice.repository;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
-import java.net.URI;
 import java.nio.charset.StandardCharsets;
 import java.security.KeyPairGenerator;
 import java.security.MessageDigest;
@@ -13,7 +12,9 @@ import java.util.HexFormat;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
 import net.firedevops.firemud.accountservice.repository.AccountJwtJwksPublicationRepository;
 import net.firedevops.firemud.accountservice.repository.AccountJwtSignerDesiredStateRepository;
 import net.firedevops.firemud.accountservice.repository.AccountJwtSignerDesiredStateRepository.Binding;
@@ -29,21 +30,19 @@ import org.jooq.SQLDialect;
 import org.jooq.exception.DataAccessException;
 import org.jooq.impl.DSL;
 import org.junit.jupiter.api.AfterAll;
-import org.junit.jupiter.api.Assumptions;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.datasource.DataSourceTransactionManager;
-import org.springframework.jdbc.datasource.DriverManagerDataSource;
 import org.springframework.jdbc.datasource.TransactionAwareDataSourceProxy;
 import org.springframework.transaction.support.TransactionTemplate;
-import org.testcontainers.DockerClientFactory;
-import org.testcontainers.containers.PostgreSQLContainer;
 import tools.jackson.databind.json.JsonMapper;
 
 class AccountJwtJwksPublicationPersistenceIntegrationTest {
   private static final String SCHEMA_PREFIX = "jwt_jwks_publication_proof";
-  private static final String EXTERNAL_POSTGRES_URL_ENV =
-      "FIREMUD_ACCOUNT_SIGNER_TEST_POSTGRES_URL";
+  private static final AccountPostgresIntegrationFixture POSTGRES =
+      new AccountPostgresIntegrationFixture();
   private static final Binding PROD_BINDING =
       new Binding(
           "prod",
@@ -60,37 +59,28 @@ class AccountJwtJwksPublicationPersistenceIntegrationTest {
   private static final String API_REVISION = "api-r1";
   private static final JsonMapper JSON = JsonMapper.builder().build();
 
-  private static final PostgreSQLContainer<?> postgres =
-      new PostgreSQLContainer<>("postgres:16-alpine");
-  private static String testJdbcUrl;
-  private static String testJdbcUsername;
-  private static String testJdbcPassword;
-  private static boolean startedOwnedContainer;
+  private final Set<String> schemas = ConcurrentHashMap.newKeySet();
 
   @BeforeAll
-  static void configureDatabase() {
-    String externalUrl = System.getenv(EXTERNAL_POSTGRES_URL_ENV);
-    if (externalUrl != null) {
-      testJdbcUrl = validateExternalLoopbackPostgresUrl(externalUrl);
-      testJdbcUsername = "postgres";
-      testJdbcPassword = "";
-      return;
-    }
-    Assumptions.assumeTrue(
-        DockerClientFactory.instance().isDockerAvailable(),
-        "PostgreSQL integration proof requires the explicit loopback tunnel or an available Docker daemon");
-    postgres.start();
-    startedOwnedContainer = true;
-    testJdbcUrl = postgres.getJdbcUrl();
-    testJdbcUsername = postgres.getUsername();
-    testJdbcPassword = postgres.getPassword();
+  static void startPostgres() {
+    POSTGRES.start();
   }
 
   @AfterAll
-  static void stopOwnedContainer() {
-    if (startedOwnedContainer) {
-      postgres.stop();
+  static void stopPostgres() {
+    POSTGRES.stop();
+  }
+
+  @AfterEach
+  void dropRunOwnedSchemas() {
+    JdbcTemplate jdbc = new JdbcTemplate(POSTGRES.dataSource());
+    for (String schema : schemas) {
+      if (!schema.startsWith(SCHEMA_PREFIX + "_") || !schema.matches("[a-z][a-z0-9_]{0,62}")) {
+        throw new IllegalStateException("Refusing to clean an unowned PostgreSQL schema");
+      }
+      jdbc.execute("DROP SCHEMA IF EXISTS " + schema + " CASCADE");
     }
+    schemas.clear();
   }
 
   @Test
@@ -336,13 +326,10 @@ class AccountJwtJwksPublicationPersistenceIntegrationTest {
             });
   }
 
-  private static TestContext newTestContext() {
+  private TestContext newTestContext() {
     String schema = SCHEMA_PREFIX + "_" + UUID.randomUUID().toString().replace("-", "");
-    DriverManagerDataSource dataSource = new DriverManagerDataSource();
-    String separator = testJdbcUrl.contains("?") ? "&" : "?";
-    dataSource.setUrl(testJdbcUrl + separator + "currentSchema=" + schema);
-    dataSource.setUsername(testJdbcUsername);
-    dataSource.setPassword(testJdbcPassword);
+    schemas.add(schema);
+    var dataSource = POSTGRES.dataSource(schema);
     Flyway.configure()
         .dataSource(dataSource)
         .schemas(schema)
@@ -474,32 +461,6 @@ class AccountJwtJwksPublicationPersistenceIntegrationTest {
     } catch (java.security.NoSuchAlgorithmException ex) {
       throw new IllegalStateException("SHA-256 is required for the persistence fixture", ex);
     }
-  }
-
-  private static String validateExternalLoopbackPostgresUrl(String jdbcUrl) {
-    final URI uri;
-    try {
-      if (!jdbcUrl.startsWith("jdbc:")) {
-        throw new IllegalArgumentException("not a JDBC URL");
-      }
-      uri = URI.create(jdbcUrl.substring("jdbc:".length()));
-    } catch (RuntimeException ex) {
-      throw new IllegalStateException(
-          EXTERNAL_POSTGRES_URL_ENV + " must target jdbc:postgresql://127.0.0.1:<port>/postgres",
-          ex);
-    }
-    if (!"postgresql".equals(uri.getScheme())
-        || !"127.0.0.1".equals(uri.getHost())
-        || uri.getPort() < 1
-        || uri.getPort() > 65_535
-        || !"/postgres".equals(uri.getPath())
-        || uri.getUserInfo() != null
-        || uri.getQuery() != null
-        || uri.getFragment() != null) {
-      throw new IllegalStateException(
-          EXTERNAL_POSTGRES_URL_ENV + " must target jdbc:postgresql://127.0.0.1:<port>/postgres");
-    }
-    return jdbcUrl;
   }
 
   private record PublicJwk(String json, String jsonWithoutKeyOps, String fingerprint) {}

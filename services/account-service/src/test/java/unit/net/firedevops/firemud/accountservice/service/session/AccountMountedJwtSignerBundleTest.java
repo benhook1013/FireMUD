@@ -487,6 +487,46 @@ class AccountMountedJwtSignerBundleTest {
   }
 
   @Test
+  void readinessCallbackFailureDoesNotRetainTransientJwtAndWipesCallbackBytes() {
+    long issuedAt = 1_800_000_000L;
+    AccountMountedJwtSignerBundle.ReadinessProbeSigningSpec spec =
+        new AccountMountedJwtSignerBundle.ReadinessProbeSigningSpec(
+            "account-service",
+            AccountMountedJwtSignerBundle.ProbeKind.REPRESENTATIVE,
+            AccountMountedJwtSignerBundle.REPRESENTATIVE_PROFILE,
+            AccountMountedJwtSignerBundle.REPRESENTATIVE_AUDIENCE,
+            UUID.randomUUID(),
+            GENERATION,
+            KID,
+            issuedAt,
+            issuedAt + 180);
+    byte[][] callbackBytes = new byte[1][];
+    String[] transientJwt = new String[1];
+
+    AccountMountedJwtSignerBundle.InvalidMountedSignerBundleException failure =
+        assertThrows(
+            AccountMountedJwtSignerBundle.InvalidMountedSignerBundleException.class,
+            () ->
+                AccountMountedJwtSignerBundle.signReadinessProbeDigest(
+                    privateMount,
+                    Path.of("current.key"),
+                    publicMount,
+                    Path.of("jwks.json"),
+                    identity(),
+                    spec,
+                    (digest, compactJwt) -> {
+                      callbackBytes[0] = compactJwt;
+                      transientJwt[0] = new String(compactJwt, StandardCharsets.US_ASCII);
+                      throw new IllegalStateException("callback failed: " + transientJwt[0]);
+                    }));
+
+    assertNull(failure.getCause());
+    assertFalse(failure.getMessage().contains(transientJwt[0]));
+    assertFalse(failure.toString().contains(transientJwt[0]));
+    assertTrue(Arrays.equals(new byte[callbackBytes[0].length], callbackBytes[0]));
+  }
+
+  @Test
   void rejectsEveryExpectedIdentityMismatch() {
     AccountMountedJwtSignerBundle.ExpectedIdentity valid = identity();
     AccountMountedJwtSignerBundle.ExpectedIdentity[] mismatches = {

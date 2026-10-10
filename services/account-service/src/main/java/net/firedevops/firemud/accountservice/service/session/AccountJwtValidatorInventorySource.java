@@ -627,6 +627,7 @@ public final class AccountJwtValidatorInventorySource {
       throw new InventoryUnavailableException();
     }
     JsonNode env = selected.get("env");
+    rejectValidatorEnvFrom(selected.get("envFrom"));
     JsonNode configNode = null;
     Set<String> environmentNames = new LinkedHashSet<>();
     if (env != null && !env.isNull()) {
@@ -705,6 +706,15 @@ public final class AccountJwtValidatorInventorySource {
           throw new InventoryUnavailableException();
         }
       }
+    }
+  }
+
+  private static void rejectValidatorEnvFrom(JsonNode envFrom) {
+    if (envFrom == null || envFrom.isNull()) {
+      return;
+    }
+    if (!envFrom.isArray() || envFrom.size() != 0) {
+      throw new InventoryUnavailableException();
     }
   }
 
