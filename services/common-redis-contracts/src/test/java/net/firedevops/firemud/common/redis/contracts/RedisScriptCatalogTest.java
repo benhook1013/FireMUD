@@ -55,8 +55,7 @@ class RedisScriptCatalogTest {
     assertThat(RedisScriptCatalog.fromContributions(List.of()).descriptors()).isEmpty();
     assertThatThrownBy(
             () ->
-                RedisScriptCatalog.fromContributions(
-                    Arrays.asList((RedisScriptContribution) null)))
+                RedisScriptCatalog.fromContributions(Arrays.asList((RedisScriptContribution) null)))
         .isInstanceOf(NullPointerException.class);
     assertThatThrownBy(
             () ->
@@ -67,7 +66,9 @@ class RedisScriptCatalogTest {
     assertThatThrownBy(
             () ->
                 RedisScriptCatalog.fromContributions(
-                    List.of(contribution("account-service", Arrays.asList((RedisScriptDescriptor) null)))))
+                    List.of(
+                        contribution(
+                            "account-service", Arrays.asList((RedisScriptDescriptor) null)))))
         .isInstanceOf(NullPointerException.class);
     assertThatThrownBy(
             () ->
@@ -111,7 +112,7 @@ class RedisScriptCatalogTest {
 
       @Override
       public Collection<RedisScriptDescriptor> descriptors() {
-        return descriptors;
+        return descriptors == null ? null : new ArrayList<>(descriptors);
       }
     };
   }
@@ -126,12 +127,15 @@ class RedisScriptCatalogTest {
         RedisScriptDescriptor.RedisRole.COORDINATION,
         List.of(
             new RedisScriptDescriptor.KeySpec(
-                "record", "session:control:", RedisScriptDescriptor.HashTagDeclaration.NOT_REQUIRED)),
+                "record",
+                "session:control:",
+                RedisScriptDescriptor.HashTagDeclaration.NOT_REQUIRED)),
         List.of(new RedisScriptDescriptor.ArgumentSpec("requestId")),
         RedisScriptDescriptor.ScriptCategory.SESSION_CAS,
         List.of(
             new RedisScriptDescriptor.OutcomeSpec(
-                "OK", RedisScriptDescriptor.OutcomeCategory.SUCCESS,
+                "OK",
+                RedisScriptDescriptor.OutcomeCategory.SUCCESS,
                 RedisScriptDescriptor.MutationEffect.MUTATING)),
         RedisScriptDescriptor.ResetSensitivity.CLUSTER,
         RedisScriptDescriptor.LossClass.SESSION_LEASE_CACHE_OR_WAKE_UP,

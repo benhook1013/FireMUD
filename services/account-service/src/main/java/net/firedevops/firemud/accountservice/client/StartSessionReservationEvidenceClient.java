@@ -21,6 +21,7 @@ import net.firedevops.firemud.loggingadmin.v1.ReadCurrentClaimEvidenceResponse;
 import net.firedevops.firemud.loggingadmin.v1.StartSessionReservationEvidencePurpose;
 import net.firedevops.firemud.loggingadmin.v1.StartSessionReservationEvidenceServiceGrpc;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Component;
 
 /**
@@ -30,6 +31,11 @@ import org.springframework.stereotype.Component;
  * commit-spanning compare-and-set proof.
  */
 @Component
+@ConditionalOnProperty(
+    prefix = "firemud.account.start-session-operator-authorization",
+    name = "enabled",
+    havingValue = "true",
+    matchIfMissing = false)
 public final class StartSessionReservationEvidenceClient
     extends AbstractReloadingBlockingGrpcClient<
         StartSessionReservationEvidenceServiceGrpc
