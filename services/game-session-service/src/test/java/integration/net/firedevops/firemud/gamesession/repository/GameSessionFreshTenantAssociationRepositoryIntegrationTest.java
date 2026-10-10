@@ -181,11 +181,53 @@ class GameSessionFreshTenantAssociationRepositoryIntegrationTest {
     Fixture fixture = fixture();
     IntakeReceipt retainedSource = fixture.registerRetainedSource(uuid(618));
     assertThat(retainedSource.source().provenanceKind()).isEqualTo("RETAINED_GAME_V29");
+    String bindingXmin =
+        Objects.requireNonNull(
+                fixture.dsl.fetchOne(
+                    "SELECT xmin::text AS xmin FROM game_session_authored_world_tenant_source_binding "
+                        + "WHERE canonical_tenant_id = ?",
+                    retainedSource.source().canonicalTenantId()),
+                "expected retained tenant source binding")
+            .get("xmin", String.class);
+    String intakeXmin =
+        Objects.requireNonNull(
+                fixture.dsl.fetchOne(
+                    "SELECT xmin::text AS xmin FROM game_session_authored_world_source_intake "
+                        + "WHERE operation_id = ?",
+                    retainedSource.operationId()),
+                "expected retained source intake")
+            .get("xmin", String.class);
 
     assertThatThrownBy(() -> fixture.associate(uuid(622), NAMESPACE, retainedSource))
         .isInstanceOf(InvalidFreshTenantSourceException.class)
         .hasMessageContaining("NEW_GAME_ROW");
 
+    assertThat(
+            Objects.requireNonNull(
+                fixture.dsl.fetchOne(
+                    "SELECT xmin::text AS xmin, provenance_kind "
+                        + "FROM game_session_authored_world_tenant_source_binding "
+                        + "WHERE canonical_tenant_id = ?",
+                    retainedSource.source().canonicalTenantId()),
+                "expected retained tenant source binding after denial"))
+        .satisfies(
+            row -> {
+              assertThat(row.get("xmin", String.class)).isEqualTo(bindingXmin);
+              assertThat(row.get("provenance_kind", String.class)).isEqualTo("RETAINED_GAME_V29");
+            });
+    assertThat(
+            Objects.requireNonNull(
+                fixture.dsl.fetchOne(
+                    "SELECT xmin::text AS xmin, source_provenance_kind "
+                        + "FROM game_session_authored_world_source_intake WHERE operation_id = ?",
+                    retainedSource.operationId()),
+                "expected retained source intake after denial"))
+        .satisfies(
+            row -> {
+              assertThat(row.get("xmin", String.class)).isEqualTo(intakeXmin);
+              assertThat(row.get("source_provenance_kind", String.class))
+                  .isEqualTo("RETAINED_GAME_V29");
+            });
     assertNoFreshAssociation(fixture);
   }
 
