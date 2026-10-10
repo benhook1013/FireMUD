@@ -797,6 +797,32 @@ class ControllerTests(unittest.TestCase):
         with github.hosted_preflight_budget(timeout_seconds=60), self.assertRaises(WrongStackTarget):
             controller._target("hosted", expected_pr=1)
 
+    def test_merged_request_batch_restores_progress_after_nested_attribution(self):
+        values, heads = _stacked_prs(4, merged=(1, 2, 3))
+        evidence = CountingEvidence()
+        controller = self.make(values, evidence, heads=heads)
+        controller.set_stack(list(values))
+        self._enable_batch_status(controller, values)
+
+        def prepare(numbers, identities):
+            self.assertEqual(numbers, (1, 2, 3))
+            self.assertEqual(set(identities), {1, 2, 3, 4})
+            budget = github.active_hosted_preflight_budget()
+            # Only one old reservation requires full attribution. The nested
+            # fetch uses a different total from the merged request batch.
+            budget.set_phase("target_complete_history_prefetch", total=1)
+            budget.set_completed(1)
+            return {(number, channel): [] for number in numbers for channel in ("hosted", "cli")}
+
+        evidence.request_history_batch = prepare
+        with github.hosted_preflight_budget(timeout_seconds=60) as budget:
+            deadline = budget.deadline
+            target = controller._target("hosted", expected_pr=4)
+            self.assertEqual(budget.deadline, deadline)
+            self.assertEqual(budget.phase_progress["target_complete_history_prefetch"], {"completed": 1, "total": 1})
+            self.assertEqual(budget.phase_progress["target_merged_request_history"], {"completed": 3, "total": 3})
+        self.assertEqual((target.pr, target.anchor.child_head), (4, values[4].head))
+
     def test_merged_request_batch_errors_and_ambiguous_results_fail_closed(self):
         for result in (
             None,

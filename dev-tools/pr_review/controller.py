@@ -5300,6 +5300,8 @@ class ReviewController:
                 if budget is not None:
                     budget.set_phase("target_merged_request_history", total=len(merged_prs))
                 prepared = request_batch(merged_prs, live_identities)
+                if budget is not None:
+                    budget.set_phase("target_merged_request_history", total=len(merged_prs))
                 expected_keys = {(pr, channel) for pr in merged_prs for channel in ("hosted", "cli")}
                 if (
                     not isinstance(prepared, Mapping)
