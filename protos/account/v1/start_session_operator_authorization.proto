@@ -1,0 +1,119 @@
+syntax = "proto3";
+
+package account.v1;
+
+import "google/protobuf/timestamp.proto";
+
+option java_package = "net.firedevops.firemud.account.v1";
+option java_multiple_files = true;
+
+// Internal mTLS-only Account boundary for the human tenant-admin StartSession authorization flow.
+service StartSessionOperatorAuthorizationService {
+  rpc IssueHumanOperatorAuthorizationReference(
+      IssueHumanOperatorAuthorizationReferenceRequest)
+      returns (IssueHumanOperatorAuthorizationReferenceResponse);
+  rpc RecoverOperatorAuthorizationReference(RecoverOperatorAuthorizationReferenceRequest)
+      returns (RecoverOperatorAuthorizationReferenceResponse);
+  rpc RedeemOperatorAuthorization(RedeemOperatorAuthorizationRequest)
+      returns (RedeemOperatorAuthorizationResponse);
+  rpc ReadRedeemedOperationProjection(ReadRedeemedOperationProjectionRequest)
+      returns (ReadRedeemedOperationProjectionResponse);
+}
+
+message IssueHumanOperatorAuthorizationReferenceRequest {
+  // Exact canonical preAuthorizationReservationTuple/v1 JSON bytes.
+  bytes canonical_pre_authorization_tuple_bytes = 1;
+  // Forwarded control-ui token. It is consumed only by Account and is never returned.
+  string control_ui_jwt = 2;
+  string reservation_owner_id = 3;
+  uint64 reservation_claim_fence = 4;
+  string current_claim_owner_id = 5;
+  uint64 current_claim_fence = 6;
+}
+
+message RecoverOperatorAuthorizationReferenceRequest {
+  // Exact canonical preAuthorizationReservationTuple/v1 JSON bytes.
+  bytes canonical_pre_authorization_tuple_bytes = 1;
+  string reservation_owner_id = 2;
+  uint64 reservation_claim_fence = 3;
+  string current_claim_owner_id = 4;
+  uint64 current_claim_fence = 5;
+}
+
+message RedeemOperatorAuthorizationRequest {
+  // Exact canonical preAuthorizationReservationTuple/v1 JSON bytes.
+  bytes canonical_pre_authorization_tuple_bytes = 1;
+  // Transient only: sent over authenticated TLS and never persisted by Logging & Admin.
+  string operator_authorization_reference = 2;
+  string authorization_reference_fingerprint = 3;
+  string reservation_owner_id = 4;
+  uint64 reservation_claim_fence = 5;
+  string owner_attempt_id = 6;
+  uint64 owner_fence = 7;
+}
+
+message IssueHumanOperatorAuthorizationReferenceResponse {
+  string operator_authorization_reference = 1;
+  string authorization_reference_fingerprint = 2;
+  google.protobuf.Timestamp expires_at = 3;
+  bytes authority_evidence_bundle = 4;
+  AuthorityEvidenceBundleReference bundle_reference = 5;
+  // Exact Logging/Admin SPIFFE identity verified from the authenticated request TLS peer.
+  string authenticated_logging_workload_identity = 6;
+}
+
+message RecoverOperatorAuthorizationReferenceResponse {
+  string operator_authorization_reference = 1;
+  string authorization_reference_fingerprint = 2;
+  google.protobuf.Timestamp expires_at = 3;
+  bytes authority_evidence_bundle = 4;
+  AuthorityEvidenceBundleReference bundle_reference = 5;
+  // Exact Logging/Admin SPIFFE identity verified from the authenticated request TLS peer.
+  string authenticated_logging_workload_identity = 6;
+}
+
+message RedeemOperatorAuthorizationResponse {
+  string authorization_reference_fingerprint = 1;
+  bytes authority_evidence_bundle = 2;
+  string issuance_operation_id = 3;
+  uint64 issuance_fence = 4;
+  bool replay = 5;
+}
+
+// Read-only projection of the exact original operation after its owner redemption.
+// It contains no JWT or opaque authorization reference.
+message ReadRedeemedOperationProjectionRequest {
+  // Exact canonical preAuthorizationReservationTuple/v1 JSON bytes.
+  bytes canonical_pre_authorization_tuple_bytes = 1;
+  string authorization_reference_fingerprint = 2;
+  string reservation_owner_id = 3;
+  uint64 reservation_claim_fence = 4;
+  string owner_attempt_id = 5;
+  uint64 owner_fence = 6;
+}
+
+message ReadRedeemedOperationProjectionResponse {
+  string control_plane_request_id = 1;
+  bytes canonical_pre_authorization_tuple_bytes = 2;
+  string mutation_digest = 3;
+  string authorization_reference_fingerprint = 4;
+  string reservation_owner_id = 5;
+  uint64 reservation_claim_fence = 6;
+  // The original redeemer identity authenticated and recorded by Account at redemption.
+  string authenticated_redeemer_workload_identity = 7;
+  string owner_attempt_id = 8;
+  uint64 owner_fence = 9;
+  google.protobuf.Timestamp reference_expires_at = 10;
+  google.protobuf.Timestamp redeemed_at = 11;
+  string issuance_operation_id = 12;
+  uint64 issuance_fence = 13;
+  AuthorityEvidenceBundleReference bundle_reference = 14;
+  bytes authority_evidence_bundle = 15;
+}
+
+message AuthorityEvidenceBundleReference {
+  string bundle_version = 1;
+  string source_version = 2;
+  string source_fence = 3;
+  string linearization = 4;
+}

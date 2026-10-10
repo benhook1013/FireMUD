@@ -34,6 +34,119 @@ service WorldManagementService {
   rpc ApplyRoomAmbientStatePatch(ApplyRoomAmbientStatePatchRequest) returns (ApplyRoomAmbientStatePatchResponse);
 }
 
+// Explicitly unwired authenticated authored-source intake boundary. This service remains separate
+// from the runtime WorldManagementService until its caller and deployment path are authorized.
+service WorldAuthoredSourceIntakeService {
+  rpc IntakeAuthoredWorldSource(IntakeAuthoredWorldSourceRequest)
+      returns (IntakeAuthoredWorldSourceResponse);
+  rpc ReadAuthoredWorldSourceIntake(ReadAuthoredWorldSourceIntakeRequest)
+      returns (ReadAuthoredWorldSourceIntakeResponse);
+  rpc ReadAuthoredWorldSourceIntakeById(ReadAuthoredWorldSourceIntakeByIdRequest)
+      returns (ReadAuthoredWorldSourceIntakeByIdResponse);
+}
+
+message IntakeAuthoredWorldSourceRequest {
+  int32 schema_version = 1;
+  string target_namespace = 2;
+  string intake_request_id = 3;
+  string canonical_tenant_id = 4;
+  string world_slug = 5;
+  string source_operation_id = 6;
+  string expected_source_evidence_digest = 7;
+}
+
+message IntakeAuthoredWorldSourceResponse {
+  int32 schema_version = 1;
+  string target_namespace = 2;
+  string intake_request_id = 3;
+  string canonical_tenant_id = 4;
+  string world_slug = 5;
+  string source_operation_id = 6;
+  string expected_source_evidence_digest = 7;
+  string operation_id = 8;
+  // Recomputable from the echoed intake binding using the World request digest contract.
+  string request_digest = 9;
+  // Opaque authenticated World attestation; it binds private World state and is not client-recomputable.
+  string receipt_digest = 10;
+}
+
+message ReadAuthoredWorldSourceIntakeRequest {
+  int32 schema_version = 1;
+  string target_namespace = 2;
+  // A distinct nonnil identity for this read; intake_request_id remains the stored receipt key.
+  string request_id = 3;
+  string intake_request_id = 4;
+  string canonical_tenant_id = 5;
+  string world_slug = 6;
+  string source_operation_id = 7;
+  string expected_source_evidence_digest = 8;
+}
+
+message ReadAuthoredWorldSourceIntakeResponse {
+  int32 schema_version = 1;
+  string target_namespace = 2;
+  string request_id = 3;
+  string intake_request_id = 4;
+  string canonical_tenant_id = 5;
+  string world_slug = 6;
+  string source_operation_id = 7;
+  string expected_source_evidence_digest = 8;
+  string operation_id = 9;
+  // Recomputable from the echoed intake binding using the World request digest contract.
+  string request_digest = 10;
+  // Opaque authenticated World attestation; it binds private World state and is not client-recomputable.
+  string receipt_digest = 11;
+}
+
+message ReadAuthoredWorldSourceIntakeByIdRequest {
+  int32 schema_version = 1;
+  string target_namespace = 2;
+  // A distinct caller-owned identity for this read; it is not the stored receipt key.
+  string read_request_id = 3;
+  string intake_request_id = 4;
+  string canonical_tenant_id = 5;
+}
+
+message AuthoredWorldSourceEvidence {
+  int32 schema_version = 1;
+  string target_namespace = 2;
+  string registration_request_id = 3;
+  string operation_id = 4;
+  string request_digest = 5;
+  string canonical_tenant_id = 6;
+  string tenant_slug = 7;
+  string world_slug = 8;
+  string world_display_name = 9;
+  int64 source_game_row_id = 10;
+  string source_game_tenant_key = 11;
+  string provenance_kind = 12;
+  string evidence_digest = 13;
+}
+
+// Public immutable receipt fields only. World-local tenant/version keys are deliberately omitted.
+message AuthoredWorldSourceIntakePublicReceipt {
+  int32 schema_version = 1;
+  string target_namespace = 2;
+  string intake_request_id = 3;
+  string operation_id = 4;
+  string canonical_tenant_id = 5;
+  string world_slug = 6;
+  string source_operation_id = 7;
+  string source_evidence_digest = 8;
+  string request_digest = 9;
+  string receipt_digest = 10;
+  AuthoredWorldSourceEvidence source = 11;
+}
+
+message ReadAuthoredWorldSourceIntakeByIdResponse {
+  int32 schema_version = 1;
+  string target_namespace = 2;
+  string read_request_id = 3;
+  string intake_request_id = 4;
+  string canonical_tenant_id = 5;
+  AuthoredWorldSourceIntakePublicReceipt receipt = 6;
+}
+
 enum WorldInstanceLifecycleStatus {
   WORLD_INSTANCE_LIFECYCLE_STATUS_UNSPECIFIED = 0;
   WORLD_INSTANCE_LIFECYCLE_STATUS_PREPARING = 1;
