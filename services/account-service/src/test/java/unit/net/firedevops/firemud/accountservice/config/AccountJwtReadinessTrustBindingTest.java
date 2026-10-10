@@ -10,11 +10,16 @@ import java.nio.file.attribute.PosixFilePermission;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.ZoneOffset;
+import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.mockito.MockedStatic;
+import org.mockito.Mockito;
 
 class AccountJwtReadinessTrustBindingTest {
   private static final long NOW = 1_800_000_000L;
@@ -90,6 +95,7 @@ class AccountJwtReadinessTrustBindingTest {
     Files.writeString(binding, protectedConfig(NOW + 60), StandardCharsets.UTF_8);
     Assumptions.assumeTrue(((Number) Files.getAttribute(directory, "unix:uid")).longValue() == 0L);
     Assumptions.assumeTrue(((Number) Files.getAttribute(binding, "unix:uid")).longValue() == 0L);
+    Assumptions.assumeTrue(hasProtectedDirectoryAncestors(directory));
     Files.setPosixFilePermissions(
         directory,
         Set.of(
@@ -149,6 +155,115 @@ class AccountJwtReadinessTrustBindingTest {
                     Clock.fixed(Instant.ofEpochSecond(NOW), ZoneOffset.UTC))
                 .current())
         .isEmpty();
+  }
+
+  @Test
+  void rejectsWritableAncestorEvenWhenTheImmediateDirectoryIsProtected() throws Exception {
+    Path writableAncestor = Files.createDirectory(tempDirectory.resolve("ancestor"));
+    Path intermediate = Files.createDirectory(writableAncestor.resolve("middle"));
+    Path directory = Files.createDirectory(intermediate.resolve("protected"));
+    Path binding = directory.resolve("binding.conf");
+    Files.writeString(binding, protectedConfig(NOW + 60), StandardCharsets.UTF_8);
+    Path absoluteBinding = binding.toAbsolutePath().normalize();
+    Path absoluteWritableAncestor = writableAncestor.toRealPath();
+    Set<PosixFilePermission> protectedDirectoryMode =
+        Set.of(
+            PosixFilePermission.OWNER_READ,
+            PosixFilePermission.OWNER_WRITE,
+            PosixFilePermission.OWNER_EXECUTE,
+            PosixFilePermission.GROUP_READ,
+            PosixFilePermission.GROUP_EXECUTE,
+            PosixFilePermission.OTHERS_READ,
+            PosixFilePermission.OTHERS_EXECUTE);
+    Set<PosixFilePermission> writableDirectoryMode = new HashSet<>(protectedDirectoryMode);
+    writableDirectoryMode.add(PosixFilePermission.GROUP_WRITE);
+    Map<Path, Object> owners = new HashMap<>();
+    Map<Path, Set<PosixFilePermission>> directoryModes = new HashMap<>();
+    for (Path ancestor = directory.toRealPath();
+        ancestor != null;
+        ancestor = ancestor.getParent()) {
+      owners.put(ancestor, 0L);
+      directoryModes.put(ancestor, protectedDirectoryMode);
+    }
+    Set<PosixFilePermission> fileMode =
+        Set.of(PosixFilePermission.OWNER_READ, PosixFilePermission.GROUP_READ);
+
+    try (MockedStatic<Files> mockedFiles =
+        Mockito.mockStatic(Files.class, Mockito.CALLS_REAL_METHODS)) {
+      mockedFiles
+          .when(
+              () ->
+                  Files.getAttribute(
+                      absoluteBinding, "unix:uid", java.nio.file.LinkOption.NOFOLLOW_LINKS))
+          .thenReturn(0L);
+      mockedFiles
+          .when(
+              () ->
+                  Files.getPosixFilePermissions(
+                      absoluteBinding, java.nio.file.LinkOption.NOFOLLOW_LINKS))
+          .thenReturn(fileMode);
+      for (Path ancestor : owners.keySet()) {
+        Path resolvedAncestor = ancestor;
+        mockedFiles
+            .when(
+                () ->
+                    Files.getAttribute(
+                        resolvedAncestor, "unix:uid", java.nio.file.LinkOption.NOFOLLOW_LINKS))
+            .thenAnswer(invocation -> owners.get(resolvedAncestor));
+        mockedFiles
+            .when(
+                () ->
+                    Files.getPosixFilePermissions(
+                        resolvedAncestor, java.nio.file.LinkOption.NOFOLLOW_LINKS))
+            .thenAnswer(invocation -> directoryModes.get(resolvedAncestor));
+      }
+
+      assertThat(
+              new AccountJwtReadinessTrustBinding(
+                      true,
+                      binding.toString(),
+                      Clock.fixed(Instant.ofEpochSecond(NOW), ZoneOffset.UTC))
+                  .current())
+          .isPresent();
+
+      directoryModes.put(absoluteWritableAncestor, writableDirectoryMode);
+      assertThat(
+              new AccountJwtReadinessTrustBinding(
+                      true,
+                      binding.toString(),
+                      Clock.fixed(Instant.ofEpochSecond(NOW), ZoneOffset.UTC))
+                  .current())
+          .isEmpty();
+
+      directoryModes.put(absoluteWritableAncestor, protectedDirectoryMode);
+      owners.put(absoluteWritableAncestor, 1000L);
+      assertThat(
+              new AccountJwtReadinessTrustBinding(
+                      true,
+                      binding.toString(),
+                      Clock.fixed(Instant.ofEpochSecond(NOW), ZoneOffset.UTC))
+                  .current())
+          .isEmpty();
+    }
+  }
+
+  private static boolean hasProtectedDirectoryAncestors(Path directory) throws Exception {
+    for (Path ancestor = directory.toRealPath();
+        ancestor != null;
+        ancestor = ancestor.getParent()) {
+      Object owner =
+          Files.getAttribute(ancestor, "unix:uid", java.nio.file.LinkOption.NOFOLLOW_LINKS);
+      if (!(owner instanceof Number uid) || uid.longValue() != 0L) {
+        return false;
+      }
+      Set<PosixFilePermission> permissions =
+          Files.getPosixFilePermissions(ancestor, java.nio.file.LinkOption.NOFOLLOW_LINKS);
+      if (permissions.contains(PosixFilePermission.GROUP_WRITE)
+          || permissions.contains(PosixFilePermission.OTHERS_WRITE)) {
+        return false;
+      }
+    }
+    return true;
   }
 
   private static String protectedConfig(long validUntil) {
