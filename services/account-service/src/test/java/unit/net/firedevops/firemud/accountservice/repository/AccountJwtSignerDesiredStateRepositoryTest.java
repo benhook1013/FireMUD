@@ -56,6 +56,7 @@ class AccountJwtSignerDesiredStateRepositoryTest {
           "a".repeat(64),
           "binding-r1");
   private static final UUID SECRET_UID = UUID.fromString("33333333-3333-4333-8333-333333333333");
+  private static final String READINESS_EVIDENCE_PREIMAGE = "{\"fixture\":\"readiness-proof\"}";
   private static final EnrollmentIdentity ENROLLMENT =
       new EnrollmentIdentity(
           TRUST.expectedClusterIncarnationUid(),
@@ -78,6 +79,8 @@ class AccountJwtSignerDesiredStateRepositoryTest {
     assertMandatory("initialize", Binding.class, EnrollmentIdentity.class);
     assertMandatory("read", Binding.class);
     assertMandatory("ensureCurrentGenerationRequest", Binding.class, TrustFence.class);
+    assertMandatoryWritable(
+        "abortUnpreparedGeneration", Binding.class, TrustFence.class, GenerationResult.class);
     assertMandatory("readCurrentGenerationRequest", Binding.class, TrustFence.class);
     assertMandatory(
         "recordSecretObservation",
@@ -225,6 +228,26 @@ class AccountJwtSignerDesiredStateRepositoryTest {
         .anyMatch(sql -> sql.contains("generation_operation_id"))
         .noneMatch(sql -> sql.contains("target_public_key_fingerprint"));
     verify(conversation.dsl, times(2)).execute(anyString(), any(Object[].class));
+  }
+
+  @Test
+  void historicalAbortedGenerationHighWaterPreventsReuseWithoutActiveSigner() {
+    Conversation conversation = new Conversation(1L);
+
+    GenerationRequest next = inWritableTransaction(conversation::ensureRequest);
+
+    assertThat(next.targetGeneration()).isEqualTo("2");
+    assertThat(next.expectedActive()).isEmpty();
+    assertThat(next.expectedPublishedActive()).isEmpty();
+    assertThat(conversation.executedStatements)
+        .anyMatch(sql -> sql.contains("account_jwt_signer_generation_operations"));
+    verify(conversation.dsl)
+        .fetchOne(
+            org.mockito.ArgumentMatchers.argThat(
+                sql ->
+                    sql.contains("COALESCE(MAX(target_generation), 0)")
+                        && sql.contains("account_jwt_signer_generation_operations")),
+            any(Object[].class));
   }
 
   @Test
@@ -722,7 +745,7 @@ class AccountJwtSignerDesiredStateRepositoryTest {
     preimage.put("prepublicationReceiptDigest", "e".repeat(64));
     preimage.put("mountedObservationDigest", "f".repeat(64));
     preimage.put("readinessPlanDigest", "1".repeat(64));
-    preimage.put("readinessEvidenceDigest", "2".repeat(64));
+    preimage.put("readinessEvidenceDigest", sha256(READINESS_EVIDENCE_PREIMAGE));
     preimage.put("publicJwksSha256", sha256(publicJwksJson));
     preimage.put("operationAction", "PROMOTE_PENDING");
     preimage.put("allowedPrivateSlots", List.of("current", "pending", "previous"));
@@ -786,6 +809,12 @@ class AccountJwtSignerDesiredStateRepositoryTest {
     return row;
   }
 
+  private static Record scalarLongRecord(long value) {
+    Record row = mock(Record.class);
+    when(row.get(0, Long.class)).thenReturn(value);
+    return row;
+  }
+
   private static <T> T inWritableTransaction(java.util.function.Supplier<T> operation) {
     TransactionSynchronizationManager.setActualTransactionActive(true);
     TransactionSynchronizationManager.setCurrentTransactionReadOnly(false);
@@ -803,6 +832,7 @@ class AccountJwtSignerDesiredStateRepositoryTest {
     private final AccountJwtSignerDesiredStateRepository repository =
         new AccountJwtSignerDesiredStateRepository(dsl);
     private final List<String> executedStatements = new java.util.ArrayList<>();
+    private final long historicalGenerationHighWater;
     private Object[] operationInsert;
     private Object[] observationInsert;
     private Object[] resultInsert;
@@ -812,6 +842,11 @@ class AccountJwtSignerDesiredStateRepositoryTest {
     private int promotionDispatchCasCount;
 
     private Conversation() {
+      this(0L);
+    }
+
+    private Conversation(long historicalGenerationHighWater) {
+      this.historicalGenerationHighWater = historicalGenerationHighWater;
       when(dsl.execute(anyString(), any(Object[].class)))
           .thenAnswer(
               invocation -> {
@@ -857,6 +892,9 @@ class AccountJwtSignerDesiredStateRepositoryTest {
                           null,
                           null,
                           operationInsert == null ? null : (UUID) operationInsert[0]);
+                }
+                if (sql.contains("COALESCE(MAX(target_generation), 0)")) {
+                  return scalarLongRecord(historicalGenerationHighWater);
                 }
                 if (sql.contains("account_jwt_signer_generation_operations")) {
                   return operationInsert == null ? null : generationOperationRow(operationInsert);
@@ -923,7 +961,10 @@ class AccountJwtSignerDesiredStateRepositoryTest {
       preparedPromotionValues.put("prepublication_receipt_digest", "e".repeat(64));
       preparedPromotionValues.put("mounted_observation_digest", "f".repeat(64));
       preparedPromotionValues.put("readiness_plan_digest", "1".repeat(64));
-      preparedPromotionValues.put("readiness_evidence_digest", "2".repeat(64));
+      preparedPromotionValues.put("readiness_evidence_digest", sha256(READINESS_EVIDENCE_PREIMAGE));
+      preparedPromotionValues.put(
+          "readiness_evidence_preimage",
+          READINESS_EVIDENCE_PREIMAGE.getBytes(StandardCharsets.UTF_8));
       preparedPromotionValues.put("expected_public_jwks_json", publicJwksJson);
       preparedPromotionValues.put("expected_active_generation_marker_json", "{}");
       preparedPromotionValues.put("private_promotion_dispatched", false);

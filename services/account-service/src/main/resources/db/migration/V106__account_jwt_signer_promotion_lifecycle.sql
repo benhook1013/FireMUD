@@ -168,6 +168,64 @@ ALTER TABLE account_jwt_signer_desired_states
                 AND enrollment_public_config_map_snapshot_digest IS NOT NULL
                 AND enrollment_public_config_map_snapshot_digest ~ '^[0-9a-f]{64}$'));
 
+-- A generation whose readiness proof cannot enter PREPARED may be terminally abandoned by
+-- Account. This receipt only releases that exact current pointer; it never changes either active
+-- fence or records authority to materialize, promote, or replace a key.
+CREATE TABLE account_jwt_signer_generation_abort_receipts (
+    operation_id UUID PRIMARY KEY,
+    environment_id VARCHAR(63) NOT NULL,
+    cluster_id VARCHAR(128) NOT NULL,
+    kubernetes_namespace VARCHAR(63) NOT NULL,
+    custody_mode VARCHAR(64) NOT NULL,
+    operation_digest VARCHAR(64) NOT NULL,
+    generation_request_digest VARCHAR(64) NOT NULL,
+    generation_receipt_digest VARCHAR(64) NOT NULL,
+    expected_state_version BIGINT NOT NULL,
+    resulting_state_version BIGINT NOT NULL,
+    expected_cluster_incarnation_uid UUID NOT NULL,
+    expected_namespace_uid UUID NOT NULL,
+    trust_binding_digest VARCHAR(64) NOT NULL,
+    trust_config_revision VARCHAR(128) NOT NULL,
+    durable_active_generation BIGINT,
+    durable_active_kid VARCHAR(128),
+    published_active_generation BIGINT,
+    published_active_kid VARCHAR(128),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT account_jwt_generation_abort_state_fk
+        FOREIGN KEY (environment_id, cluster_id, kubernetes_namespace, custody_mode)
+        REFERENCES account_jwt_signer_desired_states(
+            environment_id, cluster_id, kubernetes_namespace, custody_mode)
+        ON DELETE RESTRICT,
+    CONSTRAINT account_jwt_generation_abort_operation_fk
+        FOREIGN KEY (operation_id)
+        REFERENCES account_jwt_signer_generation_operations(operation_id)
+        ON DELETE RESTRICT,
+    CONSTRAINT account_jwt_generation_abort_result_fk
+        FOREIGN KEY (operation_id)
+        REFERENCES account_jwt_signer_generation_results(operation_id)
+        ON DELETE RESTRICT,
+    CONSTRAINT account_jwt_generation_abort_version_check
+        CHECK (expected_state_version > 1
+            AND expected_state_version < 9223372036854775807
+            AND resulting_state_version = expected_state_version + 1),
+    CONSTRAINT account_jwt_generation_abort_digest_check
+        CHECK (operation_digest ~ '^[0-9a-f]{64}$'
+            AND generation_request_digest ~ '^[0-9a-f]{64}$'
+            AND generation_receipt_digest ~ '^[0-9a-f]{64}$'
+            AND trust_binding_digest ~ '^[0-9a-f]{64}$'),
+    CONSTRAINT account_jwt_generation_abort_trust_check
+        CHECK (expected_cluster_incarnation_uid <> '00000000-0000-0000-0000-000000000000'::UUID
+            AND expected_namespace_uid <> '00000000-0000-0000-0000-000000000000'::UUID
+            AND trust_config_revision ~ '^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$'),
+    CONSTRAINT account_jwt_generation_abort_active_shape_check
+        CHECK (((durable_active_generation IS NULL AND durable_active_kid IS NULL)
+                    OR (durable_active_generation > 0
+                        AND durable_active_kid ~ '^[A-Za-z0-9_-]{1,64}$'))
+            AND ((published_active_generation IS NULL AND published_active_kid IS NULL)
+                    OR (published_active_generation > 0
+                        AND published_active_kid ~ '^[A-Za-z0-9_-]{1,64}$')))
+);
+
 -- PREPARED proof is immutable. Account first durably records its one-way peer dispatch before
 -- returning mutation authority. Only the two exact public-only CAS receipts may then be filled
 -- once, followed by one terminal state transition. No receipt includes, hashes, or returns
@@ -359,6 +417,34 @@ BEGIN
         RETURN NEW;
     END IF;
 
+    -- Abandon only one complete, exact UNPREPARED generation. Both active fences stay untouched;
+    -- the immutable Account receipt is the only authority to release the generation pointer.
+    IF OLD.generation_operation_id IS NOT NULL AND OLD.prepared_operation_id IS NULL
+        AND NEW.generation_operation_id IS NULL AND NEW.prepared_operation_id IS NULL
+        AND NEW.durable_active_generation IS NOT DISTINCT FROM OLD.durable_active_generation
+        AND NEW.durable_active_kid IS NOT DISTINCT FROM OLD.durable_active_kid
+        AND NEW.published_active_generation IS NOT DISTINCT FROM OLD.published_active_generation
+        AND NEW.published_active_kid IS NOT DISTINCT FROM OLD.published_active_kid THEN
+        SELECT receipt.* INTO operation_row
+          FROM account_jwt_signer_generation_abort_receipts AS receipt
+         WHERE receipt.operation_id = OLD.generation_operation_id
+           AND receipt.environment_id = OLD.environment_id
+           AND receipt.cluster_id = OLD.cluster_id
+           AND receipt.kubernetes_namespace = OLD.kubernetes_namespace
+           AND receipt.custody_mode = OLD.custody_mode
+           AND receipt.expected_state_version = OLD.record_version
+           AND receipt.resulting_state_version = NEW.record_version
+           AND receipt.durable_active_generation IS NOT DISTINCT FROM OLD.durable_active_generation
+           AND receipt.durable_active_kid IS NOT DISTINCT FROM OLD.durable_active_kid
+           AND receipt.published_active_generation IS NOT DISTINCT FROM OLD.published_active_generation
+           AND receipt.published_active_kid IS NOT DISTINCT FROM OLD.published_active_kid;
+        IF NOT FOUND THEN
+            RAISE EXCEPTION 'JWT generation pointer release lacks its exact Account abort receipt'
+                USING ERRCODE = '23514', CONSTRAINT = 'account_jwt_signer_generation_abort_binding';
+        END IF;
+        RETURN NEW;
+    END IF;
+
     -- Enter PREPARED only after insertion of the exact durable promotion request.
     IF OLD.generation_operation_id IS NOT NULL AND OLD.prepared_operation_id IS NULL
         AND NEW.generation_operation_id IS NULL AND NEW.prepared_operation_id IS NOT NULL
@@ -498,7 +584,10 @@ BEGIN
         OR result_row.secret_uid IS DISTINCT FROM NEW.expected_private_secret_uid
         OR result_row.observed_resource_version IS DISTINCT FROM NEW.expected_private_secret_resource_version
         OR result_row.receipt_digest IS DISTINCT FROM NEW.generation_receipt_digest
-        OR result_row.public_key_fingerprint IS DISTINCT FROM NEW.target_public_key_fingerprint THEN
+        OR result_row.public_key_fingerprint IS DISTINCT FROM NEW.target_public_key_fingerprint
+        OR EXISTS (
+            SELECT 1 FROM account_jwt_signer_generation_abort_receipts AS abort_receipt
+             WHERE abort_receipt.operation_id = NEW.generation_operation_id) THEN
         RAISE EXCEPTION 'JWT promotion request does not match current Account generation evidence'
             USING ERRCODE = '23514', CONSTRAINT = 'account_jwt_signer_promotion_insert_binding';
     END IF;
@@ -566,4 +655,144 @@ $$;
 CREATE TRIGGER account_jwt_signer_promotion_no_truncate
     BEFORE TRUNCATE ON account_jwt_signer_promotion_operations
     FOR EACH STATEMENT EXECUTE FUNCTION account_jwt_signer_promotion_no_truncate();
+
+CREATE FUNCTION account_jwt_generation_abort_insert_guard()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+AS $$
+DECLARE
+    state_row RECORD;
+    generation_row RECORD;
+    result_row RECORD;
+BEGIN
+    SELECT * INTO state_row
+      FROM account_jwt_signer_desired_states
+     WHERE environment_id = NEW.environment_id FOR UPDATE;
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'JWT generation abort desired state is missing'
+            USING ERRCODE = '23514', CONSTRAINT = 'account_jwt_signer_generation_abort_binding';
+    END IF;
+    SELECT * INTO generation_row
+      FROM account_jwt_signer_generation_operations
+     WHERE operation_id = NEW.operation_id FOR UPDATE;
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'JWT generation abort operation is missing'
+            USING ERRCODE = '23514', CONSTRAINT = 'account_jwt_signer_generation_abort_binding';
+    END IF;
+    SELECT * INTO result_row
+      FROM account_jwt_signer_generation_results
+     WHERE operation_id = NEW.operation_id FOR UPDATE;
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'JWT generation abort result is missing'
+            USING ERRCODE = '23514', CONSTRAINT = 'account_jwt_signer_generation_abort_binding';
+    END IF;
+
+    IF (state_row.cluster_id, state_row.kubernetes_namespace, state_row.custody_mode,
+        state_row.record_version, state_row.generation_operation_id, state_row.prepared_operation_id,
+        state_row.durable_active_generation, state_row.durable_active_kid,
+        state_row.published_active_generation, state_row.published_active_kid)
+       IS DISTINCT FROM
+       (NEW.cluster_id, NEW.kubernetes_namespace, NEW.custody_mode,
+        NEW.expected_state_version, NEW.operation_id, NULL,
+        NEW.durable_active_generation, NEW.durable_active_kid,
+        NEW.published_active_generation, NEW.published_active_kid)
+        OR (state_row.enrollment_cluster_incarnation_uid,
+            state_row.enrollment_namespace_uid,
+            state_row.enrollment_materializer_binding_digest,
+            state_row.enrollment_materializer_config_revision)
+            IS DISTINCT FROM
+           (NEW.expected_cluster_incarnation_uid, NEW.expected_namespace_uid,
+            NEW.trust_binding_digest, NEW.trust_config_revision)
+        OR (generation_row.environment_id, generation_row.cluster_id,
+            generation_row.kubernetes_namespace, generation_row.custody_mode,
+            generation_row.operation_digest, generation_row.expected_record_version,
+            generation_row.expected_previous_generation, generation_row.expected_previous_kid,
+            generation_row.expected_published_generation, generation_row.expected_published_kid,
+            generation_row.expected_cluster_incarnation_uid, generation_row.expected_namespace_uid,
+            generation_row.trust_binding_digest, generation_row.trust_config_revision)
+            IS DISTINCT FROM
+           (NEW.environment_id, NEW.cluster_id, NEW.kubernetes_namespace, NEW.custody_mode,
+            NEW.operation_digest, NEW.expected_state_version - 1,
+            NEW.durable_active_generation, NEW.durable_active_kid,
+            NEW.published_active_generation, NEW.published_active_kid,
+            NEW.expected_cluster_incarnation_uid, NEW.expected_namespace_uid,
+            NEW.trust_binding_digest, NEW.trust_config_revision)
+        OR (result_row.environment_id, result_row.cluster_id,
+            result_row.kubernetes_namespace, result_row.custody_mode,
+            result_row.operation_digest, result_row.generation_request_digest,
+            result_row.receipt_digest, result_row.desired_state_version,
+            result_row.expected_cluster_incarnation_uid, result_row.expected_namespace_uid,
+            result_row.trust_binding_digest, result_row.trust_config_revision,
+            result_row.target_generation, result_row.target_kid,
+            result_row.public_key_fingerprint)
+            IS DISTINCT FROM
+           (NEW.environment_id, NEW.cluster_id, NEW.kubernetes_namespace, NEW.custody_mode,
+            NEW.operation_digest, NEW.generation_request_digest,
+            NEW.generation_receipt_digest, NEW.expected_state_version,
+            NEW.expected_cluster_incarnation_uid, NEW.expected_namespace_uid,
+            NEW.trust_binding_digest, NEW.trust_config_revision,
+            generation_row.target_generation, generation_row.target_kid,
+            result_row.public_key_fingerprint)
+        OR EXISTS (
+            SELECT 1 FROM account_jwt_signer_promotion_operations promotion
+             WHERE promotion.generation_operation_id = NEW.operation_id) THEN
+        RAISE EXCEPTION 'JWT generation abort receipt does not bind the exact current UNPREPARED operation'
+            USING ERRCODE = '23514', CONSTRAINT = 'account_jwt_signer_generation_abort_binding';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+CREATE FUNCTION account_jwt_generation_abort_immutable_guard()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+AS $$
+BEGIN
+    RAISE EXCEPTION 'Account JWT signer generation abort receipts are immutable'
+        USING ERRCODE = '23514', CONSTRAINT = 'account_jwt_signer_generation_abort_immutable';
+    RETURN NULL;
+END;
+$$;
+
+CREATE FUNCTION account_jwt_generation_abort_terminal_guard()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+AS $$
+DECLARE
+    state_row RECORD;
+BEGIN
+    SELECT * INTO state_row
+      FROM account_jwt_signer_desired_states
+     WHERE environment_id = NEW.environment_id;
+    IF NOT FOUND
+        OR state_row.cluster_id IS DISTINCT FROM NEW.cluster_id
+        OR state_row.kubernetes_namespace IS DISTINCT FROM NEW.kubernetes_namespace
+        OR state_row.custody_mode IS DISTINCT FROM NEW.custody_mode
+        OR state_row.record_version IS DISTINCT FROM NEW.resulting_state_version
+        OR state_row.generation_operation_id IS NOT NULL
+        OR state_row.prepared_operation_id IS NOT NULL
+        OR state_row.durable_active_generation IS DISTINCT FROM NEW.durable_active_generation
+        OR state_row.durable_active_kid IS DISTINCT FROM NEW.durable_active_kid
+        OR state_row.published_active_generation IS DISTINCT FROM NEW.published_active_generation
+        OR state_row.published_active_kid IS DISTINCT FROM NEW.published_active_kid THEN
+        RAISE EXCEPTION 'Account generation abort receipt is not paired with its exact terminal state CAS'
+            USING ERRCODE = '23514', CONSTRAINT = 'account_jwt_signer_generation_abort_binding';
+    END IF;
+    RETURN NULL;
+END;
+$$;
+
+CREATE TRIGGER account_jwt_generation_abort_insert_guard
+    BEFORE INSERT ON account_jwt_signer_generation_abort_receipts
+    FOR EACH ROW EXECUTE FUNCTION account_jwt_generation_abort_insert_guard();
+CREATE TRIGGER account_jwt_generation_abort_immutable_guard
+    BEFORE UPDATE OR DELETE ON account_jwt_signer_generation_abort_receipts
+    FOR EACH ROW EXECUTE FUNCTION account_jwt_generation_abort_immutable_guard();
+CREATE TRIGGER account_jwt_generation_abort_no_truncate
+    BEFORE TRUNCATE ON account_jwt_signer_generation_abort_receipts
+    FOR EACH STATEMENT EXECUTE FUNCTION account_jwt_generation_abort_immutable_guard();
+CREATE CONSTRAINT TRIGGER account_jwt_generation_abort_terminal_guard
+    AFTER INSERT ON account_jwt_signer_generation_abort_receipts
+    DEFERRABLE INITIALLY DEFERRED
+    FOR EACH ROW EXECUTE FUNCTION account_jwt_generation_abort_terminal_guard();
 -- [jooq ignore stop]

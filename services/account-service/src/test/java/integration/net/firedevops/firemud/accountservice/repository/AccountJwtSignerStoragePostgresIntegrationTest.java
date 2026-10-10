@@ -246,6 +246,114 @@ class AccountJwtSignerStoragePostgresIntegrationTest {
   }
 
   @Test
+  void unpreparedGenerationAbortIsAnImmutableOwnerCasAndExactReplayAcrossRepositoryRestart()
+      throws Exception {
+    TestContext context = newTestContext(null);
+    AccountJwtSignerDesiredStateRepository desired =
+        new AccountJwtSignerDesiredStateRepository(context.dsl());
+    TrustFence trust = trust();
+    inTransaction(context, () -> desired.initialize(BINDING, enrollmentIdentity()));
+    GenerationRequest request =
+        inTransaction(context, () -> desired.ensureCurrentGenerationRequest(BINDING, trust));
+    GenerationRequest observation =
+        inTransaction(
+            context,
+            () ->
+                desired.recordSecretObservation(
+                    BINDING,
+                    trust,
+                    request.operationId(),
+                    request.operationDigest(),
+                    SECRET_UID,
+                    "12"));
+    PublicJwk key = publicJwk(request.targetKid());
+    GenerationResult result =
+        inTransaction(
+            context,
+            () ->
+                desired.recordGenerationResult(
+                    BINDING,
+                    trust,
+                    request.operationId(),
+                    observation.generationRequestDigest(),
+                    SECRET_UID,
+                    "12",
+                    "13",
+                    key.json()));
+
+    GenerationResult changedResult =
+        new GenerationResult(
+            result.operationId(),
+            result.binding(),
+            result.operationDigest(),
+            result.generationRequestDigest(),
+            result.desiredStateVersion(),
+            result.trustFence(),
+            result.privateSecretName(),
+            result.secretUid(),
+            result.expectedPriorResourceVersion(),
+            result.observedResourceVersion(),
+            result.targetGeneration(),
+            result.targetKid(),
+            result.targetAlgorithm(),
+            result.publicKeyFingerprint(),
+            result.publicJwkJson(),
+            "f".repeat(64));
+    assertThatThrownBy(
+            () ->
+                inTransaction(
+                    context,
+                    () -> desired.abortUnpreparedGeneration(BINDING, trust, changedResult)))
+        .isInstanceOf(AccountJwtSignerDesiredStateRepository.IdempotencyConflictException.class);
+
+    assertThatThrownBy(
+        () ->
+            inTransaction(
+                context,
+                () ->
+                    context
+                        .dsl()
+                        .execute(
+                            "UPDATE account_jwt_signer_desired_states "
+                                + "SET record_version = record_version + 1, "
+                                + "generation_operation_id = NULL "
+                                + "WHERE environment_id = ?",
+                            BINDING.environmentId())));
+
+    var receipt =
+        inTransaction(context, () -> desired.abortUnpreparedGeneration(BINDING, trust, result));
+    assertThat(receipt.operationId()).isEqualTo(request.operationId());
+    assertThat(receipt.operationDigest()).isEqualTo(request.operationDigest());
+    assertThat(receipt.generationRequestDigest()).isEqualTo(result.generationRequestDigest());
+    assertThat(receipt.generationReceiptDigest()).isEqualTo(result.receiptDigest());
+    assertThat(receipt.expectedStateVersion()).isEqualTo(2L);
+    assertThat(receipt.resultingStateVersion()).isEqualTo(3L);
+    assertThat(receipt.durableActive()).isEmpty();
+    assertThat(receipt.publishedActive()).isEmpty();
+
+    AccountJwtSignerDesiredStateRepository restarted =
+        new AccountJwtSignerDesiredStateRepository(context.dsl());
+    assertThat(
+            inTransaction(
+                context, () -> restarted.abortUnpreparedGeneration(BINDING, trust, result)))
+        .isEqualTo(receipt);
+    var state = inTransaction(context, () -> restarted.read(BINDING));
+    assertThat(state.recordVersion()).isEqualTo(3L);
+    assertThat(state.generationOperationId()).isEmpty();
+    assertThat(state.preparedOperationId()).isEmpty();
+    assertThat(state.durableActive()).isEmpty();
+    assertThat(state.publishedActive()).isEmpty();
+    assertThat(count(context, "account_jwt_signer_generation_abort_receipts")).isEqualTo(1L);
+
+    GenerationRequest next =
+        inTransaction(context, () -> restarted.ensureCurrentGenerationRequest(BINDING, trust));
+    assertThat(next.targetGeneration()).isEqualTo("2");
+    assertThat(next.operationId()).isNotEqualTo(request.operationId());
+    assertThat(next.expectedActive()).isEmpty();
+    assertThat(next.expectedPublishedActive()).isEmpty();
+  }
+
+  @Test
   void parentV98UpgradePreservesRetainedAccountWithoutInventingSignerEnrollment() {
     TestContext context = newTestContext("98");
     String suffix = UUID.randomUUID().toString().replace("-", "");
