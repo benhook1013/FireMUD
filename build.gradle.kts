@@ -4,6 +4,7 @@ import org.gradle.api.tasks.SourceSetContainer
 import org.gradle.api.plugins.quality.Checkstyle
 import org.gradle.api.plugins.jvm.JvmTestSuite
 import org.gradle.api.tasks.compile.JavaCompile
+import org.gradle.api.tasks.testing.logging.TestExceptionFormat
 import java.io.File
 import java.net.URI
 import groovy.json.JsonSlurper
@@ -345,6 +346,15 @@ subprojects {
     // Gate Spotless checks behind fullCheck (CI or -PfullCheck)
     tasks.matching { it.name.startsWith("spotless") && it.name.endsWith("Check") }
     .configureEach { enabled = fullCheck }
+
+    tasks.withType<Test>().configureEach {
+        testLogging {
+            exceptionFormat = TestExceptionFormat.FULL
+            showExceptions = true
+            showCauses = true
+            showStackTraces = true
+        }
+    }
 
     tasks.test {
         useJUnitPlatform()
