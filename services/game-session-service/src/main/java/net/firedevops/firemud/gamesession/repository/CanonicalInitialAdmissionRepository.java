@@ -415,12 +415,13 @@ public class CanonicalInitialAdmissionRepository {
     return new CurrentOpenSnapshot(proof, snapshotDigestOrReconciliation(before, proof));
   }
 
+  /** Package-private same-package test seam for malformed persisted projection evidence. */
   @SuppressFBWarnings(
       value = "DCN_NULLPOINTER_EXCEPTION",
       justification =
           "Canonical projection validation rejects missing persisted fields with NullPointerException;"
               + " this narrow readback boundary translates that rejection into required reconciliation.")
-  private static String snapshotDigestOrReconciliation(
+  static String snapshotDigestOrReconciliation(
       CurrentOpenPointer pointer, CanonicalInitialAdmissionOwnerProof proof) {
     try {
       return pointer.snapshotDigest(proof);
@@ -1289,9 +1290,13 @@ public class CanonicalInitialAdmissionRepository {
     }
   }
 
-  /** Full persisted pointer-row identity used to detect any before/after read drift. */
-  private record CurrentOpenPointer(Map<String, Object> fields) {
-    private CurrentOpenPointer {
+  /**
+   * Full persisted pointer-row identity used to detect any before/after read drift.
+   *
+   * <p>Package-private test seam keeps projection validation directly testable without reflection.
+   */
+  record CurrentOpenPointer(Map<String, Object> fields) {
+    CurrentOpenPointer {
       fields = Collections.unmodifiableMap(new LinkedHashMap<>(fields));
     }
 
