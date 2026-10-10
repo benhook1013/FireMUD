@@ -2058,6 +2058,66 @@ class LiveEvidence:
         A current reservation still needs public attribution before it is idle.
         """
 
+        return self._request_history(pr, channel)
+
+    def request_history_batch(
+        self, pr_numbers: Sequence[int], identities: Mapping[int, Any]
+    ) -> dict[tuple[int, str], list[dict[str, Any]]]:
+        """Prepare current safety from this selection's fresh identity snapshot.
+
+        Only unresolved Hosted reservations need complete payloads. Publish no
+        request-history result until every required read has succeeded.
+        """
+
+        numbers = tuple(pr_numbers)
+        if len(set(numbers)) != len(numbers) or any(type(pr) is not int or pr <= 0 for pr in numbers):
+            raise ControllerError("current request history requires unique positive PR numbers")
+        for pr in numbers:
+            identity = identities.get(pr)
+            if (
+                not isinstance(identity, Mapping)
+                or type(identity.get("number")) is not int
+                or identity["number"] != pr
+                or not isinstance(identity.get("headRefOid"), str)
+                or hosted.EXACT_SHA.fullmatch(identity["headRefOid"]) is None
+                or any(
+                    not isinstance(identity.get(connection), Mapping)
+                    or not isinstance(identity[connection].get("nodes"), list)
+                    or any(not isinstance(node, Mapping) for node in identity[connection]["nodes"])
+                    for connection in ("comments", "reviews")
+                )
+            ):
+                raise ControllerError(f"current request identity for PR #{pr} cannot be verified")
+        prepared: dict[tuple[int, str], list[dict[str, Any]]] = {}
+        unresolved: list[int] = []
+        for pr in numbers:
+            for channel in ("hosted", "cli"):
+                prepared[(pr, channel)] = list(
+                    self._request_history(pr, channel, identity=identities[pr], defer_full=True)
+                )
+            if any(
+                value.get("active_reservation") is True and value.get("checkpoint") != "trigger:request-lock"
+                for value in prepared[(pr, "hosted")]
+            ):
+                unresolved.append(pr)
+        # Previous target selections may have fetched these payloads. A retry
+        # uses its own fresh identity and must refresh unresolved attribution.
+        self._complete_payloads.difference_update(unresolved)
+        for pr in unresolved:
+            self._payloads.pop(pr, None)
+        self.prefetch_history_payloads(unresolved)
+        for pr in unresolved:
+            payload = self._payload(pr)
+            if github._pull_request_from_graphql_payload(payload).get("headRefOid") != identities[pr]["headRefOid"]:
+                raise ControllerError(f"current request identity for PR #{pr} changed during attribution")
+            prepared[(pr, "hosted")] = self._current_hosted_history(
+                pr, identities[pr]["headRefOid"], payload, set(), operational_only=True
+            )
+        return prepared
+
+    def _request_history(
+        self, pr: int, channel: str, *, identity: Mapping[str, Any] | None = None, defer_full: bool = False
+    ) -> Sequence[dict[str, Any]]:
         if channel == "cli":
             try:
                 common, _ = evidence.resolve_cli_capture_context()
@@ -2082,7 +2142,8 @@ class LiveEvidence:
         # The bounded identity/activity view can prove a current trigger finished
         # without touching old checkpoints or archived evidence. If it cannot,
         # complete current-trigger attribution remains an operational dependency.
-        identity = self.live.batch_pull_requests([pr]).get(pr)
+        if identity is None:
+            identity = self.live.batch_pull_requests([pr]).get(pr)
         if not isinstance(identity, Mapping):
             raise ControllerError("current Hosted admission state cannot be verified")
         head = identity.get("headRefOid")
@@ -2090,7 +2151,7 @@ class LiveEvidence:
             raise ControllerError("current Hosted admission state cannot be verified")
         payload = {"data": {"repository": {"pullRequest": dict(identity)}}}
         values = self._current_hosted_history(pr, head, payload, set(), operational_only=True)
-        if any(value.get("active_reservation") is True for value in values):
+        if not defer_full and any(value.get("active_reservation") is True for value in values):
             payload = self._payload(pr)
             values = self._current_hosted_history(pr, head, payload, set(), operational_only=True)
         return values
