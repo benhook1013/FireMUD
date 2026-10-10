@@ -151,6 +151,44 @@ class AccountJwtValidatorInventoryPersistenceIntegrationTest {
         .isInstanceOf(
             AccountJwtValidatorInventoryRepository.InventorySnapshotUnavailableException.class)
         .hasNoCause();
+
+    InventorySnapshot conflictingApiBindingRevision = mock(InventorySnapshot.class);
+    when(conflictingApiBindingRevision.observedAt()).thenReturn(observedAt);
+    when(conflictingApiBindingRevision.environmentId()).thenReturn(environmentId);
+    when(conflictingApiBindingRevision.clusterId()).thenReturn(BINDING.clusterId());
+    when(conflictingApiBindingRevision.clusterIncarnationUid()).thenReturn(CLUSTER_UID);
+    when(conflictingApiBindingRevision.namespace()).thenReturn(namespace);
+    when(conflictingApiBindingRevision.namespaceUid()).thenReturn(NAMESPACE_UID);
+    when(conflictingApiBindingRevision.apiBindingRevision()).thenReturn("api-r2");
+    when(conflictingApiBindingRevision.apiBindingDigest()).thenReturn(apiBindingDigest);
+    when(conflictingApiBindingRevision.inventoryBindingRevision())
+        .thenReturn(inventoryBindingRevision);
+    when(conflictingApiBindingRevision.inventoryBindingDigest()).thenReturn(inventoryBindingDigest);
+    when(conflictingApiBindingRevision.digest()).thenReturn(digest);
+    when(conflictingApiBindingRevision.canonicalBytes()).thenReturn(canonicalBytes);
+
+    assertThatThrownBy(
+            () ->
+                inTransaction(
+                    context,
+                    () ->
+                        repository.persistOrReadback(
+                            conflictingApiBindingRevision, BINDING, trust())))
+        .isInstanceOf(
+            AccountJwtValidatorInventoryRepository.InventorySnapshotUnavailableException.class)
+        .hasNoCause();
+
+    assertThat(count(context, "account_jwt_validator_inventory_snapshots")).isEqualTo(1L);
+    var unchanged =
+        context
+            .dsl()
+            .fetchOne(
+                "SELECT api_binding_revision, canonical_snapshot "
+                    + "FROM account_jwt_validator_inventory_snapshots WHERE snapshot_digest = ?",
+                digest);
+    assertThat(unchanged).isNotNull();
+    assertThat(unchanged.get("api_binding_revision", String.class)).isEqualTo(apiBindingRevision);
+    assertThat(unchanged.get("canonical_snapshot", byte[].class)).isEqualTo(canonicalBytes);
   }
 
   private static InventorySnapshot snapshot() throws Exception {

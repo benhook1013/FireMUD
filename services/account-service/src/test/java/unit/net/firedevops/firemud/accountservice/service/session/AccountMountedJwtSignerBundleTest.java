@@ -21,9 +21,11 @@ import java.security.spec.RSAKeyGenParameterSpec;
 import java.util.Arrays;
 import java.util.Base64;
 import java.util.HexFormat;
+import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicBoolean;
 import net.firedevops.firemud.accountservice.repository.AccountGameplayCredentialRequestBindingFixture;
 import net.firedevops.firemud.accountservice.repository.AccountGameplayDelegationPendingIdentity;
 import net.firedevops.firemud.common.security.GameSessionAccountDelegationProfile;
@@ -441,6 +443,90 @@ class AccountMountedJwtSignerBundleTest {
   }
 
   @Test
+  void rejectsBoundAccountAuthorityMismatchesBeforeCallingOwner() {
+    UUID account = UUID.fromString("a6a2af33-2e50-4092-934b-43c5bce12f7b");
+    UUID otherAccount = UUID.fromString("b7b3bf44-3f61-41a3-a145-54d6cdf23e8c");
+    String tenant = "22222222-2222-4222-8222-222222222222";
+    var noCutoff = Optional.<GameSessionAccountDelegationProfile.AccountSecurityCutoff>empty();
+
+    assertBoundTupleRejected(
+        authoritySnapshot(account, 7, 1), tenantTuple(8, 1, noCutoff, tenant), tenant);
+    assertBoundTupleRejected(
+        authoritySnapshot(account, 7, 1),
+        tenantTuple(7, 2, Optional.of(accountCutoff(account, 2)), tenant),
+        tenant);
+    assertBoundTupleRejected(
+        authoritySnapshot(account, 7, 2),
+        tenantTuple(7, 2, Optional.of(accountCutoff(otherAccount, 2)), tenant),
+        tenant);
+    assertBoundTupleRejected(
+        authoritySnapshot(account, 7, 2), tenantTuple(7, 1, noCutoff, tenant), tenant);
+  }
+
+  @Test
+  void boundClaimsRecursivelyCopyNestedAuthorityMapsBeforeSigning() {
+    UUID account = UUID.fromString("a6a2af33-2e50-4092-934b-43c5bce12f7b");
+    String tenant = "22222222-2222-4222-8222-222222222222";
+    long issued = 1_800_000_000L;
+    Map<String, Object> mutableTuple =
+        new LinkedHashMap<>(GameSessionAccountDelegationProfile.authorityTuple(7, 1));
+    Map<String, Object> mutableTenantGenerations = new LinkedHashMap<>();
+    mutableTenantGenerations.put(tenant, "5");
+    Map<String, Object> mutableMembershipGenerations = new LinkedHashMap<>();
+    mutableMembershipGenerations.put(tenant, "7");
+    mutableTuple.put("tenantAuthorityGeneration", mutableTenantGenerations);
+    mutableTuple.put("membershipAuthorityGeneration", mutableMembershipGenerations);
+
+    var bound =
+        new AccountMountedJwtSignerBundle.BoundDelegationClaims(
+            tenant, mutableTuple, Map.of(tenant, "3"));
+    mutableTenantGenerations.put(tenant, "99");
+    mutableMembershipGenerations.put(tenant, "99");
+    mutableTuple.put("issuerAuthGeneration", "99");
+
+    byte[][] delivered = new byte[1][];
+    AccountMountedJwtSignerBundle.signCommittedGameplayDelegationDigest(
+        privateMount,
+        Path.of("current.key"),
+        publicMount,
+        Path.of("jwks.json"),
+        identity(),
+        new AccountMountedJwtSignerBundle.DelegationSigningSpec(
+            delegationIdentity(account, issued),
+            authoritySnapshot(account, 7, 1),
+            Optional.of(bound)),
+        (digest, compactJwt) -> {
+          delivered[0] = compactJwt;
+          String[] parts = new String(compactJwt, StandardCharsets.US_ASCII).split("\\.", -1);
+          String claims =
+              new String(Base64.getUrlDecoder().decode(parts[1]), StandardCharsets.UTF_8);
+          assertTrue(claims.contains("\"issuerAuthGeneration\":\"7\""));
+          assertTrue(claims.contains("\"tenantAuthorityGeneration\":{\"" + tenant + "\":\"5\"}"));
+          assertTrue(
+              claims.contains("\"membershipAuthorityGeneration\":{\"" + tenant + "\":\"7\"}"));
+          assertFalse(claims.contains("\"tenantAuthorityGeneration\":{\"" + tenant + "\":\"99\"}"));
+          assertFalse(
+              claims.contains("\"membershipAuthorityGeneration\":{\"" + tenant + "\":\"99\"}"));
+        });
+
+    assertTrue(Arrays.equals(new byte[delivered[0].length], delivered[0]));
+  }
+
+  @Test
+  void rejectsCyclicBoundAuthorityTuple() {
+    String tenant = "22222222-2222-4222-8222-222222222222";
+    Map<String, Object> tuple =
+        new LinkedHashMap<>(GameSessionAccountDelegationProfile.authorityTuple(7, 1));
+    tuple.put("tenantAuthorityGeneration", tuple);
+
+    assertThrows(
+        AccountMountedJwtSignerBundle.InvalidMountedSignerBundleException.class,
+        () ->
+            new AccountMountedJwtSignerBundle.BoundDelegationClaims(
+                tenant, tuple, Map.of(tenant, "3")));
+  }
+
+  @Test
   void callbackFailureDoesNotRetainTransientCredentialAndWipesCallbackBytes() {
     long issuedAt = 1_800_000_000L;
     UUID accountId = UUID.fromString("a6a2af33-2e50-4092-934b-43c5bce12f7b");
@@ -782,6 +868,86 @@ class AccountMountedJwtSignerBundleTest {
       AccountMountedJwtSignerBundle.ExpectedIdentity expected) {
     return AccountMountedJwtSignerBundle.observeMounted(
         privateMount, Path.of("current.key"), publicMount, Path.of("jwks.json"), expected);
+  }
+
+  private void assertBoundTupleRejected(
+      AccountAuthoritySnapshot authority, Map<String, Object> tuple, String tenant) {
+    long issued = 1_800_000_000L;
+    var bound =
+        new AccountMountedJwtSignerBundle.BoundDelegationClaims(tenant, tuple, Map.of(tenant, "3"));
+    AtomicBoolean callbackInvoked = new AtomicBoolean();
+
+    assertThrows(
+        AccountMountedJwtSignerBundle.InvalidMountedSignerBundleException.class,
+        () ->
+            AccountMountedJwtSignerBundle.signCommittedGameplayDelegationDigest(
+                privateMount,
+                Path.of("current.key"),
+                publicMount,
+                Path.of("jwks.json"),
+                identity(),
+                new AccountMountedJwtSignerBundle.DelegationSigningSpec(
+                    delegationIdentity(authority.accountId(), issued),
+                    authority,
+                    Optional.of(bound)),
+                (digest, compactJwt) -> callbackInvoked.set(true)));
+
+    assertFalse(callbackInvoked.get());
+  }
+
+  private static AccountGameplayDelegationPendingIdentity delegationIdentity(
+      UUID accountId, long issuedAtEpochSecond) {
+    return new AccountGameplayDelegationPendingIdentity(
+        UUID.randomUUID(),
+        UUID.randomUUID(),
+        accountId,
+        "spiffe://firemud/ns/firemud/sa/game-session-service",
+        UUID.randomUUID(),
+        AccountGameplayCredentialRequestBindingFixture.binding(),
+        "ab".repeat(32),
+        UUID.randomUUID(),
+        issuedAtEpochSecond,
+        issuedAtEpochSecond,
+        issuedAtEpochSecond + 120);
+  }
+
+  private static AccountAuthoritySnapshot authoritySnapshot(
+      UUID accountId, long issuerGeneration, long accountGeneration) {
+    Optional<GameSessionAccountDelegationProfile.AccountSecurityCutoff> cutoff =
+        accountGeneration == 1
+            ? Optional.empty()
+            : Optional.of(accountCutoff(accountId, accountGeneration));
+    return new AccountAuthoritySnapshot(
+        accountId,
+        issuerGeneration,
+        issuerGeneration,
+        accountGeneration,
+        accountGeneration,
+        accountGeneration,
+        accountGeneration,
+        cutoff);
+  }
+
+  private static GameSessionAccountDelegationProfile.AccountSecurityCutoff accountCutoff(
+      UUID accountId, long accountGeneration) {
+    return new GameSessionAccountDelegationProfile.AccountSecurityCutoff(
+        Long.toString(accountGeneration),
+        "account:auth-authority:v1:account/" + accountId,
+        Long.toString(accountGeneration - 1));
+  }
+
+  private static Map<String, Object> tenantTuple(
+      long issuerGeneration,
+      long accountGeneration,
+      Optional<GameSessionAccountDelegationProfile.AccountSecurityCutoff> cutoff,
+      String tenant) {
+    Map<String, Object> tuple =
+        new LinkedHashMap<>(
+            GameSessionAccountDelegationProfile.authorityTuple(
+                issuerGeneration, accountGeneration, cutoff));
+    tuple.put("tenantAuthorityGeneration", Map.of(tenant, "5"));
+    tuple.put("membershipAuthorityGeneration", Map.of(tenant, "7"));
+    return tuple;
   }
 
   private void assertInvalidPrivateJson(String json) throws Exception {
