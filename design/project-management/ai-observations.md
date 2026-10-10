@@ -228,3 +228,9 @@ Entry format:
   - Observation: Revision protection prevented concurrent overwrite but did not prove preservation of the supplied text. A minimal `a—## h` example reproduces the local jq behavior: `index("##")` returns byte offset 4, while slicing from 4 uses character positions and drops both heading characters. The decision paragraph and historical tail remained present.
   - Expected pattern: Prefer exact string replacement or splitting at a verified delimiter, then read back both the new checkpoint and retained standing instructions rather than relying on the revision guard alone.
   - Current status: The heading was repaired through a second guarded revision and verified present. No standing decision or implementation authorization changed.
+
+- `2026-10-11`: Isolate a silent static-check failure before changing unrelated callers
+  - Context: A new test channel's no-op `shutdownNow` implementation made SpotBugs report no-effect calls in several existing client tests. After correcting the channel's shutdown state, the production-code task still failed without a visible finding in the ordinary combined output.
+  - Observation: The isolated owning `spotbugsMain` task with `--info` exposed an unnecessary constructor suppression, rather than another runtime defect. Passing test XML did not make the aggregate validation successful.
+  - Expected pattern: Keep the existing assertions and static rules; recover the owning task's diagnostic before editing unrelated callers or adding suppressions. Report test execution and aggregate-gate status separately.
+  - Current status: The channel fixture and unnecessary suppression are corrected, and the canonical Game Session gate passed. Physical PostgreSQL cases remain a separate proof requirement.

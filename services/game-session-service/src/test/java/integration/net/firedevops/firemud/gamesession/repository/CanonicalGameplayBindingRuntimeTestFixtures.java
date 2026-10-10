@@ -2,6 +2,8 @@ package net.firedevops.firemud.gamesession.repository;
 
 import java.time.Instant;
 import java.util.UUID;
+import net.firedevops.firemud.common.tenant.FreshTenantCreationEvidence;
+import net.firedevops.firemud.common.tenant.GameTenantCreationDigest;
 import net.firedevops.firemud.gamesession.dto.CanonicalInitialAdmissionOwnerProof.Outcome;
 import net.firedevops.firemud.gamesession.dto.CanonicalInitialAdmissionRequest.OriginKind;
 import net.firedevops.firemud.gamesession.dto.CanonicalPlayableTarget;
@@ -172,6 +174,37 @@ public final class CanonicalGameplayBindingRuntimeTestFixtures {
   }
 
   private static void seedFreshTenantAssociation(DSLContext tx, RuntimeTarget target) {
+    UUID sourceOperationId;
+    do {
+      sourceOperationId = UUID.randomUUID();
+    } while (sourceOperationId.equals(target.tenantAssociationOperationId()));
+    String requestDigest =
+        GameTenantCreationDigest.requestDigest(
+            target.targetNamespace(),
+            target.tenantAssociationRequestId(),
+            target.sourceGameTenantKey(),
+            "Fixture game",
+            null);
+    FreshTenantCreationEvidence syntheticSourceEvidence =
+        new FreshTenantCreationEvidence(
+            1,
+            target.targetNamespace(),
+            target.tenantAssociationRequestId(),
+            sourceOperationId,
+            requestDigest,
+            target.canonicalTenantId(),
+            target.sourceGameRowId(),
+            target.sourceGameTenantKey(),
+            "NEW_GAME_ROW",
+            GameTenantCreationDigest.evidenceDigest(
+                target.targetNamespace(),
+                target.tenantAssociationRequestId(),
+                sourceOperationId,
+                requestDigest,
+                target.canonicalTenantId(),
+                target.sourceGameRowId(),
+                target.sourceGameTenantKey(),
+                "NEW_GAME_ROW"));
     tx.execute(
         "INSERT INTO game_session_tenant_scope_reservation"
             + " (game_session_tenant_id, reservation_kind) VALUES (?, 'FRESH_SOURCE_BOUND')",
@@ -191,8 +224,13 @@ public final class CanonicalGameplayBindingRuntimeTestFixtures {
             + " (association_operation_id, target_namespace, association_request_id,"
             + " source_schema_version, source_target_namespace, source_request_id,"
             + " source_canonical_tenant_id, canonical_tenant_id, legacy_game_session_tenant_id,"
-            + " source_game_row_id, source_game_tenant_key, provenance_kind, association_kind)"
-            + " VALUES (?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, 'NEW_GAME_ROW', 'FRESH_SOURCE_BOUND')",
+            + " source_game_row_id, source_game_tenant_key, provenance_kind, association_kind,"
+            + " complete_source_evidence)"
+            + " VALUES (?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, 'NEW_GAME_ROW', 'FRESH_SOURCE_BOUND',"
+            + " jsonb_build_object('schemaVersion', 1, 'targetNamespace', ?,"
+            + " 'creationRequestId', ?, 'operationId', ?, 'requestDigest', ?,"
+            + " 'canonicalTenantId', ?, 'sourceGameRowId', ?, 'sourceGameTenantKey', ?,"
+            + " 'provenanceKind', 'NEW_GAME_ROW', 'evidenceDigest', ?))",
         target.tenantAssociationOperationId(),
         target.targetNamespace(),
         target.tenantAssociationRequestId(),
@@ -202,7 +240,15 @@ public final class CanonicalGameplayBindingRuntimeTestFixtures {
         target.canonicalTenantId(),
         target.gameSessionTenantId(),
         target.sourceGameRowId(),
-        target.sourceGameTenantKey());
+        target.sourceGameTenantKey(),
+        syntheticSourceEvidence.targetNamespace(),
+        syntheticSourceEvidence.creationRequestId().toString(),
+        syntheticSourceEvidence.operationId().toString(),
+        syntheticSourceEvidence.requestDigest(),
+        syntheticSourceEvidence.canonicalTenantId().toString(),
+        syntheticSourceEvidence.sourceGameRowId(),
+        syntheticSourceEvidence.sourceGameTenantKey(),
+        syntheticSourceEvidence.evidenceDigest());
   }
 
   private static void seedStartingRuntimeAndLaunch(DSLContext tx, RuntimeTarget target) {
