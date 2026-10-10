@@ -85,8 +85,10 @@ import tools.jackson.databind.json.JsonMapper;
 class AccountJwtReadinessStoragePostgresIntegrationTest {
   private static final String SCHEMA_PREFIX = "jwt_readiness_owner_storage";
   private static final int BULK_READINESS_PLAN_HEADROOM_SECONDS = 300;
-  private static final int DISPATCHED_RECOVERY_HEADROOM_SECONDS = 70;
-  private static final int DISPATCHED_RECOVERY_EXPIRY_WAIT_SECONDS = 75;
+  private static final int DISPATCHED_RECOVERY_EXPIRY_WAIT_SECONDS =
+      AccountJwtReadinessProbeRepository.MAX_VALIDATOR_CACHE_AGE_SECONDS
+          + AccountJwtReadinessProbeRepository.PROBE_LIFETIME_SECONDS
+          + 30;
   private static final AccountPostgresIntegrationFixture POSTGRES =
       new AccountPostgresIntegrationFixture();
   private static final Binding BINDING =
@@ -225,19 +227,17 @@ class AccountJwtReadinessStoragePostgresIntegrationTest {
             context,
             () -> owner.readiness().readCurrentInventoryObservationContext(BINDING, owner.trust()));
     long databaseNow = databaseNow(context);
-    long plannedAtEpochSecond =
-        databaseNow
-            - AccountJwtReadinessProbeRepository.MAX_VALIDATOR_CACHE_AGE_SECONDS
-            - AccountJwtReadinessProbeRepository.PROBE_LIFETIME_SECONDS
-            + DISPATCHED_RECOVERY_HEADROOM_SECONDS;
-    Instant plannedAt = Instant.ofEpochSecond(plannedAtEpochSecond);
+    Instant plannedAt = Instant.ofEpochSecond(databaseNow);
     InventorySnapshot inventory = completeInventorySnapshot(plannedAt, observationContext);
     ReadinessProbePlan plan =
         inTransaction(
             context,
             () -> owner.readiness().planCurrent(BINDING, owner.trust(), plannedAt, inventory));
     assertThat(plan.expiresAtEpochSecond())
-        .isEqualTo(databaseNow + DISPATCHED_RECOVERY_HEADROOM_SECONDS);
+        .isEqualTo(
+            databaseNow
+                + AccountJwtReadinessProbeRepository.MAX_VALIDATOR_CACHE_AGE_SECONDS
+                + AccountJwtReadinessProbeRepository.PROBE_LIFETIME_SECONDS);
     assertThat(plan.entries()).hasSize(8);
 
     Path privateMount = Files.createDirectory(tempDirectory.resolve("expiry-private-mount"));
