@@ -131,6 +131,24 @@ class GameInstanceServiceImplTest {
   }
 
   @Test
+  void legacyNumericLaunchFailsClosedBeforeMutation() {
+    StartSessionRequest request = new StartSessionRequest(1L, 3L, "cp-numeric-launch", 42L);
+    when(gameDesignClient.resolveLaunchDescriptor(
+            request.tenantId(), request.gameTemplateId(), request.controlPlaneRequestId()))
+        .thenReturn(
+            ResolveLaunchDescriptorResponse.newBuilder()
+                .setError(
+                    net.firedevops.firemud.shared.v1.ErrorDetail.newBuilder()
+                        .setCode("AUTHORED_WORLD_LAUNCH_BINDING_REQUIRED")
+                        .setMessage(
+                            "Canonical authored-world source binding is required to resolve a launch descriptor")
+                        .build())
+                .build());
+
+    assertNumericLaunchDeniedWithoutMutation(request);
+  }
+
+  @Test
   void runOwnedInitialLaunchExactRetryReturnsSameActiveTargetWithoutReplayingActivation() {
     StartSessionRequest request = new StartSessionRequest(1L, 3L, "run-owned-1", 42L);
     configureRunOwnedWorld(request);
@@ -374,7 +392,7 @@ class GameInstanceServiceImplTest {
                 .setLaunchDescriptor(
                     net.firedevops.firemud.gamedesign.v1.LaunchDescriptor.newBuilder()
                         .setLaunchDescriptorId("ld-pinned")
-                        .setTenantId("1")
+                        .setCanonicalTenantId("1")
                         .setGameTemplateId(3L)
                         .setControlPlaneRequestId("cp-pinned")
                         .setVersionId(11L)
@@ -1412,7 +1430,8 @@ class GameInstanceServiceImplTest {
                     .setLaunchDescriptor(
                         net.firedevops.firemud.gamedesign.v1.LaunchDescriptor.newBuilder()
                             .setLaunchDescriptorId("ld-" + invocation.getArgument(2, String.class))
-                            .setTenantId(Long.toString(invocation.getArgument(0, Long.class)))
+                            .setCanonicalTenantId(
+                                Long.toString(invocation.getArgument(0, Long.class)))
                             .setGameTemplateId(invocation.getArgument(1, Long.class))
                             .setControlPlaneRequestId(invocation.getArgument(2, String.class))
                             .setVersionId(11L)
@@ -1468,6 +1487,25 @@ class GameInstanceServiceImplTest {
                 .build());
   }
 
+  private void assertNumericLaunchDeniedWithoutMutation(StartSessionRequest request) {
+    Map<Long, GameInstance> before = new HashMap<>();
+    store.forEach((id, instance) -> before.put(id, copyOf(instance)));
+
+    IllegalArgumentException error =
+        assertThrows(IllegalArgumentException.class, () -> service.startSession(request));
+
+    assertEquals(
+        "AUTHORED_WORLD_LAUNCH_BINDING_REQUIRED: Canonical authored-world source binding is"
+            + " required to resolve a launch descriptor",
+        error.getMessage());
+    org.assertj.core.api.Assertions.assertThat(store).usingRecursiveComparison().isEqualTo(before);
+    verify(gameDesignClient)
+        .resolveLaunchDescriptor(
+            request.tenantId(), request.gameTemplateId(), request.controlPlaneRequestId());
+    verifyNoMoreInteractions(gameDesignClient);
+    verifyNoInteractions(repository, worldManagementClient, stateService);
+  }
+
   @Test
   void startSessionFailsWhenPublishedAssetProofDoesNotMatchReleaseBundle() {
     StartSessionRequest request = new StartSessionRequest(1L, 3L, "cp-proof", 42L);
@@ -1504,7 +1542,7 @@ class GameInstanceServiceImplTest {
                 .setLaunchDescriptor(
                     net.firedevops.firemud.gamedesign.v1.LaunchDescriptor.newBuilder()
                         .setLaunchDescriptorId("ld-cp-launch-tenant")
-                        .setTenantId("0")
+                        .setCanonicalTenantId("0")
                         .setGameTemplateId(3L)
                         .setControlPlaneRequestId("cp-launch-tenant")
                         .setVersionId(11L)

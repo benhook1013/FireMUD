@@ -209,7 +209,12 @@ import re
 import sys
 
 lines = pathlib.Path(sys.argv[1]).read_text(encoding="utf-8").splitlines()
-for service in ("entity-management-service", "world-management-service", "game-session-service"):
+for service in (
+    "entity-management-service",
+    "world-management-service",
+    "game-session-service",
+    "game-design-service",
+):
     headers = [index for index, line in enumerate(lines) if line == f"  {service}:"]
     assert len(headers) == 1, service
     start = headers[0]
