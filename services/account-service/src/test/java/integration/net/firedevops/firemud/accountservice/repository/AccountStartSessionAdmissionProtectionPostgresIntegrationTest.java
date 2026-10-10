@@ -6,9 +6,11 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.sql.Connection;
+import java.sql.SQLException;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
+import java.time.temporal.ChronoUnit;
 import java.util.Base64;
 import java.util.HexFormat;
 import java.util.LinkedHashMap;
@@ -30,6 +32,7 @@ import org.jooq.Field;
 import org.jooq.SQLDialect;
 import org.jooq.impl.DSL;
 import org.junit.jupiter.api.Test;
+import org.postgresql.util.PSQLException;
 import org.springframework.jdbc.datasource.DataSourceTransactionManager;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
 import org.springframework.jdbc.datasource.TransactionAwareDataSourceProxy;
@@ -558,6 +561,7 @@ class AccountStartSessionAdmissionProtectionPostgresIntegrationTest {
         dsl.fetchSingle(
                 "SELECT date_trunc('milliseconds', clock_timestamp()) + INTERVAL '123 microseconds'")
             .get(0, OffsetDateTime.class);
+    OffsetDateTime capturedAt = now.truncatedTo(ChronoUnit.MILLIS);
     UUID tenant = UUID.randomUUID();
     UUID instance = UUID.randomUUID();
     UUID actor = UUID.randomUUID();
@@ -723,7 +727,7 @@ class AccountStartSessionAdmissionProtectionPostgresIntegrationTest {
               "issuance_fence_source_version",
               1L,
               "captured_at",
-              now,
+              capturedAt,
               "snapshot_sha256",
               hash(snapshot),
               "canonical_snapshot_bytes",
@@ -864,7 +868,45 @@ class AccountStartSessionAdmissionProtectionPostgresIntegrationTest {
     Map<Field<?>, Object> values = new LinkedHashMap<>();
     for (int index = 0; index < fields.length; index += 2)
       values.put(DSL.field(DSL.name((String) fields[index])), fields[index + 1]);
-    dsl.insertInto(DSL.table(DSL.name(table))).set(values).execute();
+    try {
+      dsl.insertInto(DSL.table(DSL.name(table))).set(values).execute();
+    } catch (RuntimeException failure) {
+      String sqlState = "unavailable";
+      String constraint = "unavailable";
+      StringBuilder causeTypes = new StringBuilder();
+      var visited =
+          java.util.Collections.newSetFromMap(new java.util.IdentityHashMap<Throwable, Boolean>());
+      Throwable cause = failure;
+      int causeCount = 0;
+      while (cause != null && causeCount < 32 && visited.add(cause)) {
+        if (causeTypes.length() > 0) causeTypes.append("->");
+        causeTypes.append(diagnosticIdentifier(cause.getClass().getSimpleName()));
+        causeCount++;
+        if (cause instanceof SQLException sqlFailure && sqlFailure.getSQLState() != null) {
+          sqlState = sqlFailure.getSQLState();
+        }
+        if (cause instanceof PSQLException postgresFailure) {
+          var serverError = postgresFailure.getServerErrorMessage();
+          if (serverError != null && serverError.getConstraint() != null) {
+            constraint = serverError.getConstraint();
+          }
+        }
+        cause = cause.getCause();
+      }
+      if (cause != null) causeTypes.append("->truncated");
+      System.err.printf(
+          "StartSession admission fixture insert failed: "
+              + "table=%s SQLSTATE=%s constraint=%s causeTypes=%s%n",
+          diagnosticIdentifier(table),
+          diagnosticIdentifier(sqlState),
+          diagnosticIdentifier(constraint),
+          causeTypes);
+      throw failure;
+    }
+  }
+
+  private static String diagnosticIdentifier(String value) {
+    return value != null && value.matches("[A-Za-z0-9_]+") ? value : "unavailable";
   }
 
   private static Long sequenceValue(Fixture fixture) {

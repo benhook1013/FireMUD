@@ -25,6 +25,7 @@ import java.util.Base64;
 import java.util.HexFormat;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.UUID;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutionException;
@@ -240,10 +241,12 @@ class AccountStartSessionAdmissionProtectionAcquisitionPostgresIntegrationTest {
       Account changed = prepared.account.tx(prepared.account::changeRoleToAdmin);
       assertThat(changed.getRole()).isEqualTo("admin");
 
+      // Generic mutation history is retained, but does not prove a closed current-authority
+      // receipt.
       assertThatThrownBy(
               () -> prepared.acquire(prepared.acquisitionService(prepared.account.manager)))
           .isInstanceOf(IllegalStateException.class)
-          .hasMessage("Exact current authenticated initial creator required");
+          .hasMessageContaining("Account source event schema is unsupported");
 
       assertThat(rowCount(prepared.account.dsl, "account_start_session_admission_protections"))
           .isZero();
@@ -1031,8 +1034,8 @@ class AccountStartSessionAdmissionProtectionAcquisitionPostgresIntegrationTest {
   }
 
   private static void assertProtectionRowUnchanged(Record before, Record after) {
-    Object[] beforeValues = before.intoArray();
-    Object[] afterValues = after.intoArray();
+    Object[] beforeValues = Objects.requireNonNull(before.intoArray(), "before protection row");
+    Object[] afterValues = Objects.requireNonNull(after.intoArray(), "after protection row");
     assertThat(afterValues).hasSameSizeAs(beforeValues);
     for (int index = 0; index < beforeValues.length; index++) {
       if (beforeValues[index] instanceof byte[] bytes) {

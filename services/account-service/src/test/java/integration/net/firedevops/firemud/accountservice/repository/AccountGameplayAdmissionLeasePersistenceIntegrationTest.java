@@ -14,6 +14,7 @@ import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -75,13 +76,32 @@ class AccountGameplayAdmissionLeasePersistenceIntegrationTest {
       (context, failure) -> {
         // Only unexpected test failures reach this hook; expected assertThrows cases do not.
         try {
+          String testName = context.getRequiredTestMethod().getName();
+          boolean confirmationCase =
+              "staleSerializableConfirmationInsertRetriesInsteadOfLeakingUniqueViolation"
+                      .equals(testName)
+                  || "idlePrimaryConfirmationCapturesBeforeLocksAndIndependentlyReadsExactReceipt"
+                      .equals(testName);
           Throwable cause = failure;
+          var causeTypes = new ArrayList<String>();
           var visited =
               java.util.Collections.newSetFromMap(
                   new java.util.IdentityHashMap<Throwable, Boolean>());
           while (cause != null && visited.add(cause)) {
+            causeTypes.add(cause.getClass().getSimpleName());
             if (cause instanceof PSQLException postgresFailure) {
               var error = postgresFailure.getServerErrorMessage();
+              if (confirmationCase) {
+                System.err.printf(
+                    "Account admission confirmation failure for %s: causeTypes=%s "
+                        + "SQLSTATE=%s constraint=%s%n",
+                    testName,
+                    causeTypes,
+                    postgresFailure.getSQLState(),
+                    error == null
+                        ? "<unavailable>"
+                        : Objects.toString(error.getConstraint(), "<none>"));
+              }
               if ("23514".equals(postgresFailure.getSQLState())
                   && error != null
                   && ("account_admission_confirmation_wal_coverage".equals(error.getConstraint())
