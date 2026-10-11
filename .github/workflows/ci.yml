@@ -1007,7 +1007,7 @@ jobs:
         id: checks
         run: |
           echo "::group::Run Module Validation"
-          ./gradlew --refresh-dependencies :${{ matrix.module }}:check -PfullCheck
+          ./gradlew --refresh-dependencies --max-workers=2 '-Dorg.gradle.jvmargs=-Xmx2500m -Dfile.encoding=UTF-8' :${{ matrix.module }}:check -PfullCheck
           echo "::endgroup::"
 
       - name: 📦 Build Runtime JAR

@@ -144,7 +144,7 @@ ensure_compose_mtls_certs() {
     for service in "${services[@]}"; do
       local service_dir="$COMPOSE_MTLS_STAGE_DIR/$service"
       mkdir -m 755 -- "$service_dir"
-      if [[ "$service" == account-service || "$service" == game-session-service || "$service" == entity-management-service || "$service" == world-management-service ]]; then
+      if [[ "$service" == account-service || "$service" == game-session-service || "$service" == entity-management-service || "$service" == world-management-service || "$service" == game-design-service ]]; then
         "$GENERATOR" --workload \
           "$authority_dir/ca.crt" "$authority_dir/ca.key" \
           "$service_dir/client.crt" "$service_dir/client.key" dev "$service"
@@ -208,9 +208,20 @@ ensure_compose_mtls_certs() {
       echo "Compose mTLS workload fixture contains an unexpected service directory." >&2
       return 1
     fi
-    for service in account-service game-session-service entity-management-service world-management-service; do
+    for service in account-service game-session-service entity-management-service world-management-service game-design-service; do
       local san_output
       san_output="$(openssl x509 -in "$workloads_dir/$service/client.crt" -noout -ext subjectAltName)"
+      if [[ "$service" == game-design-service ]]; then
+        local -a gds_uri_sans=()
+        mapfile -t gds_uri_sans < <(printf '%s\n' "$san_output" \
+          | tr ',' '\n' | awk '{sub(/^[[:space:]]+/, ""); if ($0 ~ /^URI:/) print}')
+        if [[ "${#gds_uri_sans[@]}" -ne 1 \
+          || "${gds_uri_sans[0]:-}" != URI:spiffe://firemud/ns/dev/sa/game-design-service ]]; then
+          echo "Compose mTLS workload has the wrong SPIFFE identity: $service" >&2
+          return 1
+        fi
+        continue
+      fi
       if [[ "$san_output" != *"URI:spiffe://firemud/ns/dev/sa/$service"* ]]; then
         if [[ "$service" != world-management-service ]] \
           || ! migrate_legacy_world_management_leaf \

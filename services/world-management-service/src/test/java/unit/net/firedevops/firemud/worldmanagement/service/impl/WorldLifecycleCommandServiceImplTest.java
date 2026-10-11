@@ -10,6 +10,7 @@ import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -30,6 +31,8 @@ import net.firedevops.firemud.gamedesign.v1.VersionStateSnapshot;
 import net.firedevops.firemud.worldmanagement.client.EntityManagementClient;
 import net.firedevops.firemud.worldmanagement.client.GameDesignClient;
 import net.firedevops.firemud.worldmanagement.config.WorldProperties;
+import net.firedevops.firemud.worldmanagement.data.RunOwnedWorldLaunchEvidence;
+import net.firedevops.firemud.worldmanagement.data.RunOwnedWorldLaunchEvidenceProvider;
 import net.firedevops.firemud.worldmanagement.dto.PreparedWorldInstanceRequest;
 import net.firedevops.firemud.worldmanagement.entity.Room;
 import net.firedevops.firemud.worldmanagement.entity.RoomExit;
@@ -53,6 +56,8 @@ import org.springframework.transaction.support.TransactionCallback;
 import org.springframework.transaction.support.TransactionOperations;
 
 class WorldLifecycleCommandServiceImplTest {
+  private static final String PUBLISHED_RELEASE_BUNDLE_REF = "8ce42642-53ae-4d07-aab8-37c43ce66e0c";
+
   private WorldInstanceRepository worldInstanceRepository;
   private RegionInstanceRepository regionInstanceRepository;
   private ZoneRepository zoneRepository;
@@ -126,6 +131,7 @@ class WorldLifecycleCommandServiceImplTest {
                         .setManifestHash("manifest-11")
                         .addRequiredManifestAssetKeys("manifest.json")
                         .setGenerationConfigRevision("genrev-11")
+                        .setPublishedReleaseBundleRef(PUBLISHED_RELEASE_BUNDLE_REF)
                         .build())
                 .build());
     when(gameDesignClient.getVersionAssetArtifactState(42L, 11L))
@@ -202,7 +208,7 @@ class WorldLifecycleCommandServiceImplTest {
                 "{}",
                 "genrev-11",
                 77L,
-                "prb:42:11:77",
+                PUBLISHED_RELEASE_BUNDLE_REF,
                 77L));
 
     assertEquals("PREPARING", prepared.status());
@@ -253,9 +259,10 @@ class WorldLifecycleCommandServiceImplTest {
     instance.setControlPlaneRequestId("cp-1");
     instance.setLaunchDescriptorId("ld-1");
     instance.setVersionId(11L);
+    instance.setRuntimeFlagsJson("{}");
     instance.setGenerationConfigRevision("genrev-11");
     instance.setReleaseBundleId(77L);
-    instance.setPublishedReleaseBundleRef("prb:42:11:77");
+    instance.setPublishedReleaseBundleRef(PUBLISHED_RELEASE_BUNDLE_REF);
     instance.setVersionStateEpoch(77L);
     instance.setLifecycleEpoch(1L);
     instance.setStatus("PREPARING");
@@ -281,7 +288,7 @@ class WorldLifecycleCommandServiceImplTest {
     instance.setVersionId(11L);
     instance.setGenerationConfigRevision("genrev-11");
     instance.setReleaseBundleId(77L);
-    instance.setPublishedReleaseBundleRef("prb:42:11:77");
+    instance.setPublishedReleaseBundleRef(PUBLISHED_RELEASE_BUNDLE_REF);
     instance.setVersionStateEpoch(77L);
     instance.setLifecycleEpoch(1L);
     instance.setStatus("PREPARING");
@@ -307,7 +314,7 @@ class WorldLifecycleCommandServiceImplTest {
     instance.setVersionId(11L);
     instance.setReleaseBundleId(77L);
     instance.setGenerationConfigRevision("genrev-11");
-    instance.setPublishedReleaseBundleRef("prb:42:11:77");
+    instance.setPublishedReleaseBundleRef(PUBLISHED_RELEASE_BUNDLE_REF);
     instance.setVersionStateEpoch(77L);
     instance.setLifecycleEpoch(2L);
     instance.setStatus("ACTIVE");
@@ -553,12 +560,108 @@ class WorldLifecycleCommandServiceImplTest {
                         "{}",
                         "wrong-rev",
                         77L,
-                        "prb:42:11:77",
+                        PUBLISHED_RELEASE_BUNDLE_REF,
                         77L)));
 
     assertEquals(
         "RELEASE_ATTESTATION_MISMATCH: world activation request does not match the published release bundle",
         error.getMessage());
+  }
+
+  @Test
+  void prepareWorldInstanceRejectsEmptyPublishedReleaseBundleRef() {
+    when(worldInstanceRepository.findByTenantIdAndGameInstanceId(42L, 101L))
+        .thenReturn(Optional.empty());
+    when(gameDesignClient.getPublishedReleaseBundle(42L, 11L))
+        .thenReturn(
+            GetPublishedReleaseBundleResponse.newBuilder()
+                .setBundle(
+                    PublishedReleaseBundle.newBuilder()
+                        .setId(77L)
+                        .setVersionId(11L)
+                        .setAttestationSchemaVersion("v1")
+                        .setManifestHash("manifest-11")
+                        .setGenerationConfigRevision("genrev-11")
+                        .build())
+                .build());
+
+    IllegalArgumentException error =
+        assertThrows(
+            IllegalArgumentException.class,
+            () ->
+                service.prepareWorldInstance(
+                    new PreparedWorldInstanceRequest(
+                        42L,
+                        101L,
+                        7L,
+                        "cp-1",
+                        "ld-1",
+                        11L,
+                        null,
+                        "{}",
+                        "genrev-11",
+                        77L,
+                        PUBLISHED_RELEASE_BUNDLE_REF,
+                        77L)));
+
+    assertEquals(
+        "RELEASE_ATTESTATION_MISMATCH: published release bundle ref mismatch", error.getMessage());
+  }
+
+  @Test
+  void prepareWorldInstanceRejectsMismatchedPublishedReleaseBundleRef() {
+    when(worldInstanceRepository.findByTenantIdAndGameInstanceId(42L, 101L))
+        .thenReturn(Optional.empty());
+
+    IllegalArgumentException error =
+        assertThrows(
+            IllegalArgumentException.class,
+            () ->
+                service.prepareWorldInstance(
+                    new PreparedWorldInstanceRequest(
+                        42L,
+                        101L,
+                        7L,
+                        "cp-1",
+                        "ld-1",
+                        11L,
+                        null,
+                        "{}",
+                        "genrev-11",
+                        77L,
+                        "different-opaque-reference",
+                        77L)));
+
+    assertEquals(
+        "RELEASE_ATTESTATION_MISMATCH: published release bundle ref mismatch", error.getMessage());
+  }
+
+  @Test
+  void prepareWorldInstanceRejectsSynthesizedPublishedReleaseBundleRef() {
+    when(worldInstanceRepository.findByTenantIdAndGameInstanceId(42L, 101L))
+        .thenReturn(Optional.empty());
+
+    IllegalArgumentException error =
+        assertThrows(
+            IllegalArgumentException.class,
+            () ->
+                service.prepareWorldInstance(
+                    new PreparedWorldInstanceRequest(
+                        42L,
+                        101L,
+                        7L,
+                        "cp-1",
+                        "ld-1",
+                        11L,
+                        null,
+                        "{}",
+                        "genrev-11",
+                        77L,
+                        "prb:42:11:77",
+                        77L)));
+
+    assertEquals(
+        "RELEASE_ATTESTATION_MISMATCH: published release bundle ref mismatch", error.getMessage());
   }
 
   @Test
@@ -595,7 +698,7 @@ class WorldLifecycleCommandServiceImplTest {
                         "{}",
                         "genrev-11",
                         77L,
-                        "prb:42:11:77",
+                        PUBLISHED_RELEASE_BUNDLE_REF,
                         77L)));
 
     assertEquals(
@@ -638,12 +741,211 @@ class WorldLifecycleCommandServiceImplTest {
                         "{}",
                         "genrev-11",
                         77L,
-                        "prb:42:11:77",
+                        PUBLISHED_RELEASE_BUNDLE_REF,
                         77L)));
 
     assertEquals(
         "RELEASE_ATTESTATION_MISMATCH: published asset artifact state is missing required manifest asset keys",
         error.getMessage());
+  }
+
+  @Test
+  void fixturePrepareBindsOriginalPreparingEpochAndExactRetryDoesNotRepeatMaterialization() {
+    RunOwnedWorldLaunchEvidenceProvider provider = mock(RunOwnedWorldLaunchEvidenceProvider.class);
+    RunOwnedWorldLaunchEvidence evidence = mock(RunOwnedWorldLaunchEvidence.class);
+    when(provider.isEnabled()).thenReturn(true);
+    when(provider.requireAuthenticatedEvidence()).thenReturn(evidence);
+    when(evidence.bindingDigest(any(PreparedWorldInstanceRequest.class), anyLong()))
+        .thenReturn("a".repeat(64));
+    AtomicReference<WorldInstance> persisted = new AtomicReference<>();
+    when(worldInstanceRepository.findRunOwnedFixtureByTenantIdAndControlPlaneRequestIdForUpdate(
+            42L, "cp-1"))
+        .thenAnswer(invocation -> Optional.ofNullable(persisted.get()));
+    when(worldInstanceRepository.findByTenantIdAndGameInstanceIdForUpdate(42L, 101L))
+        .thenAnswer(invocation -> Optional.ofNullable(persisted.get()));
+    when(worldInstanceRepository.save(any(WorldInstance.class)))
+        .thenAnswer(
+            invocation -> {
+              WorldInstance submitted = invocation.getArgument(0);
+              submitted.setId(101L);
+              persisted.set(copyWorldInstance(submitted));
+              return submitted;
+            });
+    WorldLifecycleCommandServiceImpl fixtureService = fixtureService(provider);
+    PreparedWorldInstanceRequest request = ordinaryPreparedRequest();
+
+    var prepared = fixtureService.prepareWorldInstance(request);
+
+    assertEquals("PREPARING", prepared.status());
+    assertEquals(1L, prepared.lifecycleEpoch());
+    assertEquals("a".repeat(64), persisted.get().getRunOwnedFixtureBindingSha256());
+    assertEquals(1L, persisted.get().getRunOwnedFixturePreparingLifecycleEpoch());
+    verify(evidence).requireMatches(request);
+    verify(worldInstanceRepository).lockRunOwnedFixtureOperation(42L, "cp-1");
+    verify(gameDesignClient, never()).getPublishedReleaseBundle(42L, 11L);
+    verify(gameDesignClient, never()).getVersionAssetArtifactState(42L, 11L);
+    verify(gameDesignClient, never()).getVersionState(42L, 11L);
+
+    var retry = fixtureService.prepareWorldInstance(request);
+
+    assertEquals(prepared, retry);
+    verify(worldInstanceRepository, org.mockito.Mockito.times(1)).save(any(WorldInstance.class));
+    verify(evidence, org.mockito.Mockito.times(2)).requireMatches(request);
+  }
+
+  @Test
+  void fixtureOperationCannotBeAssignedToASecondWorldInstance() {
+    RunOwnedWorldLaunchEvidenceProvider provider = mock(RunOwnedWorldLaunchEvidenceProvider.class);
+    RunOwnedWorldLaunchEvidence evidence = mock(RunOwnedWorldLaunchEvidence.class);
+    when(provider.isEnabled()).thenReturn(true);
+    when(provider.requireAuthenticatedEvidence()).thenReturn(evidence);
+    when(evidence.bindingDigest(any(PreparedWorldInstanceRequest.class), anyLong()))
+        .thenReturn("b".repeat(64));
+    WorldInstance operationInstance = new WorldInstance();
+    operationInstance.setGameInstanceId(101L);
+    when(worldInstanceRepository.findRunOwnedFixtureByTenantIdAndControlPlaneRequestIdForUpdate(
+            42L, "cp-1"))
+        .thenReturn(Optional.of(operationInstance));
+
+    IllegalArgumentException error =
+        assertThrows(
+            IllegalArgumentException.class,
+            () ->
+                fixtureService(provider)
+                    .prepareWorldInstance(
+                        new PreparedWorldInstanceRequest(
+                            42L,
+                            202L,
+                            7L,
+                            "cp-1",
+                            "ld-1",
+                            11L,
+                            null,
+                            "{}",
+                            "genrev-11",
+                            77L,
+                            PUBLISHED_RELEASE_BUNDLE_REF,
+                            77L)));
+
+    assertTrue(error.getMessage().startsWith("RUN_OWNED_WORLD_LAUNCH_IDENTITY_CONFLICT:"));
+    verify(worldInstanceRepository, never()).save(any(WorldInstance.class));
+    verify(gameDesignClient, never()).getPublishedReleaseBundle(42L, 11L);
+  }
+
+  @Test
+  void fixtureActivationVerifiesBindingThenAllowsOnlyOriginalEpochActiveReplayWithoutWrite() {
+    RunOwnedWorldLaunchEvidenceProvider provider = mock(RunOwnedWorldLaunchEvidenceProvider.class);
+    RunOwnedWorldLaunchEvidence evidence = mock(RunOwnedWorldLaunchEvidence.class);
+    when(provider.isEnabled()).thenReturn(true);
+    when(provider.requireAuthenticatedEvidence()).thenReturn(evidence);
+    when(evidence.bindingDigest(any(PreparedWorldInstanceRequest.class), anyLong()))
+        .thenReturn("c".repeat(64));
+    WorldInstance preparing = boundFixtureInstance("PREPARING", 1L);
+    AtomicReference<WorldInstance> persisted = new AtomicReference<>(copyWorldInstance(preparing));
+    when(worldInstanceRepository.findByTenantIdAndGameInstanceId(42L, 101L))
+        .thenAnswer(invocation -> Optional.of(copyWorldInstance(persisted.get())));
+    when(worldInstanceRepository.findByTenantIdAndGameInstanceIdForUpdate(42L, 101L))
+        .thenAnswer(invocation -> Optional.of(copyWorldInstance(persisted.get())));
+    when(worldInstanceRepository.save(any(WorldInstance.class)))
+        .thenAnswer(
+            invocation -> {
+              WorldInstance submitted = invocation.getArgument(0);
+              submitted.setRowVersion(submitted.getRowVersion() + 1L);
+              persisted.set(copyWorldInstance(submitted));
+              return copyWorldInstance(submitted);
+            });
+    WorldLifecycleCommandServiceImpl fixtureService = fixtureService(provider);
+
+    var active = fixtureService.activatePreparedWorldInstance(42L, 101L, 1L);
+    assertEquals("ACTIVE", active.status());
+    assertEquals(2L, active.lifecycleEpoch());
+    assertEquals("c".repeat(64), persisted.get().getRunOwnedFixtureBindingSha256());
+
+    var replay = fixtureService.activatePreparedWorldInstance(42L, 101L, 1L);
+    assertEquals(active, replay);
+    verify(worldInstanceRepository, org.mockito.Mockito.times(1)).save(any(WorldInstance.class));
+    verify(provider, org.mockito.Mockito.times(2)).requireAuthenticatedEvidence();
+    verify(gameDesignClient, never()).getPublishedReleaseBundle(42L, 11L);
+  }
+
+  @Test
+  void configuredFixtureRejectsUnboundExistingRowsAndStaleActiveReplayEpoch() {
+    RunOwnedWorldLaunchEvidenceProvider provider = mock(RunOwnedWorldLaunchEvidenceProvider.class);
+    RunOwnedWorldLaunchEvidence evidence = mock(RunOwnedWorldLaunchEvidence.class);
+    when(provider.isEnabled()).thenReturn(true);
+    when(provider.requireAuthenticatedEvidence()).thenReturn(evidence);
+    when(evidence.bindingDigest(any(PreparedWorldInstanceRequest.class), anyLong()))
+        .thenReturn("c".repeat(64));
+    WorldInstance unbound = activeWorldInstance();
+    when(worldInstanceRepository.findByTenantIdAndGameInstanceIdForUpdate(42L, 101L))
+        .thenReturn(Optional.of(unbound));
+
+    assertThrows(
+        IllegalArgumentException.class,
+        () -> fixtureService(provider).activatePreparedWorldInstance(42L, 101L, 2L));
+    verify(gameDesignClient, never()).getPublishedReleaseBundle(42L, 11L);
+
+    WorldInstance active = boundFixtureInstance("ACTIVE", 2L);
+    when(worldInstanceRepository.findByTenantIdAndGameInstanceId(42L, 101L))
+        .thenReturn(Optional.of(active));
+    when(worldInstanceRepository.findByTenantIdAndGameInstanceIdForUpdate(42L, 101L))
+        .thenReturn(Optional.of(active));
+    IllegalArgumentException stale =
+        assertThrows(
+            IllegalArgumentException.class,
+            () -> fixtureService(provider).activatePreparedWorldInstance(42L, 101L, 0L));
+    assertTrue(stale.getMessage().startsWith("WORLD_INSTANCE_LIFECYCLE_STALE:"));
+    verify(worldInstanceRepository, never()).save(any(WorldInstance.class));
+  }
+
+  private WorldLifecycleCommandServiceImpl fixtureService(
+      RunOwnedWorldLaunchEvidenceProvider provider) {
+    WorldProperties worldProperties = new WorldProperties();
+    worldProperties.setLocalShardId(7);
+    WorldLifecycleCommandServiceImpl fixtureService =
+        new WorldLifecycleCommandServiceImpl(
+            worldInstanceRepository,
+            regionInstanceRepository,
+            zoneRepository,
+            zoneInstanceRepository,
+            roomRepository,
+            roomExitRepository,
+            roomInstanceRepository,
+            roomInstanceExitRepository,
+            worldEventRepository,
+            worldProperties,
+            gameDesignClient,
+            entityManagementClient,
+            new SimpleMeterRegistry(),
+            (TransactionOperations) null,
+            provider);
+    fixtureService.initMetrics();
+    return fixtureService;
+  }
+
+  private static PreparedWorldInstanceRequest ordinaryPreparedRequest() {
+    return new PreparedWorldInstanceRequest(
+        42L,
+        101L,
+        7L,
+        "cp-1",
+        "ld-1",
+        11L,
+        null,
+        "{}",
+        "genrev-11",
+        77L,
+        PUBLISHED_RELEASE_BUNDLE_REF,
+        77L);
+  }
+
+  private WorldInstance boundFixtureInstance(String status, long lifecycleEpoch) {
+    WorldInstance instance = activeWorldInstance();
+    instance.setLifecycleEpoch(lifecycleEpoch);
+    instance.setStatus(status);
+    instance.setRunOwnedFixtureBindingSha256("c".repeat(64));
+    instance.setRunOwnedFixturePreparingLifecycleEpoch(1L);
+    return instance;
   }
 
   private WorldInstance activeWorldInstance() {
@@ -655,9 +957,10 @@ class WorldLifecycleCommandServiceImplTest {
     instance.setControlPlaneRequestId("cp-1");
     instance.setLaunchDescriptorId("ld-1");
     instance.setVersionId(11L);
+    instance.setRuntimeFlagsJson("{}");
     instance.setReleaseBundleId(77L);
     instance.setGenerationConfigRevision("genrev-11");
-    instance.setPublishedReleaseBundleRef("prb:42:11:77");
+    instance.setPublishedReleaseBundleRef(PUBLISHED_RELEASE_BUNDLE_REF);
     instance.setVersionStateEpoch(77L);
     instance.setLifecycleEpoch(2L);
     instance.setStatus("ACTIVE");
@@ -716,6 +1019,9 @@ class WorldLifecycleCommandServiceImplTest {
     copy.setControlPlaneRequestId(source.getControlPlaneRequestId());
     copy.setLaunchDescriptorId(source.getLaunchDescriptorId());
     copy.setVersionId(source.getVersionId());
+    copy.setRunOwnedFixtureBindingSha256(source.getRunOwnedFixtureBindingSha256());
+    copy.setRunOwnedFixturePreparingLifecycleEpoch(
+        source.getRunOwnedFixturePreparingLifecycleEpoch());
     copy.setScriptPatchVersion(source.getScriptPatchVersion());
     copy.setRuntimeFlagsJson(source.getRuntimeFlagsJson());
     copy.setGenerationConfigRevision(source.getGenerationConfigRevision());

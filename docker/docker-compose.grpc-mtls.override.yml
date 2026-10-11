@@ -1,7 +1,7 @@
 # Canonical fresh/image/restart smoke profile. This deliberately overrides the
 # ordinary local plaintext profile. Account, Game Session, Entity Management,
-# and World Management receive distinct dev-namespace SPIFFE leaves; the other
-# seven local apps share the local client leaf. Each app gets only its scoped
+# World Management, and Game Design receive distinct dev-namespace SPIFFE leaves;
+# the other six local apps share the local client leaf. Each app gets only its scoped
 # read-only leaf mount and the public CA certificate under /app/certs. The CA
 # private key stays host-only and is never mounted into an app.
 x-grpc-mtls-environment: &grpc-mtls-environment
@@ -41,8 +41,40 @@ services:
   game-design-service:
     environment:
       <<: *grpc-mtls-environment
+      FIREMUD_GRPC_WORKLOAD_NAMESPACE: dev
+      FIREMUD_SMOKE_RUN_ID: ${FIREMUD_SMOKE_RUN_ID:-}
+      FIREMUD_SMOKE_COMPOSE_PROJECT_NAME: ${FIREMUD_SMOKE_COMPOSE_PROJECT_NAME:-}
+      FIREMUD_SMOKE_INITIAL_ADMISSION_FIXTURE_ENABLED: ${FIREMUD_SMOKE_INITIAL_ADMISSION_FIXTURE_ENABLED:-false}
+      FIREMUD_SMOKE_INITIAL_ADMISSION_CAPABILITY_PATH: /app/run-owned-initial-admission-capability.json
+      FIREMUD_SMOKE_AUTHORED_WORLD_SOURCE_RECEIPT_PATH: /app/run-owned-authored-world-source/source-receipt.json
+      FIREMUD_SMOKE_GAME_SESSION_LEAF_CERT_PATH: /app/game-session-fixture-client.crt
+      FIREMUD_SMOKE_WORLD_MANAGEMENT_LEAF_CERT_PATH: /app/world-management-fixture-client.crt
     volumes:
       - ${FIREMUD_COMPOSE_GRPC_MTLS_CERT_ROOT:?canonical smoke must set a run-owned mTLS certificate root}/workloads/game-design-service:/app/certs:ro
+      - type: bind
+        source: ${FIREMUD_SMOKE_INITIAL_ADMISSION_CAPABILITY_HOST_PATH:-/dev/null}
+        target: /app/run-owned-initial-admission-capability.json
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${FIREMUD_COMPOSE_GRPC_MTLS_CERT_ROOT:?canonical smoke must set a run-owned mTLS certificate root}/workloads/game-session-service/client.crt
+        target: /app/game-session-fixture-client.crt
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${FIREMUD_COMPOSE_GRPC_MTLS_CERT_ROOT:?canonical smoke must set a run-owned mTLS certificate root}/workloads/world-management-service/client.crt
+        target: /app/world-management-fixture-client.crt
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${FIREMUD_SMOKE_AUTHORED_WORLD_SOURCE_RECEIPT_DIR_HOST_PATH:?run-owned smoke must prepare a claimed authored-world receipt directory}
+        target: /app/run-owned-authored-world-source
+        read_only: false
+        bind:
+          create_host_path: false
 
   game-logic-service:
     environment:
@@ -58,11 +90,18 @@ services:
       FIREMUD_SMOKE_COMPOSE_PROJECT_NAME: ${FIREMUD_SMOKE_COMPOSE_PROJECT_NAME:-}
       FIREMUD_SMOKE_INITIAL_ADMISSION_FIXTURE_ENABLED: ${FIREMUD_SMOKE_INITIAL_ADMISSION_FIXTURE_ENABLED:-false}
       FIREMUD_SMOKE_INITIAL_ADMISSION_CAPABILITY_PATH: /app/run-owned-initial-admission-capability.json
+      FIREMUD_SMOKE_AUTHORED_WORLD_SOURCE_RECEIPT_PATH: /app/run-owned-authored-world-source/source-receipt.json
     volumes:
       - ${FIREMUD_COMPOSE_GRPC_MTLS_CERT_ROOT:?canonical smoke must set a run-owned mTLS certificate root}/workloads/game-session-service:/app/certs:ro
       - type: bind
         source: ${FIREMUD_SMOKE_INITIAL_ADMISSION_CAPABILITY_HOST_PATH:-/dev/null}
         target: /app/run-owned-initial-admission-capability.json
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${FIREMUD_SMOKE_AUTHORED_WORLD_SOURCE_RECEIPT_DIR_HOST_PATH:?run-owned smoke must prepare a claimed authored-world receipt directory}
+        target: /app/run-owned-authored-world-source
         read_only: true
         bind:
           create_host_path: false
@@ -89,5 +128,22 @@ services:
     environment:
       <<: *grpc-mtls-environment
       FIREMUD_GRPC_WORKLOAD_NAMESPACE: dev
+      FIREMUD_SMOKE_RUN_ID: ${FIREMUD_SMOKE_RUN_ID:-}
+      FIREMUD_SMOKE_COMPOSE_PROJECT_NAME: ${FIREMUD_SMOKE_COMPOSE_PROJECT_NAME:-}
+      FIREMUD_SMOKE_INITIAL_ADMISSION_FIXTURE_ENABLED: ${FIREMUD_SMOKE_INITIAL_ADMISSION_FIXTURE_ENABLED:-false}
+      FIREMUD_SMOKE_INITIAL_ADMISSION_CAPABILITY_PATH: /app/run-owned-initial-admission-capability.json
+      FIREMUD_SMOKE_AUTHORED_WORLD_SOURCE_RECEIPT_PATH: /app/run-owned-authored-world-source/source-receipt.json
     volumes:
       - ${FIREMUD_COMPOSE_GRPC_MTLS_CERT_ROOT:?canonical smoke must set a run-owned mTLS certificate root}/workloads/world-management-service:/app/certs:ro
+      - type: bind
+        source: ${FIREMUD_SMOKE_INITIAL_ADMISSION_CAPABILITY_HOST_PATH:-/dev/null}
+        target: /app/run-owned-initial-admission-capability.json
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${FIREMUD_SMOKE_AUTHORED_WORLD_SOURCE_RECEIPT_DIR_HOST_PATH:?run-owned smoke must prepare a claimed authored-world receipt directory}
+        target: /app/run-owned-authored-world-source
+        read_only: true
+        bind:
+          create_host_path: false
