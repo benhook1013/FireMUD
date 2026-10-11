@@ -122,7 +122,8 @@ class AccountStartSessionOperatorAuthorizationRepositoryIntegrationTest {
                             + "SET bundle_linearization = ? WHERE control_plane_request_id = ?",
                         "123456788",
                         REQUEST_ID)),
-        "StartSession authorization evidence is immutable except one exact redemption");
+        "StartSession authorization evidence is immutable except one exact redemption "
+            + "or expired envelope erasure");
     assertThat(
             context.inTransaction(
                 () ->
@@ -627,7 +628,8 @@ class AccountStartSessionOperatorAuthorizationRepositoryIntegrationTest {
                             + "SET authority_evidence_bundle = ? WHERE control_plane_request_id = ?",
                         bytes("rewritten"),
                         REQUEST_ID)),
-        "StartSession authorization evidence is immutable except one exact redemption");
+        "StartSession authorization evidence is immutable except one exact redemption "
+            + "or expired envelope erasure");
     assertImmutableGuardRejected(
         () ->
             context.inTransactionWithoutResult(
@@ -801,7 +803,7 @@ class AccountStartSessionOperatorAuthorizationRepositoryIntegrationTest {
   @Test
   void v126RetainedEnvelopeSurvivesAdditiveErasureMigration() {
     Context context = contextAt("126");
-    IssuanceCandidate candidate = candidate(context, tuple());
+    IssuanceCandidate candidate = legacyCandidate(context, tuple());
     insertV126Row(context, candidate);
 
     Flyway.configure()
@@ -828,7 +830,7 @@ class AccountStartSessionOperatorAuthorizationRepositoryIntegrationTest {
   @Test
   void v1262RetainedMaximumLegacyEnvelopeSurvivesForwardSizeMigration() {
     Context context = contextAt("126.2");
-    IssuanceCandidate base = candidate(context, tuple());
+    IssuanceCandidate base = legacyCandidate(context, tuple());
     byte[] retainedLegacyEnvelope = new byte[64 * 1024];
     Arrays.fill(retainedLegacyEnvelope, (byte) 0x2d);
     IssuanceCandidate legacy = withEnvelope(base, retainedLegacyEnvelope);
@@ -1182,6 +1184,28 @@ class AccountStartSessionOperatorAuthorizationRepositoryIntegrationTest {
         issuedAt.plusSeconds(210));
   }
 
+  private static IssuanceCandidate legacyCandidate(
+      Context context, StartSessionPreAuthorizationReservationTuple tuple) {
+    Instant issuedAt = canonicalDatabaseNow(context).minusSeconds(2);
+    BundleReference reference = bundleReference(7L);
+    return new IssuanceCandidate(
+        tuple.controlPlaneRequestId(),
+        canonicalBytes(tuple),
+        tuple.mutationDigest(),
+        ISSUER_URI,
+        RESERVATION_OWNER_ID,
+        3L,
+        ISSUANCE_OPERATION_ID,
+        7L,
+        reference,
+        authorityBundle(tuple, ISSUANCE_OPERATION_ID, 7L, issuedAt.plusSeconds(180), reference),
+        "arfp/v1/key-1/" + "a".repeat(64),
+        bytes("encrypted-original-response-envelope"),
+        issuedAt,
+        issuedAt.plusSeconds(180),
+        issuedAt.plusSeconds(210));
+  }
+
   private static IssuanceCandidate withEnvelope(
       IssuanceCandidate source, byte[] encryptedResponseEnvelope) {
     return new IssuanceCandidate(
@@ -1278,6 +1302,7 @@ class AccountStartSessionOperatorAuthorizationRepositoryIntegrationTest {
 
   private static IssuanceCandidate expiredCandidate(
       StartSessionPreAuthorizationReservationTuple tuple, Instant databaseNow) {
+    UUID operationId = UUID.randomUUID();
     String uniqueFingerprint =
         "arfp/v1/key-1/"
             + UUID.randomUUID().toString().replace("-", "")
@@ -1289,11 +1314,10 @@ class AccountStartSessionOperatorAuthorizationRepositoryIntegrationTest {
         ISSUER_URI,
         RESERVATION_OWNER_ID,
         3L,
-        ISSUANCE_OPERATION_ID,
+        operationId,
         31L,
         bundleReference(7L),
-        authorityBundle(
-            tuple, ISSUANCE_OPERATION_ID, 31L, databaseNow.minusSeconds(60), bundleReference(7L)),
+        authorityBundle(tuple, operationId, 31L, databaseNow.minusSeconds(60), bundleReference(7L)),
         uniqueFingerprint,
         bytes("expired-original-response-envelope"),
         databaseNow.minusSeconds(240),
