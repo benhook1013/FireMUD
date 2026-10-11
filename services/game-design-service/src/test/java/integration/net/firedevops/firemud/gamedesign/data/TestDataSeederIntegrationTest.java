@@ -2,6 +2,9 @@ package integration.net.firedevops.firemud.gamedesign.data;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.doAnswer;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
@@ -16,22 +19,30 @@ import java.util.HashSet;
 import java.util.HexFormat;
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicInteger;
+import net.firedevops.firemud.common.gamedesign.AuthoredWorldLaunchDescriptorGrpcCodec;
+import net.firedevops.firemud.common.tenant.AuthoredWorldSourceDigest;
 import net.firedevops.firemud.common.tenant.AuthoredWorldSourceEvidence;
 import net.firedevops.firemud.gamedesign.GameDesignServiceApplication;
 import net.firedevops.firemud.gamedesign.data.TestDataSeeder;
 import net.firedevops.firemud.gamedesign.dto.PublishedReleaseBundleDto;
+import net.firedevops.firemud.gamedesign.dto.ResolvedLaunchDescriptorDto;
 import net.firedevops.firemud.gamedesign.dto.VersionAssetArtifactStateDto;
 import net.firedevops.firemud.gamedesign.dto.VersionStateDto;
 import net.firedevops.firemud.gamedesign.repository.GameAuthoredWorldSourceRepository;
 import net.firedevops.firemud.gamedesign.repository.GameRepository;
 import net.firedevops.firemud.gamedesign.repository.GameTemplateRepository;
+import net.firedevops.firemud.gamedesign.repository.LaunchDescriptorRepository;
 import net.firedevops.firemud.gamedesign.repository.VersionAssetArtifactRepository;
 import net.firedevops.firemud.gamedesign.repository.VersionRepository;
+import net.firedevops.firemud.gamedesign.service.LaunchDescriptorService;
 import net.firedevops.firemud.gamedesign.service.VersionAssetArtifactService;
 import net.firedevops.firemud.gamedesign.service.VersionService;
 import net.firedevops.firemud.gamedesign.service.impl.GameDesignLaunchReadProjectionMapper;
+import net.firedevops.firemud.gamedesign.v1.LaunchDescriptor;
 import net.firedevops.firemud.gamedesign.v1.PublishedReleaseBundle;
 import net.firedevops.firemud.gamedesign.v1.VersionAssetArtifactState;
 import net.firedevops.firemud.gamedesign.v1.VersionStateSnapshot;
@@ -54,6 +65,7 @@ import org.springframework.context.annotation.Import;
 import org.springframework.core.Ordered;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
+import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
 import org.springframework.test.util.ReflectionTestUtils;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.TransactionDefinition;
@@ -88,6 +100,8 @@ import tools.jackson.databind.ObjectMapper;
 class TestDataSeederIntegrationTest {
   private static final String NAMESPACE = "dev";
   private static final String SESSION_URI_SAN = "spiffe://firemud/ns/dev/sa/game-session-service";
+  private static final String WORLD_MANAGEMENT_URI_SAN =
+      "spiffe://firemud/ns/dev/sa/world-management-service";
   private static final Table<?> SOURCE_OPERATIONS =
       DSL.table(DSL.name("game_design_authored_world_source_operations"));
   private static final Table<?> SOURCE_DELIVERIES =
@@ -111,13 +125,15 @@ class TestDataSeederIntegrationTest {
 
   @Autowired private TestDataSeeder seeder;
   @Autowired private Flyway flyway;
-  @Autowired private GameAuthoredWorldSourceRepository authoredWorldSourceRepository;
+  @MockitoSpyBean private GameAuthoredWorldSourceRepository authoredWorldSourceRepository;
   @Autowired private GameRepository gameRepository;
   @Autowired private GameTemplateRepository templateRepository;
   @Autowired private VersionRepository versionRepository;
   @Autowired private VersionAssetArtifactRepository artifactRepository;
   @Autowired private VersionService versionService;
   @Autowired private VersionAssetArtifactService artifactService;
+  @Autowired private LaunchDescriptorRepository launchDescriptorRepository;
+  @MockitoSpyBean private LaunchDescriptorService launchDescriptorService;
   @Autowired private PlatformTransactionManager transactionManager;
   @Autowired private DSLContext dsl;
   @Autowired private ObjectMapper objectMapper;
@@ -151,6 +167,9 @@ class TestDataSeederIntegrationTest {
         .isZero();
     assertThat(dsl.fetchCount(SOURCE_DELIVERIES, REGISTRATION_REQUEST_ID.eq(fixture.operationId())))
         .isZero();
+    assertThat(
+            launchDescriptorRepository.findByPrivateRequest("1", fixture.operationId().toString()))
+        .isEmpty();
 
     seeder.run(new DefaultApplicationArguments(new String[] {}));
 
@@ -163,7 +182,7 @@ class TestDataSeederIntegrationTest {
             PosixFilePermission.GROUP_READ,
             PosixFilePermission.OTHERS_READ);
     JsonNode envelope = objectMapper.readTree(Files.readAllBytes(receiptPath));
-    assertThat(envelope.size()).isEqualTo(10);
+    assertThat(envelope.size()).isEqualTo(12);
     assertThat(fieldNames(envelope))
         .isEqualTo(
             Set.of(
@@ -174,6 +193,8 @@ class TestDataSeederIntegrationTest {
                 "ownerService",
                 "gameSessionUriSan",
                 "gameSessionLeafSha256",
+                "worldManagementUriSan",
+                "worldManagementLeafSha256",
                 "caCertificateSha256",
                 "sourceEvidence",
                 "launchReadEvidence"));
@@ -188,6 +209,10 @@ class TestDataSeederIntegrationTest {
     assertThat(envelope.get("gameSessionUriSan").textValue()).isEqualTo(SESSION_URI_SAN);
     assertThat(envelope.get("gameSessionLeafSha256").textValue())
         .isEqualTo(fixture.gameSessionLeafSha256());
+    assertThat(envelope.get("worldManagementUriSan").textValue())
+        .isEqualTo(WORLD_MANAGEMENT_URI_SAN);
+    assertThat(envelope.get("worldManagementLeafSha256").textValue())
+        .isEqualTo(fixture.worldManagementLeafSha256());
     assertThat(envelope.get("caCertificateSha256").textValue())
         .isEqualTo(fixture.caCertificateSha256());
     JsonNode sourceJson = envelope.get("sourceEvidence");
@@ -242,7 +267,7 @@ class TestDataSeederIntegrationTest {
         .isNull();
 
     JsonNode launchJson = envelope.get("launchReadEvidence");
-    assertThat(launchJson.size()).isEqualTo(5);
+    assertThat(launchJson.size()).isEqualTo(6);
     assertThat(fieldNames(launchJson))
         .isEqualTo(
             Set.of(
@@ -250,7 +275,8 @@ class TestDataSeederIntegrationTest {
                 "gameTemplateId",
                 "publishedReleaseBundleBase64",
                 "versionAssetArtifactStateBase64",
-                "versionStateBase64"));
+                "versionStateBase64",
+                "launchDescriptorBase64"));
     assertThat(launchJson.get("schema").textValue())
         .isEqualTo("firemud.run-owned-v1-launch-read-evidence.v1");
     var template = templateRepository.findByTenantIdAndName("1", "Default Template").orElseThrow();
@@ -303,6 +329,46 @@ class TestDataSeederIntegrationTest {
     assertThat(versionProof.getVersionStateEpoch()).isEqualTo(version.getVersionStateEpoch());
     assertThat(versionProof.getUnknownFields().asMap()).isEmpty();
 
+    var persistedDescriptor =
+        launchDescriptorRepository
+            .findBoundByRequest(
+                NAMESPACE, actual.canonicalTenantId(), fixture.operationId().toString())
+            .orElseThrow();
+    assertThat(persistedDescriptor.getOutcomeStatus()).isEqualTo("SUCCESS");
+    assertThat(persistedDescriptor.getAuthoredWorldSourceEvidenceDigest())
+        .isEqualTo(actual.evidenceDigest());
+    ResolvedLaunchDescriptorDto descriptorDto =
+        launchDescriptorService.getLaunchDescriptor(
+            UUID.randomUUID(),
+            actual.canonicalTenantId(),
+            actual.worldSlug(),
+            fixture.operationId().toString(),
+            persistedDescriptor.getRequestDigest(),
+            persistedDescriptor.getResultDigest());
+    assertThat(descriptorDto.authoredWorldBinding().request().controlPlaneRequestId())
+        .isEqualTo(fixture.operationId().toString());
+    assertThat(descriptorDto.authoredWorldBinding().authoredWorldSourceEvidenceDigest())
+        .isEqualTo(actual.evidenceDigest());
+    String descriptorBase64 = launchJson.get("launchDescriptorBase64").textValue();
+    byte[] descriptorBytes = Base64.getDecoder().decode(descriptorBase64);
+    assertThat(Base64.getEncoder().encodeToString(descriptorBytes)).isEqualTo(descriptorBase64);
+    LaunchDescriptor descriptorProof = LaunchDescriptor.parseFrom(descriptorBytes);
+    assertThat(descriptorProof)
+        .isEqualTo(
+            AuthoredWorldLaunchDescriptorGrpcCodec.toLaunchDescriptorMessage(
+                descriptorDto.authoredWorldBinding()));
+    assertThat(descriptorProof.getAuthoredWorldBinding().getRequestDigest())
+        .isEqualTo(persistedDescriptor.getRequestDigest());
+    assertThat(descriptorProof.getAuthoredWorldBinding().getResultDigest())
+        .isEqualTo(persistedDescriptor.getResultDigest());
+    assertThat(descriptorProof.getVersionId()).isEqualTo(version.getId());
+    assertThat(descriptorProof.getVersionStateEpoch()).isEqualTo(version.getVersionStateEpoch());
+    assertThat(descriptorProof.getReleaseBundleId()).isEqualTo(bundleProof.getId());
+    assertThat(descriptorProof.getPublishedReleaseBundleRef())
+        .isEqualTo(bundleProof.getPublishedReleaseBundleRef());
+    assertThat(descriptorProof.getUnknownFields().asMap()).isEmpty();
+    assertThat(descriptorProof.getAuthoredWorldBinding().getUnknownFields().asMap()).isEmpty();
+
     byte[] originalBundleBytes = readPublishedReleaseBundleBytes();
     JsonNode bundleJson = objectMapper.readTree(originalBundleBytes);
     assertThat(bundleJson.get("id").asLong()).isPositive();
@@ -327,6 +393,9 @@ class TestDataSeederIntegrationTest {
         .isOne();
     assertThat(dsl.fetchCount(SOURCE_DELIVERIES, REGISTRATION_REQUEST_ID.eq(fixture.operationId())))
         .isOne();
+    assertThat(
+            launchDescriptorRepository.findByPrivateRequest("1", fixture.operationId().toString()))
+        .isPresent();
   }
 
   @Test
@@ -368,6 +437,10 @@ class TestDataSeederIntegrationTest {
           .hasMessageContaining("Run-owned published version does not match its game source");
 
       assertThat(fixture.receiptPath()).doesNotExist();
+      assertThat(
+              launchDescriptorRepository.findByPrivateRequest(
+                  "1", fixture.operationId().toString()))
+          .isEmpty();
       var changedVersion = versionRepository.findByTenantIdAndId(tenantId, versionId).orElseThrow();
       assertThat(changedVersion.getVersionStateEpoch()).isEqualTo(changedEpoch);
     } finally {
@@ -376,6 +449,79 @@ class TestDataSeederIntegrationTest {
 
     var restoredVersion = versionRepository.findByTenantIdAndId(tenantId, versionId).orElseThrow();
     assertThat(restoredVersion.getVersionStateEpoch()).isEqualTo(originalEpoch);
+  }
+
+  @Test
+  void refusesReceiptWhenExactDescriptorReadbackChanges(@TempDir Path testDirectory)
+      throws Exception {
+    Fixture fixture = prepareFixture(testDirectory);
+    configureSeeder(fixture);
+    doAnswer(
+            invocation -> {
+              ResolvedLaunchDescriptorDto actual =
+                  (ResolvedLaunchDescriptorDto) invocation.callRealMethod();
+              return new ResolvedLaunchDescriptorDto(
+                  actual.launchDescriptorId(),
+                  actual.canonicalTenantId(),
+                  actual.gameTemplateId(),
+                  actual.controlPlaneRequestId(),
+                  actual.versionId(),
+                  actual.scriptPatchVersion(),
+                  actual.runtimeFlagsJson(),
+                  actual.generationConfigRevision(),
+                  actual.versionStateEpoch(),
+                  actual.releaseBundleId(),
+                  actual.publishedReleaseBundleRef() + "-changed",
+                  actual.remapSetId(),
+                  actual.authoredWorldBinding());
+            })
+        .when(launchDescriptorService)
+        .getLaunchDescriptor(
+            any(UUID.class), any(UUID.class), anyString(), anyString(), anyString(), anyString());
+
+    assertThatThrownBy(() -> seeder.run(new DefaultApplicationArguments(new String[] {})))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("readback differs from its resolved result");
+
+    assertThat(fixture.receiptPath()).doesNotExist();
+    var source = gameRepository.findByTenantId("1");
+    assertThat(
+            launchDescriptorRepository.findBoundByRequest(
+                NAMESPACE, source.getCanonicalTenantId(), fixture.operationId().toString()))
+        .isPresent();
+  }
+
+  @Test
+  void refusesReceiptWhenSourceChangesAfterDescriptorPublicationBeforeFinalReadback(
+      @TempDir Path testDirectory) throws Exception {
+    Fixture fixture = prepareFixture(testDirectory);
+    configureSeeder(fixture);
+    AtomicInteger committedSourceReads = new AtomicInteger();
+    doAnswer(
+            invocation -> {
+              @SuppressWarnings("unchecked")
+              Optional<AuthoredWorldSourceEvidence> actual =
+                  (Optional<AuthoredWorldSourceEvidence>) invocation.callRealMethod();
+              if (committedSourceReads.incrementAndGet() == 4) {
+                return actual.map(TestDataSeederIntegrationTest.this::changedSourceEvidence);
+              }
+              return actual;
+            })
+        .when(authoredWorldSourceRepository)
+        .read(any(UUID.class), any(UUID.class), anyString(), anyString());
+
+    assertThatThrownBy(() -> seeder.run(new DefaultApplicationArguments(new String[] {})))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining(
+            "Committed authored-world source readback differs from the registration result");
+
+    assertThat(committedSourceReads).hasValue(4);
+    assertThat(fixture.receiptPath()).doesNotExist();
+    var source = gameRepository.findByTenantId("1");
+    assertThat(
+            launchDescriptorRepository.findBoundByRequest(
+                NAMESPACE, source.getCanonicalTenantId(), fixture.operationId().toString()))
+        .isPresent();
   }
 
   @Test
@@ -407,6 +553,40 @@ class TestDataSeederIntegrationTest {
         .isZero();
     assertThat(dsl.fetchCount(SOURCE_DELIVERIES, REGISTRATION_REQUEST_ID.eq(fixture.operationId())))
         .isZero();
+  }
+
+  @Test
+  void rejectsWrongWorldManagementCertificatePinBeforeOwnerRegistration(@TempDir Path testDirectory)
+      throws Exception {
+    Fixture fixture = prepareFixture(testDirectory);
+    String capability = Files.readString(fixture.capabilityPath());
+    String wrongLeafDigest = "0".repeat(64);
+    assertThat(wrongLeafDigest).isNotEqualTo(fixture.worldManagementLeafSha256());
+    Files.setPosixFilePermissions(
+        fixture.capabilityPath(),
+        Set.of(PosixFilePermission.OWNER_READ, PosixFilePermission.OWNER_WRITE));
+    Files.writeString(
+        fixture.capabilityPath(),
+        capability.replace(fixture.worldManagementLeafSha256(), wrongLeafDigest));
+    Files.setPosixFilePermissions(
+        fixture.capabilityPath(),
+        Set.of(
+            PosixFilePermission.OWNER_READ,
+            PosixFilePermission.GROUP_READ,
+            PosixFilePermission.OTHERS_READ));
+    configureSeeder(fixture);
+
+    assertThatThrownBy(() -> seeder.run(new DefaultApplicationArguments(new String[] {})))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("TLS certificates do not match capability pins");
+    assertThat(fixture.receiptPath()).doesNotExist();
+    assertThat(dsl.fetchCount(SOURCE_OPERATIONS, REGISTRATION_REQUEST_ID.eq(fixture.operationId())))
+        .isZero();
+    assertThat(dsl.fetchCount(SOURCE_DELIVERIES, REGISTRATION_REQUEST_ID.eq(fixture.operationId())))
+        .isZero();
+    assertThat(
+            launchDescriptorRepository.findByPrivateRequest("1", fixture.operationId().toString()))
+        .isEmpty();
   }
 
   @Test
@@ -472,7 +652,11 @@ class TestDataSeederIntegrationTest {
     Path sessionKey = certificateDirectory.resolve("game-session.key");
     Path sessionRequest = certificateDirectory.resolve("game-session.csr");
     Path sessionCertificate = certificateDirectory.resolve("game-session.crt");
-    Path extensions = certificateDirectory.resolve("game-session.ext");
+    Path sessionExtensions = certificateDirectory.resolve("game-session.ext");
+    Path worldManagementKey = certificateDirectory.resolve("world-management.key");
+    Path worldManagementRequest = certificateDirectory.resolve("world-management.csr");
+    Path worldManagementCertificate = certificateDirectory.resolve("world-management.crt");
+    Path worldManagementExtensions = certificateDirectory.resolve("world-management.ext");
     runOpenSsl(
         "req",
         "-x509",
@@ -506,7 +690,7 @@ class TestDataSeederIntegrationTest {
         "-subj",
         "/CN=game-session-service");
     Files.writeString(
-        extensions,
+        sessionExtensions,
         "basicConstraints=critical,CA:FALSE\n"
             + "keyUsage=critical,digitalSignature,keyEncipherment\n"
             + "extendedKeyUsage=clientAuth\n"
@@ -533,7 +717,49 @@ class TestDataSeederIntegrationTest {
         "2",
         "-sha256",
         "-extfile",
-        extensions.toString());
+        sessionExtensions.toString());
+    runOpenSsl(
+        "req",
+        "-new",
+        "-newkey",
+        "rsa:2048",
+        "-nodes",
+        "-sha256",
+        "-keyout",
+        worldManagementKey.toString(),
+        "-out",
+        worldManagementRequest.toString(),
+        "-subj",
+        "/CN=world-management-service");
+    Files.writeString(
+        worldManagementExtensions,
+        "basicConstraints=critical,CA:FALSE\n"
+            + "keyUsage=critical,digitalSignature,keyEncipherment\n"
+            + "extendedKeyUsage=clientAuth\n"
+            + "subjectAltName=URI:"
+            + WORLD_MANAGEMENT_URI_SAN
+            + ",DNS:world-management-service"
+            + ",DNS:world-management-service.dev"
+            + ",DNS:world-management-service.dev.svc"
+            + ",DNS:world-management-service.dev.svc.cluster.local"
+            + "\n");
+    runOpenSsl(
+        "x509",
+        "-req",
+        "-in",
+        worldManagementRequest.toString(),
+        "-CA",
+        caCertificate.toString(),
+        "-CAkey",
+        caKey.toString(),
+        "-CAcreateserial",
+        "-out",
+        worldManagementCertificate.toString(),
+        "-days",
+        "2",
+        "-sha256",
+        "-extfile",
+        worldManagementExtensions.toString());
     Files.setPosixFilePermissions(
         caCertificate,
         Set.of(
@@ -546,8 +772,15 @@ class TestDataSeederIntegrationTest {
             PosixFilePermission.OWNER_READ,
             PosixFilePermission.GROUP_READ,
             PosixFilePermission.OTHERS_READ));
+    Files.setPosixFilePermissions(
+        worldManagementCertificate,
+        Set.of(
+            PosixFilePermission.OWNER_READ,
+            PosixFilePermission.GROUP_READ,
+            PosixFilePermission.OTHERS_READ));
 
     String leafDigest = certificateDigest(sessionCertificate);
+    String worldManagementLeafDigest = certificateDigest(worldManagementCertificate);
     String caDigest = certificateDigest(caCertificate);
     UUID operationId = UUID.randomUUID();
     String runId = "fixture-commit-proof";
@@ -574,6 +807,8 @@ class TestDataSeederIntegrationTest {
     capability.put("characterCreationPolicy", "ALLOW_NEW");
     capability.put("gameSessionLeafSha256", leafDigest);
     capability.put("gameSessionUriSan", SESSION_URI_SAN);
+    capability.put("worldManagementLeafSha256", worldManagementLeafDigest);
+    capability.put("worldManagementUriSan", WORLD_MANAGEMENT_URI_SAN);
     capability.put("caCertificateSha256", caDigest);
     Files.write(capabilityPath, objectMapper.writeValueAsBytes(capability));
     Files.setPosixFilePermissions(
@@ -604,8 +839,10 @@ class TestDataSeederIntegrationTest {
         capabilityPath,
         receiptDirectory.resolve("source-receipt.json"),
         sessionCertificate,
+        worldManagementCertificate,
         caCertificate,
         leafDigest,
+        worldManagementLeafDigest,
         caDigest);
   }
 
@@ -618,6 +855,8 @@ class TestDataSeederIntegrationTest {
     ReflectionTestUtils.setField(seeder, "fixtureReceiptPath", fixture.receiptPath().toString());
     ReflectionTestUtils.setField(
         seeder, "gameSessionLeafCertPath", fixture.gameSessionCertificatePath().toString());
+    ReflectionTestUtils.setField(
+        seeder, "worldManagementLeafCertPath", fixture.worldManagementCertificatePath().toString());
     ReflectionTestUtils.setField(seeder, "workloadNamespace", NAMESPACE);
     ReflectionTestUtils.setField(seeder, "caCertPath", fixture.caCertificatePath().toString());
   }
@@ -629,6 +868,45 @@ class TestDataSeederIntegrationTest {
       return HexFormat.of()
           .formatHex(MessageDigest.getInstance("SHA-256").digest(certificate.getEncoded()));
     }
+  }
+
+  private AuthoredWorldSourceEvidence changedSourceEvidence(AuthoredWorldSourceEvidence source) {
+    String changedWorldSlug = source.worldSlug() + "-changed";
+    String requestDigest =
+        AuthoredWorldSourceDigest.requestDigest(
+            source.targetNamespace(),
+            source.registrationRequestId(),
+            source.canonicalTenantId(),
+            source.tenantSlug(),
+            changedWorldSlug,
+            source.worldDisplayName());
+    String evidenceDigest =
+        AuthoredWorldSourceDigest.evidenceDigest(
+            source.targetNamespace(),
+            source.registrationRequestId(),
+            source.operationId(),
+            requestDigest,
+            source.canonicalTenantId(),
+            source.tenantSlug(),
+            changedWorldSlug,
+            source.worldDisplayName(),
+            source.sourceGameRowId(),
+            source.sourceGameTenantKey(),
+            source.provenanceKind());
+    return new AuthoredWorldSourceEvidence(
+        source.schemaVersion(),
+        source.targetNamespace(),
+        source.registrationRequestId(),
+        source.operationId(),
+        requestDigest,
+        source.canonicalTenantId(),
+        source.tenantSlug(),
+        changedWorldSlug,
+        source.worldDisplayName(),
+        source.sourceGameRowId(),
+        source.sourceGameTenantKey(),
+        source.provenanceKind(),
+        evidenceDigest);
   }
 
   private void runOpenSsl(String... arguments) throws Exception {
@@ -656,7 +934,9 @@ class TestDataSeederIntegrationTest {
       Path capabilityPath,
       Path receiptPath,
       Path gameSessionCertificatePath,
+      Path worldManagementCertificatePath,
       Path caCertificatePath,
       String gameSessionLeafSha256,
+      String worldManagementLeafSha256,
       String caCertificateSha256) {}
 }

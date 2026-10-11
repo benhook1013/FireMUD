@@ -11,6 +11,7 @@ dependencies {
     compileOnly(libs.lombok)
 
     implementation("com.fasterxml.jackson.core:jackson-databind")
+    implementation("tools.jackson.core:jackson-databind")
     implementation(libs.java.json.canonicalization)
     implementation(libs.micrometer.core)
     implementation(libs.opentelemetry.api)

@@ -5,7 +5,6 @@ import static net.firedevops.firemud.worldmanagement.jooq.tables.WorldInstance.W
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.util.Optional;
 import net.firedevops.firemud.worldmanagement.entity.WorldInstance;
-import net.firedevops.firemud.worldmanagement.jooq.tables.records.WorldInstanceRecord;
 import org.jooq.DSLContext;
 import org.jooq.Record;
 import org.springframework.stereotype.Repository;
@@ -44,6 +43,45 @@ public class WorldInstanceRepository {
         .fetchOptional(this::toEntity);
   }
 
+  /** Serializes create/retry decisions for one tenant-owned fixture operation in PostgreSQL. */
+  public void lockRunOwnedFixtureOperation(Long tenantId, String controlPlaneRequestId) {
+    if (tenantId == null || tenantId <= 0L || controlPlaneRequestId == null) {
+      throw new IllegalArgumentException("RUN_OWNED_WORLD_FIXTURE_OPERATION_INVALID");
+    }
+    String lockIdentity =
+        tenantId
+            + ":"
+            + controlPlaneRequestId.getBytes(java.nio.charset.StandardCharsets.UTF_8).length
+            + ":"
+            + controlPlaneRequestId;
+    dsl.fetchOne("SELECT pg_advisory_xact_lock(hashtextextended(?, 0))", lockIdentity);
+  }
+
+  public Optional<WorldInstance> findRunOwnedFixtureByTenantIdAndControlPlaneRequestIdForUpdate(
+      Long tenantId, String controlPlaneRequestId) {
+    return dsl.selectFrom(WORLD_INSTANCE)
+        .where(
+            WORLD_INSTANCE
+                .TENANT_ID
+                .eq(tenantId)
+                .and(WORLD_INSTANCE.CONTROL_PLANE_REQUEST_ID.eq(controlPlaneRequestId))
+                .and(WORLD_INSTANCE.RUN_OWNED_FIXTURE_BINDING_SHA256.isNotNull()))
+        .forUpdate()
+        .fetchOptional(this::toEntity);
+  }
+
+  public Optional<WorldInstance> findRunOwnedFixtureByTenantIdAndControlPlaneRequestId(
+      Long tenantId, String controlPlaneRequestId) {
+    return dsl.selectFrom(WORLD_INSTANCE)
+        .where(
+            WORLD_INSTANCE
+                .TENANT_ID
+                .eq(tenantId)
+                .and(WORLD_INSTANCE.CONTROL_PLANE_REQUEST_ID.eq(controlPlaneRequestId))
+                .and(WORLD_INSTANCE.RUN_OWNED_FIXTURE_BINDING_SHA256.isNotNull()))
+        .fetchOptional(this::toEntity);
+  }
+
   public boolean hasNonterminalInitialAdmissionBindHold(Long tenantId, Long gameInstanceId) {
     Record result =
         dsl.fetchOne(
@@ -67,10 +105,49 @@ public class WorldInstanceRepository {
 
   public WorldInstance save(WorldInstance entity) {
     if (entity.getId() == null) {
-      WorldInstanceRecord record = dsl.newRecord(WORLD_INSTANCE);
-      populate(record, entity);
-      record.store();
-      return findById(record.getId()).orElseThrow();
+      Record inserted =
+          dsl.insertInto(WORLD_INSTANCE)
+              .set(WORLD_INSTANCE.TENANT_ID, entity.getTenantId())
+              .set(WORLD_INSTANCE.GAME_INSTANCE_ID, entity.getGameInstanceId())
+              .set(WORLD_INSTANCE.GAME_TEMPLATE_ID, entity.getGameTemplateId())
+              .set(WORLD_INSTANCE.CONTROL_PLANE_REQUEST_ID, entity.getControlPlaneRequestId())
+              .set(WORLD_INSTANCE.LAUNCH_DESCRIPTOR_ID, entity.getLaunchDescriptorId())
+              .set(WORLD_INSTANCE.VERSION_ID, entity.getVersionId())
+              .set(WORLD_INSTANCE.SCRIPT_PATCH_VERSION, entity.getScriptPatchVersion())
+              .set(WORLD_INSTANCE.RUNTIME_FLAGS_JSON, entity.getRuntimeFlagsJson())
+              .set(WORLD_INSTANCE.GENERATION_CONFIG_REVISION, entity.getGenerationConfigRevision())
+              .set(WORLD_INSTANCE.RELEASE_BUNDLE_ID, entity.getReleaseBundleId())
+              .set(
+                  WORLD_INSTANCE.PUBLISHED_RELEASE_BUNDLE_REF,
+                  entity.getPublishedReleaseBundleRef())
+              .set(WORLD_INSTANCE.VERSION_STATE_EPOCH, entity.getVersionStateEpoch())
+              .set(WORLD_INSTANCE.LIFECYCLE_EPOCH, entity.getLifecycleEpoch())
+              .set(WORLD_INSTANCE.STATUS, entity.getStatus())
+              .set(WORLD_INSTANCE.FAILURE_REASON, entity.getFailureReason())
+              .set(
+                  WORLD_INSTANCE.CREATED_AT,
+                  JooqWorldManagementRepositorySupport.toLocalDateTime(entity.getCreatedAt()))
+              .set(
+                  WORLD_INSTANCE.UPDATED_AT,
+                  JooqWorldManagementRepositorySupport.toLocalDateTime(entity.getUpdatedAt()))
+              .set(WORLD_INSTANCE.ROW_VERSION, entity.getRowVersion())
+              .set(WORLD_INSTANCE.TERMINATION_REQUEST_ID, entity.getTerminationRequestId())
+              .set(
+                  WORLD_INSTANCE.TERMINATED_AT,
+                  JooqWorldManagementRepositorySupport.toLocalDateTime(entity.getTerminatedAt()))
+              .set(WORLD_INSTANCE.REMAP_SET_ID, entity.getRemapSetId())
+              .set(
+                  WORLD_INSTANCE.RUN_OWNED_FIXTURE_BINDING_SHA256,
+                  entity.getRunOwnedFixtureBindingSha256())
+              .set(
+                  WORLD_INSTANCE.RUN_OWNED_FIXTURE_PREPARING_LIFECYCLE_EPOCH,
+                  entity.getRunOwnedFixturePreparingLifecycleEpoch())
+              .returning(WORLD_INSTANCE.ID)
+              .fetchOne();
+      if (inserted == null) {
+        throw new IllegalStateException("world_instance insert returned no row");
+      }
+      return findById(inserted.get(WORLD_INSTANCE.ID)).orElseThrow();
     }
     long nextRowVersion = entity.getRowVersion() + 1L;
     int updated =
@@ -114,33 +191,6 @@ public class WorldInstanceRepository {
     return findById(entity.getId()).orElseThrow();
   }
 
-  private void populate(WorldInstanceRecord record, WorldInstance entity) {
-    record.setTenantId(entity.getTenantId());
-    record.setGameInstanceId(entity.getGameInstanceId());
-    record.setGameTemplateId(entity.getGameTemplateId());
-    record.setControlPlaneRequestId(entity.getControlPlaneRequestId());
-    record.setLaunchDescriptorId(entity.getLaunchDescriptorId());
-    record.setVersionId(entity.getVersionId());
-    record.setScriptPatchVersion(entity.getScriptPatchVersion());
-    record.setRuntimeFlagsJson(entity.getRuntimeFlagsJson());
-    record.setGenerationConfigRevision(entity.getGenerationConfigRevision());
-    record.setReleaseBundleId(entity.getReleaseBundleId());
-    record.setPublishedReleaseBundleRef(entity.getPublishedReleaseBundleRef());
-    record.setVersionStateEpoch(entity.getVersionStateEpoch());
-    record.setLifecycleEpoch(entity.getLifecycleEpoch());
-    record.setStatus(entity.getStatus());
-    record.setFailureReason(entity.getFailureReason());
-    record.setCreatedAt(
-        JooqWorldManagementRepositorySupport.toLocalDateTime(entity.getCreatedAt()));
-    record.setUpdatedAt(
-        JooqWorldManagementRepositorySupport.toLocalDateTime(entity.getUpdatedAt()));
-    record.setRowVersion(entity.getRowVersion());
-    record.setTerminationRequestId(entity.getTerminationRequestId());
-    record.setTerminatedAt(
-        JooqWorldManagementRepositorySupport.toLocalDateTime(entity.getTerminatedAt()));
-    record.setRemapSetId(entity.getRemapSetId());
-  }
-
   private WorldInstance toEntity(Record record) {
     WorldInstance entity = new WorldInstance();
     entity.setId(record.get(WORLD_INSTANCE.ID));
@@ -168,6 +218,10 @@ public class WorldInstanceRepository {
     entity.setTerminatedAt(
         JooqWorldManagementRepositorySupport.toInstant(record.get(WORLD_INSTANCE.TERMINATED_AT)));
     entity.setRemapSetId(record.get(WORLD_INSTANCE.REMAP_SET_ID));
+    entity.setRunOwnedFixtureBindingSha256(
+        record.get(WORLD_INSTANCE.RUN_OWNED_FIXTURE_BINDING_SHA256));
+    entity.setRunOwnedFixturePreparingLifecycleEpoch(
+        record.get(WORLD_INSTANCE.RUN_OWNED_FIXTURE_PREPARING_LIFECYCLE_EPOCH));
     return entity;
   }
 }
