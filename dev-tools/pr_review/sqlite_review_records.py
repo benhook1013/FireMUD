@@ -3724,18 +3724,34 @@ class SqliteReviewRecords:
                     connection.execute("BEGIN")
                 self._require_compatible(connection, deadline=deadline)
                 controller_state = self._controller_state(connection) if include_legacy_routes else None
-                runs = [
-                    self._run_record(row)
-                    for row in connection.execute(
-                        "SELECT run_id, source_pr, channel, source_head, reviewer, scope, coverage_limits_json, "
-                        "outcome, attributable, started_at, finished_at, found_count, accepted_count, "
-                        "routed_count, finalized, finalized_at, import_payload_json, "
-                        "EXISTS (SELECT 1 FROM review_attempts a WHERE a.run_id = review_runs.run_id "
-                        "OR a.attempt_id = review_runs.run_id) "
-                        "FROM review_runs WHERE source_pr = ? ORDER BY started_at, run_id",
-                        (pr,),
-                    )
-                ]
+                attempt_rows = connection.execute(
+                    "SELECT attempt_id, channel, candidate_sha, state, started_at, finished_at, "
+                    "duration_seconds, exit_status, trigger_id, provider_review_id, checkpoint_id, run_id, "
+                    "diagnostic, metadata_json FROM review_attempts WHERE source_pr = ? "
+                    "ORDER BY started_at, attempt_id",
+                    (pr,),
+                ).fetchall()
+                associated_run_ids = {identifier for row in attempt_rows for identifier in (row[0], row[11])}
+                run_rows = connection.execute(
+                    "SELECT run_id, source_pr, channel, source_head, reviewer, scope, coverage_limits_json, "
+                    "outcome, attributable, started_at, finished_at, found_count, accepted_count, "
+                    "routed_count, finalized, finalized_at, import_payload_json "
+                    "FROM review_runs WHERE source_pr = ? ORDER BY started_at, run_id",
+                    (pr,),
+                ).fetchall()
+                if any(row[2] in {"manual", "subagent"} and row[0] not in associated_run_ids for row in run_rows):
+                    # Preserve cross-PR identity collisions and malformed links.
+                    # run_id is unindexed: this filtered lookup may scan attempts
+                    # once, never once per run, and only for curated candidates.
+                    for attempt_id, run_id in connection.execute(
+                        "SELECT attempt_id, run_id FROM review_attempts WHERE run_id IN "
+                        "(SELECT run_id FROM review_runs WHERE source_pr = ? AND channel IN ('manual', 'subagent')) "
+                        "OR attempt_id IN "
+                        "(SELECT run_id FROM review_runs WHERE source_pr = ? AND channel IN ('manual', 'subagent'))",
+                        (pr, pr),
+                    ):
+                        associated_run_ids.update((attempt_id, run_id))
+                runs = [self._run_record((*row, row[0] in associated_run_ids)) for row in run_rows]
                 observations = [
                     self._observation_record(row)
                     for row in connection.execute(
@@ -3851,13 +3867,7 @@ class SqliteReviewRecords:
                 attempts = []
                 corrected_subagent_runs = set()
                 review_count_corrections_by_run = {}
-                for row in connection.execute(
-                    "SELECT attempt_id, channel, candidate_sha, state, started_at, finished_at, "
-                    "duration_seconds, exit_status, trigger_id, provider_review_id, checkpoint_id, run_id, "
-                    "diagnostic, metadata_json FROM review_attempts WHERE source_pr = ? "
-                    "ORDER BY started_at, attempt_id",
-                    (pr,),
-                ):
+                for row in attempt_rows:
                     try:
                         metadata = json.loads(row[13])
                     except json.JSONDecodeError as exc:

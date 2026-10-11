@@ -30,6 +30,76 @@ from pr_review.state import FindingRoute, StateError, StateLockTimeout
 
 
 class SqliteReviewRecordsTest(unittest.TestCase):
+    def test_curated_chronology_preserves_cross_pr_associations_without_per_run_scans(self):
+        self.bootstrap()
+        for index in range(30):
+            self.records.import_completed_run(
+                run_id=f"curated-scan-{index}", source_pr=3163, channel="subagent", findings=(), source_decisions=(),
+            )
+        for attempt_id, pr, run_id in (
+            ("local-linked", 3163, "curated-scan-0"),
+            ("curated-scan-1", 3163, None),
+            ("curated-scan-2", 3164, None),
+            ("cross-pr-malformed", 3164, "curated-scan-3"),
+        ):
+            self.records.start_attempt(attempt_id=attempt_id, source_pr=pr, channel="subagent", metadata={"model": "gpt-test"})
+            if run_id:
+                self.records.finish_attempt(attempt_id, state="completed")
+                if pr == 3163:
+                    self.records.link_attempt_run(attempt_id, run_id)
+                else:
+                    # Deliberately corrupt only this isolated fixture: the public
+                    # API rejects a cross-PR explicit link, but old reads excluded it.
+                    with sqlite3.connect(self.database) as connection:
+                        connection.execute("UPDATE review_attempts SET run_id = ? WHERE attempt_id = ?", (run_id, attempt_id))
+        statements = []
+        original_connect = self.records._connect
+
+        def traced_connection(**kwargs):
+            connection = original_connect(**kwargs)
+            connection.set_trace_callback(statements.append)
+            return connection
+
+        with patch.object(self.records, "_connect", side_effect=traced_connection):
+            history = self.records.history(3163, include_display=False)
+        by_id = {run["run_id"]: run for run in history["runs"]}
+        for index in range(30):
+            run = by_id[f"curated-scan-{index}"]
+            if index < 4:
+                self.assertNotIn("storage_timestamps", run)
+                self.assertIsNotNone(run["started_at"])
+            else:
+                self.assertIsNone(run["started_at"])
+                self.assertEqual(run["storage_timestamps"]["started_at"]["source"], "generated")
+        attempt_reads = [sql for sql in statements if sql.startswith("SELECT") and "FROM review_attempts" in sql]
+        self.assertEqual(len(attempt_reads), 2)
+        with sqlite3.connect(self.database) as connection:
+            plans = [detail for sql in attempt_reads for *_, detail in connection.execute("EXPLAIN QUERY PLAN " + sql)]
+        self.assertFalse(any("CORRELATED" in detail for detail in plans))
+        self.assertEqual(sum("SCAN review_attempts" in detail for detail in plans), 1)
+        self.assertTrue(any("review_attempts_pr_idx" in detail for detail in plans))
+        self.assertEqual(history, self.records.history_batch([3163], include_display=False)[3163])
+
+    def test_provider_and_native_only_history_need_no_association_fallback(self):
+        self.bootstrap()
+        self.records.record_run(run_id="provider-no-scan", source_pr=3163, channel="hosted", findings=())
+        self.records.start_attempt(attempt_id="native-no-scan", source_pr=3164, channel="subagent", metadata={"model": "gpt-test"})
+        self.records.record_run(run_id="native-no-scan", source_pr=3164, channel="subagent", findings=())
+        original_connect = self.records._connect
+        for pr in (3163, 3164):
+            statements = []
+
+            def traced_connection(statements=statements, **kwargs):
+                connection = original_connect(**kwargs)
+                connection.set_trace_callback(statements.append)
+                return connection
+
+            with patch.object(self.records, "_connect", side_effect=traced_connection):
+                history = self.records.history(pr, include_display=False)
+            attempt_reads = [sql for sql in statements if sql.startswith("SELECT") and "FROM review_attempts" in sql]
+            self.assertEqual(len(attempt_reads), 1)
+            self.assertNotIn("storage_timestamps", history["runs"][0])
+
     def test_curated_review_chronology_preserves_each_supplied_clock_and_storage_order(self):
         self.bootstrap()
         recorded_at = "2026-10-11T15:49:59Z"
