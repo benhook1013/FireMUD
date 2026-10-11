@@ -234,3 +234,9 @@ Entry format:
   - Observation: The isolated owning `spotbugsMain` task with `--info` exposed an unnecessary constructor suppression, rather than another runtime defect. Passing test XML did not make the aggregate validation successful.
   - Expected pattern: Keep the existing assertions and static rules; recover the owning task's diagnostic before editing unrelated callers or adding suppressions. Report test execution and aggregate-gate status separately.
   - Current status: The channel fixture and unnecessary suppression are corrected, and the canonical Game Session gate passed. Physical PostgreSQL cases remain a separate proof requirement.
+
+- `2026-10-11`: Repeated missing-field brief replacement was recovered from exact controller history
+  - Context: Document again selected absent JSON `body` instead of string-valued `brief` while recording the activation decision. The temporary payload contained `null` and an addendum, replacing the standing brief at revision 406 despite the earlier documented lesson.
+  - Observation: A revision guard proves concurrency safety, not payload completeness. Missing-field fallback must not be used for a required standing brief.
+  - Expected pattern: Assert that `brief` is a nonempty string before constructing any replacement, and verify preserved content after publication. Use the exact stored revision for recovery rather than reconstructing instructions from memory.
+  - Current status: Restored the complete revision-405 brief, including Overseer's new standing activation direction, through guarded revision 407. Readback matches the preserved text apart from one final newline; no implementation or authorization was lost. Overseer was notified.

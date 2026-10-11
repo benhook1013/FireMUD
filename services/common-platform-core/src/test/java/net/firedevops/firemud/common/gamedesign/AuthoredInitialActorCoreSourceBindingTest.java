@@ -1,21 +1,22 @@
-package net.firedevops.firemud.gamedesign.publication;
+package net.firedevops.firemud.common.gamedesign;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import java.io.ByteArrayOutputStream;
 import java.math.BigDecimal;
+import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding.AffectedUnit;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding.Owner;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding.RevisionPayload;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding.TargetProof;
-import net.firedevops.firemud.common.gamedesign.GameplayRuleSource;
-import net.firedevops.firemud.common.gamedesign.RealmPolicySource;
 import net.firedevops.firemud.common.gamelogic.GameplayRuleManifest;
 import net.firedevops.firemud.common.gamelogic.GameplayRuleManifest.Audience;
 import net.firedevops.firemud.common.gamelogic.GameplayRuleManifest.Definition;
@@ -25,6 +26,7 @@ import net.firedevops.firemud.common.gamelogic.GameplayRuleManifest.Feedback;
 import net.firedevops.firemud.common.gamelogic.GameplayRuleManifest.PrimitiveKind;
 import net.firedevops.firemud.common.gamelogic.GameplayRuleManifest.Stat;
 import net.firedevops.firemud.common.gamelogic.GameplayRuleManifest.Visibility;
+import net.firedevops.firemud.common.gamelogic.GameplayRuleSelectedSource;
 import net.firedevops.firemud.common.publication.RealmEntryPolicy;
 import org.junit.jupiter.api.Test;
 import tools.jackson.databind.json.JsonMapper;
@@ -73,9 +75,97 @@ class AuthoredInitialActorCoreSourceBindingTest {
                         new String(
                             fixture
                                 .gameplaySnapshot()
-                                .canonicalJson()
+                                .snapshotJson()
                                 .getBytes(StandardCharsets.UTF_8),
                             StandardCharsets.ISO_8859_1)));
+  }
+
+  @Test
+  void strictDecoderRoundTripsExactBindingAndDefensivelyCopiesItsBytes() {
+    var original = fixture(List.of()).resolve().getFirst();
+    byte[] bytes = original.canonicalBytes();
+    var decoded = AuthoredInitialActorCoreSourceBinding.fromStored(bytes, original.digest());
+
+    assertThat(decoded.canonicalBytes()).isEqualTo(bytes);
+    assertThat(decoded.digest()).isEqualTo(original.digest());
+    assertThat(decoded.core()).isEqualTo(original.core());
+    assertThat(decoded.disposition()).isEqualTo(original.disposition());
+    assertThat(decoded.safeFeedback()).isEqualTo(original.safeFeedback());
+
+    bytes[0] ^= 0x01;
+    assertThat(decoded.canonicalBytes()).isEqualTo(original.canonicalBytes());
+    byte[] exposed = decoded.canonicalBytes();
+    exposed[0] ^= 0x01;
+    assertThat(decoded.canonicalBytes()).isEqualTo(original.canonicalBytes());
+    assertThatThrownBy(
+            () ->
+                AuthoredInitialActorCoreSourceBinding.fromStored(
+                    original.canonicalBytes(), digest('0')))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("digest differs");
+  }
+
+  @Test
+  void strictDecoderRejectsUnknownSchemaTrailingFramesAndSubstitutedPolicySource() {
+    var original = fixture(List.of()).resolve().getFirst();
+    byte[] canonicalBytes = original.canonicalBytes();
+
+    var unknownSchema = new ByteArrayOutputStream();
+    DraftAuthorizationFenceBinding.frame(unknownSchema, "unknown-authored-core-binding/v9");
+    byte[] unknownBytes = unknownSchema.toByteArray();
+    assertThatThrownBy(
+            () ->
+                AuthoredInitialActorCoreSourceBinding.fromStored(
+                    unknownBytes, CommandSource.sha256(unknownBytes)))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("source frame");
+
+    var trailingFrame = new ByteArrayOutputStream();
+    trailingFrame.writeBytes(canonicalBytes);
+    DraftAuthorizationFenceBinding.frame(trailingFrame, "unexpected");
+    byte[] trailingBytes = trailingFrame.toByteArray();
+    assertThatThrownBy(
+            () ->
+                AuthoredInitialActorCoreSourceBinding.fromStored(
+                    trailingBytes, CommandSource.sha256(trailingBytes)))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("Trailing");
+
+    List<byte[]> frames = splitFrames(canonicalBytes);
+    String policySnapshot = new String(frames.get(18), StandardCharsets.UTF_8);
+    assertThat(policySnapshot).contains("Wayfarer");
+    frames.set(18, policySnapshot.replace("Wayfarer", "Wanderer").getBytes(StandardCharsets.UTF_8));
+    byte[] substitutedBytes = joinFrames(frames);
+    assertThatThrownBy(
+            () ->
+                AuthoredInitialActorCoreSourceBinding.fromStored(
+                    substitutedBytes, CommandSource.sha256(substitutedBytes)))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("Policy source");
+
+    frames = splitFrames(canonicalBytes);
+    String gameplaySnapshot = new String(frames.get(27), StandardCharsets.UTF_8);
+    assertThat(gameplaySnapshot).contains("newcomer");
+    frames.set(
+        27, gameplaySnapshot.replace("newcomer", "intruder").getBytes(StandardCharsets.UTF_8));
+    byte[] corruptRulesBytes = joinFrames(frames);
+    assertThatThrownBy(
+            () ->
+                AuthoredInitialActorCoreSourceBinding.fromStored(
+                    corruptRulesBytes, CommandSource.sha256(corruptRulesBytes)))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("Gameplay rule source");
+
+    var changedSelectedCommit = withForeignWorldPolicy(fixture(List.of())).resolve().getFirst();
+    frames = splitFrames(canonicalBytes);
+    frames.set(27, splitFrames(changedSelectedCommit.canonicalBytes()).get(27));
+    byte[] changedRulesBytes = joinFrames(frames);
+    assertThatThrownBy(
+            () ->
+                AuthoredInitialActorCoreSourceBinding.fromStored(
+                    changedRulesBytes, CommandSource.sha256(changedRulesBytes)))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("Gameplay rules differ");
   }
 
   @Test
@@ -217,7 +307,7 @@ class AuthoredInitialActorCoreSourceBindingTest {
     String changedRuleSnapshot =
         fixture
             .gameplaySnapshot()
-            .canonicalJson()
+            .snapshotJson()
             .replace("\"sourceEpoch\":\"1\"", "\"sourceEpoch\":\"2\"");
     var changedRuleSource =
         resolve(
@@ -225,7 +315,7 @@ class AuthoredInitialActorCoreSourceBindingTest {
                 SOURCE_OPERATION,
                 "world",
                 fixture.policySnapshot(),
-                GameplayRuleSnapshot.fromStored(changedRuleSnapshot))
+                new GameplayRuleSelectedSource(changedRuleSnapshot))
             .getFirst();
     assertThat(changedRuleSource.digest()).isNotEqualTo(fixture.resolve().getFirst().digest());
   }
@@ -236,10 +326,10 @@ class AuthoredInitialActorCoreSourceBindingTest {
     String changedSnapshot =
         fixture
             .gameplaySnapshot()
-            .canonicalJson()
+            .snapshotJson()
             .replace("{\"bindingDigest\":", "{\"presence\":\"ACTIVE\",\"bindingDigest\":");
 
-    assertThatThrownBy(() -> GameplayRuleSnapshot.fromStored(changedSnapshot))
+    assertThatThrownBy(() -> new GameplayRuleSelectedSource(changedSnapshot))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("Unknown or missing");
   }
@@ -249,7 +339,7 @@ class AuthoredInitialActorCoreSourceBindingTest {
     Fixture fixture = fixture(List.of());
     var feedbackOnly = List.of(fixture.entries().getLast());
     var feedbackOnlySnapshot =
-        GameplayRuleSnapshot.fromStored(snapshot(fixture.binding(), feedbackOnly));
+        new GameplayRuleSelectedSource(snapshot(fixture.binding(), feedbackOnly));
     assertThatThrownBy(
             () ->
                 resolve(
@@ -454,7 +544,7 @@ class AuthoredInitialActorCoreSourceBindingTest {
       UUID sourceOperation,
       String expectedWorldSlug,
       net.firedevops.firemud.common.gamedesign.RealmPolicySnapshot policySnapshot,
-      GameplayRuleSnapshot gameplaySnapshot) {
+      GameplayRuleSelectedSource gameplaySnapshot) {
     return AuthoredInitialActorCoreSourceBinding.resolveAll(
         sourceOperation,
         digest('a'),
@@ -471,7 +561,7 @@ class AuthoredInitialActorCoreSourceBindingTest {
       DraftCommitBinding binding, List<GameplayRuleSource.Entry> entries) {
     return GameplayRuleManifest.canonical(
         Map.of(
-            "schema", GameplayRuleSnapshot.SCHEMA,
+            "schema", "game-design-gameplay-rule-source-snapshot/v1",
             "bindingJson", binding.canonicalJson(),
             "bindingDigest", binding.digest(),
             "sourceEpoch", "1",
@@ -479,6 +569,24 @@ class AuthoredInitialActorCoreSourceBindingTest {
             "genesisReceiptId", GENESIS.toString(),
             "manifestJson", GameplayRuleSource.manifest(entries).canonicalJson(),
             "entries", entries.stream().map(GameplayRuleSource.Entry::object).toList()));
+  }
+
+  private static List<byte[]> splitFrames(byte[] encoded) {
+    List<byte[]> result = new ArrayList<>();
+    ByteBuffer input = ByteBuffer.wrap(encoded);
+    while (input.hasRemaining()) {
+      int length = input.getInt();
+      byte[] value = new byte[length];
+      input.get(value);
+      result.add(value);
+    }
+    return result;
+  }
+
+  private static byte[] joinFrames(List<byte[]> frames) {
+    ByteArrayOutputStream result = new ByteArrayOutputStream();
+    for (byte[] frame : frames) DraftAuthorizationFenceBinding.frame(result, frame);
+    return result.toByteArray();
   }
 
   private static String policyJson() {
@@ -546,8 +654,8 @@ class AuthoredInitialActorCoreSourceBindingTest {
       entries = List.copyOf(entries);
     }
 
-    private GameplayRuleSnapshot gameplaySnapshot() {
-      return GameplayRuleSnapshot.fromStored(rulesJson);
+    private GameplayRuleSelectedSource gameplaySnapshot() {
+      return new GameplayRuleSelectedSource(rulesJson);
     }
 
     private List<AuthoredInitialActorCoreSourceBinding> resolve() {

@@ -1,6 +1,10 @@
-package net.firedevops.firemud.gamedesign.publication;
+package net.firedevops.firemud.common.gamedesign;
 
 import java.io.ByteArrayOutputStream;
+import java.nio.ByteBuffer;
+import java.nio.ByteOrder;
+import java.nio.charset.CharacterCodingException;
+import java.nio.charset.CodingErrorAction;
 import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
 import java.util.List;
@@ -8,13 +12,11 @@ import java.util.Objects;
 import java.util.UUID;
 import net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding;
-import net.firedevops.firemud.common.gamedesign.CommandSource;
-import net.firedevops.firemud.common.gamedesign.GameplayRuleSource;
-import net.firedevops.firemud.common.gamedesign.RealmPolicySource;
 import net.firedevops.firemud.common.gamelogic.GameplayRuleManifest;
 import net.firedevops.firemud.common.gamelogic.GameplayRuleManifest.Disposition;
 import net.firedevops.firemud.common.gamelogic.GameplayRuleManifest.Family;
 import net.firedevops.firemud.common.gamelogic.GameplayRuleManifest.Feedback;
+import net.firedevops.firemud.common.gamelogic.GameplayRuleSelectedSource;
 import net.firedevops.firemud.common.publication.AuthoredInitialActorCore;
 import net.firedevops.firemud.common.publication.RealmEntryPolicy;
 
@@ -140,7 +142,7 @@ public final class AuthoredInitialActorCoreSourceBinding {
       byte[] publicationTerminalEvidenceBytes,
       DraftCommitBinding selectedCommit,
       net.firedevops.firemud.common.gamedesign.RealmPolicySnapshot policySnapshot,
-      GameplayRuleSnapshot gameplaySnapshot) {
+      GameplayRuleSelectedSource gameplaySnapshot) {
     Objects.requireNonNull(selectedCommit, "selectedCommit");
     Objects.requireNonNull(policySnapshot, "policySnapshot");
     Objects.requireNonNull(gameplaySnapshot, "gameplaySnapshot");
@@ -173,17 +175,13 @@ public final class AuthoredInitialActorCoreSourceBinding {
       return List.of();
     }
 
-    GameplayRuleSnapshot selectedGameplaySnapshot =
-        GameplayRuleSnapshot.fromStored(gameplaySnapshot.canonicalJson());
-    if (!selectedCommit.equals(selectedGameplaySnapshot.binding())
-        || !Arrays.equals(
-            selectedGameplaySnapshot.canonicalBytes(), gameplaySnapshot.canonicalBytes())) {
+    if (!selectedCommit.equals(gameplaySnapshot.binding())) {
       throw new IllegalArgumentException(
           "GameplayRuleSource snapshot differs from the selected authored commit");
     }
-    byte[] gameplaySnapshotBytes = selectedGameplaySnapshot.canonicalBytes();
-    List<GameplayRuleSource.Entry> gameplayEntries = selectedGameplaySnapshot.entries();
-    GameplayRuleManifest manifest = GameplayRuleSource.manifest(gameplayEntries);
+    byte[] gameplaySnapshotBytes = gameplaySnapshot.canonicalBytes();
+    List<GameplayRuleSource.Entry> gameplayEntries = gameplaySnapshot.entries();
+    GameplayRuleManifest manifest = gameplaySnapshot.manifest();
 
     List<AuthoredInitialActorCoreSourceBinding> result =
         authoredActorPolicies.stream()
@@ -232,6 +230,191 @@ public final class AuthoredInitialActorCoreSourceBinding {
                 })
             .toList();
     return List.copyOf(result);
+  }
+
+  /**
+   * Decodes and independently reconstructs the exact source frame. This validates structure and
+   * digest consistency only; it does not authenticate the producer or grant runtime authority.
+   */
+  public static AuthoredInitialActorCoreSourceBinding fromStored(
+      byte[] originalCanonicalBytes, String expectedDigest) {
+    byte[] stored = requireBytes(originalCanonicalBytes, "authored actor core binding").clone();
+    if (expectedDigest == null
+        || !expectedDigest.matches("sha256:[0-9a-f]{64}")
+        || !CommandSource.sha256(stored).equals(expectedDigest)) {
+      throw new IllegalArgumentException("Authored actor core binding digest differs");
+    }
+
+    FrameReader reader = new FrameReader(stored);
+    reader.expect(SCHEMA);
+    reader.expect("1");
+    UUID worldSourceOperationId = reader.uuid();
+    String worldSourceEvidenceDigest = reader.text();
+    String expectedWorldSlug = reader.text();
+    String publicationWorkflowId = reader.text();
+
+    String tenantId = reader.text();
+    String versionId = reader.text();
+    String versionRowId = reader.text();
+    String versionTenantKey = reader.text();
+    String sourceGameRowId = reader.text();
+    String sourceGameTenantKey = reader.text();
+    String sourceProvenanceKind = reader.text();
+    UUID selectedCommitId = reader.uuid();
+    String selectedCommitDigest = reader.text();
+    byte[] selectedCommitBytes = reader.bytes();
+    DraftCommitBinding selectedCommit;
+    try {
+      selectedCommit =
+          DraftCommitBinding.fromStored(strictUtf8(selectedCommitBytes), selectedCommitDigest);
+    } catch (IllegalStateException corrupt) {
+      throw new IllegalArgumentException("Selected commit source is corrupt", corrupt);
+    }
+    var target = selectedCommit.target();
+    requireFrameEquals(target.canonicalTenantId().toString(), tenantId, "tenant");
+    requireFrameEquals(target.canonicalVersionId().toString(), versionId, "version");
+    requireFrameEquals(
+        Long.toString(target.gameDesignVersionRowId()), versionRowId, "Game Design version row");
+    requireFrameEquals(target.gameDesignVersionTenantKey(), versionTenantKey, "version tenant key");
+    requireFrameEquals(Long.toString(target.sourceGameRowId()), sourceGameRowId, "source game row");
+    requireFrameEquals(target.sourceGameTenantKey(), sourceGameTenantKey, "source game tenant key");
+    requireFrameEquals(target.sourceProvenanceKind(), sourceProvenanceKind, "source provenance");
+    if (!selectedCommit.commitId().equals(selectedCommitId)
+        || !Arrays.equals(selectedCommit.canonicalBytes(), selectedCommitBytes)) {
+      throw new IllegalArgumentException("Selected commit frame differs from its canonical source");
+    }
+
+    byte[] publicationOperationBytes = reader.bytes();
+    byte[] publicationTerminalEvidenceBytes = reader.bytes();
+    byte[] policySnapshotBytes = reader.bytes();
+    net.firedevops.firemud.common.gamedesign.RealmPolicySnapshot policySnapshot;
+    try {
+      policySnapshot =
+          net.firedevops.firemud.common.gamedesign.RealmPolicySnapshot.fromStored(
+              strictUtf8(policySnapshotBytes));
+    } catch (IllegalStateException corrupt) {
+      throw new IllegalArgumentException("Policy source snapshot is corrupt", corrupt);
+    }
+    if (!selectedCommit.equals(policySnapshot.binding())
+        || !Arrays.equals(policySnapshot.canonicalBytes(), policySnapshotBytes)) {
+      throw new IllegalArgumentException("Policy snapshot differs from the selected commit");
+    }
+
+    UUID policyCommitId = reader.uuid();
+    UUID policyRevisionId = reader.uuid();
+    String policyLogicalRevisionId = reader.text();
+    byte[] policyBytes = reader.bytes();
+    String policyJson = strictUtf8(policyBytes);
+    List<RealmPolicySource.Policy> matchingPolicies =
+        policySnapshot.policies().stream()
+            .filter(value -> value.commitId().equals(policyCommitId))
+            .filter(value -> value.revisionId().equals(policyRevisionId))
+            .filter(value -> value.logicalRevisionId().equals(policyLogicalRevisionId))
+            .filter(value -> value.policy().canonicalJson().equals(policyJson))
+            .toList();
+    if (matchingPolicies.size() != 1) {
+      throw new IllegalArgumentException("Policy source is absent or ambiguous in its snapshot");
+    }
+    RealmPolicySource.Policy policySource = matchingPolicies.getFirst();
+    var policy = policySource.policy();
+    if (policy.schemaVersion() != RealmEntryPolicy.AUTHORED_INITIAL_ACTOR_CORE_SCHEMA_VERSION
+        || policy.entryPolicy() != RealmEntryPolicy.EntryPolicy.PLAYER_CREATED
+        || policy.creationDescriptor() == null
+        || policy.initialActorCore() == null) {
+      throw new IllegalArgumentException("Schema-three authored actor core policy is required");
+    }
+    var descriptor = policy.creationDescriptor();
+    requireFrameEquals(descriptor.descriptorId(), reader.uuid().toString(), "descriptor identity");
+    requireFrameEquals(
+        descriptor.descriptorRevisionId(), reader.uuid().toString(), "descriptor revision");
+    byte[] descriptorBytes = reader.bytes();
+    if (!Arrays.equals(descriptor.canonicalBytes(), descriptorBytes)) {
+      throw new IllegalArgumentException("Descriptor bytes differ from the authored policy");
+    }
+    String coreJson = reader.text();
+    AuthoredInitialActorCore core = Objects.requireNonNull(policy.initialActorCore());
+    if (!core.canonicalJson().equals(coreJson)) {
+      throw new IllegalArgumentException("Actor core differs from the authored policy");
+    }
+
+    byte[] gameplaySnapshotBytes = reader.bytes();
+    GameplayRuleSelectedSource gameplaySnapshot;
+    try {
+      gameplaySnapshot = new GameplayRuleSelectedSource(strictUtf8(gameplaySnapshotBytes));
+    } catch (IllegalStateException corrupt) {
+      throw new IllegalArgumentException("Gameplay rule source snapshot is corrupt", corrupt);
+    }
+    if (!selectedCommit.equals(gameplaySnapshot.binding())
+        || !Arrays.equals(gameplaySnapshot.canonicalBytes(), gameplaySnapshotBytes)) {
+      throw new IllegalArgumentException("Gameplay rules differ from the selected commit");
+    }
+    byte[] manifestBytes = reader.bytes();
+    if (!Arrays.equals(gameplaySnapshot.manifest().canonicalBytes(), manifestBytes)) {
+      throw new IllegalArgumentException("Gameplay manifest differs from its selected source");
+    }
+
+    String dispositionKey = reader.text();
+    byte[] dispositionBytes = reader.bytes();
+    EntryFrame dispositionFrame = reader.entry();
+    String feedbackKey = reader.text();
+    byte[] feedbackBytes = reader.bytes();
+    EntryFrame feedbackFrame = reader.entry();
+    reader.requireEnd();
+
+    List<GameplayRuleSource.Entry> entries = gameplaySnapshot.entries();
+    List<GameplayRuleSource.Entry> dispositions =
+        entries.stream()
+            .filter(value -> value.family() == Family.DISPOSITIONS)
+            .filter(value -> value.definition().key().equals(core.dispositionKey()))
+            .toList();
+    if (dispositions.size() != 1
+        || !(dispositions.getFirst().definition() instanceof Disposition disposition)
+        || !disposition.dispositionKey().equals(dispositionKey)
+        || !Arrays.equals(
+            GameplayRuleManifest.canonical(disposition).getBytes(StandardCharsets.UTF_8),
+            dispositionBytes)) {
+      throw new IllegalArgumentException("Selected disposition differs from its source entry");
+    }
+    GameplayRuleSource.Entry dispositionEntry = dispositions.getFirst();
+    requireEntryFrame(dispositionFrame, dispositionEntry);
+
+    List<GameplayRuleSource.Entry> feedbackEntries =
+        entries.stream()
+            .filter(value -> value.family() == Family.FEEDBACK)
+            .filter(value -> value.definition().key().equals(disposition.safeFeedbackKey()))
+            .toList();
+    if (feedbackEntries.size() != 1
+        || !(feedbackEntries.getFirst().definition() instanceof Feedback safeFeedback)
+        || !safeFeedback.feedbackKey().equals(feedbackKey)
+        || !Arrays.equals(
+            GameplayRuleManifest.canonical(safeFeedback).getBytes(StandardCharsets.UTF_8),
+            feedbackBytes)) {
+      throw new IllegalArgumentException("Mandatory FEEDBACK differs from its source entry");
+    }
+    GameplayRuleSource.Entry feedbackEntry = feedbackEntries.getFirst();
+    requireEntryFrame(feedbackFrame, feedbackEntry);
+
+    AuthoredInitialActorCoreSourceBinding decoded =
+        new AuthoredInitialActorCoreSourceBinding(
+            worldSourceOperationId,
+            worldSourceEvidenceDigest,
+            expectedWorldSlug,
+            publicationWorkflowId,
+            publicationOperationBytes,
+            publicationTerminalEvidenceBytes,
+            selectedCommit,
+            policySnapshotBytes,
+            policySource,
+            gameplaySnapshotBytes,
+            gameplaySnapshot.manifest(),
+            dispositionEntry,
+            disposition,
+            feedbackEntry,
+            safeFeedback);
+    if (!Arrays.equals(decoded.canonicalBytes, stored) || !decoded.digest.equals(expectedDigest)) {
+      throw new IllegalArgumentException("Authored actor core binding bytes changed on decode");
+    }
+    return decoded;
   }
 
   public UUID worldSourceOperationId() {
@@ -293,9 +476,111 @@ public final class AuthoredInitialActorCoreSourceBinding {
     DraftAuthorizationFenceBinding.frame(output, entry.revisionId().toString());
   }
 
-  private static void requireBytes(byte[] value, String label) {
+  private static void requireEntryFrame(EntryFrame frame, GameplayRuleSource.Entry entry) {
+    if (!frame.family().equals(entry.family().name())
+        || !Arrays.equals(
+            frame.definitionBytes(),
+            GameplayRuleManifest.canonical(entry.definition()).getBytes(StandardCharsets.UTF_8))
+        || !frame.sourceBindingDigest().equals(entry.sourceBinding().digest())
+        || !Arrays.equals(frame.sourceBindingBytes(), entry.sourceBinding().canonicalBytes())
+        || !frame.revisionOrder().equals(entry.revisionOrder())
+        || !frame.revisionId().equals(entry.revisionId().toString())) {
+      throw new IllegalArgumentException("Selected rule entry provenance differs");
+    }
+  }
+
+  private static void requireFrameEquals(String expected, String actual, String label) {
+    if (!Objects.equals(expected, actual)) {
+      throw new IllegalArgumentException("Authored actor core " + label + " frame differs");
+    }
+  }
+
+  private static String strictUtf8(byte[] value) {
+    try {
+      return StandardCharsets.UTF_8
+          .newDecoder()
+          .onMalformedInput(CodingErrorAction.REPORT)
+          .onUnmappableCharacter(CodingErrorAction.REPORT)
+          .decode(ByteBuffer.wrap(value))
+          .toString();
+    } catch (CharacterCodingException malformed) {
+      throw new IllegalArgumentException(
+          "Authored actor core source contains invalid UTF-8", malformed);
+    }
+  }
+
+  private static byte[] requireBytes(byte[] value, String label) {
     if (value == null || value.length == 0) {
       throw new IllegalArgumentException("Exact " + label + " bytes are required");
+    }
+    return value;
+  }
+
+  private record EntryFrame(
+      String family,
+      byte[] definitionBytes,
+      String sourceBindingDigest,
+      byte[] sourceBindingBytes,
+      String revisionOrder,
+      String revisionId) {}
+
+  private static final class FrameReader {
+    private final byte[] stored;
+    private int offset;
+
+    private FrameReader(byte[] stored) {
+      this.stored = stored;
+    }
+
+    private void expect(String expected) {
+      if (!expected.equals(text())) {
+        throw new IllegalArgumentException("Unsupported authored actor core source frame");
+      }
+    }
+
+    private String text() {
+      return strictUtf8(bytes());
+    }
+
+    private UUID uuid() {
+      String value = text();
+      UUID parsed;
+      try {
+        parsed = UUID.fromString(value);
+      } catch (IllegalArgumentException invalid) {
+        throw new IllegalArgumentException("Canonical UUID frame required", invalid);
+      }
+      if (!parsed.toString().equals(value) || parsed.equals(new UUID(0L, 0L))) {
+        throw new IllegalArgumentException("Canonical non-nil UUID frame required");
+      }
+      return parsed;
+    }
+
+    private byte[] bytes() {
+      if (stored.length - offset < Integer.BYTES) {
+        throw new IllegalArgumentException("Incomplete authored actor core frame length");
+      }
+      int length =
+          ByteBuffer.wrap(stored, offset, Integer.BYTES).order(ByteOrder.BIG_ENDIAN).getInt();
+      offset += Integer.BYTES;
+      if (length < 0 || length > stored.length - offset) {
+        throw new IllegalArgumentException("Invalid authored actor core frame length");
+      }
+      byte[] value = Arrays.copyOfRange(stored, offset, offset + length);
+      offset += length;
+      return value;
+    }
+
+    private EntryFrame entry() {
+      String family = text();
+      Family.valueOf(family);
+      return new EntryFrame(family, bytes(), text(), bytes(), text(), text());
+    }
+
+    private void requireEnd() {
+      if (offset != stored.length) {
+        throw new IllegalArgumentException("Trailing authored actor core source bytes");
+      }
     }
   }
 }

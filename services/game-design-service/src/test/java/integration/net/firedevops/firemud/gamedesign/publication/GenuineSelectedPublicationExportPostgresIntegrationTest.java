@@ -68,6 +68,7 @@ import net.firedevops.firemud.common.account.sourceintake.SelectedOwnerIntakeAut
 import net.firedevops.firemud.common.account.sourceintake.SelectedOwnerIntakeSettlementEvidence;
 import net.firedevops.firemud.common.account.sourceintake.SelectedOwnerIntakeSourceReadEvidence;
 import net.firedevops.firemud.common.account.sourceintake.SelectedOwnerIntakeSourceReadScope;
+import net.firedevops.firemud.common.account.startsession.AccountStartSessionAdmissionProtectionAcquisitionGrpcClient;
 import net.firedevops.firemud.common.account.startsession.AccountStartSessionWorldParticipationAcquisitionClient;
 import net.firedevops.firemud.common.account.startsession.StartSessionAccountRedemptionProjection;
 import net.firedevops.firemud.common.authoring.AccountOriginalDraftOrderClient;
@@ -410,9 +411,13 @@ import tools.jackson.databind.ObjectMapper;
  * STARTING runtime/launch association with its captured catalog revision, and World consumes that
  * evidence through the native exact-peer Game Session reader. Account participation is
  * point-in-time evidence, not a continuous cross-service lock. Activation authority remains an
- * explicit fixture stipulation. This does not establish production certificate custody, full
- * application server wiring, production ingress, runtime launch, activation or registration. The
- * Logging evidence is point-in-time and does not lock later Account or Game Session commits.
+ * explicit fixture stipulation. The added admission path uses the actual World initial hold,
+ * Account protection acquisition, Account-only Game Session terminal read and Account settlement.
+ * It proves pending denial and a durable original abort without opening the CLOSED pointer; it does
+ * not prove the positive RUNNING transition, settle the World hold or supply activation authority.
+ * This does not establish production certificate custody, full application server wiring,
+ * production ingress, runtime launch, activation or registration. The Logging evidence is
+ * point-in-time and does not lock later Account or Game Session commits.
  */
 @Testcontainers(disabledWithoutDocker = true)
 @SuppressWarnings("resource")
@@ -598,6 +603,13 @@ class GenuineSelectedPublicationExportPostgresIntegrationTest {
         var accountToGameSessionCurrentAttemptClient =
             new GrpcOriginalStartSessionCurrentAttemptClient(
                 endpoints, pki.client("account-service"), channels, NAMESPACE);
+        var accountToGameSessionTerminalClient =
+            new net.firedevops.firemud.common.gamesession
+                .GrpcOriginalStartSessionAdmissionTerminalReadClient(
+                endpoints, pki.client("account-service"), channels, NAMESPACE);
+        var gameSessionToAccountAdmissionClient =
+            new AccountStartSessionAdmissionProtectionAcquisitionGrpcClient(
+                endpoints, pki.client("game-session-service"), channels, NAMESPACE);
         var worldToAccountParticipationClient =
             new AccountStartSessionWorldParticipationAcquisitionClient(
                 endpoints, pki.client("world-management-service"), channels, NAMESPACE);
@@ -630,10 +642,19 @@ class GenuineSelectedPublicationExportPostgresIntegrationTest {
                 endpoints, pki.client("world-management-service"), channels, NAMESPACE);
         var wrongWorkloadActivationClient =
             canonicalActivationClient(worldServer, pki.client("account-service"), channels);
+        var gameSessionInitialHoldClient =
+            new CanonicalInitialAdmissionHoldTransportFixture(
+                loopback(worldServer),
+                worldServer.getPort(),
+                pki.client("game-session-service"),
+                channels,
+                NAMESPACE);
         var gameSessionActivationClient =
             canonicalActivationClient(worldServer, pki.client("game-session-service"), channels)) {
       ReflectionTestUtils.invokeMethod(loggingClaimClient, "init");
       accountToGameSessionCurrentAttemptClient.init();
+      accountToGameSessionTerminalClient.init();
+      gameSessionToAccountAdmissionClient.init();
       worldToAccountParticipationClient.init();
       projectionClient.init();
       wrongWorkloadPreparationClient.init();
@@ -1084,6 +1105,16 @@ class GenuineSelectedPublicationExportPostgresIntegrationTest {
                 NAMESPACE,
                 loggingClaimClient);
         register(accountHandlers, startSessionAuthorizationProof.grpcService());
+        var accountAdmissionProtectionAcquisition =
+            startSessionAuthorizationProof.admissionProtectionAcquisitionService(
+                accountToGameSessionCurrentAttemptClient);
+        var accountAdmissionProtectionSettlement =
+            startSessionAuthorizationProof.admissionProtectionSettlementService(
+                accountToGameSessionTerminalClient);
+        register(
+            accountHandlers,
+            new AccountStartSessionAdmissionProtectionAcquisitionGrpcService(
+                accountAdmissionProtectionAcquisition, NAMESPACE));
         var accountWorldParticipationAcquisitionService =
             startSessionAuthorizationProof.worldParticipationAcquisitionService(
                 accountToGameSessionCurrentAttemptClient);
@@ -3447,6 +3478,19 @@ class GenuineSelectedPublicationExportPostgresIntegrationTest {
               gameSessionHandlers,
               new CanonicalGameInstanceLaunchAssociationReadGrpcService(
                   canonicalLaunchRepository, NAMESPACE));
+          var canonicalAdmissionRepository =
+              new net.firedevops.firemud.gamesession.repository
+                  .GameSessionCanonicalInitialAdmissionRepository(
+                  gameSessionAttempts.dsl(),
+                  gameSessionAttempts.transactionManager(),
+                  NAMESPACE,
+                  gameSessionAttempts.repository(),
+                  canonicalRealmCatalogRepository);
+          register(
+              gameSessionHandlers,
+              new net.firedevops.firemud.gamesession.service.impl
+                  .OriginalStartSessionAdmissionTerminalReadGrpcService(
+                  canonicalAdmissionRepository, NAMESPACE));
           var preparationAssociationRequest =
               new CanonicalGameInstanceLaunchAssociationReadEvidence.Request(
                   UUID.randomUUID(),
@@ -3969,8 +4013,9 @@ class GenuineSelectedPublicationExportPostgresIntegrationTest {
                 .isEqualTo(retainedEvidenceBeforeActivation);
 
             // This explicitly stipulates current producer authority and its operation-specific
-            // held handle. The fixture's STARTING evidence is the existing mocked Game Session
-            // association, not a current owner read or continuous Account/GS protection.
+            // held handle. STARTING association evidence comes from the actual Game Session
+            // launch owner and native authenticated read above, but that retained observation is
+            // not continuous Account/GS protection through the World activation commit.
             {
               var firstActivationResponse =
                   gameSessionActivationClient.activate(
@@ -4108,6 +4153,154 @@ class GenuineSelectedPublicationExportPostgresIntegrationTest {
                   .isEqualTo(independentActiveRead.launchBinding());
               assertThat(activeReadAfterConflict.startLocation())
                   .isEqualTo(independentActiveRead.startLocation());
+
+              // Genuine GS/Account terminal recovery below is deliberately an abort, not
+              // successful admission: the real launch still remains STARTING. World activation
+              // authority above remains stipulated and is not promoted by these owner results.
+              var closedPointer =
+                  Objects.requireNonNull(
+                      gameSessionAttempts
+                          .dsl()
+                          .fetchOne(
+                              "SELECT pointer_version, admission_state, game_instance_id"
+                                  + " FROM gameplay_admission_pointer"
+                                  + " WHERE target_namespace = ? AND canonical_tenant_id = ? AND realm_id = ?",
+                              NAMESPACE,
+                              canonicalRealmCatalog.canonicalTenantId(),
+                              canonicalRealmCatalog.realmId()),
+                      "Actual catalog-created CLOSED pointer required");
+              assertThat(closedPointer.get("admission_state", String.class)).isEqualTo("CLOSED");
+              assertThat(closedPointer.get("game_instance_id", Long.class)).isNull();
+              long expectedClosedVersion = closedPointer.get("pointer_version", Long.class);
+              String initialAdmissionRequestId = UUID.randomUUID().toString();
+              var holdRequest =
+                  canonicalAdmissionRepository.beginIntent(
+                      ownerAttemptClaim,
+                      new net.firedevops.firemud.gamesession.repository
+                          .GameSessionCanonicalInitialAdmissionRepository.IntentInput(
+                          canonicalLaunch,
+                          activeReadAfterConflict,
+                          initialAdmissionRequestId,
+                          net.firedevops.firemud.gamesession.dto.CanonicalInitialAdmissionRequest
+                              .OriginKind.EXPECT_CLOSED,
+                          expectedClosedVersion));
+              var initialHoldRepository =
+                  new net.firedevops.firemud.worldmanagement.tenant
+                      .WorldCanonicalInitialAdmissionHoldRepository(
+                      world.dsl(),
+                      world.transactions(),
+                      canonicalAssociationRepository,
+                      lifecycleRepository);
+              register(
+                  worldHandlers,
+                  new net.firedevops.firemud.worldmanagement.tenant
+                      .WorldCanonicalInitialAdmissionHoldGrpcService(
+                      initialHoldRepository, NAMESPACE));
+              var acquiredHold =
+                  gameSessionInitialHoldClient.acquire(
+                      holdRequest, activeReadAfterConflict.request());
+              assertThat(initialHoldRepository.readIdentity(holdRequest)).contains(acquiredHold);
+              assertThat(
+                      gameSessionInitialHoldClient.acquire(
+                          holdRequest, activeReadAfterConflict.request()))
+                  .isEqualTo(acquiredHold);
+              var attachedAdmission =
+                  canonicalAdmissionRepository.attachWorldHold(ownerAttemptClaim, acquiredHold);
+              assertThat(attachedAdmission.initialAdmissionRequestId())
+                  .isEqualTo(initialAdmissionRequestId);
+              assertThat(initialAdmissionRequestId).isNotEqualTo(controlPlaneRequestId);
+              var protectionInput =
+                  new net.firedevops.firemud.common.account.startsession
+                      .AccountStartSessionAdmissionProtectionAcquisitionInput(
+                      startSessionTuple.canonicalBytes(),
+                      ownerMutationId,
+                      ownerAttemptId,
+                      ownerFence,
+                      acquiredHold);
+              var acquiredProtection = gameSessionToAccountAdmissionClient.acquire(protectionInput);
+              assertThat(
+                      gameSessionToAccountAdmissionClient.acquire(protectionInput).canonicalBytes())
+                  .containsExactly(acquiredProtection.canonicalBytes());
+              var terminalSelector =
+                  new net.firedevops.firemud.common.gamesession
+                      .OriginalStartSessionAdmissionTerminalRequest(
+                      acquiredProtection.canonicalBytes());
+              assertThat(canonicalAdmissionRepository.readTerminal(terminalSelector)).isEmpty();
+              assertThatThrownBy(() -> accountToGameSessionTerminalClient.read(terminalSelector))
+                  .isInstanceOf(io.grpc.StatusRuntimeException.class)
+                  .satisfies(
+                      failure ->
+                          assertThat(io.grpc.Status.fromThrowable(failure).getCode())
+                              .isEqualTo(io.grpc.Status.Code.FAILED_PRECONDITION));
+              assertThatThrownBy(
+                      () ->
+                          accountAdmissionProtectionSettlement.settle(
+                              acquiredProtection.accountProtectionId(),
+                              acquiredProtection.accountProtectionFence()))
+                  .isInstanceOf(io.grpc.StatusRuntimeException.class);
+              assertThat(
+                      startSessionAuthorizationProof
+                          .sourceDsl()
+                          .fetchCount(
+                              DSL.table("account_start_session_admission_protection_settlements"),
+                              DSL.field("protection_id")
+                                  .eq(acquiredProtection.accountProtectionId())))
+                  .isZero();
+              var abortedAdmission =
+                  canonicalAdmissionRepository.abort(
+                      ownerAttemptClaim,
+                      acquiredProtection,
+                      "No original positive admission committed");
+              assertThat(abortedAdmission.ownerProof().outcome())
+                  .isEqualTo(
+                      net.firedevops.firemud.common.world
+                          .GameSessionCanonicalInitialAdmissionOwnerProof.Outcome.ABORTED);
+              assertThat(abortedAdmission.ownerProof().positiveDurableAbort()).isTrue();
+              assertThat(accountToGameSessionTerminalClient.read(terminalSelector).canonicalBytes())
+                  .containsExactly(abortedAdmission.canonicalBytes());
+              var settledAdmissionProtection =
+                  accountAdmissionProtectionSettlement.settle(
+                      acquiredProtection.accountProtectionId(),
+                      acquiredProtection.accountProtectionFence());
+              assertThat(settledAdmissionProtection.outcome())
+                  .isEqualTo(abortedAdmission.ownerProof().outcome());
+              assertThat(
+                      accountAdmissionProtectionSettlement
+                          .settle(
+                              acquiredProtection.accountProtectionId(),
+                              acquiredProtection.accountProtectionFence())
+                          .settlement()
+                          .canonicalBytes())
+                  .containsExactly(settledAdmissionProtection.settlement().canonicalBytes());
+              assertThatThrownBy(
+                      () ->
+                          canonicalAdmissionRepository.commit(
+                              ownerAttemptClaim, acquiredProtection))
+                  .isInstanceOf(IllegalStateException.class);
+              var pointerAfterAbort =
+                  Objects.requireNonNull(
+                      gameSessionAttempts
+                          .dsl()
+                          .fetchOne(
+                              "SELECT pointer_version, admission_state, game_instance_id"
+                                  + " FROM gameplay_admission_pointer"
+                                  + " WHERE target_namespace = ? AND canonical_tenant_id = ? AND realm_id = ?",
+                              NAMESPACE,
+                              canonicalRealmCatalog.canonicalTenantId(),
+                              canonicalRealmCatalog.realmId()));
+              assertThat(pointerAfterAbort.get("admission_state", String.class))
+                  .isEqualTo("CLOSED");
+              assertThat(pointerAfterAbort.get("pointer_version", Long.class))
+                  .isEqualTo(expectedClosedVersion);
+              assertThat(pointerAfterAbort.get("game_instance_id", Long.class)).isNull();
+              assertThat(
+                      canonicalLaunchRepository
+                          .readByLaunchIdentity(preparationAssociationRequest)
+                          .orElseThrow()
+                          .currentGameInstanceStatus())
+                  .isEqualTo(
+                      CanonicalGameInstanceLaunchAssociationReadEvidence.CurrentGameInstanceStatus
+                          .STARTING);
             }
 
             var retainedOwnerEvidenceAfterActivation =

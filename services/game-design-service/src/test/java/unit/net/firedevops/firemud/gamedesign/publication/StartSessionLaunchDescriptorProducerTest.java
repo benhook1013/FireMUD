@@ -11,6 +11,7 @@ import io.grpc.Status;
 import io.grpc.StatusRuntimeException;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -19,6 +20,8 @@ import net.firedevops.firemud.common.authoring.DraftCommitBinding.AffectedUnit;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding.Owner;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding.RevisionPayload;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding.TargetProof;
+import net.firedevops.firemud.common.gamedesign.AuthoredInitialActorCoreSourceBinding;
+import net.firedevops.firemud.common.gamedesign.AuthoredWorldLaunchDescriptorEvidence;
 import net.firedevops.firemud.common.gamedesign.GameplayRuleSource;
 import net.firedevops.firemud.common.gamedesign.RealmPolicySource;
 import net.firedevops.firemud.common.gamedesign.StartSessionTemplateAssociationReadEvidence;
@@ -35,6 +38,7 @@ import net.firedevops.firemud.common.operator.StartSessionAuthorityEvidenceBundl
 import net.firedevops.firemud.common.operator.StartSessionOperatorAction;
 import net.firedevops.firemud.common.operator.StartSessionPostAuthorizationExecutionTuple;
 import net.firedevops.firemud.common.operator.StartSessionPreAuthorizationReservationTuple;
+import net.firedevops.firemud.gamedesign.dto.ResolvedLaunchDescriptorDto;
 import net.firedevops.firemud.gamedesign.service.PublishedReleaseBundleService;
 import org.jooq.DSLContext;
 import org.junit.jupiter.api.Test;
@@ -142,6 +146,7 @@ class StartSessionLaunchDescriptorProducerTest {
     assertThat(resolved.getFirst().safeFeedback().feedbackKey()).isEqualTo("welcome");
     assertThat(resolved.getFirst().selectedCommit()).isEqualTo(fixture.binding());
     assertThat(resolved.getFirst().expectedWorldSlug()).isEqualTo("world");
+    assertThatThrownBy(resolved::clear).isInstanceOf(UnsupportedOperationException.class);
 
     assertThat(
             StartSessionLaunchDescriptorProducer.resolveSelectedAuthoredInitialActorCoreSources(
@@ -182,6 +187,104 @@ class StartSessionLaunchDescriptorProducerTest {
                     fixture.gameplayRules()))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("selected authored commit");
+  }
+
+  @Test
+  void resolvedBindingDefensivelyRetainsSelectedActorCoreAndRejectsChangedReleaseProvenance() {
+    var fixture = selectedActorCoreSource();
+    UUID sourceOperation = uuid("66666666-6666-4666-8666-666666666666");
+    List<AuthoredInitialActorCoreSourceBinding> sourceBindings =
+        StartSessionLaunchDescriptorProducer.resolveSelectedAuthoredInitialActorCoreSources(
+            sourceOperation,
+            digest('a'),
+            "world",
+            "selected-workflow",
+            bytes("selected publication operation"),
+            bytes("selected publication terminal evidence"),
+            fixture.binding(),
+            fixture.policySnapshot(),
+            fixture.gameplayRules());
+    var mutableBindings = new ArrayList<>(sourceBindings);
+    var resolved =
+        resolvedBinding(mutableBindings, sourceOperation, "world", COMMIT, "selected-workflow");
+
+    mutableBindings.clear();
+    assertThat(resolved.actorCoreBindings()).hasSize(1);
+    assertThat(resolved.actorCoreBindings().getFirst().canonicalBytes())
+        .isEqualTo(sourceBindings.getFirst().canonicalBytes());
+    assertThatThrownBy(resolved.actorCoreBindings()::clear)
+        .isInstanceOf(UnsupportedOperationException.class);
+
+    assertThatThrownBy(
+            () ->
+                resolvedBinding(
+                    sourceBindings,
+                    uuid("77777777-7777-4777-8777-777777777777"),
+                    "world",
+                    COMMIT,
+                    "selected-workflow"))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("exact selected StartSession release");
+    assertThatThrownBy(
+            () ->
+                resolvedBinding(
+                    sourceBindings, sourceOperation, "other-world", COMMIT, "selected-workflow"))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("exact selected StartSession release");
+    assertThatThrownBy(
+            () ->
+                resolvedBinding(
+                    sourceBindings,
+                    sourceOperation,
+                    "world",
+                    uuid("88888888-8888-4888-8888-888888888888"),
+                    "selected-workflow"))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("exact selected StartSession release");
+    assertThatThrownBy(
+            () ->
+                resolvedBinding(sourceBindings, sourceOperation, "world", COMMIT, "other-workflow"))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("exact selected StartSession release");
+  }
+
+  private static StartSessionLaunchDescriptorProducer.ResolvedBinding resolvedBinding(
+      List<AuthoredInitialActorCoreSourceBinding> actorCoreBindings,
+      UUID associationSourceOperationId,
+      String descriptorWorldSlug,
+      UUID associationSelectedCommitId,
+      String associationWorkflowId) {
+    var request = request(new ExactReplay(VERSION, COMMIT, "selected-workflow", digest('a')));
+    var association = mock(StartSessionTemplateAssociationReadEvidence.Association.class);
+    when(association.canonicalTenantId()).thenReturn(TENANT);
+    when(association.templateId()).thenReturn(91L);
+    when(association.canonicalVersionId()).thenReturn(VERSION);
+    when(association.selectedCommitId()).thenReturn(associationSelectedCommitId);
+    when(association.publishWorkflowId()).thenReturn(associationWorkflowId);
+    when(association.sourceOperationId()).thenReturn(associationSourceOperationId);
+    when(association.sourceEvidenceDigest()).thenReturn(digest('a'));
+    when(association.worldSlug()).thenReturn("world");
+
+    var associationRead = mock(StartSessionTemplateAssociationReadEvidence.Result.class);
+    when(associationRead.request()).thenReturn(request);
+    when(associationRead.association()).thenReturn(association);
+
+    var authoredWorld = mock(AuthoredWorldLaunchDescriptorEvidence.class);
+    when(authoredWorld.worldSlug()).thenReturn(descriptorWorldSlug);
+    when(authoredWorld.authoredWorldSourceOperationId())
+        .thenReturn(uuid("66666666-6666-4666-8666-666666666666"));
+    when(authoredWorld.authoredWorldSourceEvidenceDigest()).thenReturn(digest('a'));
+    when(authoredWorld.canonicalTenantId()).thenReturn(TENANT);
+    when(authoredWorld.versionId()).thenReturn(23L);
+    when(authoredWorld.gameTemplateId()).thenReturn(91L);
+
+    var descriptor = mock(ResolvedLaunchDescriptorDto.class);
+    when(descriptor.controlPlaneRequestId()).thenReturn("launch-descriptor-test");
+    when(descriptor.canonicalTenantId()).thenReturn(TENANT.toString());
+    when(descriptor.gameTemplateId()).thenReturn(91L);
+    when(descriptor.authoredWorldBinding()).thenReturn(authoredWorld);
+    return new StartSessionLaunchDescriptorProducer.ResolvedBinding(
+        request, associationRead, descriptor, actorCoreBindings);
   }
 
   private static SelectedActorCoreFixture selectedActorCoreSource() {

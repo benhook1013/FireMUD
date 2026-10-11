@@ -8,6 +8,7 @@ import java.util.Map;
 import java.util.Set;
 import net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding;
+import net.firedevops.firemud.common.gamedesign.GameplayRuleSource;
 
 /** Closed GD owner export. Structure and digest are not authentication of its producer. */
 public record GameplayRuleSelectedSource(String snapshotJson) {
@@ -40,41 +41,8 @@ public record GameplayRuleSelectedSource(String snapshotJson) {
         new EnumMap<>(GameplayRuleManifest.Family.class);
     for (var family : GameplayRuleManifest.Family.values())
       inventory.put(family, new ArrayList<>());
-    for (var entry : root.path("entries")) {
-      GameplayRuleManifest.fields(
-          entry,
-          Set.of(
-              "family",
-              "definitionJson",
-              "sourceBindingJson",
-              "sourceBindingDigest",
-              "revisionOrder",
-              "revisionId"));
-      var family = GameplayRuleManifest.Family.valueOf(text(entry, "family"));
-      var origin =
-          DraftCommitBinding.fromStored(
-              text(entry, "sourceBindingJson"), text(entry, "sourceBindingDigest"));
-      if (!origin.target().equals(binding.target())
-          || !text(entry, "revisionOrder").matches("0|[1-9][0-9]*"))
-        throw new IllegalArgumentException("Selected rule provenance differs");
-      String revisionId = text(entry, "revisionId");
-      DraftAuthorizationFenceBinding.canonicalUuid(revisionId);
-      var definition = GameplayRuleManifest.definition(family, text(entry, "definitionJson"));
-      String expectedPayload = GameplayRuleSourceRevision.upsertPayload(definition);
-      boolean originalRevision =
-          origin.revisions().stream()
-              .anyMatch(
-                  revision ->
-                      revision.owner() == DraftCommitBinding.Owner.GAME_DESIGN_CONTROL_PLANE
-                          && revision.revisionId().toString().equals(revisionId)
-                          && revision.revisionOrder().equals(text(entry, "revisionOrder"))
-                          && expectedPayload.equals(
-                              GameplayRuleManifest.canonical(
-                                  GameplayRuleManifest.tree(revision.payload()))));
-      if (!originalRevision)
-        throw new IllegalArgumentException("Rule entry lacks exact original UPSERT revision");
-      inventory.get(family).add(definition);
-    }
+    for (var entry : parseEntries(root, binding))
+      inventory.get(entry.family()).add(entry.definition());
     if (!manifest.equals(new GameplayRuleManifest(inventory))
         || !snapshotJson.equals(GameplayRuleManifest.canonical(root)))
       throw new IllegalArgumentException("Selected manifest differs from complete snapshot");
@@ -90,6 +58,11 @@ public record GameplayRuleSelectedSource(String snapshotJson) {
         text(GameplayRuleManifest.tree(snapshotJson), "manifestJson"));
   }
 
+  /** Exact immutable owner entries after the constructor's complete closed-source validation. */
+  public List<GameplayRuleSource.Entry> entries() {
+    return parseEntries(GameplayRuleManifest.tree(snapshotJson), binding());
+  }
+
   public byte[] canonicalBytes() {
     return snapshotJson.getBytes(StandardCharsets.UTF_8);
   }
@@ -102,5 +75,48 @@ public record GameplayRuleSelectedSource(String snapshotJson) {
     if (!node.path(name).isTextual())
       throw new IllegalArgumentException("Text source field required");
     return node.path(name).textValue();
+  }
+
+  private static List<GameplayRuleSource.Entry> parseEntries(
+      tools.jackson.databind.JsonNode root, DraftCommitBinding binding) {
+    List<GameplayRuleSource.Entry> result = new ArrayList<>();
+    for (var entry : root.path("entries")) {
+      GameplayRuleManifest.fields(
+          entry,
+          Set.of(
+              "family",
+              "definitionJson",
+              "sourceBindingJson",
+              "sourceBindingDigest",
+              "revisionOrder",
+              "revisionId"));
+      var family = GameplayRuleManifest.Family.valueOf(text(entry, "family"));
+      var origin =
+          DraftCommitBinding.fromStored(
+              text(entry, "sourceBindingJson"), text(entry, "sourceBindingDigest"));
+      String revisionOrder = text(entry, "revisionOrder");
+      if (!origin.target().equals(binding.target()) || !revisionOrder.matches("0|[1-9][0-9]*"))
+        throw new IllegalArgumentException("Selected rule provenance differs");
+      String revisionId = text(entry, "revisionId");
+      DraftAuthorizationFenceBinding.canonicalUuid(revisionId);
+      var definition = GameplayRuleManifest.definition(family, text(entry, "definitionJson"));
+      String expectedPayload = GameplayRuleSourceRevision.upsertPayload(definition);
+      boolean originalRevision =
+          origin.revisions().stream()
+              .anyMatch(
+                  revision ->
+                      revision.owner() == DraftCommitBinding.Owner.GAME_DESIGN_CONTROL_PLANE
+                          && revision.revisionId().toString().equals(revisionId)
+                          && revision.revisionOrder().equals(revisionOrder)
+                          && expectedPayload.equals(
+                              GameplayRuleManifest.canonical(
+                                  GameplayRuleManifest.tree(revision.payload()))));
+      if (!originalRevision)
+        throw new IllegalArgumentException("Rule entry lacks exact original UPSERT revision");
+      result.add(
+          new GameplayRuleSource.Entry(
+              family, definition, origin, revisionOrder, java.util.UUID.fromString(revisionId)));
+    }
+    return List.copyOf(result);
   }
 }

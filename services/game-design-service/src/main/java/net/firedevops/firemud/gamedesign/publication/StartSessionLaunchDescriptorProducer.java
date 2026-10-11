@@ -8,6 +8,7 @@ import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
+import net.firedevops.firemud.common.gamedesign.AuthoredInitialActorCoreSourceBinding;
 import net.firedevops.firemud.common.gamedesign.AuthoredWorldLaunchDescriptorEvidence;
 import net.firedevops.firemud.common.gamedesign.GameDesignPublicationTerminalEvidence;
 import net.firedevops.firemud.common.gamedesign.StartSessionTemplateAssociationReadEvidence.Association;
@@ -15,6 +16,7 @@ import net.firedevops.firemud.common.gamedesign.StartSessionTemplateAssociationR
 import net.firedevops.firemud.common.gamedesign.StartSessionTemplateAssociationReadEvidence.Request;
 import net.firedevops.firemud.common.gamedesign.StartSessionTemplateAssociationReadEvidence.Result;
 import net.firedevops.firemud.common.gamedesign.StartSessionTemplateAssociationReadGrpcCodec;
+import net.firedevops.firemud.common.gamelogic.GameplayRuleSelectedSource;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
 import net.firedevops.firemud.common.operator.StartSessionPostAuthorizationExecutionTuple;
 import net.firedevops.firemud.common.publication.PublicationDigestRequestBinding;
@@ -219,7 +221,8 @@ public final class StartSessionLaunchDescriptorProducer {
       requireSuccessfulDescriptor(descriptor);
       ResolvedLaunchDescriptorDto resolved =
           readStored(descriptor, descriptorRequest, requestJson, source, sourceJson);
-      return OwnerOutcome.succeeded(new ResolvedBinding(exactRequest, exact, resolved));
+      return OwnerOutcome.succeeded(
+          new ResolvedBinding(exactRequest, exact, resolved, capturedTemplate.actorCoreBindings()));
     }
 
     if (descriptors
@@ -333,7 +336,8 @@ public final class StartSessionLaunchDescriptorProducer {
     }
     ResolvedLaunchDescriptorDto resolved =
         readStored(persisted, descriptorRequest, requestJson, source, sourceJson);
-    return OwnerOutcome.succeeded(new ResolvedBinding(exactRequest, exact, resolved));
+    return OwnerOutcome.succeeded(
+        new ResolvedBinding(exactRequest, exact, resolved, capturedTemplate.actorCoreBindings()));
   }
 
   private CapturedTemplate requireCapturedTemplate(Result exact, long templateId) {
@@ -417,31 +421,34 @@ public final class StartSessionLaunchDescriptorProducer {
         || !row.worldSlug().equals(publicAssociation.worldSlug())) {
       throw conflict("Retained association row differs from the public pinned association");
     }
-    CapturedTemplate capturedTemplate =
-        new CapturedTemplate(
-            unsupported,
-            selectedGameplayRules.receiptBinding(),
-            selection.selectedCommit(),
-            capture.policy().snapshot().shared(),
-            selectedGameplayRules.snapshot(),
-            operation.workflowId(),
-            operation.canonicalBytes(),
-            readback.terminalEvidenceBytes());
+    var policySnapshot = capture.policy().snapshot().shared();
+    var gameplayRules = selectedGameplayRules.snapshot();
+    List<AuthoredInitialActorCoreSourceBinding> actorCoreBindings;
     try {
-      resolveSelectedAuthoredInitialActorCoreSources(
-          exact.association().sourceOperationId(),
-          exact.association().sourceEvidenceDigest(),
-          exact.association().worldSlug(),
-          capturedTemplate.publicationWorkflowId(),
-          capturedTemplate.publicationOperationBytes(),
-          capturedTemplate.publicationTerminalEvidenceBytes(),
-          capturedTemplate.selectedCommit(),
-          capturedTemplate.policySnapshot(),
-          capturedTemplate.gameplayRules());
+      actorCoreBindings =
+          resolveSelectedAuthoredInitialActorCoreSources(
+              exact.association().sourceOperationId(),
+              exact.association().sourceEvidenceDigest(),
+              exact.association().worldSlug(),
+              operation.workflowId(),
+              operation.canonicalBytes(),
+              readback.terminalEvidenceBytes(),
+              selection.selectedCommit(),
+              policySnapshot,
+              gameplayRules);
     } catch (IllegalArgumentException invalidActorCoreSource) {
       throw conflict("Selected authored initial actor core differs from exact published source");
     }
-    return capturedTemplate;
+    return new CapturedTemplate(
+        unsupported,
+        selectedGameplayRules.receiptBinding(),
+        selection.selectedCommit(),
+        policySnapshot,
+        gameplayRules,
+        operation.workflowId(),
+        operation.canonicalBytes(),
+        readback.terminalEvidenceBytes(),
+        actorCoreBindings);
   }
 
   static List<AuthoredInitialActorCoreSourceBinding> resolveSelectedAuthoredInitialActorCoreSources(
@@ -464,7 +471,7 @@ public final class StartSessionLaunchDescriptorProducer {
         publicationTerminalEvidenceBytes,
         selectedCommit,
         policySnapshot,
-        gameplayRules);
+        new GameplayRuleSelectedSource(gameplayRules.canonicalJson()));
   }
 
   /**
@@ -1065,14 +1072,19 @@ public final class StartSessionLaunchDescriptorProducer {
   }
 
   /**
-   * Returned to the caller so Game Session can atomically pin this descriptor with the association.
+   * Exact selected-release descriptor and its independently validated authored actor-core sources.
    */
   public record ResolvedBinding(
-      Request request, Result associationRead, ResolvedLaunchDescriptorDto descriptor) {
+      Request request,
+      Result associationRead,
+      ResolvedLaunchDescriptorDto descriptor,
+      List<AuthoredInitialActorCoreSourceBinding> actorCoreBindings) {
     public ResolvedBinding {
       Objects.requireNonNull(request, "request");
       Objects.requireNonNull(associationRead, "associationRead");
       Objects.requireNonNull(descriptor, "descriptor");
+      actorCoreBindings =
+          List.copyOf(Objects.requireNonNull(actorCoreBindings, "actorCoreBindings"));
       if (!request.equals(associationRead.request())
           || !request
               .decodedTuple()
@@ -1090,6 +1102,31 @@ public final class StartSessionLaunchDescriptorProducer {
               != descriptor.gameTemplateId()) {
         throw new IllegalArgumentException(
             "Resolved descriptor differs from exact StartSession binding");
+      }
+      var association = associationRead.association();
+      var authoredWorld = descriptor.authoredWorldBinding();
+      for (var actorCore : actorCoreBindings) {
+        var selected = actorCore.selectedCommit();
+        if (!actorCore.worldSourceOperationId().equals(association.sourceOperationId())
+            || !actorCore.worldSourceEvidenceDigest().equals(association.sourceEvidenceDigest())
+            || !actorCore.expectedWorldSlug().equals(association.worldSlug())
+            || !actorCore.publicationWorkflowId().equals(association.publishWorkflowId())
+            || !selected.target().canonicalTenantId().equals(association.canonicalTenantId())
+            || !selected.target().canonicalVersionId().equals(association.canonicalVersionId())
+            || !selected.commitId().equals(association.selectedCommitId())
+            || !actorCore.expectedWorldSlug().equals(authoredWorld.worldSlug())
+            || !actorCore
+                .worldSourceOperationId()
+                .equals(authoredWorld.authoredWorldSourceOperationId())
+            || !actorCore
+                .worldSourceEvidenceDigest()
+                .equals(authoredWorld.authoredWorldSourceEvidenceDigest())
+            || !selected.target().canonicalTenantId().equals(authoredWorld.canonicalTenantId())
+            || selected.target().gameDesignVersionRowId() != authoredWorld.versionId()
+            || association.templateId() != authoredWorld.gameTemplateId()) {
+          throw new IllegalArgumentException(
+              "Authored actor core differs from the exact selected StartSession release");
+        }
       }
     }
   }
@@ -1134,7 +1171,8 @@ public final class StartSessionLaunchDescriptorProducer {
       GameplayRuleSnapshot gameplayRules,
       String publicationWorkflowId,
       byte[] publicationOperationBytes,
-      byte[] publicationTerminalEvidenceBytes) {
+      byte[] publicationTerminalEvidenceBytes,
+      List<AuthoredInitialActorCoreSourceBinding> actorCoreBindings) {
     private CapturedTemplate {
       Objects.requireNonNull(gameLogicReceipt, "gameLogicReceipt");
       Objects.requireNonNull(selectedCommit, "selectedCommit");
@@ -1147,6 +1185,8 @@ public final class StartSessionLaunchDescriptorProducer {
           Objects.requireNonNull(
                   publicationTerminalEvidenceBytes, "publicationTerminalEvidenceBytes")
               .clone();
+      actorCoreBindings =
+          List.copyOf(Objects.requireNonNull(actorCoreBindings, "actorCoreBindings"));
       if (!selectedCommit.equals(policySnapshot.binding())
           || !selectedCommit.equals(gameplayRules.binding())) {
         throw new IllegalArgumentException("Captured source differs from selected commit");
