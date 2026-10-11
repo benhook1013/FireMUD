@@ -1,12 +1,14 @@
 package net.firedevops.firemud.gamesession.client;
 
 import jakarta.annotation.PostConstruct;
+import java.util.Objects;
 import java.util.concurrent.TimeUnit;
 import net.firedevops.firemud.common.config.ServiceEndpointsProperties;
 import net.firedevops.firemud.common.grpc.AbstractBlockingGrpcClient;
 import net.firedevops.firemud.common.grpc.BlockingGrpcStubCustomizer;
 import net.firedevops.firemud.common.grpc.CommonGrpcClientProperties;
 import net.firedevops.firemud.common.grpc.GrpcChannelFactory;
+import net.firedevops.firemud.common.tenant.AuthoredWorldSourceEvidence;
 import net.firedevops.firemud.gamedesign.v1.GameDesignServiceGrpc;
 import net.firedevops.firemud.gamedesign.v1.GetPublishedPluginVersionRequest;
 import net.firedevops.firemud.gamedesign.v1.GetPublishedPluginVersionResponse;
@@ -21,6 +23,7 @@ import net.firedevops.firemud.gamedesign.v1.GetVersionStateResponse;
 import net.firedevops.firemud.gamedesign.v1.HelpTopicScope;
 import net.firedevops.firemud.gamedesign.v1.ResolveHelpTopicRequest;
 import net.firedevops.firemud.gamedesign.v1.ResolveHelpTopicResponse;
+import net.firedevops.firemud.gamedesign.v1.ResolveLaunchDescriptorRequest;
 import net.firedevops.firemud.gamedesign.v1.ResolveLaunchDescriptorResponse;
 import net.firedevops.firemud.gamesession.service.GameAuthoredHelpReader;
 import net.firedevops.firemud.shared.v1.ErrorDetail;
@@ -64,6 +67,26 @@ public final class GameDesignClient
   public ResolveLaunchDescriptorResponse resolveLaunchDescriptor(
       long tenantId, long gameTemplateId, String controlPlaneRequestId) {
     return authoredWorldLaunchBindingRequired();
+  }
+
+  /** Resolves a run-owned fixture launch against its exact Game Design source receipt. */
+  public ResolveLaunchDescriptorResponse resolveLaunchDescriptor(
+      long tenantId,
+      long gameTemplateId,
+      String controlPlaneRequestId,
+      AuthoredWorldSourceEvidence sourceEvidence) {
+    Objects.requireNonNull(sourceEvidence, "sourceEvidence");
+    return callStub()
+        .resolveLaunchDescriptor(
+            ResolveLaunchDescriptorRequest.newBuilder()
+                .setTenantId(Long.toString(tenantId))
+                .setGameTemplateId(gameTemplateId)
+                .setControlPlaneRequestId(controlPlaneRequestId)
+                .setWorldSlug(sourceEvidence.worldSlug())
+                .setAuthoredWorldSourceOperationId(sourceEvidence.operationId().toString())
+                .setExpectedAuthoredWorldSourceEvidenceDigest(sourceEvidence.evidenceDigest())
+                .setCanonicalTenantId(sourceEvidence.canonicalTenantId().toString())
+                .build());
   }
 
   public ResolveLaunchDescriptorResponse resolveLaunchDescriptor(
