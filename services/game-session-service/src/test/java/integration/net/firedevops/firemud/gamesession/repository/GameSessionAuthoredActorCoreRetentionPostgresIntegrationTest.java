@@ -18,6 +18,7 @@ import net.firedevops.firemud.common.gamedesign.AuthoredWorldReleaseAttestationE
 import net.firedevops.firemud.common.gamedesign.CompleteLaunchBindingEvidence;
 import net.firedevops.firemud.common.gamedesign.StartSessionTemplateAssociationReadEvidence;
 import net.firedevops.firemud.common.gamedesign.StartSessionTemplateAssociationReadGrpcCodec;
+import net.firedevops.firemud.common.gamesession.CanonicalGameInstanceLaunchAssociationReadEvidence;
 import net.firedevops.firemud.common.gamesession.OriginalStartSessionCurrentAttemptEvidence;
 import net.firedevops.firemud.common.json.Rfc8785CanonicalJson;
 import net.firedevops.firemud.common.operator.StartSessionAuthorityEvidenceBundle;
@@ -40,6 +41,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.jdbc.datasource.DataSourceTransactionManager;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
 import org.springframework.jdbc.datasource.TransactionAwareDataSourceProxy;
+import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.support.TransactionTemplate;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
@@ -146,6 +148,274 @@ class GameSessionAuthoredActorCoreRetentionPostgresIntegrationTest {
                           "TRUNCATE game_session_original_start_session_authored_actor_core_retention"))
           .isInstanceOf(RuntimeException.class);
     }
+  }
+
+  @Test
+  void originalSelectionPinIsAppendOnlyAndBoundToTheExactLiveAttemptAndLaunch() throws Exception {
+    try (Fixture fixture = newFixture()) {
+      LaunchInputs launch = fixture.createLaunch();
+      AttemptInputs attempt = fixture.createAttempt(launch.proof().originalTuple());
+      var tuple = launch.proof().originalTuple();
+      byte[] selectionRequest = new byte[] {1};
+      byte[] selectionResponse = new byte[] {2};
+      byte[] descriptorRequest = new byte[] {3};
+      byte[] descriptorResponse = new byte[] {4};
+      String operationId = tuple.controlPlaneRequestId();
+      var owner = attempt.snapshot();
+      var attemptRepository =
+          new GameSessionStartSessionOperatorAttemptRepository(
+              fixture.dsl(), Duration.ofMinutes(5));
+      assertThatThrownBy(
+              () ->
+                  attemptRepository.readHistoricalOwnerAttempt(
+                      tuple, UUID.randomUUID(), owner.ownerFence()))
+          .isInstanceOf(IllegalStateException.class);
+      assertThatThrownBy(
+              () ->
+                  attemptRepository.readHistoricalOwnerAttempt(
+                      tuple, owner.ownerAttemptId(), owner.ownerFence() + 1))
+          .isInstanceOf(IllegalStateException.class);
+      var launchRepository =
+          new GameSessionCanonicalInstanceLaunchRepository(
+              fixture.dsl(),
+              fixture.transactionManager(),
+              NAMESPACE,
+              new GameSessionCanonicalRealmCatalogRepository(
+                  fixture.dsl(), fixture.transactionManager(), NAMESPACE));
+      var exactSelector = historicalSelector(launch);
+      var mismatchedSelector =
+          new CanonicalGameInstanceLaunchAssociationReadEvidence.Request(
+              UUID.randomUUID(),
+              exactSelector.targetNamespace(),
+              exactSelector.canonicalTenantId(),
+              "other-world",
+              exactSelector.gameInstanceUuid(),
+              exactSelector.controlPlaneRequestId(),
+              exactSelector.launchDescriptorId(),
+              exactSelector.expectedDescriptorRequestDigest(),
+              exactSelector.expectedDescriptorResultDigest(),
+              exactSelector.expectedReleaseAttestationEvidenceDigest());
+      TransactionTemplate readSnapshot = new TransactionTemplate(fixture.transactionManager());
+      readSnapshot.setReadOnly(true);
+      readSnapshot.setIsolationLevel(TransactionDefinition.ISOLATION_REPEATABLE_READ);
+      assertThatThrownBy(
+              () ->
+                  readSnapshot.execute(
+                      status ->
+                          launchRepository.readHistoricalAssociationInOwnerTransaction(
+                              mismatchedSelector, tuple.canonicalBytes())))
+          .isInstanceOf(IllegalStateException.class);
+      assertThatThrownBy(
+              () ->
+                  insertSelectionPin(
+                      fixture,
+                      launch,
+                      attempt,
+                      UUID.randomUUID(),
+                      selectionRequest,
+                      selectionResponse,
+                      descriptorRequest,
+                      descriptorResponse))
+          .isInstanceOf(RuntimeException.class);
+      assertThatThrownBy(
+              () ->
+                  insertSelectionPin(
+                      fixture,
+                      launch,
+                      attempt,
+                      launch.catalog().canonicalTenantId(),
+                      UUID.randomUUID(),
+                      UUID.randomUUID(),
+                      owner.ownerFence(),
+                      selectionRequest,
+                      selectionResponse,
+                      descriptorRequest,
+                      descriptorResponse))
+          .isInstanceOf(RuntimeException.class);
+      assertThatThrownBy(
+              () ->
+                  insertSelectionPin(
+                      fixture,
+                      launch,
+                      attempt,
+                      launch.catalog().canonicalTenantId(),
+                      owner.ownerAttemptId(),
+                      owner.ownerMutationId(),
+                      owner.ownerFence() + 1,
+                      selectionRequest,
+                      selectionResponse,
+                      descriptorRequest,
+                      descriptorResponse))
+          .isInstanceOf(RuntimeException.class);
+      insertSelectionPin(
+          fixture,
+          launch,
+          attempt,
+          launch.catalog().canonicalTenantId(),
+          selectionRequest,
+          selectionResponse,
+          descriptorRequest,
+          descriptorResponse);
+
+      var retained =
+          fixture
+              .dsl()
+              .fetchOne(
+                  "SELECT initial_selection_request_bytes, descriptor_pin_response_bytes"
+                      + " FROM game_session_original_start_session_selection_pin"
+                      + " WHERE target_namespace = ? AND control_plane_request_id = ?",
+                  NAMESPACE,
+                  operationId);
+      assertThat(retained.get("initial_selection_request_bytes", byte[].class))
+          .containsExactly(selectionRequest);
+      assertThat(retained.get("descriptor_pin_response_bytes", byte[].class))
+          .containsExactly(descriptorResponse);
+      String where =
+          " WHERE target_namespace = '"
+              + NAMESPACE
+              + "' AND control_plane_request_id = '"
+              + operationId
+              + "'";
+      assertThatThrownBy(
+              () ->
+                  fixture
+                      .dsl()
+                      .execute(
+                          "UPDATE game_session_original_start_session_selection_pin"
+                              + " SET initial_selection_response_digest = 'sha256:' || repeat('0', 64)"
+                              + where))
+          .isInstanceOf(RuntimeException.class);
+      assertThatThrownBy(
+              () ->
+                  fixture
+                      .dsl()
+                      .execute(
+                          "DELETE FROM game_session_original_start_session_selection_pin" + where))
+          .isInstanceOf(RuntimeException.class);
+      assertThatThrownBy(
+              () ->
+                  fixture
+                      .dsl()
+                      .execute("TRUNCATE game_session_original_start_session_selection_pin"))
+          .isInstanceOf(RuntimeException.class);
+    }
+
+    try (Fixture fixture = newFixture()) {
+      LaunchInputs launch = fixture.createLaunch();
+      AttemptInputs expiringAttempt =
+          fixture.createAttempt(launch.proof().originalTuple(), Duration.ofSeconds(2));
+      Thread.sleep(Duration.ofMillis(2200).toMillis());
+      assertThatThrownBy(
+              () ->
+                  insertSelectionPin(
+                      fixture,
+                      launch,
+                      expiringAttempt,
+                      launch.catalog().canonicalTenantId(),
+                      new byte[] {11},
+                      new byte[] {12},
+                      new byte[] {13},
+                      new byte[] {14}))
+          .isInstanceOf(RuntimeException.class);
+      var retainedCount =
+          Objects.requireNonNull(
+              fixture
+                  .dsl()
+                  .fetchOne(
+                      "SELECT count(*) AS retained FROM game_session_original_start_session_selection_pin"),
+              "expired-attempt selection-pin count query returned no row");
+      assertThat(retainedCount.get("retained", Long.class)).isZero();
+    }
+  }
+
+  private static CanonicalGameInstanceLaunchAssociationReadEvidence.Request historicalSelector(
+      LaunchInputs launch) {
+    var tuple = launch.proof().originalTuple();
+    var descriptor = launch.proof().completeLaunchBindingEvidence().descriptor();
+    var release = launch.proof().completeLaunchBindingEvidence().releaseAttestation();
+    return new CanonicalGameInstanceLaunchAssociationReadEvidence.Request(
+        UUID.randomUUID(),
+        NAMESPACE,
+        launch.catalog().canonicalTenantId(),
+        launch.catalog().worldSlug(),
+        launch.gameInstanceUuid(),
+        tuple.controlPlaneRequestId(),
+        descriptor.launchDescriptorId(),
+        descriptor.requestDigest(),
+        descriptor.resultDigest(),
+        release.evidenceDigest());
+  }
+
+  private static void insertSelectionPin(
+      Fixture fixture,
+      LaunchInputs launch,
+      AttemptInputs attempt,
+      UUID canonicalTenantId,
+      byte[] selectionRequest,
+      byte[] selectionResponse,
+      byte[] descriptorRequest,
+      byte[] descriptorResponse) {
+    var owner = attempt.snapshot();
+    insertSelectionPin(
+        fixture,
+        launch,
+        attempt,
+        canonicalTenantId,
+        owner.ownerAttemptId(),
+        owner.ownerMutationId(),
+        owner.ownerFence(),
+        selectionRequest,
+        selectionResponse,
+        descriptorRequest,
+        descriptorResponse);
+  }
+
+  private static void insertSelectionPin(
+      Fixture fixture,
+      LaunchInputs launch,
+      AttemptInputs attempt,
+      UUID canonicalTenantId,
+      UUID ownerAttemptId,
+      UUID ownerMutationId,
+      long ownerFence,
+      byte[] selectionRequest,
+      byte[] selectionResponse,
+      byte[] descriptorRequest,
+      byte[] descriptorResponse) {
+    var tuple = launch.proof().originalTuple();
+    var owner = attempt.snapshot();
+    fixture
+        .dsl()
+        .execute(
+            "INSERT INTO game_session_original_start_session_selection_pin"
+                + " (target_namespace, control_plane_request_id, canonical_tenant_id,"
+                + " game_instance_uuid, launch_descriptor_id, owner_attempt_id, owner_mutation_id,"
+                + " owner_fence, owner_lease_expires_at, original_post_authorization_tuple,"
+                + " account_redemption_projection, initial_selection_request_bytes,"
+                + " initial_selection_request_digest, initial_selection_response_bytes,"
+                + " initial_selection_response_digest, descriptor_pin_request_bytes,"
+                + " descriptor_pin_request_digest, descriptor_pin_response_bytes,"
+                + " descriptor_pin_response_digest)"
+                + " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            NAMESPACE,
+            tuple.controlPlaneRequestId(),
+            canonicalTenantId,
+            launch.gameInstanceUuid(),
+            launch.proof().completeLaunchBindingEvidence().descriptor().launchDescriptorId(),
+            ownerAttemptId,
+            ownerMutationId,
+            ownerFence,
+            java.time.OffsetDateTime.ofInstant(owner.leaseExpiresAt(), java.time.ZoneOffset.UTC),
+            tuple.canonicalBytes(),
+            owner.accountRedemptionProjection(),
+            selectionRequest,
+            sha256(selectionRequest),
+            selectionResponse,
+            sha256(selectionResponse),
+            descriptorRequest,
+            sha256(descriptorRequest),
+            descriptorResponse,
+            sha256(descriptorResponse));
   }
 
   private static Candidate candidate(
@@ -360,8 +630,13 @@ class GameSessionAuthoredActorCoreRetentionPostgresIntegrationTest {
 
     AttemptInputs createAttempt(
         net.firedevops.firemud.common.operator.StartSessionPostAuthorizationExecutionTuple tuple) {
-      var repository =
-          new GameSessionStartSessionOperatorAttemptRepository(dsl, Duration.ofMinutes(5));
+      return createAttempt(tuple, Duration.ofMinutes(5));
+    }
+
+    AttemptInputs createAttempt(
+        net.firedevops.firemud.common.operator.StartSessionPostAuthorizationExecutionTuple tuple,
+        Duration leaseDuration) {
+      var repository = new GameSessionStartSessionOperatorAttemptRepository(dsl, leaseDuration);
       var claim =
           Objects.requireNonNull(
                   transactions().execute(status -> repository.reserve(tuple)),

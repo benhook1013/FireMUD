@@ -218,6 +218,24 @@ public final class GameSessionStartSessionOperatorAttemptRepository {
       UUID expectedOwnerAttemptId,
       long expectedOwnerFence) {
     requireOutsideOwnerTransaction();
+    return readHistoricalOwnerAttemptExact(tuple, expectedOwnerAttemptId, expectedOwnerFence);
+  }
+
+  /** Same immutable historical read for composition inside one owner repeatable-read snapshot. */
+  public Optional<AttemptSnapshot> readHistoricalOwnerAttemptInOwnerTransaction(
+      StartSessionPostAuthorizationExecutionTuple tuple,
+      UUID expectedOwnerAttemptId,
+      long expectedOwnerFence) {
+    if (!TransactionSynchronizationManager.isActualTransactionActive()) {
+      throw new IllegalStateException("Active Game Session owner snapshot required");
+    }
+    return readHistoricalOwnerAttemptExact(tuple, expectedOwnerAttemptId, expectedOwnerFence);
+  }
+
+  private Optional<AttemptSnapshot> readHistoricalOwnerAttemptExact(
+      StartSessionPostAuthorizationExecutionTuple tuple,
+      UUID expectedOwnerAttemptId,
+      long expectedOwnerFence) {
     Objects.requireNonNull(tuple, "complete post-authorization tuple is required");
     requireNonNil(expectedOwnerAttemptId, "expectedOwnerAttemptId");
     if (expectedOwnerFence <= 0L) {

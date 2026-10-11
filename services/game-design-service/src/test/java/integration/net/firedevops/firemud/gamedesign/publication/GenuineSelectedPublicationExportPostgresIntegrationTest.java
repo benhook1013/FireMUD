@@ -76,6 +76,7 @@ import net.firedevops.firemud.common.account.startsession.AccountStartSessionAct
 import net.firedevops.firemud.common.account.startsession.AccountStartSessionActivationProtectionSettlementInput;
 import net.firedevops.firemud.common.account.startsession.AccountStartSessionAdmissionProtectionAcquisitionGrpcClient;
 import net.firedevops.firemud.common.account.startsession.AccountStartSessionWorldParticipationAcquisitionClient;
+import net.firedevops.firemud.common.account.startsession.AccountStartSessionWorldParticipationHistoricalReadClient;
 import net.firedevops.firemud.common.account.startsession.GrpcAccountStartSessionActivationProtectionAcquisitionClient;
 import net.firedevops.firemud.common.account.startsession.GrpcAccountStartSessionActivationProtectionSettlementClient;
 import net.firedevops.firemud.common.account.startsession.StartSessionAccountRedemptionProjection;
@@ -136,6 +137,7 @@ import net.firedevops.firemud.common.gamesession.CanonicalGameInstanceLaunchAsso
 import net.firedevops.firemud.common.gamesession.GrpcOriginalStartSessionCurrentAttemptClient;
 import net.firedevops.firemud.common.gamesession.GrpcOriginalStartSessionLaunchReadClient;
 import net.firedevops.firemud.common.gamesession.HistoricalOriginalStartSessionOwnerEvidence;
+import net.firedevops.firemud.common.gamesession.HistoricalOriginalStartSessionOwnerEvidenceReadClient;
 import net.firedevops.firemud.common.gamesession.OriginalStartSessionCurrentAttemptEvidence;
 import net.firedevops.firemud.common.gamesession.OriginalStartSessionLaunchReadEvidence;
 import net.firedevops.firemud.common.grpc.BlockingGrpcStubCustomizer;
@@ -183,6 +185,7 @@ import net.firedevops.firemud.common.world.WorldCanonicalInstanceActivation;
 import net.firedevops.firemud.common.world.WorldCanonicalInstanceLifecycleEvidence;
 import net.firedevops.firemud.common.world.WorldDraftStartLocationEvidence;
 import net.firedevops.firemud.common.world.WorldOriginalStartSessionProtectedActivationGrpcCodec;
+import net.firedevops.firemud.common.world.WorldStartSessionExecutionTerminalReadClient;
 import net.firedevops.firemud.entitymanagement.sourceintake.EntityEmptySelectedSourceIntakeRepository;
 import net.firedevops.firemud.entitymanagement.sourceintake.EntityEmptySelectedSourceIntakeService;
 import net.firedevops.firemud.entitymanagement.sourceintake.EntityEmptySelectedSourceIntakeTerminalReadService;
@@ -203,11 +206,14 @@ import net.firedevops.firemud.gamedesign.draft.DraftCommitCoordinatorRepository;
 import net.firedevops.firemud.gamedesign.draft.GameDesignDraftTerminalOutcomeRepository;
 import net.firedevops.firemud.gamedesign.draft.GameDesignDraftTerminalReadGrpcService;
 import net.firedevops.firemud.gamedesign.draft.GameDesignSelectedDraftPublicationReadGrpcService;
+import net.firedevops.firemud.gamedesign.draft.GameDesignStartSessionLaunchDescriptorGrpcService;
 import net.firedevops.firemud.gamedesign.draft.GameDesignStartSessionPublishedRealmPolicyReadGrpcService;
+import net.firedevops.firemud.gamedesign.draft.GameDesignStartSessionTemplateAssociationReadGrpcService;
 import net.firedevops.firemud.gamedesign.draft.GameDesignWorldSourceCommitService;
 import net.firedevops.firemud.gamedesign.dto.CompleteLaunchBindingDto;
 import net.firedevops.firemud.gamedesign.dto.DesignControlPlaneDigestDto;
 import net.firedevops.firemud.gamedesign.dto.PublishParticipantDigestDto;
+import net.firedevops.firemud.gamedesign.dto.ResolvedLaunchDescriptorDto;
 import net.firedevops.firemud.gamedesign.entity.GameAsset;
 import net.firedevops.firemud.gamedesign.entity.Version;
 import net.firedevops.firemud.gamedesign.mapper.VersionMapper;
@@ -283,7 +289,11 @@ import net.firedevops.firemud.gamedesign.service.impl.TenantIdentityGrpcService;
 import net.firedevops.firemud.gamedesign.service.impl.VersionAssetArtifactServiceImpl;
 import net.firedevops.firemud.gamedesign.service.impl.VersionAssetExportCandidateServiceImpl;
 import net.firedevops.firemud.gamedesign.service.impl.VersionPublishCommandServiceImpl;
+import net.firedevops.firemud.gamedesign.v1.GameDesignStartSessionLaunchDescriptorServiceGrpc;
+import net.firedevops.firemud.gamedesign.v1.GameDesignStartSessionTemplateAssociationReadServiceGrpc;
 import net.firedevops.firemud.gamedesign.v1.GetLaunchDescriptorRequest;
+import net.firedevops.firemud.gamedesign.v1.ReadStartSessionTemplateAssociationResponse;
+import net.firedevops.firemud.gamedesign.v1.ResolveStartSessionLaunchDescriptorResponse;
 import net.firedevops.firemud.gamedesign.v1.WorldDesignMutationRevision;
 import net.firedevops.firemud.gamelogic.service.GameLogicDraftDesignDigestService;
 import net.firedevops.firemud.gamelogic.service.impl.GameLogicGrpcService;
@@ -299,11 +309,15 @@ import net.firedevops.firemud.gamesession.repository.GameSessionAuthoredActorCor
 import net.firedevops.firemud.gamesession.repository.GameSessionCanonicalInstanceLaunchRepository;
 import net.firedevops.firemud.gamesession.repository.GameSessionCanonicalRealmCatalogRepository;
 import net.firedevops.firemud.gamesession.repository.GameSessionFreshTenantAssociationRepository;
+import net.firedevops.firemud.gamesession.repository.GameSessionOriginalStartSessionSelectionPinRepository;
+import net.firedevops.firemud.gamesession.repository.GameSessionOriginalStartSessionSelectionPinRepository.Candidate;
 import net.firedevops.firemud.gamesession.repository.GameSessionStartSessionOperatorAttemptRepository;
 import net.firedevops.firemud.gamesession.repository.GameSessionStartSessionOperatorAttemptRepository.AccountRedemptionProjection;
 import net.firedevops.firemud.gamesession.repository.GameSessionStartSessionOperatorAttemptRepository.AttemptClaim;
 import net.firedevops.firemud.gamesession.service.impl.CanonicalGameInstanceLaunchAssociationReadGrpcService;
 import net.firedevops.firemud.gamesession.service.impl.GameSessionAuthoredActorCoreRetentionService;
+import net.firedevops.firemud.gamesession.service.impl.GameSessionOriginalStartSessionSelectionPinService;
+import net.firedevops.firemud.gamesession.service.impl.HistoricalOriginalStartSessionOwnerEvidenceReadGrpcService;
 import net.firedevops.firemud.gamesession.service.impl.OriginalStartSessionCurrentAttemptReadGrpcService;
 import net.firedevops.firemud.gamesession.service.impl.OriginalStartSessionLaunchReadGrpcService;
 import net.firedevops.firemud.loggingadmin.StartSessionReservationMutationTestFixtures;
@@ -333,6 +347,7 @@ import net.firedevops.firemud.worldmanagement.tenant.WorldCanonicalInstanceActiv
 import net.firedevops.firemud.worldmanagement.tenant.WorldCanonicalInstanceActivationService;
 import net.firedevops.firemud.worldmanagement.tenant.WorldCanonicalInstanceAssociationRepository;
 import net.firedevops.firemud.worldmanagement.tenant.WorldCanonicalInstanceLifecycleReadRepository;
+import net.firedevops.firemud.worldmanagement.tenant.WorldCanonicalInstanceOriginalOperationRecoveryVerifier;
 import net.firedevops.firemud.worldmanagement.tenant.WorldCanonicalInstancePreparationAssemblyService;
 import net.firedevops.firemud.worldmanagement.tenant.WorldCanonicalInstancePreparationGrpcService;
 import net.firedevops.firemud.worldmanagement.tenant.WorldCanonicalInstancePreparationRepository;
@@ -352,6 +367,7 @@ import net.firedevops.firemud.worldmanagement.tenant.WorldOriginalStartSessionPr
 import net.firedevops.firemud.worldmanagement.tenant.WorldOriginalStartSessionProtectedActivationService;
 import net.firedevops.firemud.worldmanagement.tenant.WorldSelectedOwnerInventoryReadProofFixture;
 import net.firedevops.firemud.worldmanagement.tenant.WorldStartSessionAccountParticipationVerifier;
+import net.firedevops.firemud.worldmanagement.tenant.WorldStartSessionExecutionTerminalReadGrpcService;
 import net.firedevops.firemud.worldmanagement.v1.ActivateCanonicalWorldInstanceRequest;
 import net.firedevops.firemud.worldmanagement.v1.ActivateCanonicalWorldInstanceResponse;
 import net.firedevops.firemud.worldmanagement.v1.RegionDesignMutation;
@@ -645,6 +661,17 @@ class GenuineSelectedPublicationExportPostgresIntegrationTest {
     try (var loggingClaimClient = currentClaimGrpcClient(loggingServer.getPort(), pki);
         var startSessionAuthorizationTransport =
             new NativeAccountStartSessionAuthorizationTransport(endpoints, pki, channels);
+        var gameDesignStartSessionReadTransport =
+            new NativeGameDesignStartSessionReadTransport(endpoints, pki, channels);
+        var worldToAccountParticipationHistoryClient =
+            new AccountStartSessionWorldParticipationHistoricalReadClient(
+                endpoints, pki.client("world-management-service"), channels, NAMESPACE);
+        var worldToGameSessionOwnerEvidenceClient =
+            new HistoricalOriginalStartSessionOwnerEvidenceReadClient(
+                endpoints, pki.client("world-management-service"), channels, NAMESPACE);
+        var accountToWorldExecutionTerminalClient =
+            new WorldStartSessionExecutionTerminalReadClient(
+                endpoints, pki.client("account-service"), channels, NAMESPACE);
         var account =
             new AccountControlUiOriginalOrderFixture(
                 ACCOUNT_POSTGRES.getJdbcUrl(),
@@ -733,6 +760,12 @@ class GenuineSelectedPublicationExportPostgresIntegrationTest {
         var gameSessionActivationClient =
             canonicalActivationClient(worldServer, pki.client("game-session-service"), channels)) {
       ReflectionTestUtils.invokeMethod(loggingClaimClient, "init");
+      worldToAccountParticipationHistoryClient.init();
+      worldToGameSessionOwnerEvidenceClient.init();
+      accountToWorldExecutionTerminalClient.init();
+      var originalOperationRecoveryVerifier =
+          new WorldCanonicalInstanceOriginalOperationRecoveryVerifier(
+              worldToAccountParticipationHistoryClient, worldToGameSessionOwnerEvidenceClient);
       accountToGameSessionCurrentAttemptClient.init();
       accountToGameSessionTerminalClient.init();
       accountToGameSessionLaunchReadClient.init();
@@ -1195,7 +1228,10 @@ class GenuineSelectedPublicationExportPostgresIntegrationTest {
                 temporary.resolve("account-start-session-authorization-proof"),
                 NAMESPACE,
                 loggingClaimClient);
-        register(accountHandlers, startSessionAuthorizationProof.grpcService());
+        register(
+            accountHandlers,
+            startSessionAuthorizationProof.grpcService(),
+            startSessionAuthorizationProof.worldParticipationHistoricalReadGrpcService());
         var accountAdmissionProtectionAcquisition =
             startSessionAuthorizationProof.admissionProtectionAcquisitionService(
                 accountToGameSessionCurrentAttemptClient);
@@ -1221,6 +1257,9 @@ class GenuineSelectedPublicationExportPostgresIntegrationTest {
         var accountWorldParticipationAcquisitionService =
             startSessionAuthorizationProof.worldParticipationAcquisitionService(
                 accountToGameSessionCurrentAttemptClient);
+        var accountWorldParticipationSettlementService =
+            startSessionAuthorizationProof.worldParticipationSettlementService(
+                accountToWorldExecutionTerminalClient);
         register(
             accountHandlers,
             new AccountStartSessionWorldParticipationAcquisitionGrpcService(
@@ -2663,6 +2702,45 @@ class GenuineSelectedPublicationExportPostgresIntegrationTest {
         var startSessionAssociationReader =
             new StartSessionTemplateAssociationReadService(
                 gd.dsl(), gd.transactions(), NAMESPACE, projectionClient, releaseService);
+        var descriptorProducer =
+            new StartSessionLaunchDescriptorProducer(
+                gd.dsl(),
+                gd.transactions(),
+                NAMESPACE,
+                startSessionAssociationReader,
+                releaseService,
+                new ObjectMapper());
+        register(
+            gdHandlers,
+            new GameDesignStartSessionTemplateAssociationReadGrpcService(
+                startSessionAssociationReader, NAMESPACE),
+            new GameDesignStartSessionLaunchDescriptorGrpcService(descriptorProducer, NAMESPACE));
+        var canonicalRealmCatalogRepository =
+            new GameSessionCanonicalRealmCatalogRepository(
+                gameSessionAttempts.dsl(), gameSessionAttempts.transactionManager(), NAMESPACE);
+        var canonicalLaunchRepository =
+            new GameSessionCanonicalInstanceLaunchRepository(
+                gameSessionAttempts.dsl(),
+                gameSessionAttempts.transactionManager(),
+                NAMESPACE,
+                canonicalRealmCatalogRepository);
+        var selectionPinRepository =
+            new GameSessionOriginalStartSessionSelectionPinRepository(
+                gameSessionAttempts.dsl(),
+                gameSessionAttempts.transactionManager(),
+                gameSessionAttempts.repository(),
+                NAMESPACE);
+        var selectionPinService =
+            new GameSessionOriginalStartSessionSelectionPinService(
+                selectionPinRepository,
+                gameSessionAttempts.repository(),
+                canonicalLaunchRepository,
+                gameSessionAttempts.transactionManager(),
+                NAMESPACE);
+        register(
+            gameSessionHandlers,
+            new HistoricalOriginalStartSessionOwnerEvidenceReadGrpcService(
+                selectionPinService, NAMESPACE));
         register(
             gdHandlers,
             new GrpcAuthoredInitialActorCoreReadService(
@@ -3255,26 +3333,49 @@ class GenuineSelectedPublicationExportPostgresIntegrationTest {
                   ownerAttemptId,
                   ownerFence,
                   new StartSessionTemplateAssociationReadEvidence.InitialConfigured());
-          firstStartSessionSelection =
-              withGameSessionPeer(() -> startSessionAssociationReader.read(firstSelectionRequest));
-          var descriptorProducer =
-              new StartSessionLaunchDescriptorProducer(
-                  gd.dsl(),
-                  gd.transactions(),
-                  NAMESPACE,
-                  startSessionAssociationReader,
-                  releaseService,
-                  new ObjectMapper());
+          var firstSelectionCall =
+              gameDesignStartSessionReadTransport.readInitialSelection(firstSelectionRequest);
+          firstStartSessionSelection = firstSelectionCall.result();
+          var firstDescriptorRequest =
+              startSessionReadRequest(
+                  startSessionTuple,
+                  ownerAttemptId,
+                  ownerFence,
+                  pinnedSelection,
+                  UUID.randomUUID());
+          var firstDescriptorCall =
+              gameDesignStartSessionReadTransport.resolveDescriptor(firstDescriptorRequest);
+          var firstDescriptorEvidence = firstDescriptorCall.result();
+          assertThat(firstDescriptorEvidence.outcome())
+              .isInstanceOf(StartSessionLaunchDescriptorGrpcCodec.DescriptorOutcome.class);
+          var authoredWorldLaunchDescriptor =
+              ((StartSessionLaunchDescriptorGrpcCodec.DescriptorOutcome)
+                      firstDescriptorEvidence.outcome())
+                  .descriptor();
+          var firstDescriptorRead =
+              gameSessionToGameDesignAuthoredCoreClient.read(
+                  new AuthoredInitialActorCoreReadEvidence.ReadRequest(firstDescriptorRequest));
+          var descriptorDto =
+              new ResolvedLaunchDescriptorDto(
+                  authoredWorldLaunchDescriptor.launchDescriptorId(),
+                  authoredWorldLaunchDescriptor.canonicalTenantId().toString(),
+                  authoredWorldLaunchDescriptor.gameTemplateId(),
+                  authoredWorldLaunchDescriptor.controlPlaneRequestId(),
+                  authoredWorldLaunchDescriptor.versionId(),
+                  authoredWorldLaunchDescriptor.scriptPatchVersion(),
+                  authoredWorldLaunchDescriptor.runtimeFlagsJson(),
+                  authoredWorldLaunchDescriptor.generationConfigRevision(),
+                  authoredWorldLaunchDescriptor.versionStateEpoch(),
+                  authoredWorldLaunchDescriptor.releaseBundleId(),
+                  authoredWorldLaunchDescriptor.publishedReleaseBundleRef(),
+                  authoredWorldLaunchDescriptor.remapSetId(),
+                  authoredWorldLaunchDescriptor);
           var firstDescriptorBinding =
-              withGameSessionPeer(
-                  () ->
-                      descriptorProducer.resolve(
-                          startSessionReadRequest(
-                              startSessionTuple,
-                              ownerAttemptId,
-                              ownerFence,
-                              pinnedSelection,
-                              UUID.randomUUID())));
+              new StartSessionLaunchDescriptorProducer.ResolvedBinding(
+                  firstDescriptorRequest,
+                  firstDescriptorEvidence.associationRead(),
+                  descriptorDto,
+                  firstDescriptorRead.projections());
           assertThat(firstDescriptorBinding.descriptor().versionId())
               .isEqualTo(gd.target().gameDesignVersionRowId());
           assertThat(firstDescriptorBinding.descriptor().launchDescriptorId()).isNotBlank();
@@ -3322,8 +3423,7 @@ class GenuineSelectedPublicationExportPostgresIntegrationTest {
           var authoredCoreReadRequest =
               new AuthoredInitialActorCoreReadEvidence.ReadRequest(
                   firstDescriptorBinding.request());
-          var gameSessionAuthoredCoreRead =
-              gameSessionToGameDesignAuthoredCoreClient.read(authoredCoreReadRequest);
+          var gameSessionAuthoredCoreRead = firstDescriptorRead;
           assertThat(gameSessionAuthoredCoreRead.request())
               .isEqualTo(firstDescriptorBinding.request());
           assertThat(gameSessionAuthoredCoreRead.request().canonicalPostAuthorizationTuple())
@@ -3600,9 +3700,6 @@ class GenuineSelectedPublicationExportPostgresIntegrationTest {
           assertThat(actualPublishedPolicy.entryPolicy())
               .isEqualTo(actorCoreScenario.entryPolicy());
 
-          var canonicalRealmCatalogRepository =
-              new GameSessionCanonicalRealmCatalogRepository(
-                  gameSessionAttempts.dsl(), gameSessionAttempts.transactionManager(), NAMESPACE);
           var canonicalRealmCatalog =
               canonicalRealmCatalogRepository.establishFreshPublicRealm(
                   freshTenantAssociation,
@@ -3802,12 +3899,6 @@ class GenuineSelectedPublicationExportPostgresIntegrationTest {
           CompleteLaunchBindingEvidence completeLaunchEvidence =
               new CompleteLaunchBindingEvidence(
                   completeBinding.descriptor(), completeBinding.releaseAttestation());
-          var canonicalLaunchRepository =
-              new GameSessionCanonicalInstanceLaunchRepository(
-                  gameSessionAttempts.dsl(),
-                  gameSessionAttempts.transactionManager(),
-                  NAMESPACE,
-                  canonicalRealmCatalogRepository);
           var canonicalLaunch =
               canonicalLaunchRepository.createStartingLaunch(
                   startSessionTuple, completeLaunchEvidence, canonicalRealmCatalog);
@@ -3840,8 +3931,8 @@ class GenuineSelectedPublicationExportPostgresIntegrationTest {
                   canonicalLaunch.launchBindingEvidence().descriptor().resultDigest(),
                   canonicalLaunch.launchBindingEvidence().releaseAttestation().evidenceDigest());
 
-          // Reuse the original InitialConfigured owner selection above. This local owner readback
-          // is not an authenticated historical-evidence RPC.
+          // Build the pin from the original native owner reads above. Independently resolve the
+          // retained result through the authenticated historical-evidence RPC below.
 
           var originalCurrentAttemptRequest =
               new OriginalStartSessionCurrentAttemptEvidence.Request(
@@ -3910,6 +4001,53 @@ class GenuineSelectedPublicationExportPostgresIntegrationTest {
                               new StartSessionLaunchDescriptorGrpcCodec.DescriptorOutcome(
                                   firstDescriptorBinding.descriptor().authoredWorldBinding()))
                           .toByteArray()));
+          var retainedFirstSelectionPin =
+              selectionPinService.retainFirst(
+                  new Candidate(
+                      historicalOwnerEvidence,
+                      ownerMutationId,
+                      firstSelectionCall.requestBytes(),
+                      firstSelectionCall.responseBytes(),
+                      firstDescriptorCall.requestBytes(),
+                      firstDescriptorCall.responseBytes()));
+          assertThat(retainedFirstSelectionPin.ownerAttemptId()).isEqualTo(ownerAttemptId);
+          assertThat(retainedFirstSelectionPin.ownerMutationId()).isEqualTo(ownerMutationId);
+          assertThat(retainedFirstSelectionPin.ownerFence()).isEqualTo(ownerFence);
+          assertThat(retainedFirstSelectionPin.ownerLeaseExpiresAt())
+              .isEqualTo(currentOwnerAttemptBeforeRetention.leaseExpiresAt());
+          assertThat(retainedFirstSelectionPin.initialSelectionRequestBytes())
+              .containsExactly(firstSelectionCall.requestBytes());
+          assertThat(retainedFirstSelectionPin.initialSelectionResponseBytes())
+              .containsExactly(firstSelectionCall.responseBytes());
+          assertThat(retainedFirstSelectionPin.descriptorPinRequestBytes())
+              .containsExactly(firstDescriptorCall.requestBytes());
+          assertThat(retainedFirstSelectionPin.descriptorPinResponseBytes())
+              .containsExactly(firstDescriptorCall.responseBytes());
+          var retainedOwnerEvidence =
+              worldToGameSessionOwnerEvidenceClient.read(historicalOwnerEvidence.request());
+          assertThat(retainedOwnerEvidence.request()).isEqualTo(historicalOwnerEvidence.request());
+          assertThat(retainedOwnerEvidence.originalTuple().canonicalBytes())
+              .containsExactly(startSessionTuple.canonicalBytes());
+          assertThat(retainedOwnerEvidence.ownerAttemptId()).isEqualTo(ownerAttemptId);
+          assertThat(retainedOwnerEvidence.ownerFence()).isEqualTo(ownerFence);
+          assertThat(retainedOwnerEvidence.accountRedemptionProjection())
+              .containsExactly(currentOwnerAttemptBeforeRetention.accountRedemptionProjection());
+          assertThat(retainedOwnerEvidence.firstSelection().request())
+              .isEqualTo(firstSelectionRequest);
+          assertThat(retainedOwnerEvidence.firstSelection().association())
+              .isEqualTo(firstStartSessionSelection.association());
+          assertThat(retainedOwnerEvidence.descriptorPin().outcome())
+              .isEqualTo(firstDescriptorEvidence.outcome());
+          assertThat(retainedOwnerEvidence.launchAssociation())
+              .isEqualTo(historicalOwnerEvidence.launchAssociation());
+          assertThat(retainedOwnerEvidence.templateAssociationRequestDigest())
+              .isEqualTo(retainedFirstSelectionPin.initialSelectionRequestDigest());
+          assertThat(retainedOwnerEvidence.templateAssociationResponseDigest())
+              .isEqualTo(retainedFirstSelectionPin.initialSelectionResponseDigest());
+          assertThat(retainedOwnerEvidence.descriptorPinRequestDigest())
+              .isEqualTo(retainedFirstSelectionPin.descriptorPinRequestDigest());
+          assertThat(retainedOwnerEvidence.descriptorPinResponseDigest())
+              .isEqualTo(retainedFirstSelectionPin.descriptorPinResponseDigest());
 
           var authoredCoreRetentionRepository =
               new GameSessionAuthoredActorCoreRetentionRepository(
@@ -3937,7 +4075,7 @@ class GenuineSelectedPublicationExportPostgresIntegrationTest {
                   gameSessionAttempts.transactionManager());
           var firstRetainedAuthoredCore =
               authoredCoreRetentionService.retain(
-                  historicalOwnerEvidence, originalCurrentAttemptRequest);
+                  retainedOwnerEvidence, originalCurrentAttemptRequest);
           assertThat(firstRetainedAuthoredCore.candidate().canonicalSourceResultBytes())
               .containsExactly(gameSessionAuthoredCoreRead.canonicalBytes());
           assertThat(firstRetainedAuthoredCore.candidate().originalPostAuthorizationTuple())
@@ -3966,7 +4104,7 @@ class GenuineSelectedPublicationExportPostgresIntegrationTest {
               .containsExactly(gameSessionAuthoredCoreRead.canonicalBytes());
           var exactRetainedAuthoredCoreRetry =
               authoredCoreRetentionService.retain(
-                  historicalOwnerEvidence, originalCurrentAttemptRequest);
+                  retainedOwnerEvidence, originalCurrentAttemptRequest);
           assertThat(exactRetainedAuthoredCoreRetry.candidate().canonicalSourceResultBytes())
               .containsExactly(
                   independentRetainedAuthoredCore.candidate().canonicalSourceResultBytes());
@@ -4094,7 +4232,9 @@ class GenuineSelectedPublicationExportPostgresIntegrationTest {
                     worldToGameDesignPreparationClient);
             var preparationService =
                 new WorldCanonicalInstancePreparationService(
-                    preparationRepository, worldParticipationVerifier);
+                    preparationRepository,
+                    worldParticipationVerifier,
+                    originalOperationRecoveryVerifier);
             register(
                 worldHandlers,
                 new WorldCanonicalInstancePreparationGrpcService(
@@ -4103,7 +4243,9 @@ class GenuineSelectedPublicationExportPostgresIntegrationTest {
                     preparationService,
                     preparationRepository,
                     lifecycleRepository,
-                    NAMESPACE));
+                    NAMESPACE),
+                new WorldStartSessionExecutionTerminalReadGrpcService(
+                    preparationService, NAMESPACE));
 
             var expectedLifecycleRequest =
                 lifecycleRequest(
@@ -4154,6 +4296,108 @@ class GenuineSelectedPublicationExportPostgresIntegrationTest {
                       originalOwnerOperation,
                       expectedLifecycleRequest);
             }
+
+            var exactAccountParticipation =
+                startSessionAuthorizationProof
+                    .worldParticipationForOriginalTuple(startSessionTuple.canonicalBytes())
+                    .orElseThrow();
+            assertThat(exactAccountParticipation.originalPostAuthorizationTuple())
+                .containsExactly(startSessionTuple.canonicalBytes());
+            assertThat(exactAccountParticipation.gameSessionOwnerAttemptId())
+                .isEqualTo(ownerAttemptId);
+            assertThat(exactAccountParticipation.gameSessionOwnerFence()).isEqualTo(ownerFence);
+            assertThat(exactAccountParticipation.canonicalGameInstanceId())
+                .isEqualTo(canonicalGameInstanceId);
+            assertThat(exactAccountParticipation.preparationInputDigest())
+                .isEqualTo(
+                    "sha256:"
+                        + sha256(
+                            exactAccountParticipation
+                                .preparationInputJson()
+                                .getBytes(StandardCharsets.UTF_8)));
+            assertThat(exactAccountParticipation.sourceVector()).isNotEmpty();
+            assertThat(
+                    startSessionAuthorizationProof.worldParticipationSettlementExact(
+                        exactAccountParticipation.participationId(),
+                        exactAccountParticipation.participationFence()))
+                .isEmpty();
+            var committedWorldTerminalRequest =
+                new net.firedevops.firemud.common.world
+                    .WorldStartSessionExecutionTerminalReadRequest(
+                    UUID.randomUUID(),
+                    NAMESPACE,
+                    startSessionTuple.canonicalBytes(),
+                    exactAccountParticipation.participationId(),
+                    exactAccountParticipation.participationFence(),
+                    ownerAttemptId,
+                    ownerFence,
+                    canonicalGameInstanceId,
+                    exactAccountParticipation.preparationInputJson());
+            var committedWorldTerminal =
+                accountToWorldExecutionTerminalClient.read(committedWorldTerminalRequest);
+            assertThat(committedWorldTerminal.outcome())
+                .isEqualTo(
+                    net.firedevops.firemud.common.world.WorldStartSessionExecutionTerminal.Outcome
+                        .COMMITTED);
+            assertThat(committedWorldTerminal.accountWorldParticipationId())
+                .isEqualTo(exactAccountParticipation.participationId());
+            assertThat(committedWorldTerminal.accountWorldParticipationFence())
+                .isEqualTo(exactAccountParticipation.participationFence());
+            var accountParticipationAfterWorldCommit =
+                startSessionAuthorizationProof
+                    .worldParticipationForOriginalTuple(startSessionTuple.canonicalBytes())
+                    .orElseThrow();
+            assertThat(accountParticipationAfterWorldCommit.participationId())
+                .isEqualTo(exactAccountParticipation.participationId());
+            assertThat(accountParticipationAfterWorldCommit.participationFence())
+                .isEqualTo(exactAccountParticipation.participationFence());
+            assertThat(accountParticipationAfterWorldCommit.sourceVector())
+                .containsExactlyElementsOf(exactAccountParticipation.sourceVector());
+            var protectedCreatorSources = account.preparedOriginalCreator().sources();
+            String creatorRoleBeforeSettlement =
+                startSessionAuthorizationProof
+                    .sourceDsl()
+                    .fetchSingle(
+                        "SELECT role FROM accounts WHERE account_uuid = ?",
+                        startSessionAuthorizationProof.creatorAccountId())
+                    .get(0, String.class);
+            assertThatThrownBy(protectedCreatorSources::changeRoleToAdmin)
+                .isInstanceOf(RuntimeException.class)
+                .hasMessageContaining(
+                    "StartSession World participation remains pending for a required source");
+            assertThat(
+                    startSessionAuthorizationProof
+                        .sourceDsl()
+                        .fetchSingle(
+                            "SELECT role FROM accounts WHERE account_uuid = ?",
+                            startSessionAuthorizationProof.creatorAccountId())
+                        .get(0, String.class))
+                .isEqualTo(creatorRoleBeforeSettlement);
+            assertThat(
+                    startSessionAuthorizationProof.worldParticipationSettlementExact(
+                        exactAccountParticipation.participationId(),
+                        exactAccountParticipation.participationFence()))
+                .isEmpty();
+            var settledWorldParticipation =
+                withWorldPeer(
+                    () ->
+                        accountWorldParticipationSettlementService.settle(
+                            exactAccountParticipation.participationId(),
+                            exactAccountParticipation.participationFence()));
+            assertThat(settledWorldParticipation.participationId())
+                .isEqualTo(exactAccountParticipation.participationId());
+            assertThat(settledWorldParticipation.outcome())
+                .isEqualTo(committedWorldTerminal.outcome());
+            assertThat(settledWorldParticipation.terminalBytes())
+                .containsExactly(committedWorldTerminal.canonicalBytes());
+            var independentlySettledWorldParticipation =
+                startSessionAuthorizationProof
+                    .worldParticipationSettlementExact(
+                        exactAccountParticipation.participationId(),
+                        exactAccountParticipation.participationFence())
+                    .orElseThrow();
+            assertThat(independentlySettledWorldParticipation.terminalBytes())
+                .containsExactly(settledWorldParticipation.terminalBytes());
 
             var assembledPreparationInput =
                 preparationAssembly.assemble(
@@ -5649,6 +5893,21 @@ class GenuineSelectedPublicationExportPostgresIntegrationTest {
     }
   }
 
+  private static <T> T withWorldPeer(Supplier<T> operation) {
+    var peer =
+        new GrpcPeerIdentity(
+            "spiffe://firemud/ns/" + NAMESPACE + "/sa/world-management-service",
+            NAMESPACE,
+            "world-management-service");
+    Context context = Context.current().withValue(GrpcPeerIdentity.CONTEXT_KEY, peer);
+    Context previous = context.attach();
+    try {
+      return operation.get();
+    } finally {
+      context.detach(previous);
+    }
+  }
+
   private static void assertFailedPrecondition(Runnable operation) {
     assertThatThrownBy(operation::run)
         .isInstanceOf(io.grpc.StatusRuntimeException.class)
@@ -6589,6 +6848,105 @@ class GenuineSelectedPublicationExportPostgresIntegrationTest {
         pki.client("account-service"),
         new GrpcChannelFactory(),
         BlockingGrpcStubCustomizer.noop());
+  }
+
+  /** Native Game Session-to-Game Design reads for the exact first selection and descriptor pin. */
+  private static final class NativeGameDesignStartSessionReadTransport implements AutoCloseable {
+    private final ManagedChannel channel;
+    private final GameDesignStartSessionTemplateAssociationReadServiceGrpc
+            .GameDesignStartSessionTemplateAssociationReadServiceBlockingStub
+        selectionStub;
+    private final GameDesignStartSessionLaunchDescriptorServiceGrpc
+            .GameDesignStartSessionLaunchDescriptorServiceBlockingStub
+        descriptorStub;
+
+    NativeGameDesignStartSessionReadTransport(
+        ServiceEndpointsProperties endpoints, TestPki pki, GrpcChannelFactory channels)
+        throws IOException {
+      channel =
+          channels.buildChannel(
+              endpoints.getGameDesignService(), 6565, pki.client("game-session-service"), false);
+      String expectedPeer = "spiffe://firemud/ns/" + NAMESPACE + "/sa/game-design-service";
+      selectionStub =
+          GameDesignStartSessionTemplateAssociationReadServiceGrpc.newBlockingStub(channel)
+              .withCallCredentials(new GrpcServerPeerIdentityCallCredentials(expectedPeer))
+              .withInterceptors(new GrpcServerPeerIdentityClientInterceptor(expectedPeer));
+      descriptorStub =
+          GameDesignStartSessionLaunchDescriptorServiceGrpc.newBlockingStub(channel)
+              .withCallCredentials(new GrpcServerPeerIdentityCallCredentials(expectedPeer))
+              .withInterceptors(new GrpcServerPeerIdentityClientInterceptor(expectedPeer));
+    }
+
+    InitialSelectionCall readInitialSelection(
+        StartSessionTemplateAssociationReadEvidence.Request request) {
+      var wireRequest = StartSessionTemplateAssociationReadGrpcCodec.toRequest(request);
+      ReadStartSessionTemplateAssociationResponse wireResponse =
+          selectionStub
+              .withDeadlineAfter(5L, TimeUnit.SECONDS)
+              .readStartSessionTemplateAssociation(wireRequest);
+      var result = StartSessionTemplateAssociationReadGrpcCodec.fromResponse(request, wireResponse);
+      return new InitialSelectionCall(
+          result, wireRequest.toByteArray(), wireResponse.toByteArray());
+    }
+
+    DescriptorPinCall resolveDescriptor(
+        StartSessionTemplateAssociationReadEvidence.Request request) {
+      var wireRequest = StartSessionLaunchDescriptorGrpcCodec.toRequest(request);
+      ResolveStartSessionLaunchDescriptorResponse wireResponse =
+          descriptorStub
+              .withDeadlineAfter(5L, TimeUnit.SECONDS)
+              .resolveStartSessionLaunchDescriptor(wireRequest);
+      var result = StartSessionLaunchDescriptorGrpcCodec.fromResponse(request, wireResponse);
+      return new DescriptorPinCall(result, wireRequest.toByteArray(), wireResponse.toByteArray());
+    }
+
+    @Override
+    public void close() throws InterruptedException {
+      channel.shutdownNow();
+      if (!channel.awaitTermination(5L, TimeUnit.SECONDS)) {
+        throw new AssertionError("Game Design StartSession read channel did not terminate");
+      }
+    }
+  }
+
+  private record InitialSelectionCall(
+      StartSessionTemplateAssociationReadEvidence.Result result,
+      byte[] requestBytes,
+      byte[] responseBytes) {
+    private InitialSelectionCall {
+      requestBytes = requestBytes.clone();
+      responseBytes = responseBytes.clone();
+    }
+
+    @Override
+    public byte[] requestBytes() {
+      return requestBytes.clone();
+    }
+
+    @Override
+    public byte[] responseBytes() {
+      return responseBytes.clone();
+    }
+  }
+
+  private record DescriptorPinCall(
+      StartSessionLaunchDescriptorGrpcCodec.Resolved result,
+      byte[] requestBytes,
+      byte[] responseBytes) {
+    private DescriptorPinCall {
+      requestBytes = requestBytes.clone();
+      responseBytes = responseBytes.clone();
+    }
+
+    @Override
+    public byte[] requestBytes() {
+      return requestBytes.clone();
+    }
+
+    @Override
+    public byte[] responseBytes() {
+      return responseBytes.clone();
+    }
   }
 
   /** Native file-backed mTLS transport for the real Account original StartSession owner. */

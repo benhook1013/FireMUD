@@ -11,6 +11,7 @@ import java.util.UUID;
 import net.firedevops.firemud.common.gamedesign.CompleteLaunchBindingEvidence;
 import net.firedevops.firemud.common.gamedesign.RealmPolicyPublishedEvidenceCodec;
 import net.firedevops.firemud.common.gamesession.CanonicalGameInstanceLaunchAssociationReadEvidence;
+import net.firedevops.firemud.common.gamesession.HistoricalOriginalStartSessionOwnerEvidence;
 import net.firedevops.firemud.common.gamesession.OriginalStartSessionLaunchReadEvidence;
 import net.firedevops.firemud.common.operator.StartSessionPostAuthorizationExecutionTuple;
 import net.firedevops.firemud.common.publication.RealmEntryPolicy;
@@ -154,6 +155,83 @@ public final class GameSessionCanonicalInstanceLaunchRepository {
             });
     return Objects.requireNonNull(
         result, "Game Session original tuple launch read transaction returned no result");
+  }
+
+  /**
+   * Reads only immutable launch-association columns inside a caller-owned historical snapshot.
+   * Mutable Game Instance lifecycle state and the current owner-attempt phase are not consulted.
+   */
+  public Optional<HistoricalOriginalStartSessionOwnerEvidence.LaunchAssociation>
+      readHistoricalAssociationInOwnerTransaction(
+          CanonicalGameInstanceLaunchAssociationReadEvidence.Request selector,
+          byte[] exactOriginalPostAuthorizationTupleBytes) {
+    requireOwnerTransaction();
+    Objects.requireNonNull(selector, "selector");
+    if (!workloadNamespace.equals(selector.targetNamespace())) {
+      throw new InvalidCanonicalInstanceLaunchException(
+          "Launch-association namespace differs from the configured Game Session owner");
+    }
+    byte[] exactTuple =
+        Objects.requireNonNull(exactOriginalPostAuthorizationTupleBytes, "exact original tuple")
+            .clone();
+    StartSessionPostAuthorizationExecutionTuple decoded =
+        StartSessionPostAuthorizationExecutionTuple.decode(exactTuple);
+    if (!Arrays.equals(decoded.canonicalBytes(), exactTuple)) {
+      throw new InvalidCanonicalInstanceLaunchException(
+          "Historical original StartSession tuple is not canonical");
+    }
+    Record row =
+        dsl.fetchOne(
+            "SELECT target_namespace, canonical_tenant_id, world_slug, game_instance_uuid,"
+                + " control_plane_request_id, launch_descriptor_id, playable_state_namespace_id,"
+                + " playable_state_scope, public_production, captured_starting_row_version,"
+                + " complete_launch_binding_evidence::text AS gs_complete_launch_binding_json,"
+                + " original_start_session_tuple"
+                + " FROM game_session_canonical_instance_launch"
+                + " WHERE target_namespace = ? AND control_plane_request_id = ?",
+            selector.targetNamespace(),
+            selector.controlPlaneRequestId());
+    if (row == null) return Optional.empty();
+    String namespace = required(row, "target_namespace", String.class);
+    UUID tenantId = required(row, "canonical_tenant_id", UUID.class);
+    String worldSlug = required(row, "world_slug", String.class);
+    UUID instanceUuid = required(row, "game_instance_uuid", UUID.class);
+    String requestId = required(row, "control_plane_request_id", String.class);
+    String descriptorId = required(row, "launch_descriptor_id", String.class);
+    byte[] storedTuple = required(row, "original_start_session_tuple", byte[].class);
+    if (!namespace.equals(selector.targetNamespace())
+        || !tenantId.equals(selector.canonicalTenantId())
+        || !worldSlug.equals(selector.worldSlug())
+        || !instanceUuid.equals(selector.gameInstanceUuid())
+        || !requestId.equals(selector.controlPlaneRequestId())
+        || !descriptorId.equals(selector.launchDescriptorId())
+        || !Arrays.equals(storedTuple, exactTuple)) {
+      throw new InvalidCanonicalInstanceLaunchException(
+          "Historical launch association differs from its exact original selector and tuple");
+    }
+    RealmEntryPolicy.StateScope scope;
+    try {
+      scope =
+          RealmEntryPolicy.StateScope.valueOf(required(row, "playable_state_scope", String.class));
+    } catch (RuntimeException invalid) {
+      throw new InvalidCanonicalInstanceLaunchException(
+          "Historical launch playable-state scope is malformed", invalid);
+    }
+    CompleteLaunchBindingEvidence binding =
+        decodeBinding(required(row, "gs_complete_launch_binding_json", String.class));
+    return Optional.of(
+        new HistoricalOriginalStartSessionOwnerEvidence.LaunchAssociation(
+            namespace,
+            tenantId,
+            worldSlug,
+            instanceUuid,
+            requestId,
+            descriptorId,
+            required(row, "playable_state_namespace_id", UUID.class),
+            scope,
+            required(row, "public_production", Boolean.class),
+            required(row, "captured_starting_row_version", Long.class),
+            binding));
   }
 
   private CanonicalInstanceLaunch createInTransaction(PreparedLaunch input) {

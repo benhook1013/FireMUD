@@ -22,6 +22,7 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.Callable;
@@ -32,6 +33,8 @@ import net.firedevops.firemud.accountservice.repository.AccountStartSessionAdmis
 import net.firedevops.firemud.accountservice.repository.AccountStartSessionOperatorAuthorizationRepository;
 import net.firedevops.firemud.accountservice.repository.AccountStartSessionWorldOriginalAttemptEvidenceRepository;
 import net.firedevops.firemud.accountservice.repository.AccountStartSessionWorldParticipationRepository;
+import net.firedevops.firemud.accountservice.repository.AccountStartSessionWorldParticipationRepository.StoredParticipation;
+import net.firedevops.firemud.accountservice.repository.AccountStartSessionWorldParticipationRepository.StoredSettlement;
 import net.firedevops.firemud.accountservice.service.impl.StartSessionOperatorAuthorizationGrpcService;
 import net.firedevops.firemud.common.gamesession.OriginalStartSessionAdmissionTerminalReadClient;
 import net.firedevops.firemud.common.gamesession.OriginalStartSessionCurrentAttemptClient;
@@ -41,10 +44,12 @@ import net.firedevops.firemud.common.operator.StartSessionOperatorAction;
 import net.firedevops.firemud.common.operator.StartSessionPostAuthorizationExecutionTuple;
 import net.firedevops.firemud.common.operator.StartSessionPreAuthorizationReservationTuple;
 import net.firedevops.firemud.common.world.WorldOriginalStartSessionActivationTerminalReadClient;
+import net.firedevops.firemud.common.world.WorldStartSessionExecutionTerminalReadClient;
 import net.firedevops.firemud.loggingadmin.v1.ReadCurrentClaimEvidenceResponse;
 import net.firedevops.firemud.loggingadmin.v1.StartSessionReservationEvidencePurpose;
 import org.jooq.DSLContext;
 import org.jooq.Record;
+import org.springframework.transaction.support.TransactionTemplate;
 import tools.jackson.core.type.TypeReference;
 import tools.jackson.databind.json.JsonMapper;
 
@@ -349,6 +354,50 @@ public final class AccountOriginalStartSessionAuthorizationProofFixture {
         gameSessionClient,
         accountSources.manager,
         namespace);
+  }
+
+  /** Creates Account's actual same-namespace World-only historical participation receiver. */
+  public BindableService worldParticipationHistoricalReadGrpcService() {
+    var repository = new AccountStartSessionWorldParticipationRepository(accountSources.dsl);
+    var owner =
+        new AccountStartSessionWorldParticipationHistoricalReadService(
+            repository, accountSources.manager, namespace);
+    return new AccountStartSessionWorldParticipationHistoricalReadGrpcService(owner, namespace);
+  }
+
+  /** Creates the actual exact-terminal Account settler over this fixture's retained rows. */
+  public AccountStartSessionWorldParticipationSettlementService worldParticipationSettlementService(
+      WorldStartSessionExecutionTerminalReadClient worldClient) {
+    Objects.requireNonNull(worldClient, "World terminal-read client required");
+    return new AccountStartSessionWorldParticipationSettlementService(
+        new AccountStartSessionWorldParticipationRepository(accountSources.dsl),
+        worldClient,
+        accountSources.manager,
+        namespace);
+  }
+
+  /**
+   * Reads the exact durable participation coordinates for this tuple without creating authority.
+   */
+  public Optional<StoredParticipation> worldParticipationForOriginalTuple(byte[] tupleBytes) {
+    Objects.requireNonNull(tupleBytes, "original StartSession tuple bytes required");
+    var repository = new AccountStartSessionWorldParticipationRepository(accountSources.dsl);
+    var transaction = new TransactionTemplate(accountSources.manager);
+    return Objects.requireNonNull(
+        transaction.execute(ignored -> repository.findHistoricalForOriginalTuple(tupleBytes)),
+        "Account original-tuple participation lookup returned no optional");
+  }
+
+  /** Independently reads one durable exact terminal settlement without retrying its mutation. */
+  public Optional<StoredSettlement> worldParticipationSettlementExact(
+      UUID participationId, long participationFence) {
+    Objects.requireNonNull(participationId, "World participation id required");
+    var repository = new AccountStartSessionWorldParticipationRepository(accountSources.dsl);
+    var transaction = new TransactionTemplate(accountSources.manager);
+    return Objects.requireNonNull(
+        transaction.execute(
+            ignored -> repository.findSettlementExact(participationId, participationFence)),
+        "Account exact World settlement lookup returned no optional");
   }
 
   /** Creates the actual Account admission-protection acquirer over this fixture's retained rows. */
