@@ -24,8 +24,12 @@ import net.firedevops.firemud.gamedesign.v1.VersionStateSnapshot;
 import net.firedevops.firemud.worldmanagement.client.GameDesignClient;
 import net.firedevops.firemud.worldmanagement.dto.PreparedWorldInstanceRequest;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
 import org.junit.jupiter.api.io.TempDir;
+import org.springframework.boot.test.system.CapturedOutput;
+import org.springframework.boot.test.system.OutputCaptureExtension;
 
+@ExtendWith(OutputCaptureExtension.class)
 class RunOwnedWorldLaunchEvidenceProviderTest {
   private static final String OPERATION_ID = "7f1e5306-e9a7-46d9-b5cf-75348e20ffbd";
   private static final String RELEASE_REF = "8ce42642-53ae-4d07-aab8-37c43ce66e0c";
@@ -42,7 +46,7 @@ class RunOwnedWorldLaunchEvidenceProviderTest {
   }
 
   @Test
-  void disabledFixtureFailsBeforeReadingFilesOrCallingGameDesign() {
+  void disabledFixtureFailsBeforeReadingFilesOrCallingGameDesign(CapturedOutput output) {
     GameDesignClient gameDesignClient = mock(GameDesignClient.class);
     RunOwnedWorldLaunchEvidenceProvider provider =
         new RunOwnedWorldLaunchEvidenceProvider(
@@ -58,6 +62,50 @@ class RunOwnedWorldLaunchEvidenceProviderTest {
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessage("Run-owned World launch evidence is invalid");
     verifyNoInteractions(gameDesignClient);
+
+    assertThat(output)
+        .contains("Run-owned World launch evidence verification rejected; stage=ENABLED")
+        .doesNotContain("missing-capability.json", "missing-receipt.json", "fixture-run");
+  }
+
+  @Test
+  void malformedWireLogsOnlyTheFixedVerificationStageAndPreservesWireError(CapturedOutput output)
+      throws Exception {
+    GameDesignClient gameDesignClient = mock(GameDesignClient.class);
+    Path capability = temporaryDirectory.resolve("sensitive-capability-path.json");
+    Path receipt = temporaryDirectory.resolve("sensitive-receipt-path.json");
+    Files.writeString(capability, "capability-payload-secret-marker", StandardCharsets.UTF_8);
+    Files.writeString(receipt, "source-receipt-payload-secret-marker", StandardCharsets.UTF_8);
+    Files.setPosixFilePermissions(
+        capability, Set.of(PosixFilePermission.OWNER_READ, PosixFilePermission.GROUP_READ));
+    Files.setPosixFilePermissions(
+        receipt, Set.of(PosixFilePermission.OWNER_READ, PosixFilePermission.GROUP_READ));
+    RunOwnedWorldLaunchEvidenceProvider provider =
+        new RunOwnedWorldLaunchEvidenceProvider(
+            true,
+            capability.toString(),
+            receipt.toString(),
+            "fixture-run",
+            "firemud-fixture-run",
+            new CommonGrpcClientProperties(),
+            gameDesignClient);
+
+    assertThatThrownBy(provider::requireAuthenticatedEvidence)
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessage("Run-owned initial-admission fixture wire data is invalid");
+    verifyNoInteractions(gameDesignClient);
+
+    assertThat(output)
+        .contains("Run-owned World launch evidence verification rejected; stage=WIRE_PARSE")
+        .doesNotContain(
+            "sensitive-capability-path.json",
+            "sensitive-receipt-path.json",
+            "capability-payload-secret-marker",
+            "source-receipt-payload-secret-marker",
+            "fixture-run",
+            "firemud-fixture-run",
+            "InvalidWireDataException",
+            "Caused by:");
   }
 
   @Test
