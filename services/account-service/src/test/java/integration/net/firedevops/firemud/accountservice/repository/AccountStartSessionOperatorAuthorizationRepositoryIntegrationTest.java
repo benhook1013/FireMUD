@@ -132,6 +132,119 @@ class AccountStartSessionOperatorAuthorizationRepositoryIntegrationTest {
   }
 
   @Test
+  void realPostgresAllowsEqualIssueAndRedemptionTimestampsAtMillisecondPrecision() {
+    Context context = context();
+    Instant issuedAt = canonicalMillisecond(databaseNow(context));
+    IssuanceCandidate candidate =
+        candidate(tuple(), issuedAt, issuedAt.plusSeconds(180), issuedAt.plusSeconds(210));
+    context.inTransaction(() -> context.repository.createOrReadExact(candidate));
+
+    RedemptionRequest request = redemption(candidate, OWNER_ATTEMPT_ID, 11L, candidate.issuedAt());
+    var redeemed = context.inTransaction(() -> context.repository.redeemExact(request));
+
+    assertThat(redeemed.replay()).isFalse();
+    var persisted =
+        context.inTransaction(
+            () -> context.repository.findByControlPlaneRequestId(REQUEST_ID).orElseThrow());
+    assertThat(persisted.redeemedAt()).isEqualTo(issuedAt);
+    assertThat(persisted.status())
+        .isEqualTo(AccountStartSessionOperatorAuthorizationRepository.Status.REDEEMED);
+  }
+
+  @Test
+  void realPostgresRejectsRedemptionTimestampEarlierThanIssuance() {
+    Context context = context();
+    Instant issuedAt = canonicalMillisecond(databaseNow(context));
+    IssuanceCandidate candidate =
+        candidate(tuple(), issuedAt, issuedAt.plusSeconds(180), issuedAt.plusSeconds(210));
+    context.inTransaction(() -> context.repository.createOrReadExact(candidate));
+
+    RedemptionRequest request =
+        redemption(candidate, OWNER_ATTEMPT_ID, 11L, candidate.issuedAt().minusMillis(1));
+    assertThatThrownBy(() -> context.inTransaction(() -> context.repository.redeemExact(request)))
+        .isInstanceOf(IntegrityConstraintViolationException.class);
+
+    var persisted =
+        context.inTransaction(
+            () -> context.repository.findByControlPlaneRequestId(REQUEST_ID).orElseThrow());
+    assertThat(persisted.status())
+        .isEqualTo(AccountStartSessionOperatorAuthorizationRepository.Status.ISSUED);
+    assertThat(persisted.redeemedAt()).isNull();
+  }
+
+  @Test
+  void realPostgresEnforcesCanonicalPositiveLongRangeForBundleSourceFence() {
+    Context context = context();
+    Instant issuedAt = canonicalMillisecond(databaseNow(context));
+    String maxFenceRequestId = REQUEST_ID + "-source-fence-max";
+    IssuanceCandidate maxFence =
+        candidateWithReference(
+            tuple(maxFenceRequestId, "maximum Account source fence"),
+            bundleReference(Long.MAX_VALUE),
+            issuedAt);
+    var maxFenceCreated =
+        context.inTransaction(() -> context.repository.createOrReadExact(maxFence));
+    assertThat(maxFenceCreated.created()).isTrue();
+    assertThat(maxFenceCreated.issuance().bundleReference().sourceFence())
+        .isEqualTo(Long.toString(Long.MAX_VALUE));
+    assertThat(maxFenceCreated.issuance().issuanceFence())
+        .isNotEqualTo(Long.parseLong(maxFenceCreated.issuance().bundleReference().sourceFence()));
+
+    List<String> invalidSourceFences = List.of("0", "07", "9223372036854775808");
+    for (int index = 0; index < invalidSourceFences.size(); index++) {
+      String requestId = REQUEST_ID + "-source-fence-invalid-" + index;
+      String invalidSourceFence = invalidSourceFences.get(index);
+      IssuanceCandidate candidate =
+          candidateWithReference(
+              tuple(requestId, "invalid Account source fence"), bundleReference(7L), issuedAt);
+      int beforeInvalidFence = context.countRows();
+      assertThatThrownBy(
+              () -> insertCandidateWithSourceFence(context, candidate, invalidSourceFence))
+          .isInstanceOf(IntegrityConstraintViolationException.class)
+          .satisfies(
+              failure -> assertThat(findSqlException(failure).getSQLState()).isEqualTo("23514"));
+      assertThat(context.countRows()).isEqualTo(beforeInvalidFence);
+    }
+  }
+
+  @Test
+  void repositoryRejectsClosedBundleWhenItsSourceVersionDiffersFromReference() {
+    Context context = context();
+    IssuanceCandidate candidate =
+        candidateWithReference(
+            tuple(), bundleReference(7L), canonicalMillisecond(databaseNow(context)));
+    BundleReference mismatchedReference =
+        new BundleReference(
+            candidate.bundleReference().bundleVersion(),
+            "13",
+            candidate.bundleReference().sourceFence(),
+            candidate.bundleReference().linearization());
+    IssuanceCandidate mismatched =
+        new IssuanceCandidate(
+            candidate.controlPlaneRequestId(),
+            candidate.preAuthorizationTuple(),
+            candidate.mutationDigest(),
+            candidate.issuanceWorkloadUri(),
+            candidate.reservationOwnerId(),
+            candidate.reservationClaimFence(),
+            candidate.issuanceOperationId(),
+            candidate.issuanceFence(),
+            mismatchedReference,
+            candidate.authorityEvidenceBundle(),
+            candidate.authorizationReferenceFingerprint(),
+            candidate.encryptedResponseEnvelope(),
+            candidate.issuedAt(),
+            candidate.referenceExpiresAt(),
+            candidate.responseEnvelopeExpiresAt());
+
+    assertThatThrownBy(
+            () -> context.inTransaction(() -> context.repository.createOrReadExact(mismatched)))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("Account bundle reference differs");
+    assertThat(context.countRows()).isZero();
+  }
+
+  @Test
   void realPostgresAcceptsCanonicalNfcRequestIdAt128Utf8BytesAndRejectsOversizeBeforeInsert() {
     Context context = context();
     String boundedRequestId = "é".repeat(64);
@@ -718,10 +831,47 @@ class AccountStartSessionOperatorAuthorizationRepositoryIntegrationTest {
         OffsetDateTime.ofInstant(candidate.responseEnvelopeExpiresAt(), ZoneOffset.UTC));
   }
 
+  private static void insertCandidateWithSourceFence(
+      Context context, IssuanceCandidate candidate, String sourceFence) {
+    context.adminDsl.execute(
+        "INSERT INTO account_start_session_operator_authorizations "
+            + "(control_plane_request_id, pre_authorization_tuple, mutation_digest, "
+            + "issuance_workload_uri, reservation_owner_id, reservation_claim_fence, "
+            + "issuance_operation_id, issuance_fence, bundle_version, bundle_source_version, "
+            + "bundle_source_fence, bundle_linearization, authority_evidence_bundle, "
+            + "authorization_reference_fingerprint, encrypted_response_envelope, issued_at, "
+            + "reference_expires_at, response_envelope_expires_at, status) "
+            + "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, "
+            + "CAST(? AS TIMESTAMPTZ), CAST(? AS TIMESTAMPTZ), "
+            + "CAST(? AS TIMESTAMPTZ), 'ISSUED')",
+        candidate.controlPlaneRequestId(),
+        candidate.preAuthorizationTuple(),
+        candidate.mutationDigest(),
+        candidate.issuanceWorkloadUri(),
+        candidate.reservationOwnerId(),
+        candidate.reservationClaimFence(),
+        candidate.issuanceOperationId(),
+        candidate.issuanceFence(),
+        candidate.bundleReference().bundleVersion(),
+        candidate.bundleReference().sourceVersion(),
+        sourceFence,
+        candidate.bundleReference().linearization(),
+        candidate.authorityEvidenceBundle(),
+        candidate.authorizationReferenceFingerprint(),
+        candidate.encryptedResponseEnvelope(),
+        OffsetDateTime.ofInstant(candidate.issuedAt(), ZoneOffset.UTC),
+        OffsetDateTime.ofInstant(candidate.referenceExpiresAt(), ZoneOffset.UTC),
+        OffsetDateTime.ofInstant(candidate.responseEnvelopeExpiresAt(), ZoneOffset.UTC));
+  }
+
   private static Instant databaseNow(Context context) {
     return Objects.requireNonNull(
             (OffsetDateTime) context.adminDsl.fetchValue("SELECT clock_timestamp()"))
         .toInstant();
+  }
+
+  private static Instant canonicalMillisecond(Instant value) {
+    return Instant.ofEpochMilli(value.toEpochMilli());
   }
 
   private static void waitUntilDatabaseTime(Context context, Instant boundary) {
@@ -890,6 +1040,31 @@ class AccountStartSessionOperatorAuthorizationRepositoryIntegrationTest {
         issuedAt,
         referenceExpiresAt,
         responseEnvelopeExpiresAt);
+  }
+
+  private static IssuanceCandidate candidateWithReference(
+      StartSessionPreAuthorizationReservationTuple tuple,
+      BundleReference reference,
+      Instant issuedAt) {
+    UUID operationId = UUID.randomUUID();
+    String keyId = UUID.randomUUID().toString().replace("-", "");
+    Instant referenceExpiresAt = issuedAt.plusSeconds(180);
+    return new IssuanceCandidate(
+        tuple.controlPlaneRequestId(),
+        canonicalBytes(tuple),
+        tuple.mutationDigest(),
+        ISSUER_URI,
+        RESERVATION_OWNER_ID,
+        3L,
+        operationId,
+        31L,
+        reference,
+        authorityBundle(tuple, operationId, 31L, referenceExpiresAt, reference),
+        "arfp/v1/" + keyId + "/" + "a".repeat(64),
+        bytes("encrypted-original-response-envelope"),
+        issuedAt,
+        referenceExpiresAt,
+        issuedAt.plusSeconds(210));
   }
 
   private static IssuanceCandidate expiredCandidate(

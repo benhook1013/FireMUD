@@ -28,6 +28,7 @@ import java.nio.file.Path;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
+import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Base64;
@@ -39,10 +40,12 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicInteger;
+import net.firedevops.firemud.accountservice.dto.CompletePasswordResetRequest;
 import net.firedevops.firemud.accountservice.dto.DemoTenantEntitlementEventV1Codec;
 import net.firedevops.firemud.accountservice.dto.DemoTenantEntitlementRequest;
 import net.firedevops.firemud.accountservice.dto.TenantAuthorityEventV1Codec;
 import net.firedevops.firemud.accountservice.entity.Account;
+import net.firedevops.firemud.accountservice.entity.PasswordResetToken;
 import net.firedevops.firemud.accountservice.repository.AccountAuthEvidenceBundleRepository;
 import net.firedevops.firemud.accountservice.repository.AccountAuthorityGenerationRepository;
 import net.firedevops.firemud.accountservice.repository.AccountAuthorityOutboxRepository;
@@ -54,8 +57,14 @@ import net.firedevops.firemud.accountservice.repository.AccountGameplayDelegatio
 import net.firedevops.firemud.accountservice.repository.AccountGameplayDelegationResponseEnvelopeRepository.CallerIdentity;
 import net.firedevops.firemud.accountservice.repository.AccountGameplayDelegationResponseEnvelopeRepository.IdempotencyConflictException;
 import net.firedevops.firemud.accountservice.repository.AccountGameplayDelegationResponseEnvelopeRepository.RecoveredCredential;
+import net.firedevops.firemud.accountservice.repository.AccountLogoutAllOperationRepository;
+import net.firedevops.firemud.accountservice.repository.AccountPasswordResetOperationRepository;
 import net.firedevops.firemud.accountservice.repository.AccountRepository;
+import net.firedevops.firemud.accountservice.repository.AccountSecurityStateOperationRepository;
+import net.firedevops.firemud.accountservice.repository.PasswordResetTokenRepository;
 import net.firedevops.firemud.accountservice.service.AccountGenerationProjection;
+import net.firedevops.firemud.accountservice.service.AccountPasswordResetDraftSourceChangeRepository;
+import net.firedevops.firemud.accountservice.service.impl.AccountServiceImpl;
 import net.firedevops.firemud.accountservice.service.session.AccountCoordinationPinnedConnectionProvider;
 import net.firedevops.firemud.accountservice.service.session.AccountCoordinationPinnedConnectionProvider.AcknowledgementRequirements;
 import net.firedevops.firemud.accountservice.service.session.AccountGameplayDelegationAuthorityProjection;
@@ -780,15 +789,8 @@ class AccountGameplayDelegationRedisIntegrationTest {
           new BeforeSecondTransactionManager(
               database.manager(),
               () ->
-                  inTransaction(
-                      database,
-                      () -> {
-                        AccountRepository accounts = new AccountRepository(dsl, sources);
-                        Account changed = accounts.findByAccountUuid(accountId).orElseThrow();
-                        changed.setEmailVerified(true);
-                        accounts.save(changed);
-                        return null;
-                      }));
+                  commitPasswordResetAuthorityChange(
+                      database, dsl, authorities, outbox, sources, accountId));
       AccountGameplayDelegationCommittedIssuanceOwner postCheckRaceOwner =
           new AccountGameplayDelegationCommittedIssuanceOwner(
               issuance,
@@ -1501,6 +1503,81 @@ class AccountGameplayDelegationRedisIntegrationTest {
         () -> {
           sources.initializeIssuerIfAbsent(ACCOUNT_ISSUER);
           return new AccountRepository(context.dsl(), sources).save(account).getAccountUuid();
+        });
+  }
+
+  private static void commitPasswordResetAuthorityChange(
+      TestContext context,
+      DSLContext dsl,
+      AccountAuthorityGenerationRepository authorities,
+      AccountAuthorityOutboxRepository outbox,
+      AccountAuthoritySourceEvidenceRepository sources,
+      UUID accountId) {
+    AccountRepository accounts = new AccountRepository(dsl, sources);
+    AccountPasswordResetOperationRepository resetOperations =
+        new AccountPasswordResetOperationRepository(dsl);
+    AccountLogoutAllOperationRepository logoutAllOperations =
+        new AccountLogoutAllOperationRepository(dsl);
+    AccountSecurityStateOperationRepository securityStateOperations =
+        new AccountSecurityStateOperationRepository(dsl);
+    AccountPasswordResetDraftSourceChangeRepository sourceChanges =
+        new AccountPasswordResetDraftSourceChangeRepository(dsl);
+    PasswordResetTokenRepository resetTokens = new PasswordResetTokenRepository(dsl);
+    String rawToken = "active-transition-reset-" + UUID.randomUUID();
+
+    inTransaction(
+        context,
+        () -> {
+          Account account = accounts.findByAccountUuid(accountId).orElseThrow();
+          PasswordResetToken token = new PasswordResetToken();
+          token.setAccount(account);
+          token.setToken(rawToken);
+          token.setExpiresAt(LocalDateTime.now().plusHours(2));
+          resetTokens.save(token);
+          return null;
+        });
+
+    AccountServiceImpl accountService =
+        new AccountServiceImpl(
+            accounts,
+            authorities,
+            sources,
+            outbox,
+            resetOperations,
+            logoutAllOperations,
+            securityStateOperations,
+            sourceChanges,
+            null, // audit outbox
+            null, // connect scopes
+            null, // join operations
+            null, // email login challenges
+            null, // realm grants
+            null, // tenant memberships
+            null, // account mapper is not on the password-reset path
+            null, // profiles
+            null, // profile mapper
+            null, // payment transactions
+            null, // subscriptions
+            null, // external account identities
+            resetTokens,
+            null, // email verification tokens
+            null, // notifications
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            context.manager());
+    inTransaction(
+        context,
+        () -> {
+          accountService.completePasswordReset(
+              new CompletePasswordResetRequest(
+                  rawToken, "active-transition-password-" + UUID.randomUUID()));
+          return null;
         });
   }
 
