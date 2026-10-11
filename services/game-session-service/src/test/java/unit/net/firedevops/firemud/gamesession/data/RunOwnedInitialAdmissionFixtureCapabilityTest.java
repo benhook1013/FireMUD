@@ -553,12 +553,6 @@ class RunOwnedInitialAdmissionFixtureCapabilityTest {
   }
 
   private static String launchReadEvidenceJson(
-      net.firedevops.firemud.gamedesign.v1.PublishedReleaseBundle bundle) {
-    return launchReadEvidenceJson(
-        sourceEvidence(), bundle, launchArtifactState(), launchVersionState());
-  }
-
-  private static String launchReadEvidenceJson(
       AuthoredWorldSourceEvidence source,
       net.firedevops.firemud.gamedesign.v1.PublishedReleaseBundle bundle,
       net.firedevops.firemud.gamedesign.v1.VersionAssetArtifactState artifactState,
