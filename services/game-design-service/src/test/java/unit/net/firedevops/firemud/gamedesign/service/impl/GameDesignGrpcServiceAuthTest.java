@@ -14,6 +14,9 @@ import java.util.concurrent.atomic.AtomicReference;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
 import net.firedevops.firemud.common.security.SessionContext;
 import net.firedevops.firemud.gamedesign.dto.PublishedReleaseBundleDto;
+import net.firedevops.firemud.gamedesign.dto.VersionAssetArtifactStateDto;
+import net.firedevops.firemud.gamedesign.dto.VersionStateDto;
+import net.firedevops.firemud.gamedesign.model.VersionLifecycleState;
 import net.firedevops.firemud.gamedesign.service.CompleteLaunchBindingService;
 import net.firedevops.firemud.gamedesign.service.GameAuthoredHelpTopicService;
 import net.firedevops.firemud.gamedesign.service.LaunchDescriptorService;
@@ -26,6 +29,10 @@ import net.firedevops.firemud.gamedesign.service.VersionAssetArtifactService;
 import net.firedevops.firemud.gamedesign.service.VersionService;
 import net.firedevops.firemud.gamedesign.v1.GetPublishedReleaseBundleRequest;
 import net.firedevops.firemud.gamedesign.v1.GetPublishedReleaseBundleResponse;
+import net.firedevops.firemud.gamedesign.v1.GetVersionAssetArtifactStateRequest;
+import net.firedevops.firemud.gamedesign.v1.GetVersionAssetArtifactStateResponse;
+import net.firedevops.firemud.gamedesign.v1.GetVersionStateRequest;
+import net.firedevops.firemud.gamedesign.v1.GetVersionStateResponse;
 import net.firedevops.firemud.gamedesign.v1.ListVersionsRequest;
 import net.firedevops.firemud.gamedesign.v1.ListVersionsResponse;
 import org.junit.jupiter.api.AfterEach;
@@ -158,6 +165,143 @@ class GameDesignGrpcServiceAuthTest {
     assertEquals(11L, bundleRef.get().getBundle().getId());
     Mockito.verifyNoInteractions(launchDescriptorService);
   }
+
+  @Test
+  void versionStateAndArtifactStateReadsAllowOnlySameNamespaceGameSessionAndWorldManagementPeers() {
+    for (String serviceName : List.of("game-session-service", "world-management-service")) {
+      ReadFixture fixture = readFixture();
+      SessionContext.setContext(null, List.of(), Map.of(), true, serviceName, serviceName + "-1");
+      withPeer(
+          serviceName,
+          "test",
+          () -> {
+            AtomicReference<GetVersionStateResponse> versionState = new AtomicReference<>();
+            fixture.service.getVersionState(
+                GetVersionStateRequest.newBuilder().setTenantId("1").setVersionId(7L).build(),
+                observer(versionState));
+            assertEquals("", versionState.get().getError().getCode());
+
+            AtomicReference<GetVersionAssetArtifactStateResponse> artifactState =
+                new AtomicReference<>();
+            fixture.service.getVersionAssetArtifactState(
+                GetVersionAssetArtifactStateRequest.newBuilder()
+                    .setTenantId("1")
+                    .setVersionId(7L)
+                    .build(),
+                observer(artifactState));
+            assertEquals("", artifactState.get().getError().getCode());
+          });
+      Mockito.verify(fixture.versionService).getVersionState("1", 7L);
+      Mockito.verify(fixture.artifactService).getState("1", 7L);
+      SessionContext.clear();
+    }
+  }
+
+  @Test
+  void versionStateAndArtifactStateReadsDenyWrongPeerNamespaceAndAnonymousCallers() {
+    for (String[] caller :
+        new String[][] {
+          {"account-service", "test"},
+          {"game-session-service", "other"},
+          {null, "test"}
+        }) {
+      ReadFixture fixture = readFixture();
+      if (caller[0] != null) {
+        SessionContext.setContext(null, List.of(), Map.of(), true, caller[0], caller[0] + "-1");
+      }
+      withPeer(
+          caller[0],
+          caller[1],
+          () -> {
+            AtomicReference<GetVersionStateResponse> versionState = new AtomicReference<>();
+            fixture.service.getVersionState(
+                GetVersionStateRequest.newBuilder().setTenantId("1").setVersionId(7L).build(),
+                observer(versionState));
+            assertEquals("PERMISSION_DENIED", versionState.get().getError().getCode());
+
+            AtomicReference<GetVersionAssetArtifactStateResponse> artifactState =
+                new AtomicReference<>();
+            fixture.service.getVersionAssetArtifactState(
+                GetVersionAssetArtifactStateRequest.newBuilder()
+                    .setTenantId("1")
+                    .setVersionId(7L)
+                    .build(),
+                observer(artifactState));
+            assertEquals("PERMISSION_DENIED", artifactState.get().getError().getCode());
+          });
+      Mockito.verifyNoInteractions(fixture.versionService, fixture.artifactService);
+      SessionContext.clear();
+    }
+  }
+
+  private ReadFixture readFixture() {
+    VersionService versionService = Mockito.mock(VersionService.class);
+    VersionAssetArtifactService artifactService = Mockito.mock(VersionAssetArtifactService.class);
+    Mockito.when(versionService.getVersionState("1", 7L))
+        .thenReturn(
+            new VersionStateDto(
+                "1", 7L, VersionLifecycleState.PUBLISHED, 3L, java.time.LocalDateTime.now()));
+    Mockito.when(artifactService.getState("1", 7L))
+        .thenReturn(
+            new VersionAssetArtifactStateDto(
+                "1",
+                7L,
+                1,
+                "PUBLISHED",
+                2L,
+                MANIFEST_HASH,
+                "workflow-1",
+                null,
+                null,
+                java.time.LocalDateTime.now(),
+                List.of("manifest.json")));
+    GameDesignGrpcService service =
+        new GameDesignGrpcService(
+            Mockito.mock(PingService.class),
+            Mockito.mock(RevisionService.class),
+            versionService,
+            Mockito.mock(LaunchDescriptorService.class),
+            Mockito.mock(CompleteLaunchBindingService.class),
+            Mockito.mock(TemplateRemapSetService.class),
+            artifactService,
+            Mockito.mock(SettingsAuthorityService.class),
+            Mockito.mock(GameAuthoredHelpTopicService.class),
+            new TemporalVersionPublishWorkflowMetadataResolver(Optional.empty(), Optional.empty()),
+            new SimpleMeterRegistry());
+    ReflectionTestUtils.setField(service, "workloadNamespace", "test");
+    return new ReadFixture(service, versionService, artifactService);
+  }
+
+  private static <T> StreamObserver<T> observer(AtomicReference<T> response) {
+    return new StreamObserver<>() {
+      @Override
+      public void onNext(T value) {
+        response.set(value);
+      }
+
+      @Override
+      public void onError(Throwable t) {}
+
+      @Override
+      public void onCompleted() {}
+    };
+  }
+
+  private void withPeer(String serviceName, String namespace, Runnable operation) {
+    if (serviceName == null) {
+      operation.run();
+      return;
+    }
+    GrpcPeerIdentity peer =
+        GrpcPeerIdentity.parseUri("spiffe://firemud/ns/" + namespace + "/sa/" + serviceName)
+            .orElseThrow();
+    Context.current().withValue(GrpcPeerIdentity.CONTEXT_KEY, peer).run(operation);
+  }
+
+  private record ReadFixture(
+      GameDesignGrpcService service,
+      VersionService versionService,
+      VersionAssetArtifactService artifactService) {}
 
   private void underGameSessionPeer(Runnable operation) {
     GrpcPeerIdentity peer =

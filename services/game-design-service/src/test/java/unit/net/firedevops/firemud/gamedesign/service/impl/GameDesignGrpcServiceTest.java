@@ -1318,24 +1318,28 @@ class GameDesignGrpcServiceTest {
                 LocalDateTime.parse("2026-04-15T12:00:00")));
 
     AtomicReference<GetVersionStateResponse> ref = new AtomicReference<>();
-    try (MockedStatic<AdminRoleGuard> ignored = Mockito.mockStatic(AdminRoleGuard.class)) {
-      service.getVersionState(
-          GetVersionStateRequest.newBuilder().setTenantId("tenant-1").setVersionId(7L).build(),
-          new StreamObserver<>() {
-            @Override
-            public void onNext(GetVersionStateResponse value) {
-              ref.set(value);
-            }
+    underLaunchPeer(
+        "game-session-service",
+        () ->
+            service.getVersionState(
+                GetVersionStateRequest.newBuilder()
+                    .setTenantId("tenant-1")
+                    .setVersionId(7L)
+                    .build(),
+                new StreamObserver<>() {
+                  @Override
+                  public void onNext(GetVersionStateResponse value) {
+                    ref.set(value);
+                  }
 
-            @Override
-            public void onError(Throwable t) {
-              throw new AssertionError(t);
-            }
+                  @Override
+                  public void onError(Throwable t) {
+                    throw new AssertionError(t);
+                  }
 
-            @Override
-            public void onCompleted() {}
-          });
-    }
+                  @Override
+                  public void onCompleted() {}
+                }));
 
     assertEquals("", ref.get().getError().getCode());
     assertEquals(17L, ref.get().getVersionState().getVersionStateEpoch());
@@ -1483,27 +1487,28 @@ class GameDesignGrpcServiceTest {
                 List.of("logo.png", "manifest.json")));
 
     AtomicReference<GetVersionAssetArtifactStateResponse> ref = new AtomicReference<>();
-    try (MockedStatic<AdminRoleGuard> ignored = Mockito.mockStatic(AdminRoleGuard.class)) {
-      service.getVersionAssetArtifactState(
-          GetVersionAssetArtifactStateRequest.newBuilder()
-              .setTenantId("tenant-1")
-              .setVersionId(7L)
-              .build(),
-          new StreamObserver<>() {
-            @Override
-            public void onNext(GetVersionAssetArtifactStateResponse value) {
-              ref.set(value);
-            }
+    underLaunchPeer(
+        "game-session-service",
+        () ->
+            service.getVersionAssetArtifactState(
+                GetVersionAssetArtifactStateRequest.newBuilder()
+                    .setTenantId("tenant-1")
+                    .setVersionId(7L)
+                    .build(),
+                new StreamObserver<>() {
+                  @Override
+                  public void onNext(GetVersionAssetArtifactStateResponse value) {
+                    ref.set(value);
+                  }
 
-            @Override
-            public void onError(Throwable t) {
-              throw new AssertionError(t);
-            }
+                  @Override
+                  public void onError(Throwable t) {
+                    throw new AssertionError(t);
+                  }
 
-            @Override
-            public void onCompleted() {}
-          });
-    }
+                  @Override
+                  public void onCompleted() {}
+                }));
 
     assertEquals(
         "ARTIFACT_STATE_PUBLISHED", ref.get().getArtifactState().getArtifactState().name());

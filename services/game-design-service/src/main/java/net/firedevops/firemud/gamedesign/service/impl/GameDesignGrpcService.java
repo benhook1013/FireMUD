@@ -2404,10 +2404,7 @@ public class GameDesignGrpcService extends GameDesignServiceGrpc.GameDesignServi
   }
 
   private void requireLaunchAttestationReadAccess() {
-    if (SessionContext.isInternalService()) {
-      return;
-    }
-    AdminRoleGuard.requireAdminRole();
+    requireLaunchDescriptorReadAccess();
   }
 
   private static UUID canonicalPublicationUuid(String value, String field) {
