@@ -18,13 +18,15 @@ import java.nio.file.attribute.PosixFilePermission;
 import java.security.MessageDigest;
 import java.security.cert.CertificateFactory;
 import java.security.cert.X509Certificate;
+import java.util.Base64;
 import java.util.HexFormat;
 import java.util.LinkedHashMap;
-import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import java.util.UUID;
 import lombok.RequiredArgsConstructor;
+import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
 import net.firedevops.firemud.common.tenant.AuthoredWorldSourceEvidence;
 import net.firedevops.firemud.gamedesign.entity.Game;
 import net.firedevops.firemud.gamedesign.entity.GameTemplate;
@@ -37,6 +39,7 @@ import net.firedevops.firemud.gamedesign.model.VersionLifecycleState;
 import net.firedevops.firemud.gamedesign.repository.GameAuthoredWorldSourceRepository;
 import net.firedevops.firemud.gamedesign.repository.GameRepository;
 import net.firedevops.firemud.gamedesign.repository.GameTemplateRepository;
+import net.firedevops.firemud.gamedesign.repository.GameTenantIdentity;
 import net.firedevops.firemud.gamedesign.repository.PublishedReleaseBundleRepository;
 import net.firedevops.firemud.gamedesign.repository.RevisionRepository;
 import net.firedevops.firemud.gamedesign.repository.VersionAssetArtifactRepository;
@@ -81,6 +84,7 @@ public class TestDataSeeder implements ApplicationRunner {
   private final VersionRepository versionRepository;
   private final PublishedReleaseBundleRepository publishedReleaseBundleRepository;
   private final VersionAssetArtifactRepository versionAssetArtifactRepository;
+  private final RunOwnedFixtureLaunchReadback launchReadback;
   private final ObjectMapper objectMapper;
 
   @Value("${FIREMUD_SMOKE_INITIAL_ADMISSION_FIXTURE_ENABLED:false}")
@@ -123,11 +127,17 @@ public class TestDataSeeder implements ApplicationRunner {
     Game game = gameRepository.findByTenantId(DEMO_TENANT_ID);
     if (game == null) {
       game = new Game();
+      game.setTenantId(DEMO_TENANT_ID);
+      game.setName("Demo Game");
+      game.setDescription("Seed game");
+      game = gameRepository.save(game);
+    } else if (!DEMO_TENANT_ID.equals(game.getTenantId())
+        || !"Demo Game".equals(game.getName())
+        || !"Seed game".equals(game.getDescription())
+        || game.getId() == null
+        || game.getCanonicalTenantId() == null) {
+      throw new IllegalStateException("Existing demo game does not exactly match its seed");
     }
-    game.setTenantId(DEMO_TENANT_ID);
-    game.setName("Demo Game");
-    game.setDescription("Seed game");
-    game = gameRepository.save(game);
 
     Version version =
         versionRepository
@@ -137,14 +147,26 @@ public class TestDataSeeder implements ApplicationRunner {
       version = new Version();
       version.setTenantId(DEMO_TENANT_ID);
       version.setVersionNumber(DEMO_VERSION_NUMBER);
+      version.setVersionState(VersionLifecycleState.PUBLISHED);
+      version.setVersionStateEpoch(1L);
+      version.setScriptPatchVersion(null);
+      version.setBaseVersionId(null);
+      version.setScriptOnly(false);
+      version.setNotes("Seed published version");
+      version = versionRepository.save(version);
+    } else {
+      GameTenantIdentity gameIdentity =
+          gameRepository
+              .findRuntimeTenantIdentityByTenantKey(game.getTenantId())
+              .orElseThrow(
+                  () ->
+                      new IllegalStateException(
+                          "Existing demo game tenant identity cannot be read"));
+      if (!matchesDemoVersion(version, game, gameIdentity)) {
+        throw new IllegalStateException(
+            "Existing published version does not exactly match the demo seed; refusing to reuse it");
+      }
     }
-    version.setVersionState(VersionLifecycleState.PUBLISHED);
-    version.setVersionStateEpoch(1L);
-    version.setScriptPatchVersion(null);
-    version.setBaseVersionId(null);
-    version.setScriptOnly(false);
-    version.setNotes("Seed published version");
-    version = versionRepository.save(version);
     Long versionId = version.getId();
 
     GameTemplate template =
@@ -153,13 +175,18 @@ public class TestDataSeeder implements ApplicationRunner {
       template = new GameTemplate();
       template.setTenantId(DEMO_TENANT_ID);
       template.setName(DEMO_TEMPLATE_NAME);
+      template.setDescription("Demo template");
+      template.setConfig("{}");
+      template.setDefaultVersionId(version.getId());
+      template.setDefaultScriptPatchVersion(null);
+      template.setDefaultRuntimeFlagsJson("{}");
+      template.setTemplateReferencePhase(
+          net.firedevops.firemud.gamedesign.model.TemplateReferencePhase.ENFORCED);
+      template = templateRepository.save(template);
+    } else if (!matchesDemoTemplate(template, version)) {
+      throw new IllegalStateException(
+          "Existing default template does not exactly match the demo seed; refusing to reuse it");
     }
-    template.setDescription("Demo template");
-    template.setConfig("{}");
-    template.setDefaultVersionId(version.getId());
-    template.setDefaultScriptPatchVersion(null);
-    template.setDefaultRuntimeFlagsJson("{}");
-    templateRepository.save(template);
 
     Revision revision =
         revisionRepository
@@ -176,47 +203,161 @@ public class TestDataSeeder implements ApplicationRunner {
     revision.setData("{}");
     revisionRepository.save(revision);
 
-    PublishedReleaseBundle bundle =
-        publishedReleaseBundleRepository
-            .findByTenantIdAndVersionId(DEMO_TENANT_ID, versionId)
-            .orElseGet(PublishedReleaseBundle::new);
-    bundle.setTenantId(DEMO_TENANT_ID);
-    bundle.setVersionId(versionId);
-    bundle.setVersionNumber(version.getVersionNumber());
-    bundle.setAttestationSchemaVersion("v1");
-    bundle.setPublishWorkflowId(DEMO_PUBLISH_WORKFLOW_ID);
-    bundle.setManifestHash(DEMO_MANIFEST_HASH);
-    bundle.setGenerationConfigRevision(DEMO_GENERATION_CONFIG_REVISION);
-    bundle.setRequiredManifestAssetKeysJson("[]");
-    bundle.setParticipantDigestsJson("[]");
-    bundle.setCommandDefinitionsJson("[]");
-    bundle.setScriptOnly(false);
-    bundle.setScriptPatchVersion(null);
-    bundle = publishedReleaseBundleRepository.save(bundle);
+    PublishedReleaseBundle bundle = seedPublishedReleaseBundle(game, version);
 
     VersionAssetArtifact artifact =
         versionAssetArtifactRepository
             .findByTenantIdAndVersionId(DEMO_TENANT_ID, versionId)
-            .orElseGet(VersionAssetArtifact::new);
-    artifact.setTenantId(DEMO_TENANT_ID);
-    artifact.setVersionId(versionId);
-    artifact.setExportedVersionNumber(version.getVersionNumber());
-    artifact.setArtifactState(VersionAssetArtifactState.PUBLISHED);
-    artifact.setStateEpoch(Math.max(artifact.getStateEpoch(), 1L));
-    artifact.setManifestHash(bundle.getManifestHash());
-    artifact.setLastWorkflowId(DEMO_PUBLISH_WORKFLOW_ID);
-    artifact.setLastErrorCode(null);
-    artifact.setLastErrorMessage(null);
-    artifact.setExportedManifestAssetKeysJson("[]");
-    versionAssetArtifactRepository.save(artifact);
+            .orElse(null);
+    if (artifact == null) {
+      artifact = new VersionAssetArtifact();
+      artifact.setTenantId(DEMO_TENANT_ID);
+      artifact.setVersionId(versionId);
+      artifact.setExportedVersionNumber(version.getVersionNumber());
+      artifact.setArtifactState(VersionAssetArtifactState.PUBLISHED);
+      artifact.setStateEpoch(1L);
+      artifact.setManifestHash(bundle.getManifestHash());
+      artifact.setLastWorkflowId(DEMO_PUBLISH_WORKFLOW_ID);
+      artifact.setLastErrorCode(null);
+      artifact.setLastErrorMessage(null);
+      artifact.setExportedManifestAssetKeysJson("[]");
+      versionAssetArtifactRepository.save(artifact);
+    } else if (!matchesDemoArtifact(artifact, version, bundle)) {
+      throw new IllegalStateException(
+          "Existing version artifact does not exactly match the demo seed; refusing to reuse it");
+    }
 
     if (initialAdmissionFixtureEnabled) {
-      registerRunOwnedAuthoredWorldSource(game);
+      registerRunOwnedAuthoredWorldSource(game, template, version);
     }
   }
 
-  private void registerRunOwnedAuthoredWorldSource(Game game) {
+  private boolean matchesDemoVersion(Version version, Game game, GameTenantIdentity gameIdentity) {
+    return version.getId() != null
+        && version.getId() > 0L
+        && DEMO_TENANT_ID.equals(version.getTenantId())
+        && version.getVersionNumber() == DEMO_VERSION_NUMBER
+        && version.getVersionState() == VersionLifecycleState.PUBLISHED
+        && Objects.equals(version.getVersionStateEpoch(), 1L)
+        && version.getScriptPatchVersion() == null
+        && version.getBaseVersionId() == null
+        && !version.isScriptOnly()
+        && "Seed published version".equals(version.getNotes())
+        && version.getCanonicalVersionId() != null
+        && !version.getCanonicalVersionId().equals(new UUID(0L, 0L))
+        && Objects.equals(version.getCanonicalTenantId(), game.getCanonicalTenantId())
+        && Objects.equals(version.getIdentitySourceGameRowId(), game.getId())
+        && Objects.equals(version.getIdentitySourceGameTenantKey(), game.getTenantId())
+        && Objects.equals(version.getIdentitySourceGameRowId(), gameIdentity.sourceGameId())
+        && Objects.equals(
+            version.getIdentitySourceGameTenantKey(), gameIdentity.sourceLegacyTenantId())
+        && gameIdentity.provenanceKind() != null
+        && Objects.equals(
+            version.getIdentitySourceProvenanceKind(), gameIdentity.provenanceKind().name())
+        && Objects.equals(gameIdentity.canonicalTenantId(), game.getCanonicalTenantId())
+        && version.getCreatedAt() != null
+        && version.getUpdatedAt() != null;
+  }
+
+  private boolean matchesDemoTemplate(GameTemplate template, Version version) {
+    return template.getId() != null
+        && template.getId() > 0L
+        && DEMO_TENANT_ID.equals(template.getTenantId())
+        && DEMO_TEMPLATE_NAME.equals(template.getName())
+        && "Demo template".equals(template.getDescription())
+        && "{}".equals(template.getConfig())
+        && Objects.equals(template.getDefaultVersionId(), version.getId())
+        && template.getDefaultScriptPatchVersion() == null
+        && "{}".equals(template.getDefaultRuntimeFlagsJson())
+        && template.getTemplateReferencePhase()
+            == net.firedevops.firemud.gamedesign.model.TemplateReferencePhase.ENFORCED
+        && template.getCreatedAt() != null;
+  }
+
+  private boolean matchesDemoArtifact(
+      VersionAssetArtifact artifact, Version version, PublishedReleaseBundle bundle) {
+    return artifact.getId() != null
+        && artifact.getId() > 0L
+        && DEMO_TENANT_ID.equals(artifact.getTenantId())
+        && Objects.equals(artifact.getVersionId(), version.getId())
+        && artifact.getExportedVersionNumber() == version.getVersionNumber()
+        && artifact.getArtifactState() == VersionAssetArtifactState.PUBLISHED
+        && artifact.getStateEpoch() == 1L
+        && Objects.equals(artifact.getManifestHash(), bundle.getManifestHash())
+        && DEMO_PUBLISH_WORKFLOW_ID.equals(artifact.getLastWorkflowId())
+        && artifact.getLastErrorCode() == null
+        && artifact.getLastErrorMessage() == null
+        && "[]".equals(artifact.getExportedManifestAssetKeysJson())
+        && artifact.getUpdatedAt() != null;
+  }
+
+  private PublishedReleaseBundle seedPublishedReleaseBundle(Game game, Version version) {
+    PublishedReleaseBundle expected = new PublishedReleaseBundle();
+    expected.setTenantId(DEMO_TENANT_ID);
+    expected.setVersionId(version.getId());
+    expected.setCanonicalTenantId(game.getCanonicalTenantId());
+    expected.setCanonicalVersionId(version.getCanonicalVersionId());
+    expected.setVersionNumber(version.getVersionNumber());
+    expected.setAttestationSchemaVersion("v1");
+    expected.setPublishWorkflowId(DEMO_PUBLISH_WORKFLOW_ID);
+    expected.setManifestHash(DEMO_MANIFEST_HASH);
+    expected.setGenerationConfigRevision(DEMO_GENERATION_CONFIG_REVISION);
+    expected.setRequiredManifestAssetKeysJson("[]");
+    expected.setParticipantDigestsJson("[]");
+    expected.setCommandDefinitionsJson("[]");
+    expected.setScriptOnly(false);
+    expected.setScriptPatchVersion(null);
+
+    PublishedReleaseBundle stored =
+        publishedReleaseBundleRepository
+            .findByTenantIdAndVersionId(DEMO_TENANT_ID, version.getId())
+            .orElse(null);
+    if (stored == null) {
+      return publishedReleaseBundleRepository.save(expected);
+    }
+
+    if (!matchesDemoReleaseBundle(stored, expected)
+        || stored.getId() == null
+        || stored.getPublishedReleaseBundleRef() == null
+        || stored.getPublishedReleaseBundleRef().isBlank()
+        || stored.getPublishedAt() == null) {
+      throw new IllegalStateException(
+          "Existing published release bundle does not exactly match the demo seed; "
+              + "refusing to reuse it");
+    }
+    return stored;
+  }
+
+  private boolean matchesDemoReleaseBundle(
+      PublishedReleaseBundle stored, PublishedReleaseBundle expected) {
+    return Objects.equals(stored.getTenantId(), expected.getTenantId())
+        && Objects.equals(stored.getVersionId(), expected.getVersionId())
+        && Objects.equals(stored.getCanonicalTenantId(), expected.getCanonicalTenantId())
+        && Objects.equals(stored.getCanonicalVersionId(), expected.getCanonicalVersionId())
+        && stored.getVersionNumber() == expected.getVersionNumber()
+        && Objects.equals(
+            stored.getAttestationSchemaVersion(), expected.getAttestationSchemaVersion())
+        && Objects.equals(stored.getPublishWorkflowId(), expected.getPublishWorkflowId())
+        && Objects.equals(stored.getManifestHash(), expected.getManifestHash())
+        && Objects.equals(stored.getManifestSchemaVersion(), expected.getManifestSchemaVersion())
+        && Objects.equals(stored.getArtifactDigestsJson(), expected.getArtifactDigestsJson())
+        && Objects.equals(
+            stored.getGenerationConfigRevision(), expected.getGenerationConfigRevision())
+        && Objects.equals(
+            stored.getRequiredManifestAssetKeysJson(), expected.getRequiredManifestAssetKeysJson())
+        && Objects.equals(stored.getParticipantDigestsJson(), expected.getParticipantDigestsJson())
+        && Objects.equals(stored.getCommandDefinitionsJson(), expected.getCommandDefinitionsJson())
+        && stored.isScriptOnly() == expected.isScriptOnly()
+        && Objects.equals(stored.getScriptPatchVersion(), expected.getScriptPatchVersion());
+  }
+
+  private void registerRunOwnedAuthoredWorldSource(
+      Game game, GameTemplate template, Version version) {
     FixtureCapability capability = loadFixtureCapability();
+    if (!Objects.equals(template.getId(), capability.gameTemplateId())) {
+      throw new IllegalStateException(
+          "Run-owned fixture capability does not name the persisted default template");
+    }
     if (game.getCanonicalTenantId() == null
         || game.getCanonicalTenantId().equals(new UUID(0L, 0L))) {
       throw new IllegalStateException("Persisted demo game has no canonical tenant identity");
@@ -229,6 +370,13 @@ public class TestDataSeeder implements ApplicationRunner {
             FIXTURE_TENANT_SLUG,
             FIXTURE_WORLD_SLUG,
             FIXTURE_WORLD_DISPLAY_NAME);
+    if (!capability.operationId().equals(registered.registrationRequestId())) {
+      throw new IllegalStateException(
+          "Run-owned source registration does not match the fixture capability request ID");
+    }
+    RunOwnedFixtureLaunchReadback.Snapshot captured =
+        launchReadback.captureCommittedTransaction(
+            game.getId(), capability.gameTemplateId(), version.getId(), registered);
     if (!TransactionSynchronizationManager.isSynchronizationActive()
         || !TransactionSynchronizationManager.isActualTransactionActive()) {
       throw new IllegalStateException(
@@ -238,7 +386,7 @@ public class TestDataSeeder implements ApplicationRunner {
         new TransactionSynchronization() {
           @Override
           public void afterCommit() {
-            publishCommittedSourceReceipt(capability, registered);
+            publishCommittedSourceReceipt(capability, captured);
           }
         });
   }
@@ -282,7 +430,7 @@ public class TestDataSeeder implements ApplicationRunner {
     requireText(capability, "runId", fixtureRunId);
     requireText(capability, "composeProjectName", fixtureComposeProjectName);
     requireLong(capability, "tenantId", 1L);
-    requireLong(capability, "gameTemplateId", 1L);
+    long gameTemplateId = requirePositiveLong(capability, "gameTemplateId");
     requireLong(capability, "ownerAccountId", 1L);
     requireText(capability, "worldSlug", FIXTURE_WORLD_SLUG);
     requireText(capability, "worldDisplayName", FIXTURE_WORLD_DISPLAY_NAME);
@@ -301,28 +449,17 @@ public class TestDataSeeder implements ApplicationRunner {
     X509Certificate gameSessionCertificate = readCertificate(Path.of(gameSessionLeafCertPath));
     X509Certificate caCertificate = readCertificate(Path.of(caCertPath));
     requireCertificatePins(gameSessionCertificate, caCertificate, leafDigest, caDigest);
-    return new FixtureCapability(operationId, leafDigest, caDigest);
+    return new FixtureCapability(operationId, gameTemplateId, leafDigest, caDigest);
   }
 
   private void publishCommittedSourceReceipt(
-      FixtureCapability capability, AuthoredWorldSourceEvidence registered) {
-    AuthoredWorldSourceEvidence committed =
-        authoredWorldSourceRepository
-            .read(
-                registered.operationId(),
-                registered.canonicalTenantId(),
-                registered.worldSlug(),
-                registered.targetNamespace())
-            .orElseThrow(
-                () ->
-                    new IllegalStateException(
-                        "Committed authored-world source registration cannot be read back"));
-    if (!registered.equals(committed)) {
-      throw new IllegalStateException(
-          "Committed authored-world source readback differs from the registration result");
-    }
-
+      FixtureCapability capability, RunOwnedFixtureLaunchReadback.Snapshot captured) {
+    RunOwnedFixtureLaunchReadback.Snapshot committed =
+        launchReadback.readCommittedOutcome(captured);
     byte[] receipt = serializeFixtureReceipt(capability, committed);
+    if (receipt.length == 0 || receipt.length > MAX_FIXTURE_FILE_BYTES) {
+      throw new IllegalStateException("Run-owned authored-world receipt exceeds its 16 KiB bound");
+    }
     Path destination = Path.of(fixtureReceiptPath);
     Path directory = destination.getParent();
     if (directory == null
@@ -364,7 +501,8 @@ public class TestDataSeeder implements ApplicationRunner {
   }
 
   private byte[] serializeFixtureReceipt(
-      FixtureCapability capability, AuthoredWorldSourceEvidence source) {
+      FixtureCapability capability, RunOwnedFixtureLaunchReadback.Snapshot snapshot) {
+    AuthoredWorldSourceEvidence source = snapshot.sourceEvidence();
     Map<String, Object> sourceEvidence = new LinkedHashMap<>();
     sourceEvidence.put("schemaVersion", source.schemaVersion());
     sourceEvidence.put("targetNamespace", source.targetNamespace());
@@ -390,6 +528,19 @@ public class TestDataSeeder implements ApplicationRunner {
     envelope.put("gameSessionLeafSha256", capability.gameSessionLeafSha256());
     envelope.put("caCertificateSha256", capability.caCertificateSha256());
     envelope.put("sourceEvidence", sourceEvidence);
+    Map<String, Object> launchReadEvidence = new LinkedHashMap<>();
+    launchReadEvidence.put("schema", "firemud.run-owned-v1-launch-read-evidence.v1");
+    launchReadEvidence.put("gameTemplateId", snapshot.gameTemplateId());
+    launchReadEvidence.put(
+        "publishedReleaseBundleBase64",
+        Base64.getEncoder().encodeToString(snapshot.bundleProto().toByteArray()));
+    launchReadEvidence.put(
+        "versionAssetArtifactStateBase64",
+        Base64.getEncoder().encodeToString(snapshot.artifactProto().toByteArray()));
+    launchReadEvidence.put(
+        "versionStateBase64",
+        Base64.getEncoder().encodeToString(snapshot.versionProto().toByteArray()));
+    envelope.put("launchReadEvidence", launchReadEvidence);
     try {
       return objectMapper.writeValueAsBytes(envelope);
     } catch (RuntimeException exception) {
@@ -510,13 +661,10 @@ public class TestDataSeeder implements ApplicationRunner {
         throw new IllegalStateException(
             "Run-owned fixture TLS certificates do not match capability pins");
       }
-      var subjectAlternativeNames = gameSessionCertificate.getSubjectAlternativeNames();
-      if (subjectAlternativeNames == null
-          || subjectAlternativeNames.size() != 1
-          || !subjectAlternativeNames
-              .iterator()
-              .next()
-              .equals(List.of(6, FIXTURE_GAME_SESSION_URI_SAN))) {
+      if (GrpcPeerIdentity.fromCertificate(gameSessionCertificate)
+          .map(GrpcPeerIdentity::uri)
+          .filter(FIXTURE_GAME_SESSION_URI_SAN::equals)
+          .isEmpty()) {
         throw new IllegalStateException(
             "Run-owned Game Session certificate has the wrong workload URI SAN");
       }
@@ -555,9 +703,19 @@ public class TestDataSeeder implements ApplicationRunner {
     return value.textValue();
   }
 
-  private void requireLong(JsonNode node, String field, long expected) {
+  private long requirePositiveLong(JsonNode node, String field) {
     JsonNode value = node.get(field);
-    if (value == null || !value.isIntegralNumber() || value.longValue() != expected) {
+    if (value == null
+        || !value.isIntegralNumber()
+        || !value.canConvertToLong()
+        || value.longValue() <= 0L) {
+      throw new IllegalStateException("Run-owned fixture capability has an unexpected " + field);
+    }
+    return value.longValue();
+  }
+
+  private void requireLong(JsonNode node, String field, long expected) {
+    if (requirePositiveLong(node, field) != expected) {
       throw new IllegalStateException("Run-owned fixture capability has an unexpected " + field);
     }
   }
@@ -630,5 +788,8 @@ public class TestDataSeeder implements ApplicationRunner {
   }
 
   private record FixtureCapability(
-      UUID operationId, String gameSessionLeafSha256, String caCertificateSha256) {}
+      UUID operationId,
+      long gameTemplateId,
+      String gameSessionLeafSha256,
+      String caCertificateSha256) {}
 }

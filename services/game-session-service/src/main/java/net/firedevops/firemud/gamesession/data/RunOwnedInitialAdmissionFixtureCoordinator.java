@@ -157,6 +157,8 @@ public final class RunOwnedInitialAdmissionFixtureCoordinator {
       RunOwnedInitialAdmissionFixtureCapability.SourceReceipt sourceReceipt) {
     Objects.requireNonNull(capability, "capability");
     requireExactSourceReceipt(capability, sourceReceipt);
+    RunOwnedInitialAdmissionLaunchEvidence launchEvidence =
+        RunOwnedInitialAdmissionLaunchEvidence.fromVerifiedSourceReceipt(capability, sourceReceipt);
     RunOwnedInitialLaunchResult launch =
         gameInstanceService.startRunOwnedInitialLaunch(
             new StartSessionRequest(
@@ -164,7 +166,7 @@ public final class RunOwnedInitialAdmissionFixtureCoordinator {
                 capability.gameTemplateId(),
                 capability.operationId(),
                 capability.ownerAccountId()),
-            sourceReceipt.sourceEvidence());
+            launchEvidence);
     GameInstanceDto target = requireExactRunningTarget(launch, capability);
 
     InitialAdmissionBindCatalogDescriptor descriptor =
@@ -256,7 +258,7 @@ public final class RunOwnedInitialAdmissionFixtureCoordinator {
     }
   }
 
-  private static void requireExactSourceReceipt(
+  static void requireExactSourceReceipt(
       RunOwnedInitialAdmissionFixtureCapability capability,
       RunOwnedInitialAdmissionFixtureCapability.SourceReceipt receipt) {
     if (receipt == null
@@ -272,6 +274,10 @@ public final class RunOwnedInitialAdmissionFixtureCoordinator {
         || receipt.sourceEvidence() == null
         || !RunOwnedInitialAdmissionFixtureCapability.SOURCE_TARGET_NAMESPACE.equals(
             receipt.sourceEvidence().targetNamespace())
+        || receipt.launchReadEvidence() == null
+        || !RunOwnedInitialAdmissionFixtureCapability.LAUNCH_READ_EVIDENCE_SCHEMA.equals(
+            receipt.launchReadEvidence().schema())
+        || receipt.launchReadEvidence().gameTemplateId() != capability.gameTemplateId()
         || !capability
             .operationId()
             .equals(receipt.sourceEvidence().registrationRequestId().toString())

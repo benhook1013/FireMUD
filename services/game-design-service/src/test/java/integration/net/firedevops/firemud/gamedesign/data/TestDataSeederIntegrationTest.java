@@ -11,6 +11,7 @@ import java.nio.file.attribute.PosixFilePermission;
 import java.security.MessageDigest;
 import java.security.cert.CertificateFactory;
 import java.security.cert.X509Certificate;
+import java.util.Base64;
 import java.util.HashSet;
 import java.util.HexFormat;
 import java.util.LinkedHashMap;
@@ -20,25 +21,44 @@ import java.util.UUID;
 import net.firedevops.firemud.common.tenant.AuthoredWorldSourceEvidence;
 import net.firedevops.firemud.gamedesign.GameDesignServiceApplication;
 import net.firedevops.firemud.gamedesign.data.TestDataSeeder;
+import net.firedevops.firemud.gamedesign.dto.PublishedReleaseBundleDto;
+import net.firedevops.firemud.gamedesign.dto.VersionAssetArtifactStateDto;
+import net.firedevops.firemud.gamedesign.dto.VersionStateDto;
 import net.firedevops.firemud.gamedesign.repository.GameAuthoredWorldSourceRepository;
 import net.firedevops.firemud.gamedesign.repository.GameRepository;
+import net.firedevops.firemud.gamedesign.repository.GameTemplateRepository;
+import net.firedevops.firemud.gamedesign.repository.VersionAssetArtifactRepository;
+import net.firedevops.firemud.gamedesign.repository.VersionRepository;
+import net.firedevops.firemud.gamedesign.service.VersionAssetArtifactService;
+import net.firedevops.firemud.gamedesign.service.VersionService;
+import net.firedevops.firemud.gamedesign.service.impl.GameDesignLaunchReadProjectionMapper;
+import net.firedevops.firemud.gamedesign.v1.PublishedReleaseBundle;
+import net.firedevops.firemud.gamedesign.v1.VersionAssetArtifactState;
+import net.firedevops.firemud.gamedesign.v1.VersionStateSnapshot;
 import net.firedevops.firemud.test.NoGrpcServerTestConfiguration;
 import net.firedevops.firemud.test.PostgresBackedServiceTestSupport;
 import net.firedevops.firemud.test.TestContainerImages;
+import org.flywaydb.core.Flyway;
 import org.jooq.DSLContext;
 import org.jooq.Field;
+import org.jooq.Record;
 import org.jooq.Table;
 import org.jooq.impl.DSL;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.DefaultApplicationArguments;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.context.annotation.Import;
+import org.springframework.core.Ordered;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.util.ReflectionTestUtils;
 import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.TransactionDefinition;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.transaction.support.TransactionTemplate;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
@@ -53,6 +73,7 @@ import tools.jackson.databind.ObjectMapper;
       "spring.profiles.active=test",
       "firemud.smoke.seed-demo-runtime.enabled=true",
       "FIREMUD_SMOKE_INITIAL_ADMISSION_FIXTURE_ENABLED=false",
+      "spring.flyway.clean-disabled=false",
       "firemud.auth.jwt-secret=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
       "firemud.grpc.plaintext=true",
       "firemud.grpc.workload-namespace=dev",
@@ -89,11 +110,25 @@ class TestDataSeederIntegrationTest {
   }
 
   @Autowired private TestDataSeeder seeder;
+  @Autowired private Flyway flyway;
   @Autowired private GameAuthoredWorldSourceRepository authoredWorldSourceRepository;
   @Autowired private GameRepository gameRepository;
+  @Autowired private GameTemplateRepository templateRepository;
+  @Autowired private VersionRepository versionRepository;
+  @Autowired private VersionAssetArtifactRepository artifactRepository;
+  @Autowired private VersionService versionService;
+  @Autowired private VersionAssetArtifactService artifactService;
   @Autowired private PlatformTransactionManager transactionManager;
   @Autowired private DSLContext dsl;
   @Autowired private ObjectMapper objectMapper;
+
+  @BeforeEach
+  void resetDisposableServiceSchema() {
+    ReflectionTestUtils.setField(seeder, "initialAdmissionFixtureEnabled", false);
+    flyway.clean();
+    flyway.migrate();
+    seeder.run(new DefaultApplicationArguments(new String[] {}));
+  }
 
   @Test
   void publishesExactOwnerReceiptOnlyAfterCommitAndLeavesNoReceiptOnRollback(
@@ -128,7 +163,7 @@ class TestDataSeederIntegrationTest {
             PosixFilePermission.GROUP_READ,
             PosixFilePermission.OTHERS_READ);
     JsonNode envelope = objectMapper.readTree(Files.readAllBytes(receiptPath));
-    assertThat(envelope.size()).isEqualTo(9);
+    assertThat(envelope.size()).isEqualTo(10);
     assertThat(fieldNames(envelope))
         .isEqualTo(
             Set.of(
@@ -140,7 +175,8 @@ class TestDataSeederIntegrationTest {
                 "gameSessionUriSan",
                 "gameSessionLeafSha256",
                 "caCertificateSha256",
-                "sourceEvidence"));
+                "sourceEvidence",
+                "launchReadEvidence"));
     assertThat(envelope.get("schema").textValue())
         .isEqualTo("firemud.run-owned-authored-world-source-receipt.v1");
     assertThat(envelope.get("runId").textValue()).isEqualTo(fixture.runId());
@@ -205,13 +241,141 @@ class TestDataSeederIntegrationTest {
                 .fetchOne(DELIVERY_WORLD_OPERATION_ID))
         .isNull();
 
+    JsonNode launchJson = envelope.get("launchReadEvidence");
+    assertThat(launchJson.size()).isEqualTo(5);
+    assertThat(fieldNames(launchJson))
+        .isEqualTo(
+            Set.of(
+                "schema",
+                "gameTemplateId",
+                "publishedReleaseBundleBase64",
+                "versionAssetArtifactStateBase64",
+                "versionStateBase64"));
+    assertThat(launchJson.get("schema").textValue())
+        .isEqualTo("firemud.run-owned-v1-launch-read-evidence.v1");
+    var template = templateRepository.findByTenantIdAndName("1", "Default Template").orElseThrow();
+    var version = versionRepository.findByTenantIdAndVersionNumber("1", 1).orElseThrow();
+    var artifact =
+        artifactRepository.findByTenantIdAndVersionId("1", version.getId()).orElseThrow();
+    assertThat(launchJson.get("gameTemplateId").longValue())
+        .isEqualTo(template.getId())
+        .isPositive();
+    PublishedReleaseBundleDto bundleDto =
+        versionService.getPublishedReleaseBundle("1", version.getId());
+    VersionAssetArtifactStateDto artifactDto = artifactService.getState("1", version.getId());
+    VersionStateDto versionDto = versionService.getVersionState("1", version.getId());
+    String bundleBase64 = launchJson.get("publishedReleaseBundleBase64").textValue();
+    byte[] bundleBytes = Base64.getDecoder().decode(bundleBase64);
+    assertThat(Base64.getEncoder().encodeToString(bundleBytes)).isEqualTo(bundleBase64);
+    PublishedReleaseBundle bundleProof = PublishedReleaseBundle.parseFrom(bundleBytes);
+    assertThat(bundleProof).isEqualTo(GameDesignLaunchReadProjectionMapper.toProto(bundleDto));
+    assertThat(bundleProof.getId()).isPositive();
+    assertThat(bundleProof.getVersionId()).isEqualTo(version.getId());
+    assertThat(bundleProof.getPublishedReleaseBundleRef()).isNotBlank();
+    assertThat(bundleProof.getCanonicalTenantId()).isEqualTo(actual.canonicalTenantId().toString());
+    assertThat(bundleProof.getCanonicalVersionId())
+        .isEqualTo(version.getCanonicalVersionId().toString());
+    assertThat(bundleProof.getWorkflowRunId()).isEmpty();
+    assertThat(bundleProof.getWorkflowStatus()).isEmpty();
+    assertThat(bundleProof.getWorkflowFamily()).isEmpty();
+    assertThat(bundleProof.getUnknownFields().asMap()).isEmpty();
+    bundleProof
+        .getParticipantDigestsList()
+        .forEach(digest -> assertThat(digest.getUnknownFields().asMap()).isEmpty());
+    bundleProof
+        .getArtifactDigestsList()
+        .forEach(digest -> assertThat(digest.getUnknownFields().asMap()).isEmpty());
+    String artifactBase64 = launchJson.get("versionAssetArtifactStateBase64").textValue();
+    byte[] artifactBytes = Base64.getDecoder().decode(artifactBase64);
+    assertThat(Base64.getEncoder().encodeToString(artifactBytes)).isEqualTo(artifactBase64);
+    VersionAssetArtifactState artifactProof = VersionAssetArtifactState.parseFrom(artifactBytes);
+    assertThat(artifactProof).isEqualTo(GameDesignLaunchReadProjectionMapper.toProto(artifactDto));
+    assertThat(artifactProof.getVersionId()).isEqualTo(version.getId());
+    assertThat(artifactProof.getStateEpoch()).isEqualTo(artifact.getStateEpoch());
+    assertThat(artifactProof.getManifestHash()).isEqualTo(bundleDto.manifestHash());
+    assertThat(artifactProof.getUnknownFields().asMap()).isEmpty();
+    String versionBase64 = launchJson.get("versionStateBase64").textValue();
+    byte[] versionBytes = Base64.getDecoder().decode(versionBase64);
+    assertThat(Base64.getEncoder().encodeToString(versionBytes)).isEqualTo(versionBase64);
+    VersionStateSnapshot versionProof = VersionStateSnapshot.parseFrom(versionBytes);
+    assertThat(versionProof).isEqualTo(GameDesignLaunchReadProjectionMapper.toProto(versionDto));
+    assertThat(versionProof.getVersionId()).isEqualTo(version.getId());
+    assertThat(versionProof.getVersionStateEpoch()).isEqualTo(version.getVersionStateEpoch());
+    assertThat(versionProof.getUnknownFields().asMap()).isEmpty();
+
+    byte[] originalBundleBytes = readPublishedReleaseBundleBytes();
+    JsonNode bundleJson = objectMapper.readTree(originalBundleBytes);
+    assertThat(bundleJson.get("id").asLong()).isPositive();
+    assertThat(bundleJson.get("published_release_bundle_ref").textValue()).isNotBlank();
     byte[] originalReceipt = Files.readAllBytes(receiptPath);
+    var originalVersion = version;
+    var originalTemplate = template;
+    var originalArtifact = artifact;
     seeder.run(new DefaultApplicationArguments(new String[] {}));
     assertThat(Files.readAllBytes(receiptPath)).isEqualTo(originalReceipt);
+    assertThat(readPublishedReleaseBundleBytes()).containsExactly(originalBundleBytes);
+    assertThat(versionRepository.findByTenantIdAndId("1", originalVersion.getId()).orElseThrow())
+        .isEqualTo(originalVersion);
+    assertThat(templateRepository.findByTenantIdAndId("1", originalTemplate.getId()).orElseThrow())
+        .isEqualTo(originalTemplate);
+    assertThat(
+            artifactRepository
+                .findByTenantIdAndVersionId("1", originalVersion.getId())
+                .orElseThrow())
+        .isEqualTo(originalArtifact);
     assertThat(dsl.fetchCount(SOURCE_OPERATIONS, REGISTRATION_REQUEST_ID.eq(fixture.operationId())))
         .isOne();
     assertThat(dsl.fetchCount(SOURCE_DELIVERIES, REGISTRATION_REQUEST_ID.eq(fixture.operationId())))
         .isOne();
+  }
+
+  @Test
+  void refusesReceiptWhenVersionEpochChangesAfterCommitBeforeOwnerReadback(
+      @TempDir Path testDirectory) throws Exception {
+    Fixture fixture = prepareFixture(testDirectory);
+    configureSeeder(fixture);
+    var existingVersion = versionRepository.findByTenantIdAndVersionNumber("1", 1).orElseThrow();
+    String tenantId = existingVersion.getTenantId();
+    Long versionId = existingVersion.getId();
+    long originalEpoch = existingVersion.getVersionStateEpoch();
+    long changedEpoch = originalEpoch + 1L;
+    TransactionTemplate versionMutation = new TransactionTemplate(transactionManager);
+    versionMutation.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
+    TransactionTemplate registration = new TransactionTemplate(transactionManager);
+
+    try {
+      assertThatThrownBy(
+              () ->
+                  registration.execute(
+                      status -> {
+                        TransactionSynchronizationManager.registerSynchronization(
+                            new TransactionSynchronization() {
+                              @Override
+                              public int getOrder() {
+                                return Ordered.HIGHEST_PRECEDENCE;
+                              }
+
+                              @Override
+                              public void afterCommit() {
+                                writeVersionStateEpoch(
+                                    versionMutation, tenantId, versionId, changedEpoch);
+                              }
+                            });
+                        seeder.run(new DefaultApplicationArguments(new String[] {}));
+                        return null;
+                      }))
+          .isInstanceOf(IllegalStateException.class)
+          .hasMessageContaining("Run-owned published version does not match its game source");
+
+      assertThat(fixture.receiptPath()).doesNotExist();
+      var changedVersion = versionRepository.findByTenantIdAndId(tenantId, versionId).orElseThrow();
+      assertThat(changedVersion.getVersionStateEpoch()).isEqualTo(changedEpoch);
+    } finally {
+      writeVersionStateEpoch(versionMutation, tenantId, versionId, originalEpoch);
+    }
+
+    var restoredVersion = versionRepository.findByTenantIdAndId(tenantId, versionId).orElseThrow();
+    assertThat(restoredVersion.getVersionStateEpoch()).isEqualTo(originalEpoch);
   }
 
   @Test
@@ -275,6 +439,32 @@ class TestDataSeederIntegrationTest {
     return fields;
   }
 
+  private byte[] readPublishedReleaseBundleBytes() {
+    Record row =
+        dsl.fetchOne(
+            "select convert_to(row_to_json(release_bundle)::text, 'UTF8') as bundle_bytes "
+                + "from published_release_bundle as release_bundle "
+                + "where tenant_id = ? and version_id = ?",
+            "1",
+            1L);
+    assertThat(row).isNotNull();
+    return row.get("bundle_bytes", byte[].class);
+  }
+
+  private void writeVersionStateEpoch(
+      TransactionTemplate transaction, String tenantId, Long versionId, long epoch) {
+    transaction.executeWithoutResult(
+        status -> {
+          int updated =
+              dsl.execute(
+                  "update version set version_state_epoch = ? where tenant_id = ? and id = ?",
+                  epoch,
+                  tenantId,
+                  versionId);
+          assertThat(updated).isOne();
+        });
+  }
+
   private Fixture prepareFixture(Path testDirectory) throws Exception {
     Path certificateDirectory = Files.createDirectory(testDirectory.resolve("certificates"));
     Path caKey = certificateDirectory.resolve("ca.key");
@@ -322,6 +512,10 @@ class TestDataSeederIntegrationTest {
             + "extendedKeyUsage=clientAuth\n"
             + "subjectAltName=URI:"
             + SESSION_URI_SAN
+            + ",DNS:game-session-service"
+            + ",DNS:game-session-service.dev"
+            + ",DNS:game-session-service.dev.svc"
+            + ",DNS:game-session-service.dev.svc.cluster.local"
             + "\n");
     runOpenSsl(
         "x509",
@@ -365,7 +559,9 @@ class TestDataSeederIntegrationTest {
     capability.put("composeProjectName", composeProjectName);
     capability.put("operationId", operationId.toString());
     capability.put("tenantId", 1);
-    capability.put("gameTemplateId", 1);
+    capability.put(
+        "gameTemplateId",
+        templateRepository.findByTenantIdAndName("1", "Default Template").orElseThrow().getId());
     capability.put("ownerAccountId", 1);
     capability.put("worldSlug", "demo");
     capability.put("worldDisplayName", "Demo World");

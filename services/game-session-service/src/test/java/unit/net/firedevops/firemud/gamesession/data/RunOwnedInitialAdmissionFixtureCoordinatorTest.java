@@ -81,9 +81,15 @@ class RunOwnedInitialAdmissionFixtureCoordinatorTest {
     assertThat(result)
         .isEqualTo(RunOwnedInitialAdmissionFixtureCoordinator.BootstrapResult.COMMITTED);
     InOrder order = inOrder(fixture.gameInstanceService, fixture.ownerService, fixture.worldClient);
+    ArgumentCaptor<RunOwnedInitialAdmissionLaunchEvidence> launchEvidence =
+        ArgumentCaptor.forClass(RunOwnedInitialAdmissionLaunchEvidence.class);
     order
         .verify(fixture.gameInstanceService)
-        .startRunOwnedInitialLaunch(any(), same(fixture.sourceReceipt.sourceEvidence()));
+        .startRunOwnedInitialLaunch(any(), launchEvidence.capture());
+    assertThat(launchEvidence.getValue().sourceEvidence())
+        .isEqualTo(fixture.sourceReceipt.sourceEvidence());
+    assertThat(launchEvidence.getValue().publishedReleaseBundle())
+        .isEqualTo(fixture.sourceReceipt.launchReadEvidence().publishedReleaseBundle());
     order.verify(fixture.ownerService).registerPublicSharedFixtureCatalog(any());
     order.verify(fixture.ownerService).beginIntent(any());
     order
@@ -336,7 +342,46 @@ class RunOwnedInitialAdmissionFixtureCoordinatorTest {
     }
 
     verify(fixture.gameInstanceService, times(1))
-        .startRunOwnedInitialLaunch(any(), same(fixture.sourceReceipt.sourceEvidence()));
+        .startRunOwnedInitialLaunch(any(), any(RunOwnedInitialAdmissionLaunchEvidence.class));
+    verify(fixture.ownerService, times(1)).registerPublicSharedFixtureCatalog(any());
+    verify(fixture.ownerService, never()).beginIntent(any());
+    verifyNoInteractions(fixture.worldClient);
+  }
+
+  @Test
+  void changedOwnerReadEvidenceAcrossRetriesIsRejectedBeforeSecondLaunch() {
+    Fixture fixture =
+        fixture(InitialAdmissionBindHoldStatus.INITIAL_ADMISSION_BIND_HOLD_STATUS_PENDING);
+    doThrow(new IllegalStateException("stop after initial launch"))
+        .when(fixture.ownerService)
+        .registerPublicSharedFixtureCatalog(any());
+    var changedReceipt =
+        withPublishedReleaseBundleRef(fixture.sourceReceipt, "owner-release-ref-changed");
+    try (MockedStatic<RunOwnedInitialAdmissionFixtureCapability> capabilityLoader =
+        mockStatic(RunOwnedInitialAdmissionFixtureCapability.class)) {
+      capabilityLoader
+          .when(
+              () ->
+                  RunOwnedInitialAdmissionFixtureCapability.load(
+                      any(Path.class), eq(RUN_ID), eq(PROJECT_NAME), same(fixture.grpcProperties)))
+          .thenReturn(fixture.capability);
+      capabilityLoader
+          .when(
+              () ->
+                  RunOwnedInitialAdmissionFixtureCapability.loadSourceReceipt(
+                      any(Path.class),
+                      eq(RUN_ID),
+                      eq(PROJECT_NAME),
+                      same(fixture.capability),
+                      same(fixture.grpcProperties)))
+          .thenReturn(fixture.sourceReceipt, changedReceipt);
+
+      fixture.coordinator.retryRunOwnedFixtureBootstrap();
+      fixture.coordinator.retryRunOwnedFixtureBootstrap();
+    }
+
+    verify(fixture.gameInstanceService, times(1))
+        .startRunOwnedInitialLaunch(any(), any(RunOwnedInitialAdmissionLaunchEvidence.class));
     verify(fixture.ownerService, times(1)).registerPublicSharedFixtureCatalog(any());
     verify(fixture.ownerService, never()).beginIntent(any());
     verifyNoInteractions(fixture.worldClient);
@@ -534,7 +579,7 @@ class RunOwnedInitialAdmissionFixtureCoordinatorTest {
           ArgumentCaptor.forClass(StartSessionRequest.class);
       verify(fixture.gameInstanceService, times(13))
           .startRunOwnedInitialLaunch(
-              launchRequests.capture(), same(fixture.sourceReceipt.sourceEvidence()));
+              launchRequests.capture(), any(RunOwnedInitialAdmissionLaunchEvidence.class));
       assertThat(launchRequests.getAllValues())
           .allSatisfy(
               request -> {
@@ -825,7 +870,97 @@ class RunOwnedInitialAdmissionFixtureCoordinatorTest {
         capability.gameSessionUriSan(),
         capability.gameSessionLeafSha256(),
         capability.caCertificateSha256(),
-        evidence);
+        evidence,
+        launchReadEvidence(capability, evidence));
+  }
+
+  private static RunOwnedInitialAdmissionFixtureCapability.SourceReceipt
+      withPublishedReleaseBundleRef(
+          RunOwnedInitialAdmissionFixtureCapability.SourceReceipt receipt, String bundleRef) {
+    var original = receipt.launchReadEvidence();
+    var changedBundle =
+        original.publishedReleaseBundle().toBuilder()
+            .setPublishedReleaseBundleRef(bundleRef)
+            .build();
+    var changedReadEvidence =
+        new RunOwnedInitialAdmissionFixtureCapability.LaunchReadEvidence(
+            original.schema(),
+            original.gameTemplateId(),
+            changedBundle,
+            original.versionAssetArtifactState(),
+            original.versionState());
+    return new RunOwnedInitialAdmissionFixtureCapability.SourceReceipt(
+        receipt.schema(),
+        receipt.runId(),
+        receipt.composeProjectName(),
+        receipt.fixtureOperationId(),
+        receipt.ownerService(),
+        receipt.gameSessionUriSan(),
+        receipt.gameSessionLeafSha256(),
+        receipt.caCertificateSha256(),
+        receipt.sourceEvidence(),
+        changedReadEvidence);
+  }
+
+  private static RunOwnedInitialAdmissionFixtureCapability.LaunchReadEvidence launchReadEvidence(
+      RunOwnedInitialAdmissionFixtureCapability capability,
+      AuthoredWorldSourceEvidence sourceEvidence) {
+    String manifestHash = "sha256:" + "a".repeat(64);
+    String artifactDigest = "sha256:" + "b".repeat(64);
+    var bundle =
+        net.firedevops.firemud.gamedesign.v1.PublishedReleaseBundle.newBuilder()
+            .setId(77L)
+            .setVersionId(11L)
+            .setVersionNumber(1)
+            .setAttestationSchemaVersion("v1")
+            .setPublishWorkflowId("publish-11")
+            .setManifestHash(manifestHash)
+            .addRequiredManifestAssetKeys("manifest.json")
+            .setGenerationConfigRevision("genrev-11")
+            .setPublishedAt("2026-04-15T10:00:00")
+            .setPublishedReleaseBundleRef("owner-release-ref-11")
+            .setCanonicalTenantId(sourceEvidence.canonicalTenantId().toString())
+            .setCanonicalVersionId("10000000-0000-4000-8000-000000000011")
+            .setManifestSchemaVersion(1)
+            .addArtifactDigests(
+                net.firedevops.firemud.gamedesign.v1.PublishedArtifactDigest.newBuilder()
+                    .setUsageKey("manifest.json")
+                    .setArtifactKind("manifest")
+                    .setImmutableObjectKey(
+                        "artifacts/sha256/" + artifactDigest.substring("sha256:".length()))
+                    .setContentDigest(artifactDigest)
+                    .setContentType("application/json")
+                    .setArtifactSchemaVersion(1)
+                    .build())
+            .build();
+    var artifactState =
+        net.firedevops.firemud.gamedesign.v1.VersionAssetArtifactState.newBuilder()
+            .setTenantId(Long.toString(capability.tenantId()))
+            .setVersionId(11L)
+            .setArtifactState(
+                net.firedevops.firemud.gamedesign.v1.ArtifactState.ARTIFACT_STATE_PUBLISHED)
+            .setStateEpoch(2L)
+            .setManifestHash(manifestHash)
+            .setUpdatedAt("2026-04-15T10:00:00")
+            .addExportedManifestAssetKeys("manifest.json")
+            .setExportedVersionNumber(1)
+            .build();
+    var versionState =
+        net.firedevops.firemud.gamedesign.v1.VersionStateSnapshot.newBuilder()
+            .setTenantId(Long.toString(capability.tenantId()))
+            .setVersionId(11L)
+            .setVersionState(
+                net.firedevops.firemud.gamedesign.v1.VersionLifecycleState
+                    .VERSION_LIFECYCLE_STATE_PUBLISHED)
+            .setVersionStateEpoch(77L)
+            .setUpdatedAt("2026-04-15T10:00:00")
+            .build();
+    return new RunOwnedInitialAdmissionFixtureCapability.LaunchReadEvidence(
+        RunOwnedInitialAdmissionLaunchEvidence.SCHEMA,
+        capability.gameTemplateId(),
+        bundle,
+        artifactState,
+        versionState);
   }
 
   private static InitialAdmissionBindHold hold(
