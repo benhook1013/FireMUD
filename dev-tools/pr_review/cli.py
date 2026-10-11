@@ -279,6 +279,11 @@ def _parser() -> argparse.ArgumentParser:
     import_run.add_argument(
         "--input", required=True, metavar="JSON", help="curated metadata file, not raw capture/stdout"
     )
+    import_run.add_argument(
+        "--validate-only",
+        action="store_true",
+        help="validate input only; do not import or check replay/database state",
+    )
     records_database(import_run)
 
     provider_import = record_commands.add_parser(
@@ -1079,6 +1084,34 @@ def _failed_cli_attempts_from_history(history: dict[str, Any]) -> dict[str, Any]
 def _dispatch_records(args: argparse.Namespace) -> tuple[Any, int]:
     if args.acceptance_fixture is not None or args.state_path is not None:
         raise CliError("review-records commands do not accept acceptance-fixture options")
+    if args.records_command == "import-run" and args.validate_only:
+        run, findings, decisions = _load_records_import(args.input)
+        try:
+            SqliteReviewRecords.validate_import_run(
+                run_id=run["run_id"],
+                source_pr=run["source_pr"],
+                channel=run["channel"],
+                findings=findings,
+                outcome=run["outcome"],
+                source_decisions=decisions,
+                source_head=run.get("source_head"),
+                reviewer=run["reviewer"],
+                scope=run["scope"],
+                coverage_limits=run["coverage_limits"],
+                started_at=run.get("started_at"),
+                finished_at=run.get("finished_at"),
+            )
+        except ReviewRecordsError as exc:
+            raise CliError(str(exc)) from exc
+        return {
+            "api_version": 1,
+            "result": {
+                "status": "valid",
+                "imported": False,
+                "database_state_checked": False,
+                "message": "Input is valid; no import or replay check was performed.",
+            },
+        }, 0
     store = _records_store(args)
     if args.records_command == "bootstrap":
         store.bootstrap()

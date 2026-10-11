@@ -370,7 +370,8 @@ PY
 }
 
 _firemud_smoke_validate_initial_admission_capability() {
-  local path="$1" operation_id="$2" leaf_sha256="$3" ca_sha256="$4"
+  local path="$1" operation_id="$2" game_session_leaf_sha256="$3"
+  local world_management_leaf_sha256="$4" ca_sha256="$5"
   local file_metadata
   if [[ -L "$path" || ! -f "$path" ]]; then
     _firemud_smoke_fail "initial-admission capability must be an existing regular non-symlink file."
@@ -383,7 +384,8 @@ _firemud_smoke_validate_initial_admission_capability() {
   fi
 
   if ! python3 - "$path" "$FIREMUD_SMOKE_RUN_ID" \
-    "$FIREMUD_SMOKE_COMPOSE_PROJECT_NAME" "$operation_id" "$leaf_sha256" "$ca_sha256" <<'PY'
+    "$FIREMUD_SMOKE_COMPOSE_PROJECT_NAME" "$operation_id" \
+    "$game_session_leaf_sha256" "$world_management_leaf_sha256" "$ca_sha256" <<'PY'
 import json
 import os
 import re
@@ -391,13 +393,14 @@ import stat
 import sys
 import uuid
 
-path, run_id, project_name, operation_id, leaf_sha256, ca_sha256 = sys.argv[1:]
+path, run_id, project_name, operation_id, game_session_leaf_sha256, world_management_leaf_sha256, ca_sha256 = sys.argv[1:]
 allowed = {
     "schema", "runId", "composeProjectName", "operationId", "tenantId",
     "gameTemplateId", "ownerAccountId", "worldSlug", "worldDisplayName",
     "realmSlug", "realmDisplayName", "visible", "publicProductionRealm",
     "requiresCharacterSelection", "stateScope", "characterCreationPolicy",
-    "gameSessionLeafSha256", "gameSessionUriSan", "caCertificateSha256",
+    "gameSessionLeafSha256", "gameSessionUriSan", "worldManagementLeafSha256",
+    "worldManagementUriSan", "caCertificateSha256",
 }
 
 def unique_object(pairs):
@@ -466,8 +469,10 @@ expected = {
     "requiresCharacterSelection": False,
     "stateScope": "SHARED",
     "characterCreationPolicy": "ALLOW_NEW",
-    "gameSessionLeafSha256": leaf_sha256,
+    "gameSessionLeafSha256": game_session_leaf_sha256,
     "gameSessionUriSan": "spiffe://firemud/ns/dev/sa/game-session-service",
+    "worldManagementLeafSha256": world_management_leaf_sha256,
+    "worldManagementUriSan": "spiffe://firemud/ns/dev/sa/world-management-service",
     "caCertificateSha256": ca_sha256,
 }
 safe_id = re.compile(r"[a-z0-9][a-z0-9-]{0,127}\Z")
@@ -490,8 +495,10 @@ PY
 ensure_run_owned_initial_admission_capability() {
   local certificate_root="$1" mode="$2"
   local expected_certificate_root leaf_certificate ca_certificate leaf_sha256 ca_sha256
+  local world_management_leaf_certificate world_management_ca_certificate
+  local world_management_leaf_sha256 world_management_ca_sha256
   local operation_id capability_path temporary
-  local -a uri_sans=()
+  local -a uri_sans=() world_management_uri_sans=()
 
   case "$mode" in
     create-or-verify|reuse-only) ;;
@@ -512,22 +519,33 @@ ensure_run_owned_initial_admission_capability() {
   fi
   leaf_certificate="$certificate_root/workloads/game-session-service/client.crt"
   ca_certificate="$certificate_root/workloads/game-session-service/ca.crt"
+  world_management_leaf_certificate="$certificate_root/workloads/world-management-service/client.crt"
+  world_management_ca_certificate="$certificate_root/workloads/world-management-service/ca.crt"
   if [[ -L "$certificate_root/workloads" || -L "$certificate_root/workloads/game-session-service" \
     || ! -d "$certificate_root/workloads/game-session-service" \
+    || -L "$certificate_root/workloads/world-management-service" \
+    || ! -d "$certificate_root/workloads/world-management-service" \
     || -L "$leaf_certificate" || ! -f "$leaf_certificate" \
-    || -L "$ca_certificate" || ! -f "$ca_certificate" ]]; then
-    _firemud_smoke_fail "initial-admission TLS leaf and CA must be regular files in the claimed Game Session workload directory."
+    || -L "$ca_certificate" || ! -f "$ca_certificate" \
+    || -L "$world_management_leaf_certificate" || ! -f "$world_management_leaf_certificate" \
+    || -L "$world_management_ca_certificate" || ! -f "$world_management_ca_certificate" ]]; then
+    _firemud_smoke_fail "initial-admission TLS leaves and CA files must be regular files in the claimed Game Session and World Management workload directories."
     return 1
   fi
   if [[ "$(grep -c -- '-----BEGIN CERTIFICATE-----' "$leaf_certificate" 2>/dev/null || true)" != 1 \
-    || "$(grep -c -- '-----BEGIN CERTIFICATE-----' "$ca_certificate" 2>/dev/null || true)" != 1 ]]; then
-    _firemud_smoke_fail "initial-admission TLS leaf and CA must each contain exactly one certificate."
+    || "$(grep -c -- '-----BEGIN CERTIFICATE-----' "$ca_certificate" 2>/dev/null || true)" != 1 \
+    || "$(grep -c -- '-----BEGIN CERTIFICATE-----' "$world_management_leaf_certificate" 2>/dev/null || true)" != 1 \
+    || "$(grep -c -- '-----BEGIN CERTIFICATE-----' "$world_management_ca_certificate" 2>/dev/null || true)" != 1 ]]; then
+    _firemud_smoke_fail "initial-admission TLS leaves and CA files must each contain exactly one certificate."
     return 1
   fi
   if ! openssl x509 -in "$leaf_certificate" -noout -checkend 0 >/dev/null 2>&1 \
     || ! openssl x509 -in "$ca_certificate" -noout -checkend 0 >/dev/null 2>&1 \
-    || ! openssl verify -CAfile "$ca_certificate" "$leaf_certificate" >/dev/null 2>&1; then
-    _firemud_smoke_fail "initial-admission Game Session TLS leaf is invalid for the run-owned CA."
+    || ! openssl x509 -in "$world_management_leaf_certificate" -noout -checkend 0 >/dev/null 2>&1 \
+    || ! openssl x509 -in "$world_management_ca_certificate" -noout -checkend 0 >/dev/null 2>&1 \
+    || ! openssl verify -CAfile "$ca_certificate" "$leaf_certificate" >/dev/null 2>&1 \
+    || ! openssl verify -CAfile "$ca_certificate" "$world_management_leaf_certificate" >/dev/null 2>&1; then
+    _firemud_smoke_fail "initial-admission Game Session or World Management TLS leaf is invalid for the run-owned CA."
     return 1
   fi
   mapfile -t uri_sans < <(openssl x509 -in "$leaf_certificate" -noout -ext subjectAltName 2>/dev/null \
@@ -537,12 +555,27 @@ ensure_run_owned_initial_admission_capability() {
     _firemud_smoke_fail "initial-admission Game Session TLS leaf must contain one exact dev workload URI SAN."
     return 1
   fi
+  mapfile -t world_management_uri_sans < <(openssl x509 -in "$world_management_leaf_certificate" -noout -ext subjectAltName 2>/dev/null \
+    | grep -oE 'URI:[^,[:space:]]+')
+  if ((${#world_management_uri_sans[@]} != 1)) \
+    || [[ "${world_management_uri_sans[0]:-}" != URI:spiffe://firemud/ns/dev/sa/world-management-service ]]; then
+    _firemud_smoke_fail "initial-admission World Management TLS leaf must contain one exact dev workload URI SAN."
+    return 1
+  fi
   leaf_sha256="$(openssl x509 -in "$leaf_certificate" -outform DER 2>/dev/null \
+    | openssl dgst -sha256 2>/dev/null | awk '{print $NF}')"
+  world_management_leaf_sha256="$(openssl x509 -in "$world_management_leaf_certificate" -outform DER 2>/dev/null \
     | openssl dgst -sha256 2>/dev/null | awk '{print $NF}')"
   ca_sha256="$(openssl x509 -in "$ca_certificate" -outform DER 2>/dev/null \
     | openssl dgst -sha256 2>/dev/null | awk '{print $NF}')"
-  if [[ ! "$leaf_sha256" =~ ^[a-f0-9]{64}$ || ! "$ca_sha256" =~ ^[a-f0-9]{64}$ ]]; then
-    _firemud_smoke_fail "could not fingerprint the run-owned Game Session TLS leaf and CA."
+  world_management_ca_sha256="$(openssl x509 -in "$world_management_ca_certificate" -outform DER 2>/dev/null \
+    | openssl dgst -sha256 2>/dev/null | awk '{print $NF}')"
+  if [[ ! "$leaf_sha256" =~ ^[a-f0-9]{64}$ \
+    || ! "$world_management_leaf_sha256" =~ ^[a-f0-9]{64}$ \
+    || ! "$ca_sha256" =~ ^[a-f0-9]{64}$ \
+    || ! "$world_management_ca_sha256" =~ ^[a-f0-9]{64}$ \
+    || "$world_management_ca_sha256" != "$ca_sha256" ]]; then
+    _firemud_smoke_fail "could not fingerprint matching run-owned Game Session and World Management TLS identities and CA."
     return 1
   fi
 
@@ -554,7 +587,8 @@ ensure_run_owned_initial_admission_capability() {
   _firemud_smoke_prepare_authored_world_source_receipt_directory "$mode" || return 1
   if [[ -e "$capability_path" || -L "$capability_path" ]]; then
     _firemud_smoke_validate_initial_admission_capability \
-      "$capability_path" "$operation_id" "$leaf_sha256" "$ca_sha256"
+      "$capability_path" "$operation_id" "$leaf_sha256" \
+      "$world_management_leaf_sha256" "$ca_sha256"
     local validation_status=$?
     if ((validation_status == 0)); then
       FIREMUD_SMOKE_INITIAL_ADMISSION_FIXTURE_ENABLED=true
@@ -572,12 +606,13 @@ ensure_run_owned_initial_admission_capability() {
     return 1
   }
   if ! python3 - "$temporary" "$FIREMUD_SMOKE_RUN_ID" \
-    "$FIREMUD_SMOKE_COMPOSE_PROJECT_NAME" "$operation_id" "$leaf_sha256" "$ca_sha256" <<'PY'
+    "$FIREMUD_SMOKE_COMPOSE_PROJECT_NAME" "$operation_id" \
+    "$leaf_sha256" "$world_management_leaf_sha256" "$ca_sha256" <<'PY'
 import json
 import pathlib
 import sys
 
-path, run_id, project_name, operation_id, leaf_sha256, ca_sha256 = sys.argv[1:]
+path, run_id, project_name, operation_id, game_session_leaf_sha256, world_management_leaf_sha256, ca_sha256 = sys.argv[1:]
 value = {
     "schema": "firemud.run-owned-initial-admission-fixture.v1",
     "runId": run_id,
@@ -595,8 +630,10 @@ value = {
     "requiresCharacterSelection": False,
     "stateScope": "SHARED",
     "characterCreationPolicy": "ALLOW_NEW",
-    "gameSessionLeafSha256": leaf_sha256,
+    "gameSessionLeafSha256": game_session_leaf_sha256,
     "gameSessionUriSan": "spiffe://firemud/ns/dev/sa/game-session-service",
+    "worldManagementLeafSha256": world_management_leaf_sha256,
+    "worldManagementUriSan": "spiffe://firemud/ns/dev/sa/world-management-service",
     "caCertificateSha256": ca_sha256,
 }
 with pathlib.Path(path).open("w", encoding="utf-8") as target:
@@ -615,7 +652,8 @@ PY
   fi
   rm -f -- "$temporary"
   _firemud_smoke_validate_initial_admission_capability \
-    "$capability_path" "$operation_id" "$leaf_sha256" "$ca_sha256" || return 1
+    "$capability_path" "$operation_id" "$leaf_sha256" \
+    "$world_management_leaf_sha256" "$ca_sha256" || return 1
   FIREMUD_SMOKE_INITIAL_ADMISSION_FIXTURE_ENABLED=true
   export FIREMUD_SMOKE_INITIAL_ADMISSION_FIXTURE_ENABLED
 }

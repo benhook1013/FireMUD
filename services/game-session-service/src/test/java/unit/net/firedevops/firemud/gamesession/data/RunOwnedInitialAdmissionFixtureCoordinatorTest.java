@@ -22,7 +22,10 @@ import java.time.Instant;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
+import net.firedevops.firemud.common.gamedesign.AuthoredWorldLaunchDescriptorEvidence;
+import net.firedevops.firemud.common.gamedesign.AuthoredWorldLaunchDescriptorGrpcCodec;
 import net.firedevops.firemud.common.grpc.CommonGrpcClientProperties;
+import net.firedevops.firemud.common.smoke.RunOwnedInitialAdmissionFixtureWireCodec;
 import net.firedevops.firemud.common.tenant.AuthoredWorldSourceDigest;
 import net.firedevops.firemud.common.tenant.AuthoredWorldSourceEvidence;
 import net.firedevops.firemud.entitymanagement.v1.PlayableStateScope;
@@ -90,6 +93,8 @@ class RunOwnedInitialAdmissionFixtureCoordinatorTest {
         .isEqualTo(fixture.sourceReceipt.sourceEvidence());
     assertThat(launchEvidence.getValue().publishedReleaseBundle())
         .isEqualTo(fixture.sourceReceipt.launchReadEvidence().publishedReleaseBundle());
+    assertThat(launchEvidence.getValue().launchDescriptor())
+        .isEqualTo(fixture.sourceReceipt.launchReadEvidence().launchDescriptor());
     order.verify(fixture.ownerService).registerPublicSharedFixtureCatalog(any());
     order.verify(fixture.ownerService).beginIntent(any());
     order
@@ -654,7 +659,9 @@ class RunOwnedInitialAdmissionFixtureCoordinatorTest {
             "ALLOW_NEW",
             "a".repeat(64),
             RunOwnedInitialAdmissionFixtureCapability.GAME_SESSION_URI_SAN,
-            "b".repeat(64));
+            "b".repeat(64),
+            RunOwnedInitialAdmissionFixtureCapability.WORLD_MANAGEMENT_URI_SAN,
+            "c".repeat(64));
     RunOwnedInitialAdmissionFixtureCapability.SourceReceipt sourceReceipt =
         sourceReceipt(capability, 29L);
     GameInstanceDto target =
@@ -870,6 +877,8 @@ class RunOwnedInitialAdmissionFixtureCoordinatorTest {
         capability.gameSessionUriSan(),
         capability.gameSessionLeafSha256(),
         capability.caCertificateSha256(),
+        capability.worldManagementUriSan(),
+        capability.worldManagementLeafSha256(),
         evidence,
         launchReadEvidence(capability, evidence));
   }
@@ -888,7 +897,13 @@ class RunOwnedInitialAdmissionFixtureCoordinatorTest {
             original.gameTemplateId(),
             changedBundle,
             original.versionAssetArtifactState(),
-            original.versionState());
+            original.versionState(),
+            launchDescriptor(
+                receipt.sourceEvidence(),
+                changedBundle,
+                original.versionState(),
+                original.gameTemplateId(),
+                receipt.fixtureOperationId()));
     return new RunOwnedInitialAdmissionFixtureCapability.SourceReceipt(
         receipt.schema(),
         receipt.runId(),
@@ -898,6 +913,8 @@ class RunOwnedInitialAdmissionFixtureCoordinatorTest {
         receipt.gameSessionUriSan(),
         receipt.gameSessionLeafSha256(),
         receipt.caCertificateSha256(),
+        receipt.worldManagementUriSan(),
+        receipt.worldManagementLeafSha256(),
         receipt.sourceEvidence(),
         changedReadEvidence);
   }
@@ -960,7 +977,53 @@ class RunOwnedInitialAdmissionFixtureCoordinatorTest {
         capability.gameTemplateId(),
         bundle,
         artifactState,
-        versionState);
+        versionState,
+        launchDescriptor(
+            sourceEvidence,
+            bundle,
+            versionState,
+            capability.gameTemplateId(),
+            capability.operationId()));
+  }
+
+  private static net.firedevops.firemud.gamedesign.v1.LaunchDescriptor launchDescriptor(
+      AuthoredWorldSourceEvidence sourceEvidence,
+      net.firedevops.firemud.gamedesign.v1.PublishedReleaseBundle bundle,
+      net.firedevops.firemud.gamedesign.v1.VersionStateSnapshot versionState,
+      long gameTemplateId,
+      String controlPlaneRequestId) {
+    var request =
+        new AuthoredWorldLaunchDescriptorEvidence.Request(
+            RunOwnedInitialAdmissionFixtureWireCodec.SOURCE_TARGET_NAMESPACE,
+            controlPlaneRequestId,
+            sourceEvidence.canonicalTenantId(),
+            sourceEvidence.worldSlug(),
+            sourceEvidence.operationId(),
+            sourceEvidence.evidenceDigest(),
+            gameTemplateId,
+            false,
+            null,
+            false,
+            null,
+            false,
+            null,
+            false,
+            null);
+    var evidence =
+        AuthoredWorldLaunchDescriptorEvidence.create(
+            request,
+            "launch-descriptor-fixture-11",
+            bundle.getVersionId(),
+            false,
+            null,
+            "{}",
+            bundle.getGenerationConfigRevision(),
+            versionState.getVersionStateEpoch(),
+            bundle.getId(),
+            bundle.getPublishedReleaseBundleRef(),
+            false,
+            null);
+    return AuthoredWorldLaunchDescriptorGrpcCodec.toLaunchDescriptorMessage(evidence);
   }
 
   private static InitialAdmissionBindHold hold(
