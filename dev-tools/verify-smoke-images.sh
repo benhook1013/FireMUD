@@ -104,12 +104,29 @@ fi
 
 cleanup() {
   local exit_status=$?
+  local capture_failed=false
+  local capture_file
+  local service
   trap - EXIT
   if ((exit_status != 0)) && [[ "$COMPOSE_START_ATTEMPTED" == true ]]; then
-    echo "Capturing bounded Game Design and Game Session logs for the failed run-owned smoke." >&2
-    if ! docker compose "${COMPOSE_FILES[@]}" logs \
-      --no-color --timestamps --tail 200 \
-      game-design-service game-session-service 2>&1 | head -c 65536; then
+    for service in game-design-service game-session-service world-management-service; do
+      echo "Capturing bounded run-owned smoke logs for $service." >&2
+      if ! capture_file="$(mktemp)"; then
+        capture_failed=true
+        continue
+      fi
+      if docker compose "${COMPOSE_FILES[@]}" logs \
+        --no-color --timestamps --tail 200 "$service" >"$capture_file" 2>&1; then
+        if ! head -c 65536 "$capture_file"; then
+          capture_failed=true
+        fi
+      else
+        capture_failed=true
+        head -c 65536 "$capture_file" || true
+      fi
+      rm -f "$capture_file"
+    done
+    if [[ "$capture_failed" == true ]]; then
       echo "Could not capture run-owned smoke service logs." >&2
     fi
   fi

@@ -34,6 +34,8 @@ import net.firedevops.firemud.common.security.SessionContext;
 import net.firedevops.firemud.common.smoke.RunOwnedInitialAdmissionFixtureWireCodec;
 import net.firedevops.firemud.worldmanagement.client.GameDesignClient;
 import net.firedevops.firemud.worldmanagement.client.GameDesignClient.LaunchDescriptorReadback;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.io.ClassPathResource;
 import org.springframework.stereotype.Component;
@@ -46,6 +48,8 @@ import org.springframework.stereotype.Component;
  */
 @Component
 public final class RunOwnedWorldLaunchEvidenceProvider {
+  private static final Logger logger =
+      LoggerFactory.getLogger(RunOwnedWorldLaunchEvidenceProvider.class);
   private static final int MAX_WIRE_BYTES = 16 * 1024;
   private static final int MAX_CERTIFICATE_BYTES = 1024 * 1024;
   private static final String GAME_SESSION_URI_SAN =
@@ -89,70 +93,89 @@ public final class RunOwnedWorldLaunchEvidenceProvider {
    * This is invoked on every prepare, activate, and exact retry.
    */
   public RunOwnedWorldLaunchEvidence requireAuthenticatedEvidence() {
-    if (!enabled) {
-      throw invalidEvidence();
-    }
-    requireExpectedRunBinding(runId, composeProjectName);
-
-    byte[] capabilityBytes = readImmutableWireFile(capabilityPath);
-    byte[] receiptBytes = readImmutableWireFile(sourceReceiptPath);
-    var capability = RunOwnedInitialAdmissionFixtureWireCodec.parseCapability(capabilityBytes);
-    var receipt =
-        RunOwnedInitialAdmissionFixtureWireCodec.parseSourceReceipt(receiptBytes, capability);
-    if (!runId.equals(capability.runId())
-        || !composeProjectName.equals(capability.composeProjectName())
-        || !runId.equals(receipt.runId())
-        || !composeProjectName.equals(receipt.composeProjectName())) {
-      throw invalidEvidence();
-    }
-
-    CertificatePins worldPins = configuredWorldCertificatePins(grpcProperties);
-    if (!GAME_SESSION_URI_SAN.equals(capability.gameSessionUriSan())
-        || !WORLD_MANAGEMENT_URI_SAN.equals(capability.worldManagementUriSan())
-        || !worldPins.uriSan().equals(capability.worldManagementUriSan())
-        || !worldPins.leafSha256().equals(capability.worldManagementLeafSha256())
-        || !worldPins.caSha256().equals(capability.caCertificateSha256())
-        || !worldPins.caSha256().equals(receipt.caCertificateSha256())
-        || !worldPins.uriSan().equals(receipt.worldManagementUriSan())
-        || !worldPins.leafSha256().equals(receipt.worldManagementLeafSha256())) {
-      throw invalidEvidence();
-    }
-    requireAuthenticatedGameSessionPeer(capability);
-
-    AuthoredWorldLaunchDescriptorEvidence.Request expectedRequest =
-        expectedDescriptorRequest(capability, receipt);
-    AuthoredWorldLaunchDescriptorEvidence receiptDescriptor;
+    VerificationStage stage = VerificationStage.ENABLED;
     try {
-      receiptDescriptor =
-          AuthoredWorldLaunchDescriptorGrpcCodec.fromLaunchDescriptorMessage(
-              expectedRequest, receipt.launchReadEvidence().launchDescriptor());
-      LaunchDescriptorReadback readback =
-          gameDesignClient.getLaunchDescriptor(
-              new AuthoredWorldLaunchDescriptorGrpcCodec.GetRequest(
-                  freshReadRequestId(expectedRequest),
-                  expectedRequest,
-                  receiptDescriptor.resultDigest()));
-      if (!receiptDescriptor.equals(readback.evidence())
-          || !receipt.launchReadEvidence().launchDescriptor().equals(readback.message())) {
+      if (!enabled) {
+        throw invalidEvidence();
+      }
+
+      stage = VerificationStage.RUN_BINDING;
+      requireExpectedRunBinding(runId, composeProjectName);
+
+      stage = VerificationStage.CAPABILITY_FILE;
+      byte[] capabilityBytes = readImmutableWireFile(capabilityPath);
+      stage = VerificationStage.RECEIPT_FILE;
+      byte[] receiptBytes = readImmutableWireFile(sourceReceiptPath);
+
+      stage = VerificationStage.WIRE_PARSE;
+      var capability = RunOwnedInitialAdmissionFixtureWireCodec.parseCapability(capabilityBytes);
+      var receipt =
+          RunOwnedInitialAdmissionFixtureWireCodec.parseSourceReceipt(receiptBytes, capability);
+      if (!runId.equals(capability.runId())
+          || !composeProjectName.equals(capability.composeProjectName())
+          || !runId.equals(receipt.runId())
+          || !composeProjectName.equals(receipt.composeProjectName())) {
+        throw invalidEvidence();
+      }
+
+      stage = VerificationStage.WORLD_CERTIFICATE_PINS;
+      CertificatePins worldPins = configuredWorldCertificatePins(grpcProperties);
+      if (!GAME_SESSION_URI_SAN.equals(capability.gameSessionUriSan())
+          || !WORLD_MANAGEMENT_URI_SAN.equals(capability.worldManagementUriSan())
+          || !worldPins.uriSan().equals(capability.worldManagementUriSan())
+          || !worldPins.leafSha256().equals(capability.worldManagementLeafSha256())
+          || !worldPins.caSha256().equals(capability.caCertificateSha256())
+          || !worldPins.caSha256().equals(receipt.caCertificateSha256())
+          || !worldPins.uriSan().equals(receipt.worldManagementUriSan())
+          || !worldPins.leafSha256().equals(receipt.worldManagementLeafSha256())) {
+        throw invalidEvidence();
+      }
+
+      stage = VerificationStage.GAME_SESSION_PEER;
+      requireAuthenticatedGameSessionPeer(capability);
+
+      try {
+        stage = VerificationStage.DESCRIPTOR_PARSE;
+        AuthoredWorldLaunchDescriptorEvidence.Request expectedRequest =
+            expectedDescriptorRequest(capability, receipt);
+        AuthoredWorldLaunchDescriptorEvidence receiptDescriptor =
+            AuthoredWorldLaunchDescriptorGrpcCodec.fromLaunchDescriptorMessage(
+                expectedRequest, receipt.launchReadEvidence().launchDescriptor());
+
+        stage = VerificationStage.OWNER_DESCRIPTOR_READ;
+        LaunchDescriptorReadback readback =
+            gameDesignClient.getLaunchDescriptor(
+                new AuthoredWorldLaunchDescriptorGrpcCodec.GetRequest(
+                    freshReadRequestId(expectedRequest),
+                    expectedRequest,
+                    receiptDescriptor.resultDigest()));
+
+        stage = VerificationStage.OWNER_DESCRIPTOR_COMPARE;
+        if (!receiptDescriptor.equals(readback.evidence())
+            || !receipt.launchReadEvidence().launchDescriptor().equals(readback.message())) {
+          throw invalidEvidence();
+        }
+
+        return new RunOwnedWorldLaunchEvidence(
+            capability,
+            receipt,
+            receiptDescriptor,
+            capabilityBytes,
+            receiptBytes,
+            capability.gameSessionLeafSha256(),
+            worldPins.uriSan(),
+            worldPins.leafSha256(),
+            worldPins.caSha256());
+      } catch (RuntimeException exception) {
+        if (exception instanceof InvalidRunOwnedWorldLaunchEvidenceException invalid) {
+          throw invalid;
+        }
         throw invalidEvidence();
       }
     } catch (RuntimeException exception) {
-      if (exception instanceof InvalidRunOwnedWorldLaunchEvidenceException invalid) {
-        throw invalid;
-      }
-      throw invalidEvidence();
+      logger.warn("Run-owned World launch evidence verification rejected; stage={}", stage);
+      throw exception;
     }
-
-    return new RunOwnedWorldLaunchEvidence(
-        capability,
-        receipt,
-        receiptDescriptor,
-        capabilityBytes,
-        receiptBytes,
-        capability.gameSessionLeafSha256(),
-        worldPins.uriSan(),
-        worldPins.leafSha256(),
-        worldPins.caSha256());
   }
 
   private static AuthoredWorldLaunchDescriptorEvidence.Request expectedDescriptorRequest(
@@ -373,6 +396,19 @@ public final class RunOwnedWorldLaunchEvidenceProvider {
   }
 
   private record CertificatePins(String leafSha256, String uriSan, String caSha256) {}
+
+  private enum VerificationStage {
+    ENABLED,
+    RUN_BINDING,
+    CAPABILITY_FILE,
+    RECEIPT_FILE,
+    WIRE_PARSE,
+    WORLD_CERTIFICATE_PINS,
+    GAME_SESSION_PEER,
+    DESCRIPTOR_PARSE,
+    OWNER_DESCRIPTOR_READ,
+    OWNER_DESCRIPTOR_COMPARE
+  }
 
   /** Content-free failure so malformed or secret-bearing fixture bytes never reach logs. */
   public static final class InvalidRunOwnedWorldLaunchEvidenceException
