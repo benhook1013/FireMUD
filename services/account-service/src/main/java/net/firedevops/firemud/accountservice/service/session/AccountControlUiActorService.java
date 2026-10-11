@@ -15,6 +15,7 @@ import net.firedevops.firemud.accountservice.hostedterms.AccountHostedTermsServi
 import net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding;
 import net.firedevops.firemud.common.security.AccountAsymmetricJwtVerifier;
 import net.firedevops.firemud.common.security.AccountPublicJwksCache;
+import net.firedevops.firemud.common.security.AccountPublicJwksCache.SourceIdentity;
 import net.firedevops.firemud.common.security.ControlUiJwtProfileValidator;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.TransactionDefinition;
@@ -41,6 +42,8 @@ public final class AccountControlUiActorService {
   private final AccountControlUiSignerOwner signers;
   private final AccountControlUiCoordination registry;
   private final AccountJwtJwksTrustedSource publicSource;
+  private final SourceIdentity publicSourcePin;
+  private final AccountPublicJwksCache publicJwksCache;
   private final DraftAuthorizationFenceRepository fences;
   private final TransactionTemplate transaction;
   private final Clock clock;
@@ -65,6 +68,10 @@ public final class AccountControlUiActorService {
     this.publicSource = Objects.requireNonNull(publicSource);
     this.fences = Objects.requireNonNull(fences);
     this.clock = Objects.requireNonNull(clock);
+    this.publicSourcePin = this.publicSource.sourceIdentity();
+    this.publicJwksCache =
+        new AccountPublicJwksCache(
+            this.publicSource, publicSourcePin, this.clock, Duration.ofSeconds(30));
     transaction = new TransactionTemplate(Objects.requireNonNull(transactions));
     transaction.setIsolationLevel(TransactionDefinition.ISOLATION_READ_COMMITTED);
   }
@@ -223,10 +230,9 @@ public final class AccountControlUiActorService {
   /** Production asymmetric/profile verification, also used before any candidate is persisted. */
   SignedObservation verifySigned(String compactJwt) {
     outsideSql();
-    var pin = publicSource.sourceIdentity();
-    var cache = new AccountPublicJwksCache(publicSource, pin, clock, Duration.ofSeconds(30));
     return new SignedObservation(
-        new AccountAsymmetricJwtVerifier(cache, clock).verify(compactJwt, POLICY), pin);
+        new AccountAsymmetricJwtVerifier(publicJwksCache, clock).verify(compactJwt, POLICY),
+        publicSourcePin);
   }
 
   void requireSignerIdentity(

@@ -144,6 +144,8 @@ public final class AccountControlUiCurrentActorVerifier {
           claims -> ControlUiJwtProfileValidator.validateClaims(claims, 1));
 
   private final AccountJwtJwksTrustedSource publicJwks;
+  private final SourceIdentity publicSourcePin;
+  private final AccountPublicJwksCache publicJwksCache;
   private final AccountJwtSignerDesiredStateRepository signerStates;
   private final AccountJwtSignerMaterializerTrustBinding materializerTrust;
   private final AccountJwtJwksApiBinding jwksApiBinding;
@@ -193,6 +195,10 @@ public final class AccountControlUiCurrentActorVerifier {
     this.roleSnapshots = Objects.requireNonNull(roleSnapshots);
     this.outbox = Objects.requireNonNull(outbox);
     this.clock = Objects.requireNonNull(clock);
+    this.publicSourcePin = this.publicJwks.sourceIdentity();
+    this.publicJwksCache =
+        new AccountPublicJwksCache(
+            this.publicJwks, publicSourcePin, this.clock, Duration.ofSeconds(30));
     accountTransaction = new TransactionTemplate(Objects.requireNonNull(transactionManager));
     accountTransaction.setIsolationLevel(TransactionDefinition.ISOLATION_READ_COMMITTED);
     accountTransaction.setReadOnly(false);
@@ -203,11 +209,8 @@ public final class AccountControlUiCurrentActorVerifier {
     outsideSql();
     requireTenant(selectedTenant);
     byte[] compactBytes = compactBytes(compactJwt);
-    SourceIdentity pin = publicJwks.sourceIdentity();
-    AccountPublicJwksCache cache =
-        new AccountPublicJwksCache(publicJwks, pin, clock, Duration.ofSeconds(30));
     VerifiedClaims signed =
-        new AccountAsymmetricJwtVerifier(cache, clock).verify(compactJwt, POLICY);
+        new AccountAsymmetricJwtVerifier(publicJwksCache, clock).verify(compactJwt, POLICY);
     PublicJwksSnapshot currentJwks = publicJwks.load();
     String tokenHash = sha256(compactBytes);
     byte[] activeRegistry = registry.readActive(tokenHash);
@@ -216,7 +219,12 @@ public final class AccountControlUiCurrentActorVerifier {
         accountTransaction.execute(
             ignored ->
                 verifyOwnerState(
-                    tokenHash, selectedTenant, signed, pin, currentJwks, activeRegistry));
+                    tokenHash,
+                    selectedTenant,
+                    signed,
+                    publicSourcePin,
+                    currentJwks,
+                    activeRegistry));
     if (result == null) {
       throw denied();
     }

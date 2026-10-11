@@ -10,7 +10,6 @@ import static org.mockito.Mockito.when;
 
 import io.grpc.Context;
 import io.grpc.Status;
-import io.grpc.StatusRuntimeException;
 import io.grpc.stub.StreamObserver;
 import java.util.List;
 import java.util.Optional;
@@ -210,15 +209,14 @@ class AccountJwtSignerMaterializationServiceTest {
         digest);
   }
 
-  private static void assertFailedPrecondition(Throwable failure) {
-    assertThat(failure).isInstanceOf(StatusRuntimeException.class);
-    assertThat(((StatusRuntimeException) failure).getStatus().getCode())
-        .isEqualTo(Status.Code.FAILED_PRECONDITION);
+  private static void assertFailedPrecondition(Status failure) {
+    assertThat(failure).isNotNull();
+    assertThat(failure.getCode()).isEqualTo(Status.Code.FAILED_PRECONDITION);
   }
 
   private static final class Observer<T> implements StreamObserver<T> {
     private T value;
-    private Throwable failure;
+    private Status failure;
     private boolean completed;
 
     @Override
@@ -228,7 +226,7 @@ class AccountJwtSignerMaterializationServiceTest {
 
     @Override
     public void onError(Throwable throwable) {
-      failure = throwable;
+      failure = Status.fromThrowable(throwable);
     }
 
     @Override

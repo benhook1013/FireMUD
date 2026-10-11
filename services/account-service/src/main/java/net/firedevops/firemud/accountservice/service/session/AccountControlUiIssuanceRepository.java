@@ -95,17 +95,9 @@ public final class AccountControlUiIssuanceRepository {
     Instant recovery = issuedAt.plusSeconds(60);
     var spec =
         new AccountControlUiSigningSpec(operationId, requestId, jti, source, issuedAt, expiry);
-    var transaction =
-        dsl.fetchOne(
-            "SELECT pg_current_xact_id()::TEXT AS xid, nextval('account_control_ui_source_fence') AS fence");
-    if (transaction == null) {
-      throw denied();
-    }
-    String xid = transaction.get("xid", String.class);
-    Long fence = transaction.get("fence", Long.class);
-    if (xid == null || !xid.matches("[1-9][0-9]{0,19}") || fence == null || fence <= 0) {
-      throw denied();
-    }
+    OwnerLinearization linearization = captureOwnerLinearization();
+    String xid = linearization.transactionId();
+    long fence = linearization.sourceFence();
     Map<String, Object> ref =
         Map.of(
             "bundleVersion",
