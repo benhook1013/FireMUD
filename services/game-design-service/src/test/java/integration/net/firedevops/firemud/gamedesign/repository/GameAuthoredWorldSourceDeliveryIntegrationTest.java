@@ -20,6 +20,7 @@ import net.firedevops.firemud.gamedesign.repository.GameAuthoredWorldSourceDeliv
 import net.firedevops.firemud.gamedesign.repository.GameAuthoredWorldSourceDeliveryRepository.DeliveryClaim;
 import net.firedevops.firemud.gamedesign.repository.GameAuthoredWorldSourceRepository;
 import net.firedevops.firemud.gamedesign.repository.GameRepository;
+import net.firedevops.firemud.test.TestContainerImages;
 import org.flywaydb.core.Flyway;
 import org.flywaydb.core.api.MigrationVersion;
 import org.jooq.DSLContext;
@@ -58,7 +59,8 @@ class GameAuthoredWorldSourceDeliveryIntegrationTest {
       DSL.field(DSL.name("canonical_tenant_id"), UUID.class);
 
   @Container
-  static PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>("postgres:16-alpine");
+  static PostgreSQLContainer<?> postgres =
+      new PostgreSQLContainer<>(TestContainerImages.postgres());
 
   @Test
   void freshRegistrationQueuesOneStableWorldRequestAndExactSourceRetryReusesIt() {

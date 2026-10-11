@@ -404,7 +404,7 @@ public class VersionServiceImpl implements VersionService {
       throw new IllegalStateException(
           "PUBLISH_ATTEMPT_INCONSISTENT: pending attempt references a non-draft version");
     }
-    draft.ifPresent(versionRepository::delete);
+    // Retain the DRAFT candidate so its canonical identity continues reserving the tuple.
     publishAttemptService.markScriptPatchFailed(
         reservation.publishWorkflowId(), failureCode, failureMessage);
     return new ScriptPatchFinalization(
