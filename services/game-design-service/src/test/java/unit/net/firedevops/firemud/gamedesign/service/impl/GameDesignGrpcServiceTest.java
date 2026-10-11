@@ -21,7 +21,6 @@ import net.firedevops.firemud.gamedesign.dto.PluginVersionStatusEventDto;
 import net.firedevops.firemud.gamedesign.dto.PublishParticipantDigestDto;
 import net.firedevops.firemud.gamedesign.dto.PublishedPluginVersionDto;
 import net.firedevops.firemud.gamedesign.dto.PublishedReleaseBundleDto;
-import net.firedevops.firemud.gamedesign.dto.ResolvedLaunchDescriptorDto;
 import net.firedevops.firemud.gamedesign.dto.RevisionDto;
 import net.firedevops.firemud.gamedesign.dto.TemplateRemapEntryDto;
 import net.firedevops.firemud.gamedesign.dto.TemplateRemapSetDto;
@@ -1727,6 +1726,72 @@ class GameDesignGrpcServiceTest {
 
   private static <T> StreamObserver<T> observerFor(AtomicReference<T> ref) {
     return new GenericObserver<>(ref);
+  }
+
+  private AuthoredWorldLaunchDescriptorEvidence.Request launchRequest(
+      String controlPlaneRequestId) {
+    return new AuthoredWorldLaunchDescriptorEvidence.Request(
+        "test",
+        controlPlaneRequestId,
+        CANONICAL_TENANT_ID,
+        "silver-march",
+        AUTHORED_SOURCE_OPERATION_ID,
+        "sha256:" + "a".repeat(64),
+        9L,
+        false,
+        null,
+        false,
+        null,
+        false,
+        null,
+        false,
+        null);
+  }
+
+  private AuthoredWorldLaunchDescriptorEvidence launchEvidence(
+      AuthoredWorldLaunchDescriptorEvidence.Request request) {
+    return AuthoredWorldLaunchDescriptorEvidence.create(
+        request,
+        "ld-1",
+        7L,
+        false,
+        null,
+        "{}",
+        "genrev-1",
+        11L,
+        11L,
+        "release-bundle:" + CANONICAL_TENANT_ID + ":7:11",
+        false,
+        null);
+  }
+
+  private net.firedevops.firemud.gamedesign.dto.ResolvedLaunchDescriptorDto launchDto(
+      AuthoredWorldLaunchDescriptorEvidence evidence) {
+    return new net.firedevops.firemud.gamedesign.dto.ResolvedLaunchDescriptorDto(
+        evidence.launchDescriptorId(),
+        evidence.canonicalTenantId().toString(),
+        evidence.gameTemplateId(),
+        evidence.controlPlaneRequestId(),
+        evidence.versionId(),
+        evidence.scriptPatchVersion(),
+        evidence.runtimeFlagsJson(),
+        evidence.generationConfigRevision(),
+        evidence.versionStateEpoch(),
+        evidence.releaseBundleId(),
+        evidence.publishedReleaseBundleRef(),
+        evidence.remapSetId(),
+        evidence);
+  }
+
+  private ResolveLaunchDescriptorRequest resolveRequest(String controlPlaneRequestId) {
+    return ResolveLaunchDescriptorRequest.newBuilder()
+        .setCanonicalTenantId(CANONICAL_TENANT_ID.toString())
+        .setGameTemplateId(9L)
+        .setControlPlaneRequestId(controlPlaneRequestId)
+        .setWorldSlug("silver-march")
+        .setAuthoredWorldSourceOperationId(AUTHORED_SOURCE_OPERATION_ID.toString())
+        .setExpectedAuthoredWorldSourceEvidenceDigest("sha256:" + "a".repeat(64))
+        .build();
   }
 
   private TemplateRemapSetDto sampleRemapSetDto(
