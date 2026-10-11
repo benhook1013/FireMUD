@@ -112,3 +112,13 @@ Entry format:
   - Context: a curated import of an independently completed review retained unknown review clocks but displayed generated recording timestamps as its start and finish.
   - Observation: a storage default can create false chronology even when the immutable evidence accurately discloses missing clocks.
   - Expected pattern: retain supplied-versus-generated provenance and project unknown source clocks explicitly; show recording events separately without rewriting raw evidence or inferring review times from later outcomes.
+
+- `2026-10-12`: Pin the authoritative checkout before resuming a review lane
+  - Context: Gameplay resumed from inherited workspace on `develop` at `1ea2c934`, which predated the actual merged review runtime `4fad59e`.
+  - Observation: Reading the older workflow led Gameplay to treat the retired `check-coderabbit-review.py` and prior review taper as current. The Overseer restored the current native controller and its one Hosted/three CLI normal taper, preserving explicit allocations. `--expect-pr` blocked the wrong selection before quota was used, so no extra Hosted request was posted.
+  - Expected pattern: On a resumed lane, identify and pin the current authoritative merged/source checkout before reading workflow guidance. Preserve standing review allocations and do not trust stale startup documentation.
+
+- `2026-10-12`: Make the next checkpoint action discoverable after CLI review
+  - Context: CLI review completion produced captured evidence, but the next channel launch remained held until Gameplay posted and imported the established minimal public checkpoint.
+  - Observation: Gameplay had to locate the exact checkpoint marker format in the current canonical implementation; the next publication command was not obvious from the returned help or output. Checkpoint publication then completed normally, so this is an improvement candidate rather than an established controller defect.
+  - Expected pattern: Make the required next action discoverable while preserving the counts, head, file, duration line, attribution markers, and captured evidence. Do not issue a duplicate provider request.
