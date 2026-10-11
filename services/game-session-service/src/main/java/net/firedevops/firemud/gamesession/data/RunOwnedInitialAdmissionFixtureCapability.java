@@ -30,9 +30,11 @@ import java.util.UUID;
 import java.util.regex.Pattern;
 import net.firedevops.firemud.common.grpc.CommonGrpcClientProperties;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
+import net.firedevops.firemud.common.tenant.AuthoredWorldSourceEvidence;
 import org.springframework.core.io.ClassPathResource;
 import tools.jackson.core.JacksonException;
 import tools.jackson.core.StreamReadFeature;
+import tools.jackson.databind.DeserializationFeature;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
 import tools.jackson.databind.json.JsonMapper;
@@ -66,8 +68,13 @@ record RunOwnedInitialAdmissionFixtureCapability(
   public static final String REALM_DISPLAY_NAME = "Live Realm";
   public static final String STATE_SCOPE = "SHARED";
   public static final String CHARACTER_CREATION_POLICY = "ALLOW_NEW";
+  public static final String SOURCE_RECEIPT_SCHEMA =
+      "firemud.run-owned-authored-world-source-receipt.v1";
+  public static final String SOURCE_RECEIPT_OWNER_SERVICE = "game-design-service";
+  public static final String SOURCE_TARGET_NAMESPACE = "dev";
 
   private static final int MAX_CAPABILITY_BYTES = 16 * 1024;
+  private static final int MAX_SOURCE_RECEIPT_BYTES = 16 * 1024;
   private static final int MAX_CERTIFICATE_FILE_BYTES = 1024 * 1024;
   private static final Pattern SAFE_ID = Pattern.compile("[a-z0-9][a-z0-9-]{0,127}");
   private static final Pattern SHA_256 = Pattern.compile("[0-9a-f]{64}");
@@ -92,8 +99,37 @@ record RunOwnedInitialAdmissionFixtureCapability(
           "gameSessionLeafSha256",
           "gameSessionUriSan",
           "caCertificateSha256");
+  private static final Set<String> SOURCE_RECEIPT_FIELDS =
+      Set.of(
+          "schema",
+          "runId",
+          "composeProjectName",
+          "fixtureOperationId",
+          "ownerService",
+          "gameSessionUriSan",
+          "gameSessionLeafSha256",
+          "caCertificateSha256",
+          "sourceEvidence");
+  private static final Set<String> SOURCE_EVIDENCE_FIELDS =
+      Set.of(
+          "schemaVersion",
+          "targetNamespace",
+          "registrationRequestId",
+          "operationId",
+          "requestDigest",
+          "canonicalTenantId",
+          "tenantSlug",
+          "worldSlug",
+          "worldDisplayName",
+          "sourceGameRowId",
+          "sourceGameTenantKey",
+          "provenanceKind",
+          "evidenceDigest");
   private static final ObjectMapper STRICT_JSON_MAPPER =
-      JsonMapper.builder().enable(StreamReadFeature.STRICT_DUPLICATE_DETECTION).build();
+      JsonMapper.builder()
+          .enable(StreamReadFeature.STRICT_DUPLICATE_DETECTION)
+          .enable(DeserializationFeature.FAIL_ON_TRAILING_TOKENS)
+          .build();
 
   /**
    * Loads and validates the declared local capability against the active run/project and the actual
@@ -109,6 +145,232 @@ record RunOwnedInitialAdmissionFixtureCapability(
     CertificatePins certificatePins = configuredCertificatePins(grpcProperties);
     return parseAndValidate(
         capabilityBytes, expectedRunId, expectedComposeProjectName, certificatePins);
+  }
+
+  /** Loads the local Game Design receipt only when it is closed, immutable, and run/TLS-bound. */
+  static SourceReceipt loadSourceReceipt(
+      Path receiptPath,
+      String expectedRunId,
+      String expectedComposeProjectName,
+      RunOwnedInitialAdmissionFixtureCapability capability,
+      CommonGrpcClientProperties grpcProperties) {
+    try {
+      return parseSourceReceipt(
+          readSourceReceipt(receiptPath),
+          expectedRunId,
+          expectedComposeProjectName,
+          capability,
+          configuredCertificatePins(grpcProperties));
+    } catch (InvalidCapabilityException exception) {
+      throw invalidSourceReceipt();
+    } catch (RuntimeException exception) {
+      throw invalidSourceReceipt();
+    }
+  }
+
+  static byte[] readSourceReceipt(Path path) {
+    if (path == null || !path.isAbsolute()) {
+      throw invalidSourceReceipt();
+    }
+    try {
+      BasicFileAttributes before =
+          Files.readAttributes(path, BasicFileAttributes.class, LinkOption.NOFOLLOW_LINKS);
+      if (!before.isRegularFile()
+          || Files.isSymbolicLink(path)
+          || before.size() <= 0L
+          || before.size() > MAX_SOURCE_RECEIPT_BYTES
+          || !isReadOnly(path)) {
+        throw invalidSourceReceipt();
+      }
+
+      ByteArrayOutputStream bytes = new ByteArrayOutputStream((int) before.size());
+      try (SeekableByteChannel channel =
+              Files.newByteChannel(path, StandardOpenOption.READ, LinkOption.NOFOLLOW_LINKS);
+          InputStream input = Channels.newInputStream(channel)) {
+        byte[] buffer = new byte[1024];
+        int read;
+        while ((read = input.read(buffer)) >= 0) {
+          if (read == 0) {
+            continue;
+          }
+          if (bytes.size() + read > MAX_SOURCE_RECEIPT_BYTES) {
+            throw invalidSourceReceipt();
+          }
+          bytes.write(buffer, 0, read);
+        }
+      }
+
+      BasicFileAttributes after =
+          Files.readAttributes(path, BasicFileAttributes.class, LinkOption.NOFOLLOW_LINKS);
+      if (!after.isRegularFile()
+          || Files.isSymbolicLink(path)
+          || before.size() != after.size()
+          || bytes.size() != before.size()
+          || !before.lastModifiedTime().equals(after.lastModifiedTime())
+          || !sameFileKey(before.fileKey(), after.fileKey())
+          || !isReadOnly(path)) {
+        throw invalidSourceReceipt();
+      }
+      return bytes.toByteArray();
+    } catch (IOException | SecurityException exception) {
+      throw invalidSourceReceipt();
+    }
+  }
+
+  static SourceReceipt parseSourceReceipt(
+      byte[] receiptBytes,
+      String expectedRunId,
+      String expectedComposeProjectName,
+      RunOwnedInitialAdmissionFixtureCapability capability,
+      CertificatePins certificatePins) {
+    requireExpectedRunBinding(expectedRunId, expectedComposeProjectName);
+    if (receiptBytes == null
+        || receiptBytes.length == 0
+        || receiptBytes.length > MAX_SOURCE_RECEIPT_BYTES
+        || capability == null
+        || certificatePins == null
+        || !expectedRunId.equals(capability.runId())
+        || !expectedComposeProjectName.equals(capability.composeProjectName())) {
+      throw invalidSourceReceipt();
+    }
+
+    JsonNode root;
+    try {
+      root = STRICT_JSON_MAPPER.readTree(decodeUtf8(receiptBytes));
+    } catch (CharacterCodingException | JacksonException exception) {
+      throw invalidSourceReceipt();
+    }
+    if (root == null || !root.isObject() || !hasExactFields(root, SOURCE_RECEIPT_FIELDS)) {
+      throw invalidSourceReceipt();
+    }
+
+    String schema = requiredSourceReceiptText(root, "schema");
+    String runId = requiredSourceReceiptText(root, "runId");
+    String composeProjectName = requiredSourceReceiptText(root, "composeProjectName");
+    String fixtureOperationId = requiredSourceReceiptText(root, "fixtureOperationId");
+    String ownerService = requiredSourceReceiptText(root, "ownerService");
+    String uriSan = requiredSourceReceiptText(root, "gameSessionUriSan");
+    String leafSha256 = requiredSourceReceiptText(root, "gameSessionLeafSha256");
+    String caSha256 = requiredSourceReceiptText(root, "caCertificateSha256");
+    AuthoredWorldSourceEvidence sourceEvidence = parseSourceEvidence(root.get("sourceEvidence"));
+
+    if (!SOURCE_RECEIPT_SCHEMA.equals(schema)
+        || !runId.equals(expectedRunId)
+        || !composeProjectName.equals(expectedComposeProjectName)
+        || !fixtureOperationId.equals(capability.operationId())
+        || !ownerService.equals(SOURCE_RECEIPT_OWNER_SERVICE)
+        || !uriSan.equals(capability.gameSessionUriSan())
+        || !leafSha256.equals(capability.gameSessionLeafSha256())
+        || !caSha256.equals(capability.caCertificateSha256())
+        || !certificatePins.uriSan().equals(uriSan)
+        || !certificatePins.leafSha256().equals(leafSha256)
+        || !certificatePins.caSha256().equals(caSha256)
+        || !SOURCE_TARGET_NAMESPACE.equals(sourceEvidence.targetNamespace())
+        || !capability.operationId().equals(sourceEvidence.registrationRequestId().toString())
+        || !capability.worldSlug().equals(sourceEvidence.worldSlug())
+        || !capability.worldDisplayName().equals(sourceEvidence.worldDisplayName())
+        || !Long.toString(capability.tenantId()).equals(sourceEvidence.sourceGameTenantKey())) {
+      throw invalidSourceReceipt();
+    }
+
+    return new SourceReceipt(
+        schema,
+        runId,
+        composeProjectName,
+        fixtureOperationId,
+        ownerService,
+        uriSan,
+        leafSha256,
+        caSha256,
+        sourceEvidence);
+  }
+
+  private static AuthoredWorldSourceEvidence parseSourceEvidence(JsonNode source) {
+    if (source == null || !source.isObject() || !hasExactFields(source, SOURCE_EVIDENCE_FIELDS)) {
+      throw invalidSourceReceipt();
+    }
+    int schemaVersion = requiredSourceReceiptInt(source, "schemaVersion");
+    String targetNamespace = requiredSourceReceiptText(source, "targetNamespace");
+    UUID registrationRequestId = requiredSourceReceiptUuid(source, "registrationRequestId");
+    UUID operationId = requiredSourceReceiptUuid(source, "operationId");
+    String requestDigest = requiredSourceReceiptText(source, "requestDigest");
+    UUID canonicalTenantId = requiredSourceReceiptUuid(source, "canonicalTenantId");
+    String tenantSlug = requiredSourceReceiptText(source, "tenantSlug");
+    String worldSlug = requiredSourceReceiptText(source, "worldSlug");
+    String worldDisplayName = requiredSourceReceiptText(source, "worldDisplayName");
+    long sourceGameRowId = requiredSourceReceiptLong(source, "sourceGameRowId");
+    String sourceGameTenantKey = requiredSourceReceiptText(source, "sourceGameTenantKey");
+    String provenanceKind = requiredSourceReceiptText(source, "provenanceKind");
+    String evidenceDigest = requiredSourceReceiptText(source, "evidenceDigest");
+    try {
+      return new AuthoredWorldSourceEvidence(
+          schemaVersion,
+          targetNamespace,
+          registrationRequestId,
+          operationId,
+          requestDigest,
+          canonicalTenantId,
+          tenantSlug,
+          worldSlug,
+          worldDisplayName,
+          sourceGameRowId,
+          sourceGameTenantKey,
+          provenanceKind,
+          evidenceDigest);
+    } catch (RuntimeException exception) {
+      throw invalidSourceReceipt();
+    }
+  }
+
+  private static int requiredSourceReceiptInt(JsonNode root, String field) {
+    JsonNode value = root.get(field);
+    if (value == null || !value.isIntegralNumber() || !value.canConvertToInt()) {
+      throw invalidSourceReceipt();
+    }
+    return value.intValue();
+  }
+
+  private static long requiredSourceReceiptLong(JsonNode root, String field) {
+    JsonNode value = root.get(field);
+    if (value == null || !value.isIntegralNumber() || !value.canConvertToLong()) {
+      throw invalidSourceReceipt();
+    }
+    return value.longValue();
+  }
+
+  private static UUID requiredSourceReceiptUuid(JsonNode root, String field) {
+    String text = requiredSourceReceiptText(root, field);
+    try {
+      UUID uuid = UUID.fromString(text);
+      if (!uuid.toString().equals(text)) {
+        throw invalidSourceReceipt();
+      }
+      return uuid;
+    } catch (IllegalArgumentException exception) {
+      throw invalidSourceReceipt();
+    }
+  }
+
+  private static String requiredSourceReceiptText(JsonNode root, String field) {
+    JsonNode value = root.get(field);
+    if (value == null || !value.isString()) {
+      throw invalidSourceReceipt();
+    }
+    String parsed = value.textValue();
+    if (parsed.isBlank()
+        || parsed.length() > 256
+        || !parsed.equals(parsed.trim())
+        || parsed.indexOf('\n') >= 0
+        || parsed.indexOf('\r') >= 0) {
+      throw invalidSourceReceipt();
+    }
+    return parsed;
+  }
+
+  private static boolean hasExactFields(JsonNode root, Set<String> allowed) {
+    Set<String> fields = new HashSet<>();
+    root.properties().forEach(property -> fields.add(property.getKey()));
+    return fields.equals(allowed);
   }
 
   static RunOwnedInitialAdmissionFixtureCapability parseAndValidate(
@@ -426,6 +688,10 @@ record RunOwnedInitialAdmissionFixtureCapability(
     return new InvalidCapabilityException();
   }
 
+  private static InvalidSourceReceiptException invalidSourceReceipt() {
+    return new InvalidSourceReceiptException();
+  }
+
   @Override
   public String toString() {
     return "RunOwnedInitialAdmissionFixtureCapability[verified]";
@@ -433,10 +699,28 @@ record RunOwnedInitialAdmissionFixtureCapability(
 
   record CertificatePins(String leafSha256, String uriSan, String caSha256) {}
 
+  record SourceReceipt(
+      String schema,
+      String runId,
+      String composeProjectName,
+      String fixtureOperationId,
+      String ownerService,
+      String gameSessionUriSan,
+      String gameSessionLeafSha256,
+      String caCertificateSha256,
+      AuthoredWorldSourceEvidence sourceEvidence) {}
+
   /** Generic, content-free failure so callers cannot accidentally log capability contents. */
   public static final class InvalidCapabilityException extends IllegalArgumentException {
     private InvalidCapabilityException() {
       super("Run-owned initial-admission fixture capability is invalid");
+    }
+  }
+
+  /** Generic, content-free failure so callers cannot accidentally log source receipt contents. */
+  public static final class InvalidSourceReceiptException extends IllegalArgumentException {
+    private InvalidSourceReceiptException() {
+      super("Run-owned authored-world source receipt is invalid");
     }
   }
 }

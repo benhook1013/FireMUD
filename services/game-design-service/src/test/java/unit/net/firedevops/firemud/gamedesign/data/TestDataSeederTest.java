@@ -2,6 +2,7 @@ package net.firedevops.firemud.gamedesign.data;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -11,6 +12,7 @@ import net.firedevops.firemud.gamedesign.entity.PublishedReleaseBundle;
 import net.firedevops.firemud.gamedesign.entity.Revision;
 import net.firedevops.firemud.gamedesign.entity.Version;
 import net.firedevops.firemud.gamedesign.entity.VersionAssetArtifact;
+import net.firedevops.firemud.gamedesign.repository.GameAuthoredWorldSourceRepository;
 import net.firedevops.firemud.gamedesign.repository.GameRepository;
 import net.firedevops.firemud.gamedesign.repository.GameTemplateRepository;
 import net.firedevops.firemud.gamedesign.repository.PublishedReleaseBundleRepository;
@@ -23,9 +25,12 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.MockitoAnnotations;
 import org.springframework.boot.DefaultApplicationArguments;
+import org.springframework.test.util.ReflectionTestUtils;
+import tools.jackson.databind.ObjectMapper;
 
 class TestDataSeederTest {
   @Mock GameRepository gameRepository;
+  @Mock GameAuthoredWorldSourceRepository authoredWorldSourceRepository;
   @Mock GameTemplateRepository templateRepository;
   @Mock RevisionRepository revisionRepository;
   @Mock VersionRepository versionRepository;
@@ -40,11 +45,13 @@ class TestDataSeederTest {
     seeder =
         new TestDataSeeder(
             gameRepository,
+            authoredWorldSourceRepository,
             templateRepository,
             revisionRepository,
             versionRepository,
             publishedReleaseBundleRepository,
-            versionAssetArtifactRepository);
+            versionAssetArtifactRepository,
+            new ObjectMapper());
   }
 
   @Test
@@ -101,5 +108,49 @@ class TestDataSeederTest {
     assertThat(artifactCaptor.getValue().getVersionId()).isEqualTo(7L);
     assertThat(artifactCaptor.getValue().getLastWorkflowId()).isEqualTo("demo-seed-publish");
     assertThat(artifactCaptor.getValue().getManifestHash()).isEqualTo("demo-manifest-hash");
+    verify(authoredWorldSourceRepository, never())
+        .register(any(), any(), any(), any(), any(), any());
+  }
+
+  @Test
+  void refusesFixtureSourceRegistrationWithoutExactRunAndProjectBinding() throws Exception {
+    Game game = new Game();
+    game.setId(1L);
+    game.setTenantId("1");
+    game.setCanonicalTenantId(java.util.UUID.randomUUID());
+    when(gameRepository.findByTenantId("1")).thenReturn(game);
+    when(gameRepository.save(any(Game.class))).thenReturn(game);
+    when(versionRepository.findByTenantIdAndVersionNumber("1", 1))
+        .thenReturn(java.util.Optional.empty());
+    Version version = new Version();
+    version.setId(7L);
+    version.setTenantId("1");
+    version.setVersionNumber(1);
+    when(versionRepository.save(any(Version.class))).thenReturn(version);
+    when(templateRepository.findByTenantIdAndName("1", "Default Template"))
+        .thenReturn(java.util.Optional.empty());
+    when(templateRepository.save(any(GameTemplate.class)))
+        .thenAnswer(invocation -> invocation.getArgument(0));
+    when(revisionRepository.findByTenantIdAndVersionIdAndRevisionKind("1", 7L, "GENERIC"))
+        .thenReturn(java.util.Optional.empty());
+    when(revisionRepository.save(any(Revision.class)))
+        .thenAnswer(invocation -> invocation.getArgument(0));
+    when(publishedReleaseBundleRepository.findByTenantIdAndVersionId("1", 7L))
+        .thenReturn(java.util.Optional.empty());
+    when(publishedReleaseBundleRepository.save(any(PublishedReleaseBundle.class)))
+        .thenAnswer(invocation -> invocation.getArgument(0));
+    when(versionAssetArtifactRepository.findByTenantIdAndVersionId("1", 7L))
+        .thenReturn(java.util.Optional.empty());
+    when(versionAssetArtifactRepository.save(any(VersionAssetArtifact.class)))
+        .thenAnswer(invocation -> invocation.getArgument(0));
+    ReflectionTestUtils.setField(seeder, "initialAdmissionFixtureEnabled", true);
+
+    org.assertj.core.api.Assertions.assertThatThrownBy(
+            () -> seeder.run(new DefaultApplicationArguments(new String[] {})))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("fixture configuration is incomplete");
+
+    verify(authoredWorldSourceRepository, never())
+        .register(any(), any(), any(), any(), any(), any());
   }
 }
