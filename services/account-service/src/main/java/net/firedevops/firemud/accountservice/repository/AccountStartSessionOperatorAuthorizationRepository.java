@@ -48,7 +48,7 @@ public class AccountStartSessionOperatorAuthorizationRepository {
           + "redemption_authority_evidence_bundle";
   private static final int MAX_TUPLE_BYTES = 8 * 1024;
   private static final int MAX_AUTHORITY_BUNDLE_BYTES = 128 * 1024;
-  private static final int MAX_ENCRYPTED_ENVELOPE_BYTES = 64 * 1024;
+  private static final int MAX_ENCRYPTED_ENVELOPE_BYTES = 160 * 1024;
   private static final Duration MAX_REFERENCE_LIFETIME = Duration.ofMinutes(5);
   private static final Duration MAX_RESPONSE_RECOVERY_WINDOW = Duration.ofMinutes(1);
   private static final UUID NIL_UUID = new UUID(0L, 0L);

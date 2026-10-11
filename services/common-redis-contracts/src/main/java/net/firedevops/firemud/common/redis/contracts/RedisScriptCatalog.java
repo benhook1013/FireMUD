@@ -57,6 +57,7 @@ public final class RedisScriptCatalog {
     Objects.requireNonNull(classLoader, "Class loader is required");
     return new RedisScriptCatalog(
         ServiceLoader.load(RedisScriptContribution.class, classLoader).stream()
+            .limit(MAX_CONTRIBUTIONS + 1L)
             .map(ServiceLoader.Provider::get)
             .toList());
   }

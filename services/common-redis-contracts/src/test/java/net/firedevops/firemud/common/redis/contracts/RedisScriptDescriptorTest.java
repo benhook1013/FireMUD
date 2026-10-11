@@ -73,6 +73,13 @@ class RedisScriptDescriptorTest {
     assertThatThrownBy(() -> descriptor(null, null, List.of(key, key), null, null))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("duplicate KEYS");
+
+    var requiredKey =
+        new RedisScriptDescriptor.KeySpec(
+            "other", "session:other:", RedisScriptDescriptor.HashTagDeclaration.REQUIRED);
+    assertThatThrownBy(() -> descriptorWithCoexistence(null, null, List.of(key, requiredKey)))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("multi-key script must require a hash tag");
   }
 
   @Test
@@ -114,6 +121,31 @@ class RedisScriptDescriptorTest {
     assertThatThrownBy(() -> descriptor(null, null, null, null, List.of(outcome, outcome)))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("duplicate outcome");
+
+    assertThatThrownBy(
+            () ->
+                new RedisScriptDescriptor.OutcomeSpec(
+                    "CONFLICT",
+                    RedisScriptDescriptor.OutcomeCategory.VALIDATION_FAILURE,
+                    RedisScriptDescriptor.MutationEffect.MUTATING))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("must be non-mutating");
+  }
+
+  @Test
+  void rejectsInconsistentLegacyPayloadMetadataAndDuplicateCoexistence() {
+    var legacy = new RedisScriptDescriptor.SupportedCoexistence("v1", "legacy");
+    var versioned = new RedisScriptDescriptor.SupportedCoexistence("v1", "v1");
+
+    assertThatThrownBy(() -> descriptorWithCoexistence(List.of(legacy), null, null))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("legacyPayloadShape is required");
+    assertThatThrownBy(() -> descriptorWithCoexistence(List.of(versioned), "old fields", null))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("only valid when a legacy payload is supported");
+    assertThatThrownBy(() -> descriptorWithCoexistence(List.of(versioned, versioned), null, null))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("duplicate caller/payload coexistence");
   }
 
   private static RedisScriptDescriptor descriptor() {
@@ -124,6 +156,32 @@ class RedisScriptDescriptorTest {
       String resourcePath,
       String sha256,
       List<RedisScriptDescriptor.KeySpec> keys,
+      List<RedisScriptDescriptor.ArgumentSpec> arguments,
+      List<RedisScriptDescriptor.OutcomeSpec> outcomes) {
+    return descriptorWithCoexistence(
+        List.of(new RedisScriptDescriptor.SupportedCoexistence("v1", "v1")),
+        null,
+        keys,
+        resourcePath,
+        sha256,
+        arguments,
+        outcomes);
+  }
+
+  private static RedisScriptDescriptor descriptorWithCoexistence(
+      List<RedisScriptDescriptor.SupportedCoexistence> supportedCoexistence,
+      String legacyPayloadShape,
+      List<RedisScriptDescriptor.KeySpec> keys) {
+    return descriptorWithCoexistence(
+        supportedCoexistence, legacyPayloadShape, keys, null, null, null, null);
+  }
+
+  private static RedisScriptDescriptor descriptorWithCoexistence(
+      List<RedisScriptDescriptor.SupportedCoexistence> supportedCoexistence,
+      String legacyPayloadShape,
+      List<RedisScriptDescriptor.KeySpec> keys,
+      String resourcePath,
+      String sha256,
       List<RedisScriptDescriptor.ArgumentSpec> arguments,
       List<RedisScriptDescriptor.OutcomeSpec> outcomes) {
     return new RedisScriptDescriptor(
@@ -159,7 +217,9 @@ class RedisScriptDescriptorTest {
         RedisScriptDescriptor.LossClass.SESSION_LEASE_CACHE_OR_WAKE_UP,
         "A lost projection denies the operation until owner recovery.",
         RedisScriptDescriptor.CompatibilityLevel.REQUIRES_CLUSTER_RESET,
-        List.of(new RedisScriptDescriptor.SupportedCoexistence("v1", "v1")),
-        null);
+        supportedCoexistence == null
+            ? List.of(new RedisScriptDescriptor.SupportedCoexistence("v1", "v1"))
+            : supportedCoexistence,
+        legacyPayloadShape);
   }
 }

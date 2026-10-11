@@ -49,6 +49,64 @@ class AccountResponseEnvelopeCryptographyTest {
   }
 
   @Test
+  void authenticatesMaximumAuthorityBundleAndResponseWithoutChangingRawBindingBytes()
+      throws IOException {
+    writeManifest(activeManifest("key-one", 1));
+    AccountResponseEnvelopeCryptography cryptography =
+        cryptography(Clock.fixed(NOW, ZoneOffset.UTC));
+    byte[] authorityBundle =
+        new byte[AccountResponseEnvelopeCryptography.MAX_AUTHORITY_EVIDENCE_BUNDLE_BYTES];
+    Arrays.fill(authorityBundle, (byte) 0x5a);
+    var binding = bindingWithAuthorityBundle(authorityBundle);
+    byte[] response = new byte[AccountResponseEnvelopeCryptography.MAX_RESPONSE_BYTES];
+    Arrays.fill(response, (byte) 0x3c);
+
+    var envelope = cryptography.encrypt(binding, response, RECOVERY_EXPIRY);
+
+    assertThat(envelope.bytes().length).isLessThanOrEqualTo(160 * 1024);
+    assertThat(cryptography.decrypt(envelope, binding, RECOVERY_EXPIRY)).containsExactly(response);
+
+    byte[] changedAuthorityBundle = authorityBundle.clone();
+    changedAuthorityBundle[changedAuthorityBundle.length / 2] ^= 0x01;
+    assertThatThrownBy(
+            () ->
+                cryptography.decrypt(
+                    envelope, bindingWithAuthorityBundle(changedAuthorityBundle), RECOVERY_EXPIRY))
+        .isInstanceOf(AccountResponseEnvelopeCryptography.IntegrityException.class);
+  }
+
+  @Test
+  void rejectsAuthorityResponseAndCiphertextBoundsPlusOne() throws IOException {
+    writeManifest(activeManifest("key-one", 1));
+    AccountResponseEnvelopeCryptography cryptography =
+        cryptography(Clock.fixed(NOW, ZoneOffset.UTC));
+    var binding = binding();
+
+    assertThatThrownBy(
+            () ->
+                bindingWithAuthorityBundle(
+                    new byte
+                        [AccountResponseEnvelopeCryptography.MAX_AUTHORITY_EVIDENCE_BUNDLE_BYTES
+                            + 1]))
+        .isInstanceOf(IllegalArgumentException.class);
+    assertThatThrownBy(
+            () ->
+                cryptography.encrypt(
+                    binding,
+                    new byte[AccountResponseEnvelopeCryptography.MAX_RESPONSE_BYTES + 1],
+                    RECOVERY_EXPIRY))
+        .isInstanceOf(IllegalArgumentException.class);
+    assertThatThrownBy(
+            () ->
+                cryptography.decrypt(
+                    new AccountResponseEnvelopeCryptography.EncryptedResponseEnvelope(
+                        new byte[AccountResponseEnvelopeCryptography.MAX_ENVELOPE_BYTES + 1]),
+                    binding,
+                    RECOVERY_EXPIRY))
+        .isInstanceOf(AccountResponseEnvelopeCryptography.IntegrityException.class);
+  }
+
+  @Test
   void rejectsTamperingEveryChangedBindingFieldAndChangedExpiry() throws IOException {
     writeManifest(activeManifest("key-one", 1));
     AccountResponseEnvelopeCryptography cryptography =
@@ -162,6 +220,24 @@ class AccountResponseEnvelopeCryptographyTest {
         bytes("{\"authority\":\"tuple-01\"}"),
         bytes("{\"tenant-01\":\"membership-01\"}"),
         bytes("{\"bundleVersion\":\"authorityEvidenceBundle/v1\"}"));
+  }
+
+  private static AccountResponseEnvelopeCryptography.Binding bindingWithAuthorityBundle(
+      byte[] authorityEvidenceBundle) {
+    var source = binding();
+    return new AccountResponseEnvelopeCryptography.Binding(
+        source.operation(),
+        source.requestId(),
+        source.requestDigest(),
+        source.callerWorkload(),
+        source.bindingId(),
+        source.lineageId(),
+        source.replacementId(),
+        source.leaseId(),
+        source.issuanceFence(),
+        source.authorityTupleCanonicalBytes(),
+        source.membershipVersionMapCanonicalBytes(),
+        authorityEvidenceBundle);
   }
 
   private static AccountResponseEnvelopeCryptography.Binding changedBinding(
@@ -432,7 +508,23 @@ class AccountResponseEnvelopeCryptographyTest {
                   new byte[] {1},
                   new byte[0],
                   new byte[] {2}));
-      AccountResponseEnvelopeCryptography.Binding bindingOverAggregateLimit =
+      assertThrows(
+          IllegalArgumentException.class,
+          () ->
+              new AccountResponseEnvelopeCryptography.Binding(
+                  "issue",
+                  "request-1",
+                  new byte[32],
+                  "spiffe://firemud/ns/test/sa/game-session-service",
+                  "binding-1",
+                  Optional.empty(),
+                  Optional.empty(),
+                  Optional.empty(),
+                  1,
+                  new byte[] {1},
+                  new byte[] {'{', '}'},
+                  new byte[128 * 1024 + 1]));
+      AccountResponseEnvelopeCryptography.Binding maximumComponentBinding =
           new AccountResponseEnvelopeCryptography.Binding(
               "issue",
               "request-1",
@@ -445,10 +537,12 @@ class AccountResponseEnvelopeCryptographyTest {
               1,
               new byte[8 * 1024],
               new byte[4 * 1024],
-              new byte[8 * 1024]);
-      assertThrows(
-          IllegalArgumentException.class,
-          () -> crypto.encrypt(bindingOverAggregateLimit, RESPONSE_BYTES, NOW.plusSeconds(60)));
+              new byte[128 * 1024]);
+      AccountResponseEnvelopeCryptography.EncryptedResponseEnvelope maximumBindingEnvelope =
+          crypto.encrypt(maximumComponentBinding, RESPONSE_BYTES, NOW.plusSeconds(60));
+      assertArrayEquals(
+          RESPONSE_BYTES,
+          crypto.decrypt(maximumBindingEnvelope, maximumComponentBinding, NOW.plusSeconds(60)));
       assertThrows(
           AccountResponseEnvelopeCryptography.IntegrityException.class,
           () ->

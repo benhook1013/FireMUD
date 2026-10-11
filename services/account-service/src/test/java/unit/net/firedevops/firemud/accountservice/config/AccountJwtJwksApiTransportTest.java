@@ -363,19 +363,17 @@ class AccountJwtJwksApiTransportTest {
 
     ProtectedFiles ownerFixture = protectedFiles("owner-drift");
     ownerFixture.binding().current();
-    Files.setAttribute(ownerFixture.currentToken(), "unix:uid", 65534L, LinkOption.NOFOLLOW_LINKS);
+    Files.setAttribute(ownerFixture.currentToken(), "unix:uid", 65534, LinkOption.NOFOLLOW_LINKS);
     assertThatThrownBy(ownerFixture.binding()::current)
         .isInstanceOf(AccountJwtJwksApiBinding.BindingRejectedException.class);
 
     ProtectedFiles groupFixture = protectedFiles("group-drift");
     groupFixture.binding().current();
-    Object gid =
-        Files.getAttribute(groupFixture.currentToken(), "unix:gid", LinkOption.NOFOLLOW_LINKS);
+    int gid =
+        (Integer)
+            Files.getAttribute(groupFixture.currentToken(), "unix:gid", LinkOption.NOFOLLOW_LINKS);
     Files.setAttribute(
-        groupFixture.currentToken(),
-        "unix:gid",
-        ((Number) gid).longValue() == 0L ? 1L : 0L,
-        LinkOption.NOFOLLOW_LINKS);
+        groupFixture.currentToken(), "unix:gid", gid == 0 ? 1 : 0, LinkOption.NOFOLLOW_LINKS);
     assertThatThrownBy(groupFixture.binding()::current)
         .isInstanceOf(AccountJwtJwksApiBinding.BindingRejectedException.class);
 
