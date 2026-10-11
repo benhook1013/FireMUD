@@ -246,4 +246,4 @@ $$ LANGUAGE plpgsql;
 CREATE TRIGGER gd_authored_world_source_delivery_no_truncate
     BEFORE TRUNCATE ON game_design_authored_world_source_deliveries
     FOR EACH STATEMENT EXECUTE FUNCTION reject_gd_authored_world_source_delivery_truncate();
--- [jooq ignore end]
+-- [jooq ignore stop]
