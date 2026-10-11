@@ -49,7 +49,7 @@ class AccountAuthEvidenceBundleTest {
   }
 
   @Test
-  void canonicalEvidenceCarrierRejectsBytesBeyondTheExistingEnvelopeLimit() {
+  void canonicalEvidenceCarrierHonorsItsProfileLimitWithinTheLargerEnvelopeBound() {
     assertThatCode(
             () ->
                 new Binding(
@@ -69,6 +69,38 @@ class AccountAuthEvidenceBundleTest {
     assertThatThrownBy(() -> AccountAuthEvidenceBundle.parseCanonical(new byte[8 * 1024 + 1]))
         .isInstanceOf(AccountAuthEvidenceBundle.InvalidBundleException.class)
         .hasMessageContaining("byte bound");
+    assertThatCode(
+            () ->
+                new Binding(
+                    "game-session-account-delegation",
+                    "request-1",
+                    new byte[32],
+                    WORKLOAD,
+                    "operation-1",
+                    Optional.empty(),
+                    Optional.empty(),
+                    Optional.empty(),
+                    1L,
+                    new byte[] {'{', '}'},
+                    new byte[] {'{', '}'},
+                    new byte[8 * 1024 + 1]))
+        .doesNotThrowAnyException();
+    assertThatCode(
+            () ->
+                new Binding(
+                    "game-session-account-delegation",
+                    "request-1",
+                    new byte[32],
+                    WORKLOAD,
+                    "operation-1",
+                    Optional.empty(),
+                    Optional.empty(),
+                    Optional.empty(),
+                    1L,
+                    new byte[] {'{', '}'},
+                    new byte[] {'{', '}'},
+                    new byte[128 * 1024]))
+        .doesNotThrowAnyException();
     assertThatThrownBy(
             () ->
                 new Binding(
@@ -83,7 +115,7 @@ class AccountAuthEvidenceBundleTest {
                     1L,
                     new byte[] {'{', '}'},
                     new byte[] {'{', '}'},
-                    new byte[AccountAuthEvidenceBundle.MAX_CANONICAL_BYTES + 1]))
+                    new byte[128 * 1024 + 1]))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("authority evidence bundle bytes");
   }

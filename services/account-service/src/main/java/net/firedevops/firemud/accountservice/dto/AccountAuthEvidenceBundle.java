@@ -35,7 +35,7 @@ import tools.jackson.databind.json.JsonMapper;
  */
 public final class AccountAuthEvidenceBundle {
   public static final String SCHEMA = "account-auth-evidence-bundle/v1";
-  // The existing Account response-envelope AEAD binding accepts at most 8 KiB for this value.
+  // This profile-specific DTO cap remains 8 KiB within the generic envelope's larger bound.
   public static final int MAX_CANONICAL_BYTES = 8 * 1024;
 
   private static final Pattern SHA256 = Pattern.compile("[0-9a-f]{64}");
