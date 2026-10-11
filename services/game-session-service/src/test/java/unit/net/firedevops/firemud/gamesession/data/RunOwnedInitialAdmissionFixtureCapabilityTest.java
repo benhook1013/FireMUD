@@ -16,11 +16,14 @@ import java.security.PublicKey;
 import java.security.cert.X509Certificate;
 import java.util.Base64;
 import java.util.List;
-import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
+import net.firedevops.firemud.common.gamedesign.AuthoredWorldLaunchDescriptorEvidence;
+import net.firedevops.firemud.common.gamedesign.AuthoredWorldLaunchDescriptorGrpcCodec;
+import net.firedevops.firemud.common.smoke.RunOwnedInitialAdmissionFixtureWireCodec;
 import net.firedevops.firemud.common.tenant.AuthoredWorldSourceDigest;
 import net.firedevops.firemud.common.tenant.AuthoredWorldSourceEvidence;
+import net.firedevops.firemud.gamedesign.v1.LaunchDescriptor;
 import net.firedevops.firemud.gamesession.data.RunOwnedInitialAdmissionFixtureCapability.CertificatePins;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -34,6 +37,7 @@ class RunOwnedInitialAdmissionFixtureCapabilityTest {
   private static final String OPERATION_ID = "d2db8478-9c56-42ab-99c2-9fbead6841ba";
   private static final String SOURCE_OPERATION_ID = "3f773701-e812-44f5-8ae0-7268d543beed";
   private static final String LEAF_SHA = "a".repeat(64);
+  private static final String WORLD_LEAF_SHA = "c".repeat(64);
   private static final String CA_SHA = "b".repeat(64);
 
   @Test
@@ -58,6 +62,9 @@ class RunOwnedInitialAdmissionFixtureCapabilityTest {
     assertThat(capability.requiresCharacterSelection()).isFalse();
     assertThat(capability.stateScope()).isEqualTo("SHARED");
     assertThat(capability.characterCreationPolicy()).isEqualTo("ALLOW_NEW");
+    assertThat(capability.worldManagementUriSan())
+        .isEqualTo(RunOwnedInitialAdmissionFixtureCapability.WORLD_MANAGEMENT_URI_SAN);
+    assertThat(capability.worldManagementLeafSha256()).isEqualTo(WORLD_LEAF_SHA);
   }
 
   @Test
@@ -131,6 +138,8 @@ class RunOwnedInitialAdmissionFixtureCapabilityTest {
     assertThat(receipt.launchReadEvidence().versionAssetArtifactState())
         .isEqualTo(launchArtifactState());
     assertThat(receipt.launchReadEvidence().versionState()).isEqualTo(launchVersionState());
+    assertThat(receipt.launchReadEvidence().launchDescriptor())
+        .isEqualTo(launchDescriptor(sourceEvidence(), launchBundle(), launchVersionState()));
   }
 
   @Test
@@ -142,6 +151,11 @@ class RunOwnedInitialAdmissionFixtureCapabilityTest {
     assertInvalidSourceReceipt(json.replace(OPERATION_ID, "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"));
     assertInvalidSourceReceipt(json.replace(LEAF_SHA, "c".repeat(64)));
     assertInvalidSourceReceipt(json.replace(CA_SHA, "c".repeat(64)));
+    assertInvalidSourceReceipt(json.replace(WORLD_LEAF_SHA, "d".repeat(64)));
+    assertInvalidSourceReceipt(
+        json.replace(
+            RunOwnedInitialAdmissionFixtureCapability.WORLD_MANAGEMENT_URI_SAN,
+            "spiffe://firemud/ns/dev/sa/other-service"));
     assertInvalidSourceReceipt(
         json.replace("\"sourceGameRowId\": 13", "\"sourceGameRowId\": \"13\""));
     assertInvalidSourceReceipt(json + " {}\n");
@@ -304,12 +318,6 @@ class RunOwnedInitialAdmissionFixtureCapabilityTest {
     assertInvalidSourceReceipt(
         validSourceReceiptJson(
             sourceEvidence(), launchBundle().toBuilder().setUnknownFields(unknownFields).build()));
-    assertThatThrownBy(
-            () ->
-                RunOwnedInitialAdmissionFixtureCapability.requireNoUnknownFieldsRecursively(
-                    Map.of("publishedReleaseBundle", nestedUnknownBundle)))
-        .isInstanceOf(
-            RunOwnedInitialAdmissionFixtureCapability.InvalidSourceReceiptException.class);
   }
 
   @Test
@@ -475,6 +483,7 @@ class RunOwnedInitialAdmissionFixtureCapabilityTest {
       net.firedevops.firemud.gamedesign.v1.PublishedReleaseBundle bundle,
       net.firedevops.firemud.gamedesign.v1.VersionAssetArtifactState artifactState,
       net.firedevops.firemud.gamedesign.v1.VersionStateSnapshot versionState) {
+    LaunchDescriptor descriptor = launchDescriptor(source, launchBundle(), launchVersionState());
     String sourceJson =
         """
         {%n\
@@ -517,6 +526,8 @@ class RunOwnedInitialAdmissionFixtureCapabilityTest {
           "gameSessionUriSan": "%s",%n\
           "gameSessionLeafSha256": "%s",%n\
           "caCertificateSha256": "%s",%n\
+          "worldManagementUriSan": "%s",%n\
+          "worldManagementLeafSha256": "%s",%n\
           "sourceEvidence": %s,%n\
           "launchReadEvidence": %s%n\
         }%n\
@@ -530,31 +541,83 @@ class RunOwnedInitialAdmissionFixtureCapabilityTest {
             RunOwnedInitialAdmissionFixtureCapability.GAME_SESSION_URI_SAN,
             LEAF_SHA,
             CA_SHA,
+            RunOwnedInitialAdmissionFixtureCapability.WORLD_MANAGEMENT_URI_SAN,
+            WORLD_LEAF_SHA,
             sourceJson,
-            launchReadEvidenceJson(bundle, artifactState, versionState));
+            launchReadEvidenceJson(source, bundle, artifactState, versionState, descriptor));
   }
 
   private static String validLaunchReadEvidenceJson() {
-    return launchReadEvidenceJson(launchBundle());
+    return launchReadEvidenceJson(
+        sourceEvidence(), launchBundle(), launchArtifactState(), launchVersionState());
   }
 
   private static String launchReadEvidenceJson(
-      net.firedevops.firemud.gamedesign.v1.PublishedReleaseBundle bundle) {
-    return launchReadEvidenceJson(bundle, launchArtifactState(), launchVersionState());
-  }
-
-  private static String launchReadEvidenceJson(
+      AuthoredWorldSourceEvidence source,
       net.firedevops.firemud.gamedesign.v1.PublishedReleaseBundle bundle,
       net.firedevops.firemud.gamedesign.v1.VersionAssetArtifactState artifactState,
       net.firedevops.firemud.gamedesign.v1.VersionStateSnapshot versionState) {
+    return launchReadEvidenceJson(
+        source,
+        bundle,
+        artifactState,
+        versionState,
+        launchDescriptor(source, bundle, versionState));
+  }
+
+  private static String launchReadEvidenceJson(
+      AuthoredWorldSourceEvidence source,
+      net.firedevops.firemud.gamedesign.v1.PublishedReleaseBundle bundle,
+      net.firedevops.firemud.gamedesign.v1.VersionAssetArtifactState artifactState,
+      net.firedevops.firemud.gamedesign.v1.VersionStateSnapshot versionState,
+      LaunchDescriptor descriptor) {
     return """
-        {"schema":"%s","gameTemplateId":17,"publishedReleaseBundleBase64":"%s","versionAssetArtifactStateBase64":"%s","versionStateBase64":"%s"}%n\
+        {"schema":"%s","gameTemplateId":17,"publishedReleaseBundleBase64":"%s","versionAssetArtifactStateBase64":"%s","versionStateBase64":"%s","launchDescriptorBase64":"%s"}%n\
         """
         .formatted(
             RunOwnedInitialAdmissionLaunchEvidence.SCHEMA,
             encode(bundle.toByteArray()),
             encode(artifactState.toByteArray()),
-            encode(versionState.toByteArray()));
+            encode(versionState.toByteArray()),
+            encode(descriptor.toByteArray()));
+  }
+
+  private static LaunchDescriptor launchDescriptor(
+      AuthoredWorldSourceEvidence source,
+      net.firedevops.firemud.gamedesign.v1.PublishedReleaseBundle bundle,
+      net.firedevops.firemud.gamedesign.v1.VersionStateSnapshot versionState) {
+    var request =
+        new AuthoredWorldLaunchDescriptorEvidence.Request(
+            RunOwnedInitialAdmissionFixtureWireCodec.SOURCE_TARGET_NAMESPACE,
+            OPERATION_ID,
+            source.canonicalTenantId(),
+            source.worldSlug(),
+            source.operationId(),
+            source.evidenceDigest(),
+            17L,
+            false,
+            null,
+            false,
+            null,
+            false,
+            null,
+            false,
+            null);
+    var evidence =
+        AuthoredWorldLaunchDescriptorEvidence.create(
+            request,
+            "launch-descriptor-fixture-11",
+            bundle.getVersionId(),
+            false,
+            null,
+            "{}",
+            bundle.getGenerationConfigRevision(),
+            versionState.getVersionStateEpoch(),
+            bundle.getId(),
+            bundle.getPublishedReleaseBundleRef(),
+            false,
+            null);
+    return AuthoredWorldLaunchDescriptorGrpcCodec.toLaunchDescriptorMessage(evidence);
   }
 
   private static net.firedevops.firemud.gamedesign.v1.PublishedReleaseBundle launchBundle() {
@@ -639,7 +702,9 @@ class RunOwnedInitialAdmissionFixtureCapabilityTest {
           "characterCreationPolicy": "ALLOW_NEW",%n\
           "gameSessionLeafSha256": "%s",%n\
           "gameSessionUriSan": "%s",%n\
-          "caCertificateSha256": "%s"%n\
+          "caCertificateSha256": "%s",%n\
+          "worldManagementUriSan": "%s",%n\
+          "worldManagementLeafSha256": "%s"%n\
         }%n\
         """
         .formatted(
@@ -649,7 +714,9 @@ class RunOwnedInitialAdmissionFixtureCapabilityTest {
             OPERATION_ID,
             LEAF_SHA,
             RunOwnedInitialAdmissionFixtureCapability.GAME_SESSION_URI_SAN,
-            CA_SHA);
+            CA_SHA,
+            RunOwnedInitialAdmissionFixtureCapability.WORLD_MANAGEMENT_URI_SAN,
+            WORLD_LEAF_SHA);
   }
 
   private static X509Certificate certificate(String san, byte[] der, int basicConstraints)

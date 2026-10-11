@@ -1,8 +1,10 @@
 package net.firedevops.firemud.gamesession.service.impl;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
@@ -31,12 +33,12 @@ import java.util.UUID;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
-import net.firedevops.firemud.common.gamedesign.AuthoredWorldLaunchDescriptorEvidence;
-import net.firedevops.firemud.common.gamedesign.AuthoredWorldLaunchDescriptorGrpcCodec;
 import net.firedevops.firemud.common.tenant.AuthoredWorldSourceDigest;
 import net.firedevops.firemud.common.tenant.AuthoredWorldSourceEvidence;
 import net.firedevops.firemud.gamedesign.v1.GetPublishedReleaseBundleResponse;
 import net.firedevops.firemud.gamedesign.v1.GetVersionAssetArtifactStateResponse;
+import net.firedevops.firemud.gamedesign.v1.LaunchDescriptor;
+import net.firedevops.firemud.gamedesign.v1.PublishedReleaseBundle;
 import net.firedevops.firemud.gamedesign.v1.ResolveLaunchDescriptorResponse;
 import net.firedevops.firemud.gamesession.client.GameDesignClient;
 import net.firedevops.firemud.gamesession.client.WorldManagementClient;
@@ -55,9 +57,13 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.EnumSource;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.ArgumentCaptor;
 
 class GameInstanceServiceImplTest {
+  private static final String OPAQUE_PUBLISHED_RELEASE_BUNDLE_REF =
+      "6bf9e6d0-7f6b-4c85-b75e-d65949694f13";
+
   private GameInstanceRepository repository;
   private GameInstanceMapper mapper;
   private SessionStateService stateService;
@@ -68,6 +74,7 @@ class GameInstanceServiceImplTest {
   private Map<Long, GameInstance> store;
   private AtomicLong nextId;
   private String runOwnedBundleRefOverride;
+  private LaunchDescriptor runOwnedDescriptorOverride;
 
   @Test
   void legacyDtoConstructorRejectsNonblankPatchWithoutCompleteTuple() {
@@ -106,6 +113,7 @@ class GameInstanceServiceImplTest {
     store = new HashMap<>();
     nextId = new AtomicLong(10L);
     runOwnedBundleRefOverride = null;
+    runOwnedDescriptorOverride = null;
     service =
         new GameInstanceServiceImpl(
             repository,
@@ -137,6 +145,23 @@ class GameInstanceServiceImplTest {
     assertEquals("STARTING", states.getAllValues().get(0).status());
     assertEquals("RUNNING", states.getAllValues().get(1).status());
     assertNull(store.get(10L).getScriptPinEpoch());
+    ArgumentCaptor<String> publishedReleaseBundleRef = ArgumentCaptor.forClass(String.class);
+    verify(worldManagementClient)
+        .prepareWorldInstance(
+            anyLong(),
+            anyLong(),
+            anyLong(),
+            anyString(),
+            anyString(),
+            anyLong(),
+            any(),
+            any(),
+            anyString(),
+            anyLong(),
+            publishedReleaseBundleRef.capture(),
+            anyLong(),
+            any());
+    assertEquals(OPAQUE_PUBLISHED_RELEASE_BUNDLE_REF, publishedReleaseBundleRef.getValue());
   }
 
   @Test
@@ -219,20 +244,31 @@ class GameInstanceServiceImplTest {
   }
 
   @Test
-  void runOwnedLaunchRejectsDescriptorBundleReferenceMismatchBeforeWorldPreparation() {
+  void runOwnedLaunchRejectsDifferentValidResolveDescriptorBeforeMutation() {
     StartSessionRequest request =
         new StartSessionRequest(1L, 3L, "10000000-0000-4000-8000-000000000012", 42L);
-    runOwnedBundleRefOverride = "gds:owner-ref:different-release";
+    var ownerEvidence = launchEvidence(request);
+    runOwnedDescriptorOverride =
+        RunOwnedInitialAdmissionLaunchEvidenceTestFixture.create(
+                request, sourceEvidence(request), "gds:owner-ref:different-release")
+            .launchDescriptor();
+    assertFalse(
+        ownerEvidence
+            .launchDescriptor()
+            .getAuthoredWorldBinding()
+            .getResultDigest()
+            .equals(runOwnedDescriptorOverride.getAuthoredWorldBinding().getResultDigest()));
 
     IllegalArgumentException error =
         assertThrows(
             IllegalArgumentException.class,
-            () -> service.startRunOwnedInitialLaunch(request, launchEvidence(request)));
+            () -> service.startRunOwnedInitialLaunch(request, ownerEvidence));
 
     assertEquals(
-        "RUN_OWNED_LAUNCH_READ_EVIDENCE_MISMATCH: owner snapshot differs from the exact launch descriptor",
+        "RUN_OWNED_LAUNCH_DESCRIPTOR_MISMATCH: resolved descriptor differs from the immutable"
+            + " owner receipt descriptor",
         error.getMessage());
-    verifyNoInteractions(worldManagementClient);
+    verifyNoInteractions(stateService, worldManagementClient);
     verify(gameDesignClient, never()).getPublishedReleaseBundle(anyLong(), anyLong());
     verify(gameDesignClient, never()).getVersionAssetArtifactState(anyLong(), anyLong());
     verify(gameDesignClient, never()).getVersionState(anyLong(), anyLong());
@@ -257,9 +293,11 @@ class GameInstanceServiceImplTest {
             () -> service.startRunOwnedInitialLaunch(request, changed));
 
     assertEquals(
-        "RUN_OWNED_LAUNCH_READ_EVIDENCE_MISMATCH: owner snapshot differs from the exact launch descriptor",
+        "RUN_OWNED_LAUNCH_DESCRIPTOR_MISMATCH: resolved descriptor differs from the immutable"
+            + " owner receipt descriptor",
         error.getMessage());
-    verifyNoInteractions(worldManagementClient);
+    assertTrue(store.isEmpty());
+    verifyNoInteractions(stateService, worldManagementClient);
   }
 
   @Test
@@ -311,9 +349,11 @@ class GameInstanceServiceImplTest {
             () -> service.startRunOwnedInitialLaunch(request, changed));
 
     assertEquals(
-        "RUN_OWNED_LAUNCH_READ_EVIDENCE_MISMATCH: owner snapshot differs from the exact launch descriptor",
+        "RUN_OWNED_LAUNCH_DESCRIPTOR_MISMATCH: resolved descriptor differs from the immutable"
+            + " owner receipt descriptor",
         error.getMessage());
-    verifyNoInteractions(worldManagementClient);
+    assertTrue(store.isEmpty());
+    verifyNoInteractions(stateService, worldManagementClient);
   }
 
   @Test
@@ -639,7 +679,7 @@ class GameInstanceServiceImplTest {
                         .setGenerationConfigRevision("genrev-11")
                         .setVersionStateEpoch(77L)
                         .setReleaseBundleId(77L)
-                        .setPublishedReleaseBundleRef("prb:1:11:77")
+                        .setPublishedReleaseBundleRef(OPAQUE_PUBLISHED_RELEASE_BUNDLE_REF)
                         .build())
                 .build())
         .when(gameDesignClient)
@@ -663,7 +703,7 @@ class GameInstanceServiceImplTest {
             eq("{}"),
             eq("genrev-11"),
             eq(77L),
-            eq("prb:1:11:77"),
+            eq(OPAQUE_PUBLISHED_RELEASE_BUNDLE_REF),
             eq(77L),
             org.mockito.ArgumentMatchers.isNull());
     assertNull(scriptPatchVersion.getValue());
@@ -1676,8 +1716,7 @@ class GameInstanceServiceImplTest {
                             .setGenerationConfigRevision("genrev-11")
                             .setVersionStateEpoch(77L)
                             .setReleaseBundleId(77L)
-                            .setPublishedReleaseBundleRef(
-                                runOwnedBundleRef(invocation.getArgument(0, Long.class)))
+                            .setPublishedReleaseBundleRef(OPAQUE_PUBLISHED_RELEASE_BUNDLE_REF)
                             .build())
                     .build());
     when(gameDesignClient.resolveLaunchDescriptor(
@@ -1688,54 +1727,24 @@ class GameInstanceServiceImplTest {
               long gameTemplateId = invocation.getArgument(1, Long.class);
               String controlPlaneRequestId = invocation.getArgument(2, String.class);
               AuthoredWorldSourceEvidence sourceEvidence = invocation.getArgument(3);
-              AuthoredWorldLaunchDescriptorEvidence.Request expectedRequest =
-                  new AuthoredWorldLaunchDescriptorEvidence.Request(
-                      sourceEvidence.targetNamespace(),
-                      controlPlaneRequestId,
-                      sourceEvidence.canonicalTenantId(),
-                      sourceEvidence.worldSlug(),
-                      sourceEvidence.operationId(),
-                      sourceEvidence.evidenceDigest(),
-                      gameTemplateId,
-                      false,
-                      null,
-                      false,
-                      null,
-                      false,
-                      null,
-                      false,
-                      null);
-              AuthoredWorldLaunchDescriptorEvidence evidence =
-                  AuthoredWorldLaunchDescriptorEvidence.create(
-                      expectedRequest,
-                      "ld-" + controlPlaneRequestId,
-                      11L,
-                      false,
-                      null,
-                      "{}",
-                      "genrev-11",
-                      77L,
-                      77L,
-                      runOwnedBundleRef(tenantId),
-                      false,
-                      null);
+              LaunchDescriptor descriptor = runOwnedDescriptorOverride;
+              if (descriptor == null) {
+                descriptor =
+                    RunOwnedInitialAdmissionLaunchEvidenceTestFixture.create(
+                            new StartSessionRequest(
+                                tenantId, gameTemplateId, controlPlaneRequestId, 42L),
+                            sourceEvidence,
+                            runOwnedBundleRef(tenantId))
+                        .launchDescriptor();
+              }
               return ResolveLaunchDescriptorResponse.newBuilder()
-                  .setLaunchDescriptor(
-                      AuthoredWorldLaunchDescriptorGrpcCodec.toLaunchDescriptorMessage(evidence))
+                  .setLaunchDescriptor(descriptor)
                   .build();
             });
     when(gameDesignClient.getPublishedReleaseBundle(any(Long.class), any(Long.class)))
         .thenReturn(
             GetPublishedReleaseBundleResponse.newBuilder()
-                .setBundle(
-                    net.firedevops.firemud.gamedesign.v1.PublishedReleaseBundle.newBuilder()
-                        .setId(77L)
-                        .setVersionId(11L)
-                        .setAttestationSchemaVersion("v1")
-                        .setManifestHash("manifest-11")
-                        .addRequiredManifestAssetKeys("manifest.json")
-                        .setGenerationConfigRevision("genrev-11")
-                        .build())
+                .setBundle(publishedReleaseBundle(OPAQUE_PUBLISHED_RELEASE_BUNDLE_REF))
                 .build());
     when(gameDesignClient.getVersionAssetArtifactState(any(Long.class), any(Long.class)))
         .thenReturn(
@@ -1789,6 +1798,18 @@ class GameInstanceServiceImplTest {
 
   private static AuthoredWorldSourceEvidence sourceEvidence(StartSessionRequest request) {
     return sourceEvidence(request, 29L);
+  }
+
+  private static PublishedReleaseBundle publishedReleaseBundle(String publishedReleaseBundleRef) {
+    return PublishedReleaseBundle.newBuilder()
+        .setId(77L)
+        .setVersionId(11L)
+        .setAttestationSchemaVersion("v1")
+        .setManifestHash("manifest-11")
+        .addRequiredManifestAssetKeys("manifest.json")
+        .setGenerationConfigRevision("genrev-11")
+        .setPublishedReleaseBundleRef(publishedReleaseBundleRef)
+        .build();
   }
 
   private static AuthoredWorldSourceEvidence sourceEvidence(
@@ -1891,6 +1912,40 @@ class GameInstanceServiceImplTest {
         error.getMessage());
   }
 
+  @ParameterizedTest
+  @ValueSource(strings = {"", "another-owner-reference", "prb:1:11:77"})
+  void startSessionRejectsPublishedBundleReferenceThatDoesNotMatchDescriptor(String bundleRef) {
+    StartSessionRequest request = new StartSessionRequest(1L, 3L, "cp-bundle-ref-mismatch", 42L);
+    when(gameDesignClient.getPublishedReleaseBundle(1L, 11L))
+        .thenReturn(
+            GetPublishedReleaseBundleResponse.newBuilder()
+                .setBundle(publishedReleaseBundle(bundleRef))
+                .build());
+
+    IllegalArgumentException error =
+        assertThrows(IllegalArgumentException.class, () -> service.startSession(request));
+
+    assertEquals(
+        "RELEASE_ATTESTATION_MISMATCH: resolved launch descriptor does not match the published"
+            + " release bundle",
+        error.getMessage());
+    verify(worldManagementClient, never())
+        .prepareWorldInstance(
+            anyLong(),
+            anyLong(),
+            anyLong(),
+            anyString(),
+            anyString(),
+            anyLong(),
+            any(),
+            any(),
+            anyString(),
+            anyLong(),
+            anyString(),
+            anyLong(),
+            any());
+  }
+
   @Test
   void startSessionRejectsNonPositiveLaunchDescriptorTenantIdBeforeWorldPreparation() {
     StartSessionRequest request = new StartSessionRequest(1L, 3L, "cp-launch-tenant", 42L);
@@ -1907,7 +1962,7 @@ class GameInstanceServiceImplTest {
                         .setGenerationConfigRevision("genrev-11")
                         .setVersionStateEpoch(77L)
                         .setReleaseBundleId(77L)
-                        .setPublishedReleaseBundleRef("prb:1:11:77")
+                        .setPublishedReleaseBundleRef(OPAQUE_PUBLISHED_RELEASE_BUNDLE_REF)
                         .build())
                 .build())
         .when(gameDesignClient)
@@ -2074,7 +2129,7 @@ class GameInstanceServiceImplTest {
                             .setVersionId("11")
                             .setReleaseBundleId("77")
                             .setGenerationConfigRevision("genrev-11")
-                            .setPublishedReleaseBundleRef("prb:1:11:77")
+                            .setPublishedReleaseBundleRef(OPAQUE_PUBLISHED_RELEASE_BUNDLE_REF)
                             .setVersionStateEpoch(77L)
                             .setLifecycleEpoch(1L)
                             .setStatus(
@@ -2099,7 +2154,7 @@ class GameInstanceServiceImplTest {
                             .setVersionId("11")
                             .setReleaseBundleId("77")
                             .setGenerationConfigRevision("genrev-11")
-                            .setPublishedReleaseBundleRef("prb:1:11:77")
+                            .setPublishedReleaseBundleRef(OPAQUE_PUBLISHED_RELEASE_BUNDLE_REF)
                             .setVersionStateEpoch(77L)
                             .setLifecycleEpoch(2L)
                             .setStatus(
@@ -2239,7 +2294,7 @@ class GameInstanceServiceImplTest {
         .setGameInstanceId(Long.toString(gameInstanceId))
         .setGameTemplateId(Long.toString(request.gameTemplateId()))
         .setControlPlaneRequestId(request.controlPlaneRequestId())
-        .setLaunchDescriptorId("ld-" + request.controlPlaneRequestId())
+        .setLaunchDescriptorId("launch-descriptor-fixture-11")
         .setVersionId("11")
         .setReleaseBundleId("77")
         .setGenerationConfigRevision("genrev-11")
