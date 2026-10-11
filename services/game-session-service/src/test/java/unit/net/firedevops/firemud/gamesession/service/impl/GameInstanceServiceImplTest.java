@@ -1488,8 +1488,7 @@ class GameInstanceServiceImplTest {
                     .setLaunchDescriptor(
                         net.firedevops.firemud.gamedesign.v1.LaunchDescriptor.newBuilder()
                             .setLaunchDescriptorId("ld-" + invocation.getArgument(2, String.class))
-                            .setTenantId(
-                                Long.toString(invocation.getArgument(0, Long.class)))
+                            .setTenantId(Long.toString(invocation.getArgument(0, Long.class)))
                             .setGameTemplateId(invocation.getArgument(1, Long.class))
                             .setControlPlaneRequestId(invocation.getArgument(2, String.class))
                             .setVersionId(11L)

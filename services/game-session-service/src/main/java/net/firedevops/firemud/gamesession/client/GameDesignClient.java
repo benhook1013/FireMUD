@@ -23,6 +23,7 @@ import net.firedevops.firemud.gamedesign.v1.GetVersionStateResponse;
 import net.firedevops.firemud.gamedesign.v1.HelpTopicScope;
 import net.firedevops.firemud.gamedesign.v1.ResolveHelpTopicRequest;
 import net.firedevops.firemud.gamedesign.v1.ResolveHelpTopicResponse;
+import net.firedevops.firemud.gamedesign.v1.ResolveLaunchDescriptorRequest;
 import net.firedevops.firemud.gamedesign.v1.ResolveLaunchDescriptorResponse;
 import net.firedevops.firemud.gamesession.service.GameAuthoredHelpReader;
 import net.firedevops.firemud.shared.v1.ErrorDetail;
