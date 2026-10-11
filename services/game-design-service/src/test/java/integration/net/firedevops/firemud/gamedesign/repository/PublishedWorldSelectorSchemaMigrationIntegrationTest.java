@@ -50,14 +50,20 @@ class PublishedWorldSelectorSchemaMigrationIntegrationTest {
   void freshInstallAcceptsSelectedV2OnlyWithControlPlaneDigestSchemaTwo() throws Exception {
     String schema = newSchema("fresh");
     DriverManagerDataSource dataSource = dataSource(schema);
-    migrate(dataSource, schema, null);
+    // Exercise the selected-schema guard before V50 requires an operation-backed release insert.
+    migrate(dataSource, schema, MigrationVersion.fromVersion("49.1"));
     JdbcTemplate jdbc = new JdbcTemplate(dataSource);
 
     PersistedTarget accepted = persistTarget(jdbc, 1);
     WorldPublishedStartLocationEvidence acceptedEvidence = evidence(accepted);
-    insertRelease(
-        jdbc, accepted, acceptedEvidence, selectedV2Participants(accepted, acceptedEvidence));
+    long acceptedReleaseId =
+        insertRelease(
+            jdbc, accepted, acceptedEvidence, selectedV2Participants(accepted, acceptedEvidence));
     assertThat(releaseCount(jdbc, accepted.versionId())).isEqualTo(1L);
+    String acceptedRowBeforeLatest = retainedBundleRow(jdbc, acceptedReleaseId);
+    Map<String, Object> functionBeforeLatest = selectorFunctionIdentity(jdbc);
+    Map<String, Object> triggerBeforeLatest = selectorTriggerIdentity(jdbc);
+    String functionBodyBeforeLatest = selectorFunctionBody(jdbc);
 
     PersistedTarget rejected = persistTarget(jdbc, 2);
     WorldPublishedStartLocationEvidence rejectedEvidence = evidence(rejected);
@@ -79,6 +85,14 @@ class PublishedWorldSelectorSchemaMigrationIntegrationTest {
                   .isEqualTo("release v2 participant differs from selected commit/digest/schema");
             });
     assertThat(releaseCount(jdbc, rejected.versionId())).isEqualTo(0L);
+
+    migrate(dataSource, schema, null);
+
+    assertThat(retainedBundleRow(jdbc, acceptedReleaseId)).isEqualTo(acceptedRowBeforeLatest);
+    assertThat(selectorFunctionIdentity(jdbc)).isEqualTo(functionBeforeLatest);
+    assertThat(selectorTriggerIdentity(jdbc)).isEqualTo(triggerBeforeLatest);
+    assertThat(selectorFunctionBody(jdbc)).isEqualTo(functionBodyBeforeLatest);
+    assertLatestGuardRejectsReleaseWithoutOwnerAttempt(jdbc, 3);
   }
 
   @Test
@@ -106,7 +120,7 @@ class PublishedWorldSelectorSchemaMigrationIntegrationTest {
     String functionBodyBefore = selectorFunctionBody(jdbc);
     assertThat(functionBodyBefore).contains("('GAME_DESIGN_CONTROL_PLANE',1)");
 
-    migrate(dataSource, schema, null);
+    migrate(dataSource, schema, MigrationVersion.fromVersion("49.1"));
 
     assertThat(retainedBundleRow(jdbc, retainedBundleId)).isEqualTo(retainedRowBefore);
     assertThat(retainedBundleRow(jdbc, legacyV2BundleId)).isEqualTo(legacyV2RowBefore);
@@ -119,9 +133,11 @@ class PublishedWorldSelectorSchemaMigrationIntegrationTest {
 
     PersistedTarget accepted = persistTarget(jdbc, 2);
     WorldPublishedStartLocationEvidence acceptedEvidence = evidence(accepted);
-    insertRelease(
-        jdbc, accepted, acceptedEvidence, selectedV2Participants(accepted, acceptedEvidence));
+    long acceptedReleaseId =
+        insertRelease(
+            jdbc, accepted, acceptedEvidence, selectedV2Participants(accepted, acceptedEvidence));
     assertThat(releaseCount(jdbc, accepted.versionId())).isEqualTo(1L);
+    String acceptedRowBeforeLatest = retainedBundleRow(jdbc, acceptedReleaseId);
 
     PersistedTarget rejected = persistTarget(jdbc, 3);
     WorldPublishedStartLocationEvidence rejectedEvidence = evidence(rejected);
@@ -143,6 +159,32 @@ class PublishedWorldSelectorSchemaMigrationIntegrationTest {
                   .isEqualTo("release v2 participant differs from selected commit/digest/schema");
             });
     assertThat(releaseCount(jdbc, rejected.versionId())).isEqualTo(0L);
+
+    String functionBodyAfterSelectorMigration = selectorFunctionBody(jdbc);
+    migrate(dataSource, schema, null);
+
+    assertThat(retainedBundleRow(jdbc, retainedBundleId)).isEqualTo(retainedRowBefore);
+    assertThat(retainedBundleRow(jdbc, legacyV2BundleId)).isEqualTo(legacyV2RowBefore);
+    assertThat(retainedBundleRow(jdbc, acceptedReleaseId)).isEqualTo(acceptedRowBeforeLatest);
+    assertThat(selectorFunctionIdentity(jdbc)).isEqualTo(functionBefore);
+    assertThat(selectorTriggerIdentity(jdbc)).isEqualTo(triggerBefore);
+    assertThat(selectorFunctionBody(jdbc)).isEqualTo(functionBodyAfterSelectorMigration);
+    assertLatestGuardRejectsReleaseWithoutOwnerAttempt(jdbc, 4);
+  }
+
+  private void assertLatestGuardRejectsReleaseWithoutOwnerAttempt(
+      JdbcTemplate jdbc, int versionNumber) throws Exception {
+    // A schema-valid v2 row still needs a genuine publication attempt under the latest guard.
+    PersistedTarget target = persistTarget(jdbc, versionNumber);
+    WorldPublishedStartLocationEvidence targetEvidence = evidence(target);
+    assertThatThrownBy(
+            () ->
+                insertRelease(
+                    jdbc, target, targetEvidence, selectedV2Participants(target, targetEvidence)))
+        .rootCause()
+        .isInstanceOf(PSQLException.class)
+        .satisfies(cause -> assertThat(((PSQLException) cause).getSQLState()).isEqualTo("P0002"));
+    assertThat(releaseCount(jdbc, target.versionId())).isEqualTo(0L);
   }
 
   private DriverManagerDataSource dataSource(String schema) {
