@@ -80,12 +80,12 @@ public class AccountJwtValidatorInventoryRepository {
   /** Reads the exact previously persisted snapshot and rechecks its Account binding. */
   @Transactional(propagation = Propagation.MANDATORY)
   public StoredSnapshot readRequired(String digest, Binding binding, TrustFence trustFence) {
-    requireAccountTransaction();
+    requireWritableAccountTransaction();
     if (digest == null || !DIGEST.matcher(digest).matches()) {
       throw new InventorySnapshotUnavailableException();
     }
     Record row =
-        dsl.fetchOne("SELECT * FROM " + TABLE + " WHERE snapshot_digest = ? FOR KEY SHARE", digest);
+        dsl.fetchOne("SELECT * FROM " + TABLE + " WHERE snapshot_digest = ? FOR SHARE", digest);
     StoredSnapshot stored = decode(row);
     requireBinding(stored, binding, trustFence);
     return stored;

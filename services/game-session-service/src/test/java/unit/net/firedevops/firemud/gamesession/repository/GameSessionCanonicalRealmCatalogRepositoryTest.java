@@ -21,10 +21,10 @@ class GameSessionCanonicalRealmCatalogRepositoryTest {
   @Test
   void explicitPublicRequestPreservesRealmSelectorAndOpaqueOwnerPolicyExactly() {
     CreateCanonicalRealmCatalogRequest request =
-        request(" Production Realm/West ", "Café 🐉", "realm-local-characters-v7");
+        request("production-realm-west", "Café 🐉", "realm-local-v7");
 
-    assertThat(request.realmSlug()).isEqualTo(" Production Realm/West ");
-    assertThat(request.characterCreationPolicy()).isEqualTo("realm-local-characters-v7");
+    assertThat(request.realmSlug()).isEqualTo("production-realm-west");
+    assertThat(request.characterCreationPolicy()).isEqualTo("realm-local-v7");
     assertThat(request.visible()).isTrue();
     assertThat(request.publicProduction()).isTrue();
     assertThat(request.stateScope()).isEqualTo("SHARED");
@@ -73,30 +73,30 @@ class GameSessionCanonicalRealmCatalogRepositoryTest {
   @Test
   void requestDigestIsStableAndBindsEachCreationInputAndExactSourceReceipt() {
     IntakeReceipt source = sourceReceipt();
-    CreateCanonicalRealmCatalogRequest original = request("Arcology", "The City", "owner-mode");
+    CreateCanonicalRealmCatalogRequest original = request("arcology", "The City", "owner-mode");
     String digest = GameSessionCanonicalRealmCatalogRepository.requestDigest(original, source);
 
     assertThat(GameSessionCanonicalRealmCatalogRepository.requestDigest(original, source))
         .isEqualTo(digest);
     assertThat(
             GameSessionCanonicalRealmCatalogRepository.requestDigest(
-                request("arcology", "The City", "owner-mode"), source))
+                request("another-arcology", "The City", "owner-mode"), source))
         .isNotEqualTo(digest);
     assertThat(
             GameSessionCanonicalRealmCatalogRepository.requestDigest(
-                request("Arcology", "Another Display", "owner-mode"), source))
+                request("arcology", "Another Display", "owner-mode"), source))
         .isNotEqualTo(digest);
     assertThat(
             GameSessionCanonicalRealmCatalogRepository.requestDigest(
-                request("Arcology", "The City", "owner-mode", true, true, "ISOLATED"), source))
+                request("arcology", "The City", "owner-mode", true, true, "ISOLATED"), source))
         .isNotEqualTo(digest);
     assertThat(
             GameSessionCanonicalRealmCatalogRepository.requestDigest(
-                request("Arcology", "The City", "another-owner-mode"), source))
+                request("arcology", "The City", "another-owner-mode"), source))
         .isNotEqualTo(digest);
     assertThat(
             GameSessionCanonicalRealmCatalogRepository.requestDigest(
-                request("Arcology", "The City", "owner-mode", uuid(6)), source))
+                request("arcology", "The City", "owner-mode", uuid(6)), source))
         .isNotEqualTo(digest);
   }
 

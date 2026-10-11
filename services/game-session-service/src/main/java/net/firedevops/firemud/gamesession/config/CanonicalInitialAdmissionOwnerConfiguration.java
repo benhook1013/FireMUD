@@ -9,9 +9,11 @@ import net.firedevops.firemud.gamesession.service.CanonicalInitialAdmissionServi
 import net.firedevops.firemud.gamesession.service.CanonicalInitialAdmissionWorldVerifier;
 import net.firedevops.firemud.gamesession.service.impl.DatabaseCanonicalInitialAdmissionService;
 import org.jooq.DSLContext;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.transaction.PlatformTransactionManager;
 
 /** Explicit opt-in composition for the canonical initial-admission owner. */
 @Configuration(proxyBeanMethods = false)
@@ -35,8 +37,9 @@ public class CanonicalInitialAdmissionOwnerConfiguration {
   CanonicalInitialAdmissionService canonicalInitialAdmissionService(
       CanonicalInitialAdmissionRepository repository,
       GameSessionCanonicalAdmissionPointerRepository pointerRepository,
-      CanonicalInitialAdmissionWorldVerifier worldVerifier) {
+      CanonicalInitialAdmissionWorldVerifier worldVerifier,
+      @Qualifier("transactionManager") PlatformTransactionManager transactionManager) {
     return new DatabaseCanonicalInitialAdmissionService(
-        repository, pointerRepository, worldVerifier);
+        repository, pointerRepository, worldVerifier, transactionManager);
   }
 }

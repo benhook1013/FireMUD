@@ -338,6 +338,20 @@ class StatusTest(unittest.TestCase):
                 **kwargs,
             )
 
+    def _live_required_authority_failure_report(self, error: BaseException, *, base: str = "develop") -> dict:
+        payload = github_payload()
+        pull_request = payload["data"]["repository"]["pullRequest"]
+        pull_request["baseRefName"] = base
+        del pull_request["required_status_checks"]
+        with (
+            patch.object(github, "fetch_pull_request", return_value=payload),
+            patch.object(github, "fetch_pr_metadata", return_value={}),
+            patch.object(github, "fetch_required_status_checks", side_effect=error),
+            patch.object(github, "fetch_check_inventory", return_value=pull_request["statusCheckRollup"]),
+            patch.object(status, "_loc_status", return_value={"status": "fresh", "merge_base_checked": True}),
+        ):
+            return status.build_report("owner/repo", 2838, checkpoint_payload=checkpoint_payload())
+
     @staticmethod
     def _coderabbit_review(
         body: str,
@@ -1077,6 +1091,9 @@ class StatusTest(unittest.TestCase):
             compact,
         )
         self.assertIn(report["verdict"], compact)
+        self.assertEqual(report["readiness_scope"], "current_base_merge")
+        self.assertIn("current-base merge readiness:", compact)
+        self.assertIn("a logical front does not grant admission", compact)
         self.assertEqual(decoded, report)
         self.assertEqual(decoded["threads"], {"current": 1, "outdated": 0, "total": 1})
 
@@ -1153,6 +1170,252 @@ class StatusTest(unittest.TestCase):
         self.assertEqual(observed, 3)
         self.assertEqual([item["name"] for item in failed], ["deploy"])
         self.assertEqual(pending, [])
+
+    @staticmethod
+    def native_check(suite: int, conclusion: str, started: str | None = "2026-09-23T00:00:00Z") -> dict:
+        check = {
+            "id": suite + 1000,
+            "name": "Shared Job",
+            "check_suite": {"id": suite},
+            "head_sha": HEAD,
+            "app": {"id": 15368, "slug": "github-actions"},
+            "status": "completed",
+            "conclusion": conclusion,
+            "details_url": f"https://checks.test/{suite}",
+        }
+        if started is not None:
+            check["started_at"] = started
+        return check
+
+    @staticmethod
+    def native_run(suite: int, workflow: int = 10, name: str = "Same Human Name") -> dict:
+        return {
+            "id": suite + 2000,
+            "check_suite_id": suite,
+            "workflow_id": workflow,
+            "name": name,
+            "head_sha": HEAD,
+            "repository": {"id": 20, "full_name": "owner/repo"},
+            "run_attempt": 2,
+        }
+
+    def native_inventory(self, checks: list[dict], runs: list[dict], total: int | None = None) -> dict:
+        with patch.object(
+            github,
+            "_fetch_api_pages",
+            side_effect=[
+                [{"check_runs": checks}],
+                [{"workflow_runs": runs, "total_count": len(runs) if total is None else total}],
+                [{"statuses": []}],
+            ],
+        ) as fetch_pages:
+            inventory = github.fetch_check_inventory("owner/repo", HEAD)
+        self.assertEqual(fetch_pages.call_count, 3)
+        self.assertEqual(
+            fetch_pages.call_args_list[1].args[0],
+            f"repos/owner/repo/actions/runs?head_sha={HEAD}&per_page=100",
+        )
+        return inventory
+
+    def test_rest_check_inventory_uses_exact_workflows_and_preserves_raw_fields(self) -> None:
+        checks = [
+            self.native_check(1, "failure"),
+            self.native_check(2, "success", "2026-09-23T00:01:00Z"),
+            self.native_check(3, "failure"),
+            self.native_check(4, "success", "2026-09-23T00:01:00Z"),
+            self.native_check(5, "success"),
+            self.native_check(6, "failure", "2026-09-23T00:01:00Z"),
+        ]
+        # First pair is one renamed workflow; second pair has identical human
+        # names but distinct workflow IDs; third pair preserves latest failure.
+        runs = [
+            self.native_run(1, 10, "Old Name"),
+            self.native_run(2, 10, "New Name"),
+            self.native_run(3, 30),
+            self.native_run(4, 40),
+            self.native_run(5, 50),
+            self.native_run(6, 50),
+        ]
+        inventory = self.native_inventory(checks, runs)
+        for source, normalized in zip(checks, inventory["check_runs"], strict=True):
+            for key, value in source.items():
+                self.assertEqual(normalized[key], value)
+            self.assertEqual(normalized["__typename"], "CheckRun")
+            self.assertEqual(normalized["startedAt"], source["started_at"])
+            self.assertEqual(normalized["detailsUrl"], source["details_url"])
+            self.assertEqual(normalized["workflowRunId"], source["check_suite"]["id"] + 2000)
+        pending, failed, observed = status.normalize_checks(inventory["check_runs"])
+        self.assertEqual(observed, 6)
+        self.assertEqual(pending, [])
+        self.assertEqual({item["url"] for item in failed}, {"https://checks.test/3", "https://checks.test/6"})
+
+    def test_native_workflow_metadata_missing_or_conflicting_fails_closed(self) -> None:
+        cases = [
+            ("missing workflow", lambda run, check: run.pop("workflow_id")),
+            ("boolean workflow", lambda run, check: run.update(workflow_id=True)),
+            ("string workflow", lambda run, check: run.update(workflow_id="10")),
+            ("missing run head", lambda run, check: run.pop("head_sha")),
+            ("wrong run head", lambda run, check: run.update(head_sha=BASE)),
+            ("missing check head", lambda run, check: check.pop("head_sha")),
+            ("wrong check head", lambda run, check: check.update(head_sha=BASE)),
+            ("wrong repository", lambda run, check: run["repository"].update(full_name="other/repo")),
+            ("invalid repository name", lambda run, check: run["repository"].update(full_name=1)),
+            ("missing repository", lambda run, check: run.pop("repository")),
+            ("boolean repository ID", lambda run, check: run["repository"].update(id=True)),
+            ("wrong app", lambda run, check: check["app"].update(id=254, slug="codecov")),
+            ("wrong app slug", lambda run, check: check["app"].update(slug="other")),
+            ("missing app", lambda run, check: check.pop("app")),
+            ("boolean suite", lambda run, check: check["check_suite"].update(id=True)),
+            ("unmatched suite", lambda run, check: run.update(check_suite_id=999)),
+        ]
+        for label, mutate in cases:
+            with self.subTest(label=label):
+                checks = [self.native_check(1, "failure"), self.native_check(2, "success", "2026-09-23T00:01:00Z")]
+                runs = [self.native_run(1), self.native_run(2)]
+                mutate(runs[0], checks[0])
+                # A misleading native name must never rescue an unproven identity.
+                checks[0]["workflowName"] = checks[1]["workflowName"] = "Same Human Name"
+                inventory = self.native_inventory(checks, runs)
+                self.assertIsNone(inventory["check_runs"][0]["workflowIdentity"])
+                self.assertEqual(len(status.normalize_checks(inventory["check_runs"])[1]), 1)
+        checks = [self.native_check(1, "failure"), self.native_check(2, "success", "2026-09-23T00:01:00Z")]
+        conflict = self.native_run(1, 99)
+        conflict["id"] = 9000
+        inventory = self.native_inventory(checks, [self.native_run(1), self.native_run(2), conflict])
+        self.assertIsNone(inventory["check_runs"][0]["workflowIdentity"])
+        self.assertEqual(len(status.normalize_checks(inventory["check_runs"])[1]), 1)
+
+    def test_native_workflow_order_and_mixed_inventory_fail_closed(self) -> None:
+        for started in (None, "invalid", "2026-09-23T00:01:00Z"):
+            with self.subTest(started=started):
+                inventory = self.native_inventory(
+                    [self.native_check(1, "failure", started), self.native_check(2, "success", "2026-09-23T00:01:00Z")],
+                    [self.native_run(1), self.native_run(2)],
+                )
+                self.assertEqual(len(status.normalize_checks(inventory["check_runs"])[1]), 1)
+        inventory = self.native_inventory(
+            [self.native_check(2, "success", "2026-09-23T00:01:00Z")], [self.native_run(2)]
+        )
+        graphql = {
+            "__typename": "CheckRun",
+            "workflowName": "Same Human Name",
+            "name": "Shared Job",
+            "startedAt": "2026-09-23T00:00:00Z",
+            "conclusion": "failure",
+        }
+        self.assertEqual(len(status.normalize_checks([graphql, *inventory["check_runs"]])[1]), 1)
+        for key, value in (("workflow_id", True), ("repository_id", 0), ("app_id", 254), ("head_sha", BASE)):
+            with self.subTest(identity_field=key):
+                inventory = self.native_inventory(
+                    [self.native_check(1, "failure"), self.native_check(2, "success", "2026-09-23T00:01:00Z")],
+                    [self.native_run(1), self.native_run(2)],
+                )
+                inventory["check_runs"][0]["workflowIdentity"][key] = value
+                self.assertEqual(len(status.normalize_checks(inventory["check_runs"])[1]), 1)
+
+    def test_native_workflow_inventory_requires_complete_paginated_coverage(self) -> None:
+        for total in (0, 2, 1001, True):
+            with self.subTest(total=total), self.assertRaises(RuntimeError):
+                self.native_inventory([self.native_check(1, "failure")], [self.native_run(1)], total)
+        for pages in (
+            [
+                {"workflow_runs": [self.native_run(1)], "total_count": 2},
+                {"workflow_runs": [self.native_run(2)], "total_count": 3},
+            ],
+            [
+                {"workflow_runs": [self.native_run(1)], "total_count": 2},
+                {"workflow_runs": [self.native_run(1)], "total_count": 2},
+            ],
+        ):
+            with (
+                self.subTest(pages=pages),
+                patch.object(github, "_fetch_api_pages", return_value=pages),
+                self.assertRaises(RuntimeError),
+            ):
+                github._actions_workflow_identities("owner/repo", HEAD)
+        with patch.object(
+            github,
+            "_fetch_api_pages",
+            return_value=[
+                {"workflow_runs": [self.native_run(1)], "total_count": 2},
+                {"workflow_runs": [self.native_run(2)], "total_count": 2},
+            ],
+        ):
+            self.assertEqual(set(github._actions_workflow_identities("owner/repo", HEAD)), {1, 2})
+
+    def test_non_actions_inventory_does_not_request_actions_metadata(self) -> None:
+        check = self.native_check(1, "failure")
+        check["app"] = {"id": 254, "slug": "codecov"}
+        with patch.object(
+            github, "_fetch_api_pages", side_effect=[[{"check_runs": [check]}], [{"statuses": []}]]
+        ) as fetch:
+            inventory = github.fetch_check_inventory("owner/repo", HEAD)
+        self.assertEqual(fetch.call_count, 2)
+        self.assertIsNone(inventory["check_runs"][0]["workflowIdentity"])
+        for key, value in check.items():
+            self.assertEqual(inventory["check_runs"][0][key], value)
+
+    def native_required_report(self, checks: list[dict], runs: list[dict], *, any_app: bool = False) -> dict:
+        checks = [{**check, "name": "Validation Gate"} for check in checks]
+        inventory = self.native_inventory(checks, runs)
+        payload = github_payload()
+        payload["data"]["repository"]["pullRequest"]["reviewThreads"] = {"nodes": []}
+        return self._ready_report(
+            payload,
+            check_inventory_payload=inventory,
+            required_status_checks_payload={
+                "available": True,
+                "contexts": ["Validation Gate"],
+                "checks": [] if any_app else [{"context": "Validation Gate", "app_id": 15368}],
+            },
+        )
+
+    def test_required_distinct_or_unproven_workflows_never_hide_failure_by_api_order(self) -> None:
+        for missing_identity in (False, True):
+            for started in (None, "2026-09-23T00:00:00Z", "2026-09-23T00:01:00Z"):
+                for reverse in (False, True):
+                    for any_app in (False, True):
+                        with self.subTest(
+                            identity_missing=missing_identity, start=started, reverse=reverse, any_app=any_app
+                        ):
+                            checks = [
+                                self.native_check(1, "failure", started),
+                                self.native_check(2, "success", "2026-09-23T00:01:00Z"),
+                            ]
+                            runs = [self.native_run(1, 10), self.native_run(2, 20)]
+                            if missing_identity:
+                                runs[0].pop("workflow_id")
+                            report = self.native_required_report(
+                                list(reversed(checks)) if reverse else checks, runs, any_app=any_app
+                            )
+                            self.assertFalse(report["ready"])
+                            self.assertEqual(report["verdict"], "NOT READY")
+                            self.assertEqual(report["ci"]["required"]["status"], "failed")
+                            self.assertEqual(report["ci"]["required"]["contexts"][0]["status"], "failed")
+                            self.assertEqual(report["ci"]["required"]["contexts"][0]["result"]["outcome"], "FAILURE")
+
+    def test_required_proven_workflow_retries_use_only_unambiguous_latest_start(self) -> None:
+        for old_start in (None, "2026-09-23T00:00:00Z", "2026-09-23T00:01:00Z"):
+            for reverse in (False, True):
+                for latest_failure in (False, True):
+                    with self.subTest(start=old_start, reverse=reverse, latest_failure=latest_failure):
+                        checks = [
+                            self.native_check(1, "success" if latest_failure else "failure", old_start),
+                            self.native_check(2, "failure" if latest_failure else "success", "2026-09-23T00:01:00Z"),
+                        ]
+                        report = self.native_required_report(
+                            list(reversed(checks)) if reverse else checks, [self.native_run(1), self.native_run(2)]
+                        )
+                        expected_ready = old_start == "2026-09-23T00:00:00Z" and not latest_failure
+                        self.assertEqual(report["ready"], expected_ready)
+                        self.assertEqual(report["ci"]["required"]["status"], "passed" if expected_ready else "failed")
+                        result = report["ci"]["required"]["contexts"][0]["result"]
+                        self.assertEqual(result["workflowIdentity"]["workflow_id"], 10)
+        with self.assertRaises(status.StatusError):
+            self.native_required_report(
+                [self.native_check(1, "failure", "malformed"), self.native_check(2, "success", "2026-09-23T00:01:00Z")],
+                [self.native_run(1), self.native_run(2)],
+            )
 
     def test_malformed_check_fails_closed(self) -> None:
         with self.assertRaises(status.StatusError):
@@ -1365,6 +1628,42 @@ class StatusTest(unittest.TestCase):
         self.assertIn("authoritative branch protection is unavailable", report["ci"]["required"]["reason"])
         self.assertFalse(report["ready"])
 
+    def test_explicit_branch_not_protected_response_is_classified_and_blocks_every_base(self) -> None:
+        for base in ("feature/stack-parent", "develop"):
+            with self.subTest(base=base):
+                report = self._live_required_authority_failure_report(
+                    RuntimeError("request failed\ngh: Branch not protected (HTTP 404)\nprovider detail"),
+                    base=base,
+                )
+
+                required = report["ci"]["required"]
+                self.assertFalse(required["available"])
+                self.assertEqual(required["reason_code"], "branch_not_protected")
+                self.assertIn(f"current base branch {base}", required["reason"])
+                self.assertIn("current-base merge readiness is unavailable", required["reason"])
+                self.assertIn(required["reason"], report["reasons"])
+                self.assertEqual(report["readiness_scope"], "current_base_merge")
+                self.assertFalse(report["ready"])
+                self.assertEqual(report["verdict"], "NOT READY")
+
+    def test_other_required_authority_failures_remain_generic(self) -> None:
+        for error in (
+            RuntimeError("gh: Not Found (HTTP 404)"),
+            RuntimeError("gh: Resource not accessible by integration (HTTP 403)"),
+            TimeoutError("gh api timed out after 120 seconds"),
+        ):
+            with self.subTest(error=str(error)):
+                report = self._live_required_authority_failure_report(error, base="feature/stack-parent")
+                required = report["ci"]["required"]
+
+                self.assertFalse(required["available"])
+                self.assertNotIn("reason_code", required)
+                self.assertEqual(
+                    required["reason"],
+                    f"authoritative branch protection unavailable: {error}",
+                )
+                self.assertFalse(report["ready"])
+
     def test_success_rollup_reports_conflicting_failed_or_pending_inventory(self) -> None:
         for conclusion, lifecycle, category in (
             ("FAILURE", "COMPLETED", "failed"),
@@ -1430,6 +1729,7 @@ class StatusTest(unittest.TestCase):
         self.assertTrue(report["ci"]["aggregate_inventory_conflict"])
         self.assertTrue(report["ready"])
         self.assertEqual(report["verdict"], "READY")
+        self.assertEqual(report["readiness_scope"], "current_base_merge")
         self.assertIn("optional_failed=1", status.emit_text(report))
 
     def test_unavailable_inventory_labels_empty_and_failed_fallback_as_rollup_observations(self) -> None:
@@ -1439,8 +1739,7 @@ class StatusTest(unittest.TestCase):
                 pr = payload["data"]["repository"]["pullRequest"]
                 pr["reviewThreads"] = {"nodes": []}
                 pr["statusCheckRollup"] = (
-                    [{"name": "Account", "status": "COMPLETED", "conclusion": "FAILURE"}]
-                    if failure else []
+                    [{"name": "Account", "status": "COMPLETED", "conclusion": "FAILURE"}] if failure else []
                 )
                 report = self._ready_report(
                     payload,
@@ -1660,7 +1959,9 @@ class StatusTest(unittest.TestCase):
                     }
                     controller = Mock()
 
-                    def fresh_stack_status(number: int, report: dict = report, stack_report: dict = stack_report) -> dict:
+                    def fresh_stack_status(
+                        number: int, report: dict = report, stack_report: dict = stack_report
+                    ) -> dict:
                         public_status.assert_called_once()
                         self.assertEqual(number, 2838)
                         self.assertTrue(report["ready"])

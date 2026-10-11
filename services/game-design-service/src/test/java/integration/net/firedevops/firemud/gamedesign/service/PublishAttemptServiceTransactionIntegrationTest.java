@@ -14,6 +14,7 @@ import java.util.List;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding.TargetProof;
+import net.firedevops.firemud.common.gamedesign.AuthoredWorldReleaseAttestationEvidence;
 import net.firedevops.firemud.common.publication.PublicationDigestRequestBinding;
 import net.firedevops.firemud.common.temporal.FiremudWorkflowIds;
 import net.firedevops.firemud.gamedesign.GameDesignServiceApplication;
@@ -67,7 +68,10 @@ import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
-/** PostgreSQL proof for private publication mechanics, retention, and public-ingress denial. */
+/**
+ * PostgreSQL proof for isolated selected-publication mechanics, finalization recovery, and
+ * public-ingress denial.
+ */
 @Testcontainers(disabledWithoutDocker = true)
 @SpringBootTest(
     classes = GameDesignServiceApplication.class,
@@ -339,6 +343,8 @@ class PublishAttemptServiceTransactionIntegrationTest {
     assertThat(storedAttempt.getRequestDigest()).isEqualTo("exact-identity-digest");
   }
 
+  // These private mechanics tests use isolated Account/World fixture evidence. They exercise
+  // selected publication and finalization recovery, not live authorization or ingress.
   @Test
   void privateMechanicsHarnessCommitsAttemptVersionAndReleaseBundleTogether() {
     String tenantId = "9002";
@@ -358,7 +364,9 @@ class PublishAttemptServiceTransactionIntegrationTest {
             invocation -> {
               VersionDto version = invocation.getArgument(0);
               return PublishedWorldSelectorFixtures.participants(
-                  version.id(), fixture.operation().world());
+                  version.id(),
+                  fixture.operation().world(),
+                  AuthoredWorldReleaseAttestationEvidence.SELECTOR_SCHEMA_VERSION);
             });
     Mockito.when(assetExportService.exportAssets(tenantId, fixture.version().getVersionNumber()))
         .thenAnswer(invocation -> recordFixtureCandidate(fixture));
@@ -420,7 +428,9 @@ class PublishAttemptServiceTransactionIntegrationTest {
               candidateVersionId.set(candidate.id());
               candidateVersionNumber.set(candidate.versionNumber());
               return PublishedWorldSelectorFixtures.participants(
-                  candidate.id(), fixture.operation().world());
+                  candidate.id(),
+                  fixture.operation().world(),
+                  AuthoredWorldReleaseAttestationEvidence.SELECTOR_SCHEMA_VERSION);
             });
     Mockito.doAnswer(
             invocation -> {
@@ -521,6 +531,16 @@ class PublishAttemptServiceTransactionIntegrationTest {
             .findByTenantIdAndVersionId(tenantId, candidateVersionId.get())
             .orElseThrow();
     assertThat(failedArtifact.getArtifactState()).isEqualTo(VersionAssetArtifactState.FAILED);
+    assertThat(
+            exportCandidateService.readExportCandidate(
+                tenantId, retainedCandidate.getVersionNumber()))
+        .isEqualTo(exportedManifest);
+    assertThatThrownBy(
+            () ->
+                exportCandidateService.recordExportCandidate(
+                    tenantId, retainedCandidate.getVersionNumber(), exportedManifest))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessage("ASSET_EXPORT_CANDIDATE_CONFLICT");
     VersionTemplateRemapSet retainedRemapSet =
         templateRemapSetRepository
             .findByTenantIdAndRemapSetId(tenantId, remapSetId.get())

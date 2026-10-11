@@ -705,17 +705,19 @@ public class EntityManagementGrpcService
   public void createCharacter(
       CreateCharacterRequest request, StreamObserver<CreateCharacterResponse> responseObserver) {
     try {
-      long tenantId = requireTenantId(request.getTenantId());
-      long accountId = RequestIdValidation.requirePositiveLong(request.getAccountId(), "accountId");
-      CharacterDto created =
-          characterService.create(
-              tenantId,
-              accountId,
-              request.getName(),
-              request.getGameInstanceId(),
-              requirePlayableStateScope(request.getPlayableStateScope()));
+      requireTenantId(request.getTenantId());
+      RequestIdValidation.requirePositiveLong(request.getAccountId(), "accountId");
+      requirePlayableStateScope(request.getPlayableStateScope());
       CreateCharacterResponse response =
-          CreateCharacterResponse.newBuilder().setCharacterId(String.valueOf(created.id())).build();
+          CreateCharacterResponse.newBuilder()
+              .setError(
+                  GrpcAppErrors.error(
+                      meterRegistry,
+                      logger,
+                      "CreateCharacter",
+                      "FAILED_PRECONDITION",
+                      "Character creation is unavailable until owner protections are implemented."))
+              .build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
     } catch (NumberFormatException ex) {

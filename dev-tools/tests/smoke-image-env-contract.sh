@@ -8,9 +8,37 @@ ROOT_ENV_BACKUP=""
 DOCKER_ENV_BACKUP=""
 ERR_FILE="$(mktemp)"
 OUT_FILE="$(mktemp)"
+TEST_OWNERSHIP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/firemud-smoke-image-env-contract.XXXXXX")"
+TEST_RUN_ID="smoke-image-env-contract-$$"
+chmod 700 "$TEST_OWNERSHIP_DIR"
+export TEST_OWNERSHIP_DIR
+
+docker() {
+  case "$1 $2" in
+    "ps -a"|"network ls"|"volume ls") return 0 ;;
+    compose\ *)
+      local expected_receipt_directory
+      expected_receipt_directory="$FIREMUD_SMOKE_OWNERSHIP_DIR_RESOLVED/$FIREMUD_SMOKE_PROJECT_KEY.authored-world-source"
+      if [[ "${FIREMUD_SMOKE_AUTHORED_WORLD_SOURCE_RECEIPT_DIR_HOST_PATH:-}" != "$expected_receipt_directory" ||
+        ! -d "$expected_receipt_directory" ||
+        "${FIREMUD_SMOKE_INITIAL_ADMISSION_FIXTURE_ENABLED:-}" != true ||
+        ! -f "${FIREMUD_SMOKE_INITIAL_ADMISSION_CAPABILITY_HOST_PATH:-}" ]]; then
+        echo "Compose ran before the claimed initial-admission receipt directory was prepared." >&2
+        return 1
+      fi
+      command docker "$@"
+      ;;
+    *)
+      echo "Unexpected Docker command in smoke image env contract: $*" >&2
+      return 1
+      ;;
+  esac
+}
+export -f docker
 
 cleanup() {
   rm -f "$ERR_FILE" "$OUT_FILE"
+  rm -rf -- "$TEST_OWNERSHIP_DIR"
   if [[ -n "$ROOT_ENV_BACKUP" && -f "$ROOT_ENV_BACKUP" ]]; then
     mv "$ROOT_ENV_BACKUP" "$ROOT_ENV_FILE"
   else
@@ -37,6 +65,13 @@ cat >"$ROOT_ENV_FILE" <<'EOF'
 FIREMUD_AUTH_JWT_SECRET=contract-override-jwt-secret
 EOF
 
+GITHUB_ACTIONS=true \
+GITHUB_RUN_ID="$TEST_RUN_ID" \
+GITHUB_RUN_ATTEMPT=1 \
+GITHUB_JOB=smoke-image-env-contract \
+COMPOSE_PROJECT_NAME="smoke-full-$TEST_RUN_ID-1" \
+FIREMUD_SMOKE_TEST_MODE=1 \
+FIREMUD_SMOKE_OWNERSHIP_DIR="$TEST_OWNERSHIP_DIR" \
 SMOKE_IMAGE_TAG=contract-smoke-tag \
 SMOKE_COMPOSE_CONFIG_ONLY=true \
 bash "$ROOT_DIR/dev-tools/verify-smoke-images.sh" >"$OUT_FILE" 2>"$ERR_FILE"
@@ -53,6 +88,13 @@ if grep -q 'Defaulting to a blank string' "$ERR_FILE"; then
   exit 1
 fi
 
+GITHUB_ACTIONS=true \
+GITHUB_RUN_ID="$TEST_RUN_ID" \
+GITHUB_RUN_ATTEMPT=1 \
+GITHUB_JOB=smoke-image-env-contract \
+COMPOSE_PROJECT_NAME="smoke-full-$TEST_RUN_ID-1" \
+FIREMUD_SMOKE_TEST_MODE=1 \
+FIREMUD_SMOKE_OWNERSHIP_DIR="$TEST_OWNERSHIP_DIR" \
 SMOKE_IMAGE_TAG=contract-smoke-tag \
 SMOKE_IMAGE_LOCAL_ONLY=true \
 SMOKE_COMPOSE_CONFIG_ONLY=true \
@@ -78,7 +120,14 @@ if ! grep -Fq 'SMOKE_MINIO_LOCAL_ONLY=true requires a unique local server image 
   exit 1
 fi
 
-if ! SMOKE_IMAGE_TAG=contract-smoke-tag \
+if ! GITHUB_ACTIONS=true \
+  GITHUB_RUN_ID="$TEST_RUN_ID" \
+  GITHUB_RUN_ATTEMPT=1 \
+  GITHUB_JOB=smoke-image-env-contract \
+  COMPOSE_PROJECT_NAME="smoke-full-$TEST_RUN_ID-1" \
+  FIREMUD_SMOKE_TEST_MODE=1 \
+  FIREMUD_SMOKE_OWNERSHIP_DIR="$TEST_OWNERSHIP_DIR" \
+  SMOKE_IMAGE_TAG=contract-smoke-tag \
   SMOKE_MINIO_LOCAL_ONLY=true \
   SMOKE_MINIO_SERVER_IMAGE=firemud-minio-server-smoke:contract \
   SMOKE_MINIO_CLIENT_IMAGE=firemud-minio-client-smoke:contract \

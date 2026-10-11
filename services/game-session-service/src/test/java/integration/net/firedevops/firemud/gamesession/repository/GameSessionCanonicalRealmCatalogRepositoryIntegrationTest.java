@@ -22,6 +22,7 @@ import net.firedevops.firemud.gamesession.repository.GameSessionCanonicalRealmCa
 import net.firedevops.firemud.gamesession.repository.GameSessionCanonicalRealmCatalogRepository.PreparedInitialPublicProduction;
 import org.flywaydb.core.Flyway;
 import org.flywaydb.core.api.MigrationVersion;
+import org.flywaydb.core.api.configuration.FluentConfiguration;
 import org.jooq.DSLContext;
 import org.jooq.Record;
 import org.jooq.SQLDialect;
@@ -57,8 +58,7 @@ class GameSessionCanonicalRealmCatalogRepositoryIntegrationTest {
     Fixture fixture = fixture(true);
     IntakeReceipt source = fixture.register(tenant(1), "new-world", "Fresh World", "NEW_GAME_ROW");
     CreateCanonicalRealmCatalogRequest request =
-        request(
-            source, uuid(20), " Public Realm / East ", "Public Realm", "owner-policy-v2", "SHARED");
+        request(source, uuid(20), "public-realm-east", "Public Realm", "owner-policy-v2", "SHARED");
     String retainedNamespaceXmin =
         requiredRecord(
                 fixture.dsl,
@@ -87,7 +87,7 @@ class GameSessionCanonicalRealmCatalogRepositoryIntegrationTest {
     assertThat(created.tenantId()).isEqualTo(tenant(1));
     assertThat(created.tenantSlug()).isEqualTo(source.source().tenantSlug());
     assertThat(created.worldSlug()).isEqualTo("new-world");
-    assertThat(created.realmSlug()).isEqualTo(" Public Realm / East ");
+    assertThat(created.realmSlug()).isEqualTo("public-realm-east");
     assertThat(created.stateScope()).isEqualTo("SHARED");
     assertThat(created.catalogRevision()).isEqualTo(1L);
     assertThat(created.playableStateNamespaceId()).isNotEqualTo(RETAINED_SHARED_NAMESPACE_ID);
@@ -340,14 +340,236 @@ class GameSessionCanonicalRealmCatalogRepositoryIntegrationTest {
 
     IntakeReceipt retained =
         fixture.register(tenant(3), "retained-world", "Retained World", "RETAINED_GAME_V29");
+    String retainedBindingXmin =
+        requiredRecord(
+                fixture.dsl,
+                "SELECT xmin::text AS xmin FROM game_session_authored_world_tenant_source_binding "
+                    + "WHERE canonical_tenant_id = ?",
+                retained.source().canonicalTenantId())
+            .get("xmin", String.class);
+    String retainedIntakeXmin =
+        requiredRecord(
+                fixture.dsl,
+                "SELECT xmin::text AS xmin FROM game_session_authored_world_source_intake "
+                    + "WHERE operation_id = ?",
+                retained.operationId())
+            .get("xmin", String.class);
     assertThatThrownBy(
             () ->
                 fixture.create(
                     request(retained, uuid(31), "retained-realm", "Realm", "owner-mode", "SHARED")))
         .isInstanceOf(InvalidCatalogEvidenceException.class)
         .hasMessageContaining("fresh Game Design");
+    assertThat(
+            requiredRecord(
+                fixture.dsl,
+                "SELECT xmin::text AS xmin, provenance_kind FROM "
+                    + "game_session_authored_world_tenant_source_binding WHERE canonical_tenant_id = ?",
+                retained.source().canonicalTenantId()))
+        .satisfies(
+            row -> {
+              assertThat(row.get("xmin", String.class)).isEqualTo(retainedBindingXmin);
+              assertThat(row.get("provenance_kind", String.class)).isEqualTo("RETAINED_GAME_V29");
+            });
+    assertThat(
+            requiredRecord(
+                fixture.dsl,
+                "SELECT xmin::text AS xmin, source_provenance_kind FROM "
+                    + "game_session_authored_world_source_intake WHERE operation_id = ?",
+                retained.operationId()))
+        .satisfies(
+            row -> {
+              assertThat(row.get("xmin", String.class)).isEqualTo(retainedIntakeXmin);
+              assertThat(row.get("source_provenance_kind", String.class))
+                  .isEqualTo("RETAINED_GAME_V29");
+            });
     assertThat(fixture.dsl.fetchCount(DSL.table(DSL.name("game_session_canonical_realm_catalog"))))
         .isEqualTo(1);
+  }
+
+  @Test
+  void rawSqlRejectsV30AndUnknownProvenanceForNewSourceRows() {
+    Fixture fixture = fixture(false);
+
+    for (String provenance : new String[] {"RETAINED_GAME_V30", "UNKNOWN_KIND"}) {
+      int suffix = provenance.equals("RETAINED_GAME_V30") ? 1 : 2;
+      assertThatThrownBy(
+              () ->
+                  fixture.dsl.execute(
+                      "INSERT INTO game_session_authored_world_tenant_source_binding "
+                          + "(target_namespace, canonical_tenant_id, tenant_slug, source_game_row_id, "
+                          + "source_game_tenant_key, provenance_kind) VALUES (?, ?, ?, ?, ?, ?)",
+                      NAMESPACE,
+                      uuid(900 + suffix),
+                      "raw-binding-" + suffix,
+                      990L + suffix,
+                      "legacy-key-" + suffix,
+                      provenance))
+          .isInstanceOf(DataAccessException.class)
+          .hasStackTraceContaining("chk_gs_authored_world_tenant_source_provenance_v29");
+
+      assertThatThrownBy(
+              () ->
+                  fixture.dsl.execute(
+                      "INSERT INTO game_session_authored_world_source_intake ("
+                          + "operation_id, schema_version, target_namespace, intake_request_id, "
+                          + "request_digest, source_schema_version, source_registration_request_id, "
+                          + "source_operation_id, source_request_digest, canonical_tenant_id, "
+                          + "tenant_slug, world_slug, world_display_name, source_game_row_id, "
+                          + "source_game_tenant_key, source_provenance_kind, source_evidence_digest, "
+                          + "receipt_digest) VALUES (?, 1, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                      uuid(910 + suffix),
+                      NAMESPACE,
+                      uuid(920 + suffix),
+                      "sha256:" + "a".repeat(64),
+                      uuid(930 + suffix),
+                      uuid(940 + suffix),
+                      "sha256:" + "b".repeat(64),
+                      uuid(900 + suffix),
+                      "raw-binding-" + suffix,
+                      "raw-world-" + suffix,
+                      "Raw World",
+                      990L + suffix,
+                      "legacy-key-" + suffix,
+                      provenance,
+                      "sha256:" + "c".repeat(64),
+                      "sha256:" + "d".repeat(64)))
+          .isInstanceOf(DataAccessException.class)
+          .hasStackTraceContaining("chk_gs_authored_world_source_intake_provenance_v29");
+    }
+  }
+
+  @Test
+  void v40PreservesExistingV30SourceRowsAndRejectsNewV30Rows() {
+    Fixture fixture = fixture(false, MigrationVersion.fromVersion("39"));
+    UUID canonicalTenantId = uuid(950);
+    UUID intakeOperationId = uuid(951);
+    String tenantSlug = "retained-v30-tenant";
+    String worldSlug = "retained-v30-world";
+    long sourceGameRowId = 9751L;
+    String sourceGameTenantKey = "gds-retained-v30";
+    String requestDigest = "sha256:" + "1".repeat(64);
+    String sourceRequestDigest = "sha256:" + "2".repeat(64);
+    String sourceEvidenceDigest = "sha256:" + "3".repeat(64);
+    String receiptDigest = "sha256:" + "4".repeat(64);
+
+    fixture.transactions.execute(
+        status -> {
+          fixture.dsl.execute(
+              "INSERT INTO game_session_authored_world_tenant_source_binding "
+                  + "(target_namespace, canonical_tenant_id, tenant_slug, source_game_row_id, "
+                  + "source_game_tenant_key, provenance_kind) VALUES (?, ?, ?, ?, ?, 'RETAINED_GAME_V30')",
+              NAMESPACE,
+              canonicalTenantId,
+              tenantSlug,
+              sourceGameRowId,
+              sourceGameTenantKey);
+          fixture.dsl.execute(
+              "INSERT INTO game_session_authored_world_source_intake ("
+                  + "operation_id, schema_version, target_namespace, intake_request_id, "
+                  + "request_digest, source_schema_version, source_registration_request_id, "
+                  + "source_operation_id, source_request_digest, canonical_tenant_id, tenant_slug, "
+                  + "world_slug, world_display_name, source_game_row_id, source_game_tenant_key, "
+                  + "source_provenance_kind, source_evidence_digest, receipt_digest) "
+                  + "VALUES (?, 1, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'RETAINED_GAME_V30', ?, ?)",
+              intakeOperationId,
+              NAMESPACE,
+              uuid(952),
+              requestDigest,
+              uuid(953),
+              uuid(954),
+              sourceRequestDigest,
+              canonicalTenantId,
+              tenantSlug,
+              worldSlug,
+              "Retained V30 World",
+              sourceGameRowId,
+              sourceGameTenantKey,
+              sourceEvidenceDigest,
+              receiptDigest);
+          return null;
+        });
+
+    Record retainedBindingBefore =
+        requiredRecord(
+            fixture.dsl,
+            "SELECT *, xmin::text AS retained_xmin "
+                + "FROM game_session_authored_world_tenant_source_binding "
+                + "WHERE canonical_tenant_id = ?",
+            canonicalTenantId);
+    Record retainedIntakeBefore =
+        requiredRecord(
+            fixture.dsl,
+            "SELECT *, xmin::text AS retained_xmin FROM game_session_authored_world_source_intake "
+                + "WHERE operation_id = ?",
+            intakeOperationId);
+
+    fixture.migrateToLatest();
+
+    Record retainedBindingAfter =
+        requiredRecord(
+            fixture.dsl,
+            "SELECT *, xmin::text AS retained_xmin "
+                + "FROM game_session_authored_world_tenant_source_binding "
+                + "WHERE canonical_tenant_id = ?",
+            canonicalTenantId);
+    Record retainedIntakeAfter =
+        requiredRecord(
+            fixture.dsl,
+            "SELECT *, xmin::text AS retained_xmin FROM game_session_authored_world_source_intake "
+                + "WHERE operation_id = ?",
+            intakeOperationId);
+    assertThat(retainedBindingAfter).isEqualTo(retainedBindingBefore);
+    assertThat(retainedIntakeAfter).isEqualTo(retainedIntakeBefore);
+    assertThat(retainedIntakeAfter.get("request_digest", String.class)).isEqualTo(requestDigest);
+    assertThat(retainedIntakeAfter.get("source_request_digest", String.class))
+        .isEqualTo(sourceRequestDigest);
+    assertThat(retainedIntakeAfter.get("source_evidence_digest", String.class))
+        .isEqualTo(sourceEvidenceDigest);
+    assertThat(retainedIntakeAfter.get("receipt_digest", String.class)).isEqualTo(receiptDigest);
+
+    assertThatThrownBy(
+            () ->
+                fixture.dsl.execute(
+                    "INSERT INTO game_session_authored_world_tenant_source_binding "
+                        + "(target_namespace, canonical_tenant_id, tenant_slug, source_game_row_id, "
+                        + "source_game_tenant_key, provenance_kind) "
+                        + "VALUES (?, ?, ?, ?, ?, 'RETAINED_GAME_V30')",
+                    NAMESPACE,
+                    uuid(960),
+                    "new-v30-tenant",
+                    9760L,
+                    "gds-new-v30"))
+        .isInstanceOf(DataAccessException.class)
+        .hasStackTraceContaining("chk_gs_authored_world_tenant_source_provenance_v29");
+    assertThatThrownBy(
+            () ->
+                fixture.dsl.execute(
+                    "INSERT INTO game_session_authored_world_source_intake ("
+                        + "operation_id, schema_version, target_namespace, intake_request_id, "
+                        + "request_digest, source_schema_version, source_registration_request_id, "
+                        + "source_operation_id, source_request_digest, canonical_tenant_id, tenant_slug, "
+                        + "world_slug, world_display_name, source_game_row_id, source_game_tenant_key, "
+                        + "source_provenance_kind, source_evidence_digest, receipt_digest) "
+                        + "VALUES (?, 1, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, "
+                        + "'RETAINED_GAME_V30', ?, ?)",
+                    uuid(961),
+                    NAMESPACE,
+                    uuid(962),
+                    requestDigest,
+                    uuid(963),
+                    uuid(964),
+                    sourceRequestDigest,
+                    uuid(965),
+                    "new-v30-tenant",
+                    "new-v30-world",
+                    "New V30 World",
+                    9761L,
+                    "gds-new-v30-intake",
+                    sourceEvidenceDigest,
+                    receiptDigest))
+        .isInstanceOf(DataAccessException.class)
+        .hasStackTraceContaining("chk_gs_authored_world_source_intake_provenance_v29");
   }
 
   @Test
@@ -565,6 +787,10 @@ class GameSessionCanonicalRealmCatalogRepositoryIntegrationTest {
   }
 
   private Fixture fixture(boolean seedRetainedNumericRows) {
+    return fixture(seedRetainedNumericRows, null);
+  }
+
+  private Fixture fixture(boolean seedRetainedNumericRows, MigrationVersion targetVersion) {
     String schema = "gs_canonical_realm_" + UUID.randomUUID().toString().replace("-", "");
     DriverManagerDataSource dataSource = new DriverManagerDataSource();
     dataSource.setUrl(postgres.getJdbcUrl());
@@ -618,14 +844,17 @@ class GameSessionCanonicalRealmCatalogRepositoryIntegrationTest {
           RETAINED_PLAYABLE_NAMESPACE_ID);
     }
 
-    Flyway.configure()
-        .dataSource(dataSource)
-        .schemas(schema)
-        .defaultSchema(schema)
-        .table("flyway_schema_history")
-        .locations(MIGRATION_LOCATION)
-        .load()
-        .migrate();
+    FluentConfiguration migrationConfiguration =
+        Flyway.configure()
+            .dataSource(dataSource)
+            .schemas(schema)
+            .defaultSchema(schema)
+            .table("flyway_schema_history")
+            .locations(MIGRATION_LOCATION);
+    if (targetVersion != null) {
+      migrationConfiguration.target(targetVersion);
+    }
+    migrationConfiguration.load().migrate();
     DataSourceTransactionManager transactionManager = new DataSourceTransactionManager(dataSource);
     TransactionTemplate transactions = new TransactionTemplate(transactionManager);
     DSLContext transactionalDsl =
@@ -635,7 +864,9 @@ class GameSessionCanonicalRealmCatalogRepositoryIntegrationTest {
         new GameSessionAuthoredWorldSourceRepository(transactionalDsl),
         new GameSessionCanonicalRealmCatalogRepository(transactionalDsl),
         transactionManager,
-        transactions);
+        transactions,
+        dataSource,
+        schema);
   }
 
   private static UUID tenant(int value) {
@@ -656,7 +887,20 @@ class GameSessionCanonicalRealmCatalogRepositoryIntegrationTest {
       GameSessionAuthoredWorldSourceRepository sourceRepository,
       GameSessionCanonicalRealmCatalogRepository catalogRepository,
       DataSourceTransactionManager transactionManager,
-      TransactionTemplate transactions) {
+      TransactionTemplate transactions,
+      DriverManagerDataSource dataSource,
+      String schema) {
+    void migrateToLatest() {
+      Flyway.configure()
+          .dataSource(dataSource)
+          .schemas(schema)
+          .defaultSchema(schema)
+          .table("flyway_schema_history")
+          .locations(MIGRATION_LOCATION)
+          .load()
+          .migrate();
+    }
+
     IntakeReceipt register(UUID tenantId, String worldSlug, String displayName, String provenance) {
       AuthoredWorldSourceEvidence source =
           GameSessionCanonicalRealmCatalogRepositoryIntegrationTest.source(

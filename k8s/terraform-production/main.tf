@@ -59,7 +59,7 @@ resource "helm_release" "velero" {
   name       = "velero"
   repository = "https://vmware-tanzu.github.io/helm-charts"
   chart      = "velero"
-  version    = "12.2.0"
+  version    = "12.2.1"
   namespace  = var.namespace
   set {
     name  = "image.tag"

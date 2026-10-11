@@ -24,7 +24,6 @@ import org.jooq.Field;
 import org.jooq.Record;
 import org.jooq.Table;
 import org.jooq.impl.DSL;
-import org.springframework.stereotype.Repository;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
@@ -35,7 +34,6 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
  * <p>This is an unwired catalog source. It never creates or opens an admission pointer and does not
  * establish World lifecycle, membership, entitlement, or creator authorization.
  */
-@Repository
 public class GameSessionCanonicalRealmCatalogRepository {
   private static final int SCHEMA_VERSION = 1;
   private static final long INITIAL_CATALOG_REVISION = 1L;

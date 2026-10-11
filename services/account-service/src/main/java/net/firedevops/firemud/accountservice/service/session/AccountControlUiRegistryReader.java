@@ -33,6 +33,7 @@ public final class AccountControlUiRegistryReader {
   private static final Pattern DIGEST = Pattern.compile("[0-9a-f]{64}");
   private static final Pattern KID = Pattern.compile("[A-Za-z0-9_-]{1,64}");
   private static final Pattern DECIMAL = Pattern.compile("[1-9][0-9]{0,18}");
+  private static final long MAX_REDIS_SAFE_INTEGER = 9_007_199_254_740_991L;
   private static final Set<String> FIELDS =
       Set.of(
           "schemaVersion",
@@ -56,6 +57,7 @@ public final class AccountControlUiRegistryReader {
           "operationId",
           "requestId",
           "requestDigest",
+          "registryCleanupDeadlineEpochMillis",
           "state",
           "authoritySourceVersions",
           "authEvidenceBundle",
@@ -94,7 +96,9 @@ public final class AccountControlUiRegistryReader {
       byte[] key = (TOKEN_KEY_PREFIX + tokenHash).getBytes(StandardCharsets.US_ASCII);
       byte[] exact = commands.get(key);
       Map<String, Object> record = parseActiveRecord(exact, tokenHash);
-      long expiresAtMillis = checkedExpiryMillis(record.get("exp"));
+      long expiresAtMillis =
+          checkedCleanupDeadlineMillis(
+              record.get("exp"), record.get("registryCleanupDeadlineEpochMillis"));
       Long physicalExpiry = commands.pexpiretime(key);
       if (physicalExpiry == null || physicalExpiry.longValue() != expiresAtMillis) {
         throw denied();
@@ -151,11 +155,14 @@ public final class AccountControlUiRegistryReader {
     }
   }
 
-  static long checkedExpiryMillis(Object encodedExpiry) {
+  static long checkedCleanupDeadlineMillis(Object encodedExpiry, Object encodedDeadline) {
     try {
-      long exp = requirePositiveNumber(encodedExpiry);
-      // The committed control-ui profile uses the exact token expiry and zero cleanup margin.
-      return Math.multiplyExact(exp, 1000L);
+      long expMillis = Math.multiplyExact(requirePositiveNumber(encodedExpiry), 1000L);
+      long deadline = requirePositiveNumber(encodedDeadline);
+      if (deadline < expMillis || deadline > MAX_REDIS_SAFE_INTEGER) {
+        throw denied();
+      }
+      return deadline;
     } catch (ArithmeticException | IllegalArgumentException malformed) {
       throw denied();
     }

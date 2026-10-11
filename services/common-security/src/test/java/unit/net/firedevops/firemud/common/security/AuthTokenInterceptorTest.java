@@ -9,7 +9,9 @@ import io.grpc.ServerCall;
 import io.grpc.ServerCall.Listener;
 import io.grpc.ServerCallHandler;
 import io.grpc.Status;
+import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 import net.firedevops.firemud.common.security.AuthTokenInterceptor;
@@ -65,6 +67,67 @@ class AuthTokenInterceptorTest {
     assertThat(SessionContext.getAccountId()).isNull();
     assertThat(SessionContext.getGlobalRoles()).isEmpty();
     assertThat(SessionContext.getScopedRolesMap()).isEmpty();
+  }
+
+  @Test
+  void clearsStaleThreadLocalContextBeforeUnauthenticatedMethodHandler() {
+    AuthTokenInterceptor interceptor =
+        new AuthTokenInterceptor(jwtUtil, Set.of(METHOD.getFullMethodName()));
+    @SuppressWarnings({"rawtypes", "unchecked"})
+    ServerCall<Empty, Empty> call = Mockito.mock(ServerCall.class);
+    AtomicReference<String> accountIdSeenByHandler = new AtomicReference<>("not-called");
+    ServerCallHandler<Empty, Empty> next =
+        (serverCall, headers) -> {
+          accountIdSeenByHandler.set(SessionContext.getAccountId());
+          return new Listener<>() {};
+        };
+
+    Mockito.when(call.getMethodDescriptor()).thenReturn(METHOD);
+    SessionContext.setContext("stale-account", List.of("platformAdmin"), Map.of());
+
+    interceptor.interceptCall(call, new Metadata(), next);
+
+    assertThat(accountIdSeenByHandler.get()).isNull();
+    assertThat(SessionContext.getAccountId()).isNull();
+    assertThat(SessionContext.getGlobalRoles()).isEmpty();
+  }
+
+  @Test
+  void clearingStaleThreadLocalContextPreservesAnExistingGrpcJwtContext() {
+    AuthTokenInterceptor jwtInterceptor = new AuthTokenInterceptor(jwtUtil);
+    AuthTokenInterceptor publicMethodInterceptor =
+        new AuthTokenInterceptor(jwtUtil, Set.of(METHOD.getFullMethodName()));
+    @SuppressWarnings({"rawtypes", "unchecked"})
+    ServerCall<Empty, Empty> call = Mockito.mock(ServerCall.class);
+    AtomicReference<String> accountIdSeenByHandler = new AtomicReference<>();
+    AtomicReference<List<String>> rolesSeenByHandler = new AtomicReference<>();
+    ServerCallHandler<Empty, Empty> publicHandler =
+        (serverCall, headers) -> {
+          accountIdSeenByHandler.set(SessionContext.getAccountId());
+          rolesSeenByHandler.set(SessionContext.getGlobalRoles());
+          return new Listener<>() {};
+        };
+    ServerCallHandler<Empty, Empty> next =
+        (serverCall, headers) ->
+            publicMethodInterceptor.interceptCall(serverCall, headers, publicHandler);
+
+    Mockito.when(call.getMethodDescriptor()).thenReturn(METHOD);
+    Metadata headers = new Metadata();
+    String token =
+        jwtUtil.generateToken(
+            "account",
+            Map.of(
+                "accountId", "42",
+                "globalRoles", List.of("platformAdmin"),
+                "scopedRoles", Map.of()));
+    headers.put(AUTH_HEADER, "Bearer " + token);
+    SessionContext.setContext("stale-account", List.of("moderator"), Map.of());
+
+    jwtInterceptor.interceptCall(call, headers, next);
+
+    assertThat(accountIdSeenByHandler.get()).isEqualTo("42");
+    assertThat(rolesSeenByHandler.get()).containsExactly("platformAdmin");
+    assertThat(SessionContext.getAccountId()).isNull();
   }
 
   @Test

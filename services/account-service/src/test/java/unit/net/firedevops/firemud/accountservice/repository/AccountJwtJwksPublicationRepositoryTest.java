@@ -50,6 +50,7 @@ class AccountJwtJwksPublicationRepositoryTest {
   void currentReadsRemainMandatoryAccountTransactions() throws Exception {
     assertMandatory("readCurrentIntent", Binding.class, TrustFence.class);
     assertMandatory("readCurrentPublication", Binding.class, TrustFence.class);
+    assertMandatory("readPreparedPublicationForRecovery", Binding.class, TrustFence.class);
     assertMandatory(
         "recordPrepublicationIntent",
         Binding.class,
@@ -65,6 +66,36 @@ class AccountJwtJwksPublicationRepositoryTest {
         String.class,
         String.class,
         String.class);
+  }
+
+  @Test
+  void lockingCurrentAndRecoveryReadsRejectReadOnlyOwnerTransactionsBeforeDatabaseAccess()
+      throws Exception {
+    DSLContext dsl = mock(DSLContext.class);
+    AccountJwtSignerDesiredStateRepository desired =
+        mock(AccountJwtSignerDesiredStateRepository.class);
+    AccountJwtJwksPublicationRepository repository =
+        new AccountJwtJwksPublicationRepository(dsl, desired);
+    TransactionSynchronizationManager.setActualTransactionActive(true);
+    TransactionSynchronizationManager.setCurrentTransactionReadOnly(true);
+
+    assertThatThrownBy(() -> repository.readCurrentIntent(BINDING, TRUST))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessage("Account JWT JWKS persistence transaction must be writable");
+    assertThatThrownBy(() -> repository.readCurrentPublication(BINDING, TRUST))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessage("Account JWT JWKS persistence transaction must be writable");
+    assertThatThrownBy(() -> repository.readPreparedPublicationForRecovery(BINDING, TRUST))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessage("Account JWT JWKS persistence transaction must be writable");
+
+    Transactional recoveryRead =
+        AccountJwtJwksPublicationRepository.class
+            .getMethod("readPreparedPublicationForRecovery", Binding.class, TrustFence.class)
+            .getAnnotation(Transactional.class);
+    assertThat(recoveryRead).isNotNull();
+    assertThat(recoveryRead.readOnly()).isFalse();
+    verifyNoInteractions(dsl, desired);
   }
 
   @Test

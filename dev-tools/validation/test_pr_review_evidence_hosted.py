@@ -210,6 +210,11 @@ def archived_addressed_reply_fixture(common: Path, *, include_baseline: bool = T
 
 
 class GithubAndEvidenceTests(unittest.TestCase):
+    def test_all_thread_comment_queries_retain_immutable_review_ownership(self):
+        for query in (github._BASE_QUERY, github._connection_query("reviewThreads"), github._thread_comments_query()):
+            self.assertIn("pullRequestReview { databaseId }", query)
+            self.assertIn("originalCommit { oid }", query)
+
     def test_cli_result_exposes_human_duration_without_changing_seconds_or_marker(self):
         result = ReviewResult(
             run_id="run.A1",
@@ -1667,6 +1672,159 @@ class GithubAndEvidenceTests(unittest.TestCase):
 
 
 class HostedEvidenceTests(unittest.TestCase):
+    @staticmethod
+    def publication_reviews():
+        marker = (
+            "<!-- coderabbit-review-publication v1 publication=e481ca4b-4c4c-4c5b-89fb-a8ec99408867 "
+            "attempt=2fb88283-8806-4645-bfcb-836652c40071 batch={ordinal}/2 -->"
+        )
+        return [
+            {
+                "databaseId": identity,
+                "author": {"login": "coderabbitai[bot]"},
+                "state": "COMMENTED",
+                "commit": {"oid": HEAD},
+                "submittedAt": submitted,
+                "body": body + marker.format(ordinal=ordinal),
+            }
+            for ordinal, identity, submitted, body in (
+                (1, 20, "2026-09-23T00:02:00Z", "**Actionable comments posted: 2**\n"),
+                (2, 21, "2026-09-23T00:03:00Z", "**Review continued from previous batch...**\n"),
+            )
+        ]
+
+    @staticmethod
+    def publication_threads():
+        return [
+            {
+                "comments": {
+                    "nodes": [
+                        {
+                            "databaseId": identity,
+                            "author": {"login": "coderabbitai[bot]"},
+                            "body": "**Fix the boundary.**",
+                            "createdAt": created,
+                            "pullRequestReview": {"databaseId": parent},
+                            "originalCommit": {"oid": HEAD},
+                        }
+                    ]
+                }
+            }
+            for identity, parent, created in ((30, 20, "2026-09-23T00:01:30Z"), (31, 21, "2026-09-23T00:02:30Z"))
+        ]
+
+    def test_publication_order_does_not_change_primary_identity_or_last_batch_duration(self):
+        trigger = comment(10, "owner", hosted.FULL_COMMAND, "2026-09-23T00:01:00Z")
+        for reviews in (self.publication_reviews(), list(reversed(self.publication_reviews()))):
+            state = hosted.trigger_state(
+                REPO, PR, review_payload([trigger], reviews, threads=self.publication_threads()), trigger_record()
+            )
+            self.assertEqual(state.state, "completed")
+            self.assertEqual(state.response_id, 20)
+            self.assertEqual(state.response_created_at, "2026-09-23T00:02:00Z")
+            self.assertEqual(state.publication_finished_at, "2026-09-23T00:03:00Z")
+            self.assertEqual(state.publication_review_ids, (20, 21))
+            self.assertEqual(state.duration_seconds, 120)
+
+    def test_multiple_complete_publications_do_not_select_latest_result(self):
+        trigger = comment(10, "owner", hosted.FULL_COMMAND, "2026-09-23T00:01:00Z")
+        reviews = self.publication_reviews()
+        second = self.publication_reviews()
+        for review in second:
+            review["databaseId"] += 100
+            review["body"] = review["body"].replace("e481ca4b", "f481ca4b").replace("2fb88283", "3fb88283")
+            review["submittedAt"] = review["submittedAt"].replace("00:0", "00:1")
+        state = hosted.trigger_state(REPO, PR, review_payload([trigger], reviews + second), trigger_record())
+        self.assertEqual(state.state, "ambiguous")
+        self.assertFalse(state.terminal)
+        self.assertFalse(state.attributed)
+        self.assertIsNone(state.response_id)
+
+    def test_publication_requires_expected_roots_and_valid_owned_timestamps(self):
+        trigger = comment(10, "owner", hosted.FULL_COMMAND, "2026-09-23T00:01:00Z")
+        for failure in (
+            "absent",
+            "partial",
+            "missing_timestamp",
+            "malformed_timestamp",
+            "naive_timestamp",
+            "missing_count",
+            "invalid_count",
+            "missing_original_head",
+            "wrong_original_head",
+        ):
+            with self.subTest(failure=failure):
+                reviews = self.publication_reviews()
+                threads = self.publication_threads()
+                if failure == "absent":
+                    threads = []
+                elif failure == "partial":
+                    threads.pop()
+                elif failure == "missing_timestamp":
+                    del threads[1]["comments"]["nodes"][0]["createdAt"]
+                elif failure == "malformed_timestamp":
+                    threads[1]["comments"]["nodes"][0]["createdAt"] = "not a timestamp"
+                elif failure == "naive_timestamp":
+                    threads[1]["comments"]["nodes"][0]["createdAt"] = "2026-09-23T00:02:30"
+                elif failure == "missing_count":
+                    reviews[0]["body"] = reviews[0]["body"].replace(
+                        "**Actionable comments posted: 2**", "<!-- walkthrough_start -->"
+                    )
+                elif failure == "invalid_count":
+                    reviews[0]["body"] = reviews[0]["body"].replace("posted: 2", "posted: unknown")
+                elif failure == "missing_original_head":
+                    del threads[1]["comments"]["nodes"][0]["originalCommit"]
+                else:
+                    threads[1]["comments"]["nodes"][0]["originalCommit"]["oid"] = "c" * 40
+                state = hosted.trigger_state(
+                    REPO, PR, review_payload([trigger], reviews, threads=threads), trigger_record()
+                )
+                self.assertFalse(state.terminal)
+                self.assertNotEqual(state.state, "completed")
+
+    def test_publication_original_head_survives_moved_current_comment_commit(self):
+        trigger = comment(10, "owner", hosted.FULL_COMMAND, "2026-09-23T00:01:00Z")
+        threads = self.publication_threads()
+        for thread in threads:
+            thread["comments"]["nodes"][0]["commit"] = {"oid": "c" * 40}
+        payload = review_payload([trigger], self.publication_reviews(), head="c" * 40, threads=threads)
+        state = hosted.trigger_state(REPO, PR, payload, trigger_record())
+        self.assertEqual(state.state, "completed")
+        self.assertEqual(state.head_sha, HEAD)
+        self.assertEqual(state.current_head_sha, "c" * 40)
+        self.assertNotEqual(state.head_sha, state.current_head_sha)
+
+    def test_publication_missing_primary_or_late_batch_across_trigger_stays_pending(self):
+        trigger = comment(10, "owner", hosted.FULL_COMMAND, "2026-09-23T00:01:00Z")
+        next_trigger = comment(11, "owner", hosted.FULL_COMMAND, "2026-09-23T00:02:30Z")
+        for comments, reviews in (
+            ([trigger], self.publication_reviews()[1:]),
+            ([trigger, next_trigger], self.publication_reviews()),
+        ):
+            state = hosted.trigger_state(REPO, PR, review_payload(comments, reviews), trigger_record())
+            self.assertFalse(state.terminal)
+            self.assertNotEqual(state.state, "completed")
+
+    def test_publication_marker_examples_and_unauthenticated_batches_do_not_complete(self):
+        marker = self.publication_reviews()[1]["body"].split("\n", 1)[1]
+        self.assertIsNone(hosted.review_publication_marker("```\n" + marker + "\n```"))
+        self.assertIsNone(hosted.review_publication_marker("> " + marker))
+        reviews = self.publication_reviews()
+        reviews[1]["author"]["login"] = "contributor"
+        trigger = comment(10, "owner", hosted.FULL_COMMAND, "2026-09-23T00:01:00Z")
+        state = hosted.trigger_state(REPO, PR, review_payload([trigger], reviews), trigger_record())
+        self.assertFalse(state.terminal)
+
+    def test_old_malformed_publication_does_not_poison_later_legacy_result(self):
+        reviews = self.publication_reviews()
+        reviews[0]["submittedAt"] = "2026-09-23T00:00:30Z"
+        reviews[0]["body"] = reviews[0]["body"].replace("batch=1/2", "batch=0/2")
+        reviews[1]["body"] = "**Actionable comments posted: 1**"
+        trigger = comment(10, "owner", hosted.FULL_COMMAND, "2026-09-23T00:01:00Z")
+        state = hosted.trigger_state(REPO, PR, review_payload([trigger], reviews), trigger_record())
+        self.assertEqual(state.state, "completed")
+        self.assertEqual(state.response_id, 21)
+
     def test_prepost_recovery_ignores_missing_attempts(self):
         with tempfile.TemporaryDirectory() as directory:
             common = Path(directory)
@@ -2035,7 +2193,9 @@ class HostedEvidenceTests(unittest.TestCase):
         self.assertEqual(state.cooldown_basis, "provider_reset")
         self.assertEqual(state.cooldown_until, "2026-09-23T02:02:00+00:00")
 
-        malformed_limit = comment(14, "coderabbitai[bot]", "Review rate limited; next reviews available in 20 hours", "")
+        malformed_limit = comment(
+            14, "coderabbitai[bot]", "Review rate limited; next reviews available in 20 hours", ""
+        )
         malformed_limit.pop("createdAt")
         unresolved = hosted.trigger_state(
             REPO,

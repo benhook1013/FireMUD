@@ -3,6 +3,7 @@ package net.firedevops.firemud.accountservice.service.session;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.net.URI;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
@@ -383,6 +384,10 @@ class AccountJwtJwksConfigMapClientTest {
     return new AccountJwtJwksConfigMapClient(api::beginOperation);
   }
 
+  @SuppressFBWarnings(
+      value = "DMI_HARDCODED_ABSOLUTE_FILENAME",
+      justification =
+          "These fixed paths model the protected Account API CA and projected bearer-token trust inputs; the test never reads them.")
   private static ParsedBinding parsedBinding() {
     return new ParsedBinding(
         "revision-1",

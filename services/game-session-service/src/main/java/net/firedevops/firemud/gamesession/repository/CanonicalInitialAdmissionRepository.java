@@ -102,6 +102,10 @@ public class CanonicalInitialAdmissionRepository {
       requireSameRequestIdentity(existing, request);
       return;
     }
+    if (existing == null
+        && request.originKind() == CanonicalInitialAdmissionRequest.OriginKind.NO_PRIOR_POINTER) {
+      lockAllAdmissionRepresentationsForNoPrior();
+    }
     CanonicalRealmCatalogSnapshot catalog = lockCatalog(request);
     CanonicalInitialAdmissionLaunchTarget launchTarget =
         lockLaunchTarget(request, existing == null);
@@ -115,6 +119,24 @@ public class CanonicalInitialAdmissionRepository {
     if (otherPending != null) {
       throw new CanonicalInitialAdmissionConflictException(
           "Another initial-admission request already owns the pending realm attempt");
+    }
+
+    if (request.originKind() == CanonicalInitialAdmissionRequest.OriginKind.NO_PRIOR_POINTER) {
+      pointerRepository.requireNoAdmissionPointerRepresentations(
+          request.targetNamespace(),
+          request.canonicalTenantId(),
+          request.realmId(),
+          request.worldSlug(),
+          catalog.realmSlug(),
+          launchTarget.association().gameSessionTenantId(),
+          launchTarget.gameInstanceId());
+    } else {
+      pointerRepository.lockExpectedClosedForRealm(
+          request.targetNamespace(),
+          request.canonicalTenantId(),
+          request.realmId(),
+          request.expectedPriorPointerVersion(),
+          request.expectedCatalogRevision());
     }
 
     Instant now = Instant.now().truncatedTo(ChronoUnit.MICROS);
@@ -390,7 +412,24 @@ public class CanonicalInitialAdmissionRepository {
       throw new CanonicalInitialAdmissionReconciliationRequiredException(
           "Current canonical OPEN pointer changed during owner readback");
     }
-    return new CurrentOpenSnapshot(proof, before.snapshotDigest(proof));
+    return new CurrentOpenSnapshot(proof, snapshotDigestOrReconciliation(before, proof));
+  }
+
+  /** Package-private same-package test seam for malformed persisted projection evidence. */
+  @SuppressFBWarnings(
+      value = "DCN_NULLPOINTER_EXCEPTION",
+      justification =
+          "Canonical projection validation rejects missing persisted fields with NullPointerException;"
+              + " this narrow readback boundary translates that rejection into required reconciliation.")
+  static String snapshotDigestOrReconciliation(
+      CurrentOpenPointer pointer, CanonicalInitialAdmissionOwnerProof proof) {
+    try {
+      return pointer.snapshotDigest(proof);
+    } catch (IllegalArgumentException | NullPointerException malformed) {
+      throw new CanonicalInitialAdmissionReconciliationRequiredException(
+          "Current canonical OPEN snapshot contains malformed persisted projection evidence",
+          malformed);
+    }
   }
 
   private CurrentOpenPointer readCurrentOpenPointer(
@@ -687,8 +726,10 @@ public class CanonicalInitialAdmissionRepository {
         || attempt.gameSessionTenantId() != evidence.get("audit_game_session_tenant_id", Long.class)
         || attempt.gameInstanceId() != evidence.get("game_instance_id", Long.class)
         || attempt.gameInstanceId() != evidence.get("audit_game_instance_id", Long.class)
-        || attempt.pointerVersion() != evidence.get("pointer_version", Long.class)
-        || attempt.pointerVersion() != evidence.get("audit_pointer_version", Long.class)
+        || !pointerVersionMatches(
+            attempt.pointerVersion(), evidence.get("pointer_version", Long.class))
+        || !pointerVersionMatches(
+            attempt.pointerVersion(), evidence.get("audit_pointer_version", Long.class))
         || attempt.expectedCatalogRevision() != evidence.get("catalog_revision", Long.class)
         || attempt.expectedCatalogRevision() != evidence.get("audit_catalog_revision", Long.class)
         || !"OPEN".equals(evidence.get("admission_state", String.class))
@@ -818,6 +859,10 @@ public class CanonicalInitialAdmissionRepository {
       throw new CanonicalInitialAdmissionReconciliationRequiredException(
           "Original CLOSED request/event proof changed or no longer matches the attempt");
     }
+  }
+
+  static boolean pointerVersionMatches(Long attemptVersion, Long storedVersion) {
+    return Objects.equals(attemptVersion, storedVersion);
   }
 
   private boolean hasAttemptPointerEvidence(Attempt attempt) {
@@ -1245,9 +1290,13 @@ public class CanonicalInitialAdmissionRepository {
     }
   }
 
-  /** Full persisted pointer-row identity used to detect any before/after read drift. */
-  private record CurrentOpenPointer(Map<String, Object> fields) {
-    private CurrentOpenPointer {
+  /**
+   * Full persisted pointer-row identity used to detect any before/after read drift.
+   *
+   * <p>Package-private test seam keeps projection validation directly testable without reflection.
+   */
+  record CurrentOpenPointer(Map<String, Object> fields) {
+    CurrentOpenPointer {
       fields = Collections.unmodifiableMap(new LinkedHashMap<>(fields));
     }
 
@@ -1467,6 +1516,11 @@ public class CanonicalInitialAdmissionRepository {
       extends IllegalStateException {
     public CanonicalInitialAdmissionReconciliationRequiredException(String message) {
       super(message);
+    }
+
+    public CanonicalInitialAdmissionReconciliationRequiredException(
+        String message, Throwable cause) {
+      super(message, cause);
     }
   }
 }

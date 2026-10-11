@@ -1,0 +1,290 @@
+package net.firedevops.firemud.accountservice.service.session;
+
+import static org.assertj.core.api.Assertions.assertThat;
+
+import io.lettuce.core.ClientOptions;
+import io.lettuce.core.RedisClient;
+import io.lettuce.core.RedisURI;
+import io.lettuce.core.codec.ByteArrayCodec;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.time.Clock;
+import java.util.Base64;
+import java.util.Collection;
+import java.util.List;
+import java.util.UUID;
+import net.firedevops.firemud.accountservice.hostedterms.AccountHostedTermsService.CapturedEnvironmentBoundary;
+import net.firedevops.firemud.accountservice.service.session.AccountCoordinationPinnedConnectionProvider.AcknowledgementRequirements;
+import net.firedevops.firemud.common.redis.contracts.RedisScriptCatalog;
+import net.firedevops.firemud.common.redis.contracts.RedisScriptContribution;
+import net.firedevops.firemud.common.redis.contracts.RedisScriptDescriptor;
+
+/**
+ * Genuine Account owner mutations. Fresh creator/legal sources and signer platform evidence are
+ * explicitly test-only upstream inputs; this fixture is not production activation or settlement.
+ */
+public final class AccountControlUiOriginalOrderFixture implements AutoCloseable {
+  private final AccountControlUiOwnerSourcesFixture f;
+  private final AccountControlUiActorService actors;
+  private final AccountControlUiIssuanceService issuance;
+  private final AccountControlUiCoordination coordination;
+  private final RedisClient accountClient;
+  private final Path temporary;
+  private IssuedCreator originalCreator;
+
+  public AccountControlUiOriginalOrderFixture(
+      String jdbcUrl,
+      String username,
+      String password,
+      String redisHost,
+      int redisPort,
+      Path temporary)
+      throws Exception {
+    this(jdbcUrl, username, password, redisHost, redisPort, temporary, UUID.randomUUID());
+  }
+
+  public AccountControlUiOriginalOrderFixture(
+      String jdbcUrl,
+      String username,
+      String password,
+      String redisHost,
+      int redisPort,
+      Path temporary,
+      UUID gameDesignTenant)
+      throws Exception {
+    this(
+        jdbcUrl,
+        username,
+        password,
+        redisHost,
+        redisPort,
+        temporary,
+        gameDesignTenant,
+        Clock.systemUTC());
+  }
+
+  /** Actor clock is injectable for genuine signed-credential expiry recovery proof. */
+  public AccountControlUiOriginalOrderFixture(
+      String jdbcUrl,
+      String username,
+      String password,
+      String redisHost,
+      int redisPort,
+      Path temporary,
+      UUID gameDesignTenant,
+      Clock actorClock)
+      throws Exception {
+    this.temporary = temporary;
+    f =
+        new AccountControlUiOwnerSourcesFixture(
+            jdbcUrl, username, password, temporary, false, gameDesignTenant);
+    var lifecycle = new AccountControlUiSignerFixture(f, temporary);
+    lifecycle.commit();
+    var originalSigner = f.tx(lifecycle.signer::captureCurrent);
+    assertThat(f.tx(() -> lifecycle.signer.requireOriginal(originalSigner.receipt())).receipt())
+        .isEqualTo(originalSigner.receipt());
+    custody("encryption", "enc1", 11);
+    custody("request-mac", "mac1", 29);
+    String PASSWORD = UUID.randomUUID().toString();
+    var admin = RedisClient.create(RedisURI.Builder.redis(redisHost, redisPort).build());
+    accountClient =
+        RedisClient.create(
+            RedisURI.Builder.redis(redisHost, redisPort)
+                .withAuthentication("account_coord_app", PASSWORD)
+                .build());
+    accountClient.setOptions(ClientOptions.builder().autoReconnect(false).build());
+    try (var connection = admin.connect(ByteArrayCodec.INSTANCE)) {
+      connection
+          .sync()
+          .aclSetuser(
+              "account_coord_app",
+              new io.lettuce.core.AclSetuserArgs()
+                  .reset()
+                  .on()
+                  .addPassword(PASSWORD)
+                  .keyPattern("session:auth:token:*")
+                  .addCommand(io.lettuce.core.protocol.CommandType.HELLO)
+                  .addCommand(io.lettuce.core.protocol.CommandType.PING)
+                  .addCommand(
+                      io.lettuce.core.protocol.CommandType.CLIENT,
+                      io.lettuce.core.protocol.CommandKeyword.SETINFO)
+                  .addCommand(
+                      io.lettuce.core.protocol.CommandType.ACL,
+                      io.lettuce.core.protocol.CommandKeyword.WHOAMI)
+                  .addCommand(
+                      io.lettuce.core.protocol.CommandType.SCRIPT,
+                      io.lettuce.core.protocol.CommandKeyword.LOAD)
+                  .addCommand(io.lettuce.core.protocol.CommandType.EVALSHA)
+                  .addCommand(io.lettuce.core.protocol.CommandType.GET)
+                  .addCommand(io.lettuce.core.protocol.CommandType.SET)
+                  .addCommand(io.lettuce.core.protocol.CommandType.PEXPIRETIME)
+                  .addCommand(io.lettuce.core.protocol.CommandType.TIME));
+      connection
+          .sync()
+          .dispatch(
+              TestAclCommand.INSTANCE,
+              new io.lettuce.core.output.StatusOutput<>(ByteArrayCodec.INSTANCE),
+              new io.lettuce.core.protocol.CommandArgs<>(ByteArrayCodec.INSTANCE)
+                  .add("SETUSER")
+                  .add("account_coord_app")
+                  .add("+waitaof"));
+      awaitLocalAndReplicaAof(connection.sync());
+
+    } finally {
+      admin.shutdown();
+    }
+    coordination =
+        new AccountControlUiCoordination(
+            () -> accountClient.connect(ByteArrayCodec.INSTANCE),
+            new AcknowledgementRequirements(1, 1, 5000),
+            testCatalog());
+    var operations = new AccountControlUiIssuanceRepository(f.dsl);
+    var publicSource =
+        new AccountJwtJwksTrustedSource(
+            lifecycle.client, lifecycle.trust, lifecycle.desired, lifecycle.publication, f.manager);
+    actors =
+        new AccountControlUiActorService(
+            operations,
+            f.authority,
+            lifecycle.signer,
+            coordination,
+            publicSource,
+            f.fences,
+            f.manager,
+            actorClock);
+    issuance =
+        new AccountControlUiIssuanceService(
+            f.primary,
+            operations,
+            f.authority,
+            f.fences,
+            lifecycle.signer,
+            new AccountControlUiResponseCryptography(
+                new AccountControlUiKeyring(temporary.resolve("custody")), Clock.systemUTC()),
+            coordination,
+            actors,
+            f.manager,
+            Clock.systemUTC(),
+            300_000L,
+            AccountControlUiOwnerSourcesFixture.CALLER);
+  }
+
+  public UUID tenantId() {
+    return f.tenant;
+  }
+
+  /**
+   * Real Account control-UI creator retained for composition with the original StartSession proof.
+   */
+  IssuedCreator preparedOriginalCreator() {
+    if (originalCreator == null) originalCreator = issueCreator();
+    return originalCreator;
+  }
+
+  /** Same-package proof reuse; returns only an actual owner-issued and authenticated credential. */
+  IssuedCreator issueCreator() {
+    var environment = f.terms.captureCurrentEnvironmentBoundary();
+    String compact;
+    try (var peer =
+            AccountControlUiOwnerSourcesFixture.withPeer(
+                AccountControlUiOwnerSourcesFixture.CALLER);
+        var issued =
+            issuance.issue(f.request(AccountControlUiOwnerSourcesFixture.OTP), environment)) {
+      compact = new String(issued.compactBytes(), StandardCharsets.US_ASCII);
+    }
+    assertThat(f.challenges.findByAccountId(f.account.getId())).isEmpty();
+    assertThat(actors.authenticate(compact, f.tenant, environment).accountId())
+        .isEqualTo(f.account.getAccountUuid());
+    return new IssuedCreator(compact, actors, environment, f);
+  }
+
+  record IssuedCreator(
+      String compact,
+      AccountControlUiActorService actors,
+      CapturedEnvironmentBoundary environment,
+      AccountControlUiOwnerSourcesFixture sources) {}
+
+  @Override
+  public void close() {
+    accountClient.shutdown();
+  }
+
+  private static RedisScriptCatalog testCatalog() {
+    return RedisScriptCatalog.fromContributions(
+        List.of(
+            new RedisScriptContribution() {
+              @Override
+              public String ownerId() {
+                return "account-service";
+              }
+
+              @Override
+              public Collection<RedisScriptDescriptor> descriptors() {
+                return List.of(AccountControlUiRegistryContract.descriptor());
+              }
+            }));
+  }
+
+  private void custody(String purpose, String id, int value) throws Exception {
+    byte[] key = new byte[32];
+    java.util.Arrays.fill(key, (byte) value);
+    var directory = Files.createDirectories(temporary.resolve("custody").resolve(purpose));
+    Files.writeString(
+        directory.resolve("keyring"),
+        "firemud-account-response-envelope-keyring-v1\nactive "
+            + id
+            + " "
+            + Base64.getUrlEncoder().withoutPadding().encodeToString(key)
+            + "\n");
+  }
+
+  private record PublicJwk(String json, String jsonWithoutKeyOps, String fingerprint) {}
+
+  private static void awaitLocalAndReplicaAof(
+      io.lettuce.core.api.sync.RedisCommands<byte[], byte[]> commands) throws InterruptedException {
+    byte[] probeKey =
+        ("test-only:positive-account-coordination-aof-probe:" + UUID.randomUUID())
+            .getBytes(StandardCharsets.US_ASCII);
+    commands.set(probeKey, "test-only-replication-probe".getBytes(StandardCharsets.US_ASCII));
+    long deadline = System.nanoTime() + java.time.Duration.ofSeconds(30).toNanos();
+    while (System.nanoTime() < deadline) {
+      List<Object> counts =
+          commands.dispatch(
+              TestWaitAof.INSTANCE,
+              new io.lettuce.core.output.ArrayOutput<>(ByteArrayCodec.INSTANCE),
+              new io.lettuce.core.protocol.CommandArgs<>(ByteArrayCodec.INSTANCE)
+                  .add(1)
+                  .add(1)
+                  .add(500));
+      if (counts != null
+          && counts.size() == 2
+          && counts.get(0) instanceof Long local
+          && counts.get(1) instanceof Long replicas
+          && local >= 1
+          && replicas >= 1) {
+        return;
+      }
+      Thread.sleep(50);
+    }
+    throw new IllegalStateException("Test Coordination Redis replica did not acknowledge AOF");
+  }
+
+  private enum TestWaitAof implements io.lettuce.core.protocol.ProtocolKeyword {
+    INSTANCE;
+
+    @Override
+    public byte[] getBytes() {
+      return "WAITAOF".getBytes(StandardCharsets.US_ASCII);
+    }
+  }
+
+  private enum TestAclCommand implements io.lettuce.core.protocol.ProtocolKeyword {
+    INSTANCE;
+
+    @Override
+    public byte[] getBytes() {
+      return "ACL".getBytes(StandardCharsets.US_ASCII);
+    }
+  }
+}

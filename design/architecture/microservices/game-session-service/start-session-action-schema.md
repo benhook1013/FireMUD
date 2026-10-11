@@ -2,7 +2,7 @@
 
 ## Implementation status
 
-The shared typed action, digest codec, and pre-authorization reservation tuple are implemented. Logging & Admin has durable reservation, claim expiry, and read-only recovery-claim seams; Account has read-only verification of existing committed tenant-scoped control-ui issuance against its protected signer/registry and current membership evidence. These are prerequisites, not an executable StartSession route. Account operator-reference issuance/redemption, post-authorization owner handoff, canonical Game Session consumption, and physical cross-service proof remain incomplete. No external route or runtime activation is enabled by this boundary.
+The shared typed action, digest codec, pre-/post-authorization tuples and Account authority-evidence bundle are implemented with focused Java tests and shared Java/Python vectors. Source-level StartSession slices now include Logging & Admin durable reservation and authorization handoff, Account ISSUE/RECOVER/REDEEM plus the current-original-operation projection, and Game Session claim/redemption transport and prepared-action binding. Logging production service/repository mutation is mechanically denied pending its approved lifecycle and exact-family retention policy; authenticated evidence reads remain available, and isolated run-owned fixtures do not enable production writing. These slices are not yet an executable runtime: the Account receiving adapter remains disabled by default, its production hosted-terms environment producer and pinned trusted-provider/key-custody composition are absent, and Game Design's prepared selector/current-Account-projection consumer remains unwired. No full physical cross-service smoke has established boot or execution; source-level and component tests do not claim that proof. No external route or runtime activation is enabled by this boundary.
 
 ## Normative contract
 
@@ -24,6 +24,8 @@ The request is a JSON object whose declared member order is `actionFamilySchemaI
 | `mutation` | Object with the optional member `clientIp`. |
 | `mutation.clientIp` | Absent or a string whose NFC-normalized UTF-8 encoding is at most 128 bytes. Empty string is distinct from absence. `null` and all other types are rejected. No address parsing or ownership claim is implied. |
 | `auditReason` | Required string, nonblank after NFC normalization, at most 1,000 normalized UTF-8 bytes. |
+
+For the `auditReason` nonblank constraint, the shared blank codepoint set is exactly U+0009–U+000D, U+0020, U+0085, U+00A0, U+1680, U+2000–U+200A, U+2028, U+2029, U+202F, U+205F, and U+3000. Implementations must use this explicit set rather than a language-provided whitespace predicate. Other codepoints, including U+200B ZERO WIDTH SPACE, do not make an audit reason blank.
 
 JSON object members must appear in the declared order. Duplicate raw keys, keys colliding after NFC normalization, unknown or missing members, wrong JSON types, malformed Unicode, invalid UTF-8, and trailing tokens are rejected before a digest is returned. Object and array values use the recursive typed grammar from [ADR 0047, Bounded Owner Delegation](../../decisions/adr-0047-logging-admin-as-external-operator-write-ingress.md#bounded-owner-delegation); no generic JSON canonicalization is a substitute.
 
@@ -47,6 +49,6 @@ The SHA-256 preimage follows ADR 0047's exact `mutationDigest/v1` framing. The s
 
 The target owner is fixed to `game-session-service` for this schema and is carried separately in the ADR 0048 execution tuple; it is not a digest field. `controlPlaneRequestId`, any separately tagged action-family request identity, reservation owner and claim fence, transport credentials, opaque authorization references, actor assertions, and Account authority evidence are outside these seven grammar fields and are compared at their respective boundaries under [ADR 0047](../../decisions/adr-0047-logging-admin-as-external-operator-write-ingress.md#bounded-owner-delegation) and [ADR 0048](../../decisions/adr-0048-durable-idempotent-operator-write-execution.md#one-correlated-execution).
 
-The action contains no runtime version or patch input. It does not assert current ownership or authority. Game Design selects a launch descriptor under its independently authorized operation; the Game Session owner performs its separate domain and execution checks.
+The action contains no runtime version or patch input. It does not assert current ownership or authority. Game Design selects a launch descriptor under its independently authorized [original-operation read boundary](../../decisions/adr-0047-logging-admin-as-external-operator-write-ingress.md#redeemed-startsession-projection-read); the Game Session owner performs its separate domain and execution checks.
 
 The shared Java implementation exposes `StartSessionOperatorActionCodec.decode(byte[])`, `canonicalPreimage(...)`, and `mutationDigest(...)`, plus the immutable typed action accessors. Shared Java and Python conformance vectors are stored in [the common vector fixture](../../../../services/common-platform-core/src/test/resources/operator/start-session-mutation-digest-v1-vectors.json).

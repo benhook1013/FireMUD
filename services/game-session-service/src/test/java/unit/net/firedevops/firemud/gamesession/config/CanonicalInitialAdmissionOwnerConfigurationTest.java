@@ -13,9 +13,11 @@ import net.firedevops.firemud.gamesession.service.CanonicalInitialAdmissionServi
 import net.firedevops.firemud.gamesession.service.CanonicalInitialAdmissionWorldVerifier;
 import org.jooq.DSLContext;
 import org.junit.jupiter.api.Test;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.boot.test.context.runner.ApplicationContextRunner;
 import org.springframework.context.annotation.Bean;
+import org.springframework.transaction.PlatformTransactionManager;
 
 class CanonicalInitialAdmissionOwnerConfigurationTest {
   private static final String OWNER_OPT_IN =
@@ -57,11 +59,34 @@ class CanonicalInitialAdmissionOwnerConfigurationTest {
             });
   }
 
+  @Test
+  void enabledCompositionFailsClosedWithoutOwnerTransactionManager() {
+    new ApplicationContextRunner()
+        .withUserConfiguration(
+            CanonicalGameInstanceLaunchAssociationReadConfiguration.class,
+            CanonicalInitialAdmissionOwnerConfiguration.class,
+            OwnerDependencies.class)
+        .withPropertyValues(
+            OWNER_OPT_IN + "=true",
+            "firemud.grpc.workload-namespace=gameplay",
+            "test.initial-admission.transaction-manager-enabled=false")
+        .run(context -> assertThat(context).hasFailed());
+  }
+
   @TestConfiguration(proxyBeanMethods = false)
   static class OwnerDependencies {
     @Bean
     DSLContext initialAdmissionDsl() {
       return mock(DSLContext.class);
+    }
+
+    @Bean(name = "transactionManager")
+    @ConditionalOnProperty(
+        name = "test.initial-admission.transaction-manager-enabled",
+        havingValue = "true",
+        matchIfMissing = true)
+    PlatformTransactionManager initialAdmissionTransactionManager() {
+      return mock(PlatformTransactionManager.class);
     }
 
     @Bean

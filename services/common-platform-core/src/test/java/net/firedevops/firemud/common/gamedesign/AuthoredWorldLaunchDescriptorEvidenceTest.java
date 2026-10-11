@@ -89,6 +89,27 @@ class AuthoredWorldLaunchDescriptorEvidenceTest {
     assertThat(selectedDefault.scriptPatchVersion()).isEqualTo("template-default-patch");
   }
 
+  @Test
+  void presentOptionalIdentifierFieldsRejectEmptyAndWhitespaceButAbsentValuesRemainValid() {
+    AuthoredWorldLaunchDescriptorEvidence.Request absent = request();
+    assertThat(absent.requestedScriptPatchVersionPresent()).isFalse();
+    assertThat(absent.requestedScriptPatchVersion()).isNull();
+    assertThat(create(absent, 42L, false, null).scriptPatchVersionPresent()).isFalse();
+    assertThat(create(absent, 42L, false, null).remapSetIdPresent()).isFalse();
+
+    for (String blank : new String[] {"", " \t "}) {
+      assertThatThrownBy(() -> requestWithRequestedPatch(blank))
+          .isInstanceOf(IllegalArgumentException.class)
+          .hasMessageContaining("requestedScriptPatchVersion");
+      assertThatThrownBy(() -> create(absent, 42L, true, blank))
+          .isInstanceOf(IllegalArgumentException.class)
+          .hasMessageContaining("scriptPatchVersion");
+      assertThatThrownBy(() -> createWithRemap(absent, blank))
+          .isInstanceOf(IllegalArgumentException.class)
+          .hasMessageContaining("remapSetId");
+    }
+  }
+
   private static AuthoredWorldLaunchDescriptorEvidence create(
       AuthoredWorldLaunchDescriptorEvidence.Request request,
       long versionId,
@@ -107,6 +128,23 @@ class AuthoredWorldLaunchDescriptorEvidenceTest {
         "published-release",
         false,
         null);
+  }
+
+  private static AuthoredWorldLaunchDescriptorEvidence createWithRemap(
+      AuthoredWorldLaunchDescriptorEvidence.Request request, String remapSetId) {
+    return AuthoredWorldLaunchDescriptorEvidence.create(
+        request,
+        "descriptor",
+        42L,
+        false,
+        null,
+        "{}",
+        "generation-config",
+        9L,
+        7L,
+        "published-release",
+        true,
+        remapSetId);
   }
 
   private static AuthoredWorldLaunchDescriptorEvidence copyWithResult(
@@ -177,6 +215,26 @@ class AuthoredWorldLaunchDescriptorEvidenceTest {
         19L,
         false,
         null,
+        false,
+        null,
+        false,
+        null,
+        false,
+        null);
+  }
+
+  private static AuthoredWorldLaunchDescriptorEvidence.Request requestWithRequestedPatch(
+      String patch) {
+    return new AuthoredWorldLaunchDescriptorEvidence.Request(
+        "test",
+        "launch-control-request",
+        UUID.fromString("11111111-1111-4111-8111-111111111111"),
+        "synthetic-world",
+        UUID.fromString("99999999-9999-4999-8999-999999999999"),
+        "sha256:" + "a".repeat(64),
+        19L,
+        true,
+        patch,
         false,
         null,
         false,

@@ -3,6 +3,7 @@ package net.firedevops.firemud.gamesession.service;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
@@ -10,7 +11,9 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
+import java.io.IOException;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 import net.firedevops.firemud.common.gamedesign.AuthoredWorldLaunchDescriptorClient;
@@ -19,6 +22,11 @@ import net.firedevops.firemud.common.gamedesign.AuthoredWorldLaunchDescriptorGrp
 import net.firedevops.firemud.common.gamedesign.AuthoredWorldLaunchDescriptorGrpcCodec.GetRequest;
 import net.firedevops.firemud.common.gamedesign.AuthoredWorldReleaseAttestationEvidence;
 import net.firedevops.firemud.common.gamedesign.CompleteLaunchBindingEvidence;
+import net.firedevops.firemud.common.json.Rfc8785CanonicalJson;
+import net.firedevops.firemud.common.operator.StartSessionAuthorityEvidenceBundle;
+import net.firedevops.firemud.common.operator.StartSessionOperatorAction;
+import net.firedevops.firemud.common.operator.StartSessionPostAuthorizationExecutionTuple;
+import net.firedevops.firemud.common.operator.StartSessionPreAuthorizationReservationTuple;
 import net.firedevops.firemud.common.tenant.AuthoredWorldSourceDigest;
 import net.firedevops.firemud.common.tenant.AuthoredWorldSourceEvidence;
 import net.firedevops.firemud.gamedesign.v1.GetLaunchDescriptorRequest;
@@ -32,6 +40,10 @@ import net.firedevops.firemud.gamesession.repository.GameSessionCanonicalLaunchP
 import net.firedevops.firemud.gamesession.repository.GameSessionCanonicalLaunchPreparationRepository.InvalidLaunchPreparationEvidenceException;
 import net.firedevops.firemud.gamesession.repository.GameSessionCanonicalLaunchPreparationRepository.LaunchPreparationConflictException;
 import net.firedevops.firemud.gamesession.repository.GameSessionCanonicalRealmCatalogRepository;
+import net.firedevops.firemud.gamesession.repository.GameSessionStartSessionOperatorAttemptRepository;
+import net.firedevops.firemud.gamesession.repository.GameSessionStartSessionOperatorAttemptRepository.AccountRedemptionProjection;
+import net.firedevops.firemud.gamesession.repository.GameSessionStartSessionOperatorAttemptRepository.AttemptClaim;
+import net.firedevops.firemud.gamesession.repository.GameSessionStartSessionOperatorAttemptRepository.AttemptSnapshot;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
@@ -40,6 +52,7 @@ import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.TransactionStatus;
 import org.springframework.transaction.support.SimpleTransactionStatus;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
+import tools.jackson.databind.json.JsonMapper;
 
 class GameSessionCanonicalLaunchPreparationServiceTest {
   private static final String NAMESPACE = "canonical-launch-test";
@@ -51,6 +64,16 @@ class GameSessionCanonicalLaunchPreparationServiceTest {
   private static final UUID INTAKE_REQUEST = uuid(5);
   private static final UUID REALM = uuid(6);
   private static final UUID CATALOG_REQUEST = uuid(7);
+  private static final UUID RESERVATION_OWNER = uuid(20);
+  private static final UUID ISSUANCE_ID = uuid(21);
+  private static final UUID TOKEN_JTI = uuid(22);
+  private static final UUID OWNER_ATTEMPT_ID = uuid(23);
+  private static final UUID OWNER_MUTATION_ID = uuid(24);
+  private static final UUID CLAIM_OWNER_ID = uuid(25);
+  private static final String AUTHORIZATION_FINGERPRINT = "arfp/v1/test-key/" + "b".repeat(64);
+  private static final String LOGGING_WORKLOAD =
+      "spiffe://firemud/ns/" + NAMESPACE + "/sa/logging-admin-service";
+  private static final JsonMapper JSON = JsonMapper.builder().build();
 
   private final AuthoredWorldLaunchDescriptorClient descriptorClient =
       mock(AuthoredWorldLaunchDescriptorClient.class);
@@ -60,6 +83,8 @@ class GameSessionCanonicalLaunchPreparationServiceTest {
       mock(GameSessionAuthoredWorldSourceRepository.class);
   private final GameSessionCanonicalLaunchPreparationRepository preparationRepository =
       mock(GameSessionCanonicalLaunchPreparationRepository.class);
+  private final GameSessionStartSessionOperatorAttemptRepository attemptRepository =
+      mock(GameSessionStartSessionOperatorAttemptRepository.class);
   private final RecordingTransactionManager transactionManager = new RecordingTransactionManager();
   private final GameSessionCanonicalLaunchPreparationService service =
       new GameSessionCanonicalLaunchPreparationService(
@@ -303,6 +328,148 @@ class GameSessionCanonicalLaunchPreparationServiceTest {
   }
 
   @Test
+  void authorizedExactRetryValidatesCurrentClaimBeforeReturningWithoutResolvingAgain()
+      throws Exception {
+    CreateCanonicalLaunchPreparationRequest request = request();
+    CanonicalLaunchPreparationSnapshot original = preparedSnapshot();
+    StartSessionPostAuthorizationExecutionTuple tuple = authorizedTuple(request);
+    AttemptClaim claim = attemptClaim(request);
+    AttemptSnapshot attempt = attemptSnapshot(tuple, accountProjection(tuple));
+    when(attemptRepository.validateCurrentClaim(claim))
+        .thenAnswer(
+            ignored -> {
+              assertOwnerTransaction();
+              return attempt;
+            });
+    when(preparationRepository.readByControlPlaneRequestId(NAMESPACE, CONTROL_PLANE_REQUEST))
+        .thenReturn(Optional.of(original));
+
+    assertThat(authorizedService().prepareAuthorized(claim, request)).isEqualTo(original);
+
+    org.mockito.InOrder calls = inOrder(attemptRepository, preparationRepository);
+    calls.verify(attemptRepository).validateCurrentClaim(claim);
+    calls
+        .verify(preparationRepository)
+        .readByControlPlaneRequestId(NAMESPACE, CONTROL_PLANE_REQUEST);
+    verifyNoInteractions(descriptorClient, catalogRepository, sourceRepository);
+    verify(preparationRepository, never()).persistPrepared(any(), any(), any(), any());
+    assertThat(transactionManager.commitCount).isEqualTo(1);
+
+    resetRepositories();
+    when(attemptRepository.validateCurrentClaim(claim)).thenReturn(attempt);
+    when(preparationRepository.readByControlPlaneRequestId(NAMESPACE, CONTROL_PLANE_REQUEST))
+        .thenReturn(Optional.of(original));
+    CreateCanonicalLaunchPreparationRequest changedSource =
+        new CreateCanonicalLaunchPreparationRequest(
+            request.controlPlaneRequestId(),
+            request.actingAccountUuid(),
+            request.targetNamespace(),
+            request.canonicalTenantId(),
+            request.realmId(),
+            request.catalogCreationRequestId(),
+            request.catalogRevision(),
+            uuid(99),
+            request.gameTemplateId(),
+            request.requestedScriptPatchVersionPresent(),
+            request.requestedScriptPatchVersion(),
+            request.sourceVersionIdPresent(),
+            request.sourceVersionId(),
+            request.targetVersionIdPresent(),
+            request.targetVersionId(),
+            request.requestedRuntimeFlagsJsonPresent(),
+            request.requestedRuntimeFlagsJson());
+
+    assertThatThrownBy(() -> authorizedService().prepareAuthorized(claim, changedSource))
+        .isInstanceOf(LaunchPreparationConflictException.class)
+        .hasMessageContaining("changed");
+    verifyNoInteractions(descriptorClient, catalogRepository, sourceRepository);
+    verify(preparationRepository, never()).persistPrepared(any(), any(), any(), any());
+  }
+
+  @Test
+  void rejectsAuthorizedActorTenantTemplateAndDescriptorOverrideSubstitutionBeforeUpstreamCalls()
+      throws Exception {
+    CreateCanonicalLaunchPreparationRequest request = request();
+    StartSessionPostAuthorizationExecutionTuple tuple = authorizedTuple(request);
+    AttemptClaim claim = attemptClaim(request);
+    AttemptSnapshot authorizedAttempt = attemptSnapshot(tuple, accountProjection(tuple));
+    when(attemptRepository.validateCurrentClaim(claim)).thenReturn(authorizedAttempt);
+    GameSessionCanonicalLaunchPreparationService authorizedService = authorizedService();
+
+    assertThatThrownBy(
+            () ->
+                authorizedService.prepareAuthorized(
+                    claim, requestVariant(request, uuid(98), TENANT, 71L, false, null)))
+        .isInstanceOf(InvalidLaunchPreparationEvidenceException.class)
+        .hasMessageContaining("actor, tenant, or template");
+    assertThatThrownBy(
+            () ->
+                authorizedService.prepareAuthorized(
+                    claim, requestVariant(request, ACTOR, uuid(97), 71L, false, null)))
+        .isInstanceOf(InvalidLaunchPreparationEvidenceException.class)
+        .hasMessageContaining("actor, tenant, or template");
+    assertThatThrownBy(
+            () ->
+                authorizedService.prepareAuthorized(
+                    claim, requestVariant(request, ACTOR, TENANT, 72L, false, null)))
+        .isInstanceOf(InvalidLaunchPreparationEvidenceException.class)
+        .hasMessageContaining("actor, tenant, or template");
+    assertThatThrownBy(
+            () ->
+                authorizedService.prepareAuthorized(
+                    claim, requestVariant(request, ACTOR, TENANT, 71L, true, 72L)))
+        .isInstanceOf(LaunchPreparationConflictException.class)
+        .hasMessageContaining("does not authorize launch descriptor overrides");
+
+    verify(attemptRepository, times(4)).validateCurrentClaim(claim);
+    verifyNoInteractions(
+        descriptorClient, catalogRepository, sourceRepository, preparationRepository);
+  }
+
+  @Test
+  void authorizedPreparationChecksProjectionBeforeNetworkAndRevalidatesClaimAtCommit()
+      throws Exception {
+    CreateCanonicalLaunchPreparationRequest request = request();
+    StartSessionPostAuthorizationExecutionTuple tuple = authorizedTuple(request);
+    AttemptClaim claim = attemptClaim(request);
+    AccountRedemptionProjection substitutedProjection =
+        new AccountRedemptionProjection(
+            "arfp/v1/other-key/" + "c".repeat(64),
+            tuple.authorityEvidenceBundleBytes(),
+            ISSUANCE_ID,
+            23L);
+    AttemptSnapshot substitutedAttempt = attemptSnapshot(tuple, substitutedProjection);
+    when(attemptRepository.validateCurrentClaim(claim)).thenReturn(substitutedAttempt);
+
+    assertThatThrownBy(() -> authorizedService().prepareAuthorized(claim, request))
+        .isInstanceOf(InvalidLaunchPreparationEvidenceException.class)
+        .hasMessageContaining("differs from the original post-authorization tuple");
+    verifyNoInteractions(
+        descriptorClient, catalogRepository, sourceRepository, preparationRepository);
+    int commitsAfterRejectedProjection = transactionManager.commitCount;
+
+    resetRepositories();
+    AuthoredWorldSourceEvidence source = source();
+    IntakeReceipt intake = intake(source);
+    CanonicalRealmCatalogSnapshot catalog = catalog(intake);
+    AuthoredWorldLaunchDescriptorEvidence descriptor = descriptor(request, catalog, source);
+    CanonicalLaunchPreparationSnapshot prepared = snapshot(request, catalog, intake, descriptor);
+    AttemptSnapshot exactAttempt = attemptSnapshot(tuple, accountProjection(tuple));
+    when(attemptRepository.validateCurrentClaim(claim))
+        .thenAnswer(
+            ignored -> {
+              assertOwnerTransaction();
+              return exactAttempt;
+            });
+    stubNewPreparation(request, source, intake, catalog, descriptor, prepared, true);
+
+    assertThat(authorizedService().prepareAuthorized(claim, request)).isEqualTo(prepared);
+    verify(attemptRepository, times(2)).validateCurrentClaim(claim);
+    assertThat(transactionManager.commitCount).isEqualTo(commitsAfterRejectedProjection + 2);
+    verify(preparationRepository).persistPrepared(request, catalog, intake, descriptor);
+  }
+
+  @Test
   void changedRetryInputConflictsBeforeUpstreamResolutionOrMutation() {
     CreateCanonicalLaunchPreparationRequest originalRequest = request();
     AuthoredWorldSourceEvidence source = source();
@@ -325,7 +492,7 @@ class GameSessionCanonicalLaunchPreparationServiceTest {
             SOURCE_INTAKE_OPERATION,
             71,
             true,
-            "", // Present-empty remains distinct from absence.
+            "patch-v1",
             false,
             null,
             false,
@@ -511,7 +678,7 @@ class GameSessionCanonicalLaunchPreparationServiceTest {
     IntakeReceipt intake = intake(source);
     CanonicalRealmCatalogSnapshot catalog = catalog(intake);
     AuthoredWorldLaunchDescriptorEvidence absentDescriptor = descriptor(absent, catalog, source);
-    CreateCanonicalLaunchPreparationRequest presentEmpty =
+    CreateCanonicalLaunchPreparationRequest present =
         new CreateCanonicalLaunchPreparationRequest(
             CONTROL_PLANE_REQUEST,
             ACTOR,
@@ -523,22 +690,21 @@ class GameSessionCanonicalLaunchPreparationServiceTest {
             SOURCE_INTAKE_OPERATION,
             71,
             true,
-            "",
+            "patch-v1",
             false,
             null,
             false,
             null,
             false,
             null);
-    AuthoredWorldLaunchDescriptorEvidence presentEmptyDescriptor =
-        descriptor(presentEmpty, catalog, source);
+    AuthoredWorldLaunchDescriptorEvidence presentDescriptor = descriptor(present, catalog, source);
 
     assertThat(
             GameSessionCanonicalLaunchPreparationRepository.requestDigest(
                 absent, catalog, intake, absentDescriptor))
         .isNotEqualTo(
             GameSessionCanonicalLaunchPreparationRepository.requestDigest(
-                presentEmpty, catalog, intake, presentEmptyDescriptor));
+                present, catalog, intake, presentDescriptor));
 
     CanonicalRealmCatalogSnapshot changedCatalogPayload =
         new CanonicalRealmCatalogSnapshot(
@@ -567,6 +733,223 @@ class GameSessionCanonicalLaunchPreparationServiceTest {
                 absent, catalog, intake, absentDescriptor));
   }
 
+  @Test
+  void presentScriptPatchIdentifierMustBeNonblank() {
+    assertThatThrownBy(() -> requestWithScriptPatch(null))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("presence does not match its value");
+    assertThatThrownBy(() -> requestWithScriptPatch(""))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("must be nonblank when present");
+    assertThatThrownBy(() -> requestWithScriptPatch(" \t\n"))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("must be nonblank when present");
+
+    assertThat(requestWithScriptPatch("patch-v1").requestedScriptPatchVersion())
+        .isEqualTo("patch-v1");
+    assertThat(request().requestedScriptPatchVersionPresent()).isFalse();
+  }
+
+  private static CreateCanonicalLaunchPreparationRequest requestWithScriptPatch(String patch) {
+    return new CreateCanonicalLaunchPreparationRequest(
+        CONTROL_PLANE_REQUEST,
+        ACTOR,
+        NAMESPACE,
+        TENANT,
+        REALM,
+        CATALOG_REQUEST,
+        1,
+        SOURCE_INTAKE_OPERATION,
+        71,
+        true,
+        patch,
+        false,
+        null,
+        false,
+        null,
+        false,
+        null);
+  }
+
+  private GameSessionCanonicalLaunchPreparationService authorizedService() {
+    return new GameSessionCanonicalLaunchPreparationService(
+        descriptorClient,
+        catalogRepository,
+        sourceRepository,
+        preparationRepository,
+        attemptRepository,
+        transactionManager,
+        NAMESPACE);
+  }
+
+  private static void assertOwnerTransaction() {
+    assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isTrue();
+    assertThat(TransactionSynchronizationManager.isCurrentTransactionReadOnly()).isFalse();
+    assertThat(TransactionSynchronizationManager.getCurrentTransactionIsolationLevel())
+        .isEqualTo(TransactionDefinition.ISOLATION_READ_COMMITTED);
+  }
+
+  private static AttemptClaim attemptClaim(CreateCanonicalLaunchPreparationRequest request) {
+    return new AttemptClaim(
+        NAMESPACE,
+        request.controlPlaneRequestId(),
+        OWNER_ATTEMPT_ID,
+        OWNER_MUTATION_ID,
+        CLAIM_OWNER_ID,
+        29L);
+  }
+
+  private static CreateCanonicalLaunchPreparationRequest requestVariant(
+      CreateCanonicalLaunchPreparationRequest original,
+      UUID actor,
+      UUID tenant,
+      long gameTemplateId,
+      boolean targetVersionPresent,
+      Long targetVersion) {
+    return new CreateCanonicalLaunchPreparationRequest(
+        original.controlPlaneRequestId(),
+        actor,
+        original.targetNamespace(),
+        tenant,
+        original.realmId(),
+        original.catalogCreationRequestId(),
+        original.catalogRevision(),
+        original.sourceIntakeOperationId(),
+        gameTemplateId,
+        false,
+        null,
+        false,
+        null,
+        targetVersionPresent,
+        targetVersion,
+        false,
+        null);
+  }
+
+  private static AttemptSnapshot attemptSnapshot(
+      StartSessionPostAuthorizationExecutionTuple tuple, AccountRedemptionProjection projection) {
+    AttemptSnapshot snapshot = mock(AttemptSnapshot.class);
+    when(snapshot.targetNamespace()).thenReturn(NAMESPACE);
+    when(snapshot.controlPlaneRequestId()).thenReturn(tuple.controlPlaneRequestId());
+    when(snapshot.canonicalTenantId()).thenReturn(TENANT);
+    when(snapshot.ownerAttemptId()).thenReturn(OWNER_ATTEMPT_ID);
+    when(snapshot.ownerMutationId()).thenReturn(OWNER_MUTATION_ID);
+    when(snapshot.ownerFence()).thenReturn(29L);
+    when(snapshot.phaseState()).thenReturn("OWNER_EXECUTION_PENDING");
+    when(snapshot.postAuthorizationExecutionTuple()).thenReturn(tuple.canonicalBytes());
+    when(snapshot.accountRedemptionProjection()).thenReturn(projection.canonicalBytes());
+    return snapshot;
+  }
+
+  private static AccountRedemptionProjection accountProjection(
+      StartSessionPostAuthorizationExecutionTuple tuple) {
+    StartSessionAuthorityEvidenceBundle bundle =
+        StartSessionAuthorityEvidenceBundle.decode(tuple.authorityEvidenceBundleBytes());
+    return new AccountRedemptionProjection(
+        tuple.authorizationReferenceFingerprint(),
+        tuple.authorityEvidenceBundleBytes(),
+        bundle.issuanceOperationId(),
+        Long.parseLong(tuple.issuanceFence()));
+  }
+
+  private static StartSessionPostAuthorizationExecutionTuple authorizedTuple(
+      CreateCanonicalLaunchPreparationRequest request) throws IOException {
+    StartSessionOperatorAction action =
+        new StartSessionOperatorAction(
+            StartSessionOperatorAction.ACTION_FAMILY_SCHEMA_ID,
+            StartSessionOperatorAction.ACTION_FAMILY_SCHEMA_VERSION,
+            new StartSessionOperatorAction.Scope(TENANT, NAMESPACE),
+            new StartSessionOperatorAction.Target(request.gameTemplateId(), ACTOR),
+            StartSessionOperatorAction.ExpectedVersion.ABSENT,
+            new StartSessionOperatorAction.Mutation(StartSessionOperatorAction.ClientIp.absent()),
+            "Game Session source-qualified launch preparation");
+    StartSessionPreAuthorizationReservationTuple preTuple =
+        StartSessionPreAuthorizationReservationTuple.createHuman(
+            request.controlPlaneRequestId(), ACTOR, action);
+    byte[] bundleBytes = authorityEvidenceBundle(preTuple);
+    StartSessionAuthorityEvidenceBundle.BundleReference reference =
+        new StartSessionAuthorityEvidenceBundle.BundleReference(
+            StartSessionAuthorityEvidenceBundle.BUNDLE_VERSION, "17", "23", "18446744073709551615");
+    return StartSessionPostAuthorizationExecutionTuple.createHuman(
+        preTuple,
+        LOGGING_WORKLOAD,
+        AUTHORIZATION_FINGERPRINT,
+        RESERVATION_OWNER,
+        19L,
+        bundleBytes,
+        reference);
+  }
+
+  private static byte[] authorityEvidenceBundle(
+      StartSessionPreAuthorizationReservationTuple preTuple) throws IOException {
+    String tenantId = TENANT.toString();
+    Map<String, Object> projection =
+        Map.of(
+            "sourceType", "ACCOUNT",
+            "sourceEvidenceId", "sha256:" + "a".repeat(64),
+            "sourceEvidenceVersion", "17",
+            "projectionStatus", "CURRENT",
+            "evaluatedAt", "2026-10-09T00:00:00Z",
+            "expiresAt", "2026-10-09T00:05:00Z");
+    Map<String, Object> identity =
+        Map.of(
+            "issuanceOperationId", ISSUANCE_ID.toString(),
+            "controlPlaneRequestId", preTuple.controlPlaneRequestId(),
+            "actionFamilyRequestIdentity",
+                Map.of(
+                    "requestIdentityKind",
+                    "controlPlaneRequestId",
+                    "requestId",
+                    preTuple.controlPlaneRequestId()),
+            "mutationDigest", preTuple.mutationDigest());
+    Map<String, Object> authority =
+        Map.of(
+            "issuerAuthGeneration", 1L,
+            "accountAuthorityGeneration", 2L,
+            "tenantAuthorityGeneration", Map.of(tenantId, 3L),
+            "membershipAuthorityGeneration", Map.of(tenantId, 4L),
+            "privateRealmGrantVersions", List.of());
+    Map<String, Object> evidence =
+        Map.of(
+            "evidenceType",
+            StartSessionAuthorityEvidenceBundle.HUMAN_EVIDENCE_TYPE,
+            "actorAccountId",
+            ACTOR.toString(),
+            "controlUiTokenJti",
+            TOKEN_JTI.toString(),
+            "role",
+            "tenantAdmin",
+            "accountGeneration",
+            "2",
+            "tenantGeneration",
+            "3");
+    Map<String, Object> value =
+        Map.of(
+            "bundleVersion",
+            StartSessionAuthorityEvidenceBundle.BUNDLE_VERSION,
+            "authorityScope",
+            Map.of(
+                "scope", Map.of("tenantId", tenantId, "targetNamespace", NAMESPACE),
+                "actionFamily", preTuple.action().actionFamily(),
+                "applicableAccountId", ACTOR.toString(),
+                "applicableTenantId", tenantId),
+            "accountProjectionEvidence",
+            projection,
+            "issuanceOperationIdentity",
+            identity,
+            "issuanceKind",
+            "human_operator",
+            "authorityTuple",
+            authority,
+            "membershipVersion",
+            Map.of(tenantId, 5L),
+            "issuanceFence",
+            "23",
+            "issuanceEvidence",
+            evidence);
+    return Rfc8785CanonicalJson.canonicalizeUtf8(JSON.writeValueAsString(value));
+  }
+
   private void stubNewPreparation(
       CreateCanonicalLaunchPreparationRequest request,
       AuthoredWorldSourceEvidence sourceEvidence,
@@ -574,6 +957,17 @@ class GameSessionCanonicalLaunchPreparationServiceTest {
       CanonicalRealmCatalogSnapshot catalog,
       AuthoredWorldLaunchDescriptorEvidence descriptor,
       CanonicalLaunchPreparationSnapshot snapshot) {
+    stubNewPreparation(request, sourceEvidence, intake, catalog, descriptor, snapshot, false);
+  }
+
+  private void stubNewPreparation(
+      CreateCanonicalLaunchPreparationRequest request,
+      AuthoredWorldSourceEvidence sourceEvidence,
+      IntakeReceipt intake,
+      CanonicalRealmCatalogSnapshot catalog,
+      AuthoredWorldLaunchDescriptorEvidence descriptor,
+      CanonicalLaunchPreparationSnapshot snapshot,
+      boolean verifyAuthorizedClaimRevalidation) {
     when(preparationRepository.readByControlPlaneRequestId(NAMESPACE, CONTROL_PLANE_REQUEST))
         .thenReturn(Optional.empty(), Optional.of(snapshot));
     when(catalogRepository.readByRequest(NAMESPACE, CATALOG_REQUEST))
@@ -583,6 +977,9 @@ class GameSessionCanonicalLaunchPreparationServiceTest {
     when(descriptorClient.resolve(descriptor.request()))
         .thenAnswer(
             ignored -> {
+              if (verifyAuthorizedClaimRevalidation) {
+                verify(attemptRepository, times(1)).validateCurrentClaim(attemptClaim(request));
+              }
               assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
               return descriptor;
             });
@@ -602,13 +999,20 @@ class GameSessionCanonicalLaunchPreparationServiceTest {
                   .isEqualTo(TransactionDefinition.ISOLATION_READ_COMMITTED);
               assertThat(descriptor.authoredWorldSourceOperationId())
                   .isEqualTo(sourceEvidence.operationId());
+              if (verifyAuthorizedClaimRevalidation) {
+                verify(attemptRepository, times(2)).validateCurrentClaim(attemptClaim(request));
+              }
               return snapshot;
             });
   }
 
   private void resetRepositories() {
     org.mockito.Mockito.reset(
-        descriptorClient, catalogRepository, sourceRepository, preparationRepository);
+        descriptorClient,
+        catalogRepository,
+        sourceRepository,
+        preparationRepository,
+        attemptRepository);
   }
 
   private static CanonicalLaunchPreparationSnapshot preparedSnapshot() {

@@ -36,6 +36,7 @@ import net.firedevops.firemud.gamedesign.service.TemplateRemapSetService;
 import net.firedevops.firemud.gamedesign.service.impl.LaunchDescriptorServiceImpl;
 import net.firedevops.firemud.test.NoGrpcServerTestConfiguration;
 import net.firedevops.firemud.test.PostgresBackedServiceTestSupport;
+import net.firedevops.firemud.test.TestContainerImages;
 import org.flywaydb.core.Flyway;
 import org.flywaydb.core.api.MigrationVersion;
 import org.jooq.DSLContext;
@@ -92,7 +93,8 @@ class LaunchDescriptorServiceIntegrationTest {
       DSL.field(DSL.name("control_plane_request_id"), String.class);
 
   @Container
-  static PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>("postgres:16-alpine");
+  static PostgreSQLContainer<?> postgres =
+      new PostgreSQLContainer<>(TestContainerImages.postgres());
 
   @DynamicPropertySource
   static void configure(DynamicPropertyRegistry registry) {

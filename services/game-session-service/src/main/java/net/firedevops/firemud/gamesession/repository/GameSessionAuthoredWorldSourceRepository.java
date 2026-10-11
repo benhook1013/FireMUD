@@ -12,7 +12,6 @@ import org.jooq.Field;
 import org.jooq.Record;
 import org.jooq.Table;
 import org.jooq.impl.DSL;
-import org.springframework.stereotype.Repository;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
@@ -20,7 +19,6 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
 /**
  * Game Session's immutable, owner-local copy of authenticated Game Design authored-world source.
  */
-@Repository
 public class GameSessionAuthoredWorldSourceRepository {
   private static final int SCHEMA_VERSION = 1;
   private static final UUID NIL_UUID = new UUID(0L, 0L);
@@ -339,6 +337,7 @@ public class GameSessionAuthoredWorldSourceRepository {
 
   private AuthoredWorldSourceEvidence validateSource(AuthoredWorldSourceEvidence source) {
     Objects.requireNonNull(source, "source");
+    requireCanonicalOpenWorldDisplayName(source.worldDisplayName());
     try {
       return new AuthoredWorldSourceEvidence(
           source.schemaVersion(),
@@ -357,6 +356,15 @@ public class GameSessionAuthoredWorldSourceRepository {
     } catch (IllegalArgumentException exception) {
       throw new InvalidIntakeEvidenceException(
           "Game Design authored-world source evidence is invalid", exception);
+    }
+  }
+
+  private static void requireCanonicalOpenWorldDisplayName(String worldDisplayName) {
+    if (worldDisplayName == null
+        || worldDisplayName.isBlank()
+        || !worldDisplayName.equals(worldDisplayName.trim())) {
+      throw new InvalidIntakeEvidenceException(
+          "Game Design authored-world source display name is not canonical for an OPEN pointer");
     }
   }
 

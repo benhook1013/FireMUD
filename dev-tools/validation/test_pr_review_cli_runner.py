@@ -303,7 +303,12 @@ class SelectedPrStatusSummaryTests(unittest.TestCase):
             "threads": {"current": 1, "outdated": 2, "total": 3, "nodes": [{"body": "large thread detail"}]},
             "ci": {
                 "aggregate": "FAILURE",
-                "required": {"available": True, "status": "failure", "reason": "required check failed"},
+                "required": {
+                    "available": False,
+                    "status": "unavailable",
+                    "reason": "current base is not protected",
+                    "reason_code": "branch_not_protected",
+                },
                 "pending": [{"name": "Native tests", "details": "large pending detail"}],
                 "failed": [{"name": "Lint", "details": "large failure detail"}],
                 "observed": True,
@@ -315,6 +320,7 @@ class SelectedPrStatusSummaryTests(unittest.TestCase):
                 "checks": [{"name": "large raw check inventory"}],
             },
             "mergeability": {"clean": False, "diagnosis": "NOT READY"},
+            "readiness_scope": "current_base_merge",
             "ready": False,
             "verdict": "NOT READY",
             "reasons": ["required check failed", "global safety hold remains active"],
@@ -337,11 +343,13 @@ class SelectedPrStatusSummaryTests(unittest.TestCase):
 
         self.assertEqual(summary["pull_request"], report["pull_request"])
         self.assertEqual(summary["mergeability"], report["mergeability"])
+        self.assertEqual(summary["readiness_scope"], "current_base_merge")
         self.assertFalse(summary["ready"])
         self.assertEqual(summary["reasons"], report["reasons"])
         self.assertEqual(summary["threads"], {"current": 1, "outdated": 2, "total": 3})
         self.assertEqual(summary["ci"]["pending"], ["Native tests"])
         self.assertEqual(summary["ci"]["failed"], ["Lint"])
+        self.assertEqual(summary["ci"]["required_checks"]["reason_code"], "branch_not_protected")
         self.assertEqual(summary["ci"]["optional_checks"]["pending_count"], 1)
         self.assertEqual(summary["review_stack"]["review_fronts"], report["review_stack"]["review_fronts"])
         self.assertEqual(
@@ -389,6 +397,7 @@ class SelectedPrStatusSummaryTests(unittest.TestCase):
             "threads": {"current": 0, "outdated": 0, "total": 0},
             "ci": {"aggregate": {"state": "SUCCESS"}, "pending": [], "failed": [], "optional": {}, "required": {}},
             "mergeability": {"clean": True, "diagnosis": "CLEAN"},
+            "readiness_scope": "current_base_merge",
             "ready": True,
             "verdict": "READY",
             "reasons": [],
@@ -433,6 +442,8 @@ class SelectedPrStatusSummaryTests(unittest.TestCase):
         ):
             self.assertEqual(cli_module.main(["status", "--pr", "3092", "--summary", "--json"]), 0)
         summary = json.loads(output.getvalue())
+        self.assertEqual(summary["readiness_scope"], "current_base_merge")
+        self.assertEqual(summary["review_stack"]["review_fronts"], stack_report["review_fronts"])
         self.assertEqual(
             summary["review_stack"]["prs"],
             [
@@ -466,6 +477,7 @@ class SelectedPrStatusSummaryTests(unittest.TestCase):
         ):
             self.assertEqual(cli_module.main(["status", "--pr", "3092", "--json"]), 0)
         normal = json.loads(output.getvalue())
+        self.assertEqual(normal["readiness_scope"], "current_base_merge")
         self.assertEqual(normal["review_stack"]["ordered_prs"], [3090, 3091, 3092, 3093])
 
     def test_summary_requires_one_selected_pr_and_rejects_full_scan_before_controller(self):

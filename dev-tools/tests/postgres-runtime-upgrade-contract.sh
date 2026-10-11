@@ -3,7 +3,7 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 POSTGRES_LAYOUT_ENTRYPOINT="$ROOT_DIR/docker/postgres-data-layout-entrypoint.sh"
-POSTGRES16_IMAGE='postgres:16@sha256:65b16a8b326e0cfbdf33fa7e783f2a0cb352a61448616ccccfd616ef42aa0f65'
+POSTGRES16_IMAGE='public.ecr.aws/docker/library/postgres:16@sha256:65b16a8b326e0cfbdf33fa7e783f2a0cb352a61448616ccccfd616ef42aa0f65'
 POSTGRES_DUMP_DOCKERFILE="$ROOT_DIR/docker/pg-dump-cron.Dockerfile"
 
 fail() {
@@ -29,7 +29,7 @@ expected_dump_image = sys.argv[2]
 compose = yaml.safe_load((root / "docker/docker-compose.yml").read_text())
 postgres = compose["services"]["postgres"]
 expected_image = postgres.get("image")
-if not isinstance(expected_image, str) or not re.fullmatch(r"postgres:18@sha256:[0-9a-f]{64}", expected_image):
+if not isinstance(expected_image, str) or not re.fullmatch(r"public\.ecr\.aws/docker/library/postgres:18@sha256:[0-9a-f]{64}", expected_image):
     raise SystemExit("local Compose PostgreSQL image must be an exact digest-pinned PostgreSQL 18 reference")
 if postgres.get("entrypoint") != ["/usr/local/bin/firemud-postgres-data-layout-entrypoint.sh"]:
     raise SystemExit("local Compose PostgreSQL must run its pre-entrypoint data-layout guard")
@@ -79,7 +79,7 @@ if len(from_images) != 1:
     raise SystemExit("the Compose dump Dockerfile must have one unambiguous PostgreSQL base image")
 if from_images[0] != expected_dump_image:
     raise SystemExit("the Compose dump proof image must derive from the Dockerfile's exact FROM reference")
-if not re.fullmatch(r"postgres:18@sha256:[0-9a-f]{64}", expected_dump_image):
+if not re.fullmatch(r"public\.ecr\.aws/docker/library/postgres:18@sha256:[0-9a-f]{64}", expected_dump_image):
     raise SystemExit("the Compose dump Dockerfile must pin its PostgreSQL 18 base image by digest")
 
 for path in (

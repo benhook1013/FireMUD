@@ -28,9 +28,9 @@ public final class PostgresBackedServiceTestSupport {
   public static DockerImageName postgresImage(String imageReference) {
     DockerImageName image = DockerImageName.parse(imageReference);
     if (!imageReference.matches(
-        "postgres(?::[A-Za-z0-9_][A-Za-z0-9_.-]*)?(?:@sha256:[0-9a-f]{64})?")) {
+        "public\\.ecr\\.aws/docker/library/postgres:[A-Za-z0-9_][A-Za-z0-9_.-]*@sha256:[0-9a-f]{64}")) {
       throw new IllegalArgumentException(
-          "Expected a Docker image from the canonical postgres repository");
+          "Expected a digest-pinned image from the official ECR postgres repository");
     }
     return image.asCompatibleSubstituteFor(DockerImageName.parse("postgres"));
   }

@@ -3606,6 +3606,50 @@ if grep -Fq "sha256:$(printf '1%.0s' {1..64})" "$controller_publish_output"; the
   exit 1
 fi
 
+assert_controller_publish_log_contains() {
+  local assertion="$1"
+  local expected="$2"
+  local log_path="$3"
+  local observed='<missing>'
+  if [[ -f "$log_path" ]]; then
+    observed="$(<"$log_path")"
+  fi
+  if ! grep -Fq -- "$expected" "$log_path" 2>/dev/null; then
+    printf 'controller publisher %s assertion failed: expected=%q observed=%q file=%s\n' \
+      "$assertion" "$expected" "$observed" "$log_path" >&2
+    exit 1
+  fi
+}
+
+assert_controller_publish_exact_line() {
+  local assertion="$1"
+  local expected="$2"
+  local log_path="$3"
+  local observed='<missing>'
+  if [[ -f "$log_path" ]]; then
+    observed="$(<"$log_path")"
+  fi
+  if ! grep -Fxq -- "$expected" "$log_path" 2>/dev/null; then
+    printf 'controller publisher %s assertion failed: expected exact line=%q observed=%q file=%s\n' \
+      "$assertion" "$expected" "$observed" "$log_path" >&2
+    exit 1
+  fi
+}
+
+assert_controller_publish_empty_output() {
+  local assertion="$1"
+  local output_path="$2"
+  local observed='<missing>'
+  if [[ -f "$output_path" ]]; then
+    observed="$(<"$output_path")"
+  fi
+  if [[ -s "$output_path" ]]; then
+    printf 'controller publisher %s assertion failed: expected empty output observed=%q file=%s\n' \
+      "$assertion" "$observed" "$output_path" >&2
+    exit 1
+  fi
+}
+
 controller_duplicate_count="$TEMP_DIR/controller-duplicate-count"
 controller_duplicate_output="$TEMP_DIR/controller-duplicate.output"
 if (
@@ -3624,9 +3668,13 @@ if (
   echo "controller publication accepted more than one successful push digest" >&2
   exit 1
 fi
-grep -Fq 'did not report exactly one exact sha256 digest' \
+assert_controller_publish_log_contains \
+  'duplicate-digest rejection' \
+  'did not report exactly one exact sha256 digest' \
   "$TEMP_DIR/controller-duplicate.stderr"
-test ! -s "$controller_duplicate_output"
+assert_controller_publish_empty_output \
+  'duplicate-digest rejection' \
+  "$controller_duplicate_output"
 
 controller_zero_count="$TEMP_DIR/controller-zero-count"
 controller_zero_output="$TEMP_DIR/controller-zero.output"
@@ -3646,9 +3694,13 @@ if (
   echo "controller publication accepted a successful push without a digest" >&2
   exit 1
 fi
-grep -Fq 'did not report exactly one exact sha256 digest' \
+assert_controller_publish_log_contains \
+  'zero-digest rejection' \
+  'did not report exactly one exact sha256 digest' \
   "$TEMP_DIR/controller-zero.stderr"
-test ! -s "$controller_zero_output"
+assert_controller_publish_empty_output \
+  'zero-digest rejection' \
+  "$controller_zero_output"
 
 controller_failure_count="$TEMP_DIR/controller-failure-count"
 controller_failure_output="$TEMP_DIR/controller-failure.output"
@@ -3668,11 +3720,30 @@ if (
   echo "controller publication accepted three failed push attempts" >&2
   exit 1
 fi
-test "$(<"$controller_failure_count")" -eq 3
-grep -Fxq '5' "$TEMP_DIR/controller-failure-sleep.log"
-grep -Fxq '10' "$TEMP_DIR/controller-failure-sleep.log"
-grep -Fq 'after 3 attempts' "$TEMP_DIR/controller-failure.stderr"
-test ! -s "$controller_failure_output"
+controller_failure_count_observed='<missing>'
+if [[ -f "$controller_failure_count" ]]; then
+  controller_failure_count_observed="$(<"$controller_failure_count")"
+fi
+if [[ "$controller_failure_count_observed" != 3 ]]; then
+  printf 'controller publisher exhausted-retry attempt-count assertion failed: expected=3 observed=%q file=%s\n' \
+    "$controller_failure_count_observed" "$controller_failure_count" >&2
+  exit 1
+fi
+assert_controller_publish_exact_line \
+  'exhausted-retry first backoff' \
+  '5' \
+  "$TEMP_DIR/controller-failure-sleep.log"
+assert_controller_publish_exact_line \
+  'exhausted-retry second backoff' \
+  '10' \
+  "$TEMP_DIR/controller-failure-sleep.log"
+assert_controller_publish_log_contains \
+  'exhausted-retry terminal failure' \
+  'after 3 attempts' \
+  "$TEMP_DIR/controller-failure.stderr"
+assert_controller_publish_empty_output \
+  'exhausted-retry failure' \
+  "$controller_failure_output"
 
 preview_derive_step="$TEMP_DIR/preview-derive-step.sh"
 python3 - "$preview" "$preview_derive_step" <<'PY'

@@ -29,7 +29,7 @@ for expected in \
   require_contains "$CLASSIFIER" "$expected"
 done
 
-python3 - "$CI_WORKFLOW" "$SECURITY_WORKFLOW" "$PREVIEW_WORKFLOW" "$ZAP_WORKFLOW" "$CLASSIFIER" <<'PY'
+python3 - "$CI_WORKFLOW" "$SECURITY_WORKFLOW" "$PREVIEW_WORKFLOW" "$ZAP_WORKFLOW" "$CLASSIFIER" "$ROOT_DIR/build.gradle.kts" <<'PY'
 import copy
 import json
 from pathlib import Path
@@ -178,6 +178,19 @@ DEV_TOOL_CONTRACT_COMMANDS = (
     "bash ./dev-tools/tests/postgres-runtime-upgrade-contract.sh",
     "bash ./dev-tools/tests/minio-pr-smoke-bootstrap-contract.sh",
 )
+DISCOVERABLE_ARCHITECTURE_UNIT_TEST_MODULES = (
+    "dev-tools/validation/test_design_capability_allocation.py",
+    "dev-tools/validation/test_adr_review_status.py",
+    "dev-tools/validation/test_check_metrics_cardinality.py",
+    "dev-tools/validation/test_check_authz_route_matrix.py",
+)
+DEFERRED_ARCHITECTURE_COMMAND = (
+    "bash ./dev-tools/tests/architecture-doc-contracts.sh --defer-unit-tests"
+)
+VALIDATION_DISCOVERY_COMMAND = (
+    "python3 -m unittest discover -s dev-tools/validation "
+    "-p 'test_*.py' --durations 0"
+)
 
 
 def require_gating_run_step(workflow, job_id, name_suffix, command):
@@ -223,6 +236,55 @@ def require_dev_tool_contract_command(workflow, command):
         )
 
 
+def require_architecture_test_handoff(workflow):
+    label = "ci architecture test handoff"
+    step = find_step(
+        workflow,
+        "dev-tool-contract-checks",
+        "Validate dev tool contracts",
+        "ci workflow",
+    )
+    if step.get("if") != "${{ needs.changes.outputs.lightweight_only != 'true' }}":
+        raise SystemExit(f"{label}: complete-path contract step must run on full validation")
+    if str(step.get("continue-on-error", "false")).strip().lower() != "false":
+        raise SystemExit(f"{label}: complete-path contract failures must fail the job")
+    run = value_at(step, ("run",), label)
+    if not isinstance(run, str):
+        raise SystemExit(f"{label}: run block must be a string")
+    lines = [line.strip() for line in run.splitlines()]
+    if lines.count(DEFERRED_ARCHITECTURE_COMMAND) != 1:
+        raise SystemExit(
+            f"{label}: full contract path must defer discovery-covered architecture "
+            "unit tests exactly once"
+        )
+    if lines.count(VALIDATION_DISCOVERY_COMMAND) != 1:
+        raise SystemExit(
+            f"{label}: full contract path must run validation discovery with "
+            "per-test durations exactly once"
+        )
+    if lines.index(DEFERRED_ARCHITECTURE_COMMAND) >= lines.index(
+        VALIDATION_DISCOVERY_COMMAND
+    ):
+        raise SystemExit(
+            f"{label}: comprehensive validation discovery must follow deferred architecture tests"
+        )
+
+    repository_root = Path(sys.argv[1]).resolve().parents[2]
+    for module in DISCOVERABLE_ARCHITECTURE_UNIT_TEST_MODULES:
+        module_path = repository_root / module
+        if not module_path.is_file():
+            raise SystemExit(
+                f"{label}: discovered architecture test module is missing: {module}"
+            )
+        if (
+            module_path.parent != repository_root / "dev-tools/validation"
+            or not module_path.name.startswith("test_")
+        ):
+            raise SystemExit(
+                f"{label}: architecture test module is outside validation discovery: {module}"
+            )
+
+
 def mutate_dev_tool_contract_command(workflow, command):
     mutated = copy.deepcopy(workflow)
     step = find_step(
@@ -250,10 +312,93 @@ require_equal(
     module_checks_step,
     ("run",),
     "echo \"::group::Run Module Validation\"\n"
-    "./gradlew --refresh-dependencies :${{ matrix.module }}:check -PfullCheck\n"
+    "./gradlew --refresh-dependencies --max-workers=2 '-Dorg.gradle.jvmargs=-Xmx2500m -Dfile.encoding=UTF-8' :${{ matrix.module }}:check -PfullCheck\n"
     "echo \"::endgroup::\"\n",
     "ci workflow",
 )
+
+test_logs_step = find_step(
+    ci, "build-and-test", "Upload Test Logs if Failed", "ci workflow"
+)
+require_equal(
+    test_logs_step,
+    ("if",),
+    "${{ failure() || cancelled() }}",
+    "ci workflow",
+)
+
+junit_results_step = find_step(
+    ci, "build-and-test", "Upload JUnit Test Results", "ci workflow"
+)
+require_equal(
+    junit_results_step,
+    ("if",),
+    "always()",
+    "ci workflow",
+)
+require_equal(
+    junit_results_step,
+    ("uses",),
+    "actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9",
+    "ci workflow",
+)
+require_equal(
+    junit_results_step,
+    ("with", "name"),
+    "junit-${{ matrix.module }}-results-${{ github.sha }}-attempt-${{ github.run_attempt }}",
+    "ci workflow",
+)
+require_equal(
+    junit_results_step,
+    ("with", "path"),
+    "${{ matrix.module == 'load-testing' && 'dev-tools/load-testing/build/test-results/**/*.xml' || format('services/{0}/build/test-results/**/*.xml', matrix.module) }}",
+    "ci workflow",
+)
+require_equal(
+    junit_results_step,
+    ("with", "if-no-files-found"),
+    "warn",
+    "ci workflow",
+)
+require_equal(
+    junit_results_step,
+    ("with", "retention-days"),
+    "14",
+    "ci workflow",
+)
+
+gradle_build = Path(sys.argv[6]).read_text(encoding="utf-8")
+test_logging_match = re.search(
+    (
+        r"tasks\.withType<Test>\(\)\.configureEach\s*\{\s*"
+        r"testLogging\s*\{(?P<settings>.*?)\n\s*\}\s*\}"
+    ),
+    gradle_build,
+    re.DOTALL,
+)
+if test_logging_match is None:
+    raise SystemExit(
+        "build.gradle.kts: missing canonical Test task logging configuration"
+    )
+test_logging_settings = test_logging_match.group("settings")
+for expected in (
+    "exceptionFormat = TestExceptionFormat.FULL",
+    "showExceptions = true",
+    "showCauses = true",
+    "showStackTraces = true",
+):
+    if expected not in test_logging_settings:
+        raise SystemExit(
+            f"build.gradle.kts: Test task failure logging must include {expected!r}"
+        )
+if re.search(r"\bevents\s*(?:=|\()", test_logging_settings):
+    raise SystemExit(
+        "build.gradle.kts: Test task failure logging must preserve inherited events"
+    )
+if "showStandardStreams = true" in test_logging_settings:
+    raise SystemExit(
+        "build.gradle.kts: Test task failure logging must not expose standard streams"
+    )
 
 require_equal(
     ci,
@@ -432,6 +577,12 @@ require_contains(
     "needs.changes.outputs.validation_python_changed == 'true'",
     "ci workflow",
 )
+require_contains(
+    ci,
+    ("jobs", "dev-tool-contract-checks", "if"),
+    "needs.changes.outputs.lightweight_only != 'true'",
+    "ci workflow",
+)
 require_equal(
     ci,
     ("jobs", "docs-check", "needs"),
@@ -555,6 +706,12 @@ for expected in (
 complete_contract_step = find_step(
     ci, "dev-tool-contract-checks", "Validate dev tool contracts", "ci workflow"
 )
+architecture_document_step = find_step(
+    ci,
+    "dev-tool-contract-checks",
+    "Validate architecture document contracts",
+    "ci workflow",
+)
 contract_python_step = find_step(ci, "dev-tool-contract-checks", "🐍 Set Up Python", "ci workflow")
 require_equal(
     contract_python_step,
@@ -595,6 +752,46 @@ for command in DEV_TOOL_CONTRACT_COMMANDS:
     raise SystemExit(
         f"ci dev-tool contract execution accepted removal of {command}"
     )
+require_architecture_test_handoff(ci)
+for description, command in (
+    ("missing deferred architecture command", DEFERRED_ARCHITECTURE_COMMAND),
+    ("missing validation discovery", VALIDATION_DISCOVERY_COMMAND),
+):
+    mutation = mutate_dev_tool_contract_command(ci, command)
+    try:
+        require_architecture_test_handoff(mutation)
+    except SystemExit:
+        continue
+    raise SystemExit(f"ci architecture test handoff accepted {description}")
+for description, changes in (
+    ("disabled full-path step", {"if": "${{ false }}"}),
+    ("ignored full-path failure", {"continue-on-error": "true"}),
+):
+    mutation = copy.deepcopy(ci)
+    step = find_step(
+        mutation,
+        "dev-tool-contract-checks",
+        "Validate dev tool contracts",
+        "mutated ci workflow",
+    )
+    step.update(changes)
+    try:
+        require_architecture_test_handoff(mutation)
+    except SystemExit:
+        continue
+    raise SystemExit(f"ci architecture test handoff accepted {description}")
+require_equal(
+    architecture_document_step,
+    ("if",),
+    "${{ needs.changes.outputs.lightweight_only == 'true' && needs.changes.outputs.design_docs_changed == 'true' }}",
+    "ci workflow",
+)
+require_equal(
+    architecture_document_step,
+    ("run",),
+    "bash ./dev-tools/tests/architecture-doc-contracts.sh",
+    "ci workflow",
+)
 require_contains(
     complete_contract_step,
     ("run",),

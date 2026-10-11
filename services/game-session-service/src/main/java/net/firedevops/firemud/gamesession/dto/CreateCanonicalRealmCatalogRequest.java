@@ -9,6 +9,7 @@ import java.nio.charset.StandardCharsets;
 import java.util.Objects;
 import java.util.UUID;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
+import net.firedevops.firemud.common.publication.RealmEntryPolicy;
 import org.springframework.lang.Nullable;
 
 /** Explicit input for one immutable public-production realm catalog creation. */
@@ -40,15 +41,17 @@ public record CreateCanonicalRealmCatalogRequest(
       throw new IllegalArgumentException("targetNamespace must be one canonical DNS label");
     }
     Objects.requireNonNull(realmSlug, "realmSlug");
-    if (realmSlug.isBlank() || strictUtf8(realmSlug, "realmSlug").length > 120) {
-      throw new IllegalArgumentException(
-          "realmSlug must be a nonblank selector of at most 120 UTF-8 bytes");
+    strictUtf8(realmSlug, "realmSlug");
+    if (!RealmEntryPolicy.isCanonicalSlug(realmSlug)) {
+      throw new IllegalArgumentException("realmSlug must be a canonical lower-case slug");
     }
     Objects.requireNonNull(realmDisplayName, "realmDisplayName");
     if (realmDisplayName.isBlank()
+        || !realmDisplayName.equals(realmDisplayName.trim())
         || realmDisplayName.codePointCount(0, realmDisplayName.length()) > 100
         || strictUtf8(realmDisplayName, "realmDisplayName").length > 400) {
-      throw new IllegalArgumentException("realmDisplayName must be bounded and nonblank");
+      throw new IllegalArgumentException(
+          "realmDisplayName must be nonblank, trimmed, and within the catalog text bounds");
     }
     if (!visible || !publicProduction) {
       throw new IllegalArgumentException(
@@ -59,11 +62,12 @@ public record CreateCanonicalRealmCatalogRequest(
     }
     Objects.requireNonNull(characterCreationPolicy, "characterCreationPolicy");
     if (characterCreationPolicy.isBlank()
-        || characterCreationPolicy.codePointCount(0, characterCreationPolicy.length()) > 64
-        || strictUtf8(characterCreationPolicy, "characterCreationPolicy").length > 256) {
+        || !characterCreationPolicy.equals(characterCreationPolicy.trim())
+        || characterCreationPolicy.length() > 32) {
       throw new IllegalArgumentException(
-          "characterCreationPolicy must be an explicit bounded nonblank owner value");
+          "characterCreationPolicy must be nonblank, trimmed, and at most 32 characters");
     }
+    strictUtf8(characterCreationPolicy, "characterCreationPolicy");
     if (playtestLifecycleId != null || playtestStateGeneration != null) {
       throw new IllegalArgumentException(
           "Initial public-production creation cannot carry private/playtest lifecycle evidence");
