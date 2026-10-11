@@ -30,6 +30,7 @@ import java.security.MessageDigest;
 import java.security.Principal;
 import java.security.PrivateKey;
 import java.security.cert.Certificate;
+import java.security.cert.CertificateException;
 import java.security.cert.CertificateFactory;
 import java.security.cert.X509Certificate;
 import java.security.spec.PKCS8EncodedKeySpec;
@@ -52,6 +53,7 @@ import javax.net.ssl.SSLParameters;
 import javax.net.ssl.SSLSocket;
 import javax.net.ssl.TrustManagerFactory;
 import javax.net.ssl.X509ExtendedKeyManager;
+import javax.net.ssl.X509ExtendedTrustManager;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentityInterceptor;
 import net.firedevops.firemud.common.operator.StartSessionOperatorAction;
@@ -98,14 +100,26 @@ class StartSessionReservationEvidenceGrpcMutualTlsIntegrationTest {
         .extracting(GrpcPeerIdentity::uri)
         .isEqualTo("spiffe://firemud/ns/test/sa/logging-admin-service");
 
+    RejectedClientCertificateEvidence rejectionEvidence = new RejectedClientCertificateEvidence();
     Server server =
-        startTransport(pki, Mockito.mock(StartSessionPreAuthorizationReservationService.class));
+        startTransport(
+            pki,
+            Mockito.mock(StartSessionPreAuthorizationReservationService.class),
+            rejectionEvidence);
     try {
       assertTlsHandshakeAccepted(server, pki, pki.accountClient());
       assertHandshakeRejected(
-          server, pki, pki.clientWithoutCertificate(), "missing client certificate");
+          server,
+          pki,
+          pki.clientWithoutCertificate(),
+          rejectionEvidence,
+          "missing client certificate");
       assertHandshakeRejected(
-          server, pki, pki.untrustedAccountClient(), "untrusted client certificate chain");
+          server,
+          pki,
+          pki.untrustedAccountClient(),
+          rejectionEvidence,
+          "untrusted client certificate chain");
     } finally {
       server.shutdownNow();
     }
@@ -167,7 +181,9 @@ class StartSessionReservationEvidenceGrpcMutualTlsIntegrationTest {
       String replacementLeaf = certificateSha256(pki.replacementAccountClient().certificate());
       writeApprovedLeaves(approvedLeaves, "active=" + originalLeaf + "\n");
 
-      Server server = startTransport(pki, reservationService, true, approvedLeaves);
+      RejectedClientCertificateEvidence rejectionEvidence = new RejectedClientCertificateEvidence();
+      Server server =
+          startTransport(pki, reservationService, true, approvedLeaves, rejectionEvidence);
       try {
         ReadCurrentClaimEvidenceResponse response = read(server, pki, pki.accountClient(), request);
         assertThat(response.getControlPlaneRequestId()).isEqualTo(tuple.controlPlaneRequestId());
@@ -187,9 +203,17 @@ class StartSessionReservationEvidenceGrpcMutualTlsIntegrationTest {
 
         assertTlsHandshakeAccepted(server, pki, pki.accountClient());
         assertHandshakeRejected(
-            server, pki, pki.clientWithoutCertificate(), "missing client certificate");
+            server,
+            pki,
+            pki.clientWithoutCertificate(),
+            rejectionEvidence,
+            "missing client certificate");
         assertHandshakeRejected(
-            server, pki, pki.untrustedAccountClient(), "untrusted client certificate chain");
+            server,
+            pki,
+            pki.untrustedAccountClient(),
+            rejectionEvidence,
+            "untrusted client certificate chain");
         assertThat(readStatus(server, pki, pki.wrongServiceClient(), request))
             .isEqualTo(Status.Code.PERMISSION_DENIED);
         assertThat(readStatus(server, pki, pki.wrongNamespaceClient(), request))
@@ -230,31 +254,39 @@ class StartSessionReservationEvidenceGrpcMutualTlsIntegrationTest {
   }
 
   private static Server startTransport(
-      TestWorkloadPki pki, StartSessionPreAuthorizationReservationService reservationService)
-      throws Exception {
-    return startTransport(pki, reservationService, false);
-  }
-
-  private static Server startTransport(
       TestWorkloadPki pki,
       StartSessionPreAuthorizationReservationService reservationService,
-      boolean seedStaleThreadLocalCallerContext)
+      RejectedClientCertificateEvidence rejectionEvidence)
       throws Exception {
-    return startTransport(pki, reservationService, seedStaleThreadLocalCallerContext, null);
+    return startTransport(pki, reservationService, false, null, rejectionEvidence);
   }
 
   private static Server startTransport(
       TestWorkloadPki pki,
       StartSessionPreAuthorizationReservationService reservationService,
       boolean seedStaleThreadLocalCallerContext,
-      Path approvedLeafFile)
+      Path approvedLeafFile,
+      RejectedClientCertificateEvidence rejectionEvidence)
       throws Exception {
+    KeyStore serverTrustStore = KeyStore.getInstance(KeyStore.getDefaultType());
+    serverTrustStore.load(null, null);
+    serverTrustStore.setCertificateEntry(
+        "logging-admin-test-ca", readCertificate(pki.trustedCaCertificate()));
+    TrustManagerFactory serverTrustManagers =
+        TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm());
+    serverTrustManagers.init(serverTrustStore);
+    X509ExtendedTrustManager verifier =
+        Arrays.stream(serverTrustManagers.getTrustManagers())
+            .filter(X509ExtendedTrustManager.class::isInstance)
+            .map(X509ExtendedTrustManager.class::cast)
+            .findFirst()
+            .orElseThrow(() -> new IllegalStateException("X509 trust manager unavailable"));
     var serverTls =
         GrpcSslContexts.configure(
                 SslContextBuilder.forServer(
                     pki.serverCertificate().toFile(), pki.serverPrivateKey().toFile()),
                 SslProvider.JDK)
-            .trustManager(pki.trustedCaCertificate().toFile())
+            .trustManager(new RecordingClientTrustManager(verifier, rejectionEvidence))
             .clientAuth(ClientAuth.REQUIRE)
             .protocols("TLSv1.3")
             .build();
@@ -325,8 +357,10 @@ class StartSessionReservationEvidenceGrpcMutualTlsIntegrationTest {
       Server server,
       TestWorkloadPki pki,
       TestWorkloadPki.ClientIdentity clientIdentity,
+      RejectedClientCertificateEvidence rejectionEvidence,
       String description)
       throws Exception {
+    rejectionEvidence.clear();
     RawClientTls clientTls = rawClientTls(pki, clientIdentity);
     Throwable failure =
         catchThrowable(
@@ -337,6 +371,19 @@ class StartSessionReservationEvidenceGrpcMutualTlsIntegrationTest {
               }
             });
     assertThat(failure).as(description).isNotNull();
+    if (clientIdentity.certificate() != null) {
+      clientTls.assertIdentitySelected(clientIdentity, ACCOUNT_URI);
+      assertThat(clientTls.keyManager().requestedIssuers())
+          .as("%s server issuer hints must exclude the selected account chain issuer", description)
+          .isNotEmpty()
+          .doesNotContain(clientTls.keyManager().selectedChain()[0].getIssuerX500Principal());
+      rejectionEvidence.assertRejectedExactLeaf(
+          readCertificate(clientIdentity.certificate()), description);
+      assertThat(failure)
+          .as("%s client-side failure must be a transport/TLS I/O close", description)
+          .isInstanceOf(IOException.class);
+      return;
+    }
     assertThat(failure)
         .as("%s must surface a TLS handshake exception", description)
         .isInstanceOf(SSLHandshakeException.class);
@@ -345,12 +392,103 @@ class StartSessionReservationEvidenceGrpcMutualTlsIntegrationTest {
             "%s must fail during the TLS certificate handshake; failure chain: %s",
             description, throwableChain(failure))
         .isTrue();
-    if (clientIdentity.certificate() != null) {
-      clientTls.assertIdentitySelected(clientIdentity, ACCOUNT_URI);
-      assertThat(clientTls.keyManager().requestedIssuers())
-          .as("%s server issuer hints must exclude the selected account chain issuer", description)
-          .isNotEmpty()
-          .doesNotContain(clientTls.keyManager().selectedChain()[0].getIssuerX500Principal());
+  }
+
+  private record CertificateRejection(List<X509Certificate> chain, CertificateException cause) {}
+
+  private static final class RejectedClientCertificateEvidence {
+    private final java.util.concurrent.atomic.AtomicReference<CertificateRejection> rejection =
+        new java.util.concurrent.atomic.AtomicReference<>();
+
+    private void clear() {
+      rejection.set(null);
+    }
+
+    private void record(X509Certificate[] chain, CertificateException cause) {
+      List<X509Certificate> presented =
+          chain == null ? List.of() : List.copyOf(Arrays.asList(chain.clone()));
+      rejection.compareAndSet(null, new CertificateRejection(presented, cause));
+    }
+
+    private void assertRejectedExactLeaf(X509Certificate expectedLeaf, String description) {
+      CertificateRejection observed = rejection.get();
+      assertThat(observed)
+          .as("%s must be rejected by the configured server trust verifier", description)
+          .isNotNull();
+      assertThat(observed.cause())
+          .as("%s must capture the verifier's actual CertificateException", description)
+          .isInstanceOf(CertificateException.class);
+      assertThat(observed.chain())
+          .as("%s server-side rejection must be bound to the exact presented chain", description)
+          .containsExactly(expectedLeaf);
+    }
+  }
+
+  /** Records verifier rejection while delegating every trust decision to the real CA verifier. */
+  private static final class RecordingClientTrustManager extends X509ExtendedTrustManager {
+    private final X509ExtendedTrustManager delegate;
+    private final RejectedClientCertificateEvidence evidence;
+
+    private RecordingClientTrustManager(
+        X509ExtendedTrustManager delegate, RejectedClientCertificateEvidence evidence) {
+      this.delegate = delegate;
+      this.evidence = evidence;
+    }
+
+    @Override
+    public void checkClientTrusted(X509Certificate[] chain, String authType)
+        throws CertificateException {
+      try {
+        delegate.checkClientTrusted(chain, authType);
+      } catch (CertificateException rejection) {
+        evidence.record(chain, rejection);
+        throw rejection;
+      }
+    }
+
+    @Override
+    public void checkClientTrusted(X509Certificate[] chain, String authType, java.net.Socket socket)
+        throws CertificateException {
+      try {
+        delegate.checkClientTrusted(chain, authType, socket);
+      } catch (CertificateException rejection) {
+        evidence.record(chain, rejection);
+        throw rejection;
+      }
+    }
+
+    @Override
+    public void checkClientTrusted(X509Certificate[] chain, String authType, SSLEngine engine)
+        throws CertificateException {
+      try {
+        delegate.checkClientTrusted(chain, authType, engine);
+      } catch (CertificateException rejection) {
+        evidence.record(chain, rejection);
+        throw rejection;
+      }
+    }
+
+    @Override
+    public void checkServerTrusted(X509Certificate[] chain, String authType)
+        throws CertificateException {
+      delegate.checkServerTrusted(chain, authType);
+    }
+
+    @Override
+    public void checkServerTrusted(X509Certificate[] chain, String authType, java.net.Socket socket)
+        throws CertificateException {
+      delegate.checkServerTrusted(chain, authType, socket);
+    }
+
+    @Override
+    public void checkServerTrusted(X509Certificate[] chain, String authType, SSLEngine engine)
+        throws CertificateException {
+      delegate.checkServerTrusted(chain, authType, engine);
+    }
+
+    @Override
+    public X509Certificate[] getAcceptedIssuers() {
+      return delegate.getAcceptedIssuers();
     }
   }
 
