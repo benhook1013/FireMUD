@@ -1,16 +1,11 @@
 package net.firedevops.firemud.gamesession.data;
 
-import com.google.protobuf.InvalidProtocolBufferException;
-import com.google.protobuf.Message;
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.channels.Channels;
 import java.nio.channels.SeekableByteChannel;
-import java.nio.charset.CharacterCodingException;
-import java.nio.charset.CodingErrorAction;
-import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.LinkOption;
 import java.nio.file.Path;
@@ -23,29 +18,20 @@ import java.security.NoSuchAlgorithmException;
 import java.security.cert.Certificate;
 import java.security.cert.CertificateFactory;
 import java.security.cert.X509Certificate;
-import java.util.Base64;
 import java.util.Collection;
-import java.util.HashSet;
 import java.util.HexFormat;
 import java.util.List;
-import java.util.Map;
 import java.util.Set;
-import java.util.UUID;
 import java.util.regex.Pattern;
 import net.firedevops.firemud.common.grpc.CommonGrpcClientProperties;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
+import net.firedevops.firemud.common.smoke.RunOwnedInitialAdmissionFixtureWireCodec;
 import net.firedevops.firemud.common.tenant.AuthoredWorldSourceEvidence;
+import net.firedevops.firemud.gamedesign.v1.LaunchDescriptor;
 import net.firedevops.firemud.gamedesign.v1.PublishedReleaseBundle;
 import net.firedevops.firemud.gamedesign.v1.VersionAssetArtifactState;
-import net.firedevops.firemud.gamedesign.v1.VersionLifecycleState;
 import net.firedevops.firemud.gamedesign.v1.VersionStateSnapshot;
 import org.springframework.core.io.ClassPathResource;
-import tools.jackson.core.JacksonException;
-import tools.jackson.core.StreamReadFeature;
-import tools.jackson.databind.DeserializationFeature;
-import tools.jackson.databind.JsonNode;
-import tools.jackson.databind.ObjectMapper;
-import tools.jackson.databind.json.JsonMapper;
 
 /** Strict, run-bound authority to activate the local initial-admission fixture coordinator. */
 record RunOwnedInitialAdmissionFixtureCapability(
@@ -66,87 +52,37 @@ record RunOwnedInitialAdmissionFixtureCapability(
     String characterCreationPolicy,
     String gameSessionLeafSha256,
     String gameSessionUriSan,
-    String caCertificateSha256) {
-  public static final String CAPABILITY_SCHEMA = "firemud.run-owned-initial-admission-fixture.v1";
+    String caCertificateSha256,
+    String worldManagementUriSan,
+    String worldManagementLeafSha256) {
+  public static final String CAPABILITY_SCHEMA =
+      RunOwnedInitialAdmissionFixtureWireCodec.CAPABILITY_SCHEMA;
   public static final String GAME_SESSION_URI_SAN =
-      "spiffe://firemud/ns/dev/sa/game-session-service";
-  public static final String WORLD_SLUG = "demo";
-  public static final String WORLD_DISPLAY_NAME = "Demo World";
-  public static final String REALM_SLUG = "production";
-  public static final String REALM_DISPLAY_NAME = "Live Realm";
-  public static final String STATE_SCOPE = "SHARED";
-  public static final String CHARACTER_CREATION_POLICY = "ALLOW_NEW";
+      RunOwnedInitialAdmissionFixtureWireCodec.GAME_SESSION_URI_SAN;
+  public static final String WORLD_MANAGEMENT_URI_SAN =
+      RunOwnedInitialAdmissionFixtureWireCodec.WORLD_MANAGEMENT_URI_SAN;
+  public static final String WORLD_SLUG = RunOwnedInitialAdmissionFixtureWireCodec.WORLD_SLUG;
+  public static final String WORLD_DISPLAY_NAME =
+      RunOwnedInitialAdmissionFixtureWireCodec.WORLD_DISPLAY_NAME;
+  public static final String REALM_SLUG = RunOwnedInitialAdmissionFixtureWireCodec.REALM_SLUG;
+  public static final String REALM_DISPLAY_NAME =
+      RunOwnedInitialAdmissionFixtureWireCodec.REALM_DISPLAY_NAME;
+  public static final String STATE_SCOPE = RunOwnedInitialAdmissionFixtureWireCodec.STATE_SCOPE;
+  public static final String CHARACTER_CREATION_POLICY =
+      RunOwnedInitialAdmissionFixtureWireCodec.CHARACTER_CREATION_POLICY;
   public static final String SOURCE_RECEIPT_SCHEMA =
-      "firemud.run-owned-authored-world-source-receipt.v1";
-  public static final String SOURCE_RECEIPT_OWNER_SERVICE = "game-design-service";
-  public static final String SOURCE_TARGET_NAMESPACE = "dev";
+      RunOwnedInitialAdmissionFixtureWireCodec.SOURCE_RECEIPT_SCHEMA;
+  public static final String SOURCE_RECEIPT_OWNER_SERVICE =
+      RunOwnedInitialAdmissionFixtureWireCodec.SOURCE_RECEIPT_OWNER_SERVICE;
+  public static final String SOURCE_TARGET_NAMESPACE =
+      RunOwnedInitialAdmissionFixtureWireCodec.SOURCE_TARGET_NAMESPACE;
 
   private static final int MAX_CAPABILITY_BYTES = 16 * 1024;
   private static final int MAX_SOURCE_RECEIPT_BYTES = 16 * 1024;
   private static final int MAX_CERTIFICATE_FILE_BYTES = 1024 * 1024;
   private static final Pattern SAFE_ID = Pattern.compile("[a-z0-9][a-z0-9-]{0,127}");
-  private static final Pattern SHA_256 = Pattern.compile("[0-9a-f]{64}");
-  private static final Set<String> ALLOWED_FIELDS =
-      Set.of(
-          "schema",
-          "runId",
-          "composeProjectName",
-          "operationId",
-          "tenantId",
-          "gameTemplateId",
-          "ownerAccountId",
-          "worldSlug",
-          "worldDisplayName",
-          "realmSlug",
-          "realmDisplayName",
-          "visible",
-          "publicProductionRealm",
-          "requiresCharacterSelection",
-          "stateScope",
-          "characterCreationPolicy",
-          "gameSessionLeafSha256",
-          "gameSessionUriSan",
-          "caCertificateSha256");
-  private static final Set<String> SOURCE_RECEIPT_FIELDS =
-      Set.of(
-          "schema",
-          "runId",
-          "composeProjectName",
-          "fixtureOperationId",
-          "ownerService",
-          "gameSessionUriSan",
-          "gameSessionLeafSha256",
-          "caCertificateSha256",
-          "sourceEvidence",
-          "launchReadEvidence");
-  private static final Set<String> SOURCE_EVIDENCE_FIELDS =
-      Set.of(
-          "schemaVersion",
-          "targetNamespace",
-          "registrationRequestId",
-          "operationId",
-          "requestDigest",
-          "canonicalTenantId",
-          "tenantSlug",
-          "worldSlug",
-          "worldDisplayName",
-          "sourceGameRowId",
-          "sourceGameTenantKey",
-          "provenanceKind",
-          "evidenceDigest");
-  static final String LAUNCH_READ_EVIDENCE_SCHEMA = RunOwnedInitialAdmissionLaunchEvidence.SCHEMA;
-  private static final Set<String> LAUNCH_READ_EVIDENCE_FIELDS =
-      Set.of(
-          "schema",
-          "gameTemplateId",
-          "publishedReleaseBundleBase64",
-          "versionAssetArtifactStateBase64",
-          "versionStateBase64");
-  private static final ObjectMapper STRICT_JSON_MAPPER =
-      JsonMapper.builder()
-          .enable(StreamReadFeature.STRICT_DUPLICATE_DETECTION)
-          .enable(DeserializationFeature.FAIL_ON_TRAILING_TOKENS)
-          .build();
+  static final String LAUNCH_READ_EVIDENCE_SCHEMA =
+      RunOwnedInitialAdmissionFixtureWireCodec.LAUNCH_READ_EVIDENCE_SCHEMA;
 
   /**
    * Loads and validates the declared local capability against the active run/project and the actual
@@ -241,327 +177,74 @@ record RunOwnedInitialAdmissionFixtureCapability(
       RunOwnedInitialAdmissionFixtureCapability capability,
       CertificatePins certificatePins) {
     requireExpectedRunBinding(expectedRunId, expectedComposeProjectName);
-    if (receiptBytes == null
-        || receiptBytes.length == 0
-        || receiptBytes.length > MAX_SOURCE_RECEIPT_BYTES
-        || capability == null
+    if (capability == null
         || certificatePins == null
         || !expectedRunId.equals(capability.runId())
         || !expectedComposeProjectName.equals(capability.composeProjectName())) {
       throw invalidSourceReceipt();
     }
 
-    JsonNode root;
     try {
-      root = STRICT_JSON_MAPPER.readTree(decodeUtf8(receiptBytes));
-    } catch (CharacterCodingException | JacksonException exception) {
-      throw invalidSourceReceipt();
-    }
-    if (root == null || !root.isObject() || !hasExactFields(root, SOURCE_RECEIPT_FIELDS)) {
-      throw invalidSourceReceipt();
-    }
-
-    String schema = requiredSourceReceiptText(root, "schema");
-    String runId = requiredSourceReceiptText(root, "runId");
-    String composeProjectName = requiredSourceReceiptText(root, "composeProjectName");
-    String fixtureOperationId = requiredSourceReceiptText(root, "fixtureOperationId");
-    String ownerService = requiredSourceReceiptText(root, "ownerService");
-    String uriSan = requiredSourceReceiptText(root, "gameSessionUriSan");
-    String leafSha256 = requiredSourceReceiptText(root, "gameSessionLeafSha256");
-    String caSha256 = requiredSourceReceiptText(root, "caCertificateSha256");
-    AuthoredWorldSourceEvidence sourceEvidence = parseSourceEvidence(root.get("sourceEvidence"));
-    LaunchReadEvidence launchReadEvidence =
-        parseLaunchReadEvidence(root.get("launchReadEvidence"), capability, sourceEvidence);
-
-    if (!SOURCE_RECEIPT_SCHEMA.equals(schema)
-        || !runId.equals(expectedRunId)
-        || !composeProjectName.equals(expectedComposeProjectName)
-        || !fixtureOperationId.equals(capability.operationId())
-        || !ownerService.equals(SOURCE_RECEIPT_OWNER_SERVICE)
-        || !uriSan.equals(capability.gameSessionUriSan())
-        || !leafSha256.equals(capability.gameSessionLeafSha256())
-        || !caSha256.equals(capability.caCertificateSha256())
-        || !certificatePins.uriSan().equals(uriSan)
-        || !certificatePins.leafSha256().equals(leafSha256)
-        || !certificatePins.caSha256().equals(caSha256)
-        || !SOURCE_TARGET_NAMESPACE.equals(sourceEvidence.targetNamespace())
-        || !capability.operationId().equals(sourceEvidence.registrationRequestId().toString())
-        || !capability.worldSlug().equals(sourceEvidence.worldSlug())
-        || !capability.worldDisplayName().equals(sourceEvidence.worldDisplayName())
-        || !Long.toString(capability.tenantId()).equals(sourceEvidence.sourceGameTenantKey())) {
-      throw invalidSourceReceipt();
-    }
-
-    return new SourceReceipt(
-        schema,
-        runId,
-        composeProjectName,
-        fixtureOperationId,
-        ownerService,
-        uriSan,
-        leafSha256,
-        caSha256,
-        sourceEvidence,
-        launchReadEvidence);
-  }
-
-  private static LaunchReadEvidence parseLaunchReadEvidence(
-      JsonNode evidence,
-      RunOwnedInitialAdmissionFixtureCapability capability,
-      AuthoredWorldSourceEvidence sourceEvidence) {
-    if (evidence == null
-        || !evidence.isObject()
-        || !hasExactFields(evidence, LAUNCH_READ_EVIDENCE_FIELDS)) {
-      throw invalidSourceReceipt();
-    }
-    String schema = requiredSourceReceiptText(evidence, "schema");
-    long gameTemplateId = requiredPositiveSourceReceiptLong(evidence, "gameTemplateId");
-    if (!LAUNCH_READ_EVIDENCE_SCHEMA.equals(schema)
-        || gameTemplateId != capability.gameTemplateId()) {
-      throw invalidSourceReceipt();
-    }
-
-    PublishedReleaseBundle bundle =
-        parseLaunchReadEvidenceProto(
-            requiredSourceReceiptBase64(evidence, "publishedReleaseBundleBase64"),
-            PublishedReleaseBundle::parseFrom);
-    VersionAssetArtifactState artifactState =
-        parseLaunchReadEvidenceProto(
-            requiredSourceReceiptBase64(evidence, "versionAssetArtifactStateBase64"),
-            VersionAssetArtifactState::parseFrom);
-    VersionStateSnapshot versionState =
-        parseLaunchReadEvidenceProto(
-            requiredSourceReceiptBase64(evidence, "versionStateBase64"),
-            VersionStateSnapshot::parseFrom);
-    requireNoUnknownFieldsRecursively(bundle);
-    requireNoUnknownFieldsRecursively(artifactState);
-    requireNoUnknownFieldsRecursively(versionState);
-    requireLaunchReadEvidenceIdentity(
-        capability, sourceEvidence, bundle, artifactState, versionState);
-    return new LaunchReadEvidence(schema, gameTemplateId, bundle, artifactState, versionState);
-  }
-
-  private static <T extends Message> T parseLaunchReadEvidenceProto(
-      String encoded, ProtoParser<T> parser) {
-    try {
-      byte[] decoded = Base64.getDecoder().decode(encoded);
-      if (decoded.length > MAX_SOURCE_RECEIPT_BYTES
-          || !Base64.getEncoder().encodeToString(decoded).equals(encoded)) {
+      var parsed =
+          RunOwnedInitialAdmissionFixtureWireCodec.parseSourceReceipt(
+              receiptBytes, toWireCapability(capability));
+      if (!expectedRunId.equals(parsed.runId())
+          || !expectedComposeProjectName.equals(parsed.composeProjectName())
+          || !certificatePins.uriSan().equals(parsed.gameSessionUriSan())
+          || !certificatePins.leafSha256().equals(parsed.gameSessionLeafSha256())
+          || !certificatePins.caSha256().equals(parsed.caCertificateSha256())) {
         throw invalidSourceReceipt();
       }
-      return parser.parse(decoded);
-    } catch (InvalidProtocolBufferException | IllegalArgumentException exception) {
-      throw invalidSourceReceipt();
-    }
-  }
 
-  private static void requireNoUnknownFieldsRecursively(Message message) {
-    if (!message.getUnknownFields().asMap().isEmpty()) {
-      throw invalidSourceReceipt();
-    }
-    for (Object value : message.getAllFields().values()) {
-      requireNoUnknownFieldsRecursively(value);
-    }
-  }
-
-  static void requireNoUnknownFieldsRecursively(Object value) {
-    if (value instanceof Message nested) {
-      requireNoUnknownFieldsRecursively(nested);
-    } else if (value instanceof Map<?, ?> map) {
-      for (Object nested : map.values()) {
-        requireNoUnknownFieldsRecursively(nested);
-      }
-    } else if (value instanceof Iterable<?> values) {
-      for (Object nested : values) {
-        requireNoUnknownFieldsRecursively(nested);
-      }
-    }
-  }
-
-  private static void requireLaunchReadEvidenceIdentity(
-      RunOwnedInitialAdmissionFixtureCapability capability,
-      AuthoredWorldSourceEvidence sourceEvidence,
-      PublishedReleaseBundle bundle,
-      VersionAssetArtifactState artifactState,
-      VersionStateSnapshot versionState) {
-    String expectedTenantId = Long.toString(capability.tenantId());
-    String canonicalTenantId = sourceEvidence.canonicalTenantId().toString();
-    if (bundle.getId() <= 0L
-        || bundle.getVersionId() <= 0L
-        || bundle.getVersionNumber() <= 0
-        || !"v1".equals(bundle.getAttestationSchemaVersion())
-        || bundle.getManifestHash().isBlank()
-        || bundle.getGenerationConfigRevision().isBlank()
-        || bundle.getPublishedReleaseBundleRef().isBlank()
-        || !isCanonicalNonNilUuid(bundle.getCanonicalTenantId())
-        || !canonicalTenantId.equals(bundle.getCanonicalTenantId())
-        || !isCanonicalNonNilUuid(bundle.getCanonicalVersionId())
-        || (bundle.hasManifestSchemaVersion() && bundle.getManifestSchemaVersion() <= 0)
-        || (!bundle.hasManifestSchemaVersion() && bundle.getArtifactDigestsCount() != 0)
-        || !expectedTenantId.equals(artifactState.getTenantId())
-        || artifactState.getVersionId() != bundle.getVersionId()
-        || artifactState.getArtifactState()
-            != net.firedevops.firemud.gamedesign.v1.ArtifactState.ARTIFACT_STATE_PUBLISHED
-        || artifactState.getStateEpoch() <= 0L
-        || !bundle.getManifestHash().equals(artifactState.getManifestHash())
-        || artifactState.getExportedVersionNumber() != bundle.getVersionNumber()
-        || !artifactState
-            .getExportedManifestAssetKeysList()
-            .containsAll(bundle.getRequiredManifestAssetKeysList())
-        || !expectedTenantId.equals(versionState.getTenantId())
-        || versionState.getVersionId() != bundle.getVersionId()
-        || (versionState.getVersionState()
-                != VersionLifecycleState.VERSION_LIFECYCLE_STATE_PUBLISHED
-            && versionState.getVersionState()
-                != VersionLifecycleState.VERSION_LIFECYCLE_STATE_ACTIVE)
-        || versionState.getVersionStateEpoch() <= 0L
-        || versionState.getUpdatedAt().isBlank()) {
-      throw invalidSourceReceipt();
-    }
-    requirePublishedArtifactDigests(bundle);
-  }
-
-  private static void requirePublishedArtifactDigests(PublishedReleaseBundle bundle) {
-    Set<String> usageKeys = new HashSet<>();
-    for (var artifact : bundle.getArtifactDigestsList()) {
-      String contentDigest = artifact.getContentDigest();
-      if (artifact.getUsageKey().isBlank()
-          || artifact.getArtifactKind().isBlank()
-          || artifact.getContentType().isBlank()
-          || artifact.getArtifactSchemaVersion() <= 0
-          || !contentDigest.matches("sha256:[0-9a-f]{64}")
-          || !artifact
-              .getImmutableObjectKey()
-              .equals("artifacts/sha256/" + contentDigest.substring("sha256:".length()))
-          || !usageKeys.add(artifact.getUsageKey())) {
-        throw invalidSourceReceipt();
-      }
-    }
-  }
-
-  private static boolean isCanonicalNonNilUuid(String value) {
-    if (value == null || value.isBlank()) {
-      return false;
-    }
-    try {
-      UUID parsed = UUID.fromString(value);
-      return (parsed.getMostSignificantBits() != 0L || parsed.getLeastSignificantBits() != 0L)
-          && parsed.toString().equals(value);
-    } catch (IllegalArgumentException exception) {
-      return false;
-    }
-  }
-
-  private static AuthoredWorldSourceEvidence parseSourceEvidence(JsonNode source) {
-    if (source == null || !source.isObject() || !hasExactFields(source, SOURCE_EVIDENCE_FIELDS)) {
-      throw invalidSourceReceipt();
-    }
-    int schemaVersion = requiredSourceReceiptInt(source, "schemaVersion");
-    String targetNamespace = requiredSourceReceiptText(source, "targetNamespace");
-    UUID registrationRequestId = requiredSourceReceiptUuid(source, "registrationRequestId");
-    UUID operationId = requiredSourceReceiptUuid(source, "operationId");
-    String requestDigest = requiredSourceReceiptText(source, "requestDigest");
-    UUID canonicalTenantId = requiredSourceReceiptUuid(source, "canonicalTenantId");
-    String tenantSlug = requiredSourceReceiptText(source, "tenantSlug");
-    String worldSlug = requiredSourceReceiptText(source, "worldSlug");
-    String worldDisplayName = requiredSourceReceiptText(source, "worldDisplayName");
-    long sourceGameRowId = requiredSourceReceiptLong(source, "sourceGameRowId");
-    String sourceGameTenantKey = requiredSourceReceiptText(source, "sourceGameTenantKey");
-    String provenanceKind = requiredSourceReceiptText(source, "provenanceKind");
-    String evidenceDigest = requiredSourceReceiptText(source, "evidenceDigest");
-    try {
-      return new AuthoredWorldSourceEvidence(
-          schemaVersion,
-          targetNamespace,
-          registrationRequestId,
-          operationId,
-          requestDigest,
-          canonicalTenantId,
-          tenantSlug,
-          worldSlug,
-          worldDisplayName,
-          sourceGameRowId,
-          sourceGameTenantKey,
-          provenanceKind,
-          evidenceDigest);
+      var parsedLaunchEvidence = parsed.launchReadEvidence();
+      return new SourceReceipt(
+          parsed.schema(),
+          parsed.runId(),
+          parsed.composeProjectName(),
+          parsed.fixtureOperationId(),
+          parsed.ownerService(),
+          parsed.gameSessionUriSan(),
+          parsed.gameSessionLeafSha256(),
+          parsed.caCertificateSha256(),
+          parsed.worldManagementUriSan(),
+          parsed.worldManagementLeafSha256(),
+          parsed.sourceEvidence(),
+          new LaunchReadEvidence(
+              parsedLaunchEvidence.schema(),
+              parsedLaunchEvidence.gameTemplateId(),
+              parsedLaunchEvidence.publishedReleaseBundle(),
+              parsedLaunchEvidence.versionAssetArtifactState(),
+              parsedLaunchEvidence.versionState(),
+              parsedLaunchEvidence.launchDescriptor()));
     } catch (RuntimeException exception) {
       throw invalidSourceReceipt();
     }
   }
 
-  private static int requiredSourceReceiptInt(JsonNode root, String field) {
-    JsonNode value = root.get(field);
-    if (value == null || !value.isIntegralNumber() || !value.canConvertToInt()) {
-      throw invalidSourceReceipt();
-    }
-    return value.intValue();
-  }
-
-  private static long requiredSourceReceiptLong(JsonNode root, String field) {
-    JsonNode value = root.get(field);
-    if (value == null || !value.isIntegralNumber() || !value.canConvertToLong()) {
-      throw invalidSourceReceipt();
-    }
-    return value.longValue();
-  }
-
-  private static long requiredPositiveSourceReceiptLong(JsonNode root, String field) {
-    long value = requiredSourceReceiptLong(root, field);
-    if (value <= 0L) {
-      throw invalidSourceReceipt();
-    }
-    return value;
-  }
-
-  private static UUID requiredSourceReceiptUuid(JsonNode root, String field) {
-    String text = requiredSourceReceiptText(root, field);
-    try {
-      UUID uuid = UUID.fromString(text);
-      if (!uuid.toString().equals(text)) {
-        throw invalidSourceReceipt();
-      }
-      return uuid;
-    } catch (IllegalArgumentException exception) {
-      throw invalidSourceReceipt();
-    }
-  }
-
-  private static String requiredSourceReceiptText(JsonNode root, String field) {
-    JsonNode value = root.get(field);
-    if (value == null || !value.isString()) {
-      throw invalidSourceReceipt();
-    }
-    String parsed = value.textValue();
-    if (parsed.isBlank()
-        || parsed.length() > 256
-        || !parsed.equals(parsed.trim())
-        || parsed.indexOf('\n') >= 0
-        || parsed.indexOf('\r') >= 0) {
-      throw invalidSourceReceipt();
-    }
-    return parsed;
-  }
-
-  private static String requiredSourceReceiptBase64(JsonNode root, String field) {
-    JsonNode value = root.get(field);
-    if (value == null || !value.isString()) {
-      throw invalidSourceReceipt();
-    }
-    String parsed = value.textValue();
-    if (parsed.isBlank()
-        || parsed.length() > MAX_SOURCE_RECEIPT_BYTES
-        || !parsed.equals(parsed.trim())
-        || parsed.indexOf('\n') >= 0
-        || parsed.indexOf('\r') >= 0) {
-      throw invalidSourceReceipt();
-    }
-    return parsed;
-  }
-
-  private static boolean hasExactFields(JsonNode root, Set<String> allowed) {
-    Set<String> fields = new HashSet<>();
-    root.properties().forEach(property -> fields.add(property.getKey()));
-    return fields.equals(allowed);
+  private static RunOwnedInitialAdmissionFixtureWireCodec.Capability toWireCapability(
+      RunOwnedInitialAdmissionFixtureCapability capability) {
+    return new RunOwnedInitialAdmissionFixtureWireCodec.Capability(
+        CAPABILITY_SCHEMA,
+        capability.runId(),
+        capability.composeProjectName(),
+        capability.operationId(),
+        capability.tenantId(),
+        capability.gameTemplateId(),
+        capability.ownerAccountId(),
+        capability.worldSlug(),
+        capability.worldDisplayName(),
+        capability.realmSlug(),
+        capability.realmDisplayName(),
+        capability.visible(),
+        capability.publicProductionRealm(),
+        capability.requiresCharacterSelection(),
+        capability.stateScope(),
+        capability.characterCreationPolicy(),
+        capability.gameSessionLeafSha256(),
+        capability.gameSessionUriSan(),
+        capability.caCertificateSha256(),
+        capability.worldManagementUriSan(),
+        capability.worldManagementLeafSha256());
   }
 
   static RunOwnedInitialAdmissionFixtureCapability parseAndValidate(
@@ -570,93 +253,43 @@ record RunOwnedInitialAdmissionFixtureCapability(
       String expectedComposeProjectName,
       CertificatePins certificatePins) {
     requireExpectedRunBinding(expectedRunId, expectedComposeProjectName);
-    if (capabilityBytes == null
-        || capabilityBytes.length == 0
-        || capabilityBytes.length > MAX_CAPABILITY_BYTES
-        || certificatePins == null) {
+    if (certificatePins == null) {
       throw invalidCapability();
     }
 
-    JsonNode root;
     try {
-      String json = decodeUtf8(capabilityBytes);
-      root = STRICT_JSON_MAPPER.readTree(json);
-    } catch (CharacterCodingException | JacksonException exception) {
+      var parsed = RunOwnedInitialAdmissionFixtureWireCodec.parseCapability(capabilityBytes);
+      if (!expectedRunId.equals(parsed.runId())
+          || !expectedComposeProjectName.equals(parsed.composeProjectName())
+          || !certificatePins.leafSha256().equals(parsed.gameSessionLeafSha256())
+          || !certificatePins.uriSan().equals(parsed.gameSessionUriSan())
+          || !certificatePins.caSha256().equals(parsed.caCertificateSha256())) {
+        throw invalidCapability();
+      }
+      return new RunOwnedInitialAdmissionFixtureCapability(
+          parsed.runId(),
+          parsed.composeProjectName(),
+          parsed.operationId(),
+          parsed.tenantId(),
+          parsed.gameTemplateId(),
+          parsed.ownerAccountId(),
+          parsed.worldSlug(),
+          parsed.worldDisplayName(),
+          parsed.realmSlug(),
+          parsed.realmDisplayName(),
+          parsed.visible(),
+          parsed.publicProductionRealm(),
+          parsed.requiresCharacterSelection(),
+          parsed.stateScope(),
+          parsed.characterCreationPolicy(),
+          parsed.gameSessionLeafSha256(),
+          parsed.gameSessionUriSan(),
+          parsed.caCertificateSha256(),
+          parsed.worldManagementUriSan(),
+          parsed.worldManagementLeafSha256());
+    } catch (RuntimeException exception) {
       throw invalidCapability();
     }
-    if (root == null || !root.isObject() || !exactFields(root)) {
-      throw invalidCapability();
-    }
-
-    String schema = requiredText(root, "schema");
-    String runId = requiredText(root, "runId");
-    String composeProjectName = requiredText(root, "composeProjectName");
-    String operationId = requiredText(root, "operationId");
-    long tenantId = requiredPositiveLong(root, "tenantId");
-    long gameTemplateId = requiredPositiveLong(root, "gameTemplateId");
-    long ownerAccountId = requiredPositiveLong(root, "ownerAccountId");
-    String worldSlug = requiredText(root, "worldSlug");
-    String worldDisplayName = requiredText(root, "worldDisplayName");
-    String realmSlug = requiredText(root, "realmSlug");
-    String realmDisplayName = requiredText(root, "realmDisplayName");
-    JsonNode visible = root.get("visible");
-    JsonNode publicProductionRealm = root.get("publicProductionRealm");
-    JsonNode characterSelection = root.get("requiresCharacterSelection");
-    String stateScope = requiredText(root, "stateScope");
-    String characterCreationPolicy = requiredText(root, "characterCreationPolicy");
-    String leafSha256 = requiredText(root, "gameSessionLeafSha256");
-    String uriSan = requiredText(root, "gameSessionUriSan");
-    String caSha256 = requiredText(root, "caCertificateSha256");
-
-    if (!CAPABILITY_SCHEMA.equals(schema)
-        || !runId.equals(expectedRunId)
-        || !composeProjectName.equals(expectedComposeProjectName)
-        || !SAFE_ID.matcher(runId).matches()
-        || !SAFE_ID.matcher(composeProjectName).matches()
-        || !isCanonicalUuid(operationId)
-        || !WORLD_SLUG.equals(worldSlug)
-        || !WORLD_DISPLAY_NAME.equals(worldDisplayName)
-        || !REALM_SLUG.equals(realmSlug)
-        || !REALM_DISPLAY_NAME.equals(realmDisplayName)
-        || visible == null
-        || !visible.isBoolean()
-        || !visible.booleanValue()
-        || publicProductionRealm == null
-        || !publicProductionRealm.isBoolean()
-        || !publicProductionRealm.booleanValue()
-        || characterSelection == null
-        || !characterSelection.isBoolean()
-        || characterSelection.booleanValue()
-        || !STATE_SCOPE.equals(stateScope)
-        || !CHARACTER_CREATION_POLICY.equals(characterCreationPolicy)
-        || !SHA_256.matcher(leafSha256).matches()
-        || !GAME_SESSION_URI_SAN.equals(uriSan)
-        || !SHA_256.matcher(caSha256).matches()
-        || !certificatePins.leafSha256().equals(leafSha256)
-        || !certificatePins.uriSan().equals(uriSan)
-        || !certificatePins.caSha256().equals(caSha256)) {
-      throw invalidCapability();
-    }
-
-    return new RunOwnedInitialAdmissionFixtureCapability(
-        runId,
-        composeProjectName,
-        operationId,
-        tenantId,
-        gameTemplateId,
-        ownerAccountId,
-        worldSlug,
-        worldDisplayName,
-        realmSlug,
-        realmDisplayName,
-        true,
-        true,
-        false,
-        stateScope,
-        characterCreationPolicy,
-        leafSha256,
-        uriSan,
-        caSha256);
   }
 
   static CertificatePins certificatePins(X509Certificate leaf, X509Certificate ca) {
@@ -804,66 +437,12 @@ record RunOwnedInitialAdmissionFixtureCapability(
     }
   }
 
-  private static boolean exactFields(JsonNode root) {
-    Set<String> fields = new HashSet<>();
-    root.properties().forEach(property -> fields.add(property.getKey()));
-    return fields.equals(ALLOWED_FIELDS);
-  }
-
-  private static long requiredPositiveLong(JsonNode root, String field) {
-    JsonNode value = root.get(field);
-    if (value == null || !value.isIntegralNumber() || !value.canConvertToLong()) {
-      throw invalidCapability();
-    }
-    long parsed = value.longValue();
-    if (parsed <= 0L) {
-      throw invalidCapability();
-    }
-    return parsed;
-  }
-
-  private static String requiredText(JsonNode root, String field) {
-    JsonNode value = root.get(field);
-    if (value == null || !value.isString()) {
-      throw invalidCapability();
-    }
-    String parsed = value.textValue();
-    if (parsed.isBlank()
-        || parsed.length() > 256
-        || !parsed.equals(parsed.trim())
-        || parsed.indexOf('\n') >= 0
-        || parsed.indexOf('\r') >= 0) {
-      throw invalidCapability();
-    }
-    return parsed;
-  }
-
-  private static String decodeUtf8(byte[] bytes) throws CharacterCodingException {
-    return StandardCharsets.UTF_8
-        .newDecoder()
-        .onMalformedInput(CodingErrorAction.REPORT)
-        .onUnmappableCharacter(CodingErrorAction.REPORT)
-        .decode(java.nio.ByteBuffer.wrap(bytes))
-        .toString();
-  }
-
   private static void requireExpectedRunBinding(String runId, String projectName) {
     if (runId == null
         || projectName == null
         || !SAFE_ID.matcher(runId).matches()
         || !SAFE_ID.matcher(projectName).matches()) {
       throw invalidCapability();
-    }
-  }
-
-  private static boolean isCanonicalUuid(String value) {
-    if (value == null) {
-      return false;
-    }
-    try {
-      return UUID.fromString(value).toString().equals(value);
-    } catch (IllegalArgumentException exception) {
-      return false;
     }
   }
 
@@ -899,6 +478,8 @@ record RunOwnedInitialAdmissionFixtureCapability(
       String gameSessionUriSan,
       String gameSessionLeafSha256,
       String caCertificateSha256,
+      String worldManagementUriSan,
+      String worldManagementLeafSha256,
       AuthoredWorldSourceEvidence sourceEvidence,
       LaunchReadEvidence launchReadEvidence) {}
 
@@ -907,12 +488,8 @@ record RunOwnedInitialAdmissionFixtureCapability(
       long gameTemplateId,
       PublishedReleaseBundle publishedReleaseBundle,
       VersionAssetArtifactState versionAssetArtifactState,
-      VersionStateSnapshot versionState) {}
-
-  @FunctionalInterface
-  private interface ProtoParser<T extends Message> {
-    T parse(byte[] bytes) throws InvalidProtocolBufferException;
-  }
+      VersionStateSnapshot versionState,
+      LaunchDescriptor launchDescriptor) {}
 
   /** Generic, content-free failure so callers cannot accidentally log capability contents. */
   public static final class InvalidCapabilityException extends IllegalArgumentException {
