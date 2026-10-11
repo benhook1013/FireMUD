@@ -264,7 +264,7 @@ class DesignCapabilityAllocationRegressionTests(unittest.TestCase):
             self.validator.expected_microservice_allocation(
                 "design/architecture/microservices/entity-management-service/character-create-action-schema.md"
             ),
-            ("GR-3", "Operator action schema"),
+            ("GR-3", "Character-creation action schema"),
         )
 
     def test_adr_primary_allocation_drift_with_adjusted_counts(self) -> None:

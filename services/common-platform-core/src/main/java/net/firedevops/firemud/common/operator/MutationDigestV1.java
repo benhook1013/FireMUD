@@ -18,6 +18,9 @@ final class MutationDigestV1 {
   static final int MAX_NUMERIC_SCALE = 128;
   static final int MAX_SEGMENT_BYTES = 8_192;
   static final int MAX_PREIMAGE_BYTES = 32 * 1_024;
+  static final int MAX_CHARACTER_CREATE_SEGMENT_BYTES = 2 * 1_024 * 1_024;
+  static final int MAX_CHARACTER_CREATE_PREIMAGE_BYTES = 2 * 1_024 * 1_024;
+  static final int MAX_CHARACTER_CREATE_NORMALIZED_STRING_BYTES = 1_572_864;
 
   private static final String DOMAIN = "mutationDigest/v1";
   private static final Pattern NUMBER_SOURCE = Pattern.compile("-?(?:0|[1-9][0-9]*)(?:\\.[0-9]+)?");
@@ -61,9 +64,49 @@ final class MutationDigestV1 {
     return preimage;
   }
 
+  /** Frames the approved CHARACTER_CREATE/1 fields without widening StartSession's limits. */
+  static byte[] characterCreatePreimage(List<Member> fields) {
+    Objects.requireNonNull(fields, "character-create fields are required");
+    List<String> expectedFields =
+        List.of(
+            "actionFamilySchemaId",
+            "actionFamilySchemaVersion",
+            "scope",
+            "target",
+            "expectedVersion",
+            "mutation",
+            "auditReason");
+    if (fields.size() != expectedFields.size()) {
+      throw invalid("CHARACTER_CREATE preimage must contain its seven ordered outer fields");
+    }
+
+    ByteArrayOutputStream output = new ByteArrayOutputStream();
+    writeCharacterCreateSegment(output, utf8(DOMAIN));
+    for (int index = 0; index < fields.size(); index++) {
+      Member field = fields.get(index);
+      if (!expectedFields.get(index).equals(field.key())) {
+        throw invalid("CHARACTER_CREATE outer fields are missing, unknown, or reordered");
+      }
+      writeCharacterCreateSegment(output, utf8(field.key()));
+      writeCharacterCreateValue(output, field.value());
+      if (output.size() > MAX_CHARACTER_CREATE_PREIMAGE_BYTES) {
+        throw invalid("CHARACTER_CREATE preimage exceeds its family byte limit");
+      }
+    }
+    return output.toByteArray();
+  }
+
   static String sha256Hex(byte[] preimage) {
+    return sha256Hex(preimage, MAX_PREIMAGE_BYTES);
+  }
+
+  static String sha256HexCharacterCreate(byte[] preimage) {
+    return sha256Hex(preimage, MAX_CHARACTER_CREATE_PREIMAGE_BYTES);
+  }
+
+  private static String sha256Hex(byte[] preimage, int maximumBytes) {
     Objects.requireNonNull(preimage, "preimage is required");
-    if (preimage.length > MAX_PREIMAGE_BYTES) {
+    if (preimage.length > maximumBytes) {
       throw invalid("canonical preimage exceeds its byte limit");
     }
     try {
@@ -88,7 +131,11 @@ final class MutationDigestV1 {
   }
 
   static Value string(String value) {
-    String normalized = normalize(value, MAX_NORMALIZED_STRING_BYTES, "string");
+    return string(value, MAX_NORMALIZED_STRING_BYTES);
+  }
+
+  static Value string(String value, int normalizedStringByteLimit) {
+    String normalized = normalize(value, normalizedStringByteLimit, "string");
     return new ScalarValue("string", true, utf8(normalized));
   }
 
@@ -137,6 +184,56 @@ final class MutationDigestV1 {
     ByteArrayOutputStream output = new ByteArrayOutputStream();
     writeValue(output, value);
     return output.toByteArray();
+  }
+
+  private static void writeCharacterCreateValue(ByteArrayOutputStream output, Value value) {
+    Objects.requireNonNull(value, "typed value is required");
+    String type;
+    boolean present;
+    byte[] payload;
+    if (value instanceof ScalarValue scalar) {
+      type = scalar.type();
+      present = scalar.present();
+      payload = scalar.payload;
+    } else if (value instanceof ObjectValue object) {
+      type = "object";
+      present = true;
+      payload = characterCreateObjectPayload(object.members());
+    } else {
+      throw invalid("CHARACTER_CREATE typed values do not support arrays");
+    }
+    writeCharacterCreateSegment(output, utf8(type));
+    output.write(present ? '1' : '0');
+    writeCharacterCreateSegment(output, payload);
+  }
+
+  private static byte[] characterCreateObjectPayload(List<Member> members) {
+    if (members.size() > 16) {
+      throw invalid("CHARACTER_CREATE object exceeds its member limit");
+    }
+    ByteArrayOutputStream output = new ByteArrayOutputStream();
+    writeCharacterCreateSegment(output, utf8(Integer.toString(members.size())));
+    for (Member member : members) {
+      writeCharacterCreateSegment(output, utf8(member.key()));
+      writeCharacterCreateValue(output, member.value());
+      if (output.size() > MAX_CHARACTER_CREATE_SEGMENT_BYTES) {
+        throw invalid("CHARACTER_CREATE object exceeds its segment limit");
+      }
+    }
+    return output.toByteArray();
+  }
+
+  private static void writeCharacterCreateSegment(ByteArrayOutputStream output, byte[] bytes) {
+    if (bytes.length > MAX_CHARACTER_CREATE_SEGMENT_BYTES) {
+      throw invalid("CHARACTER_CREATE segment exceeds its family byte limit");
+    }
+    byte[] count = Integer.toString(bytes.length).getBytes(StandardCharsets.US_ASCII);
+    if (count.length > 10) {
+      throw invalid("CHARACTER_CREATE segment count exceeds its decimal width");
+    }
+    output.writeBytes(count);
+    output.write(':');
+    output.writeBytes(bytes);
   }
 
   static Value normalizeObject(List<Member> rawMembers) {
