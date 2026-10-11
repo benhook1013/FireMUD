@@ -2255,6 +2255,80 @@ class ReviewRecordsCliTest(unittest.TestCase):
         self.assertEqual(len(history["result"]["runs"]), 1)
         self.assertEqual(len(history["result"]["decisions"]), 2)
 
+    def test_batch_import_validate_only_reuses_validators_without_touching_database(self) -> None:
+        missing_database = self.database.parent / "uncreated" / "controller.sqlite3"
+        completed = {
+            "api_version": 1,
+            "run": {
+                "run_id": "manual-validate-completed",
+                "source_pr": 2828,
+                "channel": "manual",
+                "reviewer": "reviewer",
+                "scope": "narrow",
+                "coverage_limits": ["static inspection only"],
+                "outcome": "completed",
+            },
+            "findings": [
+                {
+                    "source_finding_key": "accepted",
+                    "title": "Validate the import boundary",
+                    "decision": "accepted",
+                    "actor": "owner",
+                    "reason": "validated source finding",
+                }
+            ],
+        }
+        incomplete = {
+            "api_version": 1,
+            "run": {
+                **completed["run"],
+                "run_id": "manual-validate-incomplete",
+                "outcome": "incomplete",
+            },
+            "findings": [{"source_finding_key": "pending", "title": "Pending source finding"}],
+        }
+
+        for document in (completed, incomplete):
+            with self.subTest(outcome=document["run"]["outcome"]):
+                self.import_file.write_text(json.dumps(document), encoding="utf-8")
+                code, result = self.invoke(
+                    "import-run",
+                    "--input",
+                    str(self.import_file),
+                    "--database",
+                    str(missing_database),
+                    "--validate-only",
+                )
+                self.assertEqual(code, 0, result)
+                self.assertEqual(result["result"]["status"], "valid")
+                self.assertFalse(result["result"]["imported"])
+                self.assertFalse(result["result"]["database_state_checked"])
+                self.assertFalse(missing_database.parent.exists())
+
+        valid_completed = json.loads(json.dumps(completed))
+        completed["findings"][0]["reason"] = "r" * 301
+        self.import_file.write_text(json.dumps(completed), encoding="utf-8")
+        code, result = self.invoke(
+            "import-run",
+            "--input",
+            str(self.import_file),
+            "--database",
+            str(missing_database),
+            "--validate-only",
+        )
+        self.assertEqual(code, 2)
+        self.assertIn("reason must be text of at most 300 characters", result["error"])
+        self.assertFalse(missing_database.parent.exists())
+
+        self.invoke("bootstrap", "--database", str(self.database))
+        self.import_file.write_text(json.dumps(valid_completed), encoding="utf-8")
+        before = self.database.read_bytes()
+        code, result = self.invoke(
+            "import-run", "--input", str(self.import_file), "--database", str(self.database), "--validate-only"
+        )
+        self.assertEqual(code, 0, result)
+        self.assertEqual(self.database.read_bytes(), before)
+
     def test_empty_incomplete_batch_is_recorded_as_unattributable(self) -> None:
         self.invoke("bootstrap", "--database", str(self.database))
         self.import_file.write_text(
