@@ -41,7 +41,7 @@ public class AccountStartSessionOperatorAuthorizationRepository {
           + "issuance_operation_id, issuance_fence, bundle_version, bundle_source_version, "
           + "bundle_source_fence, bundle_linearization, authority_evidence_bundle, "
           + "authorization_reference_fingerprint, encrypted_response_envelope, issued_at, "
-          + "reference_expires_at, response_envelope_expires_at, status, "
+          + "reference_expires_at, response_envelope_expires_at, response_envelope_erased_at, status, "
           + "redemption_redeemer_workload_uri, redemption_owner_attempt_id, "
           + "redemption_owner_fence, redeemed_at, redemption_reference_fingerprint, "
           + "redemption_authority_evidence_bundle";
@@ -133,6 +133,47 @@ public class AccountStartSessionOperatorAuthorizationRepository {
   }
 
   /**
+   * Erases only the expired encrypted response envelope for one existing compact issuance row.
+   *
+   * <p>The immutable database expiry and database wall clock decide eligibility. A repeated call
+   * for a row carrying the closed erasure marker returns that same compact record without writing;
+   * missing or inconsistent envelope state fails closed.
+   */
+  @Transactional(propagation = Propagation.MANDATORY)
+  public ResponseEnvelopeErasureResult eraseExpiredResponseEnvelope(String controlPlaneRequestId) {
+    requireOwnerTransaction();
+    StartSessionPreAuthorizationReservationTuple.requireCanonicalControlPlaneRequestId(
+        controlPlaneRequestId);
+    IssuanceRecord before = toIssuanceRecord(lockByRequestId(controlPlaneRequestId));
+    if (before.responseEnvelopeErasedAt() != null) {
+      return new ResponseEnvelopeErasureResult(false, before);
+    }
+
+    int changed =
+        dsl.execute(
+            "UPDATE "
+                + TABLE
+                + " SET encrypted_response_envelope = NULL "
+                + "WHERE control_plane_request_id = ? "
+                + "AND encrypted_response_envelope IS NOT NULL "
+                + "AND response_envelope_erased_at IS NULL "
+                + "AND response_envelope_expires_at <= clock_timestamp()",
+            controlPlaneRequestId);
+    if (changed != 1) {
+      throw unavailable();
+    }
+
+    IssuanceRecord erased = toIssuanceRecord(lockByRequestId(controlPlaneRequestId));
+    if (!sameErasureIdentity(before, erased)
+        || erased.encryptedResponseEnvelope() != null
+        || erased.responseEnvelopeErasedAt() == null
+        || erased.responseEnvelopeErasedAt().isBefore(erased.responseEnvelopeExpiresAt())) {
+      throw unavailable();
+    }
+    return new ResponseEnvelopeErasureResult(true, erased);
+  }
+
+  /**
    * Atomically consumes an unexpired exact reference binding for one owner attempt.
    *
    * <p>The stored redemption projection contains only the immutable fingerprint and the exact
@@ -218,13 +259,16 @@ public class AccountStartSessionOperatorAuthorizationRepository {
             bundleReference(row),
             requiredBytes(row, "authority_evidence_bundle", MAX_AUTHORITY_BUNDLE_BYTES),
             requiredFingerprint(row.get("authorization_reference_fingerprint", String.class)),
-            requiredBytes(row, "encrypted_response_envelope", MAX_ENCRYPTED_ENVELOPE_BYTES),
+            optionalBytes(row, "encrypted_response_envelope", MAX_ENCRYPTED_ENVELOPE_BYTES),
             requiredInstant(row.get("issued_at", OffsetDateTime.class), "issue time"),
             requiredInstant(
                 row.get("reference_expires_at", OffsetDateTime.class), "reference expiry"),
             requiredInstant(
                 row.get("response_envelope_expires_at", OffsetDateTime.class),
                 "response-envelope expiry"),
+            optionalInstant(
+                row.get("response_envelope_erased_at", OffsetDateTime.class),
+                "response-envelope erasure time"),
             parseStatus(row.get("status", String.class)),
             optionalWorkloadUri(row.get("redemption_redeemer_workload_uri", String.class)),
             optionalUuid(row.get("redemption_owner_attempt_id", UUID.class), "owner attempt ID"),
@@ -350,6 +394,35 @@ public class AccountStartSessionOperatorAuthorizationRepository {
         || candidate.reservationClaimFence() != original.reservationClaimFence()) {
       throw conflict();
     }
+  }
+
+  private static boolean sameErasureIdentity(IssuanceRecord before, IssuanceRecord after) {
+    return before.controlPlaneRequestId().equals(after.controlPlaneRequestId())
+        && Arrays.equals(before.preAuthorizationTuple(), after.preAuthorizationTuple())
+        && before.mutationDigest().equals(after.mutationDigest())
+        && before.issuanceWorkloadUri().equals(after.issuanceWorkloadUri())
+        && before.reservationOwnerId().equals(after.reservationOwnerId())
+        && before.reservationClaimFence() == after.reservationClaimFence()
+        && before.issuanceOperationId().equals(after.issuanceOperationId())
+        && before.issuanceFence() == after.issuanceFence()
+        && before.bundleReference().equals(after.bundleReference())
+        && Arrays.equals(before.authorityEvidenceBundle(), after.authorityEvidenceBundle())
+        && before
+            .authorizationReferenceFingerprint()
+            .equals(after.authorizationReferenceFingerprint())
+        && before.issuedAt().equals(after.issuedAt())
+        && before.referenceExpiresAt().equals(after.referenceExpiresAt())
+        && before.responseEnvelopeExpiresAt().equals(after.responseEnvelopeExpiresAt())
+        && before.status() == after.status()
+        && Objects.equals(
+            before.redemptionRedeemerWorkloadUri(), after.redemptionRedeemerWorkloadUri())
+        && Objects.equals(before.redemptionOwnerAttemptId(), after.redemptionOwnerAttemptId())
+        && Objects.equals(before.redemptionOwnerFence(), after.redemptionOwnerFence())
+        && Objects.equals(before.redeemedAt(), after.redeemedAt())
+        && Objects.equals(
+            before.redemptionReferenceFingerprint(), after.redemptionReferenceFingerprint())
+        && Arrays.equals(
+            before.redemptionAuthorityEvidenceBundle(), after.redemptionAuthorityEvidenceBundle());
   }
 
   private static BundleReference bundleReference(Record row) {
@@ -606,6 +679,16 @@ public class AccountStartSessionOperatorAuthorizationRepository {
     }
   }
 
+  public record ResponseEnvelopeErasureResult(boolean erasedNow, IssuanceRecord issuance) {
+    public ResponseEnvelopeErasureResult {
+      Objects.requireNonNull(issuance, "issuance record is required");
+      if (issuance.encryptedResponseEnvelope() != null
+          || issuance.responseEnvelopeErasedAt() == null) {
+        throw unavailable();
+      }
+    }
+  }
+
   /** Candidate output fields must be created by the Account authority service, never this store. */
   public record IssuanceCandidate(
       String controlPlaneRequestId,
@@ -670,6 +753,7 @@ public class AccountStartSessionOperatorAuthorizationRepository {
       Instant issuedAt,
       Instant referenceExpiresAt,
       Instant responseEnvelopeExpiresAt,
+      Instant responseEnvelopeErasedAt,
       Status status,
       String redemptionRedeemerWorkloadUri,
       UUID redemptionOwnerAttemptId,
@@ -682,6 +766,11 @@ public class AccountStartSessionOperatorAuthorizationRepository {
       authorityEvidenceBundle = copy(authorityEvidenceBundle);
       encryptedResponseEnvelope = copy(encryptedResponseEnvelope);
       redemptionAuthorityEvidenceBundle = copy(redemptionAuthorityEvidenceBundle);
+      if ((encryptedResponseEnvelope == null) != (responseEnvelopeErasedAt != null)
+          || (responseEnvelopeErasedAt != null
+              && responseEnvelopeErasedAt.isBefore(responseEnvelopeExpiresAt))) {
+        throw unavailable();
+      }
       Objects.requireNonNull(status, "status is required");
       requireBundleReference(bundleReference, issuanceFence);
       if (status == Status.ISSUED
