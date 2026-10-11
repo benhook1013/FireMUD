@@ -3,15 +3,11 @@ package net.firedevops.firemud.common.gamedesign;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
-import com.google.protobuf.ByteString;
 import com.google.protobuf.UnknownFieldSet;
 import java.util.List;
 import java.util.UUID;
 import net.firedevops.firemud.common.testing.AuthoringFixtures;
 import net.firedevops.firemud.common.world.WorldCanonicalInstanceLifecycleEvidence;
-import net.firedevops.firemud.common.world.WorldPublishedStartLocationEvidence;
-import net.firedevops.firemud.gamedesign.v1.GetCompleteLaunchBindingResponse;
-import net.firedevops.firemud.gamedesign.v1.GetLaunchDescriptorRequest;
 import net.firedevops.firemud.gamedesign.v1.GetLaunchDescriptorResponse;
 import net.firedevops.firemud.gamedesign.v1.ResolveLaunchDescriptorResponse;
 import net.firedevops.firemud.shared.v1.ErrorDetail;
@@ -91,6 +87,106 @@ class AuthoredWorldLaunchDescriptorGrpcCodecTest {
   }
 
   @Test
+  void authoredWorldDigestVectorAndEmptyOptionalPresenceRemainStable() throws Exception {
+    var request =
+        new AuthoredWorldLaunchDescriptorEvidence.Request(
+            "test",
+            "cp-α",
+            UUID.fromString("12345678-1234-4234-8234-123456789abc"),
+            "copper-coast",
+            UUID.fromString("22345678-1234-4234-8234-123456789abc"),
+            "sha256:" + "a".repeat(64),
+            19L,
+            true,
+            "pätch-🦊",
+            false,
+            null,
+            false,
+            null,
+            false,
+            null);
+    assertThat(request.requestDigest())
+        .isEqualTo("sha256:ac6fc51a4b81185a33cfe9c84df69e05537a69415a6d8b8fb478a946221e7111");
+
+    var evidence =
+        AuthoredWorldLaunchDescriptorEvidence.create(
+            request,
+            "ld-vector-1",
+            Long.MAX_VALUE,
+            true,
+            "pätch-🦊",
+            "{\"welcome\":\"雪\"}",
+            "gen-rév-🧭",
+            Long.MAX_VALUE,
+            Long.MAX_VALUE,
+            "release-bundle:12345678-1234-4234-8234-123456789abc:9223372036854775807:9223372036854775807",
+            false,
+            null);
+    assertThat(evidence.resultDigest())
+        .isEqualTo("sha256:701c68797b898b696cac24d48dcff4fe25c0856f15965ff7e8b219f7c57acd11");
+    var readRequest =
+        new AuthoredWorldLaunchDescriptorGrpcCodec.GetRequest(
+            READ_REQUEST_ID, request, evidence.resultDigest());
+    var readWire = AuthoredWorldLaunchDescriptorGrpcCodec.toGetRequest(readRequest);
+    var readResponse =
+        GetLaunchDescriptorResponse.newBuilder()
+            .setRequestId(readWire.getRequestId())
+            .setLaunchDescriptor(
+                AuthoredWorldLaunchDescriptorGrpcCodec.toLaunchDescriptorMessage(evidence))
+            .build();
+    assertThat(AuthoredWorldLaunchDescriptorGrpcCodec.fromGetResponse(readRequest, readResponse))
+        .isEqualTo(evidence);
+
+    var emptyFlagsRequest =
+        new AuthoredWorldLaunchDescriptorEvidence.Request(
+            request.targetNamespace(),
+            request.controlPlaneRequestId(),
+            request.canonicalTenantId(),
+            request.worldSlug(),
+            request.authoredWorldSourceOperationId(),
+            request.authoredWorldSourceEvidenceDigest(),
+            request.gameTemplateId(),
+            request.requestedScriptPatchVersionPresent(),
+            request.requestedScriptPatchVersion(),
+            request.sourceVersionIdPresent(),
+            request.sourceVersionId(),
+            request.targetVersionIdPresent(),
+            request.targetVersionId(),
+            true,
+            "");
+    var emptyFlagsWire = AuthoredWorldLaunchDescriptorGrpcCodec.toResolveRequest(emptyFlagsRequest);
+    assertThat(emptyFlagsWire.hasRequestedRuntimeFlagsJson()).isTrue();
+    assertThat(emptyFlagsWire.getRequestedRuntimeFlagsJson()).isEmpty();
+    var emptyFlagsEvidence =
+        AuthoredWorldLaunchDescriptorEvidence.create(
+            emptyFlagsRequest,
+            "ld-vector-1",
+            Long.MAX_VALUE,
+            true,
+            "pätch-🦊",
+            "{\"welcome\":\"雪\"}",
+            "gen-rév-🧭",
+            Long.MAX_VALUE,
+            Long.MAX_VALUE,
+            "release-bundle:12345678-1234-4234-8234-123456789abc:9223372036854775807:9223372036854775807",
+            false,
+            null);
+    assertThat(
+            AuthoredWorldLaunchDescriptorGrpcCodec.fromResolveResponse(
+                emptyFlagsRequest,
+                ResolveLaunchDescriptorResponse.newBuilder()
+                    .setLaunchDescriptor(
+                        AuthoredWorldLaunchDescriptorGrpcCodec.toLaunchDescriptorMessage(
+                            emptyFlagsEvidence))
+                    .build()))
+        .satisfies(
+            readback -> {
+              assertThat(readback.requestedRuntimeFlagsJsonPresent()).isTrue();
+              assertThat(readback.requestedRuntimeFlagsJson()).isEmpty();
+            });
+  }
+
+  @Test
   void getRequestAndResponseKeepReadCorrelationSeparateFromTheOriginalResolveIdentity()
       throws Exception {
     var descriptor = descriptorWithOptionalValues();
@@ -165,66 +261,16 @@ class AuthoredWorldLaunchDescriptorGrpcCodecTest {
                     descriptor.resultDigest()))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("distinct");
-  }
-
-  @Test
-  void completeBindingRoundTripsSupportedReleaseSchemasAndAllMappedSelections() throws Exception {
-    var world = authoredWorldFixture();
-    var descriptor = world.launchBinding().descriptor();
-    var selectedRelease = releaseWithArtifact(world.launchBinding().releaseAttestation());
-    var retainedRelease = retainedV1(selectedRelease);
-    var closureRelease = closureSelected(selectedRelease);
-
-    for (var release : List.of(retainedRelease, selectedRelease, closureRelease)) {
-      var binding = new CompleteLaunchBindingEvidence(descriptor, release);
-      var wireRequest = AuthoredWorldLaunchDescriptorGrpcCodec.toGetRequest(getRequest(descriptor));
-      var wireRelease = AuthoredWorldLaunchDescriptorGrpcCodec.toReleaseAttestation(release);
-      assertThat(wireRelease.getSchemaVersion()).isEqualTo(release.schemaVersion());
-      assertThat(wireRelease.getParticipantDigestsCount())
-          .isEqualTo(release.participantDigests().size());
-      assertThat(wireRelease.getArtifactDigestsCount()).isEqualTo(1);
-      assertThat(wireRelease.getArtifactDigests(0).getUsageKey()).isEqualTo("world.navmesh");
-      assertThat(wireRelease.getArtifactDigests(0).getImmutableObjectKey())
-          .isEqualTo(release.artifactDigests().getFirst().immutableObjectKey());
-      assertThat(wireRelease.getParticipantDigests(2).hasAbilitySchemaDigest()).isTrue();
-      assertThat(wireRelease.getParticipantDigests(2).getAbilitySchemaDigest())
-          .isEqualTo(release.participantDigests().get(2).abilitySchemaDigest());
-      if (AuthoredWorldReleaseAttestationEvidence.requiresWorldStartLocationEvidence(
-          release.schemaVersion())) {
-        assertThat(wireRelease.hasWorldStartLocationEvidence()).isTrue();
-        assertThat(wireRelease.getWorldStartLocationEvidence())
-            .isEqualTo(ByteString.copyFrom(release.worldStartLocationEvidence().canonicalBytes()));
-      } else {
-        assertThat(wireRelease.hasWorldStartLocationEvidence()).isFalse();
-      }
-
-      var response = completeResponse(wireRequest, binding);
-      assertThat(AuthoredWorldLaunchDescriptorGrpcCodec.fromCompleteResponse(wireRequest, response))
-          .isEqualTo(binding);
-    }
-
-    var unsupported =
-        AuthoredWorldLaunchDescriptorGrpcCodec.toReleaseAttestation(selectedRelease).toBuilder()
-            .setSchemaVersion(99)
-            .build();
-    var unsupportedResponse =
-        GetCompleteLaunchBindingResponse.newBuilder()
-            .setRequestId(READ_REQUEST_ID.toString())
-            .setLaunchDescriptor(
-                AuthoredWorldLaunchDescriptorGrpcCodec.toLaunchDescriptorMessage(descriptor))
-            .setReleaseAttestation(unsupported)
-            .build();
-    var wireRequest = AuthoredWorldLaunchDescriptorGrpcCodec.toGetRequest(getRequest(descriptor));
     assertThatThrownBy(
             () ->
-                AuthoredWorldLaunchDescriptorGrpcCodec.fromCompleteResponse(
-                    wireRequest, unsupportedResponse))
+                new AuthoredWorldLaunchDescriptorGrpcCodec.GetRequest(
+                    new UUID(0L, 0L), descriptor.request(), descriptor.resultDigest()))
         .isInstanceOf(IllegalArgumentException.class)
-        .hasMessageContaining("Release-attestation evidence is invalid");
+        .hasMessageContaining("nonnil");
   }
 
   @Test
-  void resolveAndCompleteReadsRejectErrorsMissingBindingsAndChangedSelectors() throws Exception {
+  void resolveReadRejectsErrorsAndMissingBindings() throws Exception {
     var world = authoredWorldFixture();
     var descriptor = world.launchBinding().descriptor();
     var wireDescriptor =
@@ -256,55 +302,6 @@ class AuthoredWorldLaunchDescriptorGrpcCodecTest {
                         .build()))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("no authored-world binding");
-
-    var wireRequest = AuthoredWorldLaunchDescriptorGrpcCodec.toGetRequest(getRequest(descriptor));
-    var completeResponse = completeResponse(wireRequest, world.launchBinding());
-    assertThatThrownBy(
-            () ->
-                AuthoredWorldLaunchDescriptorGrpcCodec.fromCompleteResponse(
-                    wireRequest,
-                    completeResponse.toBuilder()
-                        .setError(ErrorDetail.getDefaultInstance())
-                        .build()))
-        .isInstanceOf(IllegalArgumentException.class)
-        .hasMessageContaining("rejected");
-    assertThatThrownBy(
-            () ->
-                AuthoredWorldLaunchDescriptorGrpcCodec.fromCompleteResponse(
-                    wireRequest,
-                    completeResponse.toBuilder()
-                        .setRequestId(UUID.randomUUID().toString())
-                        .build()))
-        .isInstanceOf(IllegalArgumentException.class)
-        .hasMessageContaining("request ID echo");
-    assertThatThrownBy(
-            () ->
-                AuthoredWorldLaunchDescriptorGrpcCodec.fromCompleteResponse(
-                    wireRequest,
-                    completeResponse.toBuilder().setUnknownFields(UNKNOWN_FIELD).build()))
-        .isInstanceOf(IllegalArgumentException.class)
-        .hasMessageContaining("unsupported fields");
-    assertThatThrownBy(
-            () ->
-                AuthoredWorldLaunchDescriptorGrpcCodec.fromCompleteResponse(
-                    wireRequest, completeResponse.toBuilder().clearLaunchDescriptor().build()))
-        .isInstanceOf(IllegalArgumentException.class)
-        .hasMessageContaining("both descriptor and release");
-    assertThatThrownBy(
-            () ->
-                AuthoredWorldLaunchDescriptorGrpcCodec.fromCompleteResponse(
-                    wireRequest, completeResponse.toBuilder().clearReleaseAttestation().build()))
-        .isInstanceOf(IllegalArgumentException.class)
-        .hasMessageContaining("both descriptor and release");
-    assertThatThrownBy(
-            () ->
-                AuthoredWorldLaunchDescriptorGrpcCodec.fromCompleteResponse(
-                    wireRequest.toBuilder()
-                        .setExpectedRequestDigest("sha256:" + "f".repeat(64))
-                        .build(),
-                    completeResponse))
-        .isInstanceOf(IllegalArgumentException.class)
-        .hasMessageContaining("exact read selector");
   }
 
   @Test
@@ -368,31 +365,60 @@ class AuthoredWorldLaunchDescriptorGrpcCodecTest {
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("does not match evidence");
 
-    var wireRequest = AuthoredWorldLaunchDescriptorGrpcCodec.toGetRequest(getRequest(descriptor));
-    var completeResponse = completeResponse(wireRequest, world.launchBinding());
-    var releaseWithUnknownParticipant =
-        completeResponse.getReleaseAttestation().toBuilder()
-            .setParticipantDigests(
-                0,
-                completeResponse.getReleaseAttestation().getParticipantDigests(0).toBuilder()
-                    .setUnknownFields(UNKNOWN_FIELD))
+    for (var changedDescriptor :
+        List.of(
+            evidenceMessage.toBuilder().setLaunchDescriptorId("other").build(),
+            evidenceMessage.toBuilder().setCanonicalTenantId(UUID.randomUUID().toString()).build(),
+            evidenceMessage.toBuilder().setGameTemplateId(0L).build(),
+            evidenceMessage.toBuilder().setControlPlaneRequestId("other").build(),
+            evidenceMessage.toBuilder().setScriptPatchVersion("other").build(),
+            evidenceMessage.toBuilder().setRuntimeFlagsJson("other").build(),
+            evidenceMessage.toBuilder().setGenerationConfigRevision("other").build(),
+            evidenceMessage.toBuilder().setVersionStateEpoch(0L).build(),
+            evidenceMessage.toBuilder().setReleaseBundleId(0L).build(),
+            evidenceMessage.toBuilder().setPublishedReleaseBundleRef("other").build(),
+            evidenceMessage.toBuilder().setRemapSetId("other").build())) {
+      assertThatThrownBy(
+              () ->
+                  AuthoredWorldLaunchDescriptorGrpcCodec.fromResolveResponse(
+                      descriptor.request(),
+                      resolveResponse.toBuilder().setLaunchDescriptor(changedDescriptor).build()))
+          .isInstanceOf(IllegalArgumentException.class)
+          .hasMessageContaining("does not match evidence");
+    }
+
+    for (var changedRequest :
+        List.of(
+            requestWithTargetNamespaceAndWorldSlug(
+                descriptor.request(), descriptor.targetNamespace(), "copper-shore"),
+            requestWithTargetNamespaceAndWorldSlug(
+                descriptor.request(), "other", descriptor.worldSlug()))) {
+      var changedEvidence = descriptorWithRequest(descriptor, changedRequest);
+      assertThatThrownBy(
+              () ->
+                  AuthoredWorldLaunchDescriptorGrpcCodec.fromResolveResponse(
+                      descriptor.request(),
+                      ResolveLaunchDescriptorResponse.newBuilder()
+                          .setLaunchDescriptor(
+                              AuthoredWorldLaunchDescriptorGrpcCodec.toLaunchDescriptorMessage(
+                                  changedEvidence))
+                          .build()))
+          .isInstanceOf(IllegalArgumentException.class)
+          .hasMessageContaining("exact authored-world resolve request");
+    }
+
+    var unsupportedSchema =
+        evidenceMessage.toBuilder()
+            .setAuthoredWorldBinding(
+                evidenceMessage.getAuthoredWorldBinding().toBuilder().setSchemaVersion(99))
             .build();
     assertThatThrownBy(
             () ->
-                AuthoredWorldLaunchDescriptorGrpcCodec.fromCompleteResponse(
-                    wireRequest,
-                    completeResponse.toBuilder()
-                        .setReleaseAttestation(releaseWithUnknownParticipant)
-                        .build()))
+                AuthoredWorldLaunchDescriptorGrpcCodec.fromResolveResponse(
+                    descriptor.request(),
+                    resolveResponse.toBuilder().setLaunchDescriptor(unsupportedSchema).build()))
         .isInstanceOf(IllegalArgumentException.class)
-        .hasMessageContaining("unsupported fields");
-    assertThatThrownBy(
-            () ->
-                AuthoredWorldLaunchDescriptorGrpcCodec.fromCompleteResponse(
-                    wireRequest.toBuilder().setUnknownFields(UNKNOWN_FIELD).build(),
-                    completeResponse))
-        .isInstanceOf(IllegalArgumentException.class)
-        .hasMessageContaining("unsupported fields");
+        .hasMessageContaining("Authored-world launch evidence is invalid");
   }
 
   private static WorldCanonicalInstanceLifecycleEvidence authoredWorldFixture() throws Exception {
@@ -434,161 +460,50 @@ class AuthoredWorldLaunchDescriptorGrpcCodecTest {
         "approved-remap-41-42");
   }
 
+  private static AuthoredWorldLaunchDescriptorEvidence.Request
+      requestWithTargetNamespaceAndWorldSlug(
+          AuthoredWorldLaunchDescriptorEvidence.Request original,
+          String targetNamespace,
+          String worldSlug) {
+    return new AuthoredWorldLaunchDescriptorEvidence.Request(
+        targetNamespace,
+        original.controlPlaneRequestId(),
+        original.canonicalTenantId(),
+        worldSlug,
+        original.authoredWorldSourceOperationId(),
+        original.authoredWorldSourceEvidenceDigest(),
+        original.gameTemplateId(),
+        original.requestedScriptPatchVersionPresent(),
+        original.requestedScriptPatchVersion(),
+        original.sourceVersionIdPresent(),
+        original.sourceVersionId(),
+        original.targetVersionIdPresent(),
+        original.targetVersionId(),
+        original.requestedRuntimeFlagsJsonPresent(),
+        original.requestedRuntimeFlagsJson());
+  }
+
+  private static AuthoredWorldLaunchDescriptorEvidence descriptorWithRequest(
+      AuthoredWorldLaunchDescriptorEvidence original,
+      AuthoredWorldLaunchDescriptorEvidence.Request request) {
+    return AuthoredWorldLaunchDescriptorEvidence.create(
+        request,
+        original.launchDescriptorId(),
+        original.versionId(),
+        original.scriptPatchVersionPresent(),
+        original.scriptPatchVersion(),
+        original.runtimeFlagsJson(),
+        original.generationConfigRevision(),
+        original.versionStateEpoch(),
+        original.releaseBundleId(),
+        original.publishedReleaseBundleRef(),
+        original.remapSetIdPresent(),
+        original.remapSetId());
+  }
+
   private static AuthoredWorldLaunchDescriptorGrpcCodec.GetRequest getRequest(
       AuthoredWorldLaunchDescriptorEvidence descriptor) {
     return new AuthoredWorldLaunchDescriptorGrpcCodec.GetRequest(
         READ_REQUEST_ID, descriptor.request(), descriptor.resultDigest());
-  }
-
-  private static GetCompleteLaunchBindingResponse completeResponse(
-      GetLaunchDescriptorRequest request, CompleteLaunchBindingEvidence binding) {
-    return GetCompleteLaunchBindingResponse.newBuilder()
-        .setRequestId(request.getRequestId())
-        .setLaunchDescriptor(
-            AuthoredWorldLaunchDescriptorGrpcCodec.toLaunchDescriptorMessage(binding.descriptor()))
-        .setReleaseAttestation(
-            AuthoredWorldLaunchDescriptorGrpcCodec.toReleaseAttestation(
-                binding.releaseAttestation()))
-        .build();
-  }
-
-  private static AuthoredWorldReleaseAttestationEvidence releaseWithArtifact(
-      AuthoredWorldReleaseAttestationEvidence release) {
-    String digest = "a".repeat(64);
-    var artifact =
-        new AuthoredWorldReleaseAttestationEvidence.Artifact(
-            "world.navmesh",
-            "NAVMESH",
-            "artifacts/sha256/" + digest,
-            "sha256:" + digest,
-            "application/vnd.firemud.navmesh+binary",
-            1);
-    return AuthoredWorldReleaseAttestationEvidence.create(
-        release.targetNamespace(),
-        release.descriptorResultDigest(),
-        release.canonicalTenantId(),
-        release.canonicalVersionId(),
-        release.worldSlug(),
-        release.authoredWorldSourceOperationId(),
-        release.authoredWorldSourceEvidenceDigest(),
-        release.launchDescriptorId(),
-        release.publishedReleaseBundleRef(),
-        release.versionStateEpoch(),
-        release.publishWorkflowId(),
-        release.commitId(),
-        release.participantDigests(),
-        release.manifestHash(),
-        release.manifestSchemaVersion(),
-        List.of(artifact.usageKey()),
-        List.of(artifact),
-        release.commandDefinitions(),
-        release.generationConfigRevision(),
-        release.worldStartLocationEvidence());
-  }
-
-  private static AuthoredWorldReleaseAttestationEvidence retainedV1(
-      AuthoredWorldReleaseAttestationEvidence release) {
-    var participants =
-        release.participantDigests().stream()
-            .map(
-                participant ->
-                    new AuthoredWorldReleaseAttestationEvidence.Participant(
-                        participant.participantKey(),
-                        participant.scopeValue(),
-                        participant.baseVersionIdPresent(),
-                        participant.baseVersionId(),
-                        participant.appliedCommitId(),
-                        participant.contentDigest(),
-                        AuthoredWorldReleaseAttestationEvidence.supportedParticipantDigestSchema(
-                            participant.participantKey(),
-                            AuthoredWorldReleaseAttestationEvidence.SCHEMA_VERSION),
-                        participant.abilitySchemaDigestPresent(),
-                        participant.abilitySchemaDigest()))
-            .toList();
-    return AuthoredWorldReleaseAttestationEvidence.create(
-        release.targetNamespace(),
-        release.descriptorResultDigest(),
-        release.canonicalTenantId(),
-        release.canonicalVersionId(),
-        release.worldSlug(),
-        release.authoredWorldSourceOperationId(),
-        release.authoredWorldSourceEvidenceDigest(),
-        release.launchDescriptorId(),
-        release.publishedReleaseBundleRef(),
-        release.versionStateEpoch(),
-        release.publishWorkflowId(),
-        release.commitId(),
-        participants,
-        release.manifestHash(),
-        release.manifestSchemaVersion(),
-        release.requiredManifestAssetKeys(),
-        release.artifactDigests(),
-        release.commandDefinitions(),
-        release.generationConfigRevision());
-  }
-
-  private static AuthoredWorldReleaseAttestationEvidence closureSelected(
-      AuthoredWorldReleaseAttestationEvidence release) {
-    var selected = release.worldStartLocationEvidence();
-    var original = selected.request();
-    var closureSelectorRequest =
-        new WorldPublishedStartLocationEvidence.Request(
-            original.targetNamespace(),
-            original.canonicalTenantId(),
-            original.canonicalVersionId(),
-            original.intakeRequestId(),
-            original.publicationFence(),
-            original.publicationRequestId(),
-            original.requestDigest(),
-            original.versionStateEpoch(),
-            original.publishWorkflowId(),
-            original.appliedCommitId(),
-            original.contentDigest(),
-            4,
-            original.worldAffectedTuples());
-    var closureSelector =
-        new WorldPublishedStartLocationEvidence(
-            closureSelectorRequest,
-            selected.selectorReceiptBytes(),
-            selected.originalAccountBindingBytes(),
-            selected.appliedResultBytes());
-    var participants =
-        release.participantDigests().stream()
-            .map(
-                participant ->
-                    new AuthoredWorldReleaseAttestationEvidence.Participant(
-                        participant.participantKey(),
-                        participant.scopeValue(),
-                        participant.baseVersionIdPresent(),
-                        participant.baseVersionId(),
-                        participant.appliedCommitId(),
-                        participant.contentDigest(),
-                        "WORLD_MANAGEMENT".equals(participant.participantKey())
-                            ? 4
-                            : participant.digestSchemaVersion(),
-                        participant.abilitySchemaDigestPresent(),
-                        participant.abilitySchemaDigest()))
-            .toList();
-    return AuthoredWorldReleaseAttestationEvidence.createClosureSelector(
-        release.targetNamespace(),
-        release.descriptorResultDigest(),
-        release.canonicalTenantId(),
-        release.canonicalVersionId(),
-        release.worldSlug(),
-        release.authoredWorldSourceOperationId(),
-        release.authoredWorldSourceEvidenceDigest(),
-        release.launchDescriptorId(),
-        release.publishedReleaseBundleRef(),
-        release.versionStateEpoch(),
-        release.publishWorkflowId(),
-        release.commitId(),
-        participants,
-        release.manifestHash(),
-        release.manifestSchemaVersion(),
-        release.requiredManifestAssetKeys(),
-        release.artifactDigests(),
-        release.commandDefinitions(),
-        release.generationConfigRevision(),
-        closureSelector);
   }
 }

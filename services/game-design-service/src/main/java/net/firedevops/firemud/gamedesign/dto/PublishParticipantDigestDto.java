@@ -7,8 +7,30 @@ public record PublishParticipantDigestDto(
     String appliedCommitId,
     String contentDigest,
     Integer digestSchemaVersion,
+    String abilitySchemaDigest,
     String errorCode,
     String errorMessage) {
+  public PublishParticipantDigestDto(
+      String participantKey,
+      String scopeValue,
+      Long baseVersionId,
+      String appliedCommitId,
+      String contentDigest,
+      Integer digestSchemaVersion,
+      String errorCode,
+      String errorMessage) {
+    this(
+        participantKey,
+        scopeValue,
+        baseVersionId,
+        appliedCommitId,
+        contentDigest,
+        digestSchemaVersion,
+        null,
+        errorCode,
+        errorMessage);
+  }
+
   /**
    * Preserve the full-version construction shape while the typed patch scope is introduced.
    * Full-version digests have no base version and therefore keep this field null.
@@ -28,6 +50,7 @@ public record PublishParticipantDigestDto(
         appliedCommitId,
         contentDigest,
         digestSchemaVersion,
+        null,
         errorCode,
         errorMessage);
   }
