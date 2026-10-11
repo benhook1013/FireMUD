@@ -259,6 +259,14 @@ class DesignCapabilityAllocationRegressionTests(unittest.TestCase):
             ("AR-3", "Operator action schema"),
         )
 
+    def test_character_create_action_schema_appendix_allocation(self) -> None:
+        self.assertEqual(
+            self.validator.expected_microservice_allocation(
+                "design/architecture/microservices/entity-management-service/character-create-action-schema.md"
+            ),
+            ("GR-3", "Operator action schema"),
+        )
+
     def test_adr_primary_allocation_drift_with_adjusted_counts(self) -> None:
         with fixture_root() as directory:
             root = Path(directory)

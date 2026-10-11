@@ -25,6 +25,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Consumer;
 import net.firedevops.firemud.account.v1.EnrollBootstrapRequest;
@@ -451,6 +452,7 @@ final class AccountControlUiSignerFixture {
   private static <T> T rpc(Consumer<StreamObserver<T>> invocation) {
     AtomicReference<T> result = new AtomicReference<>();
     AtomicReference<Throwable> failure = new AtomicReference<>();
+    AtomicBoolean completed = new AtomicBoolean();
     invocation.accept(
         new StreamObserver<>() {
           @Override
@@ -464,10 +466,15 @@ final class AccountControlUiSignerFixture {
           }
 
           @Override
-          public void onCompleted() {}
+          public void onCompleted() {
+            completed.set(true);
+          }
         });
     if (failure.get() != null)
       throw new AssertionError("Actual Account materialization RPC failed", failure.get());
+    if (!completed.get()) {
+      throw new AssertionError("Actual Account materialization RPC did not complete");
+    }
     return java.util.Objects.requireNonNull(result.get());
   }
 

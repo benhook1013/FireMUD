@@ -753,6 +753,10 @@ MICROSERVICE_APPENDIX_ALLOCATIONS = {
         "AR-3",
         "Operator action schema",
     ),
+    "design/architecture/microservices/entity-management-service/character-create-action-schema.md": (
+        "GR-3",
+        "Operator action schema",
+    ),
     "design/architecture/microservices/logging-admin-service/admin-ui.md": ("EA-3", "First-party operator UX"),
     "design/architecture/microservices/logging-admin-service/analytics-dashboards.md": (
         "PO-4",
