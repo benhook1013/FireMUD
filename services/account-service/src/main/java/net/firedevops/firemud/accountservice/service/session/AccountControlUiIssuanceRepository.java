@@ -23,6 +23,7 @@ import tools.jackson.databind.json.JsonMapper;
 /** Genuine durable control-ui owner state. No caller-provided registry or evidence is accepted. */
 public final class AccountControlUiIssuanceRepository {
   private static final String TABLE = "account_control_ui_issuance_operations";
+  static final long MAX_REDIS_SAFE_INTEGER = 9_007_199_254_740_991L;
   private static final JsonMapper JSON =
       JsonMapper.builder()
           .enable(StreamReadFeature.STRICT_DUPLICATE_DETECTION)
@@ -84,7 +85,8 @@ public final class AccountControlUiIssuanceRepository {
       ControlUiPrimaryIdentity authenticated,
       AccountControlUiAuthority.Snapshot source,
       AccountControlUiSignerOwner.Capture signer,
-      Instant issuedAt) {
+      Instant issuedAt,
+      long sessionSafetyMarginMillis) {
     requireTransaction();
     if (!authenticated.accountId().equals(source.actor())) {
       throw denied();
@@ -92,6 +94,8 @@ public final class AccountControlUiIssuanceRepository {
     UUID operationId = UUID.randomUUID();
     UUID jti = UUID.randomUUID();
     Instant expiry = issuedAt.plusSeconds(300);
+    long cleanupDeadlineMillis =
+        checkedCleanupDeadlineMillis(expiry.toEpochMilli(), sessionSafetyMarginMillis);
     Instant recovery = issuedAt.plusSeconds(60);
     var spec =
         new AccountControlUiSigningSpec(operationId, requestId, jti, source, issuedAt, expiry);
@@ -187,7 +191,8 @@ public final class AccountControlUiIssuanceRepository {
                 + " (request_id, operation_id, token_jti, account_uuid, tenant_uuid, caller_workload,"
                 + " caller_context_id, request_mac_key_id, request_digest, claims_payload, source_payload,"
                 + " bundle_payload, signer_receipt, issued_at_epoch_second, expires_at_epoch_second,"
-                + " recovery_expires_at, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?::timestamptz, 'PREPARED')"
+                + " registry_cleanup_deadline_epoch_millis, recovery_expires_at, status)"
+                + " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?::timestamptz, 'PREPARED')"
                 + " ON CONFLICT (request_id) DO NOTHING",
             requestId,
             operationId,
@@ -204,6 +209,7 @@ public final class AccountControlUiIssuanceRepository {
             signer.receipt(),
             issuedAt.getEpochSecond(),
             expiry.getEpochSecond(),
+            cleanupDeadlineMillis,
             OffsetDateTime.ofInstant(recovery, java.time.ZoneOffset.UTC));
     Stored stored = findRequest(requestId);
     if (inserted != 1 || stored == null || !operationId.equals(stored.operationId)) {
@@ -438,6 +444,7 @@ public final class AccountControlUiIssuanceRepository {
     result.put("requestId", value.requestId.toString());
     result.put("requestDigest", value.requestDigest);
     result.put("state", active ? "active" : "pending");
+    result.put("registryCleanupDeadlineEpochMillis", value.expiryMillis());
     result.put("authoritySourceVersions", bundle.get("authoritySourceVersions"));
     var reference = new LinkedHashMap<String, Object>();
     @SuppressWarnings("unchecked")
@@ -465,6 +472,21 @@ public final class AccountControlUiIssuanceRepository {
     return AccountControlUiCoordination.digest("SHA-256", bytes);
   }
 
+  static long checkedCleanupDeadlineMillis(long tokenExpiryMillis, long marginMillis) {
+    if (tokenExpiryMillis <= 0L || marginMillis < 0L) {
+      throw denied();
+    }
+    try {
+      long deadline = Math.addExact(tokenExpiryMillis, marginMillis);
+      if (deadline > MAX_REDIS_SAFE_INTEGER) {
+        throw denied();
+      }
+      return deadline;
+    } catch (ArithmeticException malformed) {
+      throw denied();
+    }
+  }
+
   private void requireTransaction() {
     if (!TransactionSynchronizationManager.isActualTransactionActive()
         || TransactionSynchronizationManager.isCurrentTransactionReadOnly()) {
@@ -485,6 +507,7 @@ public final class AccountControlUiIssuanceRepository {
     final String caller, requestMacKeyId, requestDigest, status, tokenHash;
     final byte[] claims, sources, bundle, signerReceipt, pendingRegistry, activeRegistry;
     final Instant issuedAt, expiresAt, recoveryExpiry;
+    final Long registryCleanupDeadlineEpochMillis;
 
     Stored(Record row) {
       requestId = row.get("request_id", UUID.class);
@@ -506,11 +529,24 @@ public final class AccountControlUiIssuanceRepository {
       activeRegistry = row.get("active_registry", byte[].class);
       issuedAt = Instant.ofEpochSecond(row.get("issued_at_epoch_second", Long.class));
       expiresAt = Instant.ofEpochSecond(row.get("expires_at_epoch_second", Long.class));
+      registryCleanupDeadlineEpochMillis =
+          row.get("registry_cleanup_deadline_epoch_millis", Long.class);
       recoveryExpiry = row.get("recovery_expires_at", OffsetDateTime.class).toInstant();
     }
 
     long expiryMillis() {
-      return expiresAt.toEpochMilli();
+      Long deadline = registryCleanupDeadlineEpochMillis;
+      if (deadline == null || deadline > MAX_REDIS_SAFE_INTEGER) {
+        throw denied();
+      }
+      try {
+        if (deadline < expiresAt.toEpochMilli()) {
+          throw denied();
+        }
+      } catch (ArithmeticException malformed) {
+        throw denied();
+      }
+      return deadline;
     }
 
     @Override

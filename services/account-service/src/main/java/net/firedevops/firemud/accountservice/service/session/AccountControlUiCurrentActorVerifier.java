@@ -276,6 +276,8 @@ public final class AccountControlUiCurrentActorVerifier {
         || !numericEquals(registryRecord.get("iat"), issuance.issuedAtEpochSecond())
         || !numericEquals(registryRecord.get("nbf"), issuance.issuedAtEpochSecond())
         || !numericEquals(registryRecord.get("exp"), issuance.expiresAtEpochSecond())
+        || !numericEquals(
+            registryRecord.get("registryCleanupDeadlineEpochMillis"), issuance.expiryMillis())
         || !Arrays.equals(issuance.pendingRegistry(), derivePendingRegistry(activeRegistry))) {
       throw denied();
     }

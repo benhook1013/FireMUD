@@ -2218,6 +2218,11 @@ def main() -> int:
         or "${gradle.gradleVersion}" not in proto
     ):
         fail("protobuf diagnostic must derive both canonical versions")
+    if (
+        "all().configureEach { task ->" not in proto
+        or "task.notCompatibleWithConfigurationCache(protobufConfigurationCacheIncompatibilityReason)" not in proto
+    ):
+        fail("all protobuf generation task variants must opt out of the configuration cache")
     for action in ("setup-gh",):
         data = (actions / action / "action.yml").read_text()
         if "sha256sum --check --status" not in data:

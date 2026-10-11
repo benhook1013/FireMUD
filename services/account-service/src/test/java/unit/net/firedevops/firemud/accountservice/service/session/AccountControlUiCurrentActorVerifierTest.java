@@ -125,6 +125,7 @@ class AccountControlUiCurrentActorVerifierTest {
   private static final Instant NOW = Instant.parse("2035-04-05T06:07:08Z");
   private static final long NOW_SECONDS = NOW.getEpochSecond();
   private static final long EXPIRY_SECONDS = NOW_SECONDS + 300L;
+  private static final long CLEANUP_DEADLINE_MILLIS = EXPIRY_SECONDS * 1000L + 300_000L;
   private static KeyPair signingKey;
 
   @BeforeAll
@@ -161,6 +162,21 @@ class AccountControlUiCurrentActorVerifierTest {
             eq("api-r1"),
             eq(PROMOTION_OPERATION_ID),
             eq(GENERATION_OPERATION_ID));
+  }
+
+  @Test
+  void futureRegistryCleanupDeadlineDoesNotExtendAnExpiredJwt() throws Exception {
+    Fixture fixture = new Fixture(ACCOUNT_ID, null, 1, 1, List.of("tenantAdmin"), 1, false);
+    Map<String, Object> expiredClaims = claims(ACCOUNT_ID, null);
+    expiredClaims.put("iat", NOW_SECONDS - 300L);
+    expiredClaims.put("nbf", NOW_SECONDS - 300L);
+    expiredClaims.put("exp", NOW_SECONDS - 1L);
+    String expiredJwt = sign(expiredClaims, signingKey);
+
+    assertThatThrownBy(() -> fixture.verifier.verify(expiredJwt, TENANT_ID))
+        .isInstanceOf(AccountAsymmetricJwtVerifier.VerificationException.class);
+
+    verify(fixture.issuances, never()).readCommitted(any());
   }
 
   @Test
@@ -485,6 +501,7 @@ class AccountControlUiCurrentActorVerifierTest {
                   Map.entry("operationId", OPERATION_ID.toString()),
                   Map.entry("requestId", REQUEST_ID.toString()),
                   Map.entry("requestDigest", REQUEST_DIGEST),
+                  Map.entry("registryCleanupDeadlineEpochMillis", CLEANUP_DEADLINE_MILLIS),
                   Map.entry("state", "active"),
                   Map.entry("authoritySourceVersions", sourceVersions),
                   Map.entry("authEvidenceBundle", authBundleReference),
@@ -504,7 +521,7 @@ class AccountControlUiCurrentActorVerifierTest {
                   "recordDigest",
                   sha256(pendingRegistry),
                   "expiryMillis",
-                  Math.multiplyExact(EXPIRY_SECONDS, 1000L),
+                  CLEANUP_DEADLINE_MILLIS,
                   "aclIdentity",
                   "account_coord_app",
                   "localAofCount",
@@ -527,7 +544,7 @@ class AccountControlUiCurrentActorVerifierTest {
       when(committedIssuance.signerReceipt()).thenReturn(signerReceipt);
       when(committedIssuance.issuedAtEpochSecond()).thenReturn(NOW_SECONDS);
       when(committedIssuance.expiresAtEpochSecond()).thenReturn(EXPIRY_SECONDS);
-      when(committedIssuance.expiryMillis()).thenReturn(Math.multiplyExact(EXPIRY_SECONDS, 1000L));
+      when(committedIssuance.expiryMillis()).thenReturn(CLEANUP_DEADLINE_MILLIS);
       when(committedIssuance.status()).thenReturn("COMMITTED");
       when(committedIssuance.tokenHash()).thenReturn(tokenHash);
       when(committedIssuance.pendingRegistry()).thenReturn(pendingRegistry);
@@ -613,8 +630,7 @@ class AccountControlUiCurrentActorVerifierTest {
       when(connection.sync()).thenReturn(commands);
       when(commands.aclWhoami()).thenReturn(AccountControlUiRegistryReader.REQUIRED_ACL_IDENTITY);
       when(commands.get(any(byte[].class))).thenReturn(activeRegistry);
-      when(commands.pexpiretime(any(byte[].class)))
-          .thenReturn(Math.multiplyExact(EXPIRY_SECONDS, 1000L));
+      when(commands.pexpiretime(any(byte[].class))).thenReturn(CLEANUP_DEADLINE_MILLIS);
       registry = new AccountControlUiRegistryReader(() -> connection);
     }
 

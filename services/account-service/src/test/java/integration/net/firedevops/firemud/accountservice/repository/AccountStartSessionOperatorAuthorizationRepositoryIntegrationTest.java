@@ -8,6 +8,7 @@ import java.sql.SQLException;
 import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
+import java.time.temporal.ChronoUnit;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
@@ -75,7 +76,7 @@ class AccountStartSessionOperatorAuthorizationRepositoryIntegrationTest {
   @Test
   void realPostgresCreateRetryAndRedemptionRetainTheOriginalAuthorityRecord() {
     Context context = context();
-    IssuanceCandidate candidate = candidate(tuple());
+    IssuanceCandidate candidate = candidate(context, tuple());
     assertThat(candidate.issuanceFence())
         .isNotEqualTo(Long.parseLong(candidate.bundleReference().sourceFence()));
 
@@ -276,7 +277,7 @@ class AccountStartSessionOperatorAuthorizationRepositoryIntegrationTest {
     String boundedRequestId = "é".repeat(64);
     StartSessionPreAuthorizationReservationTuple boundaryTuple =
         tuple(boundedRequestId, "128-byte NFC request ID boundary");
-    IssuanceCandidate candidate = candidate(boundaryTuple, boundedRequestId);
+    IssuanceCandidate candidate = candidate(context, boundaryTuple, boundedRequestId);
 
     var created = context.inTransaction(() -> context.repository.createOrReadExact(candidate));
     var retry = context.inTransaction(() -> context.repository.createOrReadExact(candidate));
@@ -296,7 +297,7 @@ class AccountStartSessionOperatorAuthorizationRepositoryIntegrationTest {
                 "\"requestId\":\"" + boundedRequestId + "\"",
                 "\"requestId\":\"" + oversizedRequestId + "\"");
     assertThat(malformedTupleJson).contains(oversizedRequestId);
-    IssuanceCandidate boundaryCandidate = candidate(boundaryTuple, boundedRequestId);
+    IssuanceCandidate boundaryCandidate = candidate(context, boundaryTuple, boundedRequestId);
     IssuanceCandidate oversized =
         new IssuanceCandidate(
             boundedRequestId,
@@ -325,7 +326,7 @@ class AccountStartSessionOperatorAuthorizationRepositoryIntegrationTest {
   void realPostgresAcceptsSharedRaw64DigestAndRejectsPrefixedMalformedOrChangedDigests() {
     Context context = context();
     StartSessionPreAuthorizationReservationTuple tuple = tuple();
-    IssuanceCandidate canonical = candidate(tuple);
+    IssuanceCandidate canonical = candidate(context, tuple);
 
     assertThat(canonical.mutationDigest()).matches("[0-9a-f]{64}");
     assertThat(canonical.mutationDigest()).doesNotStartWith("sha256:");
@@ -338,7 +339,10 @@ class AccountStartSessionOperatorAuthorizationRepositoryIntegrationTest {
     for (String invalidDigest : new String[] {"sha256:" + digest, "not-a-digest", changedDigest}) {
       IssuanceCandidate invalid =
           candidate(
-              canonical.controlPlaneRequestId(), canonical.preAuthorizationTuple(), invalidDigest);
+              context,
+              canonical.controlPlaneRequestId(),
+              canonical.preAuthorizationTuple(),
+              invalidDigest);
       int rowsBeforeInvalidDigest = context.countRows();
 
       assertThatThrownBy(
@@ -353,7 +357,7 @@ class AccountStartSessionOperatorAuthorizationRepositoryIntegrationTest {
     Context context = context();
     IssuanceCandidate maximumKeyId =
         withFingerprint(
-            candidate(tuple()),
+            candidate(context, tuple()),
             "arfp/v1/" + "k".repeat(64) + "/" + "a".repeat(64),
             ISSUANCE_OPERATION_ID);
 
@@ -377,7 +381,7 @@ class AccountStartSessionOperatorAuthorizationRepositoryIntegrationTest {
         tuple(dottedRequestId, "invalid fingerprint key ID database constraint");
     IssuanceCandidate dottedKeyId =
         withFingerprint(
-            candidate(dottedTuple, dottedRequestId),
+            candidate(context, dottedTuple, dottedRequestId),
             "arfp/v1/key.with.dot/" + "b".repeat(64),
             UUID.randomUUID());
 
@@ -425,7 +429,7 @@ class AccountStartSessionOperatorAuthorizationRepositoryIntegrationTest {
   @Test
   void concurrentExactIssuanceRetriesReturnOneOriginalOutput() throws Exception {
     Context context = context();
-    IssuanceCandidate firstCandidate = candidate(tuple());
+    IssuanceCandidate firstCandidate = candidate(context, tuple());
     IssuanceCandidate secondCandidate = withDifferentOutputs(firstCandidate);
     CountDownLatch ready = new CountDownLatch(2);
     CountDownLatch start = new CountDownLatch(1);
@@ -478,7 +482,7 @@ class AccountStartSessionOperatorAuthorizationRepositoryIntegrationTest {
   @Test
   void changedTupleOrReservationBindingConflictsAndMalformedTupleNeverWrites() {
     Context context = context();
-    IssuanceCandidate candidate = candidate(tuple());
+    IssuanceCandidate candidate = candidate(context, tuple());
     context.inTransaction(() -> context.repository.createOrReadExact(candidate));
     StartSessionPreAuthorizationReservationTuple changedTuple = tuple("changed audit reason");
     IssuanceCandidate changedTupleCandidate =
@@ -524,7 +528,7 @@ class AccountStartSessionOperatorAuthorizationRepositoryIntegrationTest {
   @Test
   void twoConcurrentDifferentOwnerAttemptsCanConsumeOnlyOneReference() throws Exception {
     Context context = context();
-    IssuanceCandidate candidate = candidate(tuple());
+    IssuanceCandidate candidate = candidate(context, tuple());
     context.inTransaction(() -> context.repository.createOrReadExact(candidate));
     CountDownLatch ready = new CountDownLatch(2);
     CountDownLatch start = new CountDownLatch(1);
@@ -566,7 +570,7 @@ class AccountStartSessionOperatorAuthorizationRepositoryIntegrationTest {
   @Test
   void expiredReferenceCannotBeConsumedAndSqlGuardsRetainEvidence() {
     Context context = context();
-    IssuanceCandidate candidate = candidate(tuple());
+    IssuanceCandidate candidate = candidate(context, tuple());
     context.inTransaction(() -> context.repository.createOrReadExact(candidate));
     RedemptionRequest expired =
         new RedemptionRequest(
@@ -623,7 +627,7 @@ class AccountStartSessionOperatorAuthorizationRepositoryIntegrationTest {
   @Test
   void responseEnvelopeErasureUsesDatabaseWallClockAndPreservesRedeemedCompactEvidence() {
     Context context = context();
-    Instant databaseNow = databaseNow(context);
+    Instant databaseNow = canonicalDatabaseNow(context);
     IssuanceCandidate candidate =
         candidate(
             tuple(),
@@ -721,7 +725,7 @@ class AccountStartSessionOperatorAuthorizationRepositoryIntegrationTest {
                             candidate.controlPlaneRequestId())))
         .isInstanceOf(IntegrityConstraintViolationException.class);
 
-    Instant expiredAt = databaseNow(context);
+    Instant expiredAt = canonicalDatabaseNow(context);
     StartSessionPreAuthorizationReservationTuple expiredTuple =
         tuple("start-session/operator/" + UUID.randomUUID(), "expired erase-state guard test");
     IssuanceCandidate expiredUnredeemed = expiredCandidate(expiredTuple, expiredAt);
@@ -767,7 +771,7 @@ class AccountStartSessionOperatorAuthorizationRepositoryIntegrationTest {
   @Test
   void v126RetainedEnvelopeSurvivesAdditiveErasureMigration() {
     Context context = contextAt("126");
-    IssuanceCandidate candidate = candidate(tuple());
+    IssuanceCandidate candidate = candidate(context, tuple());
     insertV126Row(context, candidate);
 
     Flyway.configure()
@@ -900,6 +904,10 @@ class AccountStartSessionOperatorAuthorizationRepositoryIntegrationTest {
     return Instant.ofEpochMilli(value.toEpochMilli());
   }
 
+  private static Instant canonicalDatabaseNow(Context context) {
+    return databaseNow(context).truncatedTo(ChronoUnit.MILLIS);
+  }
+
   private static void waitUntilDatabaseTime(Context context, Instant boundary) {
     long timeoutNanos = System.nanoTime() + TimeUnit.SECONDS.toNanos(20);
     while (databaseNow(context).isBefore(boundary)) {
@@ -1012,16 +1020,19 @@ class AccountStartSessionOperatorAuthorizationRepositoryIntegrationTest {
         original.responseEnvelopeExpiresAt());
   }
 
-  private static IssuanceCandidate candidate(StartSessionPreAuthorizationReservationTuple tuple) {
-    return candidate(tuple, REQUEST_ID);
+  private static IssuanceCandidate candidate(
+      Context context, StartSessionPreAuthorizationReservationTuple tuple) {
+    return candidate(context, tuple, REQUEST_ID);
   }
 
   private static IssuanceCandidate candidate(
-      StartSessionPreAuthorizationReservationTuple tuple, String requestId) {
-    return candidate(requestId, canonicalBytes(tuple), tuple.mutationDigest());
+      Context context, StartSessionPreAuthorizationReservationTuple tuple, String requestId) {
+    return candidate(context, requestId, canonicalBytes(tuple), tuple.mutationDigest());
   }
 
-  private static IssuanceCandidate candidate(String requestId, byte[] tupleBytes, String digest) {
+  private static IssuanceCandidate candidate(
+      Context context, String requestId, byte[] tupleBytes, String digest) {
+    Instant issuedAt = canonicalDatabaseNow(context).minusSeconds(2);
     return new IssuanceCandidate(
         requestId,
         tupleBytes,
@@ -1036,13 +1047,13 @@ class AccountStartSessionOperatorAuthorizationRepositoryIntegrationTest {
             tupleFromBytes(tupleBytes),
             ISSUANCE_OPERATION_ID,
             31L,
-            Instant.parse("2026-10-09T00:03:00Z"),
+            issuedAt.plusSeconds(180),
             bundleReference(7L)),
         "arfp/v1/key-1/" + "a".repeat(64),
         bytes("encrypted-original-response-envelope"),
-        Instant.parse("2026-10-09T00:00:00Z"),
-        Instant.parse("2026-10-09T00:03:00Z"),
-        Instant.parse("2026-10-09T00:03:30Z"));
+        issuedAt,
+        issuedAt.plusSeconds(180),
+        issuedAt.plusSeconds(210));
   }
 
   private static IssuanceCandidate candidate(
@@ -1120,7 +1131,7 @@ class AccountStartSessionOperatorAuthorizationRepositoryIntegrationTest {
 
   private static RedemptionRequest redemption(
       IssuanceCandidate candidate, UUID ownerAttemptId, long ownerFence) {
-    return redemption(candidate, ownerAttemptId, ownerFence, Instant.parse("2026-10-09T00:00:01Z"));
+    return redemption(candidate, ownerAttemptId, ownerFence, candidate.issuedAt().plusSeconds(1));
   }
 
   private static RedemptionRequest redemption(
