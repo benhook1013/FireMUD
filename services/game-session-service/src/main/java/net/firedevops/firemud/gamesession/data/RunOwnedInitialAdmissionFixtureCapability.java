@@ -1,5 +1,7 @@
 package net.firedevops.firemud.gamesession.data;
 
+import com.google.protobuf.InvalidProtocolBufferException;
+import com.google.protobuf.Message;
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
@@ -21,16 +23,22 @@ import java.security.NoSuchAlgorithmException;
 import java.security.cert.Certificate;
 import java.security.cert.CertificateFactory;
 import java.security.cert.X509Certificate;
+import java.util.Base64;
 import java.util.Collection;
 import java.util.HashSet;
 import java.util.HexFormat;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 import java.util.regex.Pattern;
 import net.firedevops.firemud.common.grpc.CommonGrpcClientProperties;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
 import net.firedevops.firemud.common.tenant.AuthoredWorldSourceEvidence;
+import net.firedevops.firemud.gamedesign.v1.PublishedReleaseBundle;
+import net.firedevops.firemud.gamedesign.v1.VersionAssetArtifactState;
+import net.firedevops.firemud.gamedesign.v1.VersionLifecycleState;
+import net.firedevops.firemud.gamedesign.v1.VersionStateSnapshot;
 import org.springframework.core.io.ClassPathResource;
 import tools.jackson.core.JacksonException;
 import tools.jackson.core.StreamReadFeature;
@@ -109,7 +117,8 @@ record RunOwnedInitialAdmissionFixtureCapability(
           "gameSessionUriSan",
           "gameSessionLeafSha256",
           "caCertificateSha256",
-          "sourceEvidence");
+          "sourceEvidence",
+          "launchReadEvidence");
   private static final Set<String> SOURCE_EVIDENCE_FIELDS =
       Set.of(
           "schemaVersion",
@@ -125,6 +134,14 @@ record RunOwnedInitialAdmissionFixtureCapability(
           "sourceGameTenantKey",
           "provenanceKind",
           "evidenceDigest");
+  static final String LAUNCH_READ_EVIDENCE_SCHEMA = RunOwnedInitialAdmissionLaunchEvidence.SCHEMA;
+  private static final Set<String> LAUNCH_READ_EVIDENCE_FIELDS =
+      Set.of(
+          "schema",
+          "gameTemplateId",
+          "publishedReleaseBundleBase64",
+          "versionAssetArtifactStateBase64",
+          "versionStateBase64");
   private static final ObjectMapper STRICT_JSON_MAPPER =
       JsonMapper.builder()
           .enable(StreamReadFeature.STRICT_DUPLICATE_DETECTION)
@@ -253,6 +270,8 @@ record RunOwnedInitialAdmissionFixtureCapability(
     String leafSha256 = requiredSourceReceiptText(root, "gameSessionLeafSha256");
     String caSha256 = requiredSourceReceiptText(root, "caCertificateSha256");
     AuthoredWorldSourceEvidence sourceEvidence = parseSourceEvidence(root.get("sourceEvidence"));
+    LaunchReadEvidence launchReadEvidence =
+        parseLaunchReadEvidence(root.get("launchReadEvidence"), capability, sourceEvidence);
 
     if (!SOURCE_RECEIPT_SCHEMA.equals(schema)
         || !runId.equals(expectedRunId)
@@ -282,7 +301,155 @@ record RunOwnedInitialAdmissionFixtureCapability(
         uriSan,
         leafSha256,
         caSha256,
-        sourceEvidence);
+        sourceEvidence,
+        launchReadEvidence);
+  }
+
+  private static LaunchReadEvidence parseLaunchReadEvidence(
+      JsonNode evidence,
+      RunOwnedInitialAdmissionFixtureCapability capability,
+      AuthoredWorldSourceEvidence sourceEvidence) {
+    if (evidence == null
+        || !evidence.isObject()
+        || !hasExactFields(evidence, LAUNCH_READ_EVIDENCE_FIELDS)) {
+      throw invalidSourceReceipt();
+    }
+    String schema = requiredSourceReceiptText(evidence, "schema");
+    long gameTemplateId = requiredPositiveSourceReceiptLong(evidence, "gameTemplateId");
+    if (!LAUNCH_READ_EVIDENCE_SCHEMA.equals(schema)
+        || gameTemplateId != capability.gameTemplateId()) {
+      throw invalidSourceReceipt();
+    }
+
+    PublishedReleaseBundle bundle =
+        parseLaunchReadEvidenceProto(
+            requiredSourceReceiptBase64(evidence, "publishedReleaseBundleBase64"),
+            PublishedReleaseBundle::parseFrom);
+    VersionAssetArtifactState artifactState =
+        parseLaunchReadEvidenceProto(
+            requiredSourceReceiptBase64(evidence, "versionAssetArtifactStateBase64"),
+            VersionAssetArtifactState::parseFrom);
+    VersionStateSnapshot versionState =
+        parseLaunchReadEvidenceProto(
+            requiredSourceReceiptBase64(evidence, "versionStateBase64"),
+            VersionStateSnapshot::parseFrom);
+    requireNoUnknownFieldsRecursively(bundle);
+    requireNoUnknownFieldsRecursively(artifactState);
+    requireNoUnknownFieldsRecursively(versionState);
+    requireLaunchReadEvidenceIdentity(
+        capability, sourceEvidence, bundle, artifactState, versionState);
+    return new LaunchReadEvidence(schema, gameTemplateId, bundle, artifactState, versionState);
+  }
+
+  private static <T extends Message> T parseLaunchReadEvidenceProto(
+      String encoded, ProtoParser<T> parser) {
+    try {
+      byte[] decoded = Base64.getDecoder().decode(encoded);
+      if (decoded.length > MAX_SOURCE_RECEIPT_BYTES
+          || !Base64.getEncoder().encodeToString(decoded).equals(encoded)) {
+        throw invalidSourceReceipt();
+      }
+      return parser.parse(decoded);
+    } catch (InvalidProtocolBufferException | IllegalArgumentException exception) {
+      throw invalidSourceReceipt();
+    }
+  }
+
+  private static void requireNoUnknownFieldsRecursively(Message message) {
+    if (!message.getUnknownFields().asMap().isEmpty()) {
+      throw invalidSourceReceipt();
+    }
+    for (Object value : message.getAllFields().values()) {
+      requireNoUnknownFieldsRecursively(value);
+    }
+  }
+
+  static void requireNoUnknownFieldsRecursively(Object value) {
+    if (value instanceof Message nested) {
+      requireNoUnknownFieldsRecursively(nested);
+    } else if (value instanceof Map<?, ?> map) {
+      for (Object nested : map.values()) {
+        requireNoUnknownFieldsRecursively(nested);
+      }
+    } else if (value instanceof Iterable<?> values) {
+      for (Object nested : values) {
+        requireNoUnknownFieldsRecursively(nested);
+      }
+    }
+  }
+
+  private static void requireLaunchReadEvidenceIdentity(
+      RunOwnedInitialAdmissionFixtureCapability capability,
+      AuthoredWorldSourceEvidence sourceEvidence,
+      PublishedReleaseBundle bundle,
+      VersionAssetArtifactState artifactState,
+      VersionStateSnapshot versionState) {
+    String expectedTenantId = Long.toString(capability.tenantId());
+    String canonicalTenantId = sourceEvidence.canonicalTenantId().toString();
+    if (bundle.getId() <= 0L
+        || bundle.getVersionId() <= 0L
+        || bundle.getVersionNumber() <= 0
+        || !"v1".equals(bundle.getAttestationSchemaVersion())
+        || bundle.getManifestHash().isBlank()
+        || bundle.getGenerationConfigRevision().isBlank()
+        || bundle.getPublishedReleaseBundleRef().isBlank()
+        || !isCanonicalNonNilUuid(bundle.getCanonicalTenantId())
+        || !canonicalTenantId.equals(bundle.getCanonicalTenantId())
+        || !isCanonicalNonNilUuid(bundle.getCanonicalVersionId())
+        || (bundle.hasManifestSchemaVersion() && bundle.getManifestSchemaVersion() <= 0)
+        || (!bundle.hasManifestSchemaVersion() && bundle.getArtifactDigestsCount() != 0)
+        || !expectedTenantId.equals(artifactState.getTenantId())
+        || artifactState.getVersionId() != bundle.getVersionId()
+        || artifactState.getArtifactState()
+            != net.firedevops.firemud.gamedesign.v1.ArtifactState.ARTIFACT_STATE_PUBLISHED
+        || artifactState.getStateEpoch() <= 0L
+        || !bundle.getManifestHash().equals(artifactState.getManifestHash())
+        || artifactState.getExportedVersionNumber() != bundle.getVersionNumber()
+        || !artifactState
+            .getExportedManifestAssetKeysList()
+            .containsAll(bundle.getRequiredManifestAssetKeysList())
+        || !expectedTenantId.equals(versionState.getTenantId())
+        || versionState.getVersionId() != bundle.getVersionId()
+        || (versionState.getVersionState()
+                != VersionLifecycleState.VERSION_LIFECYCLE_STATE_PUBLISHED
+            && versionState.getVersionState()
+                != VersionLifecycleState.VERSION_LIFECYCLE_STATE_ACTIVE)
+        || versionState.getVersionStateEpoch() <= 0L
+        || versionState.getUpdatedAt().isBlank()) {
+      throw invalidSourceReceipt();
+    }
+    requirePublishedArtifactDigests(bundle);
+  }
+
+  private static void requirePublishedArtifactDigests(PublishedReleaseBundle bundle) {
+    Set<String> usageKeys = new HashSet<>();
+    for (var artifact : bundle.getArtifactDigestsList()) {
+      String contentDigest = artifact.getContentDigest();
+      if (artifact.getUsageKey().isBlank()
+          || artifact.getArtifactKind().isBlank()
+          || artifact.getContentType().isBlank()
+          || artifact.getArtifactSchemaVersion() <= 0
+          || !contentDigest.matches("sha256:[0-9a-f]{64}")
+          || !artifact
+              .getImmutableObjectKey()
+              .equals("artifacts/sha256/" + contentDigest.substring("sha256:".length()))
+          || !usageKeys.add(artifact.getUsageKey())) {
+        throw invalidSourceReceipt();
+      }
+    }
+  }
+
+  private static boolean isCanonicalNonNilUuid(String value) {
+    if (value == null || value.isBlank()) {
+      return false;
+    }
+    try {
+      UUID parsed = UUID.fromString(value);
+      return (parsed.getMostSignificantBits() != 0L || parsed.getLeastSignificantBits() != 0L)
+          && parsed.toString().equals(value);
+    } catch (IllegalArgumentException exception) {
+      return false;
+    }
   }
 
   private static AuthoredWorldSourceEvidence parseSourceEvidence(JsonNode source) {
@@ -338,6 +505,14 @@ record RunOwnedInitialAdmissionFixtureCapability(
     return value.longValue();
   }
 
+  private static long requiredPositiveSourceReceiptLong(JsonNode root, String field) {
+    long value = requiredSourceReceiptLong(root, field);
+    if (value <= 0L) {
+      throw invalidSourceReceipt();
+    }
+    return value;
+  }
+
   private static UUID requiredSourceReceiptUuid(JsonNode root, String field) {
     String text = requiredSourceReceiptText(root, field);
     try {
@@ -359,6 +534,22 @@ record RunOwnedInitialAdmissionFixtureCapability(
     String parsed = value.textValue();
     if (parsed.isBlank()
         || parsed.length() > 256
+        || !parsed.equals(parsed.trim())
+        || parsed.indexOf('\n') >= 0
+        || parsed.indexOf('\r') >= 0) {
+      throw invalidSourceReceipt();
+    }
+    return parsed;
+  }
+
+  private static String requiredSourceReceiptBase64(JsonNode root, String field) {
+    JsonNode value = root.get(field);
+    if (value == null || !value.isString()) {
+      throw invalidSourceReceipt();
+    }
+    String parsed = value.textValue();
+    if (parsed.isBlank()
+        || parsed.length() > MAX_SOURCE_RECEIPT_BYTES
         || !parsed.equals(parsed.trim())
         || parsed.indexOf('\n') >= 0
         || parsed.indexOf('\r') >= 0) {
@@ -708,7 +899,20 @@ record RunOwnedInitialAdmissionFixtureCapability(
       String gameSessionUriSan,
       String gameSessionLeafSha256,
       String caCertificateSha256,
-      AuthoredWorldSourceEvidence sourceEvidence) {}
+      AuthoredWorldSourceEvidence sourceEvidence,
+      LaunchReadEvidence launchReadEvidence) {}
+
+  record LaunchReadEvidence(
+      String schema,
+      long gameTemplateId,
+      PublishedReleaseBundle publishedReleaseBundle,
+      VersionAssetArtifactState versionAssetArtifactState,
+      VersionStateSnapshot versionState) {}
+
+  @FunctionalInterface
+  private interface ProtoParser<T extends Message> {
+    T parse(byte[] bytes) throws InvalidProtocolBufferException;
+  }
 
   /** Generic, content-free failure so callers cannot accidentally log capability contents. */
   public static final class InvalidCapabilityException extends IllegalArgumentException {
