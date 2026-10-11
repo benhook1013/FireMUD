@@ -5,21 +5,32 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
+import java.nio.channels.SeekableByteChannel;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
+import java.nio.file.attribute.BasicFileAttributes;
 import java.nio.file.attribute.PosixFilePermission;
 import java.security.PublicKey;
 import java.security.cert.X509Certificate;
 import java.util.List;
 import java.util.Set;
+import java.util.UUID;
+import net.firedevops.firemud.common.tenant.AuthoredWorldSourceDigest;
+import net.firedevops.firemud.common.tenant.AuthoredWorldSourceEvidence;
 import net.firedevops.firemud.gamesession.data.RunOwnedInitialAdmissionFixtureCapability.CertificatePins;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.mockito.MockedStatic;
+import org.mockito.invocation.InvocationOnMock;
+import org.mockito.stubbing.Answer;
 
 class RunOwnedInitialAdmissionFixtureCapabilityTest {
   private static final String RUN_ID = "compose-smoke-2939";
   private static final String PROJECT_NAME = "firemud-smoke-compose-smoke-2939";
   private static final String OPERATION_ID = "d2db8478-9c56-42ab-99c2-9fbead6841ba";
+  private static final String SOURCE_OPERATION_ID = "3f773701-e812-44f5-8ae0-7268d543beed";
   private static final String LEAF_SHA = "a".repeat(64);
   private static final String CA_SHA = "b".repeat(64);
 
@@ -90,6 +101,111 @@ class RunOwnedInitialAdmissionFixtureCapabilityTest {
   }
 
   @Test
+  void parsesExactSourceReceiptAndReconstructsTheFullEvidenceRecord() {
+    RunOwnedInitialAdmissionFixtureCapability.SourceReceipt receipt =
+        RunOwnedInitialAdmissionFixtureCapability.parseSourceReceipt(
+            validSourceReceiptJson().getBytes(java.nio.charset.StandardCharsets.UTF_8),
+            RUN_ID,
+            PROJECT_NAME,
+            capability(),
+            pins());
+
+    assertThat(receipt.schema())
+        .isEqualTo(RunOwnedInitialAdmissionFixtureCapability.SOURCE_RECEIPT_SCHEMA);
+    assertThat(receipt.runId()).isEqualTo(RUN_ID);
+    assertThat(receipt.composeProjectName()).isEqualTo(PROJECT_NAME);
+    assertThat(receipt.fixtureOperationId()).isEqualTo(OPERATION_ID);
+    assertThat(receipt.ownerService())
+        .isEqualTo(RunOwnedInitialAdmissionFixtureCapability.SOURCE_RECEIPT_OWNER_SERVICE);
+    assertThat(receipt.sourceEvidence()).isEqualTo(sourceEvidence());
+    assertThat(receipt.sourceEvidence().registrationRequestId())
+        .isEqualTo(UUID.fromString(OPERATION_ID));
+    assertThat(receipt.sourceEvidence().operationId())
+        .isNotEqualTo(receipt.sourceEvidence().registrationRequestId());
+  }
+
+  @Test
+  void rejectsOpenDuplicateMismatchedAndMalformedSourceReceiptFields() {
+    String json = validSourceReceiptJson();
+    assertInvalidSourceReceipt(json.replace("\"schema\":", "\"unknown\":true,\"schema\":"));
+    assertInvalidSourceReceipt(json.replace("\"schema\":", "\"schema\":\"wrong\",\"schema\":"));
+    assertInvalidSourceReceipt(json.replace(RUN_ID, "different-run"));
+    assertInvalidSourceReceipt(json.replace(OPERATION_ID, "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"));
+    assertInvalidSourceReceipt(json.replace(LEAF_SHA, "c".repeat(64)));
+    assertInvalidSourceReceipt(json.replace(CA_SHA, "c".repeat(64)));
+    assertInvalidSourceReceipt(
+        json.replace("\"sourceGameRowId\": 13", "\"sourceGameRowId\": \"13\""));
+    assertInvalidSourceReceipt(json + " {}\n");
+    assertInvalidSourceReceipt(
+        json.replace("\"sourceGameTenantKey\": \"7\"", "\"sourceGameTenantKey\": \"07\""));
+    assertInvalidSourceReceipt(json.replace("\"worldSlug\": \"demo\"", "\"worldSlug\": \"other\""));
+    assertInvalidSourceReceipt(json.substring(0, json.length() - 30));
+    assertInvalidSourceReceiptBytes(new byte[] {(byte) 0xc3, (byte) 0x28});
+  }
+
+  @Test
+  void sourceReceiptReaderRequiresBoundedRegularNonWritableNonSymlinkFile(@TempDir Path directory)
+      throws Exception {
+    Path writable =
+        Files.writeString(directory.resolve("writable-receipt.json"), validSourceReceiptJson());
+    assertThatThrownBy(() -> RunOwnedInitialAdmissionFixtureCapability.readSourceReceipt(writable))
+        .isInstanceOf(
+            RunOwnedInitialAdmissionFixtureCapability.InvalidSourceReceiptException.class);
+
+    Path readOnly = Files.writeString(directory.resolve("receipt.json"), validSourceReceiptJson());
+    Files.setPosixFilePermissions(readOnly, Set.of(PosixFilePermission.OWNER_READ));
+    assertThat(RunOwnedInitialAdmissionFixtureCapability.readSourceReceipt(readOnly))
+        .isEqualTo(validSourceReceiptJson().getBytes(java.nio.charset.StandardCharsets.UTF_8));
+
+    Path tooLarge =
+        Files.writeString(directory.resolve("too-large.json"), "x".repeat(16 * 1024 + 1));
+    Files.setPosixFilePermissions(tooLarge, Set.of(PosixFilePermission.OWNER_READ));
+    assertThatThrownBy(() -> RunOwnedInitialAdmissionFixtureCapability.readSourceReceipt(tooLarge))
+        .isInstanceOf(
+            RunOwnedInitialAdmissionFixtureCapability.InvalidSourceReceiptException.class);
+
+    Path link = directory.resolve("receipt-link.json");
+    Files.createSymbolicLink(link, readOnly.getFileName());
+    assertThatThrownBy(() -> RunOwnedInitialAdmissionFixtureCapability.readSourceReceipt(link))
+        .isInstanceOf(
+            RunOwnedInitialAdmissionFixtureCapability.InvalidSourceReceiptException.class);
+  }
+
+  @Test
+  void rejectsReceiptReplacedAfterOpenWhileReadIsInProgress(@TempDir Path directory)
+      throws Exception {
+    byte[] receiptBytes =
+        validSourceReceiptJson().getBytes(java.nio.charset.StandardCharsets.UTF_8);
+    Path receipt = Files.write(directory.resolve("receipt.json"), receiptBytes);
+    Path replacement = Files.write(directory.resolve("replacement.json"), receiptBytes);
+    Path displaced = directory.resolve("displaced-receipt.json");
+    Files.setPosixFilePermissions(receipt, Set.of(PosixFilePermission.OWNER_READ));
+    Files.setPosixFilePermissions(replacement, Set.of(PosixFilePermission.OWNER_READ));
+    Files.setLastModifiedTime(replacement, Files.getLastModifiedTime(receipt));
+
+    BasicFileAttributes originalAttributes =
+        Files.readAttributes(receipt, BasicFileAttributes.class);
+    BasicFileAttributes replacementAttributes =
+        Files.readAttributes(replacement, BasicFileAttributes.class);
+    assertThat(replacementAttributes.size()).isEqualTo(originalAttributes.size());
+    assertThat(replacementAttributes.lastModifiedTime())
+        .isEqualTo(originalAttributes.lastModifiedTime());
+    assertThat(originalAttributes.fileKey()).isNotNull();
+    assertThat(replacementAttributes.fileKey()).isNotEqualTo(originalAttributes.fileKey());
+
+    try (SeekableByteChannel openedChannel =
+            Files.newByteChannel(receipt, java.nio.file.StandardOpenOption.READ);
+        MockedStatic<Files> mockedFiles =
+            org.mockito.Mockito.mockStatic(Files.class, org.mockito.Mockito.CALLS_REAL_METHODS)) {
+      ReceiptReplacementStub.install(mockedFiles, receipt, replacement, displaced, openedChannel);
+
+      assertThatThrownBy(() -> RunOwnedInitialAdmissionFixtureCapability.readSourceReceipt(receipt))
+          .isInstanceOf(
+              RunOwnedInitialAdmissionFixtureCapability.InvalidSourceReceiptException.class);
+    }
+  }
+
+  @Test
   void derivesPinsFromActualLeafAndCaCertificatesAndRequiresOneExactUriSan() throws Exception {
     X509Certificate leaf =
         certificate(
@@ -120,6 +236,117 @@ class RunOwnedInitialAdmissionFixtureCapabilityTest {
   private static CertificatePins pins() {
     return new CertificatePins(
         LEAF_SHA, RunOwnedInitialAdmissionFixtureCapability.GAME_SESSION_URI_SAN, CA_SHA);
+  }
+
+  private static RunOwnedInitialAdmissionFixtureCapability capability() {
+    return RunOwnedInitialAdmissionFixtureCapability.parseAndValidate(
+        validJson().getBytes(java.nio.charset.StandardCharsets.UTF_8),
+        RUN_ID,
+        PROJECT_NAME,
+        pins());
+  }
+
+  private static AuthoredWorldSourceEvidence sourceEvidence() {
+    UUID registrationRequestId = UUID.fromString(OPERATION_ID);
+    UUID operationId = UUID.fromString(SOURCE_OPERATION_ID);
+    UUID canonicalTenantId = UUID.fromString("ed5d1541-a33e-4f8b-9b54-38c27d76ba6d");
+    String requestDigest =
+        AuthoredWorldSourceDigest.requestDigest(
+            RunOwnedInitialAdmissionFixtureCapability.SOURCE_TARGET_NAMESPACE,
+            registrationRequestId,
+            canonicalTenantId,
+            "demo",
+            "demo",
+            "Demo World");
+    String evidenceDigest =
+        AuthoredWorldSourceDigest.evidenceDigest(
+            RunOwnedInitialAdmissionFixtureCapability.SOURCE_TARGET_NAMESPACE,
+            registrationRequestId,
+            operationId,
+            requestDigest,
+            canonicalTenantId,
+            "demo",
+            "demo",
+            "Demo World",
+            13L,
+            "7",
+            "NEW_GAME_ROW");
+    return new AuthoredWorldSourceEvidence(
+        1,
+        RunOwnedInitialAdmissionFixtureCapability.SOURCE_TARGET_NAMESPACE,
+        registrationRequestId,
+        operationId,
+        requestDigest,
+        canonicalTenantId,
+        "demo",
+        "demo",
+        "Demo World",
+        13L,
+        "7",
+        "NEW_GAME_ROW",
+        evidenceDigest);
+  }
+
+  private static String validSourceReceiptJson() {
+    return validSourceReceiptJson(sourceEvidence());
+  }
+
+  private static String validSourceReceiptJson(AuthoredWorldSourceEvidence source) {
+    String sourceJson =
+        """
+        {%n\
+          "schemaVersion": %d,%n\
+          "targetNamespace": "%s",%n\
+          "registrationRequestId": "%s",%n\
+          "operationId": "%s",%n\
+          "requestDigest": "%s",%n\
+          "canonicalTenantId": "%s",%n\
+          "tenantSlug": "%s",%n\
+          "worldSlug": "%s",%n\
+          "worldDisplayName": "%s",%n\
+          "sourceGameRowId": %d,%n\
+          "sourceGameTenantKey": "%s",%n\
+          "provenanceKind": "%s",%n\
+          "evidenceDigest": "%s"%n\
+        }%n\
+        """
+            .formatted(
+                source.schemaVersion(),
+                source.targetNamespace(),
+                source.registrationRequestId(),
+                source.operationId(),
+                source.requestDigest(),
+                source.canonicalTenantId(),
+                source.tenantSlug(),
+                source.worldSlug(),
+                source.worldDisplayName(),
+                source.sourceGameRowId(),
+                source.sourceGameTenantKey(),
+                source.provenanceKind(),
+                source.evidenceDigest());
+    return """
+        {%n\
+          "schema": "%s",%n\
+          "runId": "%s",%n\
+          "composeProjectName": "%s",%n\
+          "fixtureOperationId": "%s",%n\
+          "ownerService": "%s",%n\
+          "gameSessionUriSan": "%s",%n\
+          "gameSessionLeafSha256": "%s",%n\
+          "caCertificateSha256": "%s",%n\
+          "sourceEvidence": %s%n\
+        }%n\
+        """
+        .formatted(
+            RunOwnedInitialAdmissionFixtureCapability.SOURCE_RECEIPT_SCHEMA,
+            RUN_ID,
+            PROJECT_NAME,
+            OPERATION_ID,
+            RunOwnedInitialAdmissionFixtureCapability.SOURCE_RECEIPT_OWNER_SERVICE,
+            RunOwnedInitialAdmissionFixtureCapability.GAME_SESSION_URI_SAN,
+            LEAF_SHA,
+            CA_SHA,
+            sourceJson);
   }
 
   private static String validJson() {
@@ -179,5 +406,49 @@ class RunOwnedInitialAdmissionFixtureCapabilityTest {
                     PROJECT_NAME,
                     pins()))
         .isInstanceOf(RunOwnedInitialAdmissionFixtureCapability.InvalidCapabilityException.class);
+  }
+
+  private static void assertInvalidSourceReceipt(String json) {
+    assertInvalidSourceReceiptBytes(json.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+  }
+
+  private static void assertInvalidSourceReceiptBytes(byte[] bytes) {
+    assertThatThrownBy(
+            () ->
+                RunOwnedInitialAdmissionFixtureCapability.parseSourceReceipt(
+                    bytes, RUN_ID, PROJECT_NAME, capability(), pins()))
+        .isInstanceOf(
+            RunOwnedInitialAdmissionFixtureCapability.InvalidSourceReceiptException.class);
+  }
+
+  @SuppressFBWarnings(
+      value = "OS_OPEN_STREAM",
+      justification =
+          "Mockito intercepts the Files.newByteChannel invocation below solely for static-stub"
+              + " recording; it does not open a channel. The answer returns the channel already"
+              + " opened by the test's try-with-resources.")
+  private static final class ReceiptReplacementStub {
+    private static void install(
+        MockedStatic<Files> mockedFiles,
+        Path receipt,
+        Path replacement,
+        Path displaced,
+        SeekableByteChannel openedChannel) {
+      mockedFiles
+          .when(
+              () ->
+                  Files.newByteChannel(
+                      org.mockito.ArgumentMatchers.eq(receipt),
+                      org.mockito.ArgumentMatchers.any(java.nio.file.OpenOption[].class)))
+          .thenAnswer(
+              new Answer<>() {
+                @Override
+                public SeekableByteChannel answer(InvocationOnMock invocation) throws Throwable {
+                  Files.move(receipt, displaced, StandardCopyOption.ATOMIC_MOVE);
+                  Files.move(replacement, receipt, StandardCopyOption.ATOMIC_MOVE);
+                  return openedChannel;
+                }
+              });
+    }
   }
 }

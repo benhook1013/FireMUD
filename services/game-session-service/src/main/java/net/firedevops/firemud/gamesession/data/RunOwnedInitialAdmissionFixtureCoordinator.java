@@ -46,6 +46,7 @@ public final class RunOwnedInitialAdmissionFixtureCoordinator {
 
   private final boolean enabled;
   private final String capabilityPath;
+  private final String sourceReceiptPath;
   private final String runId;
   private final String composeProjectName;
   private final CommonGrpcClientProperties grpcProperties;
@@ -57,10 +58,13 @@ public final class RunOwnedInitialAdmissionFixtureCoordinator {
   private final AtomicBoolean finished = new AtomicBoolean();
   private final AtomicReference<RunOwnedInitialAdmissionFixtureCapability> acceptedCapability =
       new AtomicReference<>();
+  private final AtomicReference<RunOwnedInitialAdmissionFixtureCapability.SourceReceipt>
+      acceptedSourceReceipt = new AtomicReference<>();
 
   public RunOwnedInitialAdmissionFixtureCoordinator(
       @Value("${FIREMUD_SMOKE_INITIAL_ADMISSION_FIXTURE_ENABLED:false}") boolean enabled,
       @Value("${FIREMUD_SMOKE_INITIAL_ADMISSION_CAPABILITY_PATH:}") String capabilityPath,
+      @Value("${FIREMUD_SMOKE_AUTHORED_WORLD_SOURCE_RECEIPT_PATH:}") String sourceReceiptPath,
       @Value("${FIREMUD_SMOKE_RUN_ID:}") String runId,
       @Value("${FIREMUD_SMOKE_COMPOSE_PROJECT_NAME:}") String composeProjectName,
       CommonGrpcClientProperties grpcProperties,
@@ -69,6 +73,7 @@ public final class RunOwnedInitialAdmissionFixtureCoordinator {
       WorldManagementClient worldManagementClient) {
     this.enabled = enabled;
     this.capabilityPath = capabilityPath;
+    this.sourceReceiptPath = sourceReceiptPath;
     this.runId = runId;
     this.composeProjectName = composeProjectName;
     this.grpcProperties = Objects.requireNonNull(grpcProperties, "grpcProperties");
@@ -99,7 +104,16 @@ public final class RunOwnedInitialAdmissionFixtureCoordinator {
       if (!firstCapability.equals(capability)) {
         throw unresolved();
       }
-      BootstrapResult result = coordinate(capability);
+      RunOwnedInitialAdmissionFixtureCapability.SourceReceipt sourceReceipt =
+          RunOwnedInitialAdmissionFixtureCapability.loadSourceReceipt(
+              declaredSourceReceiptPath(), runId, composeProjectName, capability, grpcProperties);
+      RunOwnedInitialAdmissionFixtureCapability.SourceReceipt firstSourceReceipt =
+          acceptedSourceReceipt.updateAndGet(
+              existing -> existing == null ? sourceReceipt : existing);
+      if (!firstSourceReceipt.equals(sourceReceipt)) {
+        throw unresolved();
+      }
+      BootstrapResult result = coordinate(capability, sourceReceipt);
       if (result == BootstrapResult.COMMITTED) {
         finished.set(true);
         logger.info(
@@ -138,15 +152,19 @@ public final class RunOwnedInitialAdmissionFixtureCoordinator {
     }
   }
 
-  BootstrapResult coordinate(RunOwnedInitialAdmissionFixtureCapability capability) {
+  BootstrapResult coordinate(
+      RunOwnedInitialAdmissionFixtureCapability capability,
+      RunOwnedInitialAdmissionFixtureCapability.SourceReceipt sourceReceipt) {
     Objects.requireNonNull(capability, "capability");
+    requireExactSourceReceipt(capability, sourceReceipt);
     RunOwnedInitialLaunchResult launch =
         gameInstanceService.startRunOwnedInitialLaunch(
             new StartSessionRequest(
                 capability.tenantId(),
                 capability.gameTemplateId(),
                 capability.operationId(),
-                capability.ownerAccountId()));
+                capability.ownerAccountId()),
+            sourceReceipt.sourceEvidence());
     GameInstanceDto target = requireExactRunningTarget(launch, capability);
 
     InitialAdmissionBindCatalogDescriptor descriptor =
@@ -223,6 +241,44 @@ public final class RunOwnedInitialAdmissionFixtureCoordinator {
     try {
       return Path.of(capabilityPath);
     } catch (RuntimeException exception) {
+      throw unresolved();
+    }
+  }
+
+  private Path declaredSourceReceiptPath() {
+    if (sourceReceiptPath == null || sourceReceiptPath.isBlank()) {
+      throw unresolved();
+    }
+    try {
+      return Path.of(sourceReceiptPath);
+    } catch (RuntimeException exception) {
+      throw unresolved();
+    }
+  }
+
+  private static void requireExactSourceReceipt(
+      RunOwnedInitialAdmissionFixtureCapability capability,
+      RunOwnedInitialAdmissionFixtureCapability.SourceReceipt receipt) {
+    if (receipt == null
+        || !RunOwnedInitialAdmissionFixtureCapability.SOURCE_RECEIPT_SCHEMA.equals(receipt.schema())
+        || !capability.runId().equals(receipt.runId())
+        || !capability.composeProjectName().equals(receipt.composeProjectName())
+        || !capability.operationId().equals(receipt.fixtureOperationId())
+        || !RunOwnedInitialAdmissionFixtureCapability.SOURCE_RECEIPT_OWNER_SERVICE.equals(
+            receipt.ownerService())
+        || !capability.gameSessionUriSan().equals(receipt.gameSessionUriSan())
+        || !capability.gameSessionLeafSha256().equals(receipt.gameSessionLeafSha256())
+        || !capability.caCertificateSha256().equals(receipt.caCertificateSha256())
+        || receipt.sourceEvidence() == null
+        || !RunOwnedInitialAdmissionFixtureCapability.SOURCE_TARGET_NAMESPACE.equals(
+            receipt.sourceEvidence().targetNamespace())
+        || !capability
+            .operationId()
+            .equals(receipt.sourceEvidence().registrationRequestId().toString())
+        || !capability.worldSlug().equals(receipt.sourceEvidence().worldSlug())
+        || !capability.worldDisplayName().equals(receipt.sourceEvidence().worldDisplayName())
+        || !Long.toString(capability.tenantId())
+            .equals(receipt.sourceEvidence().sourceGameTenantKey())) {
       throw unresolved();
     }
   }

@@ -9,7 +9,10 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 
 import java.util.Map;
+import java.util.UUID;
 import javax.sql.DataSource;
+import net.firedevops.firemud.common.tenant.AuthoredWorldSourceDigest;
+import net.firedevops.firemud.common.tenant.AuthoredWorldSourceEvidence;
 import net.firedevops.firemud.gamesession.dto.StartSessionRequest;
 import net.firedevops.firemud.gamesession.service.GameInstanceService;
 import net.firedevops.firemud.gamesession.service.impl.GameInstanceServiceImpl;
@@ -21,7 +24,8 @@ import org.springframework.core.env.MapPropertySource;
 
 class CrossServiceAppHarnessTest {
   private static final StartSessionRequest REQUEST =
-      new StartSessionRequest(41L, 810L, "cross-service-fixture", 1001L);
+      new StartSessionRequest(41L, 810L, "7f1e5306-e9a7-46d9-b5cf-75348e20ffbd", 1001L);
+  private static final AuthoredWorldSourceEvidence SOURCE_EVIDENCE = sourceEvidence();
 
   @Test
   void databaseDisabledOrMissingReplacesTheRealServiceWithTheStub() {
@@ -34,7 +38,7 @@ class CrossServiceAppHarnessTest {
 
         GameInstanceService service = context.getBean(GameInstanceService.class);
         assertThat(service.startSession(REQUEST, false).id()).isEqualTo(-1L);
-        assertThatThrownBy(() -> service.startRunOwnedInitialLaunch(REQUEST))
+        assertThatThrownBy(() -> service.startRunOwnedInitialLaunch(REQUEST, SOURCE_EVIDENCE))
             .isInstanceOf(IllegalStateException.class)
             .hasMessage("run-owned launch requires a database-enabled test context");
       }
@@ -50,9 +54,9 @@ class CrossServiceAppHarnessTest {
       GameInstanceService harnessService = context.getBean(GameInstanceService.class);
 
       assertThat(harnessService.startSession(REQUEST, false).id()).isEqualTo(-1L);
-      assertThat(harnessService.startRunOwnedInitialLaunch(REQUEST)).isNull();
+      assertThat(harnessService.startRunOwnedInitialLaunch(REQUEST, SOURCE_EVIDENCE)).isNull();
 
-      verify(actualService).startRunOwnedInitialLaunch(REQUEST);
+      verify(actualService).startRunOwnedInitialLaunch(REQUEST, SOURCE_EVIDENCE);
       verify(actualService, never()).startSession(any(), anyBoolean());
     }
   }
@@ -79,6 +83,52 @@ class CrossServiceAppHarnessTest {
     }
     context.refresh();
     return context;
+  }
+
+  private static AuthoredWorldSourceEvidence sourceEvidence() {
+    String targetNamespace = "dev";
+    UUID registrationRequestId = UUID.fromString(REQUEST.controlPlaneRequestId());
+    UUID operationId = UUID.fromString("3f773701-e812-44f5-8ae0-7268d543beed");
+    UUID canonicalTenantId = UUID.fromString("9db3ab6f-cc09-49d2-8f93-84484397a120");
+    String tenantSlug = "fixture-tenant";
+    String worldSlug = "demo";
+    String worldDisplayName = "Demo World";
+    long sourceGameRowId = 29L;
+    String sourceGameTenantKey = Long.toString(REQUEST.tenantId());
+    String provenanceKind = "NEW_GAME_ROW";
+    String requestDigest =
+        AuthoredWorldSourceDigest.requestDigest(
+            targetNamespace,
+            registrationRequestId,
+            canonicalTenantId,
+            tenantSlug,
+            worldSlug,
+            worldDisplayName);
+    return new AuthoredWorldSourceEvidence(
+        1,
+        targetNamespace,
+        registrationRequestId,
+        operationId,
+        requestDigest,
+        canonicalTenantId,
+        tenantSlug,
+        worldSlug,
+        worldDisplayName,
+        sourceGameRowId,
+        sourceGameTenantKey,
+        provenanceKind,
+        AuthoredWorldSourceDigest.evidenceDigest(
+            targetNamespace,
+            registrationRequestId,
+            operationId,
+            requestDigest,
+            canonicalTenantId,
+            tenantSlug,
+            worldSlug,
+            worldDisplayName,
+            sourceGameRowId,
+            sourceGameTenantKey,
+            provenanceKind));
   }
 
   @TestConfiguration(proxyBeanMethods = false)
