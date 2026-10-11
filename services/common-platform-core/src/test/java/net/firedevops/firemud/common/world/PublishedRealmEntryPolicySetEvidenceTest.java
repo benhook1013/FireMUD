@@ -615,7 +615,7 @@ class PublishedRealmEntryPolicySetEvidenceTest {
                         request.appliedCommitId(),
                         owner.equals("WORLD_MANAGEMENT") ? request.contentDigest() : "c".repeat(64),
                         AuthoredWorldReleaseAttestationEvidence.supportedParticipantDigestSchema(
-                            owner),
+                            owner, AuthoredWorldReleaseAttestationEvidence.SELECTOR_SCHEMA_VERSION),
                         owner.equals("GAME_LOGIC") ? DIGEST : null,
                         null,
                         null))

@@ -30,7 +30,6 @@ import org.springframework.context.annotation.Import;
 import org.springframework.context.annotation.Primary;
 import org.springframework.http.client.ReactorResourceFactory;
 import org.springframework.http.codec.ServerCodecConfigurer;
-import org.springframework.test.util.TestSocketUtils;
 import org.springframework.web.reactive.HandlerMapping;
 import org.springframework.web.reactive.handler.SimpleUrlHandlerMapping;
 import org.springframework.web.reactive.socket.WebSocketHandler;
@@ -135,9 +134,8 @@ class GatewayGameplayBridgeIntegrationTest {
   }
 
   private static UpstreamHolder startUpstream() {
-    int port = TestSocketUtils.findAvailableTcpPort();
     TEST_UPSTREAM_STATE.set(new UpstreamRuntimeState());
-    return UpstreamHolder.start(port);
+    return UpstreamHolder.start(0);
   }
 
   private static GatewayHolder startGateway(String upstreamUrl) {
@@ -195,7 +193,7 @@ class GatewayGameplayBridgeIntegrationTest {
                   Map.entry("firemud.grpc.plaintext", "true"),
                   Map.entry(GatewayTestProperties.DISABLE_GATEWAY_WARNING_AND_GRPC_SERVER, "")),
               UpstreamStubApplication.class);
-      return new UpstreamHolder(app.context(), port);
+      return new UpstreamHolder(app.context(), app.port());
     }
 
     String websocketUrl() {

@@ -320,6 +320,9 @@ public class PublishedReleaseBundleRepository {
             requested.getRequiredManifestAssetKeysJson())
         || !Objects.equals(
             persisted.getParticipantDigestsJson(), requested.getParticipantDigestsJson())
+        || !Objects.equals(
+            persisted.getWorldPublishedStartLocationEvidenceJson(),
+            requested.getWorldPublishedStartLocationEvidenceJson())
         || !Objects.equals(persisted.getPublishedReleaseBundleRef(), publishedReleaseBundleRef)) {
       throw new IllegalStateException(
           "Published release bundle readback does not match its source identity and owner reference");

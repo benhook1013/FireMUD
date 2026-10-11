@@ -294,6 +294,95 @@ public class AccountTenantMembershipRepository {
     return readback;
   }
 
+  /** Account-fenced absence enrollment for the fresh creator owner; creates no membership. */
+  @Transactional(propagation = Propagation.MANDATORY)
+  public PairAuthority prepareFreshCreatorAbsence(UUID accountUuid, UUID tenantUuid) {
+    requireOwnerWriteTransaction();
+    Account account = lockCanonicalAccountByUuid(accountUuid);
+    VerifiedTenantProvenance provenance = readFreshProvenance(tenantUuid);
+    if (readCanonicalRow(account.getId(), tenantUuid, true) != null) {
+      throw new IllegalStateException("Fresh creator membership is not absent");
+    }
+    Record retainedRoleHistoryCheck =
+        dsl.fetchOne(
+            "SELECT EXISTS (SELECT 1 FROM account_tenant_membership_role_snapshots roles "
+                + "JOIN account_tenant_membership member ON member.id = roles.membership_id "
+                + "WHERE member.account_id = ? AND member.tenant_uuid = ?)",
+            account.getId(),
+            tenantUuid);
+    if (retainedRoleHistoryCheck == null) {
+      throw new IllegalStateException("Fresh creator role history check is absent");
+    }
+    if (!Boolean.FALSE.equals(retainedRoleHistoryCheck.get(0, Boolean.class))) {
+      throw new IllegalStateException("Fresh creator pair has retained role history");
+    }
+    return pairAuthorityRepository.enrollAbsence(accountUuid, tenantUuid, provenance);
+  }
+
+  /** Exact UUID source row, including a creator write awaiting its same-transaction event. */
+  @Transactional(propagation = Propagation.MANDATORY)
+  public Optional<AccountTenantMembership> findCanonicalMembershipForUpdate(
+      UUID accountUuid, UUID tenantUuid) {
+    requireOwnerWriteTransaction();
+    requireCanonicalUuid(tenantUuid, "tenant UUID");
+    Account account = lockCanonicalAccountByUuid(accountUuid);
+    VerifiedTenantProvenance provenance = readFreshProvenance(tenantUuid);
+    Record row = readCanonicalRow(account.getId(), tenantUuid, true);
+    if (row == null) return Optional.empty();
+    AccountTenantMembership membership = toCanonicalEntity(row, account);
+    requireFreshMembershipIdentity(membership, account, tenantUuid, provenance);
+    return Optional.of(membership);
+  }
+
+  /** Creates only the exact first control-only creator row from its durable absence pair. */
+  @Transactional(propagation = Propagation.MANDATORY)
+  public AccountTenantMembership createFreshCreatorMembership(UUID accountUuid, UUID tenantUuid) {
+    requireOwnerWriteTransaction();
+    Account account = lockCanonicalAccountByUuid(accountUuid);
+    VerifiedTenantProvenance provenance = readFreshProvenance(tenantUuid);
+    if (readCanonicalRow(account.getId(), tenantUuid, true) != null) {
+      throw new IllegalStateException("Creator bootstrap cannot overwrite membership");
+    }
+    PairAuthority baseline =
+        pairAuthorityRepository
+            .readForUpdate(accountUuid, tenantUuid)
+            .orElseThrow(() -> new IllegalStateException("Creator absence pair is absent"));
+    if (!new PairAuthority(
+            accountUuid, tenantUuid, provenance, false, 1L, 1L, 0L, null, null, false)
+        .equals(baseline)) {
+      throw new IllegalStateException("Creator pair differs from its exact absence baseline");
+    }
+    Long id =
+        dsl.resultQuery(
+                "INSERT INTO account_tenant_membership (account_id, tenant_id, tenant_uuid, "
+                    + "tenant_provenance_kind, tenant_source_operation_id, tenant_provenance_digest, "
+                    + "gameplay_admission_allowed, lifecycle_state, membership_version, "
+                    + "membership_authority_generation, authority_provenance) "
+                    + "VALUES (?, NULL, ?, ?, ?, ?, FALSE, 'ACTIVE', 2, 1, 'TENANT_CREATION') RETURNING id",
+                account.getId(),
+                tenantUuid,
+                provenance.kind().name(),
+                provenance.sourceOperationId(),
+                provenance.digest())
+            .fetchOne(0, Long.class);
+    AccountTenantMembership result =
+        findCanonicalMembershipForUpdate(accountUuid, tenantUuid)
+            .orElseThrow(() -> new IllegalStateException("Creator membership readback is absent"));
+    if (id == null
+        || id <= 0L
+        || !id.equals(result.getId())
+        || result.getMembershipVersion() != 2L
+        || result.getMembershipAuthorityGeneration() != 1L
+        || result.isGameplayAdmissionAllowed()
+        || !"ACTIVE".equals(result.getLifecycleState())
+        || !"TENANT_CREATION".equals(result.getAuthorityProvenance())
+        || !Optional.of(baseline)
+            .equals(pairAuthorityRepository.readForUpdate(accountUuid, tenantUuid))) {
+      throw new IllegalStateException("Creator membership readback differs from its write");
+    }
+    return result;
+  }
+
   public boolean existsByAccountIdAndTenantId(Long accountId, Long tenantId) {
     requirePositiveNumericTenantId(tenantId);
     return dsl.fetchExists(

@@ -8,6 +8,7 @@ import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpHandler;
 import com.sun.net.httpserver.HttpsConfigurator;
 import com.sun.net.httpserver.HttpsServer;
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
@@ -30,6 +31,7 @@ import java.util.Set;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import javax.net.ssl.KeyManagerFactory;
 import javax.net.ssl.SSLContext;
@@ -61,9 +63,8 @@ class AccountJwtJwksApiTransportTest {
   private static final Duration STALL_TIMEOUT = Duration.ofMillis(350);
   private static final byte[] SELF_REVIEW =
       ("""
-          {"apiVersion":"authentication.k8s.io/v1","kind":"SelfSubjectReview",
-           "status":{"userInfo":{"username":"%s"}}}
-          """
+          {"apiVersion":"authentication.k8s.io/v1","kind":"SelfSubjectReview",%n\
+           "status":{"userInfo":{"username":"%s"}}}%n"""
               .formatted(API_USERNAME))
           .getBytes(StandardCharsets.UTF_8);
   private static final byte[] KUBE_SYSTEM_NAMESPACE =
@@ -72,9 +73,8 @@ class AccountJwtJwksApiTransportTest {
       namespaceJson(NAMESPACE, NAMESPACE_UID).getBytes(StandardCharsets.UTF_8);
   private static final byte[] CONFIG_MAP =
       ("""
-          {"apiVersion":"v1","kind":"ConfigMap","metadata":{
-            "name":"jwt-jwks","namespace":"%s","uid":"%s","resourceVersion":"7"},"data":{}}
-          """
+          {"apiVersion":"v1","kind":"ConfigMap","metadata":{%n\
+            "name":"jwt-jwks","namespace":"%s","uid":"%s","resourceVersion":"7"},"data":{}}%n"""
               .formatted(NAMESPACE, CONFIG_MAP_UID))
           .getBytes(StandardCharsets.UTF_8);
 
@@ -277,6 +277,8 @@ class AccountJwtJwksApiTransportTest {
   void stalledPostHeaderBodyIsBoundedByTheWholeResponseDeadline() throws Exception {
     CountDownLatch bodyStarted = new CountDownLatch(1);
     CountDownLatch releaseBody = new CountDownLatch(1);
+    CountDownLatch bodyHandlerCompleted = new CountDownLatch(1);
+    AtomicBoolean releaseBodyTimedOut = new AtomicBoolean();
     HttpsServer server =
         startServer(
             pki.trustedServer(),
@@ -287,11 +289,13 @@ class AccountJwtJwksApiTransportTest {
                 body.write('{');
                 body.flush();
                 bodyStarted.countDown();
-                releaseBody.await(3, TimeUnit.SECONDS);
+                releaseBodyTimedOut.set(!releaseBody.await(3, TimeUnit.SECONDS));
               } catch (IOException ignored) {
                 // The client closes the response stream when its absolute deadline expires.
               } catch (InterruptedException interrupted) {
                 Thread.currentThread().interrupt();
+              } finally {
+                bodyHandlerCompleted.countDown();
               }
             });
     AccountJwtJwksApiBinding binding = transportBinding(server, pki.trustedCa(), STALL_TIMEOUT);
@@ -304,6 +308,12 @@ class AccountJwtJwksApiTransportTest {
     } finally {
       releaseBody.countDown();
     }
+    assertThat(bodyHandlerCompleted.await(1, TimeUnit.SECONDS))
+        .as("stalled response handler should finish after the test releases its body")
+        .isTrue();
+    assertThat(releaseBodyTimedOut.get())
+        .as("test must release the stalled response body before the handler timeout")
+        .isFalse();
   }
 
   @Test
@@ -353,19 +363,17 @@ class AccountJwtJwksApiTransportTest {
 
     ProtectedFiles ownerFixture = protectedFiles("owner-drift");
     ownerFixture.binding().current();
-    Files.setAttribute(ownerFixture.currentToken(), "unix:uid", 65534L, LinkOption.NOFOLLOW_LINKS);
+    Files.setAttribute(ownerFixture.currentToken(), "unix:uid", 65534, LinkOption.NOFOLLOW_LINKS);
     assertThatThrownBy(ownerFixture.binding()::current)
         .isInstanceOf(AccountJwtJwksApiBinding.BindingRejectedException.class);
 
     ProtectedFiles groupFixture = protectedFiles("group-drift");
     groupFixture.binding().current();
-    Object gid =
-        Files.getAttribute(groupFixture.currentToken(), "unix:gid", LinkOption.NOFOLLOW_LINKS);
+    int gid =
+        (Integer)
+            Files.getAttribute(groupFixture.currentToken(), "unix:gid", LinkOption.NOFOLLOW_LINKS);
     Files.setAttribute(
-        groupFixture.currentToken(),
-        "unix:gid",
-        ((Number) gid).longValue() == 0L ? 1L : 0L,
-        LinkOption.NOFOLLOW_LINKS);
+        groupFixture.currentToken(), "unix:gid", gid == 0 ? 1 : 0, LinkOption.NOFOLLOW_LINKS);
     assertThatThrownBy(groupFixture.binding()::current)
         .isInstanceOf(AccountJwtJwksApiBinding.BindingRejectedException.class);
 
@@ -491,6 +499,10 @@ class AccountJwtJwksApiTransportTest {
     Files.setPosixFilePermissions(path, PosixFilePermissions.fromString(mode));
   }
 
+  @SuppressFBWarnings(
+      value = "DMI_HARDCODED_ABSOLUTE_FILENAME",
+      justification =
+          "These fixed nonexistent paths stand in for protected trust inputs in the transport-only fixture and are never read.")
   private AccountJwtJwksApiBinding transportBinding(
       HttpsServer server, byte[] trustedCa, Duration timeout) throws Exception {
     ParsedBinding binding =
@@ -729,9 +741,8 @@ class AccountJwtJwksApiTransportTest {
 
   private static String namespaceJson(String name, String uid) {
     return """
-        {"apiVersion":"v1","kind":"Namespace","metadata":{"name":"%s","uid":"%s"},
-         "status":{"phase":"Active"}}
-        """
+        {"apiVersion":"v1","kind":"Namespace","metadata":{"name":"%s","uid":"%s"},%n\
+         "status":{"phase":"Active"}}%n"""
         .formatted(name, uid);
   }
 

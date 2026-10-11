@@ -10,9 +10,11 @@ import io.grpc.Metadata;
 import io.grpc.ServerCall;
 import io.grpc.ServerCallHandler;
 import io.grpc.ServerInterceptor;
+import java.security.MessageDigest;
 import java.security.cert.Certificate;
 import java.security.cert.X509Certificate;
 import java.util.ArrayList;
+import java.util.HexFormat;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicReference;
 import javax.net.ssl.SSLSession;
@@ -100,6 +102,20 @@ class GrpcPeerIdentityTest {
   }
 
   @Test
+  void presentedLeafFingerprintComesFromTheAuthenticatedTlsSessionContext() throws Exception {
+    SSLSession session = sessionWithUriSans(GAME_DESIGN_URI);
+    byte[] encodedLeaf = GAME_DESIGN_URI.getBytes(java.nio.charset.StandardCharsets.US_ASCII);
+    String expectedFingerprint =
+        HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(encodedLeaf));
+
+    assertThat(GrpcPeerCertificateEvidence.fromSslSession(session))
+        .get()
+        .extracting(GrpcPeerCertificateEvidence::leafSha256)
+        .isEqualTo(expectedFingerprint);
+    assertThat(interceptAndObserveLeafFingerprint(session)).isEqualTo(expectedFingerprint);
+  }
+
+  @Test
   void knownServiceIdentityParsesAndUnknownServiceIsRejected() throws Exception {
     assertThat(
             GrpcPeerIdentity.fromSslSession(
@@ -149,8 +165,27 @@ class GrpcPeerIdentityTest {
     return observed.get();
   }
 
+  private static String interceptAndObserveLeafFingerprint(SSLSession session) throws Exception {
+    @SuppressWarnings("unchecked")
+    ServerCall<Object, Object> call = mock(ServerCall.class);
+    Attributes attributes =
+        Attributes.newBuilder().set(Grpc.TRANSPORT_ATTR_SSL_SESSION, session).build();
+    when(call.getAttributes()).thenReturn(attributes);
+
+    AtomicReference<GrpcPeerCertificateEvidence> observed = new AtomicReference<>();
+    ServerCallHandler<Object, Object> next =
+        (ignoredCall, ignoredHeaders) -> {
+          observed.set(GrpcPeerCertificateEvidence.current());
+          return new ServerCall.Listener<>() {};
+        };
+    new GrpcPeerIdentityInterceptor().interceptCall(call, new Metadata(), next);
+    return observed.get().leafSha256();
+  }
+
   private static SSLSession sessionWithUriSans(String... uris) throws Exception {
     X509Certificate certificate = mock(X509Certificate.class);
+    when(certificate.getEncoded())
+        .thenReturn(uris[0].getBytes(java.nio.charset.StandardCharsets.US_ASCII));
     List<List<?>> sans = new ArrayList<>();
     for (String uri : uris) {
       sans.add(List.of(6, uri));

@@ -1,0 +1,32 @@
+syntax = "proto3";
+
+package account.v1;
+option java_package = "net.firedevops.firemud.account.v1";
+option java_multiple_files = true;
+
+// Standalone and unregistered. This exact historical read neither admits execution nor renews
+// Account authority; World must separately authenticate its original Game Session operation.
+service AccountStartSessionWorldParticipationHistoricalReadService {
+  rpc ReadHistoricalStartSessionWorldParticipation(
+      ReadHistoricalStartSessionWorldParticipationRequest)
+      returns (ReadHistoricalStartSessionWorldParticipationResponse);
+}
+
+message ReadHistoricalStartSessionWorldParticipationRequest {
+  int32 schema_version = 1;
+  string read_request_id = 2;
+  string target_namespace = 3;
+  string account_world_participation_id = 4;
+  int64 account_world_participation_fence = 5;
+}
+
+message ReadHistoricalStartSessionWorldParticipationResponse {
+  ReadHistoricalStartSessionWorldParticipationRequest request = 1;
+  bytes original_post_authorization_tuple = 2;
+  string game_session_owner_attempt_id = 3;
+  int64 game_session_owner_fence = 4;
+  string canonical_game_instance_id = 5;
+  // Byte-for-byte retained World preparation JSON, not fresh admission or currentness evidence.
+  string preparation_input_json = 6;
+  string preparation_input_digest = 7;
+}

@@ -56,13 +56,21 @@ class SqliteRecordsRepairTest(unittest.TestCase):
         raw: int = 1,
         accepted: int = 1,
         routed: int | None = 0,
+        author_login: str | None = None,
+        updated_at: str | None = None,
     ) -> evidence.Checkpoint:
         counts = f"{raw} found / {accepted} accepted"
         if routed is not None:
             counts += f" / {routed} routed"
         heading = f"{channel}: {counts} · {HEAD[:12]} · 1 files"
         comments, unparsed = evidence.parse_checkpoint_comments(
-            [{"id": comment_id, "body": heading + "\n" + marker, "created_at": "2026-09-27T12:00:00Z"}]
+            [{
+                "id": comment_id,
+                "body": heading + "\n" + marker,
+                "created_at": "2026-09-27T12:00:00Z",
+                "updated_at": updated_at,
+                "author_login": author_login,
+            }]
         )
         if unparsed or len(comments) != 1:
             raise AssertionError("fixture checkpoint did not parse canonically")
@@ -695,7 +703,12 @@ class SqliteRecordsRepairTest(unittest.TestCase):
 
     def test_replay_after_source_decision_correction_keeps_origin_and_current_counts(self) -> None:
         self.hosted_capture()
-        checkpoint = self.checkpoint("Hosted", "<!-- firemud-hosted-review: 700 -->")
+        checkpoint = self.checkpoint(
+            "Hosted",
+            "<!-- firemud-hosted-review: 700 -->",
+            author_login="maintainer",
+            updated_at="2026-09-27T12:00:00Z",
+        )
         first = repair_provider_checkpoints(
             self.records,
             repo=REPO,
@@ -918,8 +931,9 @@ class SqliteRecordsRepairTest(unittest.TestCase):
             self.assertEqual(connection.execute("SELECT COUNT(*) FROM provider_origins").fetchone()[0], 0)
             self.assertEqual(connection.execute("SELECT COUNT(*) FROM imported_artifacts").fetchone()[0], 0)
 
-    def test_repair_links_exact_automatically_recorded_hosted_attempt_without_duplicate(self) -> None:
-        self.hosted_capture()
+    def _record_synced_hosted_attempt(self, *, capture_snapshot: bool) -> tuple[str, evidence.Checkpoint, dict]:
+        if capture_snapshot:
+            self.hosted_capture()
         attempt_id = "hosted-attempt.700"
         trigger_id = 999
         started_at = "2026-09-27T11:57:30Z"
@@ -1039,7 +1053,121 @@ class SqliteRecordsRepairTest(unittest.TestCase):
             reason="validated source finding",
             decided_at="2026-09-27T11:59:00Z",
         )
-        checkpoint = self.checkpoint("Hosted", "<!-- firemud-hosted-review: 700 -->")
+        self.records.finalize_run(attempt_id, finalized_at="2026-09-27T12:00:00Z")
+        checkpoint = self.checkpoint(
+            "Hosted",
+            "<!-- firemud-hosted-review: 700 -->",
+            author_login="maintainer",
+            updated_at="2026-09-27T12:00:00Z",
+        )
+        return attempt_id, checkpoint, payload
+
+    def _record_synced_hosted_reply_attempt(self) -> tuple[str, evidence.Checkpoint, dict]:
+        attempt_id = "hosted-reply-attempt.702"
+        trigger_id = 101
+        trigger_at = "2026-09-27T11:40:00Z"
+        response_created = "2026-09-27T11:50:00Z"
+        response_updated = "2026-09-27T11:55:00Z"
+        checkpoint_at = "2026-09-27T12:00:00Z"
+        checkpoint_body = (
+            f"Hosted: 0 found / 0 accepted / 0 routed · {HEAD[:12]} · 1 files\n"
+            "<!-- firemud-hosted-review: 702 -->"
+        )
+        trigger_comment = {
+            "databaseId": trigger_id,
+            "author": {"login": "maintainer"},
+            "body": hosted.FULL_COMMAND,
+            "createdAt": trigger_at,
+            "updatedAt": trigger_at,
+            "url": f"https://github.example/{REPO}/pull/{PR}#issuecomment-{trigger_id}",
+        }
+        response_comment = {
+            "databaseId": 702,
+            "author": {"login": "coderabbitai[bot]"},
+            "body": "Full review finished.",
+            "createdAt": response_created,
+            "updatedAt": response_updated,
+            "url": f"https://github.example/{REPO}/pull/{PR}#issuecomment-702",
+        }
+        checkpoint_comment = {
+            "databaseId": 10,
+            "author": {"login": "maintainer"},
+            "body": checkpoint_body,
+            "createdAt": checkpoint_at,
+            "updatedAt": checkpoint_at,
+            "url": f"https://github.example/{REPO}/pull/{PR}#issuecomment-10",
+        }
+        payload = {
+            "data": {
+                "repository": {
+                    "pullRequest": {
+                        "number": PR,
+                        "headRefOid": HEAD,
+                        "comments": {"nodes": [trigger_comment, response_comment, checkpoint_comment]},
+                        "reviews": {"nodes": []},
+                        "reviewThreads": {"nodes": []},
+                    }
+                }
+            }
+        }
+        trigger_record = {
+            "schema_version": 2,
+            "status": "posted",
+            "repository": REPO,
+            "pr_number": PR,
+            "head_sha": HEAD,
+            "posting_started_at": trigger_at,
+            "anchor": {
+                "child_head": HEAD,
+                "parent_identity": "develop",
+                "parent_head": HEAD,
+                "merge_base": HEAD,
+                "patch_id": "stable-patch-id",
+            },
+            "trigger": {
+                "id": trigger_id,
+                "created_at": trigger_at,
+                "url": trigger_comment["url"],
+                "author_login": "maintainer",
+                "type": "full",
+                "command": hosted.FULL_COMMAND,
+            },
+            "sqlite_attempt_id": attempt_id,
+        }
+        trigger_path = hosted.default_trigger_record_path(REPO, PR, self.common)
+        trigger_path.parent.mkdir(parents=True, exist_ok=True)
+        trigger_path.write_text(json.dumps(trigger_record), encoding="utf-8")
+        sqlite_hosted_capture.start_hosted_attempt(
+            self.records,
+            attempt_id=attempt_id,
+            source_pr=PR,
+            candidate_sha=HEAD,
+            started_at=trigger_at,
+        )
+        completed = sqlite_hosted_capture.record_hosted_terminal_result(
+            self.records,
+            attempt_id=attempt_id,
+            repo=REPO,
+            source_pr=PR,
+            trigger_record=trigger_record,
+            payload=payload,
+            current_record_path=trigger_path,
+        )
+        self.assertEqual(completed["state"], "completed")
+        self.assertEqual(completed["run_id"], attempt_id)
+        checkpoint = self.checkpoint(
+            "Hosted",
+            "<!-- firemud-hosted-review: 702 -->",
+            raw=0,
+            accepted=0,
+            routed=0,
+            author_login="maintainer",
+            updated_at=checkpoint_at,
+        )
+        return attempt_id, checkpoint, payload
+
+    def test_repair_links_exact_automatically_recorded_hosted_attempt_without_duplicate(self) -> None:
+        attempt_id, checkpoint, payload = self._record_synced_hosted_attempt(capture_snapshot=True)
 
         report = repair_provider_checkpoints(
             self.records,
@@ -1048,6 +1176,7 @@ class SqliteRecordsRepairTest(unittest.TestCase):
             checkpoints=[checkpoint],
             actor="backfill-reviewer",
             common=self.common,
+            hosted_payload=payload,
             dry_run=False,
         )
 
@@ -1071,6 +1200,321 @@ class SqliteRecordsRepairTest(unittest.TestCase):
         )
         self.assertEqual(replay["items"][0]["run_id"], attempt_id)
         self.assertEqual(len(self.records.history(PR)["runs"]), 1)
+
+    def test_repair_reuses_checkpoint_archive_after_capture_snapshot_disappears(self) -> None:
+        attempt_id, checkpoint, payload = self._record_synced_hosted_attempt(capture_snapshot=True)
+        snapshot_path = self.common / "firemud" / "hosted-review.700" / "snapshot.json"
+        snapshot = json.loads(snapshot_path.read_text(encoding="utf-8"))
+        snapshot["api_token"] = "ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890"
+        snapshot_path.write_text(json.dumps(snapshot), encoding="utf-8")
+        report = repair_provider_checkpoints(
+            self.records,
+            repo=REPO,
+            pr_number=PR,
+            checkpoints=[checkpoint],
+            actor="backfill-reviewer",
+            common=self.common,
+            hosted_payload=payload,
+            dry_run=False,
+        )
+        self.assertEqual(report["status"], "complete")
+        with sqlite3.connect(self.database) as connection:
+            before_archive = connection.execute(
+                "SELECT kind, content, source_sha256, redactions FROM imported_artifacts "
+                "WHERE run_id = ? ORDER BY kind",
+                (attempt_id,),
+            ).fetchall()
+        archived_comments = next(row for row in before_archive if row[0] == "hosted_comments")
+        self.assertGreater(archived_comments[3], 0)
+        self.assertNotIn("ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890", archived_comments[1])
+        self.assertNotEqual(
+            hashlib.sha256(archived_comments[1].encode("utf-8")).hexdigest(),
+            archived_comments[2],
+        )
+        before = self.records.history(PR)
+
+        snapshot_path.unlink()
+        replay = repair_provider_checkpoints(
+            self.records,
+            repo=REPO,
+            pr_number=PR,
+            checkpoints=[checkpoint],
+            actor="backfill-reviewer",
+            common=self.common,
+            hosted_payload=payload,
+            dry_run=False,
+        )
+
+        self.assertEqual(replay["status"], "complete")
+        self.assertEqual(replay["items"][0]["action"], "already_imported")
+        self.assertEqual(replay["items"][0]["run_id"], attempt_id)
+        self.assertEqual(self.records.history(PR), before)
+        with sqlite3.connect(self.database) as connection:
+            after_archive = connection.execute(
+                "SELECT kind, content, source_sha256, redactions FROM imported_artifacts "
+                "WHERE run_id = ? ORDER BY kind",
+                (attempt_id,),
+            ).fetchall()
+        self.assertEqual(after_archive, before_archive)
+
+    def test_repair_resumes_exact_origin_without_imported_archive(self) -> None:
+        attempt_id, checkpoint, payload = self._record_synced_hosted_attempt(capture_snapshot=False)
+        fingerprint = sqlite_provider_imports._checkpoint_fingerprint(checkpoint)
+        origin = self.records.link_provider_origin(
+            repository=REPO.casefold(),
+            source_pr=PR,
+            channel="hosted",
+            provider_id="review:700",
+            checkpoint_id=checkpoint.comment_id,
+            checkpoint_fingerprint=fingerprint,
+            run_id=attempt_id,
+        )
+        self.assertEqual(origin["run_id"], attempt_id)
+        before = self.records.history(PR)
+        with sqlite3.connect(self.database) as connection:
+            self.assertEqual(
+                connection.execute(
+                    "SELECT COUNT(*) FROM imported_artifacts WHERE run_id = ?", (attempt_id,)
+                ).fetchone()[0],
+                0,
+            )
+
+        report = repair_provider_checkpoints(
+            self.records,
+            repo=REPO,
+            pr_number=PR,
+            checkpoints=[checkpoint],
+            actor="backfill-reviewer",
+            common=self.common,
+            hosted_payload=payload,
+            dry_run=False,
+        )
+
+        after = self.records.history(PR)
+        self.assertEqual(report["status"], "complete")
+        self.assertEqual(report["items"][0]["action"], "already_imported")
+        self.assertEqual(report["items"][0]["run_id"], attempt_id)
+        for key in ("runs", "attempts", "findings", "decisions", "routes", "provider_origins"):
+            self.assertEqual(after[key], before[key], key)
+        with sqlite3.connect(self.database) as connection:
+            self.assertEqual(
+                connection.execute(
+                    "SELECT COUNT(*) FROM imported_artifacts WHERE run_id = ?", (attempt_id,)
+                ).fetchone()[0],
+                3,
+            )
+
+    def test_repair_refuses_mismatched_checkpoint_archive_after_snapshot_disappears(self) -> None:
+        attempt_id, checkpoint, payload = self._record_synced_hosted_attempt(capture_snapshot=True)
+        repair_provider_checkpoints(
+            self.records,
+            repo=REPO,
+            pr_number=PR,
+            checkpoints=[checkpoint],
+            actor="backfill-reviewer",
+            common=self.common,
+            hosted_payload=payload,
+            dry_run=False,
+        )
+        with sqlite3.connect(self.database) as connection:
+            original_fingerprint = connection.execute(
+                "SELECT checkpoint_fingerprint FROM provider_origins WHERE run_id = ?",
+                (attempt_id,),
+            ).fetchone()[0]
+            before_archive = connection.execute(
+                "SELECT kind, content, source_sha256, redactions FROM imported_artifacts "
+                "WHERE run_id = ? ORDER BY kind",
+                (attempt_id,),
+            ).fetchall()
+            connection.execute(
+                "UPDATE provider_origins SET checkpoint_fingerprint = ? WHERE run_id = ?",
+                ("0" * 64, attempt_id),
+            )
+
+        (self.common / "firemud" / "hosted-review.700" / "snapshot.json").unlink()
+        with self.assertRaisesRegex(
+            SqliteRecordsRepairError,
+            "^retained Hosted archive is linked to a different checkpoint identity$",
+        ):
+            repair_provider_checkpoints(
+                self.records,
+                repo=REPO,
+                pr_number=PR,
+                checkpoints=[checkpoint],
+                actor="backfill-reviewer",
+                common=self.common,
+                hosted_payload=payload,
+                dry_run=False,
+            )
+
+        with sqlite3.connect(self.database) as connection:
+            self.assertEqual(
+                connection.execute(
+                    "SELECT checkpoint_fingerprint FROM provider_origins WHERE run_id = ?",
+                    (attempt_id,),
+                ).fetchone()[0],
+                "0" * 64,
+            )
+            after_archive = connection.execute(
+                "SELECT kind, content, source_sha256, redactions FROM imported_artifacts "
+                "WHERE run_id = ? ORDER BY kind",
+                (attempt_id,),
+            ).fetchall()
+        self.assertEqual(after_archive, before_archive)
+        self.assertNotEqual(original_fingerprint, "0" * 64)
+
+    def test_repair_preserves_reply_only_zero_trigger_validation_for_synced_attempt(self) -> None:
+        attempt_id, checkpoint, payload = self._record_synced_hosted_reply_attempt()
+        before = self.records.history(PR)
+
+        preview = repair_provider_checkpoints(
+            self.records,
+            repo=REPO,
+            pr_number=PR,
+            checkpoints=[checkpoint],
+            actor="backfill-reviewer",
+            common=self.common,
+            hosted_payload=payload,
+        )
+
+        self.assertEqual(preview["status"], "preview")
+        self.assertEqual(preview["items"][0]["run_id"], attempt_id)
+        self.assertEqual(preview["items"][0]["provider_id"], "trigger:101")
+        self.assertEqual(self.records.history(PR), before)
+        report = repair_provider_checkpoints(
+            self.records,
+            repo=REPO,
+            pr_number=PR,
+            checkpoints=[checkpoint],
+            actor="backfill-reviewer",
+            common=self.common,
+            hosted_payload=payload,
+            dry_run=False,
+        )
+        self.assertEqual(report["status"], "complete")
+        self.assertEqual(report["items"][0]["provider_id"], "trigger:101")
+        self.assertEqual(self.records.history(PR)["runs"], before["runs"])
+        self.assertEqual(self.records.history(PR)["attempts"], before["attempts"])
+
+    def test_repair_links_retained_synced_hosted_attempt_without_private_snapshot(self) -> None:
+        attempt_id, checkpoint, payload = self._record_synced_hosted_attempt(capture_snapshot=False)
+        before = self.records.history(PR)
+
+        preview = repair_provider_checkpoints(
+            self.records,
+            repo=REPO,
+            pr_number=PR,
+            checkpoints=[checkpoint],
+            actor="backfill-reviewer",
+            common=self.common,
+            hosted_payload=payload,
+        )
+        self.assertEqual(preview["status"], "preview")
+        self.assertEqual(preview["items"][0]["run_id"], attempt_id)
+        self.assertEqual(self.records.history(PR), before)
+
+        report = repair_provider_checkpoints(
+            self.records,
+            repo=REPO,
+            pr_number=PR,
+            checkpoints=[checkpoint],
+            actor="backfill-reviewer",
+            common=self.common,
+            hosted_payload=payload,
+            dry_run=False,
+        )
+        after = self.records.history(PR)
+        self.assertEqual(report["status"], "complete")
+        self.assertEqual(report["items"][0]["action"], "already_imported")
+        self.assertEqual(report["items"][0]["run_id"], attempt_id)
+        for key in ("runs", "attempts", "findings", "decisions", "routes"):
+            self.assertEqual(after[key], before[key], key)
+        self.assertEqual(after["provider_origins"][0]["provider_id"], "review:700")
+        self.assertEqual(after["provider_origins"][0]["checkpoint_id"], checkpoint.comment_id)
+
+        replay = repair_provider_checkpoints(
+            self.records,
+            repo=REPO,
+            pr_number=PR,
+            checkpoints=[checkpoint],
+            actor="backfill-reviewer",
+            common=self.common,
+            hosted_payload=payload,
+            dry_run=False,
+        )
+        self.assertEqual(replay["items"][0]["action"], "already_imported")
+        self.assertEqual(len(self.records.history(PR)["runs"]), 1)
+
+    def test_repair_refuses_retained_synced_hosted_checkpoint_count_mismatch(self) -> None:
+        attempt_id, _, payload = self._record_synced_hosted_attempt(capture_snapshot=False)
+        checkpoint_body = (
+            f"Hosted: 2 found / 2 accepted / 0 routed · {HEAD[:12]} · 1 files\n"
+            "<!-- firemud-hosted-review: 700 -->"
+        )
+        comment = payload["data"]["repository"]["pullRequest"]["comments"]["nodes"][1]
+        comment["body"] = checkpoint_body
+        checkpoint = self.checkpoint(
+            "Hosted",
+            "<!-- firemud-hosted-review: 700 -->",
+            raw=2,
+            accepted=2,
+            author_login="maintainer",
+            updated_at="2026-09-27T12:00:00Z",
+        )
+        before = self.records.history(PR)
+
+        with self.assertRaisesRegex(
+            SqliteRecordsRepairError,
+            "^Hosted checkpoint counts do not match retained source findings and decisions$",
+        ):
+            repair_provider_checkpoints(
+                self.records,
+                repo=REPO,
+                pr_number=PR,
+                checkpoints=[checkpoint],
+                actor="backfill-reviewer",
+                common=self.common,
+                hosted_payload=payload,
+                dry_run=False,
+            )
+
+        self.assertEqual(self.records.history(PR), before)
+        with sqlite3.connect(self.database) as connection:
+            self.assertEqual(connection.execute("SELECT COUNT(*) FROM provider_origins").fetchone()[0], 0)
+            self.assertEqual(connection.execute("SELECT COUNT(*) FROM imported_artifacts").fetchone()[0], 0)
+        self.assertEqual([run["run_id"] for run in self.records.history(PR)["runs"]], [attempt_id])
+
+    def test_repair_refuses_retained_synced_hosted_archive_with_wrong_review_head(self) -> None:
+        attempt_id, checkpoint, payload = self._record_synced_hosted_attempt(capture_snapshot=False)
+        artifacts = self.records.attempt_artifacts(attempt_id)
+        reviews = json.loads(artifacts["hosted_review"])
+        reviews[0]["commit"]["oid"] = "f" * 40
+        with sqlite3.connect(self.database) as connection:
+            connection.execute(
+                "UPDATE review_artifacts SET content = ? WHERE attempt_id = ? AND kind = 'hosted_review'",
+                (json.dumps(reviews, sort_keys=True, separators=(",", ":")), attempt_id),
+            )
+        before = self.records.history(PR)
+
+        with self.assertRaisesRegex(
+            SqliteRecordsRepairError,
+            "^retained Hosted provider review does not prove the exact completed head$",
+        ):
+            repair_provider_checkpoints(
+                self.records,
+                repo=REPO,
+                pr_number=PR,
+                checkpoints=[checkpoint],
+                actor="backfill-reviewer",
+                common=self.common,
+                hosted_payload=payload,
+                dry_run=False,
+            )
+
+        self.assertEqual(self.records.history(PR), before)
+        with sqlite3.connect(self.database) as connection:
+            self.assertEqual(connection.execute("SELECT COUNT(*) FROM provider_origins").fetchone()[0], 0)
+            self.assertEqual(connection.execute("SELECT COUNT(*) FROM imported_artifacts").fetchone()[0], 0)
 
     def test_repair_refuses_mismatched_automatic_attempt_without_duplicate_or_origin(self) -> None:
         self.cli_capture()

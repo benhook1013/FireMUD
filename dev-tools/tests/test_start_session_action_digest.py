@@ -9,7 +9,6 @@ import unittest
 from dataclasses import dataclass
 from pathlib import Path
 
-
 ROOT = Path(__file__).resolve().parents[2]
 FIXTURE = (
     ROOT
@@ -18,6 +17,11 @@ FIXTURE = (
 )
 SCHEMA_ID = "firemud.game-session.start-session"
 SCHEMA_VERSION = "1"
+SHARED_WHITESPACE_CODEPOINTS = frozenset(
+    [*range(0x0009, 0x000E), 0x0020, 0x0085, 0x00A0, 0x1680]
+    + list(range(0x2000, 0x200B))
+    + [0x2028, 0x2029, 0x202F, 0x205F, 0x3000]
+)
 TOP_LEVEL_ORDER = [
     "actionFamilySchemaId",
     "actionFamilySchemaVersion",
@@ -62,7 +66,7 @@ def parse_json(raw):
 
 def scalar_string(value, byte_limit=4_096):
     if not isinstance(value, str):
-        raise ValueError("string value required")
+        raise TypeError("string value required")
     if any(0xD800 <= ord(character) <= 0xDFFF for character in value):
         raise ValueError("malformed Unicode")
     normalized = unicodedata.normalize("NFC", value)
@@ -104,8 +108,6 @@ def decimal_value(raw):
 
 
 def encoded_value(value, depth=0):
-    if depth > 8:
-        raise ValueError("composite nesting is too deep")
     if value is ABSENT:
         return segment(b"absent") + b"0" + segment(b"")
     if value is None:
@@ -118,6 +120,8 @@ def encoded_value(value, depth=0):
     if isinstance(value, bool):
         return segment(b"boolean") + b"1" + segment(b"true" if value else b"false")
     if isinstance(value, RawObject):
+        if depth >= 8:
+            raise ValueError("composite nesting is too deep")
         if len(value.members) > 16:
             raise ValueError("object exceeds its member limit")
         normalized_members = []
@@ -133,6 +137,8 @@ def encoded_value(value, depth=0):
             payload += segment(key) + encoded_value(member_value, depth + 1)
         return segment(b"object") + b"1" + segment(payload)
     if isinstance(value, list):
+        if depth >= 8:
+            raise ValueError("composite nesting is too deep")
         if len(value) > 64:
             raise ValueError("array exceeds its element limit")
         payload = segment(str(len(value)).encode("ascii"))
@@ -147,7 +153,7 @@ ABSENT = object()
 
 def ordered_members(value, declared_order, optional=()):
     if not isinstance(value, RawObject):
-        raise ValueError("object value required")
+        raise TypeError("object value required")
     if len(value.members) > 16:
         raise ValueError("object exceeds its member limit")
     members = {}
@@ -209,7 +215,9 @@ def action_preimage(raw):
         client_ip = scalar_string(client_ip, 128)
 
     audit_reason = scalar_string(members["auditReason"], 1_000)
-    if not audit_reason or all(character.isspace() for character in audit_reason):
+    if not audit_reason or all(
+        ord(character) in SHARED_WHITESPACE_CODEPOINTS for character in audit_reason
+    ):
         raise ValueError("auditReason must not be blank")
 
     values = [
@@ -262,7 +270,7 @@ class StartSessionMutationDigestVectorTest(unittest.TestCase):
             with self.subTest(vector=vector["name"]):
                 raw = raw_vector_bytes(vector)
                 if not vector["accepted"]:
-                    with self.assertRaises((ValueError, UnicodeError, json.JSONDecodeError)):
+                    with self.assertRaises((TypeError, ValueError, UnicodeError, json.JSONDecodeError)):
                         action_preimage(raw)
                     continue
                 preimage = action_preimage(raw)
@@ -276,6 +284,22 @@ class StartSessionMutationDigestVectorTest(unittest.TestCase):
         self.assertNotEqual(results["base"], results["changed-audit-reason"])
         self.assertNotEqual(results["client-ip-absent"], results["client-ip-empty"])
         self.assertEqual(results["unicode-composed"], results["unicode-decomposed"])
+
+    def test_audit_reason_uses_explicit_shared_whitespace_set(self):
+        base = json.loads(self.fixture["vectors"][0]["input"])
+        for codepoint in SHARED_WHITESPACE_CODEPOINTS:
+            with self.subTest(codepoint=f"U+{codepoint:04X}"):
+                base["auditReason"] = chr(codepoint)
+                with self.assertRaises(ValueError):
+                    action_preimage(json.dumps(base, ensure_ascii=True).encode("utf-8"))
+
+                base["auditReason"] = chr(codepoint) + "x"
+                action_preimage(json.dumps(base, ensure_ascii=True).encode("utf-8"))
+
+        for codepoint in (0x001C, 0x200B):
+            with self.subTest(outside_codepoint=f"U+{codepoint:04X}"):
+                base["auditReason"] = chr(codepoint)
+                action_preimage(json.dumps(base, ensure_ascii=True).encode("utf-8"))
 
     def test_generic_value_grammar_vectors(self):
         encodings = {}

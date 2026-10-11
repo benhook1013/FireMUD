@@ -122,6 +122,51 @@ if validator_spec is None or validator_spec.loader is None:
 validator = importlib.util.module_from_spec(validator_spec)
 validator_spec.loader.exec_module(validator)
 
+# The trusted-values loader accepts only the legacy short names and exact official
+# ECR copies, preserving the selected tags/digests without trusting artifact input.
+with tempfile.TemporaryDirectory(prefix="firemud-trusted-database-images-") as fixture_root:
+    values_path = pathlib.Path(fixture_root) / "values.yaml"
+    digest = "sha256:" + "a" * 64
+    ecr_prefix = "public.ecr.aws/docker/library/"
+    for prefix in ("", ecr_prefix):
+        for suffix in ("", "@" + digest):
+            expected = {
+                "postgres": prefix + "postgres:18" + suffix,
+                "seed": prefix + "postgres:18" + suffix,
+                "redis": prefix + "redis:8.10.2-alpine" + suffix,
+            }
+            values_path.write_text(yaml.safe_dump({
+                "previewStack": {name: {"image": image} for name, image in expected.items()}
+            }))
+            if validator._trusted_database_images(values_path) != expected:
+                raise SystemExit("trusted database loader changed accepted image references")
+    for name in ("postgres", "seed", "redis"):
+        repository = "redis" if name == "redis" else "postgres"
+        wrong_repository = "postgres" if repository == "redis" else "redis"
+        for image in (
+            "registry.invalid/docker/library/" + repository + ":18@" + digest,
+            "publicXecrXaws/docker/library/" + repository + ":18@" + digest,
+            "public.ecr.aws/other/" + repository + ":18@" + digest,
+            ecr_prefix + "nginx:18@" + digest,
+            ecr_prefix + wrong_repository + ":18@" + digest,
+            ecr_prefix + repository + ":latest@" + digest,
+            ecr_prefix + repository + "@" + digest,
+            ecr_prefix + repository + ":18@sha256:invalid",
+            ecr_prefix + repository + ":18@sha256:" + "a" * 63,
+            ecr_prefix + repository + ":18@sha256:" + "A" * 64,
+        ):
+            selected = dict(expected)
+            selected[name] = image
+            values_path.write_text(yaml.safe_dump({
+                "previewStack": {key: {"image": value} for key, value in selected.items()}
+            }))
+            try:
+                validator._trusted_database_images(values_path)
+            except ValueError:
+                pass
+            else:
+                raise SystemExit(f"trusted database loader accepted invalid {name} image: {image}")
+
 documents = [
     document
     for document in yaml.safe_load_all(pathlib.Path(sys.argv[1]).read_text())

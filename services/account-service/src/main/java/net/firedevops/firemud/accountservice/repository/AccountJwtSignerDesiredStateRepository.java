@@ -58,6 +58,8 @@ public class AccountJwtSignerDesiredStateRepository {
   private static final String OPERATION_TABLE = "account_jwt_signer_generation_operations";
   private static final String OBSERVATION_TABLE = "account_jwt_signer_secret_observations";
   private static final String RESULT_TABLE = "account_jwt_signer_generation_results";
+  private static final String GENERATION_ABORT_TABLE =
+      "account_jwt_signer_generation_abort_receipts";
   private static final String PROMOTION_TABLE = "account_jwt_signer_promotion_operations";
   private static final String MODE = "INTERIM_ACCOUNT_ONLY_MOUNTED_FALLBACK";
   private static final String ALGORITHM = "RS256";
@@ -248,6 +250,134 @@ public class AccountJwtSignerDesiredStateRepository {
   }
 
   /**
+   * Durably releases only the exact current UNPREPARED generation after its owner-recorded
+   * generation result failed readiness. The immutable abort receipt preserves the operation and
+   * both active fences; it grants no materialization, promotion, or replacement authority.
+   */
+  @Transactional(propagation = Propagation.MANDATORY)
+  public GenerationAbortReceipt abortUnpreparedGeneration(
+      Binding expectedBinding, TrustFence trust, GenerationResult expectedResult) {
+    requireWritableAccountTransaction();
+    Objects.requireNonNull(expectedBinding, "Expected JWT signer binding is required");
+    Objects.requireNonNull(trust, "Protected JWT materializer trust fence is required");
+    Objects.requireNonNull(expectedResult, "Exact Account generation result is required");
+    UUID operationId = expectedResult.operationId();
+    Record stateRow = selectState(expectedBinding.environmentId(), true);
+    if (stateRow == null) {
+      throw new MissingDesiredStateException(expectedBinding.environmentId());
+    }
+    DesiredState state = decodeState(stateRow);
+    requireBinding(state, expectedBinding);
+    requireEnrollmentTrust(state, trust);
+    StoredGenerationOperation operation = selectGenerationOperation(operationId, true);
+    GenerationResult persistedResult = selectGenerationResult(operationId, true);
+    if (operation == null || persistedResult == null) {
+      throw new StaleGenerationOperationException(
+          "Abort does not target an exact owner-recorded generation result");
+    }
+    requireCurrentTrust(operation, trust);
+    if (!expectedResult.equals(persistedResult)
+        || !expectedResult.binding().equals(expectedBinding)
+        || !expectedResult.trustFence().equals(trust)
+        || !expectedResult.operationDigest().equals(operation.operationDigest())
+        || !expectedResult.generationRequestDigest().matches("[0-9a-f]{64}")
+        || !generationOperationDigest(operation).equals(operation.operationDigest())) {
+      throw new IdempotencyConflictException(
+          "Generation abort does not match the immutable Account operation and result");
+    }
+
+    GenerationAbortReceipt existing = selectGenerationAbortReceipt(operationId, true);
+    if (existing != null) {
+      if (!existing.matches(operation, persistedResult, trust)) {
+        throw new IdempotencyConflictException(
+            "Generation abort retry changed its immutable operation or result");
+      }
+      if (!state.generationOperationId().equals(Optional.of(operationId))) {
+        if (state.recordVersion() < existing.resultingStateVersion()) {
+          throw new QuarantinedStateException(
+              "Persisted generation abort receipt is ahead of desired state");
+        }
+        return existing;
+      }
+      if (state.preparedOperationId().isPresent()
+          || state.recordVersion() != existing.expectedStateVersion()) {
+        throw new StaleGenerationOperationException(
+            "Persisted abort receipt cannot release a changed generation state");
+      }
+    }
+    if (!state.generationOperationId().equals(Optional.of(operationId))
+        || state.preparedOperationId().isPresent()) {
+      throw new StaleGenerationOperationException(
+          "Abort does not target Account's exact current UNPREPARED generation");
+    }
+    verifyOperationMatchesState(operation, state);
+    verifyGenerationResultMatchesOperation(persistedResult, operation, state);
+    if (state.recordVersion() == Long.MAX_VALUE) {
+      throw new VersionConflictException("Account JWT signer state version is exhausted");
+    }
+    if (Boolean.TRUE.equals(
+        Objects.requireNonNull(
+                dsl.fetchOne(
+                    "SELECT EXISTS (SELECT 1 FROM "
+                        + PROMOTION_TABLE
+                        + " WHERE generation_operation_id = ?)",
+                    operationId),
+                "Account JWT promotion-existence readback is required")
+            .get(0, Boolean.class))) {
+      throw new StaleGenerationOperationException(
+          "An operation with promotion evidence cannot use generation abort");
+    }
+
+    GenerationAbortReceipt candidate =
+        existing == null
+            ? GenerationAbortReceipt.from(state, operation, persistedResult, trust)
+            : existing;
+    if (existing == null) {
+      insertGenerationAbortReceipt(candidate);
+    }
+    int changed =
+        dsl.execute(
+            "UPDATE "
+                + STATE_TABLE
+                + " SET record_version = record_version + 1, generation_operation_id = NULL, "
+                + "updated_at = CURRENT_TIMESTAMP WHERE environment_id = ? AND cluster_id = ? "
+                + "AND kubernetes_namespace = ? AND custody_mode = ? AND record_version = ? "
+                + "AND generation_operation_id = ? AND prepared_operation_id IS NULL "
+                + "AND durable_active_generation IS NOT DISTINCT FROM ? "
+                + "AND durable_active_kid IS NOT DISTINCT FROM ? "
+                + "AND published_active_generation IS NOT DISTINCT FROM ? "
+                + "AND published_active_kid IS NOT DISTINCT FROM ?",
+            expectedBinding.environmentId(),
+            expectedBinding.clusterId(),
+            expectedBinding.namespace(),
+            expectedBinding.mode().value(),
+            candidate.expectedStateVersion(),
+            operationId,
+            generationValue(candidate.durableActive()),
+            kidValue(candidate.durableActive()),
+            generationValue(candidate.publishedActive()),
+            kidValue(candidate.publishedActive()));
+    if (changed != 1) {
+      throw new VersionConflictException("Account generation abort state CAS did not apply");
+    }
+    GenerationAbortReceipt readback = selectGenerationAbortReceipt(operationId, true);
+    Record readbackStateRow = selectState(expectedBinding.environmentId(), true);
+    if (readback == null || readbackStateRow == null || !readback.equals(candidate)) {
+      throw new QuarantinedStateException("Account generation abort receipt did not read back");
+    }
+    DesiredState readbackState = decodeState(readbackStateRow);
+    if (readbackState.recordVersion() != candidate.resultingStateVersion()
+        || readbackState.generationOperationId().isPresent()
+        || readbackState.preparedOperationId().isPresent()
+        || !readbackState.durableActive().equals(candidate.durableActive())
+        || !readbackState.publishedActive().equals(candidate.publishedActive())) {
+      throw new QuarantinedStateException(
+          "Account generation abort changed a protected active fence or lifecycle pointer");
+    }
+    return readback;
+  }
+
+  /**
    * Returns the same current Account-selected request and exact phase for an authenticated peer.
    */
   @Transactional(propagation = Propagation.MANDATORY)
@@ -376,17 +506,49 @@ public class AccountJwtSignerDesiredStateRepository {
     if (promotion == null || !"PREPARED".equals(promotion.status())) {
       throw new QuarantinedStateException("Account PREPARED JWT signer operation is missing");
     }
+    int expectedReadinessProbeCount = 0;
     if (!promotion.privatePromotionDispatched()) {
+      expectedReadinessProbeCount =
+          requireFreshReadinessBeforeDispatch(promotion, evidence.generationResult());
       int changed =
           dsl.execute(
-              "UPDATE "
+              "WITH readiness_clock AS MATERIALIZED (SELECT clock_timestamp() AS checked_at) "
+                  + "UPDATE "
                   + PROMOTION_TABLE
-                  + " SET private_promotion_dispatched_at = CURRENT_TIMESTAMP "
-                  + "WHERE operation_id = ? AND status = 'PREPARED' "
-                  + "AND private_promotion_dispatched_at IS NULL "
-                  + "AND private_promotion_receipt_digest IS NULL "
-                  + "AND active_jwks_receipt_digest IS NULL",
-              operationId);
+                  + " AS promotion SET private_promotion_dispatched_at = readiness_clock.checked_at "
+                  + "FROM readiness_clock WHERE promotion.operation_id = ? "
+                  + "AND promotion.status = 'PREPARED' "
+                  + "AND promotion.private_promotion_dispatched_at IS NULL "
+                  + "AND promotion.private_promotion_receipt_digest IS NULL "
+                  + "AND promotion.active_jwks_receipt_digest IS NULL "
+                  + "AND promotion.readiness_plan_digest = ? "
+                  + "AND promotion.readiness_evidence_digest = ? "
+                  + "AND encode(sha256(promotion.readiness_evidence_preimage), 'hex') "
+                  + "= promotion.readiness_evidence_digest "
+                  + "AND EXISTS (SELECT 1 FROM account_jwt_readiness_probe_plans plan "
+                  + "WHERE plan.rotation_operation_id = promotion.generation_operation_id "
+                  + "AND plan.plan_digest = promotion.readiness_plan_digest "
+                  + "AND plan.validator_inventory_complete = TRUE "
+                  + "AND plan.not_before_epoch_seconds <= "
+                  + "floor(extract(epoch FROM readiness_clock.checked_at))::BIGINT "
+                  + "AND plan.expires_at_epoch_seconds > "
+                  + "floor(extract(epoch FROM readiness_clock.checked_at))::BIGINT) "
+                  + "AND (SELECT count(*) FROM account_jwt_readiness_probe_entries entry "
+                  + "WHERE entry.rotation_operation_id = promotion.generation_operation_id "
+                  + "AND entry.plan_digest = promotion.readiness_plan_digest) = ? "
+                  + "AND (SELECT count(*) FROM account_jwt_readiness_probe_entries entry "
+                  + "WHERE entry.rotation_operation_id = promotion.generation_operation_id "
+                  + "AND entry.plan_digest = promotion.readiness_plan_digest "
+                  + "AND entry.state = 'VERIFIED' "
+                  + "AND entry.verification_receipt_sha256 IS NOT NULL "
+                  + "AND entry.verified_at_epoch_seconds < entry.expires_at_epoch_seconds "
+                  + "AND entry.expires_at_epoch_seconds > "
+                  + "floor(extract(epoch FROM readiness_clock.checked_at))::BIGINT) = ?",
+              operationId,
+              promotion.readinessPlanDigest(),
+              promotion.readinessEvidenceDigest(),
+              expectedReadinessProbeCount,
+              expectedReadinessProbeCount);
       if (changed != 1) {
         throw new VersionConflictException(
             "Account private promotion dispatch authorization CAS did not apply");
@@ -399,7 +561,8 @@ public class AccountJwtSignerDesiredStateRepository {
       throw new QuarantinedStateException(
           "Account private promotion dispatch authorization did not read back exactly");
     }
-    return evidence;
+    return new PreparedGenerationEvidence(
+        evidence.desiredState(), promotion.publicEvidence(), evidence.generationResult());
   }
 
   /**
@@ -653,11 +816,10 @@ public class AccountJwtSignerDesiredStateRepository {
             promotion.expectedPublicJwksJson());
     requireReadinessProofMatches(
         result, commitPreparation, promotion, expectedBinding, trust, readinessProof);
-    requireUnexpiredCurrentReadinessProof(promotion, result, readinessProof);
 
-    // State is locked first above, matching readiness expiry/cleanup's owner lock order. The
-    // terminal UPDATE repeats the clock and complete-entry fence atomically; the count query in
-    // the helper is a validation read, not an entry-row lock.
+    // Readiness freshness was required before PREPARED and again at the one-way dispatch boundary.
+    // After dispatch, recovery is authorized by that exact immutable proof and the durable
+    // resource receipts, not by the proof's former wall-clock window.
     int changed =
         dsl.execute(
             "UPDATE "
@@ -666,22 +828,20 @@ public class AccountJwtSignerDesiredStateRepository {
                 + "AND status = 'PREPARED' AND private_promotion_dispatched_at IS NOT NULL "
                 + "AND private_promotion_receipt_digest IS NOT NULL "
                 + "AND active_jwks_receipt_digest IS NOT NULL "
+                + "AND readiness_plan_digest = ? AND readiness_evidence_digest = ? "
+                + "AND encode(sha256(readiness_evidence_preimage), 'hex') = readiness_evidence_digest "
                 + "AND EXISTS (SELECT 1 FROM account_jwt_readiness_probe_plans plan "
                 + "WHERE plan.rotation_operation_id = ? AND plan.plan_digest = ? "
-                + "AND plan.validator_inventory_complete = TRUE "
-                + "AND plan.not_before_epoch_seconds <= "
-                + "floor(extract(epoch FROM clock_timestamp()))::BIGINT "
-                + "AND plan.expires_at_epoch_seconds > "
-                + "floor(extract(epoch FROM clock_timestamp()))::BIGINT) "
+                + "AND plan.validator_inventory_complete = TRUE) "
                 + "AND (SELECT count(*) FROM account_jwt_readiness_probe_entries entry "
                 + "WHERE entry.rotation_operation_id = ? AND entry.plan_digest = ?) = ? "
                 + "AND (SELECT count(*) FROM account_jwt_readiness_probe_entries entry "
                 + "WHERE entry.rotation_operation_id = ? AND entry.plan_digest = ? "
                 + "AND entry.state = 'VERIFIED' AND entry.verification_receipt_sha256 IS NOT NULL "
-                + "AND entry.verified_at_epoch_seconds < entry.expires_at_epoch_seconds "
-                + "AND entry.expires_at_epoch_seconds > "
-                + "floor(extract(epoch FROM clock_timestamp()))::BIGINT) = ?",
+                + "AND entry.verified_at_epoch_seconds < entry.expires_at_epoch_seconds) = ?",
             promotionOperationId,
+            promotion.readinessPlanDigest(),
+            promotion.readinessEvidenceDigest(),
             promotion.generationOperationId(),
             promotion.readinessPlanDigest(),
             promotion.generationOperationId(),
@@ -1123,7 +1283,8 @@ public class AccountJwtSignerDesiredStateRepository {
         throw new QuarantinedStateException("Prepared promotion source generation is missing");
       }
       verifyPreparedGenerationMatches(replay, replayGeneration, replayResult);
-      if (!replay.matchesPreparation(preparation, replayGeneration, replayResult, enrollment)) {
+      if (!replay.matchesPreparation(
+          preparation, replayGeneration, replayResult, enrollment, readinessProof)) {
         throw new IdempotencyConflictException(
             "JWT signer promotion retry changed its immutable evidence");
       }
@@ -1157,7 +1318,8 @@ public class AccountJwtSignerDesiredStateRepository {
     requireCurrentReadinessForPreparation(result, preparation);
 
     StoredPromotion candidate =
-        StoredPromotion.create(preparation, state, generation, result, trust, expectedBinding);
+        StoredPromotion.create(
+            preparation, state, generation, result, trust, expectedBinding, readinessProof);
     StoredPromotion existing = selectPromotion(candidate.operationId(), true);
     if (existing != null) {
       requirePromotionMatchesState(existing, state);
@@ -1224,9 +1386,12 @@ public class AccountJwtSignerDesiredStateRepository {
     }
     if (preparedReplay != null
         && (!preparedReplay.readinessPlanDigest().equals(plan.planDigest())
-            || !preparedReplay.readinessEvidenceDigest().equals(proof.readinessEvidenceDigest()))) {
+            || !preparedReplay.readinessEvidenceDigest().equals(proof.readinessEvidenceDigest())
+            || !Arrays.equals(
+                preparedReplay.readinessEvidencePreimage().getBytes(StandardCharsets.UTF_8),
+                proof.readinessEvidencePreimage()))) {
       throw new IdempotencyConflictException(
-          "Readiness recovery proof changed for the exact PREPARED promotion");
+          "Readiness recovery proof changed from the exact frozen PREPARED evidence");
     }
     if (!plan.validatorInventoryComplete()
         || proof.inventoryEvidenceReference() == null
@@ -1255,8 +1420,22 @@ public class AccountJwtSignerDesiredStateRepository {
     }
     long previousGeneration =
         Math.max(
-            state.durableActive().map(value -> parseGeneration(value.generation())).orElse(0L),
-            state.publishedActive().map(value -> parseGeneration(value.generation())).orElse(0L));
+            Math.max(
+                state.durableActive().map(value -> parseGeneration(value.generation())).orElse(0L),
+                state
+                    .publishedActive()
+                    .map(value -> parseGeneration(value.generation()))
+                    .orElse(0L)),
+            Objects.requireNonNull(
+                Objects.requireNonNull(
+                        dsl.fetchOne(
+                            "SELECT COALESCE(MAX(target_generation), 0) FROM "
+                                + OPERATION_TABLE
+                                + " WHERE environment_id = ?",
+                            state.binding().environmentId()),
+                        "Historical Account generation high-water row is required")
+                    .get(0, Long.class),
+                "Historical Account generation high-water readback is required"));
     if (previousGeneration == Long.MAX_VALUE) {
       throw new VersionConflictException("Account JWT signer generation is exhausted");
     }
@@ -1460,7 +1639,7 @@ public class AccountJwtSignerDesiredStateRepository {
                 + "p.api_binding_digest, p.api_config_revision, p.expected_private_secret_uid, "
                 + "p.expected_public_config_map_uid, p.prepublication_intent_digest, "
                 + "p.prepublication_receipt_digest, p.mounted_observation_digest, p.readiness_plan_digest, "
-                + "p.readiness_evidence_digest, p.expected_public_jwks_json, "
+                + "p.readiness_evidence_digest, p.readiness_evidence_preimage, p.expected_public_jwks_json, "
                 + "p.expected_active_generation_marker_json, "
                 + "(p.private_promotion_dispatched_at IS NOT NULL) AS private_promotion_dispatched, "
                 + "p.private_promotion_observed_resource_version, "
@@ -1906,6 +2085,9 @@ public class AccountJwtSignerDesiredStateRepository {
               row.get("mounted_observation_digest", String.class),
               row.get("readiness_plan_digest", String.class),
               row.get("readiness_evidence_digest", String.class),
+              readinessPreimageText(
+                  row.get("readiness_evidence_preimage", byte[].class),
+                  row.get("readiness_evidence_digest", String.class)),
               row.get("expected_public_jwks_json", String.class),
               row.get("expected_active_generation_marker_json", String.class),
               row.get("status", String.class),
@@ -2019,6 +2201,84 @@ public class AccountJwtSignerDesiredStateRepository {
                 + (lock ? " FOR UPDATE" : ""),
             operationId);
     return row == null ? null : decodeGenerationResult(row);
+  }
+
+  private GenerationAbortReceipt selectGenerationAbortReceipt(UUID operationId, boolean lock) {
+    Record row =
+        dsl.fetchOne(
+            "SELECT operation_id, environment_id, cluster_id, kubernetes_namespace, custody_mode, "
+                + "operation_digest, generation_request_digest, generation_receipt_digest, "
+                + "expected_state_version, resulting_state_version, "
+                + "expected_cluster_incarnation_uid, expected_namespace_uid, trust_binding_digest, "
+                + "trust_config_revision, durable_active_generation, durable_active_kid, "
+                + "published_active_generation, published_active_kid FROM "
+                + GENERATION_ABORT_TABLE
+                + " WHERE operation_id = ?"
+                + (lock ? " FOR UPDATE" : ""),
+            operationId);
+    if (row == null) {
+      return null;
+    }
+    return new GenerationAbortReceipt(
+        row.get("operation_id", UUID.class),
+        new Binding(
+            row.get("environment_id", String.class),
+            row.get("cluster_id", String.class),
+            row.get("kubernetes_namespace", String.class),
+            CustodyMode.fromValue(row.get("custody_mode", String.class))),
+        row.get("operation_digest", String.class),
+        row.get("generation_request_digest", String.class),
+        row.get("generation_receipt_digest", String.class),
+        positive(row.get("expected_state_version", Long.class), "abort expected state version"),
+        positive(row.get("resulting_state_version", Long.class), "abort resulting state version"),
+        new TrustFence(
+            row.get("expected_cluster_incarnation_uid", UUID.class).toString(),
+            row.get("expected_namespace_uid", UUID.class).toString(),
+            row.get("trust_binding_digest", String.class),
+            row.get("trust_config_revision", String.class)),
+        activeOptional(
+            row.get("durable_active_generation", Long.class),
+            row.get("durable_active_kid", String.class),
+            "aborted durable active signer"),
+        activeOptional(
+            row.get("published_active_generation", Long.class),
+            row.get("published_active_kid", String.class),
+            "aborted published active signer"));
+  }
+
+  private void insertGenerationAbortReceipt(GenerationAbortReceipt receipt) {
+    int inserted =
+        dsl.execute(
+            "INSERT INTO "
+                + GENERATION_ABORT_TABLE
+                + " (operation_id, environment_id, cluster_id, kubernetes_namespace, custody_mode, "
+                + "operation_digest, generation_request_digest, generation_receipt_digest, "
+                + "expected_state_version, resulting_state_version, expected_cluster_incarnation_uid, "
+                + "expected_namespace_uid, trust_binding_digest, trust_config_revision, "
+                + "durable_active_generation, durable_active_kid, published_active_generation, "
+                + "published_active_kid) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            receipt.operationId(),
+            receipt.binding().environmentId(),
+            receipt.binding().clusterId(),
+            receipt.binding().namespace(),
+            receipt.binding().mode().value(),
+            receipt.operationDigest(),
+            receipt.generationRequestDigest(),
+            receipt.generationReceiptDigest(),
+            receipt.expectedStateVersion(),
+            receipt.resultingStateVersion(),
+            UUID.fromString(receipt.trustFence().expectedClusterIncarnationUid()),
+            UUID.fromString(receipt.trustFence().expectedNamespaceUid()),
+            receipt.trustFence().bindingDigest(),
+            receipt.trustFence().configRevision(),
+            generationValue(receipt.durableActive()),
+            kidValue(receipt.durableActive()),
+            generationValue(receipt.publishedActive()),
+            kidValue(receipt.publishedActive()));
+    if (inserted != 1) {
+      throw new StorageUnavailableException(
+          "Account generation abort receipt insert was ambiguous");
+    }
   }
 
   private void insertGenerationOperation(StoredGenerationOperation operation) {
@@ -2176,25 +2436,20 @@ public class AccountJwtSignerDesiredStateRepository {
     }
   }
 
-  /**
-   * Rechecks the owner-created typed proof at the durable COMMITTED boundary. A proof read before
-   * this transaction is insufficient: the plan and every VERIFIED entry must still be inside their
-   * recorded validity window when Account commits the promotion.
-   */
-  private void requireUnexpiredCurrentReadinessProof(
-      StoredPromotion promotion, GenerationResult result, ReadinessPromotionProof proof) {
-    var expectedPlan = proof.plan();
+  /** Enforces readiness freshness at the last reversible boundary before private mutation. */
+  private int requireFreshReadinessBeforeDispatch(
+      StoredPromotion promotion, GenerationResult result) {
+    int expectedProbeCount = frozenReadinessProbeCount(promotion);
     Record currentPlan =
         dsl.fetchOne(
             "SELECT plan_digest, operation_digest, generation_request_digest, "
                 + "generation_receipt_digest, desired_state_version, target_generation, target_kid, "
                 + "target_public_key_fingerprint, publication_intent_digest, "
-                + "publication_receipt_digest, mounted_observation_digest, "
-                + "applicability_matrix_digest, validator_inventory_complete, "
-                + "maximum_cache_age_seconds, not_before_epoch_seconds, expires_at_epoch_seconds, "
+                + "publication_receipt_digest, mounted_observation_digest, validator_inventory_complete, "
+                + "not_before_epoch_seconds, expires_at_epoch_seconds, "
                 + "floor(extract(epoch FROM clock_timestamp()))::bigint AS checked_epoch "
                 + "FROM account_jwt_readiness_probe_plans WHERE rotation_operation_id = ? "
-                + "AND plan_digest = ? FOR UPDATE",
+                + "AND plan_digest = ? FOR SHARE",
             result.operationId(),
             promotion.readinessPlanDigest());
     if (currentPlan == null
@@ -2224,20 +2479,13 @@ public class AccountJwtSignerDesiredStateRepository {
         || !promotion
             .mountedObservationDigest()
             .equals(currentPlan.get("mounted_observation_digest", String.class))
-        || !expectedPlan
-            .applicabilityMatrixDigest()
-            .equals(currentPlan.get("applicability_matrix_digest", String.class))
-        || expectedPlan.maximumCacheAgeSeconds()
-            != currentPlan.get("maximum_cache_age_seconds", Short.class)
-        || expectedPlan.notBeforeEpochSecond()
-            != currentPlan.get("not_before_epoch_seconds", Long.class)
-        || expectedPlan.expiresAtEpochSecond()
-            != currentPlan.get("expires_at_epoch_seconds", Long.class)
         || currentPlan.get("checked_epoch", Long.class) == null
-        || currentPlan.get("checked_epoch", Long.class) < expectedPlan.notBeforeEpochSecond()
-        || currentPlan.get("checked_epoch", Long.class) >= expectedPlan.expiresAtEpochSecond()) {
+        || currentPlan.get("checked_epoch", Long.class)
+            < currentPlan.get("not_before_epoch_seconds", Long.class)
+        || currentPlan.get("checked_epoch", Long.class)
+            >= currentPlan.get("expires_at_epoch_seconds", Long.class)) {
       throw new PromotionPrerequisitesIncompleteException(
-          "Exact Account readiness proof is missing, changed, or expired at commit");
+          "Exact Account readiness proof is missing, changed, or expired before private dispatch");
     }
 
     Record currentEntries =
@@ -2255,10 +2503,30 @@ public class AccountJwtSignerDesiredStateRepository {
     if (total == null
         || verified == null
         || total <= 0L
-        || total != proof.verifiedProbes().size()
+        || total != expectedProbeCount
         || !total.equals(verified)) {
       throw new PromotionPrerequisitesIncompleteException(
-          "Every exact Account validator proof must remain VERIFIED and unexpired at commit");
+          "Every exact Account validator proof must remain VERIFIED and unexpired before private dispatch");
+    }
+    return expectedProbeCount;
+  }
+
+  private static int frozenReadinessProbeCount(StoredPromotion promotion) {
+    try {
+      JsonNode proof = STRICT_JSON.readTree(promotion.readinessEvidencePreimage());
+      JsonNode probes = proof == null ? null : proof.get("verifiedProbes");
+      if (proof == null
+          || !proof.isObject()
+          || probes == null
+          || !probes.isArray()
+          || probes.isEmpty()
+          || probes.size() > 32) {
+        throw new IllegalArgumentException("Frozen readiness probe set is malformed");
+      }
+      return probes.size();
+    } catch (Exception failure) {
+      throw new QuarantinedStateException(
+          "Frozen Account readiness proof cannot be read before private dispatch", failure);
     }
   }
 
@@ -2279,10 +2547,10 @@ public class AccountJwtSignerDesiredStateRepository {
                 + "api_binding_digest, api_config_revision, expected_private_secret_uid, "
                 + "expected_public_config_map_uid, prepublication_intent_digest, "
                 + "prepublication_receipt_digest, mounted_observation_digest, readiness_plan_digest, "
-                + "readiness_evidence_digest, expected_public_jwks_json, "
+                + "readiness_evidence_digest, readiness_evidence_preimage, expected_public_jwks_json, "
                 + "expected_active_generation_marker_json) "
                 + "VALUES (?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, 'RS256', ?, ?, ?, ?, ?, "
-                + "'PROMOTE_PENDING', ?, 'PREPARED', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                + "'PROMOTE_PENDING', ?, 'PREPARED', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             promotion.operationId(),
             promotion.binding().environmentId(),
             promotion.binding().clusterId(),
@@ -2314,6 +2582,7 @@ public class AccountJwtSignerDesiredStateRepository {
             promotion.mountedObservationDigest(),
             promotion.readinessPlanDigest(),
             promotion.readinessEvidenceDigest(),
+            promotion.readinessEvidencePreimage().getBytes(StandardCharsets.UTF_8),
             promotion.expectedPublicJwksJson(),
             promotion.expectedActiveMarkerJson());
     if (inserted != 1) {
@@ -2762,6 +3031,30 @@ public class AccountJwtSignerDesiredStateRepository {
     } catch (NoSuchAlgorithmException ex) {
       throw new IllegalStateException("SHA-256 is unavailable for JWT promotion evidence", ex);
     }
+  }
+
+  private static String sha256(byte[] value) {
+    try {
+      return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(value));
+    } catch (NoSuchAlgorithmException ex) {
+      throw new IllegalStateException("SHA-256 is unavailable for JWT promotion evidence", ex);
+    }
+  }
+
+  private static String readinessPreimageText(byte[] value, String expectedDigest) {
+    if (value == null
+        || value.length == 0
+        || value.length > 1024 * 1024
+        || expectedDigest == null
+        || !expectedDigest.equals(sha256(value))) {
+      throw new QuarantinedStateException(
+          "Persisted readiness proof preimage does not match its exact digest");
+    }
+    String text = new String(value, StandardCharsets.UTF_8);
+    if (!Arrays.equals(value, text.getBytes(StandardCharsets.UTF_8))) {
+      throw new QuarantinedStateException("Persisted readiness proof preimage is not valid UTF-8");
+    }
+    return text;
   }
 
   private static Object activeDigestValue(Optional<ActiveSigner> active) {
@@ -3393,6 +3686,7 @@ public class AccountJwtSignerDesiredStateRepository {
       String mountedObservationDigest,
       String readinessPlanDigest,
       String readinessEvidenceDigest,
+      String readinessEvidencePreimage,
       String expectedPublicJwksJson,
       String expectedActiveMarkerJson,
       String status,
@@ -3436,6 +3730,14 @@ public class AccountJwtSignerDesiredStateRepository {
       requireMatch(SHA256_HEX, mountedObservationDigest, "mounted observation digest");
       requireMatch(SHA256_HEX, readinessPlanDigest, "readiness plan digest");
       requireMatch(SHA256_HEX, readinessEvidenceDigest, "readiness evidence digest");
+      if (readinessEvidencePreimage == null
+          || readinessEvidencePreimage.isBlank()
+          || readinessEvidencePreimage.getBytes(StandardCharsets.UTF_8).length > 1024 * 1024
+          || !readinessEvidenceDigest.equals(
+              sha256(readinessEvidencePreimage.getBytes(StandardCharsets.UTF_8)))) {
+        throw new QuarantinedStateException(
+            "Promotion readiness preimage does not match its exact digest");
+      }
       if (expectedPublicJwksJson == null
           || expectedPublicJwksJson.isBlank()
           || expectedPublicJwksJson.getBytes(StandardCharsets.UTF_8).length > 256 * 1024
@@ -3487,7 +3789,8 @@ public class AccountJwtSignerDesiredStateRepository {
         StoredGenerationOperation generation,
         GenerationResult result,
         TrustFence trust,
-        Binding binding) {
+        Binding binding,
+        ReadinessPromotionProof readinessProof) {
       if (!preparation.generationOperationId().equals(generation.operationId())
           || !preparation.generationResult().equals(result)
           || !preparation
@@ -3497,6 +3800,7 @@ public class AccountJwtSignerDesiredStateRepository {
           || !result.binding().equals(binding)
           || !generation.trustFence().equals(trust)
           || !result.trustFence().equals(trust)
+          || !preparation.readinessEvidenceDigest().equals(readinessProof.readinessEvidenceDigest())
           || !state.generationOperationId().equals(Optional.of(generation.operationId()))
           || state.preparedOperationId().isPresent()) {
         throw new PromotionPrerequisitesIncompleteException(
@@ -3531,6 +3835,7 @@ public class AccountJwtSignerDesiredStateRepository {
               preparation.mountedObservationDigest(),
               preparation.readinessPlanDigest(),
               preparation.readinessEvidenceDigest(),
+              new String(readinessProof.readinessEvidencePreimage(), StandardCharsets.UTF_8),
               preparation.expectedPublicJwksJson(),
               "{}",
               "PREPARED",
@@ -3568,6 +3873,7 @@ public class AccountJwtSignerDesiredStateRepository {
               unsigned.mountedObservationDigest(),
               unsigned.readinessPlanDigest(),
               unsigned.readinessEvidenceDigest(),
+              unsigned.readinessEvidencePreimage(),
               unsigned.expectedPublicJwksJson(),
               "{}",
               unsigned.status(),
@@ -3604,6 +3910,7 @@ public class AccountJwtSignerDesiredStateRepository {
           signed.mountedObservationDigest(),
           signed.readinessPlanDigest(),
           signed.readinessEvidenceDigest(),
+          signed.readinessEvidencePreimage(),
           signed.expectedPublicJwksJson(),
           activeMarkerJson(signed),
           signed.status(),
@@ -3623,7 +3930,8 @@ public class AccountJwtSignerDesiredStateRepository {
         PromotionPreparation preparation,
         StoredGenerationOperation generation,
         GenerationResult result,
-        EnrollmentIdentity enrollment) {
+        EnrollmentIdentity enrollment,
+        ReadinessPromotionProof readinessProof) {
       return generation.operationId().equals(preparation.generationOperationId())
           && result.equals(preparation.generationResult())
           && preparation.enrollmentIdentity().sameStablePins(enrollment)
@@ -3636,6 +3944,8 @@ public class AccountJwtSignerDesiredStateRepository {
           && mountedObservationDigest.equals(preparation.mountedObservationDigest())
           && readinessPlanDigest.equals(preparation.readinessPlanDigest())
           && readinessEvidenceDigest.equals(preparation.readinessEvidenceDigest())
+          && readinessEvidencePreimage.equals(
+              new String(readinessProof.readinessEvidencePreimage(), StandardCharsets.UTF_8))
           && expectedPublicJwksJson.equals(preparation.expectedPublicJwksJson())
           && generationOperationId.equals(generation.operationId())
           && generationOperationDigest.equals(generation.operationDigest())
@@ -3892,6 +4202,79 @@ public class AccountJwtSignerDesiredStateRepository {
       if (!durableActive.equals(publishedActive)) {
         throw new QuarantinedStateException("Aborted signer operation changed active fences");
       }
+    }
+  }
+
+  /** Terminal, non-authorizing receipt for one exact unprepared generation operation. */
+  public record GenerationAbortReceipt(
+      UUID operationId,
+      Binding binding,
+      String operationDigest,
+      String generationRequestDigest,
+      String generationReceiptDigest,
+      long expectedStateVersion,
+      long resultingStateVersion,
+      TrustFence trustFence,
+      Optional<ActiveSigner> durableActive,
+      Optional<ActiveSigner> publishedActive) {
+    public GenerationAbortReceipt {
+      requireOperationId(operationId);
+      Objects.requireNonNull(binding, "Generation abort binding is required");
+      requireMatch(SHA256_HEX, operationDigest, "aborted generation operation digest");
+      requireMatch(SHA256_HEX, generationRequestDigest, "aborted generation request digest");
+      requireMatch(SHA256_HEX, generationReceiptDigest, "aborted generation result digest");
+      if (expectedStateVersion <= 1L
+          || expectedStateVersion == Long.MAX_VALUE
+          || resultingStateVersion != expectedStateVersion + 1L) {
+        throw new QuarantinedStateException("Generation abort state-version fence is malformed");
+      }
+      Objects.requireNonNull(trustFence, "Generation abort trust fence is required");
+      durableActive = Objects.requireNonNull(durableActive);
+      publishedActive = Objects.requireNonNull(publishedActive);
+    }
+
+    private static GenerationAbortReceipt from(
+        DesiredState state,
+        StoredGenerationOperation operation,
+        GenerationResult result,
+        TrustFence trust) {
+      if (state.recordVersion() != result.desiredStateVersion()
+          || !state.binding().equals(operation.binding())
+          || !state.durableActive().equals(operation.expectedPreviousActive())
+          || !state.publishedActive().equals(operation.expectedPublishedActive())
+          || !operation.operationId().equals(result.operationId())
+          || !operation.operationDigest().equals(result.operationDigest())
+          || !result.trustFence().equals(trust)
+          || !operation.trustFence().equals(trust)) {
+        throw new QuarantinedStateException(
+            "Generation abort source does not match current Account owner evidence");
+      }
+      return new GenerationAbortReceipt(
+          operation.operationId(),
+          operation.binding(),
+          operation.operationDigest(),
+          result.generationRequestDigest(),
+          result.receiptDigest(),
+          state.recordVersion(),
+          state.recordVersion() + 1L,
+          trust,
+          state.durableActive(),
+          state.publishedActive());
+    }
+
+    private boolean matches(
+        StoredGenerationOperation operation, GenerationResult result, TrustFence trust) {
+      return binding.equals(operation.binding())
+          && operationId.equals(operation.operationId())
+          && operationDigest.equals(operation.operationDigest())
+          && generationRequestDigest.equals(result.generationRequestDigest())
+          && generationReceiptDigest.equals(result.receiptDigest())
+          && expectedStateVersion == result.desiredStateVersion()
+          && trustFence.equals(trust)
+          && trustFence.equals(operation.trustFence())
+          && trustFence.equals(result.trustFence())
+          && durableActive.equals(operation.expectedPreviousActive())
+          && publishedActive.equals(operation.expectedPublishedActive());
     }
   }
 

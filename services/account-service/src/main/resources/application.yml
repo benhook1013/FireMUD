@@ -57,6 +57,8 @@ firemud:
       connect-token-expiration-ms: 30000
     actor-staging-eligibility:
       enabled: ${FIREMUD_ACCOUNT_ACTOR_STAGING_ELIGIBILITY_ENABLED:false}
+    start-session-operator-authorization:
+      enabled: ${FIREMUD_ACCOUNT_START_SESSION_OPERATOR_AUTHORIZATION_ENABLED:false}
   mail:
     from: no-reply@firemud.local
     verification-url: http://localhost:8080/auth/verify-email?token=%s
@@ -65,6 +67,7 @@ firemud:
     stripe-api-key: test-key
     platform-fee-percent: 5
   auth:
+    session-safety-margin-ms: ${FIREMUD_AUTH_SESSION_SAFETY_MARGIN_MS:300000}
     http:
       enabled: true
       role-requirement: AUTHENTICATED
@@ -107,6 +110,10 @@ firemud:
         - account.v1.AccountService/JoinPublicProductionMembership
         - account.v1.RuntimeAccountIdentityService/ResolveRuntimeAccountIdentity
         - account.v1.AccountActorStagingEligibilityService/ResolvePreseededActorStagingEligibility
+        - account.v1.StartSessionOperatorAuthorizationService/IssueHumanOperatorAuthorizationReference
+        - account.v1.StartSessionOperatorAuthorizationService/RecoverOperatorAuthorizationReference
+        - account.v1.StartSessionOperatorAuthorizationService/RedeemOperatorAuthorization
+        - account.v1.StartSessionOperatorAuthorizationService/ReadRedeemedOperationProjection
 
 management:
   endpoints:

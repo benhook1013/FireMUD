@@ -70,7 +70,8 @@ _EVIDENCE_LABEL = re.compile(
     r"^(?:(?:supported by static analysis|script executed|analysis results?|"
     r"committable suggestion|script output|analysis chain|suggested fix|prompt for ai agents|ai (?:agent )?prompt)\s*:?|"
     r"repository\s*:\s*`?[a-zA-Z0-9_.-]+/[a-zA-Z0-9_.-]+`?|"
-    r"length of output\s*:\s*[0-9]+)\s*$", re.IGNORECASE
+    r"length of output\s*:\s*[0-9]+)\s*$",
+    re.IGNORECASE,
 )
 
 
@@ -78,6 +79,11 @@ def _is_evidence_label(value: str) -> bool:
     candidate = _bold_line_content(value.strip()) or value.strip().strip("_*")
     candidate = re.sub(r"^[^a-zA-Z0-9]+", "", candidate)
     return bool(_EVIDENCE_LABEL.fullmatch(candidate))
+
+
+def _is_suggested_fix_label(value: str) -> bool:
+    candidate = _bold_line_content(value.strip()) or value.strip().strip("_*")
+    return bool(re.fullmatch(r"[^a-zA-Z0-9]*Suggested fix\s*:?\s*", candidate, flags=re.IGNORECASE))
 
 
 def _headline_text(line: str) -> str:
@@ -106,7 +112,7 @@ def _strip_badge_prefix(line: str, *, allow_two_field: bool = False) -> str:
     ):
         match = re.match(pattern, line)
         if match and _is_badge_line(match.group(), allow_two_field=allow_two_field):
-            return line[match.end():].strip()
+            return line[match.end() :].strip()
     return line
 
 
@@ -124,7 +130,7 @@ def _hosted_issue_markdown(
             continue
         summary = _headline_text(match.group(1))
         if re.search(r"prompt for ai agents|ai (?:agent )?prompt", summary, re.IGNORECASE):
-            value = value[:match.start()]
+            value = value[: match.start()]
             break
     # Protect ordinary samples before any HTML/metadata cleanup. Diagnostic
     # details still discard their entire block, including protected samples.
@@ -134,7 +140,11 @@ def _hosted_issue_markdown(
         marker += ":"
     for index, (start, end) in reversed(list(enumerate(_markdown_fenced_ranges(value)))):
         preceding = value[:start].rstrip().splitlines()
-        if preceding and _is_evidence_label(_headline_text(preceding[-1])):
+        if (
+            preceding
+            and _is_evidence_label(_headline_text(preceding[-1]))
+            and not _is_suggested_fix_label(_headline_text(preceding[-1]))
+        ):
             replacement = "\n"
         else:
             token = f"{marker}{index}\x00"
@@ -145,28 +155,39 @@ def _hosted_issue_markdown(
     value = re.sub(r"<(script|style)\b[^>]*>.*?</\1>", "", value, flags=re.DOTALL | re.IGNORECASE)
     value = re.sub(
         r"<details\b[^>]*>\s*<summary\b[^>]*>(.*?)</summary>(.*?)</details>",
-        lambda match: "" if (_is_evidence_label(_headline_text(match.group(1)))
-                              or re.fullmatch(r"[^a-zA-Z0-9]*Tools\s*", _headline_text(match.group(1))))
-        else match.group(1) + "\n" + match.group(2),
+        lambda match: (
+            ""
+            if (
+                (
+                    _is_evidence_label(_headline_text(match.group(1)))
+                    and not _is_suggested_fix_label(_headline_text(match.group(1)))
+                )
+                or re.fullmatch(r"[^a-zA-Z0-9]*Tools\s*", _headline_text(match.group(1)))
+            )
+            else match.group(1) + "\n" + match.group(2)
+        ),
         value,
         flags=re.DOTALL | re.IGNORECASE,
     )
     # Security taxonomy is metadata only when the provider header and an
     # adjacent exploitability/CWE block prove that a later authored remediation exists.
     value = "\n".join(
-        line for line in value.splitlines()
-        if not _is_evidence_label(_headline_text(html.unescape(line)))
-        and line.strip() not in {"---", "***", "___"}
+        line
+        for line in value.splitlines()
+        if not _is_evidence_label(_headline_text(html.unescape(line))) and line.strip() not in {"---", "***", "___"}
     )
     pattern = re.compile(
         r"^([^\n]+)\n[ \t\n]*\*\*([^\n*]+)\*\*[ \t]*\n[ \t\n]*"
         r"((?:\*\*(?:Reachability|Exploitability|CWE):\*\*[^\n]*\n[ \t\n]*)+)"
-        r"(?=\*\*[^\n*]+\*\*(?:[ \t]|$))", re.MULTILINE
+        r"(?=\*\*[^\n*]+\*\*(?:[ \t]|$))",
+        re.MULTILINE,
     )
+
     def strip_classification(match: re.Match[str]) -> str:
         header, classification, metadata = match.groups()
         if (
-            not _is_badge_line(header) or len(header.split("|")) not in {3, 4}
+            not _is_badge_line(header)
+            or len(header.split("|")) not in {3, 4}
             or _badge_label_text(header.split("|")[0]).casefold() != "security & privacy"
             or "**Exploitability:**" not in metadata
             or not re.search(r"\*\*CWE:\*\*.*CWE-[0-9]+", metadata)
@@ -175,6 +196,7 @@ def _hosted_issue_markdown(
         if classification_titles is not None:
             classification_titles.add(classification)
         return header + "\n"
+
     value = pattern.sub(strip_classification, value)
     lines = []
     header_position = True
@@ -187,8 +209,9 @@ def _hosted_issue_markdown(
             header_position = False
         if not keep_badges:
             line = _strip_badge_prefix(line, allow_two_field=allow_two_field)
-        if line and ((_is_badge_line(line, allow_two_field=allow_two_field) and not keep_badges)
-                     or _is_evidence_label(line)):
+        if line and (
+            (_is_badge_line(line, allow_two_field=allow_two_field) and not keep_badges) or _is_evidence_label(line)
+        ):
             continue
         if line or not lines or lines[-1]:
             lines.append(line)
@@ -255,7 +278,7 @@ def _hosted_display_detail(value: str, title: str) -> str:
             break
         match = re.match(r"^(?:\*\*(.+?)\*\*|__(.+?)__)(?:\s|$)", candidate)
         if match and (match.group(1) or match.group(2)) == title:
-            lines[index] = candidate[match.end():].lstrip()
+            lines[index] = candidate[match.end() :].lstrip()
             break
     value = "\n".join(lines).strip()
     value, _ = _redact_archive_text(value)
@@ -277,8 +300,10 @@ def _badge_label_text(value: str) -> str:
 
 
 def _explicit_severity_label(value: str, *, priority_badge: bool = False) -> str | None:
-    labels = {label.casefold(): label for label in
-              ("Critical", "Major", "Minor", "Trivial", "High", "Medium", "Low", "P0", "P1", "P2", "P3")}
+    labels = {
+        label.casefold(): label
+        for label in ("Critical", "Major", "Minor", "Trivial", "High", "Medium", "Low", "P0", "P1", "P2", "P3")
+    }
     candidate = _badge_label_text(value)
     candidate = re.sub(r"^severity\s*:\s*", "", candidate, flags=re.IGNORECASE)
     priority = re.fullmatch(r"(P[0-3])\]?(?:\s+(?:Bug|Issue|Nit|Suggestion))?", candidate, re.IGNORECASE)
@@ -293,14 +318,23 @@ def _is_badge_line(line: str, *, allow_two_field: bool = False) -> bool:
     candidate = re.sub(r"^#{1,6}\s*", "", line).strip()
     sections = [section.strip() for section in candidate.split("|")]
     wrapped_fields = all(
-        any(section.startswith(delimiter) and section.endswith(delimiter)
-            for delimiter in ("_", "**", "__")) for section in sections
+        any(section.startswith(delimiter) and section.endswith(delimiter) for delimiter in ("_", "**", "__"))
+        for section in sections
     )
     if len(sections) == 2 and wrapped_fields:
-        known_categories = {"bug", "data integrity & integration", "functional correctness", "maintainability & code quality",
-                            "security & privacy", "stability & availability"}
-        return (allow_two_field and _badge_label_text(sections[0]).casefold() in known_categories
-                and _explicit_severity_label(sections[1]) is not None)
+        known_categories = {
+            "bug",
+            "data integrity & integration",
+            "functional correctness",
+            "maintainability & code quality",
+            "security & privacy",
+            "stability & availability",
+        }
+        return (
+            allow_two_field
+            and _badge_label_text(sections[0]).casefold() in known_categories
+            and _explicit_severity_label(sections[1]) is not None
+        )
     if len(sections) in {3, 4} and wrapped_fields:
         category = _badge_label_text(sections[0]).casefold()
         if category.startswith("security") and category != "security & privacy":
@@ -340,11 +374,12 @@ def _hosted_display_severity(value: str) -> str | None:
         match = re.match(
             r"^(?:_[^\n]*?_(?:\s*\|\s*_[^\n]*?_){1,3}|"
             r"\*\*[^\n]*?\*\*(?:\s*\|\s*\*\*[^\n]*?\*\*){1,3}|"
-            r"__[^\n]*?__(?:\s*\|\s*__[^\n]*?__){1,3})", line
+            r"__[^\n]*?__(?:\s*\|\s*__[^\n]*?__){1,3})",
+            line,
         )
-        fields = match.group().split("|") if match and _is_badge_line(
-            match.group(), allow_two_field=allow_two_field
-        ) else []
+        fields = (
+            match.group().split("|") if match and _is_badge_line(match.group(), allow_two_field=allow_two_field) else []
+        )
         badge = fields[-1] if len(fields) == 2 else fields[-2] if fields else None
         if badge is None:
             match = re.match(r"^(?:\*\*([^\n]*?)\*\*|__([^\n]*?)__)", line)

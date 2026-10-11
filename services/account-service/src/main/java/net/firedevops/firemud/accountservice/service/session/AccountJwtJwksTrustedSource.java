@@ -60,8 +60,9 @@ public final class AccountJwtJwksTrustedSource
   private static final String ACCOUNT_SERVICE_NAME = "account-service";
   private static final int MAX_KEYS = 64;
   private static final java.util.Set<String> JWKS_FIELDS = java.util.Set.of("keys");
-  private static final java.util.Set<String> JWK_FIELDS =
-      java.util.Set.of("kty", "use", "alg", "kid", "key_ops", "n", "e");
+  private static final java.util.Set<String> REQUIRED_JWK_FIELDS =
+      java.util.Set.of("kty", "use", "alg", "kid", "n", "e");
+  private static final java.util.Set<String> OPTIONAL_JWK_FIELDS = java.util.Set.of("key_ops");
   private static final JsonMapper STRICT_JSON =
       JsonMapper.builder()
           .enable(StreamReadFeature.STRICT_DUPLICATE_DETECTION)
@@ -266,14 +267,14 @@ public final class AccountJwtJwksTrustedSource
                 Optional<PublicationEvidence> currentPublication =
                     publicationRepository.readCurrentPublication(
                         binding.accountBinding(), trustFence(binding));
-                if (currentPublication.isEmpty()
-                    || currentPublication.orElseThrow().receipt().isEmpty()) {
+                if (currentPublication.isEmpty()) {
                   return new OwnerProjection(committed, projection);
                 }
                 PublicationEvidence evidence = currentPublication.orElseThrow();
                 requirePublicationBinding(evidence, binding, api);
                 PrepublicationIntent intent = evidence.intent();
-                var receipt = evidence.receipt().orElseThrow();
+                var receipt =
+                    evidence.receipt().orElseThrow(AccountJwtJwksTrustedSource::unavailable);
                 if (!intent.operationId().equals(request.operationId())
                     || !intent.operationDigest().equals(request.operationDigest())
                     || !intent.generationRequestDigest().equals(request.generationRequestDigest())
@@ -307,9 +308,7 @@ public final class AccountJwtJwksTrustedSource
       if (ownerStateUnavailable instanceof SourceUnavailableException unavailable) {
         throw unavailable;
       }
-      if (ownerStateUnavailable instanceof IllegalStateException
-          && ownerStateUnavailable.getMessage() != null
-          && ownerStateUnavailable.getMessage().contains("Account trusted public JWKS source")) {
+      if (ownerStateUnavailable instanceof SourceRejectedException) {
         throw ownerStateUnavailable;
       }
       throw rejected();
@@ -621,7 +620,7 @@ public final class AccountJwtJwksTrustedSource
       }
       Map<String, String> fingerprints = new LinkedHashMap<>();
       for (JsonNode key : keys) {
-        if (key == null || !key.isObject() || !hasExactFields(key, JWK_FIELDS)) {
+        if (!hasRequiredAndAllowedFields(key, REQUIRED_JWK_FIELDS, OPTIONAL_JWK_FIELDS)) {
           throw new IllegalArgumentException();
         }
         String kty = requiredText(key, "kty");
@@ -635,11 +634,11 @@ public final class AccountJwtJwksTrustedSource
             || !"sig".equals(use)
             || !"RS256".equals(alg)
             || !kid.matches("[A-Za-z0-9_-]{1,64}")
-            || keyOps == null
-            || !keyOps.isArray()
-            || keyOps.size() != 1
-            || !keyOps.get(0).isTextual()
-            || !"verify".equals(keyOps.get(0).textValue())) {
+            || (keyOps != null
+                && (!keyOps.isArray()
+                    || keyOps.size() != 1
+                    || !keyOps.get(0).isTextual()
+                    || !"verify".equals(keyOps.get(0).textValue())))) {
           throw new IllegalArgumentException();
         }
         String preimage =
@@ -677,6 +676,24 @@ public final class AccountJwtJwksTrustedSource
     }
     for (Map.Entry<String, JsonNode> property : object.properties()) {
       if (!expected.contains(property.getKey())) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  private static boolean hasRequiredAndAllowedFields(
+      JsonNode object, java.util.Set<String> required, java.util.Set<String> optional) {
+    if (object == null || !object.isObject() || object.size() < required.size()) {
+      return false;
+    }
+    for (String field : required) {
+      if (!object.has(field)) {
+        return false;
+      }
+    }
+    for (Map.Entry<String, JsonNode> property : object.properties()) {
+      if (!required.contains(property.getKey()) && !optional.contains(property.getKey())) {
         return false;
       }
     }
@@ -740,8 +757,14 @@ public final class AccountJwtJwksTrustedSource
     return new SourceUnavailableException();
   }
 
-  private static IllegalStateException rejected() {
-    return new IllegalStateException("Account trusted public JWKS source was rejected");
+  private static SourceRejectedException rejected() {
+    return new SourceRejectedException();
+  }
+
+  private static final class SourceRejectedException extends IllegalStateException {
+    private SourceRejectedException() {
+      super("Account trusted public JWKS source was rejected");
+    }
   }
 
   private record TrustedPin(

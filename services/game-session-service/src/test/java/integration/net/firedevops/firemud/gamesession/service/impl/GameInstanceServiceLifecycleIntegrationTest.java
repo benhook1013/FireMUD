@@ -138,7 +138,7 @@ class GameInstanceServiceLifecycleIntegrationTest {
                 .setLaunchDescriptor(
                     net.firedevops.firemud.gamedesign.v1.LaunchDescriptor.newBuilder()
                         .setLaunchDescriptorId("ld-1")
-                        .setTenantId("42")
+                        .setCanonicalTenantId("42")
                         .setGameTemplateId(7L)
                         .setControlPlaneRequestId("cp-1")
                         .setVersionId(11L)
@@ -156,7 +156,7 @@ class GameInstanceServiceLifecycleIntegrationTest {
                 .setLaunchDescriptor(
                     net.firedevops.firemud.gamedesign.v1.LaunchDescriptor.newBuilder()
                         .setLaunchDescriptorId("ld-2")
-                        .setTenantId("42")
+                        .setCanonicalTenantId("42")
                         .setGameTemplateId(7L)
                         .setControlPlaneRequestId("cp-2")
                         .setVersionId(12L)

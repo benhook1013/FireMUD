@@ -3,8 +3,10 @@ CREATE TABLE start_session_pre_authorization_reservations (
     pre_authorization_tuple_json VARCHAR(8192) NOT NULL,
     mutation_digest VARCHAR(64) NOT NULL,
     phase VARCHAR(32) NOT NULL
+        CONSTRAINT start_session_pre_authorization_reservations_phase_check
         CHECK (phase = 'ACCOUNT_AUTHORIZATION'),
     state VARCHAR(40) NOT NULL
+        CONSTRAINT start_session_pre_authorization_reservations_state_check
         CHECK (state IN ('RESERVED', 'AUTHORIZATION_PENDING')),
     reservation_owner_id UUID NOT NULL,
     reservation_claim_fence BIGINT NOT NULL
