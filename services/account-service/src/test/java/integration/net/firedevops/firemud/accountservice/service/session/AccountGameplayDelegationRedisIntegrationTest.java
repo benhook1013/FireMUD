@@ -81,8 +81,10 @@ import net.firedevops.firemud.common.security.GameSessionAccountDelegationRegist
 import net.firedevops.firemud.test.TestContainerImages;
 import org.flywaydb.core.Flyway;
 import org.jooq.DSLContext;
+import org.jooq.ExecuteListener;
 import org.jooq.SQLDialect;
 import org.jooq.impl.DSL;
+import org.jooq.impl.DefaultExecuteListenerProvider;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeAll;
@@ -90,6 +92,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
+import org.postgresql.util.PSQLException;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.datasource.DataSourceTransactionManager;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
@@ -446,7 +449,7 @@ class AccountGameplayDelegationRedisIntegrationTest {
           projectionPair(
               accountId, Long.MAX_VALUE, Long.MAX_VALUE, "issuer-bigint-max", "account-bigint-max");
       assertThat(new String(signedBigintBoundary[0], StandardCharsets.UTF_8))
-          .contains("\"generation\":\"9223372036854775807\"");
+          .contains("\"issuerAuthGeneration\":\"9223372036854775807\"");
       assertThat(new String(signedBigintBoundary[1], StandardCharsets.UTF_8))
           .contains("\"accountAuthorityGeneration\":\"9223372036854775807\"")
           .contains("\"outboxSequence\":\"9223372036854775806\"");
@@ -1401,6 +1404,39 @@ class AccountGameplayDelegationRedisIntegrationTest {
         .migrate();
     DSLContext dsl =
         DSL.using(new TransactionAwareDataSourceProxy(dataSource), SQLDialect.POSTGRES);
+    dsl.configuration()
+        .setAppending(
+            new DefaultExecuteListenerProvider(
+                ExecuteListener.onException(
+                    context -> {
+                      java.sql.SQLException sqlException = context.sqlException();
+                      if (sqlException == null) return;
+                      String exceptionClass = sqlException.getClass().getSimpleName();
+                      if (!exceptionClass.matches("[A-Za-z0-9_$]+")) {
+                        exceptionClass = "SQLException";
+                      }
+                      String sqlState = sqlException.getSQLState();
+                      if (sqlState == null || !sqlState.matches("[A-Z0-9]{5}")) {
+                        sqlState = "unknown";
+                      }
+                      String constraint = "unknown";
+                      if (sqlException instanceof PSQLException postgresException) {
+                        var serverError = postgresException.getServerErrorMessage();
+                        String candidateConstraint =
+                            serverError == null ? null : serverError.getConstraint();
+                        if (candidateConstraint != null
+                            && candidateConstraint.matches("[a-z][a-z0-9_]{0,62}")) {
+                          constraint = candidateConstraint;
+                        }
+                      }
+                      throw new AssertionError(
+                          "Physical Account PostgreSQL failure: exceptionClass="
+                              + exceptionClass
+                              + "; sqlState="
+                              + sqlState
+                              + "; constraint="
+                              + constraint);
+                    })));
     DataSourceTransactionManager manager = new DataSourceTransactionManager(dataSource);
     return new TestContext(dsl, manager, new TransactionTemplate(manager));
   }
