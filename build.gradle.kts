@@ -312,10 +312,14 @@ subprojects {
             showCauses = true
             showStackTraces = true
         }
+    }
 
-        if (name == "integrationTest"
-            && project.name in
-                setOf("account-service", "game-design-service", "entity-management-service")) {
+    tasks.withType<Test>()
+        .matching {
+            it.name == "integrationTest" &&
+                project.name in setOf("account-service", "game-design-service", "entity-management-service")
+        }
+        .configureEach {
             testLogging {
                 // Keep active integration-test boundaries visible when cancellation precedes XML.
                 events("started", "passed", "failed", "skipped")
@@ -324,7 +328,6 @@ subprojects {
                 showStandardStreams = false
             }
         }
-    }
 
     tasks.test {
         useJUnitPlatform()
