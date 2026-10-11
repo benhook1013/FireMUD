@@ -76,6 +76,18 @@ public final class PublishedWorldSelectorFixtures {
 
   public static List<net.firedevops.firemud.gamedesign.dto.PublishParticipantDigestDto>
       participants(long versionId, WorldPublishedStartLocationEvidence evidence) {
+    return participants(
+        versionId,
+        evidence,
+        net.firedevops.firemud.common.gamedesign.AuthoredWorldReleaseAttestationEvidence
+            .SCHEMA_VERSION);
+  }
+
+  public static List<net.firedevops.firemud.gamedesign.dto.PublishParticipantDigestDto>
+      participants(
+          long versionId,
+          WorldPublishedStartLocationEvidence evidence,
+          int attestationSchemaVersion) {
     return net
         .firedevops
         .firemud
@@ -95,7 +107,7 @@ public final class PublishedWorldSelectorFixtures {
                         ? evidence.request().contentDigest()
                         : "c".repeat(64),
                     net.firedevops.firemud.common.gamedesign.AuthoredWorldReleaseAttestationEvidence
-                        .supportedParticipantDigestSchema(owner),
+                        .supportedParticipantDigestSchema(owner, attestationSchemaVersion),
                     "GAME_LOGIC".equals(owner) ? "sha256:" + "d".repeat(64) : null,
                     null,
                     null))

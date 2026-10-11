@@ -300,12 +300,51 @@ _firemud_smoke_initial_admission_context() {
   FIREMUD_SMOKE_COMPOSE_PROJECT_NAME="$project_name"
   FIREMUD_SMOKE_INITIAL_ADMISSION_CAPABILITY_PATH=/app/run-owned-initial-admission-capability.json
   FIREMUD_SMOKE_INITIAL_ADMISSION_CAPABILITY_HOST_PATH="$FIREMUD_SMOKE_OWNERSHIP_DIR_RESOLVED/$FIREMUD_SMOKE_PROJECT_KEY.initial-admission-capability.json"
+  FIREMUD_SMOKE_AUTHORED_WORLD_SOURCE_RECEIPT_DIR_HOST_PATH="$FIREMUD_SMOKE_OWNERSHIP_DIR_RESOLVED/$FIREMUD_SMOKE_PROJECT_KEY.authored-world-source"
+  FIREMUD_SMOKE_AUTHORED_WORLD_SOURCE_RECEIPT_PATH=/app/run-owned-authored-world-source/source-receipt.json
   FIREMUD_SMOKE_INITIAL_ADMISSION_FIXTURE_ENABLED=false
   FIREMUD_SMOKE_INITIAL_ADMISSION_CLAIM_DIGEST="$digest"
   export FIREMUD_SMOKE_RUN_ID FIREMUD_SMOKE_COMPOSE_PROJECT_NAME
   export FIREMUD_SMOKE_INITIAL_ADMISSION_CAPABILITY_PATH
   export FIREMUD_SMOKE_INITIAL_ADMISSION_CAPABILITY_HOST_PATH
+  export FIREMUD_SMOKE_AUTHORED_WORLD_SOURCE_RECEIPT_DIR_HOST_PATH
+  export FIREMUD_SMOKE_AUTHORED_WORLD_SOURCE_RECEIPT_PATH
   export FIREMUD_SMOKE_INITIAL_ADMISSION_FIXTURE_ENABLED
+}
+
+_firemud_smoke_prepare_authored_world_source_receipt_directory() {
+  local mode="$1"
+  local directory="$FIREMUD_SMOKE_AUTHORED_WORLD_SOURCE_RECEIPT_DIR_HOST_PATH"
+  local expected_directory="$FIREMUD_SMOKE_OWNERSHIP_DIR_RESOLVED/$FIREMUD_SMOKE_PROJECT_KEY.authored-world-source"
+
+  if [[ "$directory" != "$expected_directory" || -L "$directory" ]]; then
+    _firemud_smoke_fail "authored-world source receipt directory must be the exact claimed run/project child path."
+    return 1
+  fi
+  if [[ ! -e "$directory" ]]; then
+    if [[ "$mode" == reuse-only ]]; then
+      _firemud_smoke_fail "restart requires the existing authored-world source receipt directory; it will not create one."
+      return 1
+    fi
+    local previous_umask mkdir_status
+    previous_umask="$(umask)"
+    umask 000
+    if mkdir -m 777 -- "$directory"; then
+      mkdir_status=0
+    else
+      mkdir_status=$?
+    fi
+    umask "$previous_umask"
+    if ((mkdir_status != 0)) || ! chmod 777 -- "$directory"; then
+      _firemud_smoke_fail "could not create the authored-world source receipt directory."
+      return 1
+    fi
+  fi
+  if [[ -L "$directory" || ! -d "$directory" \
+    || "$(stat -c '%u %a %F' "$directory" 2>/dev/null || true)" != "$(id -u) 777 directory" ]]; then
+    _firemud_smoke_fail "authored-world source receipt directory must be owner-owned mode 777 for the fixture container UID."
+    return 1
+  fi
 }
 
 _firemud_smoke_initial_admission_operation_id() {
@@ -512,6 +551,7 @@ ensure_run_owned_initial_admission_capability() {
     _firemud_smoke_fail "could not derive the stable initial-admission operation identity."
     return 1
   }
+  _firemud_smoke_prepare_authored_world_source_receipt_directory "$mode" || return 1
   if [[ -e "$capability_path" || -L "$capability_path" ]]; then
     _firemud_smoke_validate_initial_admission_capability \
       "$capability_path" "$operation_id" "$leaf_sha256" "$ca_sha256"
