@@ -22,6 +22,7 @@ import net.firedevops.firemud.common.settings.SharedSettingsAuthorityReader;
 import net.firedevops.firemud.gamesession.client.AutomationScriptingClient;
 import net.firedevops.firemud.gamesession.client.ModerationPolicyClient;
 import net.firedevops.firemud.gamesession.command.text.GameplayWorldCatalog;
+import net.firedevops.firemud.gamesession.data.RunOwnedInitialAdmissionLaunchEvidence;
 import net.firedevops.firemud.gamesession.dto.GameInstanceDto;
 import net.firedevops.firemud.gamesession.dto.StartSessionRequest;
 import net.firedevops.firemud.gamesession.service.GameInstanceService;
@@ -375,8 +376,9 @@ public final class CrossServiceAppHarness {
         }
 
         @Override
-        public RunOwnedInitialLaunchResult startRunOwnedInitialLaunch(StartSessionRequest request) {
-          return actualGameInstanceService.startRunOwnedInitialLaunch(request);
+        public RunOwnedInitialLaunchResult startRunOwnedInitialLaunch(
+            StartSessionRequest request, RunOwnedInitialAdmissionLaunchEvidence launchEvidence) {
+          return actualGameInstanceService.startRunOwnedInitialLaunch(request, launchEvidence);
         }
       };
     }
@@ -414,7 +416,8 @@ public final class CrossServiceAppHarness {
         }
 
         @Override
-        public RunOwnedInitialLaunchResult startRunOwnedInitialLaunch(StartSessionRequest request) {
+        public RunOwnedInitialLaunchResult startRunOwnedInitialLaunch(
+            StartSessionRequest request, RunOwnedInitialAdmissionLaunchEvidence launchEvidence) {
           throw new IllegalStateException(
               "run-owned launch requires a database-enabled test context");
         }
