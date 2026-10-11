@@ -241,10 +241,16 @@ class AccountStartSessionOperatorAuthorizationServiceTest {
     AccountControlUiAuthority.Snapshot source = source(actorId, tenantId, 7L, new byte[] {1});
     AccountControlUiIssuanceRepository.Stored stored =
         stored(actorId, tenantId, tokenJti, issuerOperationId, source);
+    AccountStartSessionAuthorityCapture capture =
+        capture(tuple, source, stored, requestOwnerId, 10L);
+    Map<String, AccountStartSessionAuthorityCapture> captures = new ConcurrentHashMap<>();
+    captures.put(tuple.controlPlaneRequestId(), capture);
     Current current = new Current(stored, source);
 
     var actors = org.mockito.Mockito.mock(AccountControlUiActorService.class);
     var issuanceOperations = org.mockito.Mockito.mock(AccountControlUiIssuanceRepository.class);
+    var captureRepository =
+        org.mockito.Mockito.mock(AccountStartSessionAuthorityCaptureRepository.class);
     var claims = org.mockito.Mockito.mock(StartSessionReservationEvidenceClient.class);
     var repository =
         org.mockito.Mockito.mock(AccountStartSessionOperatorAuthorizationRepository.class);
@@ -267,12 +273,51 @@ class AccountStartSessionOperatorAuthorizationServiceTest {
     when(transactions.getTransaction(any(TransactionDefinition.class)))
         .thenAnswer(ignored -> new SimpleTransactionStatus());
     when(hostedTerms.captureCurrentEnvironmentBoundary()).thenReturn(environment);
+    when(captureRepository.prepareOrReadExact(any(), any(), anyString(), any(), anyLong()))
+        .thenAnswer(
+            invocation -> {
+              Current requestedCurrent = invocation.getArgument(0);
+              StartSessionPreAuthorizationReservationTuple requestedTuple =
+                  invocation.getArgument(1);
+              UUID requestedOwner = invocation.getArgument(3);
+              long requestedFence = invocation.getArgument(4);
+              return captures.computeIfAbsent(
+                  requestedTuple.controlPlaneRequestId(),
+                  ignored ->
+                      capture(
+                          requestedTuple,
+                          requestedCurrent.source(),
+                          requestedCurrent.stored(),
+                          requestedOwner,
+                          requestedFence));
+            });
+    when(captureRepository.lockExactCurrent(any(), any(), any(), anyString(), any(), anyLong()))
+        .thenAnswer(
+            invocation -> {
+              StartSessionPreAuthorizationReservationTuple requestedTuple =
+                  invocation.getArgument(2);
+              AccountStartSessionAuthorityCapture requestedCapture =
+                  captures.get(requestedTuple.controlPlaneRequestId());
+              assertThat(requestedCapture).isNotNull();
+              return requestedCapture;
+            });
+    when(captureRepository.lockReadExactCurrent(any(), any(), anyString(), any(), anyLong()))
+        .thenAnswer(
+            invocation -> {
+              StartSessionPreAuthorizationReservationTuple requestedTuple =
+                  invocation.getArgument(1);
+              AccountStartSessionAuthorityCapture requestedCapture =
+                  captures.get(requestedTuple.controlPlaneRequestId());
+              assertThat(requestedCapture).isNotNull();
+              return requestedCapture;
+            });
     when(claims.readCurrentClaimEvidence(any(), any(), anyLong(), any(), anyLong(), any()))
         .thenAnswer(
             invocation ->
                 claimEvidence(
                     invocation.<StartSessionPreAuthorizationReservationTuple>getArgument(0),
-                    invocation.<UUID>getArgument(1)));
+                    invocation.<UUID>getArgument(1),
+                    operationClock.instant()));
 
     Path responseKeyringDirectory = temporaryDirectory.resolve("operator-response");
     Files.createDirectories(responseKeyringDirectory);
@@ -351,8 +396,6 @@ class AccountStartSessionOperatorAuthorizationServiceTest {
                   issuance.issuanceFence(),
                   replay);
             });
-    when(issuanceOperations.captureOwnerLinearization())
-        .thenReturn(new OwnerLinearization("123456", 99L));
     AtomicReference<Current> currentForCalls = new AtomicReference<>(current);
     doAnswer(
             invocation -> {
@@ -385,6 +428,7 @@ class AccountStartSessionOperatorAuthorizationServiceTest {
         new AccountStartSessionOperatorAuthorizationService(
             actors,
             issuanceOperations,
+            captureRepository,
             claims,
             repository,
             fingerprintKeys,
@@ -1445,6 +1489,11 @@ class AccountStartSessionOperatorAuthorizationServiceTest {
 
   private static ReadCurrentClaimEvidenceResponse claimEvidence(
       StartSessionPreAuthorizationReservationTuple tuple, UUID ownerId) {
+    return claimEvidence(tuple, ownerId, NOW);
+  }
+
+  private static ReadCurrentClaimEvidenceResponse claimEvidence(
+      StartSessionPreAuthorizationReservationTuple tuple, UUID ownerId, Instant observedAt) {
     return ReadCurrentClaimEvidenceResponse.newBuilder()
         .setControlPlaneRequestId(tuple.controlPlaneRequestId())
         .setPreAuthorizationTupleJson(
@@ -1454,8 +1503,8 @@ class AccountStartSessionOperatorAuthorizationServiceTest {
         .setReservationClaimFence(10L)
         .setClaimOwnerId(ownerId.toString())
         .setClaimFence(10L)
-        .setObservedAtEpochMillis(NOW.minusSeconds(1).toEpochMilli())
-        .setClaimExpiresAtEpochMillis(NOW.plusSeconds(30).toEpochMilli())
+        .setObservedAtEpochMillis(observedAt.minusSeconds(1).toEpochMilli())
+        .setClaimExpiresAtEpochMillis(observedAt.plusSeconds(30).toEpochMilli())
         .build();
   }
 }
