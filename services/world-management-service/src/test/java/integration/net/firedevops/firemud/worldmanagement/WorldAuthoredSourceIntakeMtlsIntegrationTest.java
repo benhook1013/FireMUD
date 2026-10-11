@@ -3,6 +3,7 @@ package net.firedevops.firemud.worldmanagement;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.clearInvocations;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -332,9 +333,9 @@ class WorldAuthoredSourceIntakeMtlsIntegrationTest {
   }
 
   @Test
-  void registeredDraftMutationDeniesGameDesignPeerWithoutAccountCommitAuthorization()
-      throws Exception {
+  void registeredDraftMutationDeniesGameDesignPeerBeforeOwnerReadOrMutation() throws Exception {
     startRegisteredWorldManagementReceiver();
+    clearInvocations(gameDesignClient, gameSessionClient, entityManagementClient);
     Map<String, List<String>> before = worldMutationRowSnapshot();
 
     ApplyWorldDesignMutationResponse response =
@@ -345,11 +346,14 @@ class WorldAuthoredSourceIntakeMtlsIntegrationTest {
     assertThat(worldMutationRowSnapshot())
         .as("World content, source, association, lifecycle and publication rows stay unchanged")
         .isEqualTo(before);
+    verifyNoInteractions(gameDesignClient, gameSessionClient, entityManagementClient);
   }
 
   @Test
-  void registeredDraftMutationDeniesOtherAuthenticatedPeerBeforeOwnerMutation() throws Exception {
+  void registeredDraftMutationDeniesOtherAuthenticatedPeerBeforeOwnerReadOrMutation()
+      throws Exception {
     startRegisteredWorldManagementReceiver();
+    clearInvocations(gameDesignClient, gameSessionClient, entityManagementClient);
     Map<String, List<String>> before = worldMutationRowSnapshot();
 
     ApplyWorldDesignMutationResponse response =
@@ -360,6 +364,7 @@ class WorldAuthoredSourceIntakeMtlsIntegrationTest {
     assertThat(worldMutationRowSnapshot())
         .as("World content, source, association, lifecycle and publication rows stay unchanged")
         .isEqualTo(before);
+    verifyNoInteractions(gameDesignClient, gameSessionClient, entityManagementClient);
   }
 
   private AuthoredWorldSourceClient sourceBoundary(Scenario scenario) {
@@ -654,7 +659,7 @@ class WorldAuthoredSourceIntakeMtlsIntegrationTest {
     assertThat(response.getError().getCode()).isEqualTo("FAILED_PRECONDITION");
     assertThat(response.getError().getMessage())
         .isEqualTo(
-            "Canonical World Draft writes are unavailable until current Account commit authorization is verified.");
+            "Complete Draft caller/tenant authorization and owner publication proof are unavailable.");
     assertThat(response.getResult())
         .isEqualTo(WorldDesignMutationResult.WORLD_DESIGN_MUTATION_RESULT_UNSPECIFIED);
     assertThat(response.getTenantId()).isEmpty();
