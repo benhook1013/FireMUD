@@ -3,7 +3,7 @@
 -- jOOQ's H2 model gives unnamed historical checks non-portable generated names.
 -- [jooq ignore start]
 ALTER TABLE account_start_session_operator_authorizations
-    DROP CONSTRAINT account_start_session_operator_authorizations_bundle_source_fence_check;
+    DROP CONSTRAINT account_start_session_operator_authorizations_check;
 
 ALTER TABLE account_start_session_operator_authorizations
     ADD CONSTRAINT account_ss_operator_bundle_source_fence_canonical_check
