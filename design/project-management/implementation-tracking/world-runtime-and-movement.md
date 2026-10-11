@@ -125,6 +125,7 @@ These links add decision provenance only; they do not upgrade world runtime, lif
 
 ## Active Gaps
 
+- World `CHARACTER_CREATE` protection is not implemented. Gameplay has not yet defined its carrier, so World has no distinct operation-bound protection storage, authenticated exact Entity terminal read/settlement path, lifecycle compare-and-set fence for the unresolved cross-owner operation, or focused race/restart proof. Entity remains the actor creator; World holds unresolved protection through Entity commit and resolves it only from exact authenticated `COMMITTED` or positively fenced definitive `ABORTED` evidence. Absence, timeout, expiry, or unavailable evidence cannot release the fence. See the [World protection contract](../../architecture/microservices/world-management-service/api-contracts.md#character_create-protection-contract).
 - TICK-04 confirms World ownership of topology, location, occupancy, and ambient room state. Authoritative character/session location mutation remains open; DROP/PICKUP require World validation of its own stale-rejecting `TargetingFactSnapshot` location/version token plus Game Session protection of the ordered execution under the actor/executor fence before Entity commits, but the current proto and proof do not cover it. Current Game Session room binding is not that authority.
 
 - Broader travel, pathfinding, combat adjacency, richer movement failure semantics, and additional client polish are outside the completed directional-movement baseline.
