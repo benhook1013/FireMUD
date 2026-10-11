@@ -65,7 +65,7 @@ public final class AccountStartSessionOperatorAuthorityBundle {
 
     Map<String, Object> claims =
         AccountControlUiIssuanceRepository.object(controlUiIssuance.claims);
-    requireCurrentTenantClaims(tuple, source, controlUiIssuance, claims);
+    requireCurrentTenantClaims(tuple, source, controlUiIssuance, claims, false);
     SourceEvidence accountSource = uniqueAccountSource(source, source.actor());
     BundleReference reference =
         new BundleReference(
@@ -111,7 +111,8 @@ public final class AccountStartSessionOperatorAuthorityBundle {
                     "requestId",
                     tuple.controlPlaneRequestId()),
             "mutationDigest", tuple.mutationDigest());
-    Map<String, Object> humanEvidence = humanTenantEvidence(source, controlUiIssuance.jti, claims);
+    Map<String, Object> humanEvidence =
+        humanTenantEvidence(source, controlUiIssuance.jti, claims, false);
 
     Map<String, Object> bundle = new LinkedHashMap<>();
     bundle.put("bundleVersion", BUNDLE_VERSION);
@@ -151,34 +152,39 @@ public final class AccountStartSessionOperatorAuthorityBundle {
     Objects.requireNonNull(now, "current time is required");
     decoded.requireTupleBinding(tuple);
     decoded.requireReferenceBinding(toSharedReference(originalReference));
-    Map<String, Object> projection =
-        object(value.get("accountProjectionEvidence"), "accountProjectionEvidence");
-    if (!now.isBefore(originalReferenceExpiresAt())
-        || !now.isBefore(instant(string(projection.get("expiresAt"), "projection expiry")))) {
-      throw denied("Original Account authority evidence is expired");
-    }
-    if (!tuple.actor().accountId().equals(currentSource.actor())
-        || !tuple.action().scope().tenantId().equals(currentSource.tenant())
-        || !currentControlUiIssuance.accountId.equals(currentSource.actor())
-        || !currentControlUiIssuance.tenantId.equals(currentSource.tenant())) {
-      throw denied("Current Account actor or tenant changed");
-    }
-    Map<String, Object> claims =
-        AccountControlUiIssuanceRepository.object(currentControlUiIssuance.claims);
-    requireCurrentTenantClaims(tuple, currentSource, currentControlUiIssuance, claims);
-    SourceEvidence source = uniqueAccountSource(currentSource, currentSource.actor());
-    if (!source.sourceVersion().equals(projection.get("sourceEvidenceVersion"))
-        || !source.sourceVersion().equals(originalReference.sourceVersion())
-        || !sourceEvidenceId(currentSource.evidence(), source.sourceVersion(), originalReference)
-            .equals(projection.get("sourceEvidenceId"))
-        || !canonicalEquals(currentSource.authorityTuple(), value.get("authorityTuple"))
-        || !canonicalEquals(currentSource.membershipVersion(), value.get("membershipVersion"))) {
-      throw denied("Current Account source, generation, or membership changed");
-    }
-    Map<String, Object> expectedEvidence =
-        humanTenantEvidence(currentSource, currentControlUiIssuance.jti, claims);
-    if (!canonicalEquals(expectedEvidence, value.get("issuanceEvidence"))) {
-      throw denied("Current human authority evidence changed");
+    try {
+      Map<String, Object> projection =
+          object(value.get("accountProjectionEvidence"), "accountProjectionEvidence");
+      if (!now.isBefore(originalReferenceExpiresAt())
+          || !now.isBefore(instant(string(projection.get("expiresAt"), "projection expiry")))) {
+        throw denied(true, "Original Account authority evidence is expired");
+      }
+      if (!tuple.actor().accountId().equals(currentSource.actor())
+          || !tuple.action().scope().tenantId().equals(currentSource.tenant())
+          || !currentControlUiIssuance.accountId.equals(currentSource.actor())
+          || !currentControlUiIssuance.tenantId.equals(currentSource.tenant())) {
+        throw denied(true, "Current Account actor or tenant changed");
+      }
+      Map<String, Object> claims =
+          AccountControlUiIssuanceRepository.object(currentControlUiIssuance.claims);
+      requireCurrentTenantClaims(tuple, currentSource, currentControlUiIssuance, claims, true);
+      SourceEvidence source = uniqueAccountSource(currentSource, currentSource.actor());
+      if (!source.sourceVersion().equals(projection.get("sourceEvidenceVersion"))
+          || !source.sourceVersion().equals(originalReference.sourceVersion())
+          || !sourceEvidenceId(currentSource.evidence(), source.sourceVersion(), originalReference)
+              .equals(projection.get("sourceEvidenceId"))
+          || !canonicalEquals(currentSource.authorityTuple(), value.get("authorityTuple"))
+          || !canonicalEquals(currentSource.membershipVersion(), value.get("membershipVersion"))) {
+        throw denied(true, "Current Account source, generation, or membership changed");
+      }
+      Map<String, Object> expectedEvidence =
+          humanTenantEvidence(currentSource, currentControlUiIssuance.jti, claims, true);
+      if (!canonicalEquals(expectedEvidence, value.get("issuanceEvidence"))) {
+        throw denied(true, "Current human authority evidence changed");
+      }
+    } catch (IllegalArgumentException malformedCurrentAuthority) {
+      throw new IllegalStateException(
+          "Current Account authorization evidence is unavailable", malformedCurrentAuthority);
     }
   }
 
@@ -193,29 +199,34 @@ public final class AccountStartSessionOperatorAuthorityBundle {
     Objects.requireNonNull(originalReference, "original Account source reference is required");
     decoded.requireTupleBinding(tuple);
     decoded.requireReferenceBinding(toSharedReference(originalReference));
-    if (!tuple.actor().accountId().equals(currentSource.actor())
-        || !tuple.action().scope().tenantId().equals(currentSource.tenant())
-        || !currentControlUiIssuance.accountId.equals(currentSource.actor())
-        || !currentControlUiIssuance.tenantId.equals(currentSource.tenant())) {
-      throw denied("Current Account actor or tenant changed");
-    }
-    Map<String, Object> claims =
-        AccountControlUiIssuanceRepository.object(currentControlUiIssuance.claims);
-    requireCurrentTenantClaims(tuple, currentSource, currentControlUiIssuance, claims);
-    SourceEvidence accountSource = uniqueAccountSource(currentSource, currentSource.actor());
-    Map<String, Object> projection =
-        object(value.get("accountProjectionEvidence"), "accountProjectionEvidence");
-    if (!accountSource.sourceVersion().equals(originalReference.sourceVersion())
-        || !accountSource.sourceVersion().equals(projection.get("sourceEvidenceVersion"))
-        || !sourceEvidenceId(
-                currentSource.evidence(), accountSource.sourceVersion(), originalReference)
-            .equals(projection.get("sourceEvidenceId"))
-        || !canonicalEquals(currentSource.authorityTuple(), value.get("authorityTuple"))
-        || !canonicalEquals(currentSource.membershipVersion(), value.get("membershipVersion"))
-        || !canonicalEquals(
-            humanTenantEvidence(currentSource, currentControlUiIssuance.jti, claims),
-            value.get("issuanceEvidence"))) {
-      throw denied("Current Account source differs from the consumed authorization");
+    try {
+      if (!tuple.actor().accountId().equals(currentSource.actor())
+          || !tuple.action().scope().tenantId().equals(currentSource.tenant())
+          || !currentControlUiIssuance.accountId.equals(currentSource.actor())
+          || !currentControlUiIssuance.tenantId.equals(currentSource.tenant())) {
+        throw denied(true, "Current Account actor or tenant changed");
+      }
+      Map<String, Object> claims =
+          AccountControlUiIssuanceRepository.object(currentControlUiIssuance.claims);
+      requireCurrentTenantClaims(tuple, currentSource, currentControlUiIssuance, claims, true);
+      SourceEvidence accountSource = uniqueAccountSource(currentSource, currentSource.actor());
+      Map<String, Object> projection =
+          object(value.get("accountProjectionEvidence"), "accountProjectionEvidence");
+      if (!accountSource.sourceVersion().equals(originalReference.sourceVersion())
+          || !accountSource.sourceVersion().equals(projection.get("sourceEvidenceVersion"))
+          || !sourceEvidenceId(
+                  currentSource.evidence(), accountSource.sourceVersion(), originalReference)
+              .equals(projection.get("sourceEvidenceId"))
+          || !canonicalEquals(currentSource.authorityTuple(), value.get("authorityTuple"))
+          || !canonicalEquals(currentSource.membershipVersion(), value.get("membershipVersion"))
+          || !canonicalEquals(
+              humanTenantEvidence(currentSource, currentControlUiIssuance.jti, claims, true),
+              value.get("issuanceEvidence"))) {
+        throw denied(true, "Current Account source differs from the consumed authorization");
+      }
+    } catch (IllegalArgumentException malformedCurrentAuthority) {
+      throw new IllegalStateException(
+          "Current Account authorization evidence is unavailable", malformedCurrentAuthority);
     }
   }
 
@@ -312,7 +323,8 @@ public final class AccountStartSessionOperatorAuthorityBundle {
       StartSessionPreAuthorizationReservationTuple tuple,
       Snapshot source,
       Stored stored,
-      Map<String, Object> claims) {
+      Map<String, Object> claims,
+      boolean currentState) {
     if (!tuple.actor().accountId().equals(stored.accountId)
         || !tuple.actor().accountId().equals(source.actor())
         || !tuple.action().scope().tenantId().equals(stored.tenantId)
@@ -328,14 +340,14 @@ public final class AccountStartSessionOperatorAuthorityBundle {
             .equals(claims.get("scopedRoles"))
         || !canonicalEquals(source.authorityTuple(), claims.get("authorityTuple"))
         || !canonicalEquals(source.membershipVersion(), claims.get("membershipVersion"))) {
-      throw denied("Current tenantAdmin control-ui evidence is required");
+      throw denied(currentState, "Current tenantAdmin control-ui evidence is required");
     }
   }
 
   private static Map<String, Object> humanTenantEvidence(
-      Snapshot source, UUID tokenJti, Map<String, Object> claims) {
+      Snapshot source, UUID tokenJti, Map<String, Object> claims, boolean currentState) {
     if (claims.containsKey("assurance") || claims.containsKey("globalRoles")) {
-      throw denied("Tenant authority must omit assurance and global-role evidence");
+      throw denied(currentState, "Tenant authority must omit assurance and global-role evidence");
     }
     Map<String, Object> tuple = source.authorityTuple();
     long accountGeneration =
@@ -343,7 +355,7 @@ public final class AccountStartSessionOperatorAuthorityBundle {
     Map<String, Object> tenantGenerations =
         object(tuple.get("tenantAuthorityGeneration"), "tenantAuthorityGeneration");
     if (!tenantGenerations.keySet().equals(Set.of(source.tenant().toString()))) {
-      throw denied("Exact selected tenant authority generation is required");
+      throw denied(currentState, "Exact selected tenant authority generation is required");
     }
     long tenantGeneration =
         positiveNumber(
@@ -467,6 +479,10 @@ public final class AccountStartSessionOperatorAuthorityBundle {
 
   private static IllegalArgumentException denied(String message) {
     return new IllegalArgumentException(message);
+  }
+
+  private static RuntimeException denied(boolean currentState, String message) {
+    return currentState ? new IllegalStateException(message) : denied(message);
   }
 
   /** Original source reference is a separate typed object, not an extra bundle member. */
