@@ -376,6 +376,13 @@ public final class AccountOriginalStartSessionAuthorizationProofFixture {
         namespace);
   }
 
+  /** Creates the actual Account settlement receiver for same-namespace World mTLS calls. */
+  public BindableService worldParticipationSettlementGrpcService(
+      WorldStartSessionExecutionTerminalReadClient worldClient) {
+    return new AccountStartSessionWorldParticipationSettlementGrpcService(
+        worldParticipationSettlementService(worldClient), namespace);
+  }
+
   /**
    * Reads the exact durable participation coordinates for this tuple without creating authority.
    */

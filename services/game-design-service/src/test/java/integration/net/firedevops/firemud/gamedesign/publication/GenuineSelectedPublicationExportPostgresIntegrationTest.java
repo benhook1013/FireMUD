@@ -77,8 +77,10 @@ import net.firedevops.firemud.common.account.startsession.AccountStartSessionAct
 import net.firedevops.firemud.common.account.startsession.AccountStartSessionAdmissionProtectionAcquisitionGrpcClient;
 import net.firedevops.firemud.common.account.startsession.AccountStartSessionWorldParticipationAcquisitionClient;
 import net.firedevops.firemud.common.account.startsession.AccountStartSessionWorldParticipationHistoricalReadClient;
+import net.firedevops.firemud.common.account.startsession.AccountStartSessionWorldParticipationSettlementInput;
 import net.firedevops.firemud.common.account.startsession.GrpcAccountStartSessionActivationProtectionAcquisitionClient;
 import net.firedevops.firemud.common.account.startsession.GrpcAccountStartSessionActivationProtectionSettlementClient;
+import net.firedevops.firemud.common.account.startsession.GrpcAccountStartSessionWorldParticipationSettlementClient;
 import net.firedevops.firemud.common.account.startsession.StartSessionAccountRedemptionProjection;
 import net.firedevops.firemud.common.authoring.AccountOriginalDraftOrderClient;
 import net.firedevops.firemud.common.authoring.AccountOriginalDraftOrderGrpcCodec;
@@ -672,6 +674,9 @@ class GenuineSelectedPublicationExportPostgresIntegrationTest {
         var accountToWorldExecutionTerminalClient =
             new WorldStartSessionExecutionTerminalReadClient(
                 endpoints, pki.client("account-service"), channels, NAMESPACE);
+        var worldToAccountParticipationSettlementClient =
+            new GrpcAccountStartSessionWorldParticipationSettlementClient(
+                endpoints, pki.client("world-management-service"), channels, NAMESPACE);
         var account =
             new AccountControlUiOriginalOrderFixture(
                 ACCOUNT_POSTGRES.getJdbcUrl(),
@@ -763,6 +768,7 @@ class GenuineSelectedPublicationExportPostgresIntegrationTest {
       worldToAccountParticipationHistoryClient.init();
       worldToGameSessionOwnerEvidenceClient.init();
       accountToWorldExecutionTerminalClient.init();
+      worldToAccountParticipationSettlementClient.init();
       var originalOperationRecoveryVerifier =
           new WorldCanonicalInstanceOriginalOperationRecoveryVerifier(
               worldToAccountParticipationHistoryClient, worldToGameSessionOwnerEvidenceClient);
@@ -1257,13 +1263,12 @@ class GenuineSelectedPublicationExportPostgresIntegrationTest {
         var accountWorldParticipationAcquisitionService =
             startSessionAuthorizationProof.worldParticipationAcquisitionService(
                 accountToGameSessionCurrentAttemptClient);
-        var accountWorldParticipationSettlementService =
-            startSessionAuthorizationProof.worldParticipationSettlementService(
-                accountToWorldExecutionTerminalClient);
         register(
             accountHandlers,
             new AccountStartSessionWorldParticipationAcquisitionGrpcService(
-                accountWorldParticipationAcquisitionService, NAMESPACE));
+                accountWorldParticipationAcquisitionService, NAMESPACE),
+            startSessionAuthorizationProof.worldParticipationSettlementGrpcService(
+                accountToWorldExecutionTerminalClient));
         var worldParticipationVerifier =
             new WorldStartSessionAccountParticipationVerifier(
                 NAMESPACE, worldToAccountParticipationClient);
@@ -4378,17 +4383,23 @@ class GenuineSelectedPublicationExportPostgresIntegrationTest {
                         exactAccountParticipation.participationId(),
                         exactAccountParticipation.participationFence()))
                 .isEmpty();
+            var settlementRequestId = UUID.randomUUID();
             var settledWorldParticipation =
-                withWorldPeer(
-                    () ->
-                        accountWorldParticipationSettlementService.settle(
-                            exactAccountParticipation.participationId(),
-                            exactAccountParticipation.participationFence()));
-            assertThat(settledWorldParticipation.participationId())
+                worldToAccountParticipationSettlementClient.settle(
+                    new AccountStartSessionWorldParticipationSettlementInput(
+                        NAMESPACE,
+                        settlementRequestId,
+                        exactAccountParticipation.participationId(),
+                        exactAccountParticipation.participationFence()));
+            assertThat(settledWorldParticipation.settlementRequestId())
+                .isEqualTo(settlementRequestId);
+            assertThat(settledWorldParticipation.accountWorldParticipationId())
                 .isEqualTo(exactAccountParticipation.participationId());
-            assertThat(settledWorldParticipation.outcome())
+            assertThat(settledWorldParticipation.accountWorldParticipationFence())
+                .isEqualTo(exactAccountParticipation.participationFence());
+            assertThat(settledWorldParticipation.terminal().outcome())
                 .isEqualTo(committedWorldTerminal.outcome());
-            assertThat(settledWorldParticipation.terminalBytes())
+            assertThat(settledWorldParticipation.terminal().canonicalBytes())
                 .containsExactly(committedWorldTerminal.canonicalBytes());
             var independentlySettledWorldParticipation =
                 startSessionAuthorizationProof
@@ -4397,7 +4408,33 @@ class GenuineSelectedPublicationExportPostgresIntegrationTest {
                         exactAccountParticipation.participationFence())
                     .orElseThrow();
             assertThat(independentlySettledWorldParticipation.terminalBytes())
-                .containsExactly(settledWorldParticipation.terminalBytes());
+                .containsExactly(settledWorldParticipation.terminal().canonicalBytes());
+            assertThat(independentlySettledWorldParticipation.settledAt().toInstant())
+                .isEqualTo(settledWorldParticipation.settledAt());
+
+            var retrySettlementRequestId = UUID.randomUUID();
+            assertThat(retrySettlementRequestId).isNotEqualTo(settlementRequestId);
+            var retriedWorldParticipation =
+                worldToAccountParticipationSettlementClient.settle(
+                    new AccountStartSessionWorldParticipationSettlementInput(
+                        NAMESPACE,
+                        retrySettlementRequestId,
+                        exactAccountParticipation.participationId(),
+                        exactAccountParticipation.participationFence()));
+            assertThat(retriedWorldParticipation.settlementRequestId())
+                .isEqualTo(retrySettlementRequestId);
+            assertThat(retriedWorldParticipation.terminal().canonicalBytes())
+                .containsExactly(settledWorldParticipation.terminal().canonicalBytes());
+            assertThat(retriedWorldParticipation.settledAt())
+                .isEqualTo(settledWorldParticipation.settledAt());
+            assertThat(
+                    startSessionAuthorizationProof
+                        .sourceDsl()
+                        .fetchCount(
+                            DSL.table("account_start_session_world_participation_settlements"),
+                            DSL.field("participation_id", UUID.class)
+                                .eq(exactAccountParticipation.participationId())))
+                .isOne();
 
             var assembledPreparationInput =
                 preparationAssembly.assemble(
@@ -5884,21 +5921,6 @@ class GenuineSelectedPublicationExportPostgresIntegrationTest {
             "spiffe://firemud/ns/" + NAMESPACE + "/sa/game-session-service",
             NAMESPACE,
             "game-session-service");
-    Context context = Context.current().withValue(GrpcPeerIdentity.CONTEXT_KEY, peer);
-    Context previous = context.attach();
-    try {
-      return operation.get();
-    } finally {
-      context.detach(previous);
-    }
-  }
-
-  private static <T> T withWorldPeer(Supplier<T> operation) {
-    var peer =
-        new GrpcPeerIdentity(
-            "spiffe://firemud/ns/" + NAMESPACE + "/sa/world-management-service",
-            NAMESPACE,
-            "world-management-service");
     Context context = Context.current().withValue(GrpcPeerIdentity.CONTEXT_KEY, peer);
     Context previous = context.attach();
     try {
