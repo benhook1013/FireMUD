@@ -14,7 +14,9 @@ import java.nio.file.attribute.BasicFileAttributes;
 import java.nio.file.attribute.PosixFilePermission;
 import java.security.PublicKey;
 import java.security.cert.X509Certificate;
+import java.util.Base64;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 import net.firedevops.firemud.common.tenant.AuthoredWorldSourceDigest;
@@ -122,6 +124,13 @@ class RunOwnedInitialAdmissionFixtureCapabilityTest {
         .isEqualTo(UUID.fromString(OPERATION_ID));
     assertThat(receipt.sourceEvidence().operationId())
         .isNotEqualTo(receipt.sourceEvidence().registrationRequestId());
+    assertThat(receipt.launchReadEvidence().schema())
+        .isEqualTo(RunOwnedInitialAdmissionLaunchEvidence.SCHEMA);
+    assertThat(receipt.launchReadEvidence().gameTemplateId()).isEqualTo(17L);
+    assertThat(receipt.launchReadEvidence().publishedReleaseBundle()).isEqualTo(launchBundle());
+    assertThat(receipt.launchReadEvidence().versionAssetArtifactState())
+        .isEqualTo(launchArtifactState());
+    assertThat(receipt.launchReadEvidence().versionState()).isEqualTo(launchVersionState());
   }
 
   @Test
@@ -141,6 +150,166 @@ class RunOwnedInitialAdmissionFixtureCapabilityTest {
     assertInvalidSourceReceipt(json.replace("\"worldSlug\": \"demo\"", "\"worldSlug\": \"other\""));
     assertInvalidSourceReceipt(json.substring(0, json.length() - 30));
     assertInvalidSourceReceiptBytes(new byte[] {(byte) 0xc3, (byte) 0x28});
+    assertInvalidSourceReceipt(
+        json.replace(",\n  \"launchReadEvidence\": " + validLaunchReadEvidenceJson(), ""));
+    assertInvalidSourceReceipt(
+        json.replace("\"launchReadEvidence\": {", "\"launchReadEvidence\": {\"unknown\":true,"));
+    assertInvalidSourceReceipt(
+        json.replace(
+            "\"launchReadEvidence\": {", "\"launchReadEvidence\": {\"schema\":\"duplicate\","));
+    assertInvalidSourceReceipt(
+        json.replace("\"gameTemplateId\":17", "\"gameTemplateId\":9223372036854775808"));
+    assertInvalidSourceReceipt(json.replace("\"gameTemplateId\":17", "\"gameTemplateId\":17.0"));
+    String canonicalBundle = encode(launchBundle().toByteArray());
+    String nonCanonicalBundle =
+        Base64.getEncoder().withoutPadding().encodeToString(launchBundle().toByteArray());
+    if (nonCanonicalBundle.equals(canonicalBundle)) {
+      nonCanonicalBundle += "=";
+    }
+    assertInvalidSourceReceipt(json.replace(canonicalBundle, nonCanonicalBundle));
+    assertInvalidSourceReceipt(json.replace(canonicalBundle, encode(new byte[] {10, 5})));
+    assertInvalidSourceReceipt(
+        validSourceReceiptJson(
+            sourceEvidence(),
+            launchBundle().toBuilder()
+                .setCanonicalTenantId("11111111-1111-4111-8111-111111111111")
+                .build()));
+    assertInvalidSourceReceipt(
+        validSourceReceiptJson(
+            sourceEvidence(),
+            launchBundle(),
+            launchArtifactState().toBuilder().setArtifactStateValue(999).build(),
+            launchVersionState()));
+    assertInvalidSourceReceipt(
+        validSourceReceiptJson(
+            sourceEvidence(),
+            launchBundle(),
+            launchArtifactState(),
+            launchVersionState().toBuilder().setVersionStateValue(999).build()));
+  }
+
+  @Test
+  void rejectsOwnerReadProjectionScopeAndStateMismatches() {
+    var unknownField = com.google.protobuf.UnknownFieldSet.Field.newBuilder().addVarint(1L).build();
+    var unknownFields =
+        com.google.protobuf.UnknownFieldSet.newBuilder().addField(99, unknownField).build();
+    var invalidReceipts =
+        List.of(
+            validSourceReceiptJson().replace("\"gameTemplateId\":17", "\"gameTemplateId\":18"),
+            validSourceReceiptJson(
+                sourceEvidence(),
+                launchBundle(),
+                launchArtifactState().toBuilder().setTenantId("8").build(),
+                launchVersionState()),
+            validSourceReceiptJson(
+                sourceEvidence(),
+                launchBundle(),
+                launchArtifactState().toBuilder().setVersionId(12L).build(),
+                launchVersionState()),
+            validSourceReceiptJson(
+                sourceEvidence(),
+                launchBundle(),
+                launchArtifactState().toBuilder().setStateEpoch(0L).build(),
+                launchVersionState()),
+            validSourceReceiptJson(
+                sourceEvidence(),
+                launchBundle(),
+                launchArtifactState().toBuilder()
+                    .setArtifactState(
+                        net.firedevops.firemud.gamedesign.v1.ArtifactState
+                            .ARTIFACT_STATE_TOMBSTONED)
+                    .build(),
+                launchVersionState()),
+            validSourceReceiptJson(
+                sourceEvidence(),
+                launchBundle(),
+                launchArtifactState().toBuilder()
+                    .setManifestHash("sha256:" + "c".repeat(64))
+                    .build(),
+                launchVersionState()),
+            validSourceReceiptJson(
+                sourceEvidence(),
+                launchBundle(),
+                launchArtifactState(),
+                launchVersionState().toBuilder().setTenantId("8").build()),
+            validSourceReceiptJson(
+                sourceEvidence(),
+                launchBundle(),
+                launchArtifactState(),
+                launchVersionState().toBuilder().setVersionId(12L).build()),
+            validSourceReceiptJson(
+                sourceEvidence(),
+                launchBundle(),
+                launchArtifactState(),
+                launchVersionState().toBuilder().setVersionStateEpoch(0L).build()),
+            validSourceReceiptJson(
+                sourceEvidence(),
+                launchBundle().toBuilder().setCanonicalVersionId("not-a-canonical-uuid").build()),
+            validSourceReceiptJson(
+                sourceEvidence(),
+                launchBundle(),
+                launchArtifactState().toBuilder().setUnknownFields(unknownFields).build(),
+                launchVersionState()),
+            validSourceReceiptJson(
+                sourceEvidence(),
+                launchBundle(),
+                launchArtifactState(),
+                launchVersionState().toBuilder().setUnknownFields(unknownFields).build()));
+
+    invalidReceipts.forEach(
+        RunOwnedInitialAdmissionFixtureCapabilityTest::assertInvalidSourceReceipt);
+  }
+
+  @Test
+  void rejectsArtifactSnapshotMissingTheBundlesRequiredManifestKey() {
+    var bundle = launchBundle();
+    var missingKeys = launchArtifactState().toBuilder().clearExportedManifestAssetKeys().build();
+    var validReceipt =
+        RunOwnedInitialAdmissionFixtureCapability.parseSourceReceipt(
+            validSourceReceiptJson().getBytes(java.nio.charset.StandardCharsets.UTF_8),
+            RUN_ID,
+            PROJECT_NAME,
+            capability(),
+            pins());
+
+    assertThat(validReceipt.launchReadEvidence().publishedReleaseBundle()).isEqualTo(bundle);
+    assertThat(bundle.getRequiredManifestAssetKeysList()).containsExactly("manifest.json");
+    assertThat(missingKeys.getExportedManifestAssetKeysList()).isEmpty();
+    assertInvalidSourceReceipt(
+        validSourceReceiptJson(sourceEvidence(), bundle, missingKeys, launchVersionState()));
+  }
+
+  @Test
+  void rejectsUnknownProtobufFieldsRecursivelyInOwnerReadEvidence() {
+    var unknownField = com.google.protobuf.UnknownFieldSet.Field.newBuilder().addVarint(1L).build();
+    var unknownFields =
+        com.google.protobuf.UnknownFieldSet.newBuilder().addField(99, unknownField).build();
+    var nestedUnknownBundle =
+        launchBundle().toBuilder()
+            .setArtifactDigests(
+                0,
+                launchBundle().getArtifactDigests(0).toBuilder()
+                    .setUnknownFields(unknownFields)
+                    .build())
+            .build();
+    assertInvalidSourceReceipt(validSourceReceiptJson(sourceEvidence(), nestedUnknownBundle));
+    var nestedUnknownParticipant =
+        launchBundle().toBuilder()
+            .addParticipantDigests(
+                net.firedevops.firemud.gamedesign.v1.ParticipantDigest.newBuilder()
+                    .setUnknownFields(unknownFields)
+                    .build())
+            .build();
+    assertInvalidSourceReceipt(validSourceReceiptJson(sourceEvidence(), nestedUnknownParticipant));
+    assertInvalidSourceReceipt(
+        validSourceReceiptJson(
+            sourceEvidence(), launchBundle().toBuilder().setUnknownFields(unknownFields).build()));
+    assertThatThrownBy(
+            () ->
+                RunOwnedInitialAdmissionFixtureCapability.requireNoUnknownFieldsRecursively(
+                    Map.of("publishedReleaseBundle", nestedUnknownBundle)))
+        .isInstanceOf(
+            RunOwnedInitialAdmissionFixtureCapability.InvalidSourceReceiptException.class);
   }
 
   @Test
@@ -292,6 +461,20 @@ class RunOwnedInitialAdmissionFixtureCapabilityTest {
   }
 
   private static String validSourceReceiptJson(AuthoredWorldSourceEvidence source) {
+    return validSourceReceiptJson(source, launchBundle());
+  }
+
+  private static String validSourceReceiptJson(
+      AuthoredWorldSourceEvidence source,
+      net.firedevops.firemud.gamedesign.v1.PublishedReleaseBundle bundle) {
+    return validSourceReceiptJson(source, bundle, launchArtifactState(), launchVersionState());
+  }
+
+  private static String validSourceReceiptJson(
+      AuthoredWorldSourceEvidence source,
+      net.firedevops.firemud.gamedesign.v1.PublishedReleaseBundle bundle,
+      net.firedevops.firemud.gamedesign.v1.VersionAssetArtifactState artifactState,
+      net.firedevops.firemud.gamedesign.v1.VersionStateSnapshot versionState) {
     String sourceJson =
         """
         {%n\
@@ -334,7 +517,8 @@ class RunOwnedInitialAdmissionFixtureCapabilityTest {
           "gameSessionUriSan": "%s",%n\
           "gameSessionLeafSha256": "%s",%n\
           "caCertificateSha256": "%s",%n\
-          "sourceEvidence": %s%n\
+          "sourceEvidence": %s,%n\
+          "launchReadEvidence": %s%n\
         }%n\
         """
         .formatted(
@@ -346,7 +530,92 @@ class RunOwnedInitialAdmissionFixtureCapabilityTest {
             RunOwnedInitialAdmissionFixtureCapability.GAME_SESSION_URI_SAN,
             LEAF_SHA,
             CA_SHA,
-            sourceJson);
+            sourceJson,
+            launchReadEvidenceJson(bundle, artifactState, versionState));
+  }
+
+  private static String validLaunchReadEvidenceJson() {
+    return launchReadEvidenceJson(launchBundle());
+  }
+
+  private static String launchReadEvidenceJson(
+      net.firedevops.firemud.gamedesign.v1.PublishedReleaseBundle bundle) {
+    return launchReadEvidenceJson(bundle, launchArtifactState(), launchVersionState());
+  }
+
+  private static String launchReadEvidenceJson(
+      net.firedevops.firemud.gamedesign.v1.PublishedReleaseBundle bundle,
+      net.firedevops.firemud.gamedesign.v1.VersionAssetArtifactState artifactState,
+      net.firedevops.firemud.gamedesign.v1.VersionStateSnapshot versionState) {
+    return """
+        {"schema":"%s","gameTemplateId":17,"publishedReleaseBundleBase64":"%s","versionAssetArtifactStateBase64":"%s","versionStateBase64":"%s"}%n\
+        """
+        .formatted(
+            RunOwnedInitialAdmissionLaunchEvidence.SCHEMA,
+            encode(bundle.toByteArray()),
+            encode(artifactState.toByteArray()),
+            encode(versionState.toByteArray()));
+  }
+
+  private static net.firedevops.firemud.gamedesign.v1.PublishedReleaseBundle launchBundle() {
+    String canonicalTenantId = sourceEvidence().canonicalTenantId().toString();
+    String artifactDigest = "sha256:" + "b".repeat(64);
+    return net.firedevops.firemud.gamedesign.v1.PublishedReleaseBundle.newBuilder()
+        .setId(77L)
+        .setVersionId(11L)
+        .setVersionNumber(1)
+        .setAttestationSchemaVersion("v1")
+        .setPublishWorkflowId("publish-11")
+        .setManifestHash("sha256:" + "a".repeat(64))
+        .addRequiredManifestAssetKeys("manifest.json")
+        .setGenerationConfigRevision("genrev-11")
+        .setPublishedAt("2026-04-15T10:00:00")
+        .setPublishedReleaseBundleRef("owner-release-ref-11")
+        .setCanonicalTenantId(canonicalTenantId)
+        .setCanonicalVersionId("10000000-0000-4000-8000-000000000011")
+        .setManifestSchemaVersion(1)
+        .addArtifactDigests(
+            net.firedevops.firemud.gamedesign.v1.PublishedArtifactDigest.newBuilder()
+                .setUsageKey("manifest.json")
+                .setArtifactKind("manifest")
+                .setImmutableObjectKey(
+                    "artifacts/sha256/" + artifactDigest.substring("sha256:".length()))
+                .setContentDigest(artifactDigest)
+                .setContentType("application/json")
+                .setArtifactSchemaVersion(1)
+                .build())
+        .build();
+  }
+
+  private static net.firedevops.firemud.gamedesign.v1.VersionAssetArtifactState
+      launchArtifactState() {
+    return net.firedevops.firemud.gamedesign.v1.VersionAssetArtifactState.newBuilder()
+        .setTenantId("7")
+        .setVersionId(11L)
+        .setArtifactState(
+            net.firedevops.firemud.gamedesign.v1.ArtifactState.ARTIFACT_STATE_PUBLISHED)
+        .setStateEpoch(2L)
+        .setManifestHash("sha256:" + "a".repeat(64))
+        .setUpdatedAt("2026-04-15T10:00:00")
+        .addExportedManifestAssetKeys("manifest.json")
+        .setExportedVersionNumber(1)
+        .build();
+  }
+
+  private static net.firedevops.firemud.gamedesign.v1.VersionStateSnapshot launchVersionState() {
+    return net.firedevops.firemud.gamedesign.v1.VersionStateSnapshot.newBuilder()
+        .setTenantId("7")
+        .setVersionId(11L)
+        .setVersionState(
+            net.firedevops.firemud.gamedesign.v1.VersionLifecycleState
+                .VERSION_LIFECYCLE_STATE_PUBLISHED)
+        .setVersionStateEpoch(77L)
+        .setUpdatedAt("2026-04-15T10:00:00")
+        .build();
+  }
+
+  private static String encode(byte[] bytes) {
+    return Base64.getEncoder().encodeToString(bytes);
   }
 
   private static String validJson() {

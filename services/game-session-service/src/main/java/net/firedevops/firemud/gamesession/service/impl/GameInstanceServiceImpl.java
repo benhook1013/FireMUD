@@ -24,6 +24,7 @@ import net.firedevops.firemud.gamesession.client.EntityManagementClient;
 import net.firedevops.firemud.gamesession.client.GameDesignClient;
 import net.firedevops.firemud.gamesession.client.GameLogicClient;
 import net.firedevops.firemud.gamesession.client.WorldManagementClient;
+import net.firedevops.firemud.gamesession.data.RunOwnedInitialAdmissionLaunchEvidence;
 import net.firedevops.firemud.gamesession.dto.GameInstanceDto;
 import net.firedevops.firemud.gamesession.dto.ResolvedLaunchDescriptor;
 import net.firedevops.firemud.gamesession.dto.StartSessionRequest;
@@ -247,13 +248,13 @@ public class GameInstanceServiceImpl implements GameInstanceService {
   @Override
   @Timed(value = "gamesession.run_owned_initial_launch")
   public RunOwnedInitialLaunchResult startRunOwnedInitialLaunch(
-      StartSessionRequest request, AuthoredWorldSourceEvidence sourceEvidence) {
+      StartSessionRequest request, RunOwnedInitialAdmissionLaunchEvidence launchEvidence) {
     validateRunOwnedLaunchRequest(request);
-    requireRunOwnedSourceMatchesRequest(request, sourceEvidence);
+    requireRunOwnedSourceMatchesRequest(request, launchEvidence);
     ResolvedLaunchDescriptor resolvedLaunchDescriptor =
-        preflightRunOwnedLaunch(request, sourceEvidence);
-    requireDescriptorMatchesRequest(request, resolvedLaunchDescriptor);
-    String requestDigest = runOwnedLaunchRequestDigest(request, sourceEvidence);
+        preflightRunOwnedLaunch(request, launchEvidence);
+    requireRunOwnedDescriptorMatchesRequest(request, resolvedLaunchDescriptor);
+    String requestDigest = runOwnedLaunchRequestDigest(request, launchEvidence);
     GameInstance reserved =
         inTransaction(
             () -> reserveRunOwnedInitialLaunch(request, resolvedLaunchDescriptor, requestDigest),
@@ -738,7 +739,8 @@ public class GameInstanceServiceImpl implements GameInstanceService {
   }
 
   private static String runOwnedLaunchRequestDigest(
-      StartSessionRequest request, AuthoredWorldSourceEvidence sourceEvidence) {
+      StartSessionRequest request, RunOwnedInitialAdmissionLaunchEvidence launchEvidence) {
+    AuthoredWorldSourceEvidence sourceEvidence = launchEvidence.sourceEvidence();
     StringBuilder preimage = new StringBuilder();
     appendDigestField(preimage, "schema", RUN_OWNED_LAUNCH_DIGEST_SCHEMA);
     appendDigestField(preimage, "tenantId", Long.toString(request.tenantId()));
@@ -762,11 +764,29 @@ public class GameInstanceServiceImpl implements GameInstanceService {
     appendDigestField(preimage, "sourceGameTenantKey", sourceEvidence.sourceGameTenantKey());
     appendDigestField(preimage, "sourceProvenanceKind", sourceEvidence.provenanceKind());
     appendDigestField(preimage, "sourceEvidenceDigest", sourceEvidence.evidenceDigest());
+    appendDigestField(preimage, "launchReadEvidenceSchema", launchEvidence.schema());
+    appendDigestField(
+        preimage,
+        "launchReadEvidenceGameTemplateId",
+        Long.toString(launchEvidence.gameTemplateId()));
+    appendDigestField(
+        preimage,
+        "publishedReleaseBundleSnapshotSha256",
+        sha256Hex(launchEvidence.publishedReleaseBundle().toByteArray()));
+    appendDigestField(
+        preimage,
+        "versionAssetArtifactStateSnapshotSha256",
+        sha256Hex(launchEvidence.versionAssetArtifactState().toByteArray()));
+    appendDigestField(
+        preimage,
+        "versionStateSnapshotSha256",
+        sha256Hex(launchEvidence.versionState().toByteArray()));
+    return sha256Hex(preimage.toString().getBytes(StandardCharsets.UTF_8));
+  }
+
+  private static String sha256Hex(byte[] bytes) {
     try {
-      return HexFormat.of()
-          .formatHex(
-              MessageDigest.getInstance("SHA-256")
-                  .digest(preimage.toString().getBytes(StandardCharsets.UTF_8)));
+      return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(bytes));
     } catch (NoSuchAlgorithmException exception) {
       throw new IllegalStateException("SHA-256 unavailable", exception);
     }
@@ -804,6 +824,28 @@ public class GameInstanceServiceImpl implements GameInstanceService {
         || !releaseBundleRef(
                 request.tenantId(), descriptor.versionId(), descriptor.releaseBundleId())
             .equals(descriptor.publishedReleaseBundleRef())) {
+      throw new IllegalArgumentException(
+          "LAUNCH_DESCRIPTOR_INCOMPLETE: resolved descriptor is missing exact published inputs");
+    }
+  }
+
+  private void requireRunOwnedDescriptorMatchesRequest(
+      StartSessionRequest request, ResolvedLaunchDescriptor descriptor) {
+    if (descriptor.tenantId() != request.tenantId()
+        || descriptor.gameTemplateId() != request.gameTemplateId()
+        || !request.controlPlaneRequestId().equals(descriptor.controlPlaneRequestId())) {
+      throw new IllegalArgumentException(
+          "LAUNCH_DESCRIPTOR_REQUEST_MISMATCH: resolved descriptor is not bound to this request");
+    }
+    if (descriptor.launchDescriptorId() == null
+        || descriptor.launchDescriptorId().isBlank()
+        || descriptor.versionId() <= 0L
+        || descriptor.releaseBundleId() <= 0L
+        || descriptor.versionStateEpoch() <= 0L
+        || descriptor.generationConfigRevision() == null
+        || descriptor.generationConfigRevision().isBlank()
+        || descriptor.publishedReleaseBundleRef() == null
+        || descriptor.publishedReleaseBundleRef().isBlank()) {
       throw new IllegalArgumentException(
           "LAUNCH_DESCRIPTOR_INCOMPLETE: resolved descriptor is missing exact published inputs");
     }
@@ -1270,10 +1312,11 @@ public class GameInstanceServiceImpl implements GameInstanceService {
   }
 
   private ResolvedLaunchDescriptor preflightRunOwnedLaunch(
-      StartSessionRequest request, AuthoredWorldSourceEvidence sourceEvidence) {
+      StartSessionRequest request, RunOwnedInitialAdmissionLaunchEvidence launchEvidence) {
     if (gameDesignClient == null) {
       throw new IllegalStateException("launch descriptor authority unavailable");
     }
+    AuthoredWorldSourceEvidence sourceEvidence = launchEvidence.sourceEvidence();
     ResolveLaunchDescriptorResponse descriptorResponse =
         gameDesignClient.resolveLaunchDescriptor(
             request.tenantId(),
@@ -1281,7 +1324,65 @@ public class GameInstanceServiceImpl implements GameInstanceService {
             request.controlPlaneRequestId(),
             sourceEvidence);
     requireExactAuthoredWorldDescriptorRequest(request, sourceEvidence, descriptorResponse);
-    return preflightLaunchResponse(request, descriptorResponse, request.tenantId());
+    if (descriptorResponse.hasError()) {
+      throw new IllegalArgumentException(
+          descriptorResponse.getError().getCode()
+              + ": "
+              + descriptorResponse.getError().getMessage());
+    }
+    if (!descriptorResponse.hasLaunchDescriptor()) {
+      throw new IllegalArgumentException(
+          "AUTHORED_WORLD_LAUNCH_DESCRIPTOR_MISMATCH: Game Design returned no descriptor");
+    }
+    var descriptor = descriptorResponse.getLaunchDescriptor();
+    var bundle = launchEvidence.publishedReleaseBundle();
+    var artifactState = launchEvidence.versionAssetArtifactState();
+    var versionState = launchEvidence.versionState();
+    String tenantId = Long.toString(request.tenantId());
+    if (!RunOwnedInitialAdmissionLaunchEvidence.SCHEMA.equals(launchEvidence.schema())
+        || launchEvidence.gameTemplateId() != request.gameTemplateId()
+        || descriptor.getGameTemplateId() != request.gameTemplateId()
+        || descriptor.getVersionId() != bundle.getVersionId()
+        || descriptor.getReleaseBundleId() != bundle.getId()
+        || descriptor.getVersionStateEpoch() != versionState.getVersionStateEpoch()
+        || !descriptor.getPublishedReleaseBundleRef().equals(bundle.getPublishedReleaseBundleRef())
+        || !descriptor.getGenerationConfigRevision().equals(bundle.getGenerationConfigRevision())
+        || !sourceEvidence.canonicalTenantId().toString().equals(bundle.getCanonicalTenantId())
+        || !tenantId.equals(artifactState.getTenantId())
+        || artifactState.getVersionId() != descriptor.getVersionId()
+        || artifactState.getStateEpoch() <= 0L
+        || artifactState.getArtifactState()
+            != net.firedevops.firemud.gamedesign.v1.ArtifactState.ARTIFACT_STATE_PUBLISHED
+        || !artifactState.getManifestHash().equals(bundle.getManifestHash())
+        || artifactState.getExportedVersionNumber() != bundle.getVersionNumber()
+        || !artifactState
+            .getExportedManifestAssetKeysList()
+            .containsAll(bundle.getRequiredManifestAssetKeysList())
+        || !tenantId.equals(versionState.getTenantId())
+        || versionState.getVersionId() != descriptor.getVersionId()
+        || versionState.getVersionStateEpoch() != descriptor.getVersionStateEpoch()
+        || (versionState.getVersionState()
+                != VersionLifecycleState.VERSION_LIFECYCLE_STATE_PUBLISHED
+            && versionState.getVersionState()
+                != VersionLifecycleState.VERSION_LIFECYCLE_STATE_ACTIVE)) {
+      throw new IllegalArgumentException(
+          "RUN_OWNED_LAUNCH_READ_EVIDENCE_MISMATCH: owner snapshot differs from the exact launch"
+              + " descriptor");
+    }
+    requireSupportedReleaseAttestationSchema(bundle.getAttestationSchemaVersion());
+    return new ResolvedLaunchDescriptor(
+        descriptor.getLaunchDescriptorId(),
+        request.tenantId(),
+        descriptor.getGameTemplateId(),
+        descriptor.getControlPlaneRequestId(),
+        descriptor.getVersionId(),
+        descriptor.getScriptPatchVersion().isBlank() ? null : descriptor.getScriptPatchVersion(),
+        descriptor.getRuntimeFlagsJson(),
+        descriptor.getGenerationConfigRevision(),
+        descriptor.getVersionStateEpoch(),
+        descriptor.getReleaseBundleId(),
+        descriptor.getPublishedReleaseBundleRef(),
+        descriptor.getRemapSetId().isBlank() ? null : descriptor.getRemapSetId());
   }
 
   private ResolvedLaunchDescriptor preflightLaunchResponse(
@@ -1351,9 +1452,19 @@ public class GameInstanceServiceImpl implements GameInstanceService {
   }
 
   private void requireRunOwnedSourceMatchesRequest(
-      StartSessionRequest request, AuthoredWorldSourceEvidence sourceEvidence) {
-    if (sourceEvidence == null
-        || !"dev".equals(sourceEvidence.targetNamespace())
+      StartSessionRequest request, RunOwnedInitialAdmissionLaunchEvidence launchEvidence) {
+    if (launchEvidence == null
+        || launchEvidence.sourceEvidence() == null
+        || launchEvidence.schema() == null
+        || launchEvidence.gameTemplateId() != request.gameTemplateId()
+        || launchEvidence.publishedReleaseBundle() == null
+        || launchEvidence.versionAssetArtifactState() == null
+        || launchEvidence.versionState() == null) {
+      throw new IllegalArgumentException(
+          "RUN_OWNED_INITIAL_LAUNCH_SOURCE_MISMATCH: verified fixture launch evidence is required");
+    }
+    AuthoredWorldSourceEvidence sourceEvidence = launchEvidence.sourceEvidence();
+    if (!"dev".equals(sourceEvidence.targetNamespace())
         || !request
             .controlPlaneRequestId()
             .equals(sourceEvidence.registrationRequestId().toString())

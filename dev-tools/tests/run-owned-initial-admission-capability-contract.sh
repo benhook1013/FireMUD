@@ -306,7 +306,9 @@ for wrapper in verify-fresh-bootstrap.sh verify-smoke-images.sh verify-restart-s
   [[ -n "$disabled_line" && -n "$capability_line" ]]
   if [[ -n "$config_line" ]]; then
     ((disabled_line < config_line))
-    if [[ "$wrapper" != verify-restart-state.sh ]]; then
+    if [[ "$wrapper" == verify-smoke-images.sh ]]; then
+      ((capability_line < config_line))
+    elif [[ "$wrapper" != verify-restart-state.sh ]]; then
       ((config_line < capability_line))
     fi
   fi
