@@ -1203,7 +1203,8 @@ class WorldCanonicalInstanceAssociationPostgresIntegrationTest {
                     input,
                     changedTupleIdentity))
         .isInstanceOf(IllegalArgumentException.class)
-        .hasMessageContaining("differs from the exact original StartSession tuple");
+        .hasMessageContaining(
+            "Original StartSession tuple differs from the exact assembled World operation");
 
     WorldCanonicalInstancePreparation.Input substitutedInput =
         preparationInput(fixture, canonicalGameInstanceId, UUID.randomUUID(), "GS_FIXTURE", 1L);

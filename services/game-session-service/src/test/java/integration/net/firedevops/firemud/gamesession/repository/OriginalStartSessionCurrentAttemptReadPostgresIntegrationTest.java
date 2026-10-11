@@ -418,7 +418,7 @@ class OriginalStartSessionCurrentAttemptReadPostgresIntegrationTest {
                             + "ORDER BY installed_rank DESC LIMIT 1"),
                     "Game Session migration history has no successful version")
                 .get("version", String.class));
-    assertThat(latestVersion).isEqualTo("35");
+    assertThat(latestVersion).isEqualTo("46");
 
     DataSourceTransactionManager transactionManager = new DataSourceTransactionManager(dataSource);
     TransactionTemplate transactions = new TransactionTemplate(transactionManager);

@@ -158,7 +158,7 @@ public final class CanonicalGameplayBindingRuntimeTestFixtures {
             + " source_operation_id, source_request_digest, source_world_display_name,"
             + " source_game_row_id, source_game_tenant_key, source_provenance_kind, source_evidence_digest,"
             + " complete_policy_set_evidence)"
-            + " VALUES (?, ?, ?, ?, ?, ?, ?, TRUE, TRUE, 'SHARED', ?, ?, 1, ?, ?, ?, ?, 1, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?)",
+            + " VALUES (?, ?, ?, ?, ?, ?, ?, TRUE, TRUE, 'SHARED', ?, ?, 1, ?, ?, ?, ?, 1, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         target.targetNamespace(),
         target.canonicalTenantId(),
         target.tenantSlug(),

@@ -2012,7 +2012,9 @@ class WorldDraftGraphApplicationPostgresIntegrationTest {
               () -> service.activateProtected(protection, stipulatedActivationAuthority()))
           .isInstanceOf(
               WorldCanonicalInstanceActivationRepository.ActivationConflictException.class)
-          .hasMessageContaining("does not match the committed original execution");
+          .hasMessageContaining(
+              "Account activation protection differs from the exact committed World execution, "
+                  + "schema-2 local realm/catalog association, or preparation");
     }
     assertThat(activationOperationCountForRequest(request.activationRequestId())).isZero();
     assertThat(
@@ -4153,7 +4155,7 @@ class WorldDraftGraphApplicationPostgresIntegrationTest {
   }
 
   @Test
-  void v65UpgradeRetainsV52EvolvedLegacyActivationBytesWithoutProtectedAdoption() {
+  void v66UpgradeRetainsV52EvolvedLegacyActivationBytesWithoutProtectedAdoption() {
     HistoricalSchemaFixture schema = historicalSchemaAt("world_v42_legacy_activation", "42");
     WorldDraftGraphApplicationPostgresIntegrationTest historical = schema.database();
     Fixture f = historical.fixture();
@@ -4438,12 +4440,51 @@ class WorldDraftGraphApplicationPostgresIntegrationTest {
     assertThat(worldAtV65.get("canonical_realm_id", UUID.class)).isNull();
     assertThat(worldAtV65.get("catalog_revision", Long.class)).isNull();
 
+    Record activationGuardAtV65 =
+        Objects.requireNonNull(
+            historical.dsl.fetchOne(
+                "SELECT p.oid::bigint AS function_oid,p.proacl::text AS function_acl "
+                    + "FROM pg_proc p WHERE p.oid=to_regprocedure "
+                    + "(current_schema() || '.world_validate_canonical_activation_operation()')"));
+    historical.migrateHistoricalSchema(schema.schema(), "66");
+    Record activationGuardAtV66 =
+        Objects.requireNonNull(
+            historical.dsl.fetchOne(
+                "SELECT p.oid::bigint AS function_oid,p.proacl::text AS function_acl "
+                    + "FROM pg_proc p WHERE p.oid=to_regprocedure "
+                    + "(current_schema() || '.world_validate_canonical_activation_operation()')"));
+    assertThat(activationGuardAtV66.get("function_oid", Long.class))
+        .isEqualTo(activationGuardAtV65.get("function_oid", Long.class));
+    assertThat(activationGuardAtV66.get("function_acl", String.class))
+        .isEqualTo(activationGuardAtV65.get("function_acl", String.class));
+    var associationAtV66 =
+        Objects.requireNonNull(
+            historical.dsl.fetchOne(
+                "SELECT schema_version,canonical_realm_id,catalog_revision "
+                    + "FROM world_canonical_instance_association "
+                    + "WHERE canonical_game_instance_id=?",
+                input.canonicalGameInstanceId()));
+    assertThat(associationAtV66.get("schema_version", Short.class)).isEqualTo((short) 1);
+    assertThat(associationAtV66.get("canonical_realm_id", UUID.class)).isNull();
+    assertThat(associationAtV66.get("catalog_revision", Long.class)).isNull();
+    assertThat(
+            Objects.requireNonNull(
+                    historical.dsl.fetchOne(
+                        "SELECT input_json::JSONB->>'schemaVersion' FROM "
+                            + "world_canonical_instance_preparation "
+                            + "WHERE canonical_game_instance_id=?",
+                        input.canonicalGameInstanceId()))
+                .get(0, String.class))
+        .isEqualTo("2");
+
     assertThat(
             historical.rowJson(
                 "SELECT to_jsonb(o)::text FROM world_canonical_instance_activation_operation o "
                     + "WHERE activation_request_id=?",
                 request.activationRequestId()))
         .containsExactly(operationJsonBeforeUpgrade);
+    assertThat(historical.preparationRows(input.canonicalGameInstanceId()))
+        .containsExactly(preparationRowsBeforeRetry);
     assertThat(
             historical.rowJson(
                 "SELECT (to_jsonb(a)-'canonical_realm_id'-'catalog_revision')::text "
@@ -5485,6 +5526,7 @@ class WorldDraftGraphApplicationPostgresIntegrationTest {
     Mockito.when(gameDesign.getComplete(Mockito.any())).thenReturn(returnedPair);
 
     var gameSession = Mockito.mock(CanonicalGameInstanceLaunchAssociationClient.class);
+    UUID canonicalRealmId = UUID.randomUUID();
     Mockito.when(gameSession.read(Mockito.any()))
         .thenAnswer(
             invocation -> {
@@ -5496,7 +5538,7 @@ class WorldDraftGraphApplicationPostgresIntegrationTest {
                   playableStateNamespaceId,
                   RealmEntryPolicy.StateScope.SHARED,
                   true,
-                  UUID.randomUUID(),
+                  canonicalRealmId,
                   1L,
                   CanonicalGameInstanceLaunchAssociationReadEvidence.CurrentGameInstanceStatus
                       .STARTING,
