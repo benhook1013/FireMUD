@@ -271,7 +271,7 @@ public record AccountGenerationProjection(
             logout.outboxSequence());
       }
       case AccountSecurityStateAuthorityEventV1Codec.SCHEMA_VERSION -> {
-        var security = AccountSecurityStateAuthorityEventV1Codec.verify(eventJson);
+        var security = AccountSecurityStateAuthorityEventV1Codec.verifyFamily(eventJson);
         canonicalEvent = security.canonicalJson();
         requireEventBinding(
             accountId,

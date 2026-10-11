@@ -10,6 +10,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.Set;
 import net.firedevops.firemud.common.json.Rfc8785CanonicalJson;
 
@@ -18,6 +19,8 @@ public final class AccountSecurityStateAuthorityEventV1Codec {
   public static final String SCHEMA_VERSION = "account-auth-account-security-state-event/v1";
   public static final String EVENT_TYPE = "ACCOUNT_SECURITY_STATE_CHANGED";
   public static final String EVENT_ID_PREFIX = "account-security-state-event-v1:";
+  public static final String RESTRICTION_EVENT_TYPE = "ACCOUNT_RESTRICTION_CHANGED";
+  public static final String RESTRICTION_EVENT_ID_PREFIX = "account-restriction-event-v1:";
   public static final String EVENT_STREAM_PREFIX = "account:auth-authority:v1:";
 
   private static final Set<String> PREIMAGE_FIELDS =
@@ -46,6 +49,33 @@ public final class AccountSecurityStateAuthorityEventV1Codec {
           "LOGIN_AUTH_MODES_CHANGED",
           "GLOBAL_ROLE_CHANGED",
           "LIFECYCLE_STATE_CHANGED");
+  private static final Set<String> RESTRICTION_PREIMAGE_FIELDS =
+      Set.of(
+          "schemaVersion",
+          "eventType",
+          "eventId",
+          "requestId",
+          "accountId",
+          "sourceScope",
+          "outboxStreamKey",
+          "outboxSequence",
+          "accountAuthorityGeneration",
+          "sourceVersion",
+          "accountSecurityCutoff",
+          "restrictionCategory",
+          "restrictionRevision",
+          "restrictionEnforcementEpoch",
+          "restrictionState",
+          "restrictionResultId",
+          "restrictionRequestDigest",
+          "restrictionSourceKind",
+          "restrictionSourceRequestId",
+          "restrictionSourceDigest");
+  private static final Set<String> RESTRICTION_CATEGORIES =
+      Set.of("account_security_lock", "platform_access_ban");
+  private static final Set<String> RESTRICTION_STATES = Set.of("NONRESTRICTED", "RESTRICTED");
+  private static final Set<String> RESTRICTION_SOURCE_KINDS =
+      Set.of("ACCOUNT_SECURITY_POLICY", "ACCOUNT_SECURITY_RECOVERY", "LOGGING_ADMIN_MODERATION");
   private static final Set<String> LOGIN_MODES = Set.of("EMAIL_OTP", "PASSWORD");
   private static final Set<String> GLOBAL_ROLES =
       Set.of("platformAdmin", "support", "billingAdmin");
@@ -102,6 +132,155 @@ public final class AccountSecurityStateAuthorityEventV1Codec {
       throw invalid("eventDigest does not match the complete canonical preimage");
     }
     return evidence(wire, supplied);
+  }
+
+  /**
+   * Seals one closed category revision in the existing Account security-state event family. The
+   * original ACCOUNT_SECURITY_STATE_CHANGED preimage and codec remain byte-for-byte fixed.
+   */
+  public static AccountRestrictionAuthorityEvent sealRestriction(Map<String, ?> preimage) {
+    Objects.requireNonNull(preimage, "restriction event preimage is required");
+    JsonNode tree = JSON.valueToTree(preimage);
+    if (!(tree instanceof ObjectNode object)) {
+      throw invalid("restriction event preimage must be an object");
+    }
+    validateRestrictionPreimage(object);
+    String digest = digest(object);
+    ObjectNode wire = object.deepCopy();
+    wire.put("eventDigest", digest);
+    return restrictionEvidence(wire, digest);
+  }
+
+  /** Verifies either exact v1 variant without widening the original variant's field set. */
+  public static AccountSecurityStateFamilyEvent verifyFamily(String wireJson) {
+    Objects.requireNonNull(wireJson, "event JSON is required");
+    final JsonNode tree;
+    try {
+      Rfc8785CanonicalJson.canonicalizeUtf8(wireJson);
+      tree = JSON.readTree(wireJson);
+    } catch (IOException exception) {
+      throw new IllegalArgumentException("event JSON is malformed", exception);
+    }
+    if (!(tree instanceof ObjectNode object)) {
+      throw invalid("event must be an object");
+    }
+    return switch (text(object, "eventType")) {
+      case EVENT_TYPE -> AccountSecurityStateFamilyEvent.securityState(verify(wireJson));
+      case RESTRICTION_EVENT_TYPE ->
+          AccountSecurityStateFamilyEvent.restriction(verifyRestriction(wireJson));
+      default -> throw invalid("Account security-state event variant is unsupported");
+    };
+  }
+
+  /** Verifies only the new fixed-category restriction variant. */
+  public static AccountRestrictionAuthorityEvent verifyRestriction(String wireJson) {
+    Objects.requireNonNull(wireJson, "restriction event JSON is required");
+    final JsonNode tree;
+    try {
+      Rfc8785CanonicalJson.canonicalizeUtf8(wireJson);
+      tree = JSON.readTree(wireJson);
+    } catch (IOException exception) {
+      throw new IllegalArgumentException("restriction event JSON is malformed", exception);
+    }
+    if (!(tree instanceof ObjectNode wire)) {
+      throw invalid("restriction event must be an object");
+    }
+    var wireFields = new java.util.HashSet<>(RESTRICTION_PREIMAGE_FIELDS);
+    wireFields.add("eventDigest");
+    exactFields(wire, wireFields);
+    String supplied = text(wire, "eventDigest");
+    if (!StrictAuthorityEventSupport.isCanonicalSha256Digest(supplied)) {
+      throw invalid("eventDigest must be canonical sha256 hexadecimal");
+    }
+    ObjectNode preimage = wire.deepCopy();
+    preimage.remove("eventDigest");
+    validateRestrictionPreimage(preimage);
+    if (!MessageDigest.isEqual(
+        supplied.getBytes(StandardCharsets.US_ASCII),
+        digest(preimage).getBytes(StandardCharsets.US_ASCII))) {
+      throw invalid("eventDigest does not match the complete restriction preimage");
+    }
+    return restrictionEvidence(wire, supplied);
+  }
+
+  private static void validateRestrictionPreimage(ObjectNode event) {
+    exactFields(event, RESTRICTION_PREIMAGE_FIELDS);
+    equalText(event, "schemaVersion", SCHEMA_VERSION);
+    equalText(event, "eventType", RESTRICTION_EVENT_TYPE);
+    String requestId = uuid(event, "requestId");
+    equalText(event, "eventId", RESTRICTION_EVENT_ID_PREFIX + requestId);
+    String accountId = uuid(event, "accountId");
+    equalText(event, "sourceScope", "account/" + accountId);
+    equalText(event, "outboxStreamKey", EVENT_STREAM_PREFIX + "account/" + accountId);
+    positive(event, "outboxSequence");
+    positive(event, "accountAuthorityGeneration");
+    positive(event, "sourceVersion");
+    ObjectNode cutoff = object(event, "accountSecurityCutoff");
+    exactFields(cutoff, CUTOFF_FIELDS);
+    positive(cutoff, "accountAuthorityGeneration");
+    positive(cutoff, "outboxSequence");
+    for (String field : CUTOFF_FIELDS) {
+      equalText(cutoff, field, text(event, field));
+    }
+    String category = text(event, "restrictionCategory");
+    if (!RESTRICTION_CATEGORIES.contains(category)) {
+      throw invalid("restrictionCategory is unsupported");
+    }
+    positive(event, "restrictionRevision");
+    positive(event, "restrictionEnforcementEpoch");
+    if (!RESTRICTION_STATES.contains(text(event, "restrictionState"))) {
+      throw invalid("restrictionState is unsupported");
+    }
+    uuid(event, "restrictionResultId");
+    String requestDigest = text(event, "restrictionRequestDigest");
+    if (!StrictAuthorityEventSupport.isCanonicalSha256Digest(requestDigest)) {
+      throw invalid("restrictionRequestDigest must be canonical sha256 hexadecimal");
+    }
+    String sourceKind = text(event, "restrictionSourceKind");
+    if (!RESTRICTION_SOURCE_KINDS.contains(sourceKind)
+        || ("account_security_lock".equals(category)
+            && ("LOGGING_ADMIN_MODERATION".equals(sourceKind)
+                || ("ACCOUNT_SECURITY_POLICY".equals(sourceKind)
+                    && !"RESTRICTED".equals(text(event, "restrictionState")))
+                || ("ACCOUNT_SECURITY_RECOVERY".equals(sourceKind)
+                    && !"NONRESTRICTED".equals(text(event, "restrictionState")))))
+        || ("platform_access_ban".equals(category)
+            && !"LOGGING_ADMIN_MODERATION".equals(sourceKind))) {
+      throw invalid("restrictionSourceKind does not match its Account category owner");
+    }
+    uuid(event, "restrictionSourceRequestId");
+    String sourceDigest = text(event, "restrictionSourceDigest");
+    if (!StrictAuthorityEventSupport.isCanonicalSha256Digest(sourceDigest)) {
+      throw invalid("restrictionSourceDigest must be canonical sha256 hexadecimal");
+    }
+  }
+
+  private static AccountRestrictionAuthorityEvent restrictionEvidence(
+      ObjectNode wire, String digest) {
+    ObjectNode cutoff = object(wire, "accountSecurityCutoff");
+    return new AccountRestrictionAuthorityEvent(
+        text(wire, "eventId"),
+        text(wire, "requestId"),
+        text(wire, "accountId"),
+        text(wire, "outboxStreamKey"),
+        text(wire, "outboxSequence"),
+        text(wire, "accountAuthorityGeneration"),
+        text(wire, "sourceVersion"),
+        new AccountSecurityCutoff(
+            text(cutoff, "accountAuthorityGeneration"),
+            text(cutoff, "outboxStreamKey"),
+            text(cutoff, "outboxSequence")),
+        text(wire, "restrictionCategory"),
+        text(wire, "restrictionRevision"),
+        text(wire, "restrictionEnforcementEpoch"),
+        text(wire, "restrictionState"),
+        text(wire, "restrictionResultId"),
+        text(wire, "restrictionRequestDigest"),
+        text(wire, "restrictionSourceKind"),
+        text(wire, "restrictionSourceRequestId"),
+        text(wire, "restrictionSourceDigest"),
+        digest,
+        canonicalJson(wire));
   }
 
   private static void validatePreimage(ObjectNode event) {
@@ -346,6 +525,287 @@ public final class AccountSecurityStateAuthorityEventV1Codec {
 
     public AccountState accountState() {
       return accountState;
+    }
+
+    public String eventDigest() {
+      return eventDigest;
+    }
+
+    public String canonicalJson() {
+      return canonicalJson;
+    }
+
+    public byte[] canonicalJsonUtf8() {
+      return canonicalJson.getBytes(StandardCharsets.UTF_8);
+    }
+  }
+
+  /** One verified closed variant in this Account-owned source-event family. */
+  public static final class AccountSecurityStateFamilyEvent {
+    private final String eventId;
+    private final String requestId;
+    private final String accountId;
+    private final String outboxStreamKey;
+    private final String outboxSequence;
+    private final String accountAuthorityGeneration;
+    private final String sourceVersion;
+    private final AccountSecurityCutoff accountSecurityCutoff;
+    private final Optional<AccountSecurityStateAuthorityEvent> securityState;
+    private final Optional<AccountRestrictionAuthorityEvent> restriction;
+    private final String eventDigest;
+    private final String canonicalJson;
+
+    private AccountSecurityStateFamilyEvent(
+        String eventId,
+        String requestId,
+        String accountId,
+        String outboxStreamKey,
+        String outboxSequence,
+        String accountAuthorityGeneration,
+        String sourceVersion,
+        AccountSecurityCutoff accountSecurityCutoff,
+        Optional<AccountSecurityStateAuthorityEvent> securityState,
+        Optional<AccountRestrictionAuthorityEvent> restriction,
+        String eventDigest,
+        String canonicalJson) {
+      this.eventId = eventId;
+      this.requestId = requestId;
+      this.accountId = accountId;
+      this.outboxStreamKey = outboxStreamKey;
+      this.outboxSequence = outboxSequence;
+      this.accountAuthorityGeneration = accountAuthorityGeneration;
+      this.sourceVersion = sourceVersion;
+      this.accountSecurityCutoff = accountSecurityCutoff;
+      this.securityState = securityState;
+      this.restriction = restriction;
+      this.eventDigest = eventDigest;
+      this.canonicalJson = canonicalJson;
+    }
+
+    private static AccountSecurityStateFamilyEvent securityState(
+        AccountSecurityStateAuthorityEvent event) {
+      return new AccountSecurityStateFamilyEvent(
+          event.eventId(),
+          event.requestId(),
+          event.accountId(),
+          event.outboxStreamKey(),
+          event.outboxSequence(),
+          event.accountAuthorityGeneration(),
+          event.sourceVersion(),
+          event.accountSecurityCutoff(),
+          Optional.of(event),
+          Optional.empty(),
+          event.eventDigest(),
+          event.canonicalJson());
+    }
+
+    private static AccountSecurityStateFamilyEvent restriction(
+        AccountRestrictionAuthorityEvent event) {
+      return new AccountSecurityStateFamilyEvent(
+          event.eventId(),
+          event.requestId(),
+          event.accountId(),
+          event.outboxStreamKey(),
+          event.outboxSequence(),
+          event.accountAuthorityGeneration(),
+          event.sourceVersion(),
+          event.accountSecurityCutoff(),
+          Optional.empty(),
+          Optional.of(event),
+          event.eventDigest(),
+          event.canonicalJson());
+    }
+
+    public String eventId() {
+      return eventId;
+    }
+
+    public String requestId() {
+      return requestId;
+    }
+
+    public String accountId() {
+      return accountId;
+    }
+
+    public String outboxStreamKey() {
+      return outboxStreamKey;
+    }
+
+    public String outboxSequence() {
+      return outboxSequence;
+    }
+
+    public String accountAuthorityGeneration() {
+      return accountAuthorityGeneration;
+    }
+
+    public String sourceVersion() {
+      return sourceVersion;
+    }
+
+    public AccountSecurityCutoff accountSecurityCutoff() {
+      return accountSecurityCutoff;
+    }
+
+    public Optional<AccountSecurityStateAuthorityEvent> securityState() {
+      return securityState;
+    }
+
+    public Optional<AccountRestrictionAuthorityEvent> restriction() {
+      return restriction;
+    }
+
+    public String eventDigest() {
+      return eventDigest;
+    }
+
+    public String canonicalJson() {
+      return canonicalJson;
+    }
+  }
+
+  /** Immutable evidence constructible only by sealing or verifying a restriction variant. */
+  public static final class AccountRestrictionAuthorityEvent {
+    private final String eventId;
+    private final String requestId;
+    private final String accountId;
+    private final String outboxStreamKey;
+    private final String outboxSequence;
+    private final String accountAuthorityGeneration;
+    private final String sourceVersion;
+    private final AccountSecurityCutoff accountSecurityCutoff;
+    private final String category;
+    private final String revision;
+    private final String enforcementEpoch;
+    private final String state;
+    private final String resultId;
+    private final String requestDigest;
+    private final String sourceKind;
+    private final String sourceRequestId;
+    private final String sourceDigest;
+    private final String eventDigest;
+    private final String canonicalJson;
+
+    private AccountRestrictionAuthorityEvent(
+        String eventId,
+        String requestId,
+        String accountId,
+        String outboxStreamKey,
+        String outboxSequence,
+        String accountAuthorityGeneration,
+        String sourceVersion,
+        AccountSecurityCutoff accountSecurityCutoff,
+        String category,
+        String revision,
+        String enforcementEpoch,
+        String state,
+        String resultId,
+        String requestDigest,
+        String sourceKind,
+        String sourceRequestId,
+        String sourceDigest,
+        String eventDigest,
+        String canonicalJson) {
+      this.eventId = eventId;
+      this.requestId = requestId;
+      this.accountId = accountId;
+      this.outboxStreamKey = outboxStreamKey;
+      this.outboxSequence = outboxSequence;
+      this.accountAuthorityGeneration = accountAuthorityGeneration;
+      this.sourceVersion = sourceVersion;
+      this.accountSecurityCutoff = accountSecurityCutoff;
+      this.category = category;
+      this.revision = revision;
+      this.enforcementEpoch = enforcementEpoch;
+      this.state = state;
+      this.resultId = resultId;
+      this.requestDigest = requestDigest;
+      this.sourceKind = sourceKind;
+      this.sourceRequestId = sourceRequestId;
+      this.sourceDigest = sourceDigest;
+      this.eventDigest = eventDigest;
+      this.canonicalJson = canonicalJson;
+    }
+
+    public String schemaVersion() {
+      return SCHEMA_VERSION;
+    }
+
+    public String eventType() {
+      return RESTRICTION_EVENT_TYPE;
+    }
+
+    public String eventId() {
+      return eventId;
+    }
+
+    public String requestId() {
+      return requestId;
+    }
+
+    public String accountId() {
+      return accountId;
+    }
+
+    public String sourceScope() {
+      return "account/" + accountId;
+    }
+
+    public String outboxStreamKey() {
+      return outboxStreamKey;
+    }
+
+    public String outboxSequence() {
+      return outboxSequence;
+    }
+
+    public String accountAuthorityGeneration() {
+      return accountAuthorityGeneration;
+    }
+
+    public String sourceVersion() {
+      return sourceVersion;
+    }
+
+    public AccountSecurityCutoff accountSecurityCutoff() {
+      return accountSecurityCutoff;
+    }
+
+    public String category() {
+      return category;
+    }
+
+    public String revision() {
+      return revision;
+    }
+
+    public String enforcementEpoch() {
+      return enforcementEpoch;
+    }
+
+    public String state() {
+      return state;
+    }
+
+    public String resultId() {
+      return resultId;
+    }
+
+    public String requestDigest() {
+      return requestDigest;
+    }
+
+    public String sourceKind() {
+      return sourceKind;
+    }
+
+    public String sourceRequestId() {
+      return sourceRequestId;
+    }
+
+    public String sourceDigest() {
+      return sourceDigest;
     }
 
     public String eventDigest() {

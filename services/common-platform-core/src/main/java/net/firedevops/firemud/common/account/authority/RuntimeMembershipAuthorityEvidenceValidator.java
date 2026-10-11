@@ -304,7 +304,7 @@ public final class RuntimeMembershipAuthorityEvidenceValidator {
   }
 
   private static AccountSource decodeSecurityStateAccountSource(String canonicalJson) {
-    var security = AccountSecurityStateAuthorityEventV1Codec.verify(canonicalJson);
+    var security = AccountSecurityStateAuthorityEventV1Codec.verifyFamily(canonicalJson);
     return new AccountSource(
         security.eventId(),
         security.eventDigest(),

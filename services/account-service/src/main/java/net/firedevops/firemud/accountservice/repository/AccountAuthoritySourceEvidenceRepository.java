@@ -521,7 +521,7 @@ public class AccountAuthoritySourceEvidenceRepository {
     if (insertedSource != 1) throw new SourceEvidenceUnavailableException();
   }
 
-  private CurrentSourceEvidence readCurrentSource(AuthorityScope scope, ScopeState authority) {
+  CurrentSourceEvidence readCurrentSource(AuthorityScope scope, ScopeState authority) {
     return readCurrentSource(scope, authority, Optional.empty(), false);
   }
 
