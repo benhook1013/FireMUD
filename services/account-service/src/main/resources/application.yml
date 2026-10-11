@@ -67,6 +67,7 @@ firemud:
     stripe-api-key: test-key
     platform-fee-percent: 5
   auth:
+    session-safety-margin-ms: ${FIREMUD_AUTH_SESSION_SAFETY_MARGIN_MS:300000}
     http:
       enabled: true
       role-requirement: AUTHENTICATED

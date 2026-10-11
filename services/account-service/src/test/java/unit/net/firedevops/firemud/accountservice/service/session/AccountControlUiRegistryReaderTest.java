@@ -42,6 +42,14 @@ class AccountControlUiRegistryReaderTest {
             () -> AccountControlUiRegistryReader.parseActiveRecord(withUnknown, TOKEN_HASH))
         .isInstanceOf(IllegalStateException.class);
 
+    Map<String, Object> missingDeadline = new LinkedHashMap<>(record());
+    missingDeadline.remove("registryCleanupDeadlineEpochMillis");
+    assertThatThrownBy(
+            () ->
+                AccountControlUiRegistryReader.parseActiveRecord(
+                    canonicalBytes(missingDeadline), TOKEN_HASH))
+        .isInstanceOf(IllegalStateException.class);
+
     String canonical = new String(canonicalRecord(), StandardCharsets.UTF_8);
     byte[] nonCanonical = (" " + canonical).getBytes(StandardCharsets.UTF_8);
     assertThatThrownBy(
@@ -52,7 +60,7 @@ class AccountControlUiRegistryReaderTest {
   @Test
   void readsOnlyAfterLiveAclIdentityAndExactExpiryReadback() throws Exception {
     byte[] active = canonicalRecord();
-    long deadline = 1_800_000_000_000L;
+    long deadline = 1_800_000_300_000L;
     StatefulRedisConnection<byte[], byte[]> connection = mock(StatefulRedisConnection.class);
     ClientOptions options = mock(ClientOptions.class);
     @SuppressWarnings("unchecked")
@@ -74,7 +82,7 @@ class AccountControlUiRegistryReaderTest {
   }
 
   @Test
-  void deniesWhenPhysicalExpiryDiffersFromExactTokenExpiry() throws Exception {
+  void deniesWhenPhysicalExpiryDiffersFromExactCleanupDeadline() throws Exception {
     StatefulRedisConnection<byte[], byte[]> connection = mock(StatefulRedisConnection.class);
     ClientOptions options = mock(ClientOptions.class);
     @SuppressWarnings("unchecked")
@@ -85,7 +93,7 @@ class AccountControlUiRegistryReaderTest {
     when(connection.sync()).thenReturn(commands);
     when(commands.aclWhoami()).thenReturn(AccountControlUiRegistryReader.REQUIRED_ACL_IDENTITY);
     when(commands.get(any(byte[].class))).thenReturn(canonicalRecord());
-    when(commands.pexpiretime(any(byte[].class))).thenReturn(1_800_000_300_000L);
+    when(commands.pexpiretime(any(byte[].class))).thenReturn(1_800_000_000_000L);
 
     AccountControlUiRegistryReader reader = new AccountControlUiRegistryReader(() -> connection);
 
@@ -94,10 +102,23 @@ class AccountControlUiRegistryReaderTest {
   }
 
   @Test
-  void computesExactTokenExpiryWithCheckedArithmetic() {
-    assertThat(AccountControlUiRegistryReader.checkedExpiryMillis(1_800_000_000L))
-        .isEqualTo(1_800_000_000_000L);
-    assertThatThrownBy(() -> AccountControlUiRegistryReader.checkedExpiryMillis(Long.MAX_VALUE))
+  void acceptsExactCleanupDeadlineAndRejectsMissingOrOutOfRangeEvidence() {
+    assertThat(
+            AccountControlUiRegistryReader.checkedCleanupDeadlineMillis(
+                1_800_000_000L, 1_800_000_300_000L))
+        .isEqualTo(1_800_000_300_000L);
+    assertThatThrownBy(
+            () -> AccountControlUiRegistryReader.checkedCleanupDeadlineMillis(1_800_000_000L, null))
+        .isInstanceOf(IllegalStateException.class);
+    assertThatThrownBy(
+            () ->
+                AccountControlUiRegistryReader.checkedCleanupDeadlineMillis(
+                    1_800_000_000L, 1_799_999_999_999L))
+        .isInstanceOf(IllegalStateException.class);
+    assertThatThrownBy(
+            () ->
+                AccountControlUiRegistryReader.checkedCleanupDeadlineMillis(
+                    Long.MAX_VALUE, 9_007_199_254_740_991L))
         .isInstanceOf(IllegalStateException.class);
   }
 
@@ -131,6 +152,7 @@ class AccountControlUiRegistryReaderTest {
         Map.entry("operationId", "40000000-0000-4000-8000-000000000004"),
         Map.entry("requestId", "50000000-0000-4000-8000-000000000005"),
         Map.entry("requestDigest", "b".repeat(64)),
+        Map.entry("registryCleanupDeadlineEpochMillis", 1_800_000_300_000L),
         Map.entry("state", "active"),
         Map.entry(
             "authoritySourceVersions", Map.of("ACCOUNT:10000000-0000-4000-8000-000000000001", 1)),
