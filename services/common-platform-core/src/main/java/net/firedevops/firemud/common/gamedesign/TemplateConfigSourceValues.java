@@ -90,9 +90,10 @@ public final class TemplateConfigSourceValues {
               "targetScopeId");
           text(event, "eventType");
           text(event, "eventSchemaVersion");
-          for (String key : List.of("bindingId", "targetScopeType", "targetScopeId"))
-            if (!event.path(key).isTextual())
-              throw new IllegalArgumentException("Exact Automation binding key required");
+          text(event, "bindingId");
+          text(event, "targetScopeType");
+          if (!event.path("targetScopeId").isTextual())
+            throw new IllegalArgumentException("Exact Automation binding key required");
           if (!bindings.add(TemplateConfigSourceJson.canonical(event)))
             throw new IllegalArgumentException("Duplicate template event binding");
         }

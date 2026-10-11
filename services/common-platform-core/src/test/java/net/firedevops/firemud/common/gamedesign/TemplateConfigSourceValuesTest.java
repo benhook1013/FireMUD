@@ -167,6 +167,53 @@ class TemplateConfigSourceValuesTest {
         .hasMessageContaining("Exact original");
   }
 
+  @Test
+  void rejectsBlankAutomationBindingIdAndScopeType() {
+    for (String blank : List.of("", "   ")) {
+      assertThatThrownBy(
+              () -> new TemplateConfigSourceValues.Config(templateConfig(blank, "GLOBAL", "")))
+          .isInstanceOf(IllegalArgumentException.class);
+      assertThatThrownBy(
+              () -> new TemplateConfigSourceValues.Config(templateConfig("binding", blank, "")))
+          .isInstanceOf(IllegalArgumentException.class);
+    }
+  }
+
+  @Test
+  void requiresTextualTargetScopeIdButAllowsAnEmptyValue() {
+    String validWithEmptyTargetId = templateConfig("binding", "GLOBAL", "");
+    assertThat(new TemplateConfigSourceValues.Config(validWithEmptyTargetId).canonicalJson())
+        .contains("\"targetScopeId\":\"\"");
+
+    assertThatThrownBy(
+            () ->
+                new TemplateConfigSourceValues.Config(
+                    validWithEmptyTargetId.replace(",\"targetScopeId\":\"\"", "")))
+        .isInstanceOf(IllegalArgumentException.class);
+    assertThatThrownBy(
+            () ->
+                new TemplateConfigSourceValues.Config(
+                    validWithEmptyTargetId.replace(
+                        "\"targetScopeId\":\"\"", "\"targetScopeId\":1")))
+        .isInstanceOf(IllegalArgumentException.class);
+  }
+
+  private static String templateConfig(
+      String bindingId, String targetScopeType, String targetScopeId) {
+    return "{\"schemaVersion\":1,\"baseVersionId\":\""
+        + VERSION
+        + "\",\"world\":{\"regions\":[],\"rooms\":[]},\"entity\":{\"items\":[],\"npcs\":[]},"
+        + "\"gameLogic\":{\"inputs\":[]},\"automation\":{\"scripts\":[{\"scriptId\":\"script\","
+        + "\"eventBindings\":[{\"eventType\":\"onLoad\",\"eventSchemaVersion\":\"1\","
+        + "\"bindingId\":\""
+        + bindingId
+        + "\",\"targetScopeType\":\""
+        + targetScopeType
+        + "\",\"targetScopeId\":\""
+        + targetScopeId
+        + "\"}]}],\"scriptPatch\":{\"presence\":\"ABSENT\"}},\"supportedSettings\":[]}";
+  }
+
   private static DraftCommitBinding binding(String... payloads) {
     var revisions =
         IntStream.range(0, payloads.length)
