@@ -28,6 +28,7 @@ class RealmEntryPolicyTest {
     assertThat(parsed.schemaVersion()).isEqualTo(RealmEntryPolicy.SCHEMA_VERSION);
     assertThat(parsed.entryPolicy()).isEqualTo(EntryPolicy.PRESEEDED_ONLY);
     assertThat(parsed.creationDescriptor()).isNull();
+    assertThat(parsed.initialActorCore()).isNull();
     assertThat(parsed.canonicalJson()).isEqualTo(expected);
     assertThat(parsed.canonicalJson().getBytes(StandardCharsets.UTF_8))
         .containsExactly(expected.getBytes(StandardCharsets.UTF_8));
@@ -38,6 +39,14 @@ class RealmEntryPolicyTest {
   void parsesV2PlayerCreatedPolicyAndDescriptorRoundTrip() {
     var parsed = RealmEntryPolicy.parse(policy(2, "PLAYER_CREATED", descriptor()), JSON);
     var descriptor = parsed.creationDescriptor();
+    String expected =
+        "{\"creationDescriptor\":{"
+            + descriptorCanonicalFields()
+            + "},"
+            + "\"entryPolicy\":\"PLAYER_CREATED\",\"publicProduction\":true,"
+            + "\"realmDisplayName\":\"Realm\",\"realmSlug\":\"realm\","
+            + "\"schemaVersion\":2,\"stateScope\":\"SHARED\",\"visible\":true,"
+            + "\"worldDisplayName\":\"World\",\"worldSlug\":\"world\"}";
 
     assertThat(parsed.schemaVersion()).isEqualTo(RealmEntryPolicy.PLAYER_CREATED_SCHEMA_VERSION);
     assertThat(parsed.entryPolicy()).isEqualTo(EntryPolicy.PLAYER_CREATED);
@@ -47,6 +56,23 @@ class RealmEntryPolicyTest {
     assertThat(descriptor.descriptorRevisionId()).isEqualTo(REVISION_ID);
     assertThat(descriptor.inputKind()).isEqualTo(PlayerCreationDescriptor.INPUT_KIND);
     assertThat(descriptor.dependencies()).isEmpty();
+    assertThat(parsed.initialActorCore()).isNull();
+    assertThat(parsed.canonicalJson()).isEqualTo(expected);
+    assertThat(parsed.canonicalJson().getBytes(StandardCharsets.UTF_8))
+        .containsExactly(expected.getBytes(StandardCharsets.UTF_8));
+    assertThat(RealmEntryPolicy.parseCanonical(parsed.canonicalJson(), JSON)).isEqualTo(parsed);
+  }
+
+  @Test
+  void parsesV3PlayerCreatedPolicyWithAuthoredInitialActorCore() {
+    var parsed = RealmEntryPolicy.parse(policyV3(core()), JSON);
+
+    assertThat(parsed.schemaVersion())
+        .isEqualTo(RealmEntryPolicy.AUTHORED_INITIAL_ACTOR_CORE_SCHEMA_VERSION);
+    assertThat(parsed.entryPolicy()).isEqualTo(EntryPolicy.PLAYER_CREATED);
+    assertThat(parsed.creationDescriptor()).isNotNull();
+    assertThat(parsed.initialActorCore())
+        .isEqualTo(new AuthoredInitialActorCore("Wayfarer", "newcomer"));
     assertThat(RealmEntryPolicy.parseCanonical(parsed.canonicalJson(), JSON)).isEqualTo(parsed);
   }
 
@@ -74,6 +100,8 @@ class RealmEntryPolicyTest {
       assertInvalid(policy(2, entryPolicy, descriptor()));
     }
     assertInvalid(policy(3, "PLAYER_CREATED", descriptor()));
+    assertInvalid(policyV3(null));
+    assertInvalid(policyV3(core()).replace("\"PLAYER_CREATED\"", "\"PRESEEDED_ONLY\""));
     assertInvalid(policy(2, "PLAYER_CREATED", null));
     assertInvalid(policyWithExtraField(2, "PLAYER_CREATED", descriptor()));
   }
@@ -132,6 +160,7 @@ class RealmEntryPolicyTest {
                     StateScope.SHARED,
                     EntryPolicy.PLAYER_CREATED,
                     null,
+                    null,
                     "{}"))
         .isInstanceOf(IllegalArgumentException.class);
     assertThatThrownBy(
@@ -147,6 +176,7 @@ class RealmEntryPolicyTest {
                     StateScope.SHARED,
                     EntryPolicy.PRESEEDED_ONLY,
                     PlayerCreationDescriptor.parse(descriptor()),
+                    null,
                     "{}"))
         .isInstanceOf(IllegalArgumentException.class);
     assertThatThrownBy(
@@ -161,6 +191,7 @@ class RealmEntryPolicyTest {
                     true,
                     StateScope.SHARED,
                     EntryPolicy.PRESEEDED_ONLY,
+                    null,
                     null,
                     "{}"))
         .isInstanceOf(IllegalArgumentException.class);
@@ -177,6 +208,7 @@ class RealmEntryPolicyTest {
                     StateScope.SHARED,
                     EntryPolicy.PLAYER_CREATED,
                     null,
+                    null,
                     "{}"))
         .isInstanceOf(IllegalArgumentException.class);
     assertThatThrownBy(
@@ -192,14 +224,34 @@ class RealmEntryPolicyTest {
                     StateScope.SHARED,
                     EntryPolicy.PRESEEDED_ONLY,
                     null,
+                    null,
+                    "{}"))
+        .isInstanceOf(IllegalArgumentException.class);
+    assertThatThrownBy(
+            () ->
+                new RealmEntryPolicy(
+                    3,
+                    "world",
+                    "World",
+                    "realm",
+                    "Realm",
+                    true,
+                    true,
+                    StateScope.SHARED,
+                    EntryPolicy.PLAYER_CREATED,
+                    PlayerCreationDescriptor.parse(descriptor()),
+                    null,
                     "{}"))
         .isInstanceOf(IllegalArgumentException.class);
   }
 
   @Test
-  void preservesThe4096BytePolicyInputLimitForBothSchemas() {
+  void preservesThe4096BytePolicyInputLimitForAllSchemas() {
     for (String input :
-        List.of(policy(1, "PRESEEDED_ONLY", null), policy(2, "PLAYER_CREATED", descriptor()))) {
+        List.of(
+            policy(1, "PRESEEDED_ONLY", null),
+            policy(2, "PLAYER_CREATED", descriptor()),
+            policyV3(core()))) {
       String atLimit = padToLimit(input, RealmEntryPolicy.MAX_JSON_BYTES);
       assertThat(atLimit.getBytes(StandardCharsets.UTF_8)).hasSize(RealmEntryPolicy.MAX_JSON_BYTES);
       assertThat(RealmEntryPolicy.parse(atLimit, JSON).canonicalJson()).isNotEmpty();
@@ -230,6 +282,20 @@ class RealmEntryPolicyTest {
         + "}";
   }
 
+  private static String policyV3(String initialActorCore) {
+    return "{\"schemaVersion\":3,\"worldSlug\":\"world\",\"worldDisplayName\":\"World\","
+        + "\"realmSlug\":\"realm\",\"realmDisplayName\":\"Realm\","
+        + "\"visible\":true,\"publicProduction\":true,\"stateScope\":\"SHARED\","
+        + "\"entryPolicy\":\"PLAYER_CREATED\",\"creationDescriptor\":"
+        + descriptor()
+        + (initialActorCore == null ? "" : ",\"initialActorCore\":" + initialActorCore)
+        + "}";
+  }
+
+  private static String core() {
+    return "{\"displayName\":\"Wayfarer\",\"dispositionKey\":\"newcomer\"}";
+  }
+
   private static String policyWithExtraField(int version, String entryPolicy, String descriptor) {
     String input = policy(version, entryPolicy, descriptor);
     return input.substring(0, input.length() - 1) + ",\"unknown\":true}";
@@ -241,6 +307,14 @@ class RealmEntryPolicyTest {
         + "\",\"descriptorRevisionId\":\""
         + REVISION_ID
         + "\",\"inputKind\":\"EMPTY_OBJECT\",\"dependencies\":[]}";
+  }
+
+  private static String descriptorCanonicalFields() {
+    return "\"dependencies\":[],\"descriptorId\":\""
+        + DESCRIPTOR_ID
+        + "\",\"descriptorRevisionId\":\""
+        + REVISION_ID
+        + "\",\"inputKind\":\"EMPTY_OBJECT\",\"schemaVersion\":1";
   }
 
   private static String padToLimit(String input, int bytes) {

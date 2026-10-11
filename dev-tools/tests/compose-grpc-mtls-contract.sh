@@ -379,6 +379,8 @@ entity_namespace = services["entity-management-service"]["environment"].get("FIR
 assert entity_namespace == "dev", entity_namespace
 wms_namespace = services["world-management-service"]["environment"].get("FIREMUD_GRPC_WORKLOAD_NAMESPACE")
 assert wms_namespace == "dev", wms_namespace
+game_design_namespace = services["game-design-service"]["environment"].get("FIREMUD_GRPC_WORKLOAD_NAMESPACE")
+assert game_design_namespace == "dev", game_design_namespace
 game_session = services["game-session-service"]
 game_session_environment = game_session["environment"]
 assert game_session_environment.get("FIREMUD_SMOKE_RUN_ID") == ""
