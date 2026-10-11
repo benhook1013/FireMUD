@@ -12,7 +12,7 @@ import json
 import re
 import subprocess
 from collections import defaultdict
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from datetime import datetime, timezone
 from typing import Any
 
@@ -996,19 +996,24 @@ def build_report(
     required_status_checks_payload: Mapping[str, Any] | None = None,
     check_inventory_payload: Mapping[str, Any] | list[Any] | None = None,
     summary_dispositions: Sequence[SummaryFindingDisposition] = (),
+    raw_payload_observer: Callable[[dict[str, Any]], None] | None = None,
 ) -> dict[str, Any]:
     repo = _repo_name(repo)
     if isinstance(pr_number, bool) or not isinstance(pr_number, int) or pr_number <= 0:
         raise StatusError("pr must be a positive integer")
     live = pull_request_payload is None
     raw_payload = github.fetch_pull_request(repo, pr_number) if live else pull_request_payload
+    if live and raw_payload_observer is not None:
+        raw_payload_observer(raw_payload)
     try:
-        pr = raw_payload["data"]["repository"]["pullRequest"]
+        raw_pr = raw_payload["data"]["repository"]["pullRequest"]
     except (KeyError, TypeError) as exc:
         raise StatusError("GitHub response has no pull request") from exc
+    pr = raw_pr
     if live:
         # Review conversations require GraphQL pagination, while ``gh pr view`` is
         # the stable compact source for the PR, CI, mergeability, and LOC fields.
+        pr = dict(raw_pr)
         pr.update(github.fetch_pr_metadata(repo, pr_number))
     _validate_github(pr, pr_number)
     if required_status_checks_payload is not None:
@@ -1222,11 +1227,17 @@ def status(
     *,
     repo: str | None = None,
     summary_dispositions: Sequence[SummaryFindingDisposition] = (),
+    raw_payload_observer: Callable[[dict[str, Any]], None] | None = None,
 ) -> dict[str, Any]:
     """Return the current report; ``as_json`` controls the CLI rendering form."""
     if pr is None:
         raise StatusError("status requires --pr until stack live-target integration is available")
-    report = build_report(_repo_name(repo), pr, summary_dispositions=summary_dispositions)
+    report = build_report(
+        _repo_name(repo),
+        pr,
+        summary_dispositions=summary_dispositions,
+        raw_payload_observer=raw_payload_observer,
+    )
     return report
 
 

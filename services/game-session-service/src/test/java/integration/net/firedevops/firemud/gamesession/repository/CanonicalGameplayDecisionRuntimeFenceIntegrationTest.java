@@ -304,6 +304,9 @@ class CanonicalGameplayDecisionRuntimeFenceIntegrationTest {
       DSLContext dsl = DSL.using(dataSource, SQLDialect.POSTGRES);
       CanonicalGameplayBindingRuntimeTestFixtures.RuntimeTarget target =
           CanonicalGameplayBindingRuntimeTestFixtures.seedRunningLaunch(dsl);
+      CanonicalGameplayBindingRuntimeTestFixtures.RuntimeTarget otherSourceIntakeOwner =
+          CanonicalGameplayBindingRuntimeTestFixtures.seedRunningLaunch(
+              dsl, UUID.randomUUID(), 2L, 24L, UUID.randomUUID());
 
       assertThat(
               insertLaunchPreparation(
@@ -350,7 +353,7 @@ class CanonicalGameplayDecisionRuntimeFenceIntegrationTest {
           target.catalogCreationRequestId(),
           target.catalogRevision(),
           target.canonicalTenantId(),
-          UUID.randomUUID(),
+          otherSourceIntakeOwner.sourceIntakeOperationId(),
           target.sourceIntakeRequestId());
       assertLaunchPreparationCatalogMismatchRejected(
           dsl,

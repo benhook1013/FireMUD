@@ -69,7 +69,8 @@ public final class AccountPublicJwksCache {
   private Instant loadedAt;
   private String loadedJwksFingerprint;
   private Instant lastUnknownKidRefreshAt;
-  private Instant lastStaleSourceUnavailableAt;
+  private Instant lastStaleRefreshFailureAt;
+  private StaleRefreshFailure lastStaleRefreshFailure;
   private final Set<String> unknownKidsRefreshedForSnapshot = new LinkedHashSet<>();
 
   public AccountPublicJwksCache(
@@ -105,15 +106,14 @@ public final class AccountPublicJwksCache {
         }
       }
       if (!isFresh(now)
-          && lastStaleSourceUnavailableAt != null
-          && !now.isBefore(lastStaleSourceUnavailableAt)
-          && Duration.between(lastStaleSourceUnavailableAt, now)
-                  .compareTo(STALE_SOURCE_RETRY_BACKOFF)
+          && lastStaleRefreshFailureAt != null
+          && !now.isBefore(lastStaleRefreshFailureAt)
+          && Duration.between(lastStaleRefreshFailureAt, now).compareTo(STALE_SOURCE_RETRY_BACKOFF)
               < 0) {
         if (unknownKidsRefreshedForSnapshot.contains(kid)) {
           throw new UnknownKeyException();
         }
-        throw new SourceUnavailableException();
+        throw staleRefreshFailureException();
       }
       if (isFresh(now)) {
         RSAPublicKey existing = keys.get(kid);
@@ -142,13 +142,17 @@ public final class AccountPublicJwksCache {
         }
         refreshFromSource();
       } catch (SourceUnavailableException unavailable) {
-        lastStaleSourceUnavailableAt = clock.instant();
-        if (unknownKidsRefreshedForSnapshot.size() < MAX_UNKNOWN_KID_REFRESHES_PER_SNAPSHOT) {
+        recordStaleRefreshFailure(StaleRefreshFailure.SOURCE_UNAVAILABLE);
+        if (loadedAt != null
+            && !cachedKidKnown
+            && unknownKidsRefreshedForSnapshot.size() < MAX_UNKNOWN_KID_REFRESHES_PER_SNAPSHOT) {
           unknownKidsRefreshedForSnapshot.add(kid);
         }
         throw unavailable;
+      } catch (InvalidJwksException invalid) {
+        recordStaleRefreshFailure(StaleRefreshFailure.INVALID_JWKS);
+        throw invalid;
       }
-      lastStaleSourceUnavailableAt = null;
       rejectHardDenied(kid);
       RSAPublicKey refreshed = keys.get(kid);
       if (refreshed == null) {
@@ -247,7 +251,20 @@ public final class AccountPublicJwksCache {
     }
     loadedJwksFingerprint = nextJwksFingerprint;
     loadedAt = clock.instant();
-    lastStaleSourceUnavailableAt = null;
+    lastStaleRefreshFailureAt = null;
+    lastStaleRefreshFailure = null;
+  }
+
+  private void recordStaleRefreshFailure(StaleRefreshFailure failure) {
+    lastStaleRefreshFailureAt = clock.instant();
+    lastStaleRefreshFailure = failure;
+  }
+
+  private RuntimeException staleRefreshFailureException() {
+    return switch (lastStaleRefreshFailure) {
+      case SOURCE_UNAVAILABLE -> new SourceUnavailableException();
+      case INVALID_JWKS -> new InvalidJwksException();
+    };
   }
 
   private void rejectHardDenied(String kid) {
@@ -474,5 +491,10 @@ public final class AccountPublicJwksCache {
     public UnknownKeyException() {
       super("Account public JWKS key is unavailable");
     }
+  }
+
+  private enum StaleRefreshFailure {
+    SOURCE_UNAVAILABLE,
+    INVALID_JWKS
   }
 }

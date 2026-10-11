@@ -90,6 +90,15 @@ require(
 )
 require("USER 999:999" in docker_lines, "image default user must be uid/gid 999")
 require(
+    [line for line in docker_lines if line.startswith("USER ")] == ["USER 0:0", "USER 999:999"],
+    "image must select root only for distribution permissions, then return to uid/gid 999",
+)
+require(
+    docker_lines.index("USER 0:0") < docker_lines.index(permission_step_lines[0])
+    < docker_lines.index("USER 999:999") < docker_lines.index(f'ENTRYPOINT ["{launcher_path}"]'),
+    "distribution permissions must run as root before the non-root runtime entrypoint",
+)
+require(
     f'ENTRYPOINT ["{launcher_path}"]' in docker_lines,
     "image entrypoint must be the fixed finite migration-driver launcher",
 )

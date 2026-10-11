@@ -13,11 +13,13 @@ import java.util.HexFormat;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Properties;
 import java.util.TreeMap;
 import java.util.UUID;
 import java.util.regex.Pattern;
 import net.firedevops.firemud.gamesession.binding.CanonicalGameplayLegacyMigrationSourceSnapshot;
 import net.firedevops.firemud.gamesession.binding.CanonicalGameplayLegacyMigrationStorageIdentity;
+import org.springframework.data.redis.connection.RedisClusterConnection;
 import org.springframework.data.redis.connection.RedisConnection;
 import org.springframework.data.redis.core.Cursor;
 import org.springframework.data.redis.core.RedisCallback;
@@ -119,6 +121,16 @@ final class CanonicalGameplayLegacyRedisSource
       FenceIdentity fence,
       long startedAt) {
     requireFenceAndTime(cohort, fence, startedAt);
+    if (connection instanceof RedisClusterConnection) {
+      throw conflict("Legacy Redis cluster scan cannot prove complete cluster-wide inventory");
+    }
+    try {
+      Properties clusterInformation = connection.serverCommands().info("cluster");
+      CanonicalGameplayMigrationDriverMain.requireStandaloneRedisTopology(clusterInformation);
+    } catch (RuntimeException unprovenTopology) {
+      throw conflict("Legacy Redis standalone topology could not be proven");
+    }
+
     Map<String, CanonicalGameplayLegacyMigrationSourceSnapshot.Family> keys = new TreeMap<>();
     ScanOptions options =
         ScanOptions.scanOptions().match(SCAN_PATTERN).count(limits.scanCount()).build();

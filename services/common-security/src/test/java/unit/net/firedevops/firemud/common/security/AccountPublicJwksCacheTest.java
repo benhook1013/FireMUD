@@ -152,6 +152,30 @@ class AccountPublicJwksCacheTest {
   }
 
   @Test
+  void neverLoadedUnknownKidRetriesSourceAfterUnavailableResponseBackoff() {
+    AtomicInteger loads = new AtomicInteger();
+    MutableClock clock = new MutableClock(INITIAL);
+    AccountPublicJwksCache cache =
+        cache(
+            clock,
+            () -> {
+              loads.incrementAndGet();
+              throw new AccountPublicJwksCache.SourceUnavailableException();
+            });
+
+    assertThatThrownBy(() -> cache.keyFor("future"))
+        .isInstanceOf(AccountPublicJwksCache.SourceUnavailableException.class);
+    assertThatThrownBy(() -> cache.keyFor("future"))
+        .isInstanceOf(AccountPublicJwksCache.SourceUnavailableException.class);
+    assertThat(loads).hasValue(1);
+
+    clock.advance(Duration.ofSeconds(1));
+    assertThatThrownBy(() -> cache.keyFor("future"))
+        .isInstanceOf(AccountPublicJwksCache.SourceUnavailableException.class);
+    assertThat(loads).hasValue(2);
+  }
+
+  @Test
   void staleUnavailableDistinctUnknownKidsDoNotGrowRefreshHistoryPastItsBound() throws Exception {
     KeyPair known = rsa3072();
     AtomicInteger loads = new AtomicInteger();
@@ -246,6 +270,62 @@ class AccountPublicJwksCacheTest {
     clock.advance(Duration.ofSeconds(7));
     assertThatThrownBy(() -> cache.keyFor("known"))
         .isInstanceOf(AccountPublicJwksCache.SourceUnavailableException.class);
+  }
+
+  @Test
+  void repeatedStaleKnownKeyLookupsRemainUnavailableDuringSourceOutage() throws Exception {
+    KeyPair key = rsa3072();
+    AtomicInteger loads = new AtomicInteger();
+    MutableClock clock = new MutableClock(INITIAL);
+    AccountPublicJwksCache cache =
+        cache(
+            clock,
+            () -> {
+              if (loads.incrementAndGet() > 1) {
+                throw new AccountPublicJwksCache.SourceUnavailableException();
+              }
+              return snapshot(jwks(jwk("known", (RSAPublicKey) key.getPublic())));
+            });
+
+    assertThat(cache.keyFor("known")).isEqualTo(key.getPublic());
+    clock.advance(Duration.ofSeconds(11));
+
+    assertThatThrownBy(() -> cache.keyFor("known"))
+        .isInstanceOf(AccountPublicJwksCache.SourceUnavailableException.class);
+    assertThatThrownBy(() -> cache.keyFor("known"))
+        .isInstanceOf(AccountPublicJwksCache.SourceUnavailableException.class);
+    assertThat(loads).hasValue(2);
+  }
+
+  @Test
+  void repeatedStaleKnownKeyLookupsBackOffInvalidJwksAndRetryAfterOneSecond() throws Exception {
+    KeyPair key = rsa3072();
+    AtomicInteger loads = new AtomicInteger();
+    AtomicReference<String> currentJwks =
+        new AtomicReference<>(jwks(jwk("known", (RSAPublicKey) key.getPublic())));
+    MutableClock clock = new MutableClock(INITIAL);
+    AccountPublicJwksCache cache =
+        cache(
+            clock,
+            () -> {
+              loads.incrementAndGet();
+              return snapshot(currentJwks.get());
+            });
+
+    assertThat(cache.keyFor("known")).isEqualTo(key.getPublic());
+    clock.advance(Duration.ofSeconds(11));
+    currentJwks.set("not-json");
+
+    assertThatThrownBy(() -> cache.keyFor("known"))
+        .isInstanceOf(AccountPublicJwksCache.InvalidJwksException.class);
+    assertThatThrownBy(() -> cache.keyFor("known"))
+        .isInstanceOf(AccountPublicJwksCache.InvalidJwksException.class);
+    assertThat(loads).hasValue(2);
+
+    currentJwks.set(jwks(jwk("known", (RSAPublicKey) key.getPublic())));
+    clock.advance(Duration.ofSeconds(1));
+    assertThat(cache.keyFor("known")).isEqualTo(key.getPublic());
+    assertThat(loads).hasValue(3);
   }
 
   @Test

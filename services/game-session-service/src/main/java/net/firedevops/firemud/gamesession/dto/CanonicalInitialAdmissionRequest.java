@@ -67,8 +67,8 @@ public record CanonicalInitialAdmissionRequest(
       throw new IllegalArgumentException(
           "EXPECT_CLOSED requires a positive exact expectedPriorPointerVersion");
     }
-    // The immutable compatibility audit's control_plane_request_id is varchar(120).
-    requireText(initialAdmissionRequestId, "initialAdmissionRequestId", 120);
+    // Match the 128-character owner attempt and immutable intent ledgers.
+    requireText(initialAdmissionRequestId, "initialAdmissionRequestId", 128);
     if (!REQUEST_DIGEST.matcher(Objects.requireNonNull(requestDigest, "requestDigest")).matches()) {
       throw new IllegalArgumentException(
           "requestDigest must be bare lowercase 64-character SHA-256 hex");

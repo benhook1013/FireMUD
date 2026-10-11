@@ -471,7 +471,7 @@ class RuntimeTest(unittest.TestCase):
             with self.subTest(channel=channel), tempfile.TemporaryDirectory() as directory:
                 other = "cli" if channel == "hosted" else "hosted"
                 observer = LiveEvidence("owner/repo", LiveGitHub("owner/repo"))
-                observer._payloads[42] = {"stale": True}
+                observer.prefetch_payload(42, {"stale": True})
                 observer._histories[(42, channel)] = [{"checkpoint": "stale-selection"}]
                 observer._histories[(42, other)] = [{"checkpoint": "other-channel"}]
                 observer._records_histories[42] = {"stale": True}
@@ -490,6 +490,26 @@ class RuntimeTest(unittest.TestCase):
                 self.assertEqual(observer._histories[(42, other)], [{"checkpoint": "other-channel"}])
                 self.assertEqual(observer._payloads[99], {"unrelated": True})
                 self.assertNotIn(42, observer._records_histories)
+
+    def test_selected_status_payload_seed_replaces_only_its_derived_operation_cache(self) -> None:
+        observer = LiveEvidence("owner/repo", LiveGitHub("owner/repo"))
+        payload = {"data": {"repository": {"pullRequest": {"number": 42}}}}
+        observer._payloads[99] = {"unrelated": True}
+        observer._histories[(42, "hosted")] = [{"stale": True}]
+        observer._histories[(42, "cli")] = [{"stale": True}]
+        observer._histories[(99, "hosted")] = [{"unrelated": True}]
+        observer._records_histories[42] = {"stale": True}
+        observer._records_histories[99] = {"unrelated": True}
+
+        observer.prefetch_payload(42, payload)
+
+        self.assertIs(observer._payloads[42], payload)
+        self.assertNotIn((42, "hosted"), observer._histories)
+        self.assertNotIn((42, "cli"), observer._histories)
+        self.assertNotIn(42, observer._records_histories)
+        self.assertEqual(observer._payloads[99], {"unrelated": True})
+        self.assertEqual(observer._histories[(99, "hosted")], [{"unrelated": True}])
+        self.assertEqual(observer._records_histories[99], {"unrelated": True})
 
     def test_hosted_source_resolution_retries_transient_history_failure_and_casefolds_repository(self) -> None:
         origin = {
@@ -896,7 +916,7 @@ class RuntimeTest(unittest.TestCase):
                 (42, (), {"child_head": HEAD, "live_base_ref": "develop", "live_base_tip": BASE}),
             ),
         ):
-            observer._payloads[42] = {"stale": True}
+            observer.prefetch_payload(42, {"stale": True})
             observer._histories[(42, "hosted")] = [{"stale": True}]
             observer._histories[(42, "cli")] = [{"stale": True}]
             observer._records_histories[42] = {"stale": True}
@@ -910,6 +930,38 @@ class RuntimeTest(unittest.TestCase):
             self.assertNotIn((42, "hosted"), observer._histories)
             self.assertNotIn((42, "cli"), observer._histories)
             self.assertNotIn(42, observer._records_histories)
+
+    def test_audits_fetch_complete_evidence_once_per_operation_and_refresh_on_reentry(self) -> None:
+        snapshot = PullRequestSnapshot(42, "OPEN", "develop", BASE, HEAD, "feature", 1)
+        for stop_audit in (False, True):
+            with self.subTest(stop_audit=stop_audit):
+                observer = LiveEvidence("owner/repo", LiveGitHub("owner/repo"))
+                observer.prefetch_payload(42, {"stale": True})
+                fresh_payload = self._payload()
+                malformed_payload = self._payload(threads=[{"isResolved": "unknown"}])
+                if stop_audit:
+                    audit = observer.review_stop_audit
+                    arguments = (42, self.stop_audit_anchor())
+                else:
+                    audit = observer.legacy_transition_reauthorization_audit
+                    arguments = (42, (), {"child_head": HEAD, "live_base_ref": "develop", "live_base_tip": BASE})
+                with (
+                    patch.object(github, "fetch_pull_request", side_effect=[fresh_payload, malformed_payload]) as fetch,
+                    patch.object(observer.live, "pull_request", return_value=snapshot) as identities,
+                    patch.object(observer.live, "branch_head", return_value=BASE) as branch_tip,
+                    patch.object(observer, "history", return_value=[]),
+                    patch.object(observer, "_complete_trigger_paths", return_value=[]),
+                    patch.object(observer, "_global_blockers", return_value=[]),
+                ):
+                    self.assertTrue(audit(*arguments)["complete"])
+                    fetch.assert_called_once_with("owner/repo", 42)
+                    self.assertEqual(identities.call_count, 2 if stop_audit else 1)
+                    self.assertEqual(branch_tip.call_count, 1 if stop_audit else 0)
+                    with self.assertRaisesRegex(ControllerError, "review-thread evidence is malformed"):
+                        audit(*arguments)
+                    self.assertEqual(fetch.call_count, 2)
+                    self.assertEqual(identities.call_count, 4 if stop_audit else 2)
+                    self.assertEqual(branch_tip.call_count, 2 if stop_audit else 0)
 
     def test_closed_reservation_uses_only_durable_future_cooldown_when_history_is_unavailable(self) -> None:
         runner = HostedRunner("owner/repo", LiveGitHub("owner/repo"))
@@ -2178,7 +2230,7 @@ class RuntimeTest(unittest.TestCase):
             controller = default_controller("owner/repo")
         self.assertEqual(controller.default_base_ref, "main")
 
-    def test_live_github_projects_exact_metadata_and_paginated_files(self) -> None:
+    def test_live_github_projects_exact_fresh_identity_and_paginated_files(self) -> None:
         metadata = {
             "number": 42,
             "state": "OPEN",
@@ -2192,7 +2244,7 @@ class RuntimeTest(unittest.TestCase):
             "mergedAt": None,
         }
         with (
-            patch.object(github, "fetch_pr_metadata", return_value=metadata),
+            patch.object(github, "fetch_pr_identity", return_value=metadata),
             patch.object(
                 github,
                 "fetch_api_endpoint",
@@ -2214,13 +2266,12 @@ class RuntimeTest(unittest.TestCase):
             "baseRefOid": BASE,
             "headRefName": "feature",
             "headRefOid": HEAD,
-            "headRepository": {"name": "repo"},
-            "headRepositoryOwner": {"login": "owner"},
+            "headRepository": {"name": "repo", "owner": {"login": "owner"}},
             "changedFiles": 0,
             "mergeable": "MERGEABLE",
             "mergedAt": None,
         }
-        with patch.object(github, "fetch_pr_metadata", return_value=metadata):
+        with patch.object(github, "fetch_pr_identity", return_value=metadata):
             self.assertEqual(LiveGitHub("owner/repo").pull_request(42).head_repository, "owner/repo")
 
     def test_live_github_rejects_malformed_present_head_repository_identity(self) -> None:
@@ -2238,7 +2289,7 @@ class RuntimeTest(unittest.TestCase):
             "mergedAt": None,
         }
         with (
-            patch.object(github, "fetch_pr_metadata", return_value=metadata),
+            patch.object(github, "fetch_pr_identity", return_value=metadata),
             self.assertRaisesRegex(ReviewRunnerError, "head repository identity is malformed"),
         ):
             LiveGitHub("owner/repo").pull_request(42)
@@ -2257,7 +2308,7 @@ class RuntimeTest(unittest.TestCase):
             "mergedAt": None,
         }
         with (
-            patch.object(github, "fetch_pr_metadata", return_value=metadata),
+            patch.object(github, "fetch_pr_identity", return_value=metadata),
             self.assertRaisesRegex(ReviewRunnerError, "head repository identity is malformed"),
         ):
             LiveGitHub("owner/repo").pull_request(42)
@@ -2272,6 +2323,81 @@ class RuntimeTest(unittest.TestCase):
 
         self.assertEqual(value["headRepository"]["nameWithOwner"], "owner/repo")
         self.assertIn("headRepository", run.call_args.args[0][-1])
+        metadata_fields = run.call_args.args[0][-1]
+        self.assertIn("body", metadata_fields)
+        self.assertIn("statusCheckRollup", metadata_fields)
+        self.assertIn("mergeStateStatus", metadata_fields)
+
+    def test_fetch_pr_identity_requests_only_live_snapshot_fields_and_rejects_bad_identity(self) -> None:
+        pull_request = {
+            "number": 42,
+            "state": "OPEN",
+            "baseRefName": "develop",
+            "baseRefOid": BASE,
+            "headRefName": "feature",
+            "headRefOid": HEAD,
+            "headRepository": {
+                "nameWithOwner": "owner/repo",
+                "name": "repo",
+                "owner": {"login": "owner"},
+            },
+            "changedFiles": 2,
+            "mergeable": "MERGEABLE",
+            "mergedAt": None,
+        }
+        payload = {"data": {"repository": {"pullRequest": pull_request}}}
+        with patch.object(github, "run_gh_query", return_value=payload) as query:
+            identity = github.fetch_pr_identity("owner/repo", 42)
+
+        self.assertEqual(identity, pull_request)
+        self.assertEqual(query.call_args.args[1], {"owner": "owner", "repo": "repo", "number": 42})
+        query_text = query.call_args.args[0]
+        for field in (
+            "number",
+            "state",
+            "baseRefName",
+            "baseRefOid",
+            "headRefName",
+            "headRefOid",
+            "headRepository",
+            "changedFiles",
+            "mergeable",
+            "mergedAt",
+        ):
+            self.assertIn(field, query_text)
+        for field in (
+            "title",
+            "body",
+            "statusCheckRollup",
+            "mergeStateStatus",
+            "reviewDecision",
+            "comments(",
+            "reviews(",
+        ):
+            self.assertNotIn(field, query_text)
+
+        for invalid_payload, expected_exception, expected_error in (
+            ({"data": {"repository": {"pullRequest": None}}}, TypeError, "no pull request"),
+            (
+                {"data": {"repository": {"pullRequest": {**pull_request, "number": 43}}}},
+                RuntimeError,
+                "no matching pull-request identity",
+            ),
+        ):
+            with (
+                self.subTest(expected_error=expected_error),
+                patch.object(github, "run_gh_query", return_value=invalid_payload),
+                self.assertRaisesRegex(expected_exception, expected_error),
+            ):
+                github.fetch_pr_identity("owner/repo", 42)
+
+        malformed = dict(pull_request)
+        del malformed["headRefOid"]
+        with (
+            patch.object(github, "fetch_pr_identity", return_value=malformed),
+            self.assertRaisesRegex(ReviewRunnerError, "pull-request identity is malformed"),
+        ):
+            LiveGitHub("owner/repo").pull_request(42)
 
     def test_historical_cli_capture_remains_attributable(self) -> None:
         body = f"CLI: 1 found / 0 accepted · `{HEAD[:12]}` · 1 files\n<!-- firemud-cli-run: run.Legacy -->"
@@ -5183,7 +5309,7 @@ class RuntimeTest(unittest.TestCase):
             patch.object(github, "fetch_pull_request", return_value=payload),
             patch.object(live, "pull_request", return_value=snapshot),
             patch.object(live, "branch_head", return_value=BASE),
-            patch.object(observer, "legacy_transition_reauthorization_audit", side_effect=legacy_audit_at_sample),
+            patch.object(observer, "_audit_complete_hosted_history", side_effect=legacy_audit_at_sample),
             patch.object(observer, "_complete_trigger_paths", return_value=[Path("trigger.json")]),
             patch.object(hosted, "current_trigger_record_paths", return_value=[Path("trigger.json")]),
             patch.object(hosted, "load_trigger_reservation", return_value=record),
@@ -5223,7 +5349,7 @@ class RuntimeTest(unittest.TestCase):
             patch.object(github, "fetch_pull_request", return_value=payload),
             patch.object(live, "pull_request", return_value=snapshot),
             patch.object(live, "branch_head", return_value=BASE),
-            patch.object(observer, "legacy_transition_reauthorization_audit", return_value=expired_audit),
+            patch.object(observer, "_audit_complete_hosted_history", return_value=expired_audit),
             patch.object(observer, "_complete_trigger_paths", return_value=[Path("trigger.json")]),
             patch.object(hosted, "current_trigger_record_paths", return_value=[Path("trigger.json")]),
             patch.object(hosted, "load_trigger_reservation", return_value=record),
@@ -5255,7 +5381,7 @@ class RuntimeTest(unittest.TestCase):
                     patch.object(github, "fetch_pull_request", return_value=payload),
                     patch.object(live, "pull_request", return_value=snapshot),
                     patch.object(live, "branch_head", return_value=BASE),
-                    patch.object(observer, "legacy_transition_reauthorization_audit", return_value=generic_audit),
+                    patch.object(observer, "_audit_complete_hosted_history", return_value=generic_audit),
                     patch.object(observer, "history", return_value=[]),
                     patch.object(observer, "_complete_trigger_paths", return_value=[Path("trigger.json")]),
                     patch.object(hosted, "current_trigger_record_paths", return_value=[Path("trigger.json")]),
@@ -5286,7 +5412,7 @@ class RuntimeTest(unittest.TestCase):
             patch.object(github, "fetch_pull_request", return_value=payload),
             patch.object(live, "pull_request", return_value=snapshot),
             patch.object(live, "branch_head", return_value=BASE),
-            patch.object(observer, "legacy_transition_reauthorization_audit", return_value=mismatched_audit),
+            patch.object(observer, "_audit_complete_hosted_history", return_value=mismatched_audit),
             patch.object(observer, "_complete_trigger_paths", return_value=[Path("trigger.json")]),
             patch.object(hosted, "current_trigger_record_paths", return_value=[Path("trigger.json")]),
             patch.object(hosted, "load_trigger_reservation", return_value=record),
@@ -5334,7 +5460,7 @@ class RuntimeTest(unittest.TestCase):
                 patch.object(github, "fetch_pull_request", return_value=payload),
                 patch.object(observer.live, "pull_request", return_value=snapshot),
                 patch.object(observer.live, "branch_head", return_value=BASE),
-                patch.object(observer, "legacy_transition_reauthorization_audit", return_value=empty_audit),
+                patch.object(observer, "_audit_complete_hosted_history", return_value=empty_audit),
                 patch.object(observer, "_complete_trigger_paths", return_value=[]),
                 patch.object(
                     observer,
@@ -5436,14 +5562,20 @@ class RuntimeTest(unittest.TestCase):
             selected_anchor=anchor,
             selected_snapshot=snapshot,
             selected_payload=payload,
-            nested_payload=None,
+            later_snapshot=None,
             parent_tip=effective_parent,
             tip_error=None,
         ):
-            fetch_payloads = [selected_payload, nested_payload if nested_payload is not None else selected_payload]
             with (
-                patch.object(github, "fetch_pull_request", side_effect=fetch_payloads),
-                patch.object(observer.live, "pull_request", return_value=selected_snapshot),
+                patch.object(github, "fetch_pull_request", return_value=selected_payload) as fetch_payload,
+                patch.object(
+                    observer.live,
+                    "pull_request",
+                    side_effect=[
+                        selected_snapshot,
+                        later_snapshot if later_snapshot is not None else selected_snapshot,
+                    ],
+                ) as read_identity,
                 patch.object(
                     observer.live,
                     "branch_head",
@@ -5455,11 +5587,13 @@ class RuntimeTest(unittest.TestCase):
                 patch.object(observer, "_global_blockers", return_value=[]),
                 patch.object(
                     observer,
-                    "legacy_transition_reauthorization_audit",
-                    wraps=observer.legacy_transition_reauthorization_audit,
+                    "_audit_complete_hosted_history",
+                    wraps=observer._audit_complete_hosted_history,
                 ) as audit,
             ):
                 result = observer.review_stop_audit(42, selected_anchor)
+                fetch_payload.assert_called_once_with("owner/repo", 42)
+                self.assertEqual(read_identity.call_count, 2)
                 return result, audit
 
         result, audit = run()
@@ -5475,10 +5609,12 @@ class RuntimeTest(unittest.TestCase):
         self.assertEqual(audit.call_args.args[2]["live_base_tip"], retained_base)
         self.assertNotEqual(anchor["pr_base_oid"], anchor["effective_parent_head"])
 
-        shifted_nested_base = self._payload()
-        shifted_nested_base["data"]["repository"]["pullRequest"]["baseRefOid"] = "e" * 40
-        with self.assertRaisesRegex(ControllerError, "base moved during missing Hosted fingerprint retirement"):
-            run(nested_payload=shifted_nested_base)
+        for change in ({"base_sha": "e" * 40}, {"head_sha": "e" * 40}, {"base_ref_name": "release"}):
+            with (
+                self.subTest(later_identity=change),
+                self.assertRaisesRegex(ControllerError, "base moved during missing Hosted fingerprint retirement"),
+            ):
+                run(later_snapshot=dataclasses.replace(snapshot, **change))
 
         parent_ref = "feature-parent"
         numeric_pull = self._payload()["data"]["repository"]["pullRequest"]
@@ -5565,7 +5701,7 @@ class RuntimeTest(unittest.TestCase):
                 patch.object(observer.live, "branch_head", return_value="e" * 40),
                 patch.object(observer, "_complete_trigger_paths", return_value=[]),
                 patch.object(observer, "history", return_value=[]),
-                patch.object(observer, "legacy_transition_reauthorization_audit", return_value=complete_audit),
+                patch.object(observer, "_audit_complete_hosted_history", return_value=complete_audit),
             ):
                 refreshed = observer.review_stop_audit(42, anchor)
             self.assertTrue(refreshed["request_preparation_only"])
@@ -6376,7 +6512,7 @@ class RuntimeTest(unittest.TestCase):
                 patch.object(github, "fetch_pull_request", return_value=payload),
                 patch.object(live, "pull_request", return_value=snapshot),
                 patch.object(live, "branch_head", return_value=BASE),
-                patch.object(observer, "legacy_transition_reauthorization_audit", return_value=selected_audit) as audit,
+                patch.object(observer, "_audit_complete_hosted_history", return_value=selected_audit) as audit,
                 patch.object(
                     observer,
                     "_complete_trigger_paths",
@@ -6404,6 +6540,7 @@ class RuntimeTest(unittest.TestCase):
                 }
                 audit.assert_called_once()
                 self.assertEqual(audit.call_args.args, (42, (), expected_anchor))
+                self.assertIs(audit.call_args.kwargs["payload"], payload)
                 self.assertEqual(audit.call_args.kwargs["allow_historical_unmatched"], True)
                 self.assertIsInstance(audit.call_args.kwargs["now"], datetime)
                 return result

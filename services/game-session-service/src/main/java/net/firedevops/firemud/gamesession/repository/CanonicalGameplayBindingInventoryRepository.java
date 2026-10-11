@@ -237,6 +237,8 @@ public final class CanonicalGameplayBindingInventoryRepository {
           DSLContext transaction = DSL.using(configuration);
           BigInteger currentRevision = lockInventoryRevision(transaction);
           UUID transitionId = expectedEvidence.transition().transitionId();
+          lockLeaseBoundRuntimeBeforeTransition(
+              transaction, transitionId, expectedEvidence.candidate().bindingRef().bytes(), null);
           CanonicalGameplayBindingProvisionalCasEvidence current =
               loadProvisionalCasEvidence(transaction, transitionId, true);
           requireAccountCoverageEvidenceCurrent(
@@ -426,6 +428,13 @@ public final class CanonicalGameplayBindingInventoryRepository {
         configuration -> {
           DSLContext transaction = DSL.using(configuration);
           BigInteger currentRevision = lockInventoryRevision(transaction);
+          if (expectedDecision != null) {
+            lockLeaseBoundRuntimeBeforeTransition(
+                transaction,
+                expectedEvidence.transition().transitionId(),
+                expectedEvidence.candidate().bindingRef().bytes(),
+                expectedDecision.targetEvidence());
+          }
           CanonicalGameplayBindingProvisionalCasEvidence current =
               loadProvisionalCasEvidence(
                   transaction, expectedEvidence.transition().transitionId(), true);
@@ -586,6 +595,102 @@ public final class CanonicalGameplayBindingInventoryRepository {
     }
   }
 
+  private static void lockLeaseBoundRuntimeBeforeTransition(
+      DSLContext transaction,
+      UUID transitionId,
+      byte[] candidateBindingRef,
+      CanonicalPlayableTarget expectedTarget) {
+    // Keep the runtime-before-transition lock order: resolve without row locks, then acquire only
+    // the exact candidate runtime row before CAS evidence locks the transition. The V34 trigger
+    // rechecks the complete launch tuple when the transition is updated.
+    Record targetLink =
+        transaction.fetchOne(
+            "SELECT transition.status, transition.admission_lease_id,"
+                + " transition.admission_target_tenant_id,"
+                + " transition.admission_target_game_session_tenant_id,"
+                + " transition.admission_target_game_instance_id,"
+                + " transition.admission_target_canonical_game_instance_id,"
+                + " candidate.tenant_id AS candidate_tenant_id,"
+                + " candidate.runtime_game_instance_id,"
+                + " candidate.game_instance_id AS candidate_game_instance_id,"
+                + " launch.canonical_tenant_id AS launch_canonical_tenant_id,"
+                + " launch.game_session_tenant_id,"
+                + " launch.game_instance_id AS launch_game_instance_id,"
+                + " launch.game_instance_uuid AS launch_game_instance_uuid"
+                + " FROM "
+                + TRANSITION
+                + " transition JOIN "
+                + INVENTORY
+                + " candidate ON candidate.binding_ref = transition.candidate_binding_ref"
+                + " JOIN game_session_canonical_instance_launch launch"
+                + " ON launch.canonical_tenant_id = candidate.tenant_id"
+                + " AND launch.game_instance_id = candidate.runtime_game_instance_id"
+                + " AND launch.game_instance_uuid = candidate.game_instance_id"
+                + " WHERE transition.transition_id = ? AND candidate.binding_ref = ?",
+            transitionId,
+            candidateBindingRef);
+    if (targetLink == null) {
+      if (expectedTarget != null) {
+        throw conflict("Lease-bound decision has no exact candidate launch identity");
+      }
+      return;
+    }
+
+    if (expectedTarget == null) {
+      String status = targetLink.get("status", String.class);
+      if (targetLink.get("admission_lease_id", UUID.class) == null
+          || (!"PROVISIONAL".equals(status) && !"AMBIGUOUS".equals(status))) {
+        return;
+      }
+    }
+
+    UUID canonicalTenantId =
+        expectedTarget == null
+            ? targetLink.get("admission_target_tenant_id", UUID.class)
+            : expectedTarget.canonicalTenantId();
+    Long gameSessionTenantId =
+        expectedTarget == null
+            ? targetLink.get("admission_target_game_session_tenant_id", Long.class)
+            : expectedTarget.gameSessionTenantId();
+    Long gameInstanceId =
+        expectedTarget == null
+            ? targetLink.get("admission_target_game_instance_id", Long.class)
+            : expectedTarget.gameInstanceId();
+    UUID canonicalGameInstanceId =
+        expectedTarget == null
+            ? targetLink.get("admission_target_canonical_game_instance_id", UUID.class)
+            : expectedTarget.canonicalGameInstanceId();
+
+    if (canonicalTenantId == null
+        || gameSessionTenantId == null
+        || gameInstanceId == null
+        || canonicalGameInstanceId == null
+        || !Objects.equals(canonicalTenantId, targetLink.get("candidate_tenant_id", UUID.class))
+        || !Objects.equals(
+            canonicalTenantId, targetLink.get("launch_canonical_tenant_id", UUID.class))
+        || !Objects.equals(
+            gameSessionTenantId, targetLink.get("game_session_tenant_id", Long.class))
+        || !Objects.equals(gameInstanceId, targetLink.get("runtime_game_instance_id", Long.class))
+        || !Objects.equals(gameInstanceId, targetLink.get("launch_game_instance_id", Long.class))
+        || !Objects.equals(
+            canonicalGameInstanceId, targetLink.get("candidate_game_instance_id", UUID.class))
+        || !Objects.equals(
+            canonicalGameInstanceId, targetLink.get("launch_game_instance_uuid", UUID.class))) {
+      throw conflict("Lease-bound decision does not identify the exact candidate runtime row");
+    }
+
+    Record runtime =
+        transaction.fetchOne(
+            "SELECT id FROM game_instances"
+                + " WHERE tenant_id = ? AND id = ? AND game_instance_uuid = ? FOR UPDATE",
+            gameSessionTenantId,
+            gameInstanceId,
+            canonicalGameInstanceId);
+    if (runtime == null) {
+      throw conflict("Lease-bound decision has no exact current Game Instance row");
+    }
+  }
+
   private static int updateLeaseBoundProvisionalTransition(
       DSLContext transaction,
       CanonicalGameplayBindingProvisionalCasEvidence current,
@@ -628,7 +733,8 @@ public final class CanonicalGameplayBindingInventoryRepository {
             + " admission_target_hold_binding_digest = ?, admission_target_audit_event_id = ?,"
             + " admission_target_owner_proof_digest = ?,"
             + " admission_target_owner_proof_outcome = ?,"
-            + " admission_target_positive_durable_abort = ?, admission_target_terminal_at = ?,"
+            + " admission_target_positive_durable_abort = ?,"
+            + " admission_target_terminal_at = ?::timestamptz,"
             + " admission_target_character_creation_policy = ?";
     return transaction.execute(
         "UPDATE "
