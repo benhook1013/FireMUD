@@ -330,6 +330,7 @@ class AccountStartSessionOperatorAuthorizationServiceTest {
     assertThat(record).isNotNull();
     assertThat(record.status()).isEqualTo(Status.ISSUED);
     assertThat(record.encryptedResponseEnvelope()).isNotEmpty();
+    assertThat(record.encryptedResponseEnvelope().length).isLessThanOrEqualTo(160 * 1024);
     AccountStartSessionOperatorAuthorityBundle bundle =
         AccountStartSessionOperatorAuthorityBundle.decode(record.authorityEvidenceBundle());
     assertThat(AccountStartSessionOperatorAuthorizationService.envelopeBindingRequestId(requestId))
