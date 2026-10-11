@@ -110,6 +110,7 @@ import net.firedevops.firemud.common.gamedesign.AuthoredInitialActorCoreProjecti
 import net.firedevops.firemud.common.gamedesign.AuthoredInitialActorCoreReadClient;
 import net.firedevops.firemud.common.gamedesign.AuthoredInitialActorCoreReadEvidence;
 import net.firedevops.firemud.common.gamedesign.AuthoredWorldLaunchDescriptorClient;
+import net.firedevops.firemud.common.gamedesign.AuthoredWorldLaunchDescriptorEvidence;
 import net.firedevops.firemud.common.gamedesign.AuthoredWorldReleaseAttestationEvidence;
 import net.firedevops.firemud.common.gamedesign.CompleteLaunchBindingEvidence;
 import net.firedevops.firemud.common.gamedesign.GameplayRuleSource;
@@ -3360,21 +3361,7 @@ class GenuineSelectedPublicationExportPostgresIntegrationTest {
           var firstDescriptorRead =
               gameSessionToGameDesignAuthoredCoreClient.read(
                   new AuthoredInitialActorCoreReadEvidence.ReadRequest(firstDescriptorRequest));
-          var descriptorDto =
-              new ResolvedLaunchDescriptorDto(
-                  authoredWorldLaunchDescriptor.launchDescriptorId(),
-                  authoredWorldLaunchDescriptor.canonicalTenantId().toString(),
-                  authoredWorldLaunchDescriptor.gameTemplateId(),
-                  authoredWorldLaunchDescriptor.controlPlaneRequestId(),
-                  authoredWorldLaunchDescriptor.versionId(),
-                  authoredWorldLaunchDescriptor.scriptPatchVersion(),
-                  authoredWorldLaunchDescriptor.runtimeFlagsJson(),
-                  authoredWorldLaunchDescriptor.generationConfigRevision(),
-                  authoredWorldLaunchDescriptor.versionStateEpoch(),
-                  authoredWorldLaunchDescriptor.releaseBundleId(),
-                  authoredWorldLaunchDescriptor.publishedReleaseBundleRef(),
-                  authoredWorldLaunchDescriptor.remapSetId(),
-                  authoredWorldLaunchDescriptor);
+          var descriptorDto = resolvedLaunchDescriptorDto(authoredWorldLaunchDescriptor);
           var firstDescriptorBinding =
               new StartSessionLaunchDescriptorProducer.ResolvedBinding(
                   firstDescriptorRequest,
@@ -5338,16 +5325,29 @@ class GenuineSelectedPublicationExportPostgresIntegrationTest {
                 .containsExactlyElementsOf(completeBindingOwnerRowsBefore);
           }
 
+          var replayRequest =
+              startSessionReadRequest(
+                  startSessionTuple,
+                  ownerAttemptId,
+                  ownerFence,
+                  pinnedSelection,
+                  UUID.randomUUID());
+          var replayCall = gameDesignStartSessionReadTransport.resolveDescriptor(replayRequest);
+          assertThat(replayCall.result().outcome())
+              .isInstanceOf(StartSessionLaunchDescriptorGrpcCodec.DescriptorOutcome.class);
+          var replayDescriptor =
+              ((StartSessionLaunchDescriptorGrpcCodec.DescriptorOutcome)
+                      replayCall.result().outcome())
+                  .descriptor();
+          var replayActorCoreRead =
+              gameSessionToGameDesignAuthoredCoreClient.read(
+                  new AuthoredInitialActorCoreReadEvidence.ReadRequest(replayRequest));
           var replay =
-              withGameSessionPeer(
-                  () ->
-                      descriptorProducer.resolve(
-                          startSessionReadRequest(
-                              startSessionTuple,
-                              ownerAttemptId,
-                              ownerFence,
-                              pinnedSelection,
-                              UUID.randomUUID())));
+              new StartSessionLaunchDescriptorProducer.ResolvedBinding(
+                  replayRequest,
+                  replayCall.result().associationRead(),
+                  resolvedLaunchDescriptorDto(replayDescriptor),
+                  replayActorCoreRead.projections());
           assertThat(replay.descriptor()).isEqualTo(firstDescriptorBinding.descriptor());
           assertSameAuthoredCoreProjectionBytes(
               replay.actorCoreProjections(), firstDescriptorBinding.actorCoreProjections());
@@ -5357,6 +5357,9 @@ class GenuineSelectedPublicationExportPostgresIntegrationTest {
           // This deliberately synthetic tuple is only a negative mismatch probe; unlike the
           // positive path it is not issued by Account and is expected to be rejected by the real
           // durable projection receiver.
+          // The remaining tuple, attempt, and fence probes stay local so their exact Account
+          // denial detail remains observable; they are owner-negative evidence, not transport
+          // proof.
           var changedTuple =
               startSessionTuple(
                   controlPlaneRequestId,
@@ -5408,17 +5411,15 @@ class GenuineSelectedPublicationExportPostgresIntegrationTest {
                   selectedCommit.commitId(),
                   publicationRequest.derivedWorkflowIdentity(),
                   "sha256:" + "0".repeat(64));
+          var changedSelectionRequest =
+              startSessionReadRequest(
+                  startSessionTuple,
+                  ownerAttemptId,
+                  ownerFence,
+                  changedSelection,
+                  UUID.randomUUID());
           assertFailedPrecondition(
-              () ->
-                  withGameSessionPeer(
-                      () ->
-                          descriptorProducer.resolve(
-                              startSessionReadRequest(
-                                  startSessionTuple,
-                                  ownerAttemptId,
-                                  ownerFence,
-                                  changedSelection,
-                                  UUID.randomUUID()))));
+              () -> gameDesignStartSessionReadTransport.resolveDescriptor(changedSelectionRequest));
         }
         assertThat(gd.dsl().fetchCount(DSL.table("launch_descriptor"))).isOne();
         assertThat(
@@ -5440,6 +5441,24 @@ class GenuineSelectedPublicationExportPostgresIntegrationTest {
           gdServer,
           loggingServer);
     }
+  }
+
+  private static ResolvedLaunchDescriptorDto resolvedLaunchDescriptorDto(
+      AuthoredWorldLaunchDescriptorEvidence evidence) {
+    return new ResolvedLaunchDescriptorDto(
+        evidence.launchDescriptorId(),
+        evidence.canonicalTenantId().toString(),
+        evidence.gameTemplateId(),
+        evidence.controlPlaneRequestId(),
+        evidence.versionId(),
+        evidence.scriptPatchVersion(),
+        evidence.runtimeFlagsJson(),
+        evidence.generationConfigRevision(),
+        evidence.versionStateEpoch(),
+        evidence.releaseBundleId(),
+        evidence.publishedReleaseBundleRef(),
+        evidence.remapSetId(),
+        evidence);
   }
 
   private static void assertSameAuthoredCoreProjectionBytes(
