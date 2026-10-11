@@ -312,6 +312,18 @@ subprojects {
             showCauses = true
             showStackTraces = true
         }
+
+        if (name == "integrationTest"
+            && project.name in
+                setOf("account-service", "game-design-service", "entity-management-service")) {
+            testLogging {
+                // Keep active integration-test boundaries visible when cancellation precedes XML.
+                events("started", "passed", "failed", "skipped")
+                minGranularity = 0
+                maxGranularity = -1
+                showStandardStreams = false
+            }
+        }
     }
 
     tasks.test {
