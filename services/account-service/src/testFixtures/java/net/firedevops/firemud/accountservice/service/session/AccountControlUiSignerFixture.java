@@ -1,6 +1,7 @@
 package net.firedevops.firemud.accountservice.service.session;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.mockStatic;
@@ -217,11 +218,14 @@ final class AccountControlUiSignerFixture {
    */
   void prepareInitialPrepublication() throws Exception {
     prepareInitialGeneration();
-    assertThat(
-            f.tx(
-                () ->
-                    desired.readCurrentCommittedSigner(BINDING, trust(), API_DIGEST, API_REVISION)))
-        .isEmpty();
+    assertThatThrownBy(
+            () ->
+                f.tx(
+                    () ->
+                        desired.readCurrentCommittedSigner(
+                            BINDING, trust(), API_DIGEST, API_REVISION)))
+        .isInstanceOf(AccountJwtSignerDesiredStateRepository.QuarantinedStateException.class)
+        .hasMessage("Account durable and published active signer fences disagree");
   }
 
   private PreparedGeneration prepareInitialGeneration() throws Exception {
