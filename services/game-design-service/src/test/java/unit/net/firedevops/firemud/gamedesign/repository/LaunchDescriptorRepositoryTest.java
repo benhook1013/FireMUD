@@ -115,7 +115,9 @@ class LaunchDescriptorRepositoryTest {
               repository.findByTenantIdAndGameTemplateIdAndControlPlaneRequestId(
                   "other-tenant", 23L, "retained-request"))
           .isEmpty();
-      assertThatThrownBy(() -> repository.save(saved)).hasMessageContaining("immutable");
+      assertThatThrownBy(() -> repository.save(saved))
+          .isInstanceOf(IllegalStateException.class)
+          .hasMessage("Launch descriptors are immutable");
       retained.setWorldSlug("partial-binding");
       assertThatThrownBy(() -> repository.save(retained))
           .isInstanceOf(IllegalArgumentException.class)
