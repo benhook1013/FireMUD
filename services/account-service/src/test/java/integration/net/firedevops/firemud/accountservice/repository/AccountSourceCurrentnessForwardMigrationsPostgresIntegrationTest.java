@@ -253,10 +253,11 @@ class AccountSourceCurrentnessForwardMigrationsPostgresIntegrationTest {
                             + "(request_id, operation_id, token_jti, account_uuid, tenant_uuid, "
                             + "caller_workload, caller_context_id, request_mac_key_id, request_digest, "
                             + "claims_payload, source_payload, bundle_payload, signer_receipt, "
-                            + "issued_at_epoch_second, expires_at_epoch_second, recovery_expires_at, "
+                            + "issued_at_epoch_second, expires_at_epoch_second, "
+                            + "registry_cleanup_deadline_epoch_millis, recovery_expires_at, "
                             + "status, token_hash, pending_registry, active_registry, pending_receipt, "
                             + "committed_at) VALUES (?, ?, ?, ?, ?, 'test', ?, 'test-key', ?, ?, ?, ?, ?, ?, ?, "
-                            + "?::timestamptz, 'COMMITTED', ?, ?, ?, ?, CURRENT_TIMESTAMP)",
+                            + "?, ?::timestamptz, 'COMMITTED', ?, ?, ?, ?, CURRENT_TIMESTAMP)",
                         UUID.randomUUID(),
                         rejectedOperationId,
                         UUID.randomUUID(),
@@ -270,6 +271,7 @@ class AccountSourceCurrentnessForwardMigrationsPostgresIntegrationTest {
                         candidate,
                         issuedAt,
                         issuedAt + 300,
+                        (issuedAt + 300) * 1000L,
                         recoveryExpiresAt,
                         "b".repeat(64),
                         candidate,
@@ -1227,6 +1229,7 @@ class AccountSourceCurrentnessForwardMigrationsPostgresIntegrationTest {
     UUID tokenJti = UUID.randomUUID();
     long issuedAt = Instant.now().getEpochSecond();
     long expiresAt = issuedAt + 300;
+    long cleanupDeadlineEpochMillis = expiresAt * 1000L;
     OffsetDateTime recoveryExpiresAt =
         OffsetDateTime.ofInstant(Instant.ofEpochSecond(issuedAt + 30), ZoneOffset.UTC);
     byte[] candidate = new byte[] {1, 2, 3};
@@ -1245,9 +1248,10 @@ class AccountSourceCurrentnessForwardMigrationsPostgresIntegrationTest {
                           + "(request_id, operation_id, token_jti, account_uuid, tenant_uuid, "
                           + "caller_workload, caller_context_id, request_mac_key_id, request_digest, "
                           + "claims_payload, source_payload, bundle_payload, signer_receipt, "
-                          + "issued_at_epoch_second, expires_at_epoch_second, recovery_expires_at, status) "
+                          + "issued_at_epoch_second, expires_at_epoch_second, "
+                          + "registry_cleanup_deadline_epoch_millis, recovery_expires_at, status) "
                           + "VALUES (?, ?, ?, ?, ?, 'test-workload', ?, 'test-key', ?, ?, ?, ?, ?, ?, ?, "
-                          + "?::timestamptz, 'PREPARED')",
+                          + "?, ?::timestamptz, 'PREPARED')",
                       requestId,
                       operationId,
                       tokenJti,
@@ -1261,6 +1265,7 @@ class AccountSourceCurrentnessForwardMigrationsPostgresIntegrationTest {
                       candidate,
                       issuedAt,
                       expiresAt,
+                      cleanupDeadlineEpochMillis,
                       recoveryExpiresAt);
               context
                   .dsl()

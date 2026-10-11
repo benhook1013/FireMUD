@@ -10,6 +10,9 @@ project(":common-data-runtime").projectDir = File("services/common-data-runtime"
 include("common-platform-core")
 project(":common-platform-core").projectDir = File("services/common-platform-core")
 
+include("common-redis-contracts")
+project(":common-redis-contracts").projectDir = File("services/common-redis-contracts")
+
 include("common-saga")
 project(":common-saga").projectDir = File("services/common-saga")
 
