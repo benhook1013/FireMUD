@@ -27,7 +27,7 @@ sys.path.insert(0, str(ROOT / "dev-tools"))
 
 from pr_review import cli as cli_module
 from pr_review import cli_runner, evidence, github, hosted, sqlite_provider_imports, stack
-from pr_review.cli import _dispatch, _parser
+from pr_review.cli import CliError, _dispatch, _parser
 from pr_review.cli_runner import StaleReviewTargetError
 from pr_review.controller import (
     HOSTED_ACTIVE_RESPONSE_REASON,
@@ -9603,7 +9603,21 @@ class ControllerTests(unittest.TestCase):
             "review_decision": {"status": "APPROVED"},
             "checkpoint_counts": {"hosted": 1, "cli": 3},
             "threads": {"current": 0, "outdated": 0, "total": 0},
-            "ci": {"aggregate": {"state": "SUCCESS"}, "required": {}, "optional": {}},
+            "unresolved_threads": [{"id": "thread-current", "outdated": False}],
+            "coderabbit_summary": {"status": "current", "head_sha": values[4].head, "findings": []},
+            "hosted_trigger": {
+                "state": "active",
+                "validation_outcome": "valid",
+                "current_head_sha": values[4].head,
+            },
+            "review_sequence": [{"type": "Hosted", "head": values[4].head}],
+            "check_inventory": {"checks": [{"name": "required-check", "head_sha": values[4].head}]},
+            "ci": {
+                "aggregate": {"state": "SUCCESS"},
+                "required": {"pending": [], "failed": []},
+                "optional": {},
+                "inventory": [{"name": "required-check", "head_sha": values[4].head}],
+            },
             "ready": True,
             "verdict": "READY",
             "reasons": [],
@@ -9612,6 +9626,7 @@ class ControllerTests(unittest.TestCase):
         arguments = (
             _parser().parse_args(["status", "--pr", "4", "--json"]),
             _parser().parse_args(["status", "--pr", "4", "--summary", "--json"]),
+            _parser().parse_args(["status", "--pr", "4", "--compact", "--json"]),
         )
         results = []
         with (
@@ -9624,7 +9639,7 @@ class ControllerTests(unittest.TestCase):
                 self.assertEqual(exit_status, 0)
                 results.append(result)
 
-        detailed, summary = results
+        detailed, summary, compact = results
         for key in ("ready", "verdict", "reasons", "mergeability", "pull_request"):
             self.assertEqual(summary[key], detailed[key])
         detailed_rows = {item["pr"]: item for item in detailed["review_stack"]["prs"]}
@@ -9655,6 +9670,191 @@ class ControllerTests(unittest.TestCase):
         self.assertEqual(detailed_rows[4]["channels"]["cli"], "COMPLETE")
         self.assertEqual(detailed_rows[4]["reconciliation"], "PARENT_MOVED")
         self.assertEqual(detailed_rows[4]["incoming_routes"], [route.to_dict()])
+        compact_rows = {item["pr"]: item for item in compact["review_stack"]["prs"]}
+        self.assertEqual(compact_rows, {4: detailed_rows[4]})
+        self.assertEqual(
+            compact["review_stack"]["scope"],
+            "selected PR and unmerged configured ancestors; merged ancestors identity-only",
+        )
+        self.assertEqual(compact["review_stack"]["ordered_prs"], detailed["review_stack"]["ordered_prs"])
+        self.assertEqual(
+            compact["review_stack"]["legacy_transitions"], detailed["review_stack"]["legacy_transitions"]
+        )
+        self.assertEqual(
+            compact["review_stack"]["output_projection"],
+            {"scope": "selected_pr_rows_only", "selected_pr_row_count": 1, "omitted_pr_row_count": 2},
+        )
+        for key in detailed.keys() - {"review_stack"}:
+            self.assertEqual(compact[key], detailed[key], key)
+        self.assertIn("active", compact_rows[4]["review_activity"]["hosted"])
+        self.assertEqual(compact_rows[4]["channels"]["hosted"], "HUMAN_STOPPED")
+        self.assertEqual(compact["hosted_trigger"], detailed["hosted_trigger"])
+        self.assertEqual(compact["coderabbit_summary"], detailed["coderabbit_summary"])
+        self.assertEqual(compact["unresolved_threads"], detailed["unresolved_threads"])
+        self.assertEqual(compact["check_inventory"], detailed["check_inventory"])
+        self.assertEqual(compact["ci"]["inventory"], detailed["ci"]["inventory"])
+
+    def test_compact_selected_status_preserves_full_evidence_and_does_not_mutate_input(self):
+        selected = {
+            "pr": 4,
+            "head": HEAD_1,
+            "base": "feature-parent",
+            "pr_base_oid": PARENT,
+            "parent": "3",
+            "parent_head": PARENT,
+            "state": "OPEN",
+            "merged": False,
+            "is_draft": False,
+            "reconciliation": "PARENT_MOVED",
+            "channels": {"hosted": "HELD", "cli": "RATE_LIMITED"},
+            "review_progress": {
+                "hosted": {"status": "HELD", "label": "Reviewing", "rule": {"in_flight": 1}},
+                "cli": {"status": "RATE_LIMITED", "label": "Cooldown active"},
+            },
+            "review_obligations": {"hosted": ["active Hosted trigger"], "cli": []},
+            "channel_reasons": {"hosted": [], "cli": []},
+            "allocations": {"hosted": {"status": "PROMISED", "remaining": 1}},
+            "review_activity": {"hosted": {"active": [{"head": HEAD_1}], "recent": []}},
+            "incoming_routes": [{"route_id": "incoming-1"}],
+            "routes_out": [{"route_id": "outgoing-1"}],
+        }
+        unrelated = {"pr": 3, "head": HEAD_2, "allocations": {"hosted": {"status": "CAP_ACTIVE"}}}
+        report = {
+            "repo": "owner/repo",
+            "pr_number": 4,
+            "pull_request": {"headRefOid": HEAD_1, "baseRefOid": BASE},
+            "review_decision": {"status": "UNKNOWN", "exact_head": True},
+            "coderabbit_summary": {"status": "current", "head_sha": HEAD_1, "findings": [{"kind": "duplicate"}]},
+            "hosted_trigger": {"state": "active", "validation_outcome": "valid", "current_head_sha": HEAD_1},
+            "review_sequence": [{"type": "Hosted", "head": HEAD_1}],
+            "review_timeline": [{"created_at": "2026-10-12T00:00:00Z"}],
+            "threads": {"current": 1, "outdated": 2, "total": 3},
+            "unresolved_threads": [{"id": "thread-1", "outdated": False}],
+            "check_inventory": {"inventory": [{"name": "check", "head_sha": HEAD_1}]},
+            "ci": {"inventory": [{"name": "check", "head_sha": HEAD_1}]},
+            "incoming_routes": [{"route_id": "incoming-1"}],
+            "incoming_record_routes": [{"route_id": "record-1"}],
+            "reasons": ["review stack is PARENT_MOVED"],
+            "review_stack": {
+                "status": "PARENT_MOVED",
+                "selected_pr": 4,
+                "ordered_prs": [2, 3, 4],
+                "review_fronts": {"hosted": {"pr": 4, "status": "HELD"}, "cli": {"pr": 4, "status": "RATE_LIMITED"}},
+                "legacy_transitions": [{"pr": 2}],
+                "scope": "selected PR and configured ancestors",
+                "prs": [unrelated, selected],
+            },
+        }
+        original = copy.deepcopy(report)
+
+        compact = cli_module._compact_selected_pr_status(report, 4)
+
+        expected = copy.deepcopy(original)
+        expected["review_stack"]["prs"] = [selected]
+        expected["review_stack"]["output_projection"] = {
+            "scope": "selected_pr_rows_only",
+            "selected_pr_row_count": 1,
+            "omitted_pr_row_count": 1,
+        }
+        self.assertEqual(compact, expected)
+        self.assertIs(compact["review_stack"]["prs"][0], selected)
+        self.assertEqual(report, original)
+        for key in (
+            "pull_request",
+            "review_decision",
+            "coderabbit_summary",
+            "hosted_trigger",
+            "review_sequence",
+            "review_timeline",
+            "threads",
+            "unresolved_threads",
+            "check_inventory",
+            "ci",
+            "incoming_routes",
+            "incoming_record_routes",
+            "reasons",
+        ):
+            self.assertEqual(compact[key], original[key], key)
+        self.assertEqual(compact["review_stack"]["review_fronts"], original["review_stack"]["review_fronts"])
+        self.assertEqual(compact["review_stack"]["ordered_prs"], [2, 3, 4])
+        self.assertEqual(compact["review_stack"]["prs"][0]["reconciliation"], "PARENT_MOVED")
+        self.assertEqual(compact["review_stack"]["prs"][0]["allocations"]["hosted"]["status"], "PROMISED")
+
+    def test_compact_selected_status_reports_empty_selection_and_all_omitted_rows(self):
+        report = {"review_stack": {"selected_pr": 9, "ordered_prs": [1, 2], "prs": [{"pr": 1}, {"pr": 2}]}}
+
+        compact = cli_module._compact_selected_pr_status(report, 9)
+
+        self.assertEqual(compact["review_stack"]["prs"], [])
+        self.assertEqual(
+            compact["review_stack"]["output_projection"],
+            {"scope": "selected_pr_rows_only", "selected_pr_row_count": 0, "omitted_pr_row_count": 2},
+        )
+        self.assertEqual(report["review_stack"]["prs"], [{"pr": 1}, {"pr": 2}])
+
+    def test_compact_selected_status_dispatch_keeps_full_computation_and_rejects_conflicts(self):
+        selected = {
+            "pr": 4,
+            "head": HEAD_1,
+            "base": "feature-parent",
+            "pr_base_oid": BASE,
+            "parent": "3",
+            "parent_head": PARENT,
+            "reconciliation": "COHERENT",
+            "channels": {"hosted": "COMPLETE", "cli": "HUMAN_STOPPED"},
+            "review_obligations": {"hosted": [], "cli": []},
+            "allocations": {},
+            "incoming_routes": [],
+        }
+        unrelated = {"pr": 3, "head": HEAD_2, "reconciliation": "COHERENT"}
+        stack_report = {
+            "status": "COHERENT",
+            "selected_pr": 4,
+            "ordered_prs": [3, 4],
+            "review_fronts": {"hosted": {"pr": 3}, "cli": {"pr": 4}},
+            "prs": [unrelated, selected],
+        }
+        controller = SimpleNamespace(
+            repository="owner/repo",
+            store=None,
+            status_for_pr=Mock(return_value=stack_report),
+        )
+        live_report = {
+            "pull_request": {"headRefOid": HEAD_1, "baseRefName": "feature-parent", "baseRefOid": BASE},
+            "review_decision": {"status": "APPROVED"},
+            "checkpoint_counts": {"hosted": 1, "cli": 3},
+            "threads": {"current": 0, "outdated": 0, "total": 0},
+            "ci": {"aggregate": {"state": "SUCCESS"}, "required": {}, "optional": {}},
+            "ready": True,
+            "verdict": "READY",
+            "reasons": [],
+            "mergeability": {"clean": True, "diagnosis": "CLEAN"},
+        }
+        args = _parser().parse_args(["status", "--pr", "4", "--compact", "--json"])
+        with (
+            patch.object(cli_module, "_controller", return_value=(controller, None)),
+            patch.object(cli_module.status_module, "status", return_value=live_report),
+            patch.object(cli_module, "_read_record_incoming_routes", return_value=([], {"status": "available"})),
+        ):
+            compact, exit_status = _dispatch(args)
+
+        self.assertEqual(exit_status, 0)
+        controller.status_for_pr.assert_called_once_with(4, summary_only=True)
+        self.assertEqual(compact["review_stack"]["prs"], [selected])
+        self.assertEqual(compact["review_stack"]["output_projection"]["omitted_pr_row_count"], 1)
+        self.assertEqual(compact["review_stack"]["review_fronts"], stack_report["review_fronts"])
+
+        invalid_arguments = (
+            ["status", "--compact", "--json"],
+            ["status", "--pr", "4", "--compact"],
+            ["status", "--pr", "4", "--compact", "--json", "--summary"],
+            ["status", "--pr", "4", "--compact", "--json", "--full-scan"],
+        )
+        for values in invalid_arguments:
+            with self.subTest(arguments=values), patch.object(cli_module, "_controller") as make_controller:
+                with self.assertRaises(CliError):
+                    _dispatch(_parser().parse_args(values))
+                make_controller.assert_not_called()
 
     def test_selected_status_retains_later_selected_identity_observation(self):
         values, heads = _stacked_prs(3)
