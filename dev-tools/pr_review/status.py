@@ -42,6 +42,15 @@ class StatusError(ValueError):
     """Raised when required live or historical evidence is malformed."""
 
 
+BRANCH_NOT_PROTECTED_ERROR_LINE = "gh: Branch not protected (HTTP 404)"
+
+
+def _is_branch_not_protected_error(error: BaseException) -> bool:
+    """Recognize only GitHub's explicit branch-protection absence response."""
+
+    return any(line.strip() == BRANCH_NOT_PROTECTED_ERROR_LINE for line in str(error).splitlines())
+
+
 def _timestamp(value: Any, field: str) -> datetime:
     if not isinstance(value, str) or not value:
         raise StatusError(f"{field} must be a non-empty timestamp string")
@@ -393,12 +402,15 @@ def _inventory_report(
 def _required_authority(value: Any) -> dict[str, Any]:
     if not isinstance(value, Mapping) or value.get("available") is False:
         reason = value.get("reason") if isinstance(value, Mapping) else None
-        return {
+        result = {
             "available": False,
             "status": "unavailable",
             "reason": reason or "authoritative branch protection is unavailable",
             "contexts": [],
         }
+        if isinstance(value, Mapping) and value.get("reason_code") == "branch_not_protected":
+            result["reason_code"] = "branch_not_protected"
+        return result
     contexts = value.get("contexts", [])
     checks = value.get("checks", [])
     if not isinstance(contexts, list) or any(not isinstance(item, str) or not item for item in contexts):
@@ -1116,7 +1128,20 @@ def build_report(
         try:
             required_source = github.fetch_required_status_checks(repo, pr["baseRefName"])
         except (OSError, RuntimeError, TypeError, ValueError) as exc:
-            required_source = {"available": False, "reason": f"authoritative branch protection unavailable: {exc}"}
+            if _is_branch_not_protected_error(exc):
+                required_source = {
+                    "available": False,
+                    "reason_code": "branch_not_protected",
+                    "reason": (
+                        f"current base branch {pr['baseRefName']} is not protected (GitHub HTTP 404); "
+                        "required-check authority for current-base merge readiness is unavailable"
+                    ),
+                }
+            else:
+                required_source = {
+                    "available": False,
+                    "reason": f"authoritative branch protection unavailable: {exc}",
+                }
     else:
         required_source = None
     authority = _required_authority(required_source)
@@ -1311,6 +1336,7 @@ def build_report(
             "clean": not reasons,
             "diagnosis": verdict,
         },
+        "readiness_scope": "current_base_merge",
         "ready": not reasons,
         "verdict": verdict,
         "reasons": reasons,
@@ -1386,7 +1412,11 @@ def emit_text(report: Mapping[str, Any]) -> str:
         f"CI: {aggregate_label}={aggregate['state']} · {check_counts} · optional_failed={optional_failed}",
         f"pending {observation_label}: {pending_names}",
         f"failed {observation_label}: {failed_names}",
-        f"verdict: {report['verdict']}",
+        f"current-base merge readiness: {report['verdict']}",
+        (
+            "review eligibility: see separate review_stack review-front/channel/policy evidence; "
+            "a logical front does not grant admission"
+        ),
     ]
     if not inventory_available and report["ci"].get("inventory_reason"):
         lines.append(f"CI inventory unavailable: {report['ci']['inventory_reason']}")

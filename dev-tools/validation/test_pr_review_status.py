@@ -338,6 +338,20 @@ class StatusTest(unittest.TestCase):
                 **kwargs,
             )
 
+    def _live_required_authority_failure_report(self, error: BaseException, *, base: str = "develop") -> dict:
+        payload = github_payload()
+        pull_request = payload["data"]["repository"]["pullRequest"]
+        pull_request["baseRefName"] = base
+        del pull_request["required_status_checks"]
+        with (
+            patch.object(github, "fetch_pull_request", return_value=payload),
+            patch.object(github, "fetch_pr_metadata", return_value={}),
+            patch.object(github, "fetch_required_status_checks", side_effect=error),
+            patch.object(github, "fetch_check_inventory", return_value=pull_request["statusCheckRollup"]),
+            patch.object(status, "_loc_status", return_value={"status": "fresh", "merge_base_checked": True}),
+        ):
+            return status.build_report("owner/repo", 2838, checkpoint_payload=checkpoint_payload())
+
     @staticmethod
     def _coderabbit_review(
         body: str,
@@ -1077,6 +1091,9 @@ class StatusTest(unittest.TestCase):
             compact,
         )
         self.assertIn(report["verdict"], compact)
+        self.assertEqual(report["readiness_scope"], "current_base_merge")
+        self.assertIn("current-base merge readiness:", compact)
+        self.assertIn("a logical front does not grant admission", compact)
         self.assertEqual(decoded, report)
         self.assertEqual(decoded["threads"], {"current": 1, "outdated": 0, "total": 1})
 
@@ -1611,6 +1628,42 @@ class StatusTest(unittest.TestCase):
         self.assertIn("authoritative branch protection is unavailable", report["ci"]["required"]["reason"])
         self.assertFalse(report["ready"])
 
+    def test_explicit_branch_not_protected_response_is_classified_and_blocks_every_base(self) -> None:
+        for base in ("feature/stack-parent", "develop"):
+            with self.subTest(base=base):
+                report = self._live_required_authority_failure_report(
+                    RuntimeError("request failed\ngh: Branch not protected (HTTP 404)\nprovider detail"),
+                    base=base,
+                )
+
+                required = report["ci"]["required"]
+                self.assertFalse(required["available"])
+                self.assertEqual(required["reason_code"], "branch_not_protected")
+                self.assertIn(f"current base branch {base}", required["reason"])
+                self.assertIn("current-base merge readiness is unavailable", required["reason"])
+                self.assertIn(required["reason"], report["reasons"])
+                self.assertEqual(report["readiness_scope"], "current_base_merge")
+                self.assertFalse(report["ready"])
+                self.assertEqual(report["verdict"], "NOT READY")
+
+    def test_other_required_authority_failures_remain_generic(self) -> None:
+        for error in (
+            RuntimeError("gh: Not Found (HTTP 404)"),
+            RuntimeError("gh: Resource not accessible by integration (HTTP 403)"),
+            TimeoutError("gh api timed out after 120 seconds"),
+        ):
+            with self.subTest(error=str(error)):
+                report = self._live_required_authority_failure_report(error, base="feature/stack-parent")
+                required = report["ci"]["required"]
+
+                self.assertFalse(required["available"])
+                self.assertNotIn("reason_code", required)
+                self.assertEqual(
+                    required["reason"],
+                    f"authoritative branch protection unavailable: {error}",
+                )
+                self.assertFalse(report["ready"])
+
     def test_success_rollup_reports_conflicting_failed_or_pending_inventory(self) -> None:
         for conclusion, lifecycle, category in (
             ("FAILURE", "COMPLETED", "failed"),
@@ -1676,6 +1729,7 @@ class StatusTest(unittest.TestCase):
         self.assertTrue(report["ci"]["aggregate_inventory_conflict"])
         self.assertTrue(report["ready"])
         self.assertEqual(report["verdict"], "READY")
+        self.assertEqual(report["readiness_scope"], "current_base_merge")
         self.assertIn("optional_failed=1", status.emit_text(report))
 
     def test_unavailable_inventory_labels_empty_and_failed_fallback_as_rollup_observations(self) -> None:
