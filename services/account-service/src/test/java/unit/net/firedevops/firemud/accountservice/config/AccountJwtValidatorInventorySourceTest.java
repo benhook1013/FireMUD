@@ -115,6 +115,114 @@ class AccountJwtValidatorInventorySourceTest {
   }
 
   @Test
+  void rejectsSigningSecretAccessAcrossEveryPodContainerFamily() throws Exception {
+    List<String> families = List.of("containers", "initContainers", "ephemeralContainers");
+    List<String> accessForms = List.of("envFrom", "secretKeyRef", "volumeMount");
+
+    for (String family : families) {
+      for (String accessForm : accessForms) {
+        Fixture fixture = new Fixture();
+        ObjectNode podSpec;
+        ObjectNode container;
+        ObjectNode observedResource;
+        boolean podObservation = "ephemeralContainers".equals(family);
+        if (podObservation) {
+          ObjectNode podList = (ObjectNode) JSON.readTree(podListJson());
+          podSpec = (ObjectNode) podList.path("items").get(0).path("spec");
+          container = JSON.createObjectNode();
+          container.put("name", "debug");
+          container.put("image", IMAGE);
+          container.put("targetContainerName", "player-service");
+          podSpec.withArray(family).add(container);
+          observedResource = podList;
+        } else {
+          ObjectNode deployment = (ObjectNode) JSON.readTree(deploymentJson("10", 1, 1, 1, false));
+          podSpec = (ObjectNode) deployment.path("spec").path("template").path("spec");
+          if ("containers".equals(family)) {
+            container = (ObjectNode) podSpec.path("containers").get(0);
+          } else {
+            container = JSON.createObjectNode();
+            container.put("name", "setup");
+            container.put("image", IMAGE);
+            podSpec.withArray(family).add(container);
+          }
+          observedResource = deployment;
+        }
+
+        if ("containers".equals(family) && "envFrom".equals(accessForm)) {
+          // The selected validator has an independent blanket envFrom prohibition, so this case
+          // preserves the original matrix input but is not evidence of a signing-name-only guard.
+          addSigningSecretAccess(podSpec, container, accessForm, "jwt-signing-keys");
+          stubObservation(fixture, podObservation, observedResource);
+          assertThatThrownBy(fixture.source::observe)
+              .as("selected validator envFrom is rejected by its blanket rule")
+              .isInstanceOf(InventoryUnavailableException.class)
+              .hasNoCause();
+          continue;
+        }
+
+        ObjectNode secretSource =
+            addSigningSecretAccess(podSpec, container, accessForm, "runtime-secrets");
+        stubObservation(fixture, podObservation, observedResource);
+        assertThat(fixture.source.observe())
+            .as("accept non-signing %s through %s", accessForm, family)
+            .isNotNull();
+
+        // Keep the pod shape and access path valid; change only the referenced Secret name.
+        secretSource.put(
+            "volumeMount".equals(accessForm) ? "secretName" : "name", "jwt-signing-keys");
+        stubObservation(fixture, podObservation, observedResource);
+        assertThatThrownBy(fixture.source::observe)
+            .as("reject signing %s through %s", accessForm, family)
+            .isInstanceOf(InventoryUnavailableException.class)
+            .hasNoCause();
+      }
+    }
+  }
+
+  private static ObjectNode addSigningSecretAccess(
+      ObjectNode podSpec, ObjectNode container, String accessForm, String secretName) {
+    return switch (accessForm) {
+      case "envFrom" ->
+          container.withArray("envFrom").addObject().putObject("secretRef").put("name", secretName);
+      case "secretKeyRef" ->
+          container
+              .withArray("env")
+              .addObject()
+              .put("name", "CREDENTIAL")
+              .putObject("valueFrom")
+              .putObject("secretKeyRef")
+              .put("name", secretName)
+              .put("key", "signing-key");
+      case "volumeMount" -> {
+        container
+            .withArray("volumeMounts")
+            .addObject()
+            .put("name", "runtime-secrets")
+            .put("mountPath", "/var/run/secrets/firemud/credentials")
+            .put("readOnly", true);
+        yield podSpec
+            .withArray("volumes")
+            .addObject()
+            .put("name", "runtime-secrets")
+            .putObject("secret")
+            .put("secretName", secretName);
+      }
+      default -> throw new AssertionError("Unexpected signer access form: " + accessForm);
+    };
+  }
+
+  private static void stubObservation(
+      Fixture fixture, boolean podObservation, ObjectNode observedResource) throws Exception {
+    ApiResponse response = new ApiResponse(200, JSON.writeValueAsBytes(observedResource));
+    if (podObservation) {
+      fixture.stubPods(response);
+    } else {
+      fixture.stubDeployment(response);
+    }
+  }
+
+  @Test
   void rejectsSelectedValidatorEnvFromConfigMapAndSecretReferencesAndMalformedValues()
       throws Exception {
     for (String envFrom :
