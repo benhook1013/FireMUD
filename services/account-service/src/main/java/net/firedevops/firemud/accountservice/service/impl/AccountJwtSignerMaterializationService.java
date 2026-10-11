@@ -244,6 +244,12 @@ public class AccountJwtSignerMaterializationService
     try {
       validateRequest(request.getSchemaVersion(), request.getUnknownFields().asMap().isEmpty());
       Binding binding = requireCurrentAuthenticatedBinding();
+      AccountJwtSignerBootstrapCoordinator coordinator = currentBootstrapCoordinator();
+      if (coordinator == null) {
+        throw Status.FAILED_PRECONDITION
+            .withDescription("Account JWT signer reconciliation is not enabled")
+            .asRuntimeException();
+      }
       requireValidatorInventorySourceAvailable();
       PreparedGenerationEvidence preparedForObservation;
       try {
@@ -253,13 +259,9 @@ public class AccountJwtSignerMaterializationService
                     repository.readPreparedGenerationForRecovery(
                         binding.accountBinding(), trustFence(binding)));
       } catch (AccountJwtSignerDesiredStateRepository.NoPreparedPromotionException notPrepared) {
-        AccountJwtSignerBootstrapCoordinator coordinator = currentBootstrapCoordinator();
-        if (coordinator == null) {
-          throw new AccountJwtSignerDesiredStateRepository
-              .PromotionPrerequisitesIncompleteException(
-              "Account has no complete owner-verified promotion proof");
-        }
-        if (coordinator.prepareCurrentPromotionOnce().isEmpty()) {
+        var preparation = coordinator.prepareCurrentPromotionOnce();
+        requireUnchangedTrustBinding(binding);
+        if (preparation.isEmpty()) {
           if (ownerConfirmsNoPromotionReadyYet(binding)) {
             throw new AccountJwtSignerDesiredStateRepository.NoPreparedPromotionException();
           }
@@ -341,6 +343,12 @@ public class AccountJwtSignerMaterializationService
       UUID promotionOperationId = parseOperationId(request.getPromotionOperationId());
       UUID generationOperationId = parseOperationId(request.getGenerationOperationId());
       Binding binding = requireCurrentAuthenticatedBinding();
+      AccountJwtSignerBootstrapCoordinator coordinator = currentBootstrapCoordinator();
+      if (coordinator == null) {
+        throw Status.FAILED_PRECONDITION
+            .withDescription("Account JWT signer reconciliation is not enabled")
+            .asRuntimeException();
+      }
       PrivatePromotionObservation observation =
           new PrivatePromotionObservation(
               promotionOperationId,
@@ -369,12 +377,6 @@ public class AccountJwtSignerMaterializationService
             "JWT signer private promotion receipt is unavailable");
       }
       requireUnchangedTrustBinding(binding);
-      AccountJwtSignerBootstrapCoordinator coordinator = currentBootstrapCoordinator();
-      if (coordinator == null) {
-        throw Status.FAILED_PRECONDITION
-            .withDescription("Account JWT signer reconciliation is not enabled")
-            .asRuntimeException();
-      }
       coordinator.reconcilePreparedPromotionOnce(observation, receipt);
       requireUnchangedTrustBinding(binding);
       responseObserver.onNext(

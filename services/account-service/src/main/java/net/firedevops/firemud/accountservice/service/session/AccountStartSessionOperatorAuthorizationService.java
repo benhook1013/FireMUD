@@ -51,6 +51,8 @@ public final class AccountStartSessionOperatorAuthorizationService {
   private static final int REFERENCE_RANDOM_BYTES = 32;
   private static final int MAX_REFERENCE_TEXT_BYTES = 128;
   private static final Pattern REFERENCE = Pattern.compile("[A-Za-z0-9_-]{43}");
+  private static final Pattern SAFE_ENVELOPE_REQUEST_ID =
+      Pattern.compile("[A-Za-z0-9._:/@+-]{1,256}");
   private static final Set<String> RESPONSE_FIELDS =
       Set.of(
           "operatorAuthorizationReference",
@@ -662,7 +664,7 @@ public final class AccountStartSessionOperatorAuthorizationService {
       AccountStartSessionOperatorAuthorityBundle bundle) {
     return new Binding(
         ENVELOPE_OPERATION,
-        tuple.controlPlaneRequestId(),
+        envelopeBindingRequestId(tuple.controlPlaneRequestId()),
         sha256(exactTuple),
         callerWorkload,
         operationId.toString(),
@@ -673,6 +675,13 @@ public final class AccountStartSessionOperatorAuthorizationService {
         AccountControlUiAuthority.canonical(bundle.authorityTuple()),
         AccountControlUiAuthority.canonical(bundle.membershipVersion()),
         bundle.canonicalBytes());
+  }
+
+  static String envelopeBindingRequestId(String requestId) {
+    if (SAFE_ENVELOPE_REQUEST_ID.matcher(requestId).matches()) {
+      return requestId;
+    }
+    return java.util.HexFormat.of().formatHex(sha256(requestId.getBytes(StandardCharsets.UTF_8)));
   }
 
   private static byte[] encodeResponse(AuthorizationResponse response) {
