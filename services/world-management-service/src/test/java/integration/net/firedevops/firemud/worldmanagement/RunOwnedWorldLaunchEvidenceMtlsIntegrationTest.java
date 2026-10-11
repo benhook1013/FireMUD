@@ -30,6 +30,7 @@ import java.security.MessageDigest;
 import java.security.PrivateKey;
 import java.security.cert.CertificateFactory;
 import java.security.cert.X509Certificate;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Base64;
 import java.util.HexFormat;
@@ -49,6 +50,10 @@ import net.firedevops.firemud.common.grpc.GrpcChannelFactory;
 import net.firedevops.firemud.common.grpc.GrpcPeerCertificateEvidence;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentityInterceptor;
+import net.firedevops.firemud.common.runtime.RuntimeIdentity;
+import net.firedevops.firemud.common.security.AuthTokenInterceptor;
+import net.firedevops.firemud.common.security.GrpcClientAuth;
+import net.firedevops.firemud.common.security.JwtUtil;
 import net.firedevops.firemud.common.security.SessionContext;
 import net.firedevops.firemud.common.tenant.AuthoredWorldSourceDigest;
 import net.firedevops.firemud.common.tenant.AuthoredWorldSourceEvidence;
@@ -101,6 +106,17 @@ class RunOwnedWorldLaunchEvidenceMtlsIntegrationTest {
   private static final String WRONG_GS_URI = "spiffe://firemud/ns/other/sa/game-session-service";
   private static final String RELEASE_REF = "8ce42642-53ae-4d07-aab8-37c43ce66e0c";
   private static final String STORE_PASSWORD = "test-only-world-mtls-password";
+  private static final String TEST_JWT_SECRET = "testsecretkeytestsecretkeytest1234";
+  private static final JwtUtil WORLD_JWT_UTIL = new JwtUtil(TEST_JWT_SECRET, 3_600_000L);
+  private static final RuntimeIdentity WORLD_RUNTIME_IDENTITY =
+      new RuntimeIdentity(
+          "world-management-service",
+          "world-mtls-fixture-test",
+          "localhost",
+          Instant.parse("2026-10-11T00:00:00Z"),
+          "test",
+          "test",
+          "local");
 
   @TempDir static Path temporaryDirectory;
 
@@ -160,7 +176,15 @@ class RunOwnedWorldLaunchEvidenceMtlsIntegrationTest {
     endpoints.setGameDesignService("localhost:" + gameDesignServer.getPort());
     gameDesignClient =
         new GameDesignClient(
-            endpoints, worldTls, new GrpcChannelFactory(), BlockingGrpcStubCustomizer.noop());
+            endpoints,
+            worldTls,
+            new GrpcChannelFactory(),
+            new BlockingGrpcStubCustomizer() {
+              @Override
+              public <T extends io.grpc.stub.AbstractStub<T>> T customize(T stub) {
+                return GrpcClientAuth.attach(stub, WORLD_JWT_UTIL, WORLD_RUNTIME_IDENTITY);
+              }
+            });
     String previousReload = System.getProperty("firemud.grpc.tls-reload.enabled");
     System.setProperty("firemud.grpc.tls-reload.enabled", "false");
     try {
@@ -574,6 +598,44 @@ class RunOwnedWorldLaunchEvidenceMtlsIntegrationTest {
     }
   }
 
+  @Test
+  void gameDesignTransportRejectsMissingAndWrongJwtBeforeHandlerRead() throws Exception {
+    AtomicInteger descriptorReads = new AtomicInteger();
+    Fixture fixture = Fixture.create(temporaryDirectory, pki);
+    startGameDesignServer(
+        fixture,
+        descriptorReads,
+        new AtomicReference<>(),
+        new AtomicReference<>(),
+        new AtomicReference<>(),
+        new AtomicBoolean());
+
+    gameSessionChannel = channel("localhost", gameDesignServer.getPort(), pki.worldManagement());
+    var missingJwtStub = GameDesignServiceGrpc.newBlockingStub(gameSessionChannel);
+    assertThatThrownBy(
+            () ->
+                missingJwtStub.getLaunchDescriptor(GetLaunchDescriptorRequest.getDefaultInstance()))
+        .isInstanceOfSatisfying(
+            StatusRuntimeException.class,
+            failure ->
+                assertThat(failure.getStatus().getCode()).isEqualTo(Status.Code.UNAUTHENTICATED));
+    assertThat(descriptorReads).hasValue(0);
+
+    JwtUtil wrongJwtUtil = new JwtUtil("different-testsecretkeytestsecretkey1234", 3_600_000L);
+    var wrongJwtStub =
+        GrpcClientAuth.attach(
+            GameDesignServiceGrpc.newBlockingStub(gameSessionChannel),
+            wrongJwtUtil,
+            WORLD_RUNTIME_IDENTITY);
+    assertThatThrownBy(
+            () -> wrongJwtStub.getLaunchDescriptor(GetLaunchDescriptorRequest.getDefaultInstance()))
+        .isInstanceOfSatisfying(
+            StatusRuntimeException.class,
+            failure ->
+                assertThat(failure.getStatus().getCode()).isEqualTo(Status.Code.UNAUTHENTICATED));
+    assertThat(descriptorReads).hasValue(0);
+  }
+
   private void startGameDesignServer(
       Fixture fixture,
       AtomicInteger descriptorReads,
@@ -646,7 +708,11 @@ class RunOwnedWorldLaunchEvidenceMtlsIntegrationTest {
                     .trustManager(pki.caCertificateValue())
                     .clientAuth(ClientAuth.REQUIRE)
                     .build())
-            .addService(ServerInterceptors.intercept(service, new GrpcPeerIdentityInterceptor()))
+            .addService(
+                ServerInterceptors.intercept(
+                    service,
+                    new GrpcPeerIdentityInterceptor(),
+                    new AuthTokenInterceptor(WORLD_JWT_UTIL)))
             .build()
             .start();
   }
