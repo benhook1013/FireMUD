@@ -488,8 +488,20 @@ public final class CommandSource {
 
   /** Mirrors the currently accepted revision and release schema while preserving the raw JSON. */
   private static void validateCommandDefinition(String json) {
+    JsonNode rawDefinition;
+    try {
+      rawDefinition = JSON.readTree(json);
+    } catch (RuntimeException failure) {
+      throw new IllegalArgumentException("Malformed command definition JSON", failure);
+    }
     JsonNode definition = tree(json);
-    if (!definition.isObject() || definition.path("schemaVersion").asInt() != SCHEMA_VERSION) {
+    JsonNode rawSchemaVersion = rawDefinition == null ? null : rawDefinition.get("schemaVersion");
+    if (!definition.isObject()
+        || rawDefinition == null
+        || !rawDefinition.isObject()
+        || rawSchemaVersion == null
+        || !rawSchemaVersion.isInt()
+        || rawSchemaVersion.intValue() != SCHEMA_VERSION) {
       throw new IllegalArgumentException("Unsupported command definition schema");
     }
     fields(

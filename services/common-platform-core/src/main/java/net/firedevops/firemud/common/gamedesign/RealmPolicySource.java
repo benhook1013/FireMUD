@@ -54,6 +54,9 @@ public final class RealmPolicySource {
 
   public static Policy revision(
       DraftCommitBinding binding, DraftCommitBinding.RevisionPayload input) {
+    if (binding == null || input == null || !binding.revisions().contains(input)) {
+      throw new IllegalArgumentException("Policy revision is not in its exact binding");
+    }
     if (input.owner() != DraftCommitBinding.Owner.GAME_DESIGN_CONTROL_PLANE) {
       throw new IllegalArgumentException("Policy revision belongs to Game Design control plane");
     }

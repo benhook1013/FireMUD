@@ -50,12 +50,7 @@ public record TemplateConfigOwnerSourceInventoryDeclaration(
       throw new IllegalArgumentException("Exact owner source inventory revision order required");
     TemplateConfigSourceValues.uuid(Objects.requireNonNull(revisionId).toString());
     var revision =
-        sourceBinding.revisions().stream()
-            .filter(r -> r.owner() == Owner.GAME_DESIGN_CONTROL_PLANE)
-            .filter(
-                r -> r.revisionId().equals(revisionId) && r.revisionOrder().equals(revisionOrder))
-            .findFirst()
-            .orElseThrow();
+        TemplateConfigSourceValues.boundRevision(sourceBinding, revisionOrder, revisionId);
     String expectedPayload =
         owner == Owner.AUTOMATION_SCRIPTING
             ? TemplateConfigSourceValues.ownerInventoryPayload(owner, inventory)
